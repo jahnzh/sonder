@@ -352,7 +352,7 @@ export function ReaderView({
         });
         await publication.open(await blob.arrayBuffer(), "binary");
         if (disposed) {
-          publication.destroy();
+          try { publication.destroy(); } catch {}
           return;
         }
         const view = publication.renderTo(host, {
@@ -519,8 +519,11 @@ export function ReaderView({
       disposed = true;
       setRendered(false);
       (rendition.current as any)?.__observer?.disconnect();
-      rendition.current?.destroy();
-      epub.current?.destroy();
+      // epub.js throws when destroyed before its view finished initializing,
+      // and an error thrown here would unmount the whole app. The hidden Now
+      // Playing reader is torn down this way whenever the playing book changes.
+      try { rendition.current?.destroy(); } catch {}
+      try { epub.current?.destroy(); } catch {}
       rendition.current = null;
       epub.current = null;
     };
