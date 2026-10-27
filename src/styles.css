@@ -1580,6 +1580,7 @@ input[type="range"]::-moz-range-thumb {
   animation: dialog-in 0.2s ease;
 }
 .dialog-heading {
+  --dialog-title-line: calc(18px * var(--ui-scale, 1) * 1.35);
   display: flex;
   justify-content: space-between;
   gap: 20px;
@@ -1593,6 +1594,7 @@ input[type="range"]::-moz-range-thumb {
   font-size: calc(18px * var(--ui-scale, 1));
   font-weight: 650;
   letter-spacing: -0.4px;
+  line-height: var(--dialog-title-line);
   margin: 0;
 }
 .dialog-heading p {
@@ -1602,7 +1604,8 @@ input[type="range"]::-moz-range-thumb {
   margin-top: 5px;
 }
 .dialog-heading > .icon-button {
-  margin-top: -4px;
+  /* Centre the close button on the title's first line at any UI scale. */
+  margin-top: calc((var(--dialog-title-line) - 32px) / 2);
   margin-right: -7px;
 }
 .book-detail-dialog {
@@ -4708,13 +4711,13 @@ input[type="range"]::-moz-range-thumb {
     border-radius: 11px;
   }
   .dialog-heading {
+    --dialog-title-line: calc(16px * var(--ui-scale, 1) * 1.5);
     padding-bottom: 18px;
     margin-bottom: 20px;
     gap: 12px;
   }
   .dialog-heading h2 {
     font-size: calc(16px * var(--ui-scale, 1));
-    line-height: 1.5;
   }
   .dialog-heading p {
     font-size: max(11px, calc(10px * var(--ui-scale, 1)));
