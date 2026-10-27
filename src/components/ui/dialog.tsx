@@ -1,6 +1,6 @@
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
-import { hideOthers } from "aria-hidden";
+import { hideOthers, inertOthers } from "aria-hidden";
 import { useEffect, useId, useRef, type ReactNode } from "react";
 export function Dialog({
   open,
@@ -33,7 +33,9 @@ export function Dialog({
   useEffect(() => {
     if (!forceMount || !open || !content.current) return;
     content.current.focus({ preventScroll: true });
-    return hideOthers(content.current);
+    const restoreHidden = hideOthers(content.current);
+    const restoreInert = inertOthers(content.current);
+    return () => { restoreInert(); restoreHidden(); };
   }, [forceMount, open]);
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange} modal={!forceMount}>
