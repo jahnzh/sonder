@@ -375,3 +375,171 @@ test("a paused job reopens durably and resumes its completed worker output witho
     globalThis.fetch = original;
   }
 });
+test("a single file without chapter markers is located by narration samples and aligned between anchors", async () => {
+  // The previous test closes the shared app.
+  const local = await createApp();
+  after(() => local.close());
+  writeFileSync(file, await readerFixture());
+  const book = await extractBook(id);
+  const fragments = book.sections.flatMap((section) => section.paragraphs);
+  // 30 s of credits, five seconds per sentence, 20 s of closing credits.
+  const spoken = (index: number) => 30 + index * 5;
+  const duration = spoken(fragments.length) + 20;
+  db.insert(s.editions)
+    .values({
+      id: "alice-single",
+      workId: "work-alice",
+      cover: "",
+      narrator: "Unknown narrator",
+      rating: 0,
+      sourceLabel: "Local",
+    })
+    .run();
+  db.insert(s.recordings)
+    .values({ id: "recording-single", editionId: "alice-single" })
+    .run();
+  db.insert(s.tracks)
+    .values({
+      id: "single-0",
+      recordingId: "recording-single",
+      title: "Alice.m4b",
+      index: 0,
+      duration,
+      source: file,
+      sourceType: "local",
+    })
+    .run();
+  const options = (
+    await local.inject(
+      `/api/alignments/options?ebookId=${id}&recordingId=recording-single`,
+    )
+  ).json();
+  assert.equal(options.anchored, true);
+  assert.deepEqual(options.pairings, []);
+  process.env.ALIGNMENT_WORKER_URL = "http://alignment.test";
+  process.env.ALIGNMENT_WORKER_TOKEN = "test-private-worker-token";
+  let anchors = 0,
+    windows = 0,
+    hold: Promise<void> | null = null,
+    holding!: () => void;
+  const held = new Promise<void>((resolve) => (holding = resolve));
+  let release!: () => void;
+  globalThis.fetch = async (input, init) => {
+    const data = JSON.parse(String(init?.body));
+    if (String(input).endsWith("/anchor")) {
+      anchors++;
+      if (anchors === 3 && !hold) {
+        hold = new Promise((resolve) => (release = resolve));
+        holding();
+        await hold;
+      }
+      const index = Math.max(0, Math.ceil((data.start - 30) / 5));
+      if (index >= fragments.length || spoken(index) > data.start + data.duration - 3)
+        return Response.json({ match: null, start: data.start, text: "" });
+      return Response.json({
+        match: { index, score: 0.9, text: "" },
+        start: spoken(index),
+        text: "word ".repeat(40),
+      });
+    }
+    windows++;
+    const step = data.duration / data.fragments.length;
+    return Response.json({
+      engine: "aeneas-1.7.3",
+      elapsedSeconds: 1,
+      intervals: data.fragments.map((_: string, index: number) => ({
+        index,
+        start: data.start + index * step,
+        end: data.start + (index + 1) * step,
+      })),
+    });
+  };
+  const before = db.select().from(s.progress).all();
+  const created = await local.inject({
+    method: "POST",
+    url: "/api/alignments",
+    payload: { ebookId: id, recordingId: "recording-single" },
+  });
+  assert.equal(created.statusCode, 200, created.body);
+  const job = created.json();
+  assert.equal(job.mode, "anchored");
+  assert.deepEqual(job.pairings, []);
+  await held;
+  await local.inject({
+    method: "PATCH",
+    url: `/api/alignments/${job.id}`,
+    payload: { action: "pause" },
+  });
+  release();
+  for (let i = 0; i < 50; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const current = (await local.inject("/api/alignments")).json().jobs
+      .find((value: any) => value.id === job.id);
+    if (current.status === "paused" && current.anchoring.samples[2].done) break;
+  }
+  const paused = (await local.inject(`/api/alignments/${job.id}/map`)).json();
+  assert.equal(paused.status, "paused");
+  const sampled = paused.anchoring.samples.filter((v: any) => v.done).length;
+  assert.equal(sampled, 3);
+  await local.inject({
+    method: "PATCH",
+    url: `/api/alignments/${job.id}`,
+    payload: { action: "resume" },
+  });
+  let map: any;
+  for (let i = 0; i < 200; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    map = (await local.inject(`/api/alignments/${job.id}/map`)).json();
+    if (map.anchoring?.stage === "done") break;
+  }
+  assert.equal(map.status, "partial", map.error);
+  assert.equal(
+    anchors,
+    map.anchoring.samples.length,
+    "completed samples are not repeated after resuming",
+  );
+  assert.equal(windows, map.anchoring.segments.length);
+  assert.ok(map.anchoring.anchors.length >= 3);
+  assert.ok(map.coverage > 0.9, `coverage ${map.coverage}`);
+  assert.equal(map.progress, 1);
+  const intro = map.anchoring.flags.find((flag: any) => flag.kind === "intro");
+  assert.ok(intro && Math.abs(intro.end - 30) < 6, JSON.stringify(intro));
+  assert.ok(map.anchoring.flags.some((flag: any) => flag.kind === "outro"));
+  const order = new Map(fragments.map((fragment, i) => [fragment.id, i]));
+  for (const [i, interval] of map.intervals.entries()) {
+    assert.equal(interval.trackId, "single-0");
+    assert.ok(interval.verified === undefined);
+    const real = spoken(order.get(interval.paragraphId)!);
+    assert.ok(Math.abs(interval.start - real) < 12, `${interval.paragraphId} at ${interval.start}, spoken at ${real}`);
+    if (i) assert.ok(interval.start >= map.intervals[i - 1].end - 1e-6);
+  }
+  assert.deepEqual(db.select().from(s.progress).all(), before);
+  const reviewed = await local.inject({
+    method: "PATCH",
+    url: `/api/alignments/${job.id}`,
+    payload: { action: "review" },
+  });
+  assert.equal(reviewed.statusCode, 200, reviewed.body);
+  // Unrelated narration: no sample is found in this EPUB.
+  globalThis.fetch = async (input, init) => {
+    const data = JSON.parse(String(init?.body));
+    return Response.json({ match: null, start: data.start, text: "word ".repeat(40) });
+  };
+  const rebuilt = await createAlignment(id, "recording-single", undefined, "anchored");
+  for (let i = 0; i < 200; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    if (["error", "partial"].includes((await local.inject(`/api/alignments/${rebuilt.id}/map`)).json().status)) break;
+  }
+  const refused = (await local.inject(`/api/alignments/${rebuilt.id}/map`)).json();
+  assert.equal(refused.status, "error");
+  assert.match(refused.error, /Only 0 of \d+ narration samples were found/);
+  db.update(s.tracks)
+    .set({ chapters: [{ title: "Down the Rabbit-Hole", start: 0, end: 300 }] })
+    .where(eq(s.tracks.id, "alice-0"))
+    .run();
+  await assert.rejects(
+    createAlignment(id, "recording-alice", undefined, "anchored"),
+    /chapter markers/,
+  );
+  globalThis.fetch = original;
+});

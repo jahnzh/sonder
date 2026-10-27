@@ -47,6 +47,50 @@ export type AlignmentInterval = {
   confidence: number;
   verified?: boolean;
 };
+export type AlignmentFlag = {
+  kind:
+    | "intro"
+    | "outro"
+    | "skipped-text"
+    | "extra-audio"
+    | "unmatched-text"
+    | "unaligned";
+  trackId?: string;
+  start?: number;
+  end?: number;
+  section?: number;
+  title?: string;
+  first?: number;
+  last?: number;
+};
+// Sync for recordings without chapter markers: sampled narration anchors, then
+// known-text alignment of the windows between them. Fragment numbers index the
+// ebook's paragraphs in reading order.
+export type AlignmentAnchoring = {
+  stage: "sampling" | "aligning" | "done";
+  refinements: number;
+  samples: {
+    trackId: string;
+    time: number;
+    duration: number;
+    done?: boolean;
+    spokenWords?: number;
+    match?: { fragment: number; score: number; start: number } | null;
+  }[];
+  anchors: { trackId: string; time: number; fragment: number; score: number }[];
+  segments: {
+    trackId: string;
+    start: number;
+    duration: number;
+    first: number;
+    last: number;
+    coreFirst: number;
+    coreLast: number;
+    done?: boolean;
+  }[];
+  rate: number;
+  flags: AlignmentFlag[];
+};
 export type AlignmentJob = {
   id: string;
   generation?: string;
@@ -79,4 +123,6 @@ export type AlignmentJob = {
     start: number;
     duration: number;
   }[];
+  mode?: "chapters" | "anchored";
+  anchoring?: AlignmentAnchoring;
 };

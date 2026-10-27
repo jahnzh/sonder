@@ -18,6 +18,17 @@ import { ensureMediaStorage, mediaRoot } from "./storage.ts";
 import { hasServerMedia, requestServerDownload } from "./downloads.ts";
 import type { AlignmentJob, AlignmentInterval } from "../src/reading-types.ts";
 import { matchSections } from "./alignment-pairings.ts";
+import {
+  coreIntervals,
+  planSamples,
+  planSegments,
+  prefixWords,
+  refinementSamples,
+  selectAnchors,
+  speakingRate,
+  stitch,
+  wordCount,
+} from "./alignment-anchors.ts";
 export { matchTitle } from "./alignment-pairings.ts";
 export function recordingContext(id: string) {
   const rec = db
@@ -172,8 +183,15 @@ export async function alignmentOptions(ebookId: string, recordingId: string) {
         0,
       ) >= 40,
   );
-  const pairings = matchSections(sections, clips);
+  // One long file without chapter markers is located by sampling its
+  // narration instead; a title match there would pair only one section.
+  const anchored =
+    tracks.every((track) => !track.chapters?.length) &&
+    tracks.some((track) => track.duration > 0);
+  const matched = matchSections(sections, clips);
+  const pairings = anchored && tracks.length === 1 ? [] : matched;
   return {
+    anchored,
     sections: book.sections.map((section) => ({
       index: section.index,
       title: section.title,
@@ -191,6 +209,7 @@ export async function createAlignment(
   ebookId: string,
   recordingId: string,
   pairings?: AlignmentJob["pairings"],
+  mode?: AlignmentJob["mode"],
 ) {
   ensureMediaStorage();
   const book = await extractBook(ebookId),
@@ -211,13 +230,20 @@ export async function createAlignment(
   );
   if (existing && activeStatuses.includes(existing.status)) return existing;
   const options = await alignmentOptions(ebookId, recordingId);
-  const chosen = pairings || options.pairings;
-  if (!chosen.length)
+  const chosen = pairings?.length ? pairings : options.pairings;
+  const anchored =
+    mode === "anchored" ||
+    (mode !== "chapters" && !chosen.length && options.anchored);
+  if (anchored && !options.anchored)
+    throw new Error(
+      "This release has chapter markers or matched chapters. Match its chapters instead.",
+    );
+  if (!anchored && !chosen.length)
     throw new Error(
       "Match ebook sections to audio chapters before preparing sync.",
     );
   const seen = new Set<number>();
-  for (const pair of chosen) {
+  for (const pair of anchored ? [] : chosen) {
     const track = tracks.find((track) => track.id === pair.trackId);
     if (
       !track ||
@@ -253,11 +279,305 @@ export async function createAlignment(
     createdAt: existing?.createdAt || Date.now(),
     updatedAt: Date.now(),
     coverage: 0,
-    pairings: chosen,
+    pairings: anchored ? [] : chosen,
+    ...(anchored
+      ? {
+          mode: "anchored" as const,
+          anchoring: {
+            stage: "sampling" as const,
+            refinements: 0,
+            samples: planSamples(tracks),
+            anchors: [],
+            segments: [],
+            rate: 0,
+            flags: [],
+          },
+        }
+      : {}),
   };
   store(job);
   void processAlignments();
   return job;
+}
+const finished = (job: AlignmentJob) =>
+  job.mode === "anchored"
+    ? job.anchoring?.stage === "done"
+    : job.sectionsDone.length === job.pairings.length;
+async function workerRequest(path: string, body: object, timeout: number) {
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetch(
+      `${process.env.ALIGNMENT_WORKER_URL!.replace(/\/$/, "")}${path}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token: process.env.ALIGNMENT_WORKER_TOKEN,
+          ...body,
+        }),
+        signal: AbortSignal.timeout(timeout),
+      },
+    );
+    // A speech-recovery request can briefly hold the single worker.
+    if (response.status === 409 && attempt < 5) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      continue;
+    }
+    if (!response.ok)
+      throw new Error(
+        response.status === 409
+          ? "The alignment worker is busy. Retry in a moment."
+          : path === "/anchor"
+            ? "Local speech recovery is unavailable. Check that the speech model is installed on the media drive."
+            : "Local alignment could not process part of this narration. Retry, or choose a release with chapters.",
+      );
+    return response.json();
+  }
+}
+const anchorResult = z.object({
+  match: z
+    .object({ index: z.number().int().nonnegative(), score: z.number() })
+    .nullable(),
+  start: z.number().nonnegative().finite().optional(),
+  text: z.string().optional(),
+});
+async function processAnchored(
+  job: AlignmentJob,
+  book: Awaited<ReturnType<typeof extractBook>>,
+  tracks: ReturnType<typeof recordingContext>["tracks"],
+  folder: string,
+) {
+  const generation = job.generation;
+  const live = () => {
+    const current = alignmentJob(job.id);
+    return (
+      !stopping &&
+      activeStatuses.includes(current.status) &&
+      current.generation === generation
+    );
+  };
+  // Work finished after a pause is still kept; only a rebuild discards it.
+  const current = () => alignmentJob(job.id).generation === generation;
+  const paragraphs = book.sections.flatMap((section) =>
+    section.paragraphs.map((paragraph) => ({
+      ...paragraph,
+      section: section.index,
+      words: wordCount(paragraph.text),
+    })),
+  );
+  const words = prefixWords(paragraphs),
+    order = new Map(paragraphs.map((paragraph, i) => [paragraph.id, i]));
+  const timeline = tracks.map((track) => ({
+    id: track.id,
+    duration: track.duration,
+  }));
+  // The worker accepts up to 20,000 fragments, so very long books are sent as
+  // groups of consecutive sentences.
+  const group = Math.ceil(paragraphs.length / 20000);
+  const blocks: string[] = [];
+  for (let i = 0; i < paragraphs.length; i += group)
+    blocks.push(
+      paragraphs
+        .slice(i, i + group)
+        .map((paragraph) => paragraph.text)
+        .join(" "),
+    );
+  const language = iso3(book.language);
+  const progress = (current: AlignmentJob) => {
+    const plan = current.anchoring!;
+    const sampled =
+      plan.samples.filter((sample) => sample.done).length /
+      Math.max(1, plan.samples.length);
+    const aligned =
+      plan.segments.filter((segment) => segment.done).length /
+      Math.max(1, plan.segments.length);
+    current.progress =
+      plan.stage === "sampling" ? sampled * 0.25 : 0.25 + aligned * 0.75;
+  };
+  while (job.anchoring!.stage === "sampling") {
+    for (const [i, sample] of job.anchoring!.samples.entries()) {
+      if (sample.done) continue;
+      if (!live()) return;
+      const track = tracks.find((track) => track.id === sample.trackId);
+      const audio = track && localAudio(track);
+      if (!audio) throw new Error("The required audio file is unavailable.");
+      const result = anchorResult.parse(
+        await workerRequest(
+          "/anchor",
+          {
+            audio,
+            output: join(folder, "anchor.json"),
+            fragments: blocks,
+            language,
+            start: sample.time,
+            duration: sample.duration,
+          },
+          180000,
+        ),
+      );
+      if (!current()) return;
+      job = alignmentJob(job.id);
+      job.anchoring!.samples[i] = {
+        ...sample,
+        done: true,
+        spokenWords: result.text ? wordCount(result.text) : 0,
+        match: result.match
+          ? {
+              fragment: result.match.index * group,
+              score: result.match.score,
+              start: result.start ?? sample.time,
+            }
+          : null,
+      };
+      progress(job);
+      store(job);
+    }
+    job = alignmentJob(job.id);
+    const plan = job.anchoring!;
+    const anchors = selectAnchors(plan.samples, words, timeline);
+    const spoken = plan.samples.filter(
+      (sample) => (sample.spokenWords ?? 0) >= 10,
+    ).length;
+    if (anchors.length < 3 || anchors.length < spoken * 0.3) {
+      job.status = "error";
+      job.error = `Only ${anchors.length} of ${spoken} narration samples were found in this EPUB. Choose the matching ebook edition or a release with chapters.`;
+      plan.anchors = anchors;
+      store(job);
+      return;
+    }
+    const rate = speakingRate(anchors, words, timeline);
+    const extra =
+      plan.refinements < 2
+        ? refinementSamples(anchors, plan.samples, words, rate)
+        : [];
+    plan.anchors = anchors;
+    plan.rate = rate;
+    if (extra.length) {
+      plan.refinements++;
+      plan.samples.push(...extra);
+      plan.samples.sort(
+        (a, b) =>
+          tracks.findIndex((track) => track.id === a.trackId) -
+            tracks.findIndex((track) => track.id === b.trackId) ||
+          a.time - b.time,
+      );
+    } else {
+      const planned = planSegments(anchors, paragraphs, timeline, rate);
+      plan.segments = planned.segments;
+      plan.flags = planned.flags;
+      plan.stage = "aligning";
+    }
+    progress(job);
+    store(job);
+  }
+  for (const [i, segment] of job.anchoring!.segments.entries()) {
+    if (segment.done) continue;
+    if (!live()) return;
+    const track = tracks.find((track) => track.id === segment.trackId);
+    const audio = track && localAudio(track);
+    if (!audio) throw new Error("The required audio file is unavailable.");
+    const cacheKey = createHash("sha256")
+      .update(
+        JSON.stringify([
+          job.engine,
+          "anchored-v1",
+          job.fingerprint,
+          job.audioFingerprint,
+          segment,
+        ]),
+      )
+      .digest("hex")
+      .slice(0, 24);
+    const output = join(folder, `window-${i}-${cacheKey}.json`);
+    const raw = existsSync(output)
+      ? JSON.parse(readFileSync(output, "utf8"))
+      : await workerRequest(
+          "/align",
+          {
+            audio,
+            output,
+            fragments: paragraphs
+              .slice(segment.first, segment.last + 1)
+              .map((paragraph) => paragraph.text),
+            language,
+            start: segment.start,
+            duration: segment.duration,
+          },
+          30 * 60 * 1000,
+        );
+    if (!current()) return;
+    const result = z
+      .object({
+        intervals: z
+          .array(
+            z.object({
+              index: z.number().int().nonnegative(),
+              start: z.number().nonnegative().finite(),
+              end: z.number().nonnegative().finite(),
+            }),
+          )
+          .max(20000),
+        elapsedSeconds: z.number().nonnegative().finite(),
+      })
+      .parse(raw);
+    const intervals: AlignmentInterval[] = coreIntervals(
+      segment,
+      result.intervals,
+    ).map((interval) => {
+      const paragraph = paragraphs[interval.fragment],
+        rate = paragraph.words / (interval.end - interval.start);
+      return {
+        paragraphId: paragraph.id,
+        section: paragraph.section,
+        trackId: segment.trackId,
+        start: interval.start,
+        end: interval.end,
+        confidence: rate > 0.3 && rate < 6 ? 0.65 : 0.2,
+      };
+    });
+    job = alignmentJob(job.id);
+    const plan = job.anchoring!;
+    if (!intervals.length)
+      plan.flags.push({
+        kind: "unaligned",
+        trackId: segment.trackId,
+        start: segment.start,
+        end: segment.start + segment.duration,
+        section: paragraphs[segment.coreFirst].section,
+        first: segment.coreFirst,
+        last: segment.coreLast,
+      });
+    job.intervals.push(...intervals);
+    plan.segments[i] = { ...segment, done: true };
+    job.elapsedSeconds += result.elapsedSeconds;
+    progress(job);
+    job.coverage = job.intervals.length / paragraphs.length;
+    store(job);
+  }
+  if (!live()) return;
+  job = alignmentJob(job.id);
+  const plan = job.anchoring!;
+  job.intervals = stitch(job.intervals, order, timeline);
+  job.coverage = job.intervals.length / paragraphs.length;
+  // Sections with real text and no narration at all, such as front matter.
+  const mapped = new Set(job.intervals.map((interval) => interval.section));
+  for (const section of book.sections)
+    if (
+      !mapped.has(section.index) &&
+      section.paragraphs.reduce((count, p) => count + wordCount(p.text), 0) >=
+        40
+    )
+      plan.flags.push({ kind: "unmatched-text", section: section.index });
+  for (const flag of plan.flags)
+    if (flag.section !== undefined)
+      flag.title = book.sections.find(
+        (section) => section.index === flag.section,
+      )?.title;
+  plan.stage = "done";
+  job.progress = 1;
+  job.status = "partial";
+  job.warning =
+    "Timings are estimated from sampled narration. Preview a few passages, then mark the alignment reviewed. Passages without matching narration are left unsynced.";
+  store(job);
 }
 let running = false,
   stopping = false,
@@ -300,7 +620,8 @@ export async function processAlignments() {
       }
       const currentAudioFingerprint = audioFingerprint(job.recordingId);
       if (
-        job.sectionsDone.length &&
+        (job.sectionsDone.length ||
+          job.anchoring?.samples.some((sample) => sample.done)) &&
         currentAudioFingerprint !== job.audioFingerprint
       ) {
         job.status = "error";
@@ -315,6 +636,10 @@ export async function processAlignments() {
       const generation = job.generation;
       const folder = join(mediaRoot, "alignment", job.id);
       mkdirSync(folder, { recursive: true, mode: 0o750 });
+      if (job.mode === "anchored") {
+        await processAnchored(job, book, context.tracks, folder);
+        continue;
+      }
       for (const pair of job.pairings) {
         const current = alignmentJob(job.id);
         if (
@@ -606,9 +931,15 @@ export function registerAlignment(app: FastifyInstance) {
           .min(1)
           .max(1000)
           .optional(),
+        mode: z.enum(["chapters", "anchored"]).optional(),
       })
       .parse(req.body);
-    return createAlignment(input.ebookId, input.recordingId, input.pairings);
+    return createAlignment(
+      input.ebookId,
+      input.recordingId,
+      input.pairings,
+      input.mode,
+    );
   });
   app.patch("/api/alignments/:id", async (req) => {
     const { id } = req.params as { id: string };
@@ -619,7 +950,7 @@ export function registerAlignment(app: FastifyInstance) {
     if (action === "review") {
       const book = await extractBook(job.ebookId);
       if (
-        job.sectionsDone.length !== job.pairings.length ||
+        !finished(job) ||
         book.fingerprint !== job.fingerprint ||
         audioFingerprint(job.recordingId) !== job.audioFingerprint
       )
