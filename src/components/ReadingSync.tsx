@@ -3,14 +3,47 @@ import { BookOpen, Headphones, Loader2, Link2 } from "lucide-react";
 import { api, localDB, clock } from "../lib";
 import { usePlayer } from "../player";
 import type { Book } from "../types";
-import type { AlignmentJob, ReaderBook, TextLocator } from "../reading-types";
+import type {
+  AlignmentFlag,
+  AlignmentJob,
+  ReaderBook,
+  TextLocator,
+} from "../reading-types";
 type Options = {
   sections: { index: number; title: string; paragraphs: number }[];
   clips: { trackId: string; title: string; start: number; duration: number }[];
   pairings: AlignmentJob["pairings"];
   sameWork: boolean;
   languageMatch: boolean;
+  anchored?: boolean;
 };
+const finished = (job: AlignmentJob) =>
+  job.mode === "anchored"
+    ? job.anchoring?.stage === "done"
+    : job.sectionsDone.length === job.pairings.length;
+function flagText(flag: AlignmentFlag) {
+  const range =
+    flag.start !== undefined && flag.end !== undefined
+      ? `${clock(flag.start)}–${clock(flag.end)}`
+      : "";
+  const where = flag.title ? ` (${flag.title})` : "";
+  return {
+    intro: `Introduction or credits not in the ebook: ${range}`,
+    outro: `Closing credits or audio not in the ebook: ${range}`,
+    "skipped-text": `Ebook text without matching narration near ${range}${where}. Left unsynced.`,
+    "extra-audio": `Narration not found in the ebook: ${range}. Left unsynced.`,
+    "unaligned": `Could not align ${range}${where}. Left unsynced.`,
+    "unmatched-text": `Not found in the narration: ${flag.title || "untitled section"}`,
+  }[flag.kind];
+}
+function progressText(job: AlignmentJob) {
+  const plan = job.anchoring;
+  if (job.mode !== "anchored" || !plan)
+    return `${job.sectionsDone.length} of ${job.pairings.length} sections`;
+  if (plan.stage === "sampling")
+    return `Locating text: ${plan.samples.filter((sample) => sample.done).length} of ${plan.samples.length} narration samples`;
+  return `${plan.anchors.length} anchors · ${plan.segments.filter((segment) => segment.done).length} of ${plan.segments.length} passages aligned`;
+}
 function savedOrChapteredRelease(book: ReaderBook, books: Book[]) {
   const saved = localStorage.getItem(`reader-recording:${book.id}`);
   const candidates = books.filter(
@@ -166,7 +199,7 @@ export function ReadingSync({
       body: JSON.stringify({
         ebookId: book.id,
         recordingId: selected,
-        pairings,
+        ...(anchoredMode ? { mode: "anchored" } : { pairings }),
       }),
     })
       .then(refresh)
@@ -176,6 +209,7 @@ export function ReadingSync({
   const noChapterMarkers =
     options?.clips.length === 1 &&
     !selectedAudio?.tracks.some((track) => track.chapters?.length);
+  const anchoredMode = !!options?.anchored && !pairings.length;
   const blockedReason = !selected
     ? "Choose an audiobook release to prepare reading sync."
     : busy
@@ -191,7 +225,11 @@ export function ReadingSync({
             : !options.languageMatch
               ? "The ebook and narration languages differ. Choose a release in the ebook’s language."
               : !pairings.length
-                ? noChapterMarkers && options.clips[0].duration > 7200
+                ? anchoredMode
+                  ? options.clips.every((clip) => clip.duration <= 0)
+                    ? "Audio lengths are unknown. Save this release to the server to read its chapter details."
+                    : null
+                  : noChapterMarkers && options.clips[0].duration > 7200
                   ? "This release is one long audio file without chapter markers. Choose a release with chapters, or open the chapter matcher and set an audio start and length for each ebook section."
                   : options.clips.every((clip) => clip.duration <= 0)
                     ? "Audio lengths are unknown. Save this release to the server to read its chapter details."
@@ -400,13 +438,20 @@ export function ReadingSync({
           </strong>
           <progress max="1" value={job.progress} />
           <p>
-            {job.sectionsDone.length} of {job.pairings.length} sections ·{" "}
-            {Math.round(job.coverage * 100)}% of text mapped
+            {progressText(job)} · {Math.round(job.coverage * 100)}% of text
+            mapped
             {job.elapsedSeconds > 0
               ? ` · ${clock(job.elapsedSeconds)} processing`
               : ""}
           </p>
           {job.warning && <p>{job.warning}</p>}
+          {!!job.anchoring?.flags.length && (
+            <ul className="alignment-flags">
+              {job.anchoring.flags.map((flag, index) => (
+                <li key={index}>{flagText(flag)}</li>
+              ))}
+            </ul>
+          )}
           {job.error && <p className="inline-error">{job.error}</p>}
         </div>
       )}
@@ -464,7 +509,7 @@ export function ReadingSync({
         )}
         {job &&
           job.intervals.length > 0 &&
-          job.sectionsDone.length === job.pairings.length &&
+          finished(job) &&
           !job.intervals.every((interval) => interval.verified) && (
             <button
               className="button subtle"
@@ -477,6 +522,9 @@ export function ReadingSync({
       </div>
       <p id="reading-sync-help" className="sync-preparation-help" role="status">
         {blockedReason ||
+          (anchoredMode
+            ? "No chapter markers. Reading sync samples the narration to locate the ebook text, then aligns the passages between those points."
+            : null) ||
           `${pairings.length} ebook ${pairings.length === 1 ? "section matched" : "sections matched"} to audio. Review the chapter matches, then prepare sentence timings.`}
       </p>
       {job &&
