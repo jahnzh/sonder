@@ -897,15 +897,30 @@ export function registerAlignment(app: FastifyInstance) {
     };
   });
   app.get("/api/alignments", (req) => {
-    const { ebookId } = z
-      .object({ ebookId: z.string().optional() })
+    const { ebookId, summary } = z
+      .object({
+        ebookId: z.string().optional(),
+        summary: z
+          .union([z.literal("1"), z.literal("true"), z.literal("0"), z.literal("false")])
+          .optional(),
+      })
       .parse(req.query);
+    const slim = summary === "1" || summary === "true";
+    const listed = jobs().filter((job) => !ebookId || job.ebookId === ebookId);
     return {
       available:
         !!process.env.ALIGNMENT_WORKER_URL &&
         !!process.env.ALIGNMENT_WORKER_TOKEN,
       localOnly: true,
-      jobs: jobs().filter((job) => !ebookId || job.ebookId === ebookId),
+      jobs: slim
+        ? listed.map((job) => ({
+            ...job,
+            intervalCount: job.intervals.length,
+            unverifiedCount: job.intervals.filter((interval) => !interval.verified)
+              .length,
+            intervals: [],
+          }))
+        : listed,
     };
   });
   app.get("/api/alignments/options", async (req) => {

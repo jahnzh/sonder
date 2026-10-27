@@ -125,4 +125,7 @@ export type AlignmentJob = {
   }[];
   mode?: "chapters" | "anchored";
   anchoring?: AlignmentAnchoring;
+  /** Present on summary list responses; full intervals live on /map. */
+  intervalCount?: number;
+  unverifiedCount?: number;
 };

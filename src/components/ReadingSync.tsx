@@ -21,6 +21,15 @@ const finished = (job: AlignmentJob) =>
   job.mode === "anchored"
     ? job.anchoring?.stage === "done"
     : job.sectionsDone.length === job.pairings.length;
+const processing = (status: AlignmentJob["status"]) =>
+  ["queued", "copying", "processing"].includes(status);
+const mapCacheKey = (ebookId: string, recordingId: string) =>
+  `reader-map:${ebookId}:${recordingId}`;
+const intervalCountOf = (job: AlignmentJob) =>
+  job.intervalCount ?? job.intervals.length;
+const unverifiedCountOf = (job: AlignmentJob) =>
+  job.unverifiedCount ??
+  job.intervals.filter((interval) => !interval.verified).length;
 function flagText(flag: AlignmentFlag) {
   const range =
     flag.start !== undefined && flag.end !== undefined
@@ -65,6 +74,7 @@ export function ReadingSync({
   onLinked,
   locator,
   recordingId,
+  loadOptions = false,
 }: {
   book: ReaderBook;
   books: Book[];
@@ -72,9 +82,19 @@ export function ReadingSync({
   onLinked: () => void;
   locator?: TextLocator | null;
   recordingId?: string;
+  /** When false (background-mounted), skip /alignments/options. */
+  loadOptions?: boolean;
 }) {
   const player = usePlayer();
   const epoch = useRef(0);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // While the sync panel is open, keep polling so changes made elsewhere (such
+  // as another device pausing the job) show up; in the background only poll
+  // jobs that are still processing.
+  const visible = useRef(loadOptions);
+  visible.current = loadOptions;
+  const shouldPoll = (job: AlignmentJob | undefined) =>
+    visible.current || (!!job && processing(job.status));
   const [jobs, setJobs] = useState<AlignmentJob[]>([]),
     [selected, setSelected] = useState(
       (player.book?.workId === book.workId ? player.book.recordingId : null) ||
@@ -88,6 +108,12 @@ export function ReadingSync({
   const [anchorStart, setAnchorStart] = useState(0),
     [anchorEnd, setAnchorEnd] = useState(15);
   const selectedAudio = books.find((audio) => audio.recordingId === selected);
+  const stopPoll = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  };
   const selectRelease = (recordingId: string) => {
     if (recordingId === selected) return;
     if (recordingId)
@@ -100,52 +126,89 @@ export function ReadingSync({
     onMap(null);
     setError("");
   };
-  const refresh = async () => {
+  const refresh = async (): Promise<AlignmentJob | undefined> => {
     const requestEpoch = epoch.current;
+    const cacheKey = mapCacheKey(book.id, selected);
     try {
       const result = await api<{ jobs: AlignmentJob[]; available: boolean }>(
-        `/alignments?ebookId=${encodeURIComponent(book.id)}`,
+        `/alignments?ebookId=${encodeURIComponent(book.id)}&summary=1`,
       );
       if (requestEpoch !== epoch.current) return;
       setJobs(result.jobs);
       setAvailable(result.available);
       const job = result.jobs.find((job) => job.recordingId === selected);
-      if (job?.intervals.length) {
-        const map = await api<AlignmentJob>(`/alignments/${job.id}/map`);
-        if (requestEpoch !== epoch.current) return;
-        await localDB.preferences.put({
-          key: `reader-map:${book.id}:${selected}`,
-          value: map,
-        });
-        onMap(map);
-      } else onMap(null);
+      if (!job || intervalCountOf(job) <= 0) {
+        onMap(null);
+        return job;
+      }
+      const cached = (await localDB.preferences.get(cacheKey))?.value as
+        | AlignmentJob
+        | undefined;
+      if (
+        cached?.intervals?.length &&
+        cached.updatedAt >= job.updatedAt
+      ) {
+        onMap(cached);
+        return job;
+      }
+      const map = await api<AlignmentJob>(`/alignments/${job.id}/map`);
+      if (requestEpoch !== epoch.current) return;
+      await localDB.preferences.put({ key: cacheKey, value: map });
+      onMap(map);
+      return job;
     } catch (error) {
       if (requestEpoch !== epoch.current) return;
       if (!navigator.onLine) {
-        const value = (
-          await localDB.preferences.get(`reader-map:${book.id}:${selected}`)
-        )?.value as AlignmentJob | undefined;
+        const value = (await localDB.preferences.get(cacheKey))?.value as
+          | AlignmentJob
+          | undefined;
         onMap(value || null);
-      } else {
-        onMap(null);
-        setError((error as Error).message);
+        return value;
       }
+      onMap(null);
+      setError((error as Error).message);
     }
+  };
+  const ensurePoll = (job: AlignmentJob | undefined) => {
+    stopPoll();
+    if (!shouldPoll(job)) return;
+    pollRef.current = setInterval(() => {
+      void refresh().then((updated) => {
+        if (!shouldPoll(updated)) stopPoll();
+      });
+    }, 4000);
   };
   useEffect(() => {
     if (recordingId) selectRelease(recordingId);
   }, [recordingId]);
   useEffect(() => {
+    if (!loadOptions) return;
+    const requestEpoch = epoch.current;
+    void refresh().then((job) => {
+      if (requestEpoch === epoch.current) ensurePoll(job);
+    });
+  }, [loadOptions]);
+  useEffect(() => {
     epoch.current++;
+    const requestEpoch = epoch.current;
     let live = true;
-    void refresh();
-    const timer = setInterval(() => {
-      if (live) void refresh();
-    }, 4000);
+    stopPoll();
+    void (async () => {
+      if (selected) {
+        const cached = (
+          await localDB.preferences.get(mapCacheKey(book.id, selected))
+        )?.value as AlignmentJob | undefined;
+        if (!live || requestEpoch !== epoch.current) return;
+        if (cached) onMap(cached);
+      }
+      const job = await refresh();
+      if (!live || requestEpoch !== epoch.current) return;
+      ensurePoll(job);
+    })();
     return () => {
       live = false;
       epoch.current++;
-      clearInterval(timer);
+      stopPoll();
     };
   }, [book.id, selected]);
   useEffect(() => {
@@ -157,7 +220,7 @@ export function ReadingSync({
   useEffect(() => {
     let live = true;
     setOptions(null);
-    if (!selected) return;
+    if (!selected || !loadOptions) return;
     void api<Options>(
       "/alignments/options?" +
         new URLSearchParams({ ebookId: book.id, recordingId: selected }),
@@ -173,7 +236,7 @@ export function ReadingSync({
     return () => {
       live = false;
     };
-  }, [book.id, selected, book.workId]);
+  }, [book.id, selected, book.workId, loadOptions]);
   const job = jobs.find((job) => job.recordingId === selected);
   const action = async (value: string) => {
     if (!job) return;
@@ -184,7 +247,7 @@ export function ReadingSync({
         method: "PATCH",
         body: JSON.stringify({ action: value }),
       });
-      await refresh();
+      ensurePoll(await refresh());
     } catch (error) {
       setError((error as Error).message);
     } finally {
@@ -202,7 +265,7 @@ export function ReadingSync({
         ...(anchoredMode ? { mode: "anchored" } : { pairings }),
       }),
     })
-      .then(refresh)
+      .then(async () => ensurePoll(await refresh()))
       .catch((error) => setError(error.message))
       .finally(() => setBusy(false));
   };
@@ -508,9 +571,9 @@ export function ReadingSync({
           </button>
         )}
         {job &&
-          job.intervals.length > 0 &&
+          intervalCountOf(job) > 0 &&
           finished(job) &&
-          !job.intervals.every((interval) => interval.verified) && (
+          unverifiedCountOf(job) > 0 && (
             <button
               className="button subtle"
               disabled={busy}
@@ -595,11 +658,11 @@ export function ReadingSync({
                   })
                     .then(async (value) => {
                       await localDB.preferences.put({
-                        key: `reader-map:${book.id}:${selected}`,
+                        key: mapCacheKey(book.id, selected),
                         value,
                       });
                       onMap(value);
-                      await refresh();
+                      ensurePoll(await refresh());
                     })
                     .catch((error) => setError(error.message))
                     .finally(() => setBusy(false));

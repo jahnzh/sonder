@@ -1,9 +1,11 @@
 import { api, localDB } from "./lib";
 import type {
+  AlignmentJob,
   ReaderBook,
   ReadingCheckpoint,
   TextLocator,
 } from "./reading-types";
+import type { SavedEbook } from "./types";
 export type PendingReading = {
   checkpoint: ReadingCheckpoint;
   baseRevision: number;
@@ -201,10 +203,16 @@ export async function syncBookmarks(id: string) {
     bookmarkSyncs.delete(id);
   }
 }
+const epubMemoryCache = new Map<string, Blob>();
+const inFlightEpub = new Map<string, Promise<Blob>>();
+
 export async function cachedEpub(
   id: string,
   fingerprint: string,
 ): Promise<Blob | null> {
+  const key = `${id}:${fingerprint}`;
+  const mem = epubMemoryCache.get(key);
+  if (mem) return mem;
   const stored = (await localDB.preferences.get(`reader-file:${id}`))?.value as
     { fingerprint: string; blob?: Blob; opfs?: boolean } | undefined;
   if (stored?.fingerprint !== fingerprint) return null;
@@ -213,26 +221,57 @@ export async function cachedEpub(
       const folder = await (
         await navigator.storage.getDirectory()
       ).getDirectoryHandle("sonder-ebooks");
-      return await (await folder.getFileHandle(`${id}.epub`)).getFile();
+      const file = await (await folder.getFileHandle(`${id}.epub`)).getFile();
+      epubMemoryCache.set(key, file);
+      return file;
     }
-    return stored.blob || null;
+    if (stored.blob) {
+      epubMemoryCache.set(key, stored.blob);
+      return stored.blob;
+    }
+    return null;
   } catch {
     return null;
   }
 }
-export async function epubFile(id: string, fingerprint: string) {
-  const cached = await cachedEpub(id, fingerprint);
-  if (cached) return cached;
-  const response = await fetch(`/api/ebooks/${encodeURIComponent(id)}/file`);
-  if (!response.ok)
-    throw new Error(
-      navigator.onLine
-        ? "The EPUB could not be opened."
-        : "Save this ebook on your device before reading offline.",
-    );
-  return response.blob();
+export async function epubFile(id: string, fingerprint: string): Promise<Blob> {
+  const key = `${id}:${fingerprint}`;
+  const mem = epubMemoryCache.get(key);
+  if (mem) return mem;
+
+  const inFlight = inFlightEpub.get(key);
+  if (inFlight) return inFlight;
+
+  const promise = (async () => {
+    try {
+      const cached = await cachedEpub(id, fingerprint);
+      if (cached) {
+        epubMemoryCache.set(key, cached);
+        return cached;
+      }
+      const response = await fetch(`/api/ebooks/${encodeURIComponent(id)}/file`);
+      if (!response.ok)
+        throw new Error(
+          navigator.onLine
+            ? "The EPUB could not be opened."
+            : "Save this ebook on your device before reading offline.",
+        );
+      const blob = await response.blob();
+      epubMemoryCache.set(key, blob);
+      void saveEpubOffline({ id, fingerprint }, blob).catch(() => {});
+      return blob;
+    } finally {
+      inFlightEpub.delete(key);
+    }
+  })();
+
+  inFlightEpub.set(key, promise);
+  return promise;
 }
-export async function saveEpubOffline(book: ReaderBook, blob: Blob) {
+export async function saveEpubOffline(
+  book: Pick<ReaderBook, "id" | "fingerprint">,
+  blob: Blob,
+) {
   await navigator.storage?.persist?.().catch(() => false);
   if (navigator.storage?.getDirectory) {
     const folder = await (
@@ -264,4 +303,172 @@ export function openReader(id: string, fromAudio = false) {
     new CustomEvent("sonder:open-reader", { detail: { id, fromAudio } }),
   );
   location.hash = `reader/${encodeURIComponent(id)}`;
+}
+
+let cachedEbooksList: SavedEbook[] | null = null;
+void localDB.preferences
+  .get("ebooks")
+  .then((entry) => {
+    if (entry?.value && !cachedEbooksList) {
+      cachedEbooksList = entry.value as SavedEbook[];
+    }
+  })
+  .catch(() => {});
+
+export function hasKnownReader(workId: string | undefined): boolean {
+  if (!workId) return false;
+  try {
+    if (localStorage.getItem(`reader-ebook:${workId}`)) return true;
+  } catch {}
+  if (cachedEbooksList) {
+    return cachedEbooksList.some(
+      (e) => e.workId === workId && e.format === "epub" && e.available,
+    );
+  }
+  return false;
+}
+
+let activeWarm: { cancel: () => void } | null = null;
+
+export function warmPlaybackReading(
+  workId: string,
+  recordingId?: string,
+): () => void {
+  if (activeWarm) {
+    activeWarm.cancel();
+    activeWarm = null;
+  }
+  let cancelled = false;
+  let pollTimer: ReturnType<typeof setTimeout> | null = null;
+  const cancel = () => {
+    cancelled = true;
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+  };
+  activeWarm = { cancel };
+
+  void (async () => {
+    if (!workId) return;
+
+    let all: SavedEbook[] = [];
+    try {
+      all = await api<SavedEbook[]>("/ebooks");
+      cachedEbooksList = all;
+      await localDB.preferences.put({ key: "ebooks", value: all });
+    } catch {
+      all =
+        cachedEbooksList ||
+        (((await localDB.preferences.get("ebooks"))?.value || []) as SavedEbook[]);
+      cachedEbooksList = all;
+    }
+    if (cancelled) return;
+
+    const editions = all.filter(
+      (ebook) => ebook.workId === workId && ebook.format === "epub" && ebook.available,
+    );
+    if (!editions.length) return;
+
+    let preferred: SavedEbook | undefined;
+    try {
+      const preferredId = localStorage.getItem(`reader-ebook:${workId}`);
+      preferred = editions.find((ebook) => ebook.id === preferredId);
+    } catch {}
+
+    let chosen = preferred;
+    if (!chosen && editions.length > 1 && recordingId) {
+      const editionsWithMap = await Promise.all(
+        editions.map(async (ebook) => {
+          try {
+            const data = await api<{ jobs: AlignmentJob[] }>(
+              `/alignments?ebookId=${encodeURIComponent(ebook.id)}&summary=1`,
+            );
+            const matches = data?.jobs?.some(
+              (job) =>
+                job.recordingId === recordingId &&
+                (job.intervalCount ?? job.intervals?.length ?? 0) > 0,
+            );
+            return matches ? ebook : null;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      if (cancelled) return;
+      chosen = editionsWithMap.find((e): e is SavedEbook => Boolean(e));
+    }
+
+    const selectedEbook = chosen || editions[0];
+    const ebookId = selectedEbook.id;
+    try {
+      if (!localStorage.getItem(`reader-ebook:${workId}`)) {
+        localStorage.setItem(`reader-ebook:${workId}`, ebookId);
+      }
+    } catch {}
+
+    void loadReader(ebookId)
+      .then((readerBook) => {
+        if (!cancelled && readerBook?.fingerprint) {
+          void epubFile(readerBook.id, readerBook.fingerprint).catch(() => {});
+        }
+      })
+      .catch(() => {});
+
+    if (!recordingId) return;
+
+    const mapCacheKey = `reader-map:${ebookId}:${recordingId}`;
+
+    const checkJobAndMap = async (): Promise<AlignmentJob | null> => {
+      if (cancelled) return null;
+      try {
+        const result = await api<{ jobs: AlignmentJob[]; available: boolean }>(
+          `/alignments?ebookId=${encodeURIComponent(ebookId)}&summary=1`,
+        );
+        if (cancelled) return null;
+        const job = result.jobs?.find((j) => j.recordingId === recordingId);
+        if (!job) return null;
+
+        const count = job.intervalCount ?? job.intervals?.length ?? 0;
+        if (count > 0) {
+          const cached = (await localDB.preferences.get(mapCacheKey))?.value as
+            | AlignmentJob
+            | undefined;
+          if (
+            !cached?.intervals?.length ||
+            job.updatedAt > cached.updatedAt
+          ) {
+            const map = await api<AlignmentJob>(
+              `/alignments/${encodeURIComponent(job.id)}/map`,
+            );
+            if (cancelled) return null;
+            await localDB.preferences.put({ key: mapCacheKey, value: map });
+          }
+        }
+        return job;
+      } catch {
+        return null;
+      }
+    };
+
+    const initialJob = await checkJobAndMap();
+    if (cancelled || !initialJob) return;
+
+    const pollIfProcessing = (job: AlignmentJob) => {
+      if (cancelled) return;
+      if (["queued", "copying", "processing"].includes(job.status)) {
+        pollTimer = setTimeout(async () => {
+          if (cancelled) return;
+          const updated = await checkJobAndMap();
+          if (updated && !cancelled) {
+            pollIfProcessing(updated);
+          }
+        }, 4000);
+      }
+    };
+
+    pollIfProcessing(initialJob);
+  })();
+
+  return cancel;
 }

@@ -16,8 +16,8 @@ export function PlaybackReader({book,books,notify,onAvailable,onMissing}:{book:B
       let chosen=preferred;
       if(!chosen && editions.length>1) {
         const maps=await Promise.all(editions.map(async ebook=>{
-          const data=await api<{jobs:AlignmentJob[]}>(`/alignments?ebookId=${encodeURIComponent(ebook.id)}`).catch(()=>null);
-          return data?.jobs.some(job=>job.recordingId===book.recordingId && job.intervals.length) ? ebook : null;
+          const data=await api<{jobs:AlignmentJob[]}>(`/alignments?ebookId=${encodeURIComponent(ebook.id)}&summary=1`).catch(()=>null);
+          return data?.jobs.some(job=>job.recordingId===book.recordingId && (job.intervalCount ?? job.intervals.length) > 0) ? ebook : null;
         }));
         chosen=maps.find(ebook=>!!ebook) || undefined;
       }

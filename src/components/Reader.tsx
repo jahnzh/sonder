@@ -1192,6 +1192,7 @@ export function ReaderView({
             onLinked={() => void refresh()}
             locator={locator}
             recordingId={recordingId}
+            loadOptions={panel === "sync"}
           />
         </div>
       )}
