@@ -21,6 +21,14 @@ import { listUserIds } from "./users.ts";
 import { audioFileExtension, audioFileMime, isCompleteMediaResponse } from "./media-response.ts";
 const controllers = new Map<string, AbortController>();
 let running = false;
+function jobIsActive(recordingId: string) {
+  const job = db
+    .select({ status: s.serverDownloads.status })
+    .from(s.serverDownloads)
+    .where(eq(s.serverDownloads.recordingId, recordingId))
+    .get();
+  return job?.status === "queued" || job?.status === "downloading";
+}
 export function hasServerMedia(track: typeof s.tracks.$inferSelect) {
   if (track.sourceType === "local" && existsSync(track.source)) return true;
   const copy = db
@@ -94,6 +102,8 @@ export async function processServerDownloads() {
       .where(inArray(s.serverDownloads.status, ["queued", "downloading"]))
       .all();
     for (const job of jobs) {
+      // The batch is a snapshot: skip jobs paused or removed since it was read.
+      if (!jobIsActive(job.recordingId)) continue;
       const ctrl = new AbortController();
       controllers.set(job.recordingId, ctrl);
       try {
@@ -193,6 +203,8 @@ export async function processServerDownloads() {
               throw new Error("The source did not return a valid audio file.");
             const mime = audioFileMime(temp) || response.headers.get("content-type") || "application/octet-stream";
             const path = pathPrefix + audioFileExtension(mime);
+            if (!jobIsActive(job.recordingId)) ctrl.abort();
+            ctrl.signal.throwIfAborted();
             renameSync(temp, path);
             db.update(s.tracks)
               .set({
