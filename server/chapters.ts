@@ -1,4 +1,12 @@
-import type { IChapter } from "music-metadata";
+import type { IChapter, IOptions } from "music-metadata";
+// music-metadata caps each MP4 table at 100k entries by default, which long
+// single-file M4B audiobooks exceed in their chunk and sample tables.
+export const audioParseOptions: IOptions = {
+  duration: true,
+  includeChapters: true,
+  skipCovers: true,
+  maxMetadataEntries: 10_000_000,
+};
 export type Chapter = { title: string; start: number; end?: number };
 export function normalizeChapters(
   chapters: readonly IChapter[] | undefined,

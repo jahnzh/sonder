@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { eq, inArray } from "drizzle-orm";
 import { parseFile } from "music-metadata";
-import { normalizeChapters, type Chapter } from "./chapters.ts";
+import { audioParseOptions, normalizeChapters, type Chapter } from "./chapters.ts";
 import { db, sqlite } from "./db.ts";
 import { hardcoverWorkForMedia, claimHardcoverAudio } from "./hardcover.ts";
 import * as s from "./schema.ts";
@@ -346,11 +346,7 @@ export async function refreshAcquisition(id: string) {
         if (!existsSync(path) || statSync(path).size !== file.length) return;
         let meta;
         try {
-          meta = await parseFile(path, {
-            duration: true,
-            includeChapters: true,
-            skipCovers: true,
-          });
+          meta = await parseFile(path, audioParseOptions);
         } catch {
           throw new Error(
             "A completed torrent file could not be read as audio.",

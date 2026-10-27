@@ -16,7 +16,7 @@ import { resolve, join, extname } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { parseFile } from "music-metadata";
-import { normalizeChapters, type Chapter } from "./chapters.ts";
+import { audioParseOptions, normalizeChapters, type Chapter } from "./chapters.ts";
 import { z } from "zod";
 import { eq, and, gt } from "drizzle-orm";
 import { db, sqlite, dataDir } from "./db.ts";
@@ -924,11 +924,7 @@ export async function createApp() {
         );
         if (part.file.truncated)
           throw new Error("This file exceeds the 4 GB upload limit.");
-        const meta = await parseFile(temp, {
-          duration: true,
-          includeChapters: true,
-          skipCovers: true,
-        });
+        const meta = await parseFile(temp, audioParseOptions);
         if (!meta.format.codec)
           throw new Error("This file does not contain recognizable audio.");
         renameSync(temp, path);

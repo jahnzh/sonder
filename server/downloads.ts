@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { parseFile } from "music-metadata";
-import { normalizeChapters } from "./chapters.ts";
+import { audioParseOptions, normalizeChapters } from "./chapters.ts";
 import { eq, inArray } from "drizzle-orm";
 import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
@@ -196,11 +196,7 @@ export async function processServerDownloads() {
             ctrl.signal.throwIfAborted();
             if (!size || (expected && size !== expected))
               throw new Error("The audio download was interrupted.");
-            const metadata = await parseFile(temp, {
-              duration: true,
-              includeChapters: true,
-              skipCovers: true,
-            });
+            const metadata = await parseFile(temp, audioParseOptions);
             ctrl.signal.throwIfAborted();
             if (!metadata.format.codec)
               throw new Error("The source did not return a valid audio file.");
