@@ -1,4 +1,5 @@
 import {
+  ADMIN_USER_ID,
   getUserSecret,
   getUserSetting,
   listUserIds,
@@ -763,6 +764,55 @@ export function hardcoverForWork(userId: number, workId: string) {
       .filter((l) => l.members.some((m) => m.bookId === link.bookId))
       .map((l) => l.id),
   };
+}
+// Metadata-only `hc-*` placeholders come from one user's Hardcover shelves and lists, so
+// they're only listed for users who have that book themselves, and for admins (r6#1).
+// Returns the placeholder edition ids `userId` must not see in the catalogue.
+export function hiddenHardcoverPlaceholders(userId: number): Set<string> {
+  const role = (
+    sqlite.prepare("SELECT role FROM users WHERE id=?").get(userId) as
+      | { role: string }
+      | undefined
+  )?.role;
+  if (userId === ADMIN_USER_ID || role === "admin") return new Set();
+  const placeholders = sqlite
+    .prepare(
+      `SELECT e.id, l.book_id AS bookId FROM audio_editions e
+       LEFT JOIN hardcover_links l ON l.work_id=e.work_id
+       WHERE e.id LIKE 'hc-%' AND NOT EXISTS (
+         SELECT 1 FROM recordings r JOIN tracks t ON t.recording_id=r.id WHERE r.edition_id=e.id)`,
+    )
+    .all() as { id: string; bookId: number | null }[];
+  if (!placeholders.length) return new Set();
+  const library = new Set(
+    db
+      .select()
+      .from(s.userLibrary)
+      .where(eq(s.userLibrary.userId, userId))
+      .all()
+      .map((row) => row.bookId),
+  );
+  const books = new Set<number>([
+    ...db
+      .select()
+      .from(T.links)
+      .where(eq(T.links.userId, userId))
+      .all()
+      .map((row) => row.bookId),
+    ...db
+      .select()
+      .from(T.lists)
+      .where(eq(T.lists.userId, userId))
+      .all()
+      .flatMap((list) => list.members.map((m) => m.bookId)),
+  ]);
+  return new Set(
+    placeholders
+      .filter(
+        (p) => !library.has(p.id) && (p.bookId === null || !books.has(p.bookId)),
+      )
+      .map((p) => p.id),
+  );
 }
 function canWrite(userId: number) {
   const current = state(userId);
