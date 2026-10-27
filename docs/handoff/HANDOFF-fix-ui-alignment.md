@@ -1,11 +1,13 @@
 # Handoff: fix-ui-alignment (issues #1, #2)
 
+> **Historical note.** This records one working session on 2026-10-27 and is not current instructions. Sonder is live at https://sonder.pecori.no (Caddy → 127.0.0.1:3001); see `README.md` for the current setup.
+
 Branch `fix-ui-alignment`, commit on top of 4c06d2d (see `git log -1`).
 
 ## Deployed vs main
 - Running `sonder` container: image created 2026-10-27T10:54:04Z, started 10:54:05Z; `build.json` id 2026-10-27T10:53:43Z. Commit 4c06d2d is timestamped 10:55:12Z (the commit was made after the build), not a mismatch.
 - Content check: rebuilt HEAD locally and diffed the served bundles from 127.0.0.1:3001. CSS hash is identical. All JS chunks are byte-identical once the embedded build ID and chunk filenames derived from it are normalised. Every git-tracked server file (`server/`, `src/types.ts`, `src/appearance.ts`, `src/reading-types.ts`) matches `/app` in the container. **Production serves main HEAD (4c06d2d).**
-- **Routing finding:** https://audiobooks.pecori.no currently serves **Audiobookshelf**. `/etc/caddy/Caddyfile` line 62 proxies that host to 127.0.0.1:13378 (the audiobookshelf container), not 3001. No Caddy site points at Sonder's port 3001, so Sonder is reachable only on loopback. `deploy/audiobooks.caddy` expects 3001. The user needs to decide; nothing was changed.
+- **Routing finding (resolved: Sonder is served at `sonder.pecori.no`; nothing to change):** https://audiobooks.pecori.no currently serves **Audiobookshelf**. `/etc/caddy/Caddyfile` line 62 proxies that host to 127.0.0.1:13378 (the audiobookshelf container), not 3001. No Caddy site points at Sonder's port 3001, so Sonder is reachable only on loopback. `deploy/audiobooks.caddy` expects 3001. The user needs to decide; nothing was changed.
 
 ## Done
 - Audit in Chromium at 360x740, 390x844, 430x932 and 1280x800 for the dock and both Now Playing variants (plain and reader-first). Seek labels, arrows and buttons share a centre within 0.01px. Play is centred between the seeks. The options sheet does not overflow.

@@ -1,5 +1,7 @@
 # Handoff: single-file-sync (issue #5)
 
+> **Historical note.** This records one working session on 2026-10-27 and is not current instructions. Sonder is live at https://sonder.pecori.no (Caddy → 127.0.0.1:3001); see `README.md` for the current setup.
+
 Branch `single-file-sync`. Commits: `ac621f4` (the coordinator's PLAYWRIGHT_PORT cherry-pick of 1e0847a) and `201db27` (the feature).
 
 ## Done

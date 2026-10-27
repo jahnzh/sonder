@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
+import { torrentContainerIsCurrent } from "./torrent-container.mjs";
 const root = resolve(process.env.MEDIA_ROOT || "/mnt/usb_4t_1/sonder");
 if (statSync("/mnt/usb_4t_1").dev === statSync("/").dev)
   throw new Error("The 4 TB media drive is not mounted.");
@@ -70,10 +71,7 @@ try {
     }),
   )[0];
 } catch {}
-if (
-  existing &&
-  !existing.Config.Env.some((v) => v === `SONDER_MEDIA_VOLUME_ID=${volumeId}`)
-) {
+if (existing && !torrentContainerIsCurrent(existing, vpn, volumeId)) {
   execFileSync("docker", ["stop", "sonder-torrents"], { stdio: "ignore" });
   execFileSync("docker", ["rm", "sonder-torrents"], { stdio: "ignore" });
   existing = null;

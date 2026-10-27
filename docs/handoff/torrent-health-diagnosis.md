@@ -1,5 +1,7 @@
 # Issue #3 — transmission-openvpn unhealthy: diagnosis (2026-10-27)
 
+> **Historical note.** This records one working session on 2026-10-27 and is not current instructions. Sonder is live at https://sonder.pecori.no (Caddy → 127.0.0.1:3001); see `README.md` for the current setup.
+
 All checks read-only (docker inspect/logs/exec of read-only commands, RPC session-get/port-test/torrent-get). Nothing was restarted or reconfigured.
 
 ## Evidence

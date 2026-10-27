@@ -389,6 +389,77 @@ test("local fallback negotiates Transmission sessions, persists jobs, and reject
     await new Promise<void>((r) => server.close(() => r()));
   }
 });
+test("r3: a completed torrent whose audio fails validation becomes a retryable error", async () => {
+  const hash = "e".repeat(40);
+  const broken = Buffer.alloc(4096, 7);
+  const server = createServer(async (req, res) => {
+    let raw = "";
+    for await (const chunk of req) raw += chunk;
+    if (req.headers["x-transmission-session-id"] !== "test-session") {
+      res.writeHead(409, { "X-Transmission-Session-Id": "test-session" }).end();
+      return;
+    }
+    const body = JSON.parse(raw);
+    let args: unknown = {};
+    if (body.method === "session-get")
+      args = { "download-dir": "/downloads/complete" };
+    if (body.method === "torrent-add")
+      args = {
+        "torrent-added": { id: 2, hashString: hash, name: "Broken story" },
+      };
+    if (body.method === "torrent-get")
+      args = {
+        torrents: [
+          {
+            id: 2,
+            hashString: hash,
+            name: "Broken story",
+            downloadDir: "/downloads/complete",
+            percentDone: 1,
+            status: 6,
+            error: 0,
+            errorString: "",
+            files: [
+              {
+                name: "broken/chapter.mp3",
+                length: broken.length,
+                bytesCompleted: broken.length,
+              },
+            ],
+            fileStats: [{ wanted: true }],
+          },
+        ],
+      };
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({ result: "success", arguments: args }));
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const address = server.address() as { port: number };
+  process.env.TRANSMISSION_RPC_URL = `http://127.0.0.1:${address.port}/transmission/rpc`;
+  try {
+    mkdirSync(join(temp, "media", "complete", "broken"), { recursive: true });
+    writeFileSync(
+      join(temp, "media", "complete", "broken", "chapter.mp3"),
+      broken,
+    );
+    const job = await acquire(`magnet:?xt=urn:btih:${hash}&dn=Broken+story`, {
+      title: "Broken story",
+    });
+    assert.equal(job.backend, "local");
+    await refreshAcquisition(job.id);
+    const failed = db
+      .select()
+      .from(s.acquisitions)
+      .where(eq(s.acquisitions.id, job.id))
+      .get()!;
+    assert.equal(failed.status, "error");
+    assert.match(failed.error || "", /audio/);
+    assert.equal(failed.bookId, null);
+  } finally {
+    delete process.env.TRANSMISSION_RPC_URL;
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+});
 test("cached TorBox acquisitions set add_only_if_cached and never start a local torrent", async () => {
   const original = globalThis.fetch;
   const hash = "c".repeat(40);

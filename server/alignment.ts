@@ -431,6 +431,8 @@ async function processAnchored(
       progress(job);
       store(job);
     }
+    // A pause or cancel during the last sample must not be replaced by the next stage's result.
+    if (!live()) return;
     job = alignmentJob(job.id);
     const plan = job.anchoring!;
     const anchors = selectAnchors(plan.samples, words, timeline);
@@ -595,195 +597,202 @@ export async function processAlignments() {
     for (const pending of jobs().filter((job) =>
       activeStatuses.includes(job.status),
     )) {
-      let job = alignmentJob(pending.id);
-      const book = await extractBook(job.ebookId),
-        context = recordingContext(job.recordingId);
-      if (context.tracks.some((track) => !hasServerMedia(track))) {
-        const download = db
-          .select()
-          .from(s.serverDownloads)
-          .where(eq(s.serverDownloads.recordingId, job.recordingId))
-          .get();
-        if (download?.status === "error") {
+      // Each job fails on its own, so one broken job can't stall the rest of the queue.
+      try {
+        let job = alignmentJob(pending.id);
+        const book = await extractBook(job.ebookId),
+          context = recordingContext(job.recordingId);
+        if (context.tracks.some((track) => !hasServerMedia(track))) {
+          const download = db
+            .select()
+            .from(s.serverDownloads)
+            .where(eq(s.serverDownloads.recordingId, job.recordingId))
+            .get();
+          if (download?.status === "error") {
+            job.status = "error";
+            job.error =
+              download.error || "The audio could not be saved on the HDD.";
+            store(job);
+          }
+          continue;
+        }
+        if (book.fingerprint !== job.fingerprint) {
+          job.status = "error";
+          job.error = "The EPUB changed. Prepare a new reading-sync map.";
+          store(job);
+          continue;
+        }
+        const currentAudioFingerprint = audioFingerprint(job.recordingId);
+        if (
+          (job.sectionsDone.length ||
+            job.anchoring?.samples.some((sample) => sample.done)) &&
+          currentAudioFingerprint !== job.audioFingerprint
+        ) {
           job.status = "error";
           job.error =
-            download.error || "The audio could not be saved on the HDD.";
+            "The audio changed. Rebuild this reading-sync map before continuing.";
+          store(job);
+          continue;
+        }
+        job.audioFingerprint = currentAudioFingerprint;
+        job.status = "processing";
+        store(job);
+        const generation = job.generation;
+        const folder = join(mediaRoot, "alignment", job.id);
+        mkdirSync(folder, { recursive: true, mode: 0o750 });
+        if (job.mode === "anchored") {
+          await processAnchored(job, book, context.tracks, folder);
+          continue;
+        }
+        for (const pair of job.pairings) {
+          const current = alignmentJob(job.id);
+          if (
+            stopping ||
+            !activeStatuses.includes(current.status) ||
+            current.generation !== generation
+          )
+            break;
+          if (job.sectionsDone.includes(pair.section)) continue;
+          const section = book.sections.find(
+            (section) => section.index === pair.section,
+          )!;
+          const track = context.tracks.find(
+            (track) => track.id === pair.trackId,
+          )!;
+          const audio = localAudio(track);
+          if (!audio) throw new Error("The required audio file is unavailable.");
+          const cacheKey = createHash("sha256")
+            .update(
+              JSON.stringify([
+                job.engine,
+                "sentence-normalization-v1-speech-check-v1",
+                job.fingerprint,
+                job.audioFingerprint,
+                pair,
+              ]),
+            )
+            .digest("hex")
+            .slice(0, 24);
+          const output = join(folder, `section-${pair.section}-${cacheKey}.json`);
+          let result: {
+            intervals: { index: number; start: number; end: number }[];
+            elapsedSeconds: number;
+            peakMemoryMB?: number;
+            engine: string;
+          };
+          if (existsSync(output))
+            result = JSON.parse(readFileSync(output, "utf8"));
+          else {
+            const response = await fetch(
+              `${process.env.ALIGNMENT_WORKER_URL.replace(/\/$/, "")}/align`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  token: process.env.ALIGNMENT_WORKER_TOKEN,
+                  audio,
+                  output,
+                  fragments: section.paragraphs.map((p) => p.text),
+                  language: iso3(book.language),
+                  start: pair.start,
+                  duration: pair.duration,
+                }),
+                signal: AbortSignal.timeout(30 * 60 * 1000),
+              },
+            );
+            if (!response.ok)
+              throw new Error(
+                response.status === 409
+                  ? "The alignment worker is busy. Retry in a moment."
+                  : "Local alignment could not process this section. Check its chapter pairing and retry.",
+              );
+            result = (await response.json()) as typeof result;
+          }
+          if (
+            !activeStatuses.includes(alignmentJob(job.id).status) ||
+            alignmentJob(job.id).generation !== generation
+          )
+            break;
+          result = z
+            .object({
+              intervals: z
+                .array(
+                  z.object({
+                    index: z.number().int().nonnegative(),
+                    start: z.number().nonnegative().finite(),
+                    end: z.number().nonnegative().finite(),
+                  }),
+                )
+                .max(20000),
+              elapsedSeconds: z.number().nonnegative().finite(),
+              engine: z.string(),
+            })
+            .parse(result);
+          const intervals: AlignmentInterval[] = result.intervals
+            .filter(
+              (interval) =>
+                section.paragraphs[interval.index] &&
+                interval.end > interval.start &&
+                interval.start >= pair.start &&
+                interval.end <= pair.start + pair.duration + 1,
+            )
+            .map((interval) => {
+              const paragraph = section.paragraphs[interval.index],
+                rate =
+                  paragraph.text.split(/\s+/).length /
+                  (interval.end - interval.start);
+              return {
+                paragraphId: paragraph.id,
+                section: pair.section,
+                trackId: pair.trackId,
+                start: interval.start,
+                end: interval.end,
+                confidence: rate > 0.3 && rate < 6 ? 0.65 : 0.2,
+              };
+            });
+          job = alignmentJob(job.id);
+          if (!intervals.length)
+            job.warning =
+              "This section could not be matched reliably. Check its edition and chapter pairing; unmatched text remains unsynced.";
+          job.intervals.push(...intervals);
+          job.sectionsDone.push(pair.section);
+          job.elapsedSeconds += result.elapsedSeconds;
+          job.progress = job.sectionsDone.length / job.pairings.length;
+          job.coverage =
+            job.intervals.length /
+            book.sections.reduce(
+              (count, section) => count + section.paragraphs.length,
+              0,
+            );
           store(job);
         }
-        continue;
-      }
-      if (book.fingerprint !== job.fingerprint) {
-        job.status = "error";
-        job.error = "The EPUB changed. Prepare a new reading-sync map.";
-        store(job);
-        continue;
-      }
-      const currentAudioFingerprint = audioFingerprint(job.recordingId);
-      if (
-        (job.sectionsDone.length ||
-          job.anchoring?.samples.some((sample) => sample.done)) &&
-        currentAudioFingerprint !== job.audioFingerprint
-      ) {
-        job.status = "error";
-        job.error =
-          "The audio changed. Rebuild this reading-sync map before continuing.";
-        store(job);
-        continue;
-      }
-      job.audioFingerprint = currentAudioFingerprint;
-      job.status = "processing";
-      store(job);
-      const generation = job.generation;
-      const folder = join(mediaRoot, "alignment", job.id);
-      mkdirSync(folder, { recursive: true, mode: 0o750 });
-      if (job.mode === "anchored") {
-        await processAnchored(job, book, context.tracks, folder);
-        continue;
-      }
-      for (const pair of job.pairings) {
-        const current = alignmentJob(job.id);
-        if (
-          stopping ||
-          !activeStatuses.includes(current.status) ||
-          current.generation !== generation
-        )
-          break;
-        if (job.sectionsDone.includes(pair.section)) continue;
-        const section = book.sections.find(
-          (section) => section.index === pair.section,
-        )!;
-        const track = context.tracks.find(
-          (track) => track.id === pair.trackId,
-        )!;
-        const audio = localAudio(track);
-        if (!audio) throw new Error("The required audio file is unavailable.");
-        const cacheKey = createHash("sha256")
-          .update(
-            JSON.stringify([
-              job.engine,
-              "sentence-normalization-v1-speech-check-v1",
-              job.fingerprint,
-              job.audioFingerprint,
-              pair,
-            ]),
-          )
-          .digest("hex")
-          .slice(0, 24);
-        const output = join(folder, `section-${pair.section}-${cacheKey}.json`);
-        let result: {
-          intervals: { index: number; start: number; end: number }[];
-          elapsedSeconds: number;
-          peakMemoryMB?: number;
-          engine: string;
-        };
-        if (existsSync(output))
-          result = JSON.parse(readFileSync(output, "utf8"));
-        else {
-          const response = await fetch(
-            `${process.env.ALIGNMENT_WORKER_URL.replace(/\/$/, "")}/align`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                token: process.env.ALIGNMENT_WORKER_TOKEN,
-                audio,
-                output,
-                fragments: section.paragraphs.map((p) => p.text),
-                language: iso3(book.language),
-                start: pair.start,
-                duration: pair.duration,
-              }),
-              signal: AbortSignal.timeout(30 * 60 * 1000),
-            },
-          );
-          if (!response.ok)
-            throw new Error(
-              response.status === 409
-                ? "The alignment worker is busy. Retry in a moment."
-                : "Local alignment could not process this section. Check its chapter pairing and retry.",
-            );
-          result = (await response.json()) as typeof result;
-        }
-        if (
-          !activeStatuses.includes(alignmentJob(job.id).status) ||
-          alignmentJob(job.id).generation !== generation
-        )
-          break;
-        result = z
-          .object({
-            intervals: z
-              .array(
-                z.object({
-                  index: z.number().int().nonnegative(),
-                  start: z.number().nonnegative().finite(),
-                  end: z.number().nonnegative().finite(),
-                }),
-              )
-              .max(20000),
-            elapsedSeconds: z.number().nonnegative().finite(),
-            engine: z.string(),
-          })
-          .parse(result);
-        const intervals: AlignmentInterval[] = result.intervals
-          .filter(
-            (interval) =>
-              section.paragraphs[interval.index] &&
-              interval.end > interval.start &&
-              interval.start >= pair.start &&
-              interval.end <= pair.start + pair.duration + 1,
-          )
-          .map((interval) => {
-            const paragraph = section.paragraphs[interval.index],
-              rate =
-                paragraph.text.split(/\s+/).length /
-                (interval.end - interval.start);
-            return {
-              paragraphId: paragraph.id,
-              section: pair.section,
-              trackId: pair.trackId,
-              start: interval.start,
-              end: interval.end,
-              confidence: rate > 0.3 && rate < 6 ? 0.65 : 0.2,
-            };
-          });
         job = alignmentJob(job.id);
-        if (!intervals.length)
-          job.warning =
-            "This section could not be matched reliably. Check its edition and chapter pairing; unmatched text remains unsynced.";
-        job.intervals.push(...intervals);
-        job.sectionsDone.push(pair.section);
-        job.elapsedSeconds += result.elapsedSeconds;
-        job.progress = job.sectionsDone.length / job.pairings.length;
-        job.coverage =
-          job.intervals.length /
-          book.sections.reduce(
-            (count, section) => count + section.paragraphs.length,
-            0,
-          );
-        store(job);
+        if (
+          job.sectionsDone.length === job.pairings.length &&
+          job.generation === generation &&
+          activeStatuses.includes(job.status)
+        ) {
+          job.status = "partial";
+          job.warning ||=
+            "Timings are estimated from the supplied text. Preview a few passages, then mark the alignment reviewed. Sections without a matching narration are left unsynced.";
+          store(job);
+          const path = join(folder, "map.json");
+          writeFileSync(path + ".part", JSON.stringify(job));
+          renameSync(path + ".part", path);
+        }
+      } catch (error) {
+        const current = jobs().find((job) => job.id === pending.id);
+        if (
+          current &&
+          activeStatuses.includes(current.status) &&
+          current.generation === pending.generation
+        ) {
+          current.status = "error";
+          current.error =
+            error instanceof Error ? error.message : "Local alignment failed.";
+          store(current);
+        }
       }
-      job = alignmentJob(job.id);
-      if (
-        job.sectionsDone.length === job.pairings.length &&
-        job.generation === generation &&
-        activeStatuses.includes(job.status)
-      ) {
-        job.status = "partial";
-        job.warning ||=
-          "Timings are estimated from the supplied text. Preview a few passages, then mark the alignment reviewed. Sections without a matching narration are left unsynced.";
-        store(job);
-        const path = join(folder, "map.json");
-        writeFileSync(path + ".part", JSON.stringify(job));
-        renameSync(path + ".part", path);
-      }
-    }
-  } catch (error) {
-    const current = jobs().find((job) => job.status === "processing");
-    if (current) {
-      current.status = "error";
-      current.error =
-        error instanceof Error ? error.message : "Local alignment failed.";
-      store(current);
     }
   } finally {
     running = false;
