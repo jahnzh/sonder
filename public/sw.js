@@ -225,7 +225,7 @@ self.addEventListener("fetch", (event) => {
     !["GET", "HEAD"].includes(request.method)
   )
     return;
-  if (url.pathname.startsWith("/api/media/")) {
+  if (/^\/api\/media\/[^/]+$/.test(url.pathname)) {
     event.respondWith(media(request, event));
     return;
   }

@@ -6,11 +6,13 @@ const assets = files
     (f) =>
       /\.(js|css|html|svg|png|webmanifest|woff2)$/.test(f) && f !== "sw.js",
   )
+  .sort()
   .map((f) => "/" + f);
-const version = createHash("sha256")
-  .update(await readFile("dist/index.html"))
-  .digest("hex")
-  .slice(0, 12);
+const hash = createHash("sha256");
+for (const asset of assets) {
+  hash.update(asset).update("\0").update(await readFile(`dist${asset}`));
+}
+const version = hash.digest("hex").slice(0, 12);
 let sw = await readFile("public/sw.js", "utf8");
 sw = sw
   .replace("/* PRECACHE */ []", JSON.stringify(assets))
