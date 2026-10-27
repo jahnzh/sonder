@@ -178,6 +178,34 @@ test("r6#3: in import mode an older Hardcover position never overwrites a newer 
   assert.notEqual(localPosition(), 400);
 });
 
+test("G1: an unchanged snapshot in between doesn't let an older remote change overwrite a newer local position", async () => {
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const localAt = Date.now();
+  const saved = await request(a, "POST", "/api/progress", {
+    recordingId: "recording-alice",
+    trackId: "alice-0",
+    position: 300,
+    duration: 640,
+    updatedAt: localAt,
+  });
+  assert.equal(saved.statusCode, 200, saved.body);
+  assert.equal(localPosition(), 300);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  // A sync that sees the same remote snapshot as before.
+  assert.equal((await request(a, "POST", "/api/hardcover/sync")).statusCode, 200);
+  assert.equal(localPosition(), 300);
+  // A delayed remote change made before the local listen shows up on a later sync.
+  entries[0].user_book_reads = [read(5000)];
+  entries[0].updated_at = new Date(localAt - 1000).toISOString();
+  assert.equal((await request(a, "POST", "/api/hardcover/sync")).statusCode, 200);
+  assert.equal(localPosition(), 300);
+  // A remote change made after it still applies.
+  entries[0].user_book_reads = [read(8000)];
+  entries[0].updated_at = new Date(Date.now() + 1000).toISOString();
+  assert.equal((await request(a, "POST", "/api/hardcover/sync")).statusCode, 200);
+  assert.notEqual(localPosition(), 300);
+});
+
 test("r6#6: forgetting a deleted user stops their in-flight sync before it commits anything", async () => {
   entries.push({ id: 13, book_id: 777, status_id: 1, updated_at: "2020-01-01T00:00:00Z", book: book(777, "Late Book", "Reader A"), user_book_reads: [] });
   let release: () => void = () => {};

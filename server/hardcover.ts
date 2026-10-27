@@ -1573,14 +1573,14 @@ function readFingerprint(remote: Entry) {
       : { status: remote.status_id },
   );
 }
-function rememberRead(userId: number, remote: Entry) {
+function rememberRead(userId: number, remote: Entry, syncedAt = Date.now()) {
   const current = state(userId);
   if (current.accountId === null) return;
   const values = {
     accountId: current.accountId,
     snapshot: readFingerprint(remote),
     fraction: remoteProgressFraction(remote),
-    syncedAt: Date.now(),
+    syncedAt,
   };
   db.insert(T.reads)
     .values({ userId, bookId: remote.book_id, ...values })
@@ -1677,10 +1677,12 @@ function pullRemoteProgress(
   // A newer local position always wins over an older remote one, on every sync (r6#3).
   // A remote change seen after a sync that already covered the local position is newer;
   // otherwise only a later remote updated_at proves it.
+  const uncovered = !!local && (!last || local.updatedAt > last.syncedAt);
   const localIsNewer =
-    !!local &&
-    (!last || local.updatedAt > last.syncedAt) &&
-    local.updatedAt > parseRemoteTime(remote.updated_at);
+    uncovered && local.updatedAt > parseRemoteTime(remote.updated_at);
+  // A snapshot that isn't applied doesn't cover the local position, so it keeps the
+  // previous sync time; otherwise a later, older remote change would win.
+  const baseline = uncovered ? (last?.syncedAt ?? 0) : Date.now();
   const readingQueued = readingJob(userId, remote.book_id);
   if (
     force ||
@@ -1690,7 +1692,7 @@ function pullRemoteProgress(
     rememberRead(userId, remote);
     return progress;
   }
-  if (!queued) rememberRead(userId, remote);
+  if (!queued) rememberRead(userId, remote, baseline);
   return null;
 }
 async function remoteEntry(userId: number, bookId: number, who: number) {
