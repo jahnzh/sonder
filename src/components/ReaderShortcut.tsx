@@ -1,6 +1,7 @@
+import { userStorageKey } from "../lib";
 import { useState } from "react";
 import { BookOpen, Loader2 } from "lucide-react";
-import { api, localDB, bytes } from "../lib";
+import { api, localDB, bytes, isAdmin } from "../lib";
 import { openReader } from "../reading";
 import { usePlayer } from "../player";
 import type { Book, SavedEbook } from "../types";
@@ -21,7 +22,7 @@ export function ReaderShortcut({
     [choices, setChoices] = useState<SavedEbook[]>([]);
   const p = usePlayer();
   const read = (ebook: SavedEbook) => {
-    localStorage.setItem(`reader-ebook:${book.workId}`, ebook.id);
+    localStorage.setItem(userStorageKey(`reader-ebook:${book.workId}`), ebook.id);
     setChoices([]);
     onOpen();
     if (playback || p.book?.recordingId === book.recordingId)
@@ -44,13 +45,13 @@ export function ReaderShortcut({
       );
       const preferred = ebooks.find(
         (ebook) =>
-          ebook.id === localStorage.getItem(`reader-ebook:${book.workId}`),
+          ebook.id === localStorage.getItem(userStorageKey(`reader-ebook:${book.workId}`)),
       );
       if (preferred || ebooks.length === 1) read(preferred || ebooks[0]);
       else if (ebooks.length) setChoices(ebooks);
       else {
         onOpen();
-        onMissing();
+        if (isAdmin()) onMissing();
       }
     } finally {
       setLoading(false);

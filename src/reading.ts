@@ -1,4 +1,5 @@
-import { api, localDB } from "./lib";
+import { userStorageKey } from "./lib";
+import { api, localDB, authDB, userId } from "./lib";
 import type {
   AlignmentJob,
   ReaderBook,
@@ -23,7 +24,7 @@ export function deviceId() {
 }
 export async function readingState(id: string): Promise<PendingReading | null> {
   try {
-    const saved = localStorage.getItem(key(id));
+    const saved = localStorage.getItem(userStorageKey(key(id)));
     if (saved) return JSON.parse(saved);
   } catch {}
   return (
@@ -34,6 +35,7 @@ const syncs = new Set<string>();
 export async function syncReading(id: string, resolve = false) {
   if (syncs.has(id) || !navigator.onLine) return;
   syncs.add(id);
+  const owner = userId();
   try {
     let value = await readingState(id);
     while (value?.pending) {
@@ -41,7 +43,7 @@ export async function syncReading(id: string, resolve = false) {
         `/api/reader/${encodeURIComponent(id)}/progress`,
         {
           method: "PUT",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "X-Sonder-User-Id": String(owner) },
           body: JSON.stringify({
             locator: value.checkpoint.locator,
             baseRevision: resolve
@@ -61,7 +63,9 @@ export async function syncReading(id: string, resolve = false) {
         return;
       }
       const data = await response.json();
+      if (owner !== userId()) return;
       const latest = await readingState(id);
+      if (response.status === 409 && data.code === "user_mismatch") return;
       if (response.status === 409) {
         if (latest)
           await storeReading(id, { ...latest, conflict: data.current });
@@ -95,7 +99,7 @@ export async function syncReading(id: string, resolve = false) {
   }
 }
 export async function storeReading(id: string, value: PendingReading) {
-  localStorage.setItem(key(id), JSON.stringify(value));
+  localStorage.setItem(userStorageKey(key(id)), JSON.stringify(value));
   await localDB.preferences.put({ key: key(id), value });
 }
 export async function saveReading(
@@ -178,6 +182,7 @@ export async function queueBookmark(
 export async function syncBookmarks(id: string) {
   if (!navigator.onLine || bookmarkSyncs.has(id)) return;
   bookmarkSyncs.add(id);
+  const owner = userId();
   try {
     const key = `reader-bookmark-queue:${id}`;
     let current = ((await localDB.preferences.get(key))?.value as any[]) || [];
@@ -187,11 +192,13 @@ export async function syncBookmarks(id: string) {
         `/reader/${encodeURIComponent(id)}/bookmarks${action.method === "DELETE" ? `/${action.id}` : ""}`,
         {
           method: action.method,
+          headers: { "X-Sonder-User-Id": String(owner) },
           ...(action.method === "POST"
             ? { body: JSON.stringify(action.bookmark) }
             : {}),
         },
       );
+      if (owner !== userId()) return;
       await localDB.transaction("rw", localDB.preferences, async () => {
         const latest =
           ((await localDB.preferences.get(key))?.value as any[]) || [];
@@ -213,7 +220,7 @@ export async function cachedEpub(
   const key = `${id}:${fingerprint}`;
   const mem = epubMemoryCache.get(key);
   if (mem) return mem;
-  const stored = (await localDB.preferences.get(`reader-file:${id}`))?.value as
+  const stored = (await authDB.preferences.get(`reader-file:${id}`))?.value as
     { fingerprint: string; blob?: Blob; opfs?: boolean } | undefined;
   if (stored?.fingerprint !== fingerprint) return null;
   try {
@@ -288,12 +295,12 @@ export async function saveEpubOffline(
       await writer.abort().catch(() => {});
       throw error;
     }
-    await localDB.preferences.put({
+    await authDB.preferences.put({
       key: `reader-file:${book.id}`,
       value: { fingerprint: book.fingerprint, opfs: true },
     });
   } else
-    await localDB.preferences.put({
+    await authDB.preferences.put({
       key: `reader-file:${book.id}`,
       value: { fingerprint: book.fingerprint, blob },
     });
@@ -306,19 +313,17 @@ export function openReader(id: string, fromAudio = false) {
 }
 
 let cachedEbooksList: SavedEbook[] | null = null;
-void localDB.preferences
-  .get("ebooks")
-  .then((entry) => {
-    if (entry?.value && !cachedEbooksList) {
-      cachedEbooksList = entry.value as SavedEbook[];
-    }
-  })
-  .catch(() => {});
+window.addEventListener("sonder:authenticated", () => {
+  cachedEbooksList = null;
+  void localDB.preferences.get("ebooks").then((entry) => {
+    if (entry?.value) cachedEbooksList = entry.value as SavedEbook[];
+  }).catch(() => {});
+});
 
 export function hasKnownReader(workId: string | undefined): boolean {
   if (!workId) return false;
   try {
-    if (localStorage.getItem(`reader-ebook:${workId}`)) return true;
+    if (localStorage.getItem(userStorageKey(`reader-ebook:${workId}`))) return true;
   } catch {}
   if (cachedEbooksList) {
     return cachedEbooksList.some(
@@ -372,7 +377,7 @@ export function warmPlaybackReading(
 
     let preferred: SavedEbook | undefined;
     try {
-      const preferredId = localStorage.getItem(`reader-ebook:${workId}`);
+      const preferredId = localStorage.getItem(userStorageKey(`reader-ebook:${workId}`));
       preferred = editions.find((ebook) => ebook.id === preferredId);
     } catch {}
 
@@ -402,8 +407,8 @@ export function warmPlaybackReading(
     const selectedEbook = chosen || editions[0];
     const ebookId = selectedEbook.id;
     try {
-      if (!localStorage.getItem(`reader-ebook:${workId}`)) {
-        localStorage.setItem(`reader-ebook:${workId}`, ebookId);
+      if (!localStorage.getItem(userStorageKey(`reader-ebook:${workId}`))) {
+        localStorage.setItem(userStorageKey(`reader-ebook:${workId}`), ebookId);
       }
     } catch {}
 

@@ -1,3 +1,4 @@
+import { isAdmin } from "../lib";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type EpubBook from "epubjs/types/book";
 import type Rendition from "epubjs/types/rendition";
@@ -656,6 +657,7 @@ export function ReaderView({
   };
   jumpRef.current = showFragment;
   mapRef.current = map;
+  const explicitJump = useRef(false);
   const fromAudio = async () => {
     setFollow(true);
     followRetry.current.attempts=0;
@@ -677,6 +679,7 @@ export function ReaderView({
         setPanel("sync");
         return;
       }
+      if (!isAdmin()) { notify("No reading sync is available for this position."); return; }
       setRecovering(true);
       try {
         const result = await api<{ locator: TextLocator }>(
@@ -711,9 +714,12 @@ export function ReaderView({
         interval.end > player.position,
     );
     if (interval) {
-
-      void jumpRef.current(interval.paragraphId, true);
+      following.current = `${currentMap.recordingId}:${interval.paragraphId}`;
+      explicitJump.current = true;
+      try { await jumpRef.current(interval.paragraphId, true); }
+      finally { explicitJump.current = false; setFollowRevision(value => value + 1); }
     } else {
+      if (!isAdmin()) { notify("No reading sync is available for this position."); return; }
       setRecovering(true);
       try {
         const result = await api<{ locator: TextLocator }>(
@@ -751,6 +757,7 @@ export function ReaderView({
   useEffect(() => { ++jumpEpoch.current; following.current=""; }, [map?.recordingId,p.book?.recordingId]);
   useEffect(() => {
     if (
+      explicitJump.current ||
       !follow ||
       !rendered ||
       !map ||

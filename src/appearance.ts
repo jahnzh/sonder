@@ -158,7 +158,7 @@ export function applyAppearance(value: Appearance) {
 export function cachedAppearance() {
   try {
     return appearanceSchema.parse(
-      JSON.parse(localStorage.getItem("sonder-appearance") || "{}"),
+      JSON.parse(localStorage.getItem(sessionStorage.getItem("sonder-current-user") && sessionStorage.getItem("sonder-current-user") !== "1" ? `sonder-user-${sessionStorage.getItem("sonder-current-user")}:sonder-appearance` : "sonder-appearance") || "{}"),
     );
   } catch {
     return defaultAppearance;

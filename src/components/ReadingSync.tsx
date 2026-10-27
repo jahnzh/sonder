@@ -1,3 +1,5 @@
+import { isAdmin } from "../lib";
+import { userStorageKey } from "../lib";
 import { useEffect, useRef, useState } from "react";
 import { BookOpen, Headphones, Loader2, Link2 } from "lucide-react";
 import { api, localDB, clock } from "../lib";
@@ -54,7 +56,7 @@ function progressText(job: AlignmentJob) {
   return `${plan.anchors.length} anchors · ${plan.segments.filter((segment) => segment.done).length} of ${plan.segments.length} passages aligned`;
 }
 function savedOrChapteredRelease(book: ReaderBook, books: Book[]) {
-  const saved = localStorage.getItem(`reader-recording:${book.id}`);
+  const saved = localStorage.getItem(userStorageKey(`reader-recording:${book.id}`));
   const candidates = books.filter(
     (audio) => audio.workId === book.workId && audio.tracks.length && !audio.faults?.recording,
   );
@@ -117,8 +119,8 @@ export function ReadingSync({
   const selectRelease = (recordingId: string) => {
     if (recordingId === selected) return;
     if (recordingId)
-      localStorage.setItem(`reader-recording:${book.id}`, recordingId);
-    else localStorage.removeItem(`reader-recording:${book.id}`);
+      localStorage.setItem(userStorageKey(`reader-recording:${book.id}`), recordingId);
+    else localStorage.removeItem(userStorageKey(`reader-recording:${book.id}`));
     epoch.current++;
     setSelected(recordingId);
     setOptions(null);
@@ -220,7 +222,7 @@ export function ReadingSync({
   useEffect(() => {
     let live = true;
     setOptions(null);
-    if (!selected || !loadOptions) return;
+    if (!selected || !loadOptions || !isAdmin()) return;
     void api<Options>(
       "/alignments/options?" +
         new URLSearchParams({ ebookId: book.id, recordingId: selected }),
@@ -305,6 +307,7 @@ export function ReadingSync({
       audio.workId === book.workId &&
       audio.tracks.some((track) => track.chapters?.length),
   );
+  if (!isAdmin()) return <section className="reading-sync"><h3>Reading sync</h3></section>;
   return (
     <section className="reading-sync">
       <h3>

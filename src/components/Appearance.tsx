@@ -1,3 +1,4 @@
+import { userStorageKey } from "../lib";
 import {
   createContext,
   useContext,
@@ -29,14 +30,15 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     const parsed = appearanceSchema.parse(value);
     setAppearance(parsed);
     applyAppearance(parsed);
-    localStorage.setItem("sonder-appearance", JSON.stringify(parsed));
+    localStorage.setItem(userStorageKey("sonder-appearance"), JSON.stringify(parsed));
   };
   useEffect(() => {
     const media = matchMedia("(prefers-color-scheme: dark)");
     const change = () => applyAppearance(cachedAppearance());
     media.addEventListener("change", change);
     const load = () => {
-      if (localStorage.getItem("sonder-appearance-device") !== "true")
+      update(cachedAppearance());
+      if (localStorage.getItem(userStorageKey("sonder-appearance-device")) !== "true")
         void api<Appearance>("/appearance")
           .then(update)
           .catch(() => {});
@@ -50,12 +52,12 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   }, []);
   const save = async (
     value = appearance,
-    deviceOnly = localStorage.getItem("sonder-appearance-device") === "true",
+    deviceOnly = localStorage.getItem(userStorageKey("sonder-appearance-device")) === "true",
   ) => {
     update(value);
     if (!deviceOnly)
       await api("/appearance", { method: "PUT", body: JSON.stringify(value) });
-    localStorage.setItem("sonder-appearance-device", String(deviceOnly));
+    localStorage.setItem(userStorageKey("sonder-appearance-device"), String(deviceOnly));
   };
   return (
     <Context.Provider value={{ appearance, update, save }}>
@@ -70,7 +72,7 @@ export function AppearanceSettings({
 }) {
   const { appearance, update, save } = useAppearance();
   const [deviceOnly, setDeviceOnly] = useState(
-    localStorage.getItem("sonder-appearance-device") === "true",
+    localStorage.getItem(userStorageKey("sonder-appearance-device")) === "true",
   );
   const [saved, setSaved] = useState(appearance);
   const [busy, setBusy] = useState(false);
