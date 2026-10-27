@@ -1,5 +1,7 @@
 # Handoff: roadmap pass on 2026-10-27
 
+> **Historical note.** This records one working session on 2026-10-27 and is not current instructions. Sonder is live at https://sonder.pecori.no (Caddy → 127.0.0.1:3001); see `README.md` for the current setup.
+
 Coordinator session working through GitHub issues #1–#5 (pinned roadmap #11 on `jahnzh/sonder`) with four supervised Orca workers. All workers are halted and released. Per-worker notes: `HANDOFF-fix-ui-alignment.md`, `HANDOFF-single-file-sync.md` (this folder). The torrent diagnosis is `torrent-health-diagnosis.md` (this folder).
 
 ## Follow-up later on 2026-10-27
@@ -11,7 +13,7 @@ Coordinator session working through GitHub issues #1–#5 (pinned roadmap #11 on
 - The "Unknown narrator" release is not chapterless. Read from the HDD copy, it has 55 French chapter markers, so it is a French narration (its edition language is empty). Anchored mode correctly refuses it. No truly chapterless release exists in the library to test with.
 - "Game of Thrones" is still at 0.11%, 1 peer, 0 KiB/s and has no trackers, so the swarm looks dead.
 - Cleanup done: the four worktrees and their branches were removed (all merged), along with `/home/jahn/sonder-worktrees`. The extra Orca repos are no longer listed. Roadmap #11 is updated, and #6 is deferred (needs hand-labelled data).
-- Still open: the Caddy deploy (`sudo ./scripts/apply_updates.sh` in homelab, needs the user's password), phone checks (#1, #2, #7), and #8.
+- Still open: phone checks (#1, #2, #7), and #8.
 
 ## State of `main` (local, not pushed, not deployed)
 
@@ -74,7 +76,7 @@ Verified on merged `main`: `npm run build` OK, `npm test` 97/97, `npm run test:b
 
 ## Pending actions
 
-1. **Caddy: `audiobooks.pecori.no` still shows Audiobookshelf.** `homelab/staging/etc/caddy/Caddyfile` correctly points it at `127.0.0.1:3001`, but staging was never deployed. The live `/etc/caddy/Caddyfile` still has `127.0.0.1:13378`. The user must run `cd /home/jahn/homelab && sudo ./scripts/apply_updates.sh` (needs a sudo password). The other staged configs that could be checked are identical to live; `wg0.conf` and cloudflare-ddns could not be read without sudo. Audiobookshelf then needs its own subdomain if it should stay public.
+1. **Resolved: do not run `apply_updates.sh` for this.** Sonder is served at `sonder.pecori.no`. The original note: **Caddy: `audiobooks.pecori.no` still shows Audiobookshelf.** `homelab/staging/etc/caddy/Caddyfile` correctly points it at `127.0.0.1:3001`, but staging was never deployed. The live `/etc/caddy/Caddyfile` still has `127.0.0.1:13378`. The user must run `cd /home/jahn/homelab && sudo ./scripts/apply_updates.sh` (needs a sudo password). The other staged configs that could be checked are identical to live; `wg0.conf` and cloudflare-ddns could not be read without sudo. Audiobookshelf then needs its own subdomain if it should stay public.
 2. **Deploy merged `main`** (needs the user's go-ahead): `cp data/sonder.db data/backups/before-roadmap-$(date +%s).db && docker compose build && docker compose up -d --no-build`. Then configure Prowlarr in Settings and check the torrent status line.
 3. **Push and update the issues** (needs the user's go-ahead): push `main`, and comment on or close #1, #2, #3 and #4 with the results above. #5 stays open until `single-file-sync` is merged.
 4. Finish #5 (above).
