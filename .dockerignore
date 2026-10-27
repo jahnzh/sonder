@@ -6,3 +6,6 @@ data
 artifacts
 test-results
 playwright-report
+.env.*
+!.env.example
+.codex-attachments
