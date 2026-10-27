@@ -9,6 +9,7 @@ export function Dialog({
   children,
   className = "",
   onEscapeKeyDown,
+  onPointerDownOutside,
   actions,
   forceMount,
 }: {
@@ -19,6 +20,7 @@ export function Dialog({
   children: ReactNode;
   className?: string;
   onEscapeKeyDown?: (event: KeyboardEvent) => void;
+  onPointerDownOutside?: (event: CustomEvent<{ originalEvent: PointerEvent }>) => void;
   actions?: ReactNode;
   forceMount?: boolean;
 }) {
@@ -32,6 +34,8 @@ export function Dialog({
           className={`dialog-content ${className}`}
           aria-describedby={description ? descriptionId : undefined}
           onEscapeKeyDown={onEscapeKeyDown}
+          onPointerDownOutside={onPointerDownOutside}
+          onOpenAutoFocus={(event) => event.preventDefault()}
         >
           <div className="dialog-heading">
             <div>

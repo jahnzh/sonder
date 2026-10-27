@@ -334,6 +334,11 @@ export function PlayerDock({
         forceMount
         className={`now-playing-dialog ${hasReader ? "with-reader" : ""}`}
         onEscapeKeyDown={event=>{if(optionsOpen){event.preventDefault();setOptionsOpen(false);requestAnimationFrame(()=>optionsTrigger.current?.focus());}}}
+        onPointerDownOutside={(event) => {
+          const target = (event as CustomEvent<{ originalEvent: PointerEvent }>).detail
+            ?.originalEvent?.target as Element | undefined;
+          if (target?.closest?.(".player-dock")) event.preventDefault();
+        }}
         actions={hasReader && <>
           <h2 className="now-playing-heading-title">{(p.book || b).title}</h2>
           <button ref={optionsTrigger} className="icon-button playback-menu-trigger" aria-label="Playback options" aria-expanded={optionsOpen} onClick={()=>setOptionsOpen(!optionsOpen)}><MoreHorizontal size={23}/></button>
