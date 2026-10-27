@@ -81,7 +81,9 @@ export function PlayerProvider({
   const persist = useCallback(() => {
     const { book, track } = state.current;
     const el = audio.current;
-    if (!book || !track || !Number.isFinite(el.currentTime)) return;
+    // A failed or still-loading source reports 0 before the saved seek is
+    // applied. Never replace the saved checkpoint with that temporary value.
+    if (!book || !track || pendingSeek.current !== null || !Number.isFinite(el.currentTime)) return;
     const p = {
       recordingId: book.recordingId,
       trackId: track.id,
@@ -156,7 +158,7 @@ export function PlayerProvider({
       const targetPosition = t
         ? start
         : current?.id === selected.id
-          ? el.currentTime
+          ? pendingSeek.current ?? el.currentTime
           : progress?.trackId === selected.id
             ? progress.position
             : start;
@@ -365,7 +367,7 @@ export function PlayerProvider({
       await playRef.current(
         book,
         track,
-        audio.current.currentTime,
+        pendingSeek.current ?? audio.current.currentTime,
         !audio.current.paused,
         true,
       );
