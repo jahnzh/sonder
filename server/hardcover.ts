@@ -1658,12 +1658,17 @@ function pullRemoteProgress(
     return null;
   }
   const local = localProgress(userId, target.rec.id);
-  const initialLocalIsNewer =
-    !last && !!local && local.updatedAt > parseRemoteTime(remote.updated_at);
+  // A newer local position always wins over an older remote one, on every sync (r6#3).
+  // A remote change seen after a sync that already covered the local position is newer;
+  // otherwise only a later remote updated_at proves it.
+  const localIsNewer =
+    !!local &&
+    (!last || local.updatedAt > last.syncedAt) &&
+    local.updatedAt > parseRemoteTime(remote.updated_at);
   const readingQueued = readingJob(userId, remote.book_id);
   if (
     force ||
-    ((changed || !local) && !queued && !readingQueued && !initialLocalIsNewer)
+    ((changed || !local) && !queued && !readingQueued && !localIsNewer)
   ) {
     const progress = applyFraction(userId, target.rec.id, fraction);
     rememberRead(userId, remote);
