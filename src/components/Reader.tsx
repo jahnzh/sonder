@@ -212,6 +212,10 @@ export function ReaderView({
     // after one counts as the reader navigating; epub.js also re-positions on
     // its own (e.g. after loading neighbouring sections) seconds later.
     lastGesture = useRef(0),
+    // Reader navigation (Contents, page turns) in flight, and until when its
+    // relocation still counts as the reader's own choice.
+    navigating = useRef(0),
+    navigatedUntil = useRef(0),
     fromListening = useRef(initialFromAudio),
     jumpRef = useRef<
       (id: string, save?: boolean, recordingId?: string) => Promise<boolean>
@@ -420,12 +424,13 @@ export function ReaderView({
                 all.findIndex((value) => value.id === fragment.id) /
                 Math.max(1, all.length - 1),
             };
-            const ownLayout = layoutPending.current > 0 || performance.now() <= automatic.current;
+            const navigated = navigating.current > 0 || performance.now() <= navigatedUntil.current;
+            const ownLayout = !navigated && (layoutPending.current > 0 || performance.now() <= automatic.current);
             if (ownLayout && latest.current)
               return;
             latest.current = next;
             setLocator(next);
-            if (!ownLayout && performance.now() - lastGesture.current < 1500) {
+            if (navigated || (!ownLayout && performance.now() - lastGesture.current < 1500)) {
               setFollow(false);
               pendingManual.current = next;
               if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -626,6 +631,21 @@ export function ReaderView({
       layoutPending.current--;
       automatic.current = performance.now() + 500;
     }
+  };
+  // Contents and page turns replace a follow jump still in flight, and their
+  // relocation is saved even while that jump's layout is pending.
+  const navigate = (go: (view: Rendition) => Promise<unknown>) => {
+    ++jumpEpoch.current;
+    setFollow(false);
+    automatic.current = 0; lastGesture.current = performance.now();
+    const view = rendition.current;
+    if (!view) return;
+    navigating.current++;
+    void go(view).catch(() => {}).finally(() => {
+      navigating.current--;
+      // epub.js reports the new location just after display() resolves.
+      navigatedUntil.current = performance.now() + 1000;
+    });
   };
   const showFragment = async (
     paragraphId: string,
@@ -859,16 +879,16 @@ export function ReaderView({
     void save(value).catch(() => {});
   };
   const turn = (direction: number) => {
-    setFollow(false);
-    automatic.current = 0; lastGesture.current = performance.now();
     if (preferences.display === "segment") {
+      setFollow(false);
+      automatic.current = 0; lastGesture.current = performance.now();
       const cursor = Math.max(0, Math.min(words.length - 1, segment.start + direction * preferences.segmentWords));
       setManualWord(cursor);
       const word = words[cursor];
       if (word) void showFragment(word.paragraphId, false).then(() => {
         if (latest.current) void saveReading(id, latest.current, "reading", map?.recordingId);
       });
-    } else void (direction < 0 ? rendition.current?.prev() : rendition.current?.next());
+    } else navigate(view => direction < 0 ? view.prev() : view.next());
   };
   pageAction.current = (action, content, event) => {
     if (action === "previous") turn(-1);
@@ -1032,7 +1052,7 @@ export function ReaderView({
           void p.play(audio,track,interval.start+fraction*(interval.end-interval.start));
         }}
       />}
-      {desktop && book && preferences.display === "book" && <aside className="reader-desktop-contents" aria-label="Contents sidebar"><strong>Contents</strong>{book.sections.map(section=><button key={section.index} aria-current={section.index===locator?.section ? "location" : undefined} onClick={()=>{setFollow(false);setManualWord(null);automatic.current = 0; lastGesture.current = performance.now();void rendition.current?.display(section.href);}}>{section.title}</button>)}</aside>}
+      {desktop && book && preferences.display === "book" && <aside className="reader-desktop-contents" aria-label="Contents sidebar"><strong>Contents</strong>{book.sections.map(section=><button key={section.index} aria-current={section.index===locator?.section ? "location" : undefined} onClick={()=>{setManualWord(null);navigate(view=>view.display(section.href));}}>{section.title}</button>)}</aside>}
       {desktop && book && preferences.display === "segment" && <aside className="reader-lyrics-info" aria-label="Lyrics information"><strong>{book.title}</strong><span>{book.author}</span><span>{currentInterval ? currentInterval.verified ? "Following narration" : "Estimated sentence timings" : "Reading sync"}</span><p>Keyboard shortcuts</p><span>Space · play or pause</span><span>← / → · skip 30 seconds</span><span>↑ / ↓ · previous or next line</span><span>F · back to narration</span><span>P · page mode</span></aside>}
       {desktop && preferences.display === "book" && <><button className="reader-edge reader-edge-previous" aria-label="Previous ebook page" onClick={()=>turn(-1)}><ArrowLeft size={20}/></button><button className="reader-edge reader-edge-next" aria-label="Next ebook page" onClick={()=>turn(1)}><ArrowRight size={20}/></button></>}
       {!follow && currentInterval && <button className="button primary reader-back-narration" onClick={() => {setFollow(true); following.current=""; followRetry.current.attempts=0; setError("");}}>Back to narration</button>}
@@ -1165,10 +1185,8 @@ export function ReaderView({
                 className="reader-list-item"
                 key={section.index}
                 onClick={() => {
-                  setFollow(false);
                   setManualWord(null);
-                  automatic.current = 0; lastGesture.current = performance.now();
-                  void rendition.current?.display(section.href);
+                  navigate((view) => view.display(section.href));
                   setPanel(null);
                 }}
               >

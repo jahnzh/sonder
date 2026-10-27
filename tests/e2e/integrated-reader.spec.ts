@@ -174,3 +174,32 @@ test("lyrics keys without a current line and with modifiers leave playback and d
  } finally { await page.request.put("/api/appearance",{data:appearance}); }
 });
 
+test("Contents navigation during a follow jump wins and is saved", async ({page}) => {
+ const {book,ebook,map}=await fixture(page,"Follow interrupted","en-NZ");
+ const interval=map.intervals.find((i:any)=>i.section===1&&i.start>104);
+ expect((await page.request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[0].id,position:interval.start+1,duration:book.tracks[0].duration,updatedAt:Date.now()}})).ok()).toBe(true);
+ await page.setViewportSize({width:1440,height:900});
+ await page.goto("/");
+ await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
+ const room=page.locator(".inline-reader");
+ await expect(room).toHaveAttribute("data-current-passage",interval.paragraphId);
+ const sidebar=room.getByLabel("Contents sidebar");
+ await sidebar.getByRole("button",{name:"Down the Rabbit-Hole",exact:true}).click();
+ await expect(sidebar.getByRole("button",{name:"Down the Rabbit-Hole",exact:true})).toHaveAttribute("aria-current","location");
+ await expect.poll(async()=>(await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint?.locator.section).toBe(0);
+ const before=(await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint.revision;
+ // Start a follow jump to chapter two and choose chapter one before it lands.
+ await page.evaluate(()=>{
+  const scope=document.querySelector(".inline-reader")!;
+  const read=[...scope.querySelectorAll<HTMLButtonElement>('[aria-label="Sync reading and audio positions"] button')].find(b=>b.textContent?.includes("Read from audio"))!;
+  const chapter=[...scope.querySelectorAll<HTMLButtonElement>('[aria-label="Contents sidebar"] button')].find(b=>b.textContent==="Down the Rabbit-Hole")!;
+  read.click(); chapter.click();
+ });
+ await expect.poll(async()=>(await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint.revision).toBeGreaterThan(before);
+ await page.waitForTimeout(1500);
+ await expect(sidebar.getByRole("button",{name:"Down the Rabbit-Hole",exact:true})).toHaveAttribute("aria-current","location");
+ const saved=(await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint;
+ expect(saved.locator.section).toBe(0);
+ expect(saved.origin).toBe("reading");
+});
+
