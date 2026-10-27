@@ -187,9 +187,15 @@ export async function createApp() {
   );
   await app.register(cookie);
   await app.register(rateLimit, {
-    max: 600,
+    max: Number(process.env.API_RATE_LIMIT || 600),
     timeWindow: "1 minute",
     allowList: (request) => !request.url.startsWith("/api/"),
+    // Users in one household share a public IP; count each signed-in session
+    // separately and fall back to the address for anonymous requests.
+    keyGenerator: (request) => {
+      const token = request.cookies?.sonder_session;
+      return token ? `session:${hashToken(token)}` : request.ip;
+    },
   });
   await app.register(multipart, {
     limits: { fileSize: 4 * 1024 * 1024 * 1024, files: 200, fields: 10 },

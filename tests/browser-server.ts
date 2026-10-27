@@ -6,6 +6,8 @@ process.env.DATA_DIR = join(temp, "db");
 process.env.MEDIA_ROOT = join(temp, "media");
 process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
+// The whole suite runs from one address against one server within minutes.
+process.env.API_RATE_LIMIT = "6000";
 if (process.env.PLAYWRIGHT_AUTH !== "1") delete process.env.APP_PASSWORD;
 delete process.env.TRANSMISSION_RPC_URL;
 const { installHardcoverFixture } = await import(
