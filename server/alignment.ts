@@ -1011,8 +1011,11 @@ export function registerAlignment(app: FastifyInstance) {
       job.fingerprint !== book.fingerprint ||
       job.audioFingerprint !== audioFingerprint(job.recordingId)
     )
-      throw new Error(
-        "The ebook or audio changed. Rebuild this alignment before using it.",
+      throw Object.assign(
+        new Error(
+          "The ebook or audio changed. Rebuild this alignment before using it.",
+        ),
+        { statusCode: 410, code: "alignment_stale" },
       );
     return job;
   });

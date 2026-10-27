@@ -44,8 +44,12 @@ export function ebookRecord(id: string) {
     .from(s.ebookEditions)
     .where(eq(s.ebookEditions.id, id))
     .get();
+  // A removed edition is permanent; a missing file may be a volume that is remounting (N1).
   if (!row || !existsSync(row.source))
-    throw new Error("This ebook is no longer on the media drive.");
+    throw Object.assign(
+      new Error("This ebook is no longer on the media drive."),
+      { statusCode: row ? 503 : 404 },
+    );
   if (row.format !== "epub")
     throw new Error(
       "The built-in reader supports EPUB. Download PDFs to use your preferred PDF reader.",

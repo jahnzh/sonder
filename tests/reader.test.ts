@@ -1,6 +1,6 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync, unlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 const temp = mkdtempSync(join(tmpdir(), "sonder-reader-"));
@@ -145,6 +145,34 @@ test("reading checkpoints are idempotent, support backward reading and preserve 
     400,
   );
 });
+test("a bookmark for a missing EPUB file is a temporary 503, while invalid bookmarks stay 400 (N1)", async () => {
+  const missing = "reader-missing-file";
+  db.insert(s.ebookEditions)
+    .values({ id: missing, workId: "work-alice", format: "epub", source: join(temp, "media", "ebooks", "gone.epub") })
+    .run();
+  const locator = { section: 0, paragraphId: "0:1", progression: 0.01 };
+  const post = (edition: string, payload: unknown) =>
+    app.inject({ method: "POST", url: `/api/reader/${edition}/bookmarks`, payload });
+  const unavailable = await post(missing, { id: "bookmark-missing", label: "My place", locator });
+  assert.equal(unavailable.statusCode, 503, unavailable.body);
+  // A Node I/O error (here EISDIR: the source path is a directory) is a 503 too, without the path.
+  const directory = join(temp, "media", "ebooks", "not-a-file.epub");
+  mkdirSync(directory);
+  db.update(s.ebookEditions).set({ source: directory }).where(eq(s.ebookEditions.id, missing)).run();
+  const io = await post(missing, { id: "bookmark-missing", label: "My place", locator });
+  assert.equal(io.statusCode, 503, io.body);
+  assert.doesNotMatch(io.json().error, /EISDIR|not-a-file/);
+  assert.equal(io.json().code, undefined);
+  assert.equal((await post("reader-never-existed", { id: "bookmark-missing", label: "My place", locator })).statusCode, 404);
+  const foreign = await post(id, { id: "bookmark-foreign", label: "My place", locator: { ...locator, paragraphId: "99:99" } });
+  assert.equal(foreign.statusCode, 400);
+  assert.equal(foreign.json().error, "This bookmark does not belong to this edition.");
+  const malformed = await post(id, { id: "short", label: "", locator });
+  assert.equal(malformed.statusCode, 400);
+  assert.equal(malformed.json().error, "Please check the information you entered.");
+  db.delete(s.ebookEditions).where(eq(s.ebookEditions.id, missing)).run();
+});
+
 test("bookmarks survive app reopening and deleting one does not change reading progress", async () => {
   const locator = { section: 0, paragraphId: "0:1", progression: 0.01 };
   assert.equal(
@@ -304,10 +332,10 @@ test("local alignment pairs chapters, preserves recording progress and invalidat
   assert.equal(recovered.json().approximate, true);
   assert.deepEqual(db.select().from(s.progress).all(), before);
   writeFileSync(file, await readerFixture({ language: "fr" }));
-  assert.equal(
-    (await app.inject(`/api/alignments/${job.id}/map`)).statusCode,
-    400,
-  );
+  const stale = await app.inject(`/api/alignments/${job.id}/map`);
+  assert.equal(stale.statusCode, 410);
+  assert.equal(stale.json().code, "alignment_stale");
+  assert.match(stale.json().error, /ebook or audio changed/);
   db.update(s.editions)
     .set({ language: "English" })
     .where(eq(s.editions.id, "alice"))
