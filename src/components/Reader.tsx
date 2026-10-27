@@ -577,13 +577,22 @@ export function ReaderView({
       const player=playerRef.current,current=mapRef.current;
       if(followRef.current && current && player.book?.recordingId===current.recordingId && current.intervals.some(interval=>interval.trackId===player.track?.id && interval.start<=player.position && interval.end>player.position))return;
       const restore = latest.current?.cfi || book?.sections[0]?.href;
-      if (restore && rendition.current === view) {
-        automatic.current = performance.now() + 800;
-        void view.display(restore).catch(() => {});
-      }
+      if (restore && rendition.current === view)
+        void displayAutomatically(view, restore).catch(() => {});
     }, 80);
     return () => clearTimeout(timer);
   }, [appearance, rendered, inline]);
+  // Relocations caused by our own display() calls are not reader navigation.
+  // Mark them automatic until the call settles: in a long book, opening
+  // another chapter can take longer than any fixed window.
+  const displayAutomatically = async (view: Rendition, target: string) => {
+    automatic.current = Number.POSITIVE_INFINITY;
+    try {
+      await view.display(target);
+    } finally {
+      automatic.current = performance.now() + 500;
+    }
+  };
   const showFragment = async (
     paragraphId: string,
     persist = false,
@@ -600,8 +609,7 @@ export function ReaderView({
       (fragment) => fragment.id === paragraphId,
     );
     if (!section || !fragment) return false;
-    automatic.current = performance.now() + 1500;
-    await view.display(section.href);
+    await displayAutomatically(view, section.href);
     if (request !== jumpEpoch.current || rendition.current !== view) return false;
     const content = (view.getContents() as unknown as Contents[]).find(
       (value) => value.sectionIndex === section.index,
@@ -611,7 +619,7 @@ export function ReaderView({
     if (!node) return false;
     const range = rangeAt(node, fragment.start),
       cfi = content.cfiFromRange(range);
-    await view.display(cfi);
+    await displayAutomatically(view, cfi);
     if (request !== jumpEpoch.current || rendition.current !== view) return false;
     const all = current.sections.flatMap((section) => section.paragraphs);
     const value: TextLocator = {
