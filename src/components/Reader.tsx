@@ -240,7 +240,7 @@ export function ReaderView({
   const p = usePlayer(),
     playerRef = useRef(p);
   playerRef.current = p;
-  const { appearance, update, save } = useAppearance();
+  const { appearance, saveReader } = useAppearance();
   const preferences = appearance.reader;
   // Switching Page/Lyrics doesn't change how the EPUB is styled; re-theming
   // would re-paginate the whole book for nothing.
@@ -886,9 +886,7 @@ export function ReaderView({
     notify("Bookmark saved.");
   };
   const editReader = (patch: Partial<typeof preferences>) => {
-    const value = { ...appearance, reader: { ...preferences, ...patch } };
-    update(value);
-    void save(value).catch(() => {});
+    void saveReader(patch).catch(() => {});
   };
   const turn = (direction: number) => {
     if (preferences.display === "segment") {

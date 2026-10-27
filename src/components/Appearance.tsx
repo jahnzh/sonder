@@ -1,8 +1,9 @@
-import { userStorageKey } from "../lib";
+import { userId, userStorageKey } from "../lib";
 import {
   createContext,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -18,49 +19,80 @@ import {
   type Appearance,
 } from "../appearance";
 type ThemeContext = {
+  /** What is shown, including an unsaved preview. */
   appearance: Appearance;
+  /** Last stored appearance. */
+  saved: Appearance;
+  /** Previews a value without storing it. */
   update: (value: Appearance) => void;
   save: (value?: Appearance, deviceOnly?: boolean) => Promise<void>;
+  /** Stores reader settings on top of the saved appearance; a preview stays unsaved. */
+  saveReader: (patch: Partial<Appearance["reader"]>) => Promise<void>;
 };
 const Context = createContext<ThemeContext>(null!);
 export const useAppearance = () => useContext(Context);
+const deviceOnlySetting = () =>
+  localStorage.getItem(userStorageKey("sonder-appearance-device")) === "true";
 export function AppearanceProvider({ children }: { children: ReactNode }) {
   const [appearance, setAppearance] = useState(cachedAppearance);
+  const [saved, setSaved] = useState(cachedAppearance);
+  const shown = useRef(appearance),
+    stored = useRef(saved);
   const update = (value: Appearance) => {
     const parsed = appearanceSchema.parse(value);
+    shown.current = parsed;
     setAppearance(parsed);
     applyAppearance(parsed);
+  };
+  const remember = (value: Appearance) => {
+    const parsed = appearanceSchema.parse(value);
+    stored.current = parsed;
+    setSaved(parsed);
     localStorage.setItem(userStorageKey("sonder-appearance"), JSON.stringify(parsed));
+    return parsed;
   };
   useEffect(() => {
     const media = matchMedia("(prefers-color-scheme: dark)");
     const change = () => applyAppearance(cachedAppearance());
     media.addEventListener("change", change);
+    // Until /auth/status names the user, only show the cached look: storage
+    // keys still point at the admin.
+    applyAppearance(shown.current);
     const load = () => {
-      update(cachedAppearance());
-      if (localStorage.getItem(userStorageKey("sonder-appearance-device")) !== "true")
-        void api<Appearance>("/appearance")
-          .then(update)
-          .catch(() => {});
+      const cached = cachedAppearance();
+      stored.current = cached;
+      setSaved(cached);
+      update(cached);
+      if (deviceOnlySetting()) return;
+      const owner = userId();
+      void api<Appearance>("/appearance")
+        .then((value) => {
+          if (owner !== userId()) return;
+          update(remember(value));
+        })
+        .catch(() => {});
     };
-    load();
     window.addEventListener("sonder:authenticated", load);
     return () => {
       media.removeEventListener("change", change);
       window.removeEventListener("sonder:authenticated", load);
     };
   }, []);
-  const save = async (
-    value = appearance,
-    deviceOnly = localStorage.getItem(userStorageKey("sonder-appearance-device")) === "true",
-  ) => {
-    update(value);
+  const save = async (value = appearance, deviceOnly = deviceOnlySetting()) => {
+    update(remember(value));
     if (!deviceOnly)
       await api("/appearance", { method: "PUT", body: JSON.stringify(value) });
     localStorage.setItem(userStorageKey("sonder-appearance-device"), String(deviceOnly));
   };
+  const saveReader = async (patch: Partial<Appearance["reader"]>) => {
+    const reader = { ...shown.current.reader, ...patch };
+    update({ ...shown.current, reader });
+    const value = remember({ ...stored.current, reader });
+    if (!deviceOnlySetting())
+      await api("/appearance", { method: "PUT", body: JSON.stringify(value) });
+  };
   return (
-    <Context.Provider value={{ appearance, update, save }}>
+    <Context.Provider value={{ appearance, saved, update, save, saveReader }}>
       {children}
     </Context.Provider>
   );
@@ -70,11 +102,10 @@ export function AppearanceSettings({
 }: {
   notify: (text: string, error?: boolean) => void;
 }) {
-  const { appearance, update, save } = useAppearance();
+  const { appearance, saved, update, save } = useAppearance();
   const [deviceOnly, setDeviceOnly] = useState(
     localStorage.getItem(userStorageKey("sonder-appearance-device")) === "true",
   );
-  const [saved, setSaved] = useState(appearance);
   const [busy, setBusy] = useState(false);
   const palette = paletteFor(appearance),
     ratio = contrast(palette.text, palette.background),
@@ -225,7 +256,6 @@ export function AppearanceSettings({
             setBusy(true);
             void save(appearance, deviceOnly)
               .then(() => {
-                setSaved(appearance);
                 notify("Appearance saved.");
               })
               .catch((error) => notify(error.message, true))
