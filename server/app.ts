@@ -37,6 +37,7 @@ import { registerAppearance } from "./appearance.ts";
 import { registerReader } from "./reader.ts";
 import { registerAlignment } from "./alignment.ts";
 import {registerMediaLibrary,faultsFor,chooseMedia,sourceChoice} from "./media-library.ts";
+import { audioFileMime } from "./media-response.ts";
 import { parseRange } from "./range.ts";
 import {
   isCompleteMediaResponse,
@@ -1066,7 +1067,7 @@ export async function createApp() {
         const range = parseRange(req.headers.range, size);
         reply
           .header("Accept-Ranges", "bytes")
-          .header("Content-Type", mime(path))
+          .header("Content-Type", audioFileMime(path) || mime(path))
           .header("Cache-Control", "private, no-store");
         if (range === "invalid")
           return reply

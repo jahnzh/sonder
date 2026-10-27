@@ -58,6 +58,26 @@ test("source selection bypasses a managed copy without changing the recording or
     400,
   );
 });
+test("a saved MP4 with a misleading mp3 filename is served as audio/mp4, including range requests", async () => {
+  const path = join(temp, "media", "saved", "mislabelled.mp3");
+  const bytes = Buffer.concat([Buffer.from([0, 0, 0, 20]), Buffer.from("ftypisom"), Buffer.alloc(16)]);
+  writeFileSync(path, bytes);
+  db.insert(s.tracks).values({ id: "mislabelled-mp4", recordingId: "recording-alice", index: 22, title: "Book.m4b", duration: 60, source: "https://example.invalid/audio", sourceType: "remote" }).run();
+  db.insert(s.mediaCopies).values({ trackId: "mislabelled-mp4", path, size: bytes.length, mime: "application/octet-stream" }).run();
+  try {
+    for (const method of ["GET", "HEAD"] as const) {
+      const response = await app.inject({ method, url: "/api/media/mislabelled-mp4?source=server", headers: { range: "bytes=0-11" } });
+      assert.equal(response.statusCode, 206);
+      assert.equal(response.headers["content-type"], "audio/mp4");
+      assert.equal(response.headers["content-range"], `bytes 0-11/${bytes.length}`);
+      if (method === "GET") assert.deepEqual(response.rawPayload, bytes.subarray(0, 12));
+    }
+  } finally {
+    db.delete(s.mediaCopies).where(eq(s.mediaCopies.trackId, "mislabelled-mp4")).run();
+    db.delete(s.tracks).where(eq(s.tracks.id, "mislabelled-mp4")).run();
+    rmSync(path);
+  }
+});
 test("fault reports persist, automatic playback bypasses a faulty copy, and a faulty recording is blocked until cleared", async () => {
   let response = await app.inject({
     method: "PUT",

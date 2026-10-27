@@ -17,7 +17,7 @@ import * as s from "./schema.ts";
 import { mediaRoot, ensureMediaStorage } from "./storage.ts";
 import { torboxUrl } from "./services.ts";
 import { queueHardcoverProgress } from "./hardcover.ts";
-import { isCompleteMediaResponse } from "./media-response.ts";
+import { audioFileExtension, audioFileMime, isCompleteMediaResponse } from "./media-response.ts";
 const controllers = new Map<string, AbortController>();
 let running = false;
 export function hasServerMedia(track: typeof s.tracks.$inferSelect) {
@@ -145,22 +145,12 @@ export async function processServerDownloads() {
               /\/(\d+)$/.exec(response.headers.get("content-range") || "")?.[1],
             ) ||
             0;
-          const mime = response.headers.get("content-type") || "audio/mpeg";
-          const suffix = mime.includes("mp4")
-            ? ".m4b"
-            : mime.includes("ogg")
-              ? ".ogg"
-              : mime.includes("flac")
-                ? ".flac"
-                : mime.includes("wav")
-                  ? ".wav"
-                  : ".mp3";
-          const path = join(
+          const pathPrefix = join(
             mediaRoot,
             "saved",
-            createHash("sha256").update(t.id).digest("hex") + suffix,
+            createHash("sha256").update(t.id).digest("hex"),
           );
-          const temp = path + ".part";
+          const temp = pathPrefix + ".part";
           if (existsSync(temp)) unlinkSync(temp);
           const writer = createWriteStream(temp, { flags: "wx", mode: 0o640 });
           let size = 0;
@@ -200,6 +190,8 @@ export async function processServerDownloads() {
             ctrl.signal.throwIfAborted();
             if (!metadata.format.codec)
               throw new Error("The source did not return a valid audio file.");
+            const mime = audioFileMime(temp) || response.headers.get("content-type") || "application/octet-stream";
+            const path = pathPrefix + audioFileExtension(mime);
             renameSync(temp, path);
             db.update(s.tracks)
               .set({
