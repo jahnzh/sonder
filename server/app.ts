@@ -236,6 +236,12 @@ export async function createApp() {
     )
       return;
     if (!req.user) return reply.code(401).send({ error: "Sign in to your listening space." });
+    // Queued writes carry the user they were queued under. Another tab may have
+    // switched the shared session cookie since, so refuse rather than write
+    // one user's data into another's account. Older clients omit the header.
+    const expected = req.headers["x-sonder-user-id"];
+    if (typeof expected === "string" && expected !== String(req.user.id))
+      return reply.code(409).send({ error: "Signed in as a different user.", code: "user_mismatch" });
     const path = req.url.split("?")[0];
     if (/^\/api\/(prowlarr|torbox)(?:\/|$)/.test(path) || /^\/api\/acquisitions(?:\/|$)/.test(path) || path === "/api/acquire" || path === "/api/torrents/health" || path === "/api/local/test" || /^\/api\/discover\/(abb|prowlarr)(?:\/|$)/.test(path) || path === "/api/discover/ebooks" || (req.method === "POST" && ["/api/ebooks", "/api/ebooks/import", "/api/import"].includes(path)) || (req.method === "POST" && /^\/api\/books\/[^/]+\/keep$/.test(path)) || (req.method === "POST" && /^\/api\/reader\/[^/]+\/link$/.test(path)) || (["PUT", "DELETE"].includes(req.method) && /^\/api\/recordings\/[^/]+\/(faults\/[^/]+|server-copy)$/.test(path)) || (["POST", "PATCH"].includes(req.method) && /^\/api\/alignments(?:\/|$)/.test(path))) requireAdmin(req);
   });

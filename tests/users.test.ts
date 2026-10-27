@@ -40,6 +40,13 @@ test("users have isolated libraries and progress and cannot access administratio
  assert.equal((await request(first,"DELETE",`/api/library/${book.id}`)).statusCode,200);
  assert.ok(sqlite.prepare("SELECT 1 FROM user_hidden_library WHERE user_id=2 AND book_id=?").get(book.id)); assert.equal(sqlite.prepare("SELECT 1 FROM user_hidden_library WHERE user_id=3 AND book_id=?").get(book.id),undefined);
  assert.equal((await request(admin,"GET","/api/auth/status")).json().user.username,"admin");
+ // A write queued under the first user and replayed under the second user's session is refused before it lands.
+ const firstId=(await request(first,"GET","/api/auth/status")).json().user.id;
+ const replay=await app.inject({method:"POST",url:"/api/progress",cookies:{sonder_session:second},headers:{"x-sonder-user-id":String(firstId)},payload:{...position,position:77,updatedAt:Date.now()}});
+ assert.equal(replay.statusCode,409); assert.equal(replay.json().code,"user_mismatch");
+ assert.equal((await request(second,"GET","/api/books")).json().find((x:any)=>x.id===book.id).progress,undefined);
+ const matching=await app.inject({method:"POST",url:"/api/progress",cookies:{sonder_session:first},headers:{"x-sonder-user-id":String(firstId)},payload:{...position,position:78,updatedAt:Date.now()}});
+ assert.equal(matching.statusCode,200,matching.body);
 });
 
 test("migration copies legacy rows once without changing them", async () => {
