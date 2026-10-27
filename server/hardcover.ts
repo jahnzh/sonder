@@ -240,6 +240,13 @@ export function resetHardcoverAccount(userId: number) {
       db.delete(table).where(eq(table.userId, userId)).run();
   })();
 }
+// Called when a user is deleted: any in-flight request or sync for that id stops before
+// it commits, and a later user who reuses the id starts with a fresh runtime (r6#6).
+export function forgetHardcoverUser(userId: number) {
+  const live = runtimes.get(userId);
+  if (live) live.generation++;
+  runtimes.delete(userId);
+}
 export function setHardcoverToken(userId: number, token: string) {
   if (token !== hardcoverKey(userId)) resetHardcoverAccount(userId);
   setUserSecret(userId, "hardcover", token);
@@ -1152,7 +1159,9 @@ async function runSync(userId: number): Promise<SyncSummary> {
     });
     return summary;
   } catch (error) {
-    writeState(userId, { lastError: (error as Error).message });
+    // A sync stopped by a reset or user deletion must not write onto the id afterwards.
+    if (live.generation === expectedGeneration)
+      writeState(userId, { lastError: (error as Error).message });
     throw error;
   } finally {
     live.syncing = false;
