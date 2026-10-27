@@ -454,6 +454,7 @@ export function ReaderView({
               saveTimer.current = setTimeout(() => {
                 saveTimer.current = null;
                 pendingManual.current = null;
+                navigatedUntil.current = 0;
                 void saveReading(
                   id,
                   next,
