@@ -149,5 +149,13 @@ for(const size of sizes){
   expect(await page.locator("#root").evaluate(el => (el as HTMLElement).inert)).toBe(true);
   await close.click();
   expect(await page.locator("#root").evaluate(el => (el as HTMLElement).inert)).toBe(false);
+  await expect(page.locator(".player-dock .dock-book")).toBeFocused();
+  expect(await page.locator(".now-playing-dialog").evaluate(el => el.contains(document.activeElement))).toBe(false);
+  expect(await page.evaluate(() => getComputedStyle(document.activeElement!).visibility)).toBe("visible");
+  await page.locator(".player-dock .dock-book").click();
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(page.locator(".player-dock .dock-book")).toBeFocused();
   await page.locator(".mobile-nav").getByRole("button", {name:"Settings",exact:true}).click();
  });
