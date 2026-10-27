@@ -203,6 +203,37 @@ test("Contents navigation during a follow jump wins and is saved", async ({page}
  expect(saved.origin).toBe("reading");
 });
 
+test("back to narration right after a Contents navigation keeps following", async ({page}) => {
+ const {book,map}=await fixture(page,"Follow resumed","en-NZ");
+ const interval=map.intervals.find((i:any)=>i.section===1&&i.start>104);
+ expect((await page.request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[0].id,position:interval.start+1,duration:book.tracks[0].duration,updatedAt:Date.now()}})).ok()).toBe(true);
+ await page.setViewportSize({width:1440,height:900});
+ await page.goto("/");
+ await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
+ const room=page.locator(".inline-reader");
+ await expect(room).toHaveAttribute("data-current-passage",interval.paragraphId);
+ const sidebar=room.getByLabel("Contents sidebar");
+ const two=sidebar.getByRole("button",{name:"The Pool of Tears",exact:true});
+ await expect(two).toHaveAttribute("aria-current","location");
+ // Choose chapter one, then go back to the narration within the second after
+ // that navigation lands: the follow jump is our own layout, not navigation.
+ await page.evaluate(()=>new Promise<void>(done=>{
+  const scope=document.querySelector(".inline-reader")!;
+  const chapter=[...scope.querySelectorAll<HTMLButtonElement>('[aria-label="Contents sidebar"] button')].find(b=>b.textContent==="Down the Rabbit-Hole")!;
+  chapter.click();
+  const wait=()=>{
+   const back=scope.querySelector<HTMLButtonElement>(".reader-back-narration");
+   if(chapter.getAttribute("aria-current")==="location"&&back){back.click();done();}
+   else requestAnimationFrame(wait);
+  };
+  wait();
+ }));
+ await expect(two).toHaveAttribute("aria-current","location");
+ await page.waitForTimeout(1500);
+ await expect(two).toHaveAttribute("aria-current","location");
+ await expect(room.locator(".reader-back-narration")).toBeHidden();
+});
+
 test("a cached sync map is not used once the server refuses it", async ({page}) => {
  const appearance=await(await page.request.get("/api/appearance")).json();
  const {ebook}=await fixture(page,"Changed narration","en-ZA");
