@@ -293,3 +293,142 @@ test("an image-only cover opens at the first readable EPUB section on a narrow p
       .boundingBox())!.width,
   ).toBeGreaterThanOrEqual(44);
 });
+test("a bookmark the server rejects is dropped with a notice and later bookmarks still sync", async ({
+  page,
+}) => {
+  const upload = await page.request.post("/api/ebooks/import", {
+    multipart: {
+      file: {
+        name: "Rejected bookmark.epub",
+        mimeType: "application/epub+zip",
+        buffer: await readerFixture(),
+      },
+    },
+  });
+  expect(upload.ok()).toBe(true);
+  const { id } = await upload.json();
+  // The first bookmark is never accepted, like one whose quote is too long.
+  let rejected = "";
+  await page.route(`**/api/reader/${id}/bookmarks`, async (route) => {
+    const bookmark = route.request().postDataJSON()?.id;
+    rejected ||= bookmark;
+    if (route.request().method() !== "POST" || bookmark !== rejected)
+      return route.continue();
+    await route.fulfill({
+      status: 400,
+      json: { error: "This bookmark does not belong to this edition." },
+    });
+  });
+  await page.goto(`/#reader/${id}`);
+  const reader = page.getByRole("dialog", { name: "Reader" });
+  await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
+  await reader.getByRole("button", { name: "Show reader controls" }).click();
+  const add = reader.getByRole("button", {
+    name: "Bookmark this passage",
+    exact: true,
+  });
+  await add.click();
+  // The reader dialog hides the rest of the page from the accessibility tree.
+  await expect(page.locator(".toast.error")).toContainText(
+    "A bookmark could not be saved",
+  );
+  await add.click();
+  await expect
+    .poll(
+      async () =>
+        (await (await page.request.get(`/api/reader/${id}`)).json()).bookmarks
+          .length,
+    )
+    .toBe(1);
+  await page.unrouteAll({ behavior: "wait" });
+});
+test("a reader setting does not save an appearance preview", async ({
+  page,
+}) => {
+  await page.request.put("/api/appearance", { data: defaultAppearance });
+  try {
+    const upload = await page.request.post("/api/ebooks/import", {
+      multipart: {
+        file: {
+          name: "Preview reader.epub",
+          mimeType: "application/epub+zip",
+          buffer: await readerFixture(),
+        },
+      },
+    });
+    const { id } = await upload.json();
+    await page.goto("/");
+    await page
+      .locator(".mobile-nav")
+      .getByRole("button", { name: "Settings", exact: true })
+      .click();
+    // Preview Light without saving it.
+    await page.getByRole("button", { name: "Light", exact: true }).click();
+    await page.evaluate((id) => {
+      window.dispatchEvent(
+        new CustomEvent("sonder:open-reader", { detail: { id, fromAudio: false } }),
+      );
+      location.hash = `reader/${id}`;
+    }, id);
+    const reader = page.getByRole("dialog", { name: "Reader" });
+    await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
+    await reader.getByRole("button", { name: "Show reader controls" }).click();
+    await reader
+      .getByRole("button", { name: "Reader appearance", exact: true })
+      .click();
+    await reader
+      .getByRole("slider", { name: "Reader text size", exact: true })
+      .fill("23");
+    await expect
+      .poll(
+        async () =>
+          (await (await page.request.get("/api/appearance")).json()).reader
+            .size,
+      )
+      .toBe(23);
+    expect(
+      (await (await page.request.get("/api/appearance")).json()).preset,
+    ).toBe(defaultAppearance.preset);
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-theme",
+      defaultAppearance.preset,
+    );
+  } finally {
+    await page.request.put("/api/appearance", { data: defaultAppearance });
+  }
+});
+test("startup does not write another user's cached appearance into the admin's storage", async ({
+  page,
+}) => {
+  const light = { ...defaultAppearance, preset: "light" };
+  const amoled = { ...defaultAppearance, preset: "amoled" };
+  await page.addInitScript(
+    ([light, amoled]) => {
+      if (sessionStorage.getItem("seeded")) return;
+      sessionStorage.setItem("seeded", "1");
+      // The admin keeps a device-only look; user 2 was the last one in this tab.
+      localStorage.setItem("sonder-appearance", JSON.stringify(light));
+      localStorage.setItem("sonder-appearance-device", "true");
+      localStorage.setItem("sonder-user-2:sonder-appearance", JSON.stringify(amoled));
+      sessionStorage.setItem("sonder-current-user", "2");
+    },
+    [light, amoled],
+  );
+  try {
+    await page.goto("/");
+    // The test server signs everyone in as the admin.
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    expect(
+      await page.evaluate(
+        () => JSON.parse(localStorage.getItem("sonder-appearance") || "{}").preset,
+      ),
+    ).toBe("light");
+  } finally {
+    await page.evaluate(() => {
+      localStorage.removeItem("sonder-appearance");
+      localStorage.removeItem("sonder-appearance-device");
+      localStorage.removeItem("sonder-user-2:sonder-appearance");
+    });
+  }
+});

@@ -179,6 +179,7 @@ export async function queueBookmark(
   });
   void syncBookmarks(id).catch(() => {});
 }
+const rejectedBookmarkStatuses = [400, 403, 404, 410, 413, 422];
 export async function syncBookmarks(id: string) {
   if (!navigator.onLine || bookmarkSyncs.has(id)) return;
   bookmarkSyncs.add(id);
@@ -188,17 +189,43 @@ export async function syncBookmarks(id: string) {
     let current = ((await localDB.preferences.get(key))?.value as any[]) || [];
     while (current.length) {
       const action = current[0];
-      await api(
-        `/reader/${encodeURIComponent(id)}/bookmarks${action.method === "DELETE" ? `/${action.id}` : ""}`,
+      const response = await fetch(
+        `/api/reader/${encodeURIComponent(id)}/bookmarks${action.method === "DELETE" ? `/${action.id}` : ""}`,
         {
           method: action.method,
-          headers: { "X-Sonder-User-Id": String(owner) },
+          headers: {
+            "X-Sonder-User-Id": String(owner),
+            ...(action.method === "POST"
+              ? { "Content-Type": "application/json" }
+              : {}),
+          },
           ...(action.method === "POST"
             ? { body: JSON.stringify(action.bookmark) }
             : {}),
         },
       );
+      if (response.status === 401) {
+        window.dispatchEvent(new Event("sonder:unauthorized"));
+        return;
+      }
+      const data = await response.json().catch(() => ({}));
       if (owner !== userId()) return;
+      // The server will never accept this action. Drop it so later bookmark
+      // changes for this ebook can still sync.
+      const rejected = rejectedBookmarkStatuses.includes(response.status);
+      if (!response.ok && !rejected)
+        throw new Error(data.error || "Bookmarks could not be synchronized.");
+      if (rejected)
+        window.dispatchEvent(
+          new CustomEvent("sonder:bookmark-rejected", {
+            detail: {
+              id,
+              method: action.method,
+              bookmark: action.id,
+              error: data.error || "The server rejected this bookmark.",
+            },
+          }),
+        );
       await localDB.transaction("rw", localDB.preferences, async () => {
         const latest =
           ((await localDB.preferences.get(key))?.value as any[]) || [];
@@ -333,6 +360,25 @@ export function hasKnownReader(workId: string | undefined): boolean {
   return false;
 }
 
+/** A cached reading-sync map is only reused for the same job run, built from
+ * the EPUB that is current now. The summary cannot tell whether the audio
+ * changed in place; only the map endpoint checks that. */
+export function cachedMapMatches(
+  cached: AlignmentJob | undefined,
+  job: AlignmentJob,
+  ebookFingerprint: string | undefined,
+): cached is AlignmentJob {
+  return (
+    !!cached?.intervals?.length &&
+    cached.id === job.id &&
+    cached.updatedAt >= job.updatedAt &&
+    cached.fingerprint === job.fingerprint &&
+    cached.audioFingerprint === job.audioFingerprint &&
+    !!ebookFingerprint &&
+    cached.fingerprint === ebookFingerprint
+  );
+}
+
 let activeWarm: { cancel: () => void } | null = null;
 
 export function warmPlaybackReading(
@@ -412,13 +458,12 @@ export function warmPlaybackReading(
       }
     } catch {}
 
-    void loadReader(ebookId)
-      .then((readerBook) => {
-        if (!cancelled && readerBook?.fingerprint) {
-          void epubFile(readerBook.id, readerBook.fingerprint).catch(() => {});
-        }
-      })
-      .catch(() => {});
+    const readerBook = loadReader(ebookId).catch(() => null);
+    void readerBook.then((readerBook) => {
+      if (!cancelled && readerBook?.fingerprint) {
+        void epubFile(readerBook.id, readerBook.fingerprint).catch(() => {});
+      }
+    });
 
     if (!recordingId) return;
 
@@ -439,13 +484,21 @@ export function warmPlaybackReading(
           const cached = (await localDB.preferences.get(mapCacheKey))?.value as
             | AlignmentJob
             | undefined;
-          if (
-            !cached?.intervals?.length ||
-            job.updatedAt > cached.updatedAt
-          ) {
-            const map = await api<AlignmentJob>(
-              `/alignments/${encodeURIComponent(job.id)}/map`,
-            );
+          const fingerprint = (await readerBook)?.fingerprint;
+          if (cancelled) return null;
+          if (!cachedMapMatches(cached, job, fingerprint)) {
+            let map: AlignmentJob;
+            try {
+              map = await api<AlignmentJob>(
+                `/alignments/${encodeURIComponent(job.id)}/map`,
+              );
+            } catch (error) {
+              // The server refused the map (its sources changed): a cached
+              // copy must not be used offline either.
+              if (!(error instanceof TypeError))
+                await localDB.preferences.delete(mapCacheKey);
+              throw error;
+            }
             if (cancelled) return null;
             await localDB.preferences.put({ key: mapCacheKey, value: map });
           }

@@ -147,3 +147,82 @@ test("lyrics without a map remains readable and offers sync setup", async ({page
  await expect(reader.locator(".reader-panel-heading").getByRole("heading",{name:"Reading sync",exact:true})).toBeVisible();
  } finally { await page.request.put("/api/appearance",{data:appearance}); }
 });
+
+test("lyrics keys without a current line and with modifiers leave playback and display alone", async ({page}) => {
+ const appearance=await(await page.request.get("/api/appearance")).json();
+ const {book,ebook}=await fixture(page,"Lyrics gap","en-IE");
+ try {
+  // 97 s falls between the two mapped chapters (0–95 s and 100–195 s).
+  expect((await page.request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[0].id,position:97,duration:book.tracks[0].duration,updatedAt:Date.now()}})).ok()).toBe(true);
+  await page.setViewportSize({width:1440,height:900});
+  await page.goto(`/#reader/${ebook}`);
+  const reader=page.getByRole("dialog",{name:"Reader"});
+  await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
+  await reader.locator(".reader-page-actions").getByRole("button",{name:"Lyrics",exact:true}).click();
+  const lyrics=reader.getByLabel("Lyrics reader");
+  await expect(lyrics.locator(".lyrics-line").first()).toBeVisible();
+  await expect(lyrics.locator(".lyrics-line.current")).toHaveCount(0);
+  // Browser shortcuts (print, Alt+key) are not reader keys.
+  await page.keyboard.press("Control+p");
+  await page.keyboard.press("Alt+p");
+  await page.waitForTimeout(300);
+  await expect(lyrics).toBeVisible();
+  await page.keyboard.press("ArrowDown");
+  await page.waitForTimeout(800);
+  await expect(lyrics.locator(".lyrics-line.current")).toHaveCount(0);
+  await expect(page.getByRole("button",{name:/^Pause/})).toHaveCount(0);
+ } finally { await page.request.put("/api/appearance",{data:appearance}); }
+});
+
+test("Contents navigation during a follow jump wins and is saved", async ({page}) => {
+ const {book,ebook,map}=await fixture(page,"Follow interrupted","en-NZ");
+ const interval=map.intervals.find((i:any)=>i.section===1&&i.start>104);
+ expect((await page.request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[0].id,position:interval.start+1,duration:book.tracks[0].duration,updatedAt:Date.now()}})).ok()).toBe(true);
+ await page.setViewportSize({width:1440,height:900});
+ await page.goto("/");
+ await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
+ const room=page.locator(".inline-reader");
+ await expect(room).toHaveAttribute("data-current-passage",interval.paragraphId);
+ const sidebar=room.getByLabel("Contents sidebar");
+ await sidebar.getByRole("button",{name:"Down the Rabbit-Hole",exact:true}).click();
+ await expect(sidebar.getByRole("button",{name:"Down the Rabbit-Hole",exact:true})).toHaveAttribute("aria-current","location");
+ await expect.poll(async()=>(await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint?.locator.section).toBe(0);
+ const before=(await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint.revision;
+ // Start a follow jump to chapter two and choose chapter one before it lands.
+ await page.evaluate(()=>{
+  const scope=document.querySelector(".inline-reader")!;
+  const read=[...scope.querySelectorAll<HTMLButtonElement>('[aria-label="Sync reading and audio positions"] button')].find(b=>b.textContent?.includes("Read from audio"))!;
+  const chapter=[...scope.querySelectorAll<HTMLButtonElement>('[aria-label="Contents sidebar"] button')].find(b=>b.textContent==="Down the Rabbit-Hole")!;
+  read.click(); chapter.click();
+ });
+ await expect.poll(async()=>(await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint.revision).toBeGreaterThan(before);
+ await page.waitForTimeout(1500);
+ await expect(sidebar.getByRole("button",{name:"Down the Rabbit-Hole",exact:true})).toHaveAttribute("aria-current","location");
+ const saved=(await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint;
+ expect(saved.locator.section).toBe(0);
+ expect(saved.origin).toBe("reading");
+});
+
+test("a cached sync map is not used once the server refuses it", async ({page}) => {
+ const appearance=await(await page.request.get("/api/appearance")).json();
+ const {ebook}=await fixture(page,"Changed narration","en-ZA");
+ try {
+  await page.goto(`/#reader/${ebook}`);
+  const reader=page.getByRole("dialog",{name:"Reader"});
+  await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
+  await reader.getByRole("button",{name:"Show reader controls"}).click();
+  await reader.locator(".reader-page-actions").getByRole("button",{name:"Lyrics",exact:true}).click();
+  const prompt=reader.getByRole("button",{name:"Prepare reading sync",exact:true});
+  await expect(reader.locator(".lyrics-line").first()).toBeVisible();
+  // The map is loaded and cached on this device.
+  await expect(prompt).toBeHidden();
+  // The audio changes in place: the job summary is unchanged, but the server
+  // no longer serves the map.
+  await page.route("**/api/alignments/*/map",route=>route.fulfill({status:400,json:{error:"The ebook or audio changed. Rebuild this alignment before using it."}}));
+  await page.reload();
+  await expect(reader.locator(".lyrics-line").first()).toBeVisible();
+  // The prompt also shows briefly before a cached map loads; give that time.
+  await page.waitForTimeout(1500);
+  await expect(prompt).toBeVisible();
+ } finally { await page.request.put("/api/appearance",{data:appearance}); }
+});

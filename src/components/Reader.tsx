@@ -212,6 +212,10 @@ export function ReaderView({
     // after one counts as the reader navigating; epub.js also re-positions on
     // its own (e.g. after loading neighbouring sections) seconds later.
     lastGesture = useRef(0),
+    // Reader navigation (Contents, page turns) in flight, and until when its
+    // relocation still counts as the reader's own choice.
+    navigating = useRef(0),
+    navigatedUntil = useRef(0),
     fromListening = useRef(initialFromAudio),
     jumpRef = useRef<
       (id: string, save?: boolean, recordingId?: string) => Promise<boolean>
@@ -236,7 +240,7 @@ export function ReaderView({
   const p = usePlayer(),
     playerRef = useRef(p);
   playerRef.current = p;
-  const { appearance, update, save } = useAppearance();
+  const { appearance, saveReader } = useAppearance();
   const preferences = appearance.reader;
   // Switching Page/Lyrics doesn't change how the EPUB is styled; re-theming
   // would re-paginate the whole book for nothing.
@@ -295,13 +299,25 @@ export function ReaderView({
           mapRef.current?.recordingId,
         );
     };
+    const rejected = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (detail.id !== id) return;
+      notify(`${detail.method === "DELETE" ? "A bookmark could not be removed" : "A bookmark could not be saved"}: ${detail.error}`, true);
+      if (detail.method === "POST" && bookRef.current) {
+        const updated = { ...bookRef.current, bookmarks: bookRef.current.bookmarks.filter(entry => entry.id !== detail.bookmark) };
+        bookRef.current = updated;
+        setBook(updated);
+      }
+    };
     window.addEventListener("online", online);
     window.addEventListener("pagehide", persist);
     window.addEventListener("sonder:reading-conflict", conflicting);
+    window.addEventListener("sonder:bookmark-rejected", rejected);
     return () => {
       window.removeEventListener("online", online);
       window.removeEventListener("pagehide", persist);
       window.removeEventListener("sonder:reading-conflict", conflicting);
+      window.removeEventListener("sonder:bookmark-rejected", rejected);
       if (saveTimer.current) {
         clearTimeout(saveTimer.current);
         persist();
@@ -420,12 +436,13 @@ export function ReaderView({
                 all.findIndex((value) => value.id === fragment.id) /
                 Math.max(1, all.length - 1),
             };
-            const ownLayout = layoutPending.current > 0 || performance.now() <= automatic.current;
+            const navigated = navigating.current > 0 || performance.now() <= navigatedUntil.current;
+            const ownLayout = !navigated && (layoutPending.current > 0 || performance.now() <= automatic.current);
             if (ownLayout && latest.current)
               return;
             latest.current = next;
             setLocator(next);
-            if (!ownLayout && performance.now() - lastGesture.current < 1500) {
+            if (navigated || (!ownLayout && performance.now() - lastGesture.current < 1500)) {
               setFollow(false);
               pendingManual.current = next;
               if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -487,6 +504,7 @@ export function ReaderView({
             start=null;
           });
           content.document.addEventListener("keydown", (event: KeyboardEvent) => {
+            if (event.ctrlKey || event.metaKey || event.altKey) return;
             if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); pageAction.current(event.key === "ArrowLeft" ? "previous" : "next"); }
           });
           content.document.addEventListener("click", (event) => {
@@ -625,6 +643,21 @@ export function ReaderView({
       layoutPending.current--;
       automatic.current = performance.now() + 500;
     }
+  };
+  // Contents and page turns replace a follow jump still in flight, and their
+  // relocation is saved even while that jump's layout is pending.
+  const navigate = (go: (view: Rendition) => Promise<unknown>) => {
+    ++jumpEpoch.current;
+    setFollow(false);
+    automatic.current = 0; lastGesture.current = performance.now();
+    const view = rendition.current;
+    if (!view) return;
+    navigating.current++;
+    void go(view).catch(() => {}).finally(() => {
+      navigating.current--;
+      // epub.js reports the new location just after display() resolves.
+      navigatedUntil.current = performance.now() + 1000;
+    });
   };
   const showFragment = async (
     paragraphId: string,
@@ -853,21 +886,19 @@ export function ReaderView({
     notify("Bookmark saved.");
   };
   const editReader = (patch: Partial<typeof preferences>) => {
-    const value = { ...appearance, reader: { ...preferences, ...patch } };
-    update(value);
-    void save(value).catch(() => {});
+    void saveReader(patch).catch(() => {});
   };
   const turn = (direction: number) => {
-    setFollow(false);
-    automatic.current = 0; lastGesture.current = performance.now();
     if (preferences.display === "segment") {
+      setFollow(false);
+      automatic.current = 0; lastGesture.current = performance.now();
       const cursor = Math.max(0, Math.min(words.length - 1, segment.start + direction * preferences.segmentWords));
       setManualWord(cursor);
       const word = words[cursor];
       if (word) void showFragment(word.paragraphId, false).then(() => {
         if (latest.current) void saveReading(id, latest.current, "reading", map?.recordingId);
       });
-    } else void (direction < 0 ? rendition.current?.prev() : rendition.current?.next());
+    } else navigate(view => direction < 0 ? view.prev() : view.next());
   };
   pageAction.current = (action, content, event) => {
     if (action === "previous") turn(-1);
@@ -898,7 +929,7 @@ export function ReaderView({
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       // The Now Playing reader stays mounted while its dialog is closed.
-      if ((event.target as HTMLElement)?.closest("input,select,textarea,button") || panel || sentence || viewport.current?.closest('[data-state="closed"]')) return;
+      if (event.ctrlKey || event.metaKey || event.altKey || (event.target as HTMLElement)?.closest("input,select,textarea,button") || panel || sentence || viewport.current?.closest('[data-state="closed"]')) return;
       if (preferences.display === "segment" && event.key === " ") { event.preventDefault(); if (p.book) p.toggle(); }
       else if (preferences.display === "segment" && event.key.toLowerCase() === "f") { event.preventDefault(); setFollow(true); following.current=""; }
       else if (preferences.display === "segment" && event.key.toLowerCase() === "p") { event.preventDefault(); editReader({display:"book"}); }
@@ -907,7 +938,8 @@ export function ReaderView({
     window.addEventListener("keydown",key); return () => window.removeEventListener("keydown",key);
   }, [panel,sentence,preferences.display,p.book,p.toggle,p.skip,appearance]);
   const sentenceInterval=map?.intervals.find(item=>item.paragraphId===sentence?.paragraphId);
-  const selectSentence=() => { if (sentence) { latest.current=sentence; setLocator(sentence); } };
+  // The sheet shows and copies the whole sentence; saved locators keep the usual 300-character quote.
+  const selectSentence=() => { if (sentence) { const value={...sentence,quote:sentence.quote?.slice(0,300)}; latest.current=value; setLocator(value); } };
   const searchResults =
     book && query.trim().length > 1
       ? book.sections
@@ -1019,7 +1051,7 @@ export function ReaderView({
         aria-hidden={preferences.display === "segment"}
       />
       {preferences.display === "segment" && book && <LyricsReader
-        book={book} interval={currentInterval} position={p.position} hasMap={!!map?.intervals.length} follow={follow} size={preferences.size} selectedParagraph={locator?.paragraphId}
+        book={book} interval={currentInterval} position={p.position} hasMap={!!map?.intervals.length} follow={follow} size={preferences.size} selectedParagraph={locator?.paragraphId} ignoreKeys={!!panel || !!sentence}
         onToggleControls={() => setControlsVisible(value=>!value)} onClose={() => onClose?.()}
         onManualScroll={() => setFollow(false)} onPrepareSync={() => setPanel("sync")}
         onSeek={(paragraphId, fraction) => {
@@ -1031,7 +1063,7 @@ export function ReaderView({
           void p.play(audio,track,interval.start+fraction*(interval.end-interval.start));
         }}
       />}
-      {desktop && book && preferences.display === "book" && <aside className="reader-desktop-contents" aria-label="Contents sidebar"><strong>Contents</strong>{book.sections.map(section=><button key={section.index} aria-current={section.index===locator?.section ? "location" : undefined} onClick={()=>{setFollow(false);setManualWord(null);automatic.current = 0; lastGesture.current = performance.now();void rendition.current?.display(section.href);}}>{section.title}</button>)}</aside>}
+      {desktop && book && preferences.display === "book" && <aside className="reader-desktop-contents" aria-label="Contents sidebar"><strong>Contents</strong>{book.sections.map(section=><button key={section.index} aria-current={section.index===locator?.section ? "location" : undefined} onClick={()=>{setManualWord(null);navigate(view=>view.display(section.href));}}>{section.title}</button>)}</aside>}
       {desktop && book && preferences.display === "segment" && <aside className="reader-lyrics-info" aria-label="Lyrics information"><strong>{book.title}</strong><span>{book.author}</span><span>{currentInterval ? currentInterval.verified ? "Following narration" : "Estimated sentence timings" : "Reading sync"}</span><p>Keyboard shortcuts</p><span>Space · play or pause</span><span>← / → · skip 30 seconds</span><span>↑ / ↓ · previous or next line</span><span>F · back to narration</span><span>P · page mode</span></aside>}
       {desktop && preferences.display === "book" && <><button className="reader-edge reader-edge-previous" aria-label="Previous ebook page" onClick={()=>turn(-1)}><ArrowLeft size={20}/></button><button className="reader-edge reader-edge-next" aria-label="Next ebook page" onClick={()=>turn(1)}><ArrowRight size={20}/></button></>}
       {!follow && currentInterval && <button className="button primary reader-back-narration" onClick={() => {setFollow(true); following.current=""; followRetry.current.attempts=0; setError("");}}>Back to narration</button>}
@@ -1164,10 +1196,8 @@ export function ReaderView({
                 className="reader-list-item"
                 key={section.index}
                 onClick={() => {
-                  setFollow(false);
                   setManualWord(null);
-                  automatic.current = 0; lastGesture.current = performance.now();
-                  void rendition.current?.display(section.href);
+                  navigate((view) => view.display(section.href));
                   setPanel(null);
                 }}
               >
