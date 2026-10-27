@@ -26,7 +26,9 @@ test("users have isolated libraries and progress and cannot access administratio
  assert.notDeepEqual((await request(first,"GET","/api/appearance")).json(),(await request(second,"GET","/api/appearance")).json());
  const a=(await request(first,"GET","/api/books")).json().find((x:any)=>x.id===book.id); const b=(await request(second,"GET","/api/books")).json().find((x:any)=>x.id===book.id);
  assert.equal(a.status,"finished"); assert.equal(a.progress.position,12); assert.equal(b.inLibrary,false); assert.equal(b.progress,undefined);
- for(const [method,url] of [["PATCH","/api/settings"],["POST","/api/acquire"],["POST","/api/import"],["POST","/api/alignments"]]) assert.equal((await request(first,method,url,{})).statusCode,403,url);
+ for(const [method,url,payload] of [["PATCH","/api/settings",{torbox:"x"}],["POST","/api/acquire",{}],["POST","/api/import",{}],["POST","/api/alignments",{}]] as const) assert.equal((await request(first,method,url,payload)).statusCode,403,url);
+ // An empty save from the reduced Settings form is a harmless no-op (r6#5).
+ assert.equal((await request(first,"PATCH","/api/settings",{})).statusCode,200);
  const { readerFixture }=await import("./reader-fixture.ts");
  const ebookDir=join(temp,"media","ebooks"); mkdirSync(ebookDir,{recursive:true}); const epub=join(ebookDir,"isolation.epub"); writeFileSync(epub,await readerFixture());
  sqlite.prepare("INSERT INTO ebook_editions(id,work_id,format,source) VALUES(?,?,?,?)").run("isolation",book.workId,"epub",epub);

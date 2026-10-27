@@ -126,7 +126,7 @@ export function PlayerDock({
   notify: (text:string,error?:boolean)=>void;
 }) {
   const p = usePlayer();
-  const { appearance, update, save } = useAppearance();
+  const { appearance, saveReader } = useAppearance();
   const [expanded, setExpanded] = useState(false);
   const b = p.book || fallback;
   const [hasReader, setHasReader] = useState(() => hasKnownReader(b?.workId));
@@ -408,7 +408,7 @@ export function PlayerDock({
             </PlaybackExtra>
             <PlaybackTimeline book={p.book || b} />
             <div className="player-transport-row">
-            {hasReader && <div className="player-transport-display"><button className="button subtle" onClick={()=>{const display:(typeof appearance.reader.display)=appearance.reader.display==="book"?"segment":"book";const value={...appearance,reader:{...appearance.reader,display}};update(value);void save(value).catch(()=>{});}}>{appearance.reader.display === "book" ? "Lyrics" : "Page"}</button></div>}
+            {hasReader && <div className="player-transport-display"><button className="button subtle" onClick={()=>void saveReader({display:appearance.reader.display==="book"?"segment":"book"}).catch(()=>{})}>{appearance.reader.display === "book" ? "Lyrics" : "Page"}</button></div>}
             <div className="transport large">
               <button
                 className="seek-button"

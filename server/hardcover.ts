@@ -5,6 +5,7 @@ import {
   listUserIds,
   setUserSecret,
   setUserSetting,
+  onUserDeleted,
 } from "./users.ts";
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
@@ -247,6 +248,7 @@ export function forgetHardcoverUser(userId: number) {
   if (live) live.generation++;
   runtimes.delete(userId);
 }
+onUserDeleted(forgetHardcoverUser);
 export function setHardcoverToken(userId: number, token: string) {
   if (token !== hardcoverKey(userId)) resetHardcoverAccount(userId);
   setUserSecret(userId, "hardcover", token);

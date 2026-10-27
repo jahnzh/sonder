@@ -32,6 +32,7 @@ import {
   tickHardcover,
   hardcoverWorkForMedia,
   claimHardcoverAudio,
+  hiddenHardcoverPlaceholders,
 } from "./hardcover.ts";
 import { registerHardcoverRoutes } from "./hardcover-routes.ts";
 import { registerAppearance } from "./appearance.ts";
@@ -87,12 +88,14 @@ export function listBooks(userId = 1): Book[] {
   const allTracks = db.select().from(s.tracks).all();
   const allProgress = db.select().from(s.userProgress).where(eq(s.userProgress.userId, userId)).all();
   const lib = db.select().from(s.userLibrary).where(eq(s.userLibrary.userId, userId)).all();
+  const hidden = hiddenHardcoverPlaceholders(userId);
   return db
     .select({ work: s.works, edition: s.editions, recording: s.recordings })
     .from(s.editions)
     .innerJoin(s.works, eq(s.works.id, s.editions.workId))
     .innerJoin(s.recordings, eq(s.recordings.editionId, s.editions.id))
     .all()
+    .filter(({ edition }) => !hidden.has(edition.id))
     .map(({ work, edition, recording }) => {
       const saved = lib.find((l) => l.bookId === edition.id);
       const faults=faultsFor(recording.id);
@@ -444,7 +447,9 @@ export async function createApp() {
   app.patch("/api/settings", async (req) => {
     // Any user may save or clear their own Hardcover token here (#15); every other setting is the admin's.
     const fields = Object.keys((req.body ?? {}) as Record<string, unknown>);
-    if (fields.length !== 1 || fields[0] !== "hardcover") requireAdmin(req);
+    // A regular user may save (or clear) only their own Hardcover token; an empty
+    // save from the reduced Settings form is a no-op (r6#5).
+    if (fields.length > 0 && !(fields.length === 1 && fields[0] === "hardcover")) requireAdmin(req);
     const input = z
       .object({
         name: z.string().min(1).max(60).optional(),
