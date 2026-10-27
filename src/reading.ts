@@ -179,6 +179,7 @@ export async function queueBookmark(
   });
   void syncBookmarks(id).catch(() => {});
 }
+const rejectedBookmarkStatuses = [400, 403, 404, 410, 413, 422];
 export async function syncBookmarks(id: string) {
   if (!navigator.onLine || bookmarkSyncs.has(id)) return;
   bookmarkSyncs.add(id);
@@ -188,17 +189,43 @@ export async function syncBookmarks(id: string) {
     let current = ((await localDB.preferences.get(key))?.value as any[]) || [];
     while (current.length) {
       const action = current[0];
-      await api(
-        `/reader/${encodeURIComponent(id)}/bookmarks${action.method === "DELETE" ? `/${action.id}` : ""}`,
+      const response = await fetch(
+        `/api/reader/${encodeURIComponent(id)}/bookmarks${action.method === "DELETE" ? `/${action.id}` : ""}`,
         {
           method: action.method,
-          headers: { "X-Sonder-User-Id": String(owner) },
+          headers: {
+            "X-Sonder-User-Id": String(owner),
+            ...(action.method === "POST"
+              ? { "Content-Type": "application/json" }
+              : {}),
+          },
           ...(action.method === "POST"
             ? { body: JSON.stringify(action.bookmark) }
             : {}),
         },
       );
+      if (response.status === 401) {
+        window.dispatchEvent(new Event("sonder:unauthorized"));
+        return;
+      }
+      const data = await response.json().catch(() => ({}));
       if (owner !== userId()) return;
+      // The server will never accept this action. Drop it so later bookmark
+      // changes for this ebook can still sync.
+      const rejected = rejectedBookmarkStatuses.includes(response.status);
+      if (!response.ok && !rejected)
+        throw new Error(data.error || "Bookmarks could not be synchronized.");
+      if (rejected)
+        window.dispatchEvent(
+          new CustomEvent("sonder:bookmark-rejected", {
+            detail: {
+              id,
+              method: action.method,
+              bookmark: action.id,
+              error: data.error || "The server rejected this bookmark.",
+            },
+          }),
+        );
       await localDB.transaction("rw", localDB.preferences, async () => {
         const latest =
           ((await localDB.preferences.get(key))?.value as any[]) || [];

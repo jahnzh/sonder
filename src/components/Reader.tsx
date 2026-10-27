@@ -299,13 +299,25 @@ export function ReaderView({
           mapRef.current?.recordingId,
         );
     };
+    const rejected = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (detail.id !== id) return;
+      notify(`${detail.method === "DELETE" ? "A bookmark could not be removed" : "A bookmark could not be saved"}: ${detail.error}`, true);
+      if (detail.method === "POST" && bookRef.current) {
+        const updated = { ...bookRef.current, bookmarks: bookRef.current.bookmarks.filter(entry => entry.id !== detail.bookmark) };
+        bookRef.current = updated;
+        setBook(updated);
+      }
+    };
     window.addEventListener("online", online);
     window.addEventListener("pagehide", persist);
     window.addEventListener("sonder:reading-conflict", conflicting);
+    window.addEventListener("sonder:bookmark-rejected", rejected);
     return () => {
       window.removeEventListener("online", online);
       window.removeEventListener("pagehide", persist);
       window.removeEventListener("sonder:reading-conflict", conflicting);
+      window.removeEventListener("sonder:bookmark-rejected", rejected);
       if (saveTimer.current) {
         clearTimeout(saveTimer.current);
         persist();
@@ -928,7 +940,8 @@ export function ReaderView({
     window.addEventListener("keydown",key); return () => window.removeEventListener("keydown",key);
   }, [panel,sentence,preferences.display,p.book,p.toggle,p.skip,appearance]);
   const sentenceInterval=map?.intervals.find(item=>item.paragraphId===sentence?.paragraphId);
-  const selectSentence=() => { if (sentence) { latest.current=sentence; setLocator(sentence); } };
+  // The sheet shows and copies the whole sentence; saved locators keep the usual 300-character quote.
+  const selectSentence=() => { if (sentence) { const value={...sentence,quote:sentence.quote?.slice(0,300)}; latest.current=value; setLocator(value); } };
   const searchResults =
     book && query.trim().length > 1
       ? book.sections
