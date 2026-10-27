@@ -4,7 +4,7 @@ import { ReaderView } from "./Reader";
 import {PlaybackExtra} from "./PlaybackMenu";
 import type { Book, SavedEbook } from "../types";
 import type { AlignmentJob } from "../reading-types";
-export function PlaybackReader({book,books,notify,onAvailable,onMissing}:{book:Book;books:Book[];notify:(text:string,error?:boolean)=>void;onAvailable:(available:boolean)=>void;onMissing:()=>void}) {
+export function PlaybackReader({book,books,notify,onAvailable,onMissing,onClose}:{book:Book;books:Book[];notify:(text:string,error?:boolean)=>void;onAvailable:(available:boolean)=>void;onMissing:()=>void;onClose:()=>void}) {
   const [ebooks,setEbooks]=useState<SavedEbook[]>([]),[selected,setSelected]=useState(""),[loading,setLoading]=useState(true);
   useEffect(()=>{
     let live=true;
@@ -34,7 +34,7 @@ export function PlaybackReader({book,books,notify,onAvailable,onMissing}:{book:B
   return <section className={`playback-reader ${selected ? "has-ebook" : ""}`} aria-label="Playback ebook">
     {loading ? <p role="status">Loading ebook…</p> : selected ? <>
       {ebooks.length>1 && <PlaybackExtra><label className="playback-ebook-edition">Ebook edition<select aria-label="Playback ebook edition" value={selected} onChange={event=>{setSelected(event.target.value);localStorage.setItem(`reader-ebook:${book.workId}`,event.target.value);}}>{ebooks.map((ebook,index)=><option key={ebook.id} value={ebook.id}>{ebook.title} · {ebook.id.startsWith("upload-") ? "Imported EPUB" : `EPUB ${index+1}`}</option>)}</select></label></PlaybackExtra>}
-      <ReaderView key={selected} id={selected} fromAudio={false} inline recordingId={book.recordingId} books={books} notify={notify}/>
+      <ReaderView key={selected} id={selected} fromAudio={false} inline recordingId={book.recordingId} books={books} notify={notify} onClose={onClose}/>
     </> : <button className="button subtle" onClick={onMissing}>Find ebook</button>}
   </section>;
 }

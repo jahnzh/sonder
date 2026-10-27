@@ -30,6 +30,7 @@ import { PlaybackReader } from "./PlaybackReader";
 import { PlaybackSource } from "./PlaybackSource";
 import {PlaybackMenuContext,PlaybackExtra} from "./PlaybackMenu";
 import { PlaybackTimeline } from "./PlaybackTimeline";
+import { useAppearance } from "./Appearance";
 import { ReaderShortcut } from "./ReaderShortcut";
 import { listeningChapters, currentChapter } from "../chapters";
 import { hasKnownReader, warmPlaybackReading } from "../reading";
@@ -125,6 +126,7 @@ export function PlayerDock({
   notify: (text:string,error?:boolean)=>void;
 }) {
   const p = usePlayer();
+  const { appearance, update, save } = useAppearance();
   const [expanded, setExpanded] = useState(false);
   const b = p.book || fallback;
   const [hasReader, setHasReader] = useState(() => hasKnownReader(b?.workId));
@@ -379,7 +381,20 @@ export function PlayerDock({
             </div>}
             {!hasReader && <h2>{(p.book || b).title}</h2>}
             <PlaybackExtra><p className="now-playing-author">{(p.book || b).author}</p></PlaybackExtra>
-            <PlaybackReader book={p.book || b} books={books} notify={notify} onAvailable={setHasReader} onMissing={()=>{setExpanded(false);onBookDetails(p.book || b);}}/>
+            <PlaybackReader
+              book={p.book || b}
+              books={books}
+              notify={notify}
+              onAvailable={(available) => {
+                setHasReader((prev) => available || (hasKnownReader(b?.workId) && prev));
+              }}
+              onClose={() => setExpanded(false)}
+              onMissing={() => {
+                setHasReader(false);
+                setExpanded(false);
+                onBookDetails(p.book || b);
+              }}
+            />
             <div className="now-playing-transport">
             <PlaybackExtra><div className="transport-info"><div className="chapter-playing">
               <Headphones size={14} />
@@ -392,6 +407,8 @@ export function PlayerDock({
             </div>
             </PlaybackExtra>
             <PlaybackTimeline book={p.book || b} />
+            <div className="player-transport-row">
+            {hasReader && <div className="player-transport-display"><button className="button subtle" onClick={()=>{const display:(typeof appearance.reader.display)=appearance.reader.display==="book"?"segment":"book";const value={...appearance,reader:{...appearance.reader,display}};update(value);void save(value).catch(()=>{});}}>{appearance.reader.display === "book" ? "Lyrics" : "Page"}</button></div>}
             <div className="transport large">
               <button
                 className="seek-button"
@@ -423,9 +440,10 @@ export function PlayerDock({
                 <span>30</span>
               </button>
             </div>
+            <div className="player-transport-timer"><PlaybackOptions kind="sleep" /></div>
+            </div>
             <PlaybackExtra><div className="full-options">
               <PlaybackOptions kind="speed" />
-              <PlaybackOptions kind="sleep" />
             </div></PlaybackExtra>
             </div>
             <PlaybackExtra>

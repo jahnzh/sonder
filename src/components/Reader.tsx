@@ -17,11 +17,14 @@ import {
   X,
   Play,
   Pause,
+  RotateCcw,
+  RotateCw,
 } from "lucide-react";
 import { Dialog } from "./ui/dialog";
 import { useAppearance } from "./Appearance";
 import { fontFamilies, paletteFor } from "../appearance";
 import { ReadingSync } from "./ReadingSync";
+import { LyricsReader } from "./LyricsReader";
 import { PlaybackSource } from "./PlaybackSource";
 import {PlaybackExtra,usePlaybackMenu} from "./PlaybackMenu";
 import { readerWords, readerSegment } from "../reader-segments";
@@ -141,6 +144,7 @@ export function ReaderHost({
           fromAudio={fromAudio}
           books={books}
           notify={notify}
+          onClose={() => { setId(null); location.hash = back.current; }}
         />
       )}
     </Dialog>
@@ -153,11 +157,13 @@ export function ReaderView({
   recordingId,
   books,
   notify,
+  onClose,
 }: {
   id: string;
   fromAudio: boolean;
   inline?: boolean;
   recordingId?: string;
+  onClose?: () => void;
   books: Book[];
   notify: (text: string, error?: boolean) => void;
 }) {
@@ -177,7 +183,16 @@ export function ReaderView({
     [conflict, setConflict] = useState<ReadingCheckpoint | null>(null),
     [follow, setFollow] = useState(true),
     [manualWord, setManualWord] = useState<number | null>(null),
-    [recoveryStatus, setRecoveryStatus] = useState("");
+    [recoveryStatus, setRecoveryStatus] = useState(""),
+    [controlsVisible, setControlsVisible] = useState(false),
+    [desktop, setDesktop] = useState(() => window.matchMedia("(min-width: 900px)").matches),
+    [sentence, setSentence] = useState<TextLocator | null>(null);
+  useEffect(() => {
+    const media=window.matchMedia("(min-width: 900px)");
+    const change=() => setDesktop(media.matches);
+    media.addEventListener("change",change); return () => media.removeEventListener("change",change);
+  }, []);
+  const pageAction = useRef<(action: string, content?: Contents, event?: PointerEvent) => void>(() => {});
   const viewport = useRef<HTMLDivElement>(null),
     segmentHost = useRef<HTMLElement>(null),
     epub = useRef<EpubBook | null>(null),
@@ -343,7 +358,7 @@ export function ReaderView({
         const view = publication.renderTo(host, {
           width: host.clientWidth,
           height: host.clientHeight,
-          spread: "none",
+          spread: "auto",
           flow: preferences.mode === "scroll" ? "scrolled-doc" : "paginated",
           allowScriptedContent: false,
         });
@@ -430,6 +445,35 @@ export function ReaderView({
           } catch {}
         });
         view.hooks.content.register((content: Contents) => {
+          let start: {x:number; y:number; time:number} | null = null;
+          let hold: ReturnType<typeof setTimeout> | null = null;
+          let held = false;
+          content.document.addEventListener("pointerdown", (event: PointerEvent) => {
+            if (event.button !== 0 || (event.target as Element)?.closest("a")) return;
+            start = { x: event.clientX, y: event.clientY, time: Date.now() }; held = false;
+            hold = setTimeout(() => { held = true; pageAction.current("sentence", content, event); }, 550);
+          });
+          content.document.addEventListener("pointermove", (event: PointerEvent) => {
+            if (start && (Math.abs(event.clientX-start.x)>12 || Math.abs(event.clientY-start.y)>12) && hold) { clearTimeout(hold); hold=null; }
+          });
+          content.document.addEventListener("pointercancel", () => { if (hold) clearTimeout(hold); start=null; });
+          content.document.addEventListener("pointerup", (event: PointerEvent) => {
+            if (hold) clearTimeout(hold); hold=null;
+            if (!start || held) { start=null; return; }
+            const dx=event.clientX-start.x, dy=event.clientY-start.y;
+            if (Math.abs(dx)>50 && Math.abs(dx)>Math.abs(dy)) pageAction.current(dx>0 ? "previous" : "next");
+            else if (start.y<40 && dy>80 && Math.abs(dy)>Math.abs(dx)) pageAction.current("close");
+            else if (Math.abs(dx)<12 && Math.abs(dy)<12 && Date.now()-start.time<550) {
+              const frame = content.document.defaultView?.frameElement?.getBoundingClientRect();
+              const bounds = viewport.current?.getBoundingClientRect();
+              const fraction = frame && bounds ? (frame.left + event.clientX - bounds.left) / Math.max(1, bounds.width) : event.clientX / Math.max(1, content.document.documentElement.clientWidth);
+              pageAction.current(fraction<0.3 ? "previous" : fraction>0.7 ? "next" : "controls");
+            }
+            start=null;
+          });
+          content.document.addEventListener("keydown", (event: KeyboardEvent) => {
+            if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); pageAction.current(event.key === "ArrowLeft" ? "previous" : "next"); }
+          });
           content.document.addEventListener("click", (event) => {
             const link = (event.target as Element)?.closest("a[href]");
             if (link && /^https?:/i.test(link.getAttribute("href") || "")) {
@@ -501,10 +545,12 @@ export function ReaderView({
       },
       body: {
         "font-family": `${fontFamilies[preferences.font]} !important`,
-        "font-size": `${preferences.size}px !important`,
-        "line-height": `${preferences.lineHeight} !important`,
-        padding: `${preferences.margin}px ${inline ? 0 : preferences.margin}px !important`,
-        "max-width": `${preferences.width}px`,
+        "font-size": `clamp(${Math.max(14,preferences.size-2)}px, 4.6vw, ${preferences.size+1}px) !important`,
+        "line-height": `${preferences.lineHeight === 1.7 ? (window.innerWidth > 400 ? 1.55 : 1.6) : preferences.lineHeight} !important`,
+        padding: preferences.margin === 20 ? "clamp(20px, 6vw, 32px) !important" : `${preferences.margin}px !important`,
+        "max-width": preferences.width === 720 ? "34em" : `${preferences.width}px`,
+        "text-align": "left !important",
+        hyphens: "auto",
         margin: "0 auto !important",
       },
       "body *": {
@@ -769,6 +815,45 @@ export function ReaderView({
       });
     } else void (direction < 0 ? rendition.current?.prev() : rendition.current?.next());
   };
+  pageAction.current = (action, content, event) => {
+    if (action === "previous") turn(-1);
+    else if (action === "next") turn(1);
+    else if (action === "controls") setControlsVisible(value => !value);
+    else if (action === "close") onClose?.();
+    else if (action === "sentence" && content && event && bookRef.current) {
+      const doc = content.document;
+      let range = (doc as Document & {caretRangeFromPoint?: (x:number,y:number)=>Range|null}).caretRangeFromPoint?.(event.clientX,event.clientY);
+      if (!range) {
+        const caret = doc.caretPositionFromPoint?.(event.clientX, event.clientY);
+        if (caret) { range = doc.createRange(); range.setStart(caret.offsetNode, caret.offset); range.collapse(true); }
+      }
+      if (!range) return;
+      const nodes = blockNodes(doc), index = nodes.findIndex(node => node.contains(range.startContainer));
+      const section = bookRef.current.sections.find(item => item.index === content.sectionIndex);
+      if (index < 0 || !section) return;
+      const prefix=doc.createRange(); prefix.selectNodeContents(nodes[index]);
+      try { prefix.setEnd(range.startContainer,range.startOffset); } catch { return; }
+      const offset=normalize(prefix.toString()).length;
+      const fragment=section.paragraphs.find(item => item.blockIndex===index && item.start<=offset && item.end>=offset) || section.paragraphs.find(item => item.blockIndex===index);
+      if (!fragment) return;
+      const all=bookRef.current.sections.flatMap(item=>item.paragraphs);
+      const cfi=content.cfiFromRange(rangeAt(nodes[index],fragment.start));
+      setSentence({cfi,section:section.index,paragraphId:fragment.id,quote:fragment.text,progression:all.findIndex(item=>item.id===fragment.id)/Math.max(1,all.length-1)});
+    }
+  };
+  useEffect(() => {
+    const key = (event: KeyboardEvent) => {
+      // The Now Playing reader stays mounted while its dialog is closed.
+      if ((event.target as HTMLElement)?.closest("input,select,textarea,button") || panel || sentence || viewport.current?.closest('[data-state="closed"]')) return;
+      if (preferences.display === "segment" && event.key === " ") { event.preventDefault(); if (p.book) p.toggle(); }
+      else if (preferences.display === "segment" && event.key.toLowerCase() === "f") { event.preventDefault(); setFollow(true); following.current=""; }
+      else if (preferences.display === "segment" && event.key.toLowerCase() === "p") { event.preventDefault(); editReader({display:"book"}); }
+      else if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); if (preferences.display === "segment" && p.book) p.skip(event.key === "ArrowLeft" ? -30 : 30); else pageAction.current(event.key === "ArrowLeft" ? "previous" : "next"); }
+    };
+    window.addEventListener("keydown",key); return () => window.removeEventListener("keydown",key);
+  }, [panel,sentence,preferences.display,p.book,p.toggle,p.skip,appearance]);
+  const sentenceInterval=map?.intervals.find(item=>item.paragraphId===sentence?.paragraphId);
+  const selectSentence=() => { if (sentence) { latest.current=sentence; setLocator(sentence); } };
   const searchResults =
     book && query.trim().length > 1
       ? book.sections
@@ -784,14 +869,14 @@ export function ReaderView({
           .slice(0, 60)
       : [];
   return (
-    <div className={`reader-room ${inline ? "inline-reader" : ""}`} data-current-passage={follow ? currentInterval?.paragraphId : undefined}>
-      {book && !inline && (
+    <div className={`reader-room ${inline ? "inline-reader" : ""}`} data-controls-visible={controlsVisible || desktop} data-current-passage={follow ? currentInterval?.paragraphId : undefined}>
+      {book && !inline && controlsVisible && (
         <div className="reader-book-heading">
           <strong>{book.title}</strong>
           <span>{book.author}</span>
         </div>
       )}
-      <PlaybackExtra><div
+      <PlaybackExtra><div className="reader-legacy-controls"><div
         className="reader-toolbar"
         role="toolbar"
         aria-label="Reader controls"
@@ -849,17 +934,11 @@ export function ReaderView({
       <div className="reader-display-options">
         <label>View
           <select aria-label="Reader display" value={preferences.display} onChange={event => editReader({display:event.target.value as "book"|"segment"})}>
-            <option value="book">Full ebook</option><option value="segment">Current segment</option>
+            <option value="book">Page</option><option value="segment">Lyrics</option>
           </select>
         </label>
-        {preferences.display === "segment" && <label>Words
-          <input type="number" aria-label="Words per segment" min="1" max="160" step="1" value={preferences.segmentWords} onChange={event => {if(event.target.value) editReader({segmentWords:Math.max(1,Math.min(160,Math.floor(Number(event.target.value))))});}}/>
-        </label>}
-        <button className={`button subtle reader-follow-toggle ${follow ? "selected" : ""}`} aria-label={follow ? "Following audio" : "Follow audio"} aria-pressed={follow} onClick={() => {setFollow(!follow);following.current="";followRetry.current.attempts=0;setError("");}}>
-          <Headphones size={15}/><span>{follow ? "Following" : "Follow"}</span>
-        </button>
       </div>
-      </PlaybackExtra>
+      </div></PlaybackExtra>
       {error && (
         <p className="inline-error" role="alert">
           {error}
@@ -870,17 +949,69 @@ export function ReaderView({
           <Loader2 className="spin" /> Opening your book…
         </p>
       )}
+      <div className="reader-chrome" hidden={!controlsVisible && !desktop}>
+        {!desktop && <button className="icon-button" aria-label="Hide reader controls" onClick={() => setControlsVisible(false)}><ArrowLeft size={19}/></button>}
+        {onClose && <button className="icon-button" aria-label="Close reader" onClick={onClose}><X size={19}/></button>}
+        <button className="icon-button" aria-label="Search this book" onClick={() => setPanel("search")}><Search size={19}/></button>
+        <button className="icon-button" aria-label="Reader appearance" onClick={() => setPanel("appearance")}><Settings size={19}/></button>
+        <button className="icon-button" aria-label="Bookmarks" onClick={() => setPanel("bookmarks")}><Bookmark size={19}/></button>
+        <button className="icon-button" aria-label="Reading sync" onClick={() => setPanel("sync")}><Headphones size={19}/></button>
+        <button className="icon-button" aria-label={offline ? "Ebook saved offline" : "Save ebook offline"} disabled={!book || !file.current || saving || offline} onClick={() => {if (!book || !file.current) return; setSaving(true); void saveEpubOffline(book,file.current).then(()=>{setOffline(true);notify("Ebook saved on this device.");}).catch(error=>notify(error.message,true)).finally(()=>setSaving(false));}}>{saving ? <Loader2 size={19} className="spin"/> : <Download size={19}/>}</button>
+      </div>
       <div
         className={`reader-viewport ${preferences.display === "segment" ? "segment-underlay" : ""}`}
         ref={viewport}
         aria-label="Ebook pages"
         aria-hidden={preferences.display === "segment"}
       />
-      {preferences.display === "segment" && <article ref={segmentHost} className="reader-segment" aria-label="Current ebook segment" style={{fontFamily:fontFamilies[preferences.font],fontSize:preferences.size,lineHeight:preferences.lineHeight,padding:inline ? `${preferences.margin}px 0` : preferences.margin,background:inline ? "transparent" : preferences.theme==="sepia" ? "#f2e6cd" : preferences.theme==="light" ? "#ffffff" : preferences.theme==="dark" ? "#101510" : undefined,color:inline ? paletteFor(appearance).text : preferences.theme==="sepia" ? "#362f24" : preferences.theme==="light" ? "#202820" : preferences.theme==="dark" ? "#e6eadf" : undefined}}>
-        <p style={{maxWidth:preferences.width}}>{segment.words.map((word,index) => <span key={segment.start+index} data-word={word.text} data-active-passage={follow && word.paragraphId===currentInterval?.paragraphId || undefined} data-active-word={follow && !!currentInterval && segment.start+index===segment.cursor || undefined}>{word.text}{" "}</span>)}</p>
-        {!segment.words.length && <span>No readable text in this ebook.</span>}
-      </article>}
-      <PlaybackExtra><div className="reader-navigation">
+      {preferences.display === "segment" && book && <LyricsReader
+        book={book} interval={currentInterval} position={p.position} hasMap={!!map?.intervals.length} follow={follow} size={preferences.size} selectedParagraph={locator?.paragraphId}
+        onToggleControls={() => setControlsVisible(value=>!value)} onClose={() => onClose?.()}
+        onManualScroll={() => setFollow(false)} onPrepareSync={() => setPanel("sync")}
+        onSeek={(paragraphId, fraction) => {
+          const interval=map?.intervals.find(item=>item.paragraphId===paragraphId);
+          const audio=books.find(item=>item.recordingId===map?.recordingId);
+          const track=audio?.tracks.find(item=>item.id===interval?.trackId);
+          if (!interval || !audio || !track) {setPanel("sync");return;}
+          setFollow(true); following.current="";
+          void p.play(audio,track,interval.start+fraction*(interval.end-interval.start));
+        }}
+      />}
+      {desktop && book && preferences.display === "book" && <aside className="reader-desktop-contents" aria-label="Contents sidebar"><strong>Contents</strong>{book.sections.map(section=><button key={section.index} aria-current={section.index===locator?.section ? "location" : undefined} onClick={()=>{setFollow(false);setManualWord(null);automatic.current=0;void rendition.current?.display(section.href);}}>{section.title}</button>)}</aside>}
+      {desktop && book && preferences.display === "segment" && <aside className="reader-lyrics-info" aria-label="Lyrics information"><strong>{book.title}</strong><span>{book.author}</span><span>{currentInterval ? currentInterval.verified ? "Following narration" : "Estimated sentence timings" : "Reading sync"}</span><p>Keyboard shortcuts</p><span>Space · play or pause</span><span>← / → · skip 30 seconds</span><span>↑ / ↓ · previous or next line</span><span>F · back to narration</span><span>P · page mode</span></aside>}
+      {desktop && preferences.display === "book" && <><button className="reader-edge reader-edge-previous" aria-label="Previous ebook page" onClick={()=>turn(-1)}><ArrowLeft size={20}/></button><button className="reader-edge reader-edge-next" aria-label="Next ebook page" onClick={()=>turn(1)}><ArrowRight size={20}/></button></>}
+      {!follow && currentInterval && <button className="button reader-back-narration" onClick={() => {setFollow(true); following.current=""; followRetry.current.attempts=0; setError("");}}>Back to narration</button>}
+      <div className="reader-page-footer"><button className="reader-footer-toggle" aria-label="Show reader controls" onClick={()=>setControlsVisible(true)}>{book?.sections.find(section=>section.index===locator?.section)?.title || ""} · {Math.round((locator?.progression || 0)*100)}%</button></div>
+      <div className="reader-page-actions" hidden={!controlsVisible && !desktop}>
+        <div className="reader-progress-sync" role="group" aria-label="Sync reading and audio positions">
+          <button className="button subtle" onClick={() => void fromAudio()} disabled={recovering}>
+            {recovering ? <Loader2 size={15} className="spin" /> : <BookOpen size={15} />}
+            {recovering ? "Locating passage…" : "Read from audio"}
+          </button>
+          <button className="button subtle" onClick={listen}>
+            <Headphones size={15} /> Listen from here
+          </button>
+        </div>
+        <input aria-label="Book progress" type="range" min="0" max="1000" value={Math.round((locator?.progression || 0)*1000)} onChange={event=>{const all=book?.sections.flatMap(section=>section.paragraphs) || []; const fragment=all[Math.round(Number(event.target.value)/1000*Math.max(0,all.length-1))]; if(fragment){setFollow(false);void showFragment(fragment.id,false).then(()=>{if(latest.current) void saveReading(id,latest.current,"reading",map?.recordingId);});}}}/>
+        <div>
+          <button className="icon-button" aria-label="Contents" onClick={()=>setPanel("contents")}><List size={19}/></button>
+          {!inline && <button className="button subtle" onClick={()=>editReader({display:preferences.display === "book" ? "segment" : "book"})}>{preferences.display === "book" ? "Lyrics" : "Page"}</button>}
+          <button className="icon-button" aria-label="Back 30 seconds" disabled={!p.book} onClick={()=>p.skip(-30)}><RotateCcw size={19}/></button>
+          <button className="icon-button" aria-label={p.playing ? "Pause reader audio" : "Play reader audio"} disabled={!p.book} onClick={p.toggle}>{p.playing ? <Pause size={19}/> : <Play size={19}/>}</button>
+          <button className="icon-button" aria-label="Forward 30 seconds" disabled={!p.book} onClick={()=>p.skip(30)}><RotateCw size={19}/></button>
+          <button className="icon-button" aria-label="Bookmark this passage" disabled={!locator} onClick={()=>void bookmark()}><Bookmark size={19}/></button>
+        </div>
+      </div>
+      {sentence && <div className="reader-sentence-sheet" role="dialog" aria-label="Sentence actions">
+        <button className="icon-button" aria-label="Close sentence actions" onClick={()=>setSentence(null)}><X size={19}/></button>
+        <p>{sentence.quote}</p>
+        {sentenceInterval && <p>{sentenceInterval.verified ? "Audio time" : "Estimated audio time"}: {Math.floor(sentenceInterval.start/60)}:{String(Math.floor(sentenceInterval.start%60)).padStart(2,"0")}</p>}
+        <button className="button primary" onClick={()=>{selectSentence();listen();setSentence(null);}}>Listen from here</button>
+        <button className="button subtle" onClick={()=>{selectSentence();void bookmark();setSentence(null);}}>Bookmark</button>
+        <button className="button subtle" onClick={()=>{void navigator.clipboard.writeText(sentence.quote || "").then(()=>notify("Copied."));setSentence(null);}}>Copy</button>
+        <button className="button subtle" onClick={()=>{selectSentence();setFollow(false);void showFragment(sentence.paragraphId);editReader({display:"segment"});setSentence(null);}}>Open in Lyrics</button>
+      </div>}
+      <PlaybackExtra><div className="reader-legacy-controls"><div className="reader-navigation">
         <button
           className="button subtle"
           disabled={!rendered}
@@ -903,21 +1034,6 @@ export function ReaderView({
         </button>
       </div>
       <div className="reader-listen-controls">
-        <button
-          className="button subtle"
-          onClick={() => void fromAudio()}
-          disabled={recovering}
-        >
-          {recovering ? (
-            <Loader2 size={15} className="spin" />
-          ) : (
-            <BookOpen size={15} />
-          )}{" "}
-          {recovering ? "Locating passage locally…" : "Read from audio"}
-        </button>
-        <button className="button primary" onClick={listen}>
-          <Headphones size={15} /> Listen from here
-        </button>
         {p.book && !inline && (
           <button
             className="icon-button"
@@ -930,9 +1046,9 @@ export function ReaderView({
         {!inline && <PlaybackSource />}
       </div>
       <div className="reader-sync-state" role="status">
-        {recoveryStatus || (!follow ? "Audio follow paused" : currentInterval ? `${preferences.display === "segment" ? "Estimated word position" : currentInterval.verified ? "Following narration" : "Estimated sentence timings"}` : map ? "No timing for this position" : "Prepare reading sync to highlight narration")}
+        {recoveryStatus || (!follow ? "Audio follow paused" : currentInterval ? `${currentInterval.verified ? "Following narration" : "Estimated sentence timings"}` : map ? "No timing for this position" : "Prepare reading sync to highlight narration")}
       </div>
-      </PlaybackExtra>
+      </div></PlaybackExtra>
       {conflict && (
         <div className="reading-conflict" role="alert">
           <p>

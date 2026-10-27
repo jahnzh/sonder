@@ -40,6 +40,8 @@ async function playAndPause(page: Page, title: string) {
 async function manage(page: Page) {
   await page.locator(".dock-book").click();
   await expect(page.getByText("Loading ebook…",{exact:true})).toBeHidden();
+  const reveal=page.getByRole("button",{name:"Show reader controls",exact:true});
+  if(await reveal.isVisible()) await reveal.click();
   if(await page.getByRole("button",{name:"Playback options",exact:true}).count()) await page.getByRole("button",{name:"Playback options",exact:true}).click();
   await page.getByRole("button",{name:"Versions & sources",exact:true}).click();
   await expect(page.getByRole("dialog",{name:"Versions & sources",exact:true})).toBeVisible();
@@ -172,7 +174,8 @@ test("playback opens the reader and title page; downloaded sources can be switch
   await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
   await expect(page.getByRole("dialog",{name:"Now playing"})).toBeVisible();
   await expect(page.frameLocator(".reader-viewport iframe").getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
-  await page.getByRole("button",{name:"Close dialog",exact:true}).click();
+  await page.getByRole("button",{name:"Show reader controls"}).click();
+  await page.getByRole("button",{name:"Close reader",exact:true}).click();
   await page.getByRole("button",{name:"Open title page for Managed playback story",exact:true}).click();
   await expect(page.getByRole("dialog",{name:"Book details"})).toBeVisible();
   await expect(page.getByRole("button",{name:"Read ebook",exact:true})).toBeVisible();
@@ -320,4 +323,29 @@ test.describe("touch seeking",()=>{
     await expect.poll(async()=>(await audioState(page)).position).toBe(compactPreview);
     expect(await page.evaluate(()=>(window as any).__seekEvents)).toEqual([preview,compactPreview]);
   });
+});
+
+test.describe("failed source retry",()=>{
+ test.use({serviceWorkers:"block"});
+ test("a failed source reload preserves the saved listening position on retry",async({page})=>{
+  await instrument(page);
+  const result=await page.request.post("/api/import",{multipart:{title:"Retry checkpoint",author:"Playback QA",file:{name:"Chapter.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
+  const id=(await result.json()).id;
+  const book=(await(await page.request.get("/api/books")).json()).find((b:any)=>b.id===id);
+  await page.goto("/");await playAndPause(page,"Retry checkpoint");await position(page,160);
+  await page.evaluate(() => ((window as any).__audioElements as HTMLAudioElement[]).find(a => !!a.src)!.dispatchEvent(new Event("pause")));
+  await expect.poll(async()=>(await(await page.request.get("/api/books")).json()).find((b:any)=>b.id===id).progress?.position).toBeGreaterThanOrEqual(159);
+  await page.getByRole("button",{name:"Open title page for Retry checkpoint",exact:true}).click();
+  await page.getByRole("button",{name:"Versions & sources",exact:true}).click();
+  const manager=page.getByRole("dialog",{name:"Versions & sources"});
+  await manager.getByRole("combobox",{name:"Playback source choice"}).selectOption("server");
+  const source=(url:URL)=>url.pathname===`/api/media/${book.tracks[0].id}` && url.searchParams.get("source")==="server";
+  await page.route(source,route=>route.abort());
+  await manager.getByRole("button",{name:"Apply source"}).click();
+  await expect.poll(()=>page.evaluate(() => ((window as any).__audioElements as HTMLAudioElement[]).find(a => !!a.src)?.error?.code)).toBeTruthy();
+  await page.unroute(source);
+  await manager.getByRole("button",{name:"Apply source"}).click();
+  await expect.poll(async()=>(await audioState(page)).position).toBeCloseTo(160,0);
+  await expect.poll(async()=>(await(await page.request.get("/api/books")).json()).find((b:any)=>b.id===id).progress?.position).toBeGreaterThanOrEqual(159);
+});
 });

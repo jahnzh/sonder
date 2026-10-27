@@ -2,7 +2,7 @@ import {test,expect,type Page} from "@playwright/test";
 import {readFileSync} from "node:fs";
 import {readerFixture} from "../reader-fixture";
 test.afterEach(async({page})=>{await page.unrouteAll({behavior:"wait"});});
-async function fixture(page:Page,title:string,language="en"){
+async function fixture(page:Page,title:string,language="en-US"){
  const response=await page.request.post("/api/import",{multipart:{title,author:"Reader QA",file:{name:"Narration.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
  expect(response.ok()).toBe(true);
  const id=(await response.json()).id;
@@ -47,111 +47,64 @@ async function checkHeading(page:Page){
  expect(Math.abs(await centre(dialog.getByRole("button",{name:"Playback options",exact:true}))-close)).toBeLessThan(1);
  expect(Math.abs(await centre(dialog.locator(".now-playing-heading-title"))-close)).toBeLessThan(1);
 }
-test("normal playback shows the ebook by default and follows paused seeks across sections without jump notifications or checkpoint writes",async({page})=>{
- const {ebook,map}=await fixture(page,"Integrated narration");
+test("page gestures expose controls and sentence actions",async({page})=>{
+ const {ebook,map,manifest}=await fixture(page,"Integrated narration");
  await start(page,"Integrated narration");
- await expect(page.getByRole("dialog",{name:"Reader",exact:true})).toHaveCount(0);
- await expect(page.getByRole("button",{name:"Following audio",exact:true})).toBeHidden();
- await expect(page.getByRole("button",{name:"Playback options",exact:true})).toHaveAttribute("aria-expanded","false");
- await checkTransport(page,".now-playing-dialog .transport.large");await checkHeading(page);
  const before=(await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint;
- const target=map.intervals.find((i:any)=>i.section===1 && i.start>104);
- await page.getByRole("slider",{name:"Seek in audiobook",exact:true}).fill(String(target.start+1));
- await expect(page.locator(".inline-reader")).toHaveAttribute("data-current-passage",target.paragraphId);
- await expect(page.locator(".reader-viewport .sonder-follow").first()).toBeVisible();
- await expect(page.frameLocator(".reader-viewport iframe").locator("h1")).toContainText("The Pool of Tears");
- await page.getByRole("dialog",{name:"Now playing",exact:true}).getByRole("button",{name:"Play",exact:true}).click();
- await expect.poll(()=>page.locator(".inline-reader").getAttribute("data-current-passage")).not.toBe(target.paragraphId);
- await page.getByRole("dialog",{name:"Now playing",exact:true}).getByRole("button",{name:"Pause",exact:true}).click();
- await expect(page.locator(".toast")).toHaveCount(0);
+ const room=page.locator(".inline-reader");
+ await expect(room.locator(".reader-page-actions")).toBeHidden();
+ const frameBox=(await page.locator(".reader-viewport").boundingBox())!;
+ await page.mouse.click(frameBox.x+frameBox.width/2,frameBox.y+100);
+ await expect(room.locator(".reader-page-actions")).toBeVisible();
+ await expect(room.getByRole("slider",{name:"Book progress"})).toBeVisible();
+ const text=page.frameLocator(".reader-viewport iframe").locator("p").first();
+ await text.waitFor();
+ const box=(await text.boundingBox())!;
+ await page.mouse.move(box.x+Math.min(box.width/2,80),box.y+Math.min(box.height/2,10));
+ await page.mouse.down(); await page.waitForTimeout(650); await page.mouse.up();
+ const sheet=room.getByRole("dialog",{name:"Sentence actions"});
+ await expect(sheet).toBeVisible();
+ await expect(sheet.getByRole("button",{name:"Listen from here"})).toBeVisible();
+ await expect(sheet.getByText(/Estimated audio time|Audio time/)).toBeVisible();
+ await sheet.getByRole("button",{name:"Close sentence actions"}).click();
  expect((await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint).toEqual(before);
- const box=(await page.locator(".reader-viewport").boundingBox())!;
- const controls=(await page.getByRole("slider",{name:"Seek in audiobook",exact:true}).boundingBox())!;
- expect(box.height).toBeGreaterThan(844*.65);expect(controls.y+controls.height).toBeLessThanOrEqual(844);
- const surface=await page.getByRole("dialog",{name:"Now playing",exact:true}).evaluate(el=>getComputedStyle(el).backgroundColor);
- await expect(page.frameLocator(".reader-viewport iframe").locator("body")).toHaveCSS("background-color",surface);
- const contrast=await page.frameLocator(".reader-viewport iframe").locator("body").evaluate(el=>{
-   const style=getComputedStyle(el);
-   const luminance=(color:string)=>{
-     const rgb=color.match(/\d+/g)!.slice(0,3).map(v=>Number(v)/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4);
-     return .2126*rgb[0]+.7152*rgb[1]+.0722*rgb[2];
-   };
-   const a=luminance(style.color),b=luminance(style.backgroundColor);
-   return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);
- });
- expect(contrast).toBeGreaterThan(7);
- await page.screenshot({path:"artifacts/integrated-reader-mobile.png"});
- await page.getByRole("button",{name:"Playback options",exact:true}).click();
- await expect(page.getByRole("region",{name:"Playback options",exact:true})).toBeVisible();
- await expect(page.getByRole("button",{name:"Versions & sources",exact:true})).toBeVisible();
- await page.screenshot({path:"artifacts/integrated-reader-options-mobile.png"});
- await page.getByRole("button",{name:"Search this book",exact:true}).click();
- await expect(page.getByRole("searchbox",{name:"Search inside ebook",exact:true})).toBeVisible();
- await expect(page.getByRole("region",{name:"Playback options",exact:true})).toBeHidden();
- await page.getByRole("button",{name:"Close reader options",exact:true}).click();
- await page.getByRole("button",{name:"Playback options",exact:true}).click();
- await page.keyboard.press("Escape");
- await expect(page.getByRole("button",{name:"Playback options",exact:true})).toBeFocused();
- await expect(page.getByRole("dialog",{name:"Now playing",exact:true})).toBeVisible();
- await expect(page.getByRole("region",{name:"Playback options",exact:true})).toBeHidden();
- await page.setViewportSize({width:1440,height:1000});
- await checkTransport(page,".now-playing-dialog .transport.large");await checkHeading(page);
- await expect(page.locator(".reader-viewport .sonder-follow").first()).toBeVisible();
- expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(1440);
- await page.screenshot({path:"artifacts/integrated-reader-desktop.png"});
- await page.getByRole("dialog",{name:"Now playing",exact:true}).getByRole("button",{name:"Close dialog",exact:true}).click();
- for(const width of [320,390,1024,1440]){
-   await page.setViewportSize({width,height:844});
-   await checkTransport(page,".player-dock .transport");
-   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(width);
- }
+ const passages=manifest.sections.flatMap((section:any)=>section.paragraphs);
+ const target=map.intervals.find((interval:any)=>interval.section===1 && interval.start>105);
+ const index=passages.findIndex((passage:any)=>passage.id===target.paragraphId);
+ await room.getByRole("slider",{name:"Book progress"}).fill(String(Math.round(index/(passages.length-1)*1000)));
+ await expect.poll(async()=>(await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint?.locator.paragraphId).toBe(target.paragraphId);
+ const sync=room.getByRole("group",{name:"Sync reading and audio positions"});
+ await sync.getByRole("button",{name:"Listen from here"}).click();
+ await expect(room).toHaveAttribute("data-current-passage",target.paragraphId);
+ await sync.getByRole("button",{name:"Read from audio"}).click();
+ await expect.poll(async()=>(await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint?.origin).toBe("listening");
 });
-test("current-segment mode shows the chosen number of words, follows narration, and persists its settings",async({page})=>{
+test("page controls and lyrics follow the prepared narration",async({page})=>{
  const appearance=await(await page.request.get("/api/appearance")).json();
- const {book,ebook,map}=await fixture(page,"Segment narration","en-GB");
+ await fixture(page,"Lyrics narration","en-GB");
  try {
-  await start(page,"Segment narration");
-  await page.getByRole("button",{name:"Playback options",exact:true}).click();
-  await page.getByRole("combobox",{name:"Reader display",exact:true}).selectOption("segment");
-  await page.getByRole("spinbutton",{name:"Words per segment",exact:true}).fill("12");
-  await page.getByRole("button",{name:"Close playback options",exact:true}).click();
-  const interval=map.intervals.find((i:any)=>i.section===0 && i.start>6 && i.end-i.start>1);
-  await page.getByRole("slider",{name:"Seek in audiobook",exact:true}).fill(String(interval.start+1));
-  await expect(page.locator(".reader-segment [data-word]")).toHaveCount(12);
-  await expect(page.getByRole("article",{name:"Current ebook segment",exact:true})).toBeVisible();
-  await expect(page.locator(".reader-viewport iframe")).toBeHidden();
-  await expect(page.locator(".reader-segment [data-active-word]")).toHaveCount(1);
-  await expect(page.getByText("Estimated word position",{exact:true})).toBeHidden();
-  const first=await page.locator(".reader-segment").innerText();
-  const next=map.intervals.find((i:any)=>i.section===1 && i.start>108);
-  await page.getByRole("slider",{name:"Seek in audiobook",exact:true}).fill(String(next.start+1));
-  await expect(page.locator(".inline-reader")).toHaveAttribute("data-current-passage",next.paragraphId);
-  await expect.poll(()=>page.locator(".reader-segment").innerText()).not.toBe(first);
-  await expect(page.locator(".toast")).toHaveCount(0);
-  await page.getByRole("button",{name:"Playback options",exact:true}).click();
-  await page.getByRole("spinbutton",{name:"Words per segment",exact:true}).fill("80");
-  await page.getByRole("button",{name:"Close playback options",exact:true}).click();
-  await expect(page.locator(".reader-segment [data-word]")).toHaveCount(80);
-  await expect.poll(async()=>{
-    const host=(await page.locator(".reader-segment").boundingBox())!,word=(await page.locator(".reader-segment [data-active-word]").boundingBox())!;
-    return word.y>=host.y && word.y+word.height<=host.y+host.height;
-  }).toBe(true);
-  await page.getByRole("button",{name:"Playback options",exact:true}).click();
-  await page.getByRole("spinbutton",{name:"Words per segment",exact:true}).fill("12");
-  await page.getByRole("button",{name:"Close playback options",exact:true}).click();
-  await expect.poll(async()=>(await(await page.request.get("/api/appearance")).json()).reader.segmentWords).toBe(12);
-  await page.screenshot({path:"artifacts/integrated-reader-segment-mobile.png"});
-  await page.setViewportSize({width:320,height:740});
-  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(320);
-  expect((await page.getByRole("slider",{name:"Seek in audiobook",exact:true}).boundingBox())!.y+44).toBeLessThanOrEqual(740);
-  await page.reload();
-  await page.getByRole("button",{name:`Play ${book.title}`,exact:true}).click();
-  await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
-  await expect(page.locator(".reader-segment [data-word]")).toHaveCount(12);
-  await page.getByRole("button",{name:"Playback options",exact:true}).click();
-  await expect(page.getByRole("combobox",{name:"Reader display",exact:true})).toHaveValue("segment");
-  await expect(page.getByRole("spinbutton",{name:"Words per segment",exact:true})).toHaveValue("12");
-  await expect(page.locator(".reader-segment [data-word]")).toHaveCount(12);
+  await start(page,"Lyrics narration");
+  const controls=page.locator(".inline-reader .reader-page-actions");
+  await expect(controls).toBeHidden();
+  const display=page.locator(".now-playing-transport").getByRole("button",{name:"Lyrics",exact:true});
+  await expect(display).toBeVisible();
+  await display.click();
+  const lyrics=page.getByLabel("Lyrics reader");
+  await expect(lyrics).toBeVisible();
+  await expect(lyrics.locator(".lyrics-line").first()).toBeVisible();
+  await lyrics.locator(".lyrics-line").nth(3).click();
+  await expect(lyrics.locator(".lyrics-line.current")).toHaveCount(1);
+  await lyrics.hover(); await page.mouse.wheel(0,250);
+  await expect(page.getByRole("button",{name:"Back to narration"})).toBeVisible();
+  await page.getByRole("button",{name:"Back to narration"}).click();
+  await expect(page.getByRole("button",{name:"Back to narration"})).toBeHidden();
+  await page.locator(".now-playing-transport").getByRole("button",{name:"Page",exact:true}).click();
+  await expect(page.locator(".reader-viewport iframe")).toBeVisible();
+  await page.setViewportSize({width:1440,height:900});
+  await expect(page.getByLabel("Contents sidebar")).toBeVisible();
+  await expect(page.getByRole("button",{name:"Previous ebook page",exact:true})).toBeVisible();
+  await page.locator(".now-playing-transport").getByRole("button",{name:"Lyrics",exact:true}).click();
+  await expect(page.getByLabel("Lyrics information")).toBeVisible();
  } finally {await page.request.put("/api/appearance",{data:appearance});}
 });
 
@@ -162,9 +115,27 @@ test("opening the reader restores saved audio position without starting playback
  await page.goto("/");
  await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
  await expect(page.locator(".inline-reader")).toHaveAttribute("data-current-passage",interval.paragraphId);
- await expect(page.getByRole("slider",{name:"Seek in audiobook",exact:true})).toHaveValue(String(position));
- await expect(page.getByRole("dialog",{name:"Now playing",exact:true}).getByRole("button",{name:"Play",exact:true})).toBeVisible();
+ await page.getByRole("button",{name:"Show reader controls"}).click();
+ await expect(page.getByRole("button",{name:"Play reader audio",exact:true})).toBeVisible();
  const box=(await page.locator(".reader-viewport").boundingBox())!;
  expect(box.height).toBeGreaterThan(844*.65);
  await expect(page.locator(".reader-viewport .sonder-follow").first()).toBeVisible();
+});
+
+test("lyrics without a map remains readable and offers sync setup", async ({page}) => {
+ const appearance=await(await page.request.get("/api/appearance")).json();
+ try {
+ const uploaded=await page.request.post("/api/ebooks/import",{multipart:{file:{name:"Unmapped.epub",mimeType:"application/epub+zip",buffer:await readerFixture()}}});
+ expect(uploaded.ok()).toBe(true);
+ const {id}=await uploaded.json();
+ await page.goto(`/#reader/${id}`);
+ // The closed Now Playing reader stays mounted, so scope to the standalone reader.
+ const reader=page.getByRole("dialog",{name:"Reader"});
+ await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
+ await reader.getByRole("button",{name:"Show reader controls"}).click();
+ await reader.locator(".reader-page-actions").getByRole("button",{name:"Lyrics",exact:true}).click();
+ await expect(reader.locator(".lyrics-line").first()).toBeVisible();
+ await reader.getByRole("button",{name:"Prepare reading sync",exact:true}).click();
+ await expect(reader.locator(".reader-panel-heading").getByRole("heading",{name:"Reading sync",exact:true})).toBeVisible();
+ } finally { await page.request.put("/api/appearance",{data:appearance}); }
 });

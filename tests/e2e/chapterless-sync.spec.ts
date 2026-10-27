@@ -13,6 +13,7 @@ test("a single audio file without chapter markers can prepare reading sync from 
  const id=(await upload.json()).id;
  await page.goto(`/#reader/${id}`);
  await expect(page.getByRole("dialog",{name:"Reader"})).toBeVisible();
+ await page.getByRole("button",{name:"Show reader controls"}).click();
  await page.getByRole("button",{name:"Reading sync",exact:true}).click();
  await page.getByRole("combobox",{name:"Reading sync audiobook release"}).selectOption(book.recordingId);
  await expect(page.locator(".sync-release-info")).toContainText("No chapter markers");

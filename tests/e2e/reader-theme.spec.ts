@@ -105,9 +105,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
     "sandbox",
     "allow-same-origin",
   );
-  await page
-    .getByRole("button", { name: "Next ebook page", exact: true })
-    .click();
+  await page.frameLocator(".reader-viewport iframe").locator("body").click({ position: { x: 340, y: 100 } });
   await expect
     .poll(
       async () =>
@@ -118,6 +116,9 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   const checkpoint = (
     await (await page.request.get(`/api/reader/${id}`)).json()
   ).checkpoint;
+  await page.getByRole("button", { name: "Show reader controls" }).click();
+  await expect(page.getByRole("group", { name: "Sync reading and audio positions" }).getByRole("button", { name: "Read from audio" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Sync reading and audio positions" }).getByRole("button", { name: "Listen from here" })).toBeVisible();
   await page
     .getByRole("button", { name: "Bookmark this passage", exact: true })
     .click();
@@ -201,9 +202,11 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await page
     .getByRole("button", { name: "Down the Rabbit-Hole", exact: true })
     .click();
-  await page
-    .getByRole("button", { name: "Listen from here", exact: true })
-    .click();
+  const sentence = page.frameLocator(".reader-viewport iframe").locator("p").first();
+  const box = (await sentence.boundingBox())!;
+  await page.mouse.move(box.x + 30, box.y + 10);
+  await page.mouse.down(); await page.waitForTimeout(650); await page.mouse.up();
+  await page.getByRole("dialog", { name: "Sentence actions" }).getByRole("button", { name: "Listen from here" }).click();
   await expect(
     page.getByRole("button", { name: "Pause reader audio", exact: true }),
   ).toBeVisible();
@@ -226,6 +229,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await expect(
     page.frameLocator(".reader-viewport iframe").locator("body"),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Show reader controls" }).click();
   await expect(
     page.getByRole("button", { name: "Ebook saved offline", exact: true }),
   ).toBeDisabled();
@@ -234,9 +238,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
       '.reading-sync select[aria-label="Reading sync audiobook release"]',
     ),
   ).toHaveValue(chosenRecording);
-  await page
-    .getByRole("button", { name: "Next ebook page", exact: true })
-    .click();
+  await page.frameLocator(".reader-viewport iframe").locator("body").click({ position: { x: 340, y: 100 } });
   await page
     .getByRole("button", { name: "Bookmark this passage", exact: true })
     .click();
@@ -284,6 +286,7 @@ test("an image-only cover opens at the first readable EPUB section on a narrow p
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     320,
   );
+  await page.getByRole("button", { name: "Show reader controls" }).click();
   expect(
     (await page
       .getByRole("button", { name: "Search this book", exact: true })

@@ -532,6 +532,13 @@
 .with-reader .now-playing-transport .timeline-scope { display: none; }
 .with-reader .now-playing-transport { padding-top: 8px; }
 .with-reader .now-playing-transport .transport.large { margin-top: 3px; }
+.player-transport-row { position: relative; padding-inline: 56px; }
+.player-transport-display, .player-transport-timer { position: absolute; z-index: 5; top: 0; bottom: 0; display: flex; align-items: center; }
+.player-transport-display { left: 0; }
+.player-transport-display .button { min-width: 44px; min-height: 44px; padding-inline: 10px; }
+.player-transport-timer { right: 0; }
+.player-transport-timer .player-text-button { min-width: 44px; min-height: 44px; }
+.player-transport-timer .option-menu { left: auto; right: 0; transform: none; bottom: 48px; }
 .with-reader .reader-viewport, .with-reader .reader-segment { min-height: 0; }
 .with-reader .reader-panel { top: 0; }
 .reader-segment p { font: inherit; line-height: inherit; color: inherit; }

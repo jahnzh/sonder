@@ -10,7 +10,7 @@ async function importBook(request:APIRequestContext,title:string,withEbook:boole
  if(!withEbook)return;
  const id=(await response.json()).id;
  const book=(await(await request.get("/api/books")).json()).find((b:any)=>b.id===id);
- expect((await request.post(`/api/ebooks/import?workId=${book.workId}`,{multipart:{file:{name:"Companion.epub",mimeType:"application/epub+zip",buffer:await readerFixture({})}}})).ok()).toBe(true);
+ expect((await request.post(`/api/ebooks/import?workId=${book.workId}`,{multipart:{file:{name:"Companion.epub",mimeType:"application/epub+zip",buffer:await readerFixture({language:"en-NZ"})}}})).ok()).toBe(true);
 }
 async function open(page:Page,browserName:string,title:string,[width,height]:readonly [number,number]){
  await page.setViewportSize({width,height});
@@ -68,6 +68,8 @@ async function checkTimeline(dialog:Locator,transport:Locator){
  expect(slider.box.y+slider.box.height).toBeLessThanOrEqual(row.box.y+1);
 }
 test.beforeAll(async({request})=>{
+ const appearance=await(await request.get("/api/appearance")).json();
+ await request.put("/api/appearance",{data:{...appearance,reader:{...appearance.reader,display:"book"}}});
  // One import per spec run; the browser server keeps its temp library for the whole run.
  const books=await(await request.get("/api/books")).json();
  if(!books.some((b:any)=>b.title==="Layout plain"))await importBook(request,"Layout plain",false);
@@ -87,41 +89,50 @@ for(const size of sizes){
   const [width,height]=size;
   const dialog=await open(page,browserName,"Layout reader",size);
   await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
-  const transport=dialog.locator(".transport.large");
+  const transport=dialog.locator(".now-playing-transport .transport.large");
   await checkTransport(page,transport);
   await checkTimeline(dialog,transport);
-  // Book title, options trigger and close button share the heading row.
-  const close=await centre(dialog.getByRole("button",{name:"Close dialog",exact:true}));
-  const trigger=await centre(dialog.getByRole("button",{name:"Playback options",exact:true}));
-  const title=await centre(dialog.locator(".now-playing-heading-title"));
-  expect(Math.abs(trigger.y-close.y)).toBeLessThanOrEqual(1);
-  expect(Math.abs(title.y-close.y)).toBeLessThanOrEqual(1);
-  expect(title.box.x+title.box.width).toBeLessThanOrEqual(trigger.box.x);
-  expect(close.box.x+close.box.width).toBeLessThanOrEqual(width);
-  // The whole surface fits the viewport without scrolling, and the text dominates it.
+  await expect(dialog.getByRole("button",{name:"Playback options",exact:true})).toBeVisible();
+  await expect(dialog.getByRole("button",{name:"Close dialog",exact:true})).toBeVisible();
+  const timer=dialog.getByRole("button",{name:"Sleep timer",exact:true});
+  const timerBox=await centre(timer), transportBox=await centre(transport);
+  const forwardBox=(await transport.getByRole("button",{name:"Forward 30 seconds",exact:true}).boundingBox())!;
+  expect(Math.abs(timerBox.y-transportBox.y)).toBeLessThanOrEqual(2);
+  expect(timerBox.box.width).toBeGreaterThanOrEqual(44);
+  expect(timerBox.box.x+timerBox.box.width).toBeLessThanOrEqual(width);
+  expect(timerBox.box.x).toBeGreaterThanOrEqual(forwardBox.x+forwardBox.width);
+  await timer.click();
+  const minutes=dialog.getByRole("button",{name:"15 minutes",exact:true});
+  await expect(minutes).toBeVisible();
+  const menuBox=(await minutes.boundingBox())!;
+  expect(menuBox.x).toBeGreaterThanOrEqual(0);expect(menuBox.x+menuBox.width).toBeLessThanOrEqual(width);
+  await minutes.click();
+  await expect(timer).toContainText("15m");
+  await timer.click();
+  await dialog.getByRole("button",{name:"Turn off",exact:true}).click();
   const box=(await dialog.boundingBox())!;
-  expect(box.y).toBeGreaterThanOrEqual(0);expect(box.y+box.height).toBeLessThanOrEqual(height);
+  expect(box.y).toBeGreaterThanOrEqual(0); expect(box.y+box.height).toBeLessThanOrEqual(height);
   expect((await page.locator(".reader-viewport").boundingBox())!.height).toBeGreaterThan(height*.6);
   const surface=await dialog.evaluate(el=>getComputedStyle(el).backgroundColor);
   await expect(page.frameLocator(".reader-viewport iframe").locator("body")).toHaveCSS("background-color",surface);
-  // Secondary controls are in the options sheet, not on the reading surface.
-  for(const name of ["Title page","Versions & sources"])await expect(dialog.getByRole("button",{name,exact:true})).toBeHidden();
-  await dialog.getByRole("button",{name:"Playback options",exact:true}).click();
-  const panel=page.getByRole("region",{name:"Playback options",exact:true});
-  await expect(panel).toBeVisible();
-  await expect(panel.getByRole("button",{name:"Versions & sources",exact:true})).toBeVisible();
-  const sheet=(await panel.boundingBox())!;
-  expect(sheet.x).toBeGreaterThanOrEqual(0);expect(sheet.x+sheet.width).toBeLessThanOrEqual(width);
-  expect(sheet.y+sheet.height).toBeLessThanOrEqual(height);
-  expect(await panel.evaluate(el=>el.scrollWidth-el.clientWidth)).toBeLessThanOrEqual(0);
-  const heading=await centre(panel.getByRole("heading",{name:"Playback options",exact:true}));
-  expect(Math.abs(heading.y-(await centre(panel.getByRole("button",{name:"Close playback options",exact:true}))).y)).toBeLessThanOrEqual(1);
-  // Transport stays reachable below the sheet.
-  expect(sheet.y+sheet.height).toBeLessThanOrEqual((await transport.boundingBox())!.y);
-  await page.keyboard.press("Escape");
-  await expect(panel).toBeHidden();
-  await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole("button",{name:"Playback options",exact:true})).toBeFocused();
+  if(width<900) await page.getByRole("button",{name:"Show reader controls"}).click();
+  const controls=dialog.locator(".reader-page-actions");
+  await expect(controls.getByRole("slider",{name:"Book progress"})).toBeVisible();
+  for(const name of ["Contents","Back 30 seconds","Play reader audio","Forward 30 seconds","Bookmark this passage"]) {
+    const button=controls.getByRole("button",{name,exact:true});
+    await expect(button).toBeVisible();
+    const rect=(await button.boundingBox())!;
+    expect(rect.x).toBeGreaterThanOrEqual(0); expect(rect.x+rect.width).toBeLessThanOrEqual(width);
+    expect(rect.y+rect.height).toBeLessThanOrEqual(height);
+  }
+  const lyrics=dialog.getByRole("button",{name:"Lyrics",exact:true});
+  const rewind=dialog.locator(".now-playing-transport").getByRole("button",{name:"Rewind 30 seconds",exact:true});
+  const lyricsBox=(await lyrics.boundingBox())!, rewindBox=(await rewind.boundingBox())!;
+  expect(lyricsBox.x+lyricsBox.width).toBeLessThanOrEqual(rewindBox.x+1);
+  expect(Math.abs((lyricsBox.y+lyricsBox.height/2)-(rewindBox.y+rewindBox.height/2))).toBeLessThanOrEqual(2);
+  await expect(transport).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(width);
+  if(width>=900) await expect(page.getByLabel("Contents sidebar")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
  });
