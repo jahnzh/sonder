@@ -1150,7 +1150,9 @@ export function ReaderView({
             className="button subtle"
             onClick={() => {
               void syncReading(id, true)
-                .then(() => setConflict(null))
+                .then((resolved) => {
+                  if (resolved) setConflict(null);
+                })
                 .catch((error) => notify(error.message, true));
             }}
           >

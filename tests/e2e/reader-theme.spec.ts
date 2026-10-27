@@ -473,3 +473,62 @@ test("startup does not write another user's cached appearance into the admin's s
     });
   }
 });
+test("Keep my place while offline keeps the conflict until reconnected and then resolves it", async ({
+  page,
+  context,
+}) => {
+  const upload = await page.request.post("/api/ebooks/import", {
+    multipart: {
+      file: {
+        name: "Offline conflict.epub",
+        mimeType: "application/epub+zip",
+        buffer: await readerFixture(),
+      },
+    },
+  });
+  expect(upload.ok()).toBe(true);
+  const { id } = await upload.json();
+  await page.goto(`/#reader/${id}`);
+  const reader = page.getByRole("dialog", { name: "Reader" });
+  const frame = reader.frameLocator(".reader-viewport iframe");
+  await expect(
+    frame.getByText("Alice was beginning to get very tired", { exact: false }),
+  ).toBeVisible();
+  const remote = await page.request.put(`/api/reader/${id}/progress`, {
+    data: {
+      locator: {
+        section: 1,
+        paragraphId: "1:0",
+        quote: "Other session",
+        progression: 0.5,
+      },
+      baseRevision: 0,
+      eventId: "remote-conflict-event",
+      deviceId: "other-device",
+      updatedAt: Date.now(),
+      origin: "reading",
+    },
+  });
+  expect(remote.ok()).toBe(true);
+  await frame.locator("body").click({ position: { x: 340, y: 100 } });
+  const conflict = reader.locator(".reading-conflict");
+  await expect(conflict).toBeVisible();
+  await context.setOffline(true);
+  try {
+    await conflict
+      .getByRole("button", { name: "Keep my place", exact: true })
+      .click();
+    await expect(conflict).toBeVisible();
+  } finally {
+    await context.setOffline(false);
+  }
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect(conflict).toBeHidden();
+  await expect
+    .poll(
+      async () =>
+        (await (await page.request.get(`/api/reader/${id}`)).json()).checkpoint
+          ?.revision,
+    )
+    .toBe(2);
+});

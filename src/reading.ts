@@ -12,6 +12,7 @@ export type PendingReading = {
   baseRevision: number;
   pending: boolean;
   conflict?: ReadingCheckpoint | null;
+  resolve?: boolean;
 };
 const key = (id: string) => `reader-position:${id}`;
 export function deviceId() {
@@ -32,13 +33,18 @@ export async function readingState(id: string): Promise<PendingReading | null> {
   );
 }
 const syncs = new Set<string>();
-export async function syncReading(id: string, resolve = false) {
-  if (syncs.has(id) || !navigator.onLine) return;
+export async function syncReading(id: string, resolve = false): Promise<boolean> {
+  if (resolve) {
+    const current = await readingState(id);
+    if (current?.pending) await storeReading(id, { ...current, resolve: true });
+  }
+  if (syncs.has(id) || !navigator.onLine) return false;
   syncs.add(id);
   const owner = userId();
   try {
     let value = await readingState(id);
     while (value?.pending) {
+      const shouldResolve = resolve || !!value.resolve;
       const response = await fetch(
         `/api/reader/${encodeURIComponent(id)}/progress`,
         {
@@ -46,7 +52,7 @@ export async function syncReading(id: string, resolve = false) {
           headers: { "Content-Type": "application/json", "X-Sonder-User-Id": String(owner) },
           body: JSON.stringify({
             locator: value.checkpoint.locator,
-            baseRevision: resolve
+            baseRevision: shouldResolve
               ? value.conflict?.revision || value.baseRevision
               : value.baseRevision,
             eventId: value.checkpoint.eventId,
@@ -54,27 +60,31 @@ export async function syncReading(id: string, resolve = false) {
             updatedAt: value.checkpoint.updatedAt,
             origin: value.checkpoint.origin,
             recordingId: value.checkpoint.recordingId,
-            resolve,
+            resolve: shouldResolve,
           }),
         },
       );
       if (response.status === 401) {
         window.dispatchEvent(new Event("sonder:unauthorized"));
-        return;
+        return false;
       }
       const data = await response.json();
-      if (owner !== userId()) return;
+      if (owner !== userId()) return false;
       const latest = await readingState(id);
-      if (response.status === 409 && data.code === "user_mismatch") return;
+      if (response.status === 409 && data.code === "user_mismatch") return false;
       if (response.status === 409) {
         if (latest)
-          await storeReading(id, { ...latest, conflict: data.current });
+          await storeReading(id, {
+            ...latest,
+            conflict: data.current,
+            resolve: false,
+          });
         window.dispatchEvent(
           new CustomEvent("sonder:reading-conflict", {
             detail: { id, current: data.current },
           }),
         );
-        return;
+        return false;
       }
       if (!response.ok)
         throw new Error(
@@ -90,10 +100,19 @@ export async function syncReading(id: string, resolve = false) {
         await storeReading(id, {
           ...latest,
           baseRevision: data.checkpoint.revision,
+          conflict: undefined,
+          resolve: undefined,
         });
+      if (value.conflict || shouldResolve)
+        window.dispatchEvent(
+          new CustomEvent("sonder:reading-conflict", {
+            detail: { id, current: null },
+          }),
+        );
       value = await readingState(id);
       resolve = false;
     }
+    return !(await readingState(id))?.conflict;
   } finally {
     syncs.delete(id);
   }
@@ -122,6 +141,7 @@ export async function saveReading(
     baseRevision: previous?.baseRevision || 0,
     pending: true,
     ...(previous?.conflict ? { conflict: previous.conflict } : {}),
+    ...(previous?.resolve ? { resolve: true } : {}),
   };
   await storeReading(id, value);
   if (!value.conflict) void syncReading(id).catch(() => {});
