@@ -43,6 +43,7 @@ export async function syncReading(id: string, resolve = false): Promise<boolean>
   const owner = userId();
   try {
     let value = await readingState(id);
+    let rebased = false;
     while (value?.pending) {
       const shouldResolve = resolve || !!value.resolve;
       const response = await fetch(
@@ -73,6 +74,28 @@ export async function syncReading(id: string, resolve = false): Promise<boolean>
       const latest = await readingState(id);
       if (response.status === 409 && data.code === "user_mismatch") return false;
       if (response.status === 409) {
+        if (!data.current) {
+          if (!rebased && value.baseRevision !== 0) {
+            rebased = true;
+            value = {
+              ...(latest || value),
+              baseRevision: 0,
+              conflict: undefined,
+              resolve: undefined,
+            };
+            await storeReading(id, value);
+            continue;
+          }
+          if (latest)
+            await storeReading(id, {
+              ...latest,
+              baseRevision: 0,
+              pending: false,
+              conflict: undefined,
+              resolve: undefined,
+            });
+          return false;
+        }
         if (latest)
           await storeReading(id, {
             ...latest,

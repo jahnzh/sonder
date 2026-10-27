@@ -532,3 +532,58 @@ test("Keep my place while offline keeps the conflict until reconnected and then 
     )
     .toBe(2);
 });
+test("a 409 with no server checkpoint rebases to revision 0 and saves instead of looping", async ({
+  page,
+}) => {
+  const upload = await page.request.post("/api/ebooks/import", {
+    multipart: {
+      file: {
+        name: "Inherited revision.epub",
+        mimeType: "application/epub+zip",
+        buffer: await readerFixture(),
+      },
+    },
+  });
+  expect(upload.ok()).toBe(true);
+  const { id } = await upload.json();
+  // Seed an inherited local reading state with baseRevision > 0 while the
+  // server has no checkpoint for this book.
+  await page.goto("/");
+  await page.evaluate((id) => {
+    localStorage.setItem(
+      `reader-position:${id}`,
+      JSON.stringify({
+        checkpoint: {
+          locator: {
+            section: 1,
+            paragraphId: "1:0",
+            quote: "Inherited place",
+            progression: 0,
+          },
+          revision: 4,
+          eventId: "inherited-event",
+          deviceId: "inherited-device",
+          updatedAt: Date.now() - 1000,
+          origin: "reading",
+        },
+        baseRevision: 4,
+        pending: false,
+      }),
+    );
+  }, id);
+  await page.goto(`/#reader/${id}`);
+  const reader = page.getByRole("dialog", { name: "Reader" });
+  const frame = reader.frameLocator(".reader-viewport iframe");
+  await expect(
+    frame.getByText("Alice was beginning to get very tired", { exact: false }),
+  ).toBeVisible();
+  await frame.locator("body").click({ position: { x: 340, y: 100 } });
+  await expect
+    .poll(
+      async () =>
+        (await (await page.request.get(`/api/reader/${id}`)).json()).checkpoint
+          ?.revision,
+    )
+    .toBe(1);
+  await expect(reader.locator(".reading-conflict")).toBeHidden();
+});
