@@ -33,7 +33,14 @@ export function Dialog({
   useEffect(() => {
     if (!forceMount || !open || !content.current) return;
     content.current.focus({ preventScroll: true });
-    return hideOthers(content.current);
+    const restoreHidden = hideOthers(content.current);
+    const hidden = Array.from(document.querySelectorAll<HTMLElement>('[data-aria-hidden="true"]'));
+    const previouslyInert = hidden.map(node => node.inert);
+    hidden.forEach(node => { node.inert = true; });
+    return () => {
+      hidden.forEach((node, index) => { node.inert = previouslyInert[index]; });
+      restoreHidden();
+    };
   }, [forceMount, open]);
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange} modal={!forceMount}>

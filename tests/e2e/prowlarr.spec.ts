@@ -33,9 +33,12 @@ test("Prowlarr is configured in Settings and merges with AudioBookBay, isolating
         })
       : route.fulfill({ json: { results: [abbRelease], nextPage: null } }),
   );
-  await page.route("**/api/discover/abb/releases/*", (route) =>
-    route.fulfill({ json: abbRelease }),
-  );
+  let releaseDetails!: () => void;
+  const detailsWait = new Promise<void>(resolve => { releaseDetails = resolve; });
+  await page.route("**/api/discover/abb/releases/*", async (route) => {
+    await detailsWait;
+    await route.fulfill({ json: abbRelease });
+  });
   const chosen: unknown[] = [];
   await page.route("**/api/discover/prowlarr/add", (route) => {
     chosen.push(route.request().postDataJSON());
@@ -78,6 +81,14 @@ test("Prowlarr is configured in Settings and merges with AudioBookBay, isolating
   await expect(cards.nth(1)).toContainText("Language unknown");
   await expect(page.locator(".release-source-error")).toHaveCount(0);
   expect(await page.content()).not.toContain("fixture-download-key");
+
+  // Closing a pending ABB detail request must not disable a later Prowlarr choice.
+  await cards.first().getByRole("button", { name: "Choose release", exact: true }).click();
+  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
+  await cards.nth(1).getByRole("button", { name: "Choose release", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Use this release", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
+  releaseDetails();
 
   // A failing Prowlarr leaves AudioBookBay results in place with a note.
   const picker = page.locator(".release-picker");

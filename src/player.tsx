@@ -348,7 +348,7 @@ export function PlayerProvider({
     if (el.paused) {
       setError(null);
       const { book, track } = state.current;
-      if (book && track) void playRef.current(book, track, el.currentTime);
+      if (book && track) void playRef.current(book, track, pendingSeek.current ?? el.currentTime);
     } else {
       ++playRequests.current;
       el.pause();

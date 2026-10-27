@@ -137,3 +137,17 @@ for(const size of sizes){
   await expect(dialog).toBeHidden();
  });
 }
+
+ test("Now Playing keeps keyboard focus inside the open dialog",async({page,browserName})=>{
+  const dialog=await open(page,browserName,"Layout plain",[390,844]);
+  const close=dialog.getByRole("button",{name:"Close dialog"});
+  await close.focus();
+  for(let i=0;i<30;i++){
+   await page.keyboard.press("Tab");
+   expect(await dialog.evaluate(el=>el.contains(document.activeElement))).toBe(true);
+  }
+  expect(await page.locator("#root").evaluate(el => (el as HTMLElement).inert)).toBe(true);
+  await close.click();
+  expect(await page.locator("#root").evaluate(el => (el as HTMLElement).inert)).toBe(false);
+  await page.locator(".mobile-nav").getByRole("button", {name:"Settings",exact:true}).click();
+ });

@@ -15,6 +15,12 @@ test.beforeAll(async () => {
 test.afterAll(() => { server?.kill(); });
 test("accounts keep libraries and offline queues separate", async ({ page }) => {
   mkdirSync("artifacts", { recursive: true });
+  await page.addInitScript(() => sessionStorage.setItem("test-load-count", String(Number(sessionStorage.getItem("test-load-count") || 0) + 1)));
+  const bookHeaders: string[] = [];
+  await page.route("**/api/books", route => {
+    bookHeaders.push(route.request().headers()["x-sonder-user-id"] || "");
+    return route.continue();
+  });
   await page.goto(base);
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await page.screenshot({ path: "artifacts/users-sign-in.png" });
@@ -22,7 +28,9 @@ test("accounts keep libraries and offline queues separate", async ({ page }) => 
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.getByRole("button", { name: "Settings", exact: true }).last().click();
   await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
+  await expect.poll(() => bookHeaders).toContain("1");
   const users = page.locator("section").filter({ has: page.getByRole("heading", { name: "Users" }) });
+  await expect(users.getByLabel("Role")).toHaveCount(0);
   await users.getByLabel("Username").fill("reader");
   await users.getByLabel("Password", { exact: true }).fill("reader-password");
   await users.getByRole("button", { name: "Add user" }).click();
@@ -36,9 +44,11 @@ test("accounts keep libraries and offline queues separate", async ({ page }) => 
   }), { recordingId: book.recordingId, trackId: book.tracks[0].id });
   let mismatches = 0;
   let queueOwner = "";
-  await page.route("**/api/progress", route => { mismatches++; queueOwner = route.request().headers()["x-sonder-user-id"]; return route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ code: "user_mismatch", error: "Signed in as a different user." }) }); });
+  await page.route("**/api/progress", route => { mismatches++; queueOwner = route.request().headers()["x-sonder-user-id"]; return route.fulfill({ status: mismatches === 1 ? 409 : 503, contentType: "application/json", body: JSON.stringify(mismatches === 1 ? { code: "user_mismatch", error: "Signed in as a different user." } : { error: "Temporarily unavailable." }) }); });
+  const loads = await page.evaluate(() => Number(sessionStorage.getItem("test-load-count")));
   await page.reload();
   await expect.poll(() => mismatches).toBeGreaterThan(0);
+  await expect.poll(() => page.evaluate(() => Number(sessionStorage.getItem("test-load-count"))).catch(() => 0)).toBeGreaterThanOrEqual(loads + 2);
   expect(queueOwner).toBe("1");
   await expect.poll(() => page.evaluate((id) => new Promise<boolean>(resolve => { const request = indexedDB.open("sonder"); request.onsuccess = () => { const get = request.result.transaction("progress").objectStore("progress").get(id); get.onsuccess = () => resolve(!!get.result?.pending); }; }), book.recordingId)).toBe(true);
   await page.unroute("**/api/progress");
@@ -59,4 +69,24 @@ test("accounts keep libraries and offline queues separate", async ({ page }) => 
   await expect(page.getByRole("button", { name: "Ebooks" })).toHaveCount(0);
   await page.getByRole("button", { name: `Add ${book.title} to library` }).click();
   await expect.poll(async () => (await (await page.request.get(`${base}/api/books`)).json()).find((b: { id: string }) => b.id === book.id).inLibrary).toBe(true);
+  // A legacy reader-local device fault is migrated to shared device storage
+  // before automatic playback, so the service worker can see it too.
+  await page.evaluate(({ recordingId }) => new Promise<void>((resolve, reject) => {
+    const open = indexedDB.open("sonder-user-2");
+    open.onsuccess = () => {
+      const tx = open.result.transaction("preferences", "readwrite");
+      tx.objectStore("preferences").put({ key: `device-fault:${recordingId}`, value: { reason: "wrong-book", note: "" } });
+      tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error);
+    };
+    open.onerror = () => reject(open.error);
+  }), { recordingId: book.recordingId });
+  await page.getByRole("button", { name: "My library", exact: true }).last().click();
+  await page.getByRole("button", { name: `Play ${book.title}`, exact: true }).click();
+  await expect.poll(() => page.evaluate((recordingId) => new Promise<boolean>(resolve => {
+    const open = indexedDB.open("sonder");
+    open.onsuccess = () => {
+      const get = open.result.transaction("preferences").objectStore("preferences").get(`device-fault:${recordingId}`);
+      get.onsuccess = () => resolve(!!get.result?.value);
+    };
+  }), book.recordingId)).toBe(true);
 });

@@ -2243,7 +2243,6 @@ function AccountSettings({ user, needsPassword, onLogout, notify }: { user: Acco
   const [users, setUsers] = useState<Account[]>([]);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<"user" | "admin">("user");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [resetting, setResetting] = useState<Account | null>(null);
@@ -2286,11 +2285,10 @@ function AccountSettings({ user, needsPassword, onLogout, notify }: { user: Acco
           </div>}
         </li>)}
       </ul>
-      <form className="account-form user-add" onSubmit={e => { e.preventDefault(); void action(async () => { await api("/users", { method: "POST", body: JSON.stringify({ username, password, role }) }); setUsername(""); setPassword(""); }); }}>
+      <form className="account-form user-add" onSubmit={e => { e.preventDefault(); void action(async () => { await api("/users", { method: "POST", body: JSON.stringify({ username, password, role: "user" }) }); setUsername(""); setPassword(""); }); }}>
         <h3>Add user</h3>
         <label>Username<input required value={username} onChange={e => setUsername(e.target.value)} /></label>
         <label>Password<input type="password" autoComplete="new-password" required value={password} onChange={e => setPassword(e.target.value)} /></label>
-        <label>Role<select value={role} onChange={e => setRole(e.target.value as "user" | "admin")}><option value="user">User</option><option value="admin">Admin</option></select></label>
         <button className="button primary"><Plus size={16} /> Add user</button>
       </form>
       <Dialog open={!!resetting} onOpenChange={(open) => { if (!open) setResetting(null); }} title={`Reset password for ${resetting?.username ?? ""}`} className="account-dialog">

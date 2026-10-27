@@ -5,6 +5,26 @@ import { twMerge } from "tailwind-merge";
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+// Guard all script-initiated API requests, including downloads and ebook fetches.
+const nativeFetch = window.fetch.bind(window);
+let resolvingMismatch = false;
+window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+  const url = new URL(input instanceof Request ? input.url : input.toString(), location.href);
+  const guarded = url.origin === location.origin && url.pathname.startsWith("/api/") &&
+    !["/api/auth/status", "/api/auth/login"].includes(url.pathname) && userKnown;
+  if (!guarded) return nativeFetch(input, init);
+  const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+  if (!headers.has("X-Sonder-User-Id")) headers.set("X-Sonder-User-Id", String(currentUserId));
+  const response = await nativeFetch(input, { ...init, headers });
+  if (response.status === 409 && (await response.clone().json().catch(() => null))?.code === "user_mismatch") {
+    if (!resolvingMismatch) {
+      resolvingMismatch = true;
+      void nativeFetch("/api/auth/status", { cache: "no-store" }).finally(() => location.reload());
+    }
+    throw new Error("Account changed in another tab.");
+  }
+  return response;
+};
 export async function api<T = unknown>(
   path: string,
   options: RequestInit = {},
@@ -12,7 +32,7 @@ export async function api<T = unknown>(
   const response = await fetch(`/api${path}`, {
     ...options,
     headers: {
-      ...(!["GET", "HEAD"].includes((options.method || "GET").toUpperCase()) ? { "X-Sonder-User-Id": String(currentUserId) } : {}),
+      ...(userKnown && path !== "/auth/status" && path !== "/auth/login" ? { "X-Sonder-User-Id": String(currentUserId) } : {}),
       ...(options.body != null && !(options.body instanceof FormData)
         ? { "Content-Type": "application/json" }
         : {}),
@@ -56,10 +76,12 @@ let personalDB = sharedDB;
 export function selectUserStorage(id: number, role: "admin" | "user" = "admin") {
   personalDB = id === 1 ? sharedDB : new SonderDB(`sonder-user-${id}`);
   currentUserId = id;
+  userKnown = true;
   currentRole = role;
   sessionStorage.setItem("sonder-current-user", String(id));
 }
 let currentUserId = 1;
+let userKnown = false;
 let currentRole: "admin" | "user" = "admin";
 export function userId() { return currentUserId; }
 export function isAdmin() { return currentRole === "admin"; }
@@ -67,6 +89,23 @@ export function userStorageKey(key: string) { return currentUserId === 1 ? key :
 export const localDB = new Proxy(sharedDB, {
   get(target, prop) {
     const db = ["books", "progress", "preferences"].includes(String(prop)) ? personalDB : target;
+    if (prop === "preferences" && personalDB !== sharedDB) {
+      const table = personalDB.preferences;
+      return new Proxy(table, { get(obj, key) {
+        if (key === "get") return async (id: string) => {
+          if (!id.startsWith("device-fault:")) return table.get(id);
+          const shared = await sharedDB.preferences.get(id);
+          if (shared) return shared;
+          const legacy = await table.get(id);
+          if (legacy) { await sharedDB.preferences.put(legacy); await table.delete(id); }
+          return legacy;
+        };
+        if (key === "put") return (row: { key: string; value: unknown }) => (row.key.startsWith("device-fault:") ? sharedDB.preferences : table).put(row);
+        if (key === "delete") return async (id: string) => { if (id.startsWith("device-fault:")) await sharedDB.preferences.delete(id); await table.delete(id); };
+        const value = Reflect.get(obj, key, obj);
+        return typeof value === "function" ? value.bind(obj) : value;
+      }});
+    }
     if (prop === "transaction") return (...args: unknown[]) => {
       const table = args[1] as { db?: SonderDB };
       return (table?.db || target).transaction.apply(table?.db || target, args as never);

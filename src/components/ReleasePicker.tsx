@@ -141,7 +141,7 @@ export function ReleasePicker({
     const id = ++chooseId.current;
     setSelected(release);
     setDetailsError("");
-    if (release.source === "prowlarr") return;
+    if (release.source === "prowlarr") { setDetailsBusy(false); return; }
     setDetailsBusy(true);
     try {
       const details = await api<AudiobookRelease>(
