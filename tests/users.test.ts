@@ -66,3 +66,42 @@ test("migration copies legacy rows once without changing them", async () => {
  migrated.prepare("UPDATE user_library SET status='listening'").run(); migrated.close(); run();
  const reopened=new Database(join(migrationDir,"sonder.db")); assert.equal((reopened.prepare("SELECT status FROM user_library").get() as any).status,"listening"); assert.equal((reopened.prepare("SELECT status FROM library").get() as any).status,"finished"); reopened.close();
 });
+
+test("encoded admin routes are denied to regular users", async () => {
+ const admin=(await app.inject({method:"POST",url:"/api/auth/login",payload:{password:"admin-password"}})).cookies[0].value;
+ await app.inject({method:"POST",url:"/api/users",cookies:{sonder_session:admin},payload:{username:"encoded",password:"password1"}});
+ const user=(await app.inject({method:"POST",url:"/api/auth/login",payload:{username:"encoded",password:"password1"}})).cookies[0].value;
+ for (const [method,url] of [["GET","/api/%61cquisitions"],["GET","/api/%74orbox/files"],["POST","/api/%61cquire"],["POST","/api/books/x/%6beep"],["DELETE","/api/recordings/x/server%2Dcopy"],["PUT","/api/recordings/x/f%61ults/source"],["POST","/api/%65books/import"],["POST","/api/reader/x/%6cink"],["POST","/api/%61lignments"],["GET","/api/discover/%61bb"],["GET","/api/discover/%70rowlarr/releases"],["GET","/api/discover/%65books"]] as const) {
+  const r=await app.inject({method,url,cookies:{sonder_session:user},payload:method === "GET" ? undefined : {}}); assert.equal(r.statusCode,403,`${url}: ${r.body}`);
+ }
+});
+
+test("password changes revoke other sessions, admin resets revoke all, IDs never repeat and admin role is rejected", async () => {
+ const login=async(username:string|undefined,password:string)=> (await app.inject({method:"POST",url:"/api/auth/login",payload:{username,password},headers:{"x-forwarded-for":"192.0.2.10"}})).cookies[0]?.value;
+ const admin=await login(undefined,"admin-password");
+ const req=(method:any,url:string,payload?:any,cookie=admin)=>app.inject({method,url,payload,cookies:{sonder_session:cookie}});
+ assert.equal((await req("POST","/api/users",{username:"badadmin",password:"password1",role:"admin"})).statusCode,400);
+ const created=(await req("POST","/api/users",{username:"sessiontest",password:"password1"})).json();
+ assert.equal((await req("PATCH",`/api/users/${created.id}`,{role:"admin"})).statusCode,400);
+ const one=await login("sessiontest","password1"), two=await login("sessiontest","password1");
+ assert.equal((await req("POST","/api/auth/password",{currentPassword:"password1",newPassword:"password2"},one)).statusCode,200);
+ assert.equal((await req("GET","/api/books",undefined,one)).statusCode,200); assert.equal((await req("GET","/api/books",undefined,two)).statusCode,401);
+ assert.equal((await req("PATCH",`/api/users/${created.id}`,{password:"password3"})).statusCode,200); assert.equal((await req("GET","/api/books",undefined,one)).statusCode,401);
+ const {onUserDeleted}=await import("../server/users.ts"); let deleted=0; const off=onUserDeleted(id=>{deleted=id});
+ await req("DELETE",`/api/users/${created.id}`); off(); assert.equal(deleted,created.id);
+ const next=(await req("POST","/api/users",{username:"nextuser",password:"password1"})).json(); assert.ok(next.id>created.id);
+});
+
+test("login rate limiting ignores arbitrary cookies and separates forwarded client IPs", async () => {
+ for(let i=0;i<11;i++) { const r=await app.inject({method:"POST",url:"/api/auth/login",headers:{"x-forwarded-for":"192.0.2.50"},cookies:{sonder_session:`invalid${i}`},payload:{password:"bad"}}); assert.equal(r.statusCode,i<10?401:429); }
+ const other=await app.inject({method:"POST",url:"/api/auth/login",headers:{"x-forwarded-for":"192.0.2.51"},payload:{password:"bad"}}); assert.equal(other.statusCode,401);
+});
+
+test("regular progress only fills an unknown shared duration", async () => {
+ const login=await app.inject({method:"POST",url:"/api/auth/login",headers:{"x-forwarded-for":"192.0.2.70"},payload:{username:"first",password:"password1"}});
+ const cookie=login.cookies[0].value; const book=(await app.inject({url:"/api/books",cookies:{sonder_session:cookie}})).json()[0]; const id=book.tracks[0].id;
+ sqlite.prepare("UPDATE tracks SET duration=100 WHERE id=?").run(id);
+ const save=async(duration:number)=>app.inject({method:"POST",url:"/api/progress",cookies:{sonder_session:cookie},payload:{recordingId:book.recordingId,trackId:id,position:1,duration,updatedAt:Date.now()}});
+ await save(200); assert.equal((sqlite.prepare("SELECT duration FROM tracks WHERE id=?").get(id) as any).duration,100);
+ sqlite.prepare("UPDATE tracks SET duration=0 WHERE id=?").run(id); await save(200); assert.equal((sqlite.prepare("SELECT duration FROM tracks WHERE id=?").get(id) as any).duration,200);
+});

@@ -166,6 +166,7 @@ export async function createApp() {
     logger: process.env.NODE_ENV !== "test",
     bodyLimit: 1024 * 1024,
     disableRequestLogging: true,
+    trustProxy: "loopback",
   });
   const parseJson = app.getDefaultJsonParser("error", "error");
   app.removeContentTypeParser("application/json");
@@ -193,10 +194,9 @@ export async function createApp() {
     // Users in one household share a public IP; count each signed-in session
     // separately and fall back to the address for anonymous requests.
     keyGenerator: (request) => {
-      // Never let a client-chosen cookie pick the bucket for sign-in attempts.
-      if (request.url.startsWith("/api/auth/")) return request.ip;
-      const token = request.cookies?.sonder_session;
-      return token ? `session:${hashToken(token)}` : request.ip;
+      if (request.url.startsWith("/api/auth/")) return `ip:${request.ip}`;
+      const user = sessionUser(request);
+      return user ? `user:${user.id}` : `ip:${request.ip}`;
     },
   });
   await app.register(multipart, {
@@ -250,14 +250,16 @@ export async function createApp() {
     const expected = req.headers["x-sonder-user-id"];
     if (typeof expected === "string" && expected !== String(req.user.id))
       return reply.code(409).send({ error: "Signed in as a different user.", code: "user_mismatch" });
-    const path = req.url.split("?")[0];
+  });
+  app.addHook("preHandler", async (req) => {
+    const path = req.routeOptions.url || "";
     if (/^\/api\/(prowlarr|torbox)(?:\/|$)/.test(path) || /^\/api\/acquisitions(?:\/|$)/.test(path) || path === "/api/acquire" || path === "/api/torrents/health" || path === "/api/local/test" || /^\/api\/discover\/(abb|prowlarr)(?:\/|$)/.test(path) || path === "/api/discover/ebooks" || (req.method === "POST" && ["/api/ebooks", "/api/ebooks/import", "/api/import"].includes(path)) || (req.method === "POST" && /^\/api\/books\/[^/]+\/keep$/.test(path)) || (req.method === "POST" && /^\/api\/reader\/[^/]+\/link$/.test(path)) || (["PUT", "DELETE"].includes(req.method) && /^\/api\/recordings\/[^/]+\/(faults\/[^/]+|server-copy)$/.test(path)) || (["POST", "PATCH"].includes(req.method) && /^\/api\/alignments(?:\/|$)/.test(path))) requireAdmin(req);
   });
   app.get("/api/health", async () => ({ ok: true }));
   app.get("/api/auth/status", async (req) => ({ required: !!process.env.APP_PASSWORD, authenticated: !!sessionUser(req), user: sessionUser(req) }));
   app.post(
     "/api/auth/login",
-    { config: { rateLimit: { max: 10, timeWindow: "15 minutes" } } },
+    { config: { rateLimit: { max: 10, timeWindow: "15 minutes", keyGenerator: (request) => request.ip } } },
     async (req, reply) => {
       const { password, username } = z
         .object({ password: z.string().max(512), username: z.string().max(40).optional() })
@@ -385,7 +387,7 @@ export async function createApp() {
       .values({ ...p, userId: currentUserId(req) })
       .onConflictDoUpdate({ target: [s.userProgress.userId, s.userProgress.recordingId], set: p })
       .run();
-    if (p.duration > 0)
+    if (p.duration > 0 && (currentUser(req).role === "admin" || !track.duration))
       db.update(s.tracks)
         .set({ duration: p.duration })
         .where(eq(s.tracks.id, p.trackId))
@@ -832,7 +834,8 @@ export async function createApp() {
       .get();
     const filename = (work?.title || "ebook")
       .replace(/[^a-zA-Z0-9 ._-]/g, "")
-      .slice(0, 120);
+      .slice(0, 120).trim() || "ebook";
+    const utf8Filename = `${(work?.title || "ebook").replace(/[\/\\\x00-\x1f\x7f]/g, "").slice(0, 120).trim() || "ebook"}.${row.format}`;
     reply
       .header(
         "Content-Type",
@@ -840,7 +843,7 @@ export async function createApp() {
       )
       .header(
         "Content-Disposition",
-        `attachment; filename="${filename}.${row.format}"`,
+        `attachment; filename="${filename}.${row.format}"; filename*=UTF-8''${encodeURIComponent(utf8Filename).replace(/['()*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)}`,
       )
       .header("Content-Length", statSync(row.source).size)
       .header("Cache-Control", "private, no-store");
@@ -876,6 +879,7 @@ export async function createApp() {
     return hardcoverSearch(currentUserId(req), q);
   });
   app.post("/api/import", async (req) => {
+    ensureMediaStorage();
     let title = "";
     let author = "Unknown author";
     const stored: {
