@@ -146,5 +146,5 @@ for(const size of sizes){
    await page.keyboard.press("Tab");
    expect(await dialog.evaluate(el=>el.contains(document.activeElement))).toBe(true);
   }
-  await expect(page.locator("#root")).toHaveAttribute("inert", "");
+  expect(await page.locator("#root").evaluate(el => el.inert)).toBe(true);
  });
