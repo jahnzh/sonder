@@ -167,6 +167,10 @@ test("each user syncs their own Hardcover account and progress only ever travels
     b = await login("reader-b", "password1"),
     c = await login("reader-c", "password1");
   const [idA, idB, idC] = [2, 3, 4];
+  // The admin matched Alice to its Hardcover book; regular users' syncs never create matches.
+  sqlite
+    .prepare("INSERT INTO hardcover_links(work_id,book_id,slug,series) VALUES('work-alice',101,'alice','[]')")
+    .run();
   assert.equal((await request(a, "PUT", "/api/hardcover/token", { token: "key-a" })).statusCode, 200);
   assert.equal((await request(b, "PUT", "/api/hardcover/token", { token: "key-b" })).statusCode, 200);
   for (const cookie of [a, b]) {

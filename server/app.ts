@@ -205,8 +205,19 @@ export async function createApp() {
   await app.register(multipart, {
     limits: { fileSize: 4 * 1024 * 1024 * 1024, files: 200, fields: 10 },
   });
-  app.setErrorHandler((error, _request, reply) => {
-    const status = (error as { statusCode?: number }).statusCode || 400;
+  app.setErrorHandler((error, request, reply) => {
+    const { code } = error as { code?: unknown };
+    // A Node I/O failure (missing file, unmounted volume…) is temporary, not a bad
+    // request, so clients keep and retry their writes (N1).
+    const system =
+      !(error as { statusCode?: number }).statusCode &&
+      typeof code === "string" &&
+      /^E[A-Z0-9]+$/.test(code) &&
+      ("errno" in (error as object) || "syscall" in (error as object));
+    if (system) request.log.error(error);
+    const status = system
+      ? 503
+      : (error as { statusCode?: number }).statusCode || 400;
     const retry = error as { retryable?: boolean; retryAfterMs?: number };
     if (retry.retryable && retry.retryAfterMs !== undefined)
       reply.header("Retry-After", Math.ceil(retry.retryAfterMs / 1000));
@@ -214,8 +225,13 @@ export async function createApp() {
       ...(typeof retry.retryable === "boolean"
         ? { retryable: retry.retryable, retryAfterMs: retry.retryAfterMs }
         : {}),
-      error:
-        error instanceof z.ZodError
+      // App-defined codes are lower snake case; Node and Fastify codes are not sent.
+      ...(typeof code === "string" && /^[a-z][a-z0-9_]*$/.test(code)
+        ? { code }
+        : {}),
+      error: system
+        ? "The server can't read its files right now. Try again shortly."
+        : error instanceof z.ZodError
           ? "Please check the information you entered."
           : error instanceof Error
             ? error.message
@@ -390,7 +406,8 @@ export async function createApp() {
       .values({ ...p, userId: currentUserId(req) })
       .onConflictDoUpdate({ target: [s.userProgress.userId, s.userProgress.recordingId], set: p })
       .run();
-    if (p.duration > 0 && (currentUser(req).role === "admin" || !track.duration))
+    // Track duration is shared, so only the admin's playback may set it (r1#3).
+    if (p.duration > 0 && currentUser(req).role === "admin")
       db.update(s.tracks)
         .set({ duration: p.duration })
         .where(eq(s.tracks.id, p.trackId))

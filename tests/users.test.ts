@@ -99,11 +99,26 @@ test("login rate limiting ignores arbitrary cookies and separates forwarded clie
  const other=await app.inject({method:"POST",url:"/api/auth/login",headers:{"x-forwarded-for":"192.0.2.51"},payload:{password:"bad"}}); assert.equal(other.statusCode,401);
 });
 
-test("regular progress only fills an unknown shared duration", async () => {
+test("regular progress never sets a shared duration, even an unknown one", async () => {
  const login=await app.inject({method:"POST",url:"/api/auth/login",headers:{"x-forwarded-for":"192.0.2.70"},payload:{username:"first",password:"password1"}});
  const cookie=login.cookies[0].value; const book=(await app.inject({url:"/api/books",cookies:{sonder_session:cookie}})).json()[0]; const id=book.tracks[0].id;
  sqlite.prepare("UPDATE tracks SET duration=100 WHERE id=?").run(id);
  const save=async(duration:number)=>app.inject({method:"POST",url:"/api/progress",cookies:{sonder_session:cookie},payload:{recordingId:book.recordingId,trackId:id,position:1,duration,updatedAt:Date.now()}});
  await save(200); assert.equal((sqlite.prepare("SELECT duration FROM tracks WHERE id=?").get(id) as any).duration,100);
- sqlite.prepare("UPDATE tracks SET duration=0 WHERE id=?").run(id); await save(200); assert.equal((sqlite.prepare("SELECT duration FROM tracks WHERE id=?").get(id) as any).duration,200);
+ sqlite.prepare("UPDATE tracks SET duration=0 WHERE id=?").run(id); await save(1); assert.equal((sqlite.prepare("SELECT duration FROM tracks WHERE id=?").get(id) as any).duration,0);
+ const admin=(await app.inject({method:"POST",url:"/api/auth/login",headers:{"x-forwarded-for":"192.0.2.71"},payload:{password:"admin-password"}})).cookies[0].value;
+ await app.inject({method:"POST",url:"/api/progress",cookies:{sonder_session:admin},payload:{recordingId:book.recordingId,trackId:id,position:1,duration:200,updatedAt:Date.now()}});
+ assert.equal((sqlite.prepare("SELECT duration FROM tracks WHERE id=?").get(id) as any).duration,200);
+});
+
+test("on first upgrade the next user id starts above every id left in sessions and per-user tables", async () => {
+ const admin=(await app.inject({method:"POST",url:"/api/auth/login",headers:{"x-forwarded-for":"192.0.2.80"},payload:{password:"admin-password"}})).cookies[0].value;
+ const create=async(username:string)=>(await app.inject({method:"POST",url:"/api/users",cookies:{sonder_session:admin},payload:{username,password:"password1"}})).json().id as number;
+ // Accounts deleted before the mark existed left rows behind, and no mark is stored yet.
+ const upgrade=(trace:()=>void)=>{ sqlite.pragma("foreign_keys = OFF"); trace(); sqlite.pragma("foreign_keys = ON"); sqlite.prepare("DELETE FROM settings WHERE key='user_id_high_water'").run(); };
+ const max=(sqlite.prepare("SELECT MAX(id) AS id FROM users").get() as {id:number}).id;
+ upgrade(()=>sqlite.prepare("INSERT INTO user_settings(user_id,key,value) VALUES(?,?,?)").run(max+5,"appearance","{}"));
+ const first=await create("afterupgrade1"); assert.equal(first,max+6);
+ upgrade(()=>sqlite.prepare("INSERT INTO sessions(token,user_id,expires_at) VALUES(?,?,?)").run("stale-session",first+3,0));
+ assert.equal(await create("afterupgrade2"),first+4);
 });
