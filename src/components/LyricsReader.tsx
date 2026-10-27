@@ -28,10 +28,18 @@ export function LyricsReader({ book, interval, position, hasMap, follow, onSeek,
       if (line.paragraphId === interval.paragraphId && line.fraction <= fraction) active = index;
     });
   }
-  useEffect(() => {
+  const scrollToActive = (behavior: ScrollBehavior) => {
     if (!follow || active < 0 || !host.current) return;
     const line = host.current.querySelector<HTMLElement>(`[data-line-index="${active}"]`);
-    if (line) host.current.scrollTo({ top: line.offsetTop - host.current.offsetTop - host.current.clientHeight * .3, behavior: "smooth" });
+    if (line) host.current.scrollTo({ top: line.offsetTop - host.current.offsetTop - host.current.clientHeight * .3, behavior });
+  };
+  useEffect(() => scrollToActive("smooth"), [active, follow]);
+  // Line wrapping changes with the width; keep the current line in place.
+  useEffect(() => {
+    if (!host.current) return;
+    const observer = new ResizeObserver(() => scrollToActive("instant"));
+    observer.observe(host.current);
+    return () => observer.disconnect();
   }, [active, follow]);
   useEffect(() => {
     if (follow || !selectedParagraph || !host.current) return;

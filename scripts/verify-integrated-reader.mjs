@@ -88,7 +88,7 @@ try {
  await page.mouse.move(spot.x+spot.width/2,spot.y+Math.min(10,spot.height/2));await page.mouse.down();await page.waitForTimeout(800);await page.mouse.up();
  const sheet=page.getByRole('dialog',{name:'Sentence actions',exact:true});
  await expect(sheet).toBeVisible();
- await expect(sheet.getByText(/^(Estimated audio time|Audio time): \d+:\d\d$/)).toBeVisible();
+ await expect(sheet.getByText(/^(Estimated audio time|Audio time): (\d+:)?\d{1,2}:\d\d$/)).toBeVisible();
  await expect(sheet.getByRole('button',{name:'Listen from here',exact:true})).toBeVisible();
  await page.screenshot({path:'artifacts/live-reader-sentence-sheet-mobile.png'});
  await sheet.getByRole('button',{name:'Close sentence actions',exact:true}).click();
@@ -115,6 +115,7 @@ try {
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(320);
  expect((await slider.boundingBox()).y+44).toBeLessThanOrEqual(740);
  await page.setViewportSize({width:1440,height:1000});
+ await expect(page.locator('.inline-reader .lyrics-line.current')).toBeInViewport();
  await page.screenshot({path:'artifacts/live-integrated-reader-lyrics-desktop.png'});
  await transport.getByRole('button',{name:'Page',exact:true}).click();
  await expect(page.locator('.reader-viewport .sonder-follow').first()).toBeVisible();

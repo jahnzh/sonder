@@ -29,7 +29,7 @@ import { PlaybackSource } from "./PlaybackSource";
 import {PlaybackExtra,usePlaybackMenu} from "./PlaybackMenu";
 import { readerWords, readerSegment } from "../reader-segments";
 import { usePlayer } from "../player";
-import { api, localDB } from "../lib";
+import { api, clock, localDB } from "../lib";
 import {
   loadReader,
   epubFile,
@@ -1020,7 +1020,7 @@ export function ReaderView({
       {sentence && <div className="reader-sentence-sheet" role="dialog" aria-label="Sentence actions">
         <button className="icon-button" aria-label="Close sentence actions" onClick={()=>setSentence(null)}><X size={19}/></button>
         <p>{sentence.quote}</p>
-        {sentenceInterval && <p>{sentenceInterval.verified ? "Audio time" : "Estimated audio time"}: {Math.floor(sentenceInterval.start/60)}:{String(Math.floor(sentenceInterval.start%60)).padStart(2,"0")}</p>}
+        {sentenceInterval && <p>{sentenceInterval.verified ? "Audio time" : "Estimated audio time"}: {clock(sentenceInterval.start)}</p>}
         <button className="button primary" onClick={()=>{selectSentence();listen();setSentence(null);}}>Listen from here</button>
         <button className="button subtle" onClick={()=>{selectSentence();void bookmark();setSentence(null);}}>Bookmark</button>
         <button className="button subtle" onClick={()=>{void navigator.clipboard.writeText(sentence.quote || "").then(()=>notify("Copied."));setSentence(null);}}>Copy</button>

@@ -100,6 +100,7 @@ test("page controls and lyrics follow the prepared narration",async({page})=>{
   await expect(page.getByRole("button",{name:"Back to narration"})).toBeHidden();
   await page.setViewportSize({width:320,height:740});
   await page.setViewportSize({width:1440,height:900});
+  await expect(lyrics.locator(".lyrics-line.current")).toBeInViewport();
   await page.locator(".now-playing-transport").getByRole("button",{name:"Page",exact:true}).click();
   await expect(page.locator(".inline-reader .reader-viewport .sonder-follow").first()).toBeVisible();
   await page.setViewportSize({width:390,height:844});
