@@ -19,6 +19,7 @@ try {
  expect(status.user).toMatchObject({id:1,role:'admin'});
  check('Password-only sign-in is the admin');
  const adminBooks=async()=>(await(await admin.request.get('/api/books')).json()).map(b=>({id:b.id,inLibrary:b.inLibrary,status:b.status,progress:b.progress&&{position:b.progress.position,updatedAt:b.progress.updatedAt}}));
+ const adminCatalogue=(await(await admin.request.get('/api/books')).json());
  const before=await adminBooks();
  const adminAppearance=await(await admin.request.get('/api/appearance')).json();
  const adminHardcover=(await(await admin.request.get('/api/settings')).json()).hardcoverConfigured;
@@ -36,11 +37,17 @@ try {
  expect(qaStatus.user).toMatchObject({username,role:'user'});
  check('User signs in through the real sign-in screen');
  const qaBooks=await(await qa.request.get('/api/books')).json();
- expect(qaBooks.length).toBe(before.length);
+ // Every title with audio is shared; metadata-only Hardcover placeholders from the admin's shelves are not (r6#1).
+ const withAudio=adminCatalogue.filter(b=>b.tracks?.length).map(b=>b.id).sort();
+ expect(qaBooks.filter(b=>b.tracks?.length).map(b=>b.id).sort()).toEqual(withAudio);
+ const leaked=qaBooks.filter(b=>!b.tracks?.length&&b.id.startsWith('hc-'));
+ if(leaked.length)throw Error('Admin Hardcover placeholders visible to a user: '+leaked.map(b=>b.title).join(', '));
  expect(qaBooks.filter(b=>b.inLibrary).length).toBe(0);
  expect(qaBooks.filter(b=>b.progress).length).toBe(0);
- check('User sees the shared catalogue with an empty library and no progress',{catalogue:qaBooks.length,adminLibrary:before.filter(b=>b.inLibrary).length});
- const forbidden=[['PATCH','/api/settings',{torbox:'x'}],['POST','/api/acquire',{}],['POST','/api/import',{}],['POST','/api/alignments',{}],['GET','/api/torrents/health'],['GET','/api/acquisitions'],['GET','/api/users'],['GET','/api/discover/ebooks?source=libgen&q=test']];
+ check('User sees every title with audio, none of the admin\'s Hardcover placeholders, an empty library and no progress',{userCatalogue:qaBooks.length,adminCatalogue:adminCatalogue.length,withAudio:withAudio.length});
+ const forbidden=[['PATCH','/api/settings',{torbox:'x'}],['POST','/api/acquire',{}],['POST','/api/import',{}],['POST','/api/alignments',{}],['GET','/api/torrents/health'],['GET','/api/acquisitions'],['GET','/api/users'],['GET','/api/discover/ebooks?source=libgen&q=test'],
+  // Percent-encoded variants of admin routes must be refused too (review r2#1).
+  ['GET','/api/%61cquisitions'],['GET','/api/torrents/he%61lth'],['DELETE','/api/recordings/qa-none/server%2Dcopy'],['POST','/api/%65books/import',{}],['GET','/api/discover/%61bb?q=test']];
  for(const [method,url,data] of forbidden){const r=await qa.request.fetch(url,{method,data});if(r.status()!==403)throw Error(`${method} ${url} returned ${r.status()} for a regular user`);}
  const settings=await(await qa.request.get('/api/settings')).json();
  if(JSON.stringify(settings).match(/torbox|prowlarr|transmission/i))throw Error('Regular-user settings expose admin fields: '+Object.keys(settings).join(','));
