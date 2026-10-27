@@ -18,7 +18,7 @@ const { installProwlarrFixture } = await import("./prowlarr-browser-fixture.ts")
 installProwlarrFixture();
 const { createApp } = await import("../server/app.ts");
 const app = await createApp();
-await app.listen({ port: 4173, host: "127.0.0.1" });
+await app.listen({ port: Number(process.env.PLAYWRIGHT_PORT || 4173), host: "127.0.0.1" });
 const stop = async () => {
   await app.close();
   rmSync(temp, { recursive: true, force: true });
