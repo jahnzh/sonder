@@ -8,6 +8,7 @@ if(!recordingId)throw Error('Usage: node scripts/verify-integrated-reader.mjs re
 const browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || '/home/jahn/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome'});
 const context=await browser.newContext({baseURL:process.env.SONDER_VERIFY_URL || 'https://sonder.pecori.no',viewport:{width:390,height:844},serviceWorkers:'block'});
 const report={recordingId,protectedWrites:0,checks:[],errors:[]};
+let page;
 try {
  const login=await context.request.post('/api/auth/login',{data:{password:process.env.APP_PASSWORD}});if(!login.ok())throw Error('Sign-in failed');
  const books=await(await context.request.get('/api/books')).json(),book=books.find(b=>b.recordingId===recordingId);if(!book)throw Error('Recording not found');
@@ -28,7 +29,7 @@ try {
  await context.route('**/api/progress',async route=>{report.protectedWrites++;await route.fulfill({json:{progress:route.request().postDataJSON()}});});
  await context.route('**/api/reader/*/progress',async route=>{report.protectedWrites++;const data=route.request().postDataJSON();await route.fulfill({json:{checkpoint:{...data,revision:(data.baseRevision||0)+1}}});});
  await context.route('**/api/appearance',route=>{if(route.request().method()==='PUT')throw Error('QA preferences must stay device-only');return route.continue();});
- const page=await context.newPage();page.on('pageerror',e=>report.errors.push(e.message));
+ page=await context.newPage();page.on('pageerror',e=>report.errors.push(e.message));
  const actual=()=>page.evaluate(()=>{const a=window.__audio.find(a=>a.src);return a&&{position:a.currentTime,paused:a.paused,ready:a.readyState,error:a.error?.message};});
  await page.goto('/');
  const dockBook=await page.locator('.dock-cover-button').getAttribute('aria-label');
@@ -82,7 +83,7 @@ try {
  await expect.poll(()=>page.locator('.inline-reader').getAttribute('data-current-passage'),{timeout:20000}).not.toBe(initial);
  await full.getByRole('button',{name:'Pause',exact:true}).click();
  report.checks.push({name:'Real audio advances the highlighted passage automatically'});
- const paragraph=page.frameLocator('.inline-reader .reader-viewport iframe').locator('.sonder-follow').first();
+ const paragraph=page.locator('.inline-reader .reader-viewport .sonder-follow').first();
  const spot=(await paragraph.boundingBox());
  await page.mouse.move(spot.x+spot.width/2,spot.y+Math.min(10,spot.height/2));await page.mouse.down();await page.waitForTimeout(800);await page.mouse.up();
  const sheet=page.getByRole('dialog',{name:'Sentence actions',exact:true});
@@ -97,7 +98,9 @@ try {
  await expect(page.locator('.inline-reader .lyrics-line.current')).toHaveCount(1);
  await expect(page.locator('.inline-reader .reader-viewport')).toHaveAttribute('aria-hidden','true');
  const size=await page.locator('.inline-reader .lyrics-line.current').evaluate(el=>parseFloat(getComputedStyle(el).fontSize));
- if(size<24||size>34)throw Error(`Lyrics text is ${size}px at 390px wide`);
+ // Spacing by width (clamp 24–34 px) scaled by the reader text-size preference (19 = normal).
+ const expected=Math.max(24,Math.min(34,390*.066))*(appearance.reader.size||19)/19;
+ if(Math.abs(size-expected)>1)throw Error(`Lyrics text is ${size}px at 390px wide, expected ${expected.toFixed(1)}px`);
  const lines=page.locator('.inline-reader .lyrics-line');
  const current=await lines.evaluateAll(els=>els.findIndex(el=>el.classList.contains('current')));
  const before=(await actual()).position;
@@ -118,5 +121,5 @@ try {
  await page.screenshot({path:'artifacts/live-integrated-reader-desktop.png'});
  report.checks.push({name:'Reader and transport fit narrow mobile and desktop'});
  expect(report.errors).toEqual([]);report.ok=true;
-} catch(error){report.ok=false;report.failure=error.message;process.exitCode=1;}
+} catch(error){report.ok=false;report.failure=error.message;process.exitCode=1;await page?.screenshot({path:'artifacts/live-integrated-reader-failure.png'}).catch(()=>{});report.state=await page?.evaluate(()=>({passage:document.querySelector('.inline-reader')?.getAttribute('data-current-passage'),follow:document.querySelectorAll('.inline-reader .sonder-follow').length,backToNarration:!!document.querySelector('.reader-back-narration')})).catch(()=>null);}
 finally{await context.unrouteAll({behavior:'wait'});await browser.close();fs.mkdirSync('artifacts',{recursive:true});fs.writeFileSync('artifacts/integrated-reader-verification.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));}
