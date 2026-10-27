@@ -1,6 +1,6 @@
 # Handoff: roadmap pass on 2026-10-27
 
-Coordinator session working through GitHub issues #1–#5 (pinned roadmap #11 on `jahnzh/sonder`) with four supervised Orca workers. All workers are halted and released. Per-worker notes: `HANDOFF-fix-ui-alignment.md`, `HANDOFF-single-file-sync.md` (this folder). The torrent diagnosis is `/home/jahn/sonder-worktrees/torrent-health/artifacts/torrent-health-diagnosis.md`.
+Coordinator session working through GitHub issues #1–#5 (pinned roadmap #11 on `jahnzh/sonder`) with four supervised Orca workers. All workers are halted and released. Per-worker notes: `HANDOFF-fix-ui-alignment.md`, `HANDOFF-single-file-sync.md` (this folder). The torrent diagnosis is `torrent-health-diagnosis.md` (this folder).
 
 ## Follow-up later on 2026-10-27
 
@@ -10,7 +10,8 @@ Coordinator session working through GitHub issues #1–#5 (pinned roadmap #11 on
 - `bfe67f0`: merged `single-file-sync` (#5). The full test run (Jeff Hays DCC, chapters ignored) against the chapter map gave 99.4% text coverage, median 8.5 ms, 99.1% within 1 s and max 3.9 s. Flags: the outro plus unnarrated front and back matter.
 - The "Unknown narrator" release is not chapterless. Read from the HDD copy, it has 55 French chapter markers, so it is a French narration (its edition language is empty). Anchored mode correctly refuses it. No truly chapterless release exists in the library to test with.
 - "Game of Thrones" is still at 0.11%, 1 peer, 0 KiB/s and has no trackers, so the swarm looks dead.
-- Still open: the Caddy deploy (`sudo ./scripts/apply_updates.sh` in homelab, needs the user's password), phone checks (#1, #2, #7), #6, #8, and the worktree cleanup below.
+- Cleanup done: the four worktrees and their branches were removed (all merged), along with `/home/jahn/sonder-worktrees`. The extra Orca repos are no longer listed. Roadmap #11 is updated, and #6 is deferred (needs hand-labelled data).
+- Still open: the Caddy deploy (`sudo ./scripts/apply_updates.sh` in homelab, needs the user's password), phone checks (#1, #2, #7), and #8.
 
 ## State of `main` (local, not pushed, not deployed)
 
