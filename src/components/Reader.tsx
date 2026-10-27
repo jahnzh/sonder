@@ -205,6 +205,13 @@ export function ReaderView({
     pendingManual = useRef<TextLocator | null>(null),
     currentFlow = useRef<string | null>(null),
     automatic = useRef(0),
+    // Layout work of our own still in flight (displays, resizes, re-theming).
+    // Relocations while any is pending are not reader navigation.
+    layoutPending = useRef(0),
+    // Last pointer, wheel or key input on the pages. Only a relocation shortly
+    // after one counts as the reader navigating; epub.js also re-positions on
+    // its own (e.g. after loading neighbouring sections) seconds later.
+    lastGesture = useRef(0),
     fromListening = useRef(initialFromAudio),
     jumpRef = useRef<
       (id: string, save?: boolean, recordingId?: string) => Promise<boolean>
@@ -231,6 +238,9 @@ export function ReaderView({
   playerRef.current = p;
   const { appearance, update, save } = useAppearance();
   const preferences = appearance.reader;
+  // Switching Page/Lyrics doesn't change how the EPUB is styled; re-theming
+  // would re-paginate the whole book for nothing.
+  const themeKey = JSON.stringify({ ...appearance, reader: { ...appearance.reader, display: undefined, segmentWords: undefined } });
   const words = useMemo(() => book ? readerWords(book) : [], [book?.fingerprint]);
   const currentInterval = map?.recordingId === p.book?.recordingId
     ? map?.intervals.find(interval => interval.trackId === p.track?.id && interval.start <= p.position && interval.end > p.position)
@@ -410,11 +420,12 @@ export function ReaderView({
                 all.findIndex((value) => value.id === fragment.id) /
                 Math.max(1, all.length - 1),
             };
-            if (performance.now() <= automatic.current && latest.current)
+            const ownLayout = layoutPending.current > 0 || performance.now() <= automatic.current;
+            if (ownLayout && latest.current)
               return;
             latest.current = next;
             setLocator(next);
-            if (performance.now() > automatic.current) {
+            if (!ownLayout && performance.now() - lastGesture.current < 1500) {
               setFollow(false);
               pendingManual.current = next;
               if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -449,6 +460,9 @@ export function ReaderView({
           let start: {x:number; y:number; time:number} | null = null;
           let hold: ReturnType<typeof setTimeout> | null = null;
           let held = false;
+          const gesture = () => { lastGesture.current = performance.now(); };
+          for (const type of ["pointerdown", "wheel", "keydown", "touchmove"])
+            content.document.addEventListener(type, gesture, { passive: true });
           content.document.addEventListener("pointerdown", (event: PointerEvent) => {
             if (event.button !== 0 || (event.target as Element)?.closest("a")) return;
             start = { x: event.clientX, y: event.clientY, time: Date.now() }; held = false;
@@ -500,24 +514,15 @@ export function ReaderView({
           if (!disposed && host.clientHeight > 0) {
             if(host.clientWidth===lastWidth && host.clientHeight===lastHeight)return;
             lastWidth=host.clientWidth;lastHeight=host.clientHeight;
-            // Re-paginating a long book after a resize (rotation, desktop
-            // sidebar, leaving Lyrics) can take seconds; the relocation it
-            // ends with is not the reader navigating. Count relocations as
-            // automatic until that one (at most 10 s). Taps, swipes and keys
-            // stop following explicitly, so no gesture is missed.
-            automatic.current = Number.POSITIVE_INFINITY;
-            const settled = () => {
-              clearTimeout(limit);
-              view.off("relocated", settled);
-              automatic.current = performance.now() + 500;
-            };
-            const limit = setTimeout(settled, 10000);
-            view.on("relocated", settled);
+            settleAfterLayout(view);
             view.resize(host.clientWidth, host.clientHeight);
             if(following.current){following.current="";setFollowRevision(value=>value+1);}
           }
         });
         observer.observe(host);
+        // Scrolling the page container itself (scroll mode, scrollbar drags).
+        for (const type of ["pointerdown", "wheel", "touchmove"])
+          host.addEventListener(type, () => { lastGesture.current = performance.now(); }, { passive: true });
         (view as any).__observer = observer;
       } catch (error) {
         if (!disposed)
@@ -553,7 +558,7 @@ export function ReaderView({
           : preferences.theme === "sepia"
             ? { background: "#f2e6cd", text: "#362f24" }
             : { background: "#ffffff", text: "#202820" };
-    automatic.current = performance.now() + 1000;
+    settleAfterLayout(view);
     view.themes.default({
       "html, body": {
         background: `${theme.background} !important`,
@@ -590,15 +595,34 @@ export function ReaderView({
         void displayAutomatically(view, restore).catch(() => {});
     }, 80);
     return () => clearTimeout(timer);
-  }, [appearance, rendered, inline]);
+  }, [themeKey, rendered, inline]);
   // Relocations caused by our own display() calls are not reader navigation.
   // Mark them automatic until the call settles: in a long book, opening
   // another chapter can take longer than any fixed window.
+  // Re-paginating a long book after a resize or a theme change can take
+  // seconds; the relocation it ends with is not the reader navigating. Treat
+  // relocations as our own until that one arrives (at most 10 s). Taps,
+  // swipes and keys stop following explicitly, so no gesture is missed.
+  const settleAfterLayout = (view: Rendition) => {
+    layoutPending.current++;
+    let done = false;
+    const settled = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(limit);
+      view.off("relocated", settled);
+      layoutPending.current--;
+      automatic.current = performance.now() + 500;
+    };
+    const limit = setTimeout(settled, 10000);
+    view.on("relocated", settled);
+  };
   const displayAutomatically = async (view: Rendition, target: string) => {
-    automatic.current = Number.POSITIVE_INFINITY;
+    layoutPending.current++;
     try {
       await view.display(target);
     } finally {
+      layoutPending.current--;
       automatic.current = performance.now() + 500;
     }
   };
@@ -835,7 +859,7 @@ export function ReaderView({
   };
   const turn = (direction: number) => {
     setFollow(false);
-    automatic.current = 0;
+    automatic.current = 0; lastGesture.current = performance.now();
     if (preferences.display === "segment") {
       const cursor = Math.max(0, Math.min(words.length - 1, segment.start + direction * preferences.segmentWords));
       setManualWord(cursor);
@@ -1007,7 +1031,7 @@ export function ReaderView({
           void p.play(audio,track,interval.start+fraction*(interval.end-interval.start));
         }}
       />}
-      {desktop && book && preferences.display === "book" && <aside className="reader-desktop-contents" aria-label="Contents sidebar"><strong>Contents</strong>{book.sections.map(section=><button key={section.index} aria-current={section.index===locator?.section ? "location" : undefined} onClick={()=>{setFollow(false);setManualWord(null);automatic.current=0;void rendition.current?.display(section.href);}}>{section.title}</button>)}</aside>}
+      {desktop && book && preferences.display === "book" && <aside className="reader-desktop-contents" aria-label="Contents sidebar"><strong>Contents</strong>{book.sections.map(section=><button key={section.index} aria-current={section.index===locator?.section ? "location" : undefined} onClick={()=>{setFollow(false);setManualWord(null);automatic.current = 0; lastGesture.current = performance.now();void rendition.current?.display(section.href);}}>{section.title}</button>)}</aside>}
       {desktop && book && preferences.display === "segment" && <aside className="reader-lyrics-info" aria-label="Lyrics information"><strong>{book.title}</strong><span>{book.author}</span><span>{currentInterval ? currentInterval.verified ? "Following narration" : "Estimated sentence timings" : "Reading sync"}</span><p>Keyboard shortcuts</p><span>Space · play or pause</span><span>← / → · skip 30 seconds</span><span>↑ / ↓ · previous or next line</span><span>F · back to narration</span><span>P · page mode</span></aside>}
       {desktop && preferences.display === "book" && <><button className="reader-edge reader-edge-previous" aria-label="Previous ebook page" onClick={()=>turn(-1)}><ArrowLeft size={20}/></button><button className="reader-edge reader-edge-next" aria-label="Next ebook page" onClick={()=>turn(1)}><ArrowRight size={20}/></button></>}
       {!follow && currentInterval && <button className="button primary reader-back-narration" onClick={() => {setFollow(true); following.current=""; followRetry.current.attempts=0; setError("");}}>Back to narration</button>}
@@ -1142,7 +1166,7 @@ export function ReaderView({
                 onClick={() => {
                   setFollow(false);
                   setManualWord(null);
-                  automatic.current = 0;
+                  automatic.current = 0; lastGesture.current = performance.now();
                   void rendition.current?.display(section.href);
                   setPanel(null);
                 }}

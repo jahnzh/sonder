@@ -123,7 +123,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
     .getByRole("button", { name: "Bookmark this passage", exact: true })
     .click();
   await page.getByRole("button", { name: "Bookmarks", exact: true }).click();
-  await expect(page.locator(".reader-bookmark")).toHaveCount(1);
+  await expect(page.locator(".reader-room:not(.inline-reader) .reader-bookmark")).toHaveCount(1);
   await page
     .getByRole("button", { name: "Close reader options", exact: true })
     .click();
@@ -172,7 +172,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await page
     .getByRole("button", { name: "Prepare reading sync", exact: true })
     .click();
-  await expect(page.locator(".alignment-status")).toContainText(
+  await expect(page.locator(".reader-room:not(.inline-reader) .alignment-status")).toContainText(
     "Partial alignment",
     { timeout: 15000 },
   );
@@ -182,11 +182,11 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await page.request.patch(`/api/alignments/${alignment.id}`, {
     data: { action: "pause" },
   });
-  await expect(page.locator(".alignment-status")).toContainText("Paused");
+  await expect(page.locator(".reader-room:not(.inline-reader) .alignment-status")).toContainText("Paused");
   await page
     .getByRole("button", { name: "Rebuild reading sync", exact: true })
     .click();
-  await expect(page.locator(".alignment-status")).toContainText(
+  await expect(page.locator(".reader-room:not(.inline-reader) .alignment-status")).toContainText(
     "Partial alignment",
   );
   await page
@@ -235,7 +235,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   ).toBeDisabled();
   await expect(
     page.locator(
-      '.reading-sync select[aria-label="Reading sync audiobook release"]',
+      '.reader-room:not(.inline-reader) .reading-sync select[aria-label="Reading sync audiobook release"]',
     ),
   ).toHaveValue(chosenRecording);
   await page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").locator("body").click({ position: { x: 340, y: 100 } });
