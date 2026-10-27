@@ -15,11 +15,21 @@ docker compose run --rm --no-deps alignment-worker python download_model.py
 docker compose up -d --no-build
 ```
 
-Open **https://sonder.pecori.no** and sign in with `APP_PASSWORD` from `.env`. Caddy proxies this domain to the loopback-only app on port 3001; HTTPS cookies are enabled. The site block is recorded in `deploy/audiobooks.caddy`. For development, `npm run dev` starts the frontend at **http://localhost:5173** and the API at port 3001. Stop the production container before running development on the same API port. The server reads `.env` at startup.
+Open **https://sonder.pecori.no** and sign in as `admin` with `APP_PASSWORD` from `.env` (an empty username also signs in as admin). Caddy proxies this domain to the loopback-only app on port 3001; HTTPS cookies are enabled. The site block is recorded in `deploy/audiobooks.caddy`. For development, `npm run dev` starts the frontend at **http://localhost:5173** and the API at port 3001. Stop the production container before running development on the same API port. The server reads `.env` at startup.
 
 `setup-local-torrents.mjs` creates a dedicated `sonder-torrents` Transmission 4 queue using the installed image and the **existing `transmission-openvpn` container’s network**. It does not change the existing daemon or its downloads. Its RPC uses port 9092, requires generated credentials, and is not published on the host. A stable volume marker is checked by both the app and the torrent daemon, so Docker cannot silently redirect media onto the system disk when the HDD is absent. Both incomplete and completed audiobook files are on the HDD. Credentials are written to the ignored, private `.env`; daemon settings live under ignored `data/transmission/`. If the VPN container is recreated with a different private IP, run the setup script again and restart Sonder. The VPN container must be running before the torrent queue starts.
 
 The app container binds to loopback. Put an HTTPS reverse proxy in front of it for phone access and set `COOKIE_SECURE=true`. PWA installation, OPFS, and service workers require HTTPS or localhost. On first use, add your TorBox key in Settings to enable cached streaming; without it, magnet links use the local client.
+
+## Users
+
+Sonder has one administrator (`admin`, password `APP_PASSWORD`) and any number of users, created in Settings → **Users**. Passwords are stored as scrypt hashes; users change their own password in Settings → **Account**. Without `APP_PASSWORD` (development and browser tests) there is no sign-in and every request acts as the admin.
+
+- **Shared:** the catalogue and its files (works, editions, recordings, server copies, ebooks, reading-sync maps). Anyone can add an existing title to their library, stream it and save it on their own device.
+- **Per user:** library, favourites, hidden titles, listening progress (still per recording), reader positions, bookmarks, appearance, and the Hardcover token, sync state and queues. Device storage is separate per user, and queued writes carry an `X-Sonder-User-Id` header so another tab's sign-in can never receive them (the server answers 409).
+- **Admin only:** TorBox, torrents, Prowlarr, AudioBookBay and Library Genesis search, imports, Save to server, fault flags, removing server copies, preparing reading sync, linking ebooks, server settings and user management.
+
+The first start after upgrading copies all existing per-user rows to the admin and leaves the old single-user tables untouched, so the previous version can still run against the same database.
 
 ## Listening workflow
 
@@ -41,7 +51,7 @@ Library entries, saved server media, acquisitions, settings, and progress surviv
 
 ## Hardcover library and reading progress
 
-Hardcover organizes the library as well as supplying metadata. Add your token in Settings, save it, then use **Hardcover library & progress** to test the account, choose a sync mode, and sync now.
+Hardcover organizes the library as well as supplying metadata. Each user connects their own Hardcover account: add your token in Settings, save it, then use **Hardcover library & progress** to test the account, choose a sync mode, and sync now.
 
 - **Off** keeps catalog search and explicit book matching available.
 - **Import only** brings your reading shelves, custom lists, and available reading positions into Sonder without writing to Hardcover.
