@@ -21,7 +21,7 @@ const browser = await chromium.launch({
       : undefined),
 });
 const context = await browser.newContext({
-  baseURL: process.env.SONDER_VERIFY_URL || "https://audiobooks.pecori.no",
+  baseURL: process.env.SONDER_VERIFY_URL || "https://sonder.pecori.no",
   viewport: { width: 390, height: 844 },
   serviceWorkers: "block",
 });

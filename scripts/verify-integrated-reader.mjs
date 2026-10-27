@@ -6,7 +6,7 @@ process.loadEnvFile('.env');
 const recordingId=process.argv[2];
 if(!recordingId)throw Error('Usage: node scripts/verify-integrated-reader.mjs recording-id');
 const browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || '/home/jahn/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome'});
-const context=await browser.newContext({baseURL:process.env.SONDER_VERIFY_URL || 'https://audiobooks.pecori.no',viewport:{width:390,height:844},serviceWorkers:'block'});
+const context=await browser.newContext({baseURL:process.env.SONDER_VERIFY_URL || 'https://sonder.pecori.no',viewport:{width:390,height:844},serviceWorkers:'block'});
 const report={recordingId,protectedWrites:0,checks:[],errors:[]};
 try {
  const login=await context.request.post('/api/auth/login',{data:{password:process.env.APP_PASSWORD}});if(!login.ok())throw Error('Sign-in failed');
