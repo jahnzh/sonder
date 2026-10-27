@@ -147,3 +147,30 @@ test("lyrics without a map remains readable and offers sync setup", async ({page
  await expect(reader.locator(".reader-panel-heading").getByRole("heading",{name:"Reading sync",exact:true})).toBeVisible();
  } finally { await page.request.put("/api/appearance",{data:appearance}); }
 });
+
+test("lyrics keys without a current line and with modifiers leave playback and display alone", async ({page}) => {
+ const appearance=await(await page.request.get("/api/appearance")).json();
+ const {book,ebook}=await fixture(page,"Lyrics gap","en-IE");
+ try {
+  // 97 s falls between the two mapped chapters (0–95 s and 100–195 s).
+  expect((await page.request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[0].id,position:97,duration:book.tracks[0].duration,updatedAt:Date.now()}})).ok()).toBe(true);
+  await page.setViewportSize({width:1440,height:900});
+  await page.goto(`/#reader/${ebook}`);
+  const reader=page.getByRole("dialog",{name:"Reader"});
+  await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
+  await reader.locator(".reader-page-actions").getByRole("button",{name:"Lyrics",exact:true}).click();
+  const lyrics=reader.getByLabel("Lyrics reader");
+  await expect(lyrics.locator(".lyrics-line").first()).toBeVisible();
+  await expect(lyrics.locator(".lyrics-line.current")).toHaveCount(0);
+  // Browser shortcuts (print, Alt+key) are not reader keys.
+  await page.keyboard.press("Control+p");
+  await page.keyboard.press("Alt+p");
+  await page.waitForTimeout(300);
+  await expect(lyrics).toBeVisible();
+  await page.keyboard.press("ArrowDown");
+  await page.waitForTimeout(800);
+  await expect(lyrics.locator(".lyrics-line.current")).toHaveCount(0);
+  await expect(page.getByRole("button",{name:/^Pause/})).toHaveCount(0);
+ } finally { await page.request.put("/api/appearance",{data:appearance}); }
+});
+

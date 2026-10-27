@@ -5,7 +5,7 @@ import "../lyrics-reader.css";
 
 import { lyricsLines } from "../lyrics-lines";
 
-export function LyricsReader({ book, interval, position, hasMap, follow, onSeek, onManualScroll, onPrepareSync, size, selectedParagraph, onToggleControls, onClose }: {
+export function LyricsReader({ book, interval, position, hasMap, follow, onSeek, onManualScroll, onPrepareSync, size, selectedParagraph, ignoreKeys, onToggleControls, onClose }: {
   book: ReaderBook;
   interval?: AlignmentInterval;
   position: number;
@@ -17,6 +17,8 @@ export function LyricsReader({ book, interval, position, hasMap, follow, onSeek,
   /** Existing text-size preference, with 19px as the normal size. */
   size: number;
   selectedParagraph?: string;
+  /** A reader panel or sheet is open over the lines. */
+  ignoreKeys?: boolean;
   onToggleControls: () => void;
   onClose: () => void;
 }) {
@@ -50,16 +52,20 @@ export function LyricsReader({ book, interval, position, hasMap, follow, onSeek,
   }, [selectedParagraph, follow, lines]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
-      if ((event.key !== "ArrowUp" && event.key !== "ArrowDown") || !hasMap) return;
+      if ((event.key !== "ArrowUp" && event.key !== "ArrowDown") || !hasMap || ignoreKeys) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
       if ((event.target as HTMLElement)?.closest("input,select,textarea") || host.current?.closest('[data-state="closed"]')) return;
-      const line = lines[Math.max(0, Math.min(lines.length - 1, Math.max(0, active) + (event.key === "ArrowUp" ? -1 : 1)))];
+      // Without a current line there is nothing to step from; seeking would
+      // replace the listening position with the start of the book.
+      if (active < 0) return;
+      const line = lines[Math.max(0, Math.min(lines.length - 1, active + (event.key === "ArrowUp" ? -1 : 1)))];
       if (!line) return;
       event.preventDefault();
       onSeek(line.paragraphId, line.fraction);
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [active, lines, hasMap, onSeek]);
+  }, [active, lines, hasMap, ignoreKeys, onSeek]);
   // Kept in a ref: the reader re-renders on every playback tick, which would
   // reset a plain variable between touchstart and touchend.
   const touchStart = useRef<{x:number;y:number} | null>(null);

@@ -487,6 +487,7 @@ export function ReaderView({
             start=null;
           });
           content.document.addEventListener("keydown", (event: KeyboardEvent) => {
+            if (event.ctrlKey || event.metaKey || event.altKey) return;
             if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); pageAction.current(event.key === "ArrowLeft" ? "previous" : "next"); }
           });
           content.document.addEventListener("click", (event) => {
@@ -898,7 +899,7 @@ export function ReaderView({
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       // The Now Playing reader stays mounted while its dialog is closed.
-      if ((event.target as HTMLElement)?.closest("input,select,textarea,button") || panel || sentence || viewport.current?.closest('[data-state="closed"]')) return;
+      if (event.ctrlKey || event.metaKey || event.altKey || (event.target as HTMLElement)?.closest("input,select,textarea,button") || panel || sentence || viewport.current?.closest('[data-state="closed"]')) return;
       if (preferences.display === "segment" && event.key === " ") { event.preventDefault(); if (p.book) p.toggle(); }
       else if (preferences.display === "segment" && event.key.toLowerCase() === "f") { event.preventDefault(); setFollow(true); following.current=""; }
       else if (preferences.display === "segment" && event.key.toLowerCase() === "p") { event.preventDefault(); editReader({display:"book"}); }
@@ -1019,7 +1020,7 @@ export function ReaderView({
         aria-hidden={preferences.display === "segment"}
       />
       {preferences.display === "segment" && book && <LyricsReader
-        book={book} interval={currentInterval} position={p.position} hasMap={!!map?.intervals.length} follow={follow} size={preferences.size} selectedParagraph={locator?.paragraphId}
+        book={book} interval={currentInterval} position={p.position} hasMap={!!map?.intervals.length} follow={follow} size={preferences.size} selectedParagraph={locator?.paragraphId} ignoreKeys={!!panel || !!sentence}
         onToggleControls={() => setControlsVisible(value=>!value)} onClose={() => onClose?.()}
         onManualScroll={() => setFollow(false)} onPrepareSync={() => setPanel("sync")}
         onSeek={(paragraphId, fraction) => {
