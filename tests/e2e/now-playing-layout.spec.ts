@@ -147,4 +147,7 @@ for(const size of sizes){
    expect(await dialog.evaluate(el=>el.contains(document.activeElement))).toBe(true);
   }
   expect(await page.locator("#root").evaluate(el => el.inert)).toBe(true);
+  await close.click();
+  expect(await page.locator("#root").evaluate(el => el.inert)).toBe(false);
+  await page.locator(".mobile-nav").getByRole("button", {name:"Settings",exact:true}).click();
  });
