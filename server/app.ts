@@ -69,7 +69,16 @@ import {
   abbReleaseSearch,
   abbRelease,
   abbMagnet,
+  prowlarrConfig,
+  prowlarrReleaseSearch,
+  prowlarrRelease,
+  prowlarrMagnet,
 } from "./services.ts";
+import {
+  normalizeBaseUrl,
+  prowlarrStatus,
+  releaseDisplayTitle,
+} from "./sources/prowlarr.ts";
 import type { Book } from "../src/types.ts";
 const uploadDir = importedDir;
 export function listBooks(): Book[] {
@@ -434,6 +443,8 @@ export async function createApp() {
     annasUrl: getSetting("annasUrl") || "https://annas-archive.gl",
     libgenUrl: getSetting("libgenUrl") || "https://libgen.li",
     annasConfigured: !!getSetting("annas"),
+    prowlarrUrl: getSetting("prowlarrUrl") || "",
+    prowlarrConfigured: !!prowlarrConfig(),
     localConfigured: transmissionConfigured(),
     storageLabel: "4 TB media drive",
     authenticationEnabled: !!process.env.APP_PASSWORD,
@@ -448,8 +459,11 @@ export async function createApp() {
         annasUrl: z.url().optional(),
         libgenUrl: z.url().optional(),
         annas: z.string().max(1000).optional(),
+        prowlarrUrl: z.union([z.url(), z.literal("")]).optional(),
+        prowlarr: z.string().max(200).optional(),
       })
       .parse(req.body);
+    if (input.prowlarrUrl) input.prowlarrUrl = normalizeBaseUrl(input.prowlarrUrl);
     if (input.abbUrl) {
       const u = new URL(input.abbUrl);
       if (
@@ -489,7 +503,7 @@ export async function createApp() {
         db.delete(s.settings).where(eq(s.settings.key, key)).run();
         continue;
       }
-      const v = ["torbox", "hardcover", "annas"].includes(key)
+      const v = ["torbox", "hardcover", "annas", "prowlarr"].includes(key)
         ? encrypt(value)
         : value;
       db.insert(s.settings)
@@ -498,6 +512,11 @@ export async function createApp() {
         .run();
     }
     return { ok: true };
+  });
+  app.post("/api/prowlarr/test", async () => {
+    const config = prowlarrConfig();
+    if (!config) throw new Error("Enter the Prowlarr address and API key first.");
+    return { ok: true, ...(await prowlarrStatus(config)) };
   });
   app.post("/api/torbox/test", async () => {
     await torbox("user/me");
@@ -724,6 +743,31 @@ export async function createApp() {
       cover: release.cover,
       language: release.language,
       narrator: release.narrator,
+    });
+  });
+  app.get("/api/discover/prowlarr/releases", async (req) => {
+    const { q } = z
+      .object({ q: z.string().min(2).max(150) })
+      .parse(req.query);
+    return prowlarrReleaseSearch(q);
+  });
+  app.post("/api/discover/prowlarr/add", async (req) => {
+    const input = z
+      .object({
+        id: z.string().regex(/^prowlarr-[a-f0-9]{32}$/),
+        workId: z.string().max(100).optional(),
+      })
+      .parse(req.body);
+    const link = prowlarrRelease(input.id);
+    const work = input.workId
+      ? db.select().from(s.works).where(eq(s.works.id, input.workId)).get()
+      : undefined;
+    if (input.workId && !work)
+      throw new Error("The selected book could not be found.");
+    return acquire(await prowlarrMagnet(input.id), {
+      workId: input.workId,
+      title: work?.title || releaseDisplayTitle(link.title),
+      author: work?.author,
     });
   });
   app.get("/api/discover/ebooks", async (req) => {

@@ -85,6 +85,8 @@ export type Settings = {
   libgenUrl: string;
   localConfigured: boolean;
   storageLabel: string;
+  prowlarrUrl?: string;
+  prowlarrConfigured?: boolean;
 };
 
 export type Acquisition = {
@@ -124,6 +126,20 @@ export type AudiobookRelease = {
   posted: string | null;
   uploader: string | null;
   description: string;
+  // Absent on AudioBookBay releases from older servers.
+  source?: "abb" | "prowlarr";
+  indexer?: string | null;
+  indexers?: string[];
+  seeders?: number | null;
+  leechers?: number | null;
+  sizeBytes?: number | null;
+  infoHash?: string | null;
+  cached?: boolean;
+};
+export type ReleaseSourceStatus = {
+  source: "abb" | "prowlarr";
+  label: string;
+  error?: string;
 };
 export type EbookResult = {
   md5: string;

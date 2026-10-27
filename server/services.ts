@@ -6,6 +6,11 @@ import { decrypt } from "./security.ts";
 import type { AudiobookRelease } from "../src/types.ts";
 import { createHash } from "node:crypto";
 import { retryDelayFromHeader } from "./media-response.ts";
+import {
+  prowlarrSearch,
+  resolveProwlarrLink,
+  type ProwlarrLink,
+} from "./sources/prowlarr.ts";
 export function getSetting(key: string) {
   const row = db.select().from(settings).where(eq(settings.key, key)).get();
   return row?.value;
@@ -272,4 +277,61 @@ export async function abbMagnet(slug: string) {
   throw new Error(
     "No torrent hash found on this source page. You can import its magnet link directly.",
   );
+}
+export function prowlarrConfig() {
+  const url = getSetting("prowlarrUrl");
+  const key = getSecret("prowlarr");
+  return url && key ? { url, key } : null;
+}
+const prowlarrLinks = new Map<string, { expires: number; link: ProwlarrLink }>();
+// Cached hashes only raise a release in the list; acquisition re-checks TorBox before routing.
+export async function torboxCachedHashes(hashes: string[]) {
+  const cached = new Set<string>();
+  if (!hashes.length || !getSecret("torbox")) return cached;
+  for (let index = 0; index < hashes.length; index += 50) {
+    const data = await torbox(
+      `torrents/checkcached?hash=${hashes.slice(index, index + 50).join(",")}&format=list&list_files=false`,
+    );
+    const items = Array.isArray(data)
+      ? data
+      : data && typeof data === "object"
+        ? Object.values(data)
+        : [];
+    for (const item of items)
+      if (item && typeof item === "object" && "hash" in item)
+        cached.add(String(item.hash).toLowerCase());
+  }
+  return cached;
+}
+export async function prowlarrReleaseSearch(q: string) {
+  const config = prowlarrConfig();
+  if (!config) throw new Error("Connect Prowlarr in Settings first.");
+  const { releases, links } = await prowlarrSearch(config, q);
+  const expires = Date.now() + 6 * 3600_000;
+  for (const [id, link] of links) prowlarrLinks.set(id, { expires, link });
+  for (const [id, entry] of prowlarrLinks)
+    if (entry.expires <= Date.now() || prowlarrLinks.size > 5000)
+      prowlarrLinks.delete(id);
+  const cached = await torboxCachedHashes(
+    releases.flatMap((release) => (release.infoHash ? [release.infoHash] : [])),
+  ).catch(() => new Set<string>());
+  return {
+    results: releases.map((release) => ({
+      ...release,
+      cached: !!release.infoHash && cached.has(release.infoHash),
+    })),
+    page: 1,
+    nextPage: null,
+  };
+}
+export function prowlarrRelease(id: string) {
+  const entry = prowlarrLinks.get(id);
+  if (!entry || entry.expires <= Date.now())
+    throw new Error("This search result has expired. Search again and choose the release.");
+  return entry.link;
+}
+export async function prowlarrMagnet(id: string) {
+  const config = prowlarrConfig();
+  if (!config) throw new Error("Connect Prowlarr in Settings first.");
+  return resolveProwlarrLink(config, prowlarrRelease(id));
 }

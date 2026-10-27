@@ -2617,6 +2617,24 @@ input[type="range"]::-moz-range-thumb {
   font-size: calc(11px * var(--ui-scale, 1));
   overflow-wrap: anywhere;
 }
+.release-source {
+  display: block;
+  color: var(--muted);
+  font-size: calc(11px * var(--ui-scale, 1));
+  overflow-wrap: anywhere;
+}
+.release-info h3 {
+  overflow-wrap: anywhere;
+}
+.release-source-error {
+  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 8px 12px;
+  margin-top: 10px;
+  overflow-wrap: anywhere;
+}
 .release-facts .release-language {
   background: var(--raised);
   color: var(--text);
