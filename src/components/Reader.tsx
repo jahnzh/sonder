@@ -713,7 +713,7 @@ export function ReaderView({
         interval.end > player.position,
     );
     if (interval) {
-
+      following.current = `${currentMap.recordingId}:${interval.paragraphId}`;
       void jumpRef.current(interval.paragraphId, true);
     } else {
       if (!isAdmin()) { notify("No reading sync is available for this position."); return; }
