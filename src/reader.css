@@ -391,7 +391,8 @@
 .reader-edge { position: absolute; z-index: 2; top: 50%; width: 44px; height: 44px; border: 1px solid var(--border); border-radius: 50%; background: var(--surface); color: var(--text); display: grid; place-items: center; }
 .reader-edge-previous { left: 4px; }
 .reader-edge-next { right: 4px; }
-.reader-back-narration { position: absolute; z-index: 3; bottom: 36px; left: 50%; transform: translateX(-50%); white-space: nowrap; }
+.reader-back-narration { position: absolute; z-index: 3; bottom: 36px; left: 50%; transform: translateX(-50%); white-space: nowrap; border-radius: 999px; box-shadow: 0 6px 20px color-mix(in srgb, var(--shadow) 35%, transparent); }
+.reader-back-narration.button.primary:hover { transform: translateX(-50%) translateY(-1px); }
 .reader-room[data-controls-visible="true"] .reader-back-narration { bottom: 150px; }
 .reader-sentence-sheet { position: absolute; z-index: 6; bottom: 0; left: 0; right: 0; max-height: 80%; overflow: auto; display: grid; gap: 8px; padding: 20px; border: 1px solid var(--border); border-radius: 16px 16px 0 0; background: var(--surface); box-shadow: 0 -10px 40px #0006; }
 .reader-sentence-sheet > .icon-button { justify-self: end; }

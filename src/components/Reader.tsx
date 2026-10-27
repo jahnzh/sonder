@@ -500,10 +500,18 @@ export function ReaderView({
             if(host.clientWidth===lastWidth && host.clientHeight===lastHeight)return;
             lastWidth=host.clientWidth;lastHeight=host.clientHeight;
             // Re-paginating a long book after a resize (rotation, desktop
-            // sidebar, leaving Lyrics) can take seconds; its relocation is not
-            // the reader navigating. Taps, swipes and keys stop following
-            // explicitly, so this only affects relocations without a gesture.
-            automatic.current = performance.now() + 3000;
+            // sidebar, leaving Lyrics) can take seconds; the relocation it
+            // ends with is not the reader navigating. Count relocations as
+            // automatic until that one (at most 10 s). Taps, swipes and keys
+            // stop following explicitly, so no gesture is missed.
+            automatic.current = Number.POSITIVE_INFINITY;
+            const settled = () => {
+              clearTimeout(limit);
+              view.off("relocated", settled);
+              automatic.current = performance.now() + 500;
+            };
+            const limit = setTimeout(settled, 10000);
+            view.on("relocated", settled);
             view.resize(host.clientWidth, host.clientHeight);
             if(following.current){following.current="";setFollowRevision(value=>value+1);}
           }
@@ -995,7 +1003,7 @@ export function ReaderView({
       {desktop && book && preferences.display === "book" && <aside className="reader-desktop-contents" aria-label="Contents sidebar"><strong>Contents</strong>{book.sections.map(section=><button key={section.index} aria-current={section.index===locator?.section ? "location" : undefined} onClick={()=>{setFollow(false);setManualWord(null);automatic.current=0;void rendition.current?.display(section.href);}}>{section.title}</button>)}</aside>}
       {desktop && book && preferences.display === "segment" && <aside className="reader-lyrics-info" aria-label="Lyrics information"><strong>{book.title}</strong><span>{book.author}</span><span>{currentInterval ? currentInterval.verified ? "Following narration" : "Estimated sentence timings" : "Reading sync"}</span><p>Keyboard shortcuts</p><span>Space · play or pause</span><span>← / → · skip 30 seconds</span><span>↑ / ↓ · previous or next line</span><span>F · back to narration</span><span>P · page mode</span></aside>}
       {desktop && preferences.display === "book" && <><button className="reader-edge reader-edge-previous" aria-label="Previous ebook page" onClick={()=>turn(-1)}><ArrowLeft size={20}/></button><button className="reader-edge reader-edge-next" aria-label="Next ebook page" onClick={()=>turn(1)}><ArrowRight size={20}/></button></>}
-      {!follow && currentInterval && <button className="button reader-back-narration" onClick={() => {setFollow(true); following.current=""; followRetry.current.attempts=0; setError("");}}>Back to narration</button>}
+      {!follow && currentInterval && <button className="button primary reader-back-narration" onClick={() => {setFollow(true); following.current=""; followRetry.current.attempts=0; setError("");}}>Back to narration</button>}
       <div className="reader-page-footer"><button className="reader-footer-toggle" aria-label="Show reader controls" onClick={()=>setControlsVisible(true)}>{book?.sections.find(section=>section.index===locator?.section)?.title || ""} · {Math.round((locator?.progression || 0)*100)}%</button></div>
       <div className="reader-page-actions" hidden={!controlsVisible && !desktop}>
         <div className="reader-progress-sync" role="group" aria-label="Sync reading and audio positions">
