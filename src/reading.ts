@@ -179,7 +179,19 @@ export async function queueBookmark(
   });
   void syncBookmarks(id).catch(() => {});
 }
-const rejectedBookmarkStatuses = [400, 403, 404, 410, 413, 422];
+// Only refusals that can never succeed drop a queued action: a validation
+// error, a removed ebook, a conflict or an oversized body. Server and network
+// errors keep it queued.
+function bookmarkRejected(status: number, data: { error?: string; code?: string }) {
+  if (status === 400)
+    return (
+      data.code === "bookmark_invalid" ||
+      data.error === "Please check the information you entered." ||
+      data.error === "This bookmark does not belong to this edition."
+    );
+  if (status === 409) return data.code !== "user_mismatch";
+  return [404, 410, 413, 422].includes(status);
+}
 export async function syncBookmarks(id: string) {
   if (!navigator.onLine || bookmarkSyncs.has(id)) return;
   bookmarkSyncs.add(id);
@@ -212,7 +224,7 @@ export async function syncBookmarks(id: string) {
       if (owner !== userId()) return;
       // The server will never accept this action. Drop it so later bookmark
       // changes for this ebook can still sync.
-      const rejected = rejectedBookmarkStatuses.includes(response.status);
+      const rejected = !response.ok && bookmarkRejected(response.status, data);
       if (!response.ok && !rejected)
         throw new Error(data.error || "Bookmarks could not be synchronized.");
       if (rejected)

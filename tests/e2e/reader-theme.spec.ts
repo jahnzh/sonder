@@ -307,17 +307,34 @@ test("a bookmark the server rejects is dropped with a notice and later bookmarks
   });
   expect(upload.ok()).toBe(true);
   const { id } = await upload.json();
-  // The first bookmark is never accepted, like one whose quote is too long.
+  // Temporary server and I/O errors keep the bookmark queued; a permanent
+  // validation error drops it so later bookmarks can still sync.
   let rejected = "";
+  const temporary = [
+    { status: 503, json: { error: "The media drive is not available." } },
+    { status: 400, json: { error: "ENOENT: no such file or directory" } },
+  ];
+  let transientForSecond = true;
   await page.route(`**/api/reader/${id}/bookmarks`, async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
     const bookmark = route.request().postDataJSON()?.id;
     rejected ||= bookmark;
-    if (route.request().method() !== "POST" || bookmark !== rejected)
-      return route.continue();
-    await route.fulfill({
-      status: 400,
-      json: { error: "This bookmark does not belong to this edition." },
-    });
+    if (bookmark === rejected) {
+      const next = temporary.shift();
+      if (next) return route.fulfill(next);
+      return route.fulfill({
+        status: 400,
+        json: { error: "This bookmark does not belong to this edition." },
+      });
+    }
+    if (transientForSecond) {
+      transientForSecond = false;
+      return route.fulfill({
+        status: 503,
+        json: { error: "The media drive is not available." },
+      });
+    }
+    return route.continue();
   });
   await page.goto(`/#reader/${id}`);
   const reader = page.getByRole("dialog", { name: "Reader" });
@@ -328,11 +345,19 @@ test("a bookmark the server rejects is dropped with a notice and later bookmarks
     exact: true,
   });
   await add.click();
+  await expect.poll(() => temporary.length).toBe(1);
+  await expect(page.locator(".toast.error")).toHaveCount(0);
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect.poll(() => temporary.length).toBe(0);
+  await expect(page.locator(".toast.error")).toHaveCount(0);
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
   // The reader dialog hides the rest of the page from the accessibility tree.
   await expect(page.locator(".toast.error")).toContainText(
     "A bookmark could not be saved",
   );
   await add.click();
+  await expect.poll(() => transientForSecond).toBe(false);
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
   await expect
     .poll(
       async () =>
