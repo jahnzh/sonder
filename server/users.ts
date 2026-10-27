@@ -6,6 +6,7 @@ import { decrypt, encrypt, hashToken } from "./security.ts";
 
 export const ADMIN_USER_ID = 1;
 export type User = { id: number; username: string; role: "admin" | "user" };
+declare module "fastify" { interface FastifyRequest { user: User | null } }
 const admin: User = { id: 1, username: "admin", role: "admin" };
 export function sessionUser(req: FastifyRequest): User | null {
   if (!process.env.APP_PASSWORD) return admin;
@@ -13,7 +14,7 @@ export function sessionUser(req: FastifyRequest): User | null {
   if (!token) return null;
   return (sqlite.prepare("SELECT u.id,u.username,u.role FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.token=? AND s.expires_at>?").get(hashToken(token), Date.now()) as User | undefined) ?? null;
 }
-export function currentUser(req: FastifyRequest): User { const user = sessionUser(req); if (!user) throw Object.assign(new Error("Sign in to your listening space."), { statusCode: 401 }); return user; }
+export function currentUser(req: FastifyRequest): User { const user = req.user ?? sessionUser(req); if (!user) throw Object.assign(new Error("Sign in to your listening space."), { statusCode: 401 }); return user; }
 export function currentUserId(req: FastifyRequest): number { return currentUser(req).id; }
 export function requireAdmin(req: FastifyRequest): void {
   if (currentUser(req).role !== "admin") throw Object.assign(new Error("Only the administrator can do this."), { statusCode: 403 });

@@ -20,6 +20,10 @@ test("users have isolated libraries and progress and cannot access administratio
  assert.equal((await request(first,"PATCH",`/api/library/${book.id}`,{status:"finished"})).statusCode,200);
  const position={recordingId:book.recordingId,trackId:book.tracks[0].id,position:12,duration:100,updatedAt:Date.now()};
  assert.equal((await request(first,"POST","/api/progress",position)).statusCode,200);
+ const appearance=(await request(first,"GET","/api/appearance")).json();
+ const changed={...appearance, preset: appearance.preset === "light" ? "forest" : "light"};
+ assert.equal((await request(first,"PUT","/api/appearance",changed)).statusCode,200);
+ assert.notDeepEqual((await request(first,"GET","/api/appearance")).json(),(await request(second,"GET","/api/appearance")).json());
  const a=(await request(first,"GET","/api/books")).json().find((x:any)=>x.id===book.id); const b=(await request(second,"GET","/api/books")).json().find((x:any)=>x.id===book.id);
  assert.equal(a.status,"finished"); assert.equal(a.progress.position,12); assert.equal(b.inLibrary,false); assert.equal(b.progress,undefined);
  for(const [method,url] of [["PATCH","/api/settings"],["POST","/api/acquire"],["POST","/api/import"],["POST","/api/alignments"]]) assert.equal((await request(first,method,url,{})).statusCode,403,url);

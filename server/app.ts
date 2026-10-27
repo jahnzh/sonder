@@ -212,7 +212,9 @@ export async function createApp() {
             : "Something went wrong. Please try again.",
     });
   });
+  app.decorateRequest("user", null);
   app.addHook("onRequest", async (req, reply) => {
+    req.user = sessionUser(req);
     if (!req.url.startsWith("/api/")) return;
     if (
       !["GET", "HEAD", "OPTIONS"].includes(req.method) &&
@@ -234,7 +236,7 @@ export async function createApp() {
       )
     )
       return;
-    if (!sessionUser(req)) return reply.code(401).send({ error: "Sign in to your listening space." });
+    if (!req.user) return reply.code(401).send({ error: "Sign in to your listening space." });
     const path = req.url.split("?")[0];
     if ((req.method === "PATCH" && path === "/api/settings") || /^\/api\/(prowlarr|torbox)(?:\/|$)/.test(path) || /^\/api\/acquisitions(?:\/|$)/.test(path) || path === "/api/acquire" || path === "/api/torrents/health" || path === "/api/local/test" || /^\/api\/discover\/(abb|prowlarr)(?:\/|$)/.test(path) || path === "/api/discover/ebooks" || (req.method === "POST" && ["/api/ebooks", "/api/ebooks/import", "/api/import"].includes(path)) || (req.method === "POST" && /^\/api\/books\/[^/]+\/keep$/.test(path)) || (req.method === "POST" && /^\/api\/reader\/[^/]+\/link$/.test(path)) || (["PUT", "DELETE"].includes(req.method) && /^\/api\/recordings\/[^/]+\/(faults\/[^/]+|server-copy)$/.test(path)) || (["POST", "PATCH"].includes(req.method) && /^\/api\/alignments(?:\/|$)/.test(path))) requireAdmin(req);
   });
