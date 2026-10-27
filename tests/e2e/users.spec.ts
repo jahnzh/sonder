@@ -15,6 +15,7 @@ test.beforeAll(async () => {
 test.afterAll(() => { server?.kill(); });
 test("accounts keep libraries and offline queues separate", async ({ page }) => {
   mkdirSync("artifacts", { recursive: true });
+  await page.addInitScript(() => sessionStorage.setItem("test-load-count", String(Number(sessionStorage.getItem("test-load-count") || 0) + 1)));
   const bookHeaders: string[] = [];
   await page.route("**/api/books", route => {
     bookHeaders.push(route.request().headers()["x-sonder-user-id"] || "");
@@ -44,8 +45,10 @@ test("accounts keep libraries and offline queues separate", async ({ page }) => 
   let mismatches = 0;
   let queueOwner = "";
   await page.route("**/api/progress", route => { mismatches++; queueOwner = route.request().headers()["x-sonder-user-id"]; return route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ code: "user_mismatch", error: "Signed in as a different user." }) }); });
+  const loads = await page.evaluate(() => Number(sessionStorage.getItem("test-load-count")));
   await page.reload();
   await expect.poll(() => mismatches).toBeGreaterThan(0);
+  await expect.poll(() => page.evaluate(() => Number(sessionStorage.getItem("test-load-count")))).toBeGreaterThanOrEqual(loads + 2);
   expect(queueOwner).toBe("1");
   await expect.poll(() => page.evaluate((id) => new Promise<boolean>(resolve => { const request = indexedDB.open("sonder"); request.onsuccess = () => { const get = request.result.transaction("progress").objectStore("progress").get(id); get.onsuccess = () => resolve(!!get.result?.pending); }; }), book.recordingId)).toBe(true);
   await page.unroute("**/api/progress");
