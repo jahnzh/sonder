@@ -70,4 +70,55 @@ for (const [table, columns] of [
     if (!existing.has(column))
       sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
 }
+sqlite.exec(`
+CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,username TEXT NOT NULL UNIQUE COLLATE NOCASE,password_hash TEXT,role TEXT NOT NULL CHECK(role IN ('admin','user')),created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS user_acquisitions(user_id INTEGER NOT NULL REFERENCES users(id),acquisition_id TEXT NOT NULL REFERENCES acquisitions(id),PRIMARY KEY(user_id,acquisition_id));
+CREATE TABLE IF NOT EXISTS user_settings(user_id INTEGER NOT NULL REFERENCES users(id),key TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(user_id,key));
+CREATE TABLE IF NOT EXISTS user_library(user_id INTEGER NOT NULL REFERENCES users(id),book_id TEXT NOT NULL REFERENCES audio_editions(id),status TEXT NOT NULL DEFAULT 'unread',added_at INTEGER NOT NULL,PRIMARY KEY(user_id,book_id));
+CREATE TABLE IF NOT EXISTS user_hidden_library(user_id INTEGER NOT NULL REFERENCES users(id),book_id TEXT NOT NULL REFERENCES audio_editions(id),PRIMARY KEY(user_id,book_id));
+CREATE TABLE IF NOT EXISTS user_progress(user_id INTEGER NOT NULL REFERENCES users(id),recording_id TEXT NOT NULL REFERENCES recordings(id),track_id TEXT NOT NULL REFERENCES tracks(id),position REAL NOT NULL,duration REAL NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(user_id,recording_id));
+CREATE TABLE IF NOT EXISTS user_ebook_progress(user_id INTEGER NOT NULL REFERENCES users(id),edition_id TEXT NOT NULL REFERENCES ebook_editions(id),cfi TEXT NOT NULL,chapter INTEGER NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(user_id,edition_id));
+CREATE TABLE IF NOT EXISTS user_reader_checkpoints(user_id INTEGER NOT NULL REFERENCES users(id),edition_id TEXT NOT NULL REFERENCES ebook_editions(id),data TEXT NOT NULL,PRIMARY KEY(user_id,edition_id));
+CREATE TABLE IF NOT EXISTS user_reader_bookmarks(user_id INTEGER NOT NULL REFERENCES users(id),id TEXT NOT NULL,edition_id TEXT NOT NULL REFERENCES ebook_editions(id),label TEXT NOT NULL,locator TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(user_id,id));
+CREATE TABLE IF NOT EXISTS user_reader_events(user_id INTEGER NOT NULL REFERENCES users(id),event_id TEXT NOT NULL,edition_id TEXT NOT NULL REFERENCES ebook_editions(id),PRIMARY KEY(user_id,event_id));
+`);
+if (!(sqlite.prepare("PRAGMA table_info(sessions)").all() as {name:string}[]).some(c => c.name === "user_id"))
+  sqlite.exec("ALTER TABLE sessions ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1");
+sqlite.transaction(() => {
+  sqlite.prepare("INSERT OR IGNORE INTO users(id,username,password_hash,role,created_at) VALUES(1,'admin',NULL,'admin',?)").run(Date.now());
+  if (!sqlite.prepare("SELECT 1 FROM settings WHERE key='migration:multi-user'").get()) {
+    sqlite.exec("INSERT INTO user_acquisitions(user_id,acquisition_id) SELECT 1,id FROM acquisitions");
+    for (const table of ["library", "hidden_library", "progress", "ebook_progress", "reader_checkpoints", "reader_bookmarks", "reader_events"])
+      sqlite.exec(`INSERT INTO user_${table} SELECT 1, * FROM ${table}`);
+    sqlite.exec("INSERT INTO user_settings(user_id,key,value) SELECT 1,key,value FROM settings WHERE key='appearance'");
+    sqlite.exec("INSERT INTO settings(key,value) VALUES('migration:multi-user','1')");
+  }
+})();
+sqlite.exec(`
+CREATE TABLE IF NOT EXISTS user_hardcover_links(user_id INTEGER NOT NULL REFERENCES users(id),book_id INTEGER NOT NULL,user_book_id INTEGER,status_id INTEGER,remote_updated_at INTEGER NOT NULL DEFAULT 0,synced_at INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(user_id,book_id));
+CREATE TABLE IF NOT EXISTS user_hardcover_outbox(user_id INTEGER NOT NULL REFERENCES users(id),book_id INTEGER NOT NULL,account_id INTEGER NOT NULL,status_id INTEGER NOT NULL,intent TEXT NOT NULL DEFAULT 'status',updated_at INTEGER NOT NULL,error TEXT,PRIMARY KEY(user_id,book_id));
+CREATE TABLE IF NOT EXISTS user_hardcover_reading_outbox(user_id INTEGER NOT NULL REFERENCES users(id),book_id INTEGER NOT NULL,account_id INTEGER NOT NULL,work_id TEXT NOT NULL REFERENCES works(id),fraction REAL NOT NULL,updated_at INTEGER NOT NULL,error TEXT,PRIMARY KEY(user_id,book_id));
+CREATE TABLE IF NOT EXISTS user_hardcover_progress(user_id INTEGER NOT NULL REFERENCES users(id),book_id INTEGER NOT NULL,account_id INTEGER NOT NULL,recording_id TEXT NOT NULL REFERENCES recordings(id),position REAL NOT NULL,duration REAL NOT NULL,updated_at INTEGER NOT NULL,error TEXT,PRIMARY KEY(user_id,book_id));
+CREATE TABLE IF NOT EXISTS user_hardcover_lists(user_id INTEGER NOT NULL REFERENCES users(id),id INTEGER NOT NULL,account_id INTEGER NOT NULL,name TEXT NOT NULL,slug TEXT,members TEXT NOT NULL DEFAULT '[]',synced_at INTEGER NOT NULL,PRIMARY KEY(user_id,id));
+CREATE TABLE IF NOT EXISTS user_hardcover_reads(user_id INTEGER NOT NULL REFERENCES users(id),book_id INTEGER NOT NULL,account_id INTEGER NOT NULL,snapshot TEXT NOT NULL,fraction REAL,synced_at INTEGER NOT NULL,PRIMARY KEY(user_id,book_id));
+CREATE TABLE IF NOT EXISTS user_hardcover_recording_editions(user_id INTEGER NOT NULL REFERENCES users(id),recording_id TEXT NOT NULL REFERENCES recordings(id),edition_id INTEGER NOT NULL,PRIMARY KEY(user_id,recording_id));
+`);
+// One-time copy of the single-account Hardcover key, state and queues to the admin (#15). The old rows stay for rollback.
+export function migrateHardcoverToUsers(): void {
+  sqlite.transaction(() => {
+    if (sqlite.prepare("SELECT 1 FROM settings WHERE key='migration:multi-user-hardcover'").get()) return;
+    sqlite.exec(`
+INSERT OR IGNORE INTO user_settings(user_id,key,value) SELECT 1,key,value FROM settings WHERE key IN ('hardcover','hardcoverState');
+INSERT OR IGNORE INTO user_hardcover_links(user_id,book_id,user_book_id,status_id,remote_updated_at,synced_at) SELECT 1,book_id,user_book_id,status_id,remote_updated_at,MAX(synced_at) FROM hardcover_links WHERE user_book_id IS NOT NULL OR status_id IS NOT NULL OR synced_at>0 GROUP BY book_id;
+INSERT OR IGNORE INTO user_hardcover_outbox(user_id,book_id,account_id,status_id,intent,updated_at,error) SELECT 1,book_id,account_id,status_id,intent,updated_at,error FROM hardcover_outbox;
+INSERT OR IGNORE INTO user_hardcover_reading_outbox(user_id,book_id,account_id,work_id,fraction,updated_at,error) SELECT 1,book_id,account_id,work_id,fraction,updated_at,error FROM hardcover_reading_outbox;
+INSERT OR IGNORE INTO user_hardcover_progress(user_id,book_id,account_id,recording_id,position,duration,updated_at,error) SELECT 1,book_id,account_id,recording_id,position,duration,updated_at,error FROM hardcover_progress;
+INSERT OR IGNORE INTO user_hardcover_lists(user_id,id,account_id,name,slug,members,synced_at) SELECT 1,id,account_id,name,slug,members,synced_at FROM hardcover_lists;
+INSERT OR IGNORE INTO user_hardcover_reads(user_id,book_id,account_id,snapshot,fraction,synced_at) SELECT 1,book_id,account_id,snapshot,fraction,synced_at FROM hardcover_reads;
+INSERT OR IGNORE INTO user_hardcover_recording_editions(user_id,recording_id,edition_id) SELECT 1,recording_id,edition_id FROM hardcover_recording_editions;
+INSERT INTO settings(key,value) VALUES('migration:multi-user-hardcover','1');
+`);
+  })();
+}
+migrateHardcoverToUsers();
 export const db = drizzle(sqlite, { schema });

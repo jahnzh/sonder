@@ -1,3 +1,4 @@
+import { currentUser, currentUserId, getUserSecret, sessionUser, requireAdmin, registerUsers, verifyPassword } from "./users.ts";
 import Fastify from "fastify";
 import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
@@ -27,7 +28,7 @@ import {
   hardcoverSearch,
   queueHardcoverStatus,
   queueHardcoverProgress,
-  resetHardcoverAccount,
+  setHardcoverToken,
   tickHardcover,
   hardcoverWorkForMedia,
   claimHardcoverAudio,
@@ -64,7 +65,6 @@ import {
 import { encrypt, passwordMatches, hashToken } from "./security.ts";
 import {
   getSetting,
-  getSecret,
   torbox,
   torboxUrl,
   abbSearch,
@@ -83,10 +83,10 @@ import {
 } from "./sources/prowlarr.ts";
 import type { Book } from "../src/types.ts";
 const uploadDir = importedDir;
-export function listBooks(): Book[] {
+export function listBooks(userId = 1): Book[] {
   const allTracks = db.select().from(s.tracks).all();
-  const allProgress = db.select().from(s.progress).all();
-  const lib = db.select().from(s.library).all();
+  const allProgress = db.select().from(s.userProgress).where(eq(s.userProgress.userId, userId)).all();
+  const lib = db.select().from(s.userLibrary).where(eq(s.userLibrary.userId, userId)).all();
   return db
     .select({ work: s.works, edition: s.editions, recording: s.recordings })
     .from(s.editions)
@@ -117,7 +117,7 @@ export function listBooks(): Book[] {
             .filter((t) => t.recordingId === recording.id)
             .every(hasServerMedia),
         faults,
-        hardcover: hardcoverForWork(work.id),
+        hardcover: hardcoverForWork(userId, work.id),
         id: edition.id,
         workId: work.id,
         editionId: edition.id,
@@ -211,7 +211,9 @@ export async function createApp() {
             : "Something went wrong. Please try again.",
     });
   });
+  app.decorateRequest("user", null);
   app.addHook("onRequest", async (req, reply) => {
+    req.user = sessionUser(req);
     if (!req.url.startsWith("/api/")) return;
     if (
       !["GET", "HEAD", "OPTIONS"].includes(req.method) &&
@@ -233,53 +235,22 @@ export async function createApp() {
       )
     )
       return;
-    if (process.env.APP_PASSWORD) {
-      const token = req.cookies.sonder_session;
-      const session =
-        token &&
-        db
-          .select()
-          .from(s.sessions)
-          .where(
-            and(
-              eq(s.sessions.token, hashToken(token)),
-              gt(s.sessions.expiresAt, Date.now()),
-            ),
-          )
-          .get();
-      if (!session)
-        return reply
-          .code(401)
-          .send({ error: "Sign in to your listening space." });
-    }
+    if (!req.user) return reply.code(401).send({ error: "Sign in to your listening space." });
+    const path = req.url.split("?")[0];
+    if (/^\/api\/(prowlarr|torbox)(?:\/|$)/.test(path) || /^\/api\/acquisitions(?:\/|$)/.test(path) || path === "/api/acquire" || path === "/api/torrents/health" || path === "/api/local/test" || /^\/api\/discover\/(abb|prowlarr)(?:\/|$)/.test(path) || path === "/api/discover/ebooks" || (req.method === "POST" && ["/api/ebooks", "/api/ebooks/import", "/api/import"].includes(path)) || (req.method === "POST" && /^\/api\/books\/[^/]+\/keep$/.test(path)) || (req.method === "POST" && /^\/api\/reader\/[^/]+\/link$/.test(path)) || (["PUT", "DELETE"].includes(req.method) && /^\/api\/recordings\/[^/]+\/(faults\/[^/]+|server-copy)$/.test(path)) || (["POST", "PATCH"].includes(req.method) && /^\/api\/alignments(?:\/|$)/.test(path))) requireAdmin(req);
   });
   app.get("/api/health", async () => ({ ok: true }));
-  app.get("/api/auth/status", async (req) => ({
-    required: !!process.env.APP_PASSWORD,
-    authenticated:
-      !process.env.APP_PASSWORD ||
-      !!(
-        req.cookies.sonder_session &&
-        db
-          .select()
-          .from(s.sessions)
-          .where(
-            and(
-              eq(s.sessions.token, hashToken(req.cookies.sonder_session)),
-              gt(s.sessions.expiresAt, Date.now()),
-            ),
-          )
-          .get()
-      ),
-  }));
+  app.get("/api/auth/status", async (req) => ({ required: !!process.env.APP_PASSWORD, authenticated: !!sessionUser(req), user: sessionUser(req) }));
   app.post(
     "/api/auth/login",
     { config: { rateLimit: { max: 10, timeWindow: "15 minutes" } } },
     async (req, reply) => {
-      const { password } = z
-        .object({ password: z.string().max(512) })
+      const { password, username } = z
+        .object({ password: z.string().max(512), username: z.string().max(40).optional() })
         .parse(req.body);
-      if (!process.env.APP_PASSWORD || !passwordMatches(password))
+      const isAdmin = !username || username.toLowerCase() === "admin";
+      const user = isAdmin ? { id: 1, password_hash: null } : sqlite.prepare("SELECT id,password_hash FROM users WHERE username=? COLLATE NOCASE").get(username) as {id:number;password_hash:string | null} | undefined;
+      if (!process.env.APP_PASSWORD || !user || !(isAdmin ? passwordMatches(password) : verifyPassword(password, user.password_hash)))
         return reply
           .code(401)
           .send({ error: "That password doesn’t match. Try again." });
@@ -290,6 +261,7 @@ export async function createApp() {
       db.insert(s.sessions)
         .values({
           token: hashToken(token),
+          userId: user.id,
           expiresAt: Date.now() + 30 * 86400000,
         })
         .run();
@@ -312,7 +284,8 @@ export async function createApp() {
     reply.clearCookie("sonder_session", { path: "/" });
     return { ok: true };
   });
-  app.get("/api/books", async () => listBooks());
+  app.get("/api/books", async (req) => listBooks(currentUserId(req)));
+  registerUsers(app);
   registerHardcoverRoutes(app);
   registerAppearance(app);
   registerReader(app);
@@ -322,9 +295,9 @@ export async function createApp() {
     const { bookId } = z.object({ bookId: z.string() }).parse(req.body);
     if (!db.select().from(s.editions).where(eq(s.editions.id, bookId)).get())
       throw new Error("This book could not be found.");
-    db.delete(s.hiddenLibrary).where(eq(s.hiddenLibrary.bookId, bookId)).run();
-    db.insert(s.library)
-      .values({ bookId, status: "unread", addedAt: Date.now() })
+    db.delete(s.userHiddenLibrary).where(and(eq(s.userHiddenLibrary.userId, currentUserId(req)), eq(s.userHiddenLibrary.bookId, bookId))).run();
+    db.insert(s.userLibrary)
+      .values({ userId: currentUserId(req), bookId, status: "unread", addedAt: Date.now() })
       .onConflictDoNothing()
       .run();
     const edition = db
@@ -332,7 +305,7 @@ export async function createApp() {
       .from(s.editions)
       .where(eq(s.editions.id, bookId))
       .get();
-    if (edition) queueHardcoverStatus(edition.workId, "unread", "add");
+    if (edition) queueHardcoverStatus(currentUserId(req), edition.workId, "unread", "add");
     return { ok: true };
   });
   app.patch("/api/library/:id", async (req) => {
@@ -340,24 +313,24 @@ export async function createApp() {
     const { status } = z
       .object({ status: z.enum(["unread", "listening", "finished"]) })
       .parse(req.body);
-    db.update(s.library).set({ status }).where(eq(s.library.bookId, id)).run();
+    db.update(s.userLibrary).set({ status }).where(and(eq(s.userLibrary.userId, currentUserId(req)), eq(s.userLibrary.bookId, id))).run();
     const edition = db
       .select()
       .from(s.editions)
       .where(eq(s.editions.id, id))
       .get();
-    if (edition) queueHardcoverStatus(edition.workId, status);
+    if (edition) queueHardcoverStatus(currentUserId(req), edition.workId, status);
     return { ok: true };
   });
   app.delete("/api/library/:id", async (req) => {
     const { id } = req.params as { id: string };
     if (db.select().from(s.editions).where(eq(s.editions.id, id)).get())
-      db.insert(s.hiddenLibrary)
-        .values({ bookId: id })
+      db.insert(s.userHiddenLibrary)
+        .values({ userId: currentUserId(req), bookId: id })
         .onConflictDoNothing()
         .run();
-    db.delete(s.library)
-      .where(eq(s.library.bookId, (req.params as { id: string }).id))
+    db.delete(s.userLibrary)
+      .where(and(eq(s.userLibrary.userId, currentUserId(req)), eq(s.userLibrary.bookId, (req.params as { id: string }).id)))
       .run();
     return { ok: true };
   });
@@ -389,14 +362,14 @@ export async function createApp() {
       throw new Error("This chapter does not belong to the recording.");
     const current = db
       .select()
-      .from(s.progress)
-      .where(eq(s.progress.recordingId, p.recordingId))
+      .from(s.userProgress)
+      .where(and(eq(s.userProgress.userId, currentUserId(req)), eq(s.userProgress.recordingId, p.recordingId)))
       .get();
     if (current && current.updatedAt > p.updatedAt)
       return { progress: current, conflict: true };
-    db.insert(s.progress)
-      .values(p)
-      .onConflictDoUpdate({ target: s.progress.recordingId, set: p })
+    db.insert(s.userProgress)
+      .values({ ...p, userId: currentUserId(req) })
+      .onConflictDoUpdate({ target: [s.userProgress.userId, s.userProgress.recordingId], set: p })
       .run();
     if (p.duration > 0)
       db.update(s.tracks)
@@ -410,12 +383,13 @@ export async function createApp() {
       .get();
     if (rec) {
       const changed = db
-        .update(s.library)
+        .update(s.userLibrary)
         .set({ status: "listening" })
         .where(
           and(
-            eq(s.library.bookId, rec.editionId),
-            eq(s.library.status, "unread"),
+            eq(s.userLibrary.userId, currentUserId(req)),
+            eq(s.userLibrary.bookId, rec.editionId),
+            eq(s.userLibrary.status, "unread"),
           ),
         )
         .run();
@@ -427,6 +401,7 @@ export async function createApp() {
           .get();
         if (edition)
           queueHardcoverStatus(
+            currentUserId(req),
             edition.workId,
             "listening",
             "status",
@@ -434,13 +409,14 @@ export async function createApp() {
           );
       }
     }
-    queueHardcoverProgress(p.recordingId);
+    queueHardcoverProgress(currentUserId(req), p.recordingId);
     return { progress: p, conflict: false };
   });
-  app.get("/api/settings", async () => ({
+  app.get("/api/settings", async (req) => currentUser(req).role !== "admin" ? ({ name: getSetting("name") || "My listening space", authenticationEnabled: !!process.env.APP_PASSWORD, role: currentUser(req).role, hardcoverConfigured: !!getUserSecret(currentUserId(req), "hardcover") }) : ({
+    role: currentUser(req).role,
     name: getSetting("name") || "My listening space",
     torboxConfigured: !!getSetting("torbox"),
-    hardcoverConfigured: !!getSetting("hardcover"),
+    hardcoverConfigured: !!getUserSecret(currentUserId(req), "hardcover"),
     abbUrl: getSetting("abbUrl") || "https://audiobookbay.lu",
     libgenUrl: getSetting("libgenUrl") || "https://libgen.li",
     prowlarrUrl: getSetting("prowlarrUrl") || "",
@@ -450,6 +426,9 @@ export async function createApp() {
     authenticationEnabled: !!process.env.APP_PASSWORD,
   }));
   app.patch("/api/settings", async (req) => {
+    // Any user may save or clear their own Hardcover token here (#15); every other setting is the admin's.
+    const fields = Object.keys((req.body ?? {}) as Record<string, unknown>);
+    if (fields.length !== 1 || fields[0] !== "hardcover") requireAdmin(req);
     const input = z
       .object({
         name: z.string().min(1).max(60).optional(),
@@ -490,17 +469,16 @@ export async function createApp() {
         throw new Error("Use an HTTPS mirror of the selected ebook source.");
       input.libgenUrl = url.origin;
     }
-    if (
-      input.hardcover !== undefined &&
-      input.hardcover !== getSecret("hardcover")
-    )
-      resetHardcoverAccount();
+    // The Hardcover token belongs to the signed-in user (#15), not the server settings.
+    if (input.hardcover !== undefined)
+      setHardcoverToken(currentUserId(req), input.hardcover);
+    delete input.hardcover;
     for (const [key, value] of Object.entries(input)) {
       if (value === "") {
         db.delete(s.settings).where(eq(s.settings.key, key)).run();
         continue;
       }
-      const v = ["torbox", "hardcover", "prowlarr"].includes(key)
+      const v = ["torbox", "prowlarr"].includes(key)
         ? encrypt(value)
         : value;
       db.insert(s.settings)
@@ -559,8 +537,8 @@ export async function createApp() {
       throw new Error("This torrent contains no supported audio files.");
     const id = `torbox-${torrentId}`;
     if (db.select().from(s.editions).where(eq(s.editions.id, id)).get()) {
-      db.insert(s.library)
-        .values({ bookId: id, status: "unread", addedAt: Date.now() })
+      db.insert(s.userLibrary)
+        .values({ userId: currentUserId(req), bookId: id, status: "unread", addedAt: Date.now() })
         .onConflictDoNothing()
         .run();
       return { id };
@@ -604,8 +582,8 @@ export async function createApp() {
           })
           .run(),
       );
-      db.insert(s.library)
-        .values({ bookId: id, status: "unread", addedAt: Date.now() })
+      db.insert(s.userLibrary)
+        .values({ userId: currentUserId(req), bookId: id, status: "unread", addedAt: Date.now() })
         .run();
     })();
     return { id };
@@ -618,11 +596,11 @@ export async function createApp() {
   });
   app.post("/api/acquire", async (req) => {
     const input = acquisitionInput.parse(req.body);
-    return acquire(input.magnet, input);
+    return acquire(input.magnet, { ...input, userId: currentUserId(req) });
   });
   app.post("/api/torbox/magnet", async (req) => {
     const input = acquisitionInput.parse(req.body);
-    return acquire(input.magnet, input);
+    return acquire(input.magnet, { ...input, userId: currentUserId(req) });
   });
   app.get("/api/acquisitions", async () => [
     ...db
@@ -670,6 +648,7 @@ export async function createApp() {
         workId: job.workId || undefined,
         language: job.language,
         narrator: job.narrator,
+        userId: currentUserId(req),
       });
     }
     if (job.backend !== "local" || job.status === "ready")
@@ -746,6 +725,7 @@ export async function createApp() {
       cover: release.cover,
       language: release.language,
       narrator: release.narrator,
+      userId: currentUserId(req),
     });
   });
   app.get("/api/discover/prowlarr/releases", async (req) => {
@@ -771,6 +751,7 @@ export async function createApp() {
       workId: input.workId,
       title: work?.title || releaseDisplayTitle(link.title),
       author: work?.author,
+      userId: currentUserId(req),
     });
   });
   // Older clients may still send "annas"; refuse it with a readable message.
@@ -878,7 +859,7 @@ export async function createApp() {
   app.addHook("onClose", async () => clearInterval(hardcoverTimer));
   app.get("/api/discover/hardcover", async (req) => {
     const { q } = z.object({ q: z.string().min(2).max(150) }).parse(req.query);
-    return hardcoverSearch(q);
+    return hardcoverSearch(currentUserId(req), q);
   });
   app.post("/api/import", async (req) => {
     let title = "";
@@ -992,8 +973,8 @@ export async function createApp() {
             })
             .run(),
         );
-        db.insert(s.library)
-          .values({ bookId: id, status: "unread", addedAt: Date.now() })
+        db.insert(s.userLibrary)
+          .values({ userId: currentUserId(req), bookId: id, status: "unread", addedAt: Date.now() })
           .run();
         claimHardcoverAudio(workId, id);
       })();

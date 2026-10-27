@@ -1,13 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { appearanceSchema, defaultAppearance } from "../src/appearance.ts";
-import { getSetting } from "./services.ts";
-import { db } from "./db.ts";
-import { settings } from "./schema.ts";
+import { currentUserId, getUserSetting, setUserSetting } from "./users.ts";
 export function registerAppearance(app: FastifyInstance) {
-  app.get("/api/appearance", () => {
+  app.get("/api/appearance", (req) => {
     try {
       return appearanceSchema.parse(
-        JSON.parse(getSetting("appearance") || "{}"),
+        JSON.parse(getUserSetting(currentUserId(req), "appearance") || "{}"),
       );
     } catch {
       return defaultAppearance;
@@ -16,10 +14,7 @@ export function registerAppearance(app: FastifyInstance) {
   app.put("/api/appearance", (req) => {
     const input = appearanceSchema.parse(req.body);
     const value = JSON.stringify(input);
-    db.insert(settings)
-      .values({ key: "appearance", value })
-      .onConflictDoUpdate({ target: settings.key, set: { value } })
-      .run();
+    setUserSetting(currentUserId(req), "appearance", value);
     return input;
   });
 }

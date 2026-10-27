@@ -1,3 +1,4 @@
+import { currentUserId } from "./users.ts";
 import type { FastifyInstance } from "fastify";
 import JSZip from "jszip";
 import { XMLParser } from "fast-xml-parser";
@@ -162,10 +163,10 @@ export const locatorSchema = z.object({
   quote: z.string().max(500).optional(),
   progression: z.number().min(0).max(1),
 });
-export function readerCheckpoint(id: string): ReadingCheckpoint | null {
+export function readerCheckpoint(id: string, userId = 1): ReadingCheckpoint | null {
   const row = sqlite
-    .prepare("SELECT data FROM reader_checkpoints WHERE edition_id=?")
-    .get(id) as { data: string } | undefined;
+    .prepare("SELECT data FROM user_reader_checkpoints WHERE edition_id=? AND user_id=?")
+    .get(id, userId) as { data: string } | undefined;
   return row ? JSON.parse(row.data) : null;
 }
 export function registerReader(app: FastifyInstance) {
@@ -187,12 +188,12 @@ export function registerReader(app: FastifyInstance) {
     const book = await extractBook(id);
     const bookmarks = sqlite
       .prepare(
-        "SELECT id,label,locator FROM reader_bookmarks WHERE edition_id=? ORDER BY created_at",
+        "SELECT id,label,locator FROM user_reader_bookmarks WHERE edition_id=? AND user_id=? ORDER BY created_at",
       )
-      .all(id) as { id: string; label: string; locator: string }[];
+      .all(id, currentUserId(req)) as { id: string; label: string; locator: string }[];
     return {
       ...book,
-      checkpoint: readerCheckpoint(id),
+      checkpoint: readerCheckpoint(id, currentUserId(req)),
       bookmarks: bookmarks.map((bookmark) => ({
         ...bookmark,
         locator: JSON.parse(bookmark.locator),
@@ -229,12 +230,12 @@ export function registerReader(app: FastifyInstance) {
         "This reading position does not belong to this EPUB edition.",
       );
     return sqlite.transaction(() => {
-      const current = readerCheckpoint(id),
+      const current = readerCheckpoint(id, currentUserId(req)),
         duplicate = sqlite
           .prepare(
-            "SELECT event_id FROM reader_events WHERE event_id=? AND edition_id=?",
+            "SELECT event_id FROM user_reader_events WHERE event_id=? AND edition_id=? AND user_id=?",
           )
-          .get(input.eventId, id);
+          .get(input.eventId, id, currentUserId(req));
       if (duplicate) return { checkpoint: current, duplicate: true };
       if (input.baseRevision !== (current?.revision || 0))
         return reply
@@ -257,14 +258,15 @@ export function registerReader(app: FastifyInstance) {
       };
       sqlite
         .prepare(
-          "INSERT INTO reader_checkpoints(edition_id,data) VALUES(?,?) ON CONFLICT(edition_id) DO UPDATE SET data=excluded.data",
+          "INSERT INTO user_reader_checkpoints(user_id,edition_id,data) VALUES(?,?,?) ON CONFLICT(user_id,edition_id) DO UPDATE SET data=excluded.data",
         )
-        .run(id, JSON.stringify(checkpoint));
+        .run(currentUserId(req), id, JSON.stringify(checkpoint));
       sqlite
-        .prepare("INSERT INTO reader_events(event_id,edition_id) VALUES(?,?)")
-        .run(input.eventId, id);
+        .prepare("INSERT INTO user_reader_events(user_id,event_id,edition_id) VALUES(?,?,?)")
+        .run(currentUserId(req), input.eventId, id);
       if (input.origin === "reading")
         queueHardcoverReadingProgress(
+          currentUserId(req),
           book.workId,
           input.locator.progression,
           input.recordingId,
@@ -292,9 +294,10 @@ export function registerReader(app: FastifyInstance) {
       throw new Error("This bookmark does not belong to this edition.");
     sqlite
       .prepare(
-        "INSERT INTO reader_bookmarks(id,edition_id,label,locator,created_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET label=excluded.label,locator=excluded.locator WHERE edition_id=excluded.edition_id",
+        "INSERT INTO user_reader_bookmarks(user_id,id,edition_id,label,locator,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(user_id,id) DO UPDATE SET label=excluded.label,locator=excluded.locator WHERE edition_id=excluded.edition_id",
       )
       .run(
+        currentUserId(req),
         input.id,
         id,
         input.label,
@@ -306,8 +309,8 @@ export function registerReader(app: FastifyInstance) {
   app.delete("/api/reader/:id/bookmarks/:bookmark", (req) => {
     const { id, bookmark } = req.params as { id: string; bookmark: string };
     sqlite
-      .prepare("DELETE FROM reader_bookmarks WHERE edition_id=? AND id=?")
-      .run(id, bookmark);
+      .prepare("DELETE FROM user_reader_bookmarks WHERE edition_id=? AND id=? AND user_id=?")
+      .run(id, bookmark, currentUserId(req));
     return { ok: true };
   });
 }

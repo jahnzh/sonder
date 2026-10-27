@@ -147,8 +147,9 @@ export function seed() {
             .run(),
       );
       if (i < 6)
-        db.insert(s.library)
+        db.insert(s.userLibrary)
           .values({
+            userId: 1,
             bookId: b.id,
             status: "unread",
             addedAt: Date.now() - i * 86400000,

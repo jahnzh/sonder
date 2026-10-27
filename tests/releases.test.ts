@@ -179,8 +179,8 @@ test("legacy empty-JSON library removal succeeds, keeps media/progress and allow
   assert.ok(
     db
       .select()
-      .from(s.hiddenLibrary)
-      .where(eq(s.hiddenLibrary.bookId, "alice"))
+      .from(s.userHiddenLibrary)
+      .where(eq(s.userHiddenLibrary.bookId, "alice"))
       .get(),
   );
   assert.equal(

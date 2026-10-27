@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, primaryKey } from "drizzle-orm/sqlite-core";
 export const works = sqliteTable("works", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),
@@ -70,6 +70,7 @@ export const settings = sqliteTable("settings", {
 export const sessions = sqliteTable("sessions", {
   token: text("token").primaryKey(),
   expiresAt: integer("expires_at").notNull(),
+  userId: integer("user_id").notNull().default(1),
 });
 // Independent ebook editions and CFI progress reserve the identity boundary for future alignment.
 export const ebookEditions = sqliteTable("ebook_editions", {
@@ -187,3 +188,24 @@ export const hardcoverRecordingEditions = sqliteTable(
     editionId: integer("edition_id").notNull(),
   },
 );
+
+export const users = sqliteTable("users", { id: integer("id").primaryKey(), username: text("username").notNull().unique(), passwordHash: text("password_hash"), role: text("role").notNull(), createdAt: integer("created_at").notNull() });
+export const userSettings = sqliteTable("user_settings", { userId: integer("user_id").notNull(), key: text("key").notNull(), value: text("value").notNull() }, t => [primaryKey({ columns: [t.userId, t.key] })]);
+export const userLibrary = sqliteTable("user_library", { userId: integer("user_id").notNull(), bookId: text("book_id").notNull(), status: text("status").notNull().default("unread"), addedAt: integer("added_at").notNull() }, t => [primaryKey({ columns: [t.userId, t.bookId] })]);
+export const userHiddenLibrary = sqliteTable("user_hidden_library", { userId: integer("user_id").notNull(), bookId: text("book_id").notNull() }, t => [primaryKey({ columns: [t.userId, t.bookId] })]);
+export const userProgress = sqliteTable("user_progress", { userId: integer("user_id").notNull(), recordingId: text("recording_id").notNull(), trackId: text("track_id").notNull(), position: real("position").notNull(), duration: real("duration").notNull(), updatedAt: integer("updated_at").notNull() }, t => [primaryKey({ columns: [t.userId, t.recordingId] })]);
+export const userEbookProgress = sqliteTable("user_ebook_progress", { userId: integer("user_id").notNull(), editionId: text("edition_id").notNull(), cfi: text("cfi").notNull(), chapter: integer("chapter").notNull(), updatedAt: integer("updated_at").notNull() }, t => [primaryKey({ columns: [t.userId, t.editionId] })]);
+export const userReaderCheckpoints = sqliteTable("user_reader_checkpoints", { userId: integer("user_id").notNull(), editionId: text("edition_id").notNull(), data: text("data").notNull() }, t => [primaryKey({ columns: [t.userId, t.editionId] })]);
+export const userReaderBookmarks = sqliteTable("user_reader_bookmarks", { userId: integer("user_id").notNull(), id: text("id").notNull(), editionId: text("edition_id").notNull(), label: text("label").notNull(), locator: text("locator").notNull(), createdAt: integer("created_at").notNull() }, t => [primaryKey({ columns: [t.userId, t.id] })]);
+export const userReaderEvents = sqliteTable("user_reader_events", { userId: integer("user_id").notNull(), eventId: text("event_id").notNull(), editionId: text("edition_id").notNull() }, t => [primaryKey({ columns: [t.userId, t.eventId] })]);
+
+export const userAcquisitions = sqliteTable("user_acquisitions", { userId: integer("user_id").notNull(), acquisitionId: text("acquisition_id").notNull() }, t => [primaryKey({ columns: [t.userId, t.acquisitionId] })]);
+
+// Per-user Hardcover account state (#15). The work → Hardcover book match in hardcover_links stays shared.
+export const userHardcoverLinks = sqliteTable("user_hardcover_links", { userId: integer("user_id").notNull(), bookId: integer("book_id").notNull(), userBookId: integer("user_book_id"), statusId: integer("status_id"), remoteUpdatedAt: integer("remote_updated_at").notNull().default(0), syncedAt: integer("synced_at").notNull().default(0) }, t => [primaryKey({ columns: [t.userId, t.bookId] })]);
+export const userHardcoverOutbox = sqliteTable("user_hardcover_outbox", { userId: integer("user_id").notNull(), bookId: integer("book_id").notNull(), accountId: integer("account_id").notNull(), statusId: integer("status_id").notNull(), intent: text("intent").notNull().default("status"), updatedAt: integer("updated_at").notNull(), error: text("error") }, t => [primaryKey({ columns: [t.userId, t.bookId] })]);
+export const userHardcoverReadingOutbox = sqliteTable("user_hardcover_reading_outbox", { userId: integer("user_id").notNull(), bookId: integer("book_id").notNull(), accountId: integer("account_id").notNull(), workId: text("work_id").notNull(), fraction: real("fraction").notNull(), updatedAt: integer("updated_at").notNull(), error: text("error") }, t => [primaryKey({ columns: [t.userId, t.bookId] })]);
+export const userHardcoverProgress = sqliteTable("user_hardcover_progress", { userId: integer("user_id").notNull(), bookId: integer("book_id").notNull(), accountId: integer("account_id").notNull(), recordingId: text("recording_id").notNull(), position: real("position").notNull(), duration: real("duration").notNull(), updatedAt: integer("updated_at").notNull(), error: text("error") }, t => [primaryKey({ columns: [t.userId, t.bookId] })]);
+export const userHardcoverLists = sqliteTable("user_hardcover_lists", { userId: integer("user_id").notNull(), id: integer("id").notNull(), accountId: integer("account_id").notNull(), name: text("name").notNull(), slug: text("slug"), members: text("members", { mode: "json" }).$type<{ id: number; bookId: number }[]>().notNull().default([]), syncedAt: integer("synced_at").notNull() }, t => [primaryKey({ columns: [t.userId, t.id] })]);
+export const userHardcoverReads = sqliteTable("user_hardcover_reads", { userId: integer("user_id").notNull(), bookId: integer("book_id").notNull(), accountId: integer("account_id").notNull(), snapshot: text("snapshot").notNull(), fraction: real("fraction"), syncedAt: integer("synced_at").notNull() }, t => [primaryKey({ columns: [t.userId, t.bookId] })]);
+export const userHardcoverRecordingEditions = sqliteTable("user_hardcover_recording_editions", { userId: integer("user_id").notNull(), recordingId: text("recording_id").notNull(), editionId: integer("edition_id").notNull() }, t => [primaryKey({ columns: [t.userId, t.recordingId] })]);
