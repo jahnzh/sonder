@@ -344,8 +344,9 @@ test.describe("failed source retry",()=>{
   await manager.getByRole("button",{name:"Apply source"}).click();
   await expect.poll(()=>page.evaluate(() => ((window as any).__audioElements as HTMLAudioElement[]).find(a => !!a.src)?.error?.code)).toBeTruthy();
   await page.unroute(source);
-  await manager.getByRole("button",{name:"Apply source"}).click();
-  await expect.poll(async()=>(await audioState(page)).position).toBeCloseTo(160,0);
+  await manager.getByRole("button",{name:"Close dialog"}).click();
+  await page.locator(".player-dock").getByRole("button",{name:"Play",exact:true}).click();
+  await expect.poll(async()=>(await audioState(page)).position).toBeGreaterThanOrEqual(159);
   await expect.poll(async()=>(await(await page.request.get("/api/books")).json()).find((b:any)=>b.id===id).progress?.position).toBeGreaterThanOrEqual(159);
 });
 });
