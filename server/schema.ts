@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, primaryKey } from "drizzle-orm/sqlite-core";
 export const works = sqliteTable("works", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),
@@ -70,6 +70,7 @@ export const settings = sqliteTable("settings", {
 export const sessions = sqliteTable("sessions", {
   token: text("token").primaryKey(),
   expiresAt: integer("expires_at").notNull(),
+  userId: integer("user_id").notNull().default(1),
 });
 // Independent ebook editions and CFI progress reserve the identity boundary for future alignment.
 export const ebookEditions = sqliteTable("ebook_editions", {
@@ -187,3 +188,13 @@ export const hardcoverRecordingEditions = sqliteTable(
     editionId: integer("edition_id").notNull(),
   },
 );
+
+export const users = sqliteTable("users", { id: integer("id").primaryKey(), username: text("username").notNull().unique(), passwordHash: text("password_hash"), role: text("role").notNull(), createdAt: integer("created_at").notNull() });
+export const userSettings = sqliteTable("user_settings", { userId: integer("user_id").notNull(), key: text("key").notNull(), value: text("value").notNull() }, t => [primaryKey({ columns: [t.userId, t.key] })]);
+export const userLibrary = sqliteTable("user_library", { userId: integer("user_id").notNull(), bookId: text("book_id").notNull(), status: text("status").notNull().default("unread"), addedAt: integer("added_at").notNull() }, t => [primaryKey({ columns: [t.userId, t.bookId] })]);
+export const userHiddenLibrary = sqliteTable("user_hidden_library", { userId: integer("user_id").notNull(), bookId: text("book_id").notNull() }, t => [primaryKey({ columns: [t.userId, t.bookId] })]);
+export const userProgress = sqliteTable("user_progress", { userId: integer("user_id").notNull(), recordingId: text("recording_id").notNull(), trackId: text("track_id").notNull(), position: real("position").notNull(), duration: real("duration").notNull(), updatedAt: integer("updated_at").notNull() }, t => [primaryKey({ columns: [t.userId, t.recordingId] })]);
+export const userEbookProgress = sqliteTable("user_ebook_progress", { userId: integer("user_id").notNull(), editionId: text("edition_id").notNull(), cfi: text("cfi").notNull(), chapter: integer("chapter").notNull(), updatedAt: integer("updated_at").notNull() }, t => [primaryKey({ columns: [t.userId, t.editionId] })]);
+export const userReaderCheckpoints = sqliteTable("user_reader_checkpoints", { userId: integer("user_id").notNull(), editionId: text("edition_id").notNull(), data: text("data").notNull() }, t => [primaryKey({ columns: [t.userId, t.editionId] })]);
+export const userReaderBookmarks = sqliteTable("user_reader_bookmarks", { userId: integer("user_id").notNull(), id: text("id").notNull(), editionId: text("edition_id").notNull(), label: text("label").notNull(), locator: text("locator").notNull(), createdAt: integer("created_at").notNull() }, t => [primaryKey({ columns: [t.userId, t.id] })]);
+export const userReaderEvents = sqliteTable("user_reader_events", { userId: integer("user_id").notNull(), eventId: text("event_id").notNull(), editionId: text("edition_id").notNull() }, t => [primaryKey({ columns: [t.userId, t.eventId] })]);
