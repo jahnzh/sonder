@@ -1,3 +1,4 @@
+import { isAdmin } from "../lib";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type EpubBook from "epubjs/types/book";
 import type Rendition from "epubjs/types/rendition";
@@ -677,6 +678,7 @@ export function ReaderView({
         setPanel("sync");
         return;
       }
+      if (!isAdmin()) { notify("No reading sync is available for this position."); return; }
       setRecovering(true);
       try {
         const result = await api<{ locator: TextLocator }>(
@@ -714,6 +716,7 @@ export function ReaderView({
 
       void jumpRef.current(interval.paragraphId, true);
     } else {
+      if (!isAdmin()) { notify("No reading sync is available for this position."); return; }
       setRecovering(true);
       try {
         const result = await api<{ locator: TextLocator }>(

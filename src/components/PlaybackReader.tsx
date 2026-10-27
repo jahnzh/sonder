@@ -1,3 +1,5 @@
+import { isAdmin } from "../lib";
+import { userStorageKey } from "../lib";
 import { useEffect, useState } from "react";
 import { api, localDB } from "../lib";
 import { ReaderView } from "./Reader";
@@ -12,7 +14,7 @@ export function PlaybackReader({book,books,notify,onAvailable,onMissing,onClose}
     void (async()=>{
       const all=await api<SavedEbook[]>("/ebooks").then(async value=>{await localDB.preferences.put({key:"ebooks",value});return value;}).catch(async()=>((await localDB.preferences.get("ebooks"))?.value || []) as SavedEbook[]);
       const editions=all.filter(ebook=>ebook.workId===book.workId && ebook.format==="epub" && ebook.available);
-      const preferred=editions.find(ebook=>ebook.id===localStorage.getItem(`reader-ebook:${book.workId}`));
+      const preferred=editions.find(ebook=>ebook.id===localStorage.getItem(userStorageKey(`reader-ebook:${book.workId}`)));
       let chosen=preferred;
       if(!chosen && editions.length>1) {
         const maps=await Promise.all(editions.map(async ebook=>{
@@ -26,15 +28,15 @@ export function PlaybackReader({book,books,notify,onAvailable,onMissing,onClose}
     })().catch(()=>{if(live)setLoading(false);});
     const choose=(event:Event)=>{
       const detail=(event as CustomEvent).detail;
-      if(detail.workId===book.workId){setSelected(detail.id);localStorage.setItem(`reader-ebook:${book.workId}`,detail.id);}
+      if(detail.workId===book.workId){setSelected(detail.id);localStorage.setItem(userStorageKey(`reader-ebook:${book.workId}`),detail.id);}
     };
     window.addEventListener("sonder:playback-reader",choose);
     return ()=>{live=false;window.removeEventListener("sonder:playback-reader",choose);};
   },[book.workId]);
   return <section className={`playback-reader ${selected ? "has-ebook" : ""}`} aria-label="Playback ebook">
     {loading ? <p role="status">Loading ebook…</p> : selected ? <>
-      {ebooks.length>1 && <PlaybackExtra><label className="playback-ebook-edition">Ebook edition<select aria-label="Playback ebook edition" value={selected} onChange={event=>{setSelected(event.target.value);localStorage.setItem(`reader-ebook:${book.workId}`,event.target.value);}}>{ebooks.map((ebook,index)=><option key={ebook.id} value={ebook.id}>{ebook.title} · {ebook.id.startsWith("upload-") ? "Imported EPUB" : `EPUB ${index+1}`}</option>)}</select></label></PlaybackExtra>}
+      {ebooks.length>1 && <PlaybackExtra><label className="playback-ebook-edition">Ebook edition<select aria-label="Playback ebook edition" value={selected} onChange={event=>{setSelected(event.target.value);localStorage.setItem(userStorageKey(`reader-ebook:${book.workId}`),event.target.value);}}>{ebooks.map((ebook,index)=><option key={ebook.id} value={ebook.id}>{ebook.title} · {ebook.id.startsWith("upload-") ? "Imported EPUB" : `EPUB ${index+1}`}</option>)}</select></label></PlaybackExtra>}
       <ReaderView key={selected} id={selected} fromAudio={false} inline recordingId={book.recordingId} books={books} notify={notify} onClose={onClose}/>
-    </> : <button className="button subtle" onClick={onMissing}>Find ebook</button>}
+    </> : isAdmin() ? <button className="button subtle" onClick={onMissing}>Find ebook</button> : null}
   </section>;
 }

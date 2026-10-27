@@ -1,3 +1,4 @@
+import { isAdmin } from "../lib";
 import { useEffect, useMemo, useRef } from "react";
 import type { AlignmentInterval, ReaderBook } from "../reading-types";
 import "../lyrics-reader.css";
@@ -64,7 +65,7 @@ export function LyricsReader({ book, interval, position, hasMap, follow, onSeek,
   const touchStart = useRef<{x:number;y:number} | null>(null);
   return <div className="lyrics-reader" ref={host} aria-label="Lyrics reader" onWheel={onManualScroll} onTouchStart={event=>{const touch=event.touches[0]; const top=host.current?.getBoundingClientRect().top || 0; touchStart.current={x:touch.clientX,y:touch.clientY-top};}} onTouchEnd={event=>{const touch=event.changedTouches[0], start=touchStart.current, top=host.current?.getBoundingClientRect().top || 0; if(start && start.y<60 && touch.clientY-top-start.y>80 && Math.abs(touch.clientX-start.x)<60) onClose(); touchStart.current=null;}} onTouchMove={event=>{const touch=event.touches[0], start=touchStart.current, top=host.current?.getBoundingClientRect().top || 0; if(start && Math.hypot(touch.clientX-start.x,touch.clientY-top-start.y)>10) onManualScroll();}} onClick={event=>{if (!(event.target as HTMLElement).closest("button")) onToggleControls();}} style={{ "--lyrics-size-factor": size / 19 } as React.CSSProperties}>
     <div className="lyrics-reader-content">
-      {!hasMap && <p className="lyrics-sync-prompt">Prepare reading sync to follow the narration. <button type="button" onClick={onPrepareSync}>Prepare reading sync</button></p>}
+      {!hasMap && isAdmin() && <p className="lyrics-sync-prompt">Prepare reading sync to follow the narration. <button type="button" onClick={onPrepareSync}>Prepare reading sync</button></p>}
       {lines.map((line, index) => <button type="button" key={`${line.paragraphId}:${index}`} data-line-index={index} className={`lyrics-line ${line.paragraphStart ? "paragraph-start" : ""} ${active < 0 ? "unmapped" : index === active ? "current" : index < active ? "past" : "upcoming"}`} onClick={() => onSeek(line.paragraphId, line.fraction)}>{line.text}</button>)}
       {!lines.length && <p>No readable text in this ebook.</p>}
     </div>

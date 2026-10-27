@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { Dialog } from "./ui/dialog";
 import { usePlayer } from "../player";
-import { api, localDB, deleteDownloads, bytes, clock } from "../lib";
+import { api, localDB, deleteDownloads, bytes, clock, isAdmin } from "../lib";
 import {
   getRecordingSources,
   preferredSource,
@@ -349,24 +349,24 @@ export function MediaManager({
                   {reasons[fault.reason]}
                   {fault.note ? ` · ${fault.note}` : ""}
                 </p>
-                <button
+                {isAdmin() && <button
                   className="button subtle"
                   disabled={busy || (scope !== "device" && !navigator.onLine)}
                   onClick={() => void clear(scope as keyof typeof scopeLabel)}
                 >
                   Clear fault flag
-                </button>
+                </button>}
               </div>
             ),
         )}
         <div className="media-management-actions">
-          <button
+          {isAdmin() && <button
             className="button subtle"
             onClick={() => setReport(!report)}
             aria-expanded={report}
           >
             <AlertTriangle size={16} /> Mark as faulty
-          </button>
+          </button>}
           <button
             className="button subtle"
             disabled={busy || !deviceFiles.length}
@@ -374,13 +374,13 @@ export function MediaManager({
           >
             <Trash2 size={16} /> Remove device copy
           </button>
-          <button
+          {isAdmin() &&           <button
             className="button subtle"
             disabled={busy || !state?.managedCopies || !navigator.onLine}
             onClick={() => setRemoval("server")}
           >
             <Trash2 size={16} /> Remove server copy
-          </button>
+          </button>}
           <button
             className="button subtle"
             onClick={() => onDownload(selected)}
@@ -388,7 +388,7 @@ export function MediaManager({
           >
             <Download size={16} /> Save on device
           </button>
-          <button
+          {isAdmin() &&           <button
             className="button subtle"
             disabled={busy || selected.serverStored || !navigator.onLine}
             onClick={() =>
@@ -399,7 +399,7 @@ export function MediaManager({
             }
           >
             <HardDrive size={16} /> Save on server
-          </button>
+          </button>}
           <button
             className="button subtle"
             onClick={() => {

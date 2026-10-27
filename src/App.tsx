@@ -58,6 +58,9 @@ import {
   api,
   loadBooks,
   localDB,
+  authDB,
+  selectUserStorage,
+  isAdmin,
   duration,
   bytes,
   percent,
@@ -109,21 +112,27 @@ function Mark() {
     </span>
   );
 }
+type Account = { id: number; username: string; role: "admin" | "user" };
 function App() {
+  const [user, setUser] = useState<Account | null>(null);
   const [auth, setAuth] = useState<boolean | null>(null);
   const [needsPassword, setNeedsPassword] = useState(false);
   useEffect(() => {
-    void api<{ authenticated: boolean; required: boolean }>("/auth/status")
+    void api<{ authenticated: boolean; required: boolean; user: Account | null }>("/auth/status")
       .then((r) => {
+        if (r.user) selectUserStorage(r.user.id, r.user.role);
+        if (r.user) window.dispatchEvent(new Event("sonder:authenticated"));
+        setUser(r.user);
         setAuth(r.authenticated);
         setNeedsPassword(r.required);
-        void localDB.preferences.put({ key: "auth", value: r });
+        void authDB.preferences.put({ key: "auth", value: r });
       })
       .catch(() => {
-        void localDB.preferences.get("auth").then((row) => {
+        void authDB.preferences.get("auth").then((row) => {
           const state = row?.value as
-            | { required?: boolean; authenticated?: boolean }
+            | { required?: boolean; authenticated?: boolean; user?: Account }
             | undefined;
+          if (state?.user) { selectUserStorage(state.user.id, state.user.role); setUser(state.user); }
           setAuth(state?.authenticated === true);
           setNeedsPassword(state?.required !== false);
         });
@@ -131,7 +140,7 @@ function App() {
     const unauthorized = () => {
       setAuth(false);
       setNeedsPassword(true);
-      void localDB.preferences.put({
+      void authDB.preferences.put({
         key: "auth",
         value: { required: true, authenticated: false },
       });
@@ -147,12 +156,13 @@ function App() {
         <span>Loading…</span>
       </div>
     );
-  if (!auth) return <Login onLogin={() => setAuth(true)} />;
+  if (!auth) return <Login onLogin={(account) => { setUser(account); setAuth(true); }} />;
   return (
-    <LibraryApp needsPassword={needsPassword} onLogout={() => setAuth(false)} />
+    <LibraryApp user={user || { id: 1, username: "admin", role: "admin" }} needsPassword={needsPassword} onLogout={() => setAuth(false)} />
   );
 }
-function Login({ onLogin }: { onLogin: () => void }) {
+function Login({ onLogin }: { onLogin: (user: Account) => void }) {
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -163,16 +173,15 @@ function Login({ onLogin }: { onLogin: () => void }) {
     try {
       await api("/auth/login", {
         method: "POST",
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ username: username.trim(), password }),
       });
-      await localDB.preferences.put({
-        key: "auth",
-        value: { required: true, authenticated: true },
-      });
+      const status = await api<{ user: Account }>("/auth/status");
+      selectUserStorage(status.user.id, status.user.role);
+      await authDB.preferences.put({ key: "auth", value: { required: true, authenticated: true, user: status.user } });
       window.dispatchEvent(new Event("sonder:authenticated"));
-      onLogin();
+      onLogin(status.user);
     } catch (e) {
-      setError((e as Error).message);
+      setError("Username or password is incorrect.");
     } finally {
       setBusy(false);
     }
@@ -194,14 +203,17 @@ function Login({ onLogin }: { onLogin: () => void }) {
         </div>
         <h1>Sign in</h1>
         <label>
-          Your password
+          Username
+          <input autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
+        </label>
+        <label>
+          Password
           <input
             type="password"
             autoComplete="current-password"
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            autoFocus
           />
         </label>
         {error && (
@@ -214,7 +226,7 @@ function Login({ onLogin }: { onLogin: () => void }) {
             <Loader2 className="spin" size={17} />
           ) : (
             <>
-              Come on in <ArrowRight size={17} />
+              Sign in <ArrowRight size={17} />
             </>
           )}
         </button>
@@ -223,9 +235,11 @@ function Login({ onLogin }: { onLogin: () => void }) {
   );
 }
 function LibraryApp({
+  user,
   needsPassword,
   onLogout,
 }: {
+  user: Account;
   needsPassword: boolean;
   onLogout: () => void;
 }) {
@@ -620,9 +634,9 @@ function LibraryApp({
               </small>
             </button>
           </nav>
-          <button className="sidebar-add" onClick={() => setImportOpen(true)}>
+          {user.role === "admin" && <button className="sidebar-add" onClick={() => setImportOpen(true)}>
             <Plus size={17} /> Add an audiobook
-          </button>
+          </button>}
           <div className="sidebar-bottom">
             <button
               className={`settings-nav ${page === "settings" ? "selected" : ""}`}
@@ -718,12 +732,12 @@ function LibraryApp({
                       <span className="heading-dot">.</span>
                     </h1>
                   </div>
-                  <button
+                  {user.role === "admin" && <button
                     className="button primary"
                     onClick={() => setImportOpen(true)}
                   >
                     <Plus size={17} /> Add audiobook
-                  </button>
+                  </button>}
                 </div>
                 {!query &&
                   !showFavorites &&
@@ -882,6 +896,7 @@ function LibraryApp({
             )}
             {page === "discover" && (
               <Discover
+                admin={user.role === "admin"}
                 audioTarget={audioTarget}
                 settings={settings}
                 ebookTarget={ebookTarget}
@@ -911,7 +926,7 @@ function LibraryApp({
                     {bytes(downloads.reduce((a, d) => a + d.size, 0))} stored
                   </div>
                 </div>
-                <AcquisitionQueue
+                {user.role === "admin" && <AcquisitionQueue
                   onReady={refresh}
                   onOpenBook={(id) => {
                     const b = books.find((v) => v.id === id);
@@ -925,7 +940,7 @@ function LibraryApp({
                   }}
                   onBrowse={() => navigate("discover")}
                   notify={notify}
-                />
+                />}
                 <div className="section-heading download-device-heading">
                   <div>
                     <h2>On this device</h2>
@@ -1088,6 +1103,7 @@ function LibraryApp({
             )}
             {page === "settings" && (
               <SettingsPage
+                user={user}
                 settings={settings}
                 onSaved={() => {
                   refreshSettings();
@@ -1158,6 +1174,7 @@ function LibraryApp({
           </div>
         )}
         <BookDetail
+          admin={user.role === "admin"}
           releases={
             detail
               ? books.filter(
@@ -1244,6 +1261,7 @@ function ListenButton({
 }) {
   const p = usePlayer();
   const active = p.book?.id === book.id;
+  if (!book.tracks.length && !isAdmin()) return null;
   if (!book.tracks.length)
     return (
       <button
@@ -1378,7 +1396,7 @@ function BookCard({
         >
           <Heart size={16} fill={favorite ? "currentColor" : "none"} />
         </button>
-        <button
+        {(b.tracks.length > 0 || isAdmin()) &&         <button
           className={`card-play ${active && p.playing ? "playing" : ""}`}
           aria-label={`${!b.tracks.length ? "Find audio for" : active && p.playing ? "Pause" : "Play"} ${b.title}`}
           onClick={() =>
@@ -1398,7 +1416,7 @@ function BookCard({
           ) : (
             <Play size={18} fill="currentColor" />
           )}
-        </button>
+        </button>}
         {b.status === "finished" && (
           <span className="finished-badge">
             <Check size={12} /> Finished
@@ -1512,6 +1530,7 @@ function BookCard({
   );
 }
 function BookDetail({
+  admin,
   releases,
   onManageSources,
   onRelease,
@@ -1532,6 +1551,7 @@ function BookDetail({
   onRemove,
   downloads,
 }: {
+  admin: boolean;
   releases: Book[];
   onManageSources:()=>void;
   onRelease: (book: Book) => void;
@@ -1657,9 +1677,9 @@ function BookDetail({
                 </label>
               )}
               <button className="button subtle" onClick={onManageSources}>Versions & sources</button>
-              <button className="button subtle" onClick={onFindAudio}>
+              {admin && <button className="button subtle" onClick={onFindAudio}>
                 <Search size={15} /> Find another release
-              </button>
+              </button>}
             </section>
           )}
           <HardcoverBookTools
@@ -1716,7 +1736,7 @@ function BookDetail({
               </button>
             </div>
           )}
-          {b.tracks.length > 0 && (
+          {admin && b.tracks.length > 0 && (
             <div className="detail-ebook-action">
               <span>
                 <HardDrive size={18} />
@@ -1741,14 +1761,14 @@ function BookDetail({
               </button>
             </div>
           )}
-          <div className="detail-ebook-action">
+          {admin && <div className="detail-ebook-action">
             <span>
               <BookOpen size={18} /> Ebook edition
             </span>
             <button className="button subtle" onClick={onFindEbook}>
               Find ebook <ArrowRight size={14} />
             </button>
-          </div>
+          </div>}
           {b.tracks.length > 0 && (
             <div className="detail-chapters">
               <h3>
@@ -1849,6 +1869,7 @@ function StorageInfo({ downloads }: { downloads: DownloadRecord[] }) {
   );
 }
 function Discover({
+  admin,
   audioTarget,
   settings,
   ebookTarget,
@@ -1863,6 +1884,7 @@ function Discover({
   onConnect,
   refresh,
 }: {
+  admin: boolean;
   audioTarget: Book | null;
   settings: SettingsData | null;
   ebookTarget: Book | null;
@@ -1972,7 +1994,7 @@ function Discover({
     }
   };
   const visible = books
-    .filter((b) => b.sourceLabel.startsWith("LibriVox"))
+    .filter((b) => admin ? b.sourceLabel.startsWith("LibriVox") : !b.inLibrary)
     .filter((b) => genre === "All genres" || b.genre === genre);
   return (
     <>
@@ -1991,6 +2013,7 @@ function Discover({
         >
           Classics
         </button>
+        {admin && (
         <button
           className={source === "abb" ? "selected" : ""}
           onClick={() => {
@@ -2001,6 +2024,7 @@ function Discover({
         >
           Audiobooks <ArrowUpRight size={13} />
         </button>
+        )}
         <button
           className={source === "hardcover" ? "selected" : ""}
           onClick={() => {
@@ -2011,6 +2035,7 @@ function Discover({
         >
           Hardcover <ArrowUpRight size={13} />
         </button>
+        {admin && (
         <button
           className={source === "ebooks" ? "selected" : ""}
           onClick={() => {
@@ -2020,6 +2045,7 @@ function Discover({
         >
           Ebooks <BookOpen size={13} />
         </button>
+        )}
       </div>
       {source === "ebooks" ? (
         <EbookDiscovery
@@ -2042,7 +2068,7 @@ function Discover({
       ) : source === "curated" ? (
         <section id="discover-books">
           <div className="section-heading">
-            <h2>Classics</h2>
+            <h2>{admin ? "Classics" : "Shared catalogue"}</h2>
             <span className="muted small">
               Public-domain recordings · LibriVox
             </span>
@@ -2101,6 +2127,7 @@ function Discover({
               text="No books match this search and genre. Try another title or choose All genres."
             />
           )}
+          {admin && (
           <div className="discover-ebook-callout">
             <div>
               <BookOpen size={23} />
@@ -2118,6 +2145,7 @@ function Discover({
               Explore ebooks <ArrowRight size={14} />
             </button>
           </div>
+          )}
         </section>
       ) : (
         <section className="external-search">
@@ -2208,7 +2236,26 @@ function Discover({
     </>
   );
 }
+function AccountSettings({ user, needsPassword, onLogout, notify }: { user: Account; needsPassword: boolean; onLogout: () => void; notify: (s: string, error?: boolean) => void }) {
+  const [users, setUsers] = useState<Account[]>([]);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState<"user" | "admin">("user");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const refresh = () => api<Account[]>("/users").then(setUsers).catch((e) => notify(e.message, true));
+  useEffect(() => { if (user.role === "admin") void refresh(); }, [user.id]);
+  const action = async (fn: () => Promise<unknown>) => { try { await fn(); notify("Saved."); if (user.role === "admin") await refresh(); } catch (e) { notify((e as Error).message, true); } };
+  return <>
+    <section className="settings-section"><h2>Account</h2><p>{user.username}</p>
+      {needsPassword && <button className="button subtle" onClick={() => void action(async () => { await api("/auth/logout", { method: "POST" }); await authDB.preferences.put({ key: "auth", value: { required: true, authenticated: false } }); navigator.serviceWorker?.controller?.postMessage("clear-stream-cache"); onLogout(); window.location.reload(); })}><LogOut size={16} /> Sign out</button>}
+      {user.id !== 1 && <form onSubmit={(e) => { e.preventDefault(); void action(async () => { await api("/auth/password", { method: "POST", body: JSON.stringify({ currentPassword, newPassword }) }); setCurrentPassword(""); setNewPassword(""); }); }}><h3>Change password</h3><label>Current password<input type="password" autoComplete="current-password" required value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} /></label><label>New password<input type="password" autoComplete="new-password" required value={newPassword} onChange={e => setNewPassword(e.target.value)} /></label><button className="button subtle">Change password</button></form>}
+    </section>
+    {user.role === "admin" && <section className="settings-section"><h2>Users</h2>{users.map(account => <div key={account.id}><span>{account.username} · {account.role}</span>{account.id !== 1 && <><button className="button subtle" onClick={() => { const value = window.prompt(`New password for ${account.username}`); if (value) void action(() => api(`/users/${account.id}`, { method: "PATCH", body: JSON.stringify({ password: value }) })); }}>Reset password</button><button className="button subtle" onClick={() => { if (window.confirm(`Remove ${account.username}?`)) void action(() => api(`/users/${account.id}`, { method: "DELETE" })); }}>Remove user</button></>}</div>)}<form onSubmit={e => { e.preventDefault(); void action(async () => { await api("/users", { method: "POST", body: JSON.stringify({ username, password, role }) }); setUsername(""); setPassword(""); }); }}><h3>Add user</h3><label>Username<input required value={username} onChange={e => setUsername(e.target.value)} /></label><label>Password<input type="password" autoComplete="new-password" required value={password} onChange={e => setPassword(e.target.value)} /></label><label>Role<select value={role} onChange={e => setRole(e.target.value as "user" | "admin")}><option value="user">User</option><option value="admin">Admin</option></select></label><button className="button primary">Add user</button></form></section>}
+  </>;
+}
 function SettingsPage({
+  user,
   settings,
   onSaved,
   notify,
@@ -2217,6 +2264,7 @@ function SettingsPage({
   installPrompt,
   onInstall,
 }: {
+  user: Account;
   settings: SettingsData | null;
   onSaved: () => void;
   notify: (s: string, error?: boolean) => void;
@@ -2243,12 +2291,7 @@ function SettingsPage({
     try {
       await api("/settings", {
         method: "PATCH",
-        body: JSON.stringify({
-          name,
-          abbUrl,
-          ...(torbox ? { torbox } : {}),
-          ...(hardcover ? { hardcover } : {}),
-        }),
+        body: JSON.stringify(user.role === "admin" ? { name, abbUrl, ...(torbox ? { torbox } : {}), ...(hardcover ? { hardcover } : {}) } : (hardcover ? { hardcover } : {})),
       });
       setTorbox("");
       setHardcover("");
@@ -2291,10 +2334,12 @@ function SettingsPage({
           <h1>Settings</h1>
         </div>
       </div>
+      <AccountSettings user={user} needsPassword={needsPassword} onLogout={onLogout} notify={notify} />
       <AppearanceSettings notify={notify} />
       <PlaybackSettings notify={notify} />
       <DeviceReset notify={notify} />
       <form className="settings-form" onSubmit={(e) => void save(e)}>
+        {user.role === "admin" && (
         <section className="settings-section">
           <div className="settings-section-heading">
             <span className="settings-section-icon">
@@ -2315,6 +2360,8 @@ function SettingsPage({
             />
           </label>
         </section>
+        )}
+        {user.role === "admin" && (
         <section className="settings-section">
           <div className="settings-section-heading">
             <span className="settings-section-icon green">
@@ -2380,6 +2427,7 @@ function SettingsPage({
             </div>
           )}
         </section>
+        )}
         <section className="settings-section">
           <div className="settings-section-heading">
             <span className="settings-section-icon lilac">
@@ -2434,6 +2482,7 @@ function SettingsPage({
             </button>
           )}
         </section>
+        {user.role === "admin" && (
         <section className="settings-section">
           <div className="settings-section-heading">
             <span className="settings-section-icon">
@@ -2458,6 +2507,7 @@ function SettingsPage({
             </small>
           </label>
         </section>
+        )}
         <div className="settings-save">
           <span>
             <ShieldCheck size={15} /> Connection keys are encrypted on your
@@ -2477,8 +2527,7 @@ function SettingsPage({
         configured={!!settings?.hardcoverConfigured}
         notify={notify}
       />
-      <SourceSettings settings={settings} onSaved={onSaved} notify={notify} />
-      <ProwlarrSettings settings={settings} onSaved={onSaved} notify={notify} />
+      {user.role === "admin" && <><SourceSettings settings={settings} onSaved={onSaved} notify={notify} /><ProwlarrSettings settings={settings} onSaved={onSaved} notify={notify} /></>}
       <section className="install-card">
         <div className="install-brand">
           <Mark />
@@ -2497,25 +2546,7 @@ function SettingsPage({
           </button>
         )}
       </section>
-      {needsPassword && (
-        <button
-          className="logout-button"
-          onClick={() => {
-            void api("/auth/logout", { method: "POST" }).then(async () => {
-              await localDB.preferences.put({
-                key: "auth",
-                value: { required: true, authenticated: false },
-              });
-              navigator.serviceWorker?.controller?.postMessage(
-                "clear-stream-cache",
-              );
-              onLogout();
-            });
-          }}
-        >
-          <LogOut size={16} /> Sign out
-        </button>
-      )}
+
     </>
   );
 }

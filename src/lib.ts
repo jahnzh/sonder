@@ -12,6 +12,7 @@ export async function api<T = unknown>(
   const response = await fetch(`/api${path}`, {
     ...options,
     headers: {
+      ...(!["GET", "HEAD"].includes((options.method || "GET").toUpperCase()) ? { "X-Sonder-User-Id": String(currentUserId) } : {}),
       ...(options.body != null && !(options.body instanceof FormData)
         ? { "Content-Type": "application/json" }
         : {}),
@@ -35,8 +36,8 @@ class SonderDB extends Dexie {
     { trackId: string; offset: number; blob: Blob },
     [string, number]
   >;
-  constructor() {
-    super("sonder");
+  constructor(name = "sonder") {
+    super(name);
     this.version(1).stores({
       books: "id",
       progress: "recordingId",
@@ -47,26 +48,54 @@ class SonderDB extends Dexie {
       downloadParts: "trackId,recordingId",
       downloadChunks: "[trackId+offset],trackId",
     });
+    this.version(3).stores({});
   }
 }
-export const localDB = new SonderDB();
+const sharedDB = new SonderDB();
+let personalDB = sharedDB;
+export function selectUserStorage(id: number, role: "admin" | "user" = "admin") {
+  personalDB = id === 1 ? sharedDB : new SonderDB(`sonder-user-${id}`);
+  currentUserId = id;
+  currentRole = role;
+  sessionStorage.setItem("sonder-current-user", String(id));
+}
+let currentUserId = 1;
+let currentRole: "admin" | "user" = "admin";
+export function userId() { return currentUserId; }
+export function isAdmin() { return currentRole === "admin"; }
+export function userStorageKey(key: string) { return currentUserId === 1 ? key : `sonder-user-${currentUserId}:${key}`; }
+export const localDB = new Proxy(sharedDB, {
+  get(target, prop) {
+    const db = ["books", "progress", "preferences"].includes(String(prop)) ? personalDB : target;
+    if (prop === "transaction") return (...args: unknown[]) => {
+      const table = args[1] as { db?: SonderDB };
+      return (table?.db || target).transaction.apply(table?.db || target, args as never);
+    };
+    const value = Reflect.get(db, prop, db);
+    return typeof value === "function" ? value.bind(db) : value;
+  },
+}) as SonderDB;
+export const authDB = sharedDB;
 let syncing = false;
 export async function syncProgress() {
   if (syncing || !navigator.onLine) return;
   syncing = true;
+  const owner = currentUserId;
+  const progress = localDB.progress;
   try {
-    while (navigator.onLine) {
-      const pending = await localDB.progress.filter((p) => !!p.pending).toArray();
+    while (navigator.onLine && owner === currentUserId) {
+      const pending = await progress.filter((p) => !!p.pending).toArray();
       if (!pending.length) break;
       for (const p of pending) {
         const result = await api<{ progress: Progress }>("/progress", {
           method: "POST",
+          headers: { "X-Sonder-User-Id": String(owner) },
           body: JSON.stringify(p),
         });
-        await localDB.transaction("rw", localDB.progress, async () => {
-          const latest = await localDB.progress.get(p.recordingId);
+        await progress.db.transaction("rw", progress, async () => {
+          const latest = await progress.get(p.recordingId);
           if (latest?.updatedAt === p.updatedAt)
-            await localDB.progress.put({ ...result.progress, pending: false });
+            await progress.put({ ...result.progress, pending: false });
         });
       }
       // A seek or file switch can queue a newer checkpoint while a request is
