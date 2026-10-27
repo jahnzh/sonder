@@ -2107,7 +2107,7 @@ function Discover({
               <span>
                 <strong>Prefer turning pages?</strong>
                 <p>
-                  Find ebook editions on Anna’s Archive and Library Genesis.
+                  Find ebook editions on Library Genesis.
                 </p>
               </span>
             </div>

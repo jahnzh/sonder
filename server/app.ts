@@ -442,9 +442,7 @@ export async function createApp() {
     torboxConfigured: !!getSetting("torbox"),
     hardcoverConfigured: !!getSetting("hardcover"),
     abbUrl: getSetting("abbUrl") || "https://audiobookbay.lu",
-    annasUrl: getSetting("annasUrl") || "https://annas-archive.gl",
     libgenUrl: getSetting("libgenUrl") || "https://libgen.li",
-    annasConfigured: !!getSetting("annas"),
     prowlarrUrl: getSetting("prowlarrUrl") || "",
     prowlarrConfigured: !!prowlarrConfig(),
     localConfigured: transmissionConfigured(),
@@ -458,13 +456,16 @@ export async function createApp() {
         torbox: z.string().max(300).optional(),
         hardcover: z.string().max(2000).optional(),
         abbUrl: z.url().optional(),
-        annasUrl: z.url().optional(),
         libgenUrl: z.url().optional(),
-        annas: z.string().max(1000).optional(),
+        // Accepted from older clients and ignored: Anna’s Archive is removed (#8).
+        annasUrl: z.string().optional(),
+        annas: z.string().optional(),
         prowlarrUrl: z.union([z.url(), z.literal("")]).optional(),
         prowlarr: z.string().max(200).optional(),
       })
       .parse(req.body);
+    delete input.annasUrl;
+    delete input.annas;
     if (input.prowlarrUrl) input.prowlarrUrl = normalizeBaseUrl(input.prowlarrUrl);
     if (input.abbUrl) {
       const u = new URL(input.abbUrl);
@@ -477,23 +478,17 @@ export async function createApp() {
         );
       input.abbUrl = u.origin;
     }
-    for (const field of ["annasUrl", "libgenUrl"] as const) {
-      if (input[field]) {
-        const url = new URL(input[field]!);
-        const valid =
-          field === "annasUrl"
-            ? /^([a-z0-9-]+\.)?annas-archive\.[a-z]{2,8}$/
-            : /^([a-z0-9-]+\.)?libgen\.[a-z]{2,8}$/;
-        if (
-          url.protocol !== "https:" ||
-          !valid.test(url.hostname) ||
-          url.username ||
-          url.password ||
-          url.port
-        )
-          throw new Error("Use an HTTPS mirror of the selected ebook source.");
-        input[field] = url.origin;
-      }
+    if (input.libgenUrl) {
+      const url = new URL(input.libgenUrl);
+      if (
+        url.protocol !== "https:" ||
+        !/^([a-z0-9-]+\.)?libgen\.[a-z]{2,8}$/.test(url.hostname) ||
+        url.username ||
+        url.password ||
+        url.port
+      )
+        throw new Error("Use an HTTPS mirror of the selected ebook source.");
+      input.libgenUrl = url.origin;
     }
     if (
       input.hardcover !== undefined &&
@@ -505,7 +500,7 @@ export async function createApp() {
         db.delete(s.settings).where(eq(s.settings.key, key)).run();
         continue;
       }
-      const v = ["torbox", "hardcover", "annas", "prowlarr"].includes(key)
+      const v = ["torbox", "hardcover", "prowlarr"].includes(key)
         ? encrypt(value)
         : value;
       db.insert(s.settings)
@@ -778,14 +773,22 @@ export async function createApp() {
       author: work?.author,
     });
   });
+  // Older clients may still send "annas"; refuse it with a readable message.
+  const libgenOnly = <T extends { source: "annas" | "libgen" }>(input: T) => {
+    if (input.source === "annas")
+      throw new Error(
+        "Anna’s Archive is turned off. Search Library Genesis or import an EPUB or PDF.",
+      );
+    return { ...input, source: "libgen" as const };
+  };
   app.get("/api/discover/ebooks", async (req) => {
-    const { source, q, page } = z
+    const { source, q, page } = libgenOnly(z
       .object({
         source: z.enum(["annas", "libgen"]),
         q: z.string().min(2).max(150),
         page: z.coerce.number().int().min(1).max(100).default(1),
       })
-      .parse(req.query);
+      .parse(req.query));
     return searchEbooks(source, q, page);
   });
   app.post("/api/ebooks", async (req) => {
@@ -804,7 +807,7 @@ export async function createApp() {
         workId: z.string().optional(),
       })
       .parse(req.body);
-    return saveEbook(input);
+    return saveEbook(libgenOnly(input));
   });
   app.get("/api/ebooks", async () => listEbooks());
   app.post("/api/ebooks/import", async (req) => {

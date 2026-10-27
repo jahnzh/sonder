@@ -1,9 +1,8 @@
-import { parseSearchPage as parseAnnas } from "./sources/annas-archive-parse.ts";
 import {
   parseSearchPage as parseLibgen,
   parseMirrorPage,
 } from "./sources/libgen-parse.ts";
-import { getSetting, getSecret } from "./services.ts";
+import { getSetting } from "./services.ts";
 import { ebookDir, ensureMediaStorage } from "./storage.ts";
 import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
@@ -24,7 +23,8 @@ import {
 import { join, basename, extname } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-export type EbookSource = "annas" | "libgen";
+// Anna’s Archive was removed for now (#8); Library Genesis is the only source.
+export type EbookSource = "libgen";
 export type EbookResult = {
   md5: string;
   source: EbookSource;
@@ -39,116 +39,30 @@ export type EbookResult = {
 };
 const userAgent =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36";
-function baseUrl(source: EbookSource) {
-  return (
-    getSetting(source === "annas" ? "annasUrl" : "libgenUrl") ||
-    (source === "annas" ? "https://annas-archive.gl" : "https://libgen.li")
-  );
-}
-let annaSession: { signature: string; cookie: string; expires: number } | null =
-  null;
-class AnnaBrowserRequired extends Error {
-  constructor(public accountAccepted: boolean) {
-    super("Anna’s Archive requires browser verification.");
-  }
-}
-async function annaCookie(force = false) {
-  const key = getSecret("annas");
-  if (!key) return "";
-  const base = baseUrl("annas");
-  const signature = createHash("sha256")
-    .update(base + key)
-    .digest("hex");
-  if (
-    !force &&
-    annaSession?.signature === signature &&
-    annaSession.expires > Date.now()
-  )
-    return annaSession.cookie;
-  const response = await fetch(`${base}/account/`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "User-Agent": userAgent,
-      Referer: `${base}/account/`,
-    },
-    body: new URLSearchParams({ key }),
-    redirect: "manual",
-    signal: AbortSignal.timeout(20000),
-  });
-  if (response.status === 403 || response.status === 429)
-    throw new AnnaBrowserRequired(false);
-  if (response.status >= 400)
-    throw new Error(
-      "Anna’s Archive could not sign in. Try again or open your account on the source website.",
-    );
-  const cookies = response.headers
-    .getSetCookie()
-    .map((c) => c.split(";")[0])
-    .filter((c) => c.startsWith("aa_"))
-    .join("; ");
-  if (!cookies)
-    throw new Error(
-      "Anna’s Archive did not accept this account key. Check your secret key on the source account page.",
-    );
-  annaSession = {
-    signature,
-    cookie: cookies,
-    expires: Date.now() + 30 * 60000,
-  };
-  return cookies;
+function baseUrl(_source: EbookSource) {
+  return getSetting("libgenUrl") || "https://libgen.li";
 }
 async function page(url: string, source: EbookSource) {
-  const cached = !!annaSession;
-  let cookie = source === "annas" ? await annaCookie() : "";
   let response;
   try {
-    const request = () =>
-      fetch(url, {
-        headers: {
-          Accept: "text/html",
-          "User-Agent": userAgent,
-          Referer: baseUrl(source) + "/",
-          ...(cookie ? { Cookie: cookie } : {}),
-        },
-        redirect: source === "annas" ? "manual" : "follow",
-        signal: AbortSignal.timeout(20000),
-      });
-    response = await request();
-    const challenge = () =>
-      response!.status === 403 ||
-      /[?&]check=1/.test(response!.headers.get("location") || "");
-    if (source === "annas" && challenge()) {
-      // A paid session may have expired. Renew it once; a free account still
-      // requires a real browser and must not be described as an invalid key.
-      if (cached && cookie) {
-        await response.body?.cancel();
-        cookie = await annaCookie(true);
-        response = await request();
-      }
-      if (challenge()) {
-        await response.body?.cancel();
-        throw new AnnaBrowserRequired(!!cookie);
-      }
-    }
-  } catch (error) {
-    if (error instanceof AnnaBrowserRequired) throw error;
+    response = await fetch(url, {
+      headers: {
+        Accept: "text/html",
+        "User-Agent": userAgent,
+        Referer: baseUrl(source) + "/",
+      },
+      signal: AbortSignal.timeout(20000),
+    });
+  } catch {
     throw new Error(
-      `${source === "annas" ? "Anna’s Archive" : "Library Genesis"} could not be reached. Try another mirror in Settings or open the source website.`,
+      "Library Genesis could not be reached. Try another mirror in Settings or open the source website.",
     );
   }
   if (!response.ok)
     throw new Error(
-      `${source === "annas" ? "Anna’s Archive" : "Library Genesis"} returned ${response.status}. This mirror may need browser verification.`,
+      `Library Genesis returned ${response.status}. This mirror may need browser verification.`,
     );
   const html = await response.text();
-  if (
-    source === "annas" &&
-    /<title[^>]*>\s*(?:ddos-guard|just a moment|checking your browser)/i.test(
-      html,
-    )
-  )
-    throw new AnnaBrowserRequired(!!cookie);
   if (/<title>\s*Welcome to nginx!/i.test(html))
     throw new Error(
       "This mirror is unavailable. Try another mirror in Settings or open the source website.",
@@ -159,51 +73,23 @@ export async function searchEbooks(
   source: EbookSource,
   q: string,
   pageNumber = 1,
-): Promise<{
-  files: EbookResult[];
-  website: string;
-  browserRequired?: boolean;
-  accountAccepted?: boolean;
-  notice?: string;
-}> {
+): Promise<{ files: EbookResult[]; website: string }> {
   const base = baseUrl(source);
-  let url: string;
-  if (source === "annas")
-    url = `${base}/search?${new URLSearchParams({ q, ext: "epub", content: "book_any", page: String(pageNumber) })}`;
-  else {
-    const params = new URLSearchParams([
-      ["req", q],
-      ["columns[]", "t"],
-      ["columns[]", "a"],
-      ["columns[]", "i"],
-      ["objects[]", "f"],
-      ["topics[]", "l"],
-      ["topics[]", "f"],
-      ["res", "50"],
-      ["filesuns", "all"],
-      ["page", String(pageNumber)],
-    ]);
-    url = `${base}/index.php?${params}`;
-  }
-  let html: string;
-  try {
-    html = await page(url, source);
-  } catch (error) {
-    if (!(error instanceof AnnaBrowserRequired)) throw error;
-    return {
-      files: [],
-      website: url,
-      browserRequired: true,
-      accountAccepted: error.accountAccepted,
-      notice: error.accountAccepted
-        ? "Your account key was accepted. Anna’s Archive still requires browser verification; a non-member key does not skip this check. Continue your search in the browser, then import an EPUB or PDF here."
-        : "Anna’s Archive requires browser verification. Continue your search in the browser, then import an EPUB or PDF here. A free account key does not skip this check.",
-    };
-  }
-  const files =
-    source === "annas"
-      ? parseAnnas(html, base)
-      : parseLibgen(html).map((f) => ({ ...f, coverUrl: null }));
+  const params = new URLSearchParams([
+    ["req", q],
+    ["columns[]", "t"],
+    ["columns[]", "a"],
+    ["columns[]", "i"],
+    ["objects[]", "f"],
+    ["topics[]", "l"],
+    ["topics[]", "f"],
+    ["res", "50"],
+    ["filesuns", "all"],
+    ["page", String(pageNumber)],
+  ]);
+  const url = `${base}/index.php?${params}`;
+  const html = await page(url, source);
+  const files = parseLibgen(html).map((f) => ({ ...f, coverUrl: null }));
   if (
     !files.length &&
     /just a moment|checking your browser|captcha|verify you are human|access denied/i.test(
@@ -217,14 +103,7 @@ export async function searchEbooks(
     files: files
       .filter((f) => f.extension === "epub" || f.extension === "pdf")
       .slice(0, 50)
-      .map((f) => ({
-        ...f,
-        source,
-        url:
-          source === "annas"
-            ? `${base}/md5/${f.md5}`
-            : `${base}/ads.php?md5=${f.md5}`,
-      })),
+      .map((f) => ({ ...f, source, url: `${base}/ads.php?md5=${f.md5}` })),
     website: url,
   };
 }
@@ -290,34 +169,6 @@ export async function publicFetch(input: string, init: RequestInit = {}) {
 }
 async function resolveDownload(source: EbookSource, md5: string) {
   const base = baseUrl(source);
-  if (source === "annas") {
-    const key = getSecret("annas");
-    if (!key)
-      throw new Error(
-        "Add your Anna’s Archive member key in Settings for direct downloads, or open the source website to download manually.",
-      );
-    let response;
-    try {
-      response = await fetch(
-        `${base}/dyn/api/fast_download.json?${new URLSearchParams({ md5, key })}`,
-        {
-          headers: { Accept: "application/json", "User-Agent": userAgent },
-          signal: AbortSignal.timeout(20000),
-        },
-      );
-    } catch {
-      throw new Error("Anna’s Archive could not be reached.");
-    }
-    const body = (await response.json().catch(() => ({}))) as {
-      download_url?: string;
-      error?: string;
-    };
-    if (!response.ok || !body.download_url)
-      throw new Error(
-        "Anna’s Archive could not provide a fast download. This API requires an active membership and available quota. Open the source page for free downloads, then import the file here.",
-      );
-    return body.download_url.replace(/^http:/i, "https:");
-  }
   const mirror = parseMirrorPage(
     await page(`${base}/ads.php?md5=${md5}`, "libgen"),
   );

@@ -80,8 +80,6 @@ export type Settings = {
   abbUrl: string;
   name: string;
   authenticated?: boolean;
-  annasConfigured: boolean;
-  annasUrl: string;
   libgenUrl: string;
   localConfigured: boolean;
   storageLabel: string;
@@ -143,7 +141,7 @@ export type ReleaseSourceStatus = {
 };
 export type EbookResult = {
   md5: string;
-  source: "annas" | "libgen";
+  source: "libgen";
   title: string;
   authors: string[];
   extension: "epub" | "pdf";

@@ -57,9 +57,9 @@ Local playback stays authoritative while its changes are queued. Later remote ch
 
 ## Ebook sources
 
-Discover → Ebooks supports **Anna’s Archive** and **Library Genesis**, matching Vaka’s sources. Mirrors are configurable in Settings. Anna’s Archive accepts free and member account secret keys, stored encrypted. A free key does **not** skip Anna’s browser verification or unlock the member-only fast-download API. When verification is required, search returns a browser handoff and preserves the query, rather than reporting a rejected key or an empty result set. Members with browser-check access can search in the app; expired sessions are renewed once. Library Genesis requires no key; unavailable mirrors are reported instead of appearing to return no matches.
+Discover → Ebooks searches **Library Genesis**; its mirror is configurable in Settings. It requires no key; unavailable mirrors are reported instead of appearing to return no matches. Anna’s Archive was removed for now (#8). Older clients that still ask for it get a clear refusal.
 
-For free downloads, use **Continue in browser**, download the EPUB/PDF on the source website, then use **Import ebook** on your ebook shelf. Imports stream to `MEDIA_ROOT/ebooks`, have a 150 MB limit, validate file signatures, deduplicate identical files and persist through restarts. Importing through an audiobook’s **Find ebook** dialog links the file to that work. Paid fast downloads remain available for eligible Anna accounts.
+To add a file from elsewhere, download the EPUB/PDF and use **Import ebook** on your ebook shelf. Imports stream to `MEDIA_ROOT/ebooks`, have a 150 MB limit, validate file signatures, deduplicate identical files and persist through restarts. Importing through an audiobook’s **Find ebook** dialog links the file to that work.
 
 Ebooks are checksum-verified, saved under `MEDIA_ROOT/ebooks`, and downloadable from the ebook shelf. “Find ebook” on an audiobook links the chosen edition to the same work. Ebook editions are independent of audiobook editions and recordings. EPUBs open directly in the built-in reader; PDFs remain available to download for an external reader. See the reading-sync workflow below.
 

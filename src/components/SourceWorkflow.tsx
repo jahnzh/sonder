@@ -19,7 +19,6 @@ import {
   ShieldCheck,
   ArrowRight,
   Check,
-  ArrowUpRight,
   Upload,
 } from "lucide-react";
 import { api, bytes, localDB } from "../lib";
@@ -259,17 +258,13 @@ export function EbookDiscovery({
   notify: Notify;
   target?: Book | null;
 }) {
-  const [source, setSource] = useState<"annas" | "libgen">("libgen");
+  const source = "libgen";
   const [results, setResults] = useState<EbookResult[]>([]);
   const [saved, setSaved] = useState<SavedEbook[]>([]);
   const [busy, setBusy] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [searched, setSearched] = useState(false);
-  const [browserSearch, setBrowserSearch] = useState<{
-    website: string;
-    notice: string;
-  } | null>(null);
   const [importing, setImporting] = useState(false);
   const refreshSaved = useCallback(async () => {
     try {
@@ -284,14 +279,8 @@ export function EbookDiscovery({
   useEffect(() => {
     void refreshSaved();
   }, [refreshSaved]);
-  const base =
-    source === "annas"
-      ? settings?.annasUrl || "https://annas-archive.gl"
-      : settings?.libgenUrl || "https://libgen.li";
-  const website =
-    source === "annas"
-      ? `${base}/search?q=${encodeURIComponent(query)}&ext=epub`
-      : `${base}/index.php?req=${encodeURIComponent(query)}`;
+  const base = settings?.libgenUrl || "https://libgen.li";
+  const website = `${base}/index.php?req=${encodeURIComponent(query)}`;
   const search = async (e: FormEvent) => {
     e.preventDefault();
     if (query.trim().length < 2) {
@@ -302,21 +291,11 @@ export function EbookDiscovery({
     setError("");
     setSearched(true);
     setResults([]);
-    setBrowserSearch(null);
     try {
-      const response = await api<{
-        files: EbookResult[];
-        browserRequired?: boolean;
-        notice?: string;
-        website: string;
-      }>("/discover/ebooks?" + new URLSearchParams({ source, q: query }));
+      const response = await api<{ files: EbookResult[]; website: string }>(
+        "/discover/ebooks?" + new URLSearchParams({ source, q: query }),
+      );
       setResults(response.files);
-      if (response.browserRequired)
-        setBrowserSearch({
-          website: response.website,
-          notice:
-            response.notice || "Continue your search on the source website.",
-        });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -372,48 +351,11 @@ export function EbookDiscovery({
         </span>
       </div>
       <p className="ebook-source-note">
-        Find EPUB and PDF editions through Anna’s Archive and Library Genesis.{" "}
+        Find EPUB and PDF editions through Library Genesis.{" "}
         {target
           ? `Downloaded editions will be linked to “${target.title}”.`
           : "Save an edition to your server to read or download it."}
       </p>
-      <div className="ebook-source-tabs">
-        <button
-          className={source === "libgen" ? "selected" : ""}
-          disabled={busy}
-          onClick={() => {
-            setSource("libgen");
-            setBrowserSearch(null);
-            setError("");
-            setResults([]);
-            setSearched(false);
-          }}
-        >
-          <BookOpen size={16} /> Library Genesis
-        </button>
-        <button
-          className={source === "annas" ? "selected" : ""}
-          disabled={busy}
-          onClick={() => {
-            setSource("annas");
-            setBrowserSearch(null);
-            setError("");
-            setResults([]);
-            setSearched(false);
-          }}
-        >
-          <BookOpen size={16} /> Anna’s Archive
-        </button>
-      </div>
-      {source === "annas" && !settings?.annasConfigured && (
-        <div className="source-explainer">
-          <ShieldCheck size={18} />
-          <span>
-            Free accounts may need to search in the browser. In-app search and
-            fast downloads require a membership that skips browser verification.
-          </span>
-        </div>
-      )}
       <form className="ebooks-search-form" onSubmit={(e) => void search(e)}>
         <input
           className="ebook-search-query"
@@ -434,7 +376,7 @@ export function EbookDiscovery({
         target="_blank"
         rel="noreferrer"
       >
-        Search on {source === "annas" ? "Anna’s Archive" : "Library Genesis"}{" "}
+        Search on Library Genesis{" "}
         <ExternalLink size={12} />
       </a>
       {error && (
@@ -448,20 +390,6 @@ export function EbookDiscovery({
         </div>
       ) : (
         <div className="ebook-list">
-          {browserSearch && (
-            <div className="ebook-browser-search" role="status">
-              <h3>Continue your search on Anna’s Archive</h3>
-              <p>{browserSearch.notice}</p>
-              <a
-                className="button primary"
-                href={browserSearch.website}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Continue in browser <ExternalLink size={14} />
-              </a>
-            </div>
-          )}
           {results.map((book) => {
             const stored = saved.some(
               (s) => s.id === `${book.source}-${book.md5}`,
@@ -512,10 +440,10 @@ export function EbookDiscovery({
               </article>
             );
           })}
-          {searched && !results.length && !error && !browserSearch && (
+          {searched && !results.length && !error && (
             <div className="queue-empty">
-              No EPUB or PDF editions found. Try the title alone, switch
-              sources, or search the source website.
+              No EPUB or PDF editions found. Try the title alone, or search the
+              source website.
             </div>
           )}
         </div>
@@ -601,14 +529,11 @@ export function SourceSettings({
   onSaved: () => void;
   notify: Notify;
 }) {
-  const [annasKey, setAnnasKey] = useState("");
-  const [annasUrl, setAnnasUrl] = useState("");
   const [libgenUrl, setLibgenUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
   useEffect(() => {
     if (settings) {
-      setAnnasUrl(settings.annasUrl);
       setLibgenUrl(settings.libgenUrl);
     }
   }, [settings]);
@@ -618,13 +543,8 @@ export function SourceSettings({
     try {
       await api("/settings", {
         method: "PATCH",
-        body: JSON.stringify({
-          annasUrl,
-          libgenUrl,
-          ...(annasKey ? { annas: annasKey } : {}),
-        }),
+        body: JSON.stringify({ libgenUrl }),
       });
-      setAnnasKey("");
       onSaved();
     } catch (e) {
       notify((e as Error).message, true);
@@ -697,77 +617,6 @@ export function SourceSettings({
         onSubmit={(e) => void save(e)}
         className="settings-form ebook-settings-form"
       >
-        <section className="settings-section">
-          <div className="settings-section-heading">
-            <span className="settings-section-icon lilac">
-              <BookOpen size={20} />
-            </span>
-            <div>
-              <h2>Anna’s Archive</h2>
-              <p>
-                Free accounts use browser search. Members can search and save
-                directly.
-              </p>
-            </div>
-            {settings?.annasConfigured && (
-              <span className="connection-tag connected">
-                <span /> Key saved
-              </span>
-            )}
-          </div>
-          <label>
-            Account secret key
-            <input
-              type="password"
-              autoComplete="off"
-              value={annasKey}
-              onChange={(e) => setAnnasKey(e.target.value)}
-              placeholder={
-                settings?.annasConfigured
-                  ? "••••••••••••  ·  Saved securely"
-                  : "Optional · your Anna’s Archive account key"
-              }
-            />
-            <small>
-              Free and member account keys are accepted and stored encrypted. A
-              free key does not unlock automated search or fast downloads.{" "}
-              <a
-                href={`${annasUrl || "https://annas-archive.gl"}/account/`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Open your account <ArrowUpRight size={12} />
-              </a>
-              .
-            </small>
-          </label>
-          <label className="additional-setting">
-            Mirror URL
-            <input
-              type="url"
-              value={annasUrl}
-              onChange={(e) => setAnnasUrl(e.target.value)}
-              required
-              placeholder="https://annas-archive.gl"
-            />
-          </label>
-          {settings?.annasConfigured && (
-            <button
-              className="text-danger additional-setting"
-              type="button"
-              onClick={() => {
-                void api("/settings", {
-                  method: "PATCH",
-                  body: JSON.stringify({ annas: "" }),
-                })
-                  .then(onSaved)
-                  .catch((e) => notify(e.message, true));
-              }}
-            >
-              Remove account key
-            </button>
-          )}
-        </section>
         <section className="settings-section">
           <div className="settings-section-heading">
             <span className="settings-section-icon">

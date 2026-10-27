@@ -1,36 +1,9 @@
 import { test, expect } from "@playwright/test";
-test("free Anna account can continue browser search and persist a manually downloaded ebook", async ({
+test("a manually downloaded ebook can be imported and persists after reload", async ({
   page,
 }) => {
-  await page.route("**/api/discover/ebooks?*", (route) =>
-    route.fulfill({
-      json: {
-        files: [],
-        browserRequired: true,
-        accountAccepted: true,
-        website: "https://annas-archive.gl/search?q=carl&ext=epub",
-        notice:
-          "Your account key was accepted. Anna’s Archive still requires browser verification; a non-member key does not skip this check. Continue your search in the browser, then import an EPUB or PDF here.",
-      },
-    }),
-  );
   await page.goto("/#discover");
   await page.getByRole("button", { name: "Ebooks", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Anna’s Archive", exact: true })
-    .click();
-  await page
-    .getByRole("textbox", { name: "Search ebook title or author" })
-    .fill("carl");
-  await page.getByRole("button", { name: "Search", exact: true }).click();
-  await expect(page.locator(".ebook-browser-search")).toContainText(
-    "Your account key was accepted",
-  );
-  await expect(
-    page.getByRole("link", { name: "Continue in browser" }),
-  ).toHaveAttribute("href", "https://annas-archive.gl/search?q=carl&ext=epub");
-  await expect(page.getByRole("alert")).toHaveCount(0);
-  await expect(page.getByText(/No EPUB or PDF editions found/)).toHaveCount(0);
   await page
     .getByLabel("Import ebook", { exact: true })
     .setInputFiles({

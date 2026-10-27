@@ -64,17 +64,9 @@ test("dark mobile library, browsing, filters, favorites and ebook sources", asyn
   ).toBeVisible();
   await page.getByRole("button", { name: "Ebooks", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "Library Genesis", exact: true }),
+    page.getByRole("link", { name: "Search on Library Genesis" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Anna’s Archive", exact: true }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Anna’s Archive", exact: true })
-    .click();
-  await expect(
-    page.getByText(/Free accounts may need to search in the browser/),
-  ).toBeVisible();
+  await expect(page.getByText("Anna’s Archive")).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 test("real audio playback, speed, seek, pause and recording-specific resume after reload", async ({
@@ -254,7 +246,7 @@ test("desktop layout and server/device distinction remain usable without overflo
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Anna’s Archive", exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await expect(
     page.getByRole("heading", { name: "Library Genesis", exact: true }),
   ).toBeVisible();

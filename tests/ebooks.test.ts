@@ -11,19 +11,13 @@ process.env.NODE_ENV = "test";
 delete process.env.APP_PASSWORD;
 const { createApp } = await import("../server/app.ts");
 const { db, sqlite } = await import("../server/db.ts");
-const { settings, ebookEditions } = await import("../server/schema.ts");
-const { encrypt } = await import("../server/security.ts");
+const { ebookEditions } = await import("../server/schema.ts");
 const { eq } = await import("drizzle-orm");
 const app = await createApp();
 const original = globalThis.fetch;
 let sequence = 0;
 beforeEach(() => {
   globalThis.fetch = original;
-  const value = encrypt(`non-member-secret-${++sequence}`);
-  db.insert(settings)
-    .values({ key: "annas", value })
-    .onConflictDoUpdate({ target: settings.key, set: { value } })
-    .run();
 });
 after(async () => {
   globalThis.fetch = original;
@@ -31,97 +25,14 @@ after(async () => {
   sqlite.close();
   rmSync(temp, { recursive: true, force: true });
 });
-const resultHtml = `<section><article><a class="js-vim-focus" href="/md5/${"a".repeat(32)}">Alice</a><div>English [en] · EPUB · 1MB · 2020</div></article></section>`;
-test("accepted non-member key produces a browser-search handoff instead of a 403 or invalid-key error", async () => {
-  let requests = 0;
-  globalThis.fetch = async (url, init) => {
-    requests++;
-    assert.ok(!String(url).includes("secret"));
-    if (String(url).endsWith("/account/"))
-      return new Response(null, {
-        status: 302,
-        headers: {
-          "set-cookie": "aa_account_id2=free-session; HttpOnly",
-          location: "/account/",
-        },
-      });
-    assert.equal(
-      new Headers(init?.headers).get("Cookie"),
-      "aa_account_id2=free-session",
-    );
-    assert.equal(init?.redirect, "manual");
-    return new Response(null, {
-      status: 302,
-      headers: { location: "/search?q=carl&check=1" },
-    });
+test("older clients asking for Anna’s Archive get a clear refusal without any upstream request", async () => {
+  globalThis.fetch = async () => {
+    throw new Error("No upstream request expected");
   };
-  const response = await app.inject("/api/discover/ebooks?source=annas&q=carl");
-  assert.equal(response.statusCode, 200, response.body);
-  assert.equal(response.json().browserRequired, true);
-  assert.equal(response.json().accountAccepted, true);
-  assert.match(response.json().notice, /account key was accepted/);
-  assert.match(response.json().notice, /non-member key/);
-  assert.equal(new URL(response.json().website).searchParams.get("q"), "carl");
-  assert.doesNotMatch(response.body, /secret|free-session/);
-  assert.equal(requests, 2); // Never chase the browser-check redirect loop.
-});
-test("DDoS cookies alone never count as an accepted account key", async () => {
-  globalThis.fetch = async () =>
-    new Response("Login form", {
-      headers: { "set-cookie": "__ddg1_=challenge; HttpOnly" },
-    });
-  const response = await app.inject(
-    "/api/discover/ebooks?source=annas&q=Alice",
-  );
-  assert.equal(response.statusCode, 400);
-  assert.match(response.json().error, /did not accept this account key/);
-});
-test("anonymous verification and HTML challenges return a browser handoff without pretending there are no matches", async () => {
-  db.delete(settings).where(eq(settings.key, "annas")).run();
-  globalThis.fetch = async (url) => {
-    assert.ok(!String(url).includes("/account/"));
-    return new Response("<title>DDoS-Guard</title>Checking your browser", {
-      status: 200,
-    });
-  };
-  const response = await app.inject(
-    "/api/discover/ebooks?source=annas&q=Alice",
-  );
-  assert.equal(response.statusCode, 200);
-  assert.equal(response.json().browserRequired, true);
-  assert.equal(response.json().accountAccepted, false);
-});
-test("member search works and an expired cached session is renewed once", async () => {
-  let logins = 0,
-    stale = false;
-  globalThis.fetch = async (url, init) => {
-    if (String(url).endsWith("/account/")) {
-      logins++;
-      stale = false;
-      return new Response(null, {
-        status: 302,
-        headers: { "set-cookie": `aa_account_id2=session-${logins}; HttpOnly` },
-      });
-    }
-    assert.equal(
-      new Headers(init?.headers).get("Cookie"),
-      `aa_account_id2=session-${logins}`,
-    );
-    return stale
-      ? new Response("Blocked", { status: 403 })
-      : new Response(resultHtml);
-  };
-  const first = await app.inject("/api/discover/ebooks?source=annas&q=Alice");
-  assert.equal(first.json().files[0].title, "Alice");
-  stale = true;
-  const second = await app.inject("/api/discover/ebooks?source=annas&q=Alice");
-  assert.equal(second.json().files.length, 1);
-  assert.equal(logins, 2);
-});
-test("a non-member fast-download refusal explains membership and offers file import without exposing provider details", async () => {
-  globalThis.fetch = async () =>
-    new Response("<title>Forbidden</title>", { status: 403 });
-  const response = await app.inject({
+  const search = await app.inject("/api/discover/ebooks?source=annas&q=Alice");
+  assert.equal(search.statusCode, 400);
+  assert.match(search.json().error, /Anna’s Archive is turned off/);
+  const save = await app.inject({
     method: "POST",
     url: "/api/ebooks",
     payload: {
@@ -137,9 +48,8 @@ test("a non-member fast-download refusal explains membership and offers file imp
       url: `https://annas-archive.gl/md5/${"a".repeat(32)}`,
     },
   });
-  assert.equal(response.statusCode, 400);
-  assert.match(response.json().error, /active membership/);
-  assert.match(response.json().error, /free downloads/);
+  assert.equal(save.statusCode, 400);
+  assert.match(save.json().error, /Anna’s Archive is turned off/);
 });
 function upload(filename: string, bytes: Buffer, workId?: string) {
   const boundary = "sonder-ebook-test";
