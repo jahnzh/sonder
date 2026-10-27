@@ -629,3 +629,16 @@ test("media guard refuses the wrong or missing volume marker before any media wr
     /outside Sonder/,
   );
 });
+
+test("import checks media storage before accepting uploads", async () => {
+ process.env.REQUIRE_MEDIA_MOUNT="true"; process.env.MEDIA_VOLUME_ID="missing-volume";
+ try { const r=await app.inject({method:"POST",url:"/api/import",headers:{"content-type":"multipart/form-data; boundary=x"},payload:"--x--\r\n"}); assert.equal(r.statusCode,400); assert.match(r.body,/media volume is unavailable/); }
+ finally { process.env.REQUIRE_MEDIA_MOUNT="false"; delete process.env.MEDIA_VOLUME_ID; }
+});
+
+test("ebook download has a usable fallback and UTF-8 filename", async () => {
+ const file=join(temp,"media","ebooks","filename.epub"); writeFileSync(file,"ebook");
+ sqlite.prepare("INSERT INTO works(id,title,author,description,genre,year) VALUES(?,?,?,?,?,?)").run("unicode-work","漢字","Author","","",2000);
+ sqlite.prepare("INSERT INTO ebook_editions(id,work_id,format,source) VALUES(?,?,?,?)").run("unicode-book","unicode-work","epub",file);
+ const r=await app.inject("/api/ebooks/unicode-book/file"); assert.equal(r.statusCode,200); assert.match(r.headers["content-disposition"] as string,/filename="ebook.epub"/); assert.match(r.headers["content-disposition"] as string,/filename\*=UTF-8''%E6%BC%A2%E5%AD%97.epub/);
+});
