@@ -2767,7 +2767,8 @@ input[type="range"]::-moz-range-thumb {
 .settings-section label,
 .import-fields label,
 .magnet-form label,
-.login-card label {
+.login-card label,
+.account-dialog label {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -2778,7 +2779,8 @@ input[type="range"]::-moz-range-thumb {
 .settings-section label > input,
 .import-fields input,
 .magnet-form textarea,
-.login-card input {
+.login-card input,
+.account-dialog input {
   width: 100%;
   border: 1px solid var(--border);
   background: var(--surface);
@@ -2854,6 +2856,92 @@ input[type="range"]::-moz-range-thumb {
 }
 .text-danger:hover {
   color: var(--danger);
+}
+.account-section {
+  max-width: 780px;
+}
+.account-form {
+  display: grid;
+  gap: 16px;
+}
+.account-form h3 {
+  font-family: var(--font-heading);
+  font-size: calc(13px * var(--ui-scale, 1));
+  font-weight: 600;
+}
+.account-form select {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  background: var(--raised);
+  border-radius: 5px;
+  padding: 0 12px;
+}
+.account-form > .button {
+  justify-self: start;
+  min-height: 44px;
+}
+.user-list {
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+.user-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  min-height: 64px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.user-row-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.user-row-name > strong {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.user-row-actions > .button,
+.account-dialog-actions > .button {
+  min-height: 44px;
+}
+.user-row-actions > .button.user-remove,
+.account-dialog-actions > .button.user-remove {
+  color: var(--danger);
+}
+.user-add {
+  margin-top: 28px;
+}
+.account-dialog {
+  max-width: 440px;
+}
+.account-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+@media (max-width: 650px) {
+  .user-row-actions {
+    width: 100%;
+  }
+  .user-row-actions > .button {
+    flex: 1;
+  }
+  .account-form > .button {
+    justify-self: stretch;
+  }
 }
 .optional-label {
   font-size: max(11px, calc(8px * var(--ui-scale, 1)));
@@ -3167,6 +3255,12 @@ input[type="range"]::-moz-range-thumb {
 .login-card label {
   font-size: calc(11px * var(--ui-scale, 1));
   color: var(--muted);
+}
+.login-card h1 {
+  margin-bottom: 28px;
+}
+.login-card label + label {
+  margin-top: 18px;
 }
 .login-art {
   position: relative;
@@ -6400,13 +6494,15 @@ input[type="range"]::-moz-range-thumb {
 .settings-section label,
 .import-fields label,
 .magnet-form label,
-.login-card label {
+.login-card label,
+.account-dialog label {
   color: var(--text);
 }
 .settings-section label > input,
 .import-fields input,
 .magnet-form textarea,
-.login-card input {
+.login-card input,
+.account-dialog input {
   background: var(--raised);
   border-color: var(--border);
   color: var(--text);

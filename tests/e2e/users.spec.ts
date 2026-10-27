@@ -26,7 +26,7 @@ test("accounts keep libraries and offline queues separate", async ({ page }) => 
   await users.getByLabel("Username").fill("reader");
   await users.getByLabel("Password", { exact: true }).fill("reader-password");
   await users.getByRole("button", { name: "Add user" }).click();
-  await expect(users.getByText("reader · user")).toBeVisible();
+  await expect(users.getByRole("listitem").filter({ hasText: "reader" }).getByText("User", { exact: true })).toBeVisible();
   await page.screenshot({ path: "artifacts/users-admin-settings.png" });
   const adminBooks = await (await page.request.get(`${base}/api/books`)).json();
   const book = adminBooks.find((b: { inLibrary: boolean; tracks: unknown[] }) => b.inLibrary && b.tracks.length);

@@ -45,6 +45,9 @@ import {
   Music2,
   HardDrive,
   Menu,
+  CircleUserRound,
+  KeyRound,
+  UsersRound,
 } from "lucide-react";
 import { PlayerProvider, usePlayer } from "./player";
 import { ReleasePicker } from "./components/ReleasePicker";
@@ -707,7 +710,7 @@ function LibraryApp({
                 onClick={() => navigate("settings")}
                 aria-label="Open your settings"
               >
-                J<span />
+                {needsPassword ? user.username.charAt(0).toUpperCase() : "J"}<span />
               </button>
             </div>
           </header>
@@ -2243,15 +2246,69 @@ function AccountSettings({ user, needsPassword, onLogout, notify }: { user: Acco
   const [role, setRole] = useState<"user" | "admin">("user");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [resetting, setResetting] = useState<Account | null>(null);
+  const [resetPassword, setResetPassword] = useState("");
+  const [removing, setRemoving] = useState<Account | null>(null);
   const refresh = () => api<Account[]>("/users").then(setUsers).catch((e) => notify(e.message, true));
   useEffect(() => { if (user.role === "admin") void refresh(); }, [user.id]);
   const action = async (fn: () => Promise<unknown>) => { try { await fn(); notify("Saved."); if (user.role === "admin") await refresh(); } catch (e) { notify((e as Error).message, true); } };
+  const roleLabel = (account: Account) => account.role === "admin" ? "Admin" : "User";
   return <>
-    <section className="settings-section"><h2>Account</h2><p>{user.username}</p>
+    <section className="settings-section account-section">
+      <div className="settings-section-heading">
+        <span className="settings-section-icon"><CircleUserRound size={20} /></span>
+        <div><h2>Account</h2><p>{user.username} · {roleLabel(user)}</p></div>
+      </div>
       {needsPassword && <button className="button subtle" onClick={() => void action(async () => { await api("/auth/logout", { method: "POST" }); await authDB.preferences.put({ key: "auth", value: { required: true, authenticated: false } }); navigator.serviceWorker?.controller?.postMessage("clear-stream-cache"); onLogout(); window.location.reload(); })}><LogOut size={16} /> Sign out</button>}
-      {user.id !== 1 && <form onSubmit={(e) => { e.preventDefault(); void action(async () => { await api("/auth/password", { method: "POST", body: JSON.stringify({ currentPassword, newPassword }) }); setCurrentPassword(""); setNewPassword(""); }); }}><h3>Change password</h3><label>Current password<input type="password" autoComplete="current-password" required value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} /></label><label>New password<input type="password" autoComplete="new-password" required value={newPassword} onChange={e => setNewPassword(e.target.value)} /></label><button className="button subtle">Change password</button></form>}
     </section>
-    {user.role === "admin" && <section className="settings-section"><h2>Users</h2>{users.map(account => <div key={account.id}><span>{account.username} · {account.role}</span>{account.id !== 1 && <><button className="button subtle" onClick={() => { const value = window.prompt(`New password for ${account.username}`); if (value) void action(() => api(`/users/${account.id}`, { method: "PATCH", body: JSON.stringify({ password: value }) })); }}>Reset password</button><button className="button subtle" onClick={() => { if (window.confirm(`Remove ${account.username}?`)) void action(() => api(`/users/${account.id}`, { method: "DELETE" })); }}>Remove user</button></>}</div>)}<form onSubmit={e => { e.preventDefault(); void action(async () => { await api("/users", { method: "POST", body: JSON.stringify({ username, password, role }) }); setUsername(""); setPassword(""); }); }}><h3>Add user</h3><label>Username<input required value={username} onChange={e => setUsername(e.target.value)} /></label><label>Password<input type="password" autoComplete="new-password" required value={password} onChange={e => setPassword(e.target.value)} /></label><label>Role<select value={role} onChange={e => setRole(e.target.value as "user" | "admin")}><option value="user">User</option><option value="admin">Admin</option></select></label><button className="button primary">Add user</button></form></section>}
+    {user.id !== 1 && <section className="settings-section account-section">
+      <div className="settings-section-heading">
+        <span className="settings-section-icon"><KeyRound size={20} /></span>
+        <div><h2>Change password</h2></div>
+      </div>
+      <form className="account-form" onSubmit={(e) => { e.preventDefault(); void action(async () => { await api("/auth/password", { method: "POST", body: JSON.stringify({ currentPassword, newPassword }) }); setCurrentPassword(""); setNewPassword(""); }); }}>
+        <label>Current password<input type="password" autoComplete="current-password" required value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} /></label>
+        <label>New password<input type="password" autoComplete="new-password" required value={newPassword} onChange={e => setNewPassword(e.target.value)} /></label>
+        <button className="button subtle">Change password</button>
+      </form>
+    </section>}
+    {user.role === "admin" && <section className="settings-section account-section">
+      <div className="settings-section-heading">
+        <span className="settings-section-icon"><UsersRound size={20} /></span>
+        <div><h2>Users</h2></div>
+      </div>
+      <ul className="user-list">
+        {users.map(account => <li key={account.id} className="user-row">
+          <div className="user-row-name"><strong>{account.username}</strong><span className="quiet-tag">{roleLabel(account)}</span></div>
+          {account.id !== 1 && <div className="user-row-actions">
+            <button type="button" className="button subtle" onClick={() => { setResetPassword(""); setResetting(account); }}><KeyRound size={15} /> Reset password</button>
+            <button type="button" className="button subtle user-remove" onClick={() => setRemoving(account)}><Trash2 size={15} /> Remove user</button>
+          </div>}
+        </li>)}
+      </ul>
+      <form className="account-form user-add" onSubmit={e => { e.preventDefault(); void action(async () => { await api("/users", { method: "POST", body: JSON.stringify({ username, password, role }) }); setUsername(""); setPassword(""); }); }}>
+        <h3>Add user</h3>
+        <label>Username<input required value={username} onChange={e => setUsername(e.target.value)} /></label>
+        <label>Password<input type="password" autoComplete="new-password" required value={password} onChange={e => setPassword(e.target.value)} /></label>
+        <label>Role<select value={role} onChange={e => setRole(e.target.value as "user" | "admin")}><option value="user">User</option><option value="admin">Admin</option></select></label>
+        <button className="button primary"><Plus size={16} /> Add user</button>
+      </form>
+      <Dialog open={!!resetting} onOpenChange={(open) => { if (!open) setResetting(null); }} title={`Reset password for ${resetting?.username ?? ""}`} className="account-dialog">
+        <form className="account-form" onSubmit={e => { e.preventDefault(); const account = resetting!; setResetting(null); void action(() => api(`/users/${account.id}`, { method: "PATCH", body: JSON.stringify({ password: resetPassword }) })); }}>
+          <label>New password<input type="password" autoComplete="new-password" required autoFocus value={resetPassword} onChange={e => setResetPassword(e.target.value)} /></label>
+          <div className="account-dialog-actions">
+            <button type="button" className="button subtle" onClick={() => setResetting(null)}>Cancel</button>
+            <button className="button primary">Reset password</button>
+          </div>
+        </form>
+      </Dialog>
+      <Dialog open={!!removing} onOpenChange={(open) => { if (!open) setRemoving(null); }} title={`Remove ${removing?.username ?? ""}?`} className="account-dialog">
+        <div className="account-dialog-actions">
+          <button type="button" className="button subtle" onClick={() => setRemoving(null)}>Cancel</button>
+          <button type="button" className="button subtle user-remove" onClick={() => { const account = removing!; setRemoving(null); void action(() => api(`/users/${account.id}`, { method: "DELETE" })); }}><Trash2 size={15} /> Remove user</button>
+        </div>
+      </Dialog>
+    </section>}
   </>;
 }
 function SettingsPage({
