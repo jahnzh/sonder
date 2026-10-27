@@ -2,6 +2,16 @@
 
 Coordinator session working through GitHub issues #1–#5 (pinned roadmap #11 on `jahnzh/sonder`) with four supervised Orca workers. All workers are halted and released. Per-worker notes: `HANDOFF-fix-ui-alignment.md`, `HANDOFF-single-file-sync.md` (this folder). The torrent diagnosis is `/home/jahn/sonder-worktrees/torrent-health/artifacts/torrent-health-diagnosis.md`.
 
+## Follow-up later on 2026-10-27
+
+- Deployed `main` (roadmap merges plus the two commits below) and pushed it. Prowlarr is configured in production (8 indexers, test OK, live search works). Torrent health: `ok`, incoming port closed.
+- #3 and #4 closed. #1 and #2 have result comments and stay open for the phone and iOS Safari check.
+- `9f496ea`: Save to server failed on the 14.6 h "Unknown narrator" DCC M4B with "MP4 table entry count 103009 exceeds entry limit 100000" (music-metadata 12 default). All `parseFile` calls now share `audioParseOptions` (`server/chapters.ts`) with a 10M limit. The copy now succeeds.
+- `bfe67f0`: merged `single-file-sync` (#5). The full test run (Jeff Hays DCC, chapters ignored) against the chapter map gave 99.4% text coverage, median 8.5 ms, 99.1% within 1 s and max 3.9 s. Flags: the outro plus unnarrated front and back matter.
+- The "Unknown narrator" release is not chapterless. Read from the HDD copy, it has 55 French chapter markers, so it is a French narration (its edition language is empty). Anchored mode correctly refuses it. No truly chapterless release exists in the library to test with.
+- "Game of Thrones" is still at 0.11%, 1 peer, 0 KiB/s and has no trackers, so the swarm looks dead.
+- Still open: the Caddy deploy (`sudo ./scripts/apply_updates.sh` in homelab, needs the user's password), phone checks (#1, #2, #7), #6, #8, and the worktree cleanup below.
+
 ## State of `main` (local, not pushed, not deployed)
 
 | Commit | What |
