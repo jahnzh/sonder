@@ -320,7 +320,8 @@ test("any user saves their own Hardcover token through settings, while other set
   assert.equal(await configured(c), true);
   assert.equal(getUserSecret(4, "hardcover"), "key-c");
   assert.equal(getUserSecret(1, "hardcover"), "admin-key");
-  for (const payload of [{ torbox: "x" }, { hardcover: "other", torbox: "x" }, {}])
+  // An empty body is a no-op for regular users (r6#5), so it isn't asserted as 403 here.
+  for (const payload of [{ torbox: "x" }, { hardcover: "other", torbox: "x" }])
     assert.equal((await request(c, "PATCH", "/api/settings", payload)).statusCode, 403, JSON.stringify(payload));
   assert.equal(getUserSecret(4, "hardcover"), "key-c");
   assert.equal((await request(c, "PATCH", "/api/settings", { hardcover: "" })).statusCode, 200);

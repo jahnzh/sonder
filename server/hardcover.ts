@@ -1,4 +1,5 @@
 import {
+  ADMIN_USER_ID,
   getUserSecret,
   getUserSetting,
   listUserIds,
@@ -238,6 +239,13 @@ export function resetHardcoverAccount(userId: number) {
     for (const table of [T.outbox, T.progress, T.reading, T.reads, T.lists, T.links])
       db.delete(table).where(eq(table.userId, userId)).run();
   })();
+}
+// Called when a user is deleted: any in-flight request or sync for that id stops before
+// it commits, and a later user who reuses the id starts with a fresh runtime (r6#6).
+export function forgetHardcoverUser(userId: number) {
+  const live = runtimes.get(userId);
+  if (live) live.generation++;
+  runtimes.delete(userId);
 }
 export function setHardcoverToken(userId: number, token: string) {
   if (token !== hardcoverKey(userId)) resetHardcoverAccount(userId);
@@ -764,6 +772,55 @@ export function hardcoverForWork(userId: number, workId: string) {
       .map((l) => l.id),
   };
 }
+// Metadata-only `hc-*` placeholders come from one user's Hardcover shelves and lists, so
+// they're only listed for users who have that book themselves, and for admins (r6#1).
+// Returns the placeholder edition ids `userId` must not see in the catalogue.
+export function hiddenHardcoverPlaceholders(userId: number): Set<string> {
+  const role = (
+    sqlite.prepare("SELECT role FROM users WHERE id=?").get(userId) as
+      | { role: string }
+      | undefined
+  )?.role;
+  if (userId === ADMIN_USER_ID || role === "admin") return new Set();
+  const placeholders = sqlite
+    .prepare(
+      `SELECT e.id, l.book_id AS bookId FROM audio_editions e
+       LEFT JOIN hardcover_links l ON l.work_id=e.work_id
+       WHERE e.id LIKE 'hc-%' AND NOT EXISTS (
+         SELECT 1 FROM recordings r JOIN tracks t ON t.recording_id=r.id WHERE r.edition_id=e.id)`,
+    )
+    .all() as { id: string; bookId: number | null }[];
+  if (!placeholders.length) return new Set();
+  const library = new Set(
+    db
+      .select()
+      .from(s.userLibrary)
+      .where(eq(s.userLibrary.userId, userId))
+      .all()
+      .map((row) => row.bookId),
+  );
+  const books = new Set<number>([
+    ...db
+      .select()
+      .from(T.links)
+      .where(eq(T.links.userId, userId))
+      .all()
+      .map((row) => row.bookId),
+    ...db
+      .select()
+      .from(T.lists)
+      .where(eq(T.lists.userId, userId))
+      .all()
+      .flatMap((list) => list.members.map((m) => m.bookId)),
+  ]);
+  return new Set(
+    placeholders
+      .filter(
+        (p) => !library.has(p.id) && (p.bookId === null || !books.has(p.bookId)),
+      )
+      .map((p) => p.id),
+  );
+}
 function canWrite(userId: number) {
   const current = state(userId);
   return (
@@ -1102,7 +1159,9 @@ async function runSync(userId: number): Promise<SyncSummary> {
     });
     return summary;
   } catch (error) {
-    writeState(userId, { lastError: (error as Error).message });
+    // A sync stopped by a reset or user deletion must not write onto the id afterwards.
+    if (live.generation === expectedGeneration)
+      writeState(userId, { lastError: (error as Error).message });
     throw error;
   } finally {
     live.syncing = false;
@@ -1608,12 +1667,17 @@ function pullRemoteProgress(
     return null;
   }
   const local = localProgress(userId, target.rec.id);
-  const initialLocalIsNewer =
-    !last && !!local && local.updatedAt > parseRemoteTime(remote.updated_at);
+  // A newer local position always wins over an older remote one, on every sync (r6#3).
+  // A remote change seen after a sync that already covered the local position is newer;
+  // otherwise only a later remote updated_at proves it.
+  const localIsNewer =
+    !!local &&
+    (!last || local.updatedAt > last.syncedAt) &&
+    local.updatedAt > parseRemoteTime(remote.updated_at);
   const readingQueued = readingJob(userId, remote.book_id);
   if (
     force ||
-    ((changed || !local) && !queued && !readingQueued && !initialLocalIsNewer)
+    ((changed || !local) && !queued && !readingQueued && !localIsNewer)
   ) {
     const progress = applyFraction(userId, target.rec.id, fraction);
     rememberRead(userId, remote);

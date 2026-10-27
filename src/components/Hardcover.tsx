@@ -20,7 +20,7 @@ import {
   X,
   ArrowRight,
 } from "lucide-react";
-import { api, localDB, duration } from "../lib";
+import { api, localDB, duration, isAdmin } from "../lib";
 import type { Book, HardcoverState, Progress } from "../types";
 import { Dialog } from "./ui/dialog";
 import { usePlayer } from "../player";
@@ -602,12 +602,14 @@ export function HardcoverBookTools({
             </button>
           </div>
         ) : !book.hardcover ? (
+          // The work → Hardcover match is shared by every user, so only the admin sets it.
           <div className="hardcover-unlinked">
             <p>
-              Match this recording to its book to sync reading status and
-              progress.
+              {isAdmin()
+                ? "Match this recording to its book to sync reading status and progress."
+                : "Not matched on Hardcover yet. The administrator can match it."}
             </p>
-            <button
+            {isAdmin() && <button
               className="button subtle"
               onClick={() => {
                 setMatching(true);
@@ -615,7 +617,7 @@ export function HardcoverBookTools({
               }}
             >
               Match on Hardcover <Search size={14} />
-            </button>
+            </button>}
           </div>
         ) : (
           <>
@@ -718,15 +720,17 @@ export function HardcoverBookTools({
                   </button>
                 </>
               )}
-              <button
-                className="button ghost"
-                onClick={() => {
-                  setMatching(true);
-                  setMatches([]);
-                }}
-              >
-                Change match <Link2 size={13} />
-              </button>
+              {isAdmin() && (
+                <button
+                  className="button ghost"
+                  onClick={() => {
+                    setMatching(true);
+                    setMatches([]);
+                  }}
+                >
+                  Change match <Link2 size={13} />
+                </button>
+              )}
               {book.hardcover.slug && (
                 <a
                   className="button ghost"

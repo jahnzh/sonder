@@ -113,3 +113,46 @@ test("mobile Hardcover connection, shelves, custom lists, edition selection and 
   );
   expect(errors).toEqual([]);
 });
+test("r6#4: a regular user is not offered to create or change the shared Hardcover match", async ({
+  page,
+}) => {
+  await page.route("**/api/auth/status", (route) =>
+    route.fulfill({
+      json: {
+        required: true,
+        authenticated: true,
+        user: { id: 1, username: "reader", role: "user" },
+      },
+    }),
+  );
+  await page.route("**/api/hardcover", async (route) => {
+    const real = await (await route.fetch()).json();
+    await route.fulfill({ json: { ...real, configured: true, mode: "import" } });
+  });
+  await page.route("**/api/books", async (route) => {
+    const books = await (await route.fetch()).json();
+    await route.fulfill({
+      json: books.map((b: { id: string }) =>
+        b.id === "alice" || b.id === "frankenstein"
+          ? {
+              ...b,
+              inLibrary: true,
+              hardcover:
+                b.id === "alice"
+                  ? { id: 101, slug: "alice", series: [], statusId: 2, pending: false, progressFraction: null, progressPending: false, syncError: null, listIds: [] }
+                  : undefined,
+            }
+          : b,
+      ),
+    });
+  });
+  await page.goto("/#library");
+  await page.getByRole("button", { name: "About Alice’s Adventures in Wonderland", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "Book Hardcover shelf", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Change match/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
+  await page.getByRole("button", { name: "About Frankenstein", exact: true }).click();
+  await expect(page.getByText("Not matched on Hardcover yet. The administrator can match it.")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Match on Hardcover/ })).toHaveCount(0);
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+});
