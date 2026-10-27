@@ -281,6 +281,8 @@ function createBook(
   })();
 }
 const processing = new Set<string>();
+// Completed files that fail validation won't change on the next refresh, so these end the job.
+class InvalidTorrentError extends Error {}
 export async function refreshAcquisition(id: string) {
   if (processing.has(id)) return;
   processing.add(id);
@@ -356,12 +358,12 @@ export async function refreshAcquisition(id: string) {
         try {
           meta = await parseFile(path, audioParseOptions);
         } catch {
-          throw new Error(
+          throw new InvalidTorrentError(
             "A completed torrent file could not be read as audio.",
           );
         }
         if (!meta.format.codec)
-          throw new Error("This torrent contains an invalid audio file.");
+          throw new InvalidTorrentError("This torrent contains an invalid audio file.");
         ready.push({
           id: `local-${job.hash}-${ready.length}`,
           title: meta.common.title || file.name.split("/").pop() || "Chapter",
@@ -387,7 +389,7 @@ export async function refreshAcquisition(id: string) {
           a.name.localeCompare(b.name, undefined, { numeric: true }),
         );
       if (!files.length)
-        throw new Error("This torrent contains no supported audio files.");
+        throw new InvalidTorrentError("This torrent contains no supported audio files.");
       createBook(
         job,
         files.map((f) => ({
@@ -404,7 +406,11 @@ export async function refreshAcquisition(id: string) {
     }
   } catch (error) {
     db.update(s.acquisitions)
-      .set({ error: (error as Error).message, updatedAt: Date.now() })
+      .set({
+        ...(error instanceof InvalidTorrentError ? { status: "error" } : {}),
+        error: (error as Error).message,
+        updatedAt: Date.now(),
+      })
       .where(eq(s.acquisitions.id, id))
       .run();
   } finally {
