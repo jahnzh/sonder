@@ -48,9 +48,9 @@ export function registerHardcoverRoutes(app: FastifyInstance) {
         workId: z.string().optional(),
       })
       .parse(req.body);
-    // The work → Hardcover book match is shared, so only the admin can move an existing one.
-    const linked = workId ? hardcoverLinkedBook(workId) : undefined;
-    if (linked !== undefined && linked !== id) requireAdmin(req);
+    // The work → Hardcover book match is shared, so only the admin can create or move one.
+    // Anyone may re-import a work that already points at this book.
+    if (workId && hardcoverLinkedBook(workId) !== id) requireAdmin(req);
     return importHardcoverBook(currentUserId(req), id, workId);
   });
   app.patch("/api/hardcover/shelf", async (req) => {
