@@ -74,6 +74,7 @@ export async function acquire(
     workId?: string;
     language?: string | null;
     narrator?: string | null;
+    userId?: number;
   } = {},
 ) {
   if (
@@ -87,7 +88,14 @@ export async function acquire(
     .from(s.acquisitions)
     .where(eq(s.acquisitions.hash, hash))
     .get();
-  if (existing && existing.status !== "error") return existing;
+  if (existing && existing.status !== "error") {
+    db.insert(s.userAcquisitions).values({ userId: metadata.userId ?? 1, acquisitionId: existing.id }).onConflictDoNothing().run();
+    if (existing.bookId) {
+      db.delete(s.userHiddenLibrary).where(and(eq(s.userHiddenLibrary.userId, metadata.userId ?? 1), eq(s.userHiddenLibrary.bookId, existing.bookId))).run();
+      db.insert(s.userLibrary).values({userId: metadata.userId ?? 1, bookId: existing.bookId, status: "unread", addedAt: Date.now()}).onConflictDoNothing().run();
+    }
+    return existing;
+  }
   ensureMediaStorage();
   const id = existing?.id || randomUUID();
   const title =
@@ -119,6 +127,7 @@ export async function acquire(
     .values(entry)
     .onConflictDoUpdate({ target: s.acquisitions.hash, set: entry })
     .run();
+  db.insert(s.userAcquisitions).values({userId: metadata.userId ?? 1, acquisitionId: id}).onConflictDoNothing().run();
   try {
     let backend = await chooseBackend(hash, !!getSecret("torbox"), (h) =>
       torbox(`torrents/checkcached?hash=${h}&format=list&list_files=false`),
@@ -254,11 +263,10 @@ function createBook(
           .run(),
       );
     }
-    db.delete(s.userHiddenLibrary).where(and(eq(s.userHiddenLibrary.userId, 1), eq(s.userHiddenLibrary.bookId, id))).run();
-    db.insert(s.userLibrary)
-      .values({ userId: 1, bookId: id, status: "unread", addedAt: Date.now() })
-      .onConflictDoNothing()
-      .run();
+    for (const {userId} of db.select().from(s.userAcquisitions).where(eq(s.userAcquisitions.acquisitionId, job.id)).all()) {
+      db.delete(s.userHiddenLibrary).where(and(eq(s.userHiddenLibrary.userId, userId), eq(s.userHiddenLibrary.bookId, id))).run();
+      db.insert(s.userLibrary).values({ userId, bookId: id, status: "unread", addedAt: Date.now() }).onConflictDoNothing().run();
+    }
     claimHardcoverAudio(workId, id);
     db.update(s.acquisitions)
       .set({
@@ -424,6 +432,8 @@ export async function refreshQueue() {
           .set({ status: "error" })
           .where(eq(s.acquisitions.id, job.id))
           .run();
+        const owner = db.select().from(s.userAcquisitions).where(eq(s.userAcquisitions.acquisitionId, job.id)).get();
+        if (!owner) continue;
         await acquire(job.magnet, {
           title: job.title,
           author: job.author,
@@ -431,6 +441,7 @@ export async function refreshQueue() {
           workId: job.workId || undefined,
           language: job.language,
           narrator: job.narrator,
+          userId: owner.userId,
         });
       } catch {}
     } else await refreshAcquisition(job.id);

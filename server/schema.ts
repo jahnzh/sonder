@@ -198,3 +198,5 @@ export const userEbookProgress = sqliteTable("user_ebook_progress", { userId: in
 export const userReaderCheckpoints = sqliteTable("user_reader_checkpoints", { userId: integer("user_id").notNull(), editionId: text("edition_id").notNull(), data: text("data").notNull() }, t => [primaryKey({ columns: [t.userId, t.editionId] })]);
 export const userReaderBookmarks = sqliteTable("user_reader_bookmarks", { userId: integer("user_id").notNull(), id: text("id").notNull(), editionId: text("edition_id").notNull(), label: text("label").notNull(), locator: text("locator").notNull(), createdAt: integer("created_at").notNull() }, t => [primaryKey({ columns: [t.userId, t.id] })]);
 export const userReaderEvents = sqliteTable("user_reader_events", { userId: integer("user_id").notNull(), eventId: text("event_id").notNull(), editionId: text("edition_id").notNull() }, t => [primaryKey({ columns: [t.userId, t.eventId] })]);
+
+export const userAcquisitions = sqliteTable("user_acquisitions", { userId: integer("user_id").notNull(), acquisitionId: text("acquisition_id").notNull() }, t => [primaryKey({ columns: [t.userId, t.acquisitionId] })]);

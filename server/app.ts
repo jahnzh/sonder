@@ -594,11 +594,11 @@ export async function createApp() {
   });
   app.post("/api/acquire", async (req) => {
     const input = acquisitionInput.parse(req.body);
-    return acquire(input.magnet, input);
+    return acquire(input.magnet, { ...input, userId: currentUserId(req) });
   });
   app.post("/api/torbox/magnet", async (req) => {
     const input = acquisitionInput.parse(req.body);
-    return acquire(input.magnet, input);
+    return acquire(input.magnet, { ...input, userId: currentUserId(req) });
   });
   app.get("/api/acquisitions", async () => [
     ...db
@@ -646,6 +646,7 @@ export async function createApp() {
         workId: job.workId || undefined,
         language: job.language,
         narrator: job.narrator,
+        userId: currentUserId(req),
       });
     }
     if (job.backend !== "local" || job.status === "ready")
@@ -722,6 +723,7 @@ export async function createApp() {
       cover: release.cover,
       language: release.language,
       narrator: release.narrator,
+      userId: currentUserId(req),
     });
   });
   app.get("/api/discover/prowlarr/releases", async (req) => {
@@ -747,6 +749,7 @@ export async function createApp() {
       workId: input.workId,
       title: work?.title || releaseDisplayTitle(link.title),
       author: work?.author,
+      userId: currentUserId(req),
     });
   });
   // Older clients may still send "annas"; refuse it with a readable message.

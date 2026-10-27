@@ -72,6 +72,7 @@ for (const [table, columns] of [
 }
 sqlite.exec(`
 CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,username TEXT NOT NULL UNIQUE COLLATE NOCASE,password_hash TEXT,role TEXT NOT NULL CHECK(role IN ('admin','user')),created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS user_acquisitions(user_id INTEGER NOT NULL REFERENCES users(id),acquisition_id TEXT NOT NULL REFERENCES acquisitions(id),PRIMARY KEY(user_id,acquisition_id));
 CREATE TABLE IF NOT EXISTS user_settings(user_id INTEGER NOT NULL REFERENCES users(id),key TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(user_id,key));
 CREATE TABLE IF NOT EXISTS user_library(user_id INTEGER NOT NULL REFERENCES users(id),book_id TEXT NOT NULL REFERENCES audio_editions(id),status TEXT NOT NULL DEFAULT 'unread',added_at INTEGER NOT NULL,PRIMARY KEY(user_id,book_id));
 CREATE TABLE IF NOT EXISTS user_hidden_library(user_id INTEGER NOT NULL REFERENCES users(id),book_id TEXT NOT NULL REFERENCES audio_editions(id),PRIMARY KEY(user_id,book_id));
@@ -86,6 +87,7 @@ if (!(sqlite.prepare("PRAGMA table_info(sessions)").all() as {name:string}[]).so
 sqlite.transaction(() => {
   sqlite.prepare("INSERT OR IGNORE INTO users(id,username,password_hash,role,created_at) VALUES(1,'admin',NULL,'admin',?)").run(Date.now());
   if (!sqlite.prepare("SELECT 1 FROM settings WHERE key='migration:multi-user'").get()) {
+    sqlite.exec("INSERT INTO user_acquisitions(user_id,acquisition_id) SELECT 1,id FROM acquisitions");
     for (const table of ["library", "hidden_library", "progress", "ebook_progress", "reader_checkpoints", "reader_bookmarks", "reader_events"])
       sqlite.exec(`INSERT INTO user_${table} SELECT 1, * FROM ${table}`);
     sqlite.exec("INSERT INTO user_settings(user_id,key,value) SELECT 1,key,value FROM settings WHERE key='appearance'");
