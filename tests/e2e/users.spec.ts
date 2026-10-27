@@ -44,7 +44,7 @@ test("accounts keep libraries and offline queues separate", async ({ page }) => 
   }), { recordingId: book.recordingId, trackId: book.tracks[0].id });
   let mismatches = 0;
   let queueOwner = "";
-  await page.route("**/api/progress", route => { mismatches++; queueOwner = route.request().headers()["x-sonder-user-id"]; return route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ code: "user_mismatch", error: "Signed in as a different user." }) }); });
+  await page.route("**/api/progress", route => { mismatches++; queueOwner = route.request().headers()["x-sonder-user-id"]; return route.fulfill({ status: mismatches === 1 ? 409 : 503, contentType: "application/json", body: JSON.stringify(mismatches === 1 ? { code: "user_mismatch", error: "Signed in as a different user." } : { error: "Temporarily unavailable." }) }); });
   const loads = await page.evaluate(() => Number(sessionStorage.getItem("test-load-count")));
   await page.reload();
   await expect.poll(() => mismatches).toBeGreaterThan(0);
