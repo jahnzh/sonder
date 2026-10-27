@@ -40,13 +40,20 @@ async function checkTransport(page:Page,scope:string){
  const left=(await previous.boundingBox())!,right=(await next.boundingBox())!,play=(await transport.getByRole("button",{name:/^(Play|Pause)$/}).boundingBox())!;
  expect(Math.abs((play.x+play.width/2-left.x-left.width/2)-(right.x+right.width/2-play.x-play.width/2))).toBeLessThan(1);
 }
+async function checkHeading(page:Page){
+ const dialog=page.getByRole("dialog",{name:"Now playing",exact:true});
+ const centre=async(l:any)=>{const b=(await l.boundingBox())!;return b.y+b.height/2;};
+ const close=await centre(dialog.getByRole("button",{name:"Close dialog",exact:true}));
+ expect(Math.abs(await centre(dialog.getByRole("button",{name:"Playback options",exact:true}))-close)).toBeLessThan(1);
+ expect(Math.abs(await centre(dialog.locator(".now-playing-heading-title"))-close)).toBeLessThan(1);
+}
 test("normal playback shows the ebook by default and follows paused seeks across sections without jump notifications or checkpoint writes",async({page})=>{
  const {ebook,map}=await fixture(page,"Integrated narration");
  await start(page,"Integrated narration");
  await expect(page.getByRole("dialog",{name:"Reader",exact:true})).toHaveCount(0);
  await expect(page.getByRole("button",{name:"Following audio",exact:true})).toBeHidden();
  await expect(page.getByRole("button",{name:"Playback options",exact:true})).toHaveAttribute("aria-expanded","false");
- await checkTransport(page,".now-playing-dialog .transport.large");
+ await checkTransport(page,".now-playing-dialog .transport.large");await checkHeading(page);
  const before=(await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint;
  const target=map.intervals.find((i:any)=>i.section===1 && i.start>104);
  await page.getByRole("slider",{name:"Seek in audiobook",exact:true}).fill(String(target.start+1));
@@ -88,7 +95,7 @@ test("normal playback shows the ebook by default and follows paused seeks across
  await expect(page.getByRole("dialog",{name:"Now playing",exact:true})).toBeVisible();
  await expect(page.getByRole("region",{name:"Playback options",exact:true})).toBeHidden();
  await page.setViewportSize({width:1440,height:1000});
- await checkTransport(page,".now-playing-dialog .transport.large");
+ await checkTransport(page,".now-playing-dialog .transport.large");await checkHeading(page);
  await expect(page.locator(".reader-viewport .sonder-follow").first()).toBeVisible();
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(1440);
  await page.screenshot({path:"artifacts/integrated-reader-desktop.png"});

@@ -303,8 +303,11 @@ export function PlayerDock({
         title="Now playing"
         className={`now-playing-dialog ${hasReader ? "with-reader" : ""}`}
         onEscapeKeyDown={event=>{if(optionsOpen){event.preventDefault();setOptionsOpen(false);requestAnimationFrame(()=>optionsTrigger.current?.focus());}}}
+        actions={hasReader && <>
+          <h2 className="now-playing-heading-title">{(p.book || b).title}</h2>
+          <button ref={optionsTrigger} className="icon-button playback-menu-trigger" aria-label="Playback options" aria-expanded={optionsOpen} onClick={()=>setOptionsOpen(!optionsOpen)}><MoreHorizontal size={23}/></button>
+        </>}
       >
-        {hasReader && <button ref={optionsTrigger} className="icon-button playback-menu-trigger" aria-label="Playback options" aria-expanded={optionsOpen} onClick={()=>setOptionsOpen(!optionsOpen)}><MoreHorizontal size={23}/></button>}
         {hasReader && optionsOpen && <button className="playback-options-backdrop" aria-label="Dismiss playback options" onClick={()=>setOptionsOpen(false)}/>}
         {hasReader && <div className="playback-options-panel" ref={setOptionsHost} hidden={!optionsOpen} role="region" aria-label="Playback options">
           <div className="playback-options-heading"><h3>Playback options</h3><button className="icon-button" aria-label="Close playback options" onClick={()=>{setOptionsOpen(false);optionsTrigger.current?.focus();}}><X size={20}/></button></div>
@@ -338,7 +341,7 @@ export function PlayerDock({
             {!hasReader && <div className="now-playing-art">
               <img src={(p.book || b).cover} alt={(p.book || b).title} />
             </div>}
-            <h2>{(p.book || b).title}</h2>
+            {!hasReader && <h2>{(p.book || b).title}</h2>}
             <PlaybackExtra><p className="now-playing-author">{(p.book || b).author}</p></PlaybackExtra>
             <PlaybackReader book={p.book || b} books={books} notify={notify} onAvailable={setHasReader} onMissing={()=>{setExpanded(false);onBookDetails(p.book || b);}}/>
             <div className="now-playing-transport">

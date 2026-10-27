@@ -9,6 +9,7 @@ export function Dialog({
   children,
   className = "",
   onEscapeKeyDown,
+  actions,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -17,6 +18,7 @@ export function Dialog({
   children: ReactNode;
   className?: string;
   onEscapeKeyDown?: (event: KeyboardEvent) => void;
+  actions?: ReactNode;
 }) {
   const descriptionId = useId();
   return (
@@ -37,6 +39,7 @@ export function Dialog({
                 </DialogPrimitive.Description>
               )}
             </div>
+            {actions && <div className="dialog-actions">{actions}</div>}
             <DialogPrimitive.Close
               className="icon-button"
               aria-label="Close dialog"

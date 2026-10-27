@@ -1391,9 +1391,10 @@ img {
 .seek-button > span {
   position: absolute;
   font-size: max(11px, calc(6px * var(--ui-scale, 1)));
-  top: 11px;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   font-weight: 600;
-  left: 10px;
 }
 .seek-button:hover {
   color: var(--muted);
@@ -1852,11 +1853,6 @@ input[type="range"]::-moz-range-thumb {
 .transport.large > .play-button {
   width: 52px;
   height: 52px;
-}
-.transport.large .seek-button > span {
-  font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-  top: 10px;
-  left: 10px;
 }
 .full-options {
   display: flex;
@@ -4639,11 +4635,6 @@ input[type="range"]::-moz-range-thumb {
   .transport .seek-button > svg {
     width: 22px;
   }
-  .transport .seek-button > span {
-    font-size: max(11px, calc(5px * var(--ui-scale, 1)));
-    left: 8px;
-    top: 10px;
-  }
   .transport .play-button {
     width: 33px;
     height: 33px;
@@ -4871,11 +4862,6 @@ input[type="range"]::-moz-range-thumb {
     width: 49px;
     height: 49px;
     order: unset;
-  }
-  .transport.large .seek-button > span {
-    font-size: max(11px, calc(6px * var(--ui-scale, 1)));
-    top: 10px;
-    left: 11px;
   }
   .now-playing-chapters {
     border: 0;
@@ -8196,11 +8182,6 @@ input[type="range"]::-moz-range-thumb {
   .player-dock .transport > .play-button {
     order: 0;
     flex-shrink: 0;
-  }
-  .player-dock .transport > .seek-button > span {
-    left: 14px;
-    top: 17px;
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
   }
   .player-dock .dock-book strong,
   .player-dock .dock-book small {
