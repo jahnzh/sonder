@@ -390,7 +390,8 @@ export async function createApp() {
       .values({ ...p, userId: currentUserId(req) })
       .onConflictDoUpdate({ target: [s.userProgress.userId, s.userProgress.recordingId], set: p })
       .run();
-    if (p.duration > 0 && (currentUser(req).role === "admin" || !track.duration))
+    // Track duration is shared, so only the admin's playback may set it (r1#3).
+    if (p.duration > 0 && currentUser(req).role === "admin")
       db.update(s.tracks)
         .set({ duration: p.duration })
         .where(eq(s.tracks.id, p.trackId))
