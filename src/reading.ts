@@ -1,5 +1,5 @@
 import { userStorageKey } from "./lib";
-import { api, localDB, authDB, userId } from "./lib";
+import { api, ApiError, localDB, authDB, userId } from "./lib";
 import type {
   AlignmentJob,
   ReaderBook,
@@ -360,6 +360,12 @@ export function hasKnownReader(workId: string | undefined): boolean {
   return false;
 }
 
+/** The server no longer has this map (or refuses it because its sources
+ * changed). Other failures, such as a restart or a missing media drive, are
+ * temporary and keep the cached map. */
+export function mapGone(error: unknown) {
+  return error instanceof ApiError && [404, 410].includes(error.status);
+}
 /** A cached reading-sync map is only reused for the same job run, built from
  * the EPUB that is current now. The summary cannot tell whether the audio
  * changed in place; only the map endpoint checks that. */
@@ -376,6 +382,22 @@ export function cachedMapMatches(
     cached.audioFingerprint === job.audioFingerprint &&
     !!ebookFingerprint &&
     cached.fingerprint === ebookFingerprint
+  );
+}
+
+/** The cached map was built from other sources than this job's, or from
+ * another EPUB than the current one. */
+export function cachedMapStale(
+  cached: AlignmentJob | undefined,
+  job: AlignmentJob,
+  ebookFingerprint: string | undefined,
+) {
+  return (
+    !!cached &&
+    (cached.id !== job.id ||
+      cached.fingerprint !== job.fingerprint ||
+      cached.audioFingerprint !== job.audioFingerprint ||
+      (!!ebookFingerprint && cached.fingerprint !== ebookFingerprint))
   );
 }
 
@@ -487,6 +509,8 @@ export function warmPlaybackReading(
           const fingerprint = (await readerBook)?.fingerprint;
           if (cancelled) return null;
           if (!cachedMapMatches(cached, job, fingerprint)) {
+            if (cachedMapStale(cached, job, fingerprint))
+              await localDB.preferences.delete(mapCacheKey);
             let map: AlignmentJob;
             try {
               map = await api<AlignmentJob>(
@@ -495,8 +519,7 @@ export function warmPlaybackReading(
             } catch (error) {
               // The server refused the map (its sources changed): a cached
               // copy must not be used offline either.
-              if (!(error instanceof TypeError))
-                await localDB.preferences.delete(mapCacheKey);
+              if (mapGone(error)) await localDB.preferences.delete(mapCacheKey);
               throw error;
             }
             if (cancelled) return null;

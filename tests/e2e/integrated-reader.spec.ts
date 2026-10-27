@@ -249,11 +249,49 @@ test("a cached sync map is not used once the server refuses it", async ({page}) 
   await expect(prompt).toBeHidden();
   // The audio changes in place: the job summary is unchanged, but the server
   // no longer serves the map.
-  await page.route("**/api/alignments/*/map",route=>route.fulfill({status:400,json:{error:"The ebook or audio changed. Rebuild this alignment before using it."}}));
+  await page.route("**/api/alignments/*/map",route=>route.fulfill({status:410,json:{error:"The ebook or audio changed. Rebuild this alignment before using it.",code:"alignment_stale"}}));
   await page.reload();
   await expect(reader.locator(".lyrics-line").first()).toBeVisible();
   // The prompt also shows briefly before a cached map loads; give that time.
   await page.waitForTimeout(1500);
   await expect(prompt).toBeVisible();
+ } finally { await page.request.put("/api/appearance",{data:appearance}); }
+});
+
+test("a cached sync map survives a server that is restarting", async ({page}) => {
+ const appearance=await(await page.request.get("/api/appearance")).json();
+ const {ebook}=await fixture(page,"Restarting server","en-IE");
+ try {
+  await page.goto(`/#reader/${ebook}`);
+  const reader=page.getByRole("dialog",{name:"Reader"});
+  await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
+  await reader.getByRole("button",{name:"Show reader controls"}).click();
+  await reader.locator(".reader-page-actions").getByRole("button",{name:"Lyrics",exact:true}).click();
+  const prompt=reader.getByRole("button",{name:"Prepare reading sync",exact:true});
+  await expect(reader.locator(".lyrics-line").first()).toBeVisible();
+  await expect(prompt).toBeHidden();
+  for(const failure of [
+   {status:502,contentType:"text/html",body:"<html><body>Bad gateway</body></html>"},
+   {status:503,json:{error:"The media drive is not available."}},
+   {status:400,json:{error:"ENOENT: no such file or directory"}},
+  ]){
+   await page.unrouteAll({behavior:"wait"});
+   await page.route("**/api/alignments/*/map",route=>route.fulfill(failure));
+   await page.reload();
+   await expect(reader.locator(".lyrics-line").first()).toBeVisible();
+   await page.waitForTimeout(1500);
+   await expect(prompt).toBeHidden();
+   expect(await page.evaluate(async()=>{
+    const names=(await indexedDB.databases()).map(d=>d.name).filter(n=>n?.startsWith("sonder"));
+    for(const name of names){
+     const db=await new Promise<IDBDatabase>((ok,fail)=>{const r=indexedDB.open(name!);r.onsuccess=()=>ok(r.result);r.onerror=()=>fail(r.error);});
+     if(!db.objectStoreNames.contains("preferences")){db.close();continue;}
+     const keys=await new Promise<IDBValidKey[]>(ok=>{const r=db.transaction("preferences").objectStore("preferences").getAllKeys();r.onsuccess=()=>ok(r.result);});
+     db.close();
+     if(keys.some(k=>String(k).startsWith("reader-map:")))return true;
+    }
+    return false;
+   })).toBe(true);
+  }
  } finally { await page.request.put("/api/appearance",{data:appearance}); }
 });
