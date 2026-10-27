@@ -53,11 +53,11 @@ test("page gestures expose controls and sentence actions",async({page})=>{
  const before=(await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint;
  const room=page.locator(".inline-reader");
  await expect(room.locator(".reader-page-actions")).toBeHidden();
- const frameBox=(await page.locator(".reader-viewport").boundingBox())!;
+ const frameBox=(await page.locator(".inline-reader .reader-viewport").boundingBox())!;
  await page.mouse.click(frameBox.x+frameBox.width/2,frameBox.y+100);
  await expect(room.locator(".reader-page-actions")).toBeVisible();
  await expect(room.getByRole("slider",{name:"Book progress"})).toBeVisible();
- const text=page.frameLocator(".reader-viewport iframe").locator("p").first();
+ const text=page.frameLocator(".inline-reader .reader-viewport iframe").locator("p").first();
  await text.waitFor();
  const box=(await text.boundingBox())!;
  await page.mouse.move(box.x+Math.min(box.width/2,80),box.y+Math.min(box.height/2,10));
@@ -99,7 +99,7 @@ test("page controls and lyrics follow the prepared narration",async({page})=>{
   await page.getByRole("button",{name:"Back to narration"}).click();
   await expect(page.getByRole("button",{name:"Back to narration"})).toBeHidden();
   await page.locator(".now-playing-transport").getByRole("button",{name:"Page",exact:true}).click();
-  await expect(page.locator(".reader-viewport iframe")).toBeVisible();
+  await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
   await page.setViewportSize({width:1440,height:900});
   await expect(page.getByLabel("Contents sidebar")).toBeVisible();
   await expect(page.getByRole("button",{name:"Previous ebook page",exact:true})).toBeVisible();
@@ -117,9 +117,9 @@ test("opening the reader restores saved audio position without starting playback
  await expect(page.locator(".inline-reader")).toHaveAttribute("data-current-passage",interval.paragraphId);
  await page.getByRole("button",{name:"Show reader controls"}).click();
  await expect(page.getByRole("button",{name:"Play reader audio",exact:true})).toBeVisible();
- const box=(await page.locator(".reader-viewport").boundingBox())!;
+ const box=(await page.locator(".inline-reader .reader-viewport").boundingBox())!;
  expect(box.height).toBeGreaterThan(844*.65);
- await expect(page.locator(".reader-viewport .sonder-follow").first()).toBeVisible();
+ await expect(page.locator(".inline-reader .reader-viewport .sonder-follow").first()).toBeVisible();
 });
 
 test("lyrics without a map remains readable and offers sync setup", async ({page}) => {

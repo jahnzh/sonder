@@ -173,7 +173,7 @@ test("playback opens the reader and title page; downloaded sources can be switch
   await position(page,160);
   await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
   await expect(page.getByRole("dialog",{name:"Now playing"})).toBeVisible();
-  await expect(page.frameLocator(".reader-viewport iframe").getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
+  await expect(page.frameLocator(".inline-reader .reader-viewport iframe").getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
   await page.getByRole("button",{name:"Show reader controls"}).click();
   await page.getByRole("button",{name:"Close reader",exact:true}).click();
   await page.getByRole("button",{name:"Open title page for Managed playback story",exact:true}).click();

@@ -94,18 +94,18 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await expect(
     page.getByRole("dialog", { name: "Reader" }),
   ).toBeVisible();
-  const frame = page.frameLocator(".reader-viewport iframe");
+  const frame = page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe");
   await expect(
     frame.getByText("Alice was beginning to get very tired", { exact: false }),
   ).toBeVisible();
   expect(
     await page.evaluate(() => (window as any).__epubScriptExecuted),
   ).toBeUndefined();
-  await expect(page.locator(".reader-viewport iframe")).toHaveAttribute(
+  await expect(page.locator(".reader-room:not(.inline-reader) .reader-viewport iframe")).toHaveAttribute(
     "sandbox",
     "allow-same-origin",
   );
-  await page.frameLocator(".reader-viewport iframe").locator("body").click({ position: { x: 340, y: 100 } });
+  await page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").locator("body").click({ position: { x: 340, y: 100 } });
   await expect
     .poll(
       async () =>
@@ -135,7 +135,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
     )
     .toBe(checkpoint.locator.cfi);
   await page.setViewportSize({ width: 430, height: 844 });
-  await expect(page.locator(".reader-viewport iframe")).toBeVisible();
+  await expect(page.locator(".reader-room:not(.inline-reader) .reader-viewport iframe")).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await page
     .getByRole("button", { name: "Reader appearance", exact: true })
@@ -202,7 +202,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await page
     .getByRole("button", { name: "Down the Rabbit-Hole", exact: true })
     .click();
-  const sentence = page.frameLocator(".reader-viewport iframe").locator("p").first();
+  const sentence = page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").locator("p").first();
   const box = (await sentence.boundingBox())!;
   await page.mouse.move(box.x + 30, box.y + 10);
   await page.mouse.down(); await page.waitForTimeout(650); await page.mouse.up();
@@ -227,7 +227,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await context.setOffline(true);
   await page.reload();
   await expect(
-    page.frameLocator(".reader-viewport iframe").locator("body"),
+    page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").locator("body"),
   ).toBeVisible();
   await page.getByRole("button", { name: "Show reader controls" }).click();
   await expect(
@@ -238,7 +238,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
       '.reading-sync select[aria-label="Reading sync audiobook release"]',
     ),
   ).toHaveValue(chosenRecording);
-  await page.frameLocator(".reader-viewport iframe").locator("body").click({ position: { x: 340, y: 100 } });
+  await page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").locator("body").click({ position: { x: 340, y: 100 } });
   await page
     .getByRole("button", { name: "Bookmark this passage", exact: true })
     .click();
@@ -280,7 +280,7 @@ test("an image-only cover opens at the first readable EPUB section on a narrow p
   await page.goto(`/#reader/${id}`);
   await expect(
     page
-      .frameLocator(".reader-viewport iframe")
+      .frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe")
       .getByText("Alice was beginning to get very tired", { exact: false }),
   ).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(

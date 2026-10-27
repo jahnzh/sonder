@@ -112,9 +112,9 @@ for(const size of sizes){
   await dialog.getByRole("button",{name:"Turn off",exact:true}).click();
   const box=(await dialog.boundingBox())!;
   expect(box.y).toBeGreaterThanOrEqual(0); expect(box.y+box.height).toBeLessThanOrEqual(height);
-  expect((await page.locator(".reader-viewport").boundingBox())!.height).toBeGreaterThan(height*.6);
+  expect((await page.locator(".inline-reader .reader-viewport").boundingBox())!.height).toBeGreaterThan(height*.6);
   const surface=await dialog.evaluate(el=>getComputedStyle(el).backgroundColor);
-  await expect(page.frameLocator(".reader-viewport iframe").locator("body")).toHaveCSS("background-color",surface);
+  await expect(page.frameLocator(".inline-reader .reader-viewport iframe").locator("body")).toHaveCSS("background-color",surface);
   if(width<900) await page.getByRole("button",{name:"Show reader controls"}).click();
   const controls=dialog.locator(".reader-page-actions");
   await expect(controls.getByRole("slider",{name:"Book progress"})).toBeVisible();
