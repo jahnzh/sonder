@@ -66,4 +66,24 @@ test("accounts keep libraries and offline queues separate", async ({ page }) => 
   await expect(page.getByRole("button", { name: "Ebooks" })).toHaveCount(0);
   await page.getByRole("button", { name: `Add ${book.title} to library` }).click();
   await expect.poll(async () => (await (await page.request.get(`${base}/api/books`)).json()).find((b: { id: string }) => b.id === book.id).inLibrary).toBe(true);
+  // A legacy reader-local device fault is migrated to shared device storage
+  // before automatic playback, so the service worker can see it too.
+  await page.evaluate(({ recordingId }) => new Promise<void>((resolve, reject) => {
+    const open = indexedDB.open("sonder-user-2");
+    open.onsuccess = () => {
+      const tx = open.result.transaction("preferences", "readwrite");
+      tx.objectStore("preferences").put({ key: `device-fault:${recordingId}`, value: { reason: "wrong-book", note: "" } });
+      tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error);
+    };
+    open.onerror = () => reject(open.error);
+  }), { recordingId: book.recordingId });
+  await page.getByRole("button", { name: "My library", exact: true }).last().click();
+  await page.getByRole("button", { name: `Play ${book.title}`, exact: true }).click();
+  await expect.poll(() => page.evaluate((recordingId) => new Promise<boolean>(resolve => {
+    const open = indexedDB.open("sonder");
+    open.onsuccess = () => {
+      const get = open.result.transaction("preferences").objectStore("preferences").get(`device-fault:${recordingId}`);
+      get.onsuccess = () => resolve(!!get.result?.value);
+    };
+  }), book.recordingId)).toBe(true);
 });
