@@ -34,8 +34,22 @@ export function verifyPassword(password: string, encoded: string | null): boolea
 }
 const deletionHooks = new Set<(userId: number) => void>();
 export function onUserDeleted(cb: (userId: number) => void): () => void { deletionHooks.add(cb); return () => deletionHooks.delete(cb); }
+// Ids are never reused: device storage is keyed by user id. Before the mark existed,
+// deleted accounts could leave rows behind, so the mark starts above every id seen in
+// users, sessions and the per-user tables.
+function userIdHighWater(): number {
+  const stored=(sqlite.prepare("SELECT value FROM settings WHERE key='user_id_high_water'").get() as {value:string}|undefined)?.value;
+  if (stored) return Number(stored);
+  const tables=(sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND (name='sessions' OR name LIKE 'user\\_%' ESCAPE '\\')").all() as {name:string}[])
+    .filter(({name})=>(sqlite.prepare(`PRAGMA table_info("${name}")`).all() as {name:string}[]).some(c=>c.name==="user_id"));
+  const seen=[(sqlite.prepare("SELECT COALESCE(MAX(id),1) AS id FROM users").get() as {id:number}).id,
+    ...tables.map(({name})=>(sqlite.prepare(`SELECT COALESCE(MAX(user_id),1) AS id FROM "${name}"`).get() as {id:number}).id)];
+  return setUserIdHighWater(Math.max(1,...seen));
+}
+function setUserIdHighWater(id: number): number { sqlite.prepare("INSERT INTO settings(key,value) VALUES('user_id_high_water',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(String(id)); return id; }
 const passwordSchema=z.string().min(8).max(512);
 export function registerUsers(app: FastifyInstance): void {
+  userIdHighWater();
   app.get("/api/users", req => { requireAdmin(req); return sqlite.prepare("SELECT id,username,role,created_at AS createdAt FROM users ORDER BY id").all(); });
   app.post("/api/users", req => {
     requireAdmin(req);
@@ -43,10 +57,9 @@ export function registerUsers(app: FastifyInstance): void {
     if(input.username.toLowerCase()==="admin") throw new Error("That username is reserved.");
     const id=sqlite.transaction(() => {
       const max=(sqlite.prepare("SELECT COALESCE(MAX(id), 1) AS id FROM users").get() as {id:number}).id;
-      const mark=Number((sqlite.prepare("SELECT value FROM settings WHERE key='user_id_high_water'").get() as {value:string}|undefined)?.value || 1);
-      const next=Math.max(max,mark)+1;
+      const next=Math.max(max,userIdHighWater())+1;
       sqlite.prepare("INSERT INTO users(id,username,password_hash,role,created_at) VALUES(?,?,?,?,?)").run(next,input.username,hashPassword(input.password),input.role,Date.now());
-      sqlite.prepare("INSERT INTO settings(key,value) VALUES('user_id_high_water',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(String(next));
+      setUserIdHighWater(next);
       return next;
     })();
     return sqlite.prepare("SELECT id,username,role,created_at AS createdAt FROM users WHERE id=?").get(id);
@@ -57,6 +70,6 @@ export function registerUsers(app: FastifyInstance): void {
     if (!sqlite.prepare("SELECT id FROM users WHERE id=?").get(id)) throw new Error("User not found.");
     sqlite.transaction(() => { if(input.password) { sqlite.prepare("UPDATE users SET password_hash=? WHERE id=?").run(hashPassword(input.password),id); sqlite.prepare("DELETE FROM sessions WHERE user_id=?").run(id); } if(input.role) sqlite.prepare("UPDATE users SET role=? WHERE id=?").run(input.role,id); })(); return {ok:true};
   });
-  app.delete("/api/users/:id", req => { requireAdmin(req); const id=Number((req.params as {id:string}).id); if(id===1) throw new Error("The administrator account cannot be deleted."); sqlite.transaction(()=>{ const exists=sqlite.prepare("SELECT id FROM users WHERE id=?").get(id); if (!exists) return; const mark=Number((sqlite.prepare("SELECT value FROM settings WHERE key='user_id_high_water'").get() as {value:string}|undefined)?.value || 1); sqlite.prepare("INSERT INTO settings(key,value) VALUES('user_id_high_water',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(String(Math.max(mark,id))); for(const table of ["sessions","user_acquisitions","user_settings","user_library","user_hidden_library","user_progress","user_ebook_progress","user_reader_checkpoints","user_reader_bookmarks","user_reader_events","user_hardcover_links","user_hardcover_outbox","user_hardcover_reading_outbox","user_hardcover_progress","user_hardcover_lists","user_hardcover_reads","user_hardcover_recording_editions"]) sqlite.prepare(`DELETE FROM ${table} WHERE user_id=?`).run(id); sqlite.prepare("DELETE FROM users WHERE id=?").run(id); for (const cb of deletionHooks) cb(id); })(); return {ok:true}; });
+  app.delete("/api/users/:id", req => { requireAdmin(req); const id=Number((req.params as {id:string}).id); if(id===1) throw new Error("The administrator account cannot be deleted."); sqlite.transaction(()=>{ const exists=sqlite.prepare("SELECT id FROM users WHERE id=?").get(id); if (!exists) return; setUserIdHighWater(Math.max(userIdHighWater(),id)); for(const table of ["sessions","user_acquisitions","user_settings","user_library","user_hidden_library","user_progress","user_ebook_progress","user_reader_checkpoints","user_reader_bookmarks","user_reader_events","user_hardcover_links","user_hardcover_outbox","user_hardcover_reading_outbox","user_hardcover_progress","user_hardcover_lists","user_hardcover_reads","user_hardcover_recording_editions"]) sqlite.prepare(`DELETE FROM ${table} WHERE user_id=?`).run(id); sqlite.prepare("DELETE FROM users WHERE id=?").run(id); for (const cb of deletionHooks) cb(id); })(); return {ok:true}; });
   app.post("/api/auth/password", req => { const user=currentUser(req); if(user.id===1) throw new Error("The administrator password is configured with APP_PASSWORD."); const input=z.object({currentPassword:z.string().max(512),newPassword:passwordSchema}).parse(req.body); const row=sqlite.prepare("SELECT password_hash FROM users WHERE id=?").get(user.id) as {password_hash:string}; if(!verifyPassword(input.currentPassword,row.password_hash)) throw new Error("The current password does not match."); sqlite.transaction(() => { sqlite.prepare("UPDATE users SET password_hash=? WHERE id=?").run(hashPassword(input.newPassword),user.id); sqlite.prepare("DELETE FROM sessions WHERE user_id=? AND token<>?").run(user.id,hashToken(req.cookies.sonder_session || "")); })(); return {ok:true}; });
 }
