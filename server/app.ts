@@ -193,6 +193,8 @@ export async function createApp() {
     // Users in one household share a public IP; count each signed-in session
     // separately and fall back to the address for anonymous requests.
     keyGenerator: (request) => {
+      // Never let a client-chosen cookie pick the bucket for sign-in attempts.
+      if (request.url.startsWith("/api/auth/")) return request.ip;
       const token = request.cookies?.sonder_session;
       return token ? `session:${hashToken(token)}` : request.ip;
     },
