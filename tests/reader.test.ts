@@ -1,6 +1,6 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 const temp = mkdtempSync(join(tmpdir(), "sonder-reader-"));
@@ -17,7 +17,7 @@ const s = await import("../server/schema.ts");
 const { eq } = await import("drizzle-orm");
 const { readerFixture } = await import("./reader-fixture.ts");
 const { extractBook } = await import("../server/reader.ts");
-const { createAlignment, processAlignments } =
+const { createAlignment, processAlignments, alignmentJob } =
   await import("../server/alignment.ts");
 const { defaultAppearance } = await import("../src/appearance.ts");
 const app = await createApp();
@@ -559,5 +559,79 @@ test("a single file without chapter markers is located by narration samples and 
     createAlignment(id, "recording-alice", undefined, "anchored"),
     /chapter markers/,
   );
+  globalThis.fetch = original;
+});
+test("r5: a queued job whose EPUB is gone fails on its own and later jobs still run", async () => {
+  const local = await createApp();
+  after(() => local.close());
+  delete process.env.ALIGNMENT_WORKER_URL;
+  delete process.env.ALIGNMENT_WORKER_TOKEN;
+  const brokenFile = join(temp, "media", "ebooks", "broken.epub");
+  writeFileSync(brokenFile, await readerFixture());
+  db.insert(s.ebookEditions)
+    .values({ id: "broken-edition", workId: "work-alice", format: "epub", source: brokenFile })
+    .run();
+  // Jobs run newest first, so the broken job is reached before the healthy one.
+  const healthy = await createAlignment(id, "recording-single", undefined, "anchored");
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const broken = await createAlignment("broken-edition", "recording-single", undefined, "anchored");
+  unlinkSync(brokenFile);
+  process.env.ALIGNMENT_WORKER_URL = "http://alignment.test";
+  process.env.ALIGNMENT_WORKER_TOKEN = "test-private-worker-token";
+  globalThis.fetch = async (_input, init) => {
+    const data = JSON.parse(String(init?.body));
+    return Response.json({ match: null, start: data.start, text: "" });
+  };
+  await processAlignments();
+  assert.equal(alignmentJob(broken.id).status, "error");
+  assert.notEqual(alignmentJob(healthy.id).status, "queued");
+  globalThis.fetch = original;
+});
+test("r5: pausing or cancelling during the last narration sample is not replaced by an error", async () => {
+  const local = await createApp();
+  after(() => local.close());
+  process.env.ALIGNMENT_WORKER_URL = "http://alignment.test";
+  process.env.ALIGNMENT_WORKER_TOKEN = "test-private-worker-token";
+  for (const action of ["pause", "cancel"] as const) {
+    let release!: () => void,
+      holding!: () => void;
+    const held = new Promise<void>((resolve) => (holding = resolve));
+    const hold = new Promise<void>((resolve) => (release = resolve));
+    // The worker may be called before createAlignment resolves, so find the job by its pair.
+    const sampling = () =>
+      (sqlite.prepare("SELECT data FROM alignment_jobs").all() as { data: string }[])
+        .map((row) => JSON.parse(row.data))
+        .find((job) => job.ebookId === id && job.recordingId === "recording-single");
+    globalThis.fetch = async (_input, init) => {
+      const data = JSON.parse(String(init?.body));
+      const remaining = (
+        sampling().anchoring.samples as { done?: boolean }[]
+      ).filter((sample) => !sample.done).length;
+      if (remaining === 1) {
+        holding();
+        await hold;
+      }
+      // Mismatched narration: no sample is found in this EPUB.
+      return Response.json({ match: null, start: data.start, text: "word ".repeat(40) });
+    };
+    const job = await createAlignment(id, "recording-single", undefined, "anchored");
+    await held;
+    await local.inject({
+      method: "PATCH",
+      url: `/api/alignments/${job.id}`,
+      payload: { action },
+    });
+    release();
+    let map: any;
+    for (let i = 0; i < 100; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      map = (await local.inject(`/api/alignments/${job.id}/map`)).json();
+      if (map.anchoring.samples.every((sample: any) => sample.done)) break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    map = (await local.inject(`/api/alignments/${job.id}/map`)).json();
+    assert.ok(map.anchoring.samples.every((sample: any) => sample.done));
+    assert.equal(map.status, action === "pause" ? "paused" : "cancelled", map.error);
+  }
   globalThis.fetch = original;
 });
