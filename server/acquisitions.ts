@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { parseFile } from "music-metadata";
 import { audioParseOptions, normalizeChapters, type Chapter } from "./chapters.ts";
 import { db, sqlite } from "./db.ts";
@@ -254,9 +254,9 @@ function createBook(
           .run(),
       );
     }
-    db.delete(s.hiddenLibrary).where(eq(s.hiddenLibrary.bookId, id)).run();
-    db.insert(s.library)
-      .values({ bookId: id, status: "unread", addedAt: Date.now() })
+    db.delete(s.userHiddenLibrary).where(and(eq(s.userHiddenLibrary.userId, 1), eq(s.userHiddenLibrary.bookId, id))).run();
+    db.insert(s.userLibrary)
+      .values({ userId: 1, bookId: id, status: "unread", addedAt: Date.now() })
       .onConflictDoNothing()
       .run();
     claimHardcoverAudio(workId, id);

@@ -84,10 +84,10 @@ let failWrites = false,
   concurrentWrite: (() => void) | null = null;
 beforeEach(() => {
   hc.resetHardcoverAccount();
-  db.delete(s.hiddenLibrary).run();
+  db.delete(s.userHiddenLibrary).run();
   db.delete(s.hardcoverRecordingEditions).run();
   db.delete(s.hardcoverLinks).run();
-  db.delete(s.progress).run();
+  db.delete(s.userProgress).run();
   db.insert(s.settings)
     .values({ key: "hardcover", value: encrypt("test-key-not-real") })
     .onConflictDoUpdate({
@@ -309,8 +309,8 @@ after(async () => {
 function absolute(recordingId = "recording-alice") {
   const p = db
     .select()
-    .from(s.progress)
-    .where(eq(s.progress.recordingId, recordingId))
+    .from(s.userProgress)
+    .where(eq(s.userProgress.recordingId, recordingId))
     .get()!;
   const tracks = db
     .select()
@@ -414,7 +414,7 @@ test("ebook reading progress syncs without local audio and retries a failed remo
     },
   ];
   await setup();
-  const before = db.select().from(s.progress).all();
+  const before = db.select().from(s.userProgress).all();
   const link = db
     .select()
     .from(s.hardcoverLinks)
@@ -441,7 +441,7 @@ test("ebook reading progress syncs without local audio and retries a failed remo
       .progress_pages,
     50,
   );
-  assert.deepEqual(db.select().from(s.progress).all(), before);
+  assert.deepEqual(db.select().from(s.userProgress).all(), before);
 });
 test("finishing an EPUB publishes its final page and a later explicit shelf change clears stale reading work", async () => {
   await setup();
@@ -482,9 +482,9 @@ test("new local progress arriving during a remote write is not removed by an old
       duration: 640,
       updatedAt: Date.now() + 5,
     };
-    db.insert(s.progress)
-      .values(value)
-      .onConflictDoUpdate({ target: s.progress.recordingId, set: value })
+    db.insert(s.userProgress)
+      .values({ ...value, userId: 1 })
+      .onConflictDoUpdate({ target: [s.userProgress.userId, s.userProgress.recordingId], set: value })
       .run();
     hc.queueHardcoverProgress("recording-alice");
   };
@@ -711,17 +711,17 @@ test("new audio inherits the remembered Hardcover position when it replaces a me
       sourceType: "local",
     })
     .run();
-  db.insert(s.library)
-    .values({ bookId: id, status: "unread", addedAt: Date.now() })
+  db.insert(s.userLibrary)
+    .values({ userId: 1, bookId: id, status: "unread", addedAt: Date.now() })
     .run();
   hc.claimHardcoverAudio(workId, id);
   assert.equal(absolute(id), 250);
   assert.equal(
-    db.select().from(s.library).where(eq(s.library.bookId, "hc-202")).get(),
+    db.select().from(s.userLibrary).where(eq(s.userLibrary.bookId, "hc-202")).get(),
     undefined,
   );
   assert.equal(
-    db.select().from(s.library).where(eq(s.library.bookId, id)).get()!.status,
+    db.select().from(s.userLibrary).where(eq(s.userLibrary.bookId, id)).get()!.status,
     "listening",
   );
 });
@@ -756,12 +756,13 @@ test("changing a work match clears pending progress and narration mappings for t
   assert.equal(absolute(), 250);
 });
 test("enabling two-way sync publishes a newer existing Sonder checkpoint on the first sync", async () => {
-  db.update(s.library)
+  db.update(s.userLibrary)
     .set({ status: "listening" })
-    .where(eq(s.library.bookId, "alice"))
+    .where(eq(s.userLibrary.bookId, "alice"))
     .run();
-  db.insert(s.progress)
+  db.insert(s.userProgress)
     .values({
+      userId: 1,
       recordingId: "recording-alice",
       trackId: "alice-0",
       position: 320,

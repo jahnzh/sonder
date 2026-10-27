@@ -1,0 +1,47 @@
+import { test, after } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+const temp=mkdtempSync(join(tmpdir(),"sonder-users-"));
+process.env.DATA_DIR=join(temp,"db"); process.env.MEDIA_ROOT=join(temp,"media"); process.env.REQUIRE_MEDIA_MOUNT="false"; process.env.NODE_ENV="test"; process.env.APP_PASSWORD="admin-password";
+const { createApp }=await import("../server/app.ts");
+const { sqlite }=await import("../server/db.ts");
+const app=await createApp();
+after(async()=>{ await app.close(); sqlite.close(); rmSync(temp,{recursive:true,force:true}); });
+test("users have isolated libraries and progress and cannot access administration",async()=>{
+ const login=async(username:string|undefined,password:string)=>{const r=await app.inject({method:"POST",url:"/api/auth/login",payload:{username,password}}); assert.equal(r.statusCode,200,r.body); return r.cookies[0].value;};
+ const admin=await login(undefined,"admin-password");
+ for(const username of ["first","second"]){ const r=await app.inject({method:"POST",url:"/api/users",cookies:{sonder_session:admin},payload:{username,password:"password1"}}); assert.equal(r.statusCode,200,r.body); }
+ const first=await login("first","password1"), second=await login("second","password1");
+ const request=(cookie:string,method:any,url:string,payload?:any)=>app.inject({method,url,cookies:{sonder_session:cookie},payload});
+ const books=(await request(first,"GET","/api/books")).json(); const book=books[0];
+ assert.equal((await request(first,"POST","/api/library",{bookId:book.id})).statusCode,200);
+ assert.equal((await request(first,"PATCH",`/api/library/${book.id}`,{status:"finished"})).statusCode,200);
+ const position={recordingId:book.recordingId,trackId:book.tracks[0].id,position:12,duration:100,updatedAt:Date.now()};
+ assert.equal((await request(first,"POST","/api/progress",position)).statusCode,200);
+ const a=(await request(first,"GET","/api/books")).json().find((x:any)=>x.id===book.id); const b=(await request(second,"GET","/api/books")).json().find((x:any)=>x.id===book.id);
+ assert.equal(a.status,"finished"); assert.equal(a.progress.position,12); assert.equal(b.inLibrary,false); assert.equal(b.progress,undefined);
+ for(const [method,url] of [["PATCH","/api/settings"],["POST","/api/acquire"],["POST","/api/import"],["POST","/api/alignments"]]) assert.equal((await request(first,method,url,{})).statusCode,403,url);
+ assert.equal((await request(first,"DELETE",`/api/library/${book.id}`)).statusCode,200);
+ assert.ok(sqlite.prepare("SELECT 1 FROM user_hidden_library WHERE user_id=2 AND book_id=?").get(book.id)); assert.equal(sqlite.prepare("SELECT 1 FROM user_hidden_library WHERE user_id=3 AND book_id=?").get(book.id),undefined);
+ assert.equal((await request(admin,"GET","/api/auth/status")).json().user.username,"admin");
+});
+
+test("migration copies legacy rows once without changing them", async () => {
+ const { execFileSync }=await import("node:child_process");
+ const { default: Database }=await import("better-sqlite3");
+ const migrationDir=join(temp,"migration");
+ const env={...process.env,DATA_DIR:migrationDir};
+ const run=()=>execFileSync(process.execPath,["--import","tsx","--input-type=module","-e",'import "./server/db.ts"'],{cwd:process.cwd(),env});
+ run();
+ const legacy=new Database(join(migrationDir,"sonder.db"));
+ legacy.exec("DELETE FROM settings WHERE key='migration:multi-user'; INSERT INTO works VALUES('w','Title','Author','','',2000); INSERT INTO audio_editions(id,work_id,cover,narrator,rating,source_label) VALUES('b','w','','',0,''); INSERT INTO library VALUES('b','finished',123); INSERT INTO settings VALUES('appearance','original')");
+ legacy.close(); run();
+ const migrated=new Database(join(migrationDir,"sonder.db"));
+ assert.deepEqual(migrated.prepare("SELECT book_id,status,added_at FROM library").all(),[{book_id:"b",status:"finished",added_at:123}]);
+ assert.deepEqual(migrated.prepare("SELECT user_id,book_id,status,added_at FROM user_library").all(),[{user_id:1,book_id:"b",status:"finished",added_at:123}]);
+ assert.equal((migrated.prepare("SELECT value FROM user_settings WHERE user_id=1 AND key='appearance'").get() as any).value,"original");
+ migrated.prepare("UPDATE user_library SET status='listening'").run(); migrated.close(); run();
+ const reopened=new Database(join(migrationDir,"sonder.db")); assert.equal((reopened.prepare("SELECT status FROM user_library").get() as any).status,"listening"); assert.equal((reopened.prepare("SELECT status FROM library").get() as any).status,"finished"); reopened.close();
+});

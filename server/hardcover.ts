@@ -1,5 +1,6 @@
+import { ADMIN_USER_ID } from "./users.ts";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
 import { getSecret, getSetting } from "./services.ts";
@@ -507,9 +508,10 @@ function applyStatus(bookId: number, status: ShelfStatus) {
       .from(s.editions)
       .where(eq(s.editions.workId, link.workId))
       .all())
-      db.update(s.library)
+      // #15: per-user Hardcover worker generalises this
+      db.update(s.userLibrary)
         .set({ status: localStatus(status) })
-        .where(eq(s.library.bookId, edition.id))
+        .where(and(eq(s.userLibrary.userId, ADMIN_USER_ID), eq(s.userLibrary.bookId, edition.id)))
         .run();
   }
 }
@@ -593,18 +595,22 @@ function importCatalogBook(
       .where(eq(s.editions.workId, links[0].workId))
       .get()!;
   if (forceLibrary)
-    db.delete(s.hiddenLibrary)
-      .where(eq(s.hiddenLibrary.bookId, representative.id))
+    // #15: per-user Hardcover worker generalises this
+    db.delete(s.userHiddenLibrary)
+      .where(and(eq(s.userHiddenLibrary.userId, ADMIN_USER_ID), eq(s.userHiddenLibrary.bookId, representative.id)))
       .run();
   if (
     !db
       .select()
-      .from(s.hiddenLibrary)
-      .where(eq(s.hiddenLibrary.bookId, representative.id))
+      // #15: per-user Hardcover worker generalises this
+      .from(s.userHiddenLibrary)
+      .where(and(eq(s.userHiddenLibrary.userId, ADMIN_USER_ID), eq(s.userHiddenLibrary.bookId, representative.id)))
       .get()
   )
-    db.insert(s.library)
+    // #15: per-user Hardcover worker generalises this
+    db.insert(s.userLibrary)
       .values({
+        userId: ADMIN_USER_ID,
         bookId: representative.id,
         status: localStatus(status || 1),
         addedAt: Date.now(),
@@ -620,7 +626,8 @@ function importCatalogBook(
         .where(eq(s.editions.workId, link.workId))
         .all())
         if (e.id.startsWith("hc-") && !audio.some((a) => a.id === e.id))
-          db.delete(s.library).where(eq(s.library.bookId, e.id)).run();
+          // #15: per-user Hardcover worker generalises this
+          db.delete(s.userLibrary).where(and(eq(s.userLibrary.userId, ADMIN_USER_ID), eq(s.userLibrary.bookId, e.id))).run();
   }
   return { bookId: representative.id, matched, imported };
 }
@@ -1175,8 +1182,9 @@ export function claimHardcoverAudio(workId: string, editionId: string) {
     remoteRead?.fraction != null &&
     !db
       .select()
-      .from(s.progress)
-      .where(eq(s.progress.recordingId, recording.id))
+      // #15: per-user Hardcover worker generalises this
+      .from(s.userProgress)
+      .where(and(eq(s.userProgress.userId, ADMIN_USER_ID), eq(s.userProgress.recordingId, recording.id)))
       .get() &&
     recordingData(recording.id)?.completeDuration
   )
@@ -1187,7 +1195,8 @@ export function claimHardcoverAudio(workId: string, editionId: string) {
     .where(eq(s.editions.workId, workId))
     .all())
     if (e.id.startsWith("hc-") && e.id !== editionId)
-      db.delete(s.library).where(eq(s.library.bookId, e.id)).run();
+      // #15: per-user Hardcover worker generalises this
+      db.delete(s.userLibrary).where(and(eq(s.userLibrary.userId, ADMIN_USER_ID), eq(s.userLibrary.bookId, e.id))).run();
 }
 function recordingData(recordingId: string) {
   const rec = db
@@ -1241,14 +1250,16 @@ function bootstrapLocalProgress(remote: Entry) {
   if (!recording) return;
   const local = db
     .select()
-    .from(s.progress)
-    .where(eq(s.progress.recordingId, recording.rec.id))
+    // #15: per-user Hardcover worker generalises this
+    .from(s.userProgress)
+    .where(and(eq(s.userProgress.userId, ADMIN_USER_ID), eq(s.userProgress.recordingId, recording.rec.id)))
     .get();
   if (!local || local.updatedAt <= parseRemoteTime(remote.updated_at)) return;
   const saved = db
     .select()
-    .from(s.library)
-    .where(eq(s.library.bookId, recording.edition.id))
+    // #15: per-user Hardcover worker generalises this
+    .from(s.userLibrary)
+    .where(and(eq(s.userLibrary.userId, ADMIN_USER_ID), eq(s.userLibrary.bookId, recording.edition.id)))
     .get();
   queueHardcoverStatus(
     recording.edition.workId,
@@ -1276,8 +1287,9 @@ export function queueHardcoverProgress(recordingId: string) {
     .get();
   const position = db
     .select()
-    .from(s.progress)
-    .where(eq(s.progress.recordingId, recordingId))
+    // #15: per-user Hardcover worker generalises this
+    .from(s.userProgress)
+    .where(and(eq(s.userProgress.userId, ADMIN_USER_ID), eq(s.userProgress.recordingId, recordingId)))
     .get();
   if (!link || !position) return;
   const reading = sqlite
@@ -1293,8 +1305,9 @@ export function queueHardcoverProgress(recordingId: string) {
   );
   const saved = db
     .select()
-    .from(s.library)
-    .where(eq(s.library.bookId, data.edition.id))
+    // #15: per-user Hardcover worker generalises this
+    .from(s.userLibrary)
+    .where(and(eq(s.userLibrary.userId, ADMIN_USER_ID), eq(s.userLibrary.bookId, data.edition.id)))
     .get();
   if (saved?.status === "finished" && absolute / data.duration < 0.999) return;
   const values = {
@@ -1492,13 +1505,15 @@ function chooseLocalRecording(bookId: number, requested?: string) {
       (a, b) =>
         (db
           .select()
-          .from(s.progress)
-          .where(eq(s.progress.recordingId, b.rec.id))
+          // #15: per-user Hardcover worker generalises this
+          .from(s.userProgress)
+          .where(and(eq(s.userProgress.userId, ADMIN_USER_ID), eq(s.userProgress.recordingId, b.rec.id)))
           .get()?.updatedAt || 0) -
         (db
           .select()
-          .from(s.progress)
-          .where(eq(s.progress.recordingId, a.rec.id))
+          // #15: per-user Hardcover worker generalises this
+          .from(s.userProgress)
+          .where(and(eq(s.userProgress.userId, ADMIN_USER_ID), eq(s.userProgress.recordingId, a.rec.id)))
           .get()?.updatedAt || 0),
     )[0] || null
   );
@@ -1530,9 +1545,10 @@ function applyFraction(recordingId: string, fraction: number) {
     duration: track.duration,
     updatedAt: Date.now(),
   };
-  db.insert(s.progress)
-    .values(value)
-    .onConflictDoUpdate({ target: s.progress.recordingId, set: value })
+  // #15: per-user Hardcover worker generalises this
+  db.insert(s.userProgress)
+    .values({ ...value, userId: ADMIN_USER_ID })
+    .onConflictDoUpdate({ target: [s.userProgress.userId, s.userProgress.recordingId], set: value })
     .run();
   return value;
 }
@@ -1564,8 +1580,9 @@ function pullRemoteProgress(
   }
   const local = db
     .select()
-    .from(s.progress)
-    .where(eq(s.progress.recordingId, target.rec.id))
+    // #15: per-user Hardcover worker generalises this
+    .from(s.userProgress)
+    .where(and(eq(s.userProgress.userId, ADMIN_USER_ID), eq(s.userProgress.recordingId, target.rec.id)))
     .get();
   const initialLocalIsNewer =
     !last && !!local && local.updatedAt > parseRemoteTime(remote.updated_at);
