@@ -236,6 +236,24 @@ test("local alignment pairs chapters, preserves recording progress and invalidat
   assert.equal(map.status, "partial");
   assert.ok(map.intervals.length > 20);
   assert.equal(map.intervals[0].verified, undefined);
+  const fullList = (await app.inject(`/api/alignments?ebookId=${id}`)).json()
+    .jobs.find((value: { id: string }) => value.id === job.id);
+  const summaryList = (
+    await app.inject(`/api/alignments?ebookId=${id}&summary=1`)
+  ).json().jobs.find((value: { id: string }) => value.id === job.id);
+  assert.ok(fullList.intervals.length > 20, "default list keeps intervals");
+  assert.deepEqual(summaryList.intervals, []);
+  assert.equal(summaryList.intervalCount, fullList.intervals.length);
+  assert.equal(
+    summaryList.unverifiedCount,
+    fullList.intervals.filter((interval: { verified?: boolean }) => !interval.verified)
+      .length,
+  );
+  assert.ok(
+    (await app.inject(`/api/alignments/${job.id}/map`)).json().intervals.length >
+      20,
+    "/map still returns intervals",
+  );
   assert.deepEqual(db.select().from(s.progress).all(), before);
   const durationBefore = db
     .select()

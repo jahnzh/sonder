@@ -23,7 +23,8 @@ import {
   MoreHorizontal,
 } from "lucide-react";
 import { usePlayer } from "../player";
-import { clock } from "../lib";
+import { clock, localDB } from "../lib";
+import { hasKnownReader, warmPlaybackReading } from "../reading";
 import { Dialog } from "./ui/dialog";
 import { Chapters } from "./Chapters";
 import { PlaybackReader } from "./PlaybackReader";
@@ -32,7 +33,7 @@ import {PlaybackMenuContext,PlaybackExtra} from "./PlaybackMenu";
 import { PlaybackTimeline } from "./PlaybackTimeline";
 import { ReaderShortcut } from "./ReaderShortcut";
 import { listeningChapters, currentChapter } from "../chapters";
-import type { Book } from "../types";
+import type { Book, SavedEbook } from "../types";
 export function PlaybackOptions({ kind }: { kind: "speed" | "sleep" }) {
   const p = usePlayer();
   const [open, setOpen] = useState(false);
@@ -125,18 +126,47 @@ export function PlayerDock({
 }) {
   const p = usePlayer();
   const [expanded, setExpanded] = useState(false);
-  const [hasReader,setHasReader] = useState(false);
+  const b = p.book || fallback;
+  const [hasReader, setHasReader] = useState(() => hasKnownReader(b?.workId));
   const [chaptersOpen,setChaptersOpen] = useState(false);
   const [optionsOpen,setOptionsOpen] = useState(false);
   const [optionsHost,setOptionsHost] = useState<HTMLDivElement|null>(null);
   const optionsTrigger=useRef<HTMLButtonElement>(null);
-  const b = p.book || fallback;
   useEffect(()=>{
     const open=(event:Event)=>{if((event as CustomEvent).detail.workId===b?.workId)setExpanded(true);};
     window.addEventListener("sonder:playback-reader",open);
     return ()=>window.removeEventListener("sonder:playback-reader",open);
   },[b?.workId]);
-  useEffect(()=>setHasReader(false),[b?.workId]);
+  useEffect(() => {
+    if (!b?.workId) {
+      setHasReader(false);
+      return;
+    }
+    const known = hasKnownReader(b.workId);
+    setHasReader(known);
+    if (!known) {
+      localDB.preferences
+        .get("ebooks")
+        .then((item) => {
+          const list = item?.value as SavedEbook[] | undefined;
+          if (
+            list?.some(
+              (e) => e.workId === b.workId && e.format === "epub" && e.available,
+            )
+          ) {
+            setHasReader(true);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [b?.workId]);
+  useEffect(() => {
+    if (!b?.workId) return;
+    const cancel = warmPlaybackReading(b.workId, b.recordingId);
+    return () => {
+      cancel?.();
+    };
+  }, [b?.workId, b?.recordingId]);
   useEffect(()=>{if(!expanded)setOptionsOpen(false);},[expanded]);
   useEffect(()=>{
     if(expanded && b && !p.book)void p.prepare(b);
@@ -301,6 +331,7 @@ export function PlayerDock({
         open={expanded}
         onOpenChange={setExpanded}
         title="Now playing"
+        forceMount
         className={`now-playing-dialog ${hasReader ? "with-reader" : ""}`}
         onEscapeKeyDown={event=>{if(optionsOpen){event.preventDefault();setOptionsOpen(false);requestAnimationFrame(()=>optionsTrigger.current?.focus());}}}
         actions={hasReader && <>
@@ -343,7 +374,19 @@ export function PlayerDock({
             </div>}
             {!hasReader && <h2>{(p.book || b).title}</h2>}
             <PlaybackExtra><p className="now-playing-author">{(p.book || b).author}</p></PlaybackExtra>
-            <PlaybackReader book={p.book || b} books={books} notify={notify} onAvailable={setHasReader} onMissing={()=>{setExpanded(false);onBookDetails(p.book || b);}}/>
+            <PlaybackReader
+              book={p.book || b}
+              books={books}
+              notify={notify}
+              onAvailable={(available) => {
+                setHasReader((prev) => available || (hasKnownReader(b?.workId) && prev));
+              }}
+              onMissing={() => {
+                setHasReader(false);
+                setExpanded(false);
+                onBookDetails(p.book || b);
+              }}
+            />
             <div className="now-playing-transport">
             <PlaybackExtra><div className="transport-info"><div className="chapter-playing">
               <Headphones size={14} />

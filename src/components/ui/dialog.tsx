@@ -10,6 +10,7 @@ export function Dialog({
   className = "",
   onEscapeKeyDown,
   actions,
+  forceMount,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -19,13 +20,15 @@ export function Dialog({
   className?: string;
   onEscapeKeyDown?: (event: KeyboardEvent) => void;
   actions?: ReactNode;
+  forceMount?: boolean;
 }) {
   const descriptionId = useId();
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
-      <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="dialog-overlay" />
+      <DialogPrimitive.Portal forceMount={forceMount ? true : undefined}>
+        {open && <DialogPrimitive.Overlay className="dialog-overlay" />}
         <DialogPrimitive.Content
+          forceMount={forceMount ? true : undefined}
           className={`dialog-content ${className}`}
           aria-describedby={description ? descriptionId : undefined}
           onEscapeKeyDown={onEscapeKeyDown}
