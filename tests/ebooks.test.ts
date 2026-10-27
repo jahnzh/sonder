@@ -124,3 +124,130 @@ test("invalid ebook uploads and invalid work targets leave no partial files or e
     ),
   );
 });
+const { works } = await import("../server/schema.ts");
+const { saveEbook, ebookTimeouts } = await import("../server/ebooks.ts");
+const { createHash } = await import("node:crypto");
+const { unlinkSync } = await import("node:fs");
+function libgen(content: Buffer, workId?: string) {
+  const md5 = createHash("md5").update(content).digest("hex");
+  return {
+    md5,
+    source: "libgen" as const,
+    title: "Mirror ebook",
+    authors: ["Test author"],
+    extension: "epub",
+    language: "English",
+    size: "1 KB",
+    year: "2020",
+    coverUrl: null,
+    url: "https://libgen.li/ads.php?md5=" + md5,
+    workId,
+  };
+}
+// The mirror page links to a public address; the body comes from `body`.
+function mirror(content: Buffer, body: (signal?: AbortSignal | null) => ReadableStream | Buffer) {
+  let downloads = 0;
+  globalThis.fetch = async (input, init) => {
+    const md5 = createHash("md5").update(content).digest("hex");
+    if (String(input).includes("/ads.php?"))
+      return new Response(
+        `<a href="https://1.1.1.1/get.php?md5=${md5}&amp;key=test">GET</a>`,
+      );
+    downloads++;
+    return new Response(body(init?.signal), {
+      headers: { "Content-Length": String(content.length) },
+    });
+  };
+  return () => downloads;
+}
+function addWork(id: string) {
+  db.insert(works)
+    .values({
+      id,
+      title: id,
+      author: "Test author",
+      description: "",
+      genre: "Audiobook",
+      year: 2026,
+    })
+    .onConflictDoNothing()
+    .run();
+}
+test("r4#3: saving an already-saved ebook for an audiobook links it to that audiobook", async () => {
+  addWork("work-target");
+  const pdf = Buffer.from(`%PDF-1.4\n% relink ${sequence++}\n%%EOF\n`);
+  const standalone = await upload("Relink.pdf", pdf);
+  const id = standalone.json().id;
+  const before = db.select().from(ebookEditions).where(eq(ebookEditions.id, id)).get()!;
+  assert.notEqual(before.workId, "work-target");
+  const again = await upload("Relink.pdf", pdf, "work-target");
+  assert.equal(again.json().alreadySaved, true);
+  assert.equal(
+    db.select().from(ebookEditions).where(eq(ebookEditions.id, id)).get()!.workId,
+    "work-target",
+  );
+
+  const epub = Buffer.from(`PK\x03\x04 libgen relink ${sequence++}`);
+  mirror(epub, () => epub);
+  const saved = await saveEbook(libgen(epub));
+  await saveEbook(libgen(epub, "work-target"));
+  assert.equal(
+    db.select().from(ebookEditions).where(eq(ebookEditions.id, saved.id)).get()!.workId,
+    "work-target",
+  );
+  // A row whose file is gone is downloaded again instead of being reported as saved.
+  const row = db.select().from(ebookEditions).where(eq(ebookEditions.id, saved.id)).get()!;
+  unlinkSync(row.source);
+  const downloads = mirror(epub, () => epub);
+  await saveEbook(libgen(epub, "work-target"));
+  assert.equal(downloads(), 1);
+  assert.ok(existsSync(row.source));
+});
+test("r4#4: a slow but steady ebook body isn't cut off; a stalled one fails with a clear error", async () => {
+  const previous = { ...ebookTimeouts };
+  Object.assign(ebookTimeouts, { response: 200, idle: 200 });
+  try {
+    const epub = Buffer.from(`PK\x03\x04 slow mirror ${sequence++}`.padEnd(64, "."));
+    // About 600 ms in total, well past the response timeout, with a chunk every 40 ms.
+    mirror(epub, () => {
+      let offset = 0;
+      return new ReadableStream({
+        async pull(controller) {
+          await new Promise((resolve) => setTimeout(resolve, 40));
+          if (offset >= epub.length) return controller.close();
+          controller.enqueue(epub.subarray(offset, offset + 4));
+          offset += 4;
+        },
+      });
+    });
+    const saved = await saveEbook(libgen(epub));
+    assert.ok(db.select().from(ebookEditions).where(eq(ebookEditions.id, saved.id)).get());
+
+    const stalled = Buffer.from(`PK\x03\x04 stalled mirror ${sequence++}`);
+    mirror(stalled, (signal) =>
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(stalled.subarray(0, 4));
+          signal?.addEventListener("abort", () => controller.error(signal.reason));
+        },
+      }),
+    );
+    await assert.rejects(saveEbook(libgen(stalled)), /stalled/);
+    assert.ok(
+      !readdirSync(join(temp, "media", "ebooks")).some((name) => name.endsWith(".part")),
+    );
+  } finally {
+    Object.assign(ebookTimeouts, previous);
+  }
+});
+test("r4#5 (guard, not a bug): concurrent identical uploads create one work", async () => {
+  const pdf = Buffer.from(`%PDF-1.4\n% concurrent ${sequence++}\n%%EOF\n`);
+  const count = db.select().from(works).all().length;
+  const [first, second] = await Promise.all([
+    upload("Twice.pdf", pdf),
+    upload("Twice.pdf", pdf),
+  ]);
+  assert.equal(first.statusCode, 200, first.body);
+  assert.equal(second.statusCode, 200, second.body);
+  assert.equal(db.select().from(works).all().length, count + 1);
+});

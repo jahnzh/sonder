@@ -19,6 +19,7 @@ import {
   readSync,
   closeSync,
   statSync,
+  utimesSync,
 } from "node:fs";
 import { join, basename, extname } from "node:path";
 import { Readable, Transform } from "node:stream";
@@ -130,6 +131,9 @@ function privateAddress(ip: string) {
     (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127)
   );
 }
+// Waiting for a response and waiting between body chunks are limited separately,
+// so a large file on a slow mirror isn't cut off while it is still arriving.
+export const ebookTimeouts = { response: 60000, idle: 60000 };
 export async function publicFetch(input: string, init: RequestInit = {}) {
   let url = new URL(input);
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -150,11 +154,24 @@ export async function publicFetch(input: string, init: RequestInit = {}) {
       throw new Error(
         "Downloads from private network addresses are not allowed.",
       );
-    const response = await fetch(url, {
-      ...init,
-      redirect: "manual",
-      signal: AbortSignal.timeout(120000),
-    });
+    const waiting = new AbortController();
+    const timer = setTimeout(
+      () =>
+        waiting.abort(new Error("The ebook source did not respond in time.")),
+      ebookTimeouts.response,
+    );
+    let response;
+    try {
+      response = await fetch(url, {
+        ...init,
+        redirect: "manual",
+        signal: init.signal
+          ? AbortSignal.any([init.signal, waiting.signal])
+          : waiting.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
       await response.body?.cancel();
@@ -166,6 +183,28 @@ export async function publicFetch(input: string, init: RequestInit = {}) {
     return response;
   }
   throw new Error("The ebook source redirected too many times.");
+}
+// Saving an ebook that is already on the server still attaches it to the chosen book.
+function linkEbook(id: string, workId: string | undefined) {
+  if (!workId) return;
+  const row = db
+    .select()
+    .from(s.ebookEditions)
+    .where(eq(s.ebookEditions.id, id))
+    .get();
+  if (!row || row.workId === workId) return;
+  if (!db.select().from(s.works).where(eq(s.works.id, workId)).get())
+    throw new Error("The selected book could not be found.");
+  db.update(s.ebookEditions)
+    .set({ workId })
+    .where(eq(s.ebookEditions.id, id))
+    .run();
+  // The reader caches parsed books by file size and mtime; a new mtime drops
+  // the cached work without changing the content fingerprint.
+  if (existsSync(row.source)) {
+    const now = new Date();
+    utimesSync(row.source, now, now);
+  }
 }
 async function resolveDownload(source: EbookSource, md5: string) {
   const base = baseUrl(source);
@@ -181,18 +220,27 @@ async function resolveDownload(source: EbookSource, md5: string) {
 async function downloadEbook(input: EbookResult & { workId?: string }) {
   ensureMediaStorage();
   const id = `${input.source}-${input.md5}`;
-  if (db.select().from(s.ebookEditions).where(eq(s.ebookEditions.id, id)).get())
+  const saved = db
+    .select()
+    .from(s.ebookEditions)
+    .where(eq(s.ebookEditions.id, id))
+    .get();
+  if (saved && existsSync(saved.source)) {
+    linkEbook(id, input.workId);
     return { id };
+  }
   const ext = input.extension?.toLowerCase();
   if (!["epub", "pdf"].includes(ext || ""))
     throw new Error("Choose an EPUB or PDF ebook.");
   const url = await resolveDownload(input.source, input.md5);
+  const stalled = new AbortController();
   const response = await publicFetch(url, {
     headers: {
       "User-Agent": userAgent,
       Referer: baseUrl(input.source) + "/",
       "Accept-Encoding": "identity",
     },
+    signal: stalled.signal,
   });
   if (!response.ok || !response.body)
     throw new Error(
@@ -210,9 +258,22 @@ async function downloadEbook(input: EbookResult & { workId?: string }) {
   const writer = createWriteStream(temp, { flags: "wx", mode: 0o640 });
   let size = 0;
   const hash = createHash("md5");
+  let idle: NodeJS.Timeout | undefined;
+  const watch = () => {
+    clearTimeout(idle);
+    idle = setTimeout(
+      () =>
+        stalled.abort(
+          new Error("The ebook download stalled. Retry or try another mirror."),
+        ),
+      ebookTimeouts.idle,
+    );
+  };
   try {
+    watch();
     const counter = new Transform({
       transform(chunk: Buffer, _encoding, callback) {
+        watch();
         size += chunk.byteLength;
         if (size > max) {
           callback(new Error("This ebook exceeds the 150 MB limit."));
@@ -228,7 +289,9 @@ async function downloadEbook(input: EbookResult & { workId?: string }) {
       ),
       counter,
       writer,
+      { signal: stalled.signal },
     );
+    clearTimeout(idle);
     if (!size || (expected && expected !== size))
       throw new Error("The ebook download was interrupted.");
     const digest = hash.digest("hex");
@@ -253,6 +316,12 @@ async function downloadEbook(input: EbookResult & { workId?: string }) {
         !db.select().from(s.works).where(eq(s.works.id, workId)).get()
       )
         throw new Error("The selected book could not be found.");
+      // A row whose file went missing is repaired in place and keeps its book.
+      workId ||= db
+        .select()
+        .from(s.ebookEditions)
+        .where(eq(s.ebookEditions.id, id))
+        .get()?.workId;
       if (!workId) {
         workId = `work-${randomUUID()}`;
         db.insert(s.works)
@@ -268,10 +337,15 @@ async function downloadEbook(input: EbookResult & { workId?: string }) {
       }
       db.insert(s.ebookEditions)
         .values({ id, workId, format: ext!, source: path })
+        .onConflictDoUpdate({
+          target: s.ebookEditions.id,
+          set: { workId, format: ext!, source: path },
+        })
         .run();
     })();
     return { id };
   } catch (error) {
+    clearTimeout(idle);
     writer.destroy();
     if (existsSync(temp)) unlinkSync(temp);
     if (
@@ -279,7 +353,7 @@ async function downloadEbook(input: EbookResult & { workId?: string }) {
       !db.select().from(s.ebookEditions).where(eq(s.ebookEditions.id, id)).get()
     )
       unlinkSync(path);
-    throw error;
+    throw stalled.signal.aborted ? stalled.signal.reason : error;
   }
 }
 export function listEbooks() {
@@ -364,8 +438,10 @@ export async function importEbook(
       .from(s.ebookEditions)
       .where(eq(s.ebookEditions.id, id))
       .get();
-    if (existing && existsSync(existing.source))
+    if (existing && existsSync(existing.source)) {
+      linkEbook(id, targetWorkId);
       return { id, alreadySaved: true };
+    }
     path = join(ebookDir, `${id}.${ext}`);
     renameSync(temp, path);
     sqlite.transaction(() => {
@@ -388,7 +464,7 @@ export async function importEbook(
         .values({ id, workId, format: ext, source: path! })
         .onConflictDoUpdate({
           target: s.ebookEditions.id,
-          set: { source: path!, format: ext },
+          set: { source: path!, format: ext, workId },
         })
         .run();
     })();
