@@ -371,7 +371,7 @@ test("Prowlarr settings are encrypted, searches stay isolated and chosen release
       url: "/api/discover/prowlarr/add",
       payload: { id: tpb.id },
     });
-    assert.match(local.json().error, /local torrent client is not configured/);
+    assert.match(local.json().error, /local torrents are not configured/i);
     assert.equal(created, false);
     db.insert(s.settings).values({ key: "torbox", value: encrypt("fake-key") }).run();
     db.update(s.acquisitions).set({ status: "error" }).run();
