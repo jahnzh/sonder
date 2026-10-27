@@ -1,0 +1,189 @@
+import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+export const works = sqliteTable("works", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull(),
+  author: text("author").notNull(),
+  description: text("description").notNull(),
+  genre: text("genre").notNull(),
+  year: integer("year").notNull(),
+});
+export const editions = sqliteTable("audio_editions", {
+  language: text("language"),
+  releaseTitle: text("release_title"),
+  id: text("id").primaryKey(),
+  workId: text("work_id")
+    .notNull()
+    .references(() => works.id),
+  cover: text("cover").notNull(),
+  narrator: text("narrator").notNull(),
+  rating: real("rating").notNull(),
+  sourceLabel: text("source_label").notNull(),
+});
+export const recordings = sqliteTable("recordings", {
+  id: text("id").primaryKey(),
+  editionId: text("edition_id")
+    .notNull()
+    .references(() => editions.id),
+});
+export const tracks = sqliteTable("tracks", {
+  chapters: text("chapters", { mode: "json" })
+    .$type<{ title: string; start: number; end?: number }[]>()
+    .notNull()
+    .default([]),
+  id: text("id").primaryKey(),
+  recordingId: text("recording_id")
+    .notNull()
+    .references(() => recordings.id),
+  title: text("title").notNull(),
+  index: integer("track_index").notNull(),
+  duration: real("duration").notNull().default(0),
+  source: text("source").notNull(),
+  sourceType: text("source_type").notNull(),
+});
+export const library = sqliteTable("library", {
+  bookId: text("book_id")
+    .primaryKey()
+    .references(() => editions.id),
+  status: text("status").notNull().default("unread"),
+  addedAt: integer("added_at").notNull(),
+});
+export const hiddenLibrary = sqliteTable("hidden_library", {
+  bookId: text("book_id")
+    .primaryKey()
+    .references(() => editions.id),
+});
+export const progress = sqliteTable("progress", {
+  recordingId: text("recording_id")
+    .primaryKey()
+    .references(() => recordings.id),
+  trackId: text("track_id")
+    .notNull()
+    .references(() => tracks.id),
+  position: real("position").notNull(),
+  duration: real("duration").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+export const settings = sqliteTable("settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+});
+export const sessions = sqliteTable("sessions", {
+  token: text("token").primaryKey(),
+  expiresAt: integer("expires_at").notNull(),
+});
+// Independent ebook editions and CFI progress reserve the identity boundary for future alignment.
+export const ebookEditions = sqliteTable("ebook_editions", {
+  id: text("id").primaryKey(),
+  workId: text("work_id")
+    .notNull()
+    .references(() => works.id),
+  format: text("format").notNull(),
+  source: text("source").notNull(),
+});
+export const ebookProgress = sqliteTable("ebook_progress", {
+  editionId: text("edition_id")
+    .primaryKey()
+    .references(() => ebookEditions.id),
+  cfi: text("cfi").notNull(),
+  chapter: integer("chapter").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+export const acquisitions = sqliteTable("acquisitions", {
+  workId: text("work_id"),
+  language: text("language"),
+  narrator: text("narrator"),
+  id: text("id").primaryKey(),
+  hash: text("hash").notNull().unique(),
+  magnet: text("magnet").notNull(),
+  backend: text("backend").notNull(),
+  remoteId: text("remote_id"),
+  title: text("title").notNull(),
+  author: text("author").notNull(),
+  cover: text("cover").notNull(),
+  status: text("status").notNull(),
+  progress: real("progress").notNull().default(0),
+  error: text("error"),
+  bookId: text("book_id"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+export const mediaCopies = sqliteTable("media_copies", {
+  trackId: text("track_id")
+    .primaryKey()
+    .references(() => tracks.id),
+  path: text("path").notNull(),
+  size: integer("size").notNull(),
+  mime: text("mime").notNull(),
+});
+export const serverDownloads = sqliteTable("server_downloads", {
+  recordingId: text("recording_id")
+    .primaryKey()
+    .references(() => recordings.id),
+  bookId: text("book_id").notNull(),
+  status: text("status").notNull(),
+  progress: real("progress").notNull(),
+  error: text("error"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+export const hardcoverLinks = sqliteTable("hardcover_links", {
+  workId: text("work_id")
+    .primaryKey()
+    .references(() => works.id),
+  bookId: integer("book_id").notNull(),
+  slug: text("slug"),
+  series: text("series", { mode: "json" })
+    .$type<{ name: string; position: number | null }[]>()
+    .notNull()
+    .default([]),
+  userBookId: integer("user_book_id"),
+  statusId: integer("status_id"),
+  remoteUpdatedAt: integer("remote_updated_at").notNull().default(0),
+  syncedAt: integer("synced_at").notNull().default(0),
+});
+export const hardcoverOutbox = sqliteTable("hardcover_outbox", {
+  bookId: integer("book_id").primaryKey(),
+  accountId: integer("account_id").notNull(),
+  statusId: integer("status_id").notNull(),
+  intent: text("intent").notNull().default("status"),
+  updatedAt: integer("updated_at").notNull(),
+  error: text("error"),
+});
+export const hardcoverLists = sqliteTable("hardcover_lists", {
+  id: integer("id").primaryKey(),
+  accountId: integer("account_id").notNull(),
+  name: text("name").notNull(),
+  slug: text("slug"),
+  members: text("members", { mode: "json" })
+    .$type<{ id: number; bookId: number }[]>()
+    .notNull()
+    .default([]),
+  syncedAt: integer("synced_at").notNull(),
+});
+export const hardcoverProgress = sqliteTable("hardcover_progress", {
+  bookId: integer("book_id").primaryKey(),
+  accountId: integer("account_id").notNull(),
+  recordingId: text("recording_id")
+    .notNull()
+    .references(() => recordings.id),
+  position: real("position").notNull(),
+  duration: real("duration").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  error: text("error"),
+});
+export const hardcoverReads = sqliteTable("hardcover_reads", {
+  bookId: integer("book_id").primaryKey(),
+  accountId: integer("account_id").notNull(),
+  snapshot: text("snapshot").notNull(),
+  fraction: real("fraction"),
+  syncedAt: integer("synced_at").notNull(),
+});
+export const hardcoverRecordingEditions = sqliteTable(
+  "hardcover_recording_editions",
+  {
+    recordingId: text("recording_id")
+      .primaryKey()
+      .references(() => recordings.id),
+    editionId: integer("edition_id").notNull(),
+  },
+);

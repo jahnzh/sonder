@@ -1,0 +1,738 @@
+{
+  "alice": [
+    {
+      "title": "Down the Rabbit-Hole",
+      "duration": 640,
+      "url": "https://archive.org/download/alice_in_wonderland_librivox/wonderland_ch_01_64kb.mp3"
+    },
+    {
+      "title": "The Pool of Tears",
+      "duration": 735,
+      "url": "https://archive.org/download/alice_in_wonderland_librivox/wonderland_ch_02_64kb.mp3"
+    },
+    {
+      "title": "A Caucus-Race and a Long Tale",
+      "duration": 1064,
+      "url": "https://archive.org/download/alice_in_wonderland_librivox/wonderland_ch_03_64kb.mp3"
+    },
+    {
+      "title": "The Rabbit Sends in a Little Bill",
+      "duration": 1192,
+      "url": "https://archive.org/download/alice_in_wonderland_librivox/wonderland_ch_04_64kb.mp3"
+    },
+    {
+      "title": "Advice from a Caterpillar",
+      "duration": 809,
+      "url": "https://archive.org/download/alice_in_wonderland_librivox/wonderland_ch_05_64kb.mp3"
+    },
+    {
+      "title": "Pig and Pepper",
+      "duration": 775,
+      "url": "https://archive.org/download/alice_in_wonderland_librivox/wonderland_ch_06_64kb.mp3"
+    },
+    {
+      "title": "A Mad Tea-Party",
+      "duration": 1046,
+      "url": "https://archive.org/download/alice_in_wonderland_librivox/wonderland_ch_07_64kb.mp3"
+    },
+    {
+      "title": "The Queen’s Croquet-Ground",
+      "duration": 799,
+      "url": "https://archive.org/download/alice_in_wonderland_librivox/wonderland_ch_08_64kb.mp3"
+    },
+    {
+      "title": "The Mock Turtle’s Story",
+      "duration": 908,
+      "url": "https://archive.org/download/alice_in_wonderland_librivox/wonderland_ch_09_64kb.mp3"
+    },
+    {
+      "title": "The Lobster Quadrille",
+      "duration": 1368,
+      "url": "https://archive.org/download/alice_in_wonderland_librivox/wonderland_ch_10_64kb.mp3"
+    },
+    {
+      "title": "Who Stole the Tarts?",
+      "duration": 619,
+      "url": "https://archive.org/download/alice_in_wonderland_librivox/wonderland_ch_11_64kb.mp3"
+    },
+    {
+      "title": "Alice’s Evidence",
+      "duration": 772,
+      "url": "https://archive.org/download/alice_in_wonderland_librivox/wonderland_ch_12_64kb.mp3"
+    }
+  ],
+  "sherlock": [
+    {
+      "title": "01 - A Scandal In Bohemia Part 1",
+      "duration": 1272,
+      "url": "https://archive.org/download/the_adventures_of_sherlock_holmes_v5_1904_librivox/adventuresofsherlockhomes_01_conandoyle_64kb.mp3"
+    },
+    {
+      "title": "02 - A Scandal In Bohemia Part 2",
+      "duration": 1256,
+      "url": "https://archive.org/download/the_adventures_of_sherlock_holmes_v5_1904_librivox/adventuresofsherlockhomes_02_conandoyle_64kb.mp3"
+    },
+    {
+      "title": "03 - A Scandal In Bohemia Part 3",
+      "duration": 410,
+      "url": "https://archive.org/download/the_adventures_of_sherlock_holmes_v5_1904_librivox/adventuresofsherlockhomes_03_conandoyle_64kb.mp3"
+    },
+    {
+      "title": "04 - The Red Headed League",
+      "duration": 2895,
+      "url": "https://archive.org/download/the_adventures_of_sherlock_holmes_v5_1904_librivox/adventuresofsherlockhomes_04_conandoyle_64kb.mp3"
+    },
+    {
+      "title": "05 - A Case of Identity",
+      "duration": 2190,
+      "url": "https://archive.org/download/the_adventures_of_sherlock_holmes_v5_1904_librivox/adventuresofsherlockhomes_05_conandoyle_64kb.mp3"
+    },
+    {
+      "title": "06 - The Boscombe Valley Mystery",
+      "duration": 3125,
+      "url": "https://archive.org/download/the_adventures_of_sherlock_holmes_v5_1904_librivox/adventuresofsherlockhomes_06_conandoyle_64kb.mp3"
+    },
+    {
+      "title": "07 - The Five Orange Pips",
+      "duration": 2475,
+      "url": "https://archive.org/download/the_adventures_of_sherlock_holmes_v5_1904_librivox/adventuresofsherlockhomes_07_conandoyle_64kb.mp3"
+    },
+    {
+      "title": "08 - The Man With the Twisted Lip",
+      "duration": 3040,
+      "url": "https://archive.org/download/the_adventures_of_sherlock_holmes_v5_1904_librivox/adventuresofsherlockhomes_08_conandoyle_64kb.mp3"
+    },
+    {
+      "title": "09 - The Adventure of the Blue Carbuncle",
+      "duration": 2601,
+      "url": "https://archive.org/download/the_adventures_of_sherlock_holmes_v5_1904_librivox/adventuresofsherlockhomes_09_conandoyle_64kb.mp3"
+    },
+    {
+      "title": "10 - The Adventure of the Speckled Band",
+      "duration": 3201,
+      "url": "https://archive.org/download/the_adventures_of_sherlock_holmes_v5_1904_librivox/adventuresofsherlockhomes_10_conandoyle_64kb.mp3"
+    },
+    {
+      "title": "11 - The Adventure of the Engineer's Thumb",
+      "duration": 2785,
+      "url": "https://archive.org/download/the_adventures_of_sherlock_holmes_v5_1904_librivox/adventuresofsherlockhomes_11_conandoyle_64kb.mp3"
+    },
+    {
+      "title": "12 - The Adventure of the Noble Bachelor",
+      "duration": 2740,
+      "url": "https://archive.org/download/the_adventures_of_sherlock_holmes_v5_1904_librivox/adventuresofsherlockhomes_12_conandoyle_64kb.mp3"
+    },
+    {
+      "title": "13 - The Adventure of the Beryl Coronet",
+      "duration": 3231,
+      "url": "https://archive.org/download/the_adventures_of_sherlock_holmes_v5_1904_librivox/adventuresofsherlockhomes_13_conandoyle_64kb.mp3"
+    },
+    {
+      "title": "14 - The Adventure of the Copper Beeches",
+      "duration": 3315,
+      "url": "https://archive.org/download/the_adventures_of_sherlock_holmes_v5_1904_librivox/adventuresofsherlockhomes_14_conandoyle_64kb.mp3"
+    }
+  ],
+  "pride": [
+    {
+      "title": "Ch. 1-4",
+      "duration": 1628,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_01-04_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 5-6",
+      "duration": 1206,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_05-06_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 7-8",
+      "duration": 1528,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_07-08_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 9-10",
+      "duration": 1539,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_09-10_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 11-13",
+      "duration": 1635,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_11-13_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 14-15",
+      "duration": 1135,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_14-15_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 16-17",
+      "duration": 1831,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_16-17_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 18",
+      "duration": 2182,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_18_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 19-20",
+      "duration": 1426,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_19-20_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 21-22",
+      "duration": 1544,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_21-22_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 23-24",
+      "duration": 1481,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_23-24_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 25-26",
+      "duration": 1588,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_25-26_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 27-28",
+      "duration": 1137,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_27-28_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 29-30",
+      "duration": 1495,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_29-30_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 31-32",
+      "duration": 1193,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_31-32_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 33-34",
+      "duration": 1500,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_33-34_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 35",
+      "duration": 1339,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_35_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 36-37",
+      "duration": 1493,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_36-37_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 38-40",
+      "duration": 1658,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_38-40_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 41",
+      "duration": 965,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_41_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 42",
+      "duration": 783,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_42_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 43",
+      "duration": 1989,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_43_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 44-45",
+      "duration": 1672,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_44-45_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 46",
+      "duration": 1180,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_46_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 47-48",
+      "duration": 2320,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_47-48_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 49",
+      "duration": 849,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_49_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 50-51",
+      "duration": 1620,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_50-51_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 52",
+      "duration": 1163,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_52_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 53-54",
+      "duration": 1751,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_53-54_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 55",
+      "duration": 956,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_55_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 56",
+      "duration": 1001,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_56_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 57",
+      "duration": 639,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_57_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 58",
+      "duration": 908,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_58_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 59",
+      "duration": 919,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_59_austen_apc_64kb.mp3"
+    },
+    {
+      "title": "Ch. 60-61",
+      "duration": 1035,
+      "url": "https://archive.org/download/solo_pride_librivox/prideandprejudice_60-61_austen_apc_64kb.mp3"
+    }
+  ],
+  "frankenstein": [
+    {
+      "title": "00: Intro & Preface",
+      "duration": 1142,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_00_shelley_64kb.mp3"
+    },
+    {
+      "title": "01: Letter 1",
+      "duration": 480,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_01_shelley_64kb.mp3"
+    },
+    {
+      "title": "02: Letter 2",
+      "duration": 524,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_02_shelley_64kb.mp3"
+    },
+    {
+      "title": "03: Letter 3",
+      "duration": 140,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_03_shelley_64kb.mp3"
+    },
+    {
+      "title": "04: Letter 4",
+      "duration": 1052,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_04_shelley_64kb.mp3"
+    },
+    {
+      "title": "05: Chapter 01",
+      "duration": 714,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_05_shelley_64kb.mp3"
+    },
+    {
+      "title": "06: Chapter 02",
+      "duration": 926,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_06_shelley_64kb.mp3"
+    },
+    {
+      "title": "07: Chapter 03",
+      "duration": 1058,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_07_shelley_64kb.mp3"
+    },
+    {
+      "title": "08: Chapter 04",
+      "duration": 1056,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_08_shelley_64kb.mp3"
+    },
+    {
+      "title": "09: Chapter 05",
+      "duration": 916,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_09_shelley_64kb.mp3"
+    },
+    {
+      "title": "10: Chapter 06",
+      "duration": 1067,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_10_shelley_64kb.mp3"
+    },
+    {
+      "title": "11: Chapter 07",
+      "duration": 1407,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_11_shelley_64kb.mp3"
+    },
+    {
+      "title": "12: Chapter 08",
+      "duration": 1233,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_12_shelley_64kb.mp3"
+    },
+    {
+      "title": "13: Chapter 09",
+      "duration": 951,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_13_shelley_64kb.mp3"
+    },
+    {
+      "title": "14: Chapter 10",
+      "duration": 1027,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_14_shelley_64kb.mp3"
+    },
+    {
+      "title": "15: Chapter 11",
+      "duration": 1123,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_15_shelley_64kb.mp3"
+    },
+    {
+      "title": "16: Chapter 12",
+      "duration": 834,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_16_shelley_64kb.mp3"
+    },
+    {
+      "title": "17: Chapter 13",
+      "duration": 844,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_17_shelley_64kb.mp3"
+    },
+    {
+      "title": "18: Chapter 14",
+      "duration": 698,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_18_shelley_64kb.mp3"
+    },
+    {
+      "title": "19: Chapter 15",
+      "duration": 1329,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_19_shelley_64kb.mp3"
+    },
+    {
+      "title": "20: Chapter 16",
+      "duration": 1307,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_20_shelley_64kb.mp3"
+    },
+    {
+      "title": "21: Chapter 17",
+      "duration": 812,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_21_shelley_64kb.mp3"
+    },
+    {
+      "title": "22: Chapter 18",
+      "duration": 1180,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_22_shelley_64kb.mp3"
+    },
+    {
+      "title": "23: Chapter 19",
+      "duration": 1052,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_23_shelley_64kb.mp3"
+    },
+    {
+      "title": "24: Chapter 20",
+      "duration": 1367,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_24_shelley_64kb.mp3"
+    },
+    {
+      "title": "25: Chapter 21",
+      "duration": 1401,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_25_shelley_64kb.mp3"
+    },
+    {
+      "title": "26: Chapter 22",
+      "duration": 1366,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_26_shelley_64kb.mp3"
+    },
+    {
+      "title": "27: Chapter 23",
+      "duration": 1024,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_27_shelley_64kb.mp3"
+    },
+    {
+      "title": "28: Chapter 24",
+      "duration": 3457,
+      "url": "https://archive.org/download/frankenstein1831_tac_librivox/frankenstein_28_shelley_64kb.mp3"
+    }
+  ],
+  "time": [
+    {
+      "title": "01 - Introduction",
+      "duration": 692.22,
+      "url": "https://archive.org/download/thetimemachineversion_7_2105_librivox/timemachine7_01_wells_64kb.mp3"
+    },
+    {
+      "title": "02 - The Machine",
+      "duration": 526.71,
+      "url": "https://archive.org/download/thetimemachineversion_7_2105_librivox/timemachine7_02_wells_64kb.mp3"
+    },
+    {
+      "title": "03 - The Time Traveller Returns",
+      "duration": 761.57,
+      "url": "https://archive.org/download/thetimemachineversion_7_2105_librivox/timemachine7_03_wells_64kb.mp3"
+    },
+    {
+      "title": "04 - Time Travelling",
+      "duration": 802.87,
+      "url": "https://archive.org/download/thetimemachineversion_7_2105_librivox/timemachine7_04_wells_64kb.mp3"
+    },
+    {
+      "title": "05 - In the Golden Age",
+      "duration": 646.01,
+      "url": "https://archive.org/download/thetimemachineversion_7_2105_librivox/timemachine7_05_wells_64kb.mp3"
+    },
+    {
+      "title": "06 - The Sunset of Mankind",
+      "duration": 881.06,
+      "url": "https://archive.org/download/thetimemachineversion_7_2105_librivox/timemachine7_06_wells_64kb.mp3"
+    },
+    {
+      "title": "07 - A Sudden Shock",
+      "duration": 881.08,
+      "url": "https://archive.org/download/thetimemachineversion_7_2105_librivox/timemachine7_07_wells_64kb.mp3"
+    },
+    {
+      "title": "08 - Explanation",
+      "duration": 1567.03,
+      "url": "https://archive.org/download/thetimemachineversion_7_2105_librivox/timemachine7_08_wells_64kb.mp3"
+    },
+    {
+      "title": "09 - The Morlocks",
+      "duration": 786.86,
+      "url": "https://archive.org/download/thetimemachineversion_7_2105_librivox/timemachine7_09_wells_64kb.mp3"
+    },
+    {
+      "title": "10 - When Night Came",
+      "duration": 954.46,
+      "url": "https://archive.org/download/thetimemachineversion_7_2105_librivox/timemachine7_10_wells_64kb.mp3"
+    },
+    {
+      "title": "11 - The Palace of Green Porcelain",
+      "duration": 926.48,
+      "url": "https://archive.org/download/thetimemachineversion_7_2105_librivox/timemachine7_11_wells_64kb.mp3"
+    },
+    {
+      "title": "12 - In the Darkness",
+      "duration": 941.01,
+      "url": "https://archive.org/download/thetimemachineversion_7_2105_librivox/timemachine7_12_wells_64kb.mp3"
+    },
+    {
+      "title": "13 - The Trap of the White Sphinx",
+      "duration": 434.21,
+      "url": "https://archive.org/download/thetimemachineversion_7_2105_librivox/timemachine7_13_wells_64kb.mp3"
+    },
+    {
+      "title": "14 - The Further Vision",
+      "duration": 734.56,
+      "url": "https://archive.org/download/thetimemachineversion_7_2105_librivox/timemachine7_14_wells_64kb.mp3"
+    },
+    {
+      "title": "15 - The Time Traveller's Return",
+      "duration": 208.2,
+      "url": "https://archive.org/download/thetimemachineversion_7_2105_librivox/timemachine7_15_wells_64kb.mp3"
+    },
+    {
+      "title": "16 - After the Story",
+      "duration": 529.06,
+      "url": "https://archive.org/download/thetimemachineversion_7_2105_librivox/timemachine7_16_wells_64kb.mp3"
+    },
+    {
+      "title": "17 - Epilogue",
+      "duration": 137.46,
+      "url": "https://archive.org/download/thetimemachineversion_7_2105_librivox/timemachine7_17_wells_64kb.mp3"
+    }
+  ],
+  "gatsby": [
+    {
+      "title": "01 - I",
+      "duration": 2158,
+      "url": "https://archive.org/download/great_gatsby_2305_librivox/greatgatsby_01_fitzgerald_64kb.mp3"
+    },
+    {
+      "title": "02 - II",
+      "duration": 1519,
+      "url": "https://archive.org/download/great_gatsby_2305_librivox/greatgatsby_02_fitzgerald_64kb.mp3"
+    },
+    {
+      "title": "03 - III",
+      "duration": 2183,
+      "url": "https://archive.org/download/great_gatsby_2305_librivox/greatgatsby_03_fitzgerald_64kb.mp3"
+    },
+    {
+      "title": "04 - IV",
+      "duration": 2064,
+      "url": "https://archive.org/download/great_gatsby_2305_librivox/greatgatsby_04_fitzgerald_64kb.mp3"
+    },
+    {
+      "title": "05 - V",
+      "duration": 1542,
+      "url": "https://archive.org/download/great_gatsby_2305_librivox/greatgatsby_05_fitzgerald_64kb.mp3"
+    },
+    {
+      "title": "06 - VI",
+      "duration": 1539,
+      "url": "https://archive.org/download/great_gatsby_2305_librivox/greatgatsby_06_fitzgerald_64kb.mp3"
+    },
+    {
+      "title": "07 - VII",
+      "duration": 3341,
+      "url": "https://archive.org/download/great_gatsby_2305_librivox/greatgatsby_07_fitzgerald_64kb.mp3"
+    },
+    {
+      "title": "08 - VIII",
+      "duration": 1659,
+      "url": "https://archive.org/download/great_gatsby_2305_librivox/greatgatsby_08_fitzgerald_64kb.mp3"
+    },
+    {
+      "title": "09 - IX",
+      "duration": 1838,
+      "url": "https://archive.org/download/great_gatsby_2305_librivox/greatgatsby_09_fitzgerald_64kb.mp3"
+    }
+  ],
+  "war": [
+    {
+      "title": "01 - Laying Plans",
+      "duration": 448,
+      "url": "https://archive.org/download/art_war_ps_librivox/artofwar_01_sun_64kb.mp3"
+    },
+    {
+      "title": "02 - Waging War",
+      "duration": 405,
+      "url": "https://archive.org/download/art_war_ps_librivox/artofwar_02_sun_64kb.mp3"
+    },
+    {
+      "title": "03 - Attack by Strategem",
+      "duration": 421,
+      "url": "https://archive.org/download/art_war_ps_librivox/artofwar_03_sun_64kb.mp3"
+    },
+    {
+      "title": "04 - Tactical Dispositions",
+      "duration": 346,
+      "url": "https://archive.org/download/art_war_ps_librivox/artofwar_04_sun_64kb.mp3"
+    },
+    {
+      "title": "05 - Energy",
+      "duration": 441,
+      "url": "https://archive.org/download/art_war_ps_librivox/artofwar_05_sun_64kb.mp3"
+    },
+    {
+      "title": "06 - Weak Points and Strong",
+      "duration": 614,
+      "url": "https://archive.org/download/art_war_ps_librivox/artofwar_06_sun_64kb.mp3"
+    },
+    {
+      "title": "07 - Maneuvering",
+      "duration": 564,
+      "url": "https://archive.org/download/art_war_ps_librivox/artofwar_07_sun_64kb.mp3"
+    },
+    {
+      "title": "08 - Variation in Tactics",
+      "duration": 284,
+      "url": "https://archive.org/download/art_war_ps_librivox/artofwar_08_sun_64kb.mp3"
+    },
+    {
+      "title": "09 - The Army on the March",
+      "duration": 723,
+      "url": "https://archive.org/download/art_war_ps_librivox/artofwar_09_sun_64kb.mp3"
+    },
+    {
+      "title": "10 - Terrain",
+      "duration": 612,
+      "url": "https://archive.org/download/art_war_ps_librivox/artofwar_10_sun_64kb.mp3"
+    },
+    {
+      "title": "11 - The Nine Situations",
+      "duration": 1114,
+      "url": "https://archive.org/download/art_war_ps_librivox/artofwar_11_sun_64kb.mp3"
+    },
+    {
+      "title": "12 - The Attack by Fire",
+      "duration": 345,
+      "url": "https://archive.org/download/art_war_ps_librivox/artofwar_12_sun_64kb.mp3"
+    },
+    {
+      "title": "13 - The Use of Spies",
+      "duration": 503,
+      "url": "https://archive.org/download/art_war_ps_librivox/artofwar_13_sun_64kb.mp3"
+    }
+  ],
+  "meditations": [
+    {
+      "title": "00 - Introduction",
+      "duration": 167,
+      "url": "https://archive.org/download/meditations_0708_librivox/meditations_00_marcusaurelius_64kb.mp3"
+    },
+    {
+      "title": "01 - Section 01",
+      "duration": 985,
+      "url": "https://archive.org/download/meditations_0708_librivox/meditations_01_marcusaurelius_64kb.mp3"
+    },
+    {
+      "title": "02 - Section 02",
+      "duration": 829,
+      "url": "https://archive.org/download/meditations_0708_librivox/meditations_02_marcusaurelius_64kb.mp3"
+    },
+    {
+      "title": "03 - Section 3",
+      "duration": 1060,
+      "url": "https://archive.org/download/meditations_0708_librivox/meditations_03_marcusaurelius_64kb.mp3"
+    },
+    {
+      "title": "04 - Section 04",
+      "duration": 1725,
+      "url": "https://archive.org/download/meditations_0708_librivox/meditations_04_marcusaurelius_64kb.mp3"
+    },
+    {
+      "title": "05 - Section 05",
+      "duration": 1956,
+      "url": "https://archive.org/download/meditations_0708_librivox/meditations_05_marcusaurelius_64kb.mp3"
+    },
+    {
+      "title": "06 - Section 06",
+      "duration": 1663,
+      "url": "https://archive.org/download/meditations_0708_librivox/meditations_06_marcusaurelius_64kb.mp3"
+    },
+    {
+      "title": "07 - Section 07",
+      "duration": 1957,
+      "url": "https://archive.org/download/meditations_0708_librivox/meditations_07_marcusaurelius_64kb.mp3"
+    },
+    {
+      "title": "08 - Section 08",
+      "duration": 2150,
+      "url": "https://archive.org/download/meditations_0708_librivox/meditations_08_marcusaurelius_64kb.mp3"
+    },
+    {
+      "title": "09 - Section 09",
+      "duration": 1958,
+      "url": "https://archive.org/download/meditations_0708_librivox/meditations_09_marcusaurelius_64kb.mp3"
+    },
+    {
+      "title": "10 - Section10",
+      "duration": 1716,
+      "url": "https://archive.org/download/meditations_0708_librivox/meditations_10_marcusaurelius_64kb.mp3"
+    },
+    {
+      "title": "11 - Section 11",
+      "duration": 1543,
+      "url": "https://archive.org/download/meditations_0708_librivox/meditations_11_marcusaurelius_64kb.mp3"
+    },
+    {
+      "title": "12 - Section 12",
+      "duration": 1372,
+      "url": "https://archive.org/download/meditations_0708_librivox/meditations_12_marcusaurelius_64kb.mp3"
+    },
+    {
+      "title": "13 - M. Aurelius Antoninus, by George Long M.A.",
+      "duration": 2575,
+      "url": "https://archive.org/download/meditations_0708_librivox/meditations_13_marcusaurelius_64kb.mp3"
+    },
+    {
+      "title": "14 - The Philosophy of Marcus Aurelius by George Long",
+      "duration": 3484,
+      "url": "https://archive.org/download/meditations_0708_librivox/meditations_14_marcusaurelius_64kb.mp3"
+    }
+  ]
+}
