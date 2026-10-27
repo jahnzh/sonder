@@ -8,6 +8,7 @@ import { hardcoverWorkForMedia, claimHardcoverAudio } from "./hardcover.ts";
 import * as s from "./schema.ts";
 import { getSecret, torbox } from "./services.ts";
 import { addTorrent, getTorrent, transmission } from "./transmission.ts";
+import { getTorrentHealth } from "./torrent-health.ts";
 import {
   ensureMediaStorage,
   resolveTorrentFile,
@@ -148,6 +149,14 @@ export async function acquire(
       }
     }
     if (backend === "local") {
+      // Refuse rather than queue a torrent that cannot download, e.g. when the VPN has no DNS.
+      const health = await getTorrentHealth(15_000);
+      if (health.status !== "ok") {
+        console.warn(
+          `Local torrent fallback refused for ${hash}: ${health.status} (${health.message})`,
+        );
+        throw new Error(health.message);
+      }
       const session = await transmission<{
         "download-dir": string;
         "incomplete-dir": string;

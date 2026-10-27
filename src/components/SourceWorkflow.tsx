@@ -23,6 +23,11 @@ import {
   Upload,
 } from "lucide-react";
 import { api, bytes, localDB } from "../lib";
+import {
+  TorrentHealthLine,
+  TorrentHealthWarning,
+  useTorrentHealth,
+} from "./TorrentHealth";
 import {openReader} from "../reading";
 import type {
   Acquisition,
@@ -121,6 +126,7 @@ export function AcquisitionQueue({
           device.
         </span>
       </div>
+      <TorrentHealthWarning />
       {error && (
         <p className="inline-error" role="alert">
           {error}
@@ -626,14 +632,19 @@ export function SourceSettings({
       setBusy(false);
     }
   };
+  const torrentHealth = useTorrentHealth();
   const testLocal = async () => {
     setTesting(true);
     try {
       await api("/local/test", { method: "POST" });
-      notify(
-        "Your local torrent client is connected. Audio stays on the 4 TB drive.",
-      );
+      const health = await torrentHealth.check(true);
+      if (health && health.status !== "ok") notify(health.message, true);
+      else
+        notify(
+          "Your local torrent client is connected. Audio stays on the 4 TB drive.",
+        );
     } catch (e) {
+      void torrentHealth.check(true);
       notify((e as Error).message, true);
     } finally {
       setTesting(false);
@@ -665,6 +676,10 @@ export function SourceSettings({
             on the HDD. Server downloads continue when you close Sonder.
           </span>
         </div>
+        <TorrentHealthLine
+          health={torrentHealth.health}
+          checking={torrentHealth.checking}
+        />
         <button
           className="button subtle"
           onClick={() => void testLocal()}
