@@ -264,8 +264,9 @@ export function registerReader(app: FastifyInstance) {
       sqlite
         .prepare("INSERT INTO user_reader_events(user_id,event_id,edition_id) VALUES(?,?,?)")
         .run(currentUserId(req), input.eventId, id);
-      if (input.origin === "reading" && currentUserId(req) === 1)
+      if (input.origin === "reading")
         queueHardcoverReadingProgress(
+          currentUserId(req),
           book.workId,
           input.locator.progression,
           input.recordingId,

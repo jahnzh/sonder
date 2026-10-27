@@ -11,10 +11,23 @@ import {
   pullHardcoverPosition,
   hardcoverRecordingOptions,
   setHardcoverRecordingEdition,
+  setHardcoverToken,
+  hardcoverLinkedBook,
 } from "./hardcover.ts";
+import { currentUserId, requireAdmin } from "./users.ts";
+// Every route acts for the signed-in user's own Hardcover account (#15).
 export function registerHardcoverRoutes(app: FastifyInstance) {
-  app.get("/api/hardcover", async () => hardcoverState());
-  app.post("/api/hardcover/test", async () => testHardcover());
+  app.get("/api/hardcover", async (req) => hardcoverState(currentUserId(req)));
+  app.put("/api/hardcover/token", async (req) => {
+    const { token } = z
+      .object({ token: z.string().max(2000) })
+      .parse(req.body);
+    setHardcoverToken(currentUserId(req), token);
+    return hardcoverState(currentUserId(req));
+  });
+  app.post("/api/hardcover/test", async (req) =>
+    testHardcover(currentUserId(req)),
+  );
   app.patch("/api/hardcover/config", async (req) => {
     const input = z
       .object({
@@ -22,10 +35,12 @@ export function registerHardcoverRoutes(app: FastifyInstance) {
         syncLists: z.boolean(),
       })
       .parse(req.body);
-    if (input.mode !== "off") await testHardcover();
-    return configureHardcover(input.mode, input.syncLists);
+    if (input.mode !== "off") await testHardcover(currentUserId(req));
+    return configureHardcover(currentUserId(req), input.mode, input.syncLists);
   });
-  app.post("/api/hardcover/sync", async () => syncHardcover());
+  app.post("/api/hardcover/sync", async (req) =>
+    syncHardcover(currentUserId(req)),
+  );
   app.post("/api/hardcover/books", async (req) => {
     const { id, workId } = z
       .object({
@@ -33,7 +48,10 @@ export function registerHardcoverRoutes(app: FastifyInstance) {
         workId: z.string().optional(),
       })
       .parse(req.body);
-    return importHardcoverBook(id, workId);
+    // The work → Hardcover book match is shared, so only the admin can move an existing one.
+    const linked = workId ? hardcoverLinkedBook(workId) : undefined;
+    if (linked !== undefined && linked !== id) requireAdmin(req);
+    return importHardcoverBook(currentUserId(req), id, workId);
   });
   app.patch("/api/hardcover/shelf", async (req) => {
     const { workId, statusId } = z
@@ -48,7 +66,7 @@ export function registerHardcoverRoutes(app: FastifyInstance) {
         ]),
       })
       .parse(req.body);
-    return setHardcoverShelf(workId, statusId);
+    return setHardcoverShelf(currentUserId(req), workId, statusId);
   });
   app.patch("/api/hardcover/lists/:id", async (req) => {
     const { id } = z
@@ -57,19 +75,19 @@ export function registerHardcoverRoutes(app: FastifyInstance) {
     const { workId, included } = z
       .object({ workId: z.string(), included: z.boolean() })
       .parse(req.body);
-    return setHardcoverListMember(id, workId, included);
+    return setHardcoverListMember(currentUserId(req), id, workId, included);
   });
   app.post("/api/hardcover/progress/pull", async (req) => {
     const { workId, recordingId } = z
       .object({ workId: z.string(), recordingId: z.string() })
       .parse(req.body);
-    return pullHardcoverPosition(workId, recordingId);
+    return pullHardcoverPosition(currentUserId(req), workId, recordingId);
   });
   app.get("/api/hardcover/editions", async (req) => {
     const { workId, recordingId } = z
       .object({ workId: z.string(), recordingId: z.string() })
       .parse(req.query);
-    return hardcoverRecordingOptions(workId, recordingId);
+    return hardcoverRecordingOptions(currentUserId(req), workId, recordingId);
   });
   app.patch("/api/hardcover/edition", async (req) => {
     const { workId, recordingId, editionId } = z
@@ -79,6 +97,11 @@ export function registerHardcoverRoutes(app: FastifyInstance) {
         editionId: z.number().int().positive().nullable(),
       })
       .parse(req.body);
-    return setHardcoverRecordingEdition(workId, recordingId, editionId);
+    return setHardcoverRecordingEdition(
+      currentUserId(req),
+      workId,
+      recordingId,
+      editionId,
+    );
   });
 }

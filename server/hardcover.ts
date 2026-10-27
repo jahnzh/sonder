@@ -1,9 +1,14 @@
-import { ADMIN_USER_ID } from "./users.ts";
+import {
+  getUserSecret,
+  getUserSetting,
+  listUserIds,
+  setUserSecret,
+  setUserSetting,
+} from "./users.ts";
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
-import { getSecret, getSetting } from "./services.ts";
 export type ShelfStatus = 1 | 2 | 3 | 4 | 5;
 export type SyncMode = "off" | "import" | "two-way";
 const shelfStatus = z.union([
@@ -109,71 +114,147 @@ const defaults: State = {
   lastError: null,
   listWarning: null,
 };
-let generation = 0;
-let syncing = false;
+// Every Hardcover account belongs to one Sonder user (#15): its key, state, queues and
+// in-flight sync are all looked up by user id, so a request only ever carries that user's key.
+type Runtime = {
+  generation: number;
+  syncing: boolean;
+  retryAt: number;
+  activeSync: Promise<SyncSummary> | null;
+};
+const runtimes = new Map<number, Runtime>();
+function runtime(userId: number) {
+  let value = runtimes.get(userId);
+  if (!value) {
+    value = { generation: 0, syncing: false, retryAt: 0, activeSync: null };
+    runtimes.set(userId, value);
+  }
+  return value;
+}
 let requestTail: Promise<unknown> = Promise.resolve();
 let lastRequest = 0;
-let retryAt = 0;
-let activeSync: Promise<SyncSummary> | null = null;
-type ReaderProgressJob = {
-  book_id: number;
-  account_id: number;
-  work_id: string;
-  fraction: number;
-  updated_at: number;
-  error: string | null;
+const hardcoverKey = (userId: number) => getUserSecret(userId, "hardcover");
+const T = {
+  links: s.userHardcoverLinks,
+  outbox: s.userHardcoverOutbox,
+  reading: s.userHardcoverReadingOutbox,
+  progress: s.userHardcoverProgress,
+  lists: s.userHardcoverLists,
+  reads: s.userHardcoverReads,
+  editions: s.userHardcoverRecordingEditions,
 };
-const readerProgressJobs = () =>
-  sqlite
-    .prepare("SELECT * FROM hardcover_reading_outbox")
-    .all() as ReaderProgressJob[];
-function state(): State {
+const userLink = (userId: number, bookId: number) =>
+  db
+    .select()
+    .from(T.links)
+    .where(and(eq(T.links.userId, userId), eq(T.links.bookId, bookId)))
+    .get();
+const statusJob = (userId: number, bookId: number) =>
+  db
+    .select()
+    .from(T.outbox)
+    .where(and(eq(T.outbox.userId, userId), eq(T.outbox.bookId, bookId)))
+    .get();
+const progressJob = (userId: number, bookId: number) =>
+  db
+    .select()
+    .from(T.progress)
+    .where(and(eq(T.progress.userId, userId), eq(T.progress.bookId, bookId)))
+    .get();
+const readingJob = (userId: number, bookId: number) =>
+  db
+    .select()
+    .from(T.reading)
+    .where(and(eq(T.reading.userId, userId), eq(T.reading.bookId, bookId)))
+    .get();
+const lastRead = (userId: number, bookId: number) =>
+  db
+    .select()
+    .from(T.reads)
+    .where(and(eq(T.reads.userId, userId), eq(T.reads.bookId, bookId)))
+    .get();
+const deleteStatusJob = (userId: number, bookId: number) =>
+  db
+    .delete(T.outbox)
+    .where(and(eq(T.outbox.userId, userId), eq(T.outbox.bookId, bookId)))
+    .run();
+const deleteProgressJob = (userId: number, bookId: number) =>
+  db
+    .delete(T.progress)
+    .where(and(eq(T.progress.userId, userId), eq(T.progress.bookId, bookId)))
+    .run();
+const deleteReadingJob = (userId: number, bookId: number) =>
+  db
+    .delete(T.reading)
+    .where(and(eq(T.reading.userId, userId), eq(T.reading.bookId, bookId)))
+    .run();
+const localProgress = (userId: number, recordingId: string) =>
+  db
+    .select()
+    .from(s.userProgress)
+    .where(
+      and(
+        eq(s.userProgress.userId, userId),
+        eq(s.userProgress.recordingId, recordingId),
+      ),
+    )
+    .get();
+const libraryEntry = (userId: number, bookId: string) =>
+  db
+    .select()
+    .from(s.userLibrary)
+    .where(
+      and(eq(s.userLibrary.userId, userId), eq(s.userLibrary.bookId, bookId)),
+    )
+    .get();
+function queuedJobs(userId: number) {
+  return [
+    ...db.select().from(T.outbox).where(eq(T.outbox.userId, userId)).all(),
+    ...db.select().from(T.progress).where(eq(T.progress.userId, userId)).all(),
+    ...db.select().from(T.reading).where(eq(T.reading.userId, userId)).all(),
+  ];
+}
+function state(userId: number): State {
   try {
-    return { ...defaults, ...JSON.parse(getSetting("hardcoverState") || "{}") };
+    return {
+      ...defaults,
+      ...JSON.parse(getUserSetting(userId, "hardcoverState") || "{}"),
+    };
   } catch {
     return { ...defaults };
   }
 }
-function writeState(patch: Partial<State>) {
-  const value = JSON.stringify({ ...state(), ...patch });
-  db.insert(s.settings)
-    .values({ key: "hardcoverState", value })
-    .onConflictDoUpdate({ target: s.settings.key, set: { value } })
-    .run();
+function writeState(userId: number, patch: Partial<State>) {
+  setUserSetting(
+    userId,
+    "hardcoverState",
+    JSON.stringify({ ...state(userId), ...patch }),
+  );
 }
-export function resetHardcoverAccount() {
-  generation++;
+export function resetHardcoverAccount(userId: number) {
+  runtime(userId).generation++;
   sqlite.transaction(() => {
-    writeState({ ...defaults });
-    db.delete(s.hardcoverOutbox).run();
-    db.delete(s.hardcoverProgress).run();
-    sqlite.prepare("DELETE FROM hardcover_reading_outbox").run();
-    db.delete(s.hardcoverReads).run();
-    db.delete(s.hardcoverLists).run();
-    db.update(s.hardcoverLinks)
-      .set({
-        userBookId: null,
-        statusId: null,
-        remoteUpdatedAt: 0,
-        syncedAt: 0,
-      })
-      .run();
+    writeState(userId, { ...defaults });
+    for (const table of [T.outbox, T.progress, T.reading, T.reads, T.lists, T.links])
+      db.delete(table).where(eq(table.userId, userId)).run();
   })();
 }
-export function hardcoverState() {
-  const data = state();
+export function setHardcoverToken(userId: number, token: string) {
+  if (token !== hardcoverKey(userId)) resetHardcoverAccount(userId);
+  setUserSecret(userId, "hardcover", token);
+}
+export function hardcoverState(userId: number) {
+  const data = state(userId);
   return {
     ...data,
-    configured: !!getSecret("hardcover"),
-    syncing,
-    pending:
-      db.select().from(s.hardcoverOutbox).all().length +
-      db.select().from(s.hardcoverProgress).all().length +
-      readerProgressJobs().length,
+    configured: !!hardcoverKey(userId),
+    syncing: runtime(userId).syncing,
+    pending: queuedJobs(userId).length,
     linked: db.select().from(s.hardcoverLinks).all().length,
     lists: db
       .select()
-      .from(s.hardcoverLists)
+      .from(T.lists)
+      .where(eq(T.lists.userId, userId))
       .all()
       .map((l) => ({
         id: l.id,
@@ -190,24 +271,30 @@ export function hardcoverState() {
     ],
   };
 }
-export function configureHardcover(mode: SyncMode, syncLists: boolean) {
-  if (mode !== state().mode) generation++;
-  writeState({ mode, syncLists, lastError: null });
-  return hardcoverState();
+export function configureHardcover(
+  userId: number,
+  mode: SyncMode,
+  syncLists: boolean,
+) {
+  if (mode !== state(userId).mode) runtime(userId).generation++;
+  writeState(userId, { mode, syncLists, lastError: null });
+  return hardcoverState(userId);
 }
 async function graphql<T>(
+  userId: number,
   query: string,
   variables: Record<string, unknown>,
   schema: z.ZodType<T>,
 ): Promise<T> {
-  const expectedGeneration = generation;
+  const live = runtime(userId);
+  const expectedGeneration = live.generation;
   const run = async () => {
-    if (generation !== expectedGeneration)
+    if (live.generation !== expectedGeneration)
       throw new Error("The Hardcover connection changed. Sync again.");
-    const key = getSecret("hardcover");
+    const key = hardcoverKey(userId);
     if (!key)
       throw new Error("Add your Hardcover API token in Settings first.");
-    if (retryAt > Date.now())
+    if (live.retryAt > Date.now())
       throw new Error(
         "Hardcover is rate limiting requests. Your changes are saved and will retry shortly.",
       );
@@ -237,7 +324,7 @@ async function graphql<T>(
     }
     if (response.status === 429) {
       const seconds = Number(response.headers.get("Retry-After")) || 60;
-      retryAt = Date.now() + Math.min(3600, seconds) * 1000;
+      live.retryAt = Date.now() + Math.min(3600, seconds) * 1000;
       throw new Error(
         "Hardcover is rate limiting requests. Your changes are saved and will retry shortly.",
       );
@@ -261,7 +348,7 @@ async function graphql<T>(
           .join("; ")
           .slice(0, 450)}`,
       );
-    if (generation !== expectedGeneration)
+    if (live.generation !== expectedGeneration)
       throw new Error("The Hardcover connection changed. Sync again.");
     const parsed = schema.safeParse(envelope.data);
     if (!parsed.success)
@@ -274,8 +361,9 @@ async function graphql<T>(
   requestTail = task.catch(() => {});
   return task;
 }
-export async function hardcoverSearch(query: string) {
+export async function hardcoverSearch(userId: number, query: string) {
   const data = await graphql(
+    userId,
     'query SonderSearch($q:String!){search(query:$q,query_type:"Book",per_page:12,page:1){results}}',
     { q: query },
     z.object({ search: z.object({ results: z.unknown() }) }),
@@ -302,6 +390,7 @@ export async function hardcoverSearch(query: string) {
   // Search documents do not consistently include the canonical slug. Resolve
   // all results in one catalog request instead of guessing URLs from IDs/titles.
   const catalog = await graphql(
+    userId,
     "query SonderSearchLinks($ids:[Int!]!){books(where:{id:{_in:$ids}}){id slug}}",
     { ids },
     z.object({
@@ -324,8 +413,9 @@ export async function hardcoverSearch(query: string) {
     })),
   };
 }
-export async function hardcoverBook(id: number) {
+export async function hardcoverBook(userId: number, id: number) {
   const result = await graphql(
+    userId,
     `query SonderBook($id:Int!){books_by_pk(id:$id){${bookFields}}}`,
     { id },
     z.object({ books_by_pk: catalogBook.nullable() }),
@@ -334,8 +424,9 @@ export async function hardcoverBook(id: number) {
     throw new Error("Hardcover could not find this book.");
   return result.books_by_pk;
 }
-async function account() {
+async function account(userId: number) {
   const data = await graphql(
+    userId,
     "query SonderAccount{me{id username}}",
     {},
     z.object({
@@ -350,16 +441,20 @@ async function account() {
     );
   return data.me[0];
 }
-export async function testHardcover() {
-  const who = await account();
-  const current = state();
+export async function testHardcover(userId: number) {
+  const who = await account(userId);
+  const current = state(userId);
   if (current.accountId !== null && current.accountId !== who.id) {
-    resetHardcoverAccount();
+    resetHardcoverAccount(userId);
     throw new Error(
       "This token belongs to a different Hardcover account. Choose a sync mode again before syncing.",
     );
   }
-  writeState({ accountId: who.id, username: who.username, lastError: null });
+  writeState(userId, {
+    accountId: who.id,
+    username: who.username,
+    lastError: null,
+  });
   return who;
 }
 function authorOf(book: CatalogBook) {
@@ -400,6 +495,15 @@ function parseRemoteTime(value: string | undefined | null) {
   const n = value ? Date.parse(value) : 0;
   return Number.isFinite(n) ? n : 0;
 }
+export function hardcoverLinkedBook(workId: string) {
+  return db
+    .select()
+    .from(s.hardcoverLinks)
+    .where(eq(s.hardcoverLinks.workId, workId))
+    .get()?.bookId;
+}
+// The work → Hardcover book match is a shared catalogue fact, so moving it clears
+// every user's queued work for the old book on this work.
 function metadataLink(workId: string, book: CatalogBook) {
   const existing = db
     .select()
@@ -407,11 +511,11 @@ function metadataLink(workId: string, book: CatalogBook) {
     .where(eq(s.hardcoverLinks.workId, workId))
     .get();
   if (existing && existing.bookId !== book.id) {
-    sqlite
-      .prepare(
-        "DELETE FROM hardcover_reading_outbox WHERE book_id=? AND work_id=?",
+    db.delete(T.reading)
+      .where(
+        and(eq(T.reading.bookId, existing.bookId), eq(T.reading.workId, workId)),
       )
-      .run(existing.bookId, workId);
+      .run();
     const recordingIds = db
       .select()
       .from(s.editions)
@@ -426,18 +530,16 @@ function metadataLink(workId: string, book: CatalogBook) {
       )
       .map((r) => r.id);
     for (const recordingId of recordingIds)
-      db.delete(s.hardcoverRecordingEditions)
-        .where(eq(s.hardcoverRecordingEditions.recordingId, recordingId))
+      db.delete(T.editions)
+        .where(eq(T.editions.recordingId, recordingId))
         .run();
-    const queued = db
+    for (const queued of db
       .select()
-      .from(s.hardcoverProgress)
-      .where(eq(s.hardcoverProgress.bookId, existing.bookId))
-      .get();
-    if (queued && recordingIds.includes(queued.recordingId))
-      db.delete(s.hardcoverProgress)
-        .where(eq(s.hardcoverProgress.bookId, existing.bookId))
-        .run();
+      .from(T.progress)
+      .where(eq(T.progress.bookId, existing.bookId))
+      .all())
+      if (recordingIds.includes(queued.recordingId))
+        deleteProgressJob(queued.userId, existing.bookId);
     if (
       !db
         .select()
@@ -446,9 +548,7 @@ function metadataLink(workId: string, book: CatalogBook) {
         .all()
         .some((l) => l.workId !== workId)
     )
-      db.delete(s.hardcoverOutbox)
-        .where(eq(s.hardcoverOutbox.bookId, existing.bookId))
-        .run();
+      db.delete(T.outbox).where(eq(T.outbox.bookId, existing.bookId)).run();
   }
   const values = {
     workId,
@@ -501,33 +601,39 @@ function audioForWork(workId: string) {
     );
   });
 }
-function applyStatus(bookId: number, status: ShelfStatus) {
+function applyStatus(userId: number, bookId: number, status: ShelfStatus) {
   for (const link of linkRepresentatives(bookId)) {
     for (const edition of db
       .select()
       .from(s.editions)
       .where(eq(s.editions.workId, link.workId))
       .all())
-      // #15: per-user Hardcover worker generalises this
       db.update(s.userLibrary)
         .set({ status: localStatus(status) })
-        .where(and(eq(s.userLibrary.userId, ADMIN_USER_ID), eq(s.userLibrary.bookId, edition.id)))
+        .where(
+          and(
+            eq(s.userLibrary.userId, userId),
+            eq(s.userLibrary.bookId, edition.id),
+          ),
+        )
         .run();
   }
 }
-function storeRemoteEntry(remote: Entry, apply = true) {
-  db.update(s.hardcoverLinks)
-    .set({
-      userBookId: remote.id,
-      statusId: remote.status_id,
-      remoteUpdatedAt: parseRemoteTime(remote.updated_at),
-      syncedAt: Date.now(),
-    })
-    .where(eq(s.hardcoverLinks.bookId, remote.book_id))
+function storeRemoteEntry(userId: number, remote: Entry, apply = true) {
+  const values = {
+    userBookId: remote.id,
+    statusId: remote.status_id,
+    remoteUpdatedAt: parseRemoteTime(remote.updated_at),
+    syncedAt: Date.now(),
+  };
+  db.insert(T.links)
+    .values({ userId, bookId: remote.book_id, ...values })
+    .onConflictDoUpdate({ target: [T.links.userId, T.links.bookId], set: values })
     .run();
-  if (apply) applyStatus(remote.book_id, remote.status_id);
+  if (apply) applyStatus(userId, remote.book_id, remote.status_id);
 }
 function importCatalogBook(
+  userId: number,
   book: CatalogBook,
   status: ShelfStatus | null = null,
   forceLibrary = false,
@@ -594,23 +700,15 @@ function importCatalogBook(
       .from(s.editions)
       .where(eq(s.editions.workId, links[0].workId))
       .get()!;
-  if (forceLibrary)
-    // #15: per-user Hardcover worker generalises this
-    db.delete(s.userHiddenLibrary)
-      .where(and(eq(s.userHiddenLibrary.userId, ADMIN_USER_ID), eq(s.userHiddenLibrary.bookId, representative.id)))
-      .run();
-  if (
-    !db
-      .select()
-      // #15: per-user Hardcover worker generalises this
-      .from(s.userHiddenLibrary)
-      .where(and(eq(s.userHiddenLibrary.userId, ADMIN_USER_ID), eq(s.userHiddenLibrary.bookId, representative.id)))
-      .get()
-  )
-    // #15: per-user Hardcover worker generalises this
+  const hidden = and(
+    eq(s.userHiddenLibrary.userId, userId),
+    eq(s.userHiddenLibrary.bookId, representative.id),
+  );
+  if (forceLibrary) db.delete(s.userHiddenLibrary).where(hidden).run();
+  if (!db.select().from(s.userHiddenLibrary).where(hidden).get())
     db.insert(s.userLibrary)
       .values({
-        userId: ADMIN_USER_ID,
+        userId,
         bookId: representative.id,
         status: localStatus(status || 1),
         addedAt: Date.now(),
@@ -626,103 +724,85 @@ function importCatalogBook(
         .where(eq(s.editions.workId, link.workId))
         .all())
         if (e.id.startsWith("hc-") && !audio.some((a) => a.id === e.id))
-          // #15: per-user Hardcover worker generalises this
-          db.delete(s.userLibrary).where(and(eq(s.userLibrary.userId, ADMIN_USER_ID), eq(s.userLibrary.bookId, e.id))).run();
+          db.delete(s.userLibrary)
+            .where(
+              and(
+                eq(s.userLibrary.userId, userId),
+                eq(s.userLibrary.bookId, e.id),
+              ),
+            )
+            .run();
   }
   return { bookId: representative.id, matched, imported };
 }
-export function hardcoverForWork(workId: string) {
+export function hardcoverForWork(userId: number, workId: string) {
   const link = db
     .select()
     .from(s.hardcoverLinks)
     .where(eq(s.hardcoverLinks.workId, workId))
     .get();
   if (!link) return undefined;
-  const pending = db
-    .select()
-    .from(s.hardcoverOutbox)
-    .where(eq(s.hardcoverOutbox.bookId, link.bookId))
-    .get();
+  const pending = statusJob(userId, link.bookId);
+  const queued = progressJob(userId, link.bookId);
   return {
     id: link.bookId,
     slug: link.slug,
     series: link.series,
-    statusId: pending?.statusId ?? link.statusId,
+    statusId: pending?.statusId ?? userLink(userId, link.bookId)?.statusId ?? null,
     pending: !!pending,
-    progressFraction: (() => {
-      const queued = db
-        .select()
-        .from(s.hardcoverProgress)
-        .where(eq(s.hardcoverProgress.bookId, link.bookId))
-        .get();
-      return queued
-        ? queued.position / queued.duration
-        : (db
-            .select()
-            .from(s.hardcoverReads)
-            .where(eq(s.hardcoverReads.bookId, link.bookId))
-            .get()?.fraction ?? null);
-    })(),
-    progressPending: !!db
-      .select()
-      .from(s.hardcoverProgress)
-      .where(eq(s.hardcoverProgress.bookId, link.bookId))
-      .get(),
-    syncError:
-      pending?.error ||
-      db
-        .select()
-        .from(s.hardcoverProgress)
-        .where(eq(s.hardcoverProgress.bookId, link.bookId))
-        .get()?.error ||
-      null,
+    progressFraction: queued
+      ? queued.position / queued.duration
+      : (lastRead(userId, link.bookId)?.fraction ?? null),
+    progressPending: !!queued,
+    syncError: pending?.error || queued?.error || null,
     listIds: db
       .select()
-      .from(s.hardcoverLists)
+      .from(T.lists)
+      .where(eq(T.lists.userId, userId))
       .all()
       .filter((l) => l.members.some((m) => m.bookId === link.bookId))
       .map((l) => l.id),
   };
 }
+function canWrite(userId: number) {
+  const current = state(userId);
+  return (
+    current.mode === "two-way" &&
+    current.accountId !== null &&
+    !!hardcoverKey(userId)
+  );
+}
 export function queueHardcoverStatus(
+  userId: number,
   workId: string,
   status: "unread" | "listening" | "finished",
   intent: "status" | "add" = "status",
   updatedAt = Date.now(),
 ) {
-  const current = state();
-  if (
-    current.mode !== "two-way" ||
-    current.accountId === null ||
-    !getSecret("hardcover")
-  )
-    return;
-  const link = db
-    .select()
-    .from(s.hardcoverLinks)
-    .where(eq(s.hardcoverLinks.workId, workId))
-    .get();
-  if (!link) return;
+  if (!canWrite(userId)) return;
+  const bookId = hardcoverLinkedBook(workId);
+  if (bookId === undefined) return;
   queueStatus(
-    link.bookId,
+    userId,
+    bookId,
     status === "finished" ? 3 : status === "listening" ? 2 : 1,
     intent,
     updatedAt,
   );
 }
 function queueStatus(
+  userId: number,
   bookId: number,
   statusId: ShelfStatus,
   intent: "status" | "add" = "status",
   updatedAt = Date.now(),
 ) {
-  const current = state();
+  const current = state(userId);
   if (current.mode !== "two-way" || current.accountId === null)
     throw new Error(
       "Enable two-way Hardcover sync and sync your account first.",
     );
   const values = {
-    bookId,
     statusId,
     accountId: current.accountId,
     intent,
@@ -730,21 +810,21 @@ function queueStatus(
     error: null,
   };
   if (statusId !== 2) {
-    sqlite
-      .prepare("DELETE FROM hardcover_reading_outbox WHERE book_id=?")
-      .run(bookId);
-    db.delete(s.hardcoverProgress)
-      .where(eq(s.hardcoverProgress.bookId, bookId))
-      .run();
+    deleteReadingJob(userId, bookId);
+    deleteProgressJob(userId, bookId);
   }
-  db.insert(s.hardcoverOutbox)
-    .values(values)
-    .onConflictDoUpdate({ target: s.hardcoverOutbox.bookId, set: values })
+  db.insert(T.outbox)
+    .values({ userId, bookId, ...values })
+    .onConflictDoUpdate({ target: [T.outbox.userId, T.outbox.bookId], set: values })
     .run();
-  applyStatus(bookId, statusId);
+  applyStatus(userId, bookId, statusId);
 }
-export async function importHardcoverBook(id: number, workId?: string) {
-  const book = await hardcoverBook(id);
+export async function importHardcoverBook(
+  userId: number,
+  id: number,
+  workId?: string,
+) {
+  const book = await hardcoverBook(userId, id);
   let added;
   sqlite.transaction(() => {
     if (workId) {
@@ -752,26 +832,28 @@ export async function importHardcoverBook(id: number, workId?: string) {
         throw new Error("This local book could not be found.");
       metadataLink(workId, book);
     }
-    added = importCatalogBook(book, null, true);
+    added = importCatalogBook(userId, book, null, true);
   })();
-  if (!workId && state().mode === "two-way" && state().accountId !== null)
-    queueStatus(id, 1, "add");
+  const current = state(userId);
+  if (!workId && current.mode === "two-way" && current.accountId !== null)
+    queueStatus(userId, id, 1, "add");
   return added!;
 }
-export function setHardcoverShelf(workId: string, statusId: ShelfStatus) {
-  const link = db
-    .select()
-    .from(s.hardcoverLinks)
-    .where(eq(s.hardcoverLinks.workId, workId))
-    .get();
-  if (!link) throw new Error("Match this book on Hardcover first.");
-  queueStatus(link.bookId, statusId);
+export function setHardcoverShelf(
+  userId: number,
+  workId: string,
+  statusId: ShelfStatus,
+) {
+  const bookId = hardcoverLinkedBook(workId);
+  if (bookId === undefined) throw new Error("Match this book on Hardcover first.");
+  queueStatus(userId, bookId, statusId);
   return { queued: true };
 }
-async function fetchEntries(who: number) {
+async function fetchEntries(userId: number, who: number) {
   const entries: Entry[] = [];
   for (let offset = 0; offset < 50000; offset += 250) {
     const page = await graphql(
+      userId,
       `query SonderLibrary($userId:Int!,$offset:Int!){user_books(where:{user_id:{_eq:$userId},status_id:{_in:[1,2,3,4,5]}},order_by:{id:asc},limit:250,offset:$offset){${entryFields}}}`,
       { userId: who, offset },
       z.object({ user_books: z.array(entry) }),
@@ -790,10 +872,11 @@ const ownedList = z.object({
   slug: z.string().nullable(),
   books_count: z.number(),
 });
-async function fetchLists(who: number) {
+async function fetchLists(userId: number, who: number) {
   const lists: z.infer<typeof ownedList>[] = [];
   for (let offset = 0; offset < 10000; offset += 250) {
     const result = await graphql(
+      userId,
       "query SonderLists($userId:Int!,$offset:Int!){lists(where:{user_id:{_eq:$userId}},order_by:{id:asc},limit:250,offset:$offset){id user_id name slug books_count}}",
       { userId: who, offset },
       z.object({ lists: z.array(ownedList) }),
@@ -815,6 +898,7 @@ async function fetchLists(who: number) {
     const ids = lists.slice(i, i + 100).map((l) => l.id);
     for (let offset = 0; offset < 50000; offset += 500) {
       const result = await graphql(
+        userId,
         `query SonderListBooks($ids:[Int!]!,$offset:Int!){list_books(where:{list_id:{_in:$ids}},order_by:{id:asc},limit:500,offset:$offset){id list_id book_id book{${bookFields}}}}`,
         { ids, offset },
         z.object({
@@ -839,7 +923,8 @@ async function fetchLists(who: number) {
   return { lists, members };
 }
 async function pushStatus(
-  job: typeof s.hardcoverOutbox.$inferSelect,
+  userId: number,
+  job: { bookId: number; statusId: number },
   remote?: Entry,
 ) {
   const schema = z.object({
@@ -849,6 +934,7 @@ async function pushStatus(
   let updated: Entry;
   if (remote) {
     const response = await graphql(
+      userId,
       `mutation SonderShelfUpdate($id:Int!,$object:UserBookUpdateInput!){update_user_book(id:$id,object:$object){error user_book{${entryFields}}}}`,
       { id: remote.id, object: { status_id: job.statusId } },
       z.object({ update_user_book: schema }),
@@ -861,6 +947,7 @@ async function pushStatus(
     updated = response.update_user_book.user_book;
   } else {
     const response = await graphql(
+      userId,
       `mutation SonderShelfAdd($object:UserBookCreateInput!){insert_user_book(object:$object){error user_book{${entryFields}}}}`,
       { object: { book_id: job.bookId, status_id: job.statusId } },
       z.object({ insert_user_book: schema }),
@@ -887,11 +974,12 @@ export type SyncSummary = {
   pending: number;
   progress: number;
 };
-async function runSync(): Promise<SyncSummary> {
-  if (state().mode === "off")
+async function runSync(userId: number): Promise<SyncSummary> {
+  if (state(userId).mode === "off")
     throw new Error("Choose import or two-way library sync in Settings first.");
-  const expectedGeneration = generation;
-  syncing = true;
+  const live = runtime(userId);
+  const expectedGeneration = live.generation;
+  live.syncing = true;
   const ownStatusWrites = new Set<number>();
   const summary: SyncSummary = {
     imported: 0,
@@ -903,50 +991,43 @@ async function runSync(): Promise<SyncSummary> {
     progress: 0,
   };
   try {
-    const who = await testHardcover();
-    const snapshot = await fetchEntries(who.id);
+    const who = await testHardcover(userId);
+    const snapshot = await fetchEntries(userId, who.id);
     let listData: Awaited<ReturnType<typeof fetchLists>> | null = null;
     let listWarning: string | null = null;
-    if (state().syncLists) {
+    if (state(userId).syncLists) {
       try {
-        listData = await fetchLists(who.id);
+        listData = await fetchLists(userId, who.id);
       } catch (error) {
         listWarning = (error as Error).message;
       }
     }
-    if (generation !== expectedGeneration)
+    if (live.generation !== expectedGeneration)
       throw new Error("The Hardcover connection changed. Sync again.");
     // Only a complete, validated snapshot is committed. Neither remote deletions nor missing pages delete local books.
     sqlite.transaction(() => {
       for (const remote of snapshot) {
-        const added = importCatalogBook(remote.book, remote.status_id);
+        const added = importCatalogBook(userId, remote.book, remote.status_id);
         summary.imported += Number(added.imported);
         summary.matched += Number(added.matched);
-        bootstrapLocalProgress(remote);
-        const dirty = db
-          .select()
-          .from(s.hardcoverOutbox)
-          .where(eq(s.hardcoverOutbox.bookId, remote.book_id))
-          .get();
-        const progressDirty = db
-          .select()
-          .from(s.hardcoverProgress)
-          .where(eq(s.hardcoverProgress.bookId, remote.book_id))
-          .get();
-        storeRemoteEntry(remote, !dirty && !progressDirty);
-        if (!dirty) pullRemoteProgress(remote);
+        bootstrapLocalProgress(userId, remote);
+        const dirty = statusJob(userId, remote.book_id);
+        const progressDirty = progressJob(userId, remote.book_id);
+        storeRemoteEntry(userId, remote, !dirty && !progressDirty);
+        if (!dirty) pullRemoteProgress(userId, remote);
       }
       if (listData) {
-        db.delete(s.hardcoverLists).run();
+        db.delete(T.lists).where(eq(T.lists.userId, userId)).run();
         for (const list of listData.lists) {
           const members = listData.members.filter((m) => m.list_id === list.id);
           for (const item of members) {
-            const added = importCatalogBook(item.book);
+            const added = importCatalogBook(userId, item.book);
             summary.imported += Number(added.imported);
             summary.matched += Number(added.matched);
           }
-          db.insert(s.hardcoverLists)
+          db.insert(T.lists)
             .values({
+              userId,
               id: list.id,
               accountId: who.id,
               name: list.name,
@@ -959,8 +1040,12 @@ async function runSync(): Promise<SyncSummary> {
         summary.lists = listData.lists.length;
       }
     })();
-    if (state().mode === "two-way") {
-      const jobs = db.select().from(s.hardcoverOutbox).all();
+    if (state(userId).mode === "two-way") {
+      const jobs = db
+        .select()
+        .from(T.outbox)
+        .where(eq(T.outbox.userId, userId))
+        .all();
       for (const job of jobs) {
         if (job.accountId !== who.id) continue;
         const remote = snapshot.find((e) => e.book_id === job.bookId);
@@ -973,114 +1058,106 @@ async function runSync(): Promise<SyncSummary> {
             if (remote && remote.status_id !== job.statusId)
               summary.conflicts++;
           } else {
-            result = await pushStatus(job, remote);
+            result = await pushStatus(userId, job, remote);
             ownStatusWrites.add(job.bookId);
             summary.pushed++;
             if (remote) snapshot[snapshot.indexOf(remote)] = result;
             else snapshot.push(result);
           }
           // A new local action arriving during a request must keep its own outbox entry.
-          const latest = db
-            .select()
-            .from(s.hardcoverOutbox)
-            .where(eq(s.hardcoverOutbox.bookId, job.bookId))
-            .get();
+          const latest = statusJob(userId, job.bookId);
           if (latest?.updatedAt === job.updatedAt) {
             sqlite.transaction(() => {
-              if (result) storeRemoteEntry(result);
-              db.delete(s.hardcoverOutbox)
-                .where(eq(s.hardcoverOutbox.bookId, job.bookId))
-                .run();
+              if (result) storeRemoteEntry(userId, result);
+              deleteStatusJob(userId, job.bookId);
             })();
           }
         } catch (error) {
-          const latest = db
-            .select()
-            .from(s.hardcoverOutbox)
-            .where(eq(s.hardcoverOutbox.bookId, job.bookId))
-            .get();
+          const latest = statusJob(userId, job.bookId);
           if (latest?.updatedAt === job.updatedAt)
-            db.update(s.hardcoverOutbox)
+            db.update(T.outbox)
               .set({ error: (error as Error).message })
-              .where(eq(s.hardcoverOutbox.bookId, job.bookId))
+              .where(
+                and(eq(T.outbox.userId, userId), eq(T.outbox.bookId, job.bookId)),
+              )
               .run();
         }
       }
     }
-    if (state().mode === "two-way") {
-      summary.progress = await flushProgress(snapshot, who.id, ownStatusWrites);
-      summary.progress += await flushReaderProgress(snapshot, who.id);
+    if (state(userId).mode === "two-way") {
+      summary.progress = await flushProgress(
+        userId,
+        snapshot,
+        who.id,
+        ownStatusWrites,
+      );
+      summary.progress += await flushReaderProgress(userId, snapshot, who.id);
     }
-    summary.pending =
-      db.select().from(s.hardcoverOutbox).all().length +
-      db.select().from(s.hardcoverProgress).all().length +
-      readerProgressJobs().length;
-    const failed = [
-      ...db.select().from(s.hardcoverOutbox).all(),
-      ...db.select().from(s.hardcoverProgress).all(),
-      ...readerProgressJobs(),
-    ].find((j) => j.error);
-    writeState({
+    const queued = queuedJobs(userId);
+    summary.pending = queued.length;
+    writeState(userId, {
       lastSync: Date.now(),
-      lastError: failed?.error || null,
+      lastError: queued.find((j) => j.error)?.error || null,
       listWarning,
     });
     return summary;
   } catch (error) {
-    writeState({ lastError: (error as Error).message });
+    writeState(userId, { lastError: (error as Error).message });
     throw error;
   } finally {
-    syncing = false;
+    live.syncing = false;
   }
 }
-export function syncHardcover() {
-  if (activeSync) return activeSync;
-  activeSync = runSync().finally(() => {
-    activeSync = null;
+export function syncHardcover(userId: number) {
+  const live = runtime(userId);
+  if (live.activeSync) return live.activeSync;
+  live.activeSync = runSync(userId).finally(() => {
+    live.activeSync = null;
   });
-  return activeSync;
+  return live.activeSync;
 }
-export async function tickHardcover() {
-  const current = state();
-  if (!getSecret("hardcover") || current.mode === "off" || retryAt > Date.now())
+async function tickUser(userId: number) {
+  const current = state(userId);
+  if (
+    !hardcoverKey(userId) ||
+    current.mode === "off" ||
+    runtime(userId).retryAt > Date.now()
+  )
     return;
   if (
     current.lastSync &&
     Date.now() - current.lastSync < 900000 &&
-    !db.select().from(s.hardcoverOutbox).get() &&
-    !db.select().from(s.hardcoverProgress).get() &&
-    !readerProgressJobs().length
+    !queuedJobs(userId).length
   )
     return;
-  await syncHardcover();
+  await syncHardcover(userId);
+}
+export async function tickHardcover() {
+  // One user's failing account must not hold back the others.
+  for (const userId of listUserIds()) await tickUser(userId).catch(() => {});
 }
 export async function setHardcoverListMember(
+  userId: number,
   listId: number,
   workId: string,
   included: boolean,
 ) {
-  const current = state();
+  const current = state(userId);
   if (current.mode !== "two-way")
     throw new Error(
       "Enable two-way sync to organize Hardcover lists from Sonder.",
     );
-  const who = await testHardcover();
-  const list = db
-    .select()
-    .from(s.hardcoverLists)
-    .where(eq(s.hardcoverLists.id, listId))
-    .get();
+  const who = await testHardcover(userId);
+  const listWhere = and(eq(T.lists.userId, userId), eq(T.lists.id, listId));
+  const list = db.select().from(T.lists).where(listWhere).get();
   if (!list || list.accountId !== who.id)
     throw new Error("Sync your own Hardcover lists before editing them.");
-  const link = db
-    .select()
-    .from(s.hardcoverLinks)
-    .where(eq(s.hardcoverLinks.workId, workId))
-    .get();
-  if (!link) throw new Error("Match this book on Hardcover first.");
+  const bookId = hardcoverLinkedBook(workId);
+  if (bookId === undefined) throw new Error("Match this book on Hardcover first.");
   const found = await graphql(
+    userId,
     "query SonderListMembership($list:Int!,$book:Int!){list_books(where:{list_id:{_eq:$list},book_id:{_eq:$book}},limit:1){id list_id book_id}}",
-    { list: listId, book: link.bookId },
+    { list: listId, book: bookId },
     z.object({
       list_books: z.array(
         z.object({ id: z.number(), list_id: z.number(), book_id: z.number() }),
@@ -1088,15 +1165,13 @@ export async function setHardcoverListMember(
     }),
   );
   let membership = found.list_books[0];
-  if (
-    membership &&
-    (membership.list_id !== listId || membership.book_id !== link.bookId)
-  )
+  if (membership && (membership.list_id !== listId || membership.book_id !== bookId))
     throw new Error("Hardcover returned an unexpected list entry.");
   if (included && !membership) {
     const result = await graphql(
+      userId,
       "mutation SonderListAdd($object:ListBookInput!){insert_list_book(object:$object){id list_book{id list_id book_id}}}",
-      { object: { list_id: listId, book_id: link.bookId } },
+      { object: { list_id: listId, book_id: bookId } },
       z.object({
         insert_list_book: z.object({
           id: z.number().nullable(),
@@ -1113,11 +1188,12 @@ export async function setHardcoverListMember(
     if (!result.insert_list_book.list_book)
       throw new Error("Hardcover did not add the book to this list.");
     membership = result.insert_list_book.list_book;
-    if (membership.list_id !== listId || membership.book_id !== link.bookId)
+    if (membership.list_id !== listId || membership.book_id !== bookId)
       throw new Error("Hardcover returned an unexpected list entry.");
   }
   if (!included && membership) {
     const result = await graphql(
+      userId,
       "mutation SonderListRemove($id:Int!){delete_list_book(id:$id){id}}",
       { id: membership.id },
       z.object({ delete_list_book: z.object({ id: z.number().nullable() }) }),
@@ -1125,18 +1201,12 @@ export async function setHardcoverListMember(
     if (result.delete_list_book.id !== membership.id)
       throw new Error("Hardcover did not remove this list entry.");
   }
-  const latest =
-    db
-      .select()
-      .from(s.hardcoverLists)
-      .where(eq(s.hardcoverLists.id, listId))
-      .get() || list;
-  const members = latest.members.filter((m) => m.bookId !== link.bookId);
-  if (included && membership)
-    members.push({ id: membership.id, bookId: link.bookId });
-  db.update(s.hardcoverLists)
+  const latest = db.select().from(T.lists).where(listWhere).get() || list;
+  const members = latest.members.filter((m) => m.bookId !== bookId);
+  if (included && membership) members.push({ id: membership.id, bookId });
+  db.update(T.lists)
     .set({ members, syncedAt: Date.now() })
-    .where(eq(s.hardcoverLists.id, listId))
+    .where(listWhere)
     .run();
   return { ok: true };
 }
@@ -1152,51 +1222,70 @@ export function hardcoverWorkForMedia(title: string, author: string) {
     );
   return matches.length === 1 ? matches[0].id : undefined;
 }
+// New audio for a linked work replaces metadata-only placeholders on every user's shelf
+// and picks up that user's own Hardcover shelf status and remembered position.
 export function claimHardcoverAudio(workId: string, editionId: string) {
-  const link = db
+  const bookId = hardcoverLinkedBook(workId);
+  if (bookId === undefined) return;
+  const placeholders = db
     .select()
-    .from(s.hardcoverLinks)
-    .where(eq(s.hardcoverLinks.workId, workId))
-    .get();
-  if (!link) return;
-  const dirty = db
-    .select()
-    .from(s.hardcoverOutbox)
-    .where(eq(s.hardcoverOutbox.bookId, link.bookId))
-    .get();
-  const status = (dirty?.statusId || link.statusId || 1) as ShelfStatus;
-  applyStatus(link.bookId, status);
+    .from(s.editions)
+    .where(eq(s.editions.workId, workId))
+    .all()
+    .filter((e) => e.id.startsWith("hc-") && e.id !== editionId);
   const recording = db
     .select()
     .from(s.recordings)
     .where(eq(s.recordings.editionId, editionId))
     .get();
-  const remoteRead = db
-    .select()
-    .from(s.hardcoverReads)
-    .where(eq(s.hardcoverReads.bookId, link.bookId))
-    .get();
-  if (
-    state().mode !== "off" &&
-    recording &&
-    remoteRead?.fraction != null &&
-    !db
-      .select()
-      // #15: per-user Hardcover worker generalises this
-      .from(s.userProgress)
-      .where(and(eq(s.userProgress.userId, ADMIN_USER_ID), eq(s.userProgress.recordingId, recording.id)))
-      .get() &&
-    recordingData(recording.id)?.completeDuration
-  )
-    applyFraction(recording.id, remoteRead.fraction);
-  for (const e of db
-    .select()
-    .from(s.editions)
-    .where(eq(s.editions.workId, workId))
-    .all())
-    if (e.id.startsWith("hc-") && e.id !== editionId)
-      // #15: per-user Hardcover worker generalises this
-      db.delete(s.userLibrary).where(and(eq(s.userLibrary.userId, ADMIN_USER_ID), eq(s.userLibrary.bookId, e.id))).run();
+  for (const userId of listUserIds()) {
+    const shelved = placeholders.flatMap((e) => libraryEntry(userId, e.id) || []);
+    if (
+      shelved.length &&
+      !db
+        .select()
+        .from(s.userHiddenLibrary)
+        .where(
+          and(
+            eq(s.userHiddenLibrary.userId, userId),
+            eq(s.userHiddenLibrary.bookId, editionId),
+          ),
+        )
+        .get()
+    )
+      db.insert(s.userLibrary)
+        .values({
+          userId,
+          bookId: editionId,
+          status: shelved[0].status,
+          addedAt: Date.now(),
+        })
+        .onConflictDoNothing()
+        .run();
+    const dirty = statusJob(userId, bookId);
+    const known = userLink(userId, bookId);
+    if (dirty || known)
+      applyStatus(
+        userId,
+        bookId,
+        (dirty?.statusId || known?.statusId || 1) as ShelfStatus,
+      );
+    const remoteRead = lastRead(userId, bookId);
+    if (
+      state(userId).mode !== "off" &&
+      recording &&
+      remoteRead?.fraction != null &&
+      !localProgress(userId, recording.id) &&
+      recordingData(recording.id)?.completeDuration
+    )
+      applyFraction(userId, recording.id, remoteRead.fraction);
+    for (const e of placeholders)
+      db.delete(s.userLibrary)
+        .where(
+          and(eq(s.userLibrary.userId, userId), eq(s.userLibrary.bookId, e.id)),
+        )
+        .run();
+  }
 }
 function recordingData(recordingId: string) {
   const rec = db
@@ -1226,76 +1315,39 @@ function recordingData(recordingId: string) {
     completeDuration: tracks.length > 0 && tracks.every((t) => t.duration > 0),
   };
 }
-function bootstrapLocalProgress(remote: Entry) {
+function bootstrapLocalProgress(userId: number, remote: Entry) {
   if (
-    state().mode !== "two-way" ||
-    db
-      .select()
-      .from(s.hardcoverReads)
-      .where(eq(s.hardcoverReads.bookId, remote.book_id))
-      .get() ||
-    db
-      .select()
-      .from(s.hardcoverOutbox)
-      .where(eq(s.hardcoverOutbox.bookId, remote.book_id))
-      .get() ||
-    db
-      .select()
-      .from(s.hardcoverProgress)
-      .where(eq(s.hardcoverProgress.bookId, remote.book_id))
-      .get()
+    state(userId).mode !== "two-way" ||
+    lastRead(userId, remote.book_id) ||
+    statusJob(userId, remote.book_id) ||
+    progressJob(userId, remote.book_id)
   )
     return;
-  const recording = chooseLocalRecording(remote.book_id);
+  const recording = chooseLocalRecording(userId, remote.book_id);
   if (!recording) return;
-  const local = db
-    .select()
-    // #15: per-user Hardcover worker generalises this
-    .from(s.userProgress)
-    .where(and(eq(s.userProgress.userId, ADMIN_USER_ID), eq(s.userProgress.recordingId, recording.rec.id)))
-    .get();
+  const local = localProgress(userId, recording.rec.id);
   if (!local || local.updatedAt <= parseRemoteTime(remote.updated_at)) return;
-  const saved = db
-    .select()
-    // #15: per-user Hardcover worker generalises this
-    .from(s.userLibrary)
-    .where(and(eq(s.userLibrary.userId, ADMIN_USER_ID), eq(s.userLibrary.bookId, recording.edition.id)))
-    .get();
+  const saved = libraryEntry(userId, recording.edition.id);
   queueHardcoverStatus(
+    userId,
     recording.edition.workId,
     (saved?.status || "listening") as "unread" | "listening" | "finished",
     "status",
     local.updatedAt,
   );
-  queueHardcoverProgress(recording.rec.id);
-  rememberRead(remote);
+  queueHardcoverProgress(userId, recording.rec.id);
+  rememberRead(userId, remote);
 }
-export function queueHardcoverProgress(recordingId: string) {
-  const current = state();
-  if (
-    current.mode !== "two-way" ||
-    current.accountId === null ||
-    !getSecret("hardcover")
-  )
-    return;
+export function queueHardcoverProgress(userId: number, recordingId: string) {
+  if (!canWrite(userId)) return;
+  const current = state(userId);
   const data = recordingData(recordingId);
   if (!data?.completeDuration) return;
-  const link = db
-    .select()
-    .from(s.hardcoverLinks)
-    .where(eq(s.hardcoverLinks.workId, data.edition.workId))
-    .get();
-  const position = db
-    .select()
-    // #15: per-user Hardcover worker generalises this
-    .from(s.userProgress)
-    .where(and(eq(s.userProgress.userId, ADMIN_USER_ID), eq(s.userProgress.recordingId, recordingId)))
-    .get();
-  if (!link || !position) return;
-  const reading = sqlite
-    .prepare("SELECT updated_at FROM hardcover_reading_outbox WHERE book_id=?")
-    .get(link.bookId) as { updated_at: number } | undefined;
-  if (reading && reading.updated_at > position.updatedAt) return;
+  const bookId = hardcoverLinkedBook(data.edition.workId);
+  const position = localProgress(userId, recordingId);
+  if (bookId === undefined || !position) return;
+  const reading = readingJob(userId, bookId);
+  if (reading && reading.updatedAt > position.updatedAt) return;
   const index = data.tracks.findIndex((t) => t.id === position.trackId);
   if (index < 0) return;
   const absolute = Math.min(
@@ -1303,29 +1355,24 @@ export function queueHardcoverProgress(recordingId: string) {
     data.tracks.slice(0, index).reduce((n, t) => n + t.duration, 0) +
       position.position,
   );
-  const saved = db
-    .select()
-    // #15: per-user Hardcover worker generalises this
-    .from(s.userLibrary)
-    .where(and(eq(s.userLibrary.userId, ADMIN_USER_ID), eq(s.userLibrary.bookId, data.edition.id)))
-    .get();
+  const saved = libraryEntry(userId, data.edition.id);
   if (saved?.status === "finished" && absolute / data.duration < 0.999) return;
   const values = {
-    bookId: link.bookId,
-    accountId: current.accountId,
+    accountId: current.accountId!,
     recordingId,
     position: absolute,
     duration: data.duration,
     updatedAt: position.updatedAt,
     error: null,
   };
-  db.insert(s.hardcoverProgress)
-    .values(values)
-    .onConflictDoUpdate({ target: s.hardcoverProgress.bookId, set: values })
+  db.insert(T.progress)
+    .values({ userId, bookId, ...values })
+    .onConflictDoUpdate({
+      target: [T.progress.userId, T.progress.bookId],
+      set: values,
+    })
     .run();
-  sqlite
-    .prepare("DELETE FROM hardcover_reading_outbox WHERE book_id=?")
-    .run(link.bookId);
+  deleteReadingJob(userId, bookId);
 }
 export function remoteProgressFraction(remote: Entry) {
   if (remote.status_id === 3) return 1;
@@ -1340,60 +1387,58 @@ export function remoteProgressFraction(remote: Entry) {
   return null;
 }
 export function queueHardcoverReadingProgress(
+  userId: number,
   workId: string,
   fraction: number,
   recordingId?: string,
 ) {
-  const current = state();
-  if (
-    current.mode !== "two-way" ||
-    current.accountId === null ||
-    !getSecret("hardcover")
-  )
-    return;
-  const link = db
-    .select()
-    .from(s.hardcoverLinks)
-    .where(eq(s.hardcoverLinks.workId, workId))
-    .get();
-  if (!link) return;
-  queueStatus(link.bookId, fraction >= 0.999 ? 3 : 2);
-  sqlite
-    .prepare(
-      "INSERT INTO hardcover_reading_outbox(book_id,account_id,work_id,fraction,updated_at,error) VALUES(?,?,?,?,?,NULL) ON CONFLICT(book_id) DO UPDATE SET account_id=excluded.account_id,work_id=excluded.work_id,fraction=excluded.fraction,updated_at=excluded.updated_at,error=NULL",
-    )
-    .run(
-      link.bookId,
-      current.accountId,
-      workId,
-      Math.max(0, Math.min(1, fraction)),
-      Date.now(),
-    );
-  db.delete(s.hardcoverProgress)
-    .where(eq(s.hardcoverProgress.bookId, link.bookId))
+  if (!canWrite(userId)) return;
+  const bookId = hardcoverLinkedBook(workId);
+  if (bookId === undefined) return;
+  queueStatus(userId, bookId, fraction >= 0.999 ? 3 : 2);
+  const values = {
+    accountId: state(userId).accountId!,
+    workId,
+    fraction: Math.max(0, Math.min(1, fraction)),
+    updatedAt: Date.now(),
+    error: null,
+  };
+  db.insert(T.reading)
+    .values({ userId, bookId, ...values })
+    .onConflictDoUpdate({
+      target: [T.reading.userId, T.reading.bookId],
+      set: values,
+    })
     .run();
+  deleteProgressJob(userId, bookId);
 }
-async function flushReaderProgress(snapshot: Entry[], who: number) {
+async function flushReaderProgress(
+  userId: number,
+  snapshot: Entry[],
+  who: number,
+) {
   let pushed = 0;
-  for (const job of readerProgressJobs()) {
-    if (job.account_id !== who) continue;
+  for (const job of db
+    .select()
+    .from(T.reading)
+    .where(eq(T.reading.userId, userId))
+    .all()) {
+    if (job.accountId !== who) continue;
+    const sameJob = and(
+      eq(T.reading.userId, userId),
+      eq(T.reading.bookId, job.bookId),
+      eq(T.reading.updatedAt, job.updatedAt),
+    );
     try {
-      if (
-        db
-          .select()
-          .from(s.hardcoverOutbox)
-          .where(eq(s.hardcoverOutbox.bookId, job.book_id))
-          .get()
-      )
-        continue;
+      if (statusJob(userId, job.bookId)) continue;
       const remote =
-        snapshot.find((entry) => entry.book_id === job.book_id) ||
-        (await remoteEntry(job.book_id, who));
+        snapshot.find((entry) => entry.book_id === job.bookId) ||
+        (await remoteEntry(userId, job.bookId, who));
       if (!remote)
         throw new Error(
           "Add this book to your Hardcover library before syncing reading progress.",
         );
-      const read = await ensureRead(remote),
+      const read = await ensureRead(userId, remote),
         pages = read.edition?.pages || remote.book.pages || 0;
       const audio = remote.book.default_audio_edition;
       if (!pages && !audio?.audio_seconds)
@@ -1413,6 +1458,7 @@ async function flushReaderProgress(snapshot: Entry[], who: number) {
           : Math.round(job.fraction * audio!.audio_seconds!),
       };
       const result = await graphql(
+        userId,
         `mutation SonderReadProgress($id:Int!,$object:DatesReadInput!){update_user_book_read(id:$id,object:$object){error user_book_read{${readFields}}}}`,
         { id: read.id, object },
         z.object({
@@ -1431,22 +1477,17 @@ async function flushReaderProgress(snapshot: Entry[], who: number) {
           result.update_user_book_read.error ||
             "Hardcover did not save this reading position.",
         );
-      rememberRead({
+      rememberRead(userId, {
         ...remote,
         user_book_reads: [result.update_user_book_read.user_book_read],
       });
-      sqlite
-        .prepare(
-          "DELETE FROM hardcover_reading_outbox WHERE book_id=? AND updated_at=?",
-        )
-        .run(job.book_id, job.updated_at);
+      db.delete(T.reading).where(sameJob).run();
       pushed++;
     } catch (error) {
-      sqlite
-        .prepare(
-          "UPDATE hardcover_reading_outbox SET error=? WHERE book_id=? AND updated_at=?",
-        )
-        .run((error as Error).message, job.book_id, job.updated_at);
+      db.update(T.reading)
+        .set({ error: (error as Error).message })
+        .where(sameJob)
+        .run();
     }
   }
   return pushed;
@@ -1466,22 +1507,25 @@ function readFingerprint(remote: Entry) {
       : { status: remote.status_id },
   );
 }
-function rememberRead(remote: Entry) {
-  const current = state();
+function rememberRead(userId: number, remote: Entry) {
+  const current = state(userId);
   if (current.accountId === null) return;
   const values = {
-    bookId: remote.book_id,
     accountId: current.accountId,
     snapshot: readFingerprint(remote),
     fraction: remoteProgressFraction(remote),
     syncedAt: Date.now(),
   };
-  db.insert(s.hardcoverReads)
-    .values(values)
-    .onConflictDoUpdate({ target: s.hardcoverReads.bookId, set: values })
+  db.insert(T.reads)
+    .values({ userId, bookId: remote.book_id, ...values })
+    .onConflictDoUpdate({ target: [T.reads.userId, T.reads.bookId], set: values })
     .run();
 }
-function chooseLocalRecording(bookId: number, requested?: string) {
+function chooseLocalRecording(
+  userId: number,
+  bookId: number,
+  requested?: string,
+) {
   const links = linkRepresentatives(bookId);
   const candidates = links
     .flatMap((l) =>
@@ -1503,22 +1547,12 @@ function chooseLocalRecording(bookId: number, requested?: string) {
   return (
     candidates.sort(
       (a, b) =>
-        (db
-          .select()
-          // #15: per-user Hardcover worker generalises this
-          .from(s.userProgress)
-          .where(and(eq(s.userProgress.userId, ADMIN_USER_ID), eq(s.userProgress.recordingId, b.rec.id)))
-          .get()?.updatedAt || 0) -
-        (db
-          .select()
-          // #15: per-user Hardcover worker generalises this
-          .from(s.userProgress)
-          .where(and(eq(s.userProgress.userId, ADMIN_USER_ID), eq(s.userProgress.recordingId, a.rec.id)))
-          .get()?.updatedAt || 0),
+        (localProgress(userId, b.rec.id)?.updatedAt || 0) -
+        (localProgress(userId, a.rec.id)?.updatedAt || 0),
     )[0] || null
   );
 }
-function applyFraction(recordingId: string, fraction: number) {
+function applyFraction(userId: number, recordingId: string, fraction: number) {
   const data = recordingData(recordingId);
   if (!data?.completeDuration)
     throw new Error(
@@ -1545,79 +1579,73 @@ function applyFraction(recordingId: string, fraction: number) {
     duration: track.duration,
     updatedAt: Date.now(),
   };
-  // #15: per-user Hardcover worker generalises this
   db.insert(s.userProgress)
-    .values({ ...value, userId: ADMIN_USER_ID })
-    .onConflictDoUpdate({ target: [s.userProgress.userId, s.userProgress.recordingId], set: value })
+    .values({ ...value, userId })
+    .onConflictDoUpdate({
+      target: [s.userProgress.userId, s.userProgress.recordingId],
+      set: value,
+    })
     .run();
   return value;
 }
 function pullRemoteProgress(
+  userId: number,
   remote: Entry,
   requestedRecording?: string,
   force = false,
 ) {
   const fraction = remoteProgressFraction(remote);
   if (fraction === null) {
-    rememberRead(remote);
+    rememberRead(userId, remote);
     return null;
   }
-  const last = db
-    .select()
-    .from(s.hardcoverReads)
-    .where(eq(s.hardcoverReads.bookId, remote.book_id))
-    .get();
+  const last = lastRead(userId, remote.book_id);
   const changed = !last || last.snapshot !== readFingerprint(remote);
-  const queued = db
-    .select()
-    .from(s.hardcoverProgress)
-    .where(eq(s.hardcoverProgress.bookId, remote.book_id))
-    .get();
-  const target = chooseLocalRecording(remote.book_id, requestedRecording);
+  const queued = progressJob(userId, remote.book_id);
+  const target = chooseLocalRecording(userId, remote.book_id, requestedRecording);
   if (!target) {
-    rememberRead(remote);
+    rememberRead(userId, remote);
     return null;
   }
-  const local = db
-    .select()
-    // #15: per-user Hardcover worker generalises this
-    .from(s.userProgress)
-    .where(and(eq(s.userProgress.userId, ADMIN_USER_ID), eq(s.userProgress.recordingId, target.rec.id)))
-    .get();
+  const local = localProgress(userId, target.rec.id);
   const initialLocalIsNewer =
     !last && !!local && local.updatedAt > parseRemoteTime(remote.updated_at);
-  const readingQueued = sqlite
-    .prepare("SELECT book_id FROM hardcover_reading_outbox WHERE book_id=?")
-    .get(remote.book_id);
+  const readingQueued = readingJob(userId, remote.book_id);
   if (
     force ||
     ((changed || !local) && !queued && !readingQueued && !initialLocalIsNewer)
   ) {
-    const progress = applyFraction(target.rec.id, fraction);
-    rememberRead(remote);
+    const progress = applyFraction(userId, target.rec.id, fraction);
+    rememberRead(userId, remote);
     return progress;
   }
-  if (!queued) rememberRead(remote);
+  if (!queued) rememberRead(userId, remote);
   return null;
 }
-async function remoteEntry(bookId: number, who: number) {
+async function remoteEntry(userId: number, bookId: number, who: number) {
   const data = await graphql(
+    userId,
     `query SonderBookProgress($bookId:Int!,$userId:Int!){user_books(where:{book_id:{_eq:$bookId},user_id:{_eq:$userId}},limit:1){${entryFields}}}`,
     { bookId, userId: who },
     z.object({ user_books: z.array(entry) }),
   );
   return data.user_books[0] || null;
 }
+const selectedEdition = (userId: number, recordingId: string) =>
+  db
+    .select()
+    .from(T.editions)
+    .where(
+      and(eq(T.editions.userId, userId), eq(T.editions.recordingId, recordingId)),
+    )
+    .get();
 function editionForProgress(
+  userId: number,
   book: CatalogBook,
   recordingId: string,
   read?: Read,
 ) {
-  const selected = db
-    .select()
-    .from(s.hardcoverRecordingEditions)
-    .where(eq(s.hardcoverRecordingEditions.recordingId, recordingId))
-    .get();
+  const selected = selectedEdition(userId, recordingId);
   const editions = [
     ...book.editions,
     ...(book.default_audio_edition ? [book.default_audio_edition] : []),
@@ -1661,9 +1689,10 @@ function editionForProgress(
     return book.default_audio_edition;
   return editions.find((e) => (e.audio_seconds || 0) > 0) || null;
 }
-async function ensureRead(remote: Entry) {
+async function ensureRead(userId: number, remote: Entry) {
   if (remote.user_book_reads[0]) return remote.user_book_reads[0];
   const result = await graphql(
+    userId,
     `mutation SonderReadStart($userBookId:Int!,$read:DatesReadInput!){insert_user_book_read(user_book_id:$userBookId,user_book_read:$read){error user_book_read{${readFields}}}}`,
     {
       userBookId: remote.id,
@@ -1686,28 +1715,29 @@ async function ensureRead(remote: Entry) {
   return result.insert_user_book_read.user_book_read;
 }
 async function flushProgress(
+  userId: number,
   snapshot: Entry[],
   who: number,
   ownStatusWrites: Set<number>,
 ) {
   let pushed = 0;
-  for (const job of db.select().from(s.hardcoverProgress).all()) {
+  for (const job of db
+    .select()
+    .from(T.progress)
+    .where(eq(T.progress.userId, userId))
+    .all()) {
     if (job.accountId !== who) continue;
+    // A newer local position queued while this request was in flight keeps its own job.
+    const settle = () => {
+      if (progressJob(userId, job.bookId)?.updatedAt === job.updatedAt)
+        deleteProgressJob(userId, job.bookId);
+    };
     try {
       let remote =
         snapshot.find((e) => e.book_id === job.bookId) ||
-        (await remoteEntry(job.bookId, who));
-      const statusJob = db
-        .select()
-        .from(s.hardcoverOutbox)
-        .where(eq(s.hardcoverOutbox.bookId, job.bookId))
-        .get();
-      if (statusJob) continue;
-      const previous = db
-        .select()
-        .from(s.hardcoverReads)
-        .where(eq(s.hardcoverReads.bookId, job.bookId))
-        .get();
+        (await remoteEntry(userId, job.bookId, who));
+      if (statusJob(userId, job.bookId)) continue;
+      const previous = lastRead(userId, job.bookId);
       if (
         remote &&
         !ownStatusWrites.has(job.bookId) &&
@@ -1715,17 +1745,9 @@ async function flushProgress(
         previous.snapshot !== readFingerprint(remote) &&
         parseRemoteTime(remote.updated_at) > job.updatedAt
       ) {
-        pullRemoteProgress(remote, job.recordingId, true);
-        storeRemoteEntry(remote);
-        const latest = db
-          .select()
-          .from(s.hardcoverProgress)
-          .where(eq(s.hardcoverProgress.bookId, job.bookId))
-          .get();
-        if (latest?.updatedAt === job.updatedAt)
-          db.delete(s.hardcoverProgress)
-            .where(eq(s.hardcoverProgress.bookId, job.bookId))
-            .run();
+        pullRemoteProgress(userId, remote, job.recordingId, true);
+        storeRemoteEntry(userId, remote);
+        settle();
         continue;
       }
       if (
@@ -1733,27 +1755,27 @@ async function flushProgress(
         [1, 4, 5].includes(remote.status_id) ||
         (remote.status_id === 3 && job.position / job.duration < 0.999)
       ) {
-        const book = remote?.book || (await hardcoverBook(job.bookId));
+        const book = remote?.book || (await hardcoverBook(userId, job.bookId));
         remote = await pushStatus(
-          {
-            bookId: job.bookId,
-            accountId: who,
-            statusId: 2,
-            intent: "status",
-            updatedAt: job.updatedAt,
-            error: null,
-          },
+          userId,
+          { bookId: job.bookId, statusId: 2 },
           remote || undefined,
         );
         metadataLink(
-          chooseLocalRecording(job.bookId, job.recordingId)!.edition.workId,
+          chooseLocalRecording(userId, job.bookId, job.recordingId)!.edition
+            .workId,
           book,
         );
-        storeRemoteEntry(remote);
+        storeRemoteEntry(userId, remote);
       }
       {
-        const read = await ensureRead(remote);
-        const edition = editionForProgress(remote.book, job.recordingId, read);
+        const read = await ensureRead(userId, remote);
+        const edition = editionForProgress(
+          userId,
+          remote.book,
+          job.recordingId,
+          read,
+        );
         const fraction = Math.max(0, Math.min(1, job.position / job.duration));
         const pages = read.edition?.pages || remote.book.pages || 0;
         if (!edition && !pages)
@@ -1773,6 +1795,7 @@ async function flushProgress(
             : Math.round(fraction * pages),
         };
         const result = await graphql(
+          userId,
           `mutation SonderReadProgress($id:Int!,$object:DatesReadInput!){update_user_book_read(id:$id,object:$object){error user_book_read{${readFields}}}}`,
           { id: read.id, object },
           z.object({
@@ -1798,74 +1821,53 @@ async function flushProgress(
           ...remote,
           user_book_reads: [result.update_user_book_read.user_book_read],
         };
-        rememberRead(remote);
+        rememberRead(userId, remote);
         pushed++;
       }
-      const latest = db
-        .select()
-        .from(s.hardcoverProgress)
-        .where(eq(s.hardcoverProgress.bookId, job.bookId))
-        .get();
-      if (latest?.updatedAt === job.updatedAt)
-        db.delete(s.hardcoverProgress)
-          .where(eq(s.hardcoverProgress.bookId, job.bookId))
-          .run();
+      settle();
     } catch (error) {
-      const latest = db
-        .select()
-        .from(s.hardcoverProgress)
-        .where(eq(s.hardcoverProgress.bookId, job.bookId))
-        .get();
-      if (latest?.updatedAt === job.updatedAt)
-        db.update(s.hardcoverProgress)
+      if (progressJob(userId, job.bookId)?.updatedAt === job.updatedAt)
+        db.update(T.progress)
           .set({ error: (error as Error).message })
-          .where(eq(s.hardcoverProgress.bookId, job.bookId))
+          .where(
+            and(eq(T.progress.userId, userId), eq(T.progress.bookId, job.bookId)),
+          )
           .run();
     }
   }
   return pushed;
 }
 export async function pullHardcoverPosition(
+  userId: number,
   workId: string,
   recordingId: string,
 ) {
-  const current = state();
+  const current = state(userId);
   if (current.mode === "off")
     throw new Error("Enable Hardcover library sync first.");
-  const who = await testHardcover();
-  const link = db
-    .select()
-    .from(s.hardcoverLinks)
-    .where(eq(s.hardcoverLinks.workId, workId))
-    .get();
+  const who = await testHardcover(userId);
+  const bookId = hardcoverLinkedBook(workId);
   const target = recordingData(recordingId);
-  if (!link || target?.edition.workId !== workId)
+  if (bookId === undefined || target?.edition.workId !== workId)
     throw new Error("Choose a linked recording of this book.");
-  const remote = await remoteEntry(link.bookId, who.id);
+  const remote = await remoteEntry(userId, bookId, who.id);
   if (!remote || remoteProgressFraction(remote) === null)
     throw new Error("Hardcover has no reading position for this book yet.");
-  const progress = pullRemoteProgress(remote, recordingId, true);
-  sqlite
-    .prepare("DELETE FROM hardcover_reading_outbox WHERE book_id=?")
-    .run(link.bookId);
-  db.delete(s.hardcoverProgress)
-    .where(eq(s.hardcoverProgress.bookId, link.bookId))
-    .run();
+  const progress = pullRemoteProgress(userId, remote, recordingId, true);
+  deleteReadingJob(userId, bookId);
+  deleteProgressJob(userId, bookId);
   return { progress };
 }
 export async function hardcoverRecordingOptions(
+  userId: number,
   workId: string,
   recordingId: string,
 ) {
-  const link = db
-    .select()
-    .from(s.hardcoverLinks)
-    .where(eq(s.hardcoverLinks.workId, workId))
-    .get();
+  const bookId = hardcoverLinkedBook(workId);
   const recording = recordingData(recordingId);
-  if (!link || recording?.edition.workId !== workId)
+  if (bookId === undefined || recording?.edition.workId !== workId)
     throw new Error("Choose a linked recording of this book.");
-  const book = await hardcoverBook(link.bookId);
+  const book = await hardcoverBook(userId, bookId);
   const editions = [
     ...book.editions,
     ...(book.default_audio_edition ? [book.default_audio_edition] : []),
@@ -1873,13 +1875,8 @@ export async function hardcoverRecordingOptions(
     (e, i, all) =>
       (e.audio_seconds || 0) > 0 && all.findIndex((a) => a.id === e.id) === i,
   );
-  const selected = db
-    .select()
-    .from(s.hardcoverRecordingEditions)
-    .where(eq(s.hardcoverRecordingEditions.recordingId, recordingId))
-    .get();
   return {
-    selectedEditionId: selected?.editionId || null,
+    selectedEditionId: selectedEdition(userId, recordingId)?.editionId || null,
     editions: editions.map((e) => ({
       id: e.id,
       duration: e.audio_seconds,
@@ -1892,22 +1889,25 @@ export async function hardcoverRecordingOptions(
   };
 }
 export async function setHardcoverRecordingEdition(
+  userId: number,
   workId: string,
   recordingId: string,
   editionId: number | null,
 ) {
-  const options = await hardcoverRecordingOptions(workId, recordingId);
+  const options = await hardcoverRecordingOptions(userId, workId, recordingId);
   if (editionId !== null && !options.editions.some((e) => e.id === editionId))
     throw new Error("Choose an audio edition of this Hardcover book.");
   if (editionId === null)
-    db.delete(s.hardcoverRecordingEditions)
-      .where(eq(s.hardcoverRecordingEditions.recordingId, recordingId))
+    db.delete(T.editions)
+      .where(
+        and(eq(T.editions.userId, userId), eq(T.editions.recordingId, recordingId)),
+      )
       .run();
   else
-    db.insert(s.hardcoverRecordingEditions)
-      .values({ recordingId, editionId })
+    db.insert(T.editions)
+      .values({ userId, recordingId, editionId })
       .onConflictDoUpdate({
-        target: s.hardcoverRecordingEditions.recordingId,
+        target: [T.editions.userId, T.editions.recordingId],
         set: { editionId },
       })
       .run();

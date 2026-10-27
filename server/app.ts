@@ -1,4 +1,4 @@
-import { currentUser, currentUserId, sessionUser, requireAdmin, registerUsers, verifyPassword } from "./users.ts";
+import { currentUser, currentUserId, getUserSecret, sessionUser, requireAdmin, registerUsers, verifyPassword } from "./users.ts";
 import Fastify from "fastify";
 import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
@@ -28,7 +28,7 @@ import {
   hardcoverSearch,
   queueHardcoverStatus,
   queueHardcoverProgress,
-  resetHardcoverAccount,
+  setHardcoverToken,
   tickHardcover,
   hardcoverWorkForMedia,
   claimHardcoverAudio,
@@ -65,7 +65,6 @@ import {
 import { encrypt, passwordMatches, hashToken } from "./security.ts";
 import {
   getSetting,
-  getSecret,
   torbox,
   torboxUrl,
   abbSearch,
@@ -118,7 +117,7 @@ export function listBooks(userId = 1): Book[] {
             .filter((t) => t.recordingId === recording.id)
             .every(hasServerMedia),
         faults,
-        hardcover: hardcoverForWork(work.id),
+        hardcover: hardcoverForWork(userId, work.id),
         id: edition.id,
         workId: work.id,
         editionId: edition.id,
@@ -238,7 +237,7 @@ export async function createApp() {
       return;
     if (!req.user) return reply.code(401).send({ error: "Sign in to your listening space." });
     const path = req.url.split("?")[0];
-    if ((req.method === "PATCH" && path === "/api/settings") || /^\/api\/(prowlarr|torbox)(?:\/|$)/.test(path) || /^\/api\/acquisitions(?:\/|$)/.test(path) || path === "/api/acquire" || path === "/api/torrents/health" || path === "/api/local/test" || /^\/api\/discover\/(abb|prowlarr)(?:\/|$)/.test(path) || path === "/api/discover/ebooks" || (req.method === "POST" && ["/api/ebooks", "/api/ebooks/import", "/api/import"].includes(path)) || (req.method === "POST" && /^\/api\/books\/[^/]+\/keep$/.test(path)) || (req.method === "POST" && /^\/api\/reader\/[^/]+\/link$/.test(path)) || (["PUT", "DELETE"].includes(req.method) && /^\/api\/recordings\/[^/]+\/(faults\/[^/]+|server-copy)$/.test(path)) || (["POST", "PATCH"].includes(req.method) && /^\/api\/alignments(?:\/|$)/.test(path))) requireAdmin(req);
+    if (/^\/api\/(prowlarr|torbox)(?:\/|$)/.test(path) || /^\/api\/acquisitions(?:\/|$)/.test(path) || path === "/api/acquire" || path === "/api/torrents/health" || path === "/api/local/test" || /^\/api\/discover\/(abb|prowlarr)(?:\/|$)/.test(path) || path === "/api/discover/ebooks" || (req.method === "POST" && ["/api/ebooks", "/api/ebooks/import", "/api/import"].includes(path)) || (req.method === "POST" && /^\/api\/books\/[^/]+\/keep$/.test(path)) || (req.method === "POST" && /^\/api\/reader\/[^/]+\/link$/.test(path)) || (["PUT", "DELETE"].includes(req.method) && /^\/api\/recordings\/[^/]+\/(faults\/[^/]+|server-copy)$/.test(path)) || (["POST", "PATCH"].includes(req.method) && /^\/api\/alignments(?:\/|$)/.test(path))) requireAdmin(req);
   });
   app.get("/api/health", async () => ({ ok: true }));
   app.get("/api/auth/status", async (req) => ({ required: !!process.env.APP_PASSWORD, authenticated: !!sessionUser(req), user: sessionUser(req) }));
@@ -306,7 +305,7 @@ export async function createApp() {
       .from(s.editions)
       .where(eq(s.editions.id, bookId))
       .get();
-    if (edition && currentUserId(req) === 1) queueHardcoverStatus(edition.workId, "unread", "add");
+    if (edition) queueHardcoverStatus(currentUserId(req), edition.workId, "unread", "add");
     return { ok: true };
   });
   app.patch("/api/library/:id", async (req) => {
@@ -320,7 +319,7 @@ export async function createApp() {
       .from(s.editions)
       .where(eq(s.editions.id, id))
       .get();
-    if (edition && currentUserId(req) === 1) queueHardcoverStatus(edition.workId, status);
+    if (edition) queueHardcoverStatus(currentUserId(req), edition.workId, status);
     return { ok: true };
   });
   app.delete("/api/library/:id", async (req) => {
@@ -400,8 +399,9 @@ export async function createApp() {
           .from(s.editions)
           .where(eq(s.editions.id, rec.editionId))
           .get();
-        if (edition && currentUserId(req) === 1)
+        if (edition)
           queueHardcoverStatus(
+            currentUserId(req),
             edition.workId,
             "listening",
             "status",
@@ -409,14 +409,14 @@ export async function createApp() {
           );
       }
     }
-    if (currentUserId(req) === 1) queueHardcoverProgress(p.recordingId);
+    queueHardcoverProgress(currentUserId(req), p.recordingId);
     return { progress: p, conflict: false };
   });
-  app.get("/api/settings", async (req) => currentUser(req).role !== "admin" ? ({ name: getSetting("name") || "My listening space", authenticationEnabled: !!process.env.APP_PASSWORD, role: currentUser(req).role }) : ({
+  app.get("/api/settings", async (req) => currentUser(req).role !== "admin" ? ({ name: getSetting("name") || "My listening space", authenticationEnabled: !!process.env.APP_PASSWORD, role: currentUser(req).role, hardcoverConfigured: !!getUserSecret(currentUserId(req), "hardcover") }) : ({
     role: currentUser(req).role,
     name: getSetting("name") || "My listening space",
     torboxConfigured: !!getSetting("torbox"),
-    hardcoverConfigured: !!getSetting("hardcover"),
+    hardcoverConfigured: !!getUserSecret(currentUserId(req), "hardcover"),
     abbUrl: getSetting("abbUrl") || "https://audiobookbay.lu",
     libgenUrl: getSetting("libgenUrl") || "https://libgen.li",
     prowlarrUrl: getSetting("prowlarrUrl") || "",
@@ -426,6 +426,9 @@ export async function createApp() {
     authenticationEnabled: !!process.env.APP_PASSWORD,
   }));
   app.patch("/api/settings", async (req) => {
+    // Any user may save or clear their own Hardcover token here (#15); every other setting is the admin's.
+    const fields = Object.keys((req.body ?? {}) as Record<string, unknown>);
+    if (fields.length !== 1 || fields[0] !== "hardcover") requireAdmin(req);
     const input = z
       .object({
         name: z.string().min(1).max(60).optional(),
@@ -466,17 +469,16 @@ export async function createApp() {
         throw new Error("Use an HTTPS mirror of the selected ebook source.");
       input.libgenUrl = url.origin;
     }
-    if (
-      input.hardcover !== undefined &&
-      input.hardcover !== getSecret("hardcover")
-    )
-      resetHardcoverAccount();
+    // The Hardcover token belongs to the signed-in user (#15), not the server settings.
+    if (input.hardcover !== undefined)
+      setHardcoverToken(currentUserId(req), input.hardcover);
+    delete input.hardcover;
     for (const [key, value] of Object.entries(input)) {
       if (value === "") {
         db.delete(s.settings).where(eq(s.settings.key, key)).run();
         continue;
       }
-      const v = ["torbox", "hardcover", "prowlarr"].includes(key)
+      const v = ["torbox", "prowlarr"].includes(key)
         ? encrypt(value)
         : value;
       db.insert(s.settings)
@@ -857,7 +859,7 @@ export async function createApp() {
   app.addHook("onClose", async () => clearInterval(hardcoverTimer));
   app.get("/api/discover/hardcover", async (req) => {
     const { q } = z.object({ q: z.string().min(2).max(150) }).parse(req.query);
-    return hardcoverSearch(q);
+    return hardcoverSearch(currentUserId(req), q);
   });
   app.post("/api/import", async (req) => {
     let title = "";

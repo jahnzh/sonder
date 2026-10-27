@@ -17,6 +17,7 @@ import * as s from "./schema.ts";
 import { mediaRoot, ensureMediaStorage } from "./storage.ts";
 import { torboxUrl } from "./services.ts";
 import { queueHardcoverProgress } from "./hardcover.ts";
+import { listUserIds } from "./users.ts";
 import { audioFileExtension, audioFileMime, isCompleteMediaResponse } from "./media-response.ts";
 const controllers = new Map<string, AbortController>();
 let running = false;
@@ -225,7 +226,8 @@ export async function processServerDownloads() {
           })
           .where(eq(s.serverDownloads.recordingId, job.recordingId))
           .run();
-        queueHardcoverProgress(job.recordingId);
+        for (const userId of listUserIds())
+          queueHardcoverProgress(userId, job.recordingId);
       } catch (error) {
         if (!ctrl.signal.aborted)
           db.update(s.serverDownloads)

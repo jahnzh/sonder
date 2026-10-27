@@ -13,7 +13,7 @@ const { createApp, listBooks } = await import("../server/app.ts");
 const { db, sqlite } = await import("../server/db.ts");
 const s = await import("../server/schema.ts");
 const { eq } = await import("drizzle-orm");
-const { encrypt } = await import("../server/security.ts");
+const { setUserSecret } = await import("../server/users.ts");
 const hc = await import("../server/hardcover.ts");
 const app = await createApp();
 const realFetch = globalThis.fetch;
@@ -83,18 +83,12 @@ let failWrites = false,
   invalidSnapshot = false,
   concurrentWrite: (() => void) | null = null;
 beforeEach(() => {
-  hc.resetHardcoverAccount();
+  hc.resetHardcoverAccount(1);
   db.delete(s.userHiddenLibrary).run();
-  db.delete(s.hardcoverRecordingEditions).run();
+  db.delete(s.userHardcoverRecordingEditions).run();
   db.delete(s.hardcoverLinks).run();
   db.delete(s.userProgress).run();
-  db.insert(s.settings)
-    .values({ key: "hardcover", value: encrypt("test-key-not-real") })
-    .onConflictDoUpdate({
-      target: s.settings.key,
-      set: { value: encrypt("test-key-not-real") },
-    })
-    .run();
+  setUserSecret(1, "hardcover", "test-key-not-real");
   user = 41;
   calls = [];
   failWrites = false;
@@ -324,8 +318,8 @@ function absolute(recordingId = "recording-alice") {
   );
 }
 async function setup(mode: "import" | "two-way" = "two-way") {
-  hc.configureHardcover(mode, true);
-  return hc.syncHardcover();
+  hc.configureHardcover(1, mode, true);
+  return hc.syncHardcover(1);
 }
 async function localPosition(position: number, updatedAt = Date.now()) {
   const result = await app.inject({
@@ -359,13 +353,13 @@ test("Hardcover shelves, custom lists, matching and imported progress preserve e
   assert.equal(absolute(), 1000);
   assert.equal(listBooks().find((b) => b.id === "hc-202")!.tracks.length, 0);
   assert.equal(listBooks().find((b) => b.id === "hc-303")!.inLibrary, true);
-  assert.equal(hc.hardcoverState().lists[0].name, "Weekend stories");
+  assert.equal(hc.hardcoverState(1).lists[0].name, "Weekend stories");
   assert.ok(!calls.some((c) => c.query.startsWith("mutation")));
 });
 test("two-way listening progress maps to the Hardcover edition duration and preserves read dates and page progress", async () => {
   await setup();
   await localPosition(320);
-  const summary = await hc.syncHardcover();
+  const summary = await hc.syncHardcover(1);
   assert.equal(summary.progress, 1);
   const write = calls
     .filter((c) => c.query.includes("SonderReadProgress"))
@@ -375,14 +369,14 @@ test("two-way listening progress maps to the Hardcover edition duration and pres
   assert.equal(write.variables.object.started_at, "2026-01-01");
   assert.equal(write.variables.object.finished_at, null);
   assert.equal(absolute(), 320);
-  assert.equal(hc.hardcoverState().pending, 0);
+  assert.equal(hc.hardcoverState(1).pending, 0);
 });
 test("starting a read and syncing its status does not replace queued listening progress with the new read’s zero position", async () => {
   entries[0].status_id = 1;
   entries[0].user_book_reads = [];
   await setup();
   await localPosition(300);
-  const summary = await hc.syncHardcover();
+  const summary = await hc.syncHardcover(1);
   assert.equal(summary.pushed, 1);
   assert.equal(summary.progress, 1);
   assert.equal(entries[0].status_id, 2);
@@ -392,13 +386,13 @@ test("starting a read and syncing its status does not replace queued listening p
 test("built-in reading progress publishes overall percentage without changing the recording checkpoint", async () => {
   await setup();
   await localPosition(320);
-  hc.queueHardcoverReadingProgress("work-alice", 0.4, "recording-alice");
+  hc.queueHardcoverReadingProgress(1, "work-alice", 0.4, "recording-alice");
   assert.equal(absolute(), 320);
   const queued = sqlite
-    .prepare("SELECT fraction FROM hardcover_reading_outbox")
+    .prepare("SELECT fraction FROM user_hardcover_reading_outbox")
     .get() as { fraction: number };
   assert.equal(queued.fraction, 0.4);
-  await hc.syncHardcover();
+  await hc.syncHardcover(1);
   assert.equal(entries[0].user_book_reads[0].progress_pages, 80);
   assert.equal(absolute(), 320);
 });
@@ -420,19 +414,19 @@ test("ebook reading progress syncs without local audio and retries a failed remo
     .from(s.hardcoverLinks)
     .where(eq(s.hardcoverLinks.bookId, 202))
     .get()!;
-  hc.queueHardcoverReadingProgress(link.workId, 0.25);
+  hc.queueHardcoverReadingProgress(1, link.workId, 0.25);
   failWrites = true;
-  await hc.syncHardcover();
+  await hc.syncHardcover(1);
   assert.ok(
     sqlite
-      .prepare("SELECT error FROM hardcover_reading_outbox WHERE book_id=202")
+      .prepare("SELECT error FROM user_hardcover_reading_outbox WHERE book_id=202")
       .get(),
   );
   failWrites = false;
-  await hc.syncHardcover();
+  await hc.syncHardcover(1);
   assert.equal(
     sqlite
-      .prepare("SELECT book_id FROM hardcover_reading_outbox WHERE book_id=202")
+      .prepare("SELECT book_id FROM user_hardcover_reading_outbox WHERE book_id=202")
       .get(),
     undefined,
   );
@@ -446,15 +440,15 @@ test("ebook reading progress syncs without local audio and retries a failed remo
 test("finishing an EPUB publishes its final page and a later explicit shelf change clears stale reading work", async () => {
   await setup();
   await localPosition(320);
-  hc.queueHardcoverReadingProgress("work-alice", 1);
-  await hc.syncHardcover();
+  hc.queueHardcoverReadingProgress(1, "work-alice", 1);
+  await hc.syncHardcover(1);
   assert.equal(entries[0].status_id, 3);
   assert.equal(entries[0].user_book_reads[0].progress_pages, 200);
   assert.equal(absolute(), 320);
-  hc.queueHardcoverReadingProgress("work-alice", 0.2);
-  hc.queueHardcoverStatus("work-alice", "unread");
+  hc.queueHardcoverReadingProgress(1, "work-alice", 0.2);
+  hc.queueHardcoverStatus(1, "work-alice", "unread");
   assert.equal(
-    sqlite.prepare("SELECT book_id FROM hardcover_reading_outbox").get(),
+    sqlite.prepare("SELECT book_id FROM user_hardcover_reading_outbox").get(),
     undefined,
   );
 });
@@ -462,13 +456,13 @@ test("offline Hardcover changes remain durable and retry without blocking local 
   await setup();
   await localPosition(280);
   failWrites = true;
-  const first = await hc.syncHardcover();
+  const first = await hc.syncHardcover(1);
   assert.equal(first.pending, 1);
-  assert.match(db.select().from(s.hardcoverProgress).get()!.error!, /outage/);
+  assert.match(db.select().from(s.userHardcoverProgress).get()!.error!, /outage/);
   assert.equal(absolute(), 280);
   failWrites = false;
-  await hc.syncHardcover();
-  assert.equal(hc.hardcoverState().pending, 0);
+  await hc.syncHardcover(1);
+  assert.equal(hc.hardcoverState(1).pending, 0);
   assert.equal(entries[0].user_book_reads[0].progress_seconds, 560);
 });
 test("new local progress arriving during a remote write is not removed by an older response", async () => {
@@ -486,18 +480,18 @@ test("new local progress arriving during a remote write is not removed by an old
       .values({ ...value, userId: 1 })
       .onConflictDoUpdate({ target: [s.userProgress.userId, s.userProgress.recordingId], set: value })
       .run();
-    hc.queueHardcoverProgress("recording-alice");
+    hc.queueHardcoverProgress(1, "recording-alice");
   };
-  await hc.syncHardcover();
-  assert.equal(db.select().from(s.hardcoverProgress).get()!.position, 200);
-  await hc.syncHardcover();
-  assert.equal(hc.hardcoverState().pending, 0);
+  await hc.syncHardcover(1);
+  assert.equal(db.select().from(s.userHardcoverProgress).get()!.position, 200);
+  await hc.syncHardcover(1);
+  assert.equal(hc.hardcoverState(1).pending, 0);
   assert.equal(entries[0].user_book_reads[0].progress_seconds, 400);
 });
 test("external progress changes can move backward, map across chapters, and never jump to another work", async () => {
   await setup("import");
   entries[0].user_book_reads[0].progress_seconds = 100;
-  await hc.syncHardcover();
+  await hc.syncHardcover(1);
   assert.equal(absolute(), 50);
   const wrong = await app.inject({
     method: "POST",
@@ -542,7 +536,7 @@ test("progress falls back to pages when Hardcover has no audio edition", async (
   ];
   await setup();
   await localPosition(536.35);
-  await hc.syncHardcover();
+  await hc.syncHardcover(1);
   const write = calls
     .filter((c) => c.query.includes("SonderReadProgress"))
     .at(-1)!;
@@ -552,17 +546,17 @@ test("progress falls back to pages when Hardcover has no audio edition", async (
 });
 test("shelf changes queue and retry, while removing a local library entry never deletes a Hardcover book", async () => {
   await setup();
-  hc.setHardcoverShelf("work-alice", 4);
+  hc.setHardcoverShelf(1, "work-alice", 4);
   failWrites = true;
-  await hc.syncHardcover();
-  assert.equal(db.select().from(s.hardcoverOutbox).get()!.statusId, 4);
+  await hc.syncHardcover(1);
+  assert.equal(db.select().from(s.userHardcoverOutbox).get()!.statusId, 4);
   failWrites = false;
-  await hc.syncHardcover();
+  await hc.syncHardcover(1);
   assert.equal(entries[0].status_id, 4);
   const before = calls.length;
   await app.inject({ method: "DELETE", url: "/api/library/alice" });
   assert.ok(!calls.slice(before).some((c) => /delete_user_book/.test(c.query)));
-  await hc.syncHardcover();
+  await hc.syncHardcover(1);
   assert.equal(
     listBooks().find((book) => book.id === "alice")!.inLibrary,
     false,
@@ -581,12 +575,12 @@ test("shelf changes queue and retry, while removing a local library entry never 
 test("custom list updates are restricted to synced lists owned by the connected account", async () => {
   await setup();
   await assert.rejects(
-    hc.setHardcoverListMember(999, "work-alice", true),
+    hc.setHardcoverListMember(1, 999, "work-alice", true),
     /own Hardcover lists/,
   );
-  await hc.setHardcoverListMember(70, "work-alice", false);
+  await hc.setHardcoverListMember(1, 70, "work-alice", false);
   assert.ok(!members.some((m) => m.book_id === 101));
-  await hc.setHardcoverListMember(70, "work-alice", true);
+  await hc.setHardcoverListMember(1, 70, "work-alice", true);
   assert.ok(members.some((m) => m.book_id === 101));
   assert.equal(
     listBooks().find((b) => b.id === "alice")!.hardcover?.listIds[0],
@@ -597,13 +591,13 @@ test("a failed library or optional lists response preserves the last complete sn
   await setup("import");
   const count = listBooks().filter((b) => b.inLibrary).length;
   invalidSnapshot = true;
-  await assert.rejects(hc.syncHardcover(), /unexpected response/);
+  await assert.rejects(hc.syncHardcover(1), /unexpected response/);
   assert.equal(listBooks().filter((b) => b.inLibrary).length, count);
   invalidSnapshot = false;
   failLists = true;
-  await hc.syncHardcover();
-  assert.equal(hc.hardcoverState().lists.length, 1);
-  assert.match(hc.hardcoverState().listWarning!, /read:lists/);
+  await hc.syncHardcover(1);
+  assert.equal(hc.hardcoverState(1).lists.length, 1);
+  assert.match(hc.hardcoverState(1).listWarning!, /read:lists/);
 });
 test("unknown durations and a different-account token cannot publish the wrong recording’s position", async () => {
   await setup();
@@ -617,24 +611,24 @@ test("unknown durations and a different-account token cannot publish the wrong r
     .where(eq(s.tracks.id, track.id))
     .run();
   await localPosition(100);
-  assert.equal(db.select().from(s.hardcoverProgress).all().length, 0);
+  assert.equal(db.select().from(s.userHardcoverProgress).all().length, 0);
   db.update(s.tracks)
     .set({ duration: track.duration })
     .where(eq(s.tracks.id, track.id))
     .run();
   await localPosition(110);
-  assert.equal(hc.hardcoverState().pending, 1);
+  assert.equal(hc.hardcoverState(1).pending, 1);
   user = 42;
-  await assert.rejects(hc.syncHardcover(), /different Hardcover account/);
-  assert.equal(hc.hardcoverState().mode, "off");
-  assert.equal(hc.hardcoverState().pending, 0);
+  await assert.rejects(hc.syncHardcover(1), /different Hardcover account/);
+  assert.equal(hc.hardcoverState(1).mode, "off");
+  assert.equal(hc.hardcoverState(1).pending, 0);
   assert.ok(!calls.some((c) => c.query.includes("SonderReadProgress")));
 });
 test("a linked current shelf with no open read starts one before saving audio progress", async () => {
   entries[0].user_book_reads = [];
   await setup();
   await localPosition(240);
-  await hc.syncHardcover();
+  await hc.syncHardcover(1);
   assert.ok(calls.some((c) => c.query.includes("SonderReadStart")));
   assert.equal(entries[0].user_book_reads[0].progress_seconds, 480);
 });
@@ -726,7 +720,7 @@ test("new audio inherits the remembered Hardcover position when it replaces a me
   );
 });
 test("off mode performs no library requests and discovery search remains available", async () => {
-  await assert.rejects(hc.syncHardcover(), /Choose import or two-way/);
+  await assert.rejects(hc.syncHardcover(1), /Choose import or two-way/);
   assert.equal(calls.length, 0);
   const search = await app.inject("/api/discover/hardcover?q=Alice");
   assert.equal(search.statusCode, 200, search.body);
@@ -739,12 +733,12 @@ test("off mode performs no library requests and discovery search remains availab
 });
 test("changing a work match clears pending progress and narration mappings for the old Hardcover book", async () => {
   await setup();
-  await hc.setHardcoverRecordingEdition("work-alice", "recording-alice", 901);
+  await hc.setHardcoverRecordingEdition(1, "work-alice", "recording-alice", 901);
   await localPosition(250);
-  assert.equal(hc.hardcoverState().pending, 1);
-  await hc.importHardcoverBook(202, "work-alice");
-  assert.equal(db.select().from(s.hardcoverProgress).all().length, 0);
-  assert.equal(db.select().from(s.hardcoverRecordingEditions).all().length, 0);
+  assert.equal(hc.hardcoverState(1).pending, 1);
+  await hc.importHardcoverBook(1, 202, "work-alice");
+  assert.equal(db.select().from(s.userHardcoverProgress).all().length, 0);
+  assert.equal(db.select().from(s.userHardcoverRecordingEditions).all().length, 0);
   assert.equal(
     db
       .select()
@@ -774,6 +768,6 @@ test("enabling two-way sync publishes a newer existing Sonder checkpoint on the 
   assert.equal(result.progress, 1);
   assert.equal(entries[0].user_book_reads[0].progress_seconds, 640);
   assert.equal(absolute(), 320);
-  await hc.syncHardcover();
-  assert.equal(hc.hardcoverState().pending, 0);
+  await hc.syncHardcover(1);
+  assert.equal(hc.hardcoverState(1).pending, 0);
 });
