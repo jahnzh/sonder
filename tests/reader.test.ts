@@ -151,7 +151,7 @@ test("a bookmark for a missing EPUB file is a temporary 503, while invalid bookm
     .values({ id: missing, workId: "work-alice", format: "epub", source: join(temp, "media", "ebooks", "gone.epub") })
     .run();
   const locator = { section: 0, paragraphId: "0:1", progression: 0.01 };
-  const post = (edition: string, payload: unknown) =>
+  const post = (edition: string, payload: Record<string, unknown>) =>
     app.inject({ method: "POST", url: `/api/reader/${edition}/bookmarks`, payload });
   const unavailable = await post(missing, { id: "bookmark-missing", label: "My place", locator });
   assert.equal(unavailable.statusCode, 503, unavailable.body);
