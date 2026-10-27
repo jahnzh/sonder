@@ -77,6 +77,7 @@ import type {
 import { Dialog } from "./components/ui/dialog";
 import { PlayerDock } from "./components/Player";
 import { AppUpdate } from "./components/AppUpdate";
+import { DeviceReset } from "./components/DeviceReset";
 import { Chapters } from "./components/Chapters";
 import {
   HardcoverBookTools,
@@ -2292,6 +2293,7 @@ function SettingsPage({
       </div>
       <AppearanceSettings notify={notify} />
       <PlaybackSettings notify={notify} />
+      <DeviceReset notify={notify} />
       <form className="settings-form" onSubmit={(e) => void save(e)}>
         <section className="settings-section">
           <div className="settings-section-heading">

@@ -28,7 +28,7 @@ export default defineConfig({
       .filter((browser) => existsSync(browser.executablePath()))
       .map((browser) => ({
         name: browser.name(),
-        testMatch: /now-playing-layout\.spec\.ts/,
+        testMatch: /(now-playing-layout|device-reset)\.spec\.ts/,
         use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: {} },
       })),
   ],
