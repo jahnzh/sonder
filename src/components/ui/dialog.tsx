@@ -32,14 +32,40 @@ export function Dialog({
   // and hides the page and draws its overlay itself only while open.
   useEffect(() => {
     if (!forceMount || !open || !content.current) return;
-    content.current.focus({ preventScroll: true });
-    const restoreHidden = hideOthers(content.current);
+    const node = content.current;
+    const previousFocus =
+      document.activeElement instanceof HTMLElement &&
+      document.activeElement !== document.body &&
+      !node.contains(document.activeElement)
+        ? document.activeElement
+        : null;
+    node.focus({ preventScroll: true });
+    const restoreHidden = hideOthers(node);
     const hidden = Array.from(document.querySelectorAll<HTMLElement>('[data-aria-hidden="true"]'));
-    const previouslyInert = hidden.map(node => node.inert);
-    hidden.forEach(node => { node.inert = true; });
+    const previouslyInert = hidden.map(item => item.inert);
+    hidden.forEach(item => { item.inert = true; });
     return () => {
-      hidden.forEach((node, index) => { node.inert = previouslyInert[index]; });
+      hidden.forEach((item, index) => { item.inert = previouslyInert[index]; });
       restoreHidden();
+      const visible = (el: HTMLElement | null) =>
+        !!el &&
+        el.isConnected &&
+        el.getClientRects().length > 0 &&
+        getComputedStyle(el).visibility !== "hidden";
+      const target = visible(previousFocus)
+        ? previousFocus
+        : document.querySelector<HTMLElement>(
+            ".player-dock .dock-book, .player-dock button:not([disabled])",
+          );
+      if (
+        !document.activeElement ||
+        document.activeElement === document.body ||
+        node.contains(document.activeElement) ||
+        !visible(document.activeElement as HTMLElement)
+      ) {
+        if (visible(target)) target!.focus({ preventScroll: true });
+        else (document.activeElement as HTMLElement | null)?.blur?.();
+      }
     };
   }, [forceMount, open]);
   return (

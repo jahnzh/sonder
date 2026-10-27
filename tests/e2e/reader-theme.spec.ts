@@ -307,17 +307,34 @@ test("a bookmark the server rejects is dropped with a notice and later bookmarks
   });
   expect(upload.ok()).toBe(true);
   const { id } = await upload.json();
-  // The first bookmark is never accepted, like one whose quote is too long.
+  // Temporary server and I/O errors keep the bookmark queued; a permanent
+  // validation error drops it so later bookmarks can still sync.
   let rejected = "";
+  const temporary = [
+    { status: 503, json: { error: "The media drive is not available." } },
+    { status: 400, json: { error: "ENOENT: no such file or directory" } },
+  ];
+  let transientForSecond = true;
   await page.route(`**/api/reader/${id}/bookmarks`, async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
     const bookmark = route.request().postDataJSON()?.id;
     rejected ||= bookmark;
-    if (route.request().method() !== "POST" || bookmark !== rejected)
-      return route.continue();
-    await route.fulfill({
-      status: 400,
-      json: { error: "This bookmark does not belong to this edition." },
-    });
+    if (bookmark === rejected) {
+      const next = temporary.shift();
+      if (next) return route.fulfill(next);
+      return route.fulfill({
+        status: 400,
+        json: { error: "This bookmark does not belong to this edition." },
+      });
+    }
+    if (transientForSecond) {
+      transientForSecond = false;
+      return route.fulfill({
+        status: 503,
+        json: { error: "The media drive is not available." },
+      });
+    }
+    return route.continue();
   });
   await page.goto(`/#reader/${id}`);
   const reader = page.getByRole("dialog", { name: "Reader" });
@@ -328,11 +345,19 @@ test("a bookmark the server rejects is dropped with a notice and later bookmarks
     exact: true,
   });
   await add.click();
+  await expect.poll(() => temporary.length).toBe(1);
+  await expect(page.locator(".toast.error")).toHaveCount(0);
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect.poll(() => temporary.length).toBe(0);
+  await expect(page.locator(".toast.error")).toHaveCount(0);
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
   // The reader dialog hides the rest of the page from the accessibility tree.
   await expect(page.locator(".toast.error")).toContainText(
     "A bookmark could not be saved",
   );
   await add.click();
+  await expect.poll(() => transientForSecond).toBe(false);
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
   await expect
     .poll(
       async () =>
@@ -364,6 +389,22 @@ test("a reader setting does not save an appearance preview", async ({
       .click();
     // Preview Light without saving it.
     await page.getByRole("button", { name: "Light", exact: true }).click();
+    await page
+      .getByRole("combobox", { name: "Playback progress bar" })
+      .selectOption("chapter");
+    await page
+      .getByRole("button", { name: "Save playback settings", exact: true })
+      .click();
+    await expect
+      .poll(
+        async () =>
+          (await (await page.request.get("/api/appearance")).json()).playback
+            .progressScope,
+      )
+      .toBe("chapter");
+    expect(
+      (await (await page.request.get("/api/appearance")).json()).preset,
+    ).toBe(defaultAppearance.preset);
     await page.evaluate((id) => {
       window.dispatchEvent(
         new CustomEvent("sonder:open-reader", { detail: { id, fromAudio: false } }),
@@ -431,4 +472,118 @@ test("startup does not write another user's cached appearance into the admin's s
       localStorage.removeItem("sonder-user-2:sonder-appearance");
     });
   }
+});
+test("Keep my place while offline keeps the conflict until reconnected and then resolves it", async ({
+  page,
+  context,
+}) => {
+  const upload = await page.request.post("/api/ebooks/import", {
+    multipart: {
+      file: {
+        name: "Offline conflict.epub",
+        mimeType: "application/epub+zip",
+        buffer: await readerFixture(),
+      },
+    },
+  });
+  expect(upload.ok()).toBe(true);
+  const { id } = await upload.json();
+  await page.goto(`/#reader/${id}`);
+  const reader = page.getByRole("dialog", { name: "Reader" });
+  const frame = reader.frameLocator(".reader-viewport iframe");
+  await expect(
+    frame.getByText("Alice was beginning to get very tired", { exact: false }),
+  ).toBeVisible();
+  const remote = await page.request.put(`/api/reader/${id}/progress`, {
+    data: {
+      locator: {
+        section: 1,
+        paragraphId: "1:0",
+        quote: "Other session",
+        progression: 0.5,
+      },
+      baseRevision: 0,
+      eventId: "remote-conflict-event",
+      deviceId: "other-device",
+      updatedAt: Date.now(),
+      origin: "reading",
+    },
+  });
+  expect(remote.ok()).toBe(true);
+  await frame.locator("body").click({ position: { x: 340, y: 100 } });
+  const conflict = reader.locator(".reading-conflict");
+  await expect(conflict).toBeVisible();
+  await context.setOffline(true);
+  try {
+    await conflict
+      .getByRole("button", { name: "Keep my place", exact: true })
+      .click();
+    await expect(conflict).toBeVisible();
+  } finally {
+    await context.setOffline(false);
+  }
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect(conflict).toBeHidden();
+  await expect
+    .poll(
+      async () =>
+        (await (await page.request.get(`/api/reader/${id}`)).json()).checkpoint
+          ?.revision,
+    )
+    .toBe(2);
+});
+test("a 409 with no server checkpoint rebases to revision 0 and saves instead of looping", async ({
+  page,
+}) => {
+  const upload = await page.request.post("/api/ebooks/import", {
+    multipart: {
+      file: {
+        name: "Inherited revision.epub",
+        mimeType: "application/epub+zip",
+        buffer: await readerFixture(),
+      },
+    },
+  });
+  expect(upload.ok()).toBe(true);
+  const { id } = await upload.json();
+  // Seed an inherited local reading state with baseRevision > 0 while the
+  // server has no checkpoint for this book.
+  await page.goto("/");
+  await page.evaluate((id) => {
+    localStorage.setItem(
+      `reader-position:${id}`,
+      JSON.stringify({
+        checkpoint: {
+          locator: {
+            section: 1,
+            paragraphId: "1:0",
+            quote: "Inherited place",
+            progression: 0,
+          },
+          revision: 4,
+          eventId: "inherited-event",
+          deviceId: "inherited-device",
+          updatedAt: Date.now() - 1000,
+          origin: "reading",
+        },
+        baseRevision: 4,
+        pending: false,
+      }),
+    );
+  }, id);
+  await page.goto(`/#reader/${id}`);
+  const reader = page.getByRole("dialog", { name: "Reader" });
+  const frame = reader.frameLocator(".reader-viewport iframe");
+  await expect(
+    frame.getByText("Alice was beginning to get very tired", { exact: false }),
+  ).toBeVisible();
+  await frame.locator("body").click({ position: { x: 340, y: 100 } });
+  await expect
+    .poll(
+      async () =>
+        (await (await page.request.get(`/api/reader/${id}`)).json()).checkpoint
+          ?.revision,
+    )
+    .toBe(1);
+  await expect(reader.locator(".reading-conflict")).toBeHidden();
 });

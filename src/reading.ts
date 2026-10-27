@@ -1,5 +1,5 @@
 import { userStorageKey } from "./lib";
-import { api, localDB, authDB, userId } from "./lib";
+import { api, ApiError, localDB, authDB, userId } from "./lib";
 import type {
   AlignmentJob,
   ReaderBook,
@@ -12,6 +12,7 @@ export type PendingReading = {
   baseRevision: number;
   pending: boolean;
   conflict?: ReadingCheckpoint | null;
+  resolve?: boolean;
 };
 const key = (id: string) => `reader-position:${id}`;
 export function deviceId() {
@@ -32,13 +33,19 @@ export async function readingState(id: string): Promise<PendingReading | null> {
   );
 }
 const syncs = new Set<string>();
-export async function syncReading(id: string, resolve = false) {
-  if (syncs.has(id) || !navigator.onLine) return;
+export async function syncReading(id: string, resolve = false): Promise<boolean> {
+  if (resolve) {
+    const current = await readingState(id);
+    if (current?.pending) await storeReading(id, { ...current, resolve: true });
+  }
+  if (syncs.has(id) || !navigator.onLine) return false;
   syncs.add(id);
   const owner = userId();
   try {
     let value = await readingState(id);
+    let rebased = false;
     while (value?.pending) {
+      const shouldResolve = resolve || !!value.resolve;
       const response = await fetch(
         `/api/reader/${encodeURIComponent(id)}/progress`,
         {
@@ -46,7 +53,7 @@ export async function syncReading(id: string, resolve = false) {
           headers: { "Content-Type": "application/json", "X-Sonder-User-Id": String(owner) },
           body: JSON.stringify({
             locator: value.checkpoint.locator,
-            baseRevision: resolve
+            baseRevision: shouldResolve
               ? value.conflict?.revision || value.baseRevision
               : value.baseRevision,
             eventId: value.checkpoint.eventId,
@@ -54,27 +61,53 @@ export async function syncReading(id: string, resolve = false) {
             updatedAt: value.checkpoint.updatedAt,
             origin: value.checkpoint.origin,
             recordingId: value.checkpoint.recordingId,
-            resolve,
+            resolve: shouldResolve,
           }),
         },
       );
       if (response.status === 401) {
         window.dispatchEvent(new Event("sonder:unauthorized"));
-        return;
+        return false;
       }
       const data = await response.json();
-      if (owner !== userId()) return;
+      if (owner !== userId()) return false;
       const latest = await readingState(id);
-      if (response.status === 409 && data.code === "user_mismatch") return;
+      if (response.status === 409 && data.code === "user_mismatch") return false;
       if (response.status === 409) {
+        if (!data.current) {
+          if (!rebased && value.baseRevision !== 0) {
+            rebased = true;
+            value = {
+              ...(latest || value),
+              baseRevision: 0,
+              conflict: undefined,
+              resolve: undefined,
+            };
+            await storeReading(id, value);
+            continue;
+          }
+          if (latest)
+            await storeReading(id, {
+              ...latest,
+              baseRevision: 0,
+              pending: false,
+              conflict: undefined,
+              resolve: undefined,
+            });
+          return false;
+        }
         if (latest)
-          await storeReading(id, { ...latest, conflict: data.current });
+          await storeReading(id, {
+            ...latest,
+            conflict: data.current,
+            resolve: false,
+          });
         window.dispatchEvent(
           new CustomEvent("sonder:reading-conflict", {
             detail: { id, current: data.current },
           }),
         );
-        return;
+        return false;
       }
       if (!response.ok)
         throw new Error(
@@ -90,10 +123,19 @@ export async function syncReading(id: string, resolve = false) {
         await storeReading(id, {
           ...latest,
           baseRevision: data.checkpoint.revision,
+          conflict: undefined,
+          resolve: undefined,
         });
+      if (value.conflict || shouldResolve)
+        window.dispatchEvent(
+          new CustomEvent("sonder:reading-conflict", {
+            detail: { id, current: null },
+          }),
+        );
       value = await readingState(id);
       resolve = false;
     }
+    return !(await readingState(id))?.conflict;
   } finally {
     syncs.delete(id);
   }
@@ -122,6 +164,7 @@ export async function saveReading(
     baseRevision: previous?.baseRevision || 0,
     pending: true,
     ...(previous?.conflict ? { conflict: previous.conflict } : {}),
+    ...(previous?.resolve ? { resolve: true } : {}),
   };
   await storeReading(id, value);
   if (!value.conflict) void syncReading(id).catch(() => {});
@@ -179,7 +222,19 @@ export async function queueBookmark(
   });
   void syncBookmarks(id).catch(() => {});
 }
-const rejectedBookmarkStatuses = [400, 403, 404, 410, 413, 422];
+// Only refusals that can never succeed drop a queued action: a validation
+// error, a removed ebook, a conflict or an oversized body. Server and network
+// errors keep it queued.
+function bookmarkRejected(status: number, data: { error?: string; code?: string }) {
+  if (status === 400)
+    return (
+      data.code === "bookmark_invalid" ||
+      data.error === "Please check the information you entered." ||
+      data.error === "This bookmark does not belong to this edition."
+    );
+  if (status === 409) return data.code !== "user_mismatch";
+  return [404, 410, 413, 422].includes(status);
+}
 export async function syncBookmarks(id: string) {
   if (!navigator.onLine || bookmarkSyncs.has(id)) return;
   bookmarkSyncs.add(id);
@@ -212,7 +267,7 @@ export async function syncBookmarks(id: string) {
       if (owner !== userId()) return;
       // The server will never accept this action. Drop it so later bookmark
       // changes for this ebook can still sync.
-      const rejected = rejectedBookmarkStatuses.includes(response.status);
+      const rejected = !response.ok && bookmarkRejected(response.status, data);
       if (!response.ok && !rejected)
         throw new Error(data.error || "Bookmarks could not be synchronized.");
       if (rejected)
@@ -360,6 +415,12 @@ export function hasKnownReader(workId: string | undefined): boolean {
   return false;
 }
 
+/** The server no longer has this map (or refuses it because its sources
+ * changed). Other failures, such as a restart or a missing media drive, are
+ * temporary and keep the cached map. */
+export function mapGone(error: unknown) {
+  return error instanceof ApiError && [404, 410].includes(error.status);
+}
 /** A cached reading-sync map is only reused for the same job run, built from
  * the EPUB that is current now. The summary cannot tell whether the audio
  * changed in place; only the map endpoint checks that. */
@@ -376,6 +437,22 @@ export function cachedMapMatches(
     cached.audioFingerprint === job.audioFingerprint &&
     !!ebookFingerprint &&
     cached.fingerprint === ebookFingerprint
+  );
+}
+
+/** The cached map was built from other sources than this job's, or from
+ * another EPUB than the current one. */
+export function cachedMapStale(
+  cached: AlignmentJob | undefined,
+  job: AlignmentJob,
+  ebookFingerprint: string | undefined,
+) {
+  return (
+    !!cached &&
+    (cached.id !== job.id ||
+      cached.fingerprint !== job.fingerprint ||
+      cached.audioFingerprint !== job.audioFingerprint ||
+      (!!ebookFingerprint && cached.fingerprint !== ebookFingerprint))
   );
 }
 
@@ -487,6 +564,8 @@ export function warmPlaybackReading(
           const fingerprint = (await readerBook)?.fingerprint;
           if (cancelled) return null;
           if (!cachedMapMatches(cached, job, fingerprint)) {
+            if (cachedMapStale(cached, job, fingerprint))
+              await localDB.preferences.delete(mapCacheKey);
             let map: AlignmentJob;
             try {
               map = await api<AlignmentJob>(
@@ -495,8 +574,7 @@ export function warmPlaybackReading(
             } catch (error) {
               // The server refused the map (its sources changed): a cached
               // copy must not be used offline either.
-              if (!(error instanceof TypeError))
-                await localDB.preferences.delete(mapCacheKey);
+              if (mapGone(error)) await localDB.preferences.delete(mapCacheKey);
               throw error;
             }
             if (cancelled) return null;

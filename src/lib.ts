@@ -25,6 +25,16 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   }
   return response;
 };
+/** A refusal from the server, with its status. */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+  ) {
+    super(message);
+  }
+}
 export async function api<T = unknown>(
   path: string,
   options: RequestInit = {},
@@ -43,7 +53,11 @@ export async function api<T = unknown>(
     window.dispatchEvent(new Event("sonder:unauthorized"));
   const result = await response.json();
   if (!response.ok)
-    throw new Error(result.error || "Could not connect. Please try again.");
+    throw new ApiError(
+      result.error || "Could not connect. Please try again.",
+      response.status,
+      result.code,
+    );
   return result as T;
 }
 class SonderDB extends Dexie {

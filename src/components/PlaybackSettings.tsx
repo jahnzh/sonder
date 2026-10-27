@@ -6,7 +6,7 @@ export function PlaybackSettings({
 }: {
   notify: (text: string, error?: boolean) => void;
 }) {
-  const { appearance, update, save } = useAppearance(),
+  const { appearance, update, savePlayback } = useAppearance(),
     [busy, setBusy] = useState(false);
   return (
     <section
@@ -54,7 +54,7 @@ export function PlaybackSettings({
         disabled={busy}
         onClick={() => {
           setBusy(true);
-          void save()
+          void savePlayback()
             .then(() => notify("Playback settings saved."))
             .catch((error) => notify(error.message, true))
             .finally(() => setBusy(false));

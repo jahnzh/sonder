@@ -2,8 +2,8 @@ import { isAdmin } from "../lib";
 import { userStorageKey } from "../lib";
 import { useEffect, useRef, useState } from "react";
 import { BookOpen, Headphones, Loader2, Link2 } from "lucide-react";
-import { api, localDB, clock } from "../lib";
-import { cachedMapMatches } from "../reading";
+import { api, ApiError, localDB, clock } from "../lib";
+import { cachedMapMatches, cachedMapStale, mapGone } from "../reading";
 import { usePlayer } from "../player";
 import type { Book } from "../types";
 import type {
@@ -150,20 +150,25 @@ export function ReadingSync({
         | AlignmentJob
         | undefined;
       const run = `${job.id}:${job.updatedAt}:${book.fingerprint}`;
+      const stale = cachedMapStale(cached, job, book.fingerprint);
       if (cachedMapMatches(cached, job, book.fingerprint)) {
         onMap(cached);
         // The audio may have changed in place without a new job run; let the
         // server confirm the map once per reader session.
         if (validated.current.has(run)) return job;
-      }
+      } else if (stale) await localDB.preferences.delete(cacheKey);
       let map: AlignmentJob;
       try {
         map = await api<AlignmentJob>(`/alignments/${job.id}/map`);
       } catch (error) {
         if (requestEpoch !== epoch.current) return;
-        if (!(error instanceof TypeError)) {
+        if (mapGone(error)) {
           await localDB.preferences.delete(cacheKey);
           onMap(null);
+        } else if (cached && !stale) {
+          // A temporary failure: keep the cached map and confirm it later.
+          onMap(cached);
+          return job;
         }
         throw error;
       }
@@ -174,7 +179,11 @@ export function ReadingSync({
       return job;
     } catch (error) {
       if (requestEpoch !== epoch.current) return;
-      if (!navigator.onLine || error instanceof TypeError) {
+      if (
+        !navigator.onLine ||
+        !(error instanceof ApiError) ||
+        error.status >= 500
+      ) {
         const value = (await localDB.preferences.get(cacheKey))?.value as
           | AlignmentJob
           | undefined;

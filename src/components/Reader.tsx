@@ -216,6 +216,9 @@ export function ReaderView({
     // relocation still counts as the reader's own choice.
     navigating = useRef(0),
     navigatedUntil = useRef(0),
+    // The jump epoch of that navigation: a jump of ours started after it
+    // (follow, Lyrics, progress) ends its window.
+    navigationEpoch = useRef(0),
     fromListening = useRef(initialFromAudio),
     jumpRef = useRef<
       (id: string, save?: boolean, recordingId?: string) => Promise<boolean>
@@ -436,7 +439,9 @@ export function ReaderView({
                 all.findIndex((value) => value.id === fragment.id) /
                 Math.max(1, all.length - 1),
             };
-            const navigated = navigating.current > 0 || performance.now() <= navigatedUntil.current;
+            const navigated =
+              navigationEpoch.current === jumpEpoch.current &&
+              (navigating.current > 0 || performance.now() <= navigatedUntil.current);
             const ownLayout = !navigated && (layoutPending.current > 0 || performance.now() <= automatic.current);
             if (ownLayout && latest.current)
               return;
@@ -647,7 +652,7 @@ export function ReaderView({
   // Contents and page turns replace a follow jump still in flight, and their
   // relocation is saved even while that jump's layout is pending.
   const navigate = (go: (view: Rendition) => Promise<unknown>) => {
-    ++jumpEpoch.current;
+    navigationEpoch.current = ++jumpEpoch.current;
     setFollow(false);
     automatic.current = 0; lastGesture.current = performance.now();
     const view = rendition.current;
@@ -1145,7 +1150,9 @@ export function ReaderView({
             className="button subtle"
             onClick={() => {
               void syncReading(id, true)
-                .then(() => setConflict(null))
+                .then((resolved) => {
+                  if (resolved) setConflict(null);
+                })
                 .catch((error) => notify(error.message, true));
             }}
           >
