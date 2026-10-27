@@ -203,3 +203,26 @@ test("Contents navigation during a follow jump wins and is saved", async ({page}
  expect(saved.origin).toBe("reading");
 });
 
+test("a cached sync map is not used once the server refuses it", async ({page}) => {
+ const appearance=await(await page.request.get("/api/appearance")).json();
+ const {ebook}=await fixture(page,"Changed narration","en-ZA");
+ try {
+  await page.goto(`/#reader/${ebook}`);
+  const reader=page.getByRole("dialog",{name:"Reader"});
+  await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
+  await reader.getByRole("button",{name:"Show reader controls"}).click();
+  await reader.locator(".reader-page-actions").getByRole("button",{name:"Lyrics",exact:true}).click();
+  const prompt=reader.getByRole("button",{name:"Prepare reading sync",exact:true});
+  await expect(reader.locator(".lyrics-line").first()).toBeVisible();
+  // The map is loaded and cached on this device.
+  await expect(prompt).toBeHidden();
+  // The audio changes in place: the job summary is unchanged, but the server
+  // no longer serves the map.
+  await page.route("**/api/alignments/*/map",route=>route.fulfill({status:400,json:{error:"The ebook or audio changed. Rebuild this alignment before using it."}}));
+  await page.reload();
+  await expect(reader.locator(".lyrics-line").first()).toBeVisible();
+  // The prompt also shows briefly before a cached map loads; give that time.
+  await page.waitForTimeout(1500);
+  await expect(prompt).toBeVisible();
+ } finally { await page.request.put("/api/appearance",{data:appearance}); }
+});

@@ -360,6 +360,25 @@ export function hasKnownReader(workId: string | undefined): boolean {
   return false;
 }
 
+/** A cached reading-sync map is only reused for the same job run, built from
+ * the EPUB that is current now. The summary cannot tell whether the audio
+ * changed in place; only the map endpoint checks that. */
+export function cachedMapMatches(
+  cached: AlignmentJob | undefined,
+  job: AlignmentJob,
+  ebookFingerprint: string | undefined,
+): cached is AlignmentJob {
+  return (
+    !!cached?.intervals?.length &&
+    cached.id === job.id &&
+    cached.updatedAt >= job.updatedAt &&
+    cached.fingerprint === job.fingerprint &&
+    cached.audioFingerprint === job.audioFingerprint &&
+    !!ebookFingerprint &&
+    cached.fingerprint === ebookFingerprint
+  );
+}
+
 let activeWarm: { cancel: () => void } | null = null;
 
 export function warmPlaybackReading(
@@ -439,13 +458,12 @@ export function warmPlaybackReading(
       }
     } catch {}
 
-    void loadReader(ebookId)
-      .then((readerBook) => {
-        if (!cancelled && readerBook?.fingerprint) {
-          void epubFile(readerBook.id, readerBook.fingerprint).catch(() => {});
-        }
-      })
-      .catch(() => {});
+    const readerBook = loadReader(ebookId).catch(() => null);
+    void readerBook.then((readerBook) => {
+      if (!cancelled && readerBook?.fingerprint) {
+        void epubFile(readerBook.id, readerBook.fingerprint).catch(() => {});
+      }
+    });
 
     if (!recordingId) return;
 
@@ -466,13 +484,21 @@ export function warmPlaybackReading(
           const cached = (await localDB.preferences.get(mapCacheKey))?.value as
             | AlignmentJob
             | undefined;
-          if (
-            !cached?.intervals?.length ||
-            job.updatedAt > cached.updatedAt
-          ) {
-            const map = await api<AlignmentJob>(
-              `/alignments/${encodeURIComponent(job.id)}/map`,
-            );
+          const fingerprint = (await readerBook)?.fingerprint;
+          if (cancelled) return null;
+          if (!cachedMapMatches(cached, job, fingerprint)) {
+            let map: AlignmentJob;
+            try {
+              map = await api<AlignmentJob>(
+                `/alignments/${encodeURIComponent(job.id)}/map`,
+              );
+            } catch (error) {
+              // The server refused the map (its sources changed): a cached
+              // copy must not be used offline either.
+              if (!(error instanceof TypeError))
+                await localDB.preferences.delete(mapCacheKey);
+              throw error;
+            }
             if (cancelled) return null;
             await localDB.preferences.put({ key: mapCacheKey, value: map });
           }
