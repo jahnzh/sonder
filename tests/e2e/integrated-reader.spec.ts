@@ -98,9 +98,16 @@ test("page controls and lyrics follow the prepared narration",async({page})=>{
   await expect(page.getByRole("button",{name:"Back to narration"})).toBeVisible();
   await page.getByRole("button",{name:"Back to narration"}).click();
   await expect(page.getByRole("button",{name:"Back to narration"})).toBeHidden();
-  await page.locator(".now-playing-transport").getByRole("button",{name:"Page",exact:true}).click();
-  await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
+  await page.setViewportSize({width:320,height:740});
   await page.setViewportSize({width:1440,height:900});
+  await page.locator(".now-playing-transport").getByRole("button",{name:"Page",exact:true}).click();
+  await expect(page.locator(".inline-reader .reader-viewport .sonder-follow").first()).toBeVisible();
+  await page.setViewportSize({width:390,height:844});
+  await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
+  // Returning from Lyrics keeps the narrated passage highlighted, also after a resize.
+  await expect(page.locator(".inline-reader .reader-viewport .sonder-follow").first()).toBeVisible();
+  await page.setViewportSize({width:1440,height:900});
+  await expect(page.locator(".inline-reader .reader-viewport .sonder-follow").first()).toBeVisible();
   await expect(page.getByLabel("Contents sidebar")).toBeVisible();
   await expect(page.getByRole("button",{name:"Previous ebook page",exact:true})).toBeVisible();
   await page.locator(".now-playing-transport").getByRole("button",{name:"Lyrics",exact:true}).click();

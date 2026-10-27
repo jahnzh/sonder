@@ -499,7 +499,11 @@ export function ReaderView({
           if (!disposed && host.clientHeight > 0) {
             if(host.clientWidth===lastWidth && host.clientHeight===lastHeight)return;
             lastWidth=host.clientWidth;lastHeight=host.clientHeight;
-            automatic.current = performance.now() + 700;
+            // Re-paginating a long book after a resize (rotation, desktop
+            // sidebar, leaving Lyrics) can take seconds; its relocation is not
+            // the reader navigating. Taps, swipes and keys stop following
+            // explicitly, so this only affects relocations without a gesture.
+            automatic.current = performance.now() + 3000;
             view.resize(host.clientWidth, host.clientHeight);
             if(following.current){following.current="";setFollowRevision(value=>value+1);}
           }
