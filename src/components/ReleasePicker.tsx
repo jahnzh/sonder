@@ -8,12 +8,24 @@ import {
 } from "lucide-react";
 import { api, localDB } from "../lib";
 import { Dialog } from "./ui/dialog";
-import type { Acquisition, AudiobookRelease, Book } from "../types";
+import type {
+  Acquisition,
+  AudiobookRelease,
+  Book,
+  ReleaseSourceStatus,
+} from "../types";
+import {
+  matchesLanguage,
+  mergeReleases,
+  releaseIndexers,
+  sortReleases,
+} from "../releases";
 
 export function ReleasePicker({
   query,
   onQuery,
   target,
+  prowlarrConfigured = false,
   onQueued,
   refresh,
   notify,
@@ -21,13 +33,16 @@ export function ReleasePicker({
   query: string;
   onQuery: (query: string) => void;
   target: Book | null;
+  prowlarrConfigured?: boolean;
   onQueued: () => void;
   refresh: () => Promise<void>;
   notify: (text: string, error?: boolean) => void;
 }) {
   const [results, setResults] = useState<AudiobookRelease[]>([]);
   const [language, setLanguage] = useState("English");
-  const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState(0);
+  const busy = pending > 0;
+  const [sourceErrors, setSourceErrors] = useState<ReleaseSourceStatus[]>([]);
   const [searched, setSearched] = useState(false);
   const [error, setError] = useState("");
   const [searchedQuery, setSearchedQuery] = useState("");
@@ -44,36 +59,71 @@ export function ReleasePicker({
       return;
     }
     const id = ++requestId.current;
-    setBusy(true);
     setError("");
     if (page === 1) {
       setResults([]);
       setNextPage(null);
+      setSourceErrors([]);
       setSearchedQuery(term.trim());
     }
-    try {
-      const response = await api<{
-        results: AudiobookRelease[];
-        nextPage: number | null;
-      }>(
-        "/discover/abb/releases?" +
+    // Each source fills in as it answers; one failing source never hides the others.
+    const sources: {
+      source: ReleaseSourceStatus["source"];
+      label: string;
+      path: string;
+    }[] = [
+      {
+        source: "abb",
+        label: "AudioBookBay",
+        path:
+          "/discover/abb/releases?" +
           new URLSearchParams({ q: term.trim(), page: String(page) }),
-      );
-      if (id !== requestId.current) return;
-      setResults((current) => [
-        ...new Map(
-          [...(page === 1 ? [] : current), ...response.results].map(
-            (release) => [release.id, release],
-          ),
-        ).values(),
-      ]);
-      setNextPage(response.nextPage);
-      setSearched(true);
-    } catch (error) {
-      if (id === requestId.current) setError((error as Error).message);
-    } finally {
-      if (id === requestId.current) setBusy(false);
-    }
+      },
+      ...(prowlarrConfigured && page === 1
+        ? [
+            {
+              source: "prowlarr" as const,
+              label: "Prowlarr",
+              path:
+                "/discover/prowlarr/releases?" +
+                new URLSearchParams({ q: term.trim() }),
+            },
+          ]
+        : []),
+    ];
+    setPending(sources.length);
+    await Promise.all(
+      sources.map(async ({ source, label, path }) => {
+        try {
+          const response = await api<{
+            results: AudiobookRelease[];
+            nextPage: number | null;
+          }>(path);
+          if (id !== requestId.current) return;
+          setResults((current) =>
+            mergeReleases(
+              current,
+              response.results.map((release) => ({
+                ...release,
+                source: release.source || source,
+              })),
+            ),
+          );
+          if (source === "abb") setNextPage(response.nextPage);
+        } catch (error) {
+          if (id === requestId.current)
+            setSourceErrors((current) => [
+              ...current.filter((entry) => entry.source !== source),
+              { source, label, error: (error as Error).message },
+            ]);
+        } finally {
+          if (id === requestId.current) {
+            setPending((count) => count - 1);
+            setSearched(true);
+          }
+        }
+      }),
+    );
   };
   useEffect(() => {
     void localDB.preferences.get("release-language").then((value) => {
@@ -90,8 +140,9 @@ export function ReleasePicker({
   const choose = async (release: AudiobookRelease) => {
     const id = ++chooseId.current;
     setSelected(release);
-    setDetailsBusy(true);
     setDetailsError("");
+    if (release.source === "prowlarr") return;
+    setDetailsBusy(true);
     try {
       const details = await api<AudiobookRelease>(
         "/discover/abb/releases/" + encodeURIComponent(release.id),
@@ -119,13 +170,20 @@ export function ReleasePicker({
     if (!selected) return;
     setQueuing(true);
     try {
-      const job = await api<Acquisition>("/discover/abb/add", {
-        method: "POST",
-        body: JSON.stringify({
-          slug: selected.id,
-          ...(target ? { workId: target.workId } : {}),
-        }),
-      });
+      const job = await api<Acquisition>(
+        selected.source === "prowlarr"
+          ? "/discover/prowlarr/add"
+          : "/discover/abb/add",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            ...(selected.source === "prowlarr"
+              ? { id: selected.id }
+              : { slug: selected.id }),
+            ...(target ? { workId: target.workId } : {}),
+          }),
+        },
+      );
       if (job.status === "error")
         throw new Error(
           job.error ||
@@ -153,20 +211,10 @@ export function ReleasePicker({
       ...results.map((release) => release.language || "Unknown"),
     ]),
   ].sort();
-  const visible = results
-    .filter(
-      (release) =>
-        language === "all" ||
-        (release.language || "Unknown").toLowerCase() ===
-          language.toLowerCase(),
-    )
-    .sort((a, b) => {
-      const title = (target?.title || searchedQuery).toLowerCase();
-      return (
-        Number(b.title.toLowerCase() === title) -
-        Number(a.title.toLowerCase() === title)
-      );
-    });
+  const visible = sortReleases(
+    results.filter((release) => matchesLanguage(release, language)),
+    target?.title || searchedQuery,
+  );
   return (
     <section className="release-picker external-search">
       <div className="section-heading">
@@ -243,6 +291,11 @@ export function ReleasePicker({
           {error}
         </p>
       )}
+      {sourceErrors.map((entry) => (
+        <p className="release-source-error" role="status" key={entry.source}>
+          {entry.label} unavailable: {entry.error}
+        </p>
+      ))}
       <div className="release-results">
         {visible.map((release) => (
           <article className="release-card" key={release.id}>
@@ -255,8 +308,9 @@ export function ReleasePicker({
             />
             <div className="release-info">
               <h3>{release.title}</h3>
-              <p>{release.author}</p>
+              {release.author && <p>{release.author}</p>}
               <ReleaseFacts release={release} />
+              <ReleaseSource release={release} />
               {release.narrator && <p>Narrated by {release.narrator}</p>}
               {release.uploader && (
                 <small>
@@ -279,7 +333,7 @@ export function ReleasePicker({
           <Loader2 size={18} className="spin" /> Finding releases…
         </p>
       )}
-      {searched && !busy && !visible.length && (
+      {searched && !busy && !visible.length && sourceErrors.length < (prowlarrConfigured ? 2 : 1) && (
         <p className="queue-empty">
           {results.length
             ? "No releases in this language on the loaded pages. Load more releases or choose All languages."
@@ -312,8 +366,9 @@ export function ReleasePicker({
         {selected && (
           <>
             <h2>{selected.title}</h2>
-            <p>{selected.author}</p>
+            {selected.author && <p>{selected.author}</p>}
             <ReleaseFacts release={selected} />
+            <ReleaseSource release={selected} />
             <p>
               Narrator: {selected.narrator || "Not provided by this source"}
             </p>
@@ -328,21 +383,25 @@ export function ReleasePicker({
                 <Loader2 className="spin" size={16} /> Reading release details…
               </p>
             ) : (
-              <p className="release-description">{selected.description}</p>
+              selected.description && (
+                <p className="release-description">{selected.description}</p>
+              )
             )}
             {detailsError && (
               <p className="inline-error" role="alert">
                 {detailsError}
               </p>
             )}
-            <a
-              className="text-link"
-              href={selected.url}
-              target="_blank"
-              rel="noreferrer"
-            >
-              View source details <ExternalLink size={14} />
-            </a>
+            {selected.url && (
+              <a
+                className="text-link"
+                href={selected.url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                View source details <ExternalLink size={14} />
+              </a>
+            )}
             <p className="release-storage-note">
               We’ll check this exact release in TorBox. A cache miss downloads
               through the local torrent client to your 4 TB drive. Each
@@ -382,5 +441,20 @@ function ReleaseFacts({ release }: { release: AudiobookRelease }) {
           <span key={index}>{fact}</span>
         ))}
     </div>
+  );
+}
+function ReleaseSource({ release }: { release: AudiobookRelease }) {
+  return (
+    <small className="release-source">
+      {[
+        releaseIndexers(release).join(", "),
+        typeof release.seeders === "number"
+          ? `${release.seeders} ${release.seeders === 1 ? "seeder" : "seeders"}`
+          : null,
+        release.cached ? "Cached on TorBox" : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")}
+    </small>
   );
 }

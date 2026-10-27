@@ -48,6 +48,7 @@ import {
 } from "lucide-react";
 import { PlayerProvider, usePlayer } from "./player";
 import { ReleasePicker } from "./components/ReleasePicker";
+import { ProwlarrSettings } from "./components/ProwlarrSettings";
 import { AppearanceSettings } from "./components/Appearance";
 import { PlaybackSettings } from "./components/PlaybackSettings";
 import { MediaManager } from "./components/MediaManager";
@@ -2032,6 +2033,7 @@ function Discover({
           query={query}
           onQuery={onQuery}
           target={audioTarget}
+          prowlarrConfigured={!!settings?.prowlarrConfigured}
           onQueued={onQueued}
           refresh={refresh}
           notify={notify}
@@ -2474,6 +2476,7 @@ function SettingsPage({
         notify={notify}
       />
       <SourceSettings settings={settings} onSaved={onSaved} notify={notify} />
+      <ProwlarrSettings settings={settings} onSaved={onSaved} notify={notify} />
       <section className="install-card">
         <div className="install-brand">
           <Mark />
