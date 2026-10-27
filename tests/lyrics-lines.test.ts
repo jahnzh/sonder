@@ -29,3 +29,10 @@ test("long sentences split at clauses while preserving timing fractions and punc
   assert.ok(lines[0].fraction < lines[1].fraction && lines[1].fraction < 1);
   assert.deepEqual(lines.map(line => line.paragraphStart), [true, false]);
 });
+
+test("sentence splitting keeps leading punctuation, decimals, abbreviations and initials", () => {
+  const lines = lyricsLines(book([
+    { id: "a", blockIndex: 0, text: "...Wait for me. So it was 3.5 miles! Mr. Smith met J. R. Tolkien. So did I. \"Run!\" Done" },
+  ]));
+  assert.deepEqual(lines.map(line => line.text), ["...Wait for me.", "So it was 3.5 miles!", "Mr. Smith met J. R. Tolkien.", "So did I.", "\"Run!\"", "Done"]);
+});
