@@ -1,6 +1,6 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 const temp=mkdtempSync(join(tmpdir(),"sonder-users-"));
@@ -27,6 +27,16 @@ test("users have isolated libraries and progress and cannot access administratio
  const a=(await request(first,"GET","/api/books")).json().find((x:any)=>x.id===book.id); const b=(await request(second,"GET","/api/books")).json().find((x:any)=>x.id===book.id);
  assert.equal(a.status,"finished"); assert.equal(a.progress.position,12); assert.equal(b.inLibrary,false); assert.equal(b.progress,undefined);
  for(const [method,url] of [["PATCH","/api/settings"],["POST","/api/acquire"],["POST","/api/import"],["POST","/api/alignments"]]) assert.equal((await request(first,method,url,{})).statusCode,403,url);
+ const { readerFixture }=await import("./reader-fixture.ts");
+ const ebookDir=join(temp,"media","ebooks"); mkdirSync(ebookDir,{recursive:true}); const epub=join(ebookDir,"isolation.epub"); writeFileSync(epub,await readerFixture());
+ sqlite.prepare("INSERT INTO ebook_editions(id,work_id,format,source) VALUES(?,?,?,?)").run("isolation",book.workId,"epub",epub);
+ const locator={section:0,paragraphId:"0:0",progression:0.1};
+ const checkpoint={locator,baseRevision:0,eventId:"event-first",deviceId:"device-first",updatedAt:Date.now()};
+ assert.equal((await request(first,"PUT","/api/reader/isolation/progress",checkpoint)).statusCode,200);
+ assert.equal((await request(second,"PUT","/api/reader/isolation/progress",checkpoint)).statusCode,200);
+ assert.equal((await request(first,"POST","/api/reader/isolation/bookmarks",{id:"bookmark-first",label:"First",locator})).statusCode,200);
+ const firstReader=(await request(first,"GET","/api/reader/isolation")).json(), secondReader=(await request(second,"GET","/api/reader/isolation")).json();
+ assert.equal(firstReader.checkpoint.revision,1); assert.equal(secondReader.checkpoint.revision,1); assert.equal(firstReader.bookmarks.length,1); assert.equal(secondReader.bookmarks.length,0);
  assert.equal((await request(first,"DELETE",`/api/library/${book.id}`)).statusCode,200);
  assert.ok(sqlite.prepare("SELECT 1 FROM user_hidden_library WHERE user_id=2 AND book_id=?").get(book.id)); assert.equal(sqlite.prepare("SELECT 1 FROM user_hidden_library WHERE user_id=3 AND book_id=?").get(book.id),undefined);
  assert.equal((await request(admin,"GET","/api/auth/status")).json().user.username,"admin");
