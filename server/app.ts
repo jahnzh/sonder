@@ -50,6 +50,7 @@ import {
 } from "./storage.ts";
 import { acquire, refreshQueue } from "./acquisitions.ts";
 import { transmission, transmissionConfigured } from "./transmission.ts";
+import { getTorrentHealth } from "./torrent-health.ts";
 import { searchEbooks, saveEbook, listEbooks, importEbook } from "./ebooks.ts";
 import {
   hasServerMedia,
@@ -670,6 +671,12 @@ export async function createApp() {
       .where(eq(s.acquisitions.id, id))
       .run();
     return { ok: true };
+  });
+  app.get("/api/torrents/health", async (req) => {
+    const { fresh } = z
+      .object({ fresh: z.string().optional() })
+      .parse(req.query ?? {});
+    return getTorrentHealth(fresh === "1" || fresh === "true" ? 0 : undefined);
   });
   app.post("/api/local/test", async () => {
     ensureMediaStorage();

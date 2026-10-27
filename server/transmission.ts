@@ -18,17 +18,34 @@ export type LocalTorrent = {
   fileStats: { bytesCompleted: number; wanted: boolean }[];
 };
 let sessionId = "";
+export type TransmissionFailure =
+  | "unconfigured"
+  | "unreachable"
+  | "auth"
+  | "http"
+  | "rpc"
+  | "session";
+export class TransmissionError extends Error {
+  constructor(
+    message: string,
+    readonly failure: TransmissionFailure,
+  ) {
+    super(message);
+  }
+}
 export function transmissionConfigured() {
   return !!process.env.TRANSMISSION_RPC_URL;
 }
 export async function transmission<T = Record<string, unknown>>(
   method: string,
   args: Record<string, unknown> = {},
+  timeoutMs = 15000,
 ): Promise<T> {
   const url = process.env.TRANSMISSION_RPC_URL;
   if (!url)
-    throw new Error(
+    throw new TransmissionError(
       "The local torrent client is not configured. Run the local torrent setup script on your server.",
+      "unconfigured",
     );
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -47,11 +64,12 @@ export async function transmission<T = Record<string, unknown>>(
         method: "POST",
         headers,
         body: JSON.stringify({ method, arguments: args }),
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch {
-      throw new Error(
+      throw new TransmissionError(
         "The local torrent client cannot be reached. Check that the torrent and VPN containers are running.",
+        "unreachable",
       );
     }
     if (response.status === 409) {
@@ -59,16 +77,23 @@ export async function transmission<T = Record<string, unknown>>(
       continue;
     }
     if (response.status === 401)
-      throw new Error("The local torrent client rejected its credentials.");
+      throw new TransmissionError(
+        "The local torrent client rejected its credentials.",
+        "auth",
+      );
     if (!response.ok)
-      throw new Error(`The local torrent client returned ${response.status}.`);
+      throw new TransmissionError(
+        `The local torrent client returned ${response.status}.`,
+        "http",
+      );
     const body = (await response.json()) as { result: string; arguments: T };
     if (body.result !== "success")
-      throw new Error(`Local torrent client: ${body.result}`);
+      throw new TransmissionError(`Local torrent client: ${body.result}`, "rpc");
     return body.arguments;
   }
-  throw new Error(
+  throw new TransmissionError(
     "Could not negotiate a session with the local torrent client.",
+    "session",
   );
 }
 export async function getTorrent(hash: string) {

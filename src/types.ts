@@ -162,3 +162,13 @@ export type HardcoverState = {
   lists: { id: number; name: string; count: number; slug: string | null }[];
   shelves: { id: number; name: string }[];
 };
+export type TorrentHealth = {
+  status: "ok" | "offline" | "unreachable" | "auth" | "error" | "unconfigured";
+  // RPC answered with a valid session.
+  session: boolean;
+  // Outcome of Transmission's port test, which needs working DNS and egress through the VPN.
+  network: "ok" | "port-closed" | "failed" | "unknown";
+  version: string | null;
+  message: string;
+  checkedAt: number;
+};
