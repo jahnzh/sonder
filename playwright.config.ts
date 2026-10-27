@@ -1,5 +1,6 @@
 import { defineConfig } from "@playwright/test";
 import { existsSync } from "node:fs";
+const port = Number(process.env.PLAYWRIGHT_PORT || 4173);
 const installed =
   "/home/jahn/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome";
 export default defineConfig({
@@ -10,7 +11,7 @@ export default defineConfig({
   expect: { timeout: 10000 },
   reporter: "list",
   use: {
-    baseURL: "http://127.0.0.1:4173",
+    baseURL: `http://127.0.0.1:${port}`,
     viewport: { width: 390, height: 844 },
     headless: true,
     launchOptions: {
@@ -22,7 +23,7 @@ export default defineConfig({
   },
   webServer: {
     command: "node --import tsx tests/browser-server.ts",
-    url: "http://127.0.0.1:4173/api/health",
+    url: `http://127.0.0.1:${port}/api/health`,
     reuseExistingServer: false,
     timeout: 30000,
   },
