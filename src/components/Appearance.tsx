@@ -28,6 +28,8 @@ type ThemeContext = {
   save: (value?: Appearance, deviceOnly?: boolean) => Promise<void>;
   /** Stores reader settings on top of the saved appearance; a preview stays unsaved. */
   saveReader: (patch: Partial<Appearance["reader"]>) => Promise<void>;
+  /** Stores playback settings on top of the saved appearance; a preview stays unsaved. */
+  savePlayback: (patch?: Partial<Appearance["playback"]>) => Promise<void>;
 };
 const Context = createContext<ThemeContext>(null!);
 export const useAppearance = () => useContext(Context);
@@ -91,8 +93,17 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     if (!deviceOnlySetting())
       await api("/appearance", { method: "PUT", body: JSON.stringify(value) });
   };
+  const savePlayback = async (patch: Partial<Appearance["playback"]> = {}) => {
+    const playback = { ...shown.current.playback, ...patch };
+    update({ ...shown.current, playback });
+    const value = remember({ ...stored.current, playback });
+    if (!deviceOnlySetting())
+      await api("/appearance", { method: "PUT", body: JSON.stringify(value) });
+  };
   return (
-    <Context.Provider value={{ appearance, saved, update, save, saveReader }}>
+    <Context.Provider
+      value={{ appearance, saved, update, save, saveReader, savePlayback }}
+    >
       {children}
     </Context.Provider>
   );

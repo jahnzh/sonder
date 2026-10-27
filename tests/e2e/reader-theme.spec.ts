@@ -389,6 +389,22 @@ test("a reader setting does not save an appearance preview", async ({
       .click();
     // Preview Light without saving it.
     await page.getByRole("button", { name: "Light", exact: true }).click();
+    await page
+      .getByRole("combobox", { name: "Playback progress bar" })
+      .selectOption("chapter");
+    await page
+      .getByRole("button", { name: "Save playback settings", exact: true })
+      .click();
+    await expect
+      .poll(
+        async () =>
+          (await (await page.request.get("/api/appearance")).json()).playback
+            .progressScope,
+      )
+      .toBe("chapter");
+    expect(
+      (await (await page.request.get("/api/appearance")).json()).preset,
+    ).toBe(defaultAppearance.preset);
     await page.evaluate((id) => {
       window.dispatchEvent(
         new CustomEvent("sonder:open-reader", { detail: { id, fromAudio: false } }),
