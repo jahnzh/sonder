@@ -65,7 +65,7 @@ globalThis.fetch = async (input, init) => {
   else if (query.includes("SonderLists"))
     data = { lists: [{ id: 80, user_id: 7001, name: "Private list", slug: "private", books_count: 1 }] };
   else if (query.includes("SonderBook"))
-    data = { books_by_pk: v.id === 101 ? alice : null };
+    data = { books_by_pk: v.id === 101 ? alice : v.id === 621 ? book(621, "The Time Machine", "H. G. Wells") : null };
   else throw new Error("Unexpected Hardcover operation: " + query.slice(0, 70));
   return Response.json({ data: structuredClone(data) });
 };
@@ -93,6 +93,10 @@ assert.equal(
   (await request(a, "PATCH", "/api/hardcover/config", { mode: "import", syncLists: true })).statusCode,
   200,
 );
+// The admin matched Alice to its Hardcover book earlier; regular users never create matches (G1).
+sqlite
+  .prepare("INSERT INTO hardcover_links(work_id,book_id,slug,series) VALUES('work-alice',101,'book-101','[]')")
+  .run();
 const firstSync = await request(a, "POST", "/api/hardcover/sync");
 assert.equal(firstSync.statusCode, 200, firstSync.body);
 const localPosition = () =>
@@ -130,6 +134,27 @@ test("r6#2: only the admin creates a shared match, while a regular user can stil
   assert.equal(existing.statusCode, 200, existing.body);
   const plain = await request(a, "POST", "/api/hardcover/books", { id: 101 });
   assert.equal(plain.statusCode, 200, plain.body);
+});
+
+test("G1: a regular user's automatic sync never matches an unlinked local work, it uses a hidden placeholder", async () => {
+  // Same title and author as the unlinked local Frankenstein work.
+  entries.push({ id: 14, book_id: 620, status_id: 1, updated_at: "2020-01-01T00:00:00Z", book: book(620, "Frankenstein", "Mary Shelley"), user_book_reads: [] });
+  try {
+    const sync = await request(a, "POST", "/api/hardcover/sync");
+    assert.equal(sync.statusCode, 200, sync.body);
+    assert.equal(hc.hardcoverLinkedBook("work-frankenstein"), undefined);
+    assert.equal(hc.hardcoverLinkedBook("work-hc-620"), 620);
+    assert.ok(sqlite.prepare("SELECT 1 FROM user_library WHERE user_id=? AND book_id='hc-620'").get(idA));
+    assert.equal(sqlite.prepare("SELECT 1 FROM user_library WHERE user_id=? AND book_id='frankenstein'").get(idA), undefined);
+    assert.ok(hc.hiddenHardcoverPlaceholders(idC).has("hc-620"));
+    // A plain import without a work id takes the same path.
+    const plain = await request(a, "POST", "/api/hardcover/books", { id: 621 });
+    assert.equal(plain.statusCode, 200, plain.body);
+    assert.equal(hc.hardcoverLinkedBook("work-time"), undefined);
+    assert.equal(hc.hardcoverLinkedBook("work-hc-621"), 621);
+  } finally {
+    entries.splice(entries.findIndex((e) => e.id === 14), 1);
+  }
 });
 
 test("r6#3: in import mode an older Hardcover position never overwrites a newer local one", async () => {

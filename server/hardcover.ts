@@ -505,6 +505,14 @@ function parseRemoteTime(value: string | undefined | null) {
   const n = value ? Date.parse(value) : 0;
   return Number.isFinite(n) ? n : 0;
 }
+function isAdminUser(userId: number) {
+  const role = (
+    sqlite.prepare("SELECT role FROM users WHERE id=?").get(userId) as
+      | { role: string }
+      | undefined
+  )?.role;
+  return userId === ADMIN_USER_ID || role === "admin";
+}
 export function hardcoverLinkedBook(workId: string) {
   return db
     .select()
@@ -651,7 +659,9 @@ function importCatalogBook(
   let links = linkRepresentatives(book.id);
   let matched = false,
     imported = false;
-  if (!links.length) {
+  // A title/author match creates a shared work → book link, which only the admin may do.
+  // A regular user's unmatched book gets their own hidden `hc-*` placeholder instead.
+  if (!links.length && isAdminUser(userId)) {
     const candidates = db
       .select()
       .from(s.works)
@@ -778,12 +788,7 @@ export function hardcoverForWork(userId: number, workId: string) {
 // they're only listed for users who have that book themselves, and for admins (r6#1).
 // Returns the placeholder edition ids `userId` must not see in the catalogue.
 export function hiddenHardcoverPlaceholders(userId: number): Set<string> {
-  const role = (
-    sqlite.prepare("SELECT role FROM users WHERE id=?").get(userId) as
-      | { role: string }
-      | undefined
-  )?.role;
-  if (userId === ADMIN_USER_ID || role === "admin") return new Set();
+  if (isAdminUser(userId)) return new Set();
   const placeholders = sqlite
     .prepare(
       `SELECT e.id, l.book_id AS bookId FROM audio_editions e
