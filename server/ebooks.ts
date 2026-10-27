@@ -8,8 +8,9 @@ import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
 import { eq } from "drizzle-orm";
 import { randomUUID, createHash } from "node:crypto";
-import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
+import dns, { type LookupAddress } from "node:dns";
+import { BlockList, isIP } from "node:net";
+import { Agent } from "undici";
 import {
   createWriteStream,
   existsSync,
@@ -46,7 +47,7 @@ function baseUrl(_source: EbookSource) {
 async function page(url: string, source: EbookSource) {
   let response;
   try {
-    response = await fetch(url, {
+    response = await publicFetch(url, {
       headers: {
         Accept: "text/html",
         "User-Agent": userAgent,
@@ -108,29 +109,69 @@ export async function searchEbooks(
     website: url,
   };
 }
-function privateAddress(ip: string) {
-  const value = ip.toLowerCase();
-  if (value.includes(":"))
-    return (
-      value === "::1" ||
-      value === "::" ||
-      value.startsWith("fc") ||
-      value.startsWith("fd") ||
-      value.startsWith("fe80:") ||
-      value.startsWith("::ffff:")
-    );
-  const parts = ip.split(".").map(Number);
-  return (
-    parts[0] === 0 ||
-    parts[0] === 10 ||
-    parts[0] === 127 ||
-    parts[0] >= 224 ||
-    (parts[0] === 169 && parts[1] === 254) ||
-    (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
-    (parts[0] === 192 && parts[1] === 168) ||
-    (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127)
-  );
+// Separate lists, because BlockList also matches IPv4 addresses against IPv6
+// rules as IPv4-mapped addresses, which ::ffff:0:0/96 would always match.
+const privateV4 = new BlockList(),
+  privateV6 = new BlockList();
+for (const [network, prefix] of [
+  ["0.0.0.0", 8],
+  ["10.0.0.0", 8],
+  ["100.64.0.0", 10],
+  ["127.0.0.0", 8],
+  ["169.254.0.0", 16],
+  ["172.16.0.0", 12],
+  ["192.0.0.0", 24],
+  ["192.168.0.0", 16],
+  ["198.18.0.0", 15],
+  ["224.0.0.0", 3],
+] as const)
+  privateV4.addSubnet(network, prefix, "ipv4");
+for (const [network, prefix] of [
+  ["::", 96], // unspecified, loopback and IPv4-compatible
+  ["::ffff:0:0", 96], // IPv4-mapped
+  ["64:ff9b::", 96], // NAT64
+  ["64:ff9b:1::", 48],
+  ["100::", 64],
+  ["2001::", 32], // Teredo
+  ["2002::", 16], // 6to4
+  ["fc00::", 7],
+  ["fe80::", 10],
+  ["fec0::", 10],
+  ["ff00::", 8],
+] as const)
+  privateV6.addSubnet(network, prefix, "ipv6");
+export function privateAddress(ip: string) {
+  const family = isIP(ip);
+  if (!family) return true;
+  return family === 6
+    ? privateV6.check(ip, "ipv6")
+    : privateV4.check(ip, "ipv4");
 }
+class PrivateAddressError extends Error {
+  constructor() {
+    super("Downloads from private network addresses are not allowed.");
+  }
+}
+// Every address is checked when the connection is made, so a host can't pass
+// the check with one DNS answer and connect with another.
+const publicAgent = new Agent({
+  connect: {
+    lookup(hostname, options, callback) {
+      dns.lookup(hostname, { ...options, all: true }, (error, found) => {
+        const addresses = found as unknown as LookupAddress[];
+        if (error) return callback(error, "", 0);
+        if (!addresses.length || addresses.some((a) => privateAddress(a.address)))
+          return callback(new PrivateAddressError(), "", 0);
+        if ((options as { all?: boolean }).all)
+          return (callback as unknown as (e: null, a: LookupAddress[]) => void)(
+            null,
+            addresses,
+          );
+        callback(null, addresses[0].address, addresses[0].family);
+      });
+    },
+  },
+});
 // Waiting for a response and waiting between body chunks are limited separately,
 // so a large file on a slow mirror isn't cut off while it is still arriving.
 export const ebookTimeouts = { response: 60000, idle: 60000 };
@@ -146,14 +187,9 @@ export async function publicFetch(input: string, init: RequestInit = {}) {
       throw new Error(
         "The source did not provide a secure public download URL.",
       );
+    // Literal addresses never reach the agent's lookup.
     const host = url.hostname.replace(/^\[|\]$/g, "");
-    const addresses = isIP(host)
-      ? [{ address: host }]
-      : await lookup(host, { all: true });
-    if (!addresses.length || addresses.some((a) => privateAddress(a.address)))
-      throw new Error(
-        "Downloads from private network addresses are not allowed.",
-      );
+    if (isIP(host) && privateAddress(host)) throw new PrivateAddressError();
     const waiting = new AbortController();
     const timer = setTimeout(
       () =>
@@ -168,7 +204,11 @@ export async function publicFetch(input: string, init: RequestInit = {}) {
         signal: init.signal
           ? AbortSignal.any([init.signal, waiting.signal])
           : waiting.signal,
-      });
+        dispatcher: publicAgent,
+      } as RequestInit);
+    } catch (error) {
+      const cause = (error as { cause?: unknown }).cause;
+      throw cause instanceof PrivateAddressError ? cause : error;
     } finally {
       clearTimeout(timer);
     }

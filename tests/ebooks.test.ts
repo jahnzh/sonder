@@ -154,7 +154,7 @@ function mirror(content: Buffer, body: (signal?: AbortSignal | null) => Readable
         `<a href="https://1.1.1.1/get.php?md5=${md5}&amp;key=test">GET</a>`,
       );
     downloads++;
-    return new Response(body(init?.signal), {
+    return new Response(body(init?.signal) as BodyInit, {
       headers: { "Content-Length": String(content.length) },
     });
   };
@@ -250,4 +250,65 @@ test("r4#5 (guard, not a bug): concurrent identical uploads create one work", as
   assert.equal(first.statusCode, 200, first.body);
   assert.equal(second.statusCode, 200, second.body);
   assert.equal(db.select().from(works).all().length, count + 1);
+});
+const { publicFetch, privateAddress } = await import("../server/ebooks.ts");
+const { mock } = await import("node:test");
+const dns = (await import("node:dns")).default;
+test("r4#2: private IPv4 and IPv6 ranges are refused, public addresses are not", () => {
+  for (const ip of [
+    "127.0.0.1",
+    "10.1.2.3",
+    "100.64.0.1",
+    "169.254.169.254",
+    "::1",
+    "::",
+    "fe80::1",
+    "febf::1",
+    "fc00::1",
+    "fdff::1",
+    "::ffff:127.0.0.1",
+    "::ffff:7f00:1",
+    "64:ff9b::7f00:1",
+    "2002:7f00:1::1",
+    "ff02::1",
+  ])
+    assert.equal(privateAddress(ip), true, ip);
+  for (const ip of ["1.1.1.1", "8.8.8.8", "2606:4700:4700::1111"])
+    assert.equal(privateAddress(ip), false, ip);
+  assert.equal(privateAddress("not an address"), true);
+});
+test("r4#2: the address checked is the address connected to, even when DNS changes its answer", async () => {
+  // The first answer is public; the one used to connect points at loopback.
+  const lookup = mock.method(dns, "lookup", (_host: string, options: any, callback: any) => {
+    const address = { address: "127.0.0.1", family: 4 };
+    if (options?.all) callback(null, [address]);
+    else callback(null, address.address, address.family);
+  });
+  const promises = mock.method(dns.promises, "lookup", async () => [
+    { address: "1.1.1.1", family: 4 },
+  ]);
+  try {
+    await assert.rejects(publicFetch("https://rebind.example/file"), /private network/);
+    assert.ok(lookup.mock.callCount() >= 1);
+  } finally {
+    lookup.mock.restore();
+    promises.mock.restore();
+  }
+  for (const literal of ["https://[fe90::1]/x", "https://[64:ff9b::7f00:1]/x", "https://[::ffff:7f00:1]/x"])
+    await assert.rejects(publicFetch(literal), /private network/, literal);
+});
+test("r4#2: mirror pages don't follow redirects to private addresses", async () => {
+  const requested: { url: string; redirect?: RequestRedirect }[] = [];
+  globalThis.fetch = async (input, init) => {
+    requested.push({ url: String(input), redirect: init?.redirect });
+    return new Response(null, {
+      status: 302,
+      headers: { Location: "https://127.0.0.1:443/admin" },
+    });
+  };
+  const epub = Buffer.from(`PK\x03\x04 redirect ${sequence++}`);
+  await assert.rejects(saveEbook(libgen(epub)));
+  assert.ok(requested.length >= 1);
+  assert.ok(requested.every((request) => request.redirect === "manual"));
+  assert.ok(!requested.some((request) => request.url.includes("127.0.0.1")));
 });
