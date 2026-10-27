@@ -15,6 +15,11 @@ test.beforeAll(async () => {
 test.afterAll(() => { server?.kill(); });
 test("accounts keep libraries and offline queues separate", async ({ page }) => {
   mkdirSync("artifacts", { recursive: true });
+  const bookHeaders: string[] = [];
+  await page.route("**/api/books", route => {
+    bookHeaders.push(route.request().headers()["x-sonder-user-id"] || "");
+    return route.continue();
+  });
   await page.goto(base);
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await page.screenshot({ path: "artifacts/users-sign-in.png" });
@@ -22,6 +27,7 @@ test("accounts keep libraries and offline queues separate", async ({ page }) => 
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.getByRole("button", { name: "Settings", exact: true }).last().click();
   await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
+  await expect.poll(() => bookHeaders).toContain("1");
   const users = page.locator("section").filter({ has: page.getByRole("heading", { name: "Users" }) });
   await expect(users.getByLabel("Role")).toHaveCount(0);
   await users.getByLabel("Username").fill("reader");
