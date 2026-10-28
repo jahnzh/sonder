@@ -36,7 +36,7 @@ try {
   page.on("pageerror",error=>report.errors.push(error.message));
   const actual=()=>page.evaluate(()=>{
     const a=window.__actualAudio.find(a=>!!a.src);
-    return a && {position:a.currentTime,paused:a.paused,duration:a.duration,src:a.src,ready:a.readyState,error:a.error?.message};
+    return a && {position:a.currentTime,paused:a.paused,duration:a.duration,src:a.src,ready:a.readyState,error:a.error?.message,sourceLabel:document.querySelector(".player-dock .playback-source")?.textContent};
   });
   readAudio=actual;
   await page.goto("/");
@@ -67,7 +67,11 @@ try {
   const openSources=async()=>{
     if(await room.count()){await showControls(); await room.locator(".reader-topbar").getByRole("button",{name:"More",exact:true}).click();}
     else if(await page.getByRole("button",{name:"Playback options",exact:true}).isVisible()) await page.getByRole("button",{name:"Playback options",exact:true}).click();
+    const refreshed=page.waitForResponse(response=>new URL(response.url()).pathname===`/api/recordings/${encodeURIComponent(book.recordingId)}/sources`&&response.request().method()==="GET"&&response.ok());
     await page.getByRole("button",{name:"Versions & sources",exact:true}).click();
+    const state=await (await refreshed).json();
+    await expect(page.getByRole("dialog",{name:"Versions & sources",exact:true}).getByRole("combobox",{name:"Playback source choice",exact:true})).toBeEnabled();
+    return state;
   };
   await showControls();
   const slider=page.getByRole("slider",{name:"Seek in chapter",exact:true});
@@ -112,7 +116,7 @@ try {
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(1440);
   check("desktop timeline expands",{width:desktop.width});
   await page.screenshot({path:"artifacts/live-playback-chapter-desktop.png",fullPage:true});
-  await openSources();
+  const sourceState=await openSources();
   const manager=page.getByRole("dialog",{name:"Versions & sources",exact:true});
   const source=manager.getByRole("combobox",{name:"Playback source choice",exact:true});
   await expect(source).toBeEnabled();
@@ -120,9 +124,15 @@ try {
   for(const mode of ["original","server"]){
     await expect(source).toBeEnabled();
     const option=source.locator(`option[value="${mode}"]`);
-    if(await option.isDisabled())continue;
+    // The dialog can render cached options before its asynchronous refresh settles.
+    const playing=await actual();
+    const availability=sourceState.tracks.find(track=>playing.src.includes(encodeURIComponent(track.id))) || sourceState.tracks[0];
+    if(!availability?.[mode] || sourceState.faults?.[mode])continue;
+    await expect(option).toBeEnabled();
+    report.sourceMode=mode;
     await source.selectOption(mode);
     await manager.getByRole("button",{name:"Apply source",exact:true}).click();
+    await expect(source).toHaveValue(mode);
     // Selecting the source already in use need not reload the audio URL.
     // Assert the reported delivery source and decoded audio instead of URL shape.
     await expect.poll(async()=>{
