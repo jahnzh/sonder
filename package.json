@@ -10,6 +10,7 @@
     "test": "tsx --test tests/*.test.ts tests/*.test.mjs",
     "test:browser": "playwright test",
     "check": "node scripts/check-local.mjs",
+    "ci:ssh": "bash scripts/ci-ssh.sh",
     "backup": "node scripts/backup-db.mjs"
   },
   "dependencies": {
