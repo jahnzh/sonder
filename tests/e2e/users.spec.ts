@@ -17,13 +17,17 @@ async function freePort(): Promise<number> {
 
 let server: ChildProcess;
 let base = "";
+// The port can be taken between freePort() closing its probe and the server binding it, so retry on a new port.
 test.beforeAll(async () => {
-  const port = await freePort();
-  base = `http://127.0.0.1:${port}`;
-  server = spawn(process.execPath, ["--import", "tsx", "tests/browser-server.ts"], { env: { ...process.env, PLAYWRIGHT_AUTH: "1", APP_PASSWORD: "admin-password", PLAYWRIGHT_PORT: String(port) }, stdio: "ignore" });
-  for (let i = 0; i < 100; i++) {
-    try { if ((await fetch(`${base}/api/health`)).ok) return; } catch {}
-    await new Promise(resolve => setTimeout(resolve, 100));
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const port = await freePort();
+    base = `http://127.0.0.1:${port}`;
+    server = spawn(process.execPath, ["--import", "tsx", "tests/browser-server.ts"], { env: { ...process.env, PLAYWRIGHT_AUTH: "1", APP_PASSWORD: "admin-password", PLAYWRIGHT_PORT: String(port) }, stdio: "ignore" });
+    for (let i = 0; i < 100 && server.exitCode === null; i++) {
+      try { if ((await fetch(`${base}/api/health`)).ok) return; } catch {}
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    server.kill();
   }
   throw new Error("Authenticated browser server did not start");
 });
