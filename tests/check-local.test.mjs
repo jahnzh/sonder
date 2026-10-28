@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import net from "node:net";
 import { spawn, execFileSync } from "node:child_process";
 import { runCheckLocal } from "../scripts/check-local.mjs";
 import { acquirePortLease, releasePortLease } from "../scripts/check-local-support.mjs";
@@ -122,6 +123,155 @@ function readNpmLogs(logPath) {
         .map((line) => line.trim())
         .filter((line) => line.length > 0)
         .map((line) => JSON.parse(line));
+}
+
+const leaseSupportUrl = new URL("../scripts/check-local-support.mjs", import.meta.url).href;
+const leaseContenderScript = `
+import { acquirePortLease, releasePortLease } from ${JSON.stringify(leaseSupportUrl)};
+
+let lease = null;
+process.send({ type: "ready" });
+process.on("message", async (message) => {
+  if (message === "start") {
+    try {
+      lease = await acquirePortLease(Number(process.env.LEASE_TEST_PORT));
+      process.send({ type: "result", acquired: true });
+    } catch (error) {
+      process.send({ type: "result", acquired: false, error: error.message });
+      setImmediate(() => process.exit(0));
+    }
+  } else if (message === "release" && lease) {
+    releasePortLease(lease);
+    process.exit(0);
+  }
+});
+`;
+
+function waitForChildMessage(child, type, timeoutMs = 5_000) {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+            cleanup();
+            reject(new Error(`Timed out waiting for child message "${type}": ${child.stderrText}`));
+        }, timeoutMs);
+        const onMessage = (message) => {
+            if (message?.type !== type)
+                return;
+            cleanup();
+            resolve(message);
+        };
+        const onExit = (code, signal) => {
+            cleanup();
+            reject(new Error(`Lease contender exited before "${type}" (${code ?? signal}): ${child.stderrText}`));
+        };
+        const cleanup = () => {
+            clearTimeout(timer);
+            child.off("message", onMessage);
+            child.off("exit", onExit);
+        };
+        child.on("message", onMessage);
+        child.on("exit", onExit);
+    });
+}
+
+function spawnLeaseContender(port, tempRoot) {
+    const env = { ...process.env, TMPDIR: tempRoot, LEASE_TEST_PORT: String(port) };
+    delete env.CHECK_LOCAL_PORT;
+    const child = spawn(process.execPath, ["--input-type=module", "--eval", leaseContenderScript], {
+        env,
+        stdio: ["ignore", "ignore", "pipe", "ipc"],
+    });
+    child.stderrText = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => {
+        child.stderrText += chunk;
+    });
+    return child;
+}
+
+function waitForChildExit(child, timeoutMs = 5_000) {
+    return new Promise((resolve, reject) => {
+        if (child.exitCode !== null || child.signalCode !== null)
+            return resolve();
+        const timer = setTimeout(() => {
+            cleanup();
+            reject(new Error(`Timed out waiting for lease contender to exit: ${child.stderrText}`));
+        }, timeoutMs);
+        const onExit = () => {
+            cleanup();
+            resolve();
+        };
+        const cleanup = () => {
+            clearTimeout(timer);
+            child.off("exit", onExit);
+        };
+        child.on("exit", onExit);
+    });
+}
+
+function freePort() {
+    return new Promise((resolve, reject) => {
+        const server = net.createServer();
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", () => {
+            const address = server.address();
+            server.close((error) => {
+                if (error)
+                    reject(error);
+                else
+                    resolve(address.port);
+            });
+        });
+    });
+}
+
+async function startLeaseContenders(port, tempRoot, count) {
+    const children = Array.from({ length: count }, () => spawnLeaseContender(port, tempRoot));
+    await Promise.all(children.map((child) => waitForChildMessage(child, "ready")));
+    const results = children.map((child) => waitForChildMessage(child, "result"));
+    for (const child of children)
+        child.send("start");
+    return { children, results: await Promise.all(results) };
+}
+
+async function releaseLeaseChildren(children, results) {
+    for (let index = 0; index < children.length; index++) {
+        if (results[index]?.acquired && children[index].connected)
+            children[index].send("release");
+    }
+    await Promise.all(children.map((child) => waitForChildExit(child)));
+}
+
+async function assertSingleReclaimer(lockContents, { unreadable = false } = {}) {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-lease-race-"));
+    const leaseDir = path.join(tempRoot, "sonder-port-leases");
+    const port = await freePort();
+    const lockPath = path.join(leaseDir, `port-${port}.lock`);
+    fs.mkdirSync(leaseDir, { recursive: true });
+    fs.writeFileSync(lockPath, lockContents);
+    if (unreadable) {
+        const old = new Date(Date.now() - 61_000);
+        fs.utimesSync(lockPath, old, old);
+    }
+
+    let contenders = null;
+    try {
+        contenders = await startLeaseContenders(port, tempRoot, 2);
+        const winners = contenders.results
+            .map((result, index) => ({ result, child: contenders.children[index] }))
+            .filter(({ result }) => result.acquired);
+        assert.equal(winners.length, 1, "exactly one reclaimer must hold the port");
+        assert.equal(JSON.parse(fs.readFileSync(lockPath, "utf8")).pid, winners[0].child.pid);
+        assert.equal(
+            fs.readdirSync(leaseDir).filter((name) => name.includes(".stale-")).length,
+            0,
+            "the renamed stale generation must be deleted",
+        );
+    }
+    finally {
+        if (contenders)
+            await releaseLeaseChildren(contenders.children, contenders.results);
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
 }
 test("1. Stage order: executes npm ci -> npm run build -> npm test -> npm run test:browser sequentially", async () => {
     const fixture = setupGitFixture();
@@ -630,6 +780,44 @@ test("an empty lock file older than 60 s is reclaimed and a fresh one is left al
     if (previous === undefined) delete process.env.CHECK_LOCAL_PORT;
     else process.env.CHECK_LOCAL_PORT = previous;
     fs.rmSync(lockPath, { force: true });
+  }
+});
+
+test("two competing reclaimers leave exactly one holder for a stale PID lock", async () => {
+  const staleLock = JSON.stringify({
+    pid: 2_147_483_647,
+    time: Date.now() - 61_000,
+    port: 0,
+  }) + " ".repeat(4 * 1024 * 1024);
+  await assertSingleReclaimer(staleLock);
+});
+
+test("two competing reclaimers leave exactly one holder for an old unreadable lock", async () => {
+  const unreadableLock = "not-json\n" + " ".repeat(4 * 1024 * 1024);
+  await assertSingleReclaimer(unreadableLock, { unreadable: true });
+});
+
+test("competing acquire attempts leave a live holder's public lock unchanged", async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-live-lease-"));
+  const port = await freePort();
+  const lockPath = path.join(tempRoot, "sonder-port-leases", `port-${port}.lock`);
+  let holder = null;
+  let contenders = null;
+  try {
+    holder = await startLeaseContenders(port, tempRoot, 1);
+    assert.equal(holder.results[0].acquired, true);
+    const originalLock = fs.readFileSync(lockPath, "utf8");
+
+    contenders = await startLeaseContenders(port, tempRoot, 2);
+    assert.deepEqual(contenders.results.map((result) => result.acquired), [false, false]);
+    assert.equal(fs.readFileSync(lockPath, "utf8"), originalLock);
+  }
+  finally {
+    if (contenders)
+      await releaseLeaseChildren(contenders.children, contenders.results);
+    if (holder)
+      await releaseLeaseChildren(holder.children, holder.results);
+    fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 });
 
