@@ -72,6 +72,9 @@
 .reader-viewport .epub-container {
   overscroll-behavior: contain;
 }
+.reader-viewport[data-jumping] .epub-container {
+  opacity: 0;
+}
 .reader-navigation {
   display: flex;
   align-items: center;

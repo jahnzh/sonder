@@ -270,6 +270,8 @@ export function ReaderView({
     >(async () => false),
     mapRef = useRef<AlignmentJob | null>(null),
     jumpEpoch = useRef(0),
+    // Follow jumps in flight with the pages hidden.
+    hiddenJumps = useRef(0),
     highlight = useRef<string | null>(null);
   const [followRevision,setFollowRevision]=useState(0);
   const followRef=useRef(follow);
@@ -704,6 +706,10 @@ export function ReaderView({
       automatic.current = performance.now() + 500;
     }
   };
+  const hidePages = (change: number) => {
+    hiddenJumps.current += change;
+    viewport.current?.toggleAttribute("data-jumping", hiddenJumps.current > 0);
+  };
   // Contents and page turns replace a follow jump still in flight, and their
   // relocation is saved even while that jump's layout is pending.
   const navigate = (go: (view: Rendition) => Promise<unknown>) => {
@@ -735,17 +741,31 @@ export function ReaderView({
       (fragment) => fragment.id === paragraphId,
     );
     if (!section || !fragment) return false;
-    await displayAutomatically(view, section.href);
-    if (request !== jumpEpoch.current || rendition.current !== view) return false;
-    const content = (view.getContents() as unknown as Contents[]).find(
-      (value) => value.sectionIndex === section.index,
-    );
-    if (!content) return false;
-    const node = blockNodes(content.document)[fragment.blockIndex];
-    if (!node) return false;
-    const range = rangeAt(node, fragment.start),
-      cfi = content.cfiFromRange(range);
-    await displayAutomatically(view, cfi);
+    const shown = () =>
+      (view.getContents() as unknown as Contents[]).find(
+        (value) => value.sectionIndex === section.index,
+      );
+    // In a shown section one display moves straight to the sentence. Another
+    // section opens on its first page and reaches the sentence's page a few
+    // frames later, so the pages stay hidden until then (#27).
+    let content = shown(),
+      node: Element | undefined,
+      cfi = "";
+    const opening = !content;
+    if (opening) hidePages(1);
+    try {
+      if (opening) {
+        await displayAutomatically(view, section.href);
+        if (request !== jumpEpoch.current || rendition.current !== view) return false;
+        content = shown();
+      }
+      node = content && blockNodes(content.document)[fragment.blockIndex];
+      if (!content || !node) return false;
+      cfi = content.cfiFromRange(rangeAt(node, fragment.start));
+      await displayAutomatically(view, cfi);
+    } finally {
+      if (opening) hidePages(-1);
+    }
     if (request !== jumpEpoch.current || rendition.current !== view) return false;
     const all = current.sections.flatMap((section) => section.paragraphs);
     const value: TextLocator = {
