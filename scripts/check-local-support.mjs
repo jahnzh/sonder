@@ -91,7 +91,8 @@ export function resolveGitRevision(cwd, ref) {
 }
 
 /**
- * Check if the caller working tree is dirty.
+ * Check if the caller working tree is dirty. `state` is "unknown" (and `dirty` null)
+ * when git status itself fails.
  */
 export function checkCallerDirty(cwd) {
   try {
@@ -106,11 +107,14 @@ export function checkCallerDirty(cwd) {
       .filter((line) => line.length > 0);
     return {
       dirty: lines.length > 0,
+      state: lines.length > 0 ? "dirty" : "clean",
       uncommittedChanges: lines,
     };
   } catch (err) {
+    // Unknown is not clean: dirty stays null so no report can read it as a clean tree.
     return {
-      dirty: false,
+      dirty: null,
+      state: "unknown",
       uncommittedChanges: [],
       error: err.message,
     };
@@ -257,6 +261,8 @@ export async function acquirePortLease(requestedPort = 0) {
   throw new Error("Failed to allocate an available loopback port after multiple attempts");
 }
 
+const UNREADABLE_LOCK_STALE_MS = 60_000;
+
 function tryAcquireLockFile(lockPath, port) {
   try {
     const fd = fs.openSync(lockPath, "wx");
@@ -271,17 +277,23 @@ function tryAcquireLockFile(lockPath, port) {
   } catch (err) {
     if (err.code === "EEXIST") {
       // Check for stale lock from dead process
+      let stale = false;
       try {
-        const raw = fs.readFileSync(lockPath, "utf8");
-        const parsed = JSON.parse(raw);
-        if (parsed.pid && !isPidAlive(parsed.pid)) {
-          // Dead PID: reclaim lockfile
-          try {
-            fs.unlinkSync(lockPath);
-            return tryAcquireLockFile(lockPath, port);
-          } catch (_) {}
-        }
-      } catch (_) {}
+        const parsed = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+        stale = Boolean(parsed.pid) && !isPidAlive(parsed.pid);
+      } catch (_) {
+        // Unreadable or invalid (e.g. a runner killed mid-write): stale only once old
+        // enough that another runner cannot still be writing it.
+        try {
+          stale = Date.now() - fs.statSync(lockPath).mtimeMs > UNREADABLE_LOCK_STALE_MS;
+        } catch (_) {}
+      }
+      if (stale) {
+        try {
+          fs.unlinkSync(lockPath);
+          return tryAcquireLockFile(lockPath, port);
+        } catch (_) {}
+      }
     }
     return null;
   }
