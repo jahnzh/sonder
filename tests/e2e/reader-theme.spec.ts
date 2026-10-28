@@ -1,7 +1,20 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { readerFixture } from "../reader-fixture";
 import { readFileSync } from "node:fs";
 import { defaultAppearance } from "../../src/appearance";
+// Tapping the middle of the page shows the reader's top bar and slider.
+async function showControls(page: Page) {
+  const room = page.locator(".reader-room:not(.inline-reader)");
+  if (await room.locator(".reader-topbar").isVisible()) return;
+  const box = (await room.locator(".reader-viewport").boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(room.locator(".reader-topbar")).toBeVisible();
+}
+async function openMore(page: Page) {
+  await showControls(page);
+  await page.locator(".reader-room:not(.inline-reader) .reader-topbar").getByRole("button", { name: "More", exact: true }).click();
+}
+
 test("appearance presets and custom colors persist without interrupting audio", async ({
   page,
 }) => {
@@ -116,13 +129,21 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   const checkpoint = (
     await (await page.request.get(`/api/reader/${id}`)).json()
   ).checkpoint;
-  await page.getByRole("button", { name: "Show reader controls" }).click();
-  await expect(page.getByRole("group", { name: "Sync reading and audio positions" }).getByRole("button", { name: "Read from audio" })).toBeVisible();
-  await expect(page.getByRole("group", { name: "Sync reading and audio positions" }).getByRole("button", { name: "Listen from here" })).toBeVisible();
+  await openMore(page);
+  const more = page.locator(".reader-room:not(.inline-reader) .reader-more");
+  await expect(more.getByRole("button", { name: "Read from audio" })).toBeVisible();
+  await expect(more.getByRole("button", { name: "Listen from here" })).toBeVisible();
   await page
-    .getByRole("button", { name: "Bookmark this passage", exact: true })
+    .getByRole("button", { name: "Close reader options", exact: true })
     .click();
-  await page.getByRole("button", { name: "Bookmarks", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Bookmark current sentence", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Remove bookmark from current sentence", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await openMore(page);
+  await more.getByRole("button", { name: "Bookmarks", exact: true }).click();
   await expect(page.locator(".reader-room:not(.inline-reader) .reader-bookmark")).toHaveCount(1);
   await page
     .getByRole("button", { name: "Close reader options", exact: true })
@@ -149,7 +170,8 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await page
     .getByRole("button", { name: "Close reader options", exact: true })
     .click();
-  await page.getByRole("button", { name: "Reading sync", exact: true }).click();
+  await openMore(page);
+  await more.getByRole("button", { name: "Reading sync", exact: true }).click();
   const sameRelease = page.getByRole("combobox", {
     name: "Reading sync audiobook release",
   });
@@ -198,7 +220,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await page
     .getByRole("button", { name: "Close reader options", exact: true })
     .click();
-  await page.getByRole("button", { name: "Contents", exact: true }).click();
+  await page.getByRole("button", { name: "Chapters", exact: true }).click();
   await page
     .getByRole("button", { name: "Down the Rabbit-Hole", exact: true })
     .click();
@@ -206,14 +228,16 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   const box = (await sentence.boundingBox())!;
   await page.mouse.move(box.x + 30, box.y + 10);
   await page.mouse.down(); await page.waitForTimeout(650); await page.mouse.up();
-  await page.getByRole("dialog", { name: "Sentence actions" }).getByRole("button", { name: "Listen from here" }).click();
+  // Long-press plays the narration from that sentence.
+  await expect(page.getByRole("status").filter({ hasText: "Listening from here" })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Pause reader audio", exact: true }),
+    page.getByRole("button", { name: "Pause narration", exact: true }),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: "Pause reader audio", exact: true })
+    .getByRole("button", { name: "Pause narration", exact: true })
     .click();
-  await page
+  await openMore(page);
+  await more
     .getByRole("button", { name: "Save ebook offline", exact: true })
     .click();
   await expect(
@@ -229,18 +253,22 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await expect(
     page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").locator("body"),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Show reader controls" }).click();
+  await openMore(page);
   await expect(
     page.getByRole("button", { name: "Ebook saved offline", exact: true }),
   ).toBeDisabled();
+  await page
+    .getByRole("button", { name: "Close reader options", exact: true })
+    .click();
   await expect(
     page.locator(
       '.reader-room:not(.inline-reader) .reading-sync select[aria-label="Reading sync audiobook release"]',
     ),
   ).toHaveValue(chosenRecording);
   await page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").locator("body").click({ position: { x: 340, y: 100 } });
+  await showControls(page);
   await page
-    .getByRole("button", { name: "Bookmark this passage", exact: true })
+    .getByRole("button", { name: "Bookmark current sentence", exact: true })
     .click();
   await context.setOffline(false);
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
@@ -286,7 +314,7 @@ test("an image-only cover opens at the first readable EPUB section on a narrow p
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     320,
   );
-  await page.getByRole("button", { name: "Show reader controls" }).click();
+  await showControls(page);
   expect(
     (await page
       .getByRole("button", { name: "Search this book", exact: true })
@@ -339,9 +367,9 @@ test("a bookmark the server rejects is dropped with a notice and later bookmarks
   await page.goto(`/#reader/${id}`);
   const reader = page.getByRole("dialog", { name: "Reader" });
   await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
-  await reader.getByRole("button", { name: "Show reader controls" }).click();
+  await showControls(page);
   const add = reader.getByRole("button", {
-    name: "Bookmark this passage",
+    name: "Bookmark current sentence",
     exact: true,
   });
   await add.click();
@@ -413,7 +441,7 @@ test("a reader setting does not save an appearance preview", async ({
     }, id);
     const reader = page.getByRole("dialog", { name: "Reader" });
     await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
-    await reader.getByRole("button", { name: "Show reader controls" }).click();
+    await showControls(page);
     await reader
       .getByRole("button", { name: "Reader appearance", exact: true })
       .click();
@@ -586,4 +614,36 @@ test("a 409 with no server checkpoint rebases to revision 0 and saves instead of
     )
     .toBe(1);
   await expect(reader.locator(".reading-conflict")).toBeHidden();
+});
+test("Settings → Playback chooses whether linked ebooks open in Page or Lyrics mode", async ({
+  page,
+}) => {
+  const appearance = await (await page.request.get("/api/appearance")).json();
+  try {
+    await page.request.put("/api/appearance", {
+      data: { ...appearance, reader: { ...appearance.reader, display: "book" } },
+    });
+    await page.goto("/");
+    await page
+      .locator(".mobile-nav")
+      .getByRole("button", { name: "Settings", exact: true })
+      .click();
+    const view = page.getByRole("combobox", { name: "Ebook view" });
+    await expect(view).toHaveValue("book");
+    await view.selectOption("segment");
+    await page
+      .getByRole("button", { name: "Save playback settings", exact: true })
+      .click();
+    await expect
+      .poll(async () => (await (await page.request.get("/api/appearance")).json()).reader.display)
+      .toBe("segment");
+    await page.reload();
+    await page
+      .locator(".mobile-nav")
+      .getByRole("button", { name: "Settings", exact: true })
+      .click();
+    await expect(page.getByRole("combobox", { name: "Ebook view" })).toHaveValue("segment");
+  } finally {
+    await page.request.put("/api/appearance", { data: appearance });
+  }
 });

@@ -572,3 +572,33 @@
   .player-dock .dock-center { width: 124px; max-width: 124px; }
   .player-dock .transport { gap: 0; }
 }
+
+/* With an ebook, Now Playing is the full-screen reader: its heading and large
+   transport give way to the reader's top bar and player bar (#22). */
+.now-playing-dialog.with-reader {
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+.with-reader > .dialog-heading {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.with-reader .now-playing-transport {
+  display: none;
+}
+.with-reader .playback-options-panel {
+  top: 8px;
+  bottom: 76px;
+}
+.with-reader .playback-options-backdrop {
+  inset: 0;
+}

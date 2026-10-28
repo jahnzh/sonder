@@ -26,9 +26,12 @@ type Drag = {
 export function PlaybackTimeline({
   book,
   compact = false,
+  scoped = false,
 }: {
   book: Book;
   compact?: boolean;
+  // Compact layout that still names its scope, as in the desktop reader footer.
+  scoped?: boolean;
 }) {
   const p = usePlayer(),
     { appearance } = useAppearance();
@@ -168,7 +171,7 @@ export function PlaybackTimeline({
             value={position}
             disabled={disabled}
             aria-label={
-              compact
+              compact && !scoped
                 ? "Playback position"
                 : timeline?.scope === "chapter"
                   ? "Seek in chapter"

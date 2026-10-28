@@ -28,6 +28,24 @@ async function start(page:Page,title:string){
  await expect(page.getByRole("dialog",{name:"Now playing",exact:true})).toBeVisible();
  await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
 }
+async function showControls(page:Page,scope:string){
+ const topbar=page.locator(`${scope} .reader-topbar`);
+ if(await topbar.isVisible())return;
+ const box=(await page.locator(`${scope} .reader-viewport`).boundingBox())!;
+ await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
+ await expect(topbar).toBeVisible();
+}
+// Reading mode lives in the More sheet: Now Playing's options panel, or the standalone reader's panel.
+async function readingMode(page:Page,scope:string,mode:"Page"|"Lyrics"){
+ const room=page.locator(scope);
+ if(await room.locator(".reader-topbar").isHidden()){
+  // A tap outside the lines toggles the controls in Lyrics mode.
+  if(await room.locator(".lyrics-reader").count())await room.locator(".lyrics-reader").evaluate((el:HTMLElement)=>el.click());
+  else await showControls(page,scope);
+ }
+ await room.locator(".reader-topbar").getByRole("button",{name:"More",exact:true}).click();
+ await page.locator(".reader-more:visible").getByRole("group",{name:"Reading mode"}).getByRole("button",{name:mode,exact:true}).click();
+}
 async function checkTransport(page:Page,scope:string){
  const transport=page.locator(scope);
  const previous=transport.getByRole("button",{name:"Rewind 30 seconds",exact:true}),next=transport.getByRole("button",{name:"Forward 30 seconds",exact:true});
@@ -47,36 +65,48 @@ async function checkHeading(page:Page){
  expect(Math.abs(await centre(dialog.getByRole("button",{name:"Playback options",exact:true}))-close)).toBeLessThan(1);
  expect(Math.abs(await centre(dialog.locator(".now-playing-heading-title"))-close)).toBeLessThan(1);
 }
-test("page gestures expose controls and sentence actions",async({page})=>{
+test("page gestures show controls and long-press listens from that sentence",async({page})=>{
  const {ebook,map,manifest}=await fixture(page,"Integrated narration");
  await start(page,"Integrated narration");
  const before=(await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint;
  const room=page.locator(".inline-reader");
- await expect(room.locator(".reader-page-actions")).toBeHidden();
- const frameBox=(await page.locator(".inline-reader .reader-viewport").boundingBox())!;
- await page.mouse.click(frameBox.x+frameBox.width/2,frameBox.y+100);
- await expect(room.locator(".reader-page-actions")).toBeVisible();
- await expect(room.getByRole("slider",{name:"Book progress"})).toBeVisible();
- const text=page.frameLocator(".inline-reader .reader-viewport iframe").locator("p").first();
+ await expect(room.locator(".reader-topbar")).toBeHidden();
+ // The player bar stays visible while reading.
+ await expect(room.getByRole("button",{name:"Play narration",exact:true})).toBeVisible();
+ await expect(room.getByRole("slider",{name:/^Seek in /})).toBeHidden();
+ await showControls(page,".inline-reader");
+ await expect(room.getByRole("slider",{name:/^Seek in /})).toBeVisible();
+ const text=page.frameLocator(".inline-reader .reader-viewport iframe").locator("p").nth(1);
  await text.waitFor();
  const box=(await text.boundingBox())!;
  await page.mouse.move(box.x+Math.min(box.width/2,80),box.y+Math.min(box.height/2,10));
  await page.mouse.down(); await page.waitForTimeout(650); await page.mouse.up();
- const sheet=room.getByRole("dialog",{name:"Sentence actions"});
- await expect(sheet).toBeVisible();
- await expect(sheet.getByRole("button",{name:"Listen from here"})).toBeVisible();
- await expect(sheet.getByText(/Estimated audio time|Audio time/)).toBeVisible();
- await sheet.getByRole("button",{name:"Close sentence actions"}).click();
+ // Long-press plays the narration from that sentence, with Undo.
+ const toast=room.getByRole("status").filter({hasText:"Listening from here"});
+ await expect(toast).toBeVisible();
+ await expect(room.getByRole("button",{name:"Pause narration",exact:true})).toBeVisible();
+ await toast.getByRole("button",{name:"Undo",exact:true}).click();
+ await expect(toast).toBeHidden();
  expect((await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint).toEqual(before);
- const passages=manifest.sections.flatMap((section:any)=>section.paragraphs);
  const target=map.intervals.find((interval:any)=>interval.section===1 && interval.start>105);
- const index=passages.findIndex((passage:any)=>passage.id===target.paragraphId);
- await room.getByRole("slider",{name:"Book progress"}).fill(String(Math.round(index/(passages.length-1)*1000)));
- await expect.poll(async()=>(await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint?.locator.paragraphId).toBe(target.paragraphId);
- const sync=room.getByRole("group",{name:"Sync reading and audio positions"});
- await sync.getByRole("button",{name:"Listen from here"}).click();
+ await room.getByRole("button",{name:"Pause narration",exact:true}).click();
+ // Page away from the narration, then scrub the narration: the page follows it again.
+ const pageBox=(await room.locator(".reader-viewport").boundingBox())!;
+ await page.mouse.click(pageBox.x+pageBox.width*0.9,pageBox.y+pageBox.height/2);
+ await expect(room).not.toHaveAttribute("data-current-passage",/.+/);
+ await showControls(page,".inline-reader");
+ const slider=room.getByRole("slider",{name:/^Seek in /});
+ await slider.fill(String(Math.ceil(target.start)+1));
  await expect(room).toHaveAttribute("data-current-passage",target.paragraphId);
- await sync.getByRole("button",{name:"Read from audio"}).click();
+ await expect(room.locator(".reader-player-info")).toContainText("% of book");
+ const more=page.getByRole("region",{name:"Playback options"});
+ await showControls(page,".inline-reader");
+ await room.getByRole("button",{name:"More",exact:true}).click();
+ await more.getByRole("button",{name:"Listen from here"}).click();
+ await expect(room).toHaveAttribute("data-current-passage",target.paragraphId);
+ await showControls(page,".inline-reader");
+ await room.getByRole("button",{name:"More",exact:true}).click();
+ await more.getByRole("button",{name:"Read from audio"}).click();
  await expect.poll(async()=>(await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint?.origin).toBe("listening");
 });
 test("page controls and lyrics follow the prepared narration",async({page})=>{
@@ -84,11 +114,8 @@ test("page controls and lyrics follow the prepared narration",async({page})=>{
  await fixture(page,"Lyrics narration","en-GB");
  try {
   await start(page,"Lyrics narration");
-  const controls=page.locator(".inline-reader .reader-page-actions");
-  await expect(controls).toBeHidden();
-  const display=page.locator(".now-playing-transport").getByRole("button",{name:"Lyrics",exact:true});
-  await expect(display).toBeVisible();
-  await display.click();
+  await expect(page.locator(".inline-reader .reader-topbar")).toBeHidden();
+  await readingMode(page,".inline-reader","Lyrics");
   const lyrics=page.getByLabel("Lyrics reader");
   await expect(lyrics).toBeVisible();
   await expect(lyrics.locator(".lyrics-line").first()).toBeVisible();
@@ -101,7 +128,7 @@ test("page controls and lyrics follow the prepared narration",async({page})=>{
   await page.setViewportSize({width:320,height:740});
   await page.setViewportSize({width:1440,height:900});
   await expect(lyrics.locator(".lyrics-line.current")).toBeInViewport();
-  await page.locator(".now-playing-transport").getByRole("button",{name:"Page",exact:true}).click();
+  await readingMode(page,".inline-reader","Page");
   await expect(page.locator(".inline-reader .reader-viewport .sonder-follow").first()).toBeVisible();
   await page.setViewportSize({width:390,height:844});
   await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
@@ -110,8 +137,8 @@ test("page controls and lyrics follow the prepared narration",async({page})=>{
   await page.setViewportSize({width:1440,height:900});
   await expect(page.locator(".inline-reader .reader-viewport .sonder-follow").first()).toBeVisible();
   await expect(page.getByLabel("Contents sidebar")).toBeVisible();
-  await expect(page.getByRole("button",{name:"Previous ebook page",exact:true})).toBeVisible();
-  await page.locator(".now-playing-transport").getByRole("button",{name:"Lyrics",exact:true}).click();
+  await expect(page.locator(".inline-reader").getByRole("button",{name:"Previous page",exact:true})).toBeVisible();
+  await readingMode(page,".inline-reader","Lyrics");
   await expect(page.getByLabel("Lyrics information")).toBeVisible();
  } finally {await page.request.put("/api/appearance",{data:appearance});}
 });
@@ -123,8 +150,7 @@ test("opening the reader restores saved audio position without starting playback
  await page.goto("/");
  await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
  await expect(page.locator(".inline-reader")).toHaveAttribute("data-current-passage",interval.paragraphId);
- await page.getByRole("button",{name:"Show reader controls"}).click();
- await expect(page.getByRole("button",{name:"Play reader audio",exact:true})).toBeVisible();
+ await expect(page.locator(".inline-reader").getByRole("button",{name:"Play narration",exact:true})).toBeVisible();
  const box=(await page.locator(".inline-reader .reader-viewport").boundingBox())!;
  expect(box.height).toBeGreaterThan(844*.65);
  await expect(page.locator(".inline-reader .reader-viewport .sonder-follow").first()).toBeVisible();
@@ -140,8 +166,7 @@ test("lyrics without a map remains readable and offers sync setup", async ({page
  // The closed Now Playing reader stays mounted, so scope to the standalone reader.
  const reader=page.getByRole("dialog",{name:"Reader"});
  await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
- await reader.getByRole("button",{name:"Show reader controls"}).click();
- await reader.locator(".reader-page-actions").getByRole("button",{name:"Lyrics",exact:true}).click();
+ await readingMode(page,".reader-dialog","Lyrics");
  await expect(reader.locator(".lyrics-line").first()).toBeVisible();
  await reader.getByRole("button",{name:"Prepare reading sync",exact:true}).click();
  await expect(reader.locator(".reader-panel-heading").getByRole("heading",{name:"Reading sync",exact:true})).toBeVisible();
@@ -158,7 +183,7 @@ test("lyrics keys without a current line and with modifiers leave playback and d
   await page.goto(`/#reader/${ebook}`);
   const reader=page.getByRole("dialog",{name:"Reader"});
   await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
-  await reader.locator(".reader-page-actions").getByRole("button",{name:"Lyrics",exact:true}).click();
+  await readingMode(page,".reader-dialog","Lyrics");
   const lyrics=reader.getByLabel("Lyrics reader");
   await expect(lyrics.locator(".lyrics-line").first()).toBeVisible();
   await expect(lyrics.locator(".lyrics-line.current")).toHaveCount(0);
@@ -191,7 +216,7 @@ test("Contents navigation during a follow jump wins and is saved", async ({page}
  // Start a follow jump to chapter two and choose chapter one before it lands.
  await page.evaluate(()=>{
   const scope=document.querySelector(".inline-reader")!;
-  const read=[...scope.querySelectorAll<HTMLButtonElement>('[aria-label="Sync reading and audio positions"] button')].find(b=>b.textContent?.includes("Read from audio"))!;
+  const read=[...document.querySelectorAll<HTMLButtonElement>('.playback-options-panel .reader-more button')].find(b=>b.textContent?.includes("Read from audio"))!;
   const chapter=[...scope.querySelectorAll<HTMLButtonElement>('[aria-label="Contents sidebar"] button')].find(b=>b.textContent==="Down the Rabbit-Hole")!;
   read.click(); chapter.click();
  });
@@ -213,7 +238,8 @@ test("back to narration right after a Contents navigation keeps following", asyn
  const room=page.locator(".inline-reader");
  await expect(room).toHaveAttribute("data-current-passage",interval.paragraphId);
  const sidebar=room.getByLabel("Contents sidebar");
- const two=sidebar.getByRole("button",{name:"The Pool of Tears",exact:true});
+ // The narrated chapter is also announced as "Narrating".
+ const two=sidebar.getByRole("button",{name:/^The Pool of Tears/});
  await expect(two).toHaveAttribute("aria-current","location");
  // Choose chapter one, then go back to the narration within the second after
  // that navigation lands: the follow jump is our own layout, not navigation.
@@ -241,8 +267,7 @@ test("a cached sync map is not used once the server refuses it", async ({page}) 
   await page.goto(`/#reader/${ebook}`);
   const reader=page.getByRole("dialog",{name:"Reader"});
   await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
-  await reader.getByRole("button",{name:"Show reader controls"}).click();
-  await reader.locator(".reader-page-actions").getByRole("button",{name:"Lyrics",exact:true}).click();
+  await readingMode(page,".reader-dialog","Lyrics");
   const prompt=reader.getByRole("button",{name:"Prepare reading sync",exact:true});
   await expect(reader.locator(".lyrics-line").first()).toBeVisible();
   // The map is loaded and cached on this device.
@@ -265,8 +290,7 @@ test("a cached sync map survives a server that is restarting", async ({page}) =>
   await page.goto(`/#reader/${ebook}`);
   const reader=page.getByRole("dialog",{name:"Reader"});
   await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
-  await reader.getByRole("button",{name:"Show reader controls"}).click();
-  await reader.locator(".reader-page-actions").getByRole("button",{name:"Lyrics",exact:true}).click();
+  await readingMode(page,".reader-dialog","Lyrics");
   const prompt=reader.getByRole("button",{name:"Prepare reading sync",exact:true});
   await expect(reader.locator(".lyrics-line").first()).toBeVisible();
   await expect(prompt).toBeHidden();

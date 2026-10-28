@@ -125,12 +125,12 @@ test("real audio playback, speed, seek, pause and recording-specific resume afte
   await page.locator(".dock-book").click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await page
-    .getByRole("button", { name: "Playback speed", exact: true })
+    .getByRole("button", { name: /^Playback speed/ })
     .last()
     .click();
   await page.getByRole("button", { name: "1.5×", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "Playback speed", exact: true }).last(),
+    page.getByRole("button", { name: /^Playback speed/ }).last(),
   ).toHaveText("1.5×");
   await page
     .getByRole("slider", { name: "Seek in audiobook", exact: true })

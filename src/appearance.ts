@@ -133,8 +133,9 @@ export function applyAppearance(value: Appearance) {
   root.style.setProperty("--accent", value.accent);
   root.style.setProperty(
     "--on-accent",
+    // Dark text on accent is a near-black tint of the accent rather than pure black.
     contrast(value.accent, "#000000") >= contrast(value.accent, "#ffffff")
-      ? "#000000"
+      ? `color-mix(in srgb, ${value.accent} 12%, #000)`
       : "#ffffff",
   );
   root.style.setProperty(

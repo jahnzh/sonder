@@ -1,5 +1,5 @@
 import { isAdmin } from "../lib";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type EpubBook from "epubjs/types/book";
 import type Rendition from "epubjs/types/rendition";
 import type Contents from "epubjs/types/contents";
@@ -10,7 +10,6 @@ import {
   BookOpen,
   Bookmark,
   Search,
-  Settings,
   Headphones,
   Download,
   Loader2,
@@ -20,17 +19,25 @@ import {
   Pause,
   RotateCcw,
   RotateCw,
+  ChevronDown,
+  MoreHorizontal,
+  PanelLeft,
 } from "lucide-react";
+import literataNormal from "@fontsource-variable/literata/files/literata-latin-wght-normal.woff2?url";
+import literataItalic from "@fontsource-variable/literata/files/literata-latin-wght-italic.woff2?url";
 import { Dialog } from "./ui/dialog";
 import { useAppearance } from "./Appearance";
 import { fontFamilies, paletteFor } from "../appearance";
 import { ReadingSync } from "./ReadingSync";
 import { LyricsReader } from "./LyricsReader";
 import { PlaybackSource } from "./PlaybackSource";
+import { PlaybackOptions } from "./PlaybackOptions";
+import { PlaybackTimeline } from "./PlaybackTimeline";
 import {PlaybackExtra,usePlaybackMenu} from "./PlaybackMenu";
 import { readerWords, readerSegment } from "../reader-segments";
+import { currentChapter, playbackTimeline } from "../chapters";
 import { usePlayer } from "../player";
-import { api, clock, localDB } from "../lib";
+import { api, localDB } from "../lib";
 import {
   loadReader,
   epubFile,
@@ -51,6 +58,40 @@ import type {
   ReadingCheckpoint,
 } from "../reading-types";
 const selector = "p,h1,h2,h3,h4,h5,h6,li,blockquote,pre,figcaption";
+const readerFonts = { ...fontFamilies, serif: '"Literata Variable", Georgia, "Times New Roman", serif' };
+// EPUB pages are sandboxed documents that only load fonts from blob: or data:
+// URLs, so the bundled Literata files are handed to them as blobs.
+let literataFaces: Promise<string> | null = null;
+function literataCss() {
+  literataFaces ||= Promise.all(
+    [literataNormal, literataItalic].map((url) =>
+      fetch(url).then((response) => response.blob()).then((blob) => URL.createObjectURL(blob)),
+    ),
+  )
+    .then(([normal, italic]) =>
+      [[normal, "normal"], [italic, "italic"]]
+        .map(([src, style]) => `@font-face{font-family:"Literata Variable";font-style:${style};font-weight:200 900;font-display:block;src:url(${src}) format("woff2")}`)
+        .join(""),
+    )
+    .catch(() => "");
+  return literataFaces;
+}
+const mixHex = (a: string, b: string, amount: number) =>
+  "#" + [1, 3, 5].map((i) => Math.round(parseInt(a.slice(i, i + 2), 16) * amount + parseInt(b.slice(i, i + 2), 16) * (1 - amount)).toString(16).padStart(2, "0")).join("");
+// Narration jumps to a long-pressed sentence: listening, then a book, then headphones.
+function BookToHeadphones({ size = 20 }: { size?: number }) {
+  return (
+    <svg aria-hidden="true" width={size * 1.5} height={size} viewBox="0 0 36 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 7c2.2-1.2 4.6-1.2 6.5 0v11c-1.9-1.2-4.3-1.2-6.5 0z" />
+      <path d="M8.5 7c1.9-1.2 4.3-1.2 6.5 0v11c-2.2-1.2-4.6-1.2-6.5 0z" />
+      <path d="M16.5 12.5h5" />
+      <path d="m19.5 10.5 2 2-2 2" />
+      <path d="M24 18v-4.5a5.5 5.5 0 0 1 11 0V18" />
+      <rect x="23.2" y="14.5" width="3.2" height="5" rx="1.2" />
+      <rect x="32.6" y="14.5" width="3.2" height="5" rx="1.2" />
+    </svg>
+  );
+}
 const normalize = (text: string) =>
   text.normalize("NFKC").replace(/\s+/g, " ").trim();
 function blockNodes(doc: Document) {
@@ -173,7 +214,7 @@ export function ReaderView({
     [loading, setLoading] = useState(true),
     [rendered, setRendered] = useState(false),
     [panel, setPanel] = useState<
-      "contents" | "search" | "bookmarks" | "appearance" | "sync" | null
+      "contents" | "search" | "bookmarks" | "appearance" | "sync" | "more" | null
     >(null),
     [locator, setLocator] = useState<TextLocator | null>(null),
     [query, setQuery] = useState(""),
@@ -187,7 +228,11 @@ export function ReaderView({
     [recoveryStatus, setRecoveryStatus] = useState(""),
     [controlsVisible, setControlsVisible] = useState(false),
     [desktop, setDesktop] = useState(() => window.matchMedia("(min-width: 900px)").matches),
-    [sentence, setSentence] = useState<TextLocator | null>(null);
+    [toast, setToast] = useState<{ previous: { book: Book; trackId: string; position: number } | null } | null>(null),
+    [scrub, setScrub] = useState<number | null>(null),
+    [contentsHidden, setContentsHidden] = useState(() => localStorage.getItem("sonder-reader-contents") === "hidden");
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
   useEffect(() => {
     const media=window.matchMedia("(min-width: 900px)");
     const change=() => setDesktop(media.matches);
@@ -369,6 +414,8 @@ export function ReaderView({
             FORBID_ATTR: ["srcdoc"],
           });
           doc.head?.prepend(csp);
+          const faces = doc.createElement("style");
+          doc.head?.append(faces);
           doc.querySelectorAll("[src],[href]").forEach((node) => {
             for (const attr of ["src", "href"]) {
               const value = node.getAttribute(attr) || "";
@@ -379,6 +426,7 @@ export function ReaderView({
                 node.removeAttribute(attr);
             }
           });
+          return literataCss().then((css) => { faces.textContent = css; });
         });
         await publication.open(await blob.arrayBuffer(), "binary");
         if (disposed) {
@@ -574,9 +622,11 @@ export function ReaderView({
     const view = rendition.current;
     if (!view || !rendered) return;
     const palette = paletteFor(appearance);
+    // Body text sits slightly below full contrast, as in the design.
+    const app = { background: palette.background, text: mixHex(palette.text, palette.background, 0.94) };
     const theme =
-      inline ? {background:palette.surface,text:palette.text} : preferences.theme === "app"
-        ? { background: palette.background, text: palette.text }
+      inline || preferences.theme === "app"
+        ? app
         : preferences.theme === "dark"
           ? { background: "#101510", text: "#e6eadf" }
           : preferences.theme === "sepia"
@@ -589,7 +639,11 @@ export function ReaderView({
         color: `${theme.text} !important`,
       },
       body: {
-        "font-family": `${fontFamilies[preferences.font]} !important`,
+        "font-family": `${readerFonts[preferences.font]} !important`,
+        // Long-press plays the narration; selecting text would fight it.
+        "-webkit-user-select": "none !important",
+        "user-select": "none !important",
+        "-webkit-touch-callout": "none !important",
         "font-size": `clamp(${Math.max(14,preferences.size-2)}px, 4.6vw, ${preferences.size+1}px) !important`,
         "line-height": `${preferences.lineHeight === 1.7 ? (window.innerWidth > 400 ? 1.55 : 1.6) : preferences.lineHeight} !important`,
         padding: preferences.margin === 20 ? "clamp(20px, 6vw, 32px) !important" : `${preferences.margin}px !important`,
@@ -713,7 +767,7 @@ export function ReaderView({
     );
     view.annotations.highlight(full, {}, () => {}, "sonder-follow", {
       fill: appearance.accent,
-      "fill-opacity": "0.22",
+      "fill-opacity": "0.2",
     });
     highlight.current = full;
     return true;
@@ -722,6 +776,7 @@ export function ReaderView({
   mapRef.current = map;
   const explicitJump = useRef(false);
   const fromAudio = async () => {
+    cancelManualSave();
     setFollow(true);
     followRetry.current.attempts=0;
     following.current = "";
@@ -856,9 +911,18 @@ export function ReaderView({
       following.current = "";
     }
   }, [p.position, p.track?.id, p.book?.recordingId, follow, map, rendered, followRevision]);
-  const listen = () => {
+  // Returning to the narration drops a page-turn save still waiting on its
+  // debounce; it would otherwise land after, and overwrite, the listening place.
+  const cancelManualSave = () => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = null;
+    pendingManual.current = null;
+    navigatedUntil.current = 0;
+  };
+  // Listen from here: move the narration to a sentence, keeping where it was for Undo.
+  const listenAt = (paragraphId: string | undefined, undoable = false) => {
     const interval = map?.intervals.find(
-        (interval) => interval.paragraphId === latest.current?.paragraphId,
+        (interval) => interval.paragraphId === paragraphId,
       ),
       audio = books.find((audio) => audio.recordingId === map?.recordingId);
     if (!interval || !audio) {
@@ -867,11 +931,29 @@ export function ReaderView({
       return;
     }
     const track = audio.tracks.find((track) => track.id === interval.trackId);
-    if (track) {
-      setFollow(true);
-      following.current = "";
-      void p.play(audio, track, interval.start);
+    if (!track) return;
+    const previous = p.book && p.track ? { book: p.book, trackId: p.track.id, position: p.position } : null;
+    cancelManualSave();
+    setFollow(true);
+    following.current = "";
+    void p.play(audio, track, interval.start);
+    if (undoable) {
+      setToast({ previous });
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+      toastTimer.current = setTimeout(() => setToast(null), 4000);
     }
+  };
+  const listen = () => listenAt(latest.current?.paragraphId);
+  const undoListen = () => {
+    if (!toast) return;
+    const previous = toast.previous;
+    const track = previous?.book.tracks.find((track) => track.id === previous.trackId);
+    // Nothing was playing before: Undo just stops the narration again.
+    if (previous && track) void p.play(previous.book, track, previous.position);
+    else if (playerRef.current.playing) playerRef.current.toggle();
+    setFollow(true);
+    following.current = "";
+    setToast(null);
   };
   const bookmark = async () => {
     if (!book || !latest.current) return;
@@ -889,7 +971,15 @@ export function ReaderView({
       value: updated.bookmarks,
     });
     await queueBookmark(id, "POST", entry);
-    notify("Bookmark saved.");
+  };
+  const removeBookmark = (entry: ReaderBook["bookmarks"][number]) => {
+    const current = bookRef.current;
+    if (!current) return;
+    const updated = { ...current, bookmarks: current.bookmarks.filter((bookmark) => bookmark.id !== entry.id) };
+    setBook(updated);
+    bookRef.current = updated;
+    void localDB.preferences.put({ key: `reader-book:${id}`, value: updated });
+    void queueBookmark(id, "DELETE", entry);
   };
   const editReader = (patch: Partial<typeof preferences>) => {
     void saveReader(patch).catch(() => {});
@@ -927,25 +1017,20 @@ export function ReaderView({
       const offset=normalize(prefix.toString()).length;
       const fragment=section.paragraphs.find(item => item.blockIndex===index && item.start<=offset && item.end>=offset) || section.paragraphs.find(item => item.blockIndex===index);
       if (!fragment) return;
-      const all=bookRef.current.sections.flatMap(item=>item.paragraphs);
-      const cfi=content.cfiFromRange(rangeAt(nodes[index],fragment.start));
-      setSentence({cfi,section:section.index,paragraphId:fragment.id,quote:fragment.text,progression:all.findIndex(item=>item.id===fragment.id)/Math.max(1,all.length-1)});
+      listenAt(fragment.id, true);
     }
   };
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       // The Now Playing reader stays mounted while its dialog is closed.
-      if (event.ctrlKey || event.metaKey || event.altKey || (event.target as HTMLElement)?.closest("input,select,textarea,button") || panel || sentence || viewport.current?.closest('[data-state="closed"]')) return;
+      if (event.ctrlKey || event.metaKey || event.altKey || (event.target as HTMLElement)?.closest("input,select,textarea,button") || panel || viewport.current?.closest('[data-state="closed"]')) return;
       if (preferences.display === "segment" && event.key === " ") { event.preventDefault(); if (p.book) p.toggle(); }
       else if (preferences.display === "segment" && event.key.toLowerCase() === "f") { event.preventDefault(); setFollow(true); following.current=""; }
       else if (preferences.display === "segment" && event.key.toLowerCase() === "p") { event.preventDefault(); editReader({display:"book"}); }
       else if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); if (preferences.display === "segment" && p.book) p.skip(event.key === "ArrowLeft" ? -30 : 30); else pageAction.current(event.key === "ArrowLeft" ? "previous" : "next"); }
     };
     window.addEventListener("keydown",key); return () => window.removeEventListener("keydown",key);
-  }, [panel,sentence,preferences.display,p.book,p.toggle,p.skip,appearance]);
-  const sentenceInterval=map?.intervals.find(item=>item.paragraphId===sentence?.paragraphId);
-  // The sheet shows and copies the whole sentence; saved locators keep the usual 300-character quote.
-  const selectSentence=() => { if (sentence) { const value={...sentence,quote:sentence.quote?.slice(0,300)}; latest.current=value; setLocator(value); } };
+  }, [panel,preferences.display,p.book,p.toggle,p.skip,appearance]);
   const searchResults =
     book && query.trim().length > 1
       ? book.sections
@@ -960,77 +1045,107 @@ export function ReaderView({
           )
           .slice(0, 60)
       : [];
-  return (
-    <div className={`reader-room ${inline ? "inline-reader" : ""}`} data-controls-visible={controlsVisible || desktop} data-current-passage={follow ? currentInterval?.paragraphId : undefined}>
-      {book && !inline && controlsVisible && (
-        <div className="reader-book-heading">
-          <strong>{book.title}</strong>
-          <span>{book.author}</span>
-        </div>
-      )}
-      <PlaybackExtra><div className="reader-legacy-controls"><div
-        className="reader-toolbar"
-        role="toolbar"
-        aria-label="Reader controls"
-      >
-        {(
-          [
-            ["contents", List, "Contents"],
-            ["search", Search, "Search this book"],
-            ["bookmarks", Bookmark, "Bookmarks"],
-            ["appearance", Settings, "Reader appearance"],
-            ["sync", Headphones, "Reading sync"],
-          ] as const
-        ).map(([value, Icon, label]) => (
-          <button
-            className="icon-button"
-            key={value}
-            aria-label={label}
-            aria-pressed={panel === value}
-            onClick={() => {setPanel(panel === value ? null : value);playbackMenu?.close();}}
-          >
-            <Icon size={19} />
+  const sections = book?.sections || [];
+  const sectionOf = (paragraphId?: string) =>
+    paragraphId ? sections.find((section) => section.paragraphs.some((fragment) => fragment.id === paragraphId)) : undefined;
+  const narratedSection = sectionOf(currentInterval?.paragraphId);
+  const currentSection = sections.find((section) => section.index === locator?.section);
+  // Bookmarks mark the sentence in view: the narrated one while following,
+  // otherwise the first sentence on the page.
+  const pageBookmark = book?.bookmarks.find((entry) => entry.locator.paragraphId === locator?.paragraphId);
+  const toggleBookmark = () => (pageBookmark ? removeBookmark(pageBookmark) : void bookmark());
+  // The slider follows the book/chapter progress setting and moves the page on release.
+  const scope = appearance.playback.progressScope;
+  const allFragments = sections.flatMap((section) => section.paragraphs);
+  const scopeFragments = scope === "chapter" ? currentSection?.paragraphs || [] : allFragments;
+  const scopeIndex = scopeFragments.findIndex((fragment) => fragment.id === locator?.paragraphId);
+  const progress = scopeFragments.length > 1 ? Math.max(0, scopeIndex) / (scopeFragments.length - 1) : 0;
+  const fragmentAt = (value: number) => scopeFragments[Math.round((value / 1000) * Math.max(0, scopeFragments.length - 1))];
+  const scrubbing = scrub !== null ? fragmentAt(scrub) : undefined;
+  const shownSection = scrubbing ? sectionOf(scrubbing.id) : currentSection;
+  const shownPercent = Math.round((scrub !== null ? scrub / 1000 : progress) * 100);
+  const commitScrub = () => {
+    if (scrub === null) return;
+    const fragment = fragmentAt(scrub);
+    setScrub(null);
+    if (!fragment) return;
+    setFollow(false);
+    setManualWord(null);
+    void showFragment(fragment.id, false).then(() => {
+      if (latest.current) void saveReading(id, latest.current, "reading", map?.recordingId);
+    });
+  };
+  // With this book's narration loaded, the bar is the audio position and the page follows it.
+  const audio = p.book && p.track && p.book.workId === book?.workId ? { book: p.book, track: p.track } : null;
+  const audioWhole = audio ? playbackTimeline(audio.book, audio.track.id, p.position, p.length, "book") : null;
+  const barChapter = audio ? currentChapter(audio.book, audio.track.id, p.position)?.title || audio.track.title : shownSection?.title || "";
+  const barPercent = audio
+    ? audioWhole?.duration ? Math.round((audioWhole.position / audioWhole.duration) * 100) : 0
+    : shownPercent;
+  const followScrub = () => {
+    cancelManualSave();
+    setFollow(true);
+    following.current = "";
+    followRetry.current.attempts = 0;
+  };
+  const controls = controlsVisible || desktop;
+  const timing = currentInterval ? (currentInterval.verified ? "" : " · estimated timings") : "";
+  const showContents = desktop && preferences.display === "book" && !contentsHidden;
+  const openMore = () => {
+    setPanel(null);
+    if (playbackMenu) playbackMenu.open();
+    else setPanel("more");
+  };
+  const fromMenu = (action: () => void) => () => {
+    playbackMenu?.close();
+    setPanel(null);
+    action();
+  };
+  const saveOffline = () => {
+    if (!book || !file.current) return;
+    setSaving(true);
+    void saveEpubOffline(book, file.current)
+      .then(() => {
+        setOffline(true);
+        notify("Ebook saved on this device.");
+      })
+      .catch((error) => notify(error.message, true))
+      .finally(() => setSaving(false));
+  };
+  const moreItems = (
+    <div className="reader-more">
+      <div className="reader-mode-switch" role="group" aria-label="Reading mode">
+        {(["book", "segment"] as const).map((value) => (
+          <button key={value} aria-pressed={preferences.display === value} onClick={fromMenu(() => editReader({ display: value }))}>
+            {value === "book" ? "Page" : "Lyrics"}
           </button>
         ))}
-        <button
-          className="icon-button"
-          aria-label="Bookmark this passage"
-          disabled={!locator}
-          onClick={() => void bookmark()}
-        >
-          <Bookmark size={19} fill="currentColor" />
-        </button>
-        <button
-          className="icon-button"
-          aria-label={offline ? "Ebook saved offline" : "Save ebook offline"}
-          disabled={!book || !file.current || saving || offline}
-          onClick={() => {
-            if (!book || !file.current) return;
-            setSaving(true);
-            void saveEpubOffline(book, file.current)
-              .then(() => {
-                setOffline(true);
-                notify("Ebook saved on this device.");
-              })
-              .catch((error) => notify(error.message, true))
-              .finally(() => setSaving(false));
-          }}
-        >
-          {saving ? (
-            <Loader2 size={19} className="spin" />
-          ) : (
-            <Download size={19} />
-          )}
-        </button>
       </div>
-      <div className="reader-display-options">
-        <label>View
-          <select aria-label="Reader display" value={preferences.display} onChange={event => editReader({display:event.target.value as "book"|"segment"})}>
-            <option value="book">Page</option><option value="segment">Lyrics</option>
-          </select>
-        </label>
-      </div>
-      </div></PlaybackExtra>
+      <button className="reader-more-item" onClick={fromMenu(listen)}>
+        <Headphones size={19} /> Listen from here
+      </button>
+      <button className="reader-more-item" onClick={fromMenu(() => void fromAudio())} disabled={recovering}>
+        {recovering ? <Loader2 size={19} className="spin" /> : <BookOpen size={19} />}
+        {recovering ? "Locating passage…" : "Read from audio"}
+      </button>
+      <button className="reader-more-item" onClick={fromMenu(() => setPanel("bookmarks"))}>
+        <Bookmark size={19} /> Bookmarks
+      </button>
+      <button className="reader-more-item" onClick={fromMenu(() => setPanel("sync"))}>
+        <Headphones size={19} /> Reading sync
+      </button>
+      <button className="reader-more-item" disabled={!book || !file.current || saving || offline} onClick={saveOffline}>
+        {saving ? <Loader2 size={19} className="spin" /> : <Download size={19} />}
+        {offline ? "Ebook saved offline" : "Save ebook offline"}
+      </button>
+      <p className="reader-sync-state" role="status">
+        {recoveryStatus || (!follow ? "Audio follow paused" : currentInterval ? `${currentInterval.verified ? "Following narration" : "Estimated sentence timings"}` : map ? "No timing for this position" : "Prepare reading sync to highlight narration")}
+      </p>
+    </div>
+  );
+  return (
+    <div className={`reader-room ${inline ? "inline-reader" : ""}`} data-controls-visible={controls} data-contents={showContents} data-current-passage={follow ? currentInterval?.paragraphId : undefined}>
+      {inline && <PlaybackExtra>{moreItems}</PlaybackExtra>}
       {error && (
         <p className="inline-error" role="alert">
           {error}
@@ -1041,106 +1156,133 @@ export function ReaderView({
           <Loader2 className="spin" /> Opening your book…
         </p>
       )}
-      <div className="reader-chrome" hidden={!controlsVisible && !desktop}>
-        {!desktop && <button className="icon-button" aria-label="Hide reader controls" onClick={() => setControlsVisible(false)}><ArrowLeft size={19}/></button>}
-        {onClose && <button className="icon-button" aria-label="Close reader" onClick={onClose}><X size={19}/></button>}
-        <button className="icon-button" aria-label="Search this book" onClick={() => setPanel("search")}><Search size={19}/></button>
-        <button className="icon-button" aria-label="Reader appearance" onClick={() => setPanel("appearance")}><Settings size={19}/></button>
-        <button className="icon-button" aria-label="Bookmarks" onClick={() => setPanel("bookmarks")}><Bookmark size={19}/></button>
-        <button className="icon-button" aria-label="Reading sync" onClick={() => setPanel("sync")}><Headphones size={19}/></button>
-        <button className="icon-button" aria-label={offline ? "Ebook saved offline" : "Save ebook offline"} disabled={!book || !file.current || saving || offline} onClick={() => {if (!book || !file.current) return; setSaving(true); void saveEpubOffline(book,file.current).then(()=>{setOffline(true);notify("Ebook saved on this device.");}).catch(error=>notify(error.message,true)).finally(()=>setSaving(false));}}>{saving ? <Loader2 size={19} className="spin"/> : <Download size={19}/>}</button>
-      </div>
-      <div
-        className={`reader-viewport ${preferences.display === "segment" ? "segment-underlay" : ""}`}
-        ref={viewport}
-        aria-label="Ebook pages"
-        aria-hidden={preferences.display === "segment"}
-      />
-      {preferences.display === "segment" && book && <LyricsReader
-        book={book} interval={currentInterval} position={p.position} hasMap={!!map?.intervals.length} follow={follow} size={preferences.size} selectedParagraph={locator?.paragraphId} ignoreKeys={!!panel || !!sentence}
-        onToggleControls={() => setControlsVisible(value=>!value)} onClose={() => onClose?.()}
-        onManualScroll={() => setFollow(false)} onPrepareSync={() => setPanel("sync")}
-        onSeek={(paragraphId, fraction) => {
-          const interval=map?.intervals.find(item=>item.paragraphId===paragraphId);
-          const audio=books.find(item=>item.recordingId===map?.recordingId);
-          const track=audio?.tracks.find(item=>item.id===interval?.trackId);
-          if (!interval || !audio || !track) {setPanel("sync");return;}
-          setFollow(true); following.current="";
-          void p.play(audio,track,interval.start+fraction*(interval.end-interval.start));
-        }}
-      />}
-      {desktop && book && preferences.display === "book" && <aside className="reader-desktop-contents" aria-label="Contents sidebar"><strong>Contents</strong>{book.sections.map(section=><button key={section.index} aria-current={section.index===locator?.section ? "location" : undefined} onClick={()=>{setManualWord(null);navigate(view=>view.display(section.href));}}>{section.title}</button>)}</aside>}
-      {desktop && book && preferences.display === "segment" && <aside className="reader-lyrics-info" aria-label="Lyrics information"><strong>{book.title}</strong><span>{book.author}</span><span>{currentInterval ? currentInterval.verified ? "Following narration" : "Estimated sentence timings" : "Reading sync"}</span><p>Keyboard shortcuts</p><span>Space · play or pause</span><span>← / → · skip 30 seconds</span><span>↑ / ↓ · previous or next line</span><span>F · back to narration</span><span>P · page mode</span></aside>}
-      {desktop && preferences.display === "book" && <><button className="reader-edge reader-edge-previous" aria-label="Previous ebook page" onClick={()=>turn(-1)}><ArrowLeft size={20}/></button><button className="reader-edge reader-edge-next" aria-label="Next ebook page" onClick={()=>turn(1)}><ArrowRight size={20}/></button></>}
-      {!follow && currentInterval && <button className="button primary reader-back-narration" onClick={() => {setFollow(true); following.current=""; followRetry.current.attempts=0; setError("");}}>Back to narration</button>}
-      <div className="reader-page-footer"><button className="reader-footer-toggle" aria-label="Show reader controls" onClick={()=>setControlsVisible(true)}>{book?.sections.find(section=>section.index===locator?.section)?.title || ""} · {Math.round((locator?.progression || 0)*100)}%</button></div>
-      <div className="reader-page-actions" hidden={!controlsVisible && !desktop}>
-        <div className="reader-progress-sync" role="group" aria-label="Sync reading and audio positions">
-          <button className="button subtle" onClick={() => void fromAudio()} disabled={recovering}>
-            {recovering ? <Loader2 size={15} className="spin" /> : <BookOpen size={15} />}
-            {recovering ? "Locating passage…" : "Read from audio"}
-          </button>
-          <button className="button subtle" onClick={listen}>
-            <Headphones size={15} /> Listen from here
-          </button>
-        </div>
-        <input aria-label="Book progress" type="range" min="0" max="1000" value={Math.round((locator?.progression || 0)*1000)} onChange={event=>{const all=book?.sections.flatMap(section=>section.paragraphs) || []; const fragment=all[Math.round(Number(event.target.value)/1000*Math.max(0,all.length-1))]; if(fragment){setFollow(false);void showFragment(fragment.id,false).then(()=>{if(latest.current) void saveReading(id,latest.current,"reading",map?.recordingId);});}}}/>
-        <div>
-          <button className="icon-button" aria-label="Contents" onClick={()=>setPanel("contents")}><List size={19}/></button>
-          {!inline && <button className="button subtle" onClick={()=>editReader({display:preferences.display === "book" ? "segment" : "book"})}>{preferences.display === "book" ? "Lyrics" : "Page"}</button>}
-          <button className="icon-button" aria-label="Back 30 seconds" disabled={!p.book} onClick={()=>p.skip(-30)}><RotateCcw size={19}/></button>
-          <button className="icon-button" aria-label={p.playing ? "Pause reader audio" : "Play reader audio"} disabled={!p.book} onClick={p.toggle}>{p.playing ? <Pause size={19}/> : <Play size={19}/>}</button>
-          <button className="icon-button" aria-label="Forward 30 seconds" disabled={!p.book} onClick={()=>p.skip(30)}><RotateCw size={19}/></button>
-          <button className="icon-button" aria-label="Bookmark this passage" disabled={!locator} onClick={()=>void bookmark()}><Bookmark size={19}/></button>
-        </div>
-      </div>
-      {sentence && <div className="reader-sentence-sheet" role="dialog" aria-label="Sentence actions">
-        <button className="icon-button" aria-label="Close sentence actions" onClick={()=>setSentence(null)}><X size={19}/></button>
-        <p>{sentence.quote}</p>
-        {sentenceInterval && <p>{sentenceInterval.verified ? "Audio time" : "Estimated audio time"}: {clock(sentenceInterval.start)}</p>}
-        <button className="button primary" onClick={()=>{selectSentence();listen();setSentence(null);}}>Listen from here</button>
-        <button className="button subtle" onClick={()=>{selectSentence();void bookmark();setSentence(null);}}>Bookmark</button>
-        <button className="button subtle" onClick={()=>{void navigator.clipboard.writeText(sentence.quote || "").then(()=>notify("Copied."));setSentence(null);}}>Copy</button>
-        <button className="button subtle" onClick={()=>{selectSentence();setFollow(false);void showFragment(sentence.paragraphId);editReader({display:"segment"});setSentence(null);}}>Open in Lyrics</button>
-      </div>}
-      <PlaybackExtra><div className="reader-legacy-controls"><div className="reader-navigation">
-        <button
-          className="button subtle"
-          disabled={!rendered}
-          aria-label="Previous ebook page"
-          onClick={() => turn(-1)}
-        >
-          <ArrowLeft size={17} /> Previous
-        </button>
-        <span>
-          {Math.round((locator?.progression || 0) * 100)}%
-          {offline ? " · Offline ready" : ""}
-        </span>
-        <button
-          className="button subtle"
-          disabled={!rendered}
-          aria-label="Next ebook page"
-          onClick={() => turn(1)}
-        >
-          Next <ArrowRight size={17} />
-        </button>
-      </div>
-      <div className="reader-listen-controls">
-        {p.book && !inline && (
+      <header className="reader-topbar" hidden={!controls}>
+        {onClose && <button className="icon-button" aria-label="Close reader" onClick={() => { setControlsVisible(false); setPanel(null); onClose(); }}><ChevronDown size={22} /></button>}
+        {desktop && preferences.display === "book" && (
           <button
             className="icon-button"
-            aria-label={p.playing ? "Pause reader audio" : "Play reader audio"}
-            onClick={p.toggle}
+            aria-label="Hide contents"
+            aria-pressed={!contentsHidden}
+            onClick={() => {
+              const hidden = !contentsHidden;
+              setContentsHidden(hidden);
+              try { localStorage.setItem("sonder-reader-contents", hidden ? "hidden" : "shown"); } catch {}
+            }}
           >
-            {p.playing ? <Pause size={19} /> : <Play size={19} />}
+            <PanelLeft size={20} />
           </button>
         )}
-        {!inline && <PlaybackSource />}
+        <div className="reader-topbar-title">
+          <strong>{book?.title}</strong>
+          <span>{book?.author}</span>
+        </div>
+        <button
+          className="icon-button reader-bookmark-toggle"
+          aria-label={pageBookmark ? "Remove bookmark from current sentence" : "Bookmark current sentence"}
+          aria-pressed={!!pageBookmark}
+          disabled={!locator}
+          onClick={toggleBookmark}
+        >
+          <Bookmark size={21} fill={pageBookmark ? "currentColor" : "none"} />
+        </button>
+        <button className="icon-button" aria-label="Search this book" onClick={() => setPanel("search")}><Search size={20} /></button>
+        <button className="icon-button reader-appearance-button" aria-label="Reader appearance" onClick={() => setPanel("appearance")}>Aa</button>
+        <button className="icon-button" aria-label="More" aria-expanded={panel === "more"} onClick={openMore}><MoreHorizontal size={22} /></button>
+      </header>
+      <div className="reader-body">
+        {showContents && book && (
+          <nav className="reader-desktop-contents" aria-label="Contents sidebar">
+            <h2>Contents</h2>
+            {sections.map((section) => (
+              <button
+                key={section.index}
+                aria-current={section.index === locator?.section ? "location" : undefined}
+                onClick={() => { setManualWord(null); navigate((view) => view.display(section.href)); }}
+              >
+                <span>{section.title}</span>
+                {section.index === narratedSection?.index && <Headphones size={16} role="img" aria-label="Narrating" />}
+              </button>
+            ))}
+          </nav>
+        )}
+        <div className="reader-page-area">
+          <div
+            className={`reader-viewport ${preferences.display === "segment" ? "segment-underlay" : ""}`}
+            ref={viewport}
+            aria-label="Ebook pages"
+            aria-hidden={preferences.display === "segment"}
+          />
+          {preferences.display === "segment" && book && <LyricsReader
+            book={book} interval={currentInterval} position={p.position} hasMap={!!map?.intervals.length} follow={follow} size={preferences.size} selectedParagraph={locator?.paragraphId} ignoreKeys={!!panel}
+            onToggleControls={() => setControlsVisible(value=>!value)} onClose={() => onClose?.()}
+            onManualScroll={() => setFollow(false)} onPrepareSync={() => setPanel("sync")}
+            onSeek={(paragraphId, fraction) => {
+              const interval=map?.intervals.find(item=>item.paragraphId===paragraphId);
+              const audio=books.find(item=>item.recordingId===map?.recordingId);
+              const track=audio?.tracks.find(item=>item.id===interval?.trackId);
+              if (!interval || !audio || !track) {setPanel("sync");return;}
+              setFollow(true); following.current="";
+              void p.play(audio,track,interval.start+fraction*(interval.end-interval.start));
+            }}
+          />}
+          {desktop && preferences.display === "book" && <>
+            <button className="reader-edge reader-edge-previous" aria-label="Previous page" onClick={()=>turn(-1)}><ArrowLeft size={22}/></button>
+            <button className="reader-edge reader-edge-next" aria-label="Next page" onClick={()=>turn(1)}><ArrowRight size={22}/></button>
+          </>}
+          {desktop && book && preferences.display === "segment" && <aside className="reader-lyrics-info" aria-label="Lyrics information"><strong>{book.title}</strong><span>{book.author}</span><span>{currentInterval ? currentInterval.verified ? "Following narration" : "Estimated sentence timings" : "Reading sync"}</span><p>Keyboard shortcuts</p><span>Space · play or pause</span><span>← / → · skip 30 seconds</span><span>↑ / ↓ · previous or next line</span><span>F · back to narration</span><span>P · page mode</span></aside>}
+          <div className="reader-floating">
+            {toast && (
+              <div className="reader-toast" role="status">
+                <BookToHeadphones size={18} />
+                <span>Listening from here</span>
+                <button onClick={undoListen}>Undo</button>
+              </div>
+            )}
+            {!follow && currentInterval && (
+              <button className="reader-back-narration" onClick={() => {cancelManualSave(); setFollow(true); following.current=""; followRetry.current.attempts=0; setError("");}}>
+                <BookToHeadphones size={20} /> Back to narration
+              </button>
+            )}
+          </div>
+        </div>
       </div>
-      <div className="reader-sync-state" role="status">
-        {recoveryStatus || (!follow ? "Audio follow paused" : currentInterval ? `${currentInterval.verified ? "Following narration" : "Estimated sentence timings"}` : map ? "No timing for this position" : "Prepare reading sync to highlight narration")}
-      </div>
-      </div></PlaybackExtra>
+      <section className="reader-player" aria-label="Player" data-controls={controls}>
+        <div className="reader-player-info">
+          <strong>{barChapter}</strong>
+          <span>{barPercent}% of {audio || scope !== "chapter" ? "book" : "chapter"}{timing}</span>
+        </div>
+        <div className="reader-player-line" aria-hidden="true"><i style={{ width: `${barPercent}%` }} /></div>
+        {audio ? (
+          // Scrubbing the narration brings the page back to following it.
+          <div className="reader-audio-timeline" onPointerDownCapture={followScrub} onKeyDownCapture={followScrub} onChangeCapture={followScrub}>
+            <PlaybackTimeline book={audio.book} compact scoped />
+          </div>
+        ) : <input
+          className="reader-scrubber"
+          type="range"
+          min="0"
+          max="1000"
+          aria-label={scope === "chapter" ? "Position in chapter" : "Position in book"}
+          aria-valuetext={`${shownSection?.title || ""} · ${shownPercent}%`}
+          disabled={!book || !rendered}
+          value={scrub ?? Math.round(progress * 1000)}
+          style={{ "--range-progress": `${(scrub ?? progress * 1000) / 10}%` } as CSSProperties}
+          onChange={(event) => setScrub(Number(event.target.value))}
+          onPointerUp={commitScrub}
+          onKeyUp={commitScrub}
+          onBlur={commitScrub}
+        />}
+        <button className="icon-button reader-player-chapters" aria-label="Chapters" onClick={() => setPanel(panel === "contents" ? null : "contents")}><List size={21} /></button>
+        <div className="reader-transport">
+          <button className="icon-button" aria-label="Back 30 seconds" disabled={!p.book} onClick={()=>p.skip(-30)}><RotateCcw size={26}/><span>30</span></button>
+          <button className="reader-play" aria-label={p.playing ? "Pause narration" : "Play narration"} disabled={!p.book} onClick={p.toggle}>{p.playing ? <Pause size={24} fill="currentColor"/> : <Play size={24} fill="currentColor"/>}</button>
+          <button className="icon-button" aria-label="Forward 30 seconds" disabled={!p.book} onClick={()=>p.skip(30)}><RotateCw size={26}/><span>30</span></button>
+        </div>
+        <div className="reader-player-extras">
+          <PlaybackOptions kind="sleep" />
+          <PlaybackOptions kind="speed" />
+        </div>
+      </section>
       {conflict && (
         <div className="reading-conflict" role="alert">
           <p>
@@ -1187,6 +1329,7 @@ export function ReaderView({
                   bookmarks: "Bookmarks",
                   appearance: "Reader appearance",
                   sync: "Reading sync",
+                  more: "More",
                 }[panel]
               }
             </h3>
@@ -1198,18 +1341,21 @@ export function ReaderView({
               <X size={19} />
             </button>
           </div>
+          {panel === "more" && moreItems}
           {panel === "contents" &&
             book.sections.map((section) => (
               <button
-                className="reader-list-item"
+                className="reader-list-item reader-contents-item"
                 key={section.index}
+                aria-current={section.index === locator?.section ? "location" : undefined}
                 onClick={() => {
                   setManualWord(null);
                   navigate((view) => view.display(section.href));
                   setPanel(null);
                 }}
               >
-                {section.title}
+                <span>{section.title}</span>
+                {section.index === narratedSection?.index && <Headphones size={16} role="img" aria-label="Narrating" />}
               </button>
             ))}
           {panel === "search" && (
@@ -1264,28 +1410,14 @@ export function ReaderView({
                   <button
                     className="icon-button"
                     aria-label={`Remove bookmark ${entry.label}`}
-                    onClick={() => {
-                      const updated = {
-                        ...book,
-                        bookmarks: book.bookmarks.filter(
-                          (bookmark) => bookmark.id !== entry.id,
-                        ),
-                      };
-                      setBook(updated);
-                      bookRef.current = updated;
-                      void localDB.preferences.put({
-                        key: `reader-book:${id}`,
-                        value: updated,
-                      });
-                      void queueBookmark(id, "DELETE", entry);
-                    }}
+                    onClick={() => removeBookmark(entry)}
                   >
                     <X size={16} />
                   </button>
                 </div>
               ))
             ) : (
-              <p>Save a passage with the filled bookmark button.</p>
+              <p>Bookmark a sentence with the bookmark button at the top.</p>
             ))}
           {panel === "appearance" && (
             <div className="reader-appearance">
