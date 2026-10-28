@@ -11,6 +11,7 @@ import { Palette, RotateCcw, Download, Upload, Check } from "lucide-react";
 import { api } from "../lib";
 import {
   appearanceSchema,
+  appearanceToSave,
   defaultAppearance,
   cachedAppearance,
   applyAppearance,
@@ -80,25 +81,27 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("sonder:authenticated", load);
     };
   }, []);
+  const put = (value: Appearance) =>
+    api("/appearance", {
+      method: "PUT",
+      body: JSON.stringify(appearanceToSave(value)),
+    });
   const save = async (value = appearance, deviceOnly = deviceOnlySetting()) => {
     update(remember(value));
-    if (!deviceOnly)
-      await api("/appearance", { method: "PUT", body: JSON.stringify(value) });
+    if (!deviceOnly) await put(value);
     localStorage.setItem(userStorageKey("sonder-appearance-device"), String(deviceOnly));
   };
   const saveReader = async (patch: Partial<Appearance["reader"]>) => {
     const reader = { ...shown.current.reader, ...patch };
     update({ ...shown.current, reader });
     const value = remember({ ...stored.current, reader });
-    if (!deviceOnlySetting())
-      await api("/appearance", { method: "PUT", body: JSON.stringify(value) });
+    if (!deviceOnlySetting()) await put(value);
   };
   const savePlayback = async (patch: Partial<Appearance["playback"]> = {}) => {
     const playback = { ...shown.current.playback, ...patch };
     update({ ...shown.current, playback });
     const value = remember({ ...stored.current, playback });
-    if (!deviceOnlySetting())
-      await api("/appearance", { method: "PUT", body: JSON.stringify(value) });
+    if (!deviceOnlySetting()) await put(value);
   };
   return (
     <Context.Provider

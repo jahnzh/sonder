@@ -1,6 +1,6 @@
 import { Download, Volume2 } from "lucide-react";
 import type { Book, Download as DownloadRecord } from "../types";
-import { usePlayer } from "../player";
+import { useBookSpeed, usePlayer } from "../player";
 import { listeningChapters, currentChapter, chapterTimeLeft } from "../chapters";
 import { clock } from "../lib";
 import { formatSpeed } from "../playback-speed";
@@ -14,13 +14,12 @@ export function Chapters({
   onSelect?:()=>void;
 }) {
   const p = usePlayer();
-  const playing = p.book?.id === book.id;
+  const speed = useBookSpeed(book);
+  const loaded = p.book?.id === book.id;
   const selected =
-    playing && p.track
+    loaded && p.track
       ? currentChapter(book, p.track.id, p.position)
       : undefined;
-  // Another book's speed isn't loaded, so its list shows plain durations.
-  const speed = playing ? p.speed : 1;
   return (
     <div className="chapter-list">
       {listeningChapters(book).map((c, index) => {

@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  LEGACY_SPEED_KEY,
   SPEED_MAX,
   SPEED_MIN,
   SPEED_PRESETS,
@@ -13,12 +14,14 @@ import {
   mediaPositionState,
   recordingSpeedKey,
   resolveSpeed,
+  speedMemory,
   stepSpeed,
   timeAtSpeed,
 } from "../src/playback-speed.ts";
 import { chapterTimeLeft } from "../src/chapters.ts";
 import {
   appearanceSchema,
+  appearanceToSave,
   defaultAppearance,
   keepPlaybackSpeed,
 } from "../src/appearance.ts";
@@ -145,4 +148,106 @@ test("saving appearance from an older client without a speed keeps the stored de
   assert.equal(latest.playback.speed, 1.45);
   assert.equal((await put({ ...latest, playback: { ...latest.playback, speed: 3.2 } })).statusCode >= 400, true);
   assert.equal((await get()).playback.speed, 1.45);
+});
+test("saving a reset or an imported preset without a speed clears the default on the server too", async () => {
+  const put = (payload: unknown) =>
+    app.inject({ method: "PUT", url: "/api/appearance", payload: payload as object });
+  const get = async () =>
+    (await app.inject({ method: "GET", url: "/api/appearance" })).json();
+  const withDefault = (speed: number) =>
+    appearanceSchema.parse({ playback: { speed } });
+  assert.equal((await put(appearanceToSave(withDefault(1.6)))).statusCode, 200);
+  assert.equal((await get()).playback.speed, 1.6);
+  // Settings → Appearance → Reset previews defaultAppearance, which has no speed.
+  assert.equal(appearanceToSave(defaultAppearance).playback.speed, null);
+  assert.equal((await put(appearanceToSave(defaultAppearance))).statusCode, 200);
+  const cleared = await get();
+  assert.equal(cleared.playback.speed ?? null, null);
+  assert.equal(
+    resolveSpeed({ preferred: cleared.playback.speed, legacy: 1.25 }),
+    1.25,
+    "a cleared default falls back like one never saved",
+  );
+  // A reload parses the server copy the same way as the local cache.
+  assert.equal(appearanceSchema.parse(cleared).playback.speed ?? null, null);
+  assert.equal((await put(appearanceToSave(withDefault(1.3)))).statusCode, 200);
+  const imported = appearanceSchema.parse({ preset: "amoled" });
+  assert.equal((await put(appearanceToSave(imported))).statusCode, 200);
+  assert.equal((await get()).playback.speed ?? null, null);
+  // An older client that still omits the field leaves a cleared default cleared.
+  assert.equal((await put({ preset: "forest" })).statusCode, 200);
+  assert.equal((await get()).playback.speed ?? null, null);
+  assert.equal(appearanceToSave(withDefault(1.3)).playback.speed, 1.3);
+});
+function preferences(rows = new Map<string, unknown>()) {
+  return {
+    rows,
+    get: async (key: string) =>
+      rows.has(key) ? { key, value: rows.get(key) } : undefined,
+    put: async ({ key, value }: { key: string; value: unknown }) => {
+      rows.set(key, value);
+    },
+  };
+}
+test("two recordings keep separate speeds after changes and a reload, and others follow the default", async () => {
+  const storage = preferences();
+  const memory = speedMemory(storage);
+  await memory.remember("recording-a", 1.5);
+  await memory.remember("recording-b", 0.8);
+  assert.equal(await memory.speedOf("recording-a", 1.2), 1.5);
+  assert.equal(await memory.speedOf("recording-b", 1.2), 0.8);
+  assert.equal(await memory.speedOf("recording-c", 1.2), 1.2);
+  await memory.remember("recording-a", 2.1);
+  assert.equal(await memory.speedOf("recording-a", 1.2), 2.1);
+  assert.equal(
+    await memory.speedOf("recording-b", 1.2),
+    0.8,
+    "changing one recording leaves the other alone",
+  );
+  const reloaded = speedMemory(storage);
+  assert.equal(await reloaded.speedOf("recording-a", undefined), 2.1);
+  assert.equal(await reloaded.speedOf("recording-b", undefined), 0.8);
+  assert.equal(await reloaded.speedOf("recording-c", undefined), 1);
+  assert.equal(storage.rows.has(LEGACY_SPEED_KEY), false);
+  const otherUser = speedMemory(preferences());
+  assert.equal(
+    await otherUser.speedOf("recording-a", undefined),
+    1,
+    "another user's storage has none of these speeds",
+  );
+});
+test("a speed chosen with no recording in the player becomes the device-wide speed, as before per-recording speeds", async () => {
+  const storage = preferences(new Map([[recordingSpeedKey("own"), 0.9]]));
+  const memory = speedMemory(storage);
+  await memory.deviceLoaded;
+  assert.equal(memory.device(), null);
+  await memory.remember(undefined, 1.7);
+  assert.equal(storage.rows.get(LEGACY_SPEED_KEY), 1.7);
+  assert.equal(memory.device(), 1.7);
+  assert.equal(await memory.speedOf("new", undefined), 1.7);
+  assert.equal(await memory.speedOf(undefined, undefined), 1.7);
+  assert.equal(await memory.speedOf("own", undefined), 0.9);
+  assert.equal(
+    await memory.speedOf("new", 1.2),
+    1.2,
+    "a saved Settings default still wins over the device-wide speed",
+  );
+  assert.equal(await speedMemory(storage).speedOf("new", undefined), 1.7);
+});
+test("a speed chosen while a recording's saved speed is still loading is not overwritten", async () => {
+  let release = () => {};
+  const memory = speedMemory({
+    get: (key) =>
+      key === LEGACY_SPEED_KEY
+        ? Promise.resolve(undefined)
+        : new Promise((resolve) => {
+            release = () => resolve({ key, value: 0.9 });
+          }),
+    put: async () => {},
+  });
+  const pending = memory.speedOf("recording-a", undefined);
+  await memory.remember("recording-a", 1.65);
+  release();
+  assert.equal(await pending, 1.65);
+  assert.equal(await memory.speedOf("recording-a", undefined), 1.65);
 });

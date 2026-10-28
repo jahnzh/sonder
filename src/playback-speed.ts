@@ -35,6 +35,58 @@ export function resolveSpeed({
     clampSpeed(recording) ?? clampSpeed(preferred) ?? clampSpeed(legacy) ?? 1
   );
 }
+type PreferenceRow = { key: string; value: unknown };
+/** The slice of the signed-in user's Dexie `preferences` table that speeds use. */
+export type SpeedPreferences = {
+  get(key: string): Promise<PreferenceRow | undefined>;
+  put(row: PreferenceRow): Promise<unknown>;
+};
+/**
+ * Speeds saved on this device for one user. Each recording keeps its own; a
+ * speed chosen while no recording is in the player becomes the device-wide
+ * speed, as it was before speeds were per recording.
+ */
+export function speedMemory(preferences: SpeedPreferences) {
+  // null records that the recording has no speed of its own.
+  const recordings = new Map<string, number | null>();
+  let device: number | null = null;
+  const deviceLoaded = preferences.get(LEGACY_SPEED_KEY).then(
+    (row) => {
+      device ??= clampSpeed(row?.value);
+    },
+    () => {},
+  );
+  return {
+    deviceLoaded,
+    device: () => device,
+    /** The speed a recording plays at, given the saved Settings default. */
+    async speedOf(recordingId: string | undefined, preferred: unknown) {
+      if (recordingId && !recordings.has(recordingId)) {
+        const [row] = await Promise.all([
+          preferences.get(recordingSpeedKey(recordingId)).catch(() => undefined),
+          deviceLoaded,
+        ]);
+        if (!recordings.has(recordingId))
+          recordings.set(recordingId, clampSpeed(row?.value));
+      } else await deviceLoaded;
+      return resolveSpeed({
+        recording: recordingId ? recordings.get(recordingId) : null,
+        preferred,
+        legacy: device,
+      });
+    },
+    remember(recordingId: string | undefined, speed: number) {
+      if (recordingId) recordings.set(recordingId, speed);
+      else device = speed;
+      return preferences
+        .put({
+          key: recordingId ? recordingSpeedKey(recordingId) : LEGACY_SPEED_KEY,
+          value: speed,
+        })
+        .catch(() => {});
+    },
+  };
+}
 export function timeAtSpeed(seconds: number, speed: number) {
   return Math.max(0, seconds) / (speed > 0 ? speed : 1);
 }

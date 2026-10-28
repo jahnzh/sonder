@@ -19,12 +19,11 @@ import { playbackInput, setPreferredSource } from "./playback-sources";
 import { BLOCKING_DIALOG_SELECTOR, playbackKeyAction } from "./keyboard";
 import { useAppearance } from "./components/Appearance";
 import {
-  LEGACY_SPEED_KEY,
   applySpeed,
   clampSpeed,
   mediaPositionState,
-  recordingSpeedKey,
   resolveSpeed,
+  speedMemory,
 } from "./playback-speed";
 type PlayerState = {
   source: "device" | "server" | "torbox" | "remote" | null;
@@ -37,6 +36,11 @@ type PlayerState = {
   speed: number;
   /** Speed for recordings that have none of their own on this device. */
   defaultSpeed: number;
+  /** The device-wide speed from before per-recording speeds; applies until a default is saved. */
+  deviceSpeed: number | null;
+  speedOf: (recordingId: string | undefined) => Promise<number>;
+  /** Changes whenever a saved speed changes. */
+  speedRevision: number;
   volume: number;
   sleep: number | null;
   error: string | null;
@@ -49,7 +53,8 @@ type PlayerState = {
   seekTrack: (trackId: string, position: number) => void;
   seekBook: (position: number) => void;
   skip: (n: number) => void;
-  setSpeed: (n: number) => void;
+  /** Without a recording id, sets the speed of the book in the player. */
+  setSpeed: (n: number, recordingId?: string) => void;
   setVolume: (n: number) => void;
   setSleep: (n: number | null) => void;
   next: () => void;
@@ -94,46 +99,29 @@ export function PlayerProvider({
   const generation = useRef(0);
   const playRequests = useRef(0);
   const sourceReportedFor = useRef(-1);
-  const preferredSpeed = useAppearance().appearance.playback.speed;
+  // An unsaved Settings preview must not change what is playing.
+  const preferredSpeed = useAppearance().saved.playback.speed;
   const preferredSpeedRef = useRef(preferredSpeed);
   preferredSpeedRef.current = preferredSpeed;
-  const [legacySpeed, setLegacySpeed] = useState<number | null>(null);
-  const legacySpeedRef = useRef(legacySpeed);
-  legacySpeedRef.current = legacySpeed;
-  // null records that the recording has no speed of its own on this device.
-  const recordingSpeeds = useRef(new Map<string, number | null>());
-  const [legacyLoaded] = useState(() =>
-    localDB.preferences
-      .get(LEGACY_SPEED_KEY)
-      .then((row) => {
-        legacySpeedRef.current = clampSpeed(row?.value);
-        setLegacySpeed(legacySpeedRef.current);
-      })
-      .catch(() => {}),
+  const [speeds] = useState(() =>
+    speedMemory({
+      get: (key) => localDB.preferences.get(key),
+      put: (row) => localDB.preferences.put(row),
+    }),
   );
+  const [deviceSpeed, setDeviceSpeed] = useState<number | null>(null);
+  const [speedRevision, setSpeedRevision] = useState(0);
+  useEffect(() => {
+    void speeds.deviceLoaded.then(() => setDeviceSpeed(speeds.device()));
+  }, [speeds]);
   const applyRate = useCallback((n: number) => {
     applySpeed(audio.current, n);
     setSpeedState(n);
   }, []);
   const speedFor = useCallback(
-    async (recordingId: string) => {
-      if (!recordingSpeeds.current.has(recordingId)) {
-        const [row] = await Promise.all([
-          localDB.preferences
-            .get(recordingSpeedKey(recordingId))
-            .catch(() => undefined),
-          legacyLoaded,
-        ]);
-        if (!recordingSpeeds.current.has(recordingId))
-          recordingSpeeds.current.set(recordingId, clampSpeed(row?.value));
-      }
-      return resolveSpeed({
-        recording: recordingSpeeds.current.get(recordingId),
-        preferred: preferredSpeedRef.current,
-        legacy: legacySpeedRef.current,
-      });
-    },
-    [legacyLoaded],
+    (recordingId: string | undefined) =>
+      speeds.speedOf(recordingId, preferredSpeedRef.current),
+    [speeds],
   );
   const persist = useCallback(() => {
     const { book, track } = state.current;
@@ -608,21 +596,13 @@ export function PlayerProvider({
     // Shows the fallback book's speed before playback and follows a changed
     // default for recordings that have no speed of their own.
     let live = true;
-    void (speedTarget
-      ? speedFor(speedTarget)
-      : legacyLoaded.then(() =>
-          resolveSpeed({
-            preferred: preferredSpeedRef.current,
-            legacy: legacySpeedRef.current,
-          }),
-        )
-    ).then((n) => {
+    void speedFor(speedTarget).then((n) => {
       if (live) applyRate(n);
     });
     return () => {
       live = false;
     };
-  }, [speedTarget, preferredSpeed, speedFor, legacyLoaded, applyRate]);
+  }, [speedTarget, preferredSpeed, speedFor, applyRate]);
   useEffect(() => {
     if (!sleepEnd.current) return;
     const timer = setInterval(() => {
@@ -639,16 +619,15 @@ export function PlayerProvider({
     }, 1000);
     return () => clearInterval(timer);
   }, [sleep !== null]);
-  const setSpeed = (value: number) => {
+  const setSpeed = (value: number, recordingId?: string) => {
     const n = clampSpeed(value);
     if (n === null) return;
-    applyRate(n);
-    const recordingId = (state.current.book ?? fallbackRef.current)?.recordingId;
-    if (!recordingId) return;
-    recordingSpeeds.current.set(recordingId, n);
-    void localDB.preferences
-      .put({ key: recordingSpeedKey(recordingId), value: n })
-      .catch(() => {});
+    const target = (state.current.book ?? fallbackRef.current)?.recordingId;
+    const id = recordingId ?? target;
+    if (id === target) applyRate(n);
+    if (!id) setDeviceSpeed(n);
+    void speeds.remember(id, n);
+    setSpeedRevision((revision) => revision + 1);
   };
   const setVolume = (n: number) => {
     audio.current.volume = n;
@@ -668,7 +647,10 @@ export function PlayerProvider({
         position,
         length,
         speed,
-        defaultSpeed: resolveSpeed({ preferred: preferredSpeed, legacy: legacySpeed }),
+        defaultSpeed: resolveSpeed({ preferred: preferredSpeed, legacy: deviceSpeed }),
+        deviceSpeed,
+        speedOf: speedFor,
+        speedRevision,
         volume,
         sleep,
         error,
@@ -695,4 +677,24 @@ export function PlayerProvider({
 }
 export function usePlayer() {
   return useContext(Context);
+}
+/** The speed a book plays at: live while it is in the player, otherwise its saved speed. */
+export function useBookSpeed(book: Pick<Book, "recordingId"> | null | undefined) {
+  const p = usePlayer();
+  const id = book?.recordingId;
+  const live = !id || id === p.book?.recordingId;
+  const [saved, setSaved] = useState<{ id: string; speed: number } | null>(null);
+  const { speedOf, defaultSpeed, speedRevision } = p;
+  useEffect(() => {
+    if (live) return;
+    let current = true;
+    void speedOf(id).then((speed) => {
+      if (current) setSaved({ id: id!, speed });
+    });
+    return () => {
+      current = false;
+    };
+  }, [id, live, speedOf, defaultSpeed, speedRevision]);
+  if (live) return p.speed;
+  return saved?.id === id ? saved.speed : defaultSpeed;
 }

@@ -13,7 +13,8 @@ export const appearanceSchema = z.object({
     .object({
       progressScope: z.enum(["book", "chapter"]).default("book"),
       // Unset until chosen in Settings, so the older device-wide speed still applies.
-      speed: z.number().min(0.5).max(3).optional(),
+      // null is a cleared default; a missing field comes from a client that predates it.
+      speed: z.number().min(0.5).max(3).nullable().optional(),
     })
     .default({ progressScope: "book" }),
   colors: z
@@ -56,6 +57,13 @@ export function keepPlaybackSpeed(input: Appearance, stored: Appearance): Appear
   return input.playback.speed === undefined && stored.playback.speed !== undefined
     ? { ...input, playback: { ...input.playback, speed: stored.playback.speed } }
     : input;
+}
+/** What this client sends: an unset default speed goes out as null, so the server clears it too. */
+export function appearanceToSave(value: Appearance): Appearance {
+  return {
+    ...value,
+    playback: { ...value.playback, speed: value.playback.speed ?? null },
+  };
 }
 export const palettes = {
   forest: {

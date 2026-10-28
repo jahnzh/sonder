@@ -1,4 +1,5 @@
 import type { Book, Track } from "./types";
+import { timeAtSpeed } from "./playback-speed";
 export type ListeningChapter = {
   track: Track;
   title: string;
@@ -36,7 +37,7 @@ export function chapterTimeLeft(
     position === null
       ? chapter.start
       : Math.min(chapter.end, Math.max(chapter.start, position));
-  return Math.max(0, chapter.end - from) / (speed > 0 ? speed : 1);
+  return timeAtSpeed(chapter.end - from, speed);
 }
 export function absoluteSeekTarget(
   tracks: Pick<Track, "id" | "duration">[],

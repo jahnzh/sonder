@@ -223,7 +223,7 @@ export function PlayerDock({
               <Download size={19} />
             )}
           </button>
-          <PlaybackOptions kind="speed" />
+          <PlaybackOptions kind="speed" book={b} />
           <PlaybackOptions kind="sleep" />
           <button
             className="icon-button"
@@ -384,7 +384,7 @@ export function PlayerDock({
             <div className="player-transport-timer"><PlaybackOptions kind="sleep" /></div>
             </div>
             <PlaybackExtra><div className="full-options">
-              <PlaybackOptions kind="speed" />
+              <PlaybackOptions kind="speed" book={b} />
             </div></PlaybackExtra>
             </div>
             <PlaybackExtra>

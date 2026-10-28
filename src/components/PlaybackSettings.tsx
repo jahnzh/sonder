@@ -8,6 +8,7 @@ import {
   SPEED_STEP,
   clampSpeed,
   formatSpeed,
+  resolveSpeed,
 } from "../playback-speed";
 export function PlaybackSettings({
   notify,
@@ -16,7 +17,11 @@ export function PlaybackSettings({
 }) {
   const { appearance, update, savePlayback, saveReader } = useAppearance(),
     [busy, setBusy] = useState(false);
-  const defaultSpeed = usePlayer().defaultSpeed;
+  const { deviceSpeed } = usePlayer();
+  const defaultSpeed = resolveSpeed({
+    preferred: appearance.playback.speed,
+    legacy: deviceSpeed,
+  });
   return (
     <section
       className="settings-section playback-settings"
@@ -78,8 +83,8 @@ export function PlaybackSettings({
         />
       </label>
       <p className="muted">
-        Used for books without their own speed. A speed chosen in the player is
-        kept for that recording on this device.
+        Used for books without their own speed once saved. A speed chosen in the
+        player is kept for that recording on this device.
       </p>
       <label>
         Ebook view
