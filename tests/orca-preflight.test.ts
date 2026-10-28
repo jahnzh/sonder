@@ -88,6 +88,20 @@ test("ignores the caller and its parents even when they sit in the worktree", ()
   }
 });
 
+test("checks docs in the current repo when the worktree path does not exist yet", () => {
+  const repo = makeRepo();
+  try {
+    const missingPath = join(repo, "not-created-yet");
+    const ok = preflight(["main", missingPath, "AGENTS.md"], repo);
+    assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+    const missing = preflight(["main", missingPath, "NOPE.md"], repo);
+    assert.equal(missing.status, 1);
+    assert.match(missing.stdout, /NOPE\.md/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("exits 2 on bad usage", () => {
   assert.equal(preflight([]).status, 2);
   assert.equal(preflight(["main", "/tmp"]).status, 2);

@@ -4,6 +4,8 @@
 #   orca-preflight.sh --after-stop <worktree-path>
 # Exit codes: 0 all checks pass, 1 a check failed, 2 bad usage.
 # Reports only; never terminates a process.
+# Docs are looked up in $ORCA_PREFLIGHT_REPO, else in the worktree when it exists,
+# else in the repo of the current directory (a worktree that worker-start has not created yet).
 set -u
 
 usage() {
@@ -56,8 +58,12 @@ check_processes() {
 }
 
 if [ "$after_stop" -eq 0 ]; then
+  repo=${ORCA_PREFLIGHT_REPO:-}
+  if [ -z "$repo" ]; then
+    if [ -d "$worktree" ]; then repo=$worktree; else repo=$PWD; fi
+  fi
   for doc in "$@"; do
-    if ! git -C "$worktree" cat-file -e "$base:$doc" 2>/dev/null; then
+    if ! git -C "$repo" cat-file -e "$base:$doc" 2>/dev/null; then
       echo "missing doc: $doc is not on $base"
       failed=1
     fi
