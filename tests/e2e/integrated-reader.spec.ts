@@ -73,9 +73,9 @@ test("page gestures show controls and long-press listens from that sentence",asy
  await expect(room.locator(".reader-topbar")).toBeHidden();
  // The player bar stays visible while reading.
  await expect(room.getByRole("button",{name:"Play narration",exact:true})).toBeVisible();
- await expect(room.getByRole("slider",{name:"Position in book"})).toBeHidden();
+ await expect(room.getByRole("slider",{name:/^Seek in /})).toBeHidden();
  await showControls(page,".inline-reader");
- await expect(room.getByRole("slider",{name:"Position in book"})).toBeVisible();
+ await expect(room.getByRole("slider",{name:/^Seek in /})).toBeVisible();
  const text=page.frameLocator(".inline-reader .reader-viewport iframe").locator("p").nth(1);
  await text.waitFor();
  const box=(await text.boundingBox())!;
@@ -88,15 +88,17 @@ test("page gestures show controls and long-press listens from that sentence",asy
  await toast.getByRole("button",{name:"Undo",exact:true}).click();
  await expect(toast).toBeHidden();
  expect((await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint).toEqual(before);
- const passages=manifest.sections.flatMap((section:any)=>section.paragraphs);
  const target=map.intervals.find((interval:any)=>interval.section===1 && interval.start>105);
- const index=passages.findIndex((passage:any)=>passage.id===target.paragraphId);
  await room.getByRole("button",{name:"Pause narration",exact:true}).click();
+ // Page away from the narration, then scrub the narration: the page follows it again.
+ const pageBox=(await room.locator(".reader-viewport").boundingBox())!;
+ await page.mouse.click(pageBox.x+pageBox.width*0.9,pageBox.y+pageBox.height/2);
+ await expect(room).not.toHaveAttribute("data-current-passage",/.+/);
  await showControls(page,".inline-reader");
- const slider=room.getByRole("slider",{name:"Position in book"});
- await slider.fill(String(Math.round(index/(passages.length-1)*1000)));
- await slider.blur();
- await expect.poll(async()=>(await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint?.locator.paragraphId).toBe(target.paragraphId);
+ const slider=room.getByRole("slider",{name:/^Seek in /});
+ await slider.fill(String(Math.ceil(target.start)+1));
+ await expect(room).toHaveAttribute("data-current-passage",target.paragraphId);
+ await expect(room.locator(".reader-player-info")).toContainText("% of book");
  const more=page.getByRole("region",{name:"Playback options"});
  await showControls(page,".inline-reader");
  await room.getByRole("button",{name:"More",exact:true}).click();

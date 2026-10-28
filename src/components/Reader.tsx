@@ -35,6 +35,7 @@ import { PlaybackOptions } from "./PlaybackOptions";
 import { PlaybackTimeline } from "./PlaybackTimeline";
 import {PlaybackExtra,usePlaybackMenu} from "./PlaybackMenu";
 import { readerWords, readerSegment } from "../reader-segments";
+import { currentChapter, playbackTimeline } from "../chapters";
 import { usePlayer } from "../player";
 import { api, localDB } from "../lib";
 import {
@@ -775,6 +776,7 @@ export function ReaderView({
   mapRef.current = map;
   const explicitJump = useRef(false);
   const fromAudio = async () => {
+    cancelManualSave();
     setFollow(true);
     followRetry.current.attempts=0;
     following.current = "";
@@ -909,6 +911,14 @@ export function ReaderView({
       following.current = "";
     }
   }, [p.position, p.track?.id, p.book?.recordingId, follow, map, rendered, followRevision]);
+  // Returning to the narration drops a page-turn save still waiting on its
+  // debounce; it would otherwise land after, and overwrite, the listening place.
+  const cancelManualSave = () => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = null;
+    pendingManual.current = null;
+    navigatedUntil.current = 0;
+  };
   // Listen from here: move the narration to a sentence, keeping where it was for Undo.
   const listenAt = (paragraphId: string | undefined, undoable = false) => {
     const interval = map?.intervals.find(
@@ -923,6 +933,7 @@ export function ReaderView({
     const track = audio.tracks.find((track) => track.id === interval.trackId);
     if (!track) return;
     const previous = p.book && p.track ? { book: p.book, trackId: p.track.id, position: p.position } : null;
+    cancelManualSave();
     setFollow(true);
     following.current = "";
     void p.play(audio, track, interval.start);
@@ -1063,6 +1074,19 @@ export function ReaderView({
     void showFragment(fragment.id, false).then(() => {
       if (latest.current) void saveReading(id, latest.current, "reading", map?.recordingId);
     });
+  };
+  // With this book's narration loaded, the bar is the audio position and the page follows it.
+  const audio = p.book && p.track && p.book.workId === book?.workId ? { book: p.book, track: p.track } : null;
+  const audioWhole = audio ? playbackTimeline(audio.book, audio.track.id, p.position, p.length, "book") : null;
+  const barChapter = audio ? currentChapter(audio.book, audio.track.id, p.position)?.title || audio.track.title : shownSection?.title || "";
+  const barPercent = audio
+    ? audioWhole?.duration ? Math.round((audioWhole.position / audioWhole.duration) * 100) : 0
+    : shownPercent;
+  const followScrub = () => {
+    cancelManualSave();
+    setFollow(true);
+    following.current = "";
+    followRetry.current.attempts = 0;
   };
   const controls = controlsVisible || desktop;
   const timing = currentInterval ? (currentInterval.verified ? "" : " · estimated timings") : "";
@@ -1215,7 +1239,7 @@ export function ReaderView({
               </div>
             )}
             {!follow && currentInterval && (
-              <button className="reader-back-narration" onClick={() => {setFollow(true); following.current=""; followRetry.current.attempts=0; setError("");}}>
+              <button className="reader-back-narration" onClick={() => {cancelManualSave(); setFollow(true); following.current=""; followRetry.current.attempts=0; setError("");}}>
                 <BookToHeadphones size={20} /> Back to narration
               </button>
             )}
@@ -1224,13 +1248,15 @@ export function ReaderView({
       </div>
       <section className="reader-player" aria-label="Player" data-controls={controls}>
         <div className="reader-player-info">
-          <strong>{shownSection?.title || ""}</strong>
-          <span>{shownPercent}% of {scope === "chapter" ? "chapter" : "book"}{timing}</span>
+          <strong>{barChapter}</strong>
+          <span>{barPercent}% of {audio || scope !== "chapter" ? "book" : "chapter"}{timing}</span>
         </div>
-        <div className="reader-player-line" aria-hidden="true"><i style={{ width: `${shownPercent}%` }} /></div>
-        {desktop && p.book ? (
-          // Desktop footer: the narration's position, with elapsed and total time.
-          <div className="reader-audio-timeline"><PlaybackTimeline book={p.book} compact scoped /></div>
+        <div className="reader-player-line" aria-hidden="true"><i style={{ width: `${barPercent}%` }} /></div>
+        {audio ? (
+          // Scrubbing the narration brings the page back to following it.
+          <div className="reader-audio-timeline" onPointerDownCapture={followScrub} onKeyDownCapture={followScrub} onChangeCapture={followScrub}>
+            <PlaybackTimeline book={audio.book} compact scoped />
+          </div>
         ) : <input
           className="reader-scrubber"
           type="range"

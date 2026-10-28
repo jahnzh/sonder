@@ -132,12 +132,9 @@ for(const size of sizes){
    const viewport=(await page.locator(".inline-reader .reader-viewport").boundingBox())!;
    await page.mouse.click(viewport.x+viewport.width/2,viewport.y+viewport.height/2);
   }
-  // Phones scrub the ebook; the desktop footer scrubs the narration, with times (#22 design).
-  if(width<900) await expect(player.getByRole("slider",{name:"Position in book"})).toBeVisible();
-  else {
-   await expect(player.getByRole("slider",{name:/^Seek in /})).toBeVisible();
-   await expect(player.getByRole("slider",{name:"Position in book"})).toHaveCount(0);
-  }
+  // The bar is the narration's position; the page follows it.
+  await expect(player.getByRole("slider",{name:/^Seek in /})).toBeVisible();
+  await expect(player.getByRole("slider",{name:"Position in book"})).toHaveCount(0);
   const names=["Close reader","Bookmark current sentence","Search this book","Reader appearance","More","Back 30 seconds","Play narration","Forward 30 seconds","Sleep timer"];
   if(width<900)names.push("Chapters");
   for(const name of names){

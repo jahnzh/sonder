@@ -557,6 +557,56 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+.reader-audio-timeline {
+  grid-area: scrub;
+  display: none;
+  min-width: 0;
+  margin: 4px 20px 0;
+}
+.reader-player[data-controls="true"] .reader-audio-timeline {
+  display: block;
+}
+/* The dock's phone styles turn its timeline into a hairline; in the reader it
+   is a full slider with times either side. */
+.reader-player .reader-audio-timeline .dock-progress {
+  position: static;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 28px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+.reader-player .reader-audio-timeline .dock-progress > span {
+  display: block;
+  min-width: 32px;
+  font-size: 12px;
+  color: var(--dim);
+}
+.reader-player .reader-audio-timeline .dock-progress input {
+  height: auto;
+  border-radius: 2px;
+}
+.reader-player .reader-audio-timeline .dock-progress input::-webkit-slider-thumb {
+  width: 16px;
+  height: 16px;
+}
+.reader-player .reader-audio-timeline .timeline-pointer-surface {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+.reader-player .reader-audio-timeline .timeline-pointer-surface input {
+  width: 100%;
+}
+.reader-player .reader-audio-timeline .dock-progress {
+  flex-wrap: nowrap;
+}
 .reader-player-chapters {
   grid-area: chapters;
   margin: 2px 0 12px 10px;
@@ -905,22 +955,7 @@
     height: 12px;
   }
   .reader-audio-timeline {
-    grid-area: scrub;
-    min-width: 0;
-    margin-top: 2px;
-  }
-  .reader-audio-timeline .dock-progress {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    width: 100%;
-    font-size: 12px;
-    color: var(--dim);
-    font-variant-numeric: tabular-nums;
-  }
-  .reader-audio-timeline .timeline-pointer-surface {
-    flex: 1;
-    min-width: 0;
+    margin: 2px 0 0;
   }
   .reader-player-extras {
     justify-self: end;
