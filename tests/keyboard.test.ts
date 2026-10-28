@@ -52,3 +52,10 @@ test("playback keys are ignored in text fields, selects, buttons, open dialogs a
   assert.equal(playbackKeyAction({ key: " ", altKey: true }), null);
   assert.equal(playbackKeyAction({ key: " ", defaultPrevented: true }), null);
 });
+test("README lists every keyboard shortcut", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { KEYBOARD_SHORTCUTS } = await import("../src/keyboard.ts");
+  const line = readFileSync("README.md", "utf8").split("\n").find(l => l.startsWith("Keyboard shortcuts:")) ?? "";
+  for (const { keys } of KEYBOARD_SHORTCUTS)
+    for (const key of keys) assert.ok(line.includes(`\`${key}\``), key);
+});

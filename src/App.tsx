@@ -53,6 +53,7 @@ import { PlayerProvider, usePlayer } from "./player";
 import { ReleasePicker } from "./components/ReleasePicker";
 import { ProwlarrSettings } from "./components/ProwlarrSettings";
 import { AppearanceSettings } from "./components/Appearance";
+import { KeyboardHelpButton } from "./components/KeyboardHelp";
 import { PlaybackSettings } from "./components/PlaybackSettings";
 import { MediaManager } from "./components/MediaManager";
 import {ReaderShortcut} from "./components/ReaderShortcut";
@@ -2322,6 +2323,9 @@ function SettingsPage({
       <AccountSettings user={user} needsPassword={needsPassword} onLogout={onLogout} notify={notify} />
       <AppearanceSettings notify={notify} />
       <PlaybackSettings notify={notify} />
+      <section className="settings-section" aria-label="Keyboard">
+        <KeyboardHelpButton />
+      </section>
       <DeviceReset notify={notify} />
       <form className="settings-form" onSubmit={(e) => void save(e)}>
         {user.role === "admin" && (

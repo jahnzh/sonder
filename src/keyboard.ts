@@ -53,3 +53,10 @@ export function playbackKeyAction({
     return canSeek ? { type: "skip", seconds: 30 } : null;
   return null;
 }
+export const KEYBOARD_SHORTCUTS: { keys: string[]; action: string }[] = [
+  { keys: ["Space"], action: "Play or pause" },
+  { keys: ["←", "→"], action: "Skip 30 seconds back or forward" },
+  { keys: ["/"], action: "Search" },
+  { keys: ["f"], action: "Follow the audio in the reader" },
+  { keys: ["p"], action: "Switch the reader to Page view" },
+];

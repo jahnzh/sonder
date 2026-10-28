@@ -368,3 +368,33 @@ test("Space toggles playback across views and arrows skip 30 seconds while ignor
     await page.request.delete(`/api/library/${id}`);
   }
 });
+test("keyboard shortcut sheet opens from Now Playing and Settings", async ({ page }) => {
+  await instrument(page);
+  await page.goto("/");
+  await page
+    .getByRole("button", { name: "Play Alice’s Adventures in Wonderland", exact: true })
+    .click();
+  await page.locator(".dock-book").click();
+  await page.getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
+  const sheet = page.getByRole("dialog", { name: "Keyboard shortcuts", exact: true });
+  await expect(sheet).toBeVisible();
+  for (const action of ["Play or pause", "Skip 30 seconds back or forward", "Search", "Follow the audio in the reader", "Switch the reader to Page view"])
+    await expect(sheet.getByText(action, { exact: true })).toBeVisible();
+  for (const key of ["Space", "←", "→", "/", "f", "p"])
+    await expect(sheet.locator("kbd", { hasText: new RegExp(`^${key === "/" ? "\\/" : key}$`) })).toBeVisible();
+  await sheet.getByRole("button", { name: "Close dialog" }).click();
+  await expect(sheet).toBeHidden();
+  await page.goto("/#settings");
+  await page.getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Keyboard shortcuts", exact: true }).getByText("Play or pause")).toBeVisible();
+});
+test("a form dialog focuses its first text field when it opens", async ({ page }) => {
+  await page.goto("/#settings");
+  await page.getByRole("textbox", { name: /^API token/ }).fill("browser-test-token");
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "Hardcover sync mode", exact: true })).toBeEnabled();
+  await page.goto("/#library");
+  await page.getByRole("button", { name: "About Frankenstein", exact: true }).click();
+  await page.getByRole("button", { name: /Match on Hardcover/ }).click();
+  await expect(page.getByRole("textbox", { name: "Match book title and author" })).toBeFocused();
+});

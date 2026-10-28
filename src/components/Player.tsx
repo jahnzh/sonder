@@ -1,3 +1,4 @@
+import { KeyboardHelpButton } from "./KeyboardHelp";
 import { useEffect, useRef, useState } from "react";
 import {
   Play,
@@ -313,6 +314,7 @@ export function PlayerDock({
               >
                 <Layers size={16} /> Versions & sources
               </button>
+              <KeyboardHelpButton />
             </div>
             </PlaybackExtra>
             {!hasReader && <div className="now-playing-art">
