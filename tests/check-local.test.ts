@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { execFileSync } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { runCheckLocal } from "../scripts/check-local.mjs";
+import { acquirePortLease, releasePortLease } from "../scripts/check-local-support.mjs";
 
 interface FixtureContext {
+  tempBase: string;
   repoDir: string;
   binDir: string;
   npmLogPath: string;
@@ -54,6 +56,7 @@ const logPath = process.env.STUB_NPM_LOG;
 const failStage = process.env.STUB_NPM_FAIL_STAGE;
 const failCode = parseInt(process.env.STUB_NPM_FAIL_CODE || '42', 10);
 const createTraces = process.env.STUB_NPM_CREATE_TRACES === '1';
+const sleepMs = parseInt(process.env.STUB_NPM_SLEEP_MS || '0', 10);
 
 if (logPath) {
   const entry = {
@@ -64,7 +67,12 @@ if (logPath) {
       APP_PASSWORD: process.env.APP_PASSWORD,
       DATA_DIR: process.env.DATA_DIR,
       MEDIA_ROOT: process.env.MEDIA_ROOT,
+      MEDIA_VOLUME_ID: process.env.MEDIA_VOLUME_ID,
       TRANSMISSION_RPC_URL: process.env.TRANSMISSION_RPC_URL,
+      TRANSMISSION_USERNAME: process.env.TRANSMISSION_USERNAME,
+      ALIGNMENT_WORKER_URL: process.env.ALIGNMENT_WORKER_URL,
+      ALIGNMENT_TOKEN: process.env.ALIGNMENT_TOKEN,
+      SONDER_VERIFY_URL: process.env.SONDER_VERIFY_URL,
       NODE_ENV: process.env.NODE_ENV,
     },
     snapshotFiles: {
@@ -85,12 +93,19 @@ else if (argv[0] === 'run' && argv[1] === 'build') currentStage = 'build';
 else if (argv[0] === 'test') currentStage = 'test';
 else if (argv[0] === 'run' && argv[1] === 'test:browser') currentStage = 'browser';
 
-// Simulate trace generation for browser tests
+// Simulate trace and screenshot generation
 if (currentStage === 'browser' && createTraces) {
   fs.mkdirSync(path.join(process.cwd(), 'test-results'), { recursive: true });
   fs.writeFileSync(path.join(process.cwd(), 'test-results', 'trace.zip'), 'dummy-trace-data');
   fs.mkdirSync(path.join(process.cwd(), 'playwright-report'), { recursive: true });
   fs.writeFileSync(path.join(process.cwd(), 'playwright-report', 'index.html'), '<html>report</html>');
+  fs.mkdirSync(path.join(process.cwd(), 'artifacts'), { recursive: true });
+  fs.writeFileSync(path.join(process.cwd(), 'artifacts', 'live-screenshot.png'), 'fake-png-bytes');
+}
+
+if (sleepMs > 0 && currentStage === 'ci') {
+  const end = Date.now() + sleepMs;
+  while (Date.now() < end) {}
 }
 
 if (failStage && currentStage === failStage) {
@@ -111,7 +126,7 @@ process.exit(0);
     } catch (_) {}
   };
 
-  return { repoDir, binDir, npmLogPath, initialSha, cleanup };
+  return { tempBase, repoDir, binDir, npmLogPath, initialSha, cleanup };
 }
 
 function readNpmLogs(logPath: string) {
@@ -323,7 +338,7 @@ test("3. Setup failure on invalid git ref preserves nonzero exit code and writes
   }
 });
 
-test("4. Two concurrent runs allocate distinct ports and independent artifact roots", async () => {
+test("4. Two concurrent runs allocate distinct ports with atomic leases and independent artifact roots", async () => {
   const fixture = setupGitFixture();
   try {
     const customEnv = {
@@ -417,7 +432,7 @@ test("6. Dirty status correctly records false for a clean working tree", async (
   }
 });
 
-test("7. Logs, artifact preservation, and disposable cleanup", async () => {
+test("7. Logs, artifact preservation (traces and screenshots), and disposable cleanup", async () => {
   const fixture = setupGitFixture();
   try {
     const customEnv = {
@@ -449,7 +464,14 @@ test("7. Logs, artifact preservation, and disposable cleanup", async () => {
       fs.existsSync(path.join(outputDir, "playwright-report", "index.html")),
       "Playwright report must be copied to output dir"
     );
-    assert.deepEqual(result.report.artifacts.sort(), ["playwright-report", "test-results"]);
+    // Screenshots under snapshot artifacts/ survive cleanup
+    assert.ok(
+      fs.existsSync(path.join(outputDir, "artifacts", "live-screenshot.png")),
+      "Snapshot artifacts/ screenshots must be copied to output dir"
+    );
+    assert.ok(result.report.artifacts.includes("artifacts"));
+    assert.ok(result.report.artifacts.includes("test-results"));
+    assert.ok(result.report.artifacts.includes("playwright-report"));
 
     // Disposable directory cleaned up
     const logs = readNpmLogs(fixture.npmLogPath);
@@ -461,7 +483,7 @@ test("7. Logs, artifact preservation, and disposable cleanup", async () => {
   }
 });
 
-test("8. Secrets and database paths are never leaked into child process environment", async () => {
+test("8. Secrets, application variables and database paths are never leaked into child process environment", async () => {
   const fixture = setupGitFixture();
   try {
     const customEnv = {
@@ -470,7 +492,12 @@ test("8. Secrets and database paths are never leaked into child process environm
       APP_PASSWORD: "super-secret-password",
       DATA_DIR: "/caller/secret/data",
       MEDIA_ROOT: "/caller/secret/media",
+      MEDIA_VOLUME_ID: "vol-secret-42",
       TRANSMISSION_RPC_URL: "http://caller-secret:9091",
+      TRANSMISSION_USERNAME: "secret-transmission-user",
+      ALIGNMENT_WORKER_URL: "http://alignment:3012",
+      ALIGNMENT_TOKEN: "secret-alignment-token",
+      SONDER_VERIFY_URL: "http://sonder-verify:3001",
     };
 
     const result = await runCheckLocal(["--silent"], {
@@ -485,8 +512,146 @@ test("8. Secrets and database paths are never leaked into child process environm
       assert.equal(log.env.APP_PASSWORD, undefined);
       assert.equal(log.env.DATA_DIR, undefined);
       assert.equal(log.env.MEDIA_ROOT, undefined);
+      assert.equal(log.env.MEDIA_VOLUME_ID, undefined);
       assert.equal(log.env.TRANSMISSION_RPC_URL, undefined);
+      assert.equal(log.env.TRANSMISSION_USERNAME, undefined);
+      assert.equal(log.env.ALIGNMENT_WORKER_URL, undefined);
+      assert.equal(log.env.ALIGNMENT_TOKEN, undefined);
+      assert.equal(log.env.SONDER_VERIFY_URL, undefined);
       assert.equal(log.env.NODE_ENV, "test");
+    }
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("9. Rejects unknown CLI arguments and missing argument values strictly", async () => {
+  const fixture = setupGitFixture();
+  try {
+    // Unknown argument
+    const unknownRes = await runCheckLocal(["--unknown-argument", "--silent"], {
+      cwd: fixture.repoDir,
+    });
+    assert.equal(unknownRes.ok, false);
+    assert.equal(unknownRes.exitCode, 1);
+    assert.ok(unknownRes.error?.includes("Unknown argument"));
+
+    // Missing value for --ref
+    const missingRefRes = await runCheckLocal(["--ref"], {
+      cwd: fixture.repoDir,
+    });
+    assert.equal(missingRefRes.ok, false);
+    assert.equal(missingRefRes.exitCode, 1);
+    assert.ok(missingRefRes.error?.includes("Missing required value for --ref"));
+
+    // Missing value for --output-dir
+    const missingOutputRes = await runCheckLocal(["--output-dir"], {
+      cwd: fixture.repoDir,
+    });
+    assert.equal(missingOutputRes.ok, false);
+    assert.equal(missingOutputRes.exitCode, 1);
+    assert.ok(missingOutputRes.error?.includes("Missing required value for --output-dir"));
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("10. Reserves output-dir exclusively and refuses overwriting existing report", async () => {
+  const fixture = setupGitFixture();
+  try {
+    const explicitDir = path.join(fixture.tempBase, "custom-output");
+    fs.mkdirSync(explicitDir, { recursive: true });
+    fs.writeFileSync(path.join(explicitDir, "report.json"), JSON.stringify({ existing: true }));
+
+    const result = await runCheckLocal(["--output-dir", explicitDir, "--silent"], {
+      cwd: fixture.repoDir,
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.exitCode, 1);
+    assert.ok(result.error?.includes("already contains"));
+
+    // Existing report file was not overwritten
+    const content = JSON.parse(fs.readFileSync(path.join(explicitDir, "report.json"), "utf8"));
+    assert.equal(content.existing, true);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("11. Port lease collision: held lease prevents second runner from using same port", async () => {
+  const lease = await acquirePortLease();
+  try {
+    assert.ok(lease.port > 0);
+
+    // Attempting to acquire the same leased port must fail with collision error
+    await assert.rejects(
+      async () => {
+        await acquirePortLease(lease.port);
+      },
+      (err: Error) => {
+        return err.message.includes("currently leased by another active check runner");
+      }
+    );
+  } finally {
+    releasePortLease(lease);
+  }
+});
+
+test("12. SIGTERM terminates child process, cleans up disposable directory and releases lease", async () => {
+  const fixture = setupGitFixture();
+  try {
+    const scriptPath = path.resolve("scripts/check-local.mjs");
+    const outputDir = path.join(fixture.tempBase, "sigterm-out");
+
+    const child = spawn(
+      process.execPath,
+      [scriptPath, "--output-dir", outputDir, "--silent"],
+      {
+        cwd: fixture.repoDir,
+        env: {
+          ...process.env,
+          PATH: `${fixture.binDir}:${process.env.PATH}`,
+          STUB_NPM_LOG: fixture.npmLogPath,
+          STUB_NPM_SLEEP_MS: "10000", // Sleep in stage 1 to give time for SIGTERM
+        },
+        stdio: "pipe",
+      }
+    );
+
+    // Wait until child has started running npm
+    let started = false;
+    for (let i = 0; i < 50; i++) {
+      if (fs.existsSync(fixture.npmLogPath)) {
+        started = true;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    assert.ok(started, "Runner child process must start");
+
+    // Send SIGTERM to runner process
+    child.kill("SIGTERM");
+
+    const exitCode = await new Promise<number | null>((resolve) => {
+      child.on("close", (code) => resolve(code));
+    });
+
+    // 143 is standard exit code for SIGTERM (128 + 15)
+    assert.equal(exitCode, 143);
+
+    // Verify partial report was recorded
+    const reportPath = path.join(outputDir, "report.json");
+    assert.ok(fs.existsSync(reportPath), "report.json must be written on SIGTERM");
+    const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+    assert.equal(report.finalResult, "aborted");
+    assert.equal(report.signal, "SIGTERM");
+
+    // Verify disposable directory was cleaned up
+    const logs = readNpmLogs(fixture.npmLogPath);
+    if (logs.length > 0) {
+      assert.equal(fs.existsSync(logs[0].cwd), false, "Disposable directory must be deleted on SIGTERM");
     }
   } finally {
     fixture.cleanup();
