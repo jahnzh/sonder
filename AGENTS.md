@@ -15,9 +15,16 @@ Use Node 24 and install dependencies with `npm ci`.
 
 ## CI over SSH
 
-Prefer the WSL host at `192.168.1.119` when available. Check access with `ssh -o BatchMode=yes -o ConnectTimeout=5 192.168.1.119 true`. Transfer a Git bundle and clone the committed revision into a unique temporary checkout. Install the Playwright browsers required by the lockfile and run `nice -n 10 npm run check -- --ref <commit>`. Keep browsers headless and muted. Retrieve the report and logs, then clean up only that run's files and processes. SSH dispatch is manual.
+CI runs on the WSL host at `192.168.1.119`. Dispatch is automatic on push to `main` and to agent fix branches, and the runner is the planned `scripts/ci-ssh.sh` tracked in #23. Check access with `ssh -o BatchMode=yes -o ConnectTimeout=5 192.168.1.119 true`.
 
-If SSH is unavailable, run the same committed revision locally with `npm run check -- --ref <commit>`. Record the host, commit and result in the handoff. Report remote test failures as failures; do not treat them as connectivity fallback.
+- Send a Git bundle of the committed revision to a unique temporary checkout on the host. Install dependencies and run `nice -n 10 npm run check -- --ref <commit>` there.
+- Keep browsers headless and muted. Check that the host's Playwright browsers match the lockfile before the first run.
+- Retrieve the report and logs, post the commit status, then clean up only that run's files and processes.
+- Live verification scripts (`verify-*.mjs`) never run on the host. They target production and stay on the production machine.
+
+If SSH is unreachable, run the same committed revision locally with `npm run check -- --ref <commit>`. Record the fallback, host, commit and result in the handoff. A test failure on the host is a failure: do not rerun locally to get a pass, and do not treat it as connectivity fallback.
+
+Until the runner and trigger from #23 exist, run `npm run check -- --ref <commit>` manually.
 
 ## Style and Testing
 
