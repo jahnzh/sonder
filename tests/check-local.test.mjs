@@ -6,6 +6,7 @@ import os from "node:os";
 import { spawn, execFileSync } from "node:child_process";
 import { runCheckLocal } from "../scripts/check-local.mjs";
 import { acquirePortLease, releasePortLease } from "../scripts/check-local-support.mjs";
+import { playwrightReport, knownFailuresDocument } from "./playwright-report-fixture.mjs";
 function setupGitFixture() {
     const tempBase = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-test-fixture-"));
     const repoDir = path.join(tempBase, "repo");
@@ -54,6 +55,7 @@ if (logPath) {
       ALIGNMENT_TOKEN: process.env.ALIGNMENT_TOKEN,
       SONDER_VERIFY_URL: process.env.SONDER_VERIFY_URL,
       NODE_ENV: process.env.NODE_ENV,
+      PLAYWRIGHT_JSON_OUTPUT_NAME: process.env.PLAYWRIGHT_JSON_OUTPUT_NAME,
     },
     snapshotFiles: {
       hasUncommitted: fs.existsSync(path.join(process.cwd(), 'uncommitted.txt')),
@@ -82,6 +84,10 @@ if (currentStage === 'browser' && createTraces) {
   fs.mkdirSync(path.join(process.cwd(), 'artifacts'), { recursive: true });
   fs.writeFileSync(path.join(process.cwd(), 'artifacts', 'live-screenshot.png'), 'fake-png-bytes');
   if (process.env.STUB_NPM_COLLISION) fs.writeFileSync(process.env.STUB_NPM_COLLISION, 'occupied');
+}
+
+if (currentStage === 'browser' && process.env.STUB_NPM_JSON_REPORT && process.env.PLAYWRIGHT_JSON_OUTPUT_NAME) {
+  fs.copyFileSync(process.env.STUB_NPM_JSON_REPORT, process.env.PLAYWRIGHT_JSON_OUTPUT_NAME);
 }
 
 if (sleepMs > 0 && currentStage === 'ci') {
@@ -658,4 +664,182 @@ test("a failing git status records an unknown caller state, not a clean one", as
     process.env.PATH = previousPath;
     fixture.cleanup();
   }
+});
+
+const SPEC = "tests/e2e/device-reset.spec.ts";
+const LAYOUT = "tests/e2e/now-playing-layout.spec.ts";
+const listed = [
+    {project: "webkit", file: SPEC, title: "reset refreshes the app shell"},
+    {project: "webkit", file: LAYOUT, title: "reader-first at 360px"},
+];
+function writeKnownFailuresFixture(fixture, tests, {document = knownFailuresDocument(listed)} = {}) {
+    const listFile = path.join(fixture.tempBase, "known-failures.json");
+    const reportFile = path.join(fixture.tempBase, "stub-playwright.json");
+    fs.writeFileSync(listFile, typeof document === "string" ? document : JSON.stringify(document));
+    fs.writeFileSync(reportFile, JSON.stringify(playwrightReport(tests)));
+    return {listFile, reportFile};
+}
+const status = (project, file, title, state) => ({project, file, title, status: state});
+function knownFailuresEnv(fixture, reportFile, failCode = "1") {
+    return {
+        PATH: `${fixture.binDir}:${process.env.PATH}`,
+        STUB_NPM_LOG: fixture.npmLogPath,
+        STUB_NPM_FAIL_STAGE: "browser",
+        STUB_NPM_FAIL_CODE: failCode,
+        ...(reportFile ? {STUB_NPM_JSON_REPORT: reportFile} : {}),
+    };
+}
+
+test("known failures: all browser failures listed -> passed_with_known_failures, exit 0, JSON reporter added", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const {listFile, reportFile} = writeKnownFailuresFixture(fixture, [
+            status("webkit", SPEC, "reset refreshes the app shell", "unexpected"),
+            status("webkit", LAYOUT, "reader-first at 360px", "unexpected"),
+            status("chromium", SPEC, "reset refreshes the app shell", "expected"),
+        ]);
+        const result = await runCheckLocal(["--silent", "--known-failures", listFile], {
+            cwd: fixture.repoDir,
+            env: knownFailuresEnv(fixture, reportFile),
+        });
+        assert.equal(result.ok, true);
+        assert.equal(result.exitCode, 0);
+        const report = result.report;
+        assert.equal(report.result, "passed_with_known_failures");
+        assert.equal(report.finalResult, "passed_with_known_failures");
+        assert.equal(report.ok, true);
+        assert.equal(report.failedStage, null);
+        assert.equal(report.stages[3].status, "failed", "the stage record keeps the real exit");
+        assert.equal(report.stages[3].toleratedBy, "known-failures");
+        assert.equal(report.knownFailures.known.length, 2);
+        assert.deepEqual(report.knownFailures.new, []);
+        assert.equal(report.knownFailures.listedPassed.length, 0);
+        assert.match(report.knownFailures.summary, /^passed_with_known_failures: 2 known failures/);
+        const logs = readNpmLogs(fixture.npmLogPath);
+        assert.deepEqual(logs[3].argv, ["run", "test:browser", "--", "--reporter=list,json"]);
+        assert.equal(logs[3].env.PLAYWRIGHT_JSON_OUTPUT_NAME, path.join(result.outputDir, "playwright-results.json"));
+        assert.equal(logs[2].env.PLAYWRIGHT_JSON_OUTPUT_NAME, undefined, "only the browser stage writes the report");
+        assert.ok(fs.existsSync(path.join(result.outputDir, "playwright-results.json")));
+        assert.equal(JSON.parse(fs.readFileSync(path.join(result.outputDir, "report.json"), "utf8")).result, "passed_with_known_failures");
+    }
+    finally {
+        fixture.cleanup();
+    }
+});
+
+test("known failures: one failure that is not listed -> failed, exit 1 whatever the stage exit code", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const {listFile, reportFile} = writeKnownFailuresFixture(fixture, [
+            status("webkit", SPEC, "reset refreshes the app shell", "unexpected"),
+            status("chromium", SPEC, "reset leaves the offline shell intact", "unexpected"),
+        ]);
+        const result = await runCheckLocal(["--silent", "--known-failures", listFile], {
+            cwd: fixture.repoDir,
+            env: knownFailuresEnv(fixture, reportFile, "5"),
+        });
+        assert.equal(result.ok, false);
+        assert.equal(result.exitCode, 1);
+        assert.equal(result.report.result, "failed");
+        assert.equal(result.report.failedStage, "browser");
+        assert.equal(result.report.knownFailures.known.length, 1);
+        assert.deepEqual(result.report.knownFailures.new.map((f) => f.title), ["reset leaves the offline shell intact"]);
+    }
+    finally {
+        fixture.cleanup();
+    }
+});
+
+test("known failures: browser stage passes -> passed, and listed tests that passed are recorded", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const {listFile, reportFile} = writeKnownFailuresFixture(fixture, [
+            status("webkit", SPEC, "reset refreshes the app shell", "expected"),
+            status("webkit", LAYOUT, "reader-first at 360px", "expected"),
+        ]);
+        const env = knownFailuresEnv(fixture, reportFile);
+        delete env.STUB_NPM_FAIL_STAGE;
+        const result = await runCheckLocal(["--silent", `--known-failures=${listFile}`], {cwd: fixture.repoDir, env});
+        assert.equal(result.exitCode, 0);
+        assert.equal(result.report.result, "passed");
+        assert.equal(result.report.stages[3].toleratedBy, undefined);
+        assert.equal(result.report.knownFailures.listedPassed.length, 2);
+        assert.deepEqual(result.report.knownFailures.known, []);
+    }
+    finally {
+        fixture.cleanup();
+    }
+});
+
+test("known failures: browser stage fails without a usable report -> failed, exit 1", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const {listFile} = writeKnownFailuresFixture(fixture, []);
+        const result = await runCheckLocal(["--silent", "--known-failures", listFile], {
+            cwd: fixture.repoDir,
+            env: knownFailuresEnv(fixture, null, "5"),
+        });
+        assert.equal(result.exitCode, 1);
+        assert.equal(result.report.result, "failed");
+        assert.match(result.report.knownFailures.error, /was not written/);
+    }
+    finally {
+        fixture.cleanup();
+    }
+});
+
+test("known failures: failures in an earlier stage are never tolerated and keep their exit code", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const {listFile, reportFile} = writeKnownFailuresFixture(fixture, [status("webkit", SPEC, "reset refreshes the app shell", "unexpected")]);
+        const env = {...knownFailuresEnv(fixture, reportFile, "3"), STUB_NPM_FAIL_STAGE: "test"};
+        const result = await runCheckLocal(["--silent", "--known-failures", listFile], {cwd: fixture.repoDir, env});
+        assert.equal(result.exitCode, 3);
+        assert.equal(result.report.result, "failed");
+        assert.equal(result.report.failedStage, "unit");
+        assert.equal(result.report.knownFailures.evaluated, false);
+        assert.equal(readNpmLogs(fixture.npmLogPath).length, 3, "browser stage is skipped");
+    }
+    finally {
+        fixture.cleanup();
+    }
+});
+
+test("known failures: without the flag the browser stage, report and exit code are unchanged", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const result = await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: knownFailuresEnv(fixture, null, "5")});
+        assert.equal(result.exitCode, 5);
+        assert.equal(result.report.result, "failed");
+        assert.equal("knownFailures" in result.report, false);
+        const logs = readNpmLogs(fixture.npmLogPath);
+        assert.deepEqual(logs[3].argv, ["run", "test:browser"]);
+        assert.equal(logs[3].env.PLAYWRIGHT_JSON_OUTPUT_NAME, undefined);
+    }
+    finally {
+        fixture.cleanup();
+    }
+});
+
+test("known failures: a malformed list or a missing value stops the run before anything is created", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const {listFile} = writeKnownFailuresFixture(fixture, [], {document: "{not json"});
+        const outputDir = path.join(fixture.tempBase, "report");
+        const malformed = await runCheckLocal(["--silent", "--known-failures", listFile, "--output-dir", outputDir], {
+            cwd: fixture.repoDir,
+            env: knownFailuresEnv(fixture, null),
+        });
+        assert.equal(malformed.ok, false);
+        assert.equal(malformed.exitCode, 1);
+        assert.match(malformed.error, /not valid JSON/);
+        assert.equal(fs.existsSync(outputDir), false);
+        assert.equal(readNpmLogs(fixture.npmLogPath).length, 0);
+        const missing = await runCheckLocal(["--known-failures"], {cwd: fixture.repoDir});
+        assert.equal(missing.exitCode, 1);
+        assert.match(missing.error, /Missing required value for --known-failures/);
+    }
+    finally {
+        fixture.cleanup();
+    }
 });

@@ -13,6 +13,7 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
   const options = {
     ref: "HEAD",
     outputDir: null,
+    knownFailures: null,
     help: false,
     silent: false,
   };
@@ -41,6 +42,15 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
       const val = arg.slice("--output-dir=".length);
       if (!val) return { ok: false, error: "Missing required value for --output-dir option" };
       options.outputDir = val;
+    } else if (arg === "--known-failures") {
+      if (i + 1 >= argv.length || argv[i + 1].startsWith("--")) {
+        return { ok: false, error: "Missing required value for --known-failures option" };
+      }
+      options.knownFailures = argv[++i];
+    } else if (arg.startsWith("--known-failures=")) {
+      const val = arg.slice("--known-failures=".length);
+      if (!val) return { ok: false, error: "Missing required value for --known-failures option" };
+      options.knownFailures = val;
     } else {
       return { ok: false, error: `Unknown argument "${arg}"` };
     }

@@ -12,6 +12,26 @@ The runner snapshots a committed revision into a disposable directory and runs d
 
 Every invocation uses separate build output, a browser-test port, and a report directory. Treat a check result as evidence for the revision and run identified in that report. Keep the run's report with its task handoff so another Orca conversation can find the evidence.
 
+## Known failures
+
+```bash
+npm run check -- --ref <commit> --known-failures tests/known-failures.wsl-host.json
+```
+
+Without `--known-failures` the runner behaves as described above. With it, the browser stage runs `npm run test:browser -- --reporter=list,json` and writes the Playwright JSON report to `playwright-results.json` in the report directory. Each failed test is matched by exact (project, spec file, full title) against the list; the title includes `describe` blocks joined with ` › `, as the list reporter prints it. The path is resolved against the calling checkout.
+
+The list is `{"version":1,"entries":[...]}`. Each entry has `project`, `file` (repository path), `title`, `kind` (`environment` or `intermittent`), `reason`, and optionally `issue`. A missing, unparsable or invalid list stops the run before any stage starts.
+
+| Result | When | Exit |
+| --- | --- | --- |
+| `passed` | Every stage passed. | 0 |
+| `passed_with_known_failures` | The browser stage failed and every failing test is listed. | 0 |
+| `failed` | Any other failure: an unlisted test, a failure in an earlier stage, or a browser failure the report cannot account for (no report, run-level errors, no failing test, mismatched counts). | 1 for a browser stage under this flag; an earlier stage keeps its own exit code |
+
+`report.json` records the final result and a `knownFailures` object: `known` (listed failures that occurred), `new` (unlisted failures), `listedPassed` and `listedNotRun` (listed tests that passed, or did not run in this environment), and a one-line `summary`, which is also printed unless `--silent`. The stage record stays `failed` and gains `toleratedBy: "known-failures"`.
+
+Remove an entry once its cause is fixed. A `listedPassed` entry that is `environment` is a candidate for removal; an `intermittent` one may simply have passed this time. `tests/known-failures.wsl-host.json` lists the failures seen on the WSL host (`192.168.1.119`).
+
 This command performs local validation. CI triggers, staging, image promotion and production deployment remain follow-up work on issue #23.
 
 ## Back up a running SQLite database
