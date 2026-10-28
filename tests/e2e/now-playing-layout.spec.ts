@@ -89,15 +89,28 @@ for(const size of sizes){
   const [width,height]=size;
   const dialog=await open(page,browserName,"Layout reader",size);
   await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
-  const transport=dialog.locator(".now-playing-transport .transport.large");
-  await checkTransport(page,transport);
-  await checkTimeline(dialog,transport);
-  await expect(dialog.getByRole("button",{name:"Playback options",exact:true})).toBeVisible();
-  await expect(dialog.getByRole("button",{name:"Close dialog",exact:true})).toBeVisible();
-  const timer=dialog.getByRole("button",{name:"Sleep timer",exact:true});
-  const timerBox=await centre(timer), transportBox=await centre(transport);
-  const forwardBox=(await transport.getByRole("button",{name:"Forward 30 seconds",exact:true}).boundingBox())!;
-  expect(Math.abs(timerBox.y-transportBox.y)).toBeLessThanOrEqual(2);
+  // With an ebook, Now Playing is the full-screen reader with one player bar (#22).
+  await expect(dialog.locator(".now-playing-transport")).toBeHidden();
+  const player=dialog.getByRole("region",{name:"Player",exact:true});
+  const back=player.getByRole("button",{name:"Back 30 seconds",exact:true}),forward=player.getByRole("button",{name:"Forward 30 seconds",exact:true});
+  const play=await centre(player.getByRole("button",{name:/^(Play|Pause) narration$/}));
+  const seeks=[];
+  for(const button of [back,forward]){
+   const b=await centre(button),icon=await centre(button.locator("svg")),label=await centre(button.locator("span"));
+   expect(b.box.width).toBeGreaterThanOrEqual(44);expect(b.box.height).toBeGreaterThanOrEqual(44);
+   for(const axis of ["x","y"] as const){
+    expect(Math.abs(label[axis]-icon[axis])).toBeLessThanOrEqual(1);
+    expect(Math.abs(icon[axis]-b[axis])).toBeLessThanOrEqual(1);
+   }
+   expect(Math.abs(b.y-play.y)).toBeLessThanOrEqual(1);
+   seeks.push(b);
+  }
+  expect(Math.abs((play.x-seeks[0].x)-(seeks[1].x-play.x))).toBeLessThanOrEqual(1);
+  const timer=player.getByRole("button",{name:"Sleep timer",exact:true});
+  const timerBox=await centre(timer),forwardBox=(await forward.boundingBox())!;
+  // Phones keep the timer on the transport row; desktop centres it in the footer.
+  const bar=await centre(player);
+  expect(Math.abs(timerBox.y-(width<900 ? play.y : bar.y))).toBeLessThanOrEqual(2);
   expect(timerBox.box.width).toBeGreaterThanOrEqual(44);
   expect(timerBox.box.x+timerBox.box.width).toBeLessThanOrEqual(width);
   expect(timerBox.box.x).toBeGreaterThanOrEqual(forwardBox.x+forwardBox.width);
@@ -113,26 +126,27 @@ for(const size of sizes){
   const box=(await dialog.boundingBox())!;
   expect(box.y).toBeGreaterThanOrEqual(0); expect(box.y+box.height).toBeLessThanOrEqual(height);
   expect((await page.locator(".inline-reader .reader-viewport").boundingBox())!.height).toBeGreaterThan(height*.6);
-  const surface=await dialog.evaluate(el=>getComputedStyle(el).backgroundColor);
+  const surface=await page.locator(".inline-reader").evaluate(el=>getComputedStyle(el).backgroundColor);
   await expect(page.frameLocator(".inline-reader .reader-viewport iframe").locator("body")).toHaveCSS("background-color",surface);
-  if(width<900) await page.getByRole("button",{name:"Show reader controls"}).click();
-  const controls=dialog.locator(".reader-page-actions");
-  await expect(controls.getByRole("slider",{name:"Book progress"})).toBeVisible();
-  for(const name of ["Contents","Back 30 seconds","Play reader audio","Forward 30 seconds","Bookmark this passage"]) {
-    const button=controls.getByRole("button",{name,exact:true});
-    await expect(button).toBeVisible();
-    const rect=(await button.boundingBox())!;
-    expect(rect.x).toBeGreaterThanOrEqual(0); expect(rect.x+rect.width).toBeLessThanOrEqual(width);
-    expect(rect.y+rect.height).toBeLessThanOrEqual(height);
+  if(width<900){
+   const viewport=(await page.locator(".inline-reader .reader-viewport").boundingBox())!;
+   await page.mouse.click(viewport.x+viewport.width/2,viewport.y+viewport.height/2);
   }
-  const lyrics=dialog.getByRole("button",{name:"Lyrics",exact:true});
-  const rewind=dialog.locator(".now-playing-transport").getByRole("button",{name:"Rewind 30 seconds",exact:true});
-  const lyricsBox=(await lyrics.boundingBox())!, rewindBox=(await rewind.boundingBox())!;
-  expect(lyricsBox.x+lyricsBox.width).toBeLessThanOrEqual(rewindBox.x+1);
-  expect(Math.abs((lyricsBox.y+lyricsBox.height/2)-(rewindBox.y+rewindBox.height/2))).toBeLessThanOrEqual(2);
-  await expect(transport).toBeVisible();
+  await expect(player.getByRole("slider",{name:"Position in book"})).toBeVisible();
+  const names=["Close reader","Bookmark current sentence","Search this book","Reader appearance","More","Back 30 seconds","Play narration","Forward 30 seconds","Sleep timer"];
+  if(width<900)names.push("Chapters");
+  for(const name of names){
+   const button=dialog.locator(".inline-reader").getByRole("button",{name,exact:true});
+   await expect(button).toBeVisible();
+   const rect=(await button.boundingBox())!;
+   expect(rect.width).toBeGreaterThanOrEqual(44);
+   expect(rect.x).toBeGreaterThanOrEqual(0); expect(rect.x+rect.width).toBeLessThanOrEqual(width);
+   expect(rect.y).toBeGreaterThanOrEqual(0); expect(rect.y+rect.height).toBeLessThanOrEqual(height);
+  }
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(width);
   if(width>=900) await expect(page.getByLabel("Contents sidebar")).toBeVisible();
+  // A tap on the page leaves focus in the EPUB frame; Escape works from the reader's own controls.
+  await dialog.locator(".inline-reader").getByRole("button",{name:"Search this book",exact:true}).focus();
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
  });

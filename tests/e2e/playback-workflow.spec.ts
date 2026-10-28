@@ -37,12 +37,21 @@ async function playAndPause(page: Page, title: string) {
   await pause.click();
   await expect.poll(async()=>(await audioState(page)).paused).toBe(true);
 }
+async function showReaderControls(page: Page) {
+  const topbar=page.locator(".inline-reader .reader-topbar");
+  if(await topbar.isVisible()) return;
+  const box=(await page.locator(".inline-reader .reader-viewport").boundingBox())!;
+  await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
+  await expect(topbar).toBeVisible();
+}
 async function manage(page: Page) {
   await page.locator(".dock-book").click();
   await expect(page.getByText("Loading ebook…",{exact:true})).toBeHidden();
-  const reveal=page.getByRole("button",{name:"Show reader controls",exact:true});
-  if(await reveal.isVisible()) await reveal.click();
-  if(await page.getByRole("button",{name:"Playback options",exact:true}).count()) await page.getByRole("button",{name:"Playback options",exact:true}).click();
+  // With an ebook, Playback options open from the reader's More button.
+  if(await page.locator(".inline-reader").count()){
+    await showReaderControls(page);
+    await page.locator(".inline-reader .reader-topbar").getByRole("button",{name:"More",exact:true}).click();
+  }
   await page.getByRole("button",{name:"Versions & sources",exact:true}).click();
   await expect(page.getByRole("dialog",{name:"Versions & sources",exact:true})).toBeVisible();
 }
@@ -174,7 +183,7 @@ test("playback opens the reader and title page; downloaded sources can be switch
   await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
   await expect(page.getByRole("dialog",{name:"Now playing"})).toBeVisible();
   await expect(page.frameLocator(".inline-reader .reader-viewport iframe").getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
-  await page.getByRole("button",{name:"Show reader controls"}).click();
+  await showReaderControls(page);
   await page.getByRole("button",{name:"Close reader",exact:true}).click();
   await page.getByRole("button",{name:"Open title page for Managed playback story",exact:true}).click();
   await expect(page.getByRole("dialog",{name:"Book details"})).toBeVisible();

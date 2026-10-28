@@ -8,6 +8,11 @@
   --accent: #dd8966;
   --on-accent: #1b120c;
   --accent-soft: color-mix(in srgb, var(--accent) 13%, var(--surface));
+  /* Shades from the reader design, derived from the theme so every preset and
+     custom colour keeps working (exact on Forest). */
+  --chrome: color-mix(in srgb, var(--surface) 60%, var(--background));
+  --hairline: color-mix(in srgb, var(--raised) 80%, var(--border));
+  --dim: color-mix(in srgb, var(--muted) 82%, var(--background));
   --danger: #e9a294;
   --shadow: #020602;
   --paper: var(--background);
