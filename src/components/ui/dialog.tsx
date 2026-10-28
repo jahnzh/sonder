@@ -81,7 +81,16 @@ export function Dialog({
           aria-describedby={description ? descriptionId : undefined}
           onEscapeKeyDown={onEscapeKeyDown}
           onPointerDownOutside={onPointerDownOutside}
-          onOpenAutoFocus={forceMount ? (event) => event.preventDefault() : undefined}
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            if (forceMount || !content.current) return;
+            // A dialog with a text field starts in it; any other dialog starts
+            // on the container so Space does not activate a focused button.
+            const field = content.current.querySelector<HTMLElement>(
+              'textarea:not([disabled]), input:not([disabled]):not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="checkbox"]):not([type="radio"]):not([type="file"])',
+            );
+            (field ?? content.current).focus({ preventScroll: true });
+          }}
         >
           <div className="dialog-heading">
             <div>

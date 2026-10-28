@@ -561,7 +561,13 @@ export function ReaderView({
           });
           content.document.addEventListener("keydown", (event: KeyboardEvent) => {
             if (event.ctrlKey || event.metaKey || event.altKey) return;
-            if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); pageAction.current(event.key === "ArrowLeft" ? "previous" : "next"); }
+            if (event.key === " " || ((event.key === "ArrowLeft" || event.key === "ArrowRight") && playerRef.current.book)) {
+              event.preventDefault();
+              window.dispatchEvent(new KeyboardEvent("keydown", { key: event.key, code: event.code, bubbles: true, cancelable: true }));
+            } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+              event.preventDefault();
+              pageAction.current(event.key === "ArrowLeft" ? "previous" : "next");
+            }
           });
           content.document.addEventListener("click", (event) => {
             const link = (event.target as Element)?.closest("a[href]");
@@ -1044,13 +1050,12 @@ export function ReaderView({
     const key = (event: KeyboardEvent) => {
       // The Now Playing reader stays mounted while its dialog is closed.
       if (event.ctrlKey || event.metaKey || event.altKey || (event.target as HTMLElement)?.closest("input,select,textarea,button") || panel || viewport.current?.closest('[data-state="closed"]')) return;
-      if (preferences.display === "segment" && event.key === " ") { event.preventDefault(); if (p.book) p.toggle(); }
-      else if (preferences.display === "segment" && event.key.toLowerCase() === "f") { event.preventDefault(); setFollow(true); following.current=""; }
+      if (preferences.display === "segment" && event.key.toLowerCase() === "f") { event.preventDefault(); setFollow(true); following.current=""; }
       else if (preferences.display === "segment" && event.key.toLowerCase() === "p") { event.preventDefault(); editReader({display:"book"}); }
-      else if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); if (preferences.display === "segment" && p.book) p.skip(event.key === "ArrowLeft" ? -30 : 30); else pageAction.current(event.key === "ArrowLeft" ? "previous" : "next"); }
+      else if (!p.book && (event.key === "ArrowLeft" || event.key === "ArrowRight")) { event.preventDefault(); pageAction.current(event.key === "ArrowLeft" ? "previous" : "next"); }
     };
     window.addEventListener("keydown",key); return () => window.removeEventListener("keydown",key);
-  }, [panel,preferences.display,p.book,p.toggle,p.skip,appearance]);
+  }, [panel,preferences.display,p.book,appearance]);
   const searchResults =
     book && query.trim().length > 1
       ? book.sections
