@@ -26,11 +26,13 @@ Playwright starts `tests/browser-server.ts`, which runs the real app on :4173 ag
 Deploy (production runs from Docker, not `npm start`):
 
 ```bash
-cp data/sonder.db data/backups/before-<change>-$(date +%s).db   # prior practice before each deploy
+npm run backup -- data/sonder.db data/backups/before-<change>-$(date +%s).db
 docker compose build && docker compose up -d --no-build
 ```
 
 `scripts/verify-playback-workflow.mjs` and `scripts/verify-integrated-reader.mjs <recording-id>` exercise the **deployed** UI with real media; they intercept progress writes so the user's real listening position isn't changed, and write results to `artifacts/` (gitignored). Any new live-verification script must protect progress the same way.
+
+For isolated checks of a committed revision, database backups, and live-verification safeguards, read `docs/LOCAL_CHECKS.md` before running those workflows.
 
 ## Architecture
 

@@ -43,6 +43,15 @@ Options:
 `);
 }
 
+function reserveReportDirectory(outputDir) {
+  fs.mkdirSync(path.dirname(outputDir), {recursive: true});
+  try { fs.mkdirSync(outputDir); }
+  catch (error) {
+    if (error.code === "EEXIST") throw new Error(`Output directory already contains or reserves another run: ${outputDir}`);
+    throw error;
+  }
+}
+
 /**
  * Main check-local execution entry point.
  */
@@ -91,20 +100,8 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       ? path.resolve(callerDir, options.outputDir)
       : path.resolve(callerDir, "artifacts", "ci", `unresolved-${sanitizedRef}`, runId);
 
-    // Verify outputDir reservation
-    if (options.outputDir && fs.existsSync(outputDir)) {
-      const existingReport = path.join(outputDir, "report.json");
-      if (fs.existsSync(existingReport)) {
-        console.error(`[check-local] Setup error: output directory already contains a report: ${outputDir}`);
-        return {
-          ok: false,
-          exitCode: 1,
-          error: `Output directory already contains a report: ${outputDir}`,
-        };
-      }
-    }
-
-    fs.mkdirSync(outputDir, { recursive: true });
+    try { reserveReportDirectory(outputDir); }
+    catch (error) { return {ok: false, exitCode: 1, error: error.message}; }
 
     const setupLog = `Setup failure: unable to resolve git reference "${options.ref}".\n${resolveResult.error}\n`;
     fs.writeFileSync(path.join(outputDir, "setup.log"), setupLog, "utf8");
@@ -146,18 +143,8 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     ? path.resolve(callerDir, options.outputDir)
     : path.resolve(callerDir, "artifacts", "ci", resolvedSha, runId);
 
-  // Exclusive reservation check: refuse existing reports
-  if (options.outputDir && fs.existsSync(outputDir)) {
-    const existingReport = path.join(outputDir, "report.json");
-    const existingCheckReport = path.join(outputDir, "check-report.json");
-    if (fs.existsSync(existingReport) || fs.existsSync(existingCheckReport)) {
-      const msg = `Output directory already contains existing checks report: ${outputDir}`;
-      console.error(`[check-local] Setup error: ${msg}`);
-      return { ok: false, exitCode: 1, error: msg };
-    }
-  }
-
-  fs.mkdirSync(outputDir, { recursive: true });
+  try { reserveReportDirectory(outputDir); }
+  catch (error) { return {ok: false, exitCode: 1, error: error.message}; }
 
   // 2. Allocate loopback port with atomic host lease
   let portLease = null;
@@ -267,47 +254,13 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     }
   };
 
-  const signalHandler = async (sig) => {
-    console.warn(`\n[check-local] Received ${sig}, terminating child process group and cleaning up...`);
-    if (activeChild) {
-      await terminateProcessTree(activeChild, 2000);
-      activeChild = null;
-    }
-
-    try {
-      if (disposableDir) {
-        preserveArtifacts(disposableDir, outputDir);
-      }
-    } catch (_) {}
-
-    cleanup();
-
-    const completedAt = new Date().toISOString();
-    const partialReport = {
-      runId,
-      requestedRef: options.ref,
-      resolvedRef: resolvedSha,
-      sha: resolvedSha,
-      callerDirty: callerDirty.dirty,
-      dirty: callerDirty.dirty,
-      uncommittedChanges: callerDirty.uncommittedChanges,
-      port,
-      outputDir,
-      startedAt,
-      completedAt,
-      durationMs: Date.now() - startTime,
-      ok: false,
-      result: "aborted",
-      finalResult: "aborted",
-      signal: sig,
-    };
-
-    try {
-      writeReportFiles(outputDir, partialReport);
-    } catch (_) {}
-
-    const exitCode = sig === "SIGINT" ? 130 : sig === "SIGTERM" ? 143 : 1;
-    process.exit(exitCode);
+  let interruptedSignal = null;
+  let termination = Promise.resolve();
+  const signalHandler = (sig) => {
+    if (interruptedSignal) return;
+    interruptedSignal = sig;
+    console.warn(`\n[check-local] Received ${sig}; stopping the owned stage...`);
+    if (activeChild) termination = terminateProcessTree(activeChild, 2000);
   };
 
   const unbindSignals = () => {
@@ -397,7 +350,7 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       const stageDef = STAGE_DEFINITIONS[i];
       const stageIndex = i + 1;
 
-      if (firstFailedStage) {
+      if (firstFailedStage || interruptedSignal) {
         stageResults.push({
           index: stageIndex,
           name: stageDef.name,
@@ -480,12 +433,18 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     }
 
     // 6. Preserve Playwright traces/reports and screenshots before cleanup
-    const preservedArtifacts = preserveArtifacts(disposableDir, outputDir);
+    await termination;
+    let preservedArtifacts = [];
+    let artifactError = null;
+    try { preservedArtifacts = preserveArtifacts(disposableDir, outputDir); }
+    catch (error) { artifactError = error.message; }
 
     const completedAt = new Date().toISOString();
     const totalDurationMs = Date.now() - startTime;
-    const isOverallSuccess = firstFailedStage === null;
-    const finalExitCode = isOverallSuccess ? 0 : (firstFailedStage.exitCode ?? 1);
+    const isOverallSuccess = !firstFailedStage && !interruptedSignal && !artifactError;
+    const finalExitCode = interruptedSignal ? (interruptedSignal === "SIGINT" ? 130 : 143)
+      : firstFailedStage ? (firstFailedStage.exitCode ?? 1) : artifactError ? 1 : 0;
+    const result = interruptedSignal ? "aborted" : isOverallSuccess ? "passed" : "failed";
 
     const report = {
       runId,
@@ -501,8 +460,10 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       completedAt,
       durationMs: totalDurationMs,
       ok: isOverallSuccess,
-      result: isOverallSuccess ? "passed" : "failed",
-      finalResult: isOverallSuccess ? "passed" : "failed",
+      result,
+      finalResult: result,
+      signal: interruptedSignal,
+      artifactError,
       failedStage: firstFailedStage ? firstFailedStage.name : null,
       setup: {
         status: "passed",
@@ -520,7 +481,7 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       if (isOverallSuccess) {
         console.log(`\n[check-local] All checks PASSED successfully.`);
       } else {
-        console.error(`\n[check-local] Checks FAILED at stage "${firstFailedStage.name}".`);
+        console.error(`\n[check-local] Checks failed: ${interruptedSignal || artifactError || firstFailedStage?.name}.`);
       }
       console.log(`[check-local] Summary report: ${path.join(outputDir, "report.json")}`);
     }

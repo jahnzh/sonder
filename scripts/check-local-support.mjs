@@ -162,8 +162,13 @@ export function extractSnapshot(cwd, sha, targetDir) {
       }
     };
 
-    gitProc.on("error", (err) => reject(new Error(`git archive spawn error: ${err.message}`)));
-    tarProc.on("error", (err) => reject(new Error(`tar spawn error: ${err.message}`)));
+    gitProc.on("error", (err) => { gitErr += err.message; tarProc.kill(); });
+    tarProc.on("error", (err) => { tarErr += err.message; gitProc.kill(); });
+    tarProc.stdin.on("error", (err) => {
+      tarErr += err.message;
+      gitProc.kill();
+      tarProc.kill();
+    });
 
     gitProc.on("close", (code) => {
       gitExited = true;
@@ -428,12 +433,14 @@ export function runStageProcess({
     const startTime = Date.now();
 
     let logStream = null;
+    let logError = null;
     if (logFilePath) {
       try {
         fs.mkdirSync(path.dirname(logFilePath), { recursive: true });
         logStream = fs.createWriteStream(logFilePath, { flags: "a", encoding: "utf8" });
       } catch (err) {
-        console.warn(`Warning: failed to open log file ${logFilePath}: ${err.message}`);
+        reject(new Error(`Cannot open stage log ${logFilePath}: ${err.message}`));
+        return;
       }
     }
 
@@ -450,6 +457,10 @@ export function runStageProcess({
 
     let stdout = "";
     let stderr = "";
+    logStream?.on("error", (error) => {
+      logError = error;
+      void terminateProcessTree(child);
+    });
 
     child.stdout.on("data", (chunk) => {
       const text = chunk.toString();
@@ -475,18 +486,19 @@ export function runStageProcess({
     });
 
     child.on("close", (code, signal) => {
-      if (logStream) logStream.end();
       const completedAt = new Date().toISOString();
       const durationMs = Date.now() - startTime;
-      resolve({
-        exitCode: code,
+      const finish = () => resolve({
+        exitCode: logError ? 1 : code,
         signal,
         startedAt,
         completedAt,
         durationMs,
         stdout,
-        stderr,
+        stderr: logError ? `${stderr}\nLog write failed: ${logError.message}` : stderr,
       });
+      if (logStream && !logStream.destroyed) logStream.end(finish);
+      else finish();
     });
   });
 }
@@ -505,12 +517,8 @@ export function preserveArtifacts(disposableDir, outputDir) {
     const src = path.join(disposableDir, dirName);
     if (fs.existsSync(src)) {
       const dest = path.join(outputDir, dirName);
-      try {
-        fs.cpSync(src, dest, { recursive: true, force: true });
-        preserved.push(dirName);
-      } catch (err) {
-        console.warn(`Warning: failed to preserve artifact directory ${dirName}: ${err.message}`);
-      }
+      fs.cpSync(src, dest, { recursive: true, force: true });
+      preserved.push(dirName);
     }
   }
 

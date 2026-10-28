@@ -55,6 +55,7 @@ try {
   await page.locator(".dock-book").click();
   await expect(page.getByText("Loading ebook…",{exact:true})).toBeHidden();
   const room=page.locator(".inline-reader");
+  if(hasEbook) await expect(room.locator(".reader-viewport iframe")).toBeVisible();
   const showControls=async()=>{
     if(!await room.count() || await room.locator(".reader-topbar").isVisible()) return;
     const box=await room.locator(".reader-viewport").boundingBox();
@@ -144,7 +145,8 @@ try {
     await expect(page.getByRole("dialog",{name:"Now playing",exact:true})).toBeVisible();
     await expect(page.locator(".reader-viewport iframe")).toBeVisible();
     check("compact player opens linked EPUB");
-    await page.getByRole("button",{name:"Close dialog",exact:true}).click();
+    await showControls();
+    await room.locator(".reader-topbar").getByRole("button",{name:"Close reader",exact:true}).click();
   } else check("no linked EPUB available");
   await page.getByRole("button",{name:`Open title page for ${book.title}`,exact:true}).click();
   await expect(detail).toBeVisible();

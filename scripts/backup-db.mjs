@@ -14,8 +14,6 @@ import Database from "better-sqlite3";
 import { randomBytes } from "node:crypto";
 import {
   closeSync,
-  constants,
-  copyFileSync,
   linkSync,
   lstatSync,
   openSync,
@@ -201,29 +199,15 @@ function verifyBackup(path) {
   }
 }
 
-// Publishing never replaces an existing destination: a hard link appears atomically and only
-// ever points at a verified file, so EEXIST means someone else claimed the name first. Filesystems
-// without hard links fall back to an exclusive copy, which has the same no-overwrite property.
+// Publishing is atomic and never replaces another run's destination. A filesystem
+// without hard links is rejected rather than exposing a partially copied backup.
 function publishBackup(temporary, destination) {
   try {
     linkSync(temporary, destination);
-    return;
   } catch (error) {
     if (error.code === "EEXIST")
-      throw new BackupError(`destination already exists: ${destination}`, { cause: error });
-    if (!["EPERM", "ENOTSUP", "EOPNOTSUPP", "EXDEV", "ENOSYS"].includes(error.code ?? ""))
-      throw new BackupError(`cannot write destination ${destination}: ${error.message}`, {
-        cause: error,
-      });
-  }
-  try {
-    copyFileSync(temporary, destination, constants.COPYFILE_EXCL);
-  } catch (error) {
-    if (error.code === "EEXIST")
-      throw new BackupError(`destination already exists: ${destination}`, { cause: error });
-    throw new BackupError(`cannot write destination ${destination}: ${error.message}`, {
-      cause: error,
-    });
+      throw new BackupError(`destination already exists: ${destination}`, {cause: error});
+    throw new BackupError(`cannot publish backup ${destination}: ${error.message}`, {cause: error});
   }
 }
 
