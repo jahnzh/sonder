@@ -37,15 +37,25 @@ test("the default speed applies once saved, sets chapter lengths for a book not 
       .click();
     await expect.poll(() => serverSpeed(page)).toBe(1.8);
     await expectDockSpeed(page, "1.8×");
-    await page
+    const dockTitle = await page
       .locator(".player-dock")
       .getByRole("button", { name: /^Open title page for / })
-      .click();
+      .getAttribute("aria-label");
+    const books: { title: string; inLibrary: boolean; tracks: unknown[] }[] =
+      await (await page.request.get("/api/books")).json();
+    const otherBook = books.find(
+      (book) => book.inLibrary && book.tracks.length > 0 &&
+        `Open title page for ${book.title}` !== dockTitle,
+    );
+    expect(otherBook).toBeDefined();
+    await page.locator(".mobile-nav").getByRole("button", { name: "My library", exact: true }).click();
+    await page.getByRole("button", { name: `About ${otherBook!.title}`, exact: true }).click();
     const details = page.getByRole("dialog", { name: "Book details", exact: true });
     await expect(
       details.locator(".detail-chapters .chapter-row small").first(),
     ).toHaveAttribute("title", "Chapter length at 1.8×");
     await details.getByRole("button", { name: "Close dialog", exact: true }).click();
+    await page.locator(".mobile-nav").getByRole("button", { name: "Settings", exact: true }).click();
     await page.getByRole("button", { name: "Reset", exact: true }).click();
     await page
       .getByRole("button", { name: "Save appearance", exact: true })
