@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "project": "webkit",
+      "file": "tests/e2e/device-reset.spec.ts",
+      "title": "reset refreshes the app shell while preserving device data",
+      "kind": "environment",
+      "reason": "WebKit on the WSL host: page.evaluate returns null during the service-worker and IndexedDB step",
+      "issue": 37
+    },
+    {
+      "project": "webkit",
+      "file": "tests/e2e/now-playing-layout.spec.ts",
+      "title": "reader-first Now Playing is aligned at 360px",
+      "kind": "environment",
+      "reason": "WebKit on the WSL host: the seek slider is not found and the timeline collapses to zero size",
+      "issue": 37
+    },
+    {
+      "project": "webkit",
+      "file": "tests/e2e/now-playing-layout.spec.ts",
+      "title": "reader-first Now Playing is aligned at 390px",
+      "kind": "environment",
+      "reason": "WebKit on the WSL host: the seek slider is not found and the timeline collapses to zero size",
+      "issue": 37
+    },
+    {
+      "project": "webkit",
+      "file": "tests/e2e/now-playing-layout.spec.ts",
+      "title": "reader-first Now Playing is aligned at 430px",
+      "kind": "environment",
+      "reason": "WebKit on the WSL host: the seek slider is not found and the timeline collapses to zero size",
+      "issue": 37
+    },
+    {
+      "project": "chromium",
+      "file": "tests/e2e/playback-workflow.spec.ts",
+      "title": "touch seeking › releasing a fine-seek gesture keeps the exact previewed destination",
+      "kind": "environment",
+      "reason": "Fails on every WSL host run and not locally; cause not found",
+      "issue": 37
+    },
+    {
+      "project": "chromium",
+      "file": "tests/e2e/reader-theme.spec.ts",
+      "title": "a 409 with no server checkpoint rebases to revision 0 and saves instead of looping",
+      "kind": "intermittent",
+      "reason": "Fails intermittently on the WSL host",
+      "issue": 37
+    },
+    {
+      "project": "chromium",
+      "file": "tests/e2e/users.spec.ts",
+      "title": "accounts keep libraries and offline queues separate",
+      "kind": "intermittent",
+      "reason": "Fixed in PR #44; remove this entry after it merges"
+    }
+  ]
+}

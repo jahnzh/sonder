@@ -19,6 +19,7 @@ import {
   cleanupDirectory,
   writeReportFiles,
 } from "./check-local-support.mjs";
+import { loadKnownFailures, evaluateBrowserRun } from "./known-failures.mjs";
 
 const STAGE_DEFINITIONS = [
   { name: "install", command: "npm", args: ["ci"], fullCommand: "npm ci" },
@@ -26,6 +27,8 @@ const STAGE_DEFINITIONS = [
   { name: "unit", command: "npm", args: ["test"], fullCommand: "npm test" },
   { name: "browser", command: "npm", args: ["run", "test:browser"], fullCommand: "npm run test:browser" },
 ];
+
+const PLAYWRIGHT_REPORT_NAME = "playwright-results.json";
 
 function printHelp() {
   console.log(`
@@ -38,6 +41,13 @@ Options:
   --ref <git-ref>        Git commit, branch or tag to check (default: HEAD)
   --output-dir <path>    Directory for test reports and artifacts
                          (default: artifacts/ci/<sha>/<run-id>/ in repo root)
+  --known-failures <file>
+                         JSON list of known browser failures (project, spec file,
+                         title). The browser stage also writes a Playwright JSON
+                         report; if every failing test is listed the result is
+                         passed_with_known_failures and the exit code is 0. Any
+                         other failure still fails. Relative paths resolve
+                         against the calling checkout. See docs/LOCAL_CHECKS.md.
   --silent               Suppress live stage streaming output to console
   -h, --help             Show this help message
 `);
@@ -77,6 +87,17 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
   } catch (err) {
     console.error(`[check-local] Setup error: ${err.message}`);
     return { ok: false, exitCode: 1, error: err.message };
+  }
+
+  let knownFailures = null;
+  if (options.knownFailures) {
+    const knownFailuresPath = path.resolve(callerDir, options.knownFailures);
+    const loaded = loadKnownFailures(knownFailuresPath);
+    if (!loaded.ok) {
+      console.error(`[check-local] Known-failures error: ${loaded.error}`);
+      return { ok: false, exitCode: 1, error: loaded.error };
+    }
+    knownFailures = { file: knownFailuresPath, entries: loaded.entries };
   }
 
   const runId = overrides.runId || generateRunId();
@@ -338,6 +359,7 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     const setupDurationMs = Date.now() - setupStart;
 
     // 5. Execute stages sequentially
+    const playwrightReportPath = path.join(outputDir, PLAYWRIGHT_REPORT_NAME);
     const stageResults = [];
     let firstFailedStage = null;
 
@@ -386,14 +408,20 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       const logFileName = `stage-${stageIndex}-${stageDef.name}.log`;
       const logFilePath = path.join(outputDir, logFileName);
 
+      // With a known-failures list the browser stage also writes a JSON report next to the list output.
+      const jsonReport = knownFailures && stageDef.name === "browser";
+      const stageArgs = jsonReport ? [...stageDef.args, "--", "--reporter=list,json"] : stageDef.args;
+      const stageEnv = {...childEnv, NODE_ENV: stageDef.name === "build" ? "production" : "test"};
+      if (jsonReport) stageEnv.PLAYWRIGHT_JSON_OUTPUT_NAME = playwrightReportPath;
+
       let stageRes;
       try {
         stageRes = await runStageProcess({
           command: stageDef.command,
-          args: stageDef.args,
+          args: stageArgs,
           cwd: disposableDir,
           // Vite gates production service-worker registration on this mode.
-          env: {...childEnv, NODE_ENV: stageDef.name === "build" ? "production" : "test"},
+          env: stageEnv,
           logFilePath,
           silent: options.silent,
           onSpawn: (child) => {
@@ -451,12 +479,31 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     try { preservedArtifacts = preserveArtifacts(disposableDir, outputDir); }
     catch (error) { artifactError = error.message; }
 
+    // 6b. With a known-failures list, a browser stage whose failures are all listed does not fail the run.
+    let gate = null;
+    const browserStage = stageResults.find((stage) => stage.name === "browser");
+    if (knownFailures && !interruptedSignal && browserStage && browserStage.status !== "skipped") {
+      gate = evaluateBrowserRun({
+        entries: knownFailures.entries,
+        reportPath: playwrightReportPath,
+        stageExitCode: browserStage.signal ? null : browserStage.exitCode,
+        stageSignal: browserStage.signal ?? null,
+      });
+    }
+    const toleratedStage = firstFailedStage && firstFailedStage === browserStage
+      && gate?.result === "passed_with_known_failures" ? firstFailedStage : null;
+    if (toleratedStage) toleratedStage.toleratedBy = "known-failures";
+    const blockingStage = toleratedStage ? null : firstFailedStage;
+
     const completedAt = new Date().toISOString();
     const totalDurationMs = Date.now() - startTime;
-    const isOverallSuccess = !firstFailedStage && !interruptedSignal && !artifactError;
+    const isOverallSuccess = !blockingStage && !interruptedSignal && !artifactError;
+    // Without the flag the failed stage's own exit code is kept; with it, a failed gate is a plain 1.
+    const blockingExitCode = knownFailures && blockingStage === browserStage ? 1 : (blockingStage?.exitCode ?? 1);
     const finalExitCode = interruptedSignal ? (interruptedSignal === "SIGINT" ? 130 : 143)
-      : firstFailedStage ? (firstFailedStage.exitCode ?? 1) : artifactError ? 1 : 0;
-    const result = interruptedSignal ? "aborted" : isOverallSuccess ? "passed" : "failed";
+      : blockingStage ? blockingExitCode : artifactError ? 1 : 0;
+    const result = interruptedSignal ? "aborted"
+      : isOverallSuccess ? (toleratedStage ? "passed_with_known_failures" : "passed") : "failed";
 
     const report = {
       runId,
@@ -478,7 +525,18 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       finalResult: result,
       signal: interruptedSignal,
       artifactError,
-      failedStage: firstFailedStage ? firstFailedStage.name : null,
+      failedStage: blockingStage ? blockingStage.name : null,
+      ...(knownFailures ? {knownFailures: {
+        file: knownFailures.file,
+        evaluated: gate !== null,
+        result: gate?.result ?? null,
+        error: gate?.error ?? null,
+        summary: gate?.summary ?? null,
+        known: gate?.knownFailures ?? [],
+        new: gate?.newFailures ?? [],
+        listedPassed: gate?.listedPassed ?? [],
+        listedNotRun: gate?.listedNotRun ?? [],
+      }} : {}),
       setup: {
         status: "passed",
         startedAt: setupStartedAt,
@@ -492,11 +550,12 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     writeReportFiles(outputDir, report);
 
     if (!options.silent) {
-      if (isOverallSuccess) {
+      if (isOverallSuccess && !toleratedStage) {
         console.log(`\n[check-local] All checks PASSED successfully.`);
-      } else {
-        console.error(`\n[check-local] Checks failed: ${interruptedSignal || artifactError || firstFailedStage?.name}.`);
+      } else if (!isOverallSuccess) {
+        console.error(`\n[check-local] Checks failed: ${interruptedSignal || artifactError || blockingStage?.name}.`);
       }
+      if (gate) console.log(`[check-local] ${gate.summary}`);
       console.log(`[check-local] Summary report: ${path.join(outputDir, "report.json")}`);
     }
 
