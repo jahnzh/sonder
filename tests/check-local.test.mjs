@@ -6,7 +6,11 @@ import os from "node:os";
 import net from "node:net";
 import { spawn, execFileSync } from "node:child_process";
 import { runCheckLocal } from "../scripts/check-local.mjs";
-import { acquirePortLease, releasePortLease } from "../scripts/check-local-support.mjs";
+import {
+  acquirePortLease,
+  contenderPrecedes,
+  releasePortLease,
+} from "../scripts/check-local-support.mjs";
 import { playwrightReport, knownFailuresDocument } from "./playwright-report-fixture.mjs";
 function setupGitFixture() {
     const tempBase = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-test-fixture-"));
@@ -148,130 +152,149 @@ process.on("message", async (message) => {
 `;
 
 function waitForChildMessage(child, type, timeoutMs = 5_000) {
-    return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-            cleanup();
-            reject(new Error(`Timed out waiting for child message "${type}": ${child.stderrText}`));
-        }, timeoutMs);
-        const onMessage = (message) => {
-            if (message?.type !== type)
-                return;
-            cleanup();
-            resolve(message);
-        };
-        const onExit = (code, signal) => {
-            cleanup();
-            reject(new Error(`Lease contender exited before "${type}" (${code ?? signal}): ${child.stderrText}`));
-        };
-        const cleanup = () => {
-            clearTimeout(timer);
-            child.off("message", onMessage);
-            child.off("exit", onExit);
-        };
-        child.on("message", onMessage);
-        child.on("exit", onExit);
-    });
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out waiting for child message "${type}": ${child.stderrText}`));
+    }, timeoutMs);
+    const onMessage = (message) => {
+      if (message?.type !== type) return;
+      cleanup();
+      resolve(message);
+    };
+    const onExit = (code, signal) => {
+      cleanup();
+      reject(new Error(`Lease contender exited before "${type}" (${code ?? signal}): ${child.stderrText}`));
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      child.off("message", onMessage);
+      child.off("exit", onExit);
+    };
+    child.on("message", onMessage);
+    child.on("exit", onExit);
+  });
 }
 
 function spawnLeaseContender(port, tempRoot) {
-    const env = { ...process.env, TMPDIR: tempRoot, LEASE_TEST_PORT: String(port) };
-    delete env.CHECK_LOCAL_PORT;
-    const child = spawn(process.execPath, ["--input-type=module", "--eval", leaseContenderScript], {
-        env,
-        stdio: ["ignore", "ignore", "pipe", "ipc"],
-    });
-    child.stderrText = "";
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk) => {
-        child.stderrText += chunk;
-    });
-    return child;
+  const env = { ...process.env, TMPDIR: tempRoot, LEASE_TEST_PORT: String(port) };
+  delete env.CHECK_LOCAL_PORT;
+  const child = spawn(process.execPath, ["--input-type=module", "--eval", leaseContenderScript], {
+    env,
+    stdio: ["ignore", "ignore", "pipe", "ipc"],
+  });
+  child.stderrText = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => {
+    child.stderrText += chunk;
+  });
+  return child;
 }
 
 function waitForChildExit(child, timeoutMs = 5_000) {
-    return new Promise((resolve, reject) => {
-        if (child.exitCode !== null || child.signalCode !== null)
-            return resolve();
-        const timer = setTimeout(() => {
-            cleanup();
-            reject(new Error(`Timed out waiting for lease contender to exit: ${child.stderrText}`));
-        }, timeoutMs);
-        const onExit = () => {
-            cleanup();
-            resolve();
-        };
-        const cleanup = () => {
-            clearTimeout(timer);
-            child.off("exit", onExit);
-        };
-        child.on("exit", onExit);
-    });
+  return new Promise((resolve, reject) => {
+    if (child.exitCode !== null || child.signalCode !== null) return resolve();
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out waiting for lease contender to exit: ${child.stderrText}`));
+    }, timeoutMs);
+    const onExit = () => {
+      cleanup();
+      resolve();
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      child.off("exit", onExit);
+    };
+    child.on("exit", onExit);
+  });
 }
 
 function freePort() {
-    return new Promise((resolve, reject) => {
-        const server = net.createServer();
-        server.once("error", reject);
-        server.listen(0, "127.0.0.1", () => {
-            const address = server.address();
-            server.close((error) => {
-                if (error)
-                    reject(error);
-                else
-                    resolve(address.port);
-            });
-        });
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      server.close((error) => {
+        if (error) reject(error);
+        else resolve(address.port);
+      });
     });
+  });
 }
 
-async function startLeaseContenders(port, tempRoot, count) {
-    const children = Array.from({ length: count }, () => spawnLeaseContender(port, tempRoot));
-    await Promise.all(children.map((child) => waitForChildMessage(child, "ready")));
-    const results = children.map((child) => waitForChildMessage(child, "result"));
-    for (const child of children)
-        child.send("start");
-    return { children, results: await Promise.all(results) };
+async function waitForContenderFiles(leaseDir, port, kind, count, timeoutMs = 5_000) {
+  const prefix = `port-${port}.lock.${kind}-`;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const matches = fs.readdirSync(leaseDir).filter((name) => name.startsWith(prefix));
+    if (matches.length >= count) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`Timed out waiting for ${count} ${kind} records`);
+}
+
+async function startLeaseContenders(port, tempRoot, count, { barrierPath = null } = {}) {
+  const children = Array.from({ length: count }, () => spawnLeaseContender(port, tempRoot));
+  await Promise.all(children.map((child) => waitForChildMessage(child, "ready")));
+  const results = children.map((child) => waitForChildMessage(child, "result"));
+  for (const child of children) child.send("start");
+  if (barrierPath) {
+    const leaseDir = path.join(tempRoot, "sonder-port-leases");
+    await waitForContenderFiles(leaseDir, port, "claim", count);
+    fs.rmSync(barrierPath, { force: true });
+  }
+  return { children, results: await Promise.all(results) };
 }
 
 async function releaseLeaseChildren(children, results) {
-    for (let index = 0; index < children.length; index++) {
-        if (results[index]?.acquired && children[index].connected)
-            children[index].send("release");
-    }
-    await Promise.all(children.map((child) => waitForChildExit(child)));
+  for (let index = 0; index < children.length; index++) {
+    if (results[index]?.acquired && children[index].connected) children[index].send("release");
+  }
+  await Promise.all(children.map((child) => waitForChildExit(child)));
 }
 
 async function assertSingleReclaimer(lockContents, { unreadable = false } = {}) {
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-lease-race-"));
-    const leaseDir = path.join(tempRoot, "sonder-port-leases");
-    const port = await freePort();
-    const lockPath = path.join(leaseDir, `port-${port}.lock`);
-    fs.mkdirSync(leaseDir, { recursive: true });
-    fs.writeFileSync(lockPath, lockContents);
-    if (unreadable) {
-        const old = new Date(Date.now() - 61_000);
-        fs.utimesSync(lockPath, old, old);
-    }
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-lease-race-"));
+  const leaseDir = path.join(tempRoot, "sonder-port-leases");
+  const port = await freePort();
+  const lockPath = path.join(leaseDir, `port-${port}.lock`);
+  const barrierId = `${process.pid}-test-barrier`;
+  const barrierPath = `${lockPath}.choosing-${barrierId}`;
+  fs.mkdirSync(leaseDir, { recursive: true });
+  fs.writeFileSync(lockPath, lockContents);
+  fs.writeFileSync(barrierPath, JSON.stringify({
+    pid: process.pid,
+    time: Date.now(),
+    port,
+    id: barrierId,
+  }));
+  // Hold both children in the choosing phase until both claims are visible.
+  // Releasing this barrier gives the election a reproducible interleaving.
+  if (unreadable) {
+    const old = new Date(Date.now() - 61_000);
+    fs.utimesSync(lockPath, old, old);
+  }
 
-    let contenders = null;
-    try {
-        contenders = await startLeaseContenders(port, tempRoot, 2);
-        const winners = contenders.results
-            .map((result, index) => ({ result, child: contenders.children[index] }))
-            .filter(({ result }) => result.acquired);
-        assert.equal(winners.length, 1, "exactly one reclaimer must hold the port");
-        assert.equal(JSON.parse(fs.readFileSync(lockPath, "utf8")).pid, winners[0].child.pid);
-        assert.equal(
-            fs.readdirSync(leaseDir).filter((name) => name.includes(".stale-")).length,
-            0,
-            "the renamed stale generation must be deleted",
-        );
-    }
-    finally {
-        if (contenders)
-            await releaseLeaseChildren(contenders.children, contenders.results);
-        fs.rmSync(tempRoot, { recursive: true, force: true });
-    }
+  let contenders = null;
+  try {
+    contenders = await startLeaseContenders(port, tempRoot, 2, { barrierPath });
+    const winners = contenders.results
+      .map((result, index) => ({ result, child: contenders.children[index] }))
+      .filter(({ result }) => result.acquired);
+    assert.equal(winners.length, 1, "exactly one reclaimer must hold the port");
+    assert.equal(JSON.parse(fs.readFileSync(lockPath, "utf8")).pid, winners[0].child.pid);
+    assert.equal(
+      fs.readdirSync(leaseDir).filter((name) => name.includes(".stale-")).length,
+      0,
+      "the renamed stale generation must be deleted",
+    );
+  } finally {
+    fs.rmSync(barrierPath, { force: true });
+    if (contenders) await releaseLeaseChildren(contenders.children, contenders.results);
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
 }
 test("1. Stage order: executes npm ci -> npm run build -> npm test -> npm run test:browser sequentially", async () => {
     const fixture = setupGitFixture();
@@ -659,7 +682,7 @@ test("11. Port lease collision: held lease prevents second runner from using sam
         await assert.rejects(async () => {
             await acquirePortLease(lease.port);
         }, (err) => {
-            return err.message.includes("currently leased by another active check runner");
+            return err.message.includes("currently leased or has an in-progress lease record");
         });
     }
     finally {
@@ -783,18 +806,67 @@ test("an empty lock file older than 60 s is reclaimed and a fresh one is left al
   }
 });
 
-test("two competing reclaimers leave exactly one holder for a stale PID lock", async () => {
+test("contender tie-break uses locale-independent code-unit order", () => {
+  const shorterPid = { ticket: 4, id: "1-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" };
+  const longerPid = { ticket: 4, id: "10-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" };
+  assert.equal(contenderPrecedes(shorterPid, longerPid), true);
+  assert.equal(contenderPrecedes(longerPid, shorterPid), false);
+});
+
+test("deterministic competing reclaimers leave exactly one holder for a stale PID lock", async () => {
   const staleLock = JSON.stringify({
     pid: 2_147_483_647,
     time: Date.now() - 61_000,
     port: 0,
-  }) + " ".repeat(4 * 1024 * 1024);
+  });
   await assertSingleReclaimer(staleLock);
 });
 
-test("two competing reclaimers leave exactly one holder for an old unreadable lock", async () => {
-  const unreadableLock = "not-json\n" + " ".repeat(4 * 1024 * 1024);
+test("deterministic competing reclaimers leave exactly one holder for an old unreadable lock", async () => {
+  const unreadableLock = "not-json\n";
   await assertSingleReclaimer(unreadableLock, { unreadable: true });
+});
+
+test("a fresh malformed contender record from a dead writer is removed immediately", async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-dead-contender-"));
+  const leaseDir = path.join(tempRoot, "sonder-port-leases");
+  const port = await freePort();
+  const lockPath = path.join(leaseDir, `port-${port}.lock`);
+  const malformedPath = `${lockPath}.claim-2147483647-crashed`;
+  fs.mkdirSync(leaseDir, { recursive: true });
+  fs.writeFileSync(malformedPath, "{");
+
+  let contender = null;
+  try {
+    contender = await startLeaseContenders(port, tempRoot, 1);
+    assert.equal(contender.results[0].acquired, true);
+    assert.equal(fs.existsSync(malformedPath), false);
+  } finally {
+    if (contender) await releaseLeaseChildren(contender.children, contender.results);
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("a fresh malformed contender record from a live writer stays protected", async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-live-contender-"));
+  const leaseDir = path.join(tempRoot, "sonder-port-leases");
+  const port = await freePort();
+  const lockPath = path.join(leaseDir, `port-${port}.lock`);
+  const malformedPath = `${lockPath}.choosing-${process.pid}-incomplete`;
+  fs.mkdirSync(leaseDir, { recursive: true });
+  fs.writeFileSync(malformedPath, "{");
+
+  let contender = null;
+  try {
+    contender = await startLeaseContenders(port, tempRoot, 1);
+    assert.equal(contender.results[0].acquired, false);
+    assert.match(contender.results[0].error, /in-progress lease record/);
+    assert.doesNotMatch(contender.results[0].error, /active check runner/);
+    assert.equal(fs.existsSync(malformedPath), true);
+  } finally {
+    if (contender) await releaseLeaseChildren(contender.children, contender.results);
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("competing acquire attempts leave a live holder's public lock unchanged", async () => {

@@ -238,7 +238,7 @@ export async function acquirePortLease(requestedPort = 0) {
     const lockPath = path.join(leaseDir, `port-${targetPort}.lock`);
     const acquired = await tryAcquireLockFile(lockPath, targetPort);
     if (!acquired) {
-      throw new Error(`Port ${targetPort} is currently leased by another active check runner`);
+      throw new Error(`Port ${targetPort} is currently leased or has an in-progress lease record`);
     }
     const isFree = await probePortAvailable(targetPort);
     if (!isFree) {
@@ -311,12 +311,19 @@ function inspectLockFile(lockPath) {
 function inspectContender(filePath) {
   const inspected = inspectLockFile(filePath);
   if (!inspected) return null;
+  if (!inspected.validOwner) {
+    const match = path.basename(filePath).match(/\.(?:choosing|claim|stale)-([1-9]\d*)-/);
+    const ownerPid = Number(match?.[1]);
+    if (Number.isSafeInteger(ownerPid)) {
+      if (isPidAlive(ownerPid)) return { blocked: true };
+      removeFile(filePath);
+      return null;
+    }
+  }
   if (inspected.stale) {
     // Contender names contain a UUID and are never reused, so removing this
     // exact stale generation cannot delete a replacement.
-    try {
-      fs.unlinkSync(filePath);
-    } catch (_) {}
+    removeFile(filePath);
     return null;
   }
   return inspected.validOwner ? { metadata: inspected.parsed } : { blocked: true };
@@ -340,12 +347,23 @@ function removeFile(filePath) {
   } catch (_) {}
 }
 
-function writeExclusiveJson(filePath, value) {
-  fs.writeFileSync(filePath, JSON.stringify(value), {
+function writeAtomicJson(filePath, value) {
+  const pendingPath = path.join(
+    path.dirname(filePath),
+    `.${path.basename(filePath)}.pending-${randomUUID()}`,
+  );
+  fs.writeFileSync(pendingPath, JSON.stringify(value), {
     encoding: "utf8",
     flag: "wx",
     mode: 0o600,
   });
+  try {
+    // Linking publishes only the complete record and refuses to replace an
+    // existing path. A process killed while writing leaves an ignored dotfile.
+    fs.linkSync(pendingPath, filePath);
+  } finally {
+    removeFile(pendingPath);
+  }
 }
 
 function nextContenderTicket(lockPath) {
@@ -358,9 +376,9 @@ function nextContenderTicket(lockPath) {
   return maxTicket + 1;
 }
 
-function contenderPrecedes(left, right) {
+export function contenderPrecedes(left, right) {
   return left.ticket < right.ticket
-    || (left.ticket === right.ticket && left.id.localeCompare(right.id) < 0);
+    || (left.ticket === right.ticket && left.id < right.id);
 }
 
 async function waitForContenderTurn(lockPath, contender) {
@@ -405,7 +423,7 @@ async function waitForContenderTurn(lockPath, contender) {
   }
 }
 
-function createLockFile(lockPath, port, ownerId) {
+function createLockFile(lockPath, port) {
   let fd;
   try {
     fd = fs.openSync(lockPath, "wx");
@@ -413,14 +431,12 @@ function createLockFile(lockPath, port, ownerId) {
       pid: process.pid,
       time: Date.now(),
       port,
-      ownerId,
     });
     fs.writeSync(fd, data);
     return {
       port,
       lockPath,
       fd,
-      ownerId,
       released: false,
     };
   } catch (err) {
@@ -447,8 +463,10 @@ async function tryAcquireLockFile(lockPath, port) {
 
   // A Lamport-style choosing/ticket pair elects one contender before anyone
   // inspects or renames the public lock. The winning claim stays for the lease
-  // lifetime, so a delayed stale decision cannot target the replacement lock.
-  writeExclusiveJson(choosingPath, {
+  // lifetime, so a delayed stale decision by another current runner cannot
+  // target the replacement lock. The legacy-runner limitation is documented
+  // in docs/LOCAL_CHECKS.md.
+  writeAtomicJson(choosingPath, {
     pid: process.pid,
     time: Date.now(),
     port,
@@ -466,7 +484,7 @@ async function tryAcquireLockFile(lockPath, port) {
       choosingPath,
       claimPath,
     };
-    writeExclusiveJson(claimPath, contender);
+    writeAtomicJson(claimPath, contender);
     removeFile(choosingPath);
 
     if (!await waitForContenderTurn(lockPath, contender)) return null;
@@ -475,7 +493,7 @@ async function tryAcquireLockFile(lockPath, port) {
       inspectContender(stalePath);
     }
 
-    let lease = createLockFile(lockPath, port, id);
+    let lease = createLockFile(lockPath, port);
     if (!lease) {
       const observed = inspectLockFile(lockPath);
       if (!observed?.stale) return null;
@@ -503,7 +521,7 @@ async function tryAcquireLockFile(lockPath, port) {
       }
 
       removeFile(stalePath);
-      lease = createLockFile(lockPath, port, id);
+      lease = createLockFile(lockPath, port);
       if (!lease) return null;
     }
 
