@@ -1,11 +1,26 @@
 import { test, expect } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
+import { createServer, type AddressInfo } from "node:net";
+
+// Ask the OS for a free port so this spec never collides with the shared run or another shard.
+async function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.once("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const { port } = probe.address() as AddressInfo;
+      probe.close(() => resolve(port));
+    });
+  });
+}
 
 let server: ChildProcess;
-const base = "http://127.0.0.1:4174";
+let base = "";
 test.beforeAll(async () => {
-  server = spawn(process.execPath, ["--import", "tsx", "tests/browser-server.ts"], { env: { ...process.env, PLAYWRIGHT_AUTH: "1", APP_PASSWORD: "admin-password", PLAYWRIGHT_PORT: "4174" }, stdio: "ignore" });
+  const port = await freePort();
+  base = `http://127.0.0.1:${port}`;
+  server = spawn(process.execPath, ["--import", "tsx", "tests/browser-server.ts"], { env: { ...process.env, PLAYWRIGHT_AUTH: "1", APP_PASSWORD: "admin-password", PLAYWRIGHT_PORT: String(port) }, stdio: "ignore" });
   for (let i = 0; i < 100; i++) {
     try { if ((await fetch(`${base}/api/health`)).ok) return; } catch {}
     await new Promise(resolve => setTimeout(resolve, 100));

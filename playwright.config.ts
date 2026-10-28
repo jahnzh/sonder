@@ -35,7 +35,9 @@ export default defineConfig({
   webServer: {
     command: "node --import tsx tests/browser-server.ts",
     url: `http://127.0.0.1:${port}/api/health`,
-    reuseExistingServer: false,
+    // PLAYWRIGHT_REUSE_SERVER=1 uses a server that is already listening on the port. Use it on hosts where
+    // connections to a closed loopback port hang instead of being refused, so the readiness probe never returns.
+    reuseExistingServer: process.env.PLAYWRIGHT_REUSE_SERVER === "1",
     timeout: 30000,
   },
 });
