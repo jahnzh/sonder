@@ -1,6 +1,6 @@
 # Alignment accuracy replication (issue #6)
 
-Status: partial. The published per-sentence and per-word alignment figures could not be reproduced, because the hand-labelled reference data behind them is not public. What was done: the public LibriSpeech alignment archive was downloaded and parsed, the two papers' metric definitions were pinned down, and the papers' internal arithmetic was checked. No Sonder alignment was run, and no Sonder code was changed.
+Status: partial. The published per-sentence and per-word alignment figures could not be reproduced, because the hand-labelled reference data behind them is not public. What was done: the public LibriSpeech alignment archive was downloaded and parsed, the two papers' metric definitions were pinned down, and the papers' internal arithmetic was checked. In a second pass the Parallel Audiobook Corpus was downloaded on the WSL host and Sonder's own alignment worker was scored on one chapter of it (last section). No Sonder code was changed.
 
 ## Sources
 
@@ -9,7 +9,7 @@ Status: partial. The published per-sentence and per-word alignment figures could
 | Braunschweiler, Gales, Buchholz, Interspeech 2010, "Lightly supervised recognition for automatic alignment of large coherent speech recordings" | https://www.isca-archive.org/interspeech_2010/braunschweiler10_interspeech.html (PDF text extracted with pypdf and read) | Read |
 | Li et al., "SwanVoice", arXiv:2605.30993 | https://arxiv.org/pdf/2605.30993 (PDF text extracted with pypdf and read) | Read |
 | LibriSpeech MFA alignments | Recommended Google Drive archive (about 70 MB) returned 404 from this environment. Used the Zenodo copy instead: https://zenodo.org/records/2619474, file `librispeech_alignments.zip`, 623,023,332 bytes, CC BY 4.0 | Downloaded to `artifacts/6/librispeech-mfa/` (gitignored) |
-| Parallel Audiobook Corpus, Edinburgh DataShare handle 10283/3217 | https://datashare.ed.ac.uk/handle/10283/3217 | Size checked, not downloaded (see below) |
+| Parallel Audiobook Corpus, Edinburgh DataShare handle 10283/3217 | https://datashare.ed.ac.uk/handle/10283/3217 | Downloaded on the WSL host and checksum-verified in the second pass (see the last section). Not on this machine |
 
 ## Method
 
@@ -110,9 +110,9 @@ Also checked (internal consistency only):
 
 1. **Braunschweiler et al. 2010, every numeric result.** These are measured against the authors' manual transcription and manually labelled sentence boundaries for *A Tramp Abroad*. The LibriVox audio and Project Gutenberg text (their footnote 1) are public, but the gold transcription is not. The recogniser (Toshiba HTK models, ToSpeak normalisation, the in-domain and Gigaword language models) is not available. The sentence-boundary check has no published tolerance, so it cannot be re-run even with the labels.
 2. **SwanVoice Table 3, every AAS value.** The "human-timestamped LibriSpeech" evaluation set is not located. The paper cites it as "[1]", but reference [1] in that paper is Amodei et al., *Deep Speech 2*, so the citation is wrong. A web search in this task found no human-verified word-timestamp release of LibriSpeech. The MFA archive is machine-generated and cannot stand in for it. The Swan Forced Aligner checkpoint and the Qwen3, LattifAI, NeMo and WhisperX baselines were not run. The paper also does not state N or which LibriSpeech subset "Clean" and "Others" mean.
-3. **Parallel Audiobook Corpus (step 4).** Total size is about **44.3 GB**, above the 10 GB limit, so nothing was downloaded. Per-file sizes from the DataShare page: chapter.emma.zip 11.34 GB, chapter.huck.zip 6.59 GB, chapter.sherlock.zip 5.13 GB, chapter.treasure.zip 3.34 GB, segmented.emma.zip 7.36 GB, segmented.huck.zip 4.38 GB, segmented.sherlock.zip 3.63 GB, segmented.treasure.zip 2.50 GB. The page does not say whether the alignments were manually checked. The README (13 KB) was not fetched, so this is unverified.
+3. **Parallel Audiobook Corpus (step 4, first pass).** Total size is about **44.3 GB**, above the 10 GB limit, so nothing was downloaded in the first pass; the second pass downloaded it on the WSL host, see the last section. Per-file sizes from the DataShare page: chapter.emma.zip 11.34 GB, chapter.huck.zip 6.59 GB, chapter.sherlock.zip 5.13 GB, chapter.treasure.zip 3.34 GB, segmented.emma.zip 7.36 GB, segmented.huck.zip 4.38 GB, segmented.sherlock.zip 3.63 GB, segmented.treasure.zip 2.50 GB. The page does not say whether the alignments were manually checked. The README (13 KB) was not fetched, so this is unverified.
 4. **The 70 MB condensed LibriSpeech file.** The Google Drive link returns 404 from this environment. The 623 MB Zenodo copy was used instead, so the raw TextGrid route was taken.
-5. **Sonder's own alignment worker.** Not run, as instructed. Sonder-side scoring against any reference needs approval first.
+5. **Sonder's own alignment worker.** Not run in the first pass, as instructed. Run in the second pass on one corpus chapter (last section); that is agreement with a machine reference, not a replication of any published figure.
 
 ## Decisions to check
 
@@ -121,3 +121,58 @@ Also checked (internal consistency only):
 - Implemented LCS substitution/deletion/insertion classing as the usual convention, since the paper does not state it.
 - The 51 missing TextGrids versus the 46 unaligned utterances in the upstream README is not resolved. The expected per-split counts are from memory of the corpus listing.
 - Did not implement a boundary-OK metric for Braunschweiler, because the paper defines none.
+
+## Sonder against the Parallel Audiobook Corpus
+
+Run on the WSL host (`192.168.1.119`, run id `issue6-1793194927`, branch commit `00a0655`), with the worker's own code and pins. Scripts: `scripts/alignment-replication/remote/` (`fetch_corpus.sh`, `setup_host.sh`, `run_chapter.sh`, `align_chapter.py`, `score_chapter.py`, `segment_sentences.mjs`, `probe_excerpt.py`, `pull_results.sh`, `CLEANUP.md`). Raw output: `artifacts/6/remote/` (gitignored).
+
+**The corpus reference is machine output.** The corpus README says the chapter word alignments were made with the Bell and Renals WFST method, not by hand. Every figure below is agreement with another automatic aligner. It is not error against ground truth, and it says nothing about which of the two is right where they differ.
+
+### What was run
+
+- **Corpus.** All eight zips and the README from DataShare 10283/3217 were downloaded on the host and checked against the MD5 that DataShare publishes for each file (read on the host from the DataShare API, the source of the values on the item page). Nine of nine matched, 45 GB on disk.
+- **Chapter.** *Treasure Island*, chapter 17, reader `apr`. The recording is 576.0 s (22.05 kHz WAV), the shortest chapter of that reader. The Gutenberg-derived corpus transcript is the known text (1,498 word tokens, 92 sentences); the corpus ctm has 1,488 words for the chapter.
+- **Worker.** `worker/align.py` `align()` imported from the clone and called directly (no server, no port, no token other than a local dummy): ffmpeg to 16 kHz mono, aeneas 1.7.3 with the worker's task configuration, then the worker's 30 s Whisper tiny excerpt check. Models were downloaded into `<run>/alignment` by `worker/download_model.py`. Python 3.10, numpy 1.26.4, aeneas 1.7.3, faster-whisper 1.2.1, espeak 1.48.15, matching `worker/Dockerfile`.
+- **Two granularities.** Sentence fragments use the same splitter as `server/reader.ts` (`Intl.Segmenter` per paragraph), which is how the app calls the worker. Word fragments (one per token) are the only way to get word times from this worker; the app does not do this, so the word figures describe a use the product does not make.
+- **Two scenarios.** *Untrimmed* is the whole recording with all of the text. *Trimmed* uses 30.0 s to 573.5 s and the text from the third sentence, which is what the app's chapter start and length controls do. The recording starts with about 30 s of LibriVox announcement ("This is a LibriVox recording… read by… Chapter 17. Narrative continued by the doctor…") and ends with "End of chapter 17", none of which is in the text. Whisper tiny word times (`probe_excerpt.py`) and the corpus ctm agree that the text starts at about 30.8 s. The trim points were chosen from that, the way a listener would, and not from the aeneas output.
+
+### Results
+
+Times are from `/usr/bin/time -v` around the whole Python process on the host under `nice -n 10`: wall clock including imports, ffmpeg, aeneas and the Whisper tiny check, and peak resident set size of the largest process. Host memory in use was about 1.1 GB when checked between runs (limit for this task: about 12 GB).
+
+| | Untrimmed | Trimmed |
+|---|---|---|
+| Sentence run: wall clock / peak RSS | 3.26 s / 424 MB | 2.53 s / 405 MB |
+| Word run: wall clock / peak RSS | 3.20 s / 417 MB | 3.41 s / 398 MB |
+| Excerpt check match score | 0.800 | 0.878 |
+| Word error, corpus words vs known text (Sub / Del / Ins over N ref) | 2 / 0 / 10 over 1,488 = 0.81% | 2 / 0 / 6 over 1,481 = 0.54% |
+| Sentence error, same convention (Sub / Del / Ins over N ref) | 9 / 0 / 3 over 89 = 13.5% | 8 / 0 / 2 over 88 = 11.4% |
+| Words matched for timing | 1,486 of 1,488 (99.9%) | 1,479 of 1,481 (99.9%) |
+| **Word AAS** (Eq. 14, ms per word) | 2,118.9 | **429.1** |
+| Word AAS per boundary (half of Eq. 14) | 1,059.4 | 214.5 |
+| Word start error: median / p90 / p99 / max | 180 / 940 / 21,460 / 23,570 ms | 140 / 590 / 1,150 / 1,580 ms |
+| Word end error: median / p90 / p99 / max | 160 / 730 / 21,440 / 23,090 ms | 130 / 450 / 1,000 / 1,580 ms |
+| Words with start error ≤ 0.1 / 0.25 / 0.5 / 1.0 s | 34.7 / 62.0 / 81.3 / 90.5% | 38.8 / 67.5 / 87.1 / 98.1% |
+| **Sentence AAS** (ms per sentence) | 1,371.2 | **628.5** |
+| Sentence start error: median / p90 / max | 310 / 570 / 17,650 ms | 310 / 530 / 1,280 ms |
+| Sentence end error: median / p90 / max | 310 / 580 / 13,000 ms | 305 / 540 / 780 ms |
+| Sentences with start error ≤ 0.1 / 0.25 / 0.5 / 1.0 s | 12.4 / 39.3 / 86.5 / 95.5% | 12.5 / 38.6 / 87.5 / 98.9% |
+
+Reading the table:
+
+- **Untrimmed is dominated by the 30 s of announcement.** The worker is forced to place all the text across the whole recording, so the opening is stretched over the announcement: "This fifth trip" is placed at 7.1 s where it is spoken at about 30.8 s. Words in the first 60 s are early by a median of 8 to 12 s and by up to 24 s. After about 60 s the median error is 0.3 s or less. The excerpt check does not catch this, because it only listens to 30 s in the middle. The product mitigation is the chapter start control; without it a chapter with a long intro is badly misplaced at its start.
+- **Trimmed word timing.** AAS 429 ms, median start error 140 ms, 98% of words within 1 s. The signed error (aeneas minus reference) drifts across the chapter: the median word start is about −20 ms, −90 ms and −240 ms in the first, middle and last third, so aeneas runs progressively earlier than the reference. This could be drift in either aligner; this run cannot tell.
+- **Trimmed sentence timing.** The sentence start is about 300 ms before the reference and the end about 300 ms after it, in all three thirds. That is not accuracy: the worker configures aeneas with `task_adjust_boundary_percent_value=50`, and aeneas returns sentence intervals that abut each other, so each plausibly includes part of the neighbouring pauses (not checked further), while the reference sentence span is first word start to last word end. Sentence AAS here mostly measures that difference of definition. A tolerance such as 0.5 s (about 87% of starts and 85% of ends) is more meaningful than the AAS, but no tolerance is defined in either paper, so none is endorsed.
+- **Word and sentence error** compare the corpus word list (reference) with the known text (hypothesis) by LCS, because a forced aligner emits no recognised words. They measure how well the text and the reference's word list agree (the insertions are title words and "17" that the ctm lacks), not any aligner mistake. They are not comparable to Braunschweiler et al.'s 5.4% word and 13.4% sentence error (a different book, a manual gold transcript, a different question).
+
+### Caveats and decisions to check
+
+1. **The 10 ms unit.** The corpus README says the `seg-A:B` offsets in the ctm utterance id are in 100 ms units. With 100 ms the last word of this chapter would end at 5,637 s in a 576 s recording; with 10 ms units it ends at 573.3 s and matches the audio (and Whisper's timing of the last words). The scorer asserts the ctm fits inside the audio and uses 10 ms.
+2. **One chapter, one reader, one book.** No spread across readers, books or genres. The figures should not be quoted as Sonder's accuracy.
+3. **Compared with the SwanVoice AAS numbers** (about 28 to 97 ms, on a different, human-timestamped set, with neural aligners) these are not comparable in either direction: different reference, different granularity, and the corpus reference is itself an aligner. The 429 ms word AAS is not a result to set beside them.
+4. **Trim points** (30.0 s, 573.5 s, first sentence 2) were chosen by me from a Whisper tiny excerpt and the ctm, which are the same kind of information a person trimming by ear would have. Different trim points will move the trimmed numbers.
+5. **Sentence matching** uses an LCS over normalised words (upper case, apostrophes kept, hyphens and dashes split) and attaches unmatched reference words to the preceding sentence. The reference sentence span is therefore derived from the text's sentence boundaries; it is not an independent sentence segmentation.
+6. **Word fragments** put one word per fragment, which the worker accepts (limit 20,000 fragments) but the app never does. Peak memory and time for the full-book case are not shown by this chapter.
+7. **Peak RSS** is that of the largest process, from `/usr/bin/time -v`; it includes the Whisper tiny model load. The worker's own `peakMemoryMB` field reports the same value.
+8. **Environment differences from production.** The host has no root, no ffmpeg or espeak, and Python 3.12. The run used a private conda prefix for Python 3.10 and ffmpeg 9.0.2 (not the Debian ffmpeg in the production image) and Ubuntu 24.04 `espeak` 1.48.15 unpacked with `dpkg -x`. aeneas' C extensions built and passed `aeneas.diagnostics`. A different ffmpeg or espeak build can shift boundaries slightly.
+9. **Corpus and venv were kept on the host** under `~/sonder-replication/issue6-1793194927/`. `scripts/alignment-replication/remote/CLEANUP.md` lists what is there and how to remove it. Nothing was deleted.
