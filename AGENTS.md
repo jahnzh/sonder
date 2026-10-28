@@ -49,5 +49,6 @@ Before spawning any subagent, decide the intelligence level the task needs and c
 - Give reasoning-heavy work (reproducing timing or rendering bugs, metric and analysis work, cross-file refactors) the most capable model available.
 - Give mechanical work (a scripted change with a clear spec, a small UI edit) a smaller model.
 - Set the model explicitly with `--model` and `--effort` rather than letting each agent use its default.
+- Take model ids from the agent's own listing: `agent --list-models` for cursor, and the ids a launch receipt reports for claude and antigravity. Confirm the effective model in the receipt after launch.
 
 Also consider usage limits when dividing work. Spread tasks across agents so no single provider's quota runs out mid-wave, and keep the number of concurrent workers modest. Record the choice and its reason in the spec or the handoff.
