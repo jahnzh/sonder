@@ -91,6 +91,14 @@ def main():
     # 10 ms unit check (see module docstring).
     last_end = max(w[2] for w in ref)
     assert last_end <= audio_seconds + 1.0, f"ctm runs past the audio: {last_end} > {audio_seconds}"
+    # Score only the span the worker was given: the sentences sent, and the
+    # reference words that start inside the trimmed audio.
+    first, start, end = words_run["firstSentence"], words_run["trimStart"], words_run["trimEnd"]
+    frags = {
+        "sentences": frags["sentences"][first:],
+        "words": [{**w, "sentence": w["sentence"] - first} for w in frags["words"] if w["sentence"] >= first],
+    }
+    ref = [w for w in ref if start <= w[1] < end]
 
     text_words = [(norm(w["text"]), w["sentence"]) for w in frags["words"]]
     text_words = [w for w in text_words if w[0]]
@@ -100,6 +108,7 @@ def main():
     out = {
         "session": a.session,
         "audioSeconds": audio_seconds,
+        "trim": {"startSeconds": start, "endSeconds": end, "firstSentence": first},
         "ctmLastEndSeconds": last_end,
         "referenceWords": len(ref),
         "textWords": len(hyp_norm),
