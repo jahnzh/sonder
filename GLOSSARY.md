@@ -1,0 +1,63 @@
+# Sonder
+
+A self-hosted audiobook player with a built-in ebook reader that follows the narration.
+
+## Catalogue
+
+**Work**:
+A book as an abstract title, independent of any edition, recording or file.
+_Avoid_: Title, book (when the abstract work is meant)
+
+**Audio edition**:
+A published audiobook of a work; what a library row points at.
+_Avoid_: Audiobook, release (for the edition itself)
+
+**Recording**:
+One concrete release of an audio edition (a set of tracks from one source). Progress belongs to a recording.
+_Avoid_: Version, file
+
+**Ebook edition**:
+An EPUB or PDF of a work.
+_Avoid_: Ebook file
+
+**Delivery source**:
+Where a recording's bytes come from on this play: device copy, server copy, or the original stream.
+_Avoid_: Source (alone), copy
+
+## Reading along
+
+**Page mode**:
+The reader showing the ebook as turnable pages.
+_Avoid_: Book view, paginated mode
+
+**Lyrics mode**:
+The reader showing one sentence per line, scrolling with the narration.
+_Avoid_: Karaoke, line mode
+
+**Alignment map**:
+The sentence-to-time mapping between one recording and one ebook edition.
+_Avoid_: Sync map, timings
+
+**Narrated sentence**:
+The sentence the narration is currently speaking, located through the alignment map.
+_Avoid_: Current passage, highlight
+
+**Following**:
+The state where the reader keeps the narrated sentence in view on its own.
+_Avoid_: Synced, live, linked
+
+**Paged away**:
+The state where the reader shows something other than the narrated sentence because the reader navigated.
+_Avoid_: Off narration, unlinked
+
+**Back to narration**:
+The action that returns a paged-away reader to the narrated sentence and resumes following.
+_Avoid_: Relink, resync
+
+**Bookmark**:
+A saved sentence in an ebook edition: the narrated sentence while following, otherwise the first sentence on screen.
+_Avoid_: Page bookmark, marker
+
+**Listen from here**:
+The action that moves the narration to a chosen sentence in the ebook.
+_Avoid_: Jump audio, seek to text
