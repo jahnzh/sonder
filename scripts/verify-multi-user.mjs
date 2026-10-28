@@ -30,7 +30,7 @@ try {
  const qa=await browser.newContext({baseURL,viewport:{width:390,height:844},serviceWorkers:'block'});
  const page=await qa.newPage();page.on('pageerror',e=>report.errors.push(e.message));
  await page.goto('/');
- await page.getByLabel('Username').fill(username);await page.getByLabel('Password').fill(password);
+ await page.getByLabel('Username').fill(username);await page.getByLabel('Password',{exact:true}).fill(password);
  await page.getByRole('button',{name:/^Sign in/}).click();
  await expect(page.getByRole('navigation').first()).toBeVisible();
  const qaStatus=await(await qa.request.get('/api/auth/status')).json();

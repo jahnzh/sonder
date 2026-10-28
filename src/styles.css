@@ -2767,7 +2767,6 @@ input[type="range"]::-moz-range-thumb {
 .settings-section label,
 .import-fields label,
 .magnet-form label,
-.login-card label,
 .account-dialog label {
   display: flex;
   flex-direction: column;
@@ -2779,7 +2778,6 @@ input[type="range"]::-moz-range-thumb {
 .settings-section label > input,
 .import-fields input,
 .magnet-form textarea,
-.login-card input,
 .account-dialog input {
   width: 100%;
   border: 1px solid var(--border);
@@ -3212,77 +3210,20 @@ input[type="range"]::-moz-range-thumb {
   max-width: none;
   margin-bottom: 8px;
 }
-.login-page {
-  min-height: 100dvh;
-  background: var(--surface);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 80px;
-  overflow: hidden;
-  padding: 40px;
-}
-.login-card {
-  max-width: 370px;
-  width: 100%;
-}
-.login-card > .brand {
-  font-size: calc(41px * var(--ui-scale, 1));
-  margin-bottom: 44px;
-}
-.login-card > .eyebrow {
-  font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-}
-.login-card h1 {
-  font-family: var(--font-body);
-  font-size: calc(47px * var(--ui-scale, 1));
-  line-height: 1.12;
-  color: var(--muted);
-  font-weight: 400;
-  margin-top: 18px;
-}
-.login-card > p {
-  color: var(--text);
-  font-size: calc(12px * var(--ui-scale, 1));
-  line-height: 1.9;
-  margin: 21px 0 29px;
-  max-width: 270px;
-}
-.login-card > .button {
-  margin-top: 22px;
-  width: 100%;
-}
-.login-card label {
-  font-size: calc(11px * var(--ui-scale, 1));
-  color: var(--muted);
-}
-.login-card h1 {
-  margin-bottom: 28px;
-}
-.login-card label + label {
-  margin-top: 18px;
-}
-.login-art {
-  position: relative;
-  width: 360px;
-  height: 400px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.login-art > img {
-  width: 170px;
-  border-radius: 4px;
-  box-shadow: 6px 10px 22px color-mix(in srgb, var(--shadow) 19%, transparent);
-  position: absolute;
-  transform: rotate(-16deg) translate(-70px, 20px);
-}
-.login-art > img:nth-child(2) {
-  transform: rotate(12deg) translate(80px, 20px);
-}
-.login-art > img:nth-child(3) {
-  transform: rotate(-3deg) translate(0, -60px);
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 .app-loading {
   min-height: 100dvh;
   background: var(--surface);
@@ -4223,24 +4164,12 @@ input[type="range"]::-moz-range-thumb {
   .transport.large {
     gap: 18px;
   }
-  .login-page {
-    gap: 20px;
-  }
-  .login-art {
-    width: 290px;
-  }
-  .login-art > img {
-    width: 135px;
-  }
-  .login-card {
-    max-width: 300px;
-  }
-  .login-card h1 {
-    font-size: calc(40px * var(--ui-scale, 1));
-  }
-  .login-card > p {
-    font-size: calc(11px * var(--ui-scale, 1));
-  }
+  
+  
+  
+  
+  
+  
 }
 @media (max-width: 650px) {
   :root {
@@ -5367,57 +5296,18 @@ input[type="range"]::-moz-range-thumb {
   .magnet-form > .button {
     font-size: max(11px, calc(10px * var(--ui-scale, 1)));
   }
-  .login-page {
-    padding: 30px 28px;
-    display: block;
-    position: relative;
-    overflow: hidden;
-  }
-  .login-card {
-    position: relative;
-    z-index: 2;
-    max-width: 350px;
-    margin: 70px auto 50px;
-  }
-  .login-card > .brand {
-    font-size: calc(38px * var(--ui-scale, 1));
-    margin-bottom: 47px;
-  }
-  .login-card .brand-mark i {
-    width: 4px;
-  }
-  .login-card .brand-mark {
-    gap: 3px;
-  }
-  .login-card h1 {
-    font-size: calc(46px * var(--ui-scale, 1));
-  }
-  .login-card > p {
-    font-size: calc(11px * var(--ui-scale, 1));
-  }
-  .login-card > .button {
-    font-size: calc(12px * var(--ui-scale, 1));
-    min-height: 42px;
-  }
-  .login-art {
-    position: absolute;
-    right: -140px;
-    top: 80px;
-    opacity: 0.14;
-    transform: rotate(12deg);
-    width: 280px;
-    height: 400px;
-  }
-  .login-art > img {
-    width: 160px;
-  }
-  .login-card label {
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  }
-  .login-card input {
-    font-size: calc(12px * var(--ui-scale, 1));
-    min-height: 42px;
-  }
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
   .books-list .book-card {
     gap: 17px;
     padding: 15px 0;
@@ -5670,9 +5560,7 @@ input[type="range"]::-moz-range-thumb {
   .import-fields input {
     font-size: max(11px, calc(8px * var(--ui-scale, 1)));
   }
-  .login-card {
-    margin-top: 55px;
-  }
+  
 }
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -6494,14 +6382,12 @@ input[type="range"]::-moz-range-thumb {
 .settings-section label,
 .import-fields label,
 .magnet-form label,
-.login-card label,
 .account-dialog label {
   color: var(--text);
 }
 .settings-section label > input,
 .import-fields input,
 .magnet-form textarea,
-.login-card input,
 .account-dialog input {
   background: var(--raised);
   border-color: var(--border);
@@ -6619,25 +6505,14 @@ input[type="range"]::-moz-range-thumb {
 .upload-status {
   color: var(--text);
 }
-.login-page,
 .app-loading {
   background: var(--raised);
 }
-.login-card > .brand {
-  color: var(--text);
-}
-.login-card h1 {
-  color: var(--text);
-}
-.login-card > p {
-  color: var(--muted);
-}
-.login-card label {
-  color: var(--text);
-}
-.login-art > img {
-  box-shadow: 6px 10px 22px color-mix(in srgb, var(--shadow) 33%, transparent);
-}
+
+
+
+
+
 .app-loading {
   color: var(--text);
 }
@@ -7518,18 +7393,10 @@ input[type="range"]::-moz-range-thumb {
   .books-list .book-title-row > .book-title {
     min-height: 0;
   }
-  .login-card > p {
-    font-size: calc(13px * var(--ui-scale, 1));
-  }
-  .login-card label {
-    font-size: calc(12px * var(--ui-scale, 1));
-  }
-  .login-card input {
-    font-size: calc(14px * var(--ui-scale, 1));
-  }
-  .login-card > .button {
-    min-height: 44px;
-  }
+  
+  
+  
+  
 }
 @media (max-width: 390px) {
   .page-heading > .button {

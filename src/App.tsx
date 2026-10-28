@@ -81,6 +81,7 @@ import type {
   DownloadPart,
 } from "./types";
 import { Dialog } from "./components/ui/dialog";
+import { SignIn, type Account } from "./components/SignIn";
 import { PlayerDock } from "./components/Player";
 import { AppUpdate } from "./components/AppUpdate";
 import { DeviceReset } from "./components/DeviceReset";
@@ -115,7 +116,6 @@ function Mark() {
     </span>
   );
 }
-type Account = { id: number; username: string; role: "admin" | "user" };
 function App() {
   const [user, setUser] = useState<Account | null>(null);
   const [auth, setAuth] = useState<boolean | null>(null);
@@ -159,82 +159,9 @@ function App() {
         <span>Loading…</span>
       </div>
     );
-  if (!auth) return <Login onLogin={(account) => { setUser(account); setAuth(true); }} />;
+  if (!auth) return <SignIn onLogin={(account) => { setUser(account); setAuth(true); }} />;
   return (
     <LibraryApp user={user || { id: 1, username: "admin", role: "admin" }} needsPassword={needsPassword} onLogout={() => setAuth(false)} />
-  );
-}
-function Login({ onLogin }: { onLogin: (user: Account) => void }) {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      await api("/auth/login", {
-        method: "POST",
-        body: JSON.stringify({ username: username.trim(), password }),
-      });
-      const status = await api<{ user: Account }>("/auth/status");
-      selectUserStorage(status.user.id, status.user.role);
-      await authDB.preferences.put({ key: "auth", value: { required: true, authenticated: true, user: status.user } });
-      window.dispatchEvent(new Event("sonder:authenticated"));
-      onLogin(status.user);
-    } catch (e) {
-      setError("Username or password is incorrect.");
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <main className="login-page">
-      <div className="login-art">
-        <img src="/covers/alice.svg" alt="Alice’s Adventures in Wonderland" />
-        <img
-          src="/covers/sherlock.svg"
-          alt="The Adventures of Sherlock Holmes"
-        />
-        <img src="/covers/pride.svg" alt="Pride and Prejudice" />
-      </div>
-      <form className="login-card" onSubmit={submit}>
-        <div className="brand">
-          <Mark />
-          sonder<span>®</span>
-        </div>
-        <h1>Sign in</h1>
-        <label>
-          Username
-          <input autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
-        </label>
-        <label>
-          Password
-          <input
-            type="password"
-            autoComplete="current-password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </label>
-        {error && (
-          <p className="error-text" role="alert">
-            {error}
-          </p>
-        )}
-        <button className="button primary" disabled={busy}>
-          {busy ? (
-            <Loader2 className="spin" size={17} />
-          ) : (
-            <>
-              Sign in <ArrowRight size={17} />
-            </>
-          )}
-        </button>
-      </form>
-    </main>
   );
 }
 function LibraryApp({

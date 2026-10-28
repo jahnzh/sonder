@@ -6,7 +6,7 @@
   --muted: #a9b59d;
   --border: #3c4934;
   --accent: #dd8966;
-  --on-accent: #101510;
+  --on-accent: #1b120c;
   --accent-soft: color-mix(in srgb, var(--accent) 13%, var(--surface));
   --danger: #e9a294;
   --shadow: #020602;
