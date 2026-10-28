@@ -552,6 +552,8 @@ test("12. SIGTERM terminates child process, cleans up disposable directory and r
         const logs = readNpmLogs(fixture.npmLogPath);
         if (logs.length > 0) {
             assert.equal(fs.existsSync(logs[0].cwd), false, "Disposable directory must be deleted on SIGTERM");
+            // Port lock file must be released
+            assert.equal(fs.existsSync(path.join(os.tmpdir(), "sonder-port-leases", `port-${logs[0].port}.lock`)), false, "Port lock must be released on SIGTERM");
         }
     }
     finally {
@@ -596,4 +598,64 @@ test("setup-failure reports also reserve their output directory", async () => {
     assert.match(second.error, /already contains/);
     assert.equal(JSON.parse(fs.readFileSync(path.join(output,"report.json"),"utf8")).runId,"first");
   } finally { fixture.cleanup(); }
+});
+
+test("an empty lock file older than 60 s is reclaimed and a fresh one is left alone", async () => {
+  const port = 41000 + Math.floor(Math.random() * 500);
+  const leaseDir = path.join(os.tmpdir(), "sonder-port-leases");
+  fs.mkdirSync(leaseDir, { recursive: true });
+  const lockPath = path.join(leaseDir, `port-${port}.lock`);
+  const previous = process.env.CHECK_LOCAL_PORT;
+  process.env.CHECK_LOCAL_PORT = String(port);
+  try {
+    fs.writeFileSync(lockPath, "");
+    await assert.rejects(acquirePortLease(), /currently leased/);
+    assert.ok(fs.existsSync(lockPath), "fresh empty lock must not be stolen");
+
+    const old = new Date(Date.now() - 61_000);
+    fs.utimesSync(lockPath, old, old);
+    const lease = await acquirePortLease();
+    try {
+      assert.equal(lease.port, port);
+    } finally {
+      releasePortLease(lease);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.CHECK_LOCAL_PORT;
+    else process.env.CHECK_LOCAL_PORT = previous;
+    fs.rmSync(lockPath, { force: true });
+  }
+});
+
+test("a failing git status records an unknown caller state, not a clean one", async () => {
+  const fixture = setupGitFixture();
+  const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+  const gitBin = path.join(fixture.tempBase, "git-bin");
+  fs.mkdirSync(gitBin);
+  fs.writeFileSync(
+    path.join(gitBin, "git"),
+    `#!/bin/sh\nif [ "$1" = "status" ]; then echo "boom" >&2; exit 1; fi\nexec ${realGit} "$@"\n`,
+    { mode: 0o755 },
+  );
+  const previousPath = process.env.PATH;
+  const warnings = [];
+  const originalWarn = console.warn;
+  try {
+    process.env.PATH = `${gitBin}:${previousPath}`;
+    console.warn = (line) => warnings.push(String(line));
+    const result = await runCheckLocal(["--silent"], {
+      cwd: fixture.repoDir,
+      env: { PATH: `${fixture.binDir}:${previousPath}`, STUB_NPM_LOG: fixture.npmLogPath },
+    });
+    const report = JSON.parse(fs.readFileSync(path.join(result.outputDir, "report.json"), "utf8"));
+    assert.equal(report.callerDirtyState, "unknown");
+    assert.equal(report.dirty, null);
+    assert.equal(report.callerDirty, null);
+    assert.ok(report.callerDirtyError);
+    assert.ok(warnings.some((line) => line.includes("state is unknown")));
+  } finally {
+    console.warn = originalWarn;
+    process.env.PATH = previousPath;
+    fixture.cleanup();
+  }
 });

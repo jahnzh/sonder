@@ -81,6 +81,9 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
 
   const runId = overrides.runId || generateRunId();
   const callerDirty = checkCallerDirty(callerDir);
+  if (callerDirty.state === "unknown") {
+    console.warn(`[check-local] Warning: caller working tree state is unknown (git status failed: ${callerDirty.error})`);
+  }
   const startedAt = new Date().toISOString();
   const startTime = Date.now();
 
@@ -114,6 +117,8 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       callerDirty: callerDirty.dirty,
       dirty: callerDirty.dirty,
       uncommittedChanges: callerDirty.uncommittedChanges,
+      callerDirtyState: callerDirty.state,
+      callerDirtyError: callerDirty.error || null,
       port: null,
       outputDir,
       startedAt,
@@ -170,6 +175,8 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       callerDirty: callerDirty.dirty,
       dirty: callerDirty.dirty,
       uncommittedChanges: callerDirty.uncommittedChanges,
+      callerDirtyState: callerDirty.state,
+      callerDirtyError: callerDirty.error || null,
       port: null,
       outputDir,
       startedAt,
@@ -216,6 +223,8 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       callerDirty: callerDirty.dirty,
       dirty: callerDirty.dirty,
       uncommittedChanges: callerDirty.uncommittedChanges,
+      callerDirtyState: callerDirty.state,
+      callerDirtyError: callerDirty.error || null,
       port,
       outputDir,
       startedAt,
@@ -299,6 +308,8 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
         callerDirty: callerDirty.dirty,
         dirty: callerDirty.dirty,
         uncommittedChanges: callerDirty.uncommittedChanges,
+        callerDirtyState: callerDirty.state,
+        callerDirtyError: callerDirty.error || null,
         port,
         outputDir,
         startedAt,
@@ -341,7 +352,7 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     if (!options.silent) {
       console.log(`[check-local] Run ID: ${runId}`);
       console.log(`[check-local] Target commit: ${resolvedSha} (ref: ${options.ref})`);
-      console.log(`[check-local] Caller working tree dirty: ${callerDirty.dirty}`);
+      console.log(`[check-local] Caller working tree dirty: ${callerDirty.state === "unknown" ? "unknown" : callerDirty.dirty}`);
       console.log(`[check-local] Allocated loopback port: ${port}`);
       console.log(`[check-local] Artifacts output directory: ${outputDir}`);
     }
@@ -455,6 +466,8 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       callerDirty: callerDirty.dirty,
       dirty: callerDirty.dirty,
       uncommittedChanges: callerDirty.uncommittedChanges,
+      callerDirtyState: callerDirty.state,
+      callerDirtyError: callerDirty.error || null,
       port,
       outputDir,
       startedAt,
