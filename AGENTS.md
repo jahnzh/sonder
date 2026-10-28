@@ -38,7 +38,7 @@ Use Node 24 and install dependencies with `npm ci`.
 
 ## CI over SSH
 
-Run `npm run check -- --ref <commit>` by hand until the runner from #23 exists. The planned runner, `scripts/ci-ssh.sh`, runs CI on the WSL host at `192.168.1.119`, dispatched automatically on push to `main` and to agent fix branches. Check host access with `ssh -o BatchMode=yes -o ConnectTimeout=5 192.168.1.119 true`.
+The runner is available as `npm run ci:ssh <sha>` (`scripts/ci-ssh.sh`). It runs CI on the WSL host at `192.168.1.119` and is still dispatched by hand; automatic dispatch on push is not built yet. Check host access with `ssh -o BatchMode=yes -o ConnectTimeout=5 192.168.1.119 true`.
 
 - Send a Git bundle of the committed revision to a unique temporary checkout on the host. Install dependencies and run `nice -n 10 npm run check -- --ref <commit>` there.
 - Keep browsers headless and muted. Check that the host's Playwright browsers match the lockfile before the first run.

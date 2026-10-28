@@ -24,6 +24,8 @@ export default defineConfig({
   projects: [
     { name: "chromium" },
     // Layout checks also run in Firefox/WebKit when those browsers are installed.
+    // Only now-playing-layout.spec.ts and device-reset.spec.ts run on them; other
+    // spec files are skipped for these projects without an error in a multi-project run.
     ...[firefox, webkit]
       .filter((browser) => existsSync(browser.executablePath()))
       .map((browser) => ({
