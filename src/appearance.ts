@@ -10,7 +10,11 @@ export const appearanceSchema = z.object({
   scale: z.number().min(0.9).max(1.6).default(1),
   density: z.enum(["comfortable", "compact"]).default("comfortable"),
   playback: z
-    .object({ progressScope: z.enum(["book", "chapter"]).default("book") })
+    .object({
+      progressScope: z.enum(["book", "chapter"]).default("book"),
+      // Unset until chosen in Settings, so the older device-wide speed still applies.
+      speed: z.number().min(0.5).max(3).optional(),
+    })
     .default({ progressScope: "book" }),
   colors: z
     .object({
@@ -47,6 +51,12 @@ export const appearanceSchema = z.object({
 });
 export type Appearance = z.infer<typeof appearanceSchema>;
 export const defaultAppearance = appearanceSchema.parse({});
+/** Older clients drop `playback.speed` when they save; that must not clear it. */
+export function keepPlaybackSpeed(input: Appearance, stored: Appearance): Appearance {
+  return input.playback.speed === undefined && stored.playback.speed !== undefined
+    ? { ...input, playback: { ...input.playback, speed: stored.playback.speed } }
+    : input;
+}
 export const palettes = {
   forest: {
     background: "#101510",

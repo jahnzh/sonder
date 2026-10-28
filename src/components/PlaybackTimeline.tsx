@@ -11,6 +11,7 @@ import { useAppearance } from "./Appearance";
 import { playbackTimeline } from "../chapters";
 import { clock } from "../lib";
 import { scrubPosition, seekSensitivity, seekSecond } from "../scrubbing";
+import { formatSpeed, timeAtSpeed } from "../playback-speed";
 import type { Book } from "../types";
 type Timeline = NonNullable<ReturnType<typeof playbackTimeline>>;
 type Drag = {
@@ -194,6 +195,12 @@ export function PlaybackTimeline({
       {!compact && (
         <div className="full-timestamps">
           <span>{clock(position)}</span>
+          {p.speed !== 1 && timeline && (
+            <span className="timeline-speed-left">
+              {clock(timeAtSpeed(length - position, p.speed))} left at{" "}
+              {formatSpeed(p.speed)}×
+            </span>
+          )}
           <span>−{clock(Math.max(0, length - position))}</span>
         </div>
       )}

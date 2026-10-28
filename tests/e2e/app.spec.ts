@@ -151,6 +151,27 @@ test("real audio playback, speed, seek, pause and recording-specific resume afte
   await expect(
     page.getByRole("button", { name: "Sleep timer", exact: true }).last(),
   ).toContainText("5m");
+  await page
+    .getByRole("button", { name: /^Playback speed/ })
+    .last()
+    .click();
+  await page
+    .getByRole("slider", { name: "Playback speed", exact: true })
+    .fill("2.35");
+  await page.getByRole("button", { name: "Faster", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: /^Playback speed/ }).last(),
+  ).toHaveText("2.4×");
+  await page.getByRole("button", { name: "Close options", exact: true }).click();
+  await expect(page.locator(".timeline-speed-left")).toContainText(
+    "left at 2.4×",
+  );
+  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
+  await page.reload();
+  await page.locator(".dock-book").click();
+  await expect(
+    page.getByRole("button", { name: /^Playback speed/ }).last(),
+  ).toHaveText("2.4×");
   await page.getByRole("button", { name: "Close dialog", exact: true }).click();
 });
 test("import, complete device download, service-worker ranges and offline relaunch", async ({

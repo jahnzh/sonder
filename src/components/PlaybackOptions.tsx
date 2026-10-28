@@ -1,6 +1,14 @@
 import { useState } from "react";
-import { Check, Timer } from "lucide-react";
+import { Check, Minus, Plus, Timer } from "lucide-react";
 import { usePlayer } from "../player";
+import {
+  SPEED_MAX,
+  SPEED_MIN,
+  SPEED_PRESETS,
+  SPEED_STEP,
+  formatSpeed,
+  stepSpeed,
+} from "../playback-speed";
 export function PlaybackOptions({ kind }: { kind: "speed" | "sleep" }) {
   const p = usePlayer();
   const [open, setOpen] = useState(false);
@@ -11,12 +19,12 @@ export function PlaybackOptions({ kind }: { kind: "speed" | "sleep" }) {
       <button
         className={`player-text-button ${kind === "sleep" && p.sleep ? "active" : ""}`}
         onClick={() => setOpen(!open)}
-        aria-label={kind === "speed" ? `Playback speed, ${p.speed}×` : "Sleep timer"}
+        aria-label={kind === "speed" ? `Playback speed, ${formatSpeed(p.speed)}×` : "Sleep timer"}
         aria-expanded={open}
       >
         {kind === "speed" ? (
           <>
-            {p.speed}
+            {formatSpeed(p.speed)}
             <span>×</span>
           </>
         ) : (
@@ -33,12 +41,43 @@ export function PlaybackOptions({ kind }: { kind: "speed" | "sleep" }) {
             aria-label="Close options"
             onClick={() => setOpen(false)}
           />
-          <div className="option-menu">
+          <div className={`option-menu ${kind === "speed" ? "speed-menu" : ""}`}>
             <span className="menu-title">
               {kind === "speed" ? "Playback speed" : "Sleep timer"}
             </span>
+            {kind === "speed" && (
+              <div className="speed-control">
+                <div className="speed-stepper">
+                  <button
+                    aria-label="Slower"
+                    disabled={p.speed <= SPEED_MIN}
+                    onClick={() => p.setSpeed(stepSpeed(p.speed, -1))}
+                  >
+                    <Minus size={15} />
+                  </button>
+                  <output aria-live="polite">{formatSpeed(p.speed)}×</output>
+                  <button
+                    aria-label="Faster"
+                    disabled={p.speed >= SPEED_MAX}
+                    onClick={() => p.setSpeed(stepSpeed(p.speed, 1))}
+                  >
+                    <Plus size={15} />
+                  </button>
+                </div>
+                <input
+                  type="range"
+                  aria-label="Playback speed"
+                  min={SPEED_MIN}
+                  max={SPEED_MAX}
+                  step={SPEED_STEP}
+                  value={p.speed}
+                  aria-valuetext={`${formatSpeed(p.speed)}×`}
+                  onChange={(event) => p.setSpeed(Number(event.target.value))}
+                />
+              </div>
+            )}
             {(kind === "speed"
-              ? [0.75, 1, 1.25, 1.5, 1.75, 2]
+              ? SPEED_PRESETS
               : [null, 5, 15, 30, 45, 60]
             ).map((value) => (
               <button

@@ -26,6 +26,18 @@ export function currentChapter(book: Book, trackId: string, position: number) {
     matching[matching.length - 1] || all.find((c) => c.track.id === trackId)
   );
 }
+/** Listening time to the chapter's end at `speed`; the whole chapter unless `position` is inside it. */
+export function chapterTimeLeft(
+  chapter: Pick<ListeningChapter, "start" | "end">,
+  position: number | null,
+  speed: number,
+) {
+  const from =
+    position === null
+      ? chapter.start
+      : Math.min(chapter.end, Math.max(chapter.start, position));
+  return Math.max(0, chapter.end - from) / (speed > 0 ? speed : 1);
+}
 export function absoluteSeekTarget(
   tracks: Pick<Track, "id" | "duration">[],
   seconds: number,

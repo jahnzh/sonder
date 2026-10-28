@@ -17,6 +17,15 @@ import {
 import type { Book, Track, Progress, PlaybackSourceChoice } from "./types";
 import { playbackInput, setPreferredSource } from "./playback-sources";
 import { BLOCKING_DIALOG_SELECTOR, playbackKeyAction } from "./keyboard";
+import { useAppearance } from "./components/Appearance";
+import {
+  LEGACY_SPEED_KEY,
+  applySpeed,
+  clampSpeed,
+  mediaPositionState,
+  recordingSpeedKey,
+  resolveSpeed,
+} from "./playback-speed";
 type PlayerState = {
   source: "device" | "server" | "torbox" | "remote" | null;
   book: Book | null;
@@ -26,6 +35,8 @@ type PlayerState = {
   position: number;
   length: number;
   speed: number;
+  /** Speed for recordings that have none of their own on this device. */
+  defaultSpeed: number;
   volume: number;
   sleep: number | null;
   error: string | null;
@@ -83,6 +94,47 @@ export function PlayerProvider({
   const generation = useRef(0);
   const playRequests = useRef(0);
   const sourceReportedFor = useRef(-1);
+  const preferredSpeed = useAppearance().appearance.playback.speed;
+  const preferredSpeedRef = useRef(preferredSpeed);
+  preferredSpeedRef.current = preferredSpeed;
+  const [legacySpeed, setLegacySpeed] = useState<number | null>(null);
+  const legacySpeedRef = useRef(legacySpeed);
+  legacySpeedRef.current = legacySpeed;
+  // null records that the recording has no speed of its own on this device.
+  const recordingSpeeds = useRef(new Map<string, number | null>());
+  const [legacyLoaded] = useState(() =>
+    localDB.preferences
+      .get(LEGACY_SPEED_KEY)
+      .then((row) => {
+        legacySpeedRef.current = clampSpeed(row?.value);
+        setLegacySpeed(legacySpeedRef.current);
+      })
+      .catch(() => {}),
+  );
+  const applyRate = useCallback((n: number) => {
+    applySpeed(audio.current, n);
+    setSpeedState(n);
+  }, []);
+  const speedFor = useCallback(
+    async (recordingId: string) => {
+      if (!recordingSpeeds.current.has(recordingId)) {
+        const [row] = await Promise.all([
+          localDB.preferences
+            .get(recordingSpeedKey(recordingId))
+            .catch(() => undefined),
+          legacyLoaded,
+        ]);
+        if (!recordingSpeeds.current.has(recordingId))
+          recordingSpeeds.current.set(recordingId, clampSpeed(row?.value));
+      }
+      return resolveSpeed({
+        recording: recordingSpeeds.current.get(recordingId),
+        preferred: preferredSpeedRef.current,
+        legacy: legacySpeedRef.current,
+      });
+    },
+    [legacyLoaded],
+  );
   const persist = useCallback(() => {
     const { book, track } = state.current;
     const el = audio.current;
@@ -114,7 +166,10 @@ export function PlayerProvider({
         setError("No audio is available for this book yet.");
         return;
       }
-      const saved = await localDB.progress.get(b.recordingId);
+      const [saved, rate] = await Promise.all([
+        localDB.progress.get(b.recordingId),
+        speedFor(b.recordingId),
+      ]);
       if (request !== playRequests.current) return;
       const progress =
         saved && saved.updatedAt > (b.progress?.updatedAt || 0)
@@ -142,6 +197,7 @@ export function PlayerProvider({
         el.readyState >= 1 &&
         !input.bad(sourceRef.current)
       ) {
+        applyRate(rate);
         if (t) {
           el.currentTime = Math.max(
             0,
@@ -210,6 +266,7 @@ export function PlayerProvider({
         position: pendingSeek.current,
         length: selected.duration,
       };
+      applyRate(rate);
       el.src =
         local ||
         `/api/media/${encodeURIComponent(selected.id)}${input.request === "auto" ? "" : `?source=${input.request}`}`;
@@ -245,7 +302,7 @@ export function PlayerProvider({
         }
       }
     },
-    [persist],
+    [persist, speedFor, applyRate],
   );
   const playRef = useRef(play);
   playRef.current = play;
@@ -386,23 +443,18 @@ export function PlayerProvider({
   useEffect(() => {
     const el = audio.current;
     el.preload = "metadata";
+    const positionState = () => {
+      const report = mediaPositionState(el);
+      if (!report || !("mediaSession" in navigator) || !navigator.mediaSession.setPositionState)
+        return;
+      try {
+        navigator.mediaSession.setPositionState(report);
+      } catch {}
+    };
     const time = () => {
       setPosition(el.currentTime);
       if (Date.now() - lastSave.current > 5000) persist();
-      if (
-        "mediaSession" in navigator &&
-        navigator.mediaSession.setPositionState &&
-        Number.isFinite(el.duration) &&
-        el.duration > 0
-      ) {
-        try {
-          navigator.mediaSession.setPositionState({
-            duration: el.duration,
-            playbackRate: el.playbackRate,
-            position: Math.min(el.currentTime, el.duration),
-          });
-        } catch {}
-      }
+      positionState();
     };
     const loaded = () => {
       if (
@@ -502,6 +554,7 @@ export function PlayerProvider({
       sourceReportedFor.current = generation.current;
     };
     el.addEventListener("timeupdate", time);
+    el.addEventListener("ratechange", positionState);
     el.addEventListener("loadedmetadata", loaded);
     el.addEventListener("playing", started);
     el.addEventListener("pause", paused);
@@ -536,6 +589,7 @@ export function PlayerProvider({
     return () => {
       el.pause();
       el.removeEventListener("timeupdate", time);
+      el.removeEventListener("ratechange", positionState);
       el.removeEventListener("loadedmetadata", loaded);
       el.removeEventListener("playing", started);
       el.removeEventListener("pause", paused);
@@ -549,14 +603,26 @@ export function PlayerProvider({
       navigator.serviceWorker?.removeEventListener("message", mediaSource);
     };
   }, [persist, next, previous, skip, seek, toggle]);
+  const speedTarget = book?.recordingId ?? fallback?.recordingId;
   useEffect(() => {
-    void localDB.preferences.get("speed").then((p) => {
-      if (typeof p?.value === "number") {
-        setSpeedState(p.value);
-        audio.current.playbackRate = p.value;
-      }
+    // Shows the fallback book's speed before playback and follows a changed
+    // default for recordings that have no speed of their own.
+    let live = true;
+    void (speedTarget
+      ? speedFor(speedTarget)
+      : legacyLoaded.then(() =>
+          resolveSpeed({
+            preferred: preferredSpeedRef.current,
+            legacy: legacySpeedRef.current,
+          }),
+        )
+    ).then((n) => {
+      if (live) applyRate(n);
     });
-  }, []);
+    return () => {
+      live = false;
+    };
+  }, [speedTarget, preferredSpeed, speedFor, legacyLoaded, applyRate]);
   useEffect(() => {
     if (!sleepEnd.current) return;
     const timer = setInterval(() => {
@@ -573,10 +639,16 @@ export function PlayerProvider({
     }, 1000);
     return () => clearInterval(timer);
   }, [sleep !== null]);
-  const setSpeed = (n: number) => {
-    audio.current.playbackRate = n;
-    setSpeedState(n);
-    void localDB.preferences.put({ key: "speed", value: n });
+  const setSpeed = (value: number) => {
+    const n = clampSpeed(value);
+    if (n === null) return;
+    applyRate(n);
+    const recordingId = (state.current.book ?? fallbackRef.current)?.recordingId;
+    if (!recordingId) return;
+    recordingSpeeds.current.set(recordingId, n);
+    void localDB.preferences
+      .put({ key: recordingSpeedKey(recordingId), value: n })
+      .catch(() => {});
   };
   const setVolume = (n: number) => {
     audio.current.volume = n;
@@ -596,6 +668,7 @@ export function PlayerProvider({
         position,
         length,
         speed,
+        defaultSpeed: resolveSpeed({ preferred: preferredSpeed, legacy: legacySpeed }),
         volume,
         sleep,
         error,

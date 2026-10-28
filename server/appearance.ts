@@ -1,20 +1,28 @@
 import type { FastifyInstance } from "fastify";
-import { appearanceSchema, defaultAppearance } from "../src/appearance.ts";
+import {
+  appearanceSchema,
+  defaultAppearance,
+  keepPlaybackSpeed,
+} from "../src/appearance.ts";
 import { currentUserId, getUserSetting, setUserSetting } from "./users.ts";
+function storedAppearance(userId: number) {
+  try {
+    return appearanceSchema.parse(
+      JSON.parse(getUserSetting(userId, "appearance") || "{}"),
+    );
+  } catch {
+    return defaultAppearance;
+  }
+}
 export function registerAppearance(app: FastifyInstance) {
-  app.get("/api/appearance", (req) => {
-    try {
-      return appearanceSchema.parse(
-        JSON.parse(getUserSetting(currentUserId(req), "appearance") || "{}"),
-      );
-    } catch {
-      return defaultAppearance;
-    }
-  });
+  app.get("/api/appearance", (req) => storedAppearance(currentUserId(req)));
   app.put("/api/appearance", (req) => {
-    const input = appearanceSchema.parse(req.body);
-    const value = JSON.stringify(input);
-    setUserSetting(currentUserId(req), "appearance", value);
+    const userId = currentUserId(req);
+    const input = keepPlaybackSpeed(
+      appearanceSchema.parse(req.body),
+      storedAppearance(userId),
+    );
+    setUserSetting(userId, "appearance", JSON.stringify(input));
     return input;
   });
 }
