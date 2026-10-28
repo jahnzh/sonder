@@ -57,12 +57,21 @@ export async function getRecordingSources(
   );
 }
 export async function playbackInput(book: Book, track: Track) {
-  const [preference, state, fault, download] = await Promise.all([
+  const [chosen, state, fault, download] = await Promise.all([
     preferredSource(book.recordingId),
     getRecordingSources(book),
     deviceFault(book.recordingId),
     localDB.downloads.get(track.id),
   ]);
+  // A server or original choice cannot play without a connection. Use the
+  // healthy device copy for now and leave the saved choice as it is.
+  const preference =
+    !navigator.onLine &&
+    (chosen === "server" || chosen === "original") &&
+    download &&
+    !fault
+      ? "device"
+      : chosen;
   if (state.faults.recording)
     throw new Error(
       "This recording is marked faulty. Open Versions & sources to choose another recording or clear its flag.",
