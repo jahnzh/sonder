@@ -9,4 +9,4 @@ playwright-report/
 !.env.example
 artifacts/
 .codex-attachments/
-.codegraph/
+.codegraph
