@@ -260,6 +260,78 @@ test("back to narration right after a Contents navigation keeps following", asyn
  await expect(room.locator(".reader-back-narration")).toBeHidden();
 });
 
+// Records on every animation frame which paragraphs of which chapter are painted in the reader viewport.
+async function sampleFrames(page:Page){
+ await page.evaluate(()=>{
+  const w=window as any;
+  w.__frames=[];w.__mark="";
+  const tick=()=>{
+   const vp=document.querySelector(".inline-reader .reader-viewport")?.getBoundingClientRect();
+   const shown:string[]=[];
+   if(vp)for(const frame of Array.from(document.querySelectorAll<HTMLIFrameElement>(".inline-reader .reader-viewport iframe"))){
+    const doc=frame.contentDocument,box=frame.getBoundingClientRect();
+    let hidden=getComputedStyle(frame).visibility!=="visible";
+    for(let el:Element|null=frame;el&&!hidden;el=el.parentElement)hidden=getComputedStyle(el).opacity==="0";
+    if(!doc||hidden)continue;
+    const chapter=doc.querySelector("h1")?.textContent||"";
+    for(const p of Array.from(doc.querySelectorAll<HTMLElement>("p[id]"))){
+     const r=p.getBoundingClientRect();
+     if(r.right+box.left>vp.left+4&&r.left+box.left<vp.right-4&&r.bottom+box.top>vp.top&&r.top+box.top<vp.bottom)shown.push(`${chapter}/${p.id}`);
+    }
+   }
+   w.__frames.push({mark:w.__mark,shown});
+   requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+ });
+}
+for(const [label,viewport] of [["phone",{width:390,height:844}],["desktop",{width:1440,height:900}]] as const)
+test(`following narration on ${label} never paints another page on the way`,async({page})=>{
+ await page.setViewportSize(viewport);
+ const {map}=await fixture(page,`Follow pages ${label}`);
+ await start(page,`Follow pages ${label}`);
+ const room=page.locator(".inline-reader");
+ await readingMode(page,".inline-reader","Page");
+ await sampleFrames(page);
+ // The page shown before the first jump is where it starts from.
+ await page.waitForFunction(()=>(window as any).__frames.some((f:any)=>f.shown.length));
+ const slider=room.getByRole("slider",{name:/^Seek in /});
+ // The slider moves in whole seconds.
+ const at=(i:any)=>Math.ceil(i.start+0.01);
+ const usable=map.intervals.filter((i:any)=>at(i)<i.end);
+ const one=usable.filter((i:any)=>i.section===0),two=usable.filter((i:any)=>i.section===1);
+ const late=one.length-6;
+ // Sentence by sentence on a later page of a chapter, across the chapter end, and long jumps in both directions.
+ const jumps:[string,any][]=[
+  ["chapter one late",one[late]],
+  ["next sentence",one[late+1]],
+  ["next sentence again",one[late+2]],
+  ["chapter two start",two[0]],
+  ["chapter two end",two[two.length-1]],
+  ["chapter one end",one[one.length-1]],
+  ["chapter two end again",two[two.length-1]],
+ ];
+ for(const [name,interval] of jumps){
+  await page.evaluate((mark)=>{(window as any).__mark=mark;},name);
+  await showControls(page,".inline-reader");
+  await slider.fill(String(at(interval)));
+  await expect(room).toHaveAttribute("data-current-passage",interval.paragraphId);
+  await expect(room.locator(".reader-viewport .sonder-follow").first()).toBeVisible();
+  await page.waitForTimeout(500);
+ }
+ const frames:{mark:string;shown:string[]}[]=await page.evaluate(()=>(window as any).__frames);
+ for(const [name] of jumps){
+  const first=frames.findIndex(f=>f.mark===name);
+  const origin=frames.slice(0,first).map(f=>f.shown).filter(s=>s.length).at(-1)||[];
+  const painted=frames.filter(f=>f.mark===name).map(f=>f.shown).filter(s=>s.length);
+  const target=painted.at(-1)||[];
+  expect(painted.length,name).toBeGreaterThan(0);
+  // A frame may show the page being left or the page being followed to, nothing else.
+  const allowed=new Set([...origin,...target]);
+  for(const shown of painted)expect(shown.filter(key=>!allowed.has(key)),name).toEqual([]);
+ }
+});
+
 test("a cached sync map is not used once the server refuses it", async ({page}) => {
  const appearance=await(await page.request.get("/api/appearance")).json();
  const {ebook}=await fixture(page,"Changed narration","en-ZA");
