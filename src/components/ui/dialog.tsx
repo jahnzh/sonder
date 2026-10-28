@@ -81,7 +81,16 @@ export function Dialog({
           aria-describedby={description ? descriptionId : undefined}
           onEscapeKeyDown={onEscapeKeyDown}
           onPointerDownOutside={onPointerDownOutside}
-          onOpenAutoFocus={forceMount ? (event) => event.preventDefault() : undefined}
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            if (
+              !forceMount &&
+              content.current &&
+              !content.current.contains(document.activeElement)
+            ) {
+              content.current.focus({ preventScroll: true });
+            }
+          }}
         >
           <div className="dialog-heading">
             <div>

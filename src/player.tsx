@@ -16,6 +16,7 @@ import {
 } from "./chapters";
 import type { Book, Track, Progress, PlaybackSourceChoice } from "./types";
 import { playbackInput, setPreferredSource } from "./playback-sources";
+import { BLOCKING_DIALOG_SELECTOR, playbackKeyAction } from "./keyboard";
 type PlayerState = {
   source: "device" | "server" | "torbox" | "remote" | null;
   book: Book | null;
@@ -47,9 +48,11 @@ const Context = createContext<PlayerState>(null!);
 export function PlayerProvider({
   children,
   onProgress,
+  fallback,
 }: {
   children: ReactNode;
   onProgress: (p: Progress) => void;
+  fallback?: Book;
 }) {
   const [element] = useState(() => new Audio());
   const audio = useRef<HTMLAudioElement>(element);
@@ -66,6 +69,8 @@ export function PlayerProvider({
   const [source, setSource] = useState<PlayerState["source"]>(null);
   const sourceRef = useRef(source);
   sourceRef.current = source;
+  const fallbackRef = useRef(fallback);
+  fallbackRef.current = fallback;
   const state = useRef({ book, track, position, length });
   state.current = { book, track, position, length };
   const onProgressRef = useRef(onProgress);
@@ -344,7 +349,11 @@ export function PlayerProvider({
   );
   const toggle = useCallback(() => {
     const el = audio.current;
-    if (!el.src) return;
+    if (!el.src) {
+      if (fallbackRef.current?.tracks.length)
+        void playRef.current(fallbackRef.current);
+      return;
+    }
     if (el.paused) {
       setError(null);
       const { book, track } = state.current;
@@ -455,6 +464,30 @@ export function PlayerProvider({
     const ready = () => setLoading(false);
     const pagehide = () => persist();
     const online = () => void syncProgress().catch(() => {});
+    const keydown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const interactive = target?.closest?.(
+        "input,textarea,select,button,summary,a[href]",
+      );
+      const action = playbackKeyAction({
+        key: event.key,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        altKey: event.altKey,
+        defaultPrevented: event.defaultPrevented,
+        targetTag: interactive?.tagName ?? target?.tagName ?? null,
+        contentEditable:
+          !!target?.isContentEditable ||
+          target?.getAttribute?.("contenteditable") === "true",
+        dialogOpen: !!document.querySelector(BLOCKING_DIALOG_SELECTOR),
+        canPlay: !!(state.current.book || fallbackRef.current?.tracks.length),
+        canSeek: !!(state.current.book && state.current.track),
+      });
+      if (!action) return;
+      event.preventDefault();
+      if (action.type === "toggle") toggle();
+      else skip(action.seconds);
+    };
     const mediaSource = (event: MessageEvent) => {
       const data = event.data;
       if (
@@ -478,6 +511,7 @@ export function PlayerProvider({
     el.addEventListener("canplay", ready);
     window.addEventListener("pagehide", pagehide);
     window.addEventListener("online", online);
+    window.addEventListener("keydown", keydown);
     navigator.serviceWorker?.addEventListener("message", mediaSource);
     if ("mediaSession" in navigator) {
       for (const [action, handler] of Object.entries({
@@ -511,9 +545,10 @@ export function PlayerProvider({
       el.removeEventListener("canplay", ready);
       window.removeEventListener("pagehide", pagehide);
       window.removeEventListener("online", online);
+      window.removeEventListener("keydown", keydown);
       navigator.serviceWorker?.removeEventListener("message", mediaSource);
     };
-  }, [persist, next, previous, skip, seek]);
+  }, [persist, next, previous, skip, seek, toggle]);
   useEffect(() => {
     void localDB.preferences.get("speed").then((p) => {
       if (typeof p?.value === "number") {

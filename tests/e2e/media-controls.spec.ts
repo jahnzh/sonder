@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { parseRange } from "../../server/range";
+import { readerFixture } from "../reader-fixture";
 test.use({ serviceWorkers: "block" });
 async function instrument(page: Page) {
   await page.addInitScript(() => {
@@ -188,4 +189,182 @@ test("headphone seeks cross audio files while paused and retain the 30-second of
     )
     .toContain("/api/media/alice-0");
   await expect.poll(() => audioPosition(page)).toBeCloseTo(length - 10, 0);
+});
+test("Space toggles playback across views and arrows skip 30 seconds while ignoring inputs, buttons and dialogs", async ({
+  page,
+}) => {
+  await instrument(page);
+  const paused = () =>
+    page.evaluate(
+      () =>
+        ((window as any).__audioElements as HTMLAudioElement[]).find(
+          (audio) => !!audio.src,
+        )?.paused ?? true,
+    );
+  await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: "Your library." }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", {
+      name: "Play Alice’s Adventures in Wonderland",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page
+      .locator(".player-dock")
+      .getByRole("button", { name: "Pause", exact: true }),
+  ).toBeVisible();
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur?.());
+  // Space on the library pauses and resumes playback.
+  await page.keyboard.press(" ");
+  await expect(
+    page
+      .locator(".player-dock")
+      .getByRole("button", { name: "Play", exact: true }),
+  ).toBeVisible();
+  expect(await paused()).toBe(true);
+  await page.keyboard.press(" ");
+  await expect(
+    page
+      .locator(".player-dock")
+      .getByRole("button", { name: "Pause", exact: true }),
+  ).toBeVisible();
+  expect(await paused()).toBe(false);
+  await page.keyboard.press(" ");
+  expect(await paused()).toBe(true);
+  await page.evaluate(() => {
+    const audio = ((window as any).__audioElements as HTMLAudioElement[]).find(
+      (audio) => !!audio.src,
+    )!;
+    audio.currentTime = 100;
+    audio.dispatchEvent(new Event("timeupdate"));
+  });
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(() => audioPosition(page)).toBeCloseTo(130, 0);
+  await page.keyboard.press("ArrowLeft");
+  await expect.poll(() => audioPosition(page)).toBeCloseTo(100, 0);
+  // Typing in the search box does not toggle playback or seek.
+  const search = page.getByRole("textbox", {
+    name: "Search your library",
+    exact: true,
+  });
+  await search.focus();
+  await page.keyboard.type("wonder land");
+  await expect(search).toHaveValue("wonder land");
+  expect(await paused()).toBe(true);
+  await search.fill("");
+  // Space on a title page toggles playback, and is ignored while Versions & sources is open.
+  await page
+    .getByRole("button", {
+      name: "Open title page for Alice’s Adventures in Wonderland",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Book details", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press(" ");
+  await expect.poll(paused).toBe(false);
+  await page.keyboard.press(" ");
+  await expect.poll(paused).toBe(true);
+  await page
+    .getByRole("dialog", { name: "Book details", exact: true })
+    .getByRole("button", { name: "Versions & sources", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Versions & sources", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press(" ");
+  expect(await paused()).toBe(true);
+  await page
+    .getByRole("dialog", { name: "Versions & sources", exact: true })
+    .getByRole("button", { name: "Close dialog", exact: true })
+    .click();
+  // Space and arrows work in Now Playing.
+  await page.locator(".dock-book").click();
+  const nowPlaying = page.getByRole("dialog", {
+    name: "Now playing",
+    exact: true,
+  });
+  await expect(nowPlaying).toBeVisible();
+  await page.keyboard.press(" ");
+  await expect(
+    nowPlaying.getByRole("button", { name: "Pause", exact: true }),
+  ).toBeVisible();
+  expect(await paused()).toBe(false);
+  await page.keyboard.press(" ");
+  await expect(
+    nowPlaying.getByRole("button", { name: "Play", exact: true }),
+  ).toBeVisible();
+  expect(await paused()).toBe(true);
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(() => audioPosition(page)).toBeCloseTo(130, 0);
+  await page.keyboard.press("ArrowLeft");
+  await expect.poll(() => audioPosition(page)).toBeCloseTo(100, 0);
+  await nowPlaying
+    .getByRole("button", { name: "Close dialog", exact: true })
+    .click();
+  // Space and arrows also work in the Now Playing reader in Page mode.
+  const imported = await page.request.post("/api/import", {
+    multipart: {
+      title: "Keyboard reader book",
+      author: "Reader QA",
+      file: {
+        name: "Chapter.mp3",
+        mimeType: "audio/mpeg",
+        buffer: readFileSync("server/demo/alice-01.mp3"),
+      },
+    },
+  });
+  expect(imported.ok()).toBe(true);
+  const { id } = await imported.json();
+  try {
+    const book = (await (await page.request.get("/api/books")).json()).find(
+      (b: any) => b.id === id,
+    );
+    expect(
+      (
+        await page.request.post(`/api/ebooks/import?workId=${book.workId}`, {
+          multipart: {
+            file: {
+              name: "Companion.epub",
+              mimeType: "application/epub+zip",
+              buffer: await readerFixture(),
+            },
+          },
+        })
+      ).ok(),
+    ).toBe(true);
+    await page.reload();
+    await page
+      .getByRole("button", { name: "Play Keyboard reader book", exact: true })
+      .click();
+    await page
+      .locator(".player-dock")
+      .getByRole("button", { name: "Pause", exact: true })
+      .click();
+    await page.locator(".dock-book").click();
+    await expect(
+      page.locator(".inline-reader .reader-viewport iframe"),
+    ).toBeVisible();
+    await page.keyboard.press(" ");
+    await expect(
+      nowPlaying.getByRole("button", { name: "Pause narration", exact: true }),
+    ).toBeVisible();
+    expect(await paused()).toBe(false);
+    await page.keyboard.press(" ");
+    await expect(
+      nowPlaying.getByRole("button", { name: "Play narration", exact: true }),
+    ).toBeVisible();
+    expect(await paused()).toBe(true);
+    const readerStart = await audioPosition(page);
+    await page.keyboard.press("ArrowRight");
+    await expect.poll(() => audioPosition(page)).toBeCloseTo(readerStart + 30, 0);
+    await page.keyboard.press("ArrowLeft");
+    await expect.poll(() => audioPosition(page)).toBeCloseTo(readerStart, 0);
+  } finally {
+    await page.request.delete(`/api/library/${id}`);
+  }
 });

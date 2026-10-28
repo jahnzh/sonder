@@ -492,7 +492,10 @@ function LibraryApp({
       downloadJobs[b.recordingId],
   );
   return (
-    <PlayerProvider onProgress={onProgress}>
+    <PlayerProvider
+      onProgress={onProgress}
+      fallback={detail?.tracks.length ? detail : featured}
+    >
       <div className="app-shell">
         {sidebarOpen && (
           <button
