@@ -75,3 +75,5 @@ Before spawning any subagent, decide the intelligence level the task needs and c
 - See `docs/agents/models.md` for verified model ids, supported effort values and usage notes.
 
 Also consider usage limits when dividing work. Spread tasks across agents so no single provider's quota runs out mid-wave, and keep the number of concurrent workers modest. Record the choice and its reason in the spec or the handoff.
+
+Before `orca orchestration worker-start`, run `scripts/orca-preflight.sh <base-branch> <worktree-path> <doc>...`; after `worker-stop`, run it with `--after-stop <worktree-path>` to list leftover processes.
