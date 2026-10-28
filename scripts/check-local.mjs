@@ -381,7 +381,8 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
           command: stageDef.command,
           args: stageDef.args,
           cwd: disposableDir,
-          env: childEnv,
+          // Vite gates production service-worker registration on this mode.
+          env: {...childEnv, NODE_ENV: stageDef.name === "build" ? "production" : "test"},
           logFilePath,
           silent: options.silent,
           onSpawn: (child) => {

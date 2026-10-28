@@ -12,6 +12,7 @@ const baseURL=process.env.SONDER_VERIFY_URL || "https://sonder.pecori.no";
 const context=await browser.newContext({baseURL,viewport:{width:390,height:844},hasTouch:true,serviceWorkers:"block"});
 const report={recordingId,protectedWrites:0,checks:[],errors:[]};
 const check=(name,details={})=>report.checks.push({name,...details});
+let readAudio;
 try {
   const login=await context.request.post("/api/auth/login",{data:{password:process.env.APP_PASSWORD}});
   if(!login.ok()) throw new Error("Sign-in failed");
@@ -37,6 +38,7 @@ try {
     const a=window.__actualAudio.find(a=>!!a.src);
     return a && {position:a.currentTime,paused:a.paused,duration:a.duration,src:a.src,ready:a.readyState,error:a.error?.message};
   });
+  readAudio=actual;
   await page.goto("/");
   await page.getByRole("button",{name:`About ${book.title}`,exact:true}).first().click();
   const detail=page.getByRole("dialog",{name:"Book details",exact:true});
@@ -121,7 +123,13 @@ try {
     if(await option.isDisabled())continue;
     await source.selectOption(mode);
     await manager.getByRole("button",{name:"Apply source",exact:true}).click();
-    await expect.poll(async()=>{const a=await actual();return a.src.includes(`?source=${mode}`)&&a.ready>=2&&!a.error;},{timeout:40000}).toBe(true);
+    // Selecting the source already in use need not reload the audio URL.
+    // Assert the reported delivery source and decoded audio instead of URL shape.
+    await expect.poll(async()=>{
+      const a=await actual();
+      const label=await page.locator(".player-dock .playback-source").textContent();
+      return a.ready>=2&&!a.error&&(mode==="server" ? label.includes("Host server") : /Online stream|TorBox/.test(label));
+    },{timeout:40000}).toBe(true);
     await expect.poll(async()=>(await actual()).position).toBeCloseTo(unchanged,0);
     expect((await actual()).paused).toBe(true);
     await manager.getByRole("button",{name:"Close dialog",exact:true}).click();
@@ -154,7 +162,7 @@ try {
   expect(report.errors).toEqual([]);
   report.ok=true;
 } catch(error) {
-  report.ok=false;report.failure=error.message;process.exitCode=1;
+  report.ok=false;report.failure=error.message;report.audio=await readAudio?.().catch(()=>null);process.exitCode=1;
 } finally {
   await closeProtectedBrowser(context,browser,report);
   fs.mkdirSync("artifacts",{recursive:true});

@@ -439,7 +439,7 @@ test("8. Secrets, application variables and database paths are never leaked into
             assert.equal(log.env.ALIGNMENT_WORKER_URL, undefined);
             assert.equal(log.env.ALIGNMENT_TOKEN, undefined);
             assert.equal(log.env.SONDER_VERIFY_URL, undefined);
-            assert.equal(log.env.NODE_ENV, "test");
+            assert.equal(log.env.NODE_ENV, log.argv[1] === "build" ? "production" : "test");
         }
     }
     finally {
