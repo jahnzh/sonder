@@ -1,5 +1,6 @@
 // Real UI/media/worker verification. Canonical progress writes are blocked in the QA browser.
 import fs from "node:fs";
+import {protectBrowserMutations, closeProtectedBrowser} from "./verification-safety.mjs";
 import { chromium, expect as baseExpect } from "@playwright/test";
 const expect = baseExpect.configure({ timeout: 20000 });
 process.loadEnvFile(".env");
@@ -20,12 +21,13 @@ const browser = await chromium.launch({
       ? "/home/jahn/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome"
       : undefined),
 });
+const baseURL = process.env.SONDER_VERIFY_URL || "https://sonder.pecori.no";
 const context = await browser.newContext({
-  baseURL: process.env.SONDER_VERIFY_URL || "https://sonder.pecori.no",
+  baseURL,
   viewport: { width: 390, height: 844 },
   serviceWorkers: "block",
 });
-let protectedWrites = 0;
+const report = {ebookId, recordingId, protectedWrites: 0, errors: [], ok: false};
 try {
   const login = await context.request.post("/api/auth/login", {
     data: { password: process.env.APP_PASSWORD },
@@ -58,20 +60,14 @@ try {
   const manifest = await (
     await context.request.get(`/api/reader/${jobInfo.ebookId}`)
   ).json();
-  await context.route("**/api/progress", async (route) => {
-    protectedWrites++;
-    await route.fulfill({ json: { progress: route.request().postDataJSON() } });
-  });
-  await context.route("**/api/reader/*/progress", async (route) => {
-    protectedWrites++;
-    const data = route.request().postDataJSON();
-    await route.fulfill({
-      json: { checkpoint: { ...data, revision: (data.baseRevision || 0) + 1 } },
-    });
-  });
+  const appearance = await (await context.request.get("/api/appearance")).json();
+  await protectBrowserMutations(context, baseURL, report);
+  await context.addInitScript(appearance => {
+    localStorage.setItem("sonder-appearance-device", "true");
+    localStorage.setItem("sonder-appearance", JSON.stringify({...appearance, reader: {...appearance.reader, display: "book"}}));
+  }, appearance);
   const page = await context.newPage();
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("pageerror", (error) => report.errors.push(error.message));
   await page.addInitScript(() => {
     const Native = window.Audio;
     window.__actualAudio = [];
@@ -83,7 +79,19 @@ try {
     };
   });
   await page.goto("/#reader/" + jobInfo.ebookId);
-  await page.getByRole("button", { name: "Reading sync", exact: true }).click();
+  const room = page.locator(".reader-room:not(.inline-reader)");
+  const showControls = async () => {
+    if (await room.locator(".reader-topbar").isVisible()) return;
+    const box = await room.locator(".reader-viewport").boundingBox();
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(room.locator(".reader-topbar")).toBeVisible();
+  };
+  const more = async (name) => {
+    await showControls();
+    await room.locator(".reader-topbar").getByRole("button", { name: "More", exact: true }).click();
+    await room.locator(".reader-more").getByRole("button", { name, exact: true }).click();
+  };
+  await more("Reading sync");
   await page
     .getByRole("combobox", { name: "Reading sync audiobook release" })
     .selectOption(jobInfo.recordingId);
@@ -123,6 +131,7 @@ try {
       );
     const chosen = candidates[Math.floor(candidates.length / 2)];
     if (!chosen) throw new Error("No sentence-sized test passage");
+    await showControls();
     await page
       .getByRole("button", { name: "Search this book", exact: true })
       .click();
@@ -134,9 +143,7 @@ try {
       .filter({ hasText: chosen.text })
       .first()
       .click();
-    await page
-      .getByRole("button", { name: "Listen from here", exact: true })
-      .click();
+    await more("Listen from here");
     await page.waitForFunction(
       (expected) => {
         const audio = window.__actualAudio.find((audio) => audio.src);
@@ -160,7 +167,7 @@ try {
       };
     });
     await page
-      .getByRole("button", { name: "Pause reader audio", exact: true })
+      .getByRole("button", { name: "Pause narration", exact: true })
       .click();
     const paused = await page.evaluate(
       () => window.__actualAudio.find((audio) => audio.src).currentTime,
@@ -168,9 +175,7 @@ try {
     const expected = map.intervals.find(
       (interval) => interval.start <= paused && interval.end > paused,
     );
-    await page
-      .getByRole("button", { name: "Read from audio", exact: true })
-      .click();
+    await more("Read from audio");
     await expect
       .poll(() =>
         page.evaluate(
@@ -181,6 +186,8 @@ try {
         ),
       )
       .toBe(expected.paragraphId);
+    // This deliberate direct API call bypasses browser routing. The recovery
+    // worker writes its scratch output to alignment/recovery.json on the server.
     const recovery = await context.request.post("/api/alignments/recover", {
       data: {
         ebookId: jobInfo.ebookId,
@@ -216,7 +223,7 @@ try {
     path: "artifacts/sync-sentence-switching-mobile.png",
   });
   await page.reload();
-  await page.getByRole("button", { name: "Reading sync", exact: true }).click();
+  await more("Reading sync");
   await expect(
     page.getByRole("combobox", { name: "Reading sync audiobook release" }),
   ).toHaveValue(jobInfo.recordingId);
@@ -226,22 +233,22 @@ try {
   const current = await (
     await context.request.get(`/api/reader/${jobInfo.ebookId}`)
   ).json();
-  const result = {
+  Object.assign(report, {
     sourceUpgradeValid: true,
     samples,
-    protectedWrites,
     readerPositionUnchanged:
       JSON.stringify(current.checkpoint) ===
       JSON.stringify(manifest.checkpoint),
     reopenRetainsPreparedRelease: true,
-    pageErrors: errors,
-  };
-  fs.writeFileSync(
-    "artifacts/reading-sync-verification.json",
-    JSON.stringify(result, null, 2),
-  );
-  console.log(JSON.stringify({ phase: "validated", ...result }));
+    ok: true,
+  });
+  if (!report.readerPositionUnchanged) throw new Error("Reader position changed on the server");
+} catch (error) {
+  report.ok = false;
+  report.failure = error.message;
+  process.exitCode = 1;
 } finally {
-  await context.close();
-  await browser.close();
+  await closeProtectedBrowser(context, browser, report);
+  fs.writeFileSync("artifacts/reading-sync-verification.json", JSON.stringify(report, null, 2));
+  console.log(JSON.stringify(report, null, 2));
 }

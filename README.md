@@ -21,6 +21,12 @@ Open **https://sonder.pecori.no** and sign in as `admin` with `APP_PASSWORD` fro
 
 The app container binds to loopback. Put an HTTPS reverse proxy in front of it for phone access and set `COOKIE_SECURE=true`. PWA installation, OPFS, and service workers require HTTPS or localhost. On first use, add your TorBox key in Settings to enable cached streaming; without it, magnet links use the local client.
 
+## Local checks and backups
+
+`npm run check` checks the committed `HEAD` in a disposable directory: dependency installation, build/typecheck, unit tests, then browser tests. Uncommitted changes are recorded in the report and are excluded from the snapshot. Use `npm run check -- --ref <commit>` to check another revision. Each invocation has its own logs and reports under `artifacts/ci/`.
+
+Before deploying an existing installation, create a consistent SQLite snapshot with `npm run backup -- data/sonder.db data/backups/before-<change>-$(date +%s).db`. The destination must be new; the command verifies the backup before reporting success. See [local checks and verification](docs/LOCAL_CHECKS.md) for details.
+
 ## Users
 
 Sonder has one administrator (`admin`, password `APP_PASSWORD`) and any number of users, created in Settings → **Users**. Passwords are stored as scrypt hashes; users change their own password in Settings → **Account**. Without `APP_PASSWORD` (development and browser tests) there is no sign-in and every request acts as the admin.

@@ -1,13 +1,16 @@
 // Exercise the deployed reader with real audio; isolate preferences and protect progress.
 import fs from 'node:fs';
+import {protectBrowserMutations, closeProtectedBrowser} from './verification-safety.mjs';
 import {chromium,expect as baseExpect} from '@playwright/test';
 const expect=baseExpect.configure({timeout:25000});
 process.loadEnvFile('.env');
 const recordingId=process.argv[2];
 if(!recordingId)throw Error('Usage: node scripts/verify-integrated-reader.mjs recording-id');
 const browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || '/home/jahn/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome'});
-const context=await browser.newContext({baseURL:process.env.SONDER_VERIFY_URL || 'https://sonder.pecori.no',viewport:{width:390,height:844},serviceWorkers:'block'});
+const baseURL=process.env.SONDER_VERIFY_URL || 'https://sonder.pecori.no';
+const context=await browser.newContext({baseURL,viewport:{width:390,height:844},serviceWorkers:'block'});
 const report={recordingId,protectedWrites:0,checks:[],errors:[]};
+fs.mkdirSync('artifacts',{recursive:true});
 let page;
 try {
  const login=await context.request.post('/api/auth/login',{data:{password:process.env.APP_PASSWORD}});if(!login.ok())throw Error('Sign-in failed');
@@ -26,11 +29,7 @@ try {
   localStorage.setItem(`reader-ebook:${workId}`,ebook);
   const Native=window.Audio;window.__audio=[];window.Audio=class extends Native{constructor(...args){super(...args);window.__audio.push(this);}};
  },{appearance,ebook:ebook.id,workId:book.workId});
- await context.route('**/api/progress',async route=>{report.protectedWrites++;await route.fulfill({json:{progress:route.request().postDataJSON()}});});
- await context.route('**/api/reader/*/progress',async route=>{report.protectedWrites++;const data=route.request().postDataJSON();await route.fulfill({json:{checkpoint:{...data,revision:(data.baseRevision||0)+1}}});});
- // Bookmarks are user data too: answer bookmark writes locally.
- await context.route('**/api/reader/*/bookmarks**',async route=>{if(route.request().method()==='GET')return route.continue();report.protectedWrites++;await route.fulfill({json:{ok:true}});});
- await context.route('**/api/appearance',route=>{if(route.request().method()==='PUT')throw Error('QA preferences must stay device-only');return route.continue();});
+ await protectBrowserMutations(context,baseURL,report);
  page=await context.newPage();page.on('pageerror',e=>report.errors.push(e.message));
  const actual=()=>page.evaluate(()=>{const a=window.__audio.find(a=>a.src);return a&&{position:a.currentTime,paused:a.paused,ready:a.readyState,error:a.error?.message};});
  await page.goto('/');
@@ -78,7 +77,7 @@ try {
  await page.screenshot({path:'artifacts/live-reader-options-mobile.png'});
  await options.getByRole('button',{name:'Close playback options',exact:true}).click();
  report.checks.push({name:'EPUB fills Now Playing; More holds playback and reader options',ebookId:ebook.id});
- // Page mode has no audio seek bar; move the audio itself and check the page follows.
+ // Sample the audio element directly and check that Page mode follows.
  const seek=position=>page.evaluate(position=>{const a=window.__audio.find(a=>a.src);a.currentTime=position;},position);
  // Seeking the audio element stays within the loaded file, so sample that file's passages.
  const src=await page.evaluate(()=>window.__audio.find(a=>a.src).src);
@@ -157,4 +156,4 @@ try {
  expect(report.errors).toEqual([]);report.ok=true;
 } catch(error){report.ok=false;report.failure=error.message;process.exitCode=1;await page?.screenshot({path:'artifacts/live-integrated-reader-failure.png'}).catch(()=>{});report.state=await page?.evaluate(()=>({passage:document.querySelector('.inline-reader')?.getAttribute('data-current-passage'),follow:document.querySelectorAll('.inline-reader .sonder-follow').length,backToNarration:!!document.querySelector('.reader-back-narration')})).catch(()=>null);}
 finally{// Close the page while its writes are still intercepted: unrouting first would let a queued progress save reach the server.
-await context.close().catch(()=>{});await browser.close();fs.mkdirSync('artifacts',{recursive:true});fs.writeFileSync('artifacts/integrated-reader-verification.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));}
+await closeProtectedBrowser(context,browser,report);fs.mkdirSync('artifacts',{recursive:true});fs.writeFileSync('artifacts/integrated-reader-verification.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));}
