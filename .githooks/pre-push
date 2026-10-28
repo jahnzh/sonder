@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Git sends ref updates on stdin; discard them so the push does not hang.
+while IFS= read -r _; do
+  :
+done
+
+if [[ "${SONDER_SKIP_PREPUSH:-}" == "1" ]]; then
+  echo "Pre-push hook skipped (SONDER_SKIP_PREPUSH=1)."
+  exit 0
+fi
+
+if ! npm run build; then
+  echo "Pre-push blocked: npm run build failed." >&2
+  echo "Skip once with SONDER_SKIP_PREPUSH=1 git push" >&2
+  exit 1
+fi
+
+if ! npm test; then
+  echo "Pre-push blocked: npm test failed." >&2
+  echo "Skip once with SONDER_SKIP_PREPUSH=1 git push" >&2
+  exit 1
+fi
