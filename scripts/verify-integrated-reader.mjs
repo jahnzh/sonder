@@ -151,6 +151,7 @@ try {
  await options.getByRole('group',{name:'Reading mode',exact:true}).getByRole('button',{name:'Page',exact:true}).click();
  await expect(page.locator('.inline-reader .reader-viewport .sonder-follow').first()).toBeVisible();
  await expect(page.getByLabel('Contents sidebar')).toBeVisible();
+ await expect(room.getByRole('slider',{name:/^Seek in /})).toBeVisible();
  await page.screenshot({path:'artifacts/live-integrated-reader-desktop.png'});
  report.checks.push({name:'Reader and player bar fit narrow mobile and desktop'});
  expect(report.errors).toEqual([]);report.ok=true;

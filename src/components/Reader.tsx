@@ -32,6 +32,7 @@ import { ReadingSync } from "./ReadingSync";
 import { LyricsReader } from "./LyricsReader";
 import { PlaybackSource } from "./PlaybackSource";
 import { PlaybackOptions } from "./PlaybackOptions";
+import { PlaybackTimeline } from "./PlaybackTimeline";
 import {PlaybackExtra,usePlaybackMenu} from "./PlaybackMenu";
 import { readerWords, readerSegment } from "../reader-segments";
 import { usePlayer } from "../player";
@@ -1227,7 +1228,10 @@ export function ReaderView({
           <span>{shownPercent}% of {scope === "chapter" ? "chapter" : "book"}{timing}</span>
         </div>
         <div className="reader-player-line" aria-hidden="true"><i style={{ width: `${shownPercent}%` }} /></div>
-        <input
+        {desktop && p.book ? (
+          // Desktop footer: the narration's position, with elapsed and total time.
+          <div className="reader-audio-timeline"><PlaybackTimeline book={p.book} compact scoped /></div>
+        ) : <input
           className="reader-scrubber"
           type="range"
           min="0"
@@ -1241,7 +1245,7 @@ export function ReaderView({
           onPointerUp={commitScrub}
           onKeyUp={commitScrub}
           onBlur={commitScrub}
-        />
+        />}
         <button className="icon-button reader-player-chapters" aria-label="Chapters" onClick={() => setPanel(panel === "contents" ? null : "contents")}><List size={21} /></button>
         <div className="reader-transport">
           <button className="icon-button" aria-label="Back 30 seconds" disabled={!p.book} onClick={()=>p.skip(-30)}><RotateCcw size={26}/><span>30</span></button>
