@@ -63,6 +63,13 @@ Agent skills setup follows the main flow from https://www.aihero.dev/skills-setu
 - **Triage labels**: the five canonical roles map one-to-one to the labels on the repo (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
 - **Domain docs**: single-context layout, `GLOSSARY.md` plus `docs/adr/` (created lazily). See `docs/agents/domain.md`.
 
+## Agent references
+
+- Spawn a worker with `scripts/orca-spawn.sh`, and write its spec from `docs/agents/worker-spec.md`.
+- Read the Orca inbox with `node scripts/orca-check.mjs`; after a session restart follow "Resume after a restart" in `docs/agents/worker-spec.md`.
+- Before running CI on the WSL host, read `docs/agents/ci-host.md`; run `npm run check -- --known-failures tests/known-failures.wsl-host.json` so a run with only the known failures passes.
+- Install the pre-push hook once per clone with `scripts/install-hooks.sh`.
+
 ## Spawning subagents
 
 Before spawning any subagent, decide the intelligence level the task needs and choose the agent and model to match. Do not default every worker to the same model.
