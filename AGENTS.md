@@ -4,6 +4,12 @@
 
 Sonder is a React/TypeScript PWA backed by Fastify and SQLite. Client code is in `src/`, API and database code in `server/`, and the Python alignment service in `worker/`. Assets are in `public/`, scripts in `scripts/`, unit tests in `tests/`, and browser tests in `tests/e2e/`. Read the relevant `README.md` section before changing a workflow.
 
+## Code navigation
+
+Use CodeGraph for every question about where code is or what a change affects. Before grep, find or reading files, run `codegraph explore "<symbol names or a question>"`: it prints the relevant source and the call paths between the symbols. Use `codegraph node <name or file>` for one symbol or file, and `codegraph impact <symbol>` before changing shared code. Run `codegraph sync` after editing many files.
+
+The index lives in `.codegraph/`, which git ignores, so a new worktree has none. Run `codegraph init -y` once in it (about 30 seconds) before starting work.
+
 ## Main flow
 
 Every change moves through `/grill-with-docs` → `/to-spec` → `/to-tickets` → `/implement` → `/code-review` → `/retro`. The stage skills are user-invoked slash commands. When a stage's artifact is missing, stop and name the command for the user to run.
@@ -65,5 +71,6 @@ Before spawning any subagent, decide the intelligence level the task needs and c
 - Give mechanical work (a scripted change with a clear spec, a small UI edit) a smaller model.
 - Set the model explicitly with `--model` and `--effort` rather than letting each agent use its default.
 - Take model ids from the agent's own listing: `agent --list-models` for cursor, and the ids a launch receipt reports for claude and antigravity. Confirm the effective model in the receipt after launch.
+- Run `codegraph init -y` in each worker's worktree before it starts, and tell the worker in its spec to use CodeGraph for code navigation.
 
 Also consider usage limits when dividing work. Spread tasks across agents so no single provider's quota runs out mid-wave, and keep the number of concurrent workers modest. Record the choice and its reason in the spec or the handoff.
