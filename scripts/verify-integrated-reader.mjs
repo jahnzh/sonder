@@ -39,7 +39,9 @@ try {
   expect(Math.abs((await actual()).position-book.progress.position)).toBeLessThan(10);
   await expect(page.locator('.inline-reader .reader-viewport iframe')).toBeVisible();
   report.checks.push({name:'Opening reader restores the saved position without starting playback'});
-  await page.getByRole('dialog',{name:'Now playing',exact:true}).getByRole('button',{name:'Close dialog',exact:true}).click();
+  const opened=page.locator('.inline-reader');
+  const box=await opened.locator('.reader-viewport').boundingBox();await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
+  await opened.locator('.reader-topbar').getByRole('button',{name:'Close reader',exact:true}).click();
  }
  await page.getByRole('button',{name:`About ${book.title}`,exact:true}).first().click();
  const detail=page.getByRole('dialog',{name:'Book details',exact:true});

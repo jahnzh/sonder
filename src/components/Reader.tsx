@@ -1132,7 +1132,7 @@ export function ReaderView({
         </p>
       )}
       <header className="reader-topbar" hidden={!controls}>
-        {onClose && <button className="icon-button" aria-label="Close reader" onClick={onClose}><ChevronDown size={22} /></button>}
+        {onClose && <button className="icon-button" aria-label="Close reader" onClick={() => { setControlsVisible(false); setPanel(null); onClose(); }}><ChevronDown size={22} /></button>}
         {desktop && preferences.display === "book" && (
           <button
             className="icon-button"
