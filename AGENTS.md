@@ -72,5 +72,6 @@ Before spawning any subagent, decide the intelligence level the task needs and c
 - Set the model explicitly with `--model` and `--effort` rather than letting each agent use its default.
 - Take model ids from the agent's own listing: `agent --list-models` for cursor, and the ids a launch receipt reports for claude and antigravity. Confirm the effective model in the receipt after launch.
 - Run `codegraph init -y` in each worker's worktree before it starts, and tell the worker in its spec to use CodeGraph for code navigation.
+- See `docs/agents/models.md` for verified model ids, supported effort values and usage notes.
 
 Also consider usage limits when dividing work. Spread tasks across agents so no single provider's quota runs out mid-wave, and keep the number of concurrent workers modest. Record the choice and its reason in the spec or the handoff.
