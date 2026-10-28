@@ -156,4 +156,5 @@ try {
  report.checks.push({name:'Reader and player bar fit narrow mobile and desktop'});
  expect(report.errors).toEqual([]);report.ok=true;
 } catch(error){report.ok=false;report.failure=error.message;process.exitCode=1;await page?.screenshot({path:'artifacts/live-integrated-reader-failure.png'}).catch(()=>{});report.state=await page?.evaluate(()=>({passage:document.querySelector('.inline-reader')?.getAttribute('data-current-passage'),follow:document.querySelectorAll('.inline-reader .sonder-follow').length,backToNarration:!!document.querySelector('.reader-back-narration')})).catch(()=>null);}
-finally{await context.unrouteAll({behavior:'wait'});await browser.close();fs.mkdirSync('artifacts',{recursive:true});fs.writeFileSync('artifacts/integrated-reader-verification.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));}
+finally{// Close the page while its writes are still intercepted: unrouting first would let a queued progress save reach the server.
+await context.close().catch(()=>{});await browser.close();fs.mkdirSync('artifacts',{recursive:true});fs.writeFileSync('artifacts/integrated-reader-verification.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));}
