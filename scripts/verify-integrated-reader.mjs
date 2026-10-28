@@ -28,6 +28,8 @@ try {
  },{appearance,ebook:ebook.id,workId:book.workId});
  await context.route('**/api/progress',async route=>{report.protectedWrites++;await route.fulfill({json:{progress:route.request().postDataJSON()}});});
  await context.route('**/api/reader/*/progress',async route=>{report.protectedWrites++;const data=route.request().postDataJSON();await route.fulfill({json:{checkpoint:{...data,revision:(data.baseRevision||0)+1}}});});
+ // Bookmarks are user data too: answer bookmark writes locally.
+ await context.route('**/api/reader/*/bookmarks**',async route=>{if(route.request().method()==='GET')return route.continue();report.protectedWrites++;await route.fulfill({json:{ok:true}});});
  await context.route('**/api/appearance',route=>{if(route.request().method()==='PUT')throw Error('QA preferences must stay device-only');return route.continue();});
  page=await context.newPage();page.on('pageerror',e=>report.errors.push(e.message));
  const actual=()=>page.evaluate(()=>{const a=window.__audio.find(a=>a.src);return a&&{position:a.currentTime,paused:a.paused,ready:a.readyState,error:a.error?.message};});
@@ -97,6 +99,10 @@ try {
  if(!samples.length)throw Error('No mapped passage on the loaded audio file');
  report.checks.push({name:'Paused audio seeks move the highlighted passage',samples});
  await page.screenshot({path:'artifacts/live-integrated-reader-mobile.png'});
+ // Play from the middle sample: the last one runs into unmapped closing credits.
+ const middle=samples[Math.floor(samples.length/2)];
+ await seek(middle.position-20);
+ await expect(room).toHaveAttribute('data-current-passage',/.+/);
  const play=room.getByRole('button',{name:'Play narration',exact:true}),pause=room.getByRole('button',{name:'Pause narration',exact:true});
  const initial=await room.getAttribute('data-current-passage');
  await play.click();
@@ -105,9 +111,10 @@ try {
  report.checks.push({name:'Real audio advances the highlighted passage automatically'});
  // Long-press plays the narration from that sentence; Undo returns to where it was.
  const before=(await actual()).position;
- const paragraph=page.frameLocator('.inline-reader .reader-viewport iframe').locator('p').nth(2);
- const spot=await paragraph.boundingBox();
- await page.mouse.move(spot.x+spot.width/2,spot.y+Math.min(10,spot.height/2));await page.mouse.down();await page.waitForTimeout(800);await page.mouse.up();
+ // Press in the middle of the visible page, clear of the top bar and the player.
+ if(await room.locator('.reader-topbar').isVisible()){const box=await room.locator('.reader-viewport').boundingBox();await page.mouse.click(box.x+box.width/2,box.y+box.height/2);await expect(room.locator('.reader-topbar')).toBeHidden();}
+ const pageBox=await room.locator('.reader-viewport').boundingBox();
+ await page.mouse.move(pageBox.x+pageBox.width/2,pageBox.y+pageBox.height*0.45);await page.mouse.down();await page.waitForTimeout(800);await page.mouse.up();
  const toast=room.getByRole('status').filter({hasText:'Listening from here'});
  await expect(toast).toBeVisible();
  await expect.poll(async()=>!(await actual()).paused,{timeout:20000}).toBe(true);
