@@ -4,6 +4,23 @@
 
 Sonder is a React/TypeScript PWA backed by Fastify and SQLite. Client code is in `src/`, API and database code in `server/`, and the Python alignment service in `worker/`. Assets are in `public/`, scripts in `scripts/`, unit tests in `tests/`, and browser tests in `tests/e2e/`. Read the relevant `README.md` section before changing a workflow.
 
+## Main flow
+
+Every change moves through `/grill-with-docs` → `/to-spec` → `/to-tickets` → `/implement` → `/code-review` → `/retro`. The stage skills are user-invoked slash commands. When a stage's artifact is missing, stop and name the command for the user to run.
+
+| Stage | Artifact in this repo | Next stage starts when |
+| --- | --- | --- |
+| `/grill-with-docs` | Terms in `GLOSSARY.md`; hard-to-reverse decisions as ADRs in `docs/adr/` | The plan is settled |
+| `/to-spec` | The spec, published as a GitHub issue | The spec issue exists |
+| `/to-tickets` | Tracer-bullet tickets as GitHub issues with native blocking links, labelled `needs-triage` and listed on roadmap #11 | `/triage` has set a ticket to `ready-for-agent` |
+| `/implement` | One worktree and branch per ticket, built by a worker chosen under "Spawning subagents" | `npm run check -- --ref <commit>` passes on the committed revision |
+| `/code-review` | Standards and spec findings for the branch | No finding is open |
+| `/retro` | Improvements filed as `needs-triage` issues | — |
+
+- A change small enough to build at once goes straight to `/implement`. It still has an issue, still passes the check, and still gets `/code-review`.
+- Merge a branch and open its PR only after `/code-review` has no open finding. The standards axis reads the "Style and Testing" section below.
+- An effort too large for one session starts with `/wayfinder`.
+
 ## Development and Checks
 
 Use Node 24 and install dependencies with `npm ci`.
