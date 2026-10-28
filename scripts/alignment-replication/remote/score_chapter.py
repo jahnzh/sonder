@@ -64,6 +64,15 @@ def spread(errors):
     }
 
 
+def signed_thirds(ref, hyp, index):
+    """Median signed error (hyp - ref, ms) over each third of the pairs, in chapter order."""
+    cut = [0, len(ref) // 3, 2 * len(ref) // 3, len(ref)]
+    return [
+        1000 * statistics.median(h[index] - r[index] for r, h in zip(ref[a:b], hyp[a:b]))
+        for a, b in zip(cut, cut[1:])
+    ]
+
+
 def boundary_stats(ref, hyp):
     """ref, hyp: aligned lists of (start, end). Start/end errors reported separately."""
     start_err = [abs(r[0] - h[0]) for r, h in zip(ref, hyp)]
@@ -72,8 +81,8 @@ def boundary_stats(ref, hyp):
         "n": len(ref),
         "aas_ms": aas_ms(ref, hyp),
         "aas_ms_per_boundary": aas_ms(ref, hyp) / 2,
-        "start": spread(start_err),
-        "end": spread(end_err),
+        "start": {**spread(start_err), "signed_median_ms_by_third": signed_thirds(ref, hyp, 0)},
+        "end": {**spread(end_err), "signed_median_ms_by_third": signed_thirds(ref, hyp, 1)},
     }
 
 
