@@ -615,3 +615,35 @@ test("a 409 with no server checkpoint rebases to revision 0 and saves instead of
     .toBe(1);
   await expect(reader.locator(".reading-conflict")).toBeHidden();
 });
+test("Settings → Playback chooses whether linked ebooks open in Page or Lyrics mode", async ({
+  page,
+}) => {
+  const appearance = await (await page.request.get("/api/appearance")).json();
+  try {
+    await page.request.put("/api/appearance", {
+      data: { ...appearance, reader: { ...appearance.reader, display: "book" } },
+    });
+    await page.goto("/");
+    await page
+      .locator(".mobile-nav")
+      .getByRole("button", { name: "Settings", exact: true })
+      .click();
+    const view = page.getByRole("combobox", { name: "Ebook view" });
+    await expect(view).toHaveValue("book");
+    await view.selectOption("segment");
+    await page
+      .getByRole("button", { name: "Save playback settings", exact: true })
+      .click();
+    await expect
+      .poll(async () => (await (await page.request.get("/api/appearance")).json()).reader.display)
+      .toBe("segment");
+    await page.reload();
+    await page
+      .locator(".mobile-nav")
+      .getByRole("button", { name: "Settings", exact: true })
+      .click();
+    await expect(page.getByRole("combobox", { name: "Ebook view" })).toHaveValue("segment");
+  } finally {
+    await page.request.put("/api/appearance", { data: appearance });
+  }
+});

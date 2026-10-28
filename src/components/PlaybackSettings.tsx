@@ -6,7 +6,7 @@ export function PlaybackSettings({
 }: {
   notify: (text: string, error?: boolean) => void;
 }) {
-  const { appearance, update, savePlayback } = useAppearance(),
+  const { appearance, update, savePlayback, saveReader } = useAppearance(),
     [busy, setBusy] = useState(false);
   return (
     <section
@@ -19,7 +19,7 @@ export function PlaybackSettings({
         </span>
         <div>
           <h2>Playback</h2>
-          <p>Choose what the playback progress bar shows.</p>
+          <p>Choose what the progress bar shows and how linked ebooks open.</p>
         </div>
       </div>
       <label>
@@ -45,6 +45,25 @@ export function PlaybackSettings({
         Chapter mode shows elapsed and remaining time within the current
         chapter, including chapters inside a single M4B file.
       </p>
+      <label>
+        Ebook view
+        <select
+          aria-label="Ebook view"
+          value={appearance.reader.display}
+          onChange={(event) =>
+            update({
+              ...appearance,
+              reader: {
+                ...appearance.reader,
+                display: event.target.value as "book" | "segment",
+              },
+            })
+          }
+        >
+          <option value="book">Page</option>
+          <option value="segment">Lyrics</option>
+        </select>
+      </label>
       <p className="muted">
         For precise seeking, hold the progress bar and drag farther above or
         below it to slow down. Release to seek.
@@ -55,6 +74,7 @@ export function PlaybackSettings({
         onClick={() => {
           setBusy(true);
           void savePlayback()
+            .then(() => saveReader({ display: appearance.reader.display }))
             .then(() => notify("Playback settings saved."))
             .catch((error) => notify(error.message, true))
             .finally(() => setBusy(false));
