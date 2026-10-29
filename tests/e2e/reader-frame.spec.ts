@@ -149,9 +149,10 @@ test("a section with content before its head still has the CSP in the head",asyn
   const doc=f.contentDocument!,meta=doc.querySelector('meta[http-equiv="Content-Security-Policy"]');
   // A bare character before <head> also makes the parser move the head into <body>, so the meta must be
   // inside the head the frame parsed, not merely the first element of the head in the source tree.
-  return {parent:meta?.parentElement?.tagName,first:doc.head.firstElementChild===meta,inHead:doc.head.contains(meta)};
+  return {parent:meta?.parentElement?.tagName,first:doc.head.firstElementChild===meta,inHead:doc.head.contains(meta),srcset:doc.querySelectorAll("[srcset]").length};
  });
- expect(csp).toEqual({parent:"HEAD",first:true,inHead:true});
+ // srcset is removed outright: Firefox fetches its candidates even when the CSP is in force.
+ expect(csp).toEqual({parent:"HEAD",first:true,inHead:true,srcset:0});
  expect(leaks).toEqual([]);
  expect(await page.evaluate(()=>(window as any).__epubScriptExecuted)).toBeUndefined();
 });
@@ -166,9 +167,10 @@ test("a section with a character before its head still has the CSP in the head",
  await page.waitForTimeout(1000);
  const csp=await page.locator(".reader-room:not(.inline-reader) .reader-viewport iframe").first().evaluate((f:HTMLIFrameElement)=>{
   const doc=f.contentDocument!,meta=doc.querySelector('meta[http-equiv="Content-Security-Policy"]');
-  return {parent:meta?.parentElement?.tagName,first:doc.head.firstElementChild===meta,inHead:doc.head.contains(meta)};
+  return {parent:meta?.parentElement?.tagName,first:doc.head.firstElementChild===meta,inHead:doc.head.contains(meta),srcset:doc.querySelectorAll("[srcset]").length};
  });
- expect(csp).toEqual({parent:"HEAD",first:true,inHead:true});
+ // srcset is removed outright: Firefox fetches its candidates even when the CSP is in force.
+ expect(csp).toEqual({parent:"HEAD",first:true,inHead:true,srcset:0});
  expect(leaks).toEqual([]);
  expect(await page.evaluate(()=>(window as any).__epubScriptExecuted)).toBeUndefined();
 });

@@ -446,6 +446,9 @@ export function ReaderView({
               "script,iframe,object,embed,form,input,button,nav,svg,area,map",
             )
             .forEach((node) => node.remove());
+          // srcset survives sanitising, and Firefox fetches its candidates even with the CSP in place, so a book
+          // could make the reader's browser contact a URL of its choosing. Reader pages do not need it.
+          doc.querySelectorAll("[srcset]").forEach((node) => node.removeAttribute("srcset"));
           // The CSP is the layer that holds if sanitising ever misses something, so it is never optional:
           // a section without a <head> gets one. base-uri and form-action do not fall back to default-src.
           if (!doc.head) root.insertBefore(doc.createElement("head"), root.firstChild);
