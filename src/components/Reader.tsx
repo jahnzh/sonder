@@ -389,6 +389,24 @@ export function ReaderView({
         file.current = blob;
         const publication = ePub({ replacements: "blobUrl" });
         epub.current = publication;
+        // epub.js turns every non-HTML resource into a blob: URL on the app's origin, typed by its file
+        // extension, and those documents never pass through the content hook below. With scripts allowed in
+        // the frame, an SVG or XML blob the frame is navigated to would run its script as the app. Only
+        // plain media keeps a blob: URL; everything else becomes a data: URL, whose document has an opaque
+        // origin and cannot reach the app. Images, fonts and CSS render the same either way.
+        const blobSafe = /\.(?:png|jpe?g|gif|webp|avif|bmp|ico|ttf|otf|woff2?|mp3|m4a|m4b|aac|oga|ogg|opus|wav|flac|mp4|m4v|webm)$/i;
+        let archive: any;
+        Object.defineProperty(publication, "archive", {
+          configurable: true,
+          get: () => archive,
+          set(value) {
+            archive = value;
+            if (!value?.createUrl) return;
+            const createUrl = value.createUrl.bind(value);
+            value.createUrl = (url: string, options?: { base64?: boolean }) =>
+              createUrl(url, blobSafe.test(url.split(/[?#]/)[0]) ? options : { ...options, base64: true });
+          },
+        });
         publication.spine.hooks.content.register((doc: Document) => {
           // Fail closed. A section whose root is not <html> would lose its root to the tag removal below
           // before it is sanitised or given a CSP. epub.js keeps its own reference to the original root and
@@ -414,12 +432,14 @@ export function ReaderView({
               "form",
               "input",
               "button",
+              "area",
+              "map",
             ],
             FORBID_ATTR: ["srcdoc"],
           });
           doc
             .querySelectorAll(
-              "script,iframe,object,embed,form,input,button,nav,svg",
+              "script,iframe,object,embed,form,input,button,nav,svg,area,map",
             )
             .forEach((node) => node.remove());
           // The CSP is the layer that holds if sanitising ever misses something, so it is never optional:

@@ -4,7 +4,7 @@ import {readerFixture} from "../reader-fixture";
 // The EPUB frame allows scripts so that WebKit (Safari, iOS) runs the reader's own listeners on the page:
 // without allow-scripts it runs none of them (#37). EPUB content itself must still never run script.
 // Both checks run in Chromium, Firefox and WebKit.
-async function importBook(page:Page,title:string,script=false,variant?:"svg-root"|"iframe-root"|"nav-root"|"no-head"){
+async function importBook(page:Page,title:string,script=false,variant?:"svg-root"|"iframe-root"|"nav-root"|"no-head"|"svg-asset"){
  const audio=await page.request.post("/api/import",{multipart:{title,author:"Frame QA",file:{name:"Narration.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
  expect(audio.ok()).toBe(true);
  const audioId=(await audio.json()).id;
@@ -111,4 +111,25 @@ test("a section without a head still gets the CSP first and runs nothing",async(
  expect(state.sandbox).toBe("allow-same-origin allow-scripts");
  expect(state.csp).toContain("default-src 'none'");
  expect(state.csp).toContain("base-uri 'none'");
+});
+
+// epub.js turns book resources into blob: URLs on the app's origin after the content hook has run. An SVG that
+// carries script must not get such a URL: navigating the frame to it would run the script as the app.
+test("a book's SVG asset is a data: URL, so navigating the frame to it reaches nothing",async({page})=>{
+ await importBook(page,"Frame svg asset",false,"svg-asset");
+ const frame=page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe");
+ await expect(frame.getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
+ const iframe=page.locator(".reader-room:not(.inline-reader) .reader-viewport iframe").first();
+ const seen=await iframe.evaluate((f:HTMLIFrameElement)=>{
+  const doc=f.contentDocument!;
+  const image=doc.querySelector("#svg-image") as HTMLImageElement|null,link=doc.querySelector("#svg-link") as HTMLAnchorElement|null;
+  return {image:image?.getAttribute("src")?.slice(0,22),link:link?.getAttribute("href")?.slice(0,22),areas:doc.querySelectorAll("area,map").length,width:image?.naturalWidth};
+ });
+ // The image still renders, from a data: URL; the image map is gone.
+ expect(seen).toEqual({image:"data:image/svg+xml;bas",link:"data:image/svg+xml;bas",areas:0,width:20});
+ // Navigate the frame to the link target the way a stray link or script would.
+ await iframe.evaluate((f:HTMLIFrameElement)=>{f.contentWindow!.location.assign((f.contentDocument!.querySelector("#svg-link") as HTMLAnchorElement).href);});
+ await page.waitForTimeout(1500);
+ expect(await page.evaluate(()=>(window as any).__epubScriptExecuted)).toBeUndefined();
+ expect(await iframe.getAttribute("sandbox")).toBe("allow-same-origin allow-scripts");
 });

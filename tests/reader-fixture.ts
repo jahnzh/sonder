@@ -1,6 +1,6 @@
 import JSZip from "jszip";
 export async function readerFixture(
-  options: { language?: string; script?: boolean; cover?: boolean; variant?: "svg-root" | "iframe-root" | "nav-root" | "no-head" } = {},
+  options: { language?: string; script?: boolean; cover?: boolean; variant?: "svg-root" | "iframe-root" | "nav-root" | "no-head" | "svg-asset" } = {},
 ) {
   const zip = new JSZip();
   zip.file("mimetype", "application/epub+zip", { compression: "STORE" });
@@ -12,6 +12,18 @@ export async function readerFixture(
     "OEBPS/content.opf",
     `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="bookid">sonder-reader-test</dc:identifier><dc:title>Alice Reader Test</dc:title><dc:creator>Lewis Carroll</dc:creator><dc:language>${options.language || "en"}</dc:language><meta property="dcterms:modified">2026-10-26T00:00:00Z</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="one" href="one.xhtml" media-type="application/xhtml+xml"/><item id="two" href="two.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="one"/><itemref idref="two"/></spine></package>`,
   );
+  if (options.variant === "svg-asset") {
+    // A manifest SVG that carries script, reached from an image, a link and an image map in chapter one.
+    const opf = await zip.file("OEBPS/content.opf")!.async("string");
+    zip.file(
+      "OEBPS/content.opf",
+      opf.replace("<manifest>", '<manifest><item id="payload" href="payload.svg" media-type="image/svg+xml"/>'),
+    );
+    zip.file(
+      "OEBPS/payload.svg",
+      `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><script>try{parent.__epubScriptExecuted=true}catch(e){}try{frameElement.removeAttribute("sandbox")}catch(e){}</script><rect width="20" height="20" fill="red"/></svg>`,
+    );
+  }
   if (options.cover) {
     const opf = await zip.file("OEBPS/content.opf")!.async("string");
     zip.file(
@@ -50,13 +62,13 @@ export async function readerFixture(
       "nav-root": `<?xml version="1.0"?><nav xmlns="http://www.w3.org/1999/xhtml"><img src="missing.png" alt="" onerror="${payload}"/></nav>`,
       "no-head": `<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><body><p id="p0">Alice was beginning to get very tired of sitting by her sister on the bank.</p><img src="/leak.png" alt="" onerror="${payload}"/><style>p{background:url(/leak-css.png)}</style></body></html>`,
     };
-    if (options.variant && index === 0) {
+    if (options.variant && variants[options.variant] && index === 0) {
       zip.file(`OEBPS/${href}`, variants[options.variant]);
       continue;
     }
     zip.file(
       `OEBPS/${href}`,
-      `<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>${title}</title></head><body><h1>${title}</h1>${paragraphs}${options.script ? '<script>parent.__epubScriptExecuted=true</script><iframe srcdoc="&lt;script&gt;parent.parent.__epubScriptExecuted=true&lt;/script&gt;"></iframe><img src="missing.png" alt="" onerror="parent.__epubScriptExecuted=true"/><p onclick="parent.__epubScriptExecuted=true">Inline handler</p><a href="javascript:void(parent.__epubScriptExecuted=true)">Script link</a><svg xmlns="http://www.w3.org/2000/svg" onload="parent.__epubScriptExecuted=true"><script>parent.__epubScriptExecuted=true</script></svg>' : ""}</body></html>`,
+      `<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>${title}</title></head><body><h1>${title}</h1>${paragraphs}${options.variant === "svg-asset" && index === 0 ? '<img id="svg-image" src="payload.svg" alt="Payload"/><a id="svg-link" href="payload.svg">Payload link</a><map name="m"><area id="svg-area" shape="rect" coords="0,0,20,20" href="payload.svg" alt="Payload area"/></map>' : ""}${options.script ? '<script>parent.__epubScriptExecuted=true</script><iframe srcdoc="&lt;script&gt;parent.parent.__epubScriptExecuted=true&lt;/script&gt;"></iframe><img src="missing.png" alt="" onerror="parent.__epubScriptExecuted=true"/><p onclick="parent.__epubScriptExecuted=true">Inline handler</p><a href="javascript:void(parent.__epubScriptExecuted=true)">Script link</a><svg xmlns="http://www.w3.org/2000/svg" onload="parent.__epubScriptExecuted=true"><script>parent.__epubScriptExecuted=true</script></svg>' : ""}</body></html>`,
     );
   }
   return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
