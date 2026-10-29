@@ -29,6 +29,7 @@ import {
   playFailureAction,
   recoverOnce,
   recoveryOutcome,
+  stallHandler,
   stallWatchdog,
 } from "./device-fallback";
 import { BLOCKING_DIALOG_SELECTOR, playbackKeyAction } from "./keyboard";
@@ -123,6 +124,8 @@ export function PlayerProvider({
     request: StreamRequest;
     book: Book;
     track: Track;
+    // A complete download exists, so a stalled stream has somewhere to switch.
+    deviceCopy: boolean;
     recovery?: Promise<boolean>;
   } | null>(null);
   const noticedFor = useRef<string | null>(null);
@@ -175,7 +178,9 @@ export function PlayerProvider({
   }, []);
   // A server or original choice that fails with no route to the server plays the
   // device copy for this load only; the saved choice stays as it is.
-  const recoverOnDevice = useCallback((): Promise<boolean> => {
+  // `stillNeeded` is checked once the probe is back: a stall that cleared
+  // meanwhile proves nothing about the connection and needs no switch.
+  const recoverOnDevice = useCallback((stillNeeded?: () => boolean): Promise<boolean> => {
     const load = streamLoad.current;
     if (!load) return Promise.resolve(false);
     return recoverOnce(load, async () => {
@@ -184,8 +189,9 @@ export function PlayerProvider({
       const current = () =>
         streamLoad.current === load && generation.current === load.generation;
       const unreachable = await isTransportFailure(el.src);
-      if (unreachable) failures.remember();
-      if (!unreachable || !current()) return false;
+      if (!unreachable || !current() || (stillNeeded && !stillNeeded()))
+        return false;
+      failures.remember();
       const [download, fault] = await Promise.all([
         localDB.downloads.get(load.track.id),
         deviceFault(load.book.recordingId),
@@ -267,7 +273,9 @@ export function PlayerProvider({
         b.tracks[0];
       let input: Awaited<ReturnType<typeof playbackInput>>;
       try {
-        input = await playbackInput(b, selected, failures.recent());
+        input = await playbackInput(b, selected, failures.recent(), () =>
+          failures.clear(),
+        );
       } catch (error) {
         if (request !== playRequests.current) return;
         setError((error as Error).message);
@@ -334,10 +342,16 @@ export function PlayerProvider({
               request: input.preference,
               book: b,
               track: selected,
+              deviceCopy: input.deviceCopy,
             }
           : null;
       const streamed = !!streamLoad.current;
-      if (local && input.remembered && noticedFor.current !== b.recordingId) {
+      if (
+        autoplay &&
+        local &&
+        input.remembered &&
+        noticedFor.current !== b.recordingId
+      ) {
         noticedFor.current = b.recordingId;
         notifyRef.current?.(
           fallbackNotice(input.preference === "original" ? "original" : "server"),
@@ -349,6 +363,7 @@ export function PlayerProvider({
           `/media/${encodeURIComponent(selected.id)}/location?source=${input.request}`,
         )
           .then((location) => {
+            failures.clear();
             if (
               currentGeneration === generation.current &&
               !objectUrl.current &&
@@ -539,6 +554,8 @@ export function PlayerProvider({
       const { book, track } = state.current;
       if (!book || !track) return;
       await setPreferredSource(book.recordingId, choice);
+      // The user picked a source: try it instead of the remembered outage.
+      failures.clear();
       await playRef.current(
         book,
         track,
@@ -547,19 +564,26 @@ export function PlayerProvider({
         true,
       );
     },
-    [],
+    [failures],
   );
   useEffect(() => {
     const el = audio.current;
     el.preload = "metadata";
-    const watchdog = stallWatchdog(() => {
-      const load = streamLoad.current;
-      if (!load || load.generation !== generation.current) return;
-      void recoverOnDevice().then((recovered) => {
-        // Still stalled and still this stream: check again after another wait.
-        if (!recovered && streamLoad.current === load) stalling();
-      });
-    });
+    const watchdog = stallWatchdog(
+      stallHandler({
+        load: () => {
+          const load = streamLoad.current;
+          return load && load.generation === generation.current ? load : null;
+        },
+        read: () => ({
+          currentTime: el.currentTime,
+          readyState: el.readyState,
+          paused: el.paused,
+        }),
+        recover: recoverOnDevice,
+        rearm: () => stalling(),
+      }),
+    );
     stall.current = watchdog;
     const positionState = () => {
       const report = mediaPositionState(el);
@@ -627,6 +651,7 @@ export function PlayerProvider({
       }
     };
     const failed = () => {
+      watchdog.cancel();
       const fail = () => {
         setLoading(false);
         setPlaying(false);
@@ -640,13 +665,16 @@ export function PlayerProvider({
       const load = streamLoad.current;
       if (!el.src || load?.generation !== generation.current) return fail();
       void recoverOnDevice().then((recovered) => {
-        if (!recovered && load.generation === generation.current) fail();
+        if (!recovered && load.generation === generation.current) {
+          watchdog.cancel();
+          fail();
+        }
       });
     };
     // A stream that neither plays nor fails never raises `error`, so after a
     // while the same connection check as for a failed load decides.
     const stalling = () => {
-      if (streamLoad.current && el.src && !el.paused) watchdog.arm();
+      if (streamLoad.current?.deviceCopy && el.src && !el.paused) watchdog.arm();
     };
     const waiting = () => {
       setLoading(true);

@@ -34,18 +34,11 @@ export async function deviceFault(id: string) {
   return (await localDB.preferences.get(deviceFaultKey(id)))?.value as
     MediaFault | undefined;
 }
-export async function getRecordingSources(
+// Last known sources for a recording, without asking the server.
+export async function cachedRecordingSources(
   book: Book,
 ): Promise<RecordingSources> {
   const key = `recording-sources:${book.recordingId}`;
-  if (navigator.onLine)
-    try {
-      const state = await api<RecordingSources>(
-        `/recordings/${encodeURIComponent(book.recordingId)}/sources`,
-      );
-      await localDB.preferences.put({ key, value: state });
-      return state;
-    } catch {}
   return (
     ((await localDB.preferences.get(key))?.value as RecordingSources) || {
       recordingId: book.recordingId,
@@ -64,17 +57,46 @@ export async function getRecordingSources(
     }
   );
 }
+// `onReachable` runs when the server answered the sources request.
+export async function getRecordingSources(
+  book: Book,
+  onReachable?: () => void,
+): Promise<RecordingSources> {
+  const key = `recording-sources:${book.recordingId}`;
+  if (navigator.onLine)
+    try {
+      const state = await api<RecordingSources>(
+        `/recordings/${encodeURIComponent(book.recordingId)}/sources`,
+      );
+      onReachable?.();
+      await localDB.preferences.put({ key, value: state });
+      return state;
+    } catch {}
+  return cachedRecordingSources(book);
+}
 export async function playbackInput(
   book: Book,
   track: Track,
   recentFailure = false,
+  onReachable?: () => void,
 ) {
-  const [chosen, state, fault, download] = await Promise.all([
+  const [chosen, fault, download] = await Promise.all([
     preferredSource(book.recordingId),
-    getRecordingSources(book),
     deviceFault(book.recordingId),
     localDB.downloads.get(track.id),
   ]);
+  // A recent outage sends an explicit stream straight to the device copy, so
+  // the load must not wait for a request to a server that just failed. The
+  // sources are read from the cache and refreshed in the background; if the
+  // server answers, `onReachable` lets the memory go.
+  const skipping =
+    (chosen === "server" || chosen === "original") &&
+    skipStream({ request: chosen, recentFailure, download, fault });
+  let state: RecordingSources;
+  if (skipping) {
+    state = await cachedRecordingSources(book);
+    void getRecordingSources(book, onReachable);
+  } else state = await getRecordingSources(book, onReachable);
   const preference = offlinePreference(chosen, navigator.onLine, download, fault);
   if (state.faults.recording)
     throw new Error(
@@ -115,11 +137,13 @@ export async function playbackInput(
   return {
     preference,
     request,
-    // A recent outage sends an explicit stream straight to the device copy; the
-    // caller still plays the stream when that copy turns out to be incomplete.
+    // The caller still plays the stream when the device copy turns out to be
+    // incomplete.
     remembered:
       (preference === "server" || preference === "original") &&
-      skipStream(preference, recentFailure, download, fault),
+      skipStream({ request: preference, recentFailure, download, fault }),
+    // A complete download exists, so a stalled stream has somewhere to switch.
+    deviceCopy: !!download && !fault,
     device: (preference === "auto" || preference === "device") && !fault,
     expected:
       request === "server"

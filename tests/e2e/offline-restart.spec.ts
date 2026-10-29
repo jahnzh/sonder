@@ -319,14 +319,17 @@ test("a stream that stalls after its first bytes switches to the device copy at 
     context = await launch(profile);
     await exposeAudio(context);
     // The first 2.5 s of audio arrive, then the connection goes silent: no
-    // data and no error. The connection check itself is refused at once.
+    // data and no error. The connection check hangs for 3 s, then is refused.
     const firstBytes = 40_000;
     let served = false;
     let release!: () => void;
     const hold = new Promise<void>((resolve) => (release = resolve));
     await context.route(serverStream, async (route) => {
       const headers = route.request().headers();
-      if (headers.range === "bytes=0-0") return route.abort("connectionrefused");
+      if (headers.range === "bytes=0-0") {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        return route.abort("connectionrefused").catch(() => {});
+      }
       if (!served) {
         served = true;
         return route.fulfill({
@@ -362,6 +365,64 @@ test("a stream that stalls after its first bytes switches to the device copy at 
     await rm(profile, { recursive: true, force: true });
   }
 });
+test("a stall that clears while the connection check hangs keeps the stream and checks once (server source choice)", async () => {
+  test.setTimeout(60_000);
+  const title = "Restart story resumed stream";
+  const profile = await mkdtemp(join(tmpdir(), "sonder-restart-"));
+  try {
+    let context = await launch(profile);
+    await saveOnDevice(context, title, "server");
+    await context.close();
+    context = await launch(profile);
+    await exposeAudio(context);
+    // The first 2.5 s arrive and the next request hangs. When the watchdog
+    // checks the connection, that check hangs too, and the stalled request
+    // is answered with the rest of the audio while it is still pending.
+    const firstBytes = 40_000;
+    let served = false;
+    let probes = 0;
+    let resumeStream!: () => void;
+    const resumed = new Promise<void>((resolve) => (resumeStream = resolve));
+    let endProbe!: () => void;
+    const probeEnd = new Promise<void>((resolve) => (endProbe = resolve));
+    await context.route(serverStream, async (route) => {
+      const headers = route.request().headers();
+      if (headers.range === "bytes=0-0") {
+        probes++;
+        resumeStream();
+        await probeEnd;
+        return route.abort("connectionrefused").catch(() => {});
+      }
+      if (!served) {
+        served = true;
+        return route.fulfill({
+          response: await route.fetch({
+            headers: { ...headers, range: `bytes=0-${firstBytes - 1}` },
+          }),
+        });
+      }
+      await resumed;
+      await route.fulfill({ response: await route.fetch() }).catch(() => {});
+    });
+    const page = context.pages()[0] || (await context.newPage());
+    await page.goto("/");
+    await page.getByRole("tab", { name: "Downloaded", exact: true }).click();
+    await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
+    await expect.poll(() => probes, { timeout: 25_000 }).toBe(1);
+    await expect.poll(() => audioTime(page)).toBeGreaterThan(3);
+    // Not a retrying assertion: wait out the 8 s check and several stall
+    // periods, then look. The stream was never switched and never re-checked.
+    await page.waitForTimeout(12_000);
+    expect(probes).toBe(1);
+    await expect(page.locator(".toast")).toHaveCount(0);
+    await expect(page.locator(".player-dock .playback-source")).not.toHaveText("Device cache");
+    await expect(page.locator(".player-error")).toHaveCount(0);
+    endProbe();
+    await context.close();
+  } finally {
+    await rm(profile, { recursive: true, force: true });
+  }
+});
 test("the next chapter of an unreachable server plays the device copy without another stream request (server source choice)", async () => {
   test.setTimeout(60_000);
   const title = "Restart story outage chapters";
@@ -382,6 +443,16 @@ test("the next chapter of an unreachable server plays the device copy without an
     await page.getByRole("tab", { name: "Downloaded", exact: true }).click();
     await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
     await expect(page.locator(".player-dock .playback-source")).toHaveText("Device cache");
+    // From here the server answers nothing: the sources request hangs.
+    let sourcesHeld = false;
+    let releaseSources!: () => void;
+    const sourcesHold = new Promise<void>((resolve) => (releaseSources = resolve));
+    await context.route(/\/api\/recordings\/[^/]+\/sources/, async (route) => {
+      if (!sourcesHeld) return route.continue();
+      await sourcesHold;
+      await route.abort().catch(() => {});
+    });
+    sourcesHeld = true;
     const [first, second] = (await (await page.request.get("/api/books")).json()).find(
       (b: { title: string }) => b.title === title,
     ).tracks as { id: string }[];
@@ -395,7 +466,8 @@ test("the next chapter of an unreachable server plays the device copy without an
       const el = (window as unknown as { __audio: HTMLMediaElement }).__audio;
       el.currentTime = el.duration - 0.5;
     });
-    await expect(chapter).not.toHaveText(firstChapter!, { timeout: 15_000 });
+    // Prompt, although the sources request never answers.
+    await expect(chapter).not.toHaveText(firstChapter!, { timeout: 5_000 });
     await expect(page.locator(".player-dock .playback-source")).toHaveText("Device cache");
     await expect(
       page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true }),
@@ -405,6 +477,7 @@ test("the next chapter of an unreachable server plays the device copy without an
     expect(requested.length).toBe(beforeNext);
     expect(requested).not.toContain(second.id);
     expect(await storedChoice(page, book.recordingId)).toBe("server");
+    releaseSources();
     await context.close();
   } finally {
     await rm(profile, { recursive: true, force: true });
