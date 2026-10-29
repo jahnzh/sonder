@@ -46,6 +46,6 @@ Environment overrides: `SONDER_CI_HOST`, `SONDER_CI_REMOTE_BASE`, `SONDER_CI_IMA
 
 - **Isolation**: each run is a container with a CPU, memory and PID limit, and the Playwright image supplies the browsers and their system libraries. There are no browser or WebKit package preflights, and no loopback preflight (the container has its own loopback).
 - **Browsers**: the image ships Chromium, Firefox and WebKit, and `playwright.config.ts` enables each one that exists. The Deck runs 91 tests where the WSL host runs 80.
-- **Known failures**: the same `tests/known-failures.wsl-host.json`. Its four WebKit failures are known (#37); the pilot returned `passed_with_known_failures` with 5 known failures and 0 new.
+- **Known failures**: the same `tests/known-failures.wsl-host.json`. The pilot returned `passed_with_known_failures` with 5 known failures and 0 new, four of them the WebKit failures that #37 fixed.
 - **Duration**: Chromium alone takes about 4 minutes, in line with WSL.
 - **Hardware**: a handheld that shares its disk with the user's games. Keep `--cpus 2 --memory 6g`, and never run two checks at once.

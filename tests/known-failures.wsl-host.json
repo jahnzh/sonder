@@ -2,38 +2,6 @@
   "version": 1,
   "entries": [
     {
-      "project": "webkit",
-      "file": "tests/e2e/device-reset.spec.ts",
-      "title": "reset refreshes the app shell while preserving device data",
-      "kind": "environment",
-      "reason": "WebKit on the WSL host: page.evaluate returns null during the service-worker and IndexedDB step",
-      "issue": 37
-    },
-    {
-      "project": "webkit",
-      "file": "tests/e2e/now-playing-layout.spec.ts",
-      "title": "reader-first Now Playing is aligned at 360px",
-      "kind": "environment",
-      "reason": "WebKit on the WSL host: the seek slider is not found and the timeline collapses to zero size",
-      "issue": 37
-    },
-    {
-      "project": "webkit",
-      "file": "tests/e2e/now-playing-layout.spec.ts",
-      "title": "reader-first Now Playing is aligned at 390px",
-      "kind": "environment",
-      "reason": "WebKit on the WSL host: the seek slider is not found and the timeline collapses to zero size",
-      "issue": 37
-    },
-    {
-      "project": "webkit",
-      "file": "tests/e2e/now-playing-layout.spec.ts",
-      "title": "reader-first Now Playing is aligned at 430px",
-      "kind": "environment",
-      "reason": "WebKit on the WSL host: the seek slider is not found and the timeline collapses to zero size",
-      "issue": 37
-    },
-    {
       "project": "chromium",
       "file": "tests/e2e/playback-workflow.spec.ts",
       "title": "touch seeking › releasing a fine-seek gesture keeps the exact previewed destination",
