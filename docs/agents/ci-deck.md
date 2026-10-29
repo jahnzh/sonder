@@ -17,10 +17,10 @@ npm run ci:deck <sha>
 
 `scripts/ci-deck.sh` follows `scripts/ci-ssh.sh`: it sends a Git bundle, runs detached, polls, retrieves the report into `artifacts/ci/<sha>/<run>/`, posts the commit status with context `ci/deck`, and cleans up.
 
-1. **Preflights** (read `deck-preflight.txt` in the artifacts): `podman` present; the image present, pulled when missing; free disk above `SONDER_CI_MIN_DISK_GB` (default 10); the lockfile's Playwright version matches the image tag. A `sonder-ci-run-*` container whose run directory is gone, or older than the wait cap, is printed as `stale_container=` and **left alone**: inspect it on the Deck with `podman ps -a` and remove it by hand.
+1. **Preflights** (read `deck-preflight.txt` in the artifacts): `podman`, `git`, `systemd-run`, `systemctl` present and user lingering on (without it the unit dies when the SSH session ends); the image present, pulled when missing; free disk above `SONDER_CI_MIN_DISK_GB` (default 10); the lockfile's Playwright version matches the image tag. A `sonder-ci-run-*` container whose run directory is gone, or older than the wait cap, is printed as `stale_container=` and **left alone**: inspect it on the Deck with `podman ps -a` and remove it by hand.
 2. **Unpack**: the bundle is cloned into a fresh `~/sonder-ci/runs/<sha7>-<random>/checkout` and the commit checked out. It must be a real clone because `npm run check --ref` resolves the commit and runs `git archive` in it.
 3. **Run**: the fixed command below, as a transient `systemd-run --user` unit named like the container (a `setsid nohup` child is killed when the SSH session ends on SteamOS), with its exit status written to `check.exit`.
-4. **Cleanup**: the script stops only this run's process group, runs `podman rm -f --ignore sonder-ci-run-<sha7>-<random>` and removes only `runs/<sha7>-<random>`. The image and `cache/npm` stay.
+4. **Cleanup**: the script runs `podman rm -f -t 0 --ignore sonder-ci-run-<sha7>-<random>` first (the container's init ignores SIGTERM), stops only this run's unit and removes only `runs/<sha7>-<random>`. If cleanup cannot finish, the script prints the host, directory and container to remove by hand. The image and `cache/npm` stay.
 
 The container is named `sonder-ci-run-<sha7>-<random>`, using the same `<sha7>-<random>` as the run directory. No `.env`, no `data/`, no production media and no `verify-*.mjs` exist in the container.
 
@@ -38,9 +38,9 @@ podman run --rm --name sonder-ci-run-<id> --cpus 2 --memory 6g --pids-limit 2048
 
 ## Exit codes
 
-As in `ci-ssh.sh`: 0 passed; 1 the check failed (or its own exit status); 2 usage; 4 the run never started or died (including podman exit 125); 5 SSH lost after the run began; 124 wait cap reached. Preflight codes: 3 podman missing; 6 image missing and not pullable, or not matching the lockfile; 7 free disk below the threshold. An unreachable Deck at the start falls back to a local `npm run check`. A failure on the Deck is a failure: do not rerun elsewhere to get a pass.
+As in `ci-ssh.sh`: 0 passed; 1 the check failed (or its own exit status); 2 usage; 4 the run never started or died (including podman exit 125); 5 SSH lost after the run began; 124 wait cap reached. Preflight codes: 3 podman, git, systemd-run or lingering missing; 6 image missing and not pullable, or not matching the lockfile; 7 free disk below the threshold. An unreachable Deck at the start falls back to a local `npm run check`. A failure on the Deck is a failure: do not rerun elsewhere to get a pass.
 
-Environment overrides: `SONDER_CI_HOST`, `SONDER_CI_REMOTE_BASE`, `SONDER_CI_IMAGE`, `SONDER_CI_MIN_DISK_GB`, `SONDER_CI_KNOWN_FAILURES`, `SONDER_CI_MAX_WAIT`, `SONDER_CI_POLL_INTERVAL`, `SONDER_CI_POST_STATUS`.
+Environment overrides: `SONDER_CI_HOST`, `SONDER_CI_REMOTE_BASE`, `SONDER_CI_IMAGE`, `SONDER_CI_MIN_DISK_GB`, `SONDER_CI_KNOWN_FAILURES`, `SONDER_CI_MAX_WAIT`, `SONDER_CI_POLL_INTERVAL`, `SONDER_CI_POST_STATUS`, `SONDER_CI_REPO`, `SONDER_CI_STATUS_CONTEXT`, `SONDER_CI_TRANSFER_TIMEOUT`, `SONDER_CI_PULL_TIMEOUT`, `SONDER_CI_CLEANUP_TIMEOUT`. The host must start with a letter or digit, the image likewise, and `SONDER_CI_REMOTE_BASE` must be an absolute path.
 
 ## Differences from the WSL host
 

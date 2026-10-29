@@ -119,6 +119,18 @@ esac
 exit 0
 `;
 
+// Lingering is on unless STUB_LINGER says otherwise.
+const loginctlStub = `#!/usr/bin/env bash
+echo "\${STUB_LINGER:-yes}"
+`;
+
+// A developer's own SONDER_CI_* settings must not change what the tests see.
+function cleanEnv() {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) if (key.startsWith("SONDER_CI_") || key === "REPORT_JSON") delete env[key];
+  return env;
+}
+
 function fixture() {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-ci-deck-"));
   const repo = path.join(base, "repo");
@@ -151,6 +163,7 @@ function fixture() {
     podman: podmanStub,
     "systemd-run": systemdRunStub,
     systemctl: systemctlStub,
+    loginctl: loginctlStub,
   }))
     fs.writeFileSync(path.join(bin, name), body, { mode: 0o755 });
   const logs = {
@@ -168,7 +181,7 @@ function fixture() {
       encoding: "utf8",
       timeout: 60_000,
       env: {
-        ...process.env,
+        ...cleanEnv(),
         PATH: `${bin}:${process.env.PATH}`,
         SONDER_CI_REMOTE_BASE: remote,
         SONDER_CI_POLL_INTERVAL: "0.2",
@@ -287,7 +300,7 @@ test("the report and log are retrieved and only this run's container and directo
   assert.ok(name);
   assert.equal(f.result(f.second).container, name);
   const removals = f.read(f.logs.podman).split("\n").filter((line) => line.startsWith("rm "));
-  assert.deepEqual(removals, [`rm -f --ignore ${name}`]);
+  assert.deepEqual(removals, [`rm -f -t 0 --ignore ${name}`]);
 });
 
 test("a failing check is a failure on the Deck and is never rerun elsewhere", () => {
@@ -340,7 +353,7 @@ test("three consecutive failed polls count as connectivity loss and stop the run
   assert.equal(f.result(f.second).result, "host_connectivity_lost");
   assert.equal(f.localCheckCalls().length, 0);
   assert.deepEqual(f.runsLeft(), [], "the hung run was stopped and removed");
-  assert.match(f.read(f.logs.podman), /^rm -f --ignore sonder-ci-run-/m);
+  assert.match(f.read(f.logs.podman), /^rm -f -t 0 --ignore sonder-ci-run-/m);
 });
 
 test("the wait stops at the configured cap", () => {
@@ -360,14 +373,14 @@ test("a stalled bundle upload is cut at the transfer cap and counts as connectiv
   assert.deepEqual(f.runsLeft(), []);
 });
 
-test("a missing podman stops the run before anything is sent", () => {
+test("a missing podman stops the run before anything is sent", (t) => {
   const f = fixture();
   fs.renameSync(path.join(f.bin, "podman"), path.join(f.bin, "podman.off"));
   const real = spawnSync("bash", ["-c", "command -v podman"], { env: { ...process.env, PATH: `${f.bin}:${process.env.PATH}` } });
-  if (real.status === 0) return; // a real podman on this machine's PATH cannot be hidden
+  if (real.status === 0) return t.skip("a real podman on this machine's PATH cannot be hidden");
   const out = f.run(f.second);
   assert.equal(out.status, 3, out.output);
-  assert.equal(f.result(f.second).result, "host_podman_missing");
+  assert.equal(f.result(f.second).result, "host_tool_missing");
   assert.equal(f.checkCalls().length, 0);
   assert.match(f.read(f.logs.gh), /state=failure/);
 });
@@ -453,4 +466,28 @@ test("a bad commit ref and a bad known-failures path are rejected", () => {
   const out = f.run(f.second, { SONDER_CI_KNOWN_FAILURES: "../../etc/passwd" });
   assert.equal(out.status, 2, out.output);
   assert.equal(f.runCalls().length, 0);
+});
+
+test("a Deck without user lingering stops the run before anything is sent", () => {
+  const f = fixture();
+  const out = f.run(f.second, { STUB_LINGER: "no" });
+  assert.equal(out.status, 3, out.output);
+  assert.equal(f.result(f.second).result, "host_tool_missing");
+  assert.match(out.output, /linger_check=fail/);
+  assert.equal(f.checkCalls().length, 0);
+});
+
+test("a unit that exits at once keeps its log and is reported as a container start failure", () => {
+  const f = fixture();
+  const out = f.run(f.second, { STUB_PODMAN_MODE: "start_fail" });
+  assert.equal(out.status, 4, out.output);
+  assert.equal(f.result(f.second).result, "container_start_failed");
+});
+
+test("a host or remote base that could be read as an option is refused", () => {
+  const f = fixture();
+  for (const env of [{ SONDER_CI_HOST: "-oProxyCommand=x" }, { SONDER_CI_IMAGE: "--privileged" }, { SONDER_CI_REMOTE_BASE: "relative/dir" }]) {
+    const out = f.run(f.second, env);
+    assert.equal(out.status, 2, out.output);
+  }
 });

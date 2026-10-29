@@ -46,6 +46,8 @@ MIN_DISK_GB=${SONDER_CI_MIN_DISK_GB:-10}
 KNOWN_FAILURES=${SONDER_CI_KNOWN_FAILURES:-tests/known-failures.wsl-host.json}
 POLL_FAILURE_LIMIT=3
 POLL_CALL_TIMEOUT=60
+# Cleanup stops a unit and removes a container and a directory; it gets its own, larger cap.
+CLEANUP_TIMEOUT=${SONDER_CI_CLEANUP_TIMEOUT:-150}
 # Hard cap for one scp transfer (the bundle upload, the report download).
 TRANSFER_TIMEOUT=${SONDER_CI_TRANSFER_TIMEOUT:-600}
 # Hard cap for pulling the image when it is missing.
@@ -58,7 +60,9 @@ SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=5 -o Serve
 [[ $MAX_WAIT =~ ^[0-9]+$ ]] || { echo "[ci-deck] SONDER_CI_MAX_WAIT must be whole seconds" >&2; exit 2; }
 [[ $POLL_INTERVAL =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "[ci-deck] SONDER_CI_POLL_INTERVAL must be a number of seconds" >&2; exit 2; }
 [[ $MIN_DISK_GB =~ ^[0-9]+$ ]] || { echo "[ci-deck] SONDER_CI_MIN_DISK_GB must be whole gigabytes" >&2; exit 2; }
-[[ $IMAGE =~ ^[A-Za-z0-9._/:@-]+$ ]] || { echo "[ci-deck] SONDER_CI_IMAGE has unexpected characters" >&2; exit 2; }
+[[ $IMAGE =~ ^[A-Za-z0-9][A-Za-z0-9._/:@-]*$ ]] || { echo "[ci-deck] SONDER_CI_IMAGE has unexpected characters" >&2; exit 2; }
+[[ $SONDER_CI_HOST =~ ^[A-Za-z0-9][A-Za-z0-9._@-]*$ ]] || { echo "[ci-deck] SONDER_CI_HOST has unexpected characters" >&2; exit 2; }
+[[ -z $REMOTE_BASE || $REMOTE_BASE =~ ^/[A-Za-z0-9._/-]+$ ]] || { echo "[ci-deck] SONDER_CI_REMOTE_BASE must be an absolute path" >&2; exit 2; }
 # The list path goes into the container command line, so keep it to a plain relative path.
 [[ $KNOWN_FAILURES =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ && $KNOWN_FAILURES != *..* ]] \
   || { echo "[ci-deck] SONDER_CI_KNOWN_FAILURES must be a relative repository path" >&2; exit 2; }
@@ -101,7 +105,7 @@ post_commit_status() {
   fi
 }
 
-# remote_bash <step> [arg...]: run the script on stdin on the Deck as
+# remote_command <step> [arg...]: run the script on stdin on the Deck as
 # `bash -s -- <step> arg...`. The step name stays visible on the command line.
 remote_command() {
   local cmd="bash -s --" arg
@@ -182,6 +186,14 @@ if ! command -v podman >/dev/null 2>&1; then
   exit 12
 fi
 echo "podman_version=$(podman --version 2>&1)"
+for tool in git systemd-run systemctl; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "tool_check=fail ($tool not found)"; exit 12; }
+done
+# Without lingering, a unit started over SSH dies when the session closes.
+if [ "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)" != yes ]; then
+  echo "linger_check=fail (run 'loginctl enable-linger $(id -un)' on the Deck)"
+  exit 12
+fi
 mkdir -p "$base/runs" "$base/cache/npm" || { echo "base_dir=fail ($base)"; exit 14; }
 free_kb=$(df -Pk "$base" | awk 'NR==2 {print $4}')
 free_gb=$((free_kb / 1024 / 1024))
@@ -233,8 +245,8 @@ REMOTE
       return 6
       ;;
     12)
-      log "Host failure: podman is not installed on ${SONDER_CI_HOST}"
-      record_result remote host_podman_missing 3
+      log "Host failure: podman, git, systemd-run or user lingering is missing on ${SONDER_CI_HOST}. Record: ${record_file}"
+      record_result remote host_tool_missing 3
       return 3
       ;;
     13)
@@ -244,8 +256,8 @@ REMOTE
       ;;
     14)
       log "Host failure: could not create the CI directories on ${SONDER_CI_HOST}"
-      record_result remote host_disk_low 7
-      return 7
+      record_result remote remote_setup_failed 4
+      return 4
       ;;
     *)
       log "Host failure: the Deck preflight could not run (ssh status ${rc})"
@@ -259,9 +271,9 @@ REMOTE
 # remove only this run's directory on the Deck.
 cleanup_remote() {
   [[ -n $REMOTE_RUN_DIR ]] || return 0
-  local dir=$REMOTE_RUN_DIR name=$CONTAINER_NAME
+  local dir=$REMOTE_RUN_DIR name=$CONTAINER_NAME out rc
   REMOTE_RUN_DIR=""
-  remote_bash_capped cleanup "$dir" "$name" <<'REMOTE'
+  out=$(timeout "$CLEANUP_TIMEOUT" ssh "${SSH_OPTS[@]}" "$SONDER_CI_HOST" "$(remote_command cleanup "$dir" "$name")" 2>&1 <<'REMOTE'
 run_dir=$2 name=$3
 case "$run_dir" in
   *..*) echo "refusing to clean $run_dir"; exit 1 ;;
@@ -272,27 +284,27 @@ case "$name" in
   sonder-ci-run-?*) ;;
   *) name="" ;;
 esac
-# Only this run's unit, by its exact name; the container is removed below.
+# Only this run's container, by its exact name and without waiting for it to stop: the container's init
+# (bash) ignores SIGTERM, so a plain unit stop could outlast the ssh cap and leave the container behind.
+[ -n "$name" ] && podman rm -f -t 0 --ignore "$name" >/dev/null 2>&1
 [ -n "$name" ] && systemctl --user stop "$name" >/dev/null 2>&1
 if [ -s "$run_dir/check.pid" ]; then
   pid=$(cat "$run_dir/check.pid")
   if kill -0 "$pid" 2>/dev/null && tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -qF "$run_dir"; then
-    pgid=$(ps -o pgid= -p "$pid" | tr -d ' ')
-    if [ "$pgid" = "$pid" ]; then kill -TERM -- "-$pid" 2>/dev/null; else kill -TERM "$pid" 2>/dev/null; fi
-    for _ in $(seq 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done
-    if kill -0 "$pid" 2>/dev/null; then
-      if [ "$pgid" = "$pid" ]; then kill -KILL -- "-$pid" 2>/dev/null; else kill -KILL "$pid" 2>/dev/null; fi
-    fi
+    kill -KILL "$pid" 2>/dev/null
   fi
 fi
-# Only this run's container, by its exact name. `--rm` normally removed it already.
-[ -n "$name" ] && podman rm -f --ignore "$name" >/dev/null 2>&1
 rm -rf "$run_dir" 2>/dev/null
 # Files written by a non-root user in the container belong to a sub-uid; remove them from inside the user namespace.
 [ -d "$run_dir" ] && podman unshare rm -rf "$run_dir" 2>/dev/null
 [ -d "$run_dir" ] && { echo "could not remove $run_dir"; exit 1; }
 exit 0
 REMOTE
+  )
+  rc=$?
+  if [[ $rc -ne 0 ]]; then
+    log "Cleanup on ${SONDER_CI_HOST} did not finish (status ${rc}): ${out:-no output}. Check ${dir} and container ${name} by hand."
+  fi
   return 0
 }
 
@@ -462,6 +474,7 @@ cmd="cd /pilot/runs/$id/checkout && npm ci && npm run check -- --ref $sha --know
 # systemd-run --user, not setsid/nohup: on SteamOS a process started over SSH is killed when the session ends
 # (podman and its wrapper with it). A transient user unit survives because lingering is enabled for the user.
 systemd-run --user --collect --quiet --unit "$name" --working-directory="$run_dir" bash -c '
+  echo $$ >"$7"
   exec >"$6" 2>&1
   podman run --rm --name "$1" --cpus 2 --memory 6g --pids-limit 2048 --shm-size 1g \
     --security-opt no-new-privileges --env NPM_CONFIG_CACHE=/pilot/cache/npm \
@@ -469,19 +482,19 @@ systemd-run --user --collect --quiet --unit "$name" --working-directory="$run_di
     "$3" bash -lc "$4"
   rc=$?
   echo "$rc" >"$5.tmp" && mv "$5.tmp" "$5"
-' _ "$name" "$base" "$image" "$cmd" "$run_dir/check.exit" "$run_dir/check.log" || exit 1
-# The unit's main process is the wrapper; its command line contains the run directory, which the probe and cleanup check.
-for _ in $(seq 20); do
-  pid=$(systemctl --user show -p MainPID --value "$name" 2>/dev/null)
-  [ -n "$pid" ] && [ "$pid" != 0 ] && break
+' _ "$name" "$base" "$image" "$cmd" "$run_dir/check.exit" "$run_dir/check.log" "$run_dir/check.pid" || exit 1
+# The wrapper writes its own pid first, so a unit that exits at once is still seen: its check.exit is there.
+# Its command line contains the run directory, which the probe and cleanup check.
+for _ in $(seq 40); do
+  [ -s "$run_dir/check.pid" ] || [ -s "$run_dir/check.exit" ] && break
   sleep 0.25
 done
-[ -n "${pid:-}" ] && [ "$pid" != 0 ] || { echo "the unit $name did not start"; exit 1; }
-echo "$pid" >"$run_dir/check.pid"
+[ -s "$run_dir/check.pid" ] || [ -s "$run_dir/check.exit" ] || { echo "the unit $name did not start"; exit 1; }
 REMOTE
   rc=$?
   if [[ $rc -ne 0 ]]; then
     log "Could not start the check on the Deck (status ${rc})"
+    retrieve_report
     cleanup_remote
     if [[ $rc -eq 255 ]]; then record_result remote host_connectivity_lost 5; return 5; fi
     record_result remote remote_setup_failed 4
@@ -556,7 +569,7 @@ if host_reachable; then
       log "Remote check failed with exit code ${FINAL_EXIT} (no rerun elsewhere)"
       case "$RESULT" in
         host_image_missing) DESCRIPTION="CI host failure: Playwright image missing" ;;
-        host_podman_missing) DESCRIPTION="CI host failure: podman missing" ;;
+        host_tool_missing) DESCRIPTION="CI host failure: required tool missing" ;;
         host_disk_low) DESCRIPTION="CI host failure: low disk" ;;
         remote_run_died | remote_setup_failed | host_bundle_failed | container_start_failed) DESCRIPTION="CI host failure: ${RESULT//_/ }" ;;
         host_connectivity_lost) DESCRIPTION="CI host failure: SSH connectivity lost" ;;
