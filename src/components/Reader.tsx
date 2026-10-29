@@ -95,20 +95,34 @@ function BookToHeadphones({ size = 20 }: { size?: number }) {
     </svg>
   );
 }
-// A block's text nodes as the server reads them: none inside skipped elements.
+// A block's text as the server reads it: text nodes, none inside skipped elements, and a line break
+// for each <br>, because node-html-parser's text of a <br> is "\n". The browser has no character for
+// it, so without this every sentence after a <br> is measured one character early.
 function textNodes(block: Element) {
-  return block.ownerDocument.createTreeWalker(block, NodeFilter.SHOW_TEXT, {
-    acceptNode: (node) =>
-      node.parentElement?.closest(readerSkippedSelector)
-        ? NodeFilter.FILTER_REJECT
-        : NodeFilter.FILTER_ACCEPT,
-  });
+  return block.ownerDocument.createTreeWalker(
+    block,
+    NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT,
+    {
+      acceptNode: (node) => {
+        if (
+          node.nodeType === Node.ELEMENT_NODE &&
+          (node as Element).localName !== "br"
+        )
+          return NodeFilter.FILTER_SKIP;
+        return node.parentElement?.closest(readerSkippedSelector)
+          ? NodeFilter.FILTER_REJECT
+          : NodeFilter.FILTER_ACCEPT;
+      },
+    },
+  );
 }
+const isBreak = (node: Node) => node.nodeType === Node.ELEMENT_NODE;
+const nodeText = (node: Node) => (isBreak(node) ? "\n" : node.textContent || "");
 function blockText(block: Element) {
   const walker = textNodes(block);
   let text = "",
     node: Node | null;
-  while ((node = walker.nextNode())) text += node.textContent || "";
+  while ((node = walker.nextNode())) text += nodeText(node);
   return text;
 }
 function blockNodes(doc: Document) {
@@ -123,9 +137,9 @@ function offsetIn(block: Element, container: Node, offset: number) {
     node: Node | null;
   while ((node = walker.nextNode())) {
     if (node === container)
-      return readerTextOffset(raw + (node.textContent || "").slice(0, offset));
+      return readerTextOffset(raw + nodeText(node).slice(0, offset));
     if (point.comparePoint(node, 0) >= 0) break;
-    raw += node.textContent || "";
+    raw += nodeText(node);
   }
   return readerTextOffset(raw);
 }
@@ -140,8 +154,16 @@ function rangeAt(block: Element, offset: number, end?: number) {
     const walker = textNodes(block);
     let raw = "",
       node: Node | null,
-      last: Node = block;
+      last: Node = block,
+      pending = false;
     while ((node = walker.nextNode())) {
+      // A <br> that reaches the target puts it at the start of the next text node.
+      if (pending && !isBreak(node)) return { node, offset: 0 };
+      if (isBreak(node)) {
+        raw += "\n";
+        if (readerTextOffset(raw) >= target) pending = true;
+        continue;
+      }
       last = node;
       const text = node.textContent || "";
       if (readerTextOffset(raw + text) >= target) {

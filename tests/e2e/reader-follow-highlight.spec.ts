@@ -7,12 +7,14 @@ const navChapter=`<nav epub:type="landmarks" xmlns:epub="http://www.idpf.org/200
  `<p><svg xmlns="http://www.w3.org/2000/svg" width="40" height="12"><text x="0" y="10">Ornament</text></svg></p>`+
  `<p>The first paragraph opens here. It carries a second sentence. A third sentence closes it.</p>`+
  `<p>The second paragraph begins now. Its middle sentence follows quickly. The last sentence ends the block.</p>`;
-// Chapter two: leading whitespace, runs of spaces, characters NFKC changes, inline markup and <noscript>.
+// Chapter two: leading whitespace, runs of spaces, characters NFKC changes, inline markup, <noscript> and <br/> line breaks.
 const textChapter=`<p>\n      Leading whitespace opens this block.   Then   spaced   words   follow here.\n   </p>`+
  `<p>The ﬁrst ligature sentence ﬁnds its place. A full width ＡＢＣ sentence comes next. A non&#160;breaking space ends it.</p>`+
  `<p>Plain <em>emphasis</em> starts this one. A <span>span</span> sits in the second sentence.</p>`+
  `<noscript><p>Hidden fallback paragraph.</p></noscript>`+
- `<p>After the code block comes this sentence. Then one more sentence ends the chapter.</p>`;
+ `<p>After the code block comes this sentence. Then one more sentence ends the chapter.</p>`+
+ // A line break is "\n" to the server's parser and no character in the browser: each <br> shifted every later sentence.
+ `<p>Roses are red.<br/>Violets are blue.<br/>Sugar is sweet.<br/>And so are you.</p>`;
 async function fixture(page:Page,title:string){
  const response=await page.request.post("/api/import",{multipart:{title,author:"Reader QA",file:{name:"Narration.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
  expect(response.ok()).toBe(true);
