@@ -1,6 +1,15 @@
 import { useState } from "react";
 import { Headphones, Check } from "lucide-react";
 import { useAppearance } from "./Appearance";
+import { usePlayer } from "../player";
+import {
+  SPEED_MAX,
+  SPEED_MIN,
+  SPEED_STEP,
+  clampSpeed,
+  formatSpeed,
+  resolveSpeed,
+} from "../playback-speed";
 export function PlaybackSettings({
   notify,
 }: {
@@ -8,6 +17,11 @@ export function PlaybackSettings({
 }) {
   const { appearance, update, savePlayback, saveReader } = useAppearance(),
     [busy, setBusy] = useState(false);
+  const { deviceSpeed } = usePlayer();
+  const defaultSpeed = resolveSpeed({
+    preferred: appearance.playback.speed,
+    legacy: deviceSpeed,
+  });
   return (
     <section
       className="settings-section playback-settings"
@@ -19,7 +33,7 @@ export function PlaybackSettings({
         </span>
         <div>
           <h2>Playback</h2>
-          <p>Choose what the progress bar shows and how linked ebooks open.</p>
+          <p>Choose the default speed, what the progress bar shows and how linked ebooks open.</p>
         </div>
       </div>
       <label>
@@ -44,6 +58,33 @@ export function PlaybackSettings({
       <p className="muted">
         Chapter mode shows elapsed and remaining time within the current
         chapter, including chapters inside a single M4B file.
+      </p>
+      <label>
+        <span className="setting-range-label">
+          Default speed <output>{formatSpeed(defaultSpeed)}×</output>
+        </span>
+        <input
+          type="range"
+          aria-label="Default playback speed"
+          aria-valuetext={`${formatSpeed(defaultSpeed)}×`}
+          min={SPEED_MIN}
+          max={SPEED_MAX}
+          step={SPEED_STEP}
+          value={defaultSpeed}
+          onChange={(event) =>
+            update({
+              ...appearance,
+              playback: {
+                ...appearance.playback,
+                speed: clampSpeed(Number(event.target.value)) ?? 1,
+              },
+            })
+          }
+        />
+      </label>
+      <p className="muted">
+        Used for books without their own speed once saved. A speed chosen in the
+        player is kept for that recording on this device.
       </p>
       <label>
         Ebook view

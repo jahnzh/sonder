@@ -1,4 +1,5 @@
 import type { Book, Track } from "./types";
+import { timeAtSpeed } from "./playback-speed";
 export type ListeningChapter = {
   track: Track;
   title: string;
@@ -25,6 +26,18 @@ export function currentChapter(book: Book, trackId: string, position: number) {
   return (
     matching[matching.length - 1] || all.find((c) => c.track.id === trackId)
   );
+}
+/** Listening time to the chapter's end at `speed`; the whole chapter unless `position` is inside it. */
+export function chapterTimeLeft(
+  chapter: Pick<ListeningChapter, "start" | "end">,
+  position: number | null,
+  speed: number,
+) {
+  const from =
+    position === null
+      ? chapter.start
+      : Math.min(chapter.end, Math.max(chapter.start, position));
+  return timeAtSpeed(chapter.end - from, speed);
 }
 export function absoluteSeekTarget(
   tracks: Pick<Track, "id" | "duration">[],

@@ -1,30 +1,146 @@
-import { useState } from "react";
-import { Check, Timer } from "lucide-react";
-import { usePlayer } from "../player";
-export function PlaybackOptions({ kind }: { kind: "speed" | "sleep" }) {
+import { useState, type ReactNode } from "react";
+import { Check, Minus, Plus, Timer } from "lucide-react";
+import { useBookSpeed, usePlayer } from "../player";
+import type { Book } from "../types";
+import {
+  SPEED_MAX,
+  SPEED_MIN,
+  SPEED_PRESETS,
+  SPEED_STEP,
+  formatSpeed,
+  stepSpeed,
+} from "../playback-speed";
+/** `book` is the book this control is shown for; without it, the book in the player. */
+export function PlaybackOptions({
+  kind,
+  book,
+}: {
+  kind: "speed" | "sleep";
+  book?: Book | null;
+}) {
+  return kind === "speed" ? <SpeedOptions book={book} /> : <SleepOptions />;
+}
+function SpeedOptions({ book }: { book?: Book | null }) {
   const p = usePlayer();
+  const speed = useBookSpeed(book);
+  const set = (value: number) => p.setSpeed(value, book?.recordingId);
+  return (
+    <OptionMenu
+      label={`Playback speed, ${formatSpeed(speed)}×`}
+      title="Playback speed"
+      className="speed-menu"
+      trigger={
+        <>
+          {formatSpeed(speed)}
+          <span>×</span>
+        </>
+      }
+    >
+      {(close) => (
+        <>
+          <div className="speed-control">
+            <div className="speed-stepper">
+              <button
+                aria-label="Slower"
+                disabled={speed <= SPEED_MIN}
+                onClick={() => set(stepSpeed(speed, -1))}
+              >
+                <Minus size={15} />
+              </button>
+              <output aria-live="polite">{formatSpeed(speed)}×</output>
+              <button
+                aria-label="Faster"
+                disabled={speed >= SPEED_MAX}
+                onClick={() => set(stepSpeed(speed, 1))}
+              >
+                <Plus size={15} />
+              </button>
+            </div>
+            <input
+              type="range"
+              aria-label="Playback speed"
+              min={SPEED_MIN}
+              max={SPEED_MAX}
+              step={SPEED_STEP}
+              value={speed}
+              aria-valuetext={`${formatSpeed(speed)}×`}
+              onChange={(event) => set(Number(event.target.value))}
+            />
+          </div>
+          {SPEED_PRESETS.map((value) => (
+            <button
+              key={value}
+              onClick={() => {
+                set(value);
+                close();
+              }}
+            >
+              {`${value}×${value === 1 ? " · Normal" : ""}`}
+              {speed === value && <Check size={15} />}
+            </button>
+          ))}
+        </>
+      )}
+    </OptionMenu>
+  );
+}
+function SleepOptions() {
+  const p = usePlayer();
+  const minutes = p.sleep ? Math.ceil(p.sleep / 60) : null;
+  return (
+    <OptionMenu
+      label="Sleep timer"
+      title="Sleep timer"
+      active={!!p.sleep}
+      trigger={
+        <>
+          <Timer size={19} />
+          {minutes && <span>{minutes}m</span>}
+        </>
+      }
+    >
+      {(close) =>
+        [null, 5, 15, 30, 45, 60].map((value) => (
+          <button
+            key={String(value)}
+            onClick={() => {
+              p.setSleep(value);
+              close();
+            }}
+          >
+            {value === null ? "Turn off" : `${value} minutes`}
+            {minutes === value && <Check size={15} />}
+          </button>
+        ))
+      }
+    </OptionMenu>
+  );
+}
+function OptionMenu({
+  label,
+  title,
+  trigger,
+  active = false,
+  className = "",
+  children,
+}: {
+  label: string;
+  title: string;
+  trigger: ReactNode;
+  active?: boolean;
+  className?: string;
+  children: (close: () => void) => ReactNode;
+}) {
   const [open, setOpen] = useState(false);
-  const selected =
-    kind === "speed" ? p.speed : p.sleep ? Math.ceil(p.sleep / 60) : null;
   return (
     <div className="player-option">
       <button
-        className={`player-text-button ${kind === "sleep" && p.sleep ? "active" : ""}`}
+        className={`player-text-button ${active ? "active" : ""}`}
         onClick={() => setOpen(!open)}
-        aria-label={kind === "speed" ? `Playback speed, ${p.speed}×` : "Sleep timer"}
+        aria-label={label}
         aria-expanded={open}
       >
-        {kind === "speed" ? (
-          <>
-            {p.speed}
-            <span>×</span>
-          </>
-        ) : (
-          <>
-            <Timer size={19} />
-            {p.sleep && <span>{Math.ceil(p.sleep / 60)}m</span>}
-          </>
-        )}
+        {trigger}
       </button>
       {open && (
         <>
@@ -33,30 +149,9 @@ export function PlaybackOptions({ kind }: { kind: "speed" | "sleep" }) {
             aria-label="Close options"
             onClick={() => setOpen(false)}
           />
-          <div className="option-menu">
-            <span className="menu-title">
-              {kind === "speed" ? "Playback speed" : "Sleep timer"}
-            </span>
-            {(kind === "speed"
-              ? [0.75, 1, 1.25, 1.5, 1.75, 2]
-              : [null, 5, 15, 30, 45, 60]
-            ).map((value) => (
-              <button
-                key={String(value)}
-                onClick={() => {
-                  if (kind === "speed") p.setSpeed(value!);
-                  else p.setSleep(value);
-                  setOpen(false);
-                }}
-              >
-                {value === null
-                  ? "Turn off"
-                  : kind === "speed"
-                    ? `${value}×${value === 1 ? " · Normal" : ""}`
-                    : `${value} minutes`}
-                {selected === value && <Check size={15} />}
-              </button>
-            ))}
+          <div className={`option-menu ${className}`}>
+            <span className="menu-title">{title}</span>
+            {children(() => setOpen(false))}
           </div>
         </>
       )}

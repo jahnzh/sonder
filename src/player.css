@@ -223,6 +223,55 @@
 .playback-settings > button {
   justify-self: start;
 }
+.playback-settings input[type="range"] {
+  width: 100%;
+  min-height: 44px;
+}
+.setting-range-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.setting-range-label output {
+  font-variant-numeric: tabular-nums;
+}
+.player-option .option-menu.speed-menu {
+  width: 200px;
+}
+.speed-control {
+  display: grid;
+  gap: 4px;
+  padding: 4px 4px 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 3px;
+}
+.speed-stepper {
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
+  align-items: center;
+}
+.option-menu .speed-stepper button {
+  justify-content: center;
+  min-height: 44px;
+  padding: 0;
+  color: var(--text);
+}
+.speed-stepper button:disabled {
+  opacity: 0.4;
+}
+.speed-stepper output {
+  text-align: center;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.speed-control input[type="range"] {
+  width: 100%;
+  min-height: 32px;
+}
+.full-timestamps .timeline-speed-left {
+  color: var(--muted);
+  text-align: center;
+}
 .media-manager-dialog {
   width: min(800px, calc(100vw - 28px));
   max-width: 800px;
