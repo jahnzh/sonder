@@ -586,6 +586,11 @@ export function sanitizeEnvironment(baseEnv = process.env, extra = {}) {
     "SESSION_SECRET",
     "SECRET_KEY",
     "API_KEY",
+    // Listen settings from the caller's shell must not reach a future stage that
+    // starts the app via `npm start` (server/index.ts reads both). Stages bind
+    // via PLAYWRIGHT_PORT on 127.0.0.1 instead.
+    "PORT",
+    "HOST",
   ];
 
   for (const key of forbiddenExactKeys) {
