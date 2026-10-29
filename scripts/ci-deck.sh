@@ -212,6 +212,14 @@ else
   fi
   echo "image_pull=ok"
 fi
+# The Android emulator (scripts/emulator-deck.sh) is limited to 4.6 GB and a CI run takes 6 GB; together they
+# do not fit on the Deck and the OOM kill would look like a test failure.
+emu=$(podman ps --filter name=sonder-emu- --format '{{.Names}}' 2>/dev/null | grep '^sonder-emu-' | tr '\n' ' ')
+emu_units=$(systemctl --user list-units --state=active --no-legend 'sonder-emu-*' 2>/dev/null | awk '{print $1}' | tr '\n' ' ')
+if [ -n "$emu$emu_units" ]; then
+  echo "emulator_active=$emu$emu_units"
+  exit 15
+fi
 now=$(date +%s)
 for name in $(podman ps -a --filter name=sonder-ci-run- --format '{{.Names}}' | grep '^sonder-ci-run-'); do
   dir="$base/runs/${name#sonder-ci-run-}"
@@ -253,6 +261,11 @@ REMOTE
       log "Host failure: less than ${MIN_DISK_GB} GB free on ${SONDER_CI_HOST}. Free space there, then rerun. Record: ${record_file}"
       record_result remote host_disk_low 7
       return 7
+      ;;
+    15)
+      log "Host failure: the Android emulator is running on ${SONDER_CI_HOST}. Stop it with scripts/emulator-deck.sh stop, then rerun. Record: ${record_file}"
+      record_result remote host_emulator_active 3
+      return 3
       ;;
     14)
       log "Host failure: could not create the CI directories on ${SONDER_CI_HOST}"
@@ -573,6 +586,7 @@ if host_reachable; then
       case "$RESULT" in
         host_image_missing) DESCRIPTION="CI host failure: Playwright image missing" ;;
         host_tool_missing) DESCRIPTION="CI host failure: required tool missing" ;;
+        host_emulator_active) DESCRIPTION="CI host failure: emulator running" ;;
         host_disk_low) DESCRIPTION="CI host failure: low disk" ;;
         remote_run_died | remote_setup_failed | host_bundle_failed | container_start_failed) DESCRIPTION="CI host failure: ${RESULT//_/ }" ;;
         host_connectivity_lost) DESCRIPTION="CI host failure: SSH connectivity lost" ;;

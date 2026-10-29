@@ -1,4 +1,5 @@
-import {test,expect,type Page,type Locator,type APIRequestContext} from "@playwright/test";
+import {type Page,type Locator,type APIRequestContext} from "@playwright/test";
+import {test,expect} from "./fixtures";
 import {readFileSync} from "node:fs";
 import {readerFixture} from "../reader-fixture";
 import {skipOnMobile} from "./mobile";

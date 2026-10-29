@@ -9,6 +9,7 @@
     "start": "tsx server/index.ts",
     "test": "tsx --test tests/*.test.ts tests/*.test.mjs",
     "test:browser": "playwright test",
+    "test:android": "bash scripts/test-android-emulator.sh",
     "test:mobile": "node scripts/test-mobile.mjs",
     "check": "node scripts/check-local.mjs",
     "ci:ssh": "bash scripts/ci-ssh.sh",
