@@ -1,8 +1,39 @@
-import { defineConfig, firefox, webkit } from "@playwright/test";
+import { defineConfig, devices, firefox, webkit } from "@playwright/test";
 import { existsSync } from "node:fs";
 const port = Number(process.env.PLAYWRIGHT_PORT || 4173);
 const installed =
   "/home/jahn/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome";
+// Phone-profile projects are opt-in so `npm run test:browser` and `npm run check` keep their runtime.
+// SONDER_MOBILE=1 adds them to the default projects; SONDER_MOBILE=only (npm run test:mobile) runs just them.
+const mobileMode = process.env.SONDER_MOBILE;
+const mobileSpecs = /(^|\/)(now-playing-layout|device-reset|app|playback-workflow|integrated-reader|playback-speed)\.spec\.ts$/;
+const { isMobile: _isMobile, defaultBrowserType: _browser, ...pixelWithoutIsMobile } = devices["Pixel 7"];
+const mobileProjects = [
+  // Pixel 7 in Chromium: touch input, mobile user agent, device pixel ratio and isMobile viewport handling.
+  { name: "mobile-chrome", testMatch: mobileSpecs, use: { ...devices["Pixel 7"] } },
+  // Firefox with the Pixel 7 viewport, touch and user agent. Firefox does not support isMobile, so it is dropped
+  // (no meta-viewport handling); the project exists only when the Firefox binary does.
+  ...(existsSync(firefox.executablePath())
+    ? [{ name: "mobile-firefox", testMatch: mobileSpecs, use: { ...pixelWithoutIsMobile, browserName: "firefox" as const, launchOptions: {} } }]
+    : []),
+  // iPhone 15 profile in WebKit: the closest to iOS Safari on Linux; skipped cleanly when the binary is missing.
+  ...(existsSync(webkit.executablePath())
+    ? [{ name: "mobile-safari", testMatch: mobileSpecs, use: { ...devices["iPhone 15"], launchOptions: {} } }]
+    : []),
+];
+const desktopProjects = [
+  { name: "chromium" },
+  // Layout checks also run in Firefox/WebKit when those browsers are installed.
+  // Only now-playing-layout.spec.ts and device-reset.spec.ts run on them; other
+  // spec files are skipped for these projects without an error in a multi-project run.
+  ...[firefox, webkit]
+    .filter((browser) => existsSync(browser.executablePath()))
+    .map((browser) => ({
+      name: browser.name(),
+      testMatch: /(now-playing-layout|device-reset)\.spec\.ts/,
+      use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: {} },
+    })),
+];
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: false,
@@ -21,19 +52,8 @@ export default defineConfig({
     },
     trace: "retain-on-failure",
   },
-  projects: [
-    { name: "chromium" },
-    // Layout checks also run in Firefox/WebKit when those browsers are installed.
-    // Only now-playing-layout.spec.ts and device-reset.spec.ts run on them; other
-    // spec files are skipped for these projects without an error in a multi-project run.
-    ...[firefox, webkit]
-      .filter((browser) => existsSync(browser.executablePath()))
-      .map((browser) => ({
-        name: browser.name(),
-        testMatch: /(now-playing-layout|device-reset)\.spec\.ts/,
-        use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: {} },
-      })),
-  ],
+  projects:
+    mobileMode === "only" ? mobileProjects : mobileMode === "1" ? [...desktopProjects, ...mobileProjects] : desktopProjects,
   webServer: {
     command: "node --import tsx tests/browser-server.ts",
     url: `http://127.0.0.1:${port}/api/health`,
