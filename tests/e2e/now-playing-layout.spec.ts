@@ -29,7 +29,9 @@ async function open(page:Page,browserName:string,title:string,[width,height]:rea
   await page.waitForTimeout(500);
   await expect(play).toBeVisible({timeout:100});
  }).toPass({timeout:20000});
- await expect(dock.getByRole("button",{name:"Play",exact:true})).toBeVisible();
+ // WebKit may start the audio between the loop above and here, which turns Play into Pause; the layout
+ // checks that follow do not depend on which one the dock shows.
+ await expect(dock.getByRole("button",{name:/^(Play|Pause)$/})).toBeVisible();
  await page.mouse.move(0,0);
  await checkTransport(page,page.locator(".player-dock .transport"));
  await page.locator(".dock-book").click();
