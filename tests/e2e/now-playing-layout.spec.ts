@@ -142,7 +142,8 @@ for(const size of sizes){
   const names=["Close reader","Bookmark current sentence","Search this book","Reader appearance","More","Back 30 seconds","Play narration","Forward 30 seconds","Sleep timer"];
   if(width<900)names.push("Chapters");
   for(const name of names){
-   const button=dialog.locator(".inline-reader").getByRole("button",{name,exact:true});
+   // The transport button reads "Play narration" or "Pause narration" depending on whether the tap above started playback.
+   const button=dialog.locator(".inline-reader").getByRole("button",{name:name==="Play narration"?/^(Play|Pause) narration$/:name,exact:true});
    await expect(button).toBeVisible();
    const rect=(await button.boundingBox())!;
    expect(rect.width).toBeGreaterThanOrEqual(44);
