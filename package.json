@@ -11,6 +11,7 @@
     "test:browser": "playwright test",
     "check": "node scripts/check-local.mjs",
     "ci:ssh": "bash scripts/ci-ssh.sh",
+    "ci:deck": "bash scripts/ci-deck.sh",
     "backup": "node scripts/backup-db.mjs"
   },
   "dependencies": {
