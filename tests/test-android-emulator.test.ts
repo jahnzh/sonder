@@ -51,7 +51,9 @@ function cleanEnv() {
   return env;
 }
 
-let nextPort = 41000 + Math.floor(Math.random() * 2000) * 3;
+// Below Linux's ephemeral port range (32768-60999): a port in it can be held by another process (a browser test
+// server, a reviewer), and the script then exits with "port in use" before it reaches the check under test.
+let nextPort = 20000 + Math.floor(Math.random() * 3000) * 3;
 
 function fixture({ built = true } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-test-android-"));
