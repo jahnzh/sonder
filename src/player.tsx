@@ -24,6 +24,7 @@ import {
   setPreferredSource,
   type StreamRequest,
 } from "./playback-sources";
+import { playFailureAction, recoverOnce, recoveryOutcome } from "./device-fallback";
 import { BLOCKING_DIALOG_SELECTOR, playbackKeyAction } from "./keyboard";
 import { useAppearance } from "./components/Appearance";
 import {
@@ -108,8 +109,9 @@ export function PlayerProvider({
   const sleepEnd = useRef<number | null>(null);
   const generation = useRef(0);
   const playRequests = useRef(0);
-  // The explicit server or original load now in the element. `recovery` is set
-  // once, so a failed load switches to the device copy at most once.
+  // The explicit server or original load now in the element. A switch to the
+  // device copy is kept in `recovery`, so a load switches at most once; a failed
+  // attempt is forgotten, so a later failure in the same load tries again.
   const streamLoad = useRef<{
     generation: number;
     request: StreamRequest;
@@ -167,10 +169,9 @@ export function PlayerProvider({
   const recoverOnDevice = useCallback((): Promise<boolean> => {
     const load = streamLoad.current;
     if (!load) return Promise.resolve(false);
-    load.recovery ??= (async () => {
+    return recoverOnce(load, async () => {
       const el = audio.current;
-      const resume = !el.paused;
-      const position = pendingSeek.current ?? el.currentTime;
+      const startedAt = playRequests.current;
       const current = () =>
         streamLoad.current === load && generation.current === load.generation;
       if (!(await isTransportFailure(el.src)) || !current()) return false;
@@ -186,6 +187,13 @@ export function PlayerProvider({
         URL.revokeObjectURL(local);
         return false;
       }
+      // The probe can take seconds: honour a pause or seek made meanwhile.
+      const { resume, position } = recoveryOutcome(startedAt, {
+        playRequest: playRequests.current,
+        paused: el.paused,
+        pendingSeek: pendingSeek.current,
+        currentTime: el.currentTime,
+      });
       if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
       objectUrl.current = local;
       streamLoad.current = null;
@@ -213,8 +221,7 @@ export function PlayerProvider({
           }
         }
       return true;
-    })();
-    return load.recovery;
+    });
   }, []);
   const play = useCallback(
     async (
@@ -315,6 +322,7 @@ export function PlayerProvider({
               track: selected,
             }
           : null;
+      const streamed = !!streamLoad.current;
       setSource(local ? "device" : (input.expected as PlayerState["source"]));
       if (!local)
         void api<{ source: "server" | "torbox" | "remote" }>(
@@ -363,15 +371,13 @@ export function PlayerProvider({
         if (autoplay) await el.play();
         else setPlaying(false);
       } catch (e) {
-        if (
-          currentGeneration === generation.current &&
-          !(e instanceof DOMException && e.name === "AbortError")
-        ) {
-          if (
-            streamLoad.current?.generation === currentGeneration &&
-            (await recoverOnDevice())
-          )
-            return;
+        if (currentGeneration === generation.current) {
+          const action = playFailureAction(e, {
+            streamed,
+            streaming: streamLoad.current?.generation === currentGeneration,
+          });
+          if (action === "ignore") return;
+          if (action === "recover" && (await recoverOnDevice())) return;
           if (currentGeneration !== generation.current) return;
           setLoading(false);
           setError(
@@ -422,7 +428,10 @@ export function PlayerProvider({
         ? el.duration
         : state.current.length;
       if (!max) return;
-      el.currentTime = Math.min(max, Math.max(0, n));
+      const target = Math.min(max, Math.max(0, n));
+      el.currentTime = target;
+      // A load still waiting for its saved position takes the newest target.
+      if (pendingSeek.current !== null) pendingSeek.current = target;
       setPosition(el.currentTime);
       persist();
     },

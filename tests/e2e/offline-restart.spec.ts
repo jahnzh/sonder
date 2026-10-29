@@ -199,3 +199,90 @@ test("unreachable launch keeps the stream error when the device copy is incomple
     await rm(profile, { recursive: true, force: true });
   }
 });
+// The server answers with a fixed status for the explicit server source, as the
+// reverse proxy does while the Sonder process is down (502, 503, 504).
+async function relaunchAnswering(profile: string, status: number) {
+  const context = await launch(profile);
+  await context.route(/\/api\/media\/[^?]+\?source=server/, (route) =>
+    route.fulfill({ status, contentType: "text/plain", body: "answered by the test" }),
+  );
+  const page = context.pages()[0] || (await context.newPage());
+  await page.goto("/");
+  return { context, page };
+}
+for (const status of [502, 503, 504]) {
+  test(`a ${status} answer for the server source plays the device copy (server source choice)`, async () => {
+    const title = `Restart story gateway ${status}`;
+    const profile = await mkdtemp(join(tmpdir(), "sonder-restart-"));
+    try {
+      let context = await launch(profile);
+      const book = await saveOnDevice(context, title, "server");
+      await context.close();
+      const restarted = await relaunchAnswering(profile, status);
+      context = restarted.context;
+      const page = restarted.page;
+      await playFromDock(page, title);
+      await expect(page.locator(".toast")).toContainText("Server unreachable. Playing the device copy.");
+      expect(await storedChoice(page, book.recordingId)).toBe("server");
+      await context.close();
+    } finally {
+      await rm(profile, { recursive: true, force: true });
+    }
+  });
+}
+test("a 404 answer for the server source keeps the stream error (server source choice)", async () => {
+  const title = "Restart story refusal";
+  const profile = await mkdtemp(join(tmpdir(), "sonder-restart-"));
+  try {
+    let context = await launch(profile);
+    await saveOnDevice(context, title, "server");
+    await context.close();
+    const restarted = await relaunchAnswering(profile, 404);
+    context = restarted.context;
+    const page = restarted.page;
+    await page.getByRole("tab", { name: "Downloaded", exact: true }).click();
+    await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
+    await expect(page.locator(".player-error")).toBeVisible();
+    await expect(page.locator(".toast")).toHaveCount(0);
+    await expect(page.locator(".player-dock .playback-source")).not.toHaveText("Device cache");
+    await context.close();
+  } finally {
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+test("pausing while the connection is being checked keeps the device copy paused (server source choice)", async () => {
+  const title = "Restart story paused during probe";
+  const profile = await mkdtemp(join(tmpdir(), "sonder-restart-"));
+  try {
+    let context = await launch(profile);
+    await saveOnDevice(context, title, "server");
+    await context.close();
+    context = await launch(profile);
+    // The stream fails at once; the connection check hangs for a while before it fails.
+    let probing!: () => void;
+    const probeStarted = new Promise<void>((resolve) => (probing = resolve));
+    await context.route(/\/api\/media\/[^?]+\?source=server/, async (route) => {
+      if (route.request().headers().range === "bytes=0-0") {
+        probing();
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+      }
+      await route.abort("connectionrefused");
+    });
+    const page = context.pages()[0] || (await context.newPage());
+    await page.goto("/");
+    await page.getByRole("tab", { name: "Downloaded", exact: true }).click();
+    await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
+    await probeStarted;
+    // While the source is loading the dock button reads Play; tapping it pauses.
+    await page.locator(".player-dock").getByRole("button", { name: "Play", exact: true }).click();
+    await expect(page.locator(".toast")).toContainText("Server unreachable. Playing the device copy.");
+    await expect(page.locator(".player-dock .playback-source")).toHaveText("Device cache");
+    // Not a retrying assertion: the 10 s clip would end and hide a started playback.
+    await page.waitForTimeout(2500);
+    expect(await page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true }).count()).toBe(0);
+    await expect(page.locator(".player-error")).toHaveCount(0);
+    await context.close();
+  } finally {
+    await rm(profile, { recursive: true, force: true });
+  }
+});
