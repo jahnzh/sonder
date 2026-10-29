@@ -40,6 +40,8 @@ Use Node 24 and install dependencies with `npm ci`.
 
 The runner is available as `npm run ci:ssh <sha>` (`scripts/ci-ssh.sh`). It runs CI on the WSL host at `192.168.1.119` and is still dispatched by hand; automatic dispatch on push is not built yet. Check host access with `ssh -o BatchMode=yes -o ConnectTimeout=5 192.168.1.119 true`.
 
+The Steam Deck is a second CI host that is on when the WSL host is off: `npm run ci:deck <sha>` (`scripts/ci-deck.sh`) runs the same check in a rootless Podman container and posts the `ci/deck` status. Read `docs/agents/ci-deck.md` first.
+
 - Send a Git bundle of the committed revision to a unique temporary checkout on the host. Install dependencies and run `nice -n 10 npm run check -- --ref <commit>` there.
 - Keep browsers headless and muted. Check that the host's Playwright browsers match the lockfile before the first run.
 - Retrieve the report and logs, post the commit status, then clean up only that run's files and processes.
@@ -67,6 +69,7 @@ Agent skills setup follows the main flow from https://www.aihero.dev/skills-setu
 
 - Spawn a worker with `scripts/orca-spawn.sh`, and write its spec from `docs/agents/worker-spec.md`.
 - Read the Orca inbox with `node scripts/orca-check.mjs`; after a session restart follow "Resume after a restart" in `docs/agents/worker-spec.md`.
+- Before running CI on the Steam Deck, read `docs/agents/ci-deck.md`.
 - Before running CI on the WSL host, read `docs/agents/ci-host.md`; run `npm run check -- --known-failures tests/known-failures.wsl-host.json` so a run with only the known failures passes.
 - Install the pre-push hook once per clone with `scripts/install-hooks.sh`.
 
