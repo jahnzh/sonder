@@ -24,13 +24,13 @@ const mobileProjects = [
 const desktopProjects = [
   { name: "chromium" },
   // Layout checks also run in Firefox/WebKit when those browsers are installed.
-  // Only now-playing-layout.spec.ts and device-reset.spec.ts run on them; other
+  // Only now-playing-layout, device-reset and reader-frame specs run on them; other
   // spec files are skipped for these projects without an error in a multi-project run.
   ...[firefox, webkit]
     .filter((browser) => existsSync(browser.executablePath()))
     .map((browser) => ({
       name: browser.name(),
-      testMatch: /(now-playing-layout|device-reset)\.spec\.ts/,
+      testMatch: /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: {} },
     })),
 ];

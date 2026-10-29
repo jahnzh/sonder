@@ -1,6 +1,27 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { Page } from "@playwright/test";
 import { test, expect } from "./fixtures";
 
-test("reset refreshes the app shell while preserving device data", async ({ page }) => {
+// WebKit's default context is ephemeral, like private browsing, and refuses to store a Blob in
+// IndexedDB ("Error preparing Blob/File data to be stored in object store", #37). Downloads are Blob
+// chunks, so WebKit gets a profile on disk, as Safari and an installed app have.
+const withProfile = test.extend<{ devicePage: Page }>({
+  devicePage: async ({ page, playwright, browserName, baseURL, viewport, userAgent, isMobile, hasTouch, deviceScaleFactor, headless }, use) => {
+    if (browserName !== "webkit") return use(page);
+    const profile = await mkdtemp(join(tmpdir(), "sonder-device-reset-"));
+    const context = await playwright.webkit.launchPersistentContext(profile, { baseURL, viewport, userAgent, isMobile, hasTouch, deviceScaleFactor, headless });
+    try {
+      await use(context.pages()[0] || await context.newPage());
+    } finally {
+      await context.close();
+      await rm(profile, { recursive: true, force: true });
+    }
+  },
+});
+
+withProfile("reset refreshes the app shell while preserving device data", async ({ devicePage: page }) => {
   await page.goto("/#settings");
   await page.evaluate(() => navigator.serviceWorker.ready);
   await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
@@ -17,7 +38,8 @@ test("reset refreshes the app shell while preserving device data", async ({ page
       tx.objectStore("downloadParts").put({trackId:"reset-test",recordingId:"reset-test",loaded:4,total:8,mime:"audio/mpeg",version:"v1"});
       tx.objectStore("downloadChunks").put({trackId:"reset-test",offset:0,blob:new Blob(["test"])});
       tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
+      // tx.error is still null while a failed request's error bubbles up; report that request's error.
+      tx.onerror = (event) => reject((event.target as IDBRequest).error);
     });
     db.close();
     await caches.open("sonder-shell-test-stale");

@@ -440,7 +440,11 @@ export function ReaderView({
           height: host.clientHeight,
           spread: "auto",
           flow: preferences.mode === "scroll" ? "scrolled-doc" : "paginated",
-          allowScriptedContent: false,
+          // WebKit (Safari, iOS) runs no event listener in a frame without allow-scripts, so taps,
+          // swipes and long-press would never reach the reader (#37). With allow-same-origin the
+          // frame could lift its own sandbox if a script ran; the content hook above keeps that from
+          // happening with DOMPurify and a default-src 'none' CSP in every section.
+          allowScriptedContent: true,
         });
         rendition.current = view;
         const relocate = (location: Location) => {

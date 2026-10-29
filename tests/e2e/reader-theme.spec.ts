@@ -114,10 +114,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   expect(
     await page.evaluate(() => (window as any).__epubScriptExecuted),
   ).toBeUndefined();
-  await expect(page.locator(".reader-room:not(.inline-reader) .reader-viewport iframe")).toHaveAttribute(
-    "sandbox",
-    "allow-same-origin",
-  );
+  // reader-frame.spec.ts checks the frame's sandbox and that EPUB scripts stay blocked in every engine.
   await page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").locator("body").click({ position: { x: 340, y: 100 } });
   await expect
     .poll(
