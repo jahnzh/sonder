@@ -18,7 +18,7 @@ Results go to `artifacts/android-emulator/<sha>/<run>/`: `summary.txt` (per-brow
 ## Host and layout
 
 - `deck@steamdeck`, rootless Podman, no `sudo`, `/dev/kvm` world read-write. Lingering is on, so the emulator runs as the transient user unit `sonder-emu-<name>` (default `sonder-emu-android34`) around a container of the same name.
-- Everything lives in `~/sonder-emu/`: `downloads/` (zips and the APK, checksummed), `sdk/` (emulator 37.2.12, platform-tools 37.0.1, `system-images;android-34;google_apis;x86_64` r14), `avd/`, `state/` (unit wrapper, log, boot time). About 9.5 GB.
+- Everything lives in `~/sonder-emu/`: `downloads/` (zips and the APK, checksummed), `sdk/` (emulator 37.2.12, platform-tools 37.0.1, `system-images;android-34;google_apis;x86_64` r14), `avd/`, `state/` (unit wrapper, log, boot time). 8.2 GB idle, about 9.5 GB while the emulator runs.
 - Image: the CI image `mcr.microsoft.com/playwright:v1.64.1-noble`, reused for its X/GL libraries; the SDK is mounted at `/emu`. Nothing else is installed on the Deck.
 - The SDK packages come straight from `dl.google.com` with the SHA-1 published in Google's repository manifests, without `sdkmanager` or Java. Their licence is the Android SDK License; the Google APIs image includes Chrome (113.0.5672.136).
 - Firefox for Android is `fenix-159.0.multi.android-x86_64.apk` from `archive.mozilla.org` (package `org.mozilla.firefox`), pinned by SHA-256. Its v2 signature was verified with `apksigner` 37: signer `CN=Release Engineering, O=Mozilla Corporation`, certificate SHA-256 `a78b62a5…ea319b04`. To move to another release, verify the new APK with `apksigner verify --print-certs` and update the pin in `scripts/emulator-deck.sh`.
@@ -26,8 +26,9 @@ Results go to `artifacts/android-emulator/<sha>/<run>/`: `summary.txt` (per-brow
 ## Resources
 
 - `start` refuses while a `sonder-ci-run-*` container or unit is active. A CI run uses `--memory 6g`, so never run both. `ci-deck.sh` does not check for the emulator: stop it (`scripts/emulator-deck.sh stop`) before dispatching CI.
-- Container limit `--memory 4600m --cpus 4`. Measured: cold boot 39–42 s with `-wipe-data`; anon memory about 3.4 GB after boot and up to about 4.0 GB after a browser run, plus page cache the kernel reclaims under the limit.
+- Container limit `--memory 4600m --cpus 4` (4.82 GB). Measured: cold boot 39–45 s with `-wipe-data`; anon memory 3.35–3.44 GB after boot, rising to 4.3–4.6 GB by the end of one browser's run, so the container ends each run at its limit. That is why each browser gets its own boot: with both in one boot, Chrome's page closed mid-run ("Target page, context or browser has been closed").
 - The emulator raises the RAM of this image to 2560 MB whatever `hw.ramSize` or `-memory` say.
+- The Deck backs memory with transparent huge pages (`always`). Disabling them for the emulator (`prctl(PR_SET_THP_DISABLE)`) cut anon memory by about 0.3 GB but made the Chrome run 50% slower and time out; it was dropped.
 
 ## How the browsers are driven
 
@@ -39,8 +40,9 @@ Results go to `artifacts/android-emulator/<sha>/<run>/`: `summary.txt` (per-brow
 ## Firefox automation paths (evidence, 2026-10-29)
 
 1. **geckodriver 0.37.1 with `moz:firefoxOptions.androidPackage`** (WebDriver classic) works after two fixes: `--android-storage internal` (the default `/sdcard` push fails with `fchown failed: Operation not permitted`) and `androidIntentArguments` with a VIEW intent to an http URL plus `--ez performancetest true` (without a tab the session waits forever on "Waiting for initial application window"). Navigation and scripts work, but it cannot run Playwright specs, and `setWindowRect` answers "Only supported in desktop applications".
-2. **WebDriver BiDi** works directly, without geckodriver. This is the path the specs use, through Playwright's BiDi backend. No Playwright fork is needed.
-3. **Marionette** is what geckodriver uses in path 1; it was not driven separately.
+2. **WebDriver BiDi** works directly, without geckodriver: the GeckoView config starts the remote agent, `adb forward` exposes it, and `session.new` succeeds (`platformName: android`, `browserVersion: 159.0`). This is the path the specs use, through Playwright's BiDi backend.
+3. **Marionette over adb port forwarding** works: it is how geckodriver drives path 1 (its log shows `adb forward` to device port 2829 and "Connection to Marionette established"). It was not driven without geckodriver, since paths 1 and 2 cover it.
+4. **Playwright**: 1.64.1 has no Firefox-for-Android route of its own (`_android` drives Chrome only; the bundle has no `androidPackage`). Its desktop BiDi backend (`channel: "moz-firefox"`) is what path 2 reuses through the launcher; no fork is needed.
 
 ## Failure modes
 
