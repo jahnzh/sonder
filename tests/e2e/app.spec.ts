@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { skipOnMobile } from "./mobile";
 function wave() {
   const seconds = 10,
     n = 8000 * seconds,
@@ -33,7 +34,7 @@ test("dark mobile library, browsing, filters, favorites and ebook sources", asyn
   ).toBeVisible();
   await expect(page.locator(".book-card")).toHaveCount(6);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
-    390,
+    page.viewportSize()!.width,
   );
   expect(
     await page
@@ -250,6 +251,7 @@ test("import, complete device download, service-worker ranges and offline relaun
 test("desktop layout and server/device distinction remain usable without overflow", async ({
   page,
 }) => {
+  skipOnMobile(true, "desktop layout (min-width: 900px) is not reachable on a phone profile");
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/#downloads");
   await expect(
