@@ -496,6 +496,7 @@ function LibraryApp({
     <PlayerProvider
       onProgress={onProgress}
       fallback={detail?.tracks.length ? detail : featured}
+      notify={notify}
     >
       <div className="app-shell">
         {sidebarOpen && (

@@ -1,4 +1,5 @@
 import { api, localDB } from "./lib";
+import { offlinePreference } from "./device-fallback";
 import type {
   Book,
   Track,
@@ -6,6 +7,13 @@ import type {
   RecordingSources,
   MediaFault,
 } from "./types";
+export {
+  canFallBackToDevice,
+  fallbackNotice,
+  isTransportFailure,
+  offlinePreference,
+  type StreamRequest,
+} from "./device-fallback";
 export const sourceKey = (id: string) => `playback-source:${id}`;
 export const deviceFaultKey = (id: string) => `device-fault:${id}`;
 export async function preferredSource(
@@ -63,15 +71,7 @@ export async function playbackInput(book: Book, track: Track) {
     deviceFault(book.recordingId),
     localDB.downloads.get(track.id),
   ]);
-  // A server or original choice cannot play without a connection. Use the
-  // healthy device copy for now and leave the saved choice as it is.
-  const preference =
-    !navigator.onLine &&
-    (chosen === "server" || chosen === "original") &&
-    download &&
-    !fault
-      ? "device"
-      : chosen;
+  const preference = offlinePreference(chosen, navigator.onLine, download, fault);
   if (state.faults.recording)
     throw new Error(
       "This recording is marked faulty. Open Versions & sources to choose another recording or clear its flag.",
