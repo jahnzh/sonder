@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Sonder: a self-hosted, single-user, mobile-first audiobook PWA (with a built-in EPUB reader and local ebook/audio alignment) running on this Ubuntu server. Production is live at https://audiobooks.pecori.no (Caddy → loopback port 3001; site block in `deploy/audiobooks.caddy`). `README.md` is the detailed behaviour spec — read the relevant section before changing a workflow. Status, roadmap and known issues are tracked in GitHub issues (pinned issue #11) on `jahnzh/sonder`.
+Sonder: a self-hosted, single-user, mobile-first audiobook PWA (with a built-in EPUB reader and local ebook/audio alignment) running on this Ubuntu server. Production is live at https://sonder.pecori.no (Caddy → loopback port 3001). Caddy is managed by `/home/jahn/homelab`: change the site block in `homelab/staging/etc/caddy/Caddyfile` and deploy with `sudo ./scripts/apply_updates.sh` — never edit `/etc/caddy/Caddyfile` directly, it is overwritten from staging on every homelab deploy. `deploy/audiobooks.caddy` is only a copy for reference. `README.md` is the detailed behaviour spec — read the relevant section before changing a workflow. Status, roadmap and known issues are tracked in GitHub issues (pinned issue #11) on `jahnzh/sonder`.
 
 ## Commands
 
