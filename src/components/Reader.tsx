@@ -450,9 +450,12 @@ export function ReaderView({
           // a section without a <head> gets one. base-uri and form-action do not fall back to default-src.
           if (!doc.head) root.insertBefore(doc.createElement("head"), root.firstChild);
           const head = doc.head!;
-          // The HTML parser moves a <head> that follows other content, CSP meta included, into <body>, where
-          // browsers ignore the meta. epub.js serialises the root and the frame parses it as HTML.
-          if (root.firstElementChild !== head) root.insertBefore(head, root.firstChild);
+          // The HTML parser moves a <head> that follows any other content, CSP meta included, into <body>,
+          // where browsers ignore the meta. That includes character data: one non-whitespace character before
+          // <head> is enough, and whitespace is only inert when the parser is still in "before head" mode.
+          // So the head must be the root's literal first child, text and comments included, not merely the
+          // first element. epub.js serialises the root and the frame parses it as HTML.
+          if (root.firstChild !== head) root.insertBefore(head, root.firstChild);
           const csp = doc.createElement("meta");
           csp.setAttribute("http-equiv", "Content-Security-Policy");
           csp.setAttribute(

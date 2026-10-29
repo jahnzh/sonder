@@ -4,7 +4,7 @@ import {readerFixture} from "../reader-fixture";
 // The EPUB frame allows scripts so that WebKit (Safari, iOS) runs the reader's own listeners on the page:
 // without allow-scripts it runs none of them (#37). EPUB content itself must still never run script.
 // Both checks run in Chromium, Firefox and WebKit.
-async function importBook(page:Page,title:string,script=false,variant?:"svg-root"|"iframe-root"|"nav-root"|"no-head"|"head-late"|"template-root"|"svg-asset"){
+async function importBook(page:Page,title:string,script=false,variant?:"svg-root"|"iframe-root"|"nav-root"|"no-head"|"head-late"|"text-before-head"|"template-root"|"svg-asset"){
  const audio=await page.request.post("/api/import",{multipart:{title,author:"Frame QA",file:{name:"Narration.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
  expect(audio.ok()).toBe(true);
  const audioId=(await audio.json()).id;
@@ -146,10 +146,29 @@ test("a section with content before its head still has the CSP in the head",asyn
  await expect(frame.getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
  await page.waitForTimeout(1000);
  const csp=await page.locator(".reader-room:not(.inline-reader) .reader-viewport iframe").first().evaluate((f:HTMLIFrameElement)=>{
-  const meta=f.contentDocument!.querySelector('meta[http-equiv="Content-Security-Policy"]');
-  return {parent:meta?.parentElement?.tagName,first:f.contentDocument!.head.firstElementChild===meta};
+  const doc=f.contentDocument!,meta=doc.querySelector('meta[http-equiv="Content-Security-Policy"]');
+  // A bare character before <head> also makes the parser move the head into <body>, so the meta must be
+  // inside the head the frame parsed, not merely the first element of the head in the source tree.
+  return {parent:meta?.parentElement?.tagName,first:doc.head.firstElementChild===meta,inHead:doc.head.contains(meta)};
  });
- expect(csp).toEqual({parent:"HEAD",first:true});
+ expect(csp).toEqual({parent:"HEAD",first:true,inHead:true});
+ expect(leaks).toEqual([]);
+ expect(await page.evaluate(()=>(window as any).__epubScriptExecuted)).toBeUndefined();
+});
+
+// One non-whitespace character before <head> is enough for the HTML parser to move the head, CSP meta
+// included, into <body>: a first-element check passes while the meta silently stops applying.
+test("a section with a character before its head still has the CSP in the head",async({page})=>{
+ const leaks:string[]=[];page.on("response",r=>{if(r.url().includes("/leak"))leaks.push(r.url())});
+ await importBook(page,"Frame text head",false,"text-before-head");
+ const frame=page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe");
+ await expect(frame.getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
+ await page.waitForTimeout(1000);
+ const csp=await page.locator(".reader-room:not(.inline-reader) .reader-viewport iframe").first().evaluate((f:HTMLIFrameElement)=>{
+  const doc=f.contentDocument!,meta=doc.querySelector('meta[http-equiv="Content-Security-Policy"]');
+  return {parent:meta?.parentElement?.tagName,first:doc.head.firstElementChild===meta,inHead:doc.head.contains(meta)};
+ });
+ expect(csp).toEqual({parent:"HEAD",first:true,inHead:true});
  expect(leaks).toEqual([]);
  expect(await page.evaluate(()=>(window as any).__epubScriptExecuted)).toBeUndefined();
 });

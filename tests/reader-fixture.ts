@@ -1,6 +1,6 @@
 import JSZip from "jszip";
 export async function readerFixture(
-  options: { language?: string; script?: boolean; cover?: boolean; variant?: "svg-root" | "iframe-root" | "nav-root" | "no-head" | "head-late" | "template-root" | "svg-asset" } = {},
+  options: { language?: string; script?: boolean; cover?: boolean; variant?: "svg-root" | "iframe-root" | "nav-root" | "no-head" | "head-late" | "text-before-head" | "template-root" | "svg-asset" } = {},
 ) {
   const zip = new JSZip();
   zip.file("mimetype", "application/epub+zip", { compression: "STORE" });
@@ -68,6 +68,9 @@ export async function readerFixture(
       "template-root": `<?xml version="1.0"?><template xmlns="http://www.w3.org/1999/xhtml"><img src="/leak.png" alt="" onerror="${payload}"/></template>`,
       // Content before <head>: the HTML parser moves the head, CSP meta included, into <body> unless it is first.
       "head-late": `<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><img src="/leak.png" srcset="/leak-srcset.png 1x" alt="" onerror="${payload}"/><head><title>Late head</title></head><body><p id="p0">Alice was beginning to get very tired of sitting by her sister on the bank.</p><style>p{background:url(/leak-css.png)}</style></body></html>`,
+      // A single non-whitespace character before <head> is enough to move the head into <body> as well, even
+      // though the head is still the first element. `root.firstElementChild !== head` misses this one.
+      "text-before-head": `<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml">x<head><title>Text head</title></head><body><p id="p0">Alice was beginning to get very tired of sitting by her sister on the bank.</p><img src="/leak.png" srcset="/leak-srcset.png 1x" alt="" onerror="${payload}"/><style>p{background:url(/leak-css.png)}</style></body></html>`,
       "no-head": `<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><body><p id="p0">Alice was beginning to get very tired of sitting by her sister on the bank.</p><img src="/leak.png" alt="" onerror="${payload}"/><style>p{background:url(/leak-css.png)}</style></body></html>`,
     };
     if (options.variant && variants[options.variant] && index === 0) {
