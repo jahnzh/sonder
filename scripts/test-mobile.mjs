@@ -19,6 +19,12 @@ if (list.status !== 0) {
 const projects = JSON.parse(list.stdout).config.projects.map((project) => project.name);
 
 const workDir = mkdtempSync(path.join(tmpdir(), "sonder-mobile-"));
+// Ctrl-C ends the process before `finally` runs, so remove the temporary directory on a signal too.
+for (const signal of ["SIGINT", "SIGTERM"])
+  process.on(signal, () => {
+    rmSync(workDir, { recursive: true, force: true });
+    process.exit(1);
+  });
 const rows = [];
 let exitCode = 0;
 try {
@@ -46,6 +52,8 @@ try {
   rmSync(workDir, { recursive: true, force: true });
 }
 
+if (!projects.includes("mobile-safari"))
+  console.log("\nmobile-safari was not run: the Playwright WebKit binary is not installed.");
 console.log("\nproject          passed  failed  skipped");
 for (const row of rows) {
   console.log(`${row.project.padEnd(16)} ${String(row.passed).padStart(6)}  ${String(row.failed).padStart(6)}  ${String(row.skipped).padStart(7)}`);

@@ -44,7 +44,9 @@ This command performs local validation. CI triggers, staging, image promotion an
 - `mobile-firefox`: Firefox with the Pixel 7 viewport, touch and user agent. Firefox does not support `isMobile`, so it is left out and there is no meta-viewport handling. Defined only when the Firefox binary exists.
 - `mobile-safari`: WebKit with the `iPhone 15` descriptor. It is defined only when the Playwright WebKit binary exists, so a host without it runs the other projects alone. iOS itself is not emulated.
 
-Both run `now-playing-layout`, `device-reset`, `app`, `playback-workflow`, `integrated-reader` and `playback-speed`. Build first, because the tests serve `dist/`.
+All run `now-playing-layout`, `device-reset`, `app`, `playback-workflow`, `integrated-reader` and `playback-speed`. Build first, because the tests serve `dist/`.
+
+**Known failures (measured 2026-10-29 on the server):** `mobile-chrome` 27 passed, 1 failed, 6 skipped; `mobile-firefox` 15 to 18 passed, 10 to 13 failed, 6 skipped (the count varies between runs). In headless Firefox the audio never starts, so the audio-dependent tests fail: `app.spec` real playback and import/download, `integrated-reader` following narration, and six `playback-workflow` tests (Pause never appears). Firefox does report that it can play MP3 and the autoplay preferences did not help, so the cause is not established; the headless audio device is the untested candidate. `playback-speed.spec` and one `integrated-reader` test also fail in full runs on a cleanup `PUT /api/appearance` timeout, but pass alone. Treat `mobile-firefox` as a layout check until the audio cause is found; real Firefox playback is covered by the Android emulator (#66). `mobile-safari` has not run here because WebKit is not installed.
 
 ```bash
 npm run build
