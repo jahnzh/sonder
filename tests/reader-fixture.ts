@@ -1,6 +1,6 @@
 import JSZip from "jszip";
 export async function readerFixture(
-  options: { language?: string; script?: boolean; cover?: boolean } = {},
+  options: { language?: string; script?: boolean; cover?: boolean; bodies?: [string, string] } = {},
 ) {
   const zip = new JSZip();
   zip.file("mimetype", "application/epub+zip", { compression: "STORE" });
@@ -43,7 +43,7 @@ export async function readerFixture(
     ).join("");
     zip.file(
       `OEBPS/${href}`,
-      `<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>${title}</title></head><body><h1>${title}</h1>${paragraphs}${options.script ? '<script>parent.__epubScriptExecuted=true</script><iframe srcdoc="&lt;script&gt;parent.parent.__epubScriptExecuted=true&lt;/script&gt;"></iframe>' : ""}</body></html>`,
+      `<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>${title}</title></head><body><h1>${title}</h1>${options.bodies?.[index] ?? paragraphs}${options.script ? '<script>parent.__epubScriptExecuted=true</script><iframe srcdoc="&lt;script&gt;parent.parent.__epubScriptExecuted=true&lt;/script&gt;"></iframe>' : ""}</body></html>`,
     );
   }
   return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
