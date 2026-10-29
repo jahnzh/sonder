@@ -291,8 +291,8 @@ test("missing lingering or an unusable /dev/kvm stops the start", (t) => {
   let out = f.run(["start"], { STUB_LINGER: "no" });
   assert.equal(out.status, 3, out.output);
   assert.match(out.output, /linger_check=fail/);
-  fs.chmodSync(f.kvm, 0o400);
-  out = f.run(["start"]);
+  // A missing device, not a read-only file: root (as in the Deck's CI container) can write a mode 0400 file.
+  out = f.run(["start"], { SONDER_EMU_KVM_DEVICE: path.join(f.remote, "no-such-kvm") });
   assert.equal(out.status, 3, out.output);
   assert.match(out.output, /kvm_check=fail/);
   assert.equal(f.runCalls().length, 0);
