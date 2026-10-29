@@ -390,18 +390,20 @@ export function ReaderView({
         const publication = ePub({ replacements: "blobUrl" });
         epub.current = publication;
         publication.spine.hooks.content.register((doc: Document) => {
-          const csp = doc.createElement("meta");
-          csp.setAttribute("http-equiv", "Content-Security-Policy");
-          csp.setAttribute(
-            "content",
-            "default-src 'none'; style-src 'unsafe-inline' blob: data:; img-src blob: data:; font-src blob: data:; media-src blob: data:",
-          );
-          doc
-            .querySelectorAll(
-              "script,iframe,object,embed,form,input,button,nav,svg",
-            )
-            .forEach((node) => node.remove());
-          purify.sanitize(doc.documentElement, {
+          // Fail closed. A section whose root is not <html> would lose its root to the tag removal below
+          // before it is sanitised or given a CSP. epub.js keeps its own reference to the original root and
+          // serialises that one even if this hook throws (it only logs the error), so an <svg onload> root
+          // would run script in a frame that allows scripts. Empty the root in place instead: no attributes,
+          // no children, nothing to run.
+          const root = doc.documentElement;
+          if (!root) return;
+          if (root.localName !== "html") {
+            for (const attr of Array.from(root.attributes))
+              if (!attr.name.startsWith("xmlns")) root.removeAttribute(attr.name);
+            while (root.firstChild) root.removeChild(root.firstChild);
+            return;
+          }
+          purify.sanitize(root, {
             IN_PLACE: true,
             WHOLE_DOCUMENT: true,
             FORBID_TAGS: [
@@ -415,9 +417,24 @@ export function ReaderView({
             ],
             FORBID_ATTR: ["srcdoc"],
           });
-          doc.head?.prepend(csp);
+          doc
+            .querySelectorAll(
+              "script,iframe,object,embed,form,input,button,nav,svg",
+            )
+            .forEach((node) => node.remove());
+          // The CSP is the layer that holds if sanitising ever misses something, so it is never optional:
+          // a section without a <head> gets one. base-uri and form-action do not fall back to default-src.
+          if (!doc.head) root.insertBefore(doc.createElement("head"), root.firstChild);
+          const head = doc.head!;
+          const csp = doc.createElement("meta");
+          csp.setAttribute("http-equiv", "Content-Security-Policy");
+          csp.setAttribute(
+            "content",
+            "default-src 'none'; style-src 'unsafe-inline' blob: data:; img-src blob: data:; font-src blob: data:; media-src blob: data:; frame-src 'none'; form-action 'none'; base-uri 'none'",
+          );
+          head.prepend(csp);
           const faces = doc.createElement("style");
-          doc.head?.append(faces);
+          head.append(faces);
           doc.querySelectorAll("[src],[href]").forEach((node) => {
             for (const attr of ["src", "href"]) {
               const value = node.getAttribute(attr) || "";
@@ -444,6 +461,8 @@ export function ReaderView({
           // swipes and long-press would never reach the reader (#37). With allow-same-origin the
           // frame could lift its own sandbox if a script ran; the content hook above keeps that from
           // happening with DOMPurify and a default-src 'none' CSP in every section.
+          // Never add allow-popups: epub.js rewrites resource links to blob: URLs after the content hook, and the
+          // missing popup permission is what keeps a sanitised link from opening one as an unsanitised document.
           allowScriptedContent: true,
         });
         rendition.current = view;

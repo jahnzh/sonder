@@ -1,6 +1,6 @@
 import JSZip from "jszip";
 export async function readerFixture(
-  options: { language?: string; script?: boolean; cover?: boolean } = {},
+  options: { language?: string; script?: boolean; cover?: boolean; variant?: "svg-root" | "iframe-root" | "nav-root" | "no-head" } = {},
 ) {
   const zip = new JSZip();
   zip.file("mimetype", "application/epub+zip", { compression: "STORE" });
@@ -41,6 +41,19 @@ export async function readerFixture(
       (_, i) =>
         `<p id="p${i}">${i === 0 ? (index === 0 ? "Alice was beginning to get very tired of sitting by her sister on the bank." : "This is the beginning of the second chapter by the pool of tears.") : `Passage ${i + 1} tells another part of Alice’s story.`} The curious rabbit carried a watch and hurried past the trees. Alice followed the little creature through the garden and wondered what would happen next.</p>`,
     ).join("");
+    // Malformed first sections: a root that is not <html>, and a section without a <head>. Each tries to
+    // remove the frame's own sandbox, which only works if the content ran.
+    const payload = "parent.__epubScriptExecuted=true;frameElement.removeAttribute('sandbox')";
+    const variants: Record<string, string> = {
+      "svg-root": `<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" onload="${payload}"><script>${payload}</script></svg>`,
+      "iframe-root": `<?xml version="1.0"?><iframe xmlns="http://www.w3.org/1999/xhtml" srcdoc="&lt;script&gt;parent.parent.__epubScriptExecuted=true&lt;/script&gt;"/>`,
+      "nav-root": `<?xml version="1.0"?><nav xmlns="http://www.w3.org/1999/xhtml"><img src="missing.png" alt="" onerror="${payload}"/></nav>`,
+      "no-head": `<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><body><p id="p0">Alice was beginning to get very tired of sitting by her sister on the bank.</p><img src="/leak.png" alt="" onerror="${payload}"/><style>p{background:url(/leak-css.png)}</style></body></html>`,
+    };
+    if (options.variant && index === 0) {
+      zip.file(`OEBPS/${href}`, variants[options.variant]);
+      continue;
+    }
     zip.file(
       `OEBPS/${href}`,
       `<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>${title}</title></head><body><h1>${title}</h1>${paragraphs}${options.script ? '<script>parent.__epubScriptExecuted=true</script><iframe srcdoc="&lt;script&gt;parent.parent.__epubScriptExecuted=true&lt;/script&gt;"></iframe><img src="missing.png" alt="" onerror="parent.__epubScriptExecuted=true"/><p onclick="parent.__epubScriptExecuted=true">Inline handler</p><a href="javascript:void(parent.__epubScriptExecuted=true)">Script link</a><svg xmlns="http://www.w3.org/2000/svg" onload="parent.__epubScriptExecuted=true"><script>parent.__epubScriptExecuted=true</script></svg>' : ""}</body></html>`,
