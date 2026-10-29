@@ -486,7 +486,8 @@ test("a unit that exits at once keeps its log and is reported as a container sta
 
 test("a host or remote base that could be read as an option is refused", () => {
   const f = fixture();
-  for (const env of [{ SONDER_CI_HOST: "-oProxyCommand=x" }, { SONDER_CI_IMAGE: "--privileged" }, { SONDER_CI_REMOTE_BASE: "relative/dir" }]) {
+  const refused: Record<string, string>[] = [{ SONDER_CI_HOST: "-oProxyCommand=x" }, { SONDER_CI_IMAGE: "--privileged" }, { SONDER_CI_REMOTE_BASE: "relative/dir" }];
+  for (const env of refused) {
     const out = f.run(f.second, env);
     assert.equal(out.status, 2, out.output);
   }
