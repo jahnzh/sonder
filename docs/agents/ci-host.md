@@ -42,7 +42,6 @@ timeout 4 bash -c 'exec 3<>/dev/tcp/127.0.0.1/4399'; echo $?   # prints 1, not 1
 
 Known host failures (issue #37) are listed in `tests/known-failures.wsl-host.json`:
 
-- **WebKit (4 tests)**: `device-reset`, and `now-playing-layout` reader-first at 360, 390, and 430 px.
 - **Chromium (1 test)**: the touch-seek test in `playback-workflow.spec.ts`.
 - **Intermittent (2 tests)**: the 409 test in `reader-theme.spec.ts`, and `users.spec.ts`.
 

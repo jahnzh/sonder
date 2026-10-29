@@ -389,19 +389,43 @@ export function ReaderView({
         file.current = blob;
         const publication = ePub({ replacements: "blobUrl" });
         epub.current = publication;
+        // epub.js turns every non-HTML resource into a blob: URL on the app's origin, typed by its file
+        // extension, and those documents never pass through the content hook below. With scripts allowed in
+        // the frame, an SVG or XML blob the frame is navigated to would run its script as the app. Only
+        // plain media keeps a blob: URL; everything else becomes a data: URL, whose document has an opaque
+        // origin and cannot reach the app. Images, fonts and CSS render the same either way.
+        const blobSafe = /^\.(?:png|jpe?g|gif|webp|avif|bmp|ico|ttf|otf|woff2?|mp3|m4a|m4b|aac|oga|ogg|opus|wav|flac|mp4|m4v|webm)$/i;
+        let archive: any;
+        Object.defineProperty(publication, "archive", {
+          configurable: true,
+          get: () => archive,
+          set(value) {
+            archive = value;
+            if (!value?.createUrl) return;
+            const createUrl = value.createUrl.bind(value);
+            value.createUrl = (url: string, options?: { base64?: boolean }) =>
+              // epub.js types the blob from the last dot segment of the whole URL, so decide on that same
+              // string ("x.png?.html" is html there, not png).
+              createUrl(url, blobSafe.test(`.${url.split(".").pop()}`) ? options : { ...options, base64: true });
+          },
+        });
         publication.spine.hooks.content.register((doc: Document) => {
-          const csp = doc.createElement("meta");
-          csp.setAttribute("http-equiv", "Content-Security-Policy");
-          csp.setAttribute(
-            "content",
-            "default-src 'none'; style-src 'unsafe-inline' blob: data:; img-src blob: data:; font-src blob: data:; media-src blob: data:",
-          );
-          doc
-            .querySelectorAll(
-              "script,iframe,object,embed,form,input,button,nav,svg",
-            )
-            .forEach((node) => node.remove());
-          purify.sanitize(doc.documentElement, {
+          // Fail closed. A section whose root is not <html> would lose its root to the tag removal below
+          // before it is sanitised or given a CSP. epub.js keeps its own reference to the original root and
+          // serialises that one even if this hook throws (it only logs the error), so an <svg onload> root
+          // would run script in a frame that allows scripts. Empty the root in place instead: no attributes,
+          // no children, nothing to run.
+          const root = doc.documentElement;
+          if (!root) return;
+          if (root.localName !== "html") {
+            for (const attr of Array.from(root.attributes))
+              if (!attr.name.startsWith("xmlns")) root.removeAttribute(attr.name);
+            while (root.firstChild) root.removeChild(root.firstChild);
+            // A <template> keeps its children in .content, which serialises too.
+            (root as Partial<HTMLTemplateElement>).content?.replaceChildren?.();
+            return;
+          }
+          purify.sanitize(root, {
             IN_PLACE: true,
             WHOLE_DOCUMENT: true,
             FORBID_TAGS: [
@@ -412,12 +436,38 @@ export function ReaderView({
               "form",
               "input",
               "button",
+              "area",
+              "map",
             ],
             FORBID_ATTR: ["srcdoc"],
           });
-          doc.head?.prepend(csp);
+          doc
+            .querySelectorAll(
+              "script,iframe,object,embed,form,input,button,nav,svg,area,map",
+            )
+            .forEach((node) => node.remove());
+          // srcset survives sanitising, and Firefox fetches its candidates even with the CSP in place, so a book
+          // could make the reader's browser contact a URL of its choosing. Reader pages do not need it.
+          doc.querySelectorAll("[srcset]").forEach((node) => node.removeAttribute("srcset"));
+          // The CSP is the layer that holds if sanitising ever misses something, so it is never optional:
+          // a section without a <head> gets one. base-uri and form-action do not fall back to default-src.
+          if (!doc.head) root.insertBefore(doc.createElement("head"), root.firstChild);
+          const head = doc.head!;
+          // The HTML parser moves a <head> that follows any other content, CSP meta included, into <body>,
+          // where browsers ignore the meta. That includes character data: one non-whitespace character before
+          // <head> is enough, and whitespace is only inert when the parser is still in "before head" mode.
+          // So the head must be the root's literal first child, text and comments included, not merely the
+          // first element. epub.js serialises the root and the frame parses it as HTML.
+          if (root.firstChild !== head) root.insertBefore(head, root.firstChild);
+          const csp = doc.createElement("meta");
+          csp.setAttribute("http-equiv", "Content-Security-Policy");
+          csp.setAttribute(
+            "content",
+            "default-src 'none'; style-src 'unsafe-inline' blob: data:; img-src blob: data:; font-src blob: data:; media-src blob: data:; frame-src 'none'; form-action 'none'; base-uri 'none'",
+          );
+          head.prepend(csp);
           const faces = doc.createElement("style");
-          doc.head?.append(faces);
+          head.append(faces);
           doc.querySelectorAll("[src],[href]").forEach((node) => {
             for (const attr of ["src", "href"]) {
               const value = node.getAttribute(attr) || "";
@@ -440,7 +490,13 @@ export function ReaderView({
           height: host.clientHeight,
           spread: "auto",
           flow: preferences.mode === "scroll" ? "scrolled-doc" : "paginated",
-          allowScriptedContent: false,
+          // WebKit (Safari, iOS) runs no event listener in a frame without allow-scripts, so taps,
+          // swipes and long-press would never reach the reader (#37). With allow-same-origin the
+          // frame could lift its own sandbox if a script ran; the content hook above keeps that from
+          // happening with DOMPurify and a default-src 'none' CSP in every section.
+          // Never add allow-popups: epub.js rewrites resource links to blob: URLs after the content hook, and the
+          // missing popup permission is what keeps a sanitised link from opening one as an unsanitised document.
+          allowScriptedContent: true,
         });
         rendition.current = view;
         const relocate = (location: Location) => {
