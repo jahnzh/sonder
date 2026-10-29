@@ -601,6 +601,8 @@ test("8. Secrets, application variables and database paths are never leaked into
             ALIGNMENT_WORKER_URL: "http://alignment:3012",
             ALIGNMENT_TOKEN: "secret-alignment-token",
             SONDER_VERIFY_URL: "http://sonder-verify:3001",
+            PORT: "3001",
+            HOST: "0.0.0.0",
         };
         const result = await runCheckLocal(["--silent"], {
             cwd: fixture.repoDir,
@@ -618,6 +620,8 @@ test("8. Secrets, application variables and database paths are never leaked into
             assert.equal(log.env.ALIGNMENT_WORKER_URL, undefined);
             assert.equal(log.env.ALIGNMENT_TOKEN, undefined);
             assert.equal(log.env.SONDER_VERIFY_URL, undefined);
+            assert.equal(log.env.PORT, undefined);
+            assert.equal(log.env.HOST, undefined);
             assert.equal(log.env.NODE_ENV, log.argv[1] === "build" ? "production" : "test");
         }
     }

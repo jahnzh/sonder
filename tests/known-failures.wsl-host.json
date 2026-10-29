@@ -14,15 +14,8 @@
       "file": "tests/e2e/reader-theme.spec.ts",
       "title": "a 409 with no server checkpoint rebases to revision 0 and saves instead of looping",
       "kind": "intermittent",
-      "reason": "Fails intermittently on the WSL host",
+      "reason": "Since 2026-10-28 (#37): after a page-turn click in the reader iframe with a stale local baseRevision and no server checkpoint, the poll for checkpoint.revision === 1 does not land (or .reading-conflict stays visible). Frequency on the WSL host is only recorded as intermittent; not reproduced in this branch's local chromium runs.",
       "issue": 37
-    },
-    {
-      "project": "chromium",
-      "file": "tests/e2e/users.spec.ts",
-      "title": "accounts keep libraries and offline queues separate",
-      "kind": "intermittent",
-      "reason": "Fixed in PR #44; remove this entry after it merges"
     }
   ]
 }
