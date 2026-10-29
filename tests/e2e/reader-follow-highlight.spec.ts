@@ -109,3 +109,55 @@ test("long-press on a sentence's first letter listens from that sentence, not th
   await expect.poll(()=>page.evaluate(()=>(window as any).__seeks.at(-1))).toBe(second.start);
  });
 });
+test("the follow highlight is re-measured when fonts finish loading and cleans up listeners on chapter change",async({page})=>{
+ const {book,map}=await fixture(page,"Highlight font load redraw");
+ await withReader(page,{mode:"paginated",display:"book"},async()=>{
+  await open(page,book,map.intervals[0]);
+  const rect=page.locator(".inline-reader .reader-viewport .sonder-follow rect").first();
+  await expect(rect).toBeVisible();
+  const widthBefore=await rect.evaluate((el:SVGRectElement)=>el.width.baseVal.value);
+
+  // Alter letter-spacing in the rendered chapter to change text width
+  await page.locator(".inline-reader .reader-viewport iframe").evaluate((iframe:HTMLIFrameElement)=>{
+    iframe.contentDocument!.body.style.letterSpacing="8px";
+  });
+
+  // Dispatch loadingdone on document.fonts
+  await page.evaluate(()=>{
+    document.fonts.dispatchEvent(new Event("loadingdone"));
+  });
+
+  // The highlight boxes must be re-measured afterwards
+  let widthAfterDocFonts=0;
+  await expect.poll(async()=>{
+    widthAfterDocFonts=await rect.evaluate((el:SVGRectElement)=>el.width.baseVal.value);
+    return widthAfterDocFonts;
+  },{timeout:3000}).not.toBe(widthBefore);
+
+  // Alter letter-spacing again and dispatch loadingdone on the frame document's fonts
+  await page.locator(".inline-reader .reader-viewport iframe").evaluate((iframe:HTMLIFrameElement)=>{
+    iframe.contentDocument!.body.style.letterSpacing="16px";
+    iframe.contentDocument!.fonts.dispatchEvent(new Event("loadingdone"));
+  });
+  await expect.poll(async()=>{
+    return rect.evaluate((el:SVGRectElement)=>el.width.baseVal.value);
+  },{timeout:3000}).not.toBe(widthAfterDocFonts);
+
+  // Chapter change: listeners on the old section document are cleaned up
+  const ch2Interval=map.intervals.find((i:any)=>i.paragraphId==="1:0");
+  await open(page,book,ch2Interval);
+  const ch2Rect=page.locator(".inline-reader .reader-viewport .sonder-follow rect").first();
+  await expect(ch2Rect).toBeVisible();
+  const ch2Before=await ch2Rect.evaluate((el:SVGRectElement)=>el.width.baseVal.value);
+
+  // Changing letter-spacing in chapter 2 and dispatching loadingdone on chapter 2 re-measures
+  await page.locator(".inline-reader .reader-viewport iframe").evaluate((iframe:HTMLIFrameElement)=>{
+    iframe.contentDocument!.body.style.letterSpacing="8px";
+    iframe.contentDocument!.fonts.dispatchEvent(new Event("loadingdone"));
+  });
+  await expect.poll(async()=>{
+    return ch2Rect.evaluate((el:SVGRectElement)=>el.width.baseVal.value);
+  },{timeout:3000}).not.toBe(ch2Before);
+ });
+});
+
