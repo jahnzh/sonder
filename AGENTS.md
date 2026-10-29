@@ -70,6 +70,7 @@ Agent skills setup follows the main flow from https://www.aihero.dev/skills-setu
 - Spawn a worker with `scripts/orca-spawn.sh`, and write its spec from `docs/agents/worker-spec.md`.
 - Read the Orca inbox with `node scripts/orca-check.mjs`; after a session restart follow "Resume after a restart" in `docs/agents/worker-spec.md`.
 - Before running CI on the Steam Deck, read `docs/agents/ci-deck.md`.
+- Before running `npm run test:android` or the Android emulator on the Steam Deck, read `docs/agents/emulator.md`.
 - Before running CI on the WSL host, read `docs/agents/ci-host.md`; run `npm run check -- --known-failures tests/known-failures.wsl-host.json` so a run with only the known failures passes.
 - Install the pre-push hook once per clone with `scripts/install-hooks.sh`.
 

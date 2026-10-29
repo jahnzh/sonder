@@ -1,4 +1,5 @@
-import {test,expect,type Page,type Locator,type APIRequestContext} from "@playwright/test";
+import {type Page,type Locator,type APIRequestContext} from "@playwright/test";
+import {test,expect} from "./fixtures";
 import {readFileSync} from "node:fs";
 import {readerFixture} from "../reader-fixture";
 // Geometry regression checks for issues #1 (seek/heading alignment) and #2 (reader-first Now Playing).
