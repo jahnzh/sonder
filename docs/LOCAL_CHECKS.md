@@ -36,6 +36,23 @@ Remove an entry once its cause is fixed. A `listedPassed` entry that is `environ
 
 This command performs local validation. CI triggers, staging, image promotion and production deployment remain follow-up work on issue #23.
 
+## Mobile device projects
+
+`playwright.config.ts` defines two phone-profile projects, off by default so `npm run test:browser` and `npm run check` are unchanged:
+
+- `mobile-chrome`: Chromium with the `Pixel 7` descriptor (touch, mobile user agent, device pixel ratio, `isMobile`).
+- `mobile-safari`: WebKit with the `iPhone 15` descriptor. It is defined only when the Playwright WebKit binary exists, so a host without it runs `mobile-chrome` alone. iOS itself is not emulated.
+
+Both run `now-playing-layout`, `device-reset`, `app`, `playback-workflow`, `integrated-reader` and `playback-speed`. Build first, because the tests serve `dist/`.
+
+```bash
+npm run build
+npm run test:mobile                       # only the mobile projects
+SONDER_MOBILE=1 npm run test:browser      # desktop projects plus the mobile ones (opt-in for a check run)
+```
+
+`SONDER_MOBILE=only` is what `test:mobile` sets; `SONDER_MOBILE=1` adds the mobile projects to the default list; unset leaves them out. Specs that need a keyboard or the `min-width: 900px` layout call `skipOnMobile(isMobile, reason)` from `tests/e2e/mobile.ts`, so they report as skipped with the reason.
+
 ## Back up a running SQLite database
 
 ```bash

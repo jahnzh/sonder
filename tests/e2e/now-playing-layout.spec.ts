@@ -1,6 +1,7 @@
 import {test,expect,type Page,type Locator,type APIRequestContext} from "@playwright/test";
 import {readFileSync} from "node:fs";
 import {readerFixture} from "../reader-fixture";
+import {skipOnMobile} from "./mobile";
 // Geometry regression checks for issues #1 (seek/heading alignment) and #2 (reader-first Now Playing).
 const sizes=[[360,740],[390,844],[430,932],[1280,800]] as const;
 const centre=async(l:Locator)=>{const b=(await l.boundingBox())!;return {x:b.x+b.width/2,y:b.y+b.height/2,box:b};};
@@ -76,7 +77,8 @@ test.beforeAll(async({request})=>{
  if(!books.some((b:any)=>b.title==="Layout reader"))await importBook(request,"Layout reader",true);
 });
 for(const size of sizes){
- test(`Now Playing without an ebook is aligned at ${size[0]}px`,async({page,browserName})=>{
+ test(`Now Playing without an ebook is aligned at ${size[0]}px`,async({page,browserName,isMobile})=>{
+  skipOnMobile(isMobile&&size[0]>=900,"desktop layout (min-width: 900px) is not reachable on a phone profile");
   const dialog=await open(page,browserName,"Layout plain",size);
   const transport=dialog.locator(".transport.large");
   await checkTransport(page,transport);
@@ -85,7 +87,8 @@ for(const size of sizes){
   expect(close.box.x+close.box.width).toBeLessThanOrEqual(size[0]);
   expect(Math.abs((await centre(dialog.getByRole("heading",{name:"Now playing",exact:true}))).y-close.y)).toBeLessThanOrEqual(1);
  });
- test(`reader-first Now Playing is aligned at ${size[0]}px`,async({page,browserName})=>{
+ test(`reader-first Now Playing is aligned at ${size[0]}px`,async({page,browserName,isMobile})=>{
+  skipOnMobile(isMobile&&size[0]>=900,"desktop layout (min-width: 900px) is not reachable on a phone profile");
   const [width,height]=size;
   const dialog=await open(page,browserName,"Layout reader",size);
   await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
@@ -154,7 +157,8 @@ for(const size of sizes){
  });
 }
 
- test("Now Playing keeps keyboard focus inside the open dialog",async({page,browserName})=>{
+ test("Now Playing keeps keyboard focus inside the open dialog",async({page,browserName,isMobile})=>{
+  skipOnMobile(isMobile,"needs a hardware keyboard (Tab, Escape)");
   const dialog=await open(page,browserName,"Layout plain",[390,844]);
   const close=dialog.getByRole("button",{name:"Close dialog"});
   await close.focus();

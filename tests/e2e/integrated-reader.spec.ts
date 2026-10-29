@@ -1,6 +1,7 @@
 import {test,expect,type Page} from "@playwright/test";
 import {readFileSync} from "node:fs";
 import {readerFixture} from "../reader-fixture";
+import {skipOnMobile} from "./mobile";
 test.afterEach(async({page})=>{await page.unrouteAll({behavior:"wait"});});
 async function fixture(page:Page,title:string,language="en-US"){
  const response=await page.request.post("/api/import",{multipart:{title,author:"Reader QA",file:{name:"Narration.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
@@ -173,7 +174,8 @@ test("lyrics without a map remains readable and offers sync setup", async ({page
  } finally { await page.request.put("/api/appearance",{data:appearance}); }
 });
 
-test("lyrics keys without a current line and with modifiers leave playback and display alone", async ({page}) => {
+test("lyrics keys without a current line and with modifiers leave playback and display alone", async ({page,isMobile}) => {
+ skipOnMobile(isMobile,"needs a hardware keyboard (Control/Alt/Arrow keys)");
  const appearance=await(await page.request.get("/api/appearance")).json();
  const {book,ebook}=await fixture(page,"Lyrics gap","en-IE");
  try {
@@ -286,7 +288,8 @@ async function sampleFrames(page:Page){
  });
 }
 for(const [label,viewport] of [["phone",{width:390,height:844}],["desktop",{width:1440,height:900}]] as const)
-test(`following narration on ${label} never paints another page on the way`,async({page})=>{
+test(`following narration on ${label} never paints another page on the way`,async({page,isMobile})=>{
+ skipOnMobile(isMobile&&label==="desktop","desktop layout (min-width: 900px) is not reachable on a phone profile");
  await page.setViewportSize(viewport);
  const {map}=await fixture(page,`Follow pages ${label}`);
  await start(page,`Follow pages ${label}`);
