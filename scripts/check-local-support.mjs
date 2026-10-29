@@ -236,9 +236,9 @@ export async function acquirePortLease(requestedPort = 0) {
 
   if (targetPort > 0) {
     const lockPath = path.join(leaseDir, `port-${targetPort}.lock`);
-    const acquired = tryAcquireLockFile(lockPath, targetPort);
+    const acquired = await tryAcquireLockFile(lockPath, targetPort);
     if (!acquired) {
-      throw new Error(`Port ${targetPort} is currently leased by another active check runner`);
+      throw new Error(`Port ${targetPort} is currently leased or has an in-progress lease record`);
     }
     const isFree = await probePortAvailable(targetPort);
     if (!isFree) {
@@ -256,7 +256,7 @@ export async function acquirePortLease(requestedPort = 0) {
     const candidatePort = baseScanPort + i;
     const lockPath = path.join(leaseDir, `port-${candidatePort}.lock`);
 
-    const lease = tryAcquireLockFile(lockPath, candidatePort);
+    const lease = await tryAcquireLockFile(lockPath, candidatePort);
     if (!lease) continue;
 
     const isFree = await probePortAvailable(candidatePort);
@@ -272,11 +272,166 @@ export async function acquirePortLease(requestedPort = 0) {
 }
 
 const UNREADABLE_LOCK_STALE_MS = 60_000;
+const CONTENDER_WAIT_MS = 1_000;
+const CONTENDER_POLL_MS = 5;
 
-function tryAcquireLockFile(lockPath, port) {
+function fileIdentity(stat) {
+  return [stat.dev, stat.ino].map(String).join(":");
+}
+
+function inspectLockFile(lockPath) {
+  let stat;
   try {
-    const fd = fs.openSync(lockPath, "wx");
-    const data = JSON.stringify({ pid: process.pid, time: Date.now(), port });
+    stat = fs.statSync(lockPath, { bigint: true });
+  } catch (_) {
+    return null;
+  }
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+  } catch (_) {}
+
+  const validOwner = Number.isInteger(parsed?.pid) && parsed.pid > 0;
+  let stale;
+  if (validOwner) {
+    stale = !isPidAlive(parsed.pid);
+  } else {
+    stale = Date.now() - Number(stat.mtimeMs) > UNREADABLE_LOCK_STALE_MS;
+  }
+
+  return {
+    identity: fileIdentity(stat),
+    parsed,
+    stale,
+    validOwner,
+  };
+}
+
+function inspectContender(filePath) {
+  const inspected = inspectLockFile(filePath);
+  if (!inspected) return null;
+  if (!inspected.validOwner) {
+    const match = path.basename(filePath).match(/\.(?:choosing|claim|stale)-([1-9]\d*)-/);
+    const ownerPid = Number(match?.[1]);
+    if (Number.isSafeInteger(ownerPid)) {
+      if (isPidAlive(ownerPid)) return { blocked: true };
+      removeFile(filePath);
+      return null;
+    }
+  }
+  if (inspected.stale) {
+    // Contender names contain a UUID and are never reused, so removing this
+    // exact stale generation cannot delete a replacement.
+    removeFile(filePath);
+    return null;
+  }
+  return inspected.validOwner ? { metadata: inspected.parsed } : { blocked: true };
+}
+
+function contenderPaths(lockPath, kind) {
+  const directory = path.dirname(lockPath);
+  const prefix = `${path.basename(lockPath)}.${kind}-`;
+  try {
+    return fs.readdirSync(directory)
+      .filter((name) => name.startsWith(prefix))
+      .map((name) => path.join(directory, name));
+  } catch (_) {
+    return [];
+  }
+}
+
+function removeFile(filePath) {
+  try {
+    fs.unlinkSync(filePath);
+  } catch (_) {}
+}
+
+function writeAtomicJson(filePath, value) {
+  const pendingPath = path.join(
+    path.dirname(filePath),
+    `.${path.basename(filePath)}.pending-${randomUUID()}`,
+  );
+  fs.writeFileSync(pendingPath, JSON.stringify(value), {
+    encoding: "utf8",
+    flag: "wx",
+    mode: 0o600,
+  });
+  try {
+    // Linking publishes only the complete record and refuses to replace an
+    // existing path. A process killed while writing leaves an ignored dotfile.
+    fs.linkSync(pendingPath, filePath);
+  } finally {
+    removeFile(pendingPath);
+  }
+}
+
+function nextContenderTicket(lockPath) {
+  let maxTicket = 0;
+  for (const claimPath of contenderPaths(lockPath, "claim")) {
+    const contender = inspectContender(claimPath);
+    const ticket = contender?.metadata?.ticket;
+    if (Number.isSafeInteger(ticket) && ticket > maxTicket) maxTicket = ticket;
+  }
+  return maxTicket + 1;
+}
+
+export function contenderPrecedes(left, right) {
+  return left.ticket < right.ticket
+    || (left.ticket === right.ticket && left.id < right.id);
+}
+
+async function waitForContenderTurn(lockPath, contender) {
+  const deadline = Date.now() + CONTENDER_WAIT_MS;
+
+  while (true) {
+    let choosing = false;
+    for (const choosingPath of contenderPaths(lockPath, "choosing")) {
+      if (choosingPath === contender.choosingPath) continue;
+      if (inspectContender(choosingPath)) choosing = true;
+    }
+
+    let blocked = false;
+    let lowerClaim = false;
+    if (!choosing) {
+      for (const claimPath of contenderPaths(lockPath, "claim")) {
+        if (claimPath === contender.claimPath) continue;
+        const other = inspectContender(claimPath);
+        if (!other) continue;
+        if (!other.metadata) {
+          blocked = true;
+          continue;
+        }
+        if (
+          !Number.isSafeInteger(other.metadata.ticket)
+          || typeof other.metadata.id !== "string"
+        ) {
+          blocked = true;
+          continue;
+        }
+        if (contenderPrecedes(other.metadata, contender)) {
+          lowerClaim = true;
+          break;
+        }
+      }
+    }
+
+    if (lowerClaim) return false;
+    if (!choosing && !blocked) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, CONTENDER_POLL_MS));
+  }
+}
+
+function createLockFile(lockPath, port) {
+  let fd;
+  try {
+    fd = fs.openSync(lockPath, "wx");
+    const data = JSON.stringify({
+      pid: process.pid,
+      time: Date.now(),
+      port,
+    });
     fs.writeSync(fd, data);
     return {
       port,
@@ -285,27 +440,97 @@ function tryAcquireLockFile(lockPath, port) {
       released: false,
     };
   } catch (err) {
-    if (err.code === "EEXIST") {
-      // Check for stale lock from dead process
-      let stale = false;
+    if (fd !== undefined) {
       try {
-        const parsed = JSON.parse(fs.readFileSync(lockPath, "utf8"));
-        stale = Boolean(parsed.pid) && !isPidAlive(parsed.pid);
-      } catch (_) {
-        // Unreadable or invalid (e.g. a runner killed mid-write): stale only once old
-        // enough that another runner cannot still be writing it.
-        try {
-          stale = Date.now() - fs.statSync(lockPath).mtimeMs > UNREADABLE_LOCK_STALE_MS;
-        } catch (_) {}
-      }
-      if (stale) {
-        try {
-          fs.unlinkSync(lockPath);
-          return tryAcquireLockFile(lockPath, port);
-        } catch (_) {}
-      }
+        const owned = fileIdentity(fs.fstatSync(fd, { bigint: true }));
+        const current = fileIdentity(fs.statSync(lockPath, { bigint: true }));
+        if (owned === current) fs.unlinkSync(lockPath);
+      } catch (_) {}
+      try {
+        fs.closeSync(fd);
+      } catch (_) {}
     }
+    if (err.code !== "EEXIST") throw err;
     return null;
+  }
+}
+
+async function tryAcquireLockFile(lockPath, port) {
+  const id = `${process.pid}-${randomUUID()}`;
+  const choosingPath = `${lockPath}.choosing-${id}`;
+  const claimPath = `${lockPath}.claim-${id}`;
+  let keepClaim = false;
+
+  // A Lamport-style choosing/ticket pair elects one contender before anyone
+  // inspects or renames the public lock. The winning claim stays for the lease
+  // lifetime, so a delayed stale decision by another current runner cannot
+  // target the replacement lock. The legacy-runner limitation is documented
+  // in docs/LOCAL_CHECKS.md.
+  writeAtomicJson(choosingPath, {
+    pid: process.pid,
+    time: Date.now(),
+    port,
+    id,
+  });
+
+  try {
+    const ticket = nextContenderTicket(lockPath);
+    const contender = {
+      pid: process.pid,
+      time: Date.now(),
+      port,
+      id,
+      ticket,
+      choosingPath,
+      claimPath,
+    };
+    writeAtomicJson(claimPath, contender);
+    removeFile(choosingPath);
+
+    if (!await waitForContenderTurn(lockPath, contender)) return null;
+
+    for (const stalePath of contenderPaths(lockPath, "stale")) {
+      inspectContender(stalePath);
+    }
+
+    let lease = createLockFile(lockPath, port);
+    if (!lease) {
+      const observed = inspectLockFile(lockPath);
+      if (!observed?.stale) return null;
+
+      // The contender claim serializes reclaimers for this port. Renaming first
+      // removes the stale generation atomically; a loser never touches a
+      // replacement lock and instead returns to the caller's port scan.
+      const stalePath = `${lockPath}.stale-${id}`;
+      try {
+        fs.renameSync(lockPath, stalePath);
+      } catch (_) {
+        return null;
+      }
+
+      const moved = inspectLockFile(stalePath);
+      if (!moved || moved.identity !== observed.identity) {
+        // This can only happen if a process that does not participate in the
+        // contender protocol replaced the public lock path. Restore without
+        // overwriting whatever now owns the path.
+        try {
+          fs.linkSync(stalePath, lockPath);
+          removeFile(stalePath);
+        } catch (_) {}
+        return null;
+      }
+
+      removeFile(stalePath);
+      lease = createLockFile(lockPath, port);
+      if (!lease) return null;
+    }
+
+    keepClaim = true;
+    lease.claimPath = claimPath;
+    return lease;
+  } finally {
+    removeFile(choosingPath);
+    if (!keepClaim) removeFile(claimPath);
   }
 }
 
@@ -317,14 +542,19 @@ export function releasePortLease(lease) {
   lease.released = true;
   try {
     if (lease.fd !== undefined) {
-      fs.closeSync(lease.fd);
+      const ownedIdentity = fileIdentity(fs.fstatSync(lease.fd, { bigint: true }));
+      const currentIdentity = lease.lockPath
+        ? fileIdentity(fs.statSync(lease.lockPath, { bigint: true }))
+        : null;
+      if (ownedIdentity === currentIdentity) fs.unlinkSync(lease.lockPath);
     }
   } catch (_) {}
   try {
-    if (lease.lockPath && fs.existsSync(lease.lockPath)) {
-      fs.unlinkSync(lease.lockPath);
+    if (lease.fd !== undefined) {
+      fs.closeSync(lease.fd);
     }
   } catch (_) {}
+  if (lease.claimPath) removeFile(lease.claimPath);
 }
 
 /**
