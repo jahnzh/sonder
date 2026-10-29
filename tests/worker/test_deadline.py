@@ -2,6 +2,8 @@
 import contextlib
 import io
 import json
+import os
+import signal
 import stat
 import subprocess
 import sys
@@ -10,6 +12,7 @@ import textwrap
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "worker"))
 import deadline  # noqa: E402
@@ -77,7 +80,11 @@ class Limit(unittest.TestCase):
 
     def test_anchor_limit_stays_under_the_server_wait(self):
         self.assertAlmostEqual(anchor_limit(60, {}), 129)
-        self.assertEqual(anchor_limit(60, {"ALIGNMENT_TIMEOUT_BASE_SECONDS": "1400"}), 170)
+        self.assertEqual(anchor_limit(60, {"ALIGNMENT_TIMEOUT_BASE_SECONDS": "1400"}), 150)
+
+    def test_the_anchor_ceiling_plus_the_kill_path_fits_in_the_servers_wait(self):
+        # server/alignment.ts waits 180 s for /anchor; the worker's 504 must arrive first, kill path included.
+        self.assertLess(deadline.ANCHOR_CEILING + deadline.KILL_WAIT_SECONDS + deadline.REAP_SECONDS, 180)
 
     def test_environment_overrides_each_value(self):
         self.assertEqual(alignment_limit(100, {"ALIGNMENT_TIMEOUT_BASE_SECONDS": "10"}), 25)
@@ -128,12 +135,98 @@ class Deadline(Worker):
         self.assertEqual(self.leftovers(), [])
 
     def test_locate_passage_has_its_own_deadline(self):
+        # A killed child skips its own cleanup and leaves its sample on the drive.
+        (self.folder / "anchor-sample.wav").write_bytes(b"x")
         started = time.monotonic()
         with self.assertRaises(AlignmentTimeout):
             pipeline.locate_passage(audio=self.dir / "a.m4b", folder=self.folder, fragments=["x"], language="eng", start=0, duration=30, env=self.env,
                                     child=[sys.executable, str(self.child_script), "sleep", str(self.pidfile)])
         self.assertLess(time.monotonic() - started, 10)
-        self.assertEqual(self.leftovers(), [])
+        self.assertEqual(self.leftovers(), [], "no anchor sample or working file is left on the media drive")
+
+    def test_a_child_that_survives_the_kill_keeps_the_slot_until_it_is_gone(self):
+        gate = Gate()
+        with mock.patch.object(deadline, "KILL_WAIT_SECONDS", 0.2), mock.patch.object(deadline, "REAP_SECONDS", 0.2):
+            # A kill that does nothing, like SIGKILL on a process stuck in uninterruptible disk sleep.
+            with mock.patch.object(deadline.os, "killpg"), mock.patch.object(subprocess.Popen, "kill"):
+                with self.assertRaises(AlignmentTimeout) as caught:
+                    with gate.hold():
+                        deadline.run_with_deadline(["sleep", "300"], time.monotonic() + 0.3, 0.3)
+        survivor = caught.exception.stuck
+        self.addCleanup(lambda: survivor.poll() is None and os.killpg(survivor.pid, signal.SIGKILL))
+        self.assertIsNotNone(survivor, "the timeout reports the process that is still running")
+        self.assertTrue(gate.busy and gate.stuck, "the slot stays taken and is reported as stuck")
+        self.assertIsNotNone(gate.busy_seconds())
+        with self.assertRaises(WorkerBusy):
+            with gate.hold():
+                pass
+        os.killpg(survivor.pid, signal.SIGKILL)
+        for _ in range(100):
+            if not gate.busy:
+                break
+            time.sleep(0.05)
+        self.assertFalse(gate.busy, "the slot is freed once the process is really gone")
+        self.assertFalse(gate.stuck)
+        self.assertIsNone(gate.busy_seconds())
+        with gate.hold():
+            pass
+
+try:
+    import fastapi  # noqa: F401
+    import pydantic  # noqa: F401
+except ImportError:
+    fastapi = None
+
+@unittest.skipIf(fastapi is None, "fastapi is not installed here; the worker image has it")
+class Http(unittest.TestCase):
+    """The endpoint mapping the server relies on: a timeout is 504, busy is 409, anything else is 422."""
+    @classmethod
+    def setUpClass(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.root = Path(cls.temp.name)
+        os.environ["MEDIA_ROOT"] = str(cls.root)
+        os.environ["ALIGNMENT_WORKER_TOKEN"] = "secret"
+        os.environ.pop("MEDIA_VOLUME_ID", None)
+        (cls.root / "alignment").mkdir()
+        (cls.root / "book.m4b").write_bytes(b"x")
+        import align
+        cls.align = align
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.temp.cleanup()
+
+    def align_request(self):
+        return self.align.AlignRequest(token="secret", audio=str(self.root / "book.m4b"), output=str(self.root / "alignment" / "s" / "out.json"),
+                                       fragments=["One."], duration=60)
+
+    def anchor_request(self):
+        return self.align.AnchorRequest(token="secret", audio=str(self.root / "book.m4b"), output=str(self.root / "alignment" / "o.json"),
+                                        fragments=["One."], duration=30)
+
+    def status_of(self, call, request, target, effect):
+        with mock.patch.object(self.align, target, side_effect=effect), contextlib.redirect_stderr(io.StringIO()) as log:
+            with self.assertRaises(self.align.HTTPException) as caught:
+                call(request)
+        return caught.exception.status_code, str(caught.exception.detail), log.getvalue()
+
+    def test_a_timeout_is_504_on_both_endpoints(self):
+        for call, request, target in [(self.align.align, self.align_request(), "align_section"), (self.align.anchor, self.anchor_request(), "locate_passage")]:
+            with self.subTest(target=target):
+                status, detail, _ = self.status_of(call, request, target, AlignmentTimeout(5))
+                self.assertEqual(status, 504)
+                self.assertIn("timed out", detail)
+
+    def test_a_busy_worker_is_409_and_other_failures_are_422_with_a_log_line(self):
+        with self.align.gate.hold():
+            status, _, _ = self.status_of(self.align.align, self.align_request(), "align_section", AlignmentTimeout(5))
+        self.assertEqual(status, 409)
+        status, _, log = self.status_of(self.align.align, self.align_request(), "align_section", AlignmentFailed("espeak data missing"))
+        self.assertEqual(status, 422)
+        self.assertIn("espeak data missing", log, "the worker log says why, the response does not")
+
+    def test_health_reports_a_stuck_job(self):
+        self.assertEqual(set(self.align.health()) >= {"busy", "stuck", "busySeconds", "lastTimeout"}, True)
 
 class GateState(unittest.TestCase):
     def test_a_second_holder_is_refused_and_the_age_is_reported(self):
@@ -148,6 +241,12 @@ class GateState(unittest.TestCase):
                     pass
         self.assertFalse(gate.busy)
         self.assertIsNone(gate.last_timeout)
+
+    def test_the_age_is_never_reported_for_a_free_gate(self):
+        gate = Gate()
+        with gate.hold():
+            pass
+        self.assertIsNone(gate.busy_seconds())
 
     def test_the_gate_is_released_when_the_job_raises(self):
         gate = Gate()

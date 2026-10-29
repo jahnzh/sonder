@@ -41,11 +41,17 @@ def align_section(*, audio, output, fragments, language, start, duration, media_
         temporary.replace(output)
         return result
     finally:
-        for path in (wave_path, text_path, map_path):
+        for path in (wave_path, text_path, map_path, output.with_suffix(".part")):
             path.unlink(missing_ok=True)
 
 def locate_passage(*, audio, folder, fragments, language, start, duration, env=None, child=CHILD):
     """Transcribe a short excerpt and find it in the supplied text, under the /anchor limit."""
     limit = anchor_limit(duration, env)
-    return _run_child("anchor", {"audio": str(audio), "folder": str(folder), "fragments": fragments, "language": language, "start": start, "duration": duration},
-                      folder, time.monotonic() + limit, limit, child)
+    try:
+        return _run_child("anchor", {"audio": str(audio), "folder": str(folder), "fragments": fragments, "language": language, "start": start, "duration": duration},
+                          folder, time.monotonic() + limit, limit, child)
+    finally:
+        # The child writes its sample here and a SIGKILL skips its own cleanup. One job runs at a time, so any
+        # sample left in the folder is dead.
+        for sample in folder.glob("anchor-sample*.wav"):
+            sample.unlink(missing_ok=True)

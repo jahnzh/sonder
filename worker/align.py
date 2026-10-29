@@ -1,6 +1,7 @@
 """Local known-text alignment. This service never downloads or uploads audio."""
 import os
 import secrets
+import sys
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -42,7 +43,8 @@ def anchor(request: AnchorRequest):
         raise HTTPException(504, str(error))
     except HTTPException:
         raise
-    except Exception:
+    except Exception as error:
+        print(f"[anchor] failed: {error!r}", file=sys.stderr, flush=True)
         raise HTTPException(422, "Local speech recovery is unavailable. Check that the tiny model is installed on the media drive.")
 
 def checked_path(value: str, must_exist=False):
@@ -53,7 +55,7 @@ def checked_path(value: str, must_exist=False):
 
 @app.get("/health")
 def health():
-    return {"ready": True, "engine": "aeneas-1.7.3", "busy": gate.busy, "busySeconds": gate.busy_seconds(), "lastTimeout": gate.last_timeout}
+    return {"ready": True, "engine": "aeneas-1.7.3", "busy": gate.busy, "stuck": gate.stuck, "busySeconds": gate.busy_seconds(), "lastTimeout": gate.last_timeout}
 
 @app.post("/align")
 def align(request: AlignRequest):
@@ -79,5 +81,6 @@ def align(request: AlignRequest):
         raise HTTPException(504, str(error))
     except HTTPException:
         raise
-    except Exception:
+    except Exception as error:
+        print(f"[align] failed: {error!r}", file=sys.stderr, flush=True)
         raise HTTPException(422, "Local alignment could not match this section. Check the edition and chapter pairing.")
