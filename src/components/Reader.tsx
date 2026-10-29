@@ -394,7 +394,7 @@ export function ReaderView({
         // the frame, an SVG or XML blob the frame is navigated to would run its script as the app. Only
         // plain media keeps a blob: URL; everything else becomes a data: URL, whose document has an opaque
         // origin and cannot reach the app. Images, fonts and CSS render the same either way.
-        const blobSafe = /\.(?:png|jpe?g|gif|webp|avif|bmp|ico|ttf|otf|woff2?|mp3|m4a|m4b|aac|oga|ogg|opus|wav|flac|mp4|m4v|webm)$/i;
+        const blobSafe = /^\.(?:png|jpe?g|gif|webp|avif|bmp|ico|ttf|otf|woff2?|mp3|m4a|m4b|aac|oga|ogg|opus|wav|flac|mp4|m4v|webm)$/i;
         let archive: any;
         Object.defineProperty(publication, "archive", {
           configurable: true,
@@ -404,7 +404,9 @@ export function ReaderView({
             if (!value?.createUrl) return;
             const createUrl = value.createUrl.bind(value);
             value.createUrl = (url: string, options?: { base64?: boolean }) =>
-              createUrl(url, blobSafe.test(url.split(/[?#]/)[0]) ? options : { ...options, base64: true });
+              // epub.js types the blob from the last dot segment of the whole URL, so decide on that same
+              // string ("x.png?.html" is html there, not png).
+              createUrl(url, blobSafe.test(`.${url.split(".").pop()}`) ? options : { ...options, base64: true });
           },
         });
         publication.spine.hooks.content.register((doc: Document) => {
@@ -419,6 +421,8 @@ export function ReaderView({
             for (const attr of Array.from(root.attributes))
               if (!attr.name.startsWith("xmlns")) root.removeAttribute(attr.name);
             while (root.firstChild) root.removeChild(root.firstChild);
+            // A <template> keeps its children in .content, which serialises too.
+            (root as Partial<HTMLTemplateElement>).content?.replaceChildren?.();
             return;
           }
           purify.sanitize(root, {
@@ -446,6 +450,9 @@ export function ReaderView({
           // a section without a <head> gets one. base-uri and form-action do not fall back to default-src.
           if (!doc.head) root.insertBefore(doc.createElement("head"), root.firstChild);
           const head = doc.head!;
+          // The HTML parser moves a <head> that follows other content, CSP meta included, into <body>, where
+          // browsers ignore the meta. epub.js serialises the root and the frame parses it as HTML.
+          if (root.firstElementChild !== head) root.insertBefore(head, root.firstChild);
           const csp = doc.createElement("meta");
           csp.setAttribute("http-equiv", "Content-Security-Policy");
           csp.setAttribute(

@@ -4,7 +4,7 @@ import {readerFixture} from "../reader-fixture";
 // The EPUB frame allows scripts so that WebKit (Safari, iOS) runs the reader's own listeners on the page:
 // without allow-scripts it runs none of them (#37). EPUB content itself must still never run script.
 // Both checks run in Chromium, Firefox and WebKit.
-async function importBook(page:Page,title:string,script=false,variant?:"svg-root"|"iframe-root"|"nav-root"|"no-head"|"svg-asset"){
+async function importBook(page:Page,title:string,script=false,variant?:"svg-root"|"iframe-root"|"nav-root"|"no-head"|"head-late"|"template-root"|"svg-asset"){
  const audio=await page.request.post("/api/import",{multipart:{title,author:"Frame QA",file:{name:"Narration.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
  expect(audio.ok()).toBe(true);
  const audioId=(await audio.json()).id;
@@ -83,19 +83,21 @@ test("EPUB scripts cannot run in the reader frame or reach the app",async({page}
 // A section whose root is not <html>, or that has no <head>, must not skip sanitising or the CSP. Each book's
 // payload tries to run script and to remove the frame's own sandbox; a root the sanitiser cannot handle is
 // refused and the section renders empty.
-for(const variant of ["svg-root","iframe-root","nav-root"] as const){
+for(const variant of ["svg-root","iframe-root","nav-root","template-root"] as const){
  test(`a section with a ${variant.replace("-"," ")} is emptied and runs nothing`,async({page})=>{
+  const leaks:string[]=[];page.on("response",r=>{if(r.url().includes("/leak"))leaks.push(r.url())});
   await importBook(page,`Frame ${variant}`,false,variant);
   const iframe=page.locator(".reader-room:not(.inline-reader) .reader-viewport iframe");
   await expect(iframe.first()).toBeAttached();
   await page.waitForTimeout(1500);
   expect(await page.evaluate(()=>(window as any).__epubScriptExecuted)).toBeUndefined();
+  expect(leaks).toEqual([]);
   for(const sandbox of await iframe.evaluateAll(frames=>frames.map(f=>f.getAttribute("sandbox"))))expect(sandbox).toBe("allow-same-origin allow-scripts");
   // Nothing from the book is left in the frame: no text, no script, no handler, no attribute but the namespace.
   expect(await iframe.first().evaluate((f:HTMLIFrameElement)=>{
    const doc=f.contentDocument!;
-   return {text:(doc.body.textContent||"").trim(),risky:doc.querySelectorAll("script,[onload],[onerror],[onclick],[srcdoc]").length,attrs:[...doc.body.querySelectorAll("*")].flatMap(el=>[...el.attributes].map(a=>a.name)).filter(n=>!n.startsWith("xmlns"))};
-  })).toEqual({text:"",risky:0,attrs:[]});
+   return {text:(doc.body.textContent||"").trim(),risky:doc.querySelectorAll("script,[onload],[onerror],[onclick],[srcdoc]").length,templates:[...doc.querySelectorAll("template")].reduce((n,el)=>n+(el as HTMLTemplateElement).content.childNodes.length,0),attrs:[...doc.body.querySelectorAll("*")].flatMap(el=>[...el.attributes].map(a=>a.name)).filter(n=>!n.startsWith("xmlns"))};
+  })).toEqual({text:"",risky:0,templates:0,attrs:[]});
  });
 }
 test("a section without a head still gets the CSP first and runs nothing",async({page})=>{
@@ -122,14 +124,32 @@ test("a book's SVG asset is a data: URL, so navigating the frame to it reaches n
  const iframe=page.locator(".reader-room:not(.inline-reader) .reader-viewport iframe").first();
  const seen=await iframe.evaluate((f:HTMLIFrameElement)=>{
   const doc=f.contentDocument!;
-  const image=doc.querySelector("#svg-image") as HTMLImageElement|null,link=doc.querySelector("#svg-link") as HTMLAnchorElement|null;
-  return {image:image?.getAttribute("src")?.slice(0,22),link:link?.getAttribute("href")?.slice(0,22),areas:doc.querySelectorAll("area,map").length,width:image?.naturalWidth};
+  const image=doc.querySelector("#svg-image") as HTMLImageElement|null,link=doc.querySelector("#svg-link") as HTMLAnchorElement|null,ext=doc.querySelector("#ext-link") as HTMLAnchorElement|null;
+  return {image:image?.getAttribute("src")?.slice(0,22),link:link?.getAttribute("href")?.slice(0,22),ext:ext?.getAttribute("href")?.slice(0,5),areas:doc.querySelectorAll("area,map").length,width:image?.naturalWidth};
  });
  // The image still renders, from a data: URL; the image map is gone.
- expect(seen).toEqual({image:"data:image/svg+xml;bas",link:"data:image/svg+xml;bas",areas:0,width:20});
+ // "ext.png?.html" looks like a png before the "?" but epub.js types it by its last dot segment: html.
+ expect(seen).toEqual({image:"data:image/svg+xml;bas",link:"data:image/svg+xml;bas",ext:"data:",areas:0,width:20});
  // Navigate the frame to the link target the way a stray link or script would.
  await iframe.evaluate((f:HTMLIFrameElement)=>{f.contentWindow!.location.assign((f.contentDocument!.querySelector("#svg-link") as HTMLAnchorElement).href);});
  await page.waitForTimeout(1500);
  expect(await page.evaluate(()=>(window as any).__epubScriptExecuted)).toBeUndefined();
  expect(await iframe.getAttribute("sandbox")).toBe("allow-same-origin allow-scripts");
+});
+
+// Content before <head> makes the HTML parser move the head, CSP meta included, into <body>, where browsers
+// ignore it. The head must come first, so the CSP is in force and the remote URLs in srcset and CSS stay blocked.
+test("a section with content before its head still has the CSP in the head",async({page})=>{
+ const leaks:string[]=[];page.on("response",r=>{if(r.url().includes("/leak"))leaks.push(r.url())});
+ await importBook(page,"Frame late head",false,"head-late");
+ const frame=page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe");
+ await expect(frame.getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
+ await page.waitForTimeout(1000);
+ const csp=await page.locator(".reader-room:not(.inline-reader) .reader-viewport iframe").first().evaluate((f:HTMLIFrameElement)=>{
+  const meta=f.contentDocument!.querySelector('meta[http-equiv="Content-Security-Policy"]');
+  return {parent:meta?.parentElement?.tagName,first:f.contentDocument!.head.firstElementChild===meta};
+ });
+ expect(csp).toEqual({parent:"HEAD",first:true});
+ expect(leaks).toEqual([]);
+ expect(await page.evaluate(()=>(window as any).__epubScriptExecuted)).toBeUndefined();
 });
