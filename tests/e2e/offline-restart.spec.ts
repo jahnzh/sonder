@@ -95,6 +95,25 @@ async function relaunchOffline(profile: string, mode: "offline" | "unreachable")
   await page.goto("/");
   return { context, page };
 }
+const storedChoice = (page: import("@playwright/test").Page, recordingId: string) =>
+  page.evaluate(
+    (id) =>
+      new Promise<string | undefined>((resolve, reject) => {
+        const req = indexedDB.open("sonder");
+        req.onerror = () => reject(req.error);
+        req.onsuccess = () => {
+          const get = req.result
+            .transaction("preferences")
+            .objectStore("preferences")
+            .get(`playback-source:${id}`);
+          get.onsuccess = () => {
+            req.result.close();
+            resolve(get.result?.value);
+          };
+        };
+      }),
+    recordingId,
+  );
 async function playFromDock(page: import("@playwright/test").Page, title: string) {
   await page.getByRole("tab", { name: "Downloaded", exact: true }).click();
   await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
@@ -110,20 +129,30 @@ for (const [mode, choice] of [
   ["offline", undefined],
   ["offline", "server"],
   ["unreachable", undefined],
+  ["unreachable", "server"],
 ] as const) {
   test(`${mode} launch after a browser restart plays the device copy (${choice ?? "automatic"} source choice)`, async () => {
     const title = `Restart story ${mode} ${choice ?? "auto"}`;
     const profile = await mkdtemp(join(tmpdir(), "sonder-restart-"));
     await mkdir("artifacts/7", { recursive: true });
+    let book: { recordingId: string };
     try {
       let context = await launch(profile);
-      await saveOnDevice(context, title, choice);
+      book = await saveOnDevice(context, title, choice);
       await context.close();
       const restarted = await relaunchOffline(profile, mode);
       context = restarted.context;
       const page = restarted.page;
       await playFromDock(page, title);
       await expect(page.getByText("isn’t downloaded on this device")).toHaveCount(0);
+      if (mode === "unreachable" && choice) {
+        // Online but with no route to the server: the switch is announced and
+        // lasts for this playback only.
+        await expect(page.locator(".toast")).toContainText(
+          "Server unreachable. Playing the device copy.",
+        );
+        expect(await storedChoice(page, book.recordingId)).toBe(choice);
+      }
       await page.screenshot({ path: `artifacts/7/${mode}-${choice ?? "auto"}.png` });
       await context.close();
     } finally {
@@ -131,3 +160,42 @@ for (const [mode, choice] of [
     }
   });
 }
+test("unreachable launch keeps the stream error when the device copy is incomplete (server source choice)", async () => {
+  const title = "Restart story partial copy";
+  const profile = await mkdtemp(join(tmpdir(), "sonder-restart-"));
+  try {
+    let context = await launch(profile);
+    await saveOnDevice(context, title, "server");
+    // A download that stopped short: the stored bytes no longer match the recorded size.
+    await context.pages()[0].evaluate(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          const req = indexedDB.open("sonder");
+          req.onerror = () => reject(req.error);
+          req.onsuccess = () => {
+            const tx = req.result.transaction("downloads", "readwrite");
+            const store = tx.objectStore("downloads");
+            store.getAll().onsuccess = (event) => {
+              for (const row of (event.target as IDBRequest).result)
+                store.put({ ...row, size: row.size + 1 });
+            };
+            tx.oncomplete = () => {
+              req.result.close();
+              resolve();
+            };
+          };
+        }),
+    );
+    await context.close();
+    const restarted = await relaunchOffline(profile, "unreachable");
+    context = restarted.context;
+    const page = restarted.page;
+    await page.getByRole("button", { name: `Play ${title}`, exact: true }).first().click();
+    await expect(page.locator(".player-error")).toBeVisible();
+    await expect(page.locator(".toast")).toHaveCount(0);
+    await expect(page.locator(".player-dock .playback-source")).not.toHaveText("Device cache");
+    await context.close();
+  } finally {
+    await rm(profile, { recursive: true, force: true });
+  }
+});

@@ -15,7 +15,15 @@ import {
   absoluteSeekTarget,
 } from "./chapters";
 import type { Book, Track, Progress, PlaybackSourceChoice } from "./types";
-import { playbackInput, setPreferredSource } from "./playback-sources";
+import {
+  canFallBackToDevice,
+  deviceFault,
+  fallbackNotice,
+  isTransportFailure,
+  playbackInput,
+  setPreferredSource,
+  type StreamRequest,
+} from "./playback-sources";
 import { BLOCKING_DIALOG_SELECTOR, playbackKeyAction } from "./keyboard";
 import { useAppearance } from "./components/Appearance";
 import {
@@ -65,10 +73,12 @@ export function PlayerProvider({
   children,
   onProgress,
   fallback,
+  notify,
 }: {
   children: ReactNode;
   onProgress: (p: Progress) => void;
   fallback?: Book;
+  notify?: (text: string) => void;
 }) {
   const [element] = useState(() => new Audio());
   const audio = useRef<HTMLAudioElement>(element);
@@ -98,6 +108,18 @@ export function PlayerProvider({
   const sleepEnd = useRef<number | null>(null);
   const generation = useRef(0);
   const playRequests = useRef(0);
+  // The explicit server or original load now in the element. `recovery` is set
+  // once, so a failed load switches to the device copy at most once.
+  const streamLoad = useRef<{
+    generation: number;
+    request: StreamRequest;
+    book: Book;
+    track: Track;
+    recovery?: Promise<boolean>;
+  } | null>(null);
+  const noticedFor = useRef<string | null>(null);
+  const notifyRef = useRef(notify);
+  notifyRef.current = notify;
   const sourceReportedFor = useRef(-1);
   // An unsaved Settings preview must not change what is playing.
   const preferredSpeed = useAppearance().saved.playback.speed;
@@ -139,6 +161,60 @@ export function PlayerProvider({
     lastSave.current = Date.now();
     onProgressRef.current(p);
     void saveProgress(p);
+  }, []);
+  // A server or original choice that fails with no route to the server plays the
+  // device copy for this load only; the saved choice stays as it is.
+  const recoverOnDevice = useCallback((): Promise<boolean> => {
+    const load = streamLoad.current;
+    if (!load) return Promise.resolve(false);
+    load.recovery ??= (async () => {
+      const el = audio.current;
+      const resume = !el.paused;
+      const position = pendingSeek.current ?? el.currentTime;
+      const current = () =>
+        streamLoad.current === load && generation.current === load.generation;
+      if (!(await isTransportFailure(el.src)) || !current()) return false;
+      const [download, fault] = await Promise.all([
+        localDB.downloads.get(load.track.id),
+        deviceFault(load.book.recordingId),
+      ]);
+      if (!canFallBackToDevice(load.request, download, fault)) return false;
+      // offlineUrl rejects a copy whose stored bytes are incomplete.
+      const local = await offlineUrl(load.track);
+      if (!local) return false;
+      if (!current()) {
+        URL.revokeObjectURL(local);
+        return false;
+      }
+      if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
+      objectUrl.current = local;
+      streamLoad.current = null;
+      pendingSeek.current = position;
+      setSource("device");
+      setError(null);
+      setLoading(true);
+      setPlaying(false);
+      if (noticedFor.current !== load.book.recordingId) {
+        noticedFor.current = load.book.recordingId;
+        notifyRef.current?.(fallbackNotice(load.request));
+      }
+      el.src = local;
+      el.load();
+      if (resume)
+        try {
+          await el.play();
+        } catch (e) {
+          if (
+            generation.current === load.generation &&
+            !(e instanceof DOMException && e.name === "AbortError")
+          ) {
+            setLoading(false);
+            setError("This chapter couldn’t start. Please try again.");
+          }
+        }
+      return true;
+    })();
+    return load.recovery;
   }, []);
   const play = useCallback(
     async (
@@ -230,6 +306,15 @@ export function PlayerProvider({
       }
       if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
       objectUrl.current = local;
+      streamLoad.current =
+        !local && (input.preference === "server" || input.preference === "original")
+          ? {
+              generation: currentGeneration,
+              request: input.preference,
+              book: b,
+              track: selected,
+            }
+          : null;
       setSource(local ? "device" : (input.expected as PlayerState["source"]));
       if (!local)
         void api<{ source: "server" | "torbox" | "remote" }>(
@@ -238,6 +323,7 @@ export function PlayerProvider({
           .then((location) => {
             if (
               currentGeneration === generation.current &&
+              !objectUrl.current &&
               sourceReportedFor.current !== currentGeneration
             )
               setSource(location.source);
@@ -281,6 +367,12 @@ export function PlayerProvider({
           currentGeneration === generation.current &&
           !(e instanceof DOMException && e.name === "AbortError")
         ) {
+          if (
+            streamLoad.current?.generation === currentGeneration &&
+            (await recoverOnDevice())
+          )
+            return;
+          if (currentGeneration !== generation.current) return;
           setLoading(false);
           setError(
             navigator.onLine
@@ -290,7 +382,7 @@ export function PlayerProvider({
         }
       }
     },
-    [persist, speedFor, applyRate],
+    [persist, speedFor, applyRate, recoverOnDevice],
   );
   const playRef = useRef(play);
   playRef.current = play;
@@ -462,6 +554,7 @@ export function PlayerProvider({
         pendingSeek.current = null;
       }
       setLoading(false);
+      if (!objectUrl.current) noticedFor.current = null;
       if (el.paused) persist();
     };
     const started = () => {
@@ -491,14 +584,21 @@ export function PlayerProvider({
       }
     };
     const failed = () => {
-      setLoading(false);
-      setPlaying(false);
-      if (el.src)
-        setError(
-          navigator.onLine
-            ? "The audio source is unavailable. Please try again."
-            : "This chapter isn’t downloaded on this device.",
-        );
+      const fail = () => {
+        setLoading(false);
+        setPlaying(false);
+        if (el.src)
+          setError(
+            navigator.onLine
+              ? "The audio source is unavailable. Please try again."
+              : "This chapter isn’t downloaded on this device.",
+          );
+      };
+      const load = streamLoad.current;
+      if (!el.src || load?.generation !== generation.current) return fail();
+      void recoverOnDevice().then((recovered) => {
+        if (!recovered && load.generation === generation.current) fail();
+      });
     };
     const waiting = () => setLoading(true);
     const ready = () => setLoading(false);
@@ -590,7 +690,7 @@ export function PlayerProvider({
       window.removeEventListener("keydown", keydown);
       navigator.serviceWorker?.removeEventListener("message", mediaSource);
     };
-  }, [persist, next, previous, skip, seek, toggle]);
+  }, [persist, next, previous, skip, seek, toggle, recoverOnDevice]);
   const speedTarget = book?.recordingId ?? fallback?.recordingId;
   useEffect(() => {
     // Shows the fallback book's speed before playback and follows a changed
