@@ -54,8 +54,8 @@ The implementer's acceptance run at `ba930ac` passed 11/11 in Chrome and 11/11 i
 | 2 | 9/11 | 10/11 | Chrome reader-first at 390px (`page.goto: Target page, context or browser has been closed`) and the keyboard-focus test (context setup timeout). Firefox: the same 360px test. |
 | 3 (Chrome only, `SONDER_EMU_MEMORY=6g`) | 10/11 | not run | Chrome reader-first at 1280px: context setup timeout. |
 
-- **Chrome hangs creating the browser context** in a different test each run (about 1 in 11 to 2 in 11). It is not tied to the memory limit: with 6 GB the emulator still grows to 5.9 GB by the end of a run and the hang still happened, so the default stays at 4600m. The cause is open; the leak-like growth of the emulator's anonymous memory during a run is the lead.
-- **Firefox reader-first at 360px fails every time**: `Play narration` is not found in `.inline-reader`, while 390, 430 and 1280px pass. This is a reproducible difference on Firefox for Android and is tracked in its own issue. It may be a real layout or tap-handling problem, or an assumption of the test.
+- **Chrome hangs creating the browser context** in a different test each run (about 1 in 11 to 2 in 11). It is not tied to the memory limit: with 6 GB the emulator still grows to 5.9 GB by the end of a run and the hang still happened, so the default stays at 4600m. The cause is open (#71); the leak-like growth of the emulator's anonymous memory during a run is the lead.
+- **Firefox reader-first at 360px fails every time**: `Play narration` is not found in `.inline-reader`, while 390, 430 and 1280px pass. This is a reproducible difference on Firefox for Android and is tracked in #70. It may be a real layout or tap-handling problem, or an assumption of the test.
 - The scripts do not retry tests, so a failure is reported as `failed exit=1`; read `playwright.log` and `report.json` before treating a failure as a product bug.
 - Boot takes 38 to 45 s. The container ends a run at its memory limit.
 
