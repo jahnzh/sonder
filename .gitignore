@@ -10,3 +10,4 @@ playwright-report/
 artifacts/
 .codex-attachments/
 .codegraph
+__pycache__/

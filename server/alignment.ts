@@ -303,7 +303,20 @@ const finished = (job: AlignmentJob) =>
   job.mode === "anchored"
     ? job.anchoring?.stage === "done"
     : job.sectionsDone.length === job.pairings.length;
-async function workerRequest(path: string, body: object, timeout: number) {
+// The worker ends a request itself (HTTP 504) after at most 1700 s, so these client
+// waits must stay longer than that for its clear error to arrive first.
+const SECTION_TIMEOUT_MS = 30 * 60 * 1000,
+  ANCHOR_TIMEOUT_MS = 180000;
+export const WORKER_TIMEOUT_MESSAGE =
+  "The alignment worker timed out on this section. Retry later, or choose a release with chapters.";
+async function workerRequest(
+  path: string,
+  body: object,
+  timeout: number,
+  failure = path === "/anchor"
+    ? "Local speech recovery is unavailable. Check that the speech model is installed on the media drive."
+    : "Local alignment could not process part of this narration. Retry, or choose a release with chapters.",
+) {
   for (let attempt = 0; ; attempt++) {
     const response = await fetch(
       `${process.env.ALIGNMENT_WORKER_URL!.replace(/\/$/, "")}${path}`,
@@ -322,13 +335,13 @@ async function workerRequest(path: string, body: object, timeout: number) {
       await new Promise((resolve) => setTimeout(resolve, 3000));
       continue;
     }
+    // The worker stopped this request at its time limit; running it again would hold the core for as long.
+    if (response.status === 504) throw new Error(WORKER_TIMEOUT_MESSAGE);
     if (!response.ok)
       throw new Error(
         response.status === 409
           ? "The alignment worker is busy. Retry in a moment."
-          : path === "/anchor"
-            ? "Local speech recovery is unavailable. Check that the speech model is installed on the media drive."
-            : "Local alignment could not process part of this narration. Retry, or choose a release with chapters.",
+          : failure,
       );
     return response.json();
   }
@@ -411,7 +424,7 @@ async function processAnchored(
             start: sample.time,
             duration: sample.duration,
           },
-          180000,
+          ANCHOR_TIMEOUT_MS,
         ),
       );
       if (!current()) return;
@@ -504,7 +517,7 @@ async function processAnchored(
             start: segment.start,
             duration: segment.duration,
           },
-          30 * 60 * 1000,
+          SECTION_TIMEOUT_MS,
         );
     if (!current()) return;
     const result = z
@@ -683,30 +696,19 @@ export async function processAlignments() {
           if (existsSync(output))
             result = JSON.parse(readFileSync(output, "utf8"));
           else {
-            const response = await fetch(
-              `${process.env.ALIGNMENT_WORKER_URL.replace(/\/$/, "")}/align`,
+            result = await workerRequest(
+              "/align",
               {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  token: process.env.ALIGNMENT_WORKER_TOKEN,
-                  audio,
-                  output,
-                  fragments: section.paragraphs.map((p) => p.text),
-                  language: iso3(book.language),
-                  start: pair.start,
-                  duration: pair.duration,
-                }),
-                signal: AbortSignal.timeout(30 * 60 * 1000),
+                audio,
+                output,
+                fragments: section.paragraphs.map((p) => p.text),
+                language: iso3(book.language),
+                start: pair.start,
+                duration: pair.duration,
               },
+              SECTION_TIMEOUT_MS,
+              "Local alignment could not process this section. Check its chapter pairing and retry.",
             );
-            if (!response.ok)
-              throw new Error(
-                response.status === 409
-                  ? "The alignment worker is busy. Retry in a moment."
-                  : "Local alignment could not process this section. Check its chapter pairing and retry.",
-              );
-            result = (await response.json()) as typeof result;
           }
           if (
             !activeStatuses.includes(alignmentJob(job.id).status) ||
@@ -856,7 +858,7 @@ export function registerAlignment(app: FastifyInstance) {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(180000),
+        signal: AbortSignal.timeout(ANCHOR_TIMEOUT_MS),
         body: JSON.stringify({
           token: process.env.ALIGNMENT_WORKER_TOKEN,
           audio,
@@ -872,7 +874,9 @@ export function registerAlignment(app: FastifyInstance) {
       throw new Error(
         response.status === 409
           ? "The local worker is busy. Try again after the current section."
-          : "This passage could not be located locally. Check its edition and chapter match.",
+          : response.status === 504
+            ? WORKER_TIMEOUT_MESSAGE
+            : "This passage could not be located locally. Check its edition and chapter match.",
       );
     const result = z
       .object({

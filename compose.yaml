@@ -38,6 +38,11 @@ services:
       ALIGNMENT_WORKER_TOKEN: ${ALIGNMENT_WORKER_TOKEN:?Generate a private worker token}
       HF_HOME: ${MEDIA_ROOT:-/mnt/usb_4t_1/sonder}/alignment/models/huggingface
       HF_HUB_DISABLE_XET: "1"
+      # Alignment time limit: min(MAX, BASE + PER_AUDIO_SECOND x audio seconds). Empty uses the
+      # defaults 120 s, 0.15 and 1200 s; see README. Set them in .env, not here.
+      ALIGNMENT_TIMEOUT_BASE_SECONDS: ${ALIGNMENT_TIMEOUT_BASE_SECONDS:-}
+      ALIGNMENT_TIMEOUT_PER_AUDIO_SECOND: ${ALIGNMENT_TIMEOUT_PER_AUDIO_SECOND:-}
+      ALIGNMENT_TIMEOUT_MAX_SECONDS: ${ALIGNMENT_TIMEOUT_MAX_SECONDS:-}
     volumes:
       - ${MEDIA_ROOT:-/mnt/usb_4t_1/sonder}:${MEDIA_ROOT:-/mnt/usb_4t_1/sonder}
     cpus: 2
