@@ -117,3 +117,81 @@ export function playFailureAction(
   if (load.streaming && name !== "NotAllowedError") return "recover";
   return "report";
 }
+
+// How long a stream may sit stalled or waiting before the connection is
+// checked, and how long a confirmed outage is remembered.
+export const STALL_SWITCH_MS = 10_000;
+export const FAILURE_MEMORY_MS = 60_000;
+
+// A confirmed transport failure, remembered briefly so the next load can go
+// straight to the device copy. The clock is injected to keep it testable.
+export function failureMemory(
+  now: () => number = () => Date.now(),
+  windowMs = FAILURE_MEMORY_MS,
+) {
+  let at: number | null = null;
+  return {
+    remember() {
+      at = now();
+    },
+    clear() {
+      at = null;
+    },
+    recent() {
+      if (at === null) return false;
+      const elapsed = now() - at;
+      return elapsed >= 0 && elapsed < windowMs;
+    },
+  };
+}
+
+// Whether a load may skip the stream and play the device copy: a recent outage
+// and the same download and fault rules as a failed stream. The caller still
+// has to confirm the stored bytes are complete.
+export function skipStream(
+  request: StreamRequest,
+  recentFailure: boolean,
+  download: unknown,
+  fault: unknown,
+) {
+  return recentFailure && canFallBackToDevice(request, download, fault);
+}
+
+export type Timers = {
+  set: (run: () => void, ms: number) => unknown;
+  clear: (handle: unknown) => void;
+};
+
+const browserTimers: Timers = {
+  set: (run, ms) => setTimeout(run, ms),
+  clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+};
+
+// One timer for a stream that has stopped delivering. Arming again while it
+// runs keeps the original deadline, because `waiting` and `stalled` repeat.
+export function stallWatchdog(
+  onStall: () => void,
+  delayMs = STALL_SWITCH_MS,
+  timers: Timers = browserTimers,
+) {
+  let handle: unknown = null;
+  let armed = false;
+  return {
+    armed: () => armed,
+    arm() {
+      if (armed) return;
+      armed = true;
+      handle = timers.set(() => {
+        armed = false;
+        handle = null;
+        onStall();
+      }, delayMs);
+    },
+    cancel() {
+      if (!armed) return;
+      armed = false;
+      timers.clear(handle);
+      handle = null;
+    },
+  };
+}

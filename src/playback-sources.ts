@@ -1,5 +1,5 @@
 import { api, localDB } from "./lib";
-import { offlinePreference } from "./device-fallback";
+import { offlinePreference, skipStream } from "./device-fallback";
 import type {
   Book,
   Track,
@@ -64,7 +64,11 @@ export async function getRecordingSources(
     }
   );
 }
-export async function playbackInput(book: Book, track: Track) {
+export async function playbackInput(
+  book: Book,
+  track: Track,
+  recentFailure = false,
+) {
   const [chosen, state, fault, download] = await Promise.all([
     preferredSource(book.recordingId),
     getRecordingSources(book),
@@ -111,6 +115,11 @@ export async function playbackInput(book: Book, track: Track) {
   return {
     preference,
     request,
+    // A recent outage sends an explicit stream straight to the device copy; the
+    // caller still plays the stream when that copy turns out to be incomplete.
+    remembered:
+      (preference === "server" || preference === "original") &&
+      skipStream(preference, recentFailure, download, fault),
     device: (preference === "auto" || preference === "device") && !fault,
     expected:
       request === "server"

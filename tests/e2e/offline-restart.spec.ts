@@ -38,7 +38,12 @@ const launch = (profile: string, args: string[] = []) =>
       process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ||
       (existsSync(installed) ? installed : undefined),
   });
-async function saveOnDevice(context: BrowserContext, title: string, choice?: "server") {
+async function saveOnDevice(
+  context: BrowserContext,
+  title: string,
+  choice?: "server",
+  chapters = 1,
+) {
   const page = context.pages()[0] || (await context.newPage());
   await page.goto("/");
   if (process.env.PLAYWRIGHT_AUTH === "1") {
@@ -49,11 +54,13 @@ async function saveOnDevice(context: BrowserContext, title: string, choice?: "se
   await page.reload();
   await page.waitForFunction(() => !!navigator.serviceWorker.controller);
   await page.getByRole("button", { name: "Add audiobook", exact: true }).click();
-  await page.locator("input[type=file]").setInputFiles({
-    name: `${title}.wav`,
-    mimeType: "audio/wav",
-    buffer: wave(),
-  });
+  await page.locator("input[type=file]").setInputFiles(
+    Array.from({ length: chapters }, (_, i) => ({
+      name: chapters > 1 ? `${title} ${i + 1}.wav` : `${title}.wav`,
+      mimeType: "audio/wav",
+      buffer: wave(),
+    })),
+  );
   await page.getByRole("textbox", { name: "Book title", exact: true }).fill(title);
   await page.getByRole("textbox", { name: "Author", exact: true }).fill("Sonder test");
   await page.getByRole("button", { name: "Add to my library", exact: true }).click();
@@ -281,6 +288,123 @@ test("pausing while the connection is being checked keeps the device copy paused
     await page.waitForTimeout(2500);
     expect(await page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true }).count()).toBe(0);
     await expect(page.locator(".player-error")).toHaveCount(0);
+    await context.close();
+  } finally {
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+// Lets a test read the playback position: the player's audio element is not in the page.
+const exposeAudio = (context: BrowserContext) =>
+  context.addInitScript(() => {
+    const play = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function () {
+      (window as unknown as { __audio: HTMLMediaElement }).__audio = this;
+      return play.call(this);
+    };
+  });
+const audioTime = (page: import("@playwright/test").Page) =>
+  page.evaluate(
+    () => (window as unknown as { __audio: HTMLMediaElement }).__audio.currentTime,
+  );
+const serverStream = /\/api\/media\/[^/?]+\?source=server/;
+test("a stream that stalls after its first bytes switches to the device copy at the same position (server source choice)", async () => {
+  test.setTimeout(60_000);
+  const title = "Restart story stalled stream";
+  const profile = await mkdtemp(join(tmpdir(), "sonder-restart-"));
+  try {
+    let context = await launch(profile);
+    const book = await saveOnDevice(context, title, "server");
+    await context.close();
+    context = await launch(profile);
+    await exposeAudio(context);
+    // The first 2.5 s of audio arrive, then the connection goes silent: no
+    // data and no error. The connection check itself is refused at once.
+    const firstBytes = 40_000;
+    let served = false;
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => (release = resolve));
+    await context.route(serverStream, async (route) => {
+      const headers = route.request().headers();
+      if (headers.range === "bytes=0-0") return route.abort("connectionrefused");
+      if (!served) {
+        served = true;
+        return route.fulfill({
+          response: await route.fetch({
+            headers: { ...headers, range: `bytes=0-${firstBytes - 1}` },
+          }),
+        });
+      }
+      await hold;
+      await route.abort().catch(() => {});
+    });
+    const page = context.pages()[0] || (await context.newPage());
+    await page.goto("/");
+    await page.getByRole("tab", { name: "Downloaded", exact: true }).click();
+    await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
+    await expect(page.locator(".player-dock .playback-source")).not.toHaveText("Device cache");
+    await expect(page.locator(".toast")).toHaveCount(0);
+    // The stream never errors, so only the stall switches it (10 s, plus the check).
+    await expect(page.locator(".player-dock .playback-source")).toHaveText("Device cache", {
+      timeout: 25_000,
+    });
+    await expect(page.locator(".toast")).toContainText("Server unreachable. Playing the device copy.");
+    // The device copy continues where the stream stopped (2.5 s in), not at 0.
+    await expect.poll(() => audioTime(page)).toBeGreaterThan(1.5);
+    const resumedAt = await audioTime(page);
+    await expect.poll(() => audioTime(page)).toBeGreaterThan(resumedAt + 0.5);
+    await expect(page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+    await expect(page.locator(".player-error")).toHaveCount(0);
+    expect(await storedChoice(page, book.recordingId)).toBe("server");
+    release();
+    await context.close();
+  } finally {
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+test("the next chapter of an unreachable server plays the device copy without another stream request (server source choice)", async () => {
+  test.setTimeout(60_000);
+  const title = "Restart story outage chapters";
+  const profile = await mkdtemp(join(tmpdir(), "sonder-restart-"));
+  try {
+    let context = await launch(profile);
+    const book = await saveOnDevice(context, title, "server", 2);
+    await context.close();
+    context = await launch(profile);
+    await exposeAudio(context);
+    const requested: string[] = [];
+    await context.route(serverStream, (route) => {
+      requested.push(new URL(route.request().url()).pathname.split("/").pop()!);
+      return route.abort("connectionrefused");
+    });
+    const page = context.pages()[0] || (await context.newPage());
+    await page.goto("/");
+    await page.getByRole("tab", { name: "Downloaded", exact: true }).click();
+    await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
+    await expect(page.locator(".player-dock .playback-source")).toHaveText("Device cache");
+    const [first, second] = (await (await page.request.get("/api/books")).json()).find(
+      (b: { title: string }) => b.title === title,
+    ).tracks as { id: string }[];
+    expect(requested.length).toBeGreaterThan(0);
+    expect(new Set(requested)).toEqual(new Set([first.id]));
+    const chapter = page.locator(".player-dock .dock-book small");
+    const firstChapter = await chapter.textContent();
+    const beforeNext = requested.length;
+    // Play out the first chapter: the second one follows on its own.
+    await page.evaluate(() => {
+      const el = (window as unknown as { __audio: HTMLMediaElement }).__audio;
+      el.currentTime = el.duration - 0.5;
+    });
+    await expect(chapter).not.toHaveText(firstChapter!, { timeout: 15_000 });
+    await expect(page.locator(".player-dock .playback-source")).toHaveText("Device cache");
+    await expect(
+      page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true }),
+    ).toBeVisible();
+    await expect(page.locator(".player-error")).toHaveCount(0);
+    // Nothing was asked of the unreachable server for the second chapter.
+    expect(requested.length).toBe(beforeNext);
+    expect(requested).not.toContain(second.id);
+    expect(await storedChoice(page, book.recordingId)).toBe("server");
     await context.close();
   } finally {
     await rm(profile, { recursive: true, force: true });

@@ -1,13 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  FAILURE_MEMORY_MS,
+  STALL_SWITCH_MS,
   canFallBackToDevice,
+  failureMemory,
   fallbackNotice,
   isTransportFailure,
   offlinePreference,
   playFailureAction,
   recoverOnce,
   recoveryOutcome,
+  skipStream,
+  stallWatchdog,
+  type Timers,
 } from "../src/device-fallback.ts";
 
 const download = { trackId: "t1" };
@@ -178,4 +184,147 @@ test("a rejected play() on a device or automatic load is reported", () => {
 test("the notice names the unreachable source and the device copy", () => {
   assert.equal(fallbackNotice("server"), "Server unreachable. Playing the device copy.");
   assert.equal(fallbackNotice("original"), "Original stream unreachable. Playing the device copy.");
+});
+
+// A manual clock that runs due timers when advanced.
+function fakeClock() {
+  let now = 0;
+  let next = 0;
+  const pending = new Map<number, { at: number; run: () => void }>();
+  const timers: Timers = {
+    set: (run, ms) => {
+      pending.set(++next, { at: now + ms, run });
+      return next;
+    },
+    clear: (handle) => void pending.delete(handle as number),
+  };
+  return {
+    now: () => now,
+    timers,
+    pending: () => pending.size,
+    advance(ms: number) {
+      const end = now + ms;
+      for (;;) {
+        const due = [...pending.entries()]
+          .filter(([, t]) => t.at <= end)
+          .sort((a, b) => a[1].at - b[1].at)[0];
+        if (!due) break;
+        pending.delete(due[0]);
+        now = due[1].at;
+        due[1].run();
+      }
+      now = end;
+    },
+  };
+}
+
+test("the defaults are a 10 s stall and a 60 s failure memory", () => {
+  assert.equal(STALL_SWITCH_MS, 10_000);
+  assert.equal(FAILURE_MEMORY_MS, 60_000);
+});
+
+test("a stall switches once, after the stall time and not before", () => {
+  const clock = fakeClock();
+  let stalls = 0;
+  const watchdog = stallWatchdog(() => stalls++, STALL_SWITCH_MS, clock.timers);
+  watchdog.arm();
+  clock.advance(STALL_SWITCH_MS - 1);
+  assert.equal(stalls, 0);
+  clock.advance(1);
+  assert.equal(stalls, 1);
+  clock.advance(STALL_SWITCH_MS * 3);
+  assert.equal(stalls, 1);
+  assert.equal(watchdog.armed(), false);
+});
+
+test("repeated waiting and stalled events keep the first deadline", () => {
+  const clock = fakeClock();
+  let stalls = 0;
+  const watchdog = stallWatchdog(() => stalls++, STALL_SWITCH_MS, clock.timers);
+  watchdog.arm();
+  clock.advance(6_000);
+  watchdog.arm();
+  clock.advance(4_000);
+  assert.equal(stalls, 1);
+  assert.equal(clock.pending(), 0);
+});
+
+test("cancelling stops the stall, and the watchdog can be armed again", () => {
+  const clock = fakeClock();
+  let stalls = 0;
+  const watchdog = stallWatchdog(() => stalls++, STALL_SWITCH_MS, clock.timers);
+  watchdog.arm();
+  clock.advance(9_000);
+  watchdog.cancel();
+  assert.equal(clock.pending(), 0);
+  clock.advance(60_000);
+  assert.equal(stalls, 0);
+  watchdog.cancel();
+  watchdog.arm();
+  clock.advance(STALL_SWITCH_MS);
+  assert.equal(stalls, 1);
+});
+
+test("a stall handler may arm the watchdog again for the next check", () => {
+  const clock = fakeClock();
+  let stalls = 0;
+  const watchdog = stallWatchdog(
+    () => {
+      stalls++;
+      watchdog.arm();
+    },
+    STALL_SWITCH_MS,
+    clock.timers,
+  );
+  watchdog.arm();
+  clock.advance(STALL_SWITCH_MS * 2);
+  assert.equal(stalls, 2);
+});
+
+test("a failure is remembered for 60 s and then forgotten", () => {
+  const clock = fakeClock();
+  const memory = failureMemory(clock.now);
+  assert.equal(memory.recent(), false);
+  memory.remember();
+  clock.advance(FAILURE_MEMORY_MS - 1);
+  assert.equal(memory.recent(), true);
+  clock.advance(1);
+  assert.equal(memory.recent(), false);
+});
+
+test("a success or the online event clears the remembered failure", () => {
+  const clock = fakeClock();
+  const memory = failureMemory(clock.now);
+  memory.remember();
+  clock.advance(1_000);
+  memory.clear();
+  assert.equal(memory.recent(), false);
+});
+
+test("a new failure restarts the memory window", () => {
+  const clock = fakeClock();
+  const memory = failureMemory(clock.now);
+  memory.remember();
+  clock.advance(50_000);
+  memory.remember();
+  clock.advance(50_000);
+  assert.equal(memory.recent(), true);
+});
+
+test("the memory ignores a clock that moved backwards", () => {
+  let now = 100_000;
+  const memory = failureMemory(() => now);
+  memory.remember();
+  now = 50_000;
+  assert.equal(memory.recent(), false);
+});
+
+test("a remembered outage skips the stream only for a healthy download of an explicit choice", () => {
+  for (const request of ["server", "original"] as const) {
+    assert.equal(skipStream(request, true, download, undefined), true);
+    assert.equal(skipStream(request, false, download, undefined), false);
+    assert.equal(skipStream(request, true, undefined, undefined), false);
+    assert.equal(skipStream(request, true, download, fault), false);
+  }
+  assert.equal(skipStream("auto", true, download, undefined), false);
 });

@@ -24,7 +24,13 @@ import {
   setPreferredSource,
   type StreamRequest,
 } from "./playback-sources";
-import { playFailureAction, recoverOnce, recoveryOutcome } from "./device-fallback";
+import {
+  failureMemory,
+  playFailureAction,
+  recoverOnce,
+  recoveryOutcome,
+  stallWatchdog,
+} from "./device-fallback";
 import { BLOCKING_DIALOG_SELECTOR, playbackKeyAction } from "./keyboard";
 import { useAppearance } from "./components/Appearance";
 import {
@@ -120,6 +126,9 @@ export function PlayerProvider({
     recovery?: Promise<boolean>;
   } | null>(null);
   const noticedFor = useRef<string | null>(null);
+  // A confirmed outage, so the next chapter goes straight to the device copy.
+  const [failures] = useState(() => failureMemory());
+  const stall = useRef<ReturnType<typeof stallWatchdog> | null>(null);
   const notifyRef = useRef(notify);
   notifyRef.current = notify;
   const sourceReportedFor = useRef(-1);
@@ -174,7 +183,9 @@ export function PlayerProvider({
       const startedAt = playRequests.current;
       const current = () =>
         streamLoad.current === load && generation.current === load.generation;
-      if (!(await isTransportFailure(el.src)) || !current()) return false;
+      const unreachable = await isTransportFailure(el.src);
+      if (unreachable) failures.remember();
+      if (!unreachable || !current()) return false;
       const [download, fault] = await Promise.all([
         localDB.downloads.get(load.track.id),
         deviceFault(load.book.recordingId),
@@ -197,6 +208,7 @@ export function PlayerProvider({
       if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
       objectUrl.current = local;
       streamLoad.current = null;
+      stall.current?.cancel();
       pendingSeek.current = position;
       setSource("device");
       setError(null);
@@ -222,7 +234,7 @@ export function PlayerProvider({
         }
       return true;
     });
-  }, []);
+  }, [failures]);
   const play = useCallback(
     async (
       b: Book,
@@ -255,7 +267,7 @@ export function PlayerProvider({
         b.tracks[0];
       let input: Awaited<ReturnType<typeof playbackInput>>;
       try {
-        input = await playbackInput(b, selected);
+        input = await playbackInput(b, selected, failures.recent());
       } catch (error) {
         if (request !== playRequests.current) return;
         setError((error as Error).message);
@@ -296,10 +308,12 @@ export function PlayerProvider({
             : start;
       persist();
       const currentGeneration = ++generation.current;
+      stall.current?.cancel();
       el.pause();
       setLoading(true);
       setError(null);
-      const local = input.device ? await offlineUrl(selected) : null;
+      const local =
+        input.device || input.remembered ? await offlineUrl(selected) : null;
       if (input.preference === "device" && !local) {
         setLoading(false);
         setError(
@@ -323,6 +337,12 @@ export function PlayerProvider({
             }
           : null;
       const streamed = !!streamLoad.current;
+      if (local && input.remembered && noticedFor.current !== b.recordingId) {
+        noticedFor.current = b.recordingId;
+        notifyRef.current?.(
+          fallbackNotice(input.preference === "original" ? "original" : "server"),
+        );
+      }
       setSource(local ? "device" : (input.expected as PlayerState["source"]));
       if (!local)
         void api<{ source: "server" | "torbox" | "remote" }>(
@@ -388,7 +408,7 @@ export function PlayerProvider({
         }
       }
     },
-    [persist, speedFor, applyRate, recoverOnDevice],
+    [persist, speedFor, applyRate, recoverOnDevice, failures],
   );
   const playRef = useRef(play);
   playRef.current = play;
@@ -532,6 +552,15 @@ export function PlayerProvider({
   useEffect(() => {
     const el = audio.current;
     el.preload = "metadata";
+    const watchdog = stallWatchdog(() => {
+      const load = streamLoad.current;
+      if (!load || load.generation !== generation.current) return;
+      void recoverOnDevice().then((recovered) => {
+        // Still stalled and still this stream: check again after another wait.
+        if (!recovered && streamLoad.current === load) stalling();
+      });
+    });
+    stall.current = watchdog;
     const positionState = () => {
       const report = mediaPositionState(el);
       if (!report || !("mediaSession" in navigator) || !navigator.mediaSession.setPositionState)
@@ -563,22 +592,27 @@ export function PlayerProvider({
         pendingSeek.current = null;
       }
       setLoading(false);
+      if (streamLoad.current) failures.clear();
       if (!objectUrl.current) noticedFor.current = null;
       if (el.paused) persist();
     };
     const started = () => {
+      watchdog.cancel();
+      if (streamLoad.current) failures.clear();
       setPlaying(true);
       setLoading(false);
       if ("mediaSession" in navigator)
         navigator.mediaSession.playbackState = "playing";
     };
     const paused = () => {
+      watchdog.cancel();
       setPlaying(false);
       if ("mediaSession" in navigator)
         navigator.mediaSession.playbackState = "paused";
       persist();
     };
     const ended = () => {
+      watchdog.cancel();
       persist();
       const { book, track } = state.current;
       if (!book || !track) return;
@@ -609,10 +643,22 @@ export function PlayerProvider({
         if (!recovered && load.generation === generation.current) fail();
       });
     };
-    const waiting = () => setLoading(true);
+    // A stream that neither plays nor fails never raises `error`, so after a
+    // while the same connection check as for a failed load decides.
+    const stalling = () => {
+      if (streamLoad.current && el.src && !el.paused) watchdog.arm();
+    };
+    const waiting = () => {
+      setLoading(true);
+      stalling();
+    };
+    const seeked = () => watchdog.cancel();
     const ready = () => setLoading(false);
     const pagehide = () => persist();
-    const online = () => void syncProgress().catch(() => {});
+    const online = () => {
+      failures.clear();
+      void syncProgress().catch(() => {});
+    };
     const keydown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const interactive = target?.closest?.(
@@ -658,6 +704,8 @@ export function PlayerProvider({
     el.addEventListener("ended", ended);
     el.addEventListener("error", failed);
     el.addEventListener("waiting", waiting);
+    el.addEventListener("stalled", stalling);
+    el.addEventListener("seeked", seeked);
     el.addEventListener("canplay", ready);
     window.addEventListener("pagehide", pagehide);
     window.addEventListener("online", online);
@@ -693,13 +741,17 @@ export function PlayerProvider({
       el.removeEventListener("ended", ended);
       el.removeEventListener("error", failed);
       el.removeEventListener("waiting", waiting);
+      el.removeEventListener("stalled", stalling);
+      el.removeEventListener("seeked", seeked);
+      watchdog.cancel();
+      stall.current = null;
       el.removeEventListener("canplay", ready);
       window.removeEventListener("pagehide", pagehide);
       window.removeEventListener("online", online);
       window.removeEventListener("keydown", keydown);
       navigator.serviceWorker?.removeEventListener("message", mediaSource);
     };
-  }, [persist, next, previous, skip, seek, toggle, recoverOnDevice]);
+  }, [persist, next, previous, skip, seek, toggle, recoverOnDevice, failures]);
   const speedTarget = book?.recordingId ?? fallback?.recordingId;
   useEffect(() => {
     // Shows the fallback book's speed before playback and follows a changed
