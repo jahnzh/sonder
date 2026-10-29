@@ -120,19 +120,20 @@ function fixture({ built = true } = {}) {
   return { repo, sha, ports, run, read, runDir, summary, emuCalls };
 }
 
-test("a passing run starts the emulator, tunnels, runs both browsers and stops the emulator", async () => {
+test("a passing run boots the emulator for each browser, tunnels once and leaves it stopped", async () => {
   const f = fixture();
   const out = await f.run();
   assert.equal(out.status, 0, out.output);
-  assert.deepEqual(f.emuCalls(), [
+  const perBrowser = (...setup: string[]) => [
     "start",
-    "install-firefox",
+    ...setup,
     `adb reverse tcp:${f.ports.app} tcp:${f.ports.app}`,
     `adb forward tcp:${f.ports.bidi} tcp:${f.ports.bidi}`,
     "status",
+    "adb logcat -d",
     "stop",
-    "status",
-  ]);
+  ];
+  assert.deepEqual(f.emuCalls(), [...perBrowser(), ...perBrowser("install-firefox"), "status"]);
   const ssh = f.read("ssh").split("\n").filter(Boolean);
   assert.match(ssh[0], new RegExp(`-o ExitOnForwardFailure=yes -f -N -M -S \\S+ -L ${f.ports.adb}:127\\.0\\.0\\.1:5037 -L ${f.ports.bidi}:127\\.0\\.0\\.1:${f.ports.bidi} -R ${f.ports.app}:127\\.0\\.0\\.1:${f.ports.app} deck@steamdeck$`));
   assert.match(ssh[1], /-S \S+ -O exit deck@steamdeck$/);
@@ -145,10 +146,10 @@ test("a passing run starts the emulator, tunnels, runs both browsers and stops t
   assert.equal(summary.chrome, "passed exit=0");
   assert.equal(summary.firefox, "passed exit=0");
   assert.equal(summary.exit, "0");
-  for (const file of ["chrome/report.json", "firefox/report.json", "chrome/playwright.log", "deck-after.txt"]) {
+  for (const file of ["chrome/report.json", "firefox/report.json", "chrome/playwright.log", "firefox/logcat.txt", "deck-after.txt"]) {
     assert.ok(fs.existsSync(path.join(f.runDir(), file)), file);
   }
-  const emulator = fs.readFileSync(path.join(f.runDir(), "emulator.txt"), "utf8");
+  const emulator = fs.readFileSync(path.join(f.runDir(), "firefox", "emulator.txt"), "utf8");
   assert.match(emulator, /^boot_seconds=41$/m);
   assert.match(emulator, /^after_tests_memory_peak_bytes=4100000000$/m);
 });
@@ -167,6 +168,7 @@ test("only the named browser runs, and Chrome alone needs no Firefox install", a
   const out = await f.run(["chrome"]);
   assert.equal(out.status, 0, out.output);
   assert.equal(f.emuCalls().includes("install-firefox"), false);
+  assert.equal(f.emuCalls().filter((call) => call === "start").length, 1);
   assert.equal(f.read("npx").split("\n").filter(Boolean).length, 1);
 });
 
@@ -174,7 +176,7 @@ test("a refused emulator start (a CI run is active) is passed on and nothing els
   const f = fixture();
   const out = await f.run([], { STUB_EMU_START: "8" });
   assert.equal(out.status, 8, out.output);
-  assert.deepEqual(f.emuCalls(), ["start"]);
+  assert.deepEqual(f.emuCalls(), ["start", "status"]);
   assert.equal(f.read("ssh"), "");
   assert.equal(f.read("npx"), "");
   assert.equal(f.summary().result, "emulator_start_failed exit=8");
@@ -192,8 +194,9 @@ test("a Firefox install failure stops the emulator and keeps its status", async 
   const f = fixture();
   const out = await f.run([], { STUB_EMU_FIREFOX: "10" });
   assert.equal(out.status, 10, out.output);
-  assert.ok(f.emuCalls().includes("stop"));
-  assert.equal(f.read("npx"), "");
+  assert.equal(f.emuCalls().at(-2), "stop");
+  // Chrome ran on its own boot first; Firefox never did.
+  assert.deepEqual(f.read("npx").split("\n").filter(Boolean).map((line) => line.split(" ")[0]), ["browser=chrome"]);
 });
 
 test("an emulator still running after the run is reported", async () => {

@@ -5,18 +5,19 @@
 #
 # Usage: scripts/test-android-emulator.sh [chrome|firefox]...   (default: both, Chrome first)
 #
-# 1. scripts/emulator-deck.sh start (refuses while a CI run is active), then install-firefox.
+# 1. Per browser, a fresh scripts/emulator-deck.sh start (refuses while a CI run is active), then
+#    install-firefox for Firefox.
 # 2. One SSH connection holds the tunnels: this machine's ADB_PORT to the Deck's adb server, BIDI_PORT
 #    to Firefox's remote agent (adb forward, same port on the device), and the Deck's APP_PORT back to
 #    the browser server here. `adb reverse` makes the emulator's 127.0.0.1:APP_PORT that server, so the
 #    app is a secure context with its service worker, and nothing reaches sonder.pecori.no.
 # 3. Per browser: `playwright test -c playwright.android.config.ts --project=android-<browser>`, whose
 #    webServer starts tests/browser-server.ts here with a throwaway database and media directory.
-# 4. Always: close the tunnels and stop the emulator, then check the Deck has nothing left running.
+# 4. Per browser, stop the emulator; at the end close the tunnels and check the Deck has nothing left.
 #
-# Results: artifacts/android-emulator/<sha>/<run>/ with emulator.txt (boot time, memory), summary.txt,
-# and per browser report.json (Playwright JSON), playwright.log, test-results/ and, for Firefox,
-# relay.log (what the BiDi relay changed).
+# Results: artifacts/android-emulator/<sha>/<run>/ with summary.txt and deck-after.txt, and per browser
+# emulator.txt (boot time, memory after boot and after the run), report.json (Playwright JSON),
+# playwright.log, test-results/, logcat.txt and, for Firefox, relay.log (what the BiDi relay changed).
 #
 # Exit status: 0 every browser passed; 1 a browser's specs failed; 2 usage; 3 setup failed here
 # (dist/ missing, a local port in use, the tunnel did not come up, adb forwarding failed); 4 the specs
@@ -80,15 +81,15 @@ close_tunnel() {
   return 0
 }
 
-# Idempotent: closes the tunnels, stops the emulator and records what the Deck still runs.
+# Idempotent: closes the tunnels, stops the emulator if it is up, and records what the Deck still runs.
 cleanup() {
   close_tunnel
   if [[ $EMULATOR_STARTED -eq 1 ]]; then
     EMULATOR_STARTED=0
     log "Stopping the emulator"
     bash "$EMU" stop >"$RUN_DIR/emulator-stop.txt" 2>&1 || log "emulator-deck.sh stop failed; see $RUN_DIR/emulator-stop.txt"
-    bash "$EMU" status >"$RUN_DIR/deck-after.txt" 2>&1
   fi
+  bash "$EMU" status >"$RUN_DIR/deck-after.txt" 2>&1
 }
 
 on_signal() {
@@ -119,19 +120,6 @@ mkdir -p "$RUN_DIR"
   echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } >"$RUN_DIR/summary.txt"
 
-log "Starting the emulator on ${HOST}"
-bash "$EMU" start >"$RUN_DIR/emulator.txt" 2>"$RUN_DIR/emulator-start.log"
-rc=$?
-cat "$RUN_DIR/emulator.txt"
-if [[ $rc -ne 0 ]]; then
-  log "The emulator did not start (status ${rc}); see $RUN_DIR/emulator-start.log"
-  echo "result=emulator_start_failed exit=${rc}" >>"$RUN_DIR/summary.txt"
-  # A failed start stops its own container; stop again in case it got further than it reported.
-  [[ $rc -ne 8 ]] && bash "$EMU" stop >"$RUN_DIR/emulator-stop.txt" 2>&1
-  exit "$rc"
-fi
-EMULATOR_STARTED=1
-
 fail_setup() {
   log "$1"
   echo "result=setup_failed" >>"$RUN_DIR/summary.txt"
@@ -139,35 +127,57 @@ fail_setup() {
   exit 3
 }
 
-if [[ " ${BROWSERS[*]} " == *" firefox "* ]]; then
-  bash "$EMU" install-firefox >>"$RUN_DIR/emulator-start.log" 2>&1
-  rc=$?
-  if [[ $rc -ne 0 ]]; then
-    log "Firefox could not be installed (status ${rc}); see $RUN_DIR/emulator-start.log"
-    echo "result=firefox_install_failed exit=${rc}" >>"$RUN_DIR/summary.txt"
-    cleanup
-    exit "$rc"
+open_tunnel() {
+  TUNNEL_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sonder-android-tunnel-XXXXXXXX")
+  TUNNEL_SOCKET="$TUNNEL_DIR/control"
+  # -f returns once every forward is established; ExitOnForwardFailure makes a taken port an error.
+  # The forwards outlive an emulator restart: each new connection reaches the Deck's port afresh.
+  if ! ssh "${SSH_OPTS[@]}" -o ExitOnForwardFailure=yes -f -N -M -S "$TUNNEL_SOCKET" \
+    -L "${ADB_PORT}:127.0.0.1:5037" -L "${BIDI_PORT}:127.0.0.1:${BIDI_PORT}" -R "${APP_PORT}:127.0.0.1:${APP_PORT}" \
+    "$HOST" >>"$1" 2>&1; then
+    TUNNEL_SOCKET=""
+    return 1
   fi
-fi
-
-TUNNEL_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sonder-android-tunnel-XXXXXXXX")
-TUNNEL_SOCKET="$TUNNEL_DIR/control"
-# -f returns once every forward is established; ExitOnForwardFailure makes a taken port an error.
-if ! ssh "${SSH_OPTS[@]}" -o ExitOnForwardFailure=yes -f -N -M -S "$TUNNEL_SOCKET" \
-  -L "${ADB_PORT}:127.0.0.1:5037" -L "${BIDI_PORT}:127.0.0.1:${BIDI_PORT}" -R "${APP_PORT}:127.0.0.1:${APP_PORT}" \
-  "$HOST" >>"$RUN_DIR/emulator-start.log" 2>&1; then
-  TUNNEL_SOCKET=""
-  fail_setup "The SSH tunnels to ${HOST} did not come up; see $RUN_DIR/emulator-start.log"
-fi
-bash "$EMU" adb reverse "tcp:${APP_PORT}" "tcp:${APP_PORT}" >>"$RUN_DIR/emulator-start.log" 2>&1 \
-  || fail_setup "adb reverse for port ${APP_PORT} failed"
-bash "$EMU" adb forward "tcp:${BIDI_PORT}" "tcp:${BIDI_PORT}" >>"$RUN_DIR/emulator-start.log" 2>&1 \
-  || fail_setup "adb forward for port ${BIDI_PORT} failed"
+}
 
 FINAL_EXIT=0
 for browser in "${BROWSERS[@]}"; do
   out="$RUN_DIR/$browser"
   mkdir -p "$out"
+  # A fresh boot for each browser: memory one browser's run leaves in the emulator (its anon memory
+  # grows from about 3.4 GB towards the container limit over a run) does not carry over to the next.
+  log "Starting the emulator on ${HOST} for ${browser}"
+  bash "$EMU" start >"$out/emulator.txt" 2>"$out/emulator-start.log"
+  rc=$?
+  cat "$out/emulator.txt"
+  if [[ $rc -ne 0 ]]; then
+    log "The emulator did not start (status ${rc}); see $out/emulator-start.log"
+    echo "result=emulator_start_failed exit=${rc}" >>"$RUN_DIR/summary.txt"
+    # 8 is a refusal: nothing was started. Otherwise stop in case it got further than it reported.
+    [[ $rc -ne 8 ]] && EMULATOR_STARTED=1
+    cleanup
+    exit "$rc"
+  fi
+  EMULATOR_STARTED=1
+
+  if [[ $browser == firefox ]]; then
+    bash "$EMU" install-firefox >>"$out/emulator-start.log" 2>&1
+    rc=$?
+    if [[ $rc -ne 0 ]]; then
+      log "Firefox could not be installed (status ${rc}); see $out/emulator-start.log"
+      echo "result=firefox_install_failed exit=${rc}" >>"$RUN_DIR/summary.txt"
+      cleanup
+      exit "$rc"
+    fi
+  fi
+  if [[ -z $TUNNEL_SOCKET ]] && ! open_tunnel "$out/emulator-start.log"; then
+    fail_setup "The SSH tunnels to ${HOST} did not come up; see $out/emulator-start.log"
+  fi
+  bash "$EMU" adb reverse "tcp:${APP_PORT}" "tcp:${APP_PORT}" >>"$out/emulator-start.log" 2>&1 \
+    || fail_setup "adb reverse for port ${APP_PORT} failed"
+  bash "$EMU" adb forward "tcp:${BIDI_PORT}" "tcp:${BIDI_PORT}" >>"$out/emulator-start.log" 2>&1 \
+    || fail_setup "adb forward for port ${BIDI_PORT} failed"
+
   log "Running the mobile specs in ${browser} for Android"
   PLAYWRIGHT_PORT=$APP_PORT \
   PLAYWRIGHT_JSON_OUTPUT_NAME="$out/report.json" \
@@ -181,10 +191,15 @@ for browser in "${BROWSERS[@]}"; do
   tail -n 5 "$out/playwright.log"
   echo "${browser}=$([[ $rc -eq 0 ]] && echo passed || echo failed) exit=${rc}" >>"$RUN_DIR/summary.txt"
   [[ $rc -eq 0 ]] || FINAL_EXIT=1
+
+  # Memory over this browser's run and the device log (process kills, crashes), before the container goes.
+  bash "$EMU" status 2>/dev/null | grep -E '^memory_' | sed 's/^/after_tests_/' >>"$out/emulator.txt"
+  bash "$EMU" adb logcat -d >"$out/logcat.txt" 2>&1
+  log "Stopping the emulator"
+  EMULATOR_STARTED=0
+  bash "$EMU" stop >"$out/emulator-stop.txt" 2>&1 || log "emulator-deck.sh stop failed; see $out/emulator-stop.txt"
 done
 
-# Memory over the whole run, before the container goes away.
-bash "$EMU" status 2>/dev/null | grep -E '^memory_' | sed 's/^/after_tests_/' >>"$RUN_DIR/emulator.txt"
 cleanup
 if ! grep -q '^running=no$' "$RUN_DIR/deck-after.txt" 2>/dev/null || ! grep -q '^unit_active=\(inactive\|failed\|\)$' "$RUN_DIR/deck-after.txt" 2>/dev/null; then
   log "Could not confirm that the emulator is gone from ${HOST}; see $RUN_DIR/deck-after.txt"

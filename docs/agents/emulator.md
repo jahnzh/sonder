@@ -9,9 +9,9 @@ npm run build          # the browser server serves dist/
 npm run test:android   # both browsers; or: bash scripts/test-android-emulator.sh chrome
 ```
 
-`scripts/test-android-emulator.sh` boots the emulator, opens one SSH connection with the tunnels, runs `playwright.android.config.ts` once per browser, then closes the tunnels and stops the emulator. It runs `now-playing-layout` and `device-reset`; add a spec by importing `test` from `tests/e2e/fixtures.ts` and adding it to the config's `testMatch`. It is not part of `npm run test:browser` or `npm run check`.
+`scripts/test-android-emulator.sh` boots a fresh emulator for each browser, opens one SSH connection with the tunnels, runs `playwright.android.config.ts` for that browser and stops the emulator again; at the end it closes the tunnels and records what the Deck still runs. It runs `now-playing-layout` and `device-reset`; add a spec by importing `test` from `tests/e2e/fixtures.ts` and adding it to the config's `testMatch`. It is not part of `npm run test:browser` or `npm run check`.
 
-Results go to `artifacts/android-emulator/<sha>/<run>/`: `summary.txt` (per-browser result), `emulator.txt` (boot seconds, memory after boot and after the tests), `deck-after.txt` (the Deck after cleanup), and per browser `report.json`, `playwright.log`, `test-results/` and, for Firefox, `relay.log`.
+Results go to `artifacts/android-emulator/<sha>/<run>/`: `summary.txt` (per-browser result), `deck-after.txt` (the Deck after cleanup), and per browser `emulator.txt` (boot seconds, memory after boot and after the run), `report.json`, `playwright.log`, `test-results/`, `logcat.txt` and, for Firefox, `relay.log`.
 
 `scripts/emulator-deck.sh start|stop|status|install-apk <apk>|install-firefox|adb <args>` manages the emulator by hand. Exit codes and environment variables are in the header of each script.
 
