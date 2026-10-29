@@ -272,6 +272,8 @@ case "$name" in
   sonder-ci-run-?*) ;;
   *) name="" ;;
 esac
+# Only this run's unit, by its exact name; the container is removed below.
+[ -n "$name" ] && systemctl --user stop "$name" >/dev/null 2>&1
 if [ -s "$run_dir/check.pid" ]; then
   pid=$(cat "$run_dir/check.pid")
   if kill -0 "$pid" 2>/dev/null && tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -qF "$run_dir"; then
@@ -457,15 +459,25 @@ base=$(dirname "$(dirname "$run_dir")")
 id=$(basename "$run_dir")
 rm -f "$run_dir/check.exit" "$run_dir/check.pid"
 cmd="cd /pilot/runs/$id/checkout && npm ci && npm run check -- --ref $sha --known-failures $known_failures --output-dir /pilot/runs/$id/report"
-setsid nohup bash -c '
+# systemd-run --user, not setsid/nohup: on SteamOS a process started over SSH is killed when the session ends
+# (podman and its wrapper with it). A transient user unit survives because lingering is enabled for the user.
+systemd-run --user --collect --quiet --unit "$name" --working-directory="$run_dir" bash -c '
+  exec >"$6" 2>&1
   podman run --rm --name "$1" --cpus 2 --memory 6g --pids-limit 2048 --shm-size 1g \
     --security-opt no-new-privileges --env NPM_CONFIG_CACHE=/pilot/cache/npm \
     --env PLAYWRIGHT_BROWSERS_PATH=/ms-playwright --env CI=1 --volume "$2:/pilot:rw" \
     "$3" bash -lc "$4"
   rc=$?
   echo "$rc" >"$5.tmp" && mv "$5.tmp" "$5"
-' _ "$name" "$base" "$image" "$cmd" "$run_dir/check.exit" >"$run_dir/check.log" 2>&1 </dev/null &
-echo $! >"$run_dir/check.pid"
+' _ "$name" "$base" "$image" "$cmd" "$run_dir/check.exit" "$run_dir/check.log" || exit 1
+# The unit's main process is the wrapper; its command line contains the run directory, which the probe and cleanup check.
+for _ in $(seq 20); do
+  pid=$(systemctl --user show -p MainPID --value "$name" 2>/dev/null)
+  [ -n "$pid" ] && [ "$pid" != 0 ] && break
+  sleep 0.25
+done
+[ -n "${pid:-}" ] && [ "$pid" != 0 ] || { echo "the unit $name did not start"; exit 1; }
+echo "$pid" >"$run_dir/check.pid"
 REMOTE
   rc=$?
   if [[ $rc -ne 0 ]]; then

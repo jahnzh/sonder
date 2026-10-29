@@ -92,6 +92,33 @@ esac
 exit 0
 `;
 
+// \`systemd-run --user --unit NAME cmd...\` starts the command detached and remembers its pid so
+// \`systemctl --user show -p MainPID --value NAME\` and \`systemctl --user stop NAME\` can find it.
+const systemdRunStub = `#!/usr/bin/env bash
+echo "$*" >>"$STUB_PODMAN_LOG.systemd"
+unit="" wd=$PWD
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --user|--collect|--quiet) shift ;;
+    --unit) unit=$2; shift 2 ;;
+    --working-directory=*) wd=\${1#*=}; shift ;;
+    *) break ;;
+  esac
+done
+cd "$wd" && "$@" >/dev/null 2>&1 </dev/null &
+echo $! >"$STUB_PODMAN_STATE/unit-$unit.pid"
+`;
+
+const systemctlStub = `#!/usr/bin/env bash
+echo "$*" >>"$STUB_PODMAN_LOG.systemd"
+[[ $1 == --user ]] && shift
+case "$1" in
+  show) cat "$STUB_PODMAN_STATE/unit-\${@: -1}.pid" 2>/dev/null ;;
+  stop) pid=$(cat "$STUB_PODMAN_STATE/unit-$2.pid" 2>/dev/null) && kill -TERM "$pid" 2>/dev/null; exit 0 ;;
+esac
+exit 0
+`;
+
 function fixture() {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-ci-deck-"));
   const repo = path.join(base, "repo");
@@ -122,6 +149,8 @@ function fixture() {
     npm: npmStub,
     gh: ghStub,
     podman: podmanStub,
+    "systemd-run": systemdRunStub,
+    systemctl: systemctlStub,
   }))
     fs.writeFileSync(path.join(bin, name), body, { mode: 0o755 });
   const logs = {
@@ -224,6 +253,8 @@ test("a passing run starts the container with the fixed flags and posts ci/deck"
   ])
     assert.ok(call.includes(flag), `missing ${flag} in: ${call}`);
   assert.doesNotMatch(call, /--cap-drop/);
+  // A setsid/nohup child is killed when the SSH session ends on SteamOS, so the run is a transient user unit.
+  assert.match(f.read(`${f.logs.podman}.systemd`), /^--user --collect --quiet --unit sonder-ci-run-[^ ]+ --working-directory=/m);
   assert.doesNotMatch(call, /\.env\b(?!=)|verify-|data\//);
   assert.match(f.read(f.logs.gh), /context=ci\/deck/);
   assert.match(f.read(f.logs.gh), /state=pending/);

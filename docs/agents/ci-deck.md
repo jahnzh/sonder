@@ -19,7 +19,7 @@ npm run ci:deck <sha>
 
 1. **Preflights** (read `deck-preflight.txt` in the artifacts): `podman` present; the image present, pulled when missing; free disk above `SONDER_CI_MIN_DISK_GB` (default 10); the lockfile's Playwright version matches the image tag. A `sonder-ci-run-*` container whose run directory is gone, or older than the wait cap, is printed as `stale_container=` and **left alone**: inspect it on the Deck with `podman ps -a` and remove it by hand.
 2. **Unpack**: the bundle is cloned into a fresh `~/sonder-ci/runs/<sha7>-<random>/checkout` and the commit checked out. It must be a real clone because `npm run check --ref` resolves the commit and runs `git archive` in it.
-3. **Run**: the fixed command below, detached, with its exit status written to `check.exit`.
+3. **Run**: the fixed command below, as a transient `systemd-run --user` unit named like the container (a `setsid nohup` child is killed when the SSH session ends on SteamOS), with its exit status written to `check.exit`.
 4. **Cleanup**: the script stops only this run's process group, runs `podman rm -f --ignore sonder-ci-run-<sha7>-<random>` and removes only `runs/<sha7>-<random>`. The image and `cache/npm` stay.
 
 The container is named `sonder-ci-run-<sha7>-<random>`, using the same `<sha7>-<random>` as the run directory. No `.env`, no `data/`, no production media and no `verify-*.mjs` exist in the container.
