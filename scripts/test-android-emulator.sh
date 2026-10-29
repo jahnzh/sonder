@@ -136,6 +136,7 @@ open_tunnel() {
     -L "${ADB_PORT}:127.0.0.1:5037" -L "${BIDI_PORT}:127.0.0.1:${BIDI_PORT}" -R "${APP_PORT}:127.0.0.1:${APP_PORT}" \
     "$HOST" >>"$1" 2>&1; then
     TUNNEL_SOCKET=""
+    rm -rf "$TUNNEL_DIR"
     return 1
   fi
 }
@@ -146,6 +147,17 @@ for browser in "${BROWSERS[@]}"; do
   mkdir -p "$out"
   # A fresh boot for each browser: memory one browser's run leaves in the emulator (its anon memory
   # grows from about 3.4 GB towards the container limit over a run) does not carry over to the next.
+  # An emulator that is already up was not started by this run: it has been used, its boot time is not this
+  # run's, and this script must not stop it. Refuse instead of testing on it.
+  if bash "$EMU" status 2>/dev/null | grep -q '^running=yes'; then
+    log "An emulator is already running on ${HOST}; stop it with scripts/emulator-deck.sh stop first"
+    echo "result=emulator_already_running exit=8" >>"$RUN_DIR/summary.txt"
+    cleanup
+    exit 8
+  fi
+  # Set before the start: the unit survives this SSH session, so an interrupt during the (long) start must
+  # still stop it. A refusal (status 8) started nothing and resets the flag below.
+  EMULATOR_STARTED=1
   log "Starting the emulator on ${HOST} for ${browser}"
   bash "$EMU" start >"$out/emulator.txt" 2>"$out/emulator-start.log"
   rc=$?
@@ -153,12 +165,11 @@ for browser in "${BROWSERS[@]}"; do
   if [[ $rc -ne 0 ]]; then
     log "The emulator did not start (status ${rc}); see $out/emulator-start.log"
     echo "result=emulator_start_failed exit=${rc}" >>"$RUN_DIR/summary.txt"
-    # 8 is a refusal: nothing was started. Otherwise stop in case it got further than it reported.
-    [[ $rc -ne 8 ]] && EMULATOR_STARTED=1
+    # 8 is a refusal: nothing was started, so there is nothing of ours to stop.
+    [[ $rc -eq 8 ]] && EMULATOR_STARTED=0
     cleanup
     exit "$rc"
   fi
-  EMULATOR_STARTED=1
 
   if [[ $browser == firefox ]]; then
     bash "$EMU" install-firefox >>"$out/emulator-start.log" 2>&1

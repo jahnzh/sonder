@@ -15,11 +15,12 @@ const emulatorStub = `#!/usr/bin/env bash
 echo "$*" >>"$STUB_LOG.emu"
 case "$1" in
   start)
+    [[ \${STUB_EMU_SLOW:-} == 1 ]] && sleep 30
     [[ \${STUB_EMU_START:-0} == 0 ]] || { echo "refused" >&2; exit "$STUB_EMU_START"; }
     echo "boot_seconds=41"; echo "memory_anon_bytes=3400000000" ;;
   install-firefox) exit "\${STUB_EMU_FIREFOX:-0}" ;;
   status)
-    if [[ \${STUB_EMU_LEFT:-} == running ]]; then echo "running=yes"; echo "unit_active=active"; else echo "running=no"; echo "unit_active=inactive"; fi
+    if [[ \${STUB_EMU_BEFORE:-} == running || ( \${STUB_EMU_LEFT:-} == running && -n $(grep -x start "$STUB_LOG.emu") ) ]]; then echo "running=yes"; echo "unit_active=active"; else echo "running=no"; echo "unit_active=inactive"; fi
     echo "memory_peak_bytes=4100000000" ;;
   stop) echo "stopped=sonder-emu-android34" ;;
   adb) exit "\${STUB_EMU_ADB:-0}" ;;
@@ -83,9 +84,13 @@ function fixture({ built = true } = {}) {
   };
   const ports = { app: nextPort++, adb: nextPort++, bidi: nextPort++ };
 
+  let current: ReturnType<typeof spawn> | undefined;
+  // Like Ctrl-C in a terminal: the signal goes to the whole foreground process group.
+  const interrupt = () => process.kill(-current!.pid!, "SIGINT");
   function run(args: string[] = [], env: Record<string, string> = {}) {
     return new Promise<{ status: number | null; output: string }>((resolve) => {
       const child = spawn("bash", [path.join(repo, "scripts", "test-android-emulator.sh"), ...args], {
+        detached: true,
         cwd: repo,
         env: {
           ...cleanEnv(),
@@ -97,6 +102,7 @@ function fixture({ built = true } = {}) {
           ...env,
         },
       });
+      current = child;
       let output = "";
       child.stdout.on("data", (d) => (output += d));
       child.stderr.on("data", (d) => (output += d));
@@ -117,7 +123,7 @@ function fixture({ built = true } = {}) {
       }),
     );
   const emuCalls = () => read("emu").split("\n").filter(Boolean);
-  return { repo, sha, ports, run, read, runDir, summary, emuCalls };
+  return { repo, sha, ports, run, read, runDir, summary, emuCalls, interrupt };
 }
 
 test("a passing run boots the emulator for each browser, tunnels once and leaves it stopped", async () => {
@@ -125,6 +131,7 @@ test("a passing run boots the emulator for each browser, tunnels once and leaves
   const out = await f.run();
   assert.equal(out.status, 0, out.output);
   const perBrowser = (...setup: string[]) => [
+    "status",
     "start",
     ...setup,
     `adb reverse tcp:${f.ports.app} tcp:${f.ports.app}`,
@@ -176,7 +183,7 @@ test("a refused emulator start (a CI run is active) is passed on and nothing els
   const f = fixture();
   const out = await f.run([], { STUB_EMU_START: "8" });
   assert.equal(out.status, 8, out.output);
-  assert.deepEqual(f.emuCalls(), ["start", "status"]);
+  assert.deepEqual(f.emuCalls(), ["status", "start", "status"]);
   assert.equal(f.read("ssh"), "");
   assert.equal(f.read("npx"), "");
   assert.equal(f.summary().result, "emulator_start_failed exit=8");
@@ -201,7 +208,7 @@ test("a Firefox install failure stops the emulator and keeps its status", async 
 
 test("an emulator still running after the run is reported", async () => {
   const f = fixture();
-  const out = await f.run([], { STUB_EMU_LEFT: "running" });
+  const out = await f.run(["chrome"], { STUB_EMU_LEFT: "running" });
   assert.equal(out.status, 4, out.output);
   assert.match(out.output, /Could not confirm that the emulator is gone/);
 });
@@ -233,4 +240,23 @@ test("bad arguments and the Fetch-blocked port 4190 are usage errors", async () 
   assert.equal((await f.run([], { SONDER_ANDROID_ADB_PORT: "80" })).status, 2);
   assert.equal((await f.run([], { SONDER_EMU_HOST: "-oProxyCommand=x" })).status, 2);
   assert.equal(f.read("emu"), "");
+});
+
+test("an emulator that is already running is refused and not stopped", async () => {
+  const f = fixture();
+  const out = await f.run([], { STUB_EMU_BEFORE: "running" });
+  assert.equal(out.status, 8, out.output);
+  assert.equal(f.emuCalls().includes("start"), false);
+  assert.equal(f.emuCalls().includes("stop"), false);
+  assert.equal(f.summary().result, "emulator_already_running exit=8");
+});
+
+test("an interrupt while the emulator is starting still stops it", async () => {
+  const f = fixture();
+  const running = f.run([], { STUB_EMU_SLOW: "1" });
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  f.interrupt();
+  const out = await running;
+  assert.equal(out.status, 130, out.output);
+  assert.ok(f.emuCalls().includes("stop"), f.emuCalls().join(","));
 });

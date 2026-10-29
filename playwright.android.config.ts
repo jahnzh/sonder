@@ -11,6 +11,8 @@ export default defineConfig({
   testMatch: /(now-playing-layout|device-reset)\.spec\.ts/,
   fullyParallel: false,
   workers: 1,
+  // A hang outside a test (adb, the tunnel) is otherwise bounded only by fixture timeouts.
+  globalTimeout: 40 * 60 * 1000,
   // Each test starts the browser on the emulator and resizes its screen.
   timeout: 180000,
   expect: { timeout: 15000 },

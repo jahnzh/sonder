@@ -492,3 +492,14 @@ test("a host or remote base that could be read as an option is refused", () => {
     assert.equal(out.status, 2, out.output);
   }
 });
+
+test("a running Android emulator stops the run as a host failure before anything is sent", () => {
+  const f = fixture();
+  fs.writeFileSync(path.join(f.podmanState, "containers"), "sonder-emu-android34\n");
+  const out = f.run(f.second);
+  assert.equal(out.status, 3, out.output);
+  assert.match(out.output, /emulator_active=sonder-emu-android34/);
+  assert.equal(f.result(f.second).result, "host_emulator_active");
+  assert.equal(f.checkCalls().length, 0);
+  assert.match(f.read(f.logs.gh), /emulator running/);
+});
