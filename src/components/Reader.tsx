@@ -51,13 +51,16 @@ import {
   syncBookmarks,
 } from "../reading";
 import type { Book } from "../types";
-import type {
-  ReaderBook,
-  TextLocator,
-  AlignmentJob,
-  ReadingCheckpoint,
+import {
+  countedBlocks,
+  readerSkippedSelector,
+  readerTextOffset,
+  type ReaderBook,
+  type ReaderSection,
+  type TextLocator,
+  type AlignmentJob,
+  type ReadingCheckpoint,
 } from "../reading-types";
-const selector = "p,h1,h2,h3,h4,h5,h6,li,blockquote,pre,figcaption";
 const readerFonts = { ...fontFamilies, serif: '"Literata Variable", Georgia, "Times New Roman", serif' };
 // EPUB pages are sandboxed documents that only load fonts from blob: or data:
 // URLs, so the bundled Literata files are handed to them as blobs.
@@ -92,32 +95,81 @@ function BookToHeadphones({ size = 20 }: { size?: number }) {
     </svg>
   );
 }
-const normalize = (text: string) =>
-  text.normalize("NFKC").replace(/\s+/g, " ").trim();
-function blockNodes(doc: Document) {
-  const root = doc.body || doc.documentElement;
-  const list = [...root.querySelectorAll(selector)].filter(
-    (node) =>
-      !node.querySelector(selector) && normalize(node.textContent || ""),
+// A block's text as the server reads it: text nodes, none inside skipped elements, and a line break
+// for each <br>, because node-html-parser's text of a <br> is "\n". The browser has no character for
+// it, so without this every sentence after a <br> is measured one character early.
+function textNodes(block: Element) {
+  return block.ownerDocument.createTreeWalker(
+    block,
+    NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT,
+    {
+      acceptNode: (node) => {
+        if (
+          node.nodeType === Node.ELEMENT_NODE &&
+          (node as Element).localName !== "br"
+        )
+          return NodeFilter.FILTER_SKIP;
+        return node.parentElement?.closest(readerSkippedSelector)
+          ? NodeFilter.FILTER_REJECT
+          : NodeFilter.FILTER_ACCEPT;
+      },
+    },
   );
-  return list.length ? list : [root];
+}
+const isBreak = (node: Node) => node.nodeType === Node.ELEMENT_NODE;
+const nodeText = (node: Node) => (isBreak(node) ? "\n" : node.textContent || "");
+function blockText(block: Element) {
+  const walker = textNodes(block);
+  let text = "",
+    node: Node | null;
+  while ((node = walker.nextNode())) text += nodeText(node);
+  return text;
+}
+function blockNodes(doc: Document) {
+  return countedBlocks(doc.body || doc.documentElement, blockText);
+}
+// The offset of a DOM position in the block's normalised text, as sentence start and end count it.
+function offsetIn(block: Element, container: Node, offset: number) {
+  const walker = textNodes(block),
+    point = block.ownerDocument.createRange();
+  point.setStart(container, offset);
+  let raw = "",
+    node: Node | null;
+  while ((node = walker.nextNode())) {
+    if (node === container)
+      return readerTextOffset(raw + nodeText(node).slice(0, offset));
+    if (point.comparePoint(node, 0) >= 0) break;
+    raw += nodeText(node);
+  }
+  return readerTextOffset(raw);
+}
+// The sentence of a block that a normalised offset falls in; past its end, the block's last.
+function sentenceAt(section: ReaderSection, blockIndex: number, offset: number) {
+  const block = section.paragraphs.filter((fragment) => fragment.blockIndex === blockIndex);
+  return block.filter((fragment) => fragment.start <= offset).pop() || block[0];
 }
 function rangeAt(block: Element, offset: number, end?: number) {
-  const doc = block.ownerDocument,
-    walker = doc.createTreeWalker(block, NodeFilter.SHOW_TEXT);
-  let raw = "",
-    node: Node | null,
-    last: Node = block;
+  const doc = block.ownerDocument;
   const find = (target: number) => {
-    walker.currentNode = block;
-    raw = "";
+    const walker = textNodes(block);
+    let raw = "",
+      node: Node | null,
+      last: Node = block,
+      pending = false;
     while ((node = walker.nextNode())) {
+      // A <br> that reaches the target puts it at the start of the next text node.
+      if (pending && !isBreak(node)) return { node, offset: 0 };
+      if (isBreak(node)) {
+        raw += "\n";
+        if (readerTextOffset(raw) >= target) pending = true;
+        continue;
+      }
       last = node;
       const text = node.textContent || "";
-      if (normalize(raw + text).length >= target) {
+      if (readerTextOffset(raw + text) >= target) {
         let i = 0;
         for (; i <= text.length; i++)
-          if (normalize(raw + text.slice(0, i)).length >= target) break;
+          if (readerTextOffset(raw + text.slice(0, i)) >= target) break;
         return { node, offset: Math.min(i, text.length) };
       }
       raw += text;
@@ -521,20 +573,9 @@ export function ReaderView({
             block = nodes[index];
             let offset = 0;
             try {
-              const prefix = doc.createRange();
-              prefix.selectNodeContents(block);
-              prefix.setEnd(range.startContainer, range.startOffset);
-              offset = normalize(prefix.toString()).length;
+              offset = offsetIn(block, range.startContainer, range.startOffset);
             } catch {}
-            const fragment =
-              section.paragraphs.find(
-                (fragment) =>
-                  fragment.blockIndex === index && fragment.end > offset,
-              ) ||
-              section.paragraphs.find(
-                (fragment) => fragment.blockIndex === index,
-              ) ||
-              section.paragraphs[0];
+            const fragment = sentenceAt(section, index, offset) || section.paragraphs[0];
             const all = book.sections.flatMap((section) => section.paragraphs);
             const next: TextLocator = {
               cfi: location.start.cfi,
@@ -844,8 +885,9 @@ export function ReaderView({
     if (persist) await saveReading(id, value, "listening", recordingId);
     if (highlight.current)
       view.annotations.remove(highlight.current, "highlight");
+    // The highlight ends at the sentence's last character, not after its trailing space.
     const full = content.cfiFromRange(
-      rangeAt(node, fragment.start, fragment.end),
+      rangeAt(node, fragment.start, Math.min(fragment.end, fragment.start + fragment.text.length)),
     );
     view.annotations.highlight(full, {}, () => {}, "sonder-follow", {
       fill: appearance.accent,
@@ -1094,10 +1136,9 @@ export function ReaderView({
       const nodes = blockNodes(doc), index = nodes.findIndex(node => node.contains(range.startContainer));
       const section = bookRef.current.sections.find(item => item.index === content.sectionIndex);
       if (index < 0 || !section) return;
-      const prefix=doc.createRange(); prefix.selectNodeContents(nodes[index]);
-      try { prefix.setEnd(range.startContainer,range.startOffset); } catch { return; }
-      const offset=normalize(prefix.toString()).length;
-      const fragment=section.paragraphs.find(item => item.blockIndex===index && item.start<=offset && item.end>=offset) || section.paragraphs.find(item => item.blockIndex===index);
+      let offset=0;
+      try { offset=offsetIn(nodes[index],range.startContainer,range.startOffset); } catch { return; }
+      const fragment=sentenceAt(section,index,offset);
       if (!fragment) return;
       listenAt(fragment.id, true);
     }

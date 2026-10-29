@@ -1,6 +1,6 @@
 import JSZip from "jszip";
 export async function readerFixture(
-  options: { language?: string; script?: boolean; cover?: boolean; variant?: "svg-root" | "iframe-root" | "nav-root" | "no-head" | "head-late" | "text-before-head" | "template-root" | "svg-asset" } = {},
+  options: { language?: string; script?: boolean; cover?: boolean; bodies?: [string, string]; variant?: "svg-root" | "iframe-root" | "nav-root" | "no-head" | "head-late" | "text-before-head" | "template-root" | "svg-asset" } = {},
 ) {
   const zip = new JSZip();
   zip.file("mimetype", "application/epub+zip", { compression: "STORE" });
@@ -79,7 +79,7 @@ export async function readerFixture(
     }
     zip.file(
       `OEBPS/${href}`,
-      `<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>${title}</title></head><body><h1>${title}</h1>${paragraphs}${options.variant === "svg-asset" && index === 0 ? '<img id="svg-image" src="payload.svg" alt="Payload"/><a id="svg-link" href="payload.svg">Payload link</a><a id="ext-link" href="ext.png?.html">Mismatch link</a><map name="m"><area id="svg-area" shape="rect" coords="0,0,20,20" href="payload.svg" alt="Payload area"/></map>' : ""}${options.script ? '<script>parent.__epubScriptExecuted=true</script><iframe srcdoc="&lt;script&gt;parent.parent.__epubScriptExecuted=true&lt;/script&gt;"></iframe><img src="missing.png" alt="" onerror="parent.__epubScriptExecuted=true"/><p onclick="parent.__epubScriptExecuted=true">Inline handler</p><a href="javascript:void(parent.__epubScriptExecuted=true)">Script link</a><svg xmlns="http://www.w3.org/2000/svg" onload="parent.__epubScriptExecuted=true"><script>parent.__epubScriptExecuted=true</script></svg>' : ""}</body></html>`,
+      `<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>${title}</title></head><body><h1>${title}</h1>${options.bodies?.[index] ?? paragraphs}${options.variant === "svg-asset" && index === 0 ? '<img id="svg-image" src="payload.svg" alt="Payload"/><a id="svg-link" href="payload.svg">Payload link</a><a id="ext-link" href="ext.png?.html">Mismatch link</a><map name="m"><area id="svg-area" shape="rect" coords="0,0,20,20" href="payload.svg" alt="Payload area"/></map>' : ""}${options.script ? '<script>parent.__epubScriptExecuted=true</script><iframe srcdoc="&lt;script&gt;parent.parent.__epubScriptExecuted=true&lt;/script&gt;"></iframe><img src="missing.png" alt="" onerror="parent.__epubScriptExecuted=true"/><p onclick="parent.__epubScriptExecuted=true">Inline handler</p><a href="javascript:void(parent.__epubScriptExecuted=true)">Script link</a><svg xmlns="http://www.w3.org/2000/svg" onload="parent.__epubScriptExecuted=true"><script>parent.__epubScriptExecuted=true</script></svg>' : ""}</body></html>`,
     );
   }
   return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
