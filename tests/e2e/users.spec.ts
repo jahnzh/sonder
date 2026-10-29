@@ -71,10 +71,18 @@ test("accounts keep libraries and offline queues separate", async ({ page }) => 
   expect(queueOwner).toBe("1");
   await expect.poll(() => page.evaluate((id) => new Promise<boolean>(resolve => { const request = indexedDB.open("sonder"); request.onsuccess = () => { const get = request.result.transaction("progress").objectStore("progress").get(id); get.onsuccess = () => resolve(!!get.result?.pending); }; }), book.recordingId)).toBe(true);
   await page.unroute("**/api/progress");
-  await page.getByRole("button", { name: "Sign out" }).click();
+  // Sign out clears the session then reloads. Wait for that load before filling
+  // credentials so we do not type into the still-mounted Settings "Add user"
+  // form or race the in-flight reload (which left Settings unreachable).
+  await Promise.all([
+    page.waitForEvent("load"),
+    page.getByRole("button", { name: "Sign out" }).click(),
+  ]);
+  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await page.getByLabel("Username").fill("reader");
   await page.getByLabel("Password", { exact: true }).fill("reader-password");
   await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("button", { name: "Settings", exact: true }).last()).toBeVisible();
   await page.getByRole("button", { name: "Settings", exact: true }).last().click();
   await expect(page.getByRole("heading", { name: "Account" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Users" })).toHaveCount(0);

@@ -161,7 +161,7 @@ test("the committed WSL host list is valid and names tests that exist in the spe
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
     const loaded = loadKnownFailures(path.join(root, "tests", "known-failures.wsl-host.json"));
     assert.equal(loaded.ok, true, loaded.error);
-    assert.equal(loaded.entries.length, 3);
+    assert.equal(loaded.entries.length, 2);
     for (const entry of loaded.entries) {
         const source = fs.readFileSync(path.join(root, entry.file), "utf8");
         const leaf = entry.title.split(" › ").pop().replace(/\d+px$/, "");
