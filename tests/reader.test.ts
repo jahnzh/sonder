@@ -16,7 +16,8 @@ const { db, sqlite } = await import("../server/db.ts");
 const s = await import("../server/schema.ts");
 const { eq } = await import("drizzle-orm");
 const { readerFixture } = await import("./reader-fixture.ts");
-const { extractBook } = await import("../server/reader.ts");
+const { extractBook, paragraphsOf } = await import("../server/reader.ts");
+const { parse } = await import("node-html-parser");
 const { createAlignment, processAlignments, alignmentJob } =
   await import("../server/alignment.ts");
 const { defaultAppearance } = await import("../src/appearance.ts");
@@ -77,6 +78,36 @@ test("EPUB reading order and sentence offsets are extracted without treating scr
   assert.doesNotMatch(JSON.stringify(book.sections), /__epubScriptExecuted/);
   assert.equal(book.sections[0].paragraphs[1].blockIndex, 1);
   assert.ok(book.fingerprint);
+});
+test("the shared block definition counts a chapter's blocks exactly as the server did before it (#69)", () => {
+  // The server's paragraphsOf() before the definition was shared. Saved alignment maps and
+  // sentence locators number blocks this way, so the shared one must not re-number them.
+  const legacy = (root: any) => {
+    const blocks = "p,h1,h2,h3,h4,h5,h6,li,blockquote,pre,figcaption";
+    const all = root.querySelectorAll(blocks).filter((node: any) => !node.querySelector(blocks));
+    return (all.length ? all : [root])
+      .map((node: any) => node.text.normalize("NFKC").replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+  };
+  const chapters = [
+    `<h1>Title</h1><p>One. Two.</p><p>Three.</p>`,
+    `<nav epub:type="toc"><ol><li>Skip</li><li>Notes</li></ol></nav><p><svg><text>Ornament</text></svg></p><p>Story.</p>`,
+    `<blockquote><p>Inner.</p><p>Second.</p></blockquote><ul><li><p>Nested item.</p></li><li>Plain item.</li></ul>`,
+    `<p> </p><p>\u00a0</p><h2>  Spaced   heading </h2><figcaption>Caption.</figcaption>`,
+    `<div>Only loose text.</div>`,
+    `<div><p></p></div>`,
+    `<pre>Code <b>bold</b> line.</pre><noscript><p>Fallback.</p></noscript><p>After.</p>`,
+    `<script>var x = "<p>no</p>";</script><style>p{}</style><section><h3>Part</h3><p>Body ﬁne.</p></section>`,
+  ];
+  for (const chapter of chapters) {
+    const html = `<html><body>${chapter}</body></html>`;
+    const prune = (source: string) => {
+      const root = parse(source);
+      root.querySelectorAll("script,style,nav,svg").forEach((node) => node.remove());
+      return root.querySelector("body") || root;
+    };
+    assert.deepEqual(paragraphsOf(prune(html)), legacy(prune(html)), chapter);
+  }
 });
 test("reading checkpoints are idempotent, support backward reading and preserve conflicts by revision", async () => {
   const book = await extractBook(id);

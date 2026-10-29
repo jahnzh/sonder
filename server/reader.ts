@@ -10,19 +10,18 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
-import type {
-  ReaderBook,
-  ReadingCheckpoint,
-  TextLocator,
+import {
+  countedBlocks,
+  normalizeReaderText,
+  readerSkippedSelector,
+  type ReaderBook,
+  type ReadingCheckpoint,
+  type TextLocator,
 } from "../src/reading-types.ts";
 import { queueHardcoverReadingProgress } from "./hardcover.ts";
-const blocks = "p,h1,h2,h3,h4,h5,h6,li,blockquote,pre,figcaption";
 export function paragraphsOf(root: HTMLElement) {
-  const all = root
-    .querySelectorAll(blocks)
-    .filter((node) => !node.querySelector(blocks));
-  return (all.length ? all : [root])
-    .map((node) => node.text.normalize("NFKC").replace(/\s+/g, " ").trim())
+  return countedBlocks(root, (node) => node.text)
+    .map((node) => normalizeReaderText(node.text))
     .filter(Boolean);
 }
 const xml = new XMLParser({
@@ -115,7 +114,7 @@ export async function extractBook(id: string) {
       throw new Error("This EPUB contains an invalid chapter path.");
     const root = parse(await load(href));
     root
-      .querySelectorAll("script,style,nav,svg")
+      .querySelectorAll(readerSkippedSelector)
       .forEach((node) => node.remove());
     const body = root.querySelector("body") || root;
     const segmenter = new Intl.Segmenter("en", { granularity: "sentence" });

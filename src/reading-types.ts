@@ -129,3 +129,32 @@ export type AlignmentJob = {
   intervalCount?: number;
   unverifiedCount?: number;
 };
+// A sentence locator's blockIndex counts the "blocks" of a section. The server
+// (node-html-parser) and the reader (the browser DOM) count them with this one
+// definition, so a fragment's block, start and end point at the same text (#69).
+// Changing it re-numbers every block and invalidates saved alignment maps.
+export const readerBlockSelector = "p,h1,h2,h3,h4,h5,h6,li,blockquote,pre,figcaption";
+/** Elements that are not book text: their blocks and text are never counted. */
+export const readerSkippedSelector = "script,style,nav,svg";
+export const normalizeReaderText = (text: string) =>
+  text.normalize("NFKC").replace(/\s+/g, " ").trim();
+/**
+ * Where a block's raw text prefix ends in normalizeReaderText(block): leading
+ * whitespace is dropped and runs collapse to one space, but a trailing run still
+ * counts, so the offset just after a space is the start of the next sentence.
+ */
+export const readerTextOffset = (prefix: string) =>
+  prefix.normalize("NFKC").replace(/\s+/g, " ").trimStart().length;
+type BlockElement = {
+  querySelectorAll(selector: string): Iterable<unknown> | ArrayLike<unknown>;
+  closest(selector: string): unknown;
+};
+/** The counted blocks of a section: blocks with text that contain no other block, outside skipped elements. */
+export function countedBlocks<T extends BlockElement>(root: T, text: (block: T) => string): T[] {
+  const blocks = (node: T) =>
+    (Array.from(node.querySelectorAll(readerBlockSelector)) as T[]).filter(
+      (block) => !block.closest(readerSkippedSelector),
+    );
+  const all = blocks(root).filter((block) => !blocks(block).length);
+  return all.length ? all.filter((block) => normalizeReaderText(text(block))) : [root];
+}
