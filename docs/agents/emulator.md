@@ -44,6 +44,21 @@ Results go to `artifacts/android-emulator/<sha>/<run>/`: `summary.txt` (per-brow
 3. **Marionette over adb port forwarding** works: it is how geckodriver drives path 1 (its log shows `adb forward` to device port 2829 and "Connection to Marionette established"). It was not driven without geckodriver, since paths 1 and 2 cover it.
 4. **Playwright**: 1.64.1 has no Firefox-for-Android route of its own (`_android` drives Chrome only; the bundle has no `androidPackage`). Its desktop BiDi backend (`channel: "moz-firefox"`) is what path 2 reuses through the launcher; no fork is needed.
 
+## Measured results (2026-10-29)
+
+The implementer's acceptance run at `ba930ac` passed 11/11 in Chrome and 11/11 in Firefox. Three full runs by the coordinator on the merged code (`e27aad5`, `7db8a00`) did not reproduce that:
+
+| Run | Chrome | Firefox | Failures |
+| --- | --- | --- | --- |
+| 1 | 10/11 | 10/11 | Chrome `device-reset` offline shell: `Test timeout of 180000ms exceeded while setting up "context"`. Firefox `now-playing-layout` reader-first at 360px. |
+| 2 | 9/11 | 10/11 | Chrome reader-first at 390px (`page.goto: Target page, context or browser has been closed`) and the keyboard-focus test (context setup timeout). Firefox: the same 360px test. |
+| 3 (Chrome only, `SONDER_EMU_MEMORY=6g`) | 10/11 | not run | Chrome reader-first at 1280px: context setup timeout. |
+
+- **Chrome hangs creating the browser context** in a different test each run (about 1 in 11 to 2 in 11). It is not tied to the memory limit: with 6 GB the emulator still grows to 5.9 GB by the end of a run and the hang still happened, so the default stays at 4600m. The cause is open; the leak-like growth of the emulator's anonymous memory during a run is the lead.
+- **Firefox reader-first at 360px fails every time**: `Play narration` is not found in `.inline-reader`, while 390, 430 and 1280px pass. This is a reproducible difference on Firefox for Android and is tracked in its own issue. It may be a real layout or tap-handling problem, or an assumption of the test.
+- The scripts do not retry tests, so a failure is reported as `failed exit=1`; read `playwright.log` and `report.json` before treating a failure as a product bug.
+- Boot takes 38 to 45 s. The container ends a run at its memory limit.
+
 ## Failure modes
 
 - **Port 4190 or another Fetch-blocked port**: Firefox shows "Port restricted for security reasons". The default app port is 4174.
