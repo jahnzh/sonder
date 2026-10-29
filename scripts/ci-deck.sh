@@ -473,16 +473,19 @@ rm -f "$run_dir/check.exit" "$run_dir/check.pid"
 cmd="cd /pilot/runs/$id/checkout && npm ci && npm run check -- --ref $sha --known-failures $known_failures --output-dir /pilot/runs/$id/report"
 # systemd-run --user, not setsid/nohup: on SteamOS a process started over SSH is killed when the session ends
 # (podman and its wrapper with it). A transient user unit survives because lingering is enabled for the user.
-systemd-run --user --collect --quiet --unit "$name" --working-directory="$run_dir" bash -c '
-  echo $$ >"$7"
-  exec >"$6" 2>&1
-  podman run --rm --name "$1" --cpus 2 --memory 6g --pids-limit 2048 --shm-size 1g \
-    --security-opt no-new-privileges --env NPM_CONFIG_CACHE=/pilot/cache/npm \
-    --env PLAYWRIGHT_BROWSERS_PATH=/ms-playwright --env CI=1 --volume "$2:/pilot:rw" \
-    "$3" bash -lc "$4"
-  rc=$?
-  echo "$rc" >"$5.tmp" && mv "$5.tmp" "$5"
-' _ "$name" "$base" "$image" "$cmd" "$run_dir/check.exit" "$run_dir/check.log" "$run_dir/check.pid" || exit 1
+# The wrapper is a file, not an inline `bash -c`: systemd expands `$` on a unit command line (`$$` becomes `$`).
+cat >"$run_dir/run.sh" <<'WRAPPER'
+echo $$ >"$7"
+exec >"$6" 2>&1
+podman run --rm --name "$1" --cpus 2 --memory 6g --pids-limit 2048 --shm-size 1g \
+  --security-opt no-new-privileges --env NPM_CONFIG_CACHE=/pilot/cache/npm \
+  --env PLAYWRIGHT_BROWSERS_PATH=/ms-playwright --env CI=1 --volume "$2:/pilot:rw" \
+  "$3" bash -lc "$4"
+rc=$?
+echo "$rc" >"$5.tmp" && mv "$5.tmp" "$5"
+WRAPPER
+systemd-run --user --collect --quiet --unit "$name" --working-directory="$run_dir" \
+  bash "$run_dir/run.sh" "$name" "$base" "$image" "$cmd" "$run_dir/check.exit" "$run_dir/check.log" "$run_dir/check.pid" || exit 1
 # The wrapper writes its own pid first, so a unit that exits at once is still seen: its check.exit is there.
 # Its command line contains the run directory, which the probe and cleanup check.
 for _ in $(seq 40); do
