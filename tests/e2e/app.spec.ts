@@ -250,9 +250,8 @@ test("import, complete device download, service-worker ranges and offline relaun
 });
 test("desktop layout and server/device distinction remain usable without overflow", async ({
   page,
-  isMobile,
 }) => {
-  skipOnMobile(isMobile, "desktop layout (min-width: 900px) is not reachable on a phone profile");
+  skipOnMobile(true, "desktop layout (min-width: 900px) is not reachable on a phone profile");
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/#downloads");
   await expect(

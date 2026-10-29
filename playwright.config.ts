@@ -7,9 +7,15 @@ const installed =
 // SONDER_MOBILE=1 adds them to the default projects; SONDER_MOBILE=only (npm run test:mobile) runs just them.
 const mobileMode = process.env.SONDER_MOBILE;
 const mobileSpecs = /(now-playing-layout|device-reset|app|playback-workflow|integrated-reader|playback-speed)\.spec\.ts/;
+const { isMobile: _isMobile, defaultBrowserType: _browser, ...pixelWithoutIsMobile } = devices["Pixel 7"];
 const mobileProjects = [
   // Pixel 7 in Chromium: touch input, mobile user agent, device pixel ratio and isMobile viewport handling.
   { name: "mobile-chrome", testMatch: mobileSpecs, use: { ...devices["Pixel 7"] } },
+  // Firefox with the Pixel 7 viewport, touch and user agent. Firefox does not support isMobile, so it is dropped
+  // (no meta-viewport handling); the project exists only when the Firefox binary does.
+  ...(existsSync(firefox.executablePath())
+    ? [{ name: "mobile-firefox", testMatch: mobileSpecs, use: { ...pixelWithoutIsMobile, browserName: "firefox" as const, launchOptions: {} } }]
+    : []),
   // iPhone 15 profile in WebKit: the closest to iOS Safari on Linux; skipped cleanly when the binary is missing.
   ...(existsSync(webkit.executablePath())
     ? [{ name: "mobile-safari", testMatch: mobileSpecs, use: { ...devices["iPhone 15"], launchOptions: {} } }]
