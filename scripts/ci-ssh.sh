@@ -14,7 +14,8 @@
 # Environment: SONDER_CI_HOST, SONDER_CI_REPO, SONDER_CI_STATUS_CONTEXT,
 # SONDER_CI_POST_STATUS (0 skips the GitHub status), SONDER_CI_MAX_WAIT (seconds,
 # default 1800), SONDER_CI_POLL_INTERVAL (seconds, default 15),
-# SONDER_CI_REMOTE_BASE (default /tmp), SONDER_CI_LOOPBACK_PORT (default 4399).
+# SONDER_CI_REMOTE_BASE (default /tmp), SONDER_CI_LOOPBACK_PORT (default 4399),
+# SONDER_CI_KNOWN_FAILURES (repository path, default tests/known-failures.wsl-host.json).
 #
 # No `set -e`: every step handles its own failure so a failing step can never
 # skip the code that records the outcome.
@@ -36,6 +37,7 @@ MAX_WAIT=${SONDER_CI_MAX_WAIT:-1800}
 POLL_INTERVAL=${SONDER_CI_POLL_INTERVAL:-15}
 REMOTE_BASE=${SONDER_CI_REMOTE_BASE:-/tmp}
 LOOPBACK_PORT=${SONDER_CI_LOOPBACK_PORT:-4399}
+KNOWN_FAILURES=${SONDER_CI_KNOWN_FAILURES:-tests/known-failures.wsl-host.json}
 POLL_FAILURE_LIMIT=3
 POLL_CALL_TIMEOUT=60
 # Hard cap for one scp transfer (the bundle upload, the report download).
@@ -48,6 +50,9 @@ SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=5 -o Serve
 [[ $MAX_WAIT =~ ^[0-9]+$ ]] || { echo "[ci-ssh] SONDER_CI_MAX_WAIT must be whole seconds" >&2; exit 2; }
 [[ $POLL_INTERVAL =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "[ci-ssh] SONDER_CI_POLL_INTERVAL must be a number of seconds" >&2; exit 2; }
 [[ $LOOPBACK_PORT =~ ^[0-9]+$ ]] || { echo "[ci-ssh] SONDER_CI_LOOPBACK_PORT must be a port number" >&2; exit 2; }
+# The list path goes into the remote command line, so keep it to a plain relative path.
+[[ $KNOWN_FAILURES =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ && $KNOWN_FAILURES != *..* ]] \
+  || { echo "[ci-ssh] SONDER_CI_KNOWN_FAILURES must be a relative repository path" >&2; exit 2; }
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT" || exit 1
@@ -435,15 +440,15 @@ REMOTE
   log "Starting the check on ${SONDER_CI_HOST}"
   # The wrapper must not run under `set -e`: a failing check still has to write
   # check.exit, or the wait loop can only conclude that the run died.
-  remote_bash start "$REMOTE_RUN_DIR" "$FULL_SHA" <<'REMOTE'
-run_dir=$2 sha=$3
+  remote_bash start "$REMOTE_RUN_DIR" "$FULL_SHA" "$KNOWN_FAILURES" <<'REMOTE'
+run_dir=$2 sha=$3 known_failures=$4
 cd "$run_dir/checkout" || exit 1
 rm -f "$run_dir/check.exit" "$run_dir/check.pid"
 setsid nohup bash -c '
-  nice -n 10 npm run check -- --ref "$1" --output-dir "$2"
+  nice -n 10 npm run check -- --ref "$1" --known-failures "$4" --output-dir "$2"
   rc=$?
   echo "$rc" >"$3.tmp" && mv "$3.tmp" "$3"
-' _ "$sha" "$run_dir/report" "$run_dir/check.exit" >"$run_dir/check.log" 2>&1 </dev/null &
+' _ "$sha" "$run_dir/report" "$run_dir/check.exit" "$known_failures" >"$run_dir/check.log" 2>&1 </dev/null &
 echo $! >"$run_dir/check.pid"
 REMOTE
   rc=$?
