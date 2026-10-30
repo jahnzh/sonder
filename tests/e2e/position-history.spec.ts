@@ -43,12 +43,18 @@ async function audioState(page: Page) {
 }
 
 async function setPosition(page: Page, position: number) {
-  await page.evaluate((position) => {
-    const audio = ((window as any).__jumpAudio as HTMLAudioElement[]).find((item) => !!item.src)!;
-    audio.currentTime = position;
-    audio.dispatchEvent(new Event("timeupdate"));
-  }, position);
-  await expect.poll(async () => (await audioState(page)).position).toBeCloseTo(position, 5);
+  // After a cross-track load the player still holds pendingSeek until
+  // loadedmetadata; assigning currentTime once can be overwritten. Keep
+  // assigning until the element reports the requested time.
+  await expect.poll(async () => {
+    await page.evaluate((position) => {
+      const audio = ((window as any).__jumpAudio as HTMLAudioElement[]).find((item) => !!item.src)!;
+      if (audio.readyState < 1 || !Number.isFinite(audio.duration) || audio.duration <= 0) return;
+      audio.currentTime = position;
+      audio.dispatchEvent(new Event("timeupdate"));
+    }, position);
+    return (await audioState(page)).position;
+  }).toBeCloseTo(position, 5);
 }
 
 async function startPaused(page: Page, title: string) {
