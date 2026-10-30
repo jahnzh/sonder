@@ -35,6 +35,7 @@ import { PlaybackOptions } from "./PlaybackOptions";
 import { PlaybackTimeline } from "./PlaybackTimeline";
 import {PlaybackExtra,usePlaybackMenu} from "./PlaybackMenu";
 import { readerWords, readerSegment } from "../reader-segments";
+import { readerNeedsScripts } from "../reader-sandbox";
 import { currentChapter, playbackTimeline } from "../chapters";
 import { usePlayer } from "../player";
 import { api, forgetPositionHistory, localDB } from "../lib";
@@ -462,6 +463,7 @@ export function ReaderView({
         ]);
         const blob = await epubFile(id, book.fingerprint);
         if (disposed) return;
+        const scriptRequirement = readerNeedsScripts();
         file.current = blob;
         const publication = ePub({ replacements: "blobUrl" });
         epub.current = publication;
@@ -557,6 +559,7 @@ export function ReaderView({
           return literataCss().then((css) => { faces.textContent = css; });
         });
         await publication.open(await blob.arrayBuffer(), "binary");
+        const allowScriptedContent = await scriptRequirement;
         if (disposed) {
           try { publication.destroy(); } catch {}
           return;
@@ -567,12 +570,13 @@ export function ReaderView({
           spread: "auto",
           flow: preferences.mode === "scroll" ? "scrolled-doc" : "paginated",
           // WebKit (Safari, iOS) runs no event listener in a frame without allow-scripts, so taps,
-          // swipes and long-press would never reach the reader (#37). With allow-same-origin the
+          // swipes and long-press would never reach the reader (#37). The probe enables scripts
+          // only when listeners fail or the result is unknown. With allow-same-origin the
           // frame could lift its own sandbox if a script ran; the content hook above keeps that from
           // happening with DOMPurify and a default-src 'none' CSP in every section.
           // Never add allow-popups: epub.js rewrites resource links to blob: URLs after the content hook, and the
           // missing popup permission is what keeps a sanitised link from opening one as an unsanitised document.
-          allowScriptedContent: true,
+          allowScriptedContent,
         });
         rendition.current = view;
         const relocate = (location: Location) => {

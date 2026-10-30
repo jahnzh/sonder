@@ -1,9 +1,9 @@
 import {test,expect,type Page,type Locator} from "@playwright/test";
 import {readFileSync} from "node:fs";
 import {readerFixture} from "../reader-fixture";
-// The EPUB frame allows scripts so that WebKit (Safari, iOS) runs the reader's own listeners on the page:
-// without allow-scripts it runs none of them (#37). EPUB content itself must still never run script.
-// Both checks run in Chromium, Firefox and WebKit.
+// WebKit needs allow-scripts so the reader's own listeners run on the page (#37).
+// EPUB content itself must still never run script. These checks run in all three engines.
+const sandboxFor=(browserName:string)=>browserName==="webkit" ? "allow-same-origin allow-scripts" : "allow-same-origin";
 async function importBook(page:Page,title:string,script=false,variant?:"svg-root"|"iframe-root"|"nav-root"|"no-head"|"head-late"|"text-before-head"|"template-root"|"svg-asset"){
  const audio=await page.request.post("/api/import",{multipart:{title,author:"Frame QA",file:{name:"Narration.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
  expect(audio.ok()).toBe(true);
@@ -23,8 +23,15 @@ async function openReader(page:Page,title:string,script=false){
  await expect(frame.getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
  return {id,room,frame};
 }
-test("taps, page turns and long-press on the book page reach the reader",async({page})=>{
+test("the reader frame only permits scripts when the engine needs them",async({page,browserName})=>{
+ const {room}=await openReader(page,"Frame sandbox");
+ const frames=room.locator(".reader-viewport iframe");
+ await expect(frames.first()).toHaveAttribute("sandbox",sandboxFor(browserName));
+ for(const sandbox of await frames.evaluateAll(els=>els.map(el=>el.getAttribute("sandbox"))))expect(sandbox).toBe(sandboxFor(browserName));
+});
+test("taps, page turns and long-press on the book page reach the reader",async({page,browserName})=>{
  const {id,room}=await openReader(page,"Frame gestures");
+ await expect(room.locator(".reader-viewport iframe").first()).toHaveAttribute("sandbox",sandboxFor(browserName));
  const topbar=room.locator(".reader-topbar"),box=(await room.locator(".reader-viewport").boundingBox())!;
  await expect(topbar).toBeHidden();
  await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
@@ -60,10 +67,10 @@ const attack=(viewport:Locator)=>viewport.evaluate(async(host)=>{
  }
  return {sections:results,parent:(window as any).__epubScriptExecuted};
 });
-test("EPUB scripts cannot run in the reader frame or reach the app",async({page})=>{
+test("EPUB scripts cannot run in the reader frame or reach the app",async({page,browserName})=>{
  const {room,frame}=await openReader(page,"Frame scripts",true);
  const viewport=room.locator(".reader-viewport");
- const expected={sandbox:"allow-same-origin allow-scripts",csp:"default-src 'none'; style-src 'unsafe-inline' blob: data:; img-src blob: data:; font-src blob: data:; media-src blob: data:; frame-src 'none'; form-action 'none'; base-uri 'none'",leftovers:0,ran:false};
+ const expected={sandbox:sandboxFor(browserName),csp:"default-src 'none'; style-src 'unsafe-inline' blob: data:; img-src blob: data:; font-src blob: data:; media-src blob: data:; frame-src 'none'; form-action 'none'; base-uri 'none'",leftovers:0,ran:false};
  // Activating the sanitised content runs nothing either.
  await frame.getByText("Inline handler",{exact:true}).evaluate((el:HTMLElement)=>el.click());
  await frame.getByText("Script link",{exact:true}).evaluate((el:HTMLElement)=>el.click());
@@ -80,11 +87,32 @@ test("EPUB scripts cannot run in the reader frame or reach the app",async({page}
  expect(later.parent).toBeUndefined();
 });
 
+test("a failed event probe enables scripts while the content defences still block them",async({page,browserName})=>{
+ test.skip(browserName!=="chromium","WebKit and Firefox exercise their native sandbox in the other tests");
+ // Stop the probe's synthetic pointer events bubbling to its document, as in WebKit's blocked-listener case.
+ await page.addInitScript(()=>{
+  const OriginalPointerEvent=window.PointerEvent;
+  Object.defineProperty(window,"PointerEvent",{configurable:true,value:class extends OriginalPointerEvent{
+   constructor(type:string,options?:PointerEventInit){super(type,{...options,bubbles:false});}
+  }});
+ });
+ const {room}=await openReader(page,"Frame failed probe",true);
+ const result=await attack(room.locator(".reader-viewport"));
+ expect(result.sections.length).toBeGreaterThan(0);
+ for(const section of result.sections){
+  expect(section.sandbox).toBe("allow-same-origin allow-scripts");
+  expect(section.csp).toContain("default-src 'none'");
+  expect(section.leftovers).toBe(0);
+  expect(section.ran).toBe(false);
+ }
+ expect(result.parent).toBeUndefined();
+});
+
 // A section whose root is not <html>, or that has no <head>, must not skip sanitising or the CSP. Each book's
 // payload tries to run script and to remove the frame's own sandbox; a root the sanitiser cannot handle is
 // refused and the section renders empty.
 for(const variant of ["svg-root","iframe-root","nav-root","template-root"] as const){
- test(`a section with a ${variant.replace("-"," ")} is emptied and runs nothing`,async({page})=>{
+ test(`a section with a ${variant.replace("-"," ")} is emptied and runs nothing`,async({page,browserName})=>{
   const leaks:string[]=[];page.on("response",r=>{if(r.url().includes("/leak"))leaks.push(r.url())});
   await importBook(page,`Frame ${variant}`,false,variant);
   const iframe=page.locator(".reader-room:not(.inline-reader) .reader-viewport iframe");
@@ -92,7 +120,7 @@ for(const variant of ["svg-root","iframe-root","nav-root","template-root"] as co
   await page.waitForTimeout(1500);
   expect(await page.evaluate(()=>(window as any).__epubScriptExecuted)).toBeUndefined();
   expect(leaks).toEqual([]);
-  for(const sandbox of await iframe.evaluateAll(frames=>frames.map(f=>f.getAttribute("sandbox"))))expect(sandbox).toBe("allow-same-origin allow-scripts");
+  for(const sandbox of await iframe.evaluateAll(frames=>frames.map(f=>f.getAttribute("sandbox"))))expect(sandbox).toBe(sandboxFor(browserName));
   // Nothing from the book is left in the frame: no text, no script, no handler, no attribute but the namespace.
   expect(await iframe.first().evaluate((f:HTMLIFrameElement)=>{
    const doc=f.contentDocument!;
@@ -100,7 +128,7 @@ for(const variant of ["svg-root","iframe-root","nav-root","template-root"] as co
   })).toEqual({text:"",risky:0,templates:0,attrs:[]});
  });
 }
-test("a section without a head still gets the CSP first and runs nothing",async({page})=>{
+test("a section without a head still gets the CSP first and runs nothing",async({page,browserName})=>{
  await importBook(page,"Frame no head",false,"no-head");
  const frame=page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe");
  await expect(frame.getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
@@ -110,14 +138,14 @@ test("a section without a head still gets the CSP first and runs nothing",async(
   sandbox:f.getAttribute("sandbox"),
   csp:f.contentDocument!.head.firstElementChild?.getAttribute("http-equiv")==="Content-Security-Policy"?f.contentDocument!.head.firstElementChild!.getAttribute("content"):null,
  }));
- expect(state.sandbox).toBe("allow-same-origin allow-scripts");
+ expect(state.sandbox).toBe(sandboxFor(browserName));
  expect(state.csp).toContain("default-src 'none'");
  expect(state.csp).toContain("base-uri 'none'");
 });
 
 // epub.js turns book resources into blob: URLs on the app's origin after the content hook has run. An SVG that
 // carries script must not get such a URL: navigating the frame to it would run the script as the app.
-test("a book's SVG asset is a data: URL, so navigating the frame to it reaches nothing",async({page})=>{
+test("a book's SVG asset is a data: URL, so navigating the frame to it reaches nothing",async({page,browserName})=>{
  await importBook(page,"Frame svg asset",false,"svg-asset");
  const frame=page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe");
  await expect(frame.getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
@@ -134,7 +162,7 @@ test("a book's SVG asset is a data: URL, so navigating the frame to it reaches n
  await iframe.evaluate((f:HTMLIFrameElement)=>{f.contentWindow!.location.assign((f.contentDocument!.querySelector("#svg-link") as HTMLAnchorElement).href);});
  await page.waitForTimeout(1500);
  expect(await page.evaluate(()=>(window as any).__epubScriptExecuted)).toBeUndefined();
- expect(await iframe.getAttribute("sandbox")).toBe("allow-same-origin allow-scripts");
+ expect(await iframe.getAttribute("sandbox")).toBe(sandboxFor(browserName));
 });
 
 // Content before <head> makes the HTML parser move the head, CSP meta included, into <body>, where browsers
