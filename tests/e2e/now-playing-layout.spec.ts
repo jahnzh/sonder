@@ -34,9 +34,8 @@ async function open(page:Page,browserName:string,title:string,[width,height]:rea
    }
    return play.isVisible();
   },{timeout:20000}).toBe(true);
-  await expect(play).toBeVisible();
  }
- // WebKit may start the audio between the wait above and here, which turns Play into Pause; the layout
+ // Firefox and WebKit may start the audio between the wait above and here, which turns Play into Pause; the layout
  // checks that follow do not depend on which one the dock shows.
  await expect(dock.getByRole("button",{name:/^(Play|Pause)$/})).toBeVisible();
  await page.mouse.move(0,0);
