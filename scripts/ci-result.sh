@@ -23,6 +23,10 @@ usage() {
   exit 2
 }
 
+if [[ ${1:-} == -h || ${1:-} == --help ]]; then
+  echo "usage: scripts/ci-result.sh <worktree-or-run-dir> [sha-prefix]"
+  exit 0
+fi
 [[ $# -ge 1 && $# -le 2 ]] || usage
 
 TARGET=$1

@@ -158,3 +158,12 @@ test("fixture check-report.json keeps the real knownFailures.summary field", () 
   assert.ok(Array.isArray(report.browserSlowestTests));
   assert.equal(report.browserSlowestTests[0].durationMs, 41234);
 });
+
+test("--help prints the usage on stdout and exits 0", () => {
+  const script = fileURLToPath(new URL("../scripts/ci-result.sh", import.meta.url));
+  for (const flag of ["--help", "-h"]) {
+    const result = spawnSync("bash", [script, flag], { encoding: "utf8" });
+    assert.equal(result.status, 0, flag);
+    assert.match(result.stdout, /usage: scripts\/ci-result\.sh/);
+  }
+});

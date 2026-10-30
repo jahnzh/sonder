@@ -243,3 +243,14 @@ test("runMutate restore in finally even when spawn throws", async () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("--help prints the usage on stdout and exits 0, but only before the -- that starts the test command", () => {
+  const script = fileURLToPath(new URL("../scripts/mutate.mjs", import.meta.url));
+  const help = spawnSync(process.execPath, [script, "--help"], { encoding: "utf8" });
+  assert.equal(help.status, 0);
+  assert.match(help.stdout, /usage: node scripts\/mutate\.mjs/);
+  // After `--` the word belongs to the test command, so it is not a help request.
+  const after = spawnSync(process.execPath, [script, "--file", "x", "--search", "a", "--replace", "b", "--", "echo", "--help"], { encoding: "utf8" });
+  assert.notEqual(after.status, 0);
+  assert.doesNotMatch(after.stdout, /usage: node scripts\/mutate\.mjs/);
+});
