@@ -50,7 +50,7 @@ test("the policy has no inline-script or eval allowance and closes the document-
   const policy = cspPolicy();
   const script = policy.split("; ").find((d) => d.startsWith("script-src "));
   assert.equal(script, "script-src 'self'");
-  for (const directive of ["object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'", "connect-src 'self'", "report-uri /api/csp-report"])
+  for (const directive of ["object-src 'none'", "base-uri 'self'", "frame-ancestors 'none'", "connect-src 'self'", "report-uri /api/csp-report"])
     assert.ok(policy.split("; ").includes(directive), directive);
 });
 

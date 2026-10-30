@@ -205,9 +205,12 @@ test("a section with a character before its head still has the CSP in the head",
 // The server's app-level Content-Security-Policy (#76) is the layer behind the section CSP: a srcdoc frame inherits the
 // embedding document's policy and a blob: document the creator's, so an inline script in either is refused even where the
 // frame has no CSP meta of its own. The scripts set a flag on the app's window, so with CSP_MODE=off this test fails.
-test("an inline script in a srcdoc frame or a blob: document the page creates is blocked by the app policy",async({page})=>{
+test("the app shell is served under the enforced policy",async({page})=>{
  const shell=await page.request.get("/");
  expect(shell.headers()["content-security-policy"]).toContain("script-src 'self';");
+ expect(shell.headers()["content-security-policy-report-only"]).toBeUndefined();
+});
+test("an inline script in a srcdoc frame or a blob: document the page creates is blocked by the app policy",async({page})=>{
  await openReader(page,"App policy");
  const reports:string[]=[];
  page.on("request",request=>{if(request.url().endsWith("/api/csp-report"))reports.push(request.postData()||"");});

@@ -19,12 +19,14 @@ export function cspMode(value = process.env.CSP_MODE): CspMode {
 //   policy, load the stylesheets epub.js rewrites to blob: URLs.
 // - img-src https:: Hardcover and torrent-site cover URLs are stored as https:// links and shown directly.
 // - connect-src 'self': the client only calls its own origin; Hardcover, TorBox and the sources are server-side.
+// - base-uri 'self': epub.js sets a same-origin <base> in the documents it parses for the reader, and the browser applies
+//   this policy to them. The app's own shell has none.
 // - frame-src blob:: reader frames and documents the page builds from Blobs; srcdoc frames are not subject to it.
 const DIRECTIVES = [
   "default-src 'self'",
   "script-src 'self'",
   "object-src 'none'",
-  "base-uri 'none'",
+  "base-uri 'self'",
   "frame-ancestors 'none'",
   "form-action 'self'",
   "img-src 'self' blob: data: https:",
