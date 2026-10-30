@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Start an Orca worker with a required model, after the preflight.
-#   orca-spawn.sh --spec-file <file> --name <worktree> --base <branch> --agent <id> --model <id> [--effort <level>] [--doc <path>...]
+#   orca-spawn.sh --spec-file <file> --name <worktree> (--base <branch> | --base-worktree <name>) --agent <id> --model <id> [--effort <level>] [--doc <path>...]
+# Exactly one of --base and --base-worktree is required. --base-worktree uses the branch checked out in the worktree
+# <name> under the workspaces directory, so the local branch name need not match the remote one.
 # Without --doc the preflight checks AGENTS.md and CLAUDE.md on the base.
+# After the launch the script prints "branch: <name>", the local branch of the new worktree, for push and cleanup.
 # Exit codes: 0 worker started with the requested model, 1 a check or the launch failed, 2 bad usage.
 # ORCA_SPAWN_WORKSPACES overrides the workspaces directory (tests); ORCA_CLI_COMMAND the orca binary.
 # The launch receipt is read as JSON: {"ok": true, "result": {"dispatchId", "launch": {"effective": {"model"}}, "effects": [...]}}.
@@ -11,11 +14,11 @@
 set -u
 
 usage() {
-  echo "usage: orca-spawn.sh --spec-file <file> --name <worktree> --base <branch> --agent <id> --model <id> [--effort <level>] [--doc <path>...]" >&2
+  echo "usage: orca-spawn.sh --spec-file <file> --name <worktree> (--base <branch> | --base-worktree <name>) --agent <id> --model <id> [--effort <level>] [--doc <path>...]" >&2
   exit 2
 }
 
-spec_file="" name="" base="" agent="" model="" effort=""
+spec_file="" name="" base="" base_worktree="" agent="" model="" effort=""
 docs=()
 while [ $# -gt 0 ]; do
   [ $# -ge 2 ] || usage
@@ -23,6 +26,7 @@ while [ $# -gt 0 ]; do
     --spec-file) spec_file=$2 ;;
     --name) name=$2 ;;
     --base) base=$2 ;;
+    --base-worktree) base_worktree=$2 ;;
     --agent) agent=$2 ;;
     --model) model=$2 ;;
     --effort) effort=$2 ;;
@@ -36,7 +40,13 @@ if [ -z "$model" ]; then
   echo "refusing to spawn without --model" >&2
   usage
 fi
-[ -n "$spec_file" ] && [ -n "$name" ] && [ -n "$base" ] && [ -n "$agent" ] || usage
+[ -n "$spec_file" ] && [ -n "$name" ] && [ -n "$agent" ] || usage
+# Exactly one of --base and --base-worktree.
+if [ -n "$base" ] && [ -n "$base_worktree" ]; then
+  echo "use either --base or --base-worktree, not both" >&2
+  usage
+fi
+[ -n "$base" ] || [ -n "$base_worktree" ] || usage
 if [ ! -f "$spec_file" ]; then
   echo "spec file not found: $spec_file" >&2
   exit 2
@@ -57,7 +67,17 @@ fi
 [ ${#docs[@]} -gt 0 ] || docs=(AGENTS.md CLAUDE.md)
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
-worktree=${ORCA_SPAWN_WORKSPACES:-/home/jahn/orca/workspaces/audiobook_streamer}/$name
+workspaces=${ORCA_SPAWN_WORKSPACES:-/home/jahn/orca/workspaces/audiobook_streamer}
+worktree=$workspaces/$name
+
+if [ -n "$base_worktree" ]; then
+  base=$(git -C "$workspaces/$base_worktree" branch --show-current 2>/dev/null)
+  if [ -z "$base" ]; then
+    echo "cannot resolve a branch from worktree $workspaces/$base_worktree (missing, not a git worktree, or detached HEAD)" >&2
+    exit 1
+  fi
+  echo "base branch: $base (from worktree $base_worktree)"
+fi
 
 # One command-line argument is limited to about 128 KiB (MAX_ARG_STRLEN), and worker-start takes the spec as one
 # argument. Refuse early, before anything is started, with a message the caller can act on.
@@ -127,6 +147,12 @@ fi
 if [ -d "$worktree" ]; then
   (cd "$worktree" && nohup codegraph init -y > .codegraph-init.log 2>&1 &)
   echo "codegraph init -y running in the background in $worktree (log: .codegraph-init.log)"
+  # Orca may name the local branch differently from the base (user/name); push and clean up with this one.
+  if branch=$(git -C "$worktree" branch --show-current 2>/dev/null) && [ -n "$branch" ]; then
+    echo "branch: $branch"
+  else
+    echo "warning: could not read the branch of $worktree" >&2
+  fi
 else
   echo "warning: worktree $worktree not found; the worker is running. Run codegraph init -y there once it exists." >&2
 fi

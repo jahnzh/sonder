@@ -7,10 +7,13 @@ const DEFAULT_WAIT_SECONDS = 90;
 const MAX_WAIT_SECONDS = 100;
 
 function printUsage() {
-  console.error(`Usage: node scripts/orca-check.mjs [--terminal <handle>] [--run <run_id>] [--types <type,...>] [--wait [<seconds>]] [--ack <delivery_id>]
+  console.error(`Usage: node scripts/orca-check.mjs [--terminal <handle>] [--run <run_id>] [--types <type,...>] [--wait [<seconds>]] [--ack <delivery_id>] [--heartbeats]
 
 Runs $ORCA_CLI_COMMAND orchestration check --json (default command: orca), strips keepalive lines, and prints messages.
---wait defaults to ${DEFAULT_WAIT_SECONDS}s and cannot exceed ${MAX_WAIT_SECONDS}s.`);
+--wait defaults to ${DEFAULT_WAIT_SECONDS}s and cannot exceed ${MAX_WAIT_SECONDS}s.
+A delivery that holds only heartbeats is acknowledged and the wait continues; a delivery with any other message is
+printed without its heartbeats and left for the caller to ack. When only heartbeats arrived, the count line ends
+with heartbeats=<n>. --heartbeats prints every delivery as Orca returns it and acks nothing.`);
 }
 
 /**
@@ -119,14 +122,16 @@ export function formatMessageLine(message) {
 
 /**
  * @param {Record<string, unknown>} result
+ * @param {{ hidden?: number }} [opts] hidden: heartbeats left out of the lines below the count line
  * @returns {string[]}
  */
-export function formatCheckLines(result) {
+export function formatCheckLines(result, opts = {}) {
   const count = typeof result.count === "number" ? result.count : 0;
   const delivery =
     result.deliveryId == null ? "null" : String(result.deliveryId);
   const timedOut = result.timedOut === true ? "true" : "false";
-  const lines = [`count=${count} delivery=${delivery} timedOut=${timedOut}`];
+  const hidden = opts.hidden ? ` heartbeats=${opts.hidden}` : "";
+  const lines = [`count=${count} delivery=${delivery} timedOut=${timedOut}${hidden}`];
   const messages = Array.isArray(result.messages) ? result.messages : [];
   for (const message of messages) {
     if (message && typeof message === "object") {
@@ -134,6 +139,11 @@ export function formatCheckLines(result) {
     }
   }
   return lines;
+}
+
+/** @param {unknown} message */
+function isHeartbeat(message) {
+  return !!message && typeof message === "object" && /** @type {Record<string, unknown>} */ (message).type === "heartbeat";
 }
 
 /**
@@ -148,6 +158,7 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
     types: null,
     waitSeconds: null,
     ack: null,
+    heartbeats: false,
     help: false,
   };
 
@@ -155,6 +166,8 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") {
       options.help = true;
+    } else if (arg === "--heartbeats") {
+      options.heartbeats = true;
     } else if (arg === "--terminal") {
       if (i + 1 >= argv.length || argv[i + 1].startsWith("--")) {
         return { ok: false, error: "Missing value for --terminal" };
@@ -232,21 +245,10 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
 
 /**
  * @param {Record<string, unknown>} options
- * @param {{ runOrca?: (args: string[]) => { status: number | null, stdout: string, stderr: string } }} [hooks]
+ * @param {{ runOrca?: (args: string[]) => { status: number | null, stdout: string, stderr: string }, now?: () => number }} [hooks]
  */
 export function runOrcaCheck(options, hooks = {}) {
   const orca = process.env.ORCA_CLI_COMMAND || "orca";
-  /** @type {string[]} */
-  const args = ["orchestration", "check", "--json"];
-  // A worker passes its own handle; the coordinator omits it inside its own Orca terminal.
-  if (options.terminal) args.push("--terminal", String(options.terminal));
-  if (options.run) args.push("--run", String(options.run));
-  if (options.types) args.push("--types", String(options.types));
-  if (options.ack) args.push("--ack", String(options.ack));
-  if (options.waitSeconds != null) {
-    args.push("--wait", "--timeout-ms", String(options.waitSeconds * 1000));
-  }
-
   const runOrca =
     hooks.runOrca ||
     ((orcaArgs) =>
@@ -254,28 +256,78 @@ export function runOrcaCheck(options, hooks = {}) {
         encoding: "utf8",
         maxBuffer: 10 * 1024 * 1024,
       }));
+  const now = hooks.now || Date.now;
 
-  const proc = runOrca(args);
-  const combined = `${proc.stdout || ""}${proc.stderr || ""}`;
-  const parsed = parseOrcaCheckOutput(combined);
+  /**
+   * @param {string | null} ack
+   * @param {number | null} waitMs null: do not block
+   */
+  const buildArgs = (ack, waitMs) => {
+    /** @type {string[]} */
+    const args = ["orchestration", "check", "--json"];
+    // A worker passes its own handle; the coordinator omits it inside its own Orca terminal.
+    if (options.terminal) args.push("--terminal", String(options.terminal));
+    if (options.run) args.push("--run", String(options.run));
+    if (options.types) args.push("--types", String(options.types));
+    if (ack) args.push("--ack", ack);
+    if (waitMs != null) args.push("--wait", "--timeout-ms", String(waitMs));
+    return args;
+  };
 
-  if (!parsed.ok) {
-    const code = parsed.error.code || "error";
-    const message = parsed.error.message || "Orca orchestration check failed";
-    console.error(`${code}: ${message}`);
-    return { ok: false, exitCode: 1 };
+  const budgetMs = options.waitSeconds != null ? Number(options.waitSeconds) * 1000 : null;
+  const deadline = budgetMs == null ? 0 : now() + budgetMs;
+  let ack = options.ack ? String(options.ack) : null;
+  let waitMs = budgetMs;
+  let hidden = 0;
+  let proc;
+  let result;
+
+  for (;;) {
+    proc = runOrca(buildArgs(ack, waitMs));
+    const combined = `${proc.stdout || ""}${proc.stderr || ""}`;
+    const parsed = parseOrcaCheckOutput(combined);
+
+    if (!parsed.ok) {
+      const code = parsed.error.code || "error";
+      const message = parsed.error.message || "Orca orchestration check failed";
+      console.error(`${code}: ${message}`);
+      return { ok: false, exitCode: 1 };
+    }
+
+    result = parsed.result;
+    const messages = Array.isArray(result.messages) ? result.messages : [];
+    const heartbeatOnly = messages.length > 0 && messages.every(isHeartbeat);
+    // Acking a delivery returns the next batch, so one call acknowledges the heartbeats and keeps waiting.
+    // The same delivery id back means the ack did not take; stop instead of looping.
+    if (options.heartbeats || !heartbeatOnly || result.deliveryId == null || result.deliveryId === ack) break;
+    hidden += messages.length;
+    ack = String(result.deliveryId);
+    if (budgetMs != null) {
+      const left = deadline - now();
+      // Out of budget: the last call only acks and reads what is queued, without blocking.
+      waitMs = left >= 1000 ? left : null;
+    }
   }
 
-  const { result } = parsed;
-  const lines = [];
+  // The budget ran out in this script, not in Orca, so the empty last call did not report the timeout.
+  if (budgetMs != null && waitMs == null && hidden > 0 && result.count === 0) result = { ...result, timedOut: true };
 
+  if (!options.heartbeats) {
+    const messages = Array.isArray(result.messages) ? result.messages : [];
+    const shown = messages.filter((m) => !isHeartbeat(m));
+    hidden += messages.length - shown.length;
+    result = { ...result, messages: shown };
+  }
+
+  const lines = [];
+  const formatOpts = { hidden };
   if (options.ack) {
     const remaining = typeof result.count === "number" ? result.count : 0;
     lines.push(`acked=${options.ack} remaining=${remaining}`);
     // Orca returns the next batch with the ack; show it so one call acknowledges and reads.
-    if (remaining > 0) lines.push(...formatCheckLines(result));
+    if (remaining > 0 || hidden > 0) lines.push(...formatCheckLines(result, formatOpts));
   } else {
-    lines.push(...formatCheckLines(result));
+    lines.push(...formatCheckLines(result, formatOpts));
   }
 
   console.log(lines.join("\n"));
