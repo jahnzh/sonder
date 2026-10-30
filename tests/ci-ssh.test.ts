@@ -69,6 +69,13 @@ for pkg in gstreamer1.0-plugins-ugly:amd64 gstreamer1.0-gl:amd64 shared-mime-inf
 done
 `;
 
+// A developer's own SONDER_CI_* settings must not change what the tests see.
+function cleanEnv() {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) if (key.startsWith("SONDER_CI_") || key === "REPORT_JSON") delete env[key];
+  return env;
+}
+
 function fixture() {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-ci-ssh-"));
   const repo = path.join(base, "repo");
@@ -121,7 +128,7 @@ function fixture() {
       encoding: "utf8",
       timeout: 60_000,
       env: {
-        ...process.env,
+        ...cleanEnv(),
         PATH: `${bin}:${process.env.PATH}`,
         SONDER_CI_REMOTE_BASE: remote,
         SONDER_CI_POLL_INTERVAL: "0.2",
@@ -246,6 +253,34 @@ test("a passing remote check passes", () => {
   assert.equal(out.status, 0, out.output);
   assert.equal(f.result(f.second).result, "passed");
   assert.match(f.read(f.logs.gh), /state=success/);
+});
+
+test("a remote check passes the WSL known-failures file by default", () => {
+  const f = fixture();
+  const out = f.run(f.second);
+  assert.equal(out.status, 0, out.output);
+  const calls = f.checkCalls();
+  assert.equal(calls.length, 1);
+  assert.match(
+    calls[0],
+    new RegExp(`--ref ${f.second} --known-failures tests/known-failures\\.wsl-host\\.json --output-dir `),
+  );
+});
+
+test("SONDER_CI_KNOWN_FAILURES overrides the known-failures path", () => {
+  const f = fixture();
+  const out = f.run(f.second, { SONDER_CI_KNOWN_FAILURES: "tests/custom-known.json" });
+  assert.equal(out.status, 0, out.output);
+  assert.match(f.checkCalls()[0], /--known-failures tests\/custom-known\.json /);
+  assert.doesNotMatch(f.checkCalls()[0], /known-failures\.wsl-host\.json/);
+});
+
+test("a bad known-failures path is rejected before the check starts", () => {
+  const f = fixture();
+  const out = f.run(f.second, { SONDER_CI_KNOWN_FAILURES: "../../etc/passwd" });
+  assert.equal(out.status, 2, out.output);
+  assert.match(out.output, /SONDER_CI_KNOWN_FAILURES must be a relative repository path/);
+  assert.equal(f.checkCalls().length, 0);
 });
 
 test("a missing Playwright browser location stops the run before the check starts", () => {

@@ -45,7 +45,7 @@ Known host failures (issue #37) are listed in `tests/known-failures.wsl-host.jso
 - **Chromium (1 test)**: the touch-seek test in `playback-workflow.spec.ts`.
 - **Intermittent (2 tests)**: the 409 test in `reader-theme.spec.ts`, and `users.spec.ts`.
 
-Pass `tests/known-failures.wsl-host.json` to `npm run check -- --known-failures <file>` so that a run with only those failures passes.
+`scripts/ci-ssh.sh` passes that file to `npm run check -- --known-failures` by default, so a WSL run with only those failures is `passed_with_known_failures` and the report includes a `knownFailures` entry. Override the path with `SONDER_CI_KNOWN_FAILURES` (a relative repository path). For a hand-run `npm run check` on the host, pass `--known-failures tests/known-failures.wsl-host.json` yourself.
 
 ## Running a check on the host
 
