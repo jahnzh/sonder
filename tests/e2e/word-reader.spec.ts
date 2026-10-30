@@ -330,17 +330,21 @@ test("opened in Word mode with the bar hidden, a touch user reaches the top bar 
   await expect(reader).toHaveAttribute("data-paused", "true");
 });
 
-/** Steps sentences in Word mode, then returns the sentence on screen. */
-async function stepSentences(page: Page, count: number) {
+/** Presses Shift+→ `count` times in Word mode, each time waiting for the sentence on screen to change. */
+async function pressSentences(page: Page, count: number) {
   // The sentence on screen follows a moment after the key; wait for it before the next press.
-  const step = async () => {
+  for (let i = 0; i < count; i++) {
     const before = await context(page);
     await page.keyboard.press("Shift+ArrowRight");
     await expect.poll(() => context(page)).not.toBe(before);
-  };
-  for (let i = 0; i < count; i++) await step();
+  }
+}
+
+/** Steps sentences in Word mode, then returns the sentence on screen. */
+async function stepSentences(page: Page, count: number) {
+  await pressSentences(page, count);
   // The first sentence of a passage is the only one whose text is unique in the chapter.
-  for (let i = 0; i < 3 && !(await context(page)).startsWith("Passage"); i++) await step();
+  for (let i = 0; i < 3 && !(await context(page)).startsWith("Passage"); i++) await pressSentences(page, 1);
   return context(page);
 }
 
@@ -410,16 +414,21 @@ test("a checkpoint written in Word mode restores the sentence in Page mode after
   await expectPageShows(page, sentence, first.slice(0, 30));
 });
 
-test("stepping onto a sentence without timing shows it and saves what is shown", async ({ page }) => {
-  const { ebook, manifest } = await fixture(page, "Word unaligned", "first");
+test("stepping onto a sentence without timing shows it and saves what is shown", async ({ page }, testInfo) => {
+  // One server serves every repeat of a run, so each repeat needs a title of its own.
+  const title = `Word unaligned ${testInfo.repeatEachIndex}`;
+  const { ebook, manifest } = await fixture(page, title, "first");
   await setDisplay(page, "word");
-  await openReader(page, "Word unaligned");
+  await openReader(page, title);
   const reader = wordReader(page);
   await expect(reader).toBeVisible();
   // The last sentence of the narrated chapter, then words onto the next chapter.
-  await stepSentences(page, manifest.sections[0].paragraphs.length - 1);
+  await pressSentences(page, manifest.sections[0].paragraphs.length - 1);
+  expect(await context(page)).toContain("Alice followed the little creature");
   for (let i = 0; i < 40 && !(await context(page)).includes("second chapter"); i++) {
+    const before = await wordIndex(page);
     await page.keyboard.press("ArrowRight");
+    await expect(reader).toHaveAttribute("data-word-index", String(before + 1));
   }
   expect(await context(page)).toContain("This is the beginning of the second chapter");
   expect((await audioState(page)).paused).toBe(true);
@@ -429,6 +438,44 @@ test("stepping onto a sentence without timing shows it and saves what is shown",
       return `${book.checkpoint?.origin}:${book.checkpoint?.locator?.quote?.slice(0, 30)}`;
     })
     .toBe("reading:This is the beginning of the s");
+});
+
+test("a sentence step from the narrated chapter onto one without timing stays on it", async ({ page }, testInfo) => {
+  const title = `Word sentence step ${testInfo.repeatEachIndex}`;
+  const { ebook, manifest } = await fixture(page, title, "first");
+  await setDisplay(page, "word");
+  await openReader(page, title);
+  const reader = wordReader(page);
+  await expect(reader).toBeVisible();
+  const next = manifest.sections[1].paragraphs[0].text;
+  // The last sentence of the narrated chapter is the 36th step; the 37th is the first one without timing.
+  await pressSentences(page, manifest.sections[0].paragraphs.length);
+  await expect(reader.getByTestId("word-context")).toHaveText(next);
+  // The display settles on it: nothing moves it back to the word it left.
+  const changes = await page.evaluate(
+    () =>
+      new Promise<number>((resolve) => {
+        const target = document.querySelector('[aria-label="Word reader"]')!;
+        let count = 0;
+        const observer = new MutationObserver((records) => {
+          count += records.filter((record) => record.attributeName === "data-word-index").length;
+        });
+        observer.observe(target, { attributes: true });
+        setTimeout(() => {
+          observer.disconnect();
+          resolve(count);
+        }, 800);
+      }),
+  );
+  expect(changes).toBe(0);
+  expect(await context(page)).toBe(next);
+  expect((await audioState(page)).paused).toBe(true);
+  await expect
+    .poll(async () => {
+      const book = await (await page.request.get(`/api/reader/${ebook}`)).json();
+      return `${book.checkpoint?.origin}:${book.checkpoint?.locator?.quote}`;
+    })
+    .toBe(`reading:${next}`);
 });
 
 test("words advancing by themselves stop in a hidden tab and do not save every sentence", async ({ page }) => {

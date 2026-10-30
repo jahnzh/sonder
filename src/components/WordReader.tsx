@@ -155,21 +155,28 @@ export function WordReader({
     playing ? estimated : position,
     shown.current,
   );
-  const resolvedIndex = withNarration ? narratedIndex : manualIndex;
+  // Narration drives the display without touching manualIndex, so when it ends (a step onto
+  // a sentence without timing) the manual index is settled against the selected sentence while
+  // rendering. A render that showed the stale word would report it through onWord, and the
+  // Reader would move the selection back to it.
+  const selectedId = selectedParagraph || words[0]?.paragraphId;
+  const manualResolved = (() => {
+    if (words[manualIndex]?.paragraphId === selectedId) return manualIndex;
+    if (words[shown.current]?.paragraphId === selectedId) return shown.current;
+    return (selectedId && starts.get(selectedId)) || 0;
+  })();
+  const resolvedIndex = withNarration ? narratedIndex : manualResolved;
   shown.current = resolvedIndex;
 
   useEffect(() => {
     if (withNarration) {
       setWpmRunning(false);
+      // Leaving the narration keeps the word that was on screen.
+      setManualIndex(narratedIndex);
       return;
     }
-    const paragraphId = selectedParagraph || words[0]?.paragraphId;
-    const first = (paragraphId && starts.get(paragraphId)) || 0;
-    setManualIndex((current) => {
-      if (words[shown.current]?.paragraphId === paragraphId) return shown.current;
-      return words[current]?.paragraphId === paragraphId ? current : first;
-    });
-  }, [withNarration, selectedParagraph, book.fingerprint]);
+    setManualIndex(manualResolved);
+  }, [withNarration, withNarration ? narratedIndex : -1, selectedParagraph, book.fingerprint]);
 
   const current = words[Math.max(0, Math.min(words.length - 1, resolvedIndex))];
   const parts = splitOrp(current?.text || "");
