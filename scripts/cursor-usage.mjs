@@ -1489,6 +1489,33 @@ export function candidateAvailability(observation, candidate = {}, now) {
 }
 
 /**
+ * The bearer token goes to whatever endpoint is configured, so only https is accepted;
+ * plain http is allowed for loopback hosts only (local mocks).
+ * @param {string} endpoint
+ * @returns {{ message: string, display: string } | null}
+ */
+function checkEndpointScheme(endpoint) {
+  let url;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    return {
+      display: "invalid",
+      message: "Cursor endpoint is not a valid URL; refusing to send credentials. Use an https:// URL.",
+    };
+  }
+  if (url.protocol === "https:") return null;
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  if (url.protocol === "http:" && (host === "127.0.0.1" || host === "::1" || host === "localhost")) {
+    return null;
+  }
+  return {
+    display: `${url.protocol}//${url.host}`,
+    message: `Cursor endpoint must use https:// (http:// is allowed only for 127.0.0.1, ::1 or localhost); refusing to send credentials to ${url.protocol}//${url.host}.`,
+  };
+}
+
+/**
  * Builds an empty base skeleton for terminal error states (`unknown_account`, `unavailable`).
  * @param {{ status: "unknown_account" | "unavailable", reason: string, endpoint: string, methods: string[], credentialSource: import("./cursor-usage.d.mts").CursorCredentialSource, hostSelector: string, hostTransport: "local" | "unmapped", hostname: string | null, platform: string | null, account?: Partial<import("./cursor-usage.d.mts").CursorUsageObservation["scope"]["account"]>, expectedAccount: import("./cursor-usage.d.mts").CursorExpectedAccount | null, nowMs: number, maxAgeMs: number, modelId: string | null, error: import("./cursor-usage.d.mts").CursorUsageObservation["error"] }} params
  * @returns {import("./cursor-usage.d.mts").CursorUsageObservation}
@@ -1704,6 +1731,33 @@ export async function readCursorUsage(options = {}) {
 
   const expectedAccount = options.expectedAccount ?? mappedEntry?.expectedAccount ?? null;
   const effectiveHostname = rawLocalHostname;
+
+  const endpointProblem = checkEndpointScheme(defaultEndpoint);
+  if (endpointProblem) {
+    return buildFailureObservation({
+      status: "unavailable",
+      reason: "insecure_endpoint",
+      endpoint: endpointProblem.display,
+      methods: [],
+      credentialSource: "none",
+      hostSelector,
+      hostTransport: "local",
+      hostname: effectiveHostname,
+      platform,
+      expectedAccount,
+      nowMs,
+      maxAgeMs,
+      modelId,
+      error: {
+        code: "insecure_endpoint",
+        message: endpointProblem.message,
+        httpStatus: null,
+        connectCode: null,
+        rateLimited: false,
+        retryAfterMs: null,
+      },
+    });
+  }
 
   const explicitAuthFilePath =
     options.authFilePath?.trim() || mappedEntry?.authFilePath?.trim() || undefined;

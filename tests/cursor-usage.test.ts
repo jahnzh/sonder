@@ -1436,3 +1436,66 @@ test("regression (finding 4 - LOW): rejects unrequested --allow-on-demand flag, 
 });
 
 
+
+test("refuses a non-https, non-loopback endpoint before any request and never echoes the token", async (t) => {
+  const home = makeTempHome(t);
+  const secretSig = "ENDPOINT_SECRET_SIG_424242";
+  const accessToken = makeFakeJwt({ exp: Math.floor(NOW_MS / 1000) + 7200 }, secretSig);
+  writeAuthFiles(home, { accessToken });
+
+  const refused = [
+    "http://api2.cursor.sh",
+    "http://192.168.1.50:3000",
+    "ftp://api2.cursor.sh",
+    "http://localhost.evil.example",
+    "not a url",
+  ];
+  for (const endpoint of refused) {
+    const { fetchImpl, calls } = createFetchStub(realDashboardFixtures());
+    const obs = await readCursorUsage({
+      homedir: home,
+      platform: "linux",
+      hostname: "andi-test",
+      env: {},
+      now: NOW_MS,
+      endpoint,
+      fetchImpl,
+    });
+    assert.equal(calls.length, 0, `fetch must not run for ${endpoint}`);
+    assert.equal(obs.status, "unavailable", endpoint);
+    assert.equal(obs.error?.code, "insecure_endpoint", endpoint);
+    assert.ok(!JSON.stringify(obs).includes(secretSig));
+    assert.ok(!JSON.stringify(obs).includes(accessToken));
+  }
+
+  // The host-map endpoint is held to the same rule.
+  const { fetchImpl, calls } = createFetchStub(realDashboardFixtures());
+  const mapped = await readCursorUsage({
+    homedir: home,
+    platform: "linux",
+    hostname: "andi-test",
+    env: {},
+    now: NOW_MS,
+    host: "andi-test",
+    hostMap: { "andi-test": { endpoint: "http://203.0.113.9" } },
+    fetchImpl,
+  });
+  assert.equal(calls.length, 0);
+  assert.equal(mapped.error?.code, "insecure_endpoint");
+
+  // Loopback http and https are accepted.
+  for (const endpoint of ["http://127.0.0.1:1", "http://localhost:1", "http://[::1]:1", "https://api2.cursor.sh"]) {
+    const stub = createFetchStub(realDashboardFixtures());
+    const obs = await readCursorUsage({
+      homedir: home,
+      platform: "linux",
+      hostname: "andi-test",
+      env: {},
+      now: NOW_MS,
+      endpoint,
+      fetchImpl: stub.fetchImpl,
+    });
+    assert.notEqual(obs.error?.code, "insecure_endpoint", endpoint);
+    assert.ok(stub.calls.length > 0, endpoint);
+  }
+});
