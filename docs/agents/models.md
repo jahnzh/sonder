@@ -26,7 +26,7 @@ A row meets its own level and those below it. The levels are the coordinator's r
 
 ## Usage limits
 
-Usage-limit figures are supplied by the user, as no tool reports them, so `scripts/orca-recommend.mjs` reports usage as `unknown`. The coordinator should spread workers across providers and keep the number concurrent modest.
+`scripts/orca-recommend.mjs` reports Codex usage from the collector (`docs/agents/usage-collector.md`). Other agents' figures are supplied by the user and reported as `unknown` until their readers are connected. The coordinator should spread workers across providers and keep the number concurrent modest.
 
 ## Cursor status
 
