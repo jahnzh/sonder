@@ -110,7 +110,7 @@ Any change touching keyboard handling, persistence/progress, security or shared 
 
 When `orca orchestration worker-list` shows projection `stale_status` for more than 30 minutes:
 1. Send one status request.
-2. If no answer in 20 minutes: run `orca orchestration worker-stop`.
+2. If no answer in 20 minutes: run `orca orchestration worker-stop --dispatch <id>`.
 3. Run `bash scripts/orca-preflight.sh --after-stop <worktree>`.
 4. Inspect the worktree (uncommitted work is often good).
 5. Finish the work yourself or respawn on the same worktree.
@@ -121,4 +121,4 @@ When `orca orchestration worker-list` shows projection `stale_status` for more t
 - A worker's local branch can differ from its remote name, so use `orca-spawn.sh --base-worktree`.
 - Heartbeats are hidden by `orca-check.mjs` unless `--heartbeats`.
 - `pkill -f` and `pgrep -f` match their own shell: kill by PID.
-- `gh pr edit` fails on this repo (GraphQL Projects classic deprecation): use `gh api -X PATCH repos/jahnzh/sonder/pulls/<n> -F body=@file` (see `docs/agents/issue-tracker.md`).
+- `gh pr edit` fails on this repo: see `docs/agents/issue-tracker.md`.
