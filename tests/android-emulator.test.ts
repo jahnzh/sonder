@@ -1,11 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createRequire } from "node:module";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { BidiRelay, EMULATOR_PREFS, geckoViewConfig, readUserPrefs, startCommand } from "./android/firefox-android.mjs";
 import { screenSizeFor } from "./android/viewport";
 import { androidBrowser } from "./android/fixtures";
 
-const { yaml } = createRequire(import.meta.url)("playwright-core/lib/utilsBundle");
+const androidDir = path.dirname(fileURLToPath(import.meta.url)) + "/android";
 
 test("user.js prefs are read as strings, numbers and booleans", () => {
   const prefs = readUserPrefs(
@@ -27,18 +29,30 @@ test("user.js prefs are read as strings, numbers and booleans", () => {
 });
 
 test("the GeckoView config enables the remote agent on the given port with the prefs", () => {
-  const config = yaml.parse(geckoViewConfig({ port: 19222, prefs: { ...EMULATOR_PREFS, "a.b": "c" } }));
-  // The agent answers 400 to a Host header with another port, so the port is the one clients use.
-  assert.deepEqual(config.args, ["--remote-debugging-port", "19222", "--remote-allow-hosts", "localhost,127.0.0.1"]);
-  assert.equal(config.prefs["a.b"], "c");
-  assert.equal(config.prefs["layers.gpu-process.enabled"], false);
-  assert.equal(config.prefs["gfx.webrender.software"], true);
+  // Line assertions: avoid playwright-core/lib/utilsBundle (a Playwright bump must not break npm test).
+  const config = geckoViewConfig({ port: 19222, prefs: { ...EMULATOR_PREFS, "a.b": "c" } });
+  assert.match(config, /^args:\n {2}- "--remote-debugging-port"\n {2}- "19222"\n {2}- "--remote-allow-hosts"\n {2}- "localhost,127\.0\.0\.1"\nprefs:\n/m);
+  assert.match(config, /^ {2}"a\.b": "c"$/m);
+  assert.match(config, /^ {2}"layers\.gpu-process\.enabled": false$/m);
+  assert.match(config, /^ {2}"gfx\.webrender\.software": true$/m);
+});
+
+test("android helpers do not import playwright-core/lib/utilsBundle", () => {
+  for (const file of ["firefox-android.mjs", "firefox-bidi-launcher.mjs"]) {
+    const source = fs.readFileSync(path.join(androidDir, file), "utf8");
+    assert.equal(source.includes("playwright-core/lib/utilsBundle"), false, file);
+  }
 });
 
 test("the start command opens a tab on the URL and skips onboarding", () => {
   assert.equal(
     startCommand("http://127.0.0.1:4174/api/health"),
-    "am start -n org.mozilla.firefox/org.mozilla.fenix.IntentReceiverActivity -a android.intent.action.VIEW -d http://127.0.0.1:4174/api/health --ez performancetest true",
+    "am start -n org.mozilla.firefox/org.mozilla.fenix.IntentReceiverActivity -a android.intent.action.VIEW -d 'http://127.0.0.1:4174/api/health' --ez performancetest true",
+  );
+  // A query string with & stays inside single quotes so adb shell cannot background the command.
+  assert.equal(
+    startCommand("http://127.0.0.1:4174/?a=1&b=2"),
+    "am start -n org.mozilla.firefox/org.mozilla.fenix.IntentReceiverActivity -a android.intent.action.VIEW -d 'http://127.0.0.1:4174/?a=1&b=2' --ez performancetest true",
   );
   for (const url of ["about:blank", "http://x/; reboot", "http://x/$(id)", "file:///etc/passwd"]) {
     assert.throws(() => startCommand(url), /Unexpected start URL/);

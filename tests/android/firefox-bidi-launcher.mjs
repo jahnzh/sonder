@@ -12,11 +12,11 @@
 // 19222: forwarded from here to the same port on the device), SONDER_ANDROID_LOG (a file for notes).
 import { appendFileSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { WebSocket, WebSocketServer } from "ws";
 import { BidiRelay, EMULATOR_PREFS, FIREFOX_PACKAGE, geckoViewConfig, readUserPrefs, startCommand } from "./firefox-android.mjs";
 
 const require = createRequire(import.meta.url);
 const { _android } = require("playwright-core");
-const { ws: WebSocket, wsServer: WebSocketServer } = require("playwright-core/lib/utilsBundle");
 
 const adbHost = process.env.SONDER_ANDROID_ADB_HOST || "127.0.0.1";
 const adbPort = Number(process.env.SONDER_ANDROID_ADB_PORT || 15037);

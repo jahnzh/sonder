@@ -10,7 +10,8 @@
 #
 # start: preflights, fetches and verifies the SDK packages once, writes the AVD, boots it
 # headless with KVM and waits for sys.boot_completed. Prints boot_seconds= and memory.
-# It refuses to start while a sonder-ci-run-* container or unit is active on the Deck.
+# It refuses to start while a sonder-ci-run-* container or unit is active on the Deck
+# (checked in preflight and again at launch; remote exit 18 maps to 8).
 # stop: removes only this container and stops only this unit. status: key=value lines.
 # install-firefox: fetches the pinned Firefox for Android build, checks its SHA-256 and installs it.
 # adb: runs the emulator's own adb (its server listens on the Deck's 127.0.0.1:5037).
@@ -27,6 +28,8 @@
 # SONDER_EMU_BOOT_TIMEOUT (seconds, default 300), SONDER_EMU_MIN_DISK_GB (default 10),
 # SONDER_EMU_POLL_INTERVAL (seconds, default 3), SONDER_EMU_KVM_DEVICE (the device the preflight
 # checks, default /dev/kvm; the unit tests point it at a file).
+# CALL_TIMEOUT (120 s) caps ordinary SSH calls; SETUP_TIMEOUT (1800 s) caps preflight (image pull)
+# and install-firefox (APK download), and the first-time SDK setup.
 #
 # No `set -e`: every step handles its own failure.
 set -uo pipefail
@@ -96,8 +99,9 @@ remote_command() {
   printf '%s' "$cmd"
 }
 
+# REMOTE_TIMEOUT overrides CALL_TIMEOUT for long steps (preflight image pull, install-firefox).
 remote_bash() {
-  timeout "$CALL_TIMEOUT" ssh "${SSH_OPTS[@]}" "$SONDER_EMU_HOST" "$(remote_command "$@")"
+  timeout "${REMOTE_TIMEOUT:-$CALL_TIMEOUT}" ssh "${SSH_OPTS[@]}" "$SONDER_EMU_HOST" "$(remote_command "$@")"
 }
 
 # Shared by every remote step: the base directory, and whether a CI run is active.
@@ -115,9 +119,10 @@ remote_step() {
 }
 
 # Returns 0 when the Deck is ready; 3, 6, 7 or 8 as documented above; 5 when SSH failed.
+# Uses SETUP_TIMEOUT: first-time image pull can take up to 900 s inside this call.
 preflight() {
   local out rc
-  out=$(remote_step preflight '
+  out=$(REMOTE_TIMEOUT=$SETUP_TIMEOUT remote_step preflight '
 image=$2 min_gb=$3 kvm=$4
 for tool in podman systemd-run systemctl; do
   command -v "$tool" >/dev/null 2>&1 || { echo "tool_check=fail ($tool not found)"; exit 12; }
@@ -174,7 +179,7 @@ for entry in "$@"; do
   marker="$base/sdk/$dir/.sonder-$sha"
   [ -f "$marker" ] && continue
   if ! echo "$sha  $base/downloads/$file" | sha1sum -c --quiet - >/dev/null 2>&1; then
-    curl -fsSL --retry 3 -o "$base/downloads/$file.part" "$url" || { echo "download=fail $url"; exit 15; }
+    curl -fsSL --retry 3 -o "$base/downloads/$file.part" "$url" || { echo "download=fail $url"; rm -f "$base/downloads/$file.part"; exit 15; }
     mv "$base/downloads/$file.part" "$base/downloads/$file"
     echo "$sha  $base/downloads/$file" | sha1sum -c --quiet - || { echo "checksum=fail $file"; rm -f "$base/downloads/$file"; exit 15; }
   fi
@@ -236,9 +241,16 @@ echo "avd=$base/avd/$name.avd"
 }
 
 # Starts the unit. Prints nothing; returns 0 when the unit started or was already running.
+# Re-checks for a CI run here: setup can take up to SETUP_TIMEOUT seconds after preflight.
+# Exit 18 on the Deck is mapped to 8 by cmd_start.
 launch_remote() {
   remote_step launch '
 name=$2 container=$3 image=$4 memory=$5 cpus=$6
+active=$(ci_active)
+if [ -n "$active" ]; then
+  echo "ci_active=$(echo $active)"
+  exit 18
+fi
 if podman container exists "$container" 2>/dev/null; then
   echo "already_running=$container"
   exit 0
@@ -341,6 +353,10 @@ cmd_start() {
   launch_remote >&2
   rc=$?
   if [[ $rc -ne 0 ]]; then
+    if [[ $rc -eq 18 ]]; then
+      log "Refusing to start: a CI run is active on ${SONDER_EMU_HOST}. Wait for it to finish."
+      return 8
+    fi
     log "Could not start the unit ${CONTAINER} (status ${rc})"
     [[ $rc -eq 255 || $rc -eq 124 ]] && return 5
     return 1
@@ -388,12 +404,13 @@ podman exec "$container" /emu/sdk/platform-tools/adb install -r "/emu/apks/$file
 
 cmd_install_firefox() {
   local rc
-  remote_step install_firefox '
+  # SETUP_TIMEOUT: the APK is about 139 MB and can outlast CALL_TIMEOUT.
+  REMOTE_TIMEOUT=$SETUP_TIMEOUT remote_step install_firefox '
 container=$2 url=$3 sha=$4 package=$5 version=$6
 file="$base/downloads/$(basename "$url")"
 mkdir -p "$base/downloads"
 if ! echo "$sha  $file" | sha256sum -c --quiet - >/dev/null 2>&1; then
-  curl -fsSL --retry 3 -o "$file.part" "$url" || { echo "download=fail $url"; exit 15; }
+  curl -fsSL --retry 3 -o "$file.part" "$url" || { echo "download=fail $url"; rm -f "$file.part"; exit 15; }
   mv "$file.part" "$file"
   echo "$sha  $file" | sha256sum -c --quiet - || { echo "checksum=fail $file"; rm -f "$file"; exit 15; }
 fi
