@@ -53,3 +53,29 @@ Known host failures (issue #37) are listed in `tests/known-failures.wsl-host.jso
 - `scripts/ci-ssh.sh` runs preflights for loopback refusal, Playwright browsers, and WebKit packages, and detects a dead run.
 - A full check takes about 4 to 5 minutes.
 - Keep live verification scripts (`scripts/verify-*.mjs`) on the production machine; never run them on the host.
+
+## Reader e2e timing (issue #115)
+
+When measuring whether reader waits are slow on a host or the specs are too strict, run the three instrumented specs with timing on.
+
+The named wait ceiling is `READER_WAIT_MS` in `tests/e2e/timing.ts`: **45 s** per instrumented step (`sentenceChange`, `followHighlight`, `historyRestore`, `checkpointRestore`). Idle-machine maxima were much lower (about 103 ms–2.6 s); the 45 s ceiling covers CPU contention on slow hosts (Deck, WSL) while still failing if the condition never arrives. Assertions stay on the real condition (sentence changed, highlight updated, …); only the clock limit grew from the old 10 s Playwright defaults.
+
+A step that takes more than **10 s** (`SLOW_STEP_MS`) still passes against the 45 s ceiling, but prints one warning line to **stderr immediately** when the step ends: `slow step <test name> <step> <ms>`. (Playwright ends workers with `process.exit()`, so a deferred beforeExit flush would never run.) With `SONDER_E2E_TIMING=1`, the same step is also appended as a JSONL timing line.
+
+```bash
+npm run build
+SONDER_E2E_TIMING=1 SONDER_E2E_TIMING_FILE=test-results/e2e-timing-wsl.jsonl \
+  npx playwright test tests/e2e/word-reader.spec.ts tests/e2e/reader-follow-highlight.spec.ts \
+  tests/e2e/position-history.spec.ts
+```
+
+On the Deck, use a different file (for example `test-results/e2e-timing-deck.jsonl`) the same way after `npm run build`. Without `SONDER_E2E_TIMING=1` nothing is written to the timing file (slow-step stderr warnings still print). Default file when the env var is set but `SONDER_E2E_TIMING_FILE` is unset: `test-results/e2e-timing.jsonl`. Playwright empties `test-results/` at the start of each run, so for repeated local runs (or when keeping the file after the process exits) set `SONDER_E2E_TIMING_FILE` to a path outside that directory, for example under `artifacts/`.
+
+Summarise one or more runs with a host label:
+
+```bash
+node scripts/summarize-e2e-timing.mjs --label wsl test-results/e2e-timing-wsl.jsonl \
+  --label deck test-results/e2e-timing-deck.jsonl
+```
+
+Each step prints count, median, p90 and max in ms; steps whose max is above 10 s (`SLOW_STEP_MS`) are flagged `SLOW`. Steps recorded: `sentence-change`, `checkpoint-restore`, `follow-highlight`, `history-restore`.

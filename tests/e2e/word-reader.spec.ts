@@ -1,6 +1,10 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { readerFixture } from "../reader-fixture";
+import { installReaderWaitBudget, READER_WAIT_MS, timedWait } from "./timing";
+
+// Per-step expect ceilings are up to 45 s; leave room for many sentence steps.
+installReaderWaitBudget(test);
 
 test.beforeEach(async ({ page }) => {
   // Lets a test read the audio element the player created.
@@ -336,7 +340,14 @@ async function pressSentences(page: Page, count: number) {
   for (let i = 0; i < count; i++) {
     const before = await context(page);
     await page.keyboard.press("Shift+ArrowRight");
-    await expect.poll(() => context(page)).not.toBe(before);
+    await timedWait(
+      "sentence-change",
+      () =>
+        expect
+          .poll(() => context(page), { timeout: READER_WAIT_MS.sentenceChange })
+          .not.toBe(before),
+      { testName: test.info().title },
+    );
   }
 }
 
@@ -348,12 +359,17 @@ async function stepSentences(page: Page, count: number) {
   return context(page);
 }
 
-async function expectPageShows(page: Page, sentence: string, notSentence: string) {
-  await expect(wordReader(page)).toHaveCount(0);
+async function expectPageShows(
+  page: Page,
+  sentence: string,
+  notSentence: string,
+  timeout = READER_WAIT_MS.checkpointRestore,
+) {
+  await expect(wordReader(page)).toHaveCount(0, { timeout });
 
   const frame = page.frameLocator(".inline-reader .reader-viewport iframe");
-  await expect(frame.getByText(sentence.slice(0, 30)).first()).toBeInViewport();
-  await expect(frame.getByText(notSentence).first()).not.toBeInViewport();
+  await expect(frame.getByText(sentence.slice(0, 30)).first()).toBeInViewport({ timeout });
+  await expect(frame.getByText(notSentence).first()).not.toBeInViewport({ timeout });
 }
 
 const toPage: [string, (page: Page) => Promise<void>][] = [
@@ -410,8 +426,14 @@ test("a checkpoint written in Word mode restores the sentence in Page mode after
     })
     .toBe(sentence.slice(0, 30));
   await setDisplay(page, "book");
-  await openReader(page, "Word reload");
-  await expectPageShows(page, sentence, first.slice(0, 30));
+  await timedWait(
+    "checkpoint-restore",
+    async () => {
+      await openReader(page, "Word reload");
+      await expectPageShows(page, sentence, first.slice(0, 30));
+    },
+    { testName: test.info().title },
+  );
 });
 
 test("stepping onto a sentence without timing shows it and saves what is shown", async ({ page }, testInfo) => {

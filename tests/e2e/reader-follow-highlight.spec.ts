@@ -1,8 +1,11 @@
 import {test,expect,type Page} from "@playwright/test";
 import {readFileSync} from "node:fs";
 import {readerFixture} from "../reader-fixture";
+import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
 // The service worker would answer the script request below before page.route sees it.
 test.use({serviceWorkers:"block"});
+// Per-step expect ceilings are up to 45 s; leave room for many highlight waits.
+installReaderWaitBudget(test);
 test.afterEach(async({page})=>{await page.unrouteAll({behavior:"wait"});});
 // Chapter one: counted blocks inside <nav> and text inside <svg> before the narrated text (#69).
 const navChapter=`<nav epub:type="landmarks" xmlns:epub="http://www.idpf.org/2007/ops"><ol><li>Skip to the story</li><li>Notes on this edition</li></ol></nav>`+
@@ -35,7 +38,7 @@ async function fixture(page:Page,title:string){
 // The text of the follow highlight: its CFI resolved in the page by epub.js's own CFI class.
 async function highlighted(page:Page){
  const follow=page.locator(".inline-reader .reader-viewport .sonder-follow");
- await expect(follow).toHaveAttribute("data-epubcfi",/^epubcfi\(/);
+ await timedWait("follow-highlight",()=>expect(follow).toHaveAttribute("data-epubcfi",/^epubcfi\(/,{timeout:READER_WAIT_MS.followHighlight}),{testName:test.info().title});
  if(!await page.evaluate(()=>"ePub" in window)){
   // An inline script (addScriptTag with a path) would be refused by the app's script-src 'self' (#76), so serve the file from the app's own origin.
   await page.route("**/__epub-test.js",route=>route.fulfill({path:"node_modules/epubjs/dist/epub.min.js",contentType:"text/javascript"}));
@@ -51,7 +54,7 @@ async function open(page:Page,book:any,interval:any){
  expect((await page.request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[0].id,position:interval.start+.5,duration:book.tracks[0].duration,updatedAt:Date.now()}})).ok()).toBe(true);
  await page.goto("/");
  await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
- await expect(page.locator(".inline-reader")).toHaveAttribute("data-current-passage",interval.paragraphId);
+ await timedWait("follow-highlight",()=>expect(page.locator(".inline-reader")).toHaveAttribute("data-current-passage",interval.paragraphId,{timeout:READER_WAIT_MS.followHighlight}),{testName:test.info().title});
 }
 async function withReader(page:Page,reader:object,run:()=>Promise<void>){
  const appearance=await(await page.request.get("/api/appearance")).json();
@@ -81,7 +84,7 @@ test("lyrics mode shows the narrated sentence as the current line in the same ch
  await withReader(page,{display:"segment"},async()=>{
   for(const interval of map.intervals){
    await open(page,book,interval);
-   await expect(page.locator(".inline-reader .lyrics-line.current")).toHaveText((fragments.get(interval.paragraphId) as any).text);
+   await timedWait("follow-highlight",()=>expect(page.locator(".inline-reader .lyrics-line.current")).toHaveText((fragments.get(interval.paragraphId) as any).text,{timeout:READER_WAIT_MS.followHighlight}),{testName:test.info().title});
   }
  });
 });
