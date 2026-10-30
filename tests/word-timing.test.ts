@@ -22,12 +22,19 @@ test("interpolateWordTimes weights by characters and punctuation and fills the s
   assert.ok(timed.every((word) => word.estimated));
   // "friend." has more letters and a period, so it gets more time than "Hi".
   assert.ok(timed[2].end - timed[2].start > timed[0].end - timed[0].start);
+  // Each word's share of the sentence is exactly its weight over the total weight.
+  const weights = ["Hi", "there,", "friend."].map(wordWeight);
+  const total = weights.reduce((sum, value) => sum + value, 0);
+  timed.forEach((word, index) => {
+    assert.ok(Math.abs(word.end - word.start - (10 * weights[index]) / total) < 1e-9, `word ${index}`);
+  });
   // Adjacent words meet with no gap.
   assert.equal(timed[0].end, timed[1].start);
   assert.equal(timed[1].end, timed[2].start);
   // Punctuation adds weight beyond bare character count.
-  assert.ok(wordWeight("there,") > wordWeight("there"));
-  assert.ok(wordWeight("friend.") > wordWeight("friend"));
+  // More than the one extra character the mark itself adds.
+  assert.ok(wordWeight("there,") > wordWeight("there") + 1);
+  assert.ok(wordWeight("friend.") > wordWeight("friend") + 1);
 });
 
 test("interpolateWordTimes with one word spans the whole interval", () => {
