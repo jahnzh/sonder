@@ -393,15 +393,6 @@ export function PlayerDock({
               <PlaybackOptions kind="speed" book={b} />
             </div></PlaybackExtra>
             </div>
-            {/* Always laid out so its appearing never moves the controls below. */}
-            <button
-              type="button"
-              className={`button subtle player-undo-jump${p.canUndoJump ? "" : " is-idle"}`}
-              onClick={p.undoJump}
-              disabled={!p.canUndoJump}
-              tabIndex={p.canUndoJump ? undefined : -1}
-              aria-hidden={p.canUndoJump ? undefined : true}
-            >Undo jump</button>
             <PlaybackExtra>
             <details className="player-extra-options" open={!hasReader}><summary>Downloads</summary>
             <section
