@@ -1,6 +1,6 @@
 # Usage collector
 
-`scripts/orca-usage.mjs` keeps a local history of provider usage and feeds `scripts/orca-recommend.mjs`. It starts with the machine as a systemd user service and polls every minute whether or not any orchestration is running. It collects Codex today (#106); the other agents stay `unknown` until their readers are added to `PROVIDERS`. For what a Codex reading means, see `docs/agents/codex-usage.md`.
+`scripts/orca-usage.mjs` keeps a local history of provider usage and feeds `scripts/orca-recommend.mjs` / `scripts/orca-plan.mjs`. It starts with the machine as a systemd user service and polls every minute whether or not any orchestration is running. It collects Claude, Codex, Cursor and Antigravity (#106, #107–#109, #113). Each provider keeps its own windows and interpretation; percentages are never compared across agents. Reader details: `docs/agents/claude-usage.md`, `docs/agents/codex-usage.md`, `docs/agents/cursor-usage.md`, `docs/agents/antigravity-usage.md`.
 
 ```sh
 node scripts/orca-usage.mjs status                       # collector health, last success, current usage; reads nothing new
@@ -63,8 +63,11 @@ History is a SQLite database, `usage.sqlite`, in `ORCA_USAGE_STATE_DIR`, else `$
 | What `status` shows | What to do |
 | --- | --- |
 | `collector.state` is `stopped` or `never_started` | `systemctl --user status orca-usage-collector.service`, then `journalctl --user -u orca-usage-collector.service -n 50`. Run the installer if the unit is missing. |
-| `lastFailure.reason` is `not_signed_in` or `auth_required` | Run `codex login` on the host. Polling resumes by itself at the next attempt. |
-| `cli_not_found` | `codex` moved. Rerun the installer. |
+| `lastFailure.reason` is `not_signed_in` or `auth_required` (Codex) | Run `codex login` on the host. Polling resumes by itself at the next attempt. |
+| Claude `not_logged_in` / `credentials_expired` | Sign in with Claude Code on the host (`claude` auth). |
+| Cursor `unknown_account` / auth missing | Sign in with the Cursor CLI / IDE on the host so `~/.cursor/auth.json` exists. |
+| Antigravity login missing | Sign in with `agy` on the host. |
+| `cli_not_found` | The named CLI moved. Rerun the installer after fixing PATH (`codex`, and ensure `agy` / Cursor / Claude Code stay reachable for their readers). |
 | `cli_error` after a Codex update | Run `node scripts/codex-usage.mjs` and compare with `docs/agents/codex-usage.md`. A removed feature flag or changed protocol appears here. |
 | `rate_limited` | Wait: the backoff recovers by itself. Do not lower it by hand. |
 | The database is corrupt | Stop the service, move `usage.sqlite` aside and start it again. History restarts empty. |

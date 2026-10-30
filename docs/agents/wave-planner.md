@@ -56,7 +56,7 @@ Only `--summary`, `--kind` and `--files` equivalents leave the machine for Jev. 
 - **`allowances`**: per-agent usage with provenance (`source`, `observedAt`, `freshness`), reset windows, and `sharedWith.active` / `sharedWith.proposed`. The note states that percentages are provider-specific and not comparable, and that capacity is a snapshot, not a reservation.
 - **`notes`**: reminders that the planner never launches, that unknown/stale/low/exhausted stay distinct, and that learning keeps the baseline visible and never reads transcripts.
 
-A fresh usage poll runs before planning for every agent `scripts/orca-usage.mjs` collects (Codex today). Claude and any agent without a collector stay `unknown`; do not treat that as capacity. Re-run the command when workers finish or usage changes.
+A fresh usage poll runs before planning for every agent `scripts/orca-usage.mjs` collects (Claude, Codex, Cursor, Antigravity). An agent missing from the baseline is omitted; a failed or unknown reading stays `unknown` / `unavailable` and must not be treated as capacity. Re-run the command when workers finish or usage changes. See `docs/agents/dispatch-evaluation.md` for how the planner, collector, history and evaluation fit normal orchestration.
 
 ## Balancing rules
 

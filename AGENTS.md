@@ -82,6 +82,7 @@ Agent skills setup follows the main flow from https://www.aihero.dev/skills-setu
 - Before reading or interpreting Cursor usage (`node scripts/cursor-usage.mjs`), read `docs/agents/cursor-usage.md`.
 - Before reading or interpreting Codex usage (`node scripts/codex-usage.mjs`), read `docs/agents/codex-usage.md`.
 - Before installing, checking or recovering the usage collector (`scripts/orca-usage.mjs`), or judging `usage` in a recommendation, read `docs/agents/usage-collector.md`.
+- Before reading or writing a multi-provider dispatch evaluation (`docs/agents/dispatch-evaluation.md`, `scripts/orca-dispatch-eval.mjs`), read that doc first. It never starts workers or sends history to Jev.
 - Install the pre-push hook once per clone with `scripts/install-hooks.sh`.
 
 ## Spawning subagents

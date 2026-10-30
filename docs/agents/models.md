@@ -26,7 +26,7 @@ A row meets its own level and those below it. The levels are the coordinator's r
 
 ## Usage limits
 
-`scripts/orca-recommend.mjs` reports Codex usage from the collector (`docs/agents/usage-collector.md`). Other agents' figures are supplied by the user and reported as `unknown` until their readers are connected. For a ready wave, `scripts/orca-plan.mjs` balances shared allowances and concurrency across tasks without comparing provider percentages (`docs/agents/wave-planner.md`). The coordinator still keeps the number concurrent modest (default plan limit: three).
+`scripts/orca-recommend.mjs` and `scripts/orca-plan.mjs` refresh Claude, Codex, Cursor and Antigravity usage from the collector before recommending (`docs/agents/usage-collector.md`). Failed or missing readings stay `unknown` / `unavailable` and are never treated as confirmed capacity. For a ready wave, the planner balances shared allowances and concurrency across tasks without comparing provider percentages (`docs/agents/wave-planner.md`). The coordinator still keeps the number concurrent modest (default plan limit: three).
 
 ## Cursor status
 

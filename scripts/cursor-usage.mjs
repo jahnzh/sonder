@@ -1436,6 +1436,65 @@ export function evaluateCursorObservation(observation, options = {}) {
 }
 
 /**
+ * What a stored Cursor reading says at `now` for collector/planner use.
+ * Re-runs `evaluateCursorObservation` and maps Cursor statuses onto the collector vocabulary
+ * (fresh, low, exhausted, stale, unavailable, unknown). Only fresh and low confirm capacity.
+ * `limited` (some model buckets exhausted) stays unknown at agent scope so a partial reading is never capacity.
+ *
+ * @param {import("./cursor-usage.d.mts").CursorUsageObservation | null | undefined} observation
+ * @param {number | string | Date} [now]
+ */
+export function assessCursorUsage(observation, now = new Date()) {
+  if (!observation || typeof observation !== "object") {
+    return {
+      status: "unknown",
+      reason: "no reading has been taken",
+      capacityConfirmed: false,
+      resetsAt: null,
+      staleAfter: null,
+      freshness: "unknown",
+    };
+  }
+  const evaluated = evaluateCursorObservation(observation, { now });
+  const freshnessState = evaluated.freshness?.state ?? "unknown";
+  const staleAfterMs =
+    typeof evaluated.observedAtMs === "number" && Number.isFinite(evaluated.observedAtMs)
+      ? evaluated.observedAtMs + (evaluated.freshness?.maxAgeMs ?? DEFAULT_MAX_AGE_MS)
+      : null;
+  const resetsAt = evaluated.reset?.primaryResetAt ?? null;
+  const reasonFromCautions = Array.isArray(evaluated.cautions) && evaluated.cautions.length
+    ? evaluated.cautions.join("; ")
+    : null;
+  const reason =
+    evaluated.error?.message ??
+    evaluated.reason ??
+    reasonFromCautions ??
+    evaluated.status;
+
+  /** @type {Record<string, "fresh" | "low" | "exhausted" | "stale" | "unavailable" | "unknown">} */
+  const mapped = {
+    ok: "fresh",
+    low: "low",
+    exhausted: "exhausted",
+    stale: "stale",
+    unavailable: "unavailable",
+    unknown_account: "unknown",
+    account_mismatch: "unknown",
+    limited: "unknown",
+    unknown: "unknown",
+  };
+  const status = mapped[evaluated.status] ?? "unknown";
+  return {
+    status,
+    reason: typeof reason === "string" ? reason : String(reason),
+    capacityConfirmed: status === "fresh" || status === "low",
+    resetsAt,
+    staleAfter: staleAfterMs !== null ? new Date(staleAfterMs).toISOString() : null,
+    freshness: freshnessState,
+  };
+}
+
+/**
  * Answers whether a worker candidate (`{ model, surface }`, both optional) can run on this Cursor subscription.
  * Re-evaluates freshness at `now` (defaulting to current wall-clock time) rather than trusting cached `freshness`.
  * Unmapped, blank, qualified, or unrecognised scopes resolve to `"unknown"`, never `"available"`.

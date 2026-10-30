@@ -8,6 +8,9 @@ import { STALE_AFTER_MS, UsageError, accountFingerprint, assessFreshness, redact
 
 export { STALE_AFTER_MS, accountFingerprint, assessFreshness };
 
+/** Remaining fraction at or under this share is reported as low for collector planning. */
+export const LOW_REMAINING_FRACTION = 0.1;
+
 const DEFAULT_TIMEOUT_MS = 45_000;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const AUTH_PROMPTS = ["Authentication required", "Authentication expired"];
@@ -477,6 +480,59 @@ export async function readAntigravityUsage({
       : (observation.freshness.reasons[0] ?? "stale");
   }
   return observation;
+}
+
+function describeAntigravityWindows(windows) {
+  return windows
+    .map((window) => `${window.label ?? window.id} ${window.usedPercent}% used, resets ${window.resetsAt ?? "unreported"}`)
+    .join("; ");
+}
+
+function earliestAntigravityReset(windows) {
+  const times = windows.map((window) => Date.parse(window.resetsAt)).filter((time) => !Number.isNaN(time));
+  return times.length ? new Date(Math.min(...times)).toISOString() : null;
+}
+
+/**
+ * What a stored Antigravity reading says at `now` for collector/planner use.
+ * Status is one of fresh, low, exhausted, stale, unavailable or unknown; only fresh and low confirm capacity.
+ * Group-scoped (`limited`) exhaustion does not exhaust the whole agent by itself.
+ */
+export function assessAntigravityUsage(observation, now = new Date()) {
+  const freshness = assessFreshness(observation, now);
+  const windows = Array.isArray(observation?.windows) ? observation.windows : [];
+  const verdict = (status, reason, resetsAt = earliestAntigravityReset(windows)) => ({
+    status,
+    reason,
+    capacityConfirmed: status === "fresh" || status === "low",
+    resetsAt,
+    staleAfter: freshness.staleAfter,
+    freshness: freshness.state,
+  });
+  if (observation?.status === "unknown_account" || observation?.status === "account_mismatch") {
+    return verdict("unknown", observation.detail ?? observation.reason, null);
+  }
+  if (freshness.state === "unavailable") {
+    return verdict("unavailable", observation?.detail ?? freshness.reasons[0], null);
+  }
+  if (freshness.state === "unknown") {
+    return verdict("unknown", observation?.detail ?? freshness.reasons[0], null);
+  }
+  if (freshness.state === "stale" || observation?.status === "stale") {
+    return verdict("stale", `${freshness.reasons.join(", ")}; last read ${observation.observedAt}: ${describeAntigravityWindows(windows)}`);
+  }
+  if (observation.status === "exhausted") {
+    const blocking = windows.filter((window) => window.exhausted || window.remainingFraction <= 0);
+    return verdict(
+      "exhausted",
+      describeAntigravityWindows(blocking.length ? blocking : windows),
+      earliestAntigravityReset(blocking.length ? blocking : windows),
+    );
+  }
+  const low = windows.filter((window) => !window.exhausted && window.remainingFraction <= LOW_REMAINING_FRACTION);
+  return low.length
+    ? verdict("low", describeAntigravityWindows(low), earliestAntigravityReset(low))
+    : verdict("fresh", describeAntigravityWindows(windows));
 }
 
 const OPTION_KEYS = {

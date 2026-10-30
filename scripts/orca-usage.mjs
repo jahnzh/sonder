@@ -5,8 +5,11 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { assessAntigravityUsage, readAntigravityUsage } from "./antigravity-usage.mjs";
+import { assessClaudeUsage, readClaudeUsage } from "./claude-usage.mjs";
 import { assessCodexUsage, readCodexUsage } from "./codex-usage.mjs";
-import { redact, scrub } from "./usage-common.mjs";
+import { assessCursorUsage, readCursorUsage } from "./cursor-usage.mjs";
+import { accountFingerprint, redact, scrub } from "./usage-common.mjs";
 
 export const POLL_INTERVAL_MS = 60_000;
 export const MAX_BACKOFF_MS = 30 * 60 * 1000;
@@ -19,7 +22,58 @@ const DEFAULT_READINGS_LIMIT = 20;
 const ACCOUNT_FAILURES = new Set(["unknown_account", "account_mismatch"]);
 const CREDENTIAL_KEYS = /token|secret|password|api.?key|authorization|cookie|email|account.?id/i;
 
-export const PROVIDERS = [{ name: "codex", read: readCodexUsage, assess: assessCodexUsage }];
+/** Cursor's reader takes a Date/ms/`now` string; the collector clock exposes a function. */
+function readCursorForCollector(options = {}) {
+  const { now, ...rest } = options;
+  return readCursorUsage({
+    ...rest,
+    ...(now !== undefined ? { now: typeof now === "function" ? now() : now } : {}),
+  });
+}
+
+export const PROVIDERS = [
+  { name: "claude", read: readClaudeUsage, assess: assessClaudeUsage },
+  { name: "codex", read: readCodexUsage, assess: assessCodexUsage },
+  { name: "cursor", read: readCursorForCollector, assess: assessCursorUsage },
+  { name: "antigravity", read: readAntigravityUsage, assess: assessAntigravityUsage },
+];
+
+/** Provider-specific scope shapes collapse to a fingerprint or host string for planner reports. */
+export function reportAccount(scope) {
+  if (!scope || typeof scope !== "object") return "unknown";
+  if (typeof scope.account === "string" && scope.account.trim()) return scope.account.trim();
+  if (scope.account && typeof scope.account === "object") {
+    if (typeof scope.account.userId === "number" || typeof scope.account.userId === "string") {
+      return accountFingerprint(String(scope.account.userId));
+    }
+    return scope.account.known ? "known" : "unknown";
+  }
+  if (typeof scope.accountUuid === "string" && scope.accountUuid.trim()) {
+    return accountFingerprint(scope.accountUuid.trim());
+  }
+  return "unknown";
+}
+
+export function reportHost(scope) {
+  if (!scope || typeof scope !== "object" || scope.host == null) return "unknown";
+  if (typeof scope.host === "string") return scope.host.trim() || "unknown";
+  if (typeof scope.host === "object") {
+    const hostname = typeof scope.host.hostname === "string" ? scope.host.hostname.trim() : "";
+    if (hostname) return hostname;
+    const selector = typeof scope.host.selector === "string" ? scope.host.selector.trim() : "";
+    if (selector) return selector;
+  }
+  return "unknown";
+}
+
+export function reportPlan(scope) {
+  if (!scope || typeof scope !== "object") return null;
+  if (typeof scope.plan === "string" && scope.plan.trim()) return scope.plan.trim();
+  if (scope.account && typeof scope.account === "object" && typeof scope.account.planName === "string") {
+    return scope.account.planName.trim() || null;
+  }
+  return null;
+}
 
 export const systemClock = {
   now: () => new Date(),
@@ -290,9 +344,9 @@ export function usageReport(store, provider, now) {
     ...assessment,
     source: reading?.source ?? null,
     observedAt: reading?.observedAt ?? null,
-    account: reading?.scope?.account ?? "unknown",
-    host: reading?.scope?.host ?? "unknown",
-    plan: reading?.scope?.plan ?? null,
+    account: reportAccount(reading?.scope),
+    host: reportHost(reading?.scope),
+    plan: reportPlan(reading?.scope),
     windows: reading?.windows ?? null,
     collector: { ...collectorStatus(store, now), ...providerStatus(store, provider.name) },
   };

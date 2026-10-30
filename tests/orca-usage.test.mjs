@@ -1,14 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assessCodexUsage, readCodexUsage } from "../scripts/codex-usage.mjs";
+import { assessClaudeUsage } from "../scripts/claude-usage.mjs";
+import { assessAntigravityUsage } from "../scripts/antigravity-usage.mjs";
+import { assessCursorUsage } from "../scripts/cursor-usage.mjs";
 import {
   MAX_BACKOFF_MS,
   POLL_INTERVAL_MS,
+  PROVIDERS,
   UsageStore,
   backoffDelay,
   collectOnce,
@@ -16,6 +20,8 @@ import {
   defaultStateDir,
   main,
   refreshProvider,
+  reportAccount,
+  reportHost,
   runCollector,
   usageForPlanning,
   usageReport,
@@ -685,9 +691,20 @@ test("the service process reads through codex, refuses a second copy and stops c
   withState(async (dir) => {
     const bin = join(dir, "bin");
     const stateDir = join(dir, "state");
+    const home = join(dir, "home");
     mkdirSync(bin);
+    mkdirSync(home);
     writeFakeCodex(bin, { rateLimits: { result: rateLimits({ resetsAt: FAR_RESET, secondaryResetsAt: FAR_RESET }) } });
-    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, ORCA_USAGE_STATE_DIR: stateDir };
+    writeFileSync(join(bin, "agy"), "#!/usr/bin/env bash\necho missing\nexit 1\n");
+    chmodSync(join(bin, "agy"), 0o755);
+    // Isolate Claude/Cursor/Antigravity credentials so this process never touches the developer's logins.
+    const env = {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      HOME: home,
+      CLAUDE_CONFIG_DIR: join(dir, "claude"),
+      ORCA_USAGE_STATE_DIR: stateDir,
+    };
     const first = startCollector(env);
     let second;
     try {
@@ -714,6 +731,9 @@ test("the service process reads through codex, refuses a second copy and stops c
     assert.ok(status.readings.count >= 1);
     assert.equal(status.usage.codex.host.length > 0, true);
     assert.equal(status.usage.codex.status, "fresh");
+    for (const name of ["claude", "codex", "cursor", "antigravity"]) {
+      assert.ok(status.usage[name], `status must include ${name}`);
+    }
   }));
 
 test("an unavailable login leaves the failure in history with the real error text removed", () =>
@@ -729,5 +749,100 @@ test("an unavailable login leaves the failure in history with the real error tex
     assert.equal(state.last_failure_reason, "rate_limited");
     assert.equal(state.next_poll_at, new Date(clock.now().getTime() + 5 * MINUTE).toISOString());
     assert.doesNotMatch(JSON.stringify(store.listReadings()), /127\.0\.0\.1/);
+    store.close();
+  }));
+
+test("PROVIDERS lists all four agents with assess functions", () => {
+  assert.deepEqual(
+    PROVIDERS.map((provider) => provider.name),
+    ["claude", "codex", "cursor", "antigravity"],
+  );
+  for (const provider of PROVIDERS) {
+    assert.equal(typeof provider.read, "function");
+    assert.equal(typeof provider.assess, "function");
+  }
+});
+
+test("reportAccount and reportHost normalize Claude, Cursor and fingerprint scopes", () => {
+  assert.equal(reportAccount({ account: "sha256:0123456789abcdef" }), "sha256:0123456789abcdef");
+  assert.match(reportAccount({ accountUuid: "acct-uuid-1" }), /^sha256:[0-9a-f]{16}$/);
+  assert.match(reportAccount({ account: { known: true, userId: 42 } }), /^sha256:[0-9a-f]{16}$/);
+  assert.equal(reportHost({ host: "andi" }), "andi");
+  assert.equal(reportHost({ host: { selector: "local", hostname: "andi" } }), "andi");
+  assert.equal(reportAccount(null), "unknown");
+  assert.equal(reportHost({}), "unknown");
+});
+
+test("planning refreshes every collected provider and keeps raw readings", () =>
+  withState(async (dir) => {
+    const clock = fakeClock();
+    const providers = [
+      {
+        name: "claude",
+        assess: assessClaudeUsage,
+        read: async () => ({
+          provider: "claude",
+          observedAt: clock.now().toISOString(),
+          status: "available",
+          reason: null,
+          detail: null,
+          source: { kind: "claude-oauth-usage-endpoint" },
+          scope: { host: "andi", accountUuid: "claude-acct" },
+          windows: [{ kind: "session", label: "session", appliesTo: "all", usedPercent: 20, resetsAt: "2026-10-30T23:00:00.000Z" }],
+          exhaustedWindows: [],
+        }),
+      },
+      {
+        name: "codex",
+        assess: assessCodexUsage,
+        read: async () => ({ observedAt: clock.now().toISOString(), ...good({ used: 15 }) }),
+      },
+      {
+        name: "cursor",
+        assess: assessCursorUsage,
+        read: async () => ({
+          provider: "cursor",
+          observedAt: clock.now().toISOString(),
+          observedAtMs: clock.now().getTime(),
+          status: "ok",
+          reason: null,
+          source: { kind: "cursor-dashboard" },
+          scope: { host: { selector: "local", hostname: "andi" }, account: { known: true, userId: 7, planName: "pro" } },
+          windows: [{ id: "included_total", kind: "percentage_allowance", usedPercent: 10, display: "ok" }],
+          reset: { primaryResetAt: "2026-10-31T00:00:00.000Z" },
+          freshness: { state: "fresh", maxAgeMs: 30 * 60 * 1000 },
+          cautions: [],
+          error: null,
+        }),
+      },
+      {
+        name: "antigravity",
+        assess: assessAntigravityUsage,
+        read: async () => ({
+          provider: "antigravity",
+          observedAt: clock.now().toISOString(),
+          status: "available",
+          reason: null,
+          detail: null,
+          source: { kind: "agy-usage" },
+          scope: { host: "andi", account: "sha256:abcdef0123456789" },
+          windows: [{ id: "flash-5h", label: "flash", usedPercent: 5, remainingFraction: 0.95, resetsAt: "2026-10-30T23:00:00.000Z", exhausted: false }],
+          exhaustedWindows: [],
+          groups: [],
+        }),
+      },
+    ];
+    const report = await usageForPlanning({ stateDir: dir, clock, providers });
+    assert.equal(report.claude.status, "fresh");
+    assert.equal(report.codex.status, "fresh");
+    assert.equal(report.cursor.status, "fresh");
+    assert.equal(report.antigravity.status, "fresh");
+    assert.match(report.claude.account, /^sha256:/);
+    assert.match(report.cursor.account, /^sha256:/);
+    assert.equal(report.cursor.host, "andi");
+    const store = new UsageStore(dir);
+    const readings = store.listReadings({ limit: 20 });
+    assert.equal(new Set(readings.map((row) => row.provider)).size, 4);
+    assert.ok(readings.every((row) => row.origin === "planner"));
     store.close();
   }));

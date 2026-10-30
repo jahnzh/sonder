@@ -22,7 +22,7 @@ const MIN_REASONING_PROBABILITY = 0.7;
 const NOUL_NO = 0.3;
 const NOUL_YES = 0.7;
 
-// For agents scripts/orca-usage.mjs does not collect yet.
+// For agents that are not in PROVIDERS / usageByAgent for this run.
 const UNKNOWN_USAGE = {
   status: "unknown",
   reason: "no verified usage collector covers this agent",

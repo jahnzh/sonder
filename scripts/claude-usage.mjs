@@ -8,6 +8,8 @@ export const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 export const CLAUDE_PROFILE_URL = "https://api.anthropic.com/api/oauth/profile";
 const OAUTH_BETA = "oauth-2025-04-20";
 export const STALE_AFTER_MS = 30 * 60 * 1000;
+/** Shared-window remaining at or under this share is reported as low for collector planning. */
+export const LOW_REMAINING_PERCENT = 10;
 const REQUEST_TIMEOUT_MS = 15_000;
 
 const SOURCE = {
@@ -395,6 +397,73 @@ export async function readClaudeUsage({
   }
   observation.freshness = assessFreshness(observation, observedAt);
   return observation;
+}
+
+function describeClaudeWindows(windows) {
+  return windows
+    .map((window) => `${window.label ?? window.kind} ${window.usedPercent}% used, resets ${window.resetsAt ?? "unreported"}`)
+    .join("; ");
+}
+
+function earliestClaudeReset(windows) {
+  const times = windows.map((window) => Date.parse(window.resetsAt)).filter((time) => !Number.isNaN(time));
+  return times.length ? new Date(Math.min(...times)).toISOString() : null;
+}
+
+/**
+ * What a stored Claude reading says at `now` for collector/planner use.
+ * Status is one of fresh, low, exhausted, stale, unavailable or unknown; only fresh and low confirm capacity.
+ * Scoped (`limited`) exhaustion does not exhaust the whole agent: shared windows still govern the report.
+ */
+export function assessClaudeUsage(observation, now = new Date()) {
+  const windows = Array.isArray(observation?.windows) ? observation.windows : [];
+  const freshness =
+    observation && ["available", "limited", "exhausted", "stale"].includes(observation.status) && windows.length > 0
+      ? assessFreshness(observation, now)
+      : {
+          state:
+            observation?.status === "unavailable"
+              ? "unavailable"
+              : observation?.status === "unknown_account" || observation?.status === "account_mismatch"
+                ? "unknown"
+                : "unknown",
+          reasons: [observation?.detail ?? observation?.reason ?? "no_usage_windows"],
+          staleAfter: null,
+        };
+  const verdict = (status, reason, resetsAt = earliestClaudeReset(windows)) => ({
+    status,
+    reason,
+    capacityConfirmed: status === "fresh" || status === "low",
+    resetsAt,
+    staleAfter: freshness.staleAfter,
+    freshness: freshness.state,
+  });
+  if (observation?.status === "unknown_account" || observation?.status === "account_mismatch") {
+    return verdict("unknown", observation.detail ?? observation.reason, null);
+  }
+  if (freshness.state === "unavailable" || observation?.status === "unavailable") {
+    return verdict("unavailable", observation?.detail ?? observation?.reason ?? freshness.reasons[0], null);
+  }
+  if (freshness.state === "unknown") {
+    return verdict("unknown", observation?.detail ?? observation?.reason ?? freshness.reasons[0], null);
+  }
+  if (freshness.state === "stale" || observation?.status === "stale") {
+    return verdict("stale", `${freshness.reasons.join(", ")}; last read ${observation.observedAt}: ${describeClaudeWindows(windows)}`);
+  }
+  if (observation.status === "exhausted") {
+    const blocking = windows.filter((window) => window.appliesTo === "all" && window.usedPercent >= 100);
+    return verdict(
+      "exhausted",
+      describeClaudeWindows(blocking.length ? blocking : windows),
+      earliestClaudeReset(blocking.length ? blocking : windows),
+    );
+  }
+  const shared = windows.filter((window) => window.appliesTo === "all");
+  const capacityWindows = shared.length ? shared : windows;
+  const low = capacityWindows.filter((window) => 100 - window.usedPercent <= LOW_REMAINING_PERCENT);
+  return low.length
+    ? verdict("low", describeClaudeWindows(low), earliestClaudeReset(low))
+    : verdict("fresh", describeClaudeWindows(capacityWindows));
 }
 
 function parseArgs(argv) {
