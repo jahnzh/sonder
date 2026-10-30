@@ -1,0 +1,81 @@
+{
+  "sha": "f6fe50ff82ff2d125c186370c4e9e47ba5ffeefa",
+  "ok": true,
+  "result": "passed_with_known_failures",
+  "finalResult": "passed_with_known_failures",
+  "knownFailures": {
+    "file": "/pilot/runs/f6fe50f-cgZcKika/checkout/tests/known-failures.wsl-host.json",
+    "evaluated": true,
+    "result": "passed_with_known_failures",
+    "error": null,
+    "summary": "passed_with_known_failures: 4 known failures (4 environment), 0 new; 3 listed tests passed",
+    "known": [
+      {
+        "project": "webkit",
+        "file": "tests/e2e/device-reset.spec.ts",
+        "title": "reset refreshes the app shell while preserving device data",
+        "kind": "environment",
+        "reason": "WebKit on the WSL host: page.evaluate returns null during the service-worker and IndexedDB step",
+        "issue": 37,
+        "message": "Error: page.evaluate: null"
+      }
+    ],
+    "new": [],
+    "listedPassed": [
+      {
+        "project": "chromium",
+        "file": "tests/e2e/playback-workflow.spec.ts",
+        "title": "touch seeking \u203a releasing a fine-seek gesture keeps the exact previewed destination",
+        "kind": "environment",
+        "reason": "Fails on every WSL host run and not locally; cause not found",
+        "issue": 37,
+        "outcome": "passed"
+      }
+    ],
+    "listedNotRun": []
+  },
+  "browserSlowestTests": [
+    {
+      "project": "chromium",
+      "file": "tests/e2e/device-reset.spec.ts",
+      "title": "reset refreshes the app shell while preserving device data",
+      "durationMs": 41234,
+      "status": "expected"
+    },
+    {
+      "project": "webkit",
+      "file": "tests/e2e/now-playing-layout.spec.ts",
+      "title": "reader-first at 360px",
+      "durationMs": 30821,
+      "status": "expected"
+    },
+    {
+      "project": "chromium",
+      "file": "tests/e2e/playback-workflow.spec.ts",
+      "title": "touch seeking \u203a fine-seek keeps destination",
+      "durationMs": 27500,
+      "status": "expected"
+    },
+    {
+      "project": "firefox",
+      "file": "tests/e2e/releases.spec.ts",
+      "title": "release picker",
+      "durationMs": 19012,
+      "status": "expected"
+    },
+    {
+      "project": "chromium",
+      "file": "tests/e2e/library.spec.ts",
+      "title": "library loads",
+      "durationMs": 15100,
+      "status": "expected"
+    },
+    {
+      "project": "chromium",
+      "file": "tests/e2e/settings.spec.ts",
+      "title": "settings save",
+      "durationMs": 9000,
+      "status": "expected"
+    }
+  ]
+}
