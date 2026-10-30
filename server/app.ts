@@ -35,6 +35,7 @@ import {
   hiddenHardcoverPlaceholders,
 } from "./hardcover.ts";
 import { registerHardcoverRoutes } from "./hardcover-routes.ts";
+import { CSP_REPORT_PATH, cspMode, registerCsp } from "./csp.ts";
 import { registerAppearance } from "./appearance.ts";
 import { registerReader } from "./reader.ts";
 import { registerAlignment } from "./alignment.ts";
@@ -242,6 +243,8 @@ export async function createApp() {
   app.addHook("onRequest", async (req, reply) => {
     req.user = sessionUser(req);
     if (!req.url.startsWith("/api/")) return;
+    // Browsers post violation reports unauthenticated and, from an opaque-origin frame, with `Origin: null`.
+    if (req.method === "POST" && req.url.split("?")[0] === CSP_REPORT_PATH) return;
     if (
       !["GET", "HEAD", "OPTIONS"].includes(req.method) &&
       req.headers.origin
@@ -274,6 +277,7 @@ export async function createApp() {
     const path = req.routeOptions.url || "";
     if (/^\/api\/(prowlarr|torbox)(?:\/|$)/.test(path) || /^\/api\/acquisitions(?:\/|$)/.test(path) || path === "/api/acquire" || path === "/api/torrents/health" || path === "/api/local/test" || /^\/api\/discover\/(abb|prowlarr)(?:\/|$)/.test(path) || path === "/api/discover/ebooks" || (req.method === "POST" && ["/api/ebooks", "/api/ebooks/import", "/api/import"].includes(path)) || (req.method === "POST" && /^\/api\/books\/[^/]+\/keep$/.test(path)) || (req.method === "POST" && /^\/api\/reader\/[^/]+\/link$/.test(path)) || (["PUT", "DELETE"].includes(req.method) && /^\/api\/recordings\/[^/]+\/(faults\/[^/]+|server-copy)$/.test(path)) || (["POST", "PATCH"].includes(req.method) && /^\/api\/alignments(?:\/|$)/.test(path))) requireAdmin(req);
   });
+  registerCsp(app, { mode: cspMode() });
   app.get("/api/health", async () => ({ ok: true }));
   app.get("/api/auth/status", async (req) => ({ required: !!process.env.APP_PASSWORD, authenticated: !!sessionUser(req), user: sessionUser(req) }));
   app.post(

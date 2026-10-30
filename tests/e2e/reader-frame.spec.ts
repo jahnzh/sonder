@@ -202,3 +202,30 @@ test("a section with a character before its head still has the CSP in the head",
  expect(leaks).toEqual([]);
  expect(await page.evaluate(()=>(window as any).__epubScriptExecuted)).toBeUndefined();
 });
+// The server's app-level Content-Security-Policy (#76) is the layer behind the section CSP: a srcdoc frame inherits the
+// embedding document's policy and a blob: document the creator's, so an inline script in either is refused even where the
+// frame has no CSP meta of its own. The scripts set a flag on the app's window, so with CSP_MODE=off this test fails.
+test("an inline script in a srcdoc frame or a blob: document the page creates is blocked by the app policy",async({page})=>{
+ const shell=await page.request.get("/");
+ expect(shell.headers()["content-security-policy"]).toContain("script-src 'self';");
+ await openReader(page,"App policy");
+ const reports:string[]=[];
+ page.on("request",request=>{if(request.url().endsWith("/api/csp-report"))reports.push(request.postData()||"");});
+ const ran=await page.evaluate(async()=>{
+  const w=window as any;
+  const load=(frame:HTMLIFrameElement)=>new Promise<void>(resolve=>{frame.addEventListener("load",()=>resolve(),{once:true});document.body.append(frame);});
+  const srcdoc=document.createElement("iframe");
+  srcdoc.setAttribute("sandbox","allow-same-origin allow-scripts");
+  srcdoc.srcdoc="<!doctype html><html><body><script>parent.__srcdocScript=true<\/script></body></html>";
+  await load(srcdoc);
+  const blob=document.createElement("iframe");
+  blob.setAttribute("sandbox","allow-same-origin allow-scripts");
+  blob.src=URL.createObjectURL(new Blob(["<!doctype html><html><body><script>parent.__blobScript=true<\/script></body></html>"],{type:"text/html"}));
+  await load(blob);
+  await new Promise(resolve=>setTimeout(resolve,500));
+  return {srcdoc:!!w.__srcdocScript,blob:!!w.__blobScript,blobLoaded:blob.contentDocument?.body?.tagName==="BODY"};
+ });
+ expect(ran).toEqual({srcdoc:false,blob:false,blobLoaded:true});
+ // The browser also reported both refusals to the server's endpoint.
+ await expect.poll(()=>reports.filter(body=>/script-src/.test(body)).length).toBeGreaterThanOrEqual(2);
+});
