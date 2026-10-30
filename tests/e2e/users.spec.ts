@@ -150,7 +150,10 @@ test("sign-in page shows the password toggle, busy state and error", async ({ pa
   await expect(page.getByRole("button", { name: "Settings", exact: true }).last()).toBeVisible();
 });
 async function openReaderPlayer(page: Page) {
-  await page.locator(".dock-book").click();
+  // Phone layouts hide dock-actions (including the list icon); the dock book row opens Now Playing there.
+  const list = page.locator(".player-dock").getByRole("button", { name: "Chapters and now playing", exact: true });
+  if (await list.isVisible()) await list.click();
+  else await page.locator(".player-dock .dock-book").click();
   const dialog = page.getByRole("dialog", { name: "Now playing", exact: true });
   await expect(dialog).toBeVisible();
   await expect(dialog.locator(".playback-reader.has-ebook")).toBeVisible({ timeout: 20000 });
@@ -171,9 +174,14 @@ async function revealReaderControls(page: Page) {
 }
 
 async function openPlaybackOptions(page: Page) {
-  await revealReaderControls(page);
-  await page.locator(".inline-reader .reader-topbar").getByRole("button", { name: "More", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Now playing", exact: true });
+  await expect(dialog).toBeVisible();
   const options = page.getByRole("region", { name: "Playback options" });
+  if (!(await options.isVisible())) {
+    const list = dialog.getByRole("region", { name: "Player", exact: true }).getByRole("button", { name: "Chapters", exact: true });
+    if (await list.isVisible()) await list.click();
+    else await dialog.getByRole("button", { name: "Playback options", exact: true }).click();
+  }
   await expect(options).toBeVisible();
   return options;
 }
@@ -190,11 +198,16 @@ async function closePlaybackOptions(page: Page) {
   }
 }
 
-async function restoreLatestHistory(page: Page) {
+async function openPositionHistory(page: Page) {
   const options = await openPlaybackOptions(page);
   await options.getByRole("button", { name: "Position history", exact: true }).click();
   const historyDialog = page.getByRole("dialog", { name: "Position history", exact: true });
   await expect(historyDialog).toBeVisible();
+  return historyDialog;
+}
+
+async function restoreLatestHistory(page: Page) {
+  const historyDialog = await openPositionHistory(page);
   await historyDialog.locator(".position-history-entry").first().click();
   await expect(historyDialog).toBeHidden();
 }
@@ -233,7 +246,7 @@ test("one account's position history is not shown to or undoable by another", as
   await users.getByLabel("Password", { exact: true }).fill("historian-password");
   await users.getByRole("button", { name: "Add user" }).click();
   await expect(users.getByRole("listitem").filter({ hasText: "historian" })).toBeVisible();
-  // Import a dedicated title with an EPUB so Position history is reachable from the reader More menu.
+  // Import a dedicated title with an EPUB so the reader-open Now Playing path is covered.
   const audio = readFileSync("server/demo/alice-01.mp3");
   const imported = await page.request.post(`${base}/api/import`, {
     multipart: {
@@ -275,8 +288,14 @@ test("one account's position history is not shown to or undoable by another", as
   await page.getByRole("button", { name: `Add ${book.title} to library` }).click();
   await page.getByRole("button", { name: "My library", exact: true }).last().click();
   dialog = await openNowPlaying(book.title);
-  // Same recording, other account: Position history stays disabled and no row in either database.
-  await expect(await positionHistoryButton(page)).toBeDisabled();
+  // Same recording, other account: empty Position history and no row in either database.
+  {
+    const historyButton = await positionHistoryButton(page);
+    await expect(historyButton).toBeEnabled();
+    await historyButton.click();
+    await expect(page.getByRole("dialog", { name: "Position history", exact: true }).getByText("No jumps in the last 24 hours")).toBeVisible();
+    await page.getByRole("dialog", { name: "Position history", exact: true }).getByRole("button", { name: "Close dialog", exact: true }).click();
+  }
   await closePlaybackOptions(page);
   expect((await stored("other-user", book.recordingId)).every((entries) => entries === null)).toBe(true);
   await revealReaderControls(page);
@@ -285,7 +304,13 @@ test("one account's position history is not shown to or undoable by another", as
   await closePlaybackOptions(page);
   await expect.poll(async () => (await stored("other-user", book.recordingId)).filter((entries) => entries).length).toBe(1);
   await restoreLatestHistory(page);
-  await expect(await positionHistoryButton(page)).toBeDisabled();
+  {
+    const historyButton = await positionHistoryButton(page);
+    await expect(historyButton).toBeEnabled();
+    await historyButton.click();
+    await expect(page.getByRole("dialog", { name: "Position history", exact: true }).getByText("No jumps in the last 24 hours")).toBeVisible();
+    await page.getByRole("dialog", { name: "Position history", exact: true }).getByRole("button", { name: "Close dialog", exact: true }).click();
+  }
   await closePlaybackOptions(page);
   // Undoing here took nothing from the other account's history.
   expect((await stored("sonder", book.recordingId))[0]).toEqual(adminHistory);

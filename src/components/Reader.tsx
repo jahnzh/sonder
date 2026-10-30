@@ -20,7 +20,6 @@ import {
   RotateCcw,
   RotateCw,
   ChevronDown,
-  History,
   MoreHorizontal,
   PanelLeft,
 } from "lucide-react";
@@ -41,7 +40,7 @@ import { readerWords, readerSegment } from "../reader-segments";
 import { readerNeedsScripts } from "../reader-sandbox";
 import { currentChapter, playbackTimeline } from "../chapters";
 import { usePlayer } from "../player";
-import { api, clock, forgetPositionHistory, localDB } from "../lib";
+import { api, forgetPositionHistory, localDB } from "../lib";
 import {
   loadReader,
   epubFile,
@@ -55,16 +54,7 @@ import {
   syncBookmarks,
 } from "../reading";
 import type { Book } from "../types";
-import type { JumpKind, PositionEntry } from "../position-history";
-const jumpKindLabel: Record<JumpKind, string> = {
-  seek: "Seek",
-  skip: "Skip",
-  chapter: "Chapter",
-  play: "Play",
-  hardcover: "Hardcover",
-  recording: "Recording",
-  source: "Source",
-};
+import type { PositionEntry } from "../position-history";
 import {
   countedBlocks,
   readerSkippedSelector,
@@ -295,7 +285,6 @@ export function ReaderView({
     [controlsVisible, setControlsVisible] = useState(false),
     [desktop, setDesktop] = useState(() => window.matchMedia("(min-width: 900px)").matches),
     [toast, setToast] = useState<{ previous: { book: Book; trackId: string; position: number } | null } | null>(null),
-    [historyOpen, setHistoryOpen] = useState(false),
     [scrub, setScrub] = useState<number | null>(null),
     [contentsHidden, setContentsHidden] = useState(() => localStorage.getItem("sonder-reader-contents") === "hidden");
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1396,7 +1385,6 @@ export function ReaderView({
       .catch((error) => notify(error.message, true))
       .finally(() => setSaving(false));
   };
-  const openHistory = fromMenu(() => setHistoryOpen(true));
   const moreItems = (
     <div className="reader-more">
       <div className="reader-mode-switch" role="group" aria-label="Reading mode">
@@ -1417,9 +1405,6 @@ export function ReaderView({
         {recovering ? <Loader2 size={19} className="spin" /> : <BookOpen size={19} />}
         {recovering ? "Locating passage…" : "Read from audio"}
       </button>
-      <button className="reader-more-item" onClick={openHistory} disabled={!p.canUndoJump}>
-        <History size={19} /> Position history
-      </button>
       <button className="reader-more-item" onClick={fromMenu(() => setPanel("bookmarks"))}>
         <Bookmark size={19} /> Bookmarks
       </button>
@@ -1438,39 +1423,6 @@ export function ReaderView({
   return (
     <div className={`reader-room ${inline ? "inline-reader" : ""}`} data-controls-visible={controls} data-contents={showContents} data-current-passage={follow ? currentInterval?.paragraphId : undefined}>
       {inline && <PlaybackExtra>{moreItems}</PlaybackExtra>}
-      <Dialog
-        open={historyOpen}
-        onOpenChange={setHistoryOpen}
-        title="Position history"
-        className="position-history-dialog"
-      >
-        <div className="position-history-list" role="list">
-          {p.positionHistory.length === 0 ? (
-            <p className="position-history-empty">No earlier positions</p>
-          ) : [...p.positionHistory].reverse().map((entry) => {
-            const playing = p.book;
-            const track = playing?.tracks.find((item) => item.id === entry.trackId);
-            const chapter = playing && track
-              ? currentChapter(playing, entry.trackId, entry.position)?.title || track.title
-              : null;
-            const label = `${jumpKindLabel[entry.kind]} · ${clock(entry.position)}${chapter ? ` · ${chapter.replace(/^\d+[. -]*/, "")}` : ""}`;
-            return (
-              <button
-                key={`${entry.timestamp}-${entry.trackId}-${entry.position}-${entry.kind}`}
-                type="button"
-                className="button subtle position-history-entry"
-                role="listitem"
-                onClick={() => {
-                  p.restoreJump(entry);
-                  setHistoryOpen(false);
-                }}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
-      </Dialog>
       {error && (
         <p className="inline-error" role="alert">
           {error}
@@ -1637,7 +1589,15 @@ export function ReaderView({
           onKeyUp={commitScrub}
           onBlur={commitScrub}
         />}
-        <button className="icon-button reader-player-chapters" aria-label="Chapters" onClick={() => setPanel(panel === "contents" ? null : "contents")}><List size={21} /></button>
+        <button
+          className="icon-button reader-player-chapters"
+          aria-label="Chapters"
+          onClick={() => {
+            // Inline Now Playing: the list button opens Playback options (chapters live there).
+            if (playbackMenu) playbackMenu.open();
+            else setPanel(panel === "contents" ? null : "contents");
+          }}
+        ><List size={21} /></button>
         <div className="reader-transport">
           <button className="icon-button" aria-label="Back 30 seconds" disabled={!p.book} onClick={()=>p.skip(-30)}><RotateCcw size={26}/><span>30</span></button>
           <button className="reader-play" aria-label={p.playing ? "Pause narration" : "Play narration"} disabled={!p.book} onClick={p.toggle}>{p.playing ? <Pause size={24} fill="currentColor"/> : <Play size={24} fill="currentColor"/>}</button>
