@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   parseAllJsonValues,
   parseOrcaCheckOutput,
@@ -9,7 +12,11 @@ import {
   parseFindingsLine,
   runOrcaCheck,
   main,
+  autoRecordReviewWorkerDone,
+  defaultRecordReview,
+  resolveReviewedDispatch,
 } from "../scripts/orca-check.mjs";
+import { openStore } from "../scripts/orca-history.mjs";
 
 // Copied from a real `orca orchestration check --terminal <handle> --json` on an empty queue.
 const emptyResultEnvelope = {
@@ -589,7 +596,7 @@ test("parseFindingsLine reads the documented Findings counts line", () => {
   assert.equal(parseFindingsLine("no counts here"), null);
 });
 
-test("worker_done with a Findings line records a review for the reviewing dispatch", () => {
+test("worker_done with a Findings line and a review_of link records the review on the reviewed dispatch", () => {
   const reviews = [];
   const done = workerDone("m1", "ctx_review");
   done.body = "Reviewed the branch.\nFindings: blocking=0 high=1 medium=2 low=0\nNothing left.";
@@ -599,13 +606,46 @@ test("worker_done with a Findings line records a review for the reviewing dispat
     { t: 0 },
     {
       captureHistory: () => {},
-      recordReview: (id, findings) => reviews.push({ id, findings }),
+      resolveReviewedDispatch: (reviewerId) => {
+        assert.equal(reviewerId, "ctx_review");
+        return "ctx_impl";
+      },
+      recordReview: (reviewedId, findings, reviewerId) =>
+        reviews.push({ reviewedId, findings, reviewerId }),
     },
   );
   assert.equal(outcome.exitCode, 0);
-  assert.deepEqual(reviews, [{ id: "ctx_review", findings: { blocking: 0, high: 1, medium: 2, low: 0 } }]);
+  assert.deepEqual(reviews, [
+    {
+      reviewedId: "ctx_impl",
+      findings: { blocking: 0, high: 1, medium: 2, low: 0 },
+      reviewerId: "ctx_review",
+    },
+  ]);
   assert.match(logs[0], /m1 worker_done/);
-  assert.doesNotMatch(errors.join("\n"), /no Findings line/);
+  assert.doesNotMatch(errors.join("\n"), /no Findings line|no review_of link/);
+});
+
+test("worker_done with Findings but no review_of link records nothing and prints one reminder", () => {
+  const reviews = [];
+  const done = workerDone("m1", "ctx_review");
+  done.body = "Findings: blocking=0 high=1 medium=0 low=0";
+  const { outcome, errors } = runScripted(
+    {},
+    [deliveryEnvelope("del_done", [done])],
+    { t: 0 },
+    {
+      captureHistory: () => {},
+      resolveReviewedDispatch: () => null,
+      recordReview: (...args) => reviews.push(args),
+    },
+  );
+  assert.equal(outcome.exitCode, 0);
+  assert.deepEqual(reviews, []);
+  assert.match(
+    errors.join("\n"),
+    /history: worker_done for ctx_review has Findings but no review_of link; skipping automatic record-review/,
+  );
 });
 
 test("worker_done without a Findings line records nothing and prints one reminder", () => {
@@ -633,12 +673,132 @@ test("a failed automatic record-review does not fail the check", () => {
     { t: 0 },
     {
       captureHistory: () => {},
+      resolveReviewedDispatch: () => "ctx_impl",
       recordReview: () => {
-        throw new Error("no record for ctx_review");
+        throw new Error("no record for ctx_impl");
       },
     },
   );
   assert.equal(outcome.exitCode, 0);
-  assert.match(errors.join("\n"), /automatic record-review failed for ctx_review/);
-  assert.match(errors.join("\n"), /no record for ctx_review/);
+  assert.match(errors.join("\n"), /automatic record-review failed for ctx_impl/);
+  assert.match(errors.join("\n"), /no record for ctx_impl/);
+});
+
+function seedRecord(store, id, links = []) {
+  const now = "2026-10-30T12:00:00.000Z";
+  store.putRecord({
+    schema: 1,
+    id,
+    dispatchId: id,
+    taskId: "unknown",
+    runId: "unknown",
+    capturedAt: now,
+    updatedAt: now,
+    task: {
+      type: "unknown",
+      typeSource: "unknown",
+      files: "unknown",
+      difficulty: "unknown",
+      difficultySource: "unknown",
+      jevVersion: "unknown",
+      jevUncertainty: null,
+    },
+    agent: {
+      name: "unknown",
+      requestedModel: "unknown",
+      effectiveModel: "unknown",
+      requestedEffort: "unknown",
+      effectiveEffort: "unknown",
+    },
+    versions: { agent: "unknown", model: "unknown", jev: "unknown" },
+    host: "unknown",
+    branch: "unknown",
+    baseBranch: "unknown",
+    selection: { status: "unknown" },
+    lifecycle: {
+      dispatchStatus: "unknown",
+      workerState: "unknown",
+      outcome: "unknown",
+      dispatchedAt: "unknown",
+      completedAt: "unknown",
+      events: [],
+    },
+    retries: { failureCount: "unknown", retryOf: null },
+    signals: { checks: [], reviews: [] },
+    links,
+    usage: { attributable: [], shared: [] },
+    transcript: { status: "unknown" },
+  });
+}
+
+test("Findings with a review_of link record counts on the reviewed dispatch only (real history store)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "orca-check-review-"));
+  const prev = process.env.ORCA_HISTORY_DIR;
+  process.env.ORCA_HISTORY_DIR = dir;
+  const errors = [];
+  const origErr = console.error;
+  console.error = (line) => errors.push(String(line));
+  try {
+    const store = openStore(dir);
+    seedRecord(store, "ctx_impl");
+    seedRecord(store, "ctx_review", [
+      {
+        kind: "review_of",
+        target: "ctx_impl",
+        evidence: "orca-spawn --review-of",
+        at: "2026-10-30T12:00:00.000Z",
+      },
+    ]);
+    assert.equal(resolveReviewedDispatch("ctx_review"), "ctx_impl");
+
+    autoRecordReviewWorkerDone([
+      {
+        type: "worker_done",
+        body: "Summary.\nFindings: blocking=0 high=2 medium=1 low=0\nDone.",
+        payload: { dispatchId: "ctx_review" },
+      },
+    ]);
+
+    const reviewed = openStore(dir).getRecord("ctx_impl");
+    const reviewer = openStore(dir).getRecord("ctx_review");
+    assert.equal(reviewed.signals.reviews.length, 1);
+    assert.deepEqual(reviewed.signals.reviews[0].findings, {
+      blocking: 0,
+      high: 2,
+      medium: 1,
+      low: 0,
+    });
+    assert.equal(reviewed.signals.reviews[0].reviewerDispatch, "ctx_review");
+    assert.equal(reviewer.signals.reviews.length, 0, "severity counts must not land on the reviewing dispatch");
+    assert.equal(errors.length, 0, errors.join("\n"));
+  } finally {
+    console.error = origErr;
+    if (prev === undefined) delete process.env.ORCA_HISTORY_DIR;
+    else process.env.ORCA_HISTORY_DIR = prev;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("defaultRecordReview without a review_of link records nothing and prints one reminder", () => {
+  const dir = mkdtempSync(join(tmpdir(), "orca-check-nolink-"));
+  const prev = process.env.ORCA_HISTORY_DIR;
+  process.env.ORCA_HISTORY_DIR = dir;
+  const errors = [];
+  const origErr = console.error;
+  console.error = (line) => errors.push(String(line));
+  try {
+    const store = openStore(dir);
+    seedRecord(store, "ctx_review");
+    defaultRecordReview("ctx_review", { blocking: 0, high: 1, medium: 0, low: 0 });
+    assert.equal(openStore(dir).getRecord("ctx_review").signals.reviews.length, 0);
+    assert.match(
+      errors.join("\n"),
+      /history: worker_done for ctx_review has Findings but no review_of link; skipping automatic record-review/,
+    );
+  } finally {
+    console.error = origErr;
+    if (prev === undefined) delete process.env.ORCA_HISTORY_DIR;
+    else process.env.ORCA_HISTORY_DIR = prev;
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

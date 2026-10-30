@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -17,7 +18,8 @@ with heartbeats=<n>. --heartbeats prints every delivery as Orca returns it and a
 Each worker_done whose payload names a dispatchId also runs orca-history capture for that dispatch; a capture
 failure is printed to stderr and does not change the check exit code.
 A worker_done body that includes a line \`Findings: blocking=N high=N medium=N low=N\` also records
-record-review for that dispatch; without the line, nothing is recorded and one reminder is printed.`);
+record-review on the dispatch named by that reviewer's review_of link (with --reviewer-dispatch);
+without the line or without a review_of link, nothing is recorded and one reminder is printed.`);
 }
 
 /** Exact line reviewers emit in the worker_done body so orca-check can record-review automatically. */
@@ -227,13 +229,54 @@ export function autoCaptureWorkerDone(messages, hooks = {}) {
   }
 }
 
+/** Same allowlist as scripts/orca-history.mjs requireId / safeId. */
+const SAFE_HISTORY_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+function historyDir(env = process.env) {
+  if (env.ORCA_HISTORY_DIR?.trim()) return env.ORCA_HISTORY_DIR;
+  return path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "artifacts", "orca", "history");
+}
+
 /**
- * Runs `orca-history record-review` for one reviewing dispatch. Failures are the caller's to swallow.
- * @param {string} dispatchId
+ * The dispatch a reviewer was linked to via `orca-spawn --review-of` (kind review_of).
+ * @param {string} reviewerDispatchId
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string | null}
+ */
+export function resolveReviewedDispatch(reviewerDispatchId, env = process.env) {
+  if (!SAFE_HISTORY_ID.test(reviewerDispatchId)) return null;
+  const file = path.join(historyDir(env), "records", `${reviewerDispatchId}.json`);
+  try {
+    const record = JSON.parse(readFileSync(file, "utf8"));
+    const links = Array.isArray(record?.links) ? record.links : [];
+    const link = links.find(
+      (entry) =>
+        entry &&
+        entry.kind === "review_of" &&
+        typeof entry.target === "string" &&
+        SAFE_HISTORY_ID.test(entry.target),
+    );
+    return link ? link.target : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Runs `orca-history record-review` on the reviewed dispatch. Failures are the caller's to swallow.
+ * When the reviewing dispatch has no review_of link, records nothing and prints one reminder.
+ * @param {string} reviewerDispatchId
  * @param {{ blocking: number, high: number, medium: number, low: number }} findings
  * @param {NodeJS.ProcessEnv} [env]
  */
-export function defaultRecordReview(dispatchId, findings, env = process.env) {
+export function defaultRecordReview(reviewerDispatchId, findings, env = process.env) {
+  const reviewedId = resolveReviewedDispatch(reviewerDispatchId, env);
+  if (!reviewedId) {
+    console.error(
+      `history: worker_done for ${reviewerDispatchId} has Findings but no review_of link; skipping automatic record-review`,
+    );
+    return;
+  }
   const script = fileURLToPath(new URL("./orca-history.mjs", import.meta.url));
   const run = spawnSync(
     process.execPath,
@@ -241,7 +284,9 @@ export function defaultRecordReview(dispatchId, findings, env = process.env) {
       script,
       "record-review",
       "--dispatch",
-      dispatchId,
+      reviewedId,
+      "--reviewer-dispatch",
+      reviewerDispatchId,
       "--blocking",
       String(findings.blocking),
       "--high",
@@ -267,39 +312,55 @@ export function defaultRecordReview(dispatchId, findings, env = process.env) {
 }
 
 /**
- * After a worker_done message, record-review when the body has a Findings line. Never throws; never changes the exit code.
+ * After a worker_done message, record-review when the body has a Findings line and the
+ * reviewing dispatch has a review_of link. Never throws; never changes the exit code.
  * @param {unknown[]} messages
- * @param {{ recordReview?: (dispatchId: string, findings: { blocking: number, high: number, medium: number, low: number }) => void }} [hooks]
+ * @param {{
+ *   recordReview?: (reviewedId: string, findings: { blocking: number, high: number, medium: number, low: number }, reviewerId: string) => void,
+ *   resolveReviewedDispatch?: (reviewerId: string) => string | null,
+ * }} [hooks]
  */
 export function autoRecordReviewWorkerDone(messages, hooks = {}) {
-  const record = hooks.recordReview || defaultRecordReview;
+  const resolve = hooks.resolveReviewedDispatch || ((id) => resolveReviewedDispatch(id));
   for (const message of messages) {
     if (!message || typeof message !== "object") continue;
     if (/** @type {Record<string, unknown>} */ (message).type !== "worker_done") continue;
     const msg = /** @type {Record<string, unknown>} */ (message);
     const body = typeof msg.body === "string" ? msg.body : "";
     const findings = parseFindingsLine(body);
-    const id = dispatchIdOfWorkerDone(message);
+    const reviewerId = dispatchIdOfWorkerDone(message);
     if (!findings) {
       console.error(
-        `history: worker_done${id ? ` for ${id}` : ""} has no Findings line; skipping automatic record-review`,
+        `history: worker_done${reviewerId ? ` for ${reviewerId}` : ""} has no Findings line; skipping automatic record-review`,
       );
       continue;
     }
-    if (!id) {
+    if (!reviewerId) {
       console.error("history: worker_done has Findings but no dispatchId; skipping automatic record-review");
       continue;
     }
     try {
-      record(id, findings);
+      if (hooks.recordReview) {
+        const reviewedId = resolve(reviewerId);
+        if (!reviewedId) {
+          console.error(
+            `history: worker_done for ${reviewerId} has Findings but no review_of link; skipping automatic record-review`,
+          );
+          continue;
+        }
+        hooks.recordReview(reviewedId, findings, reviewerId);
+      } else {
+        defaultRecordReview(reviewerId, findings);
+      }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      console.error(`history: automatic record-review failed for ${id}: ${detail}`);
+      const reviewedId = resolve(reviewerId);
+      console.error(
+        `history: automatic record-review failed for ${reviewedId || reviewerId}: ${detail}`,
+      );
     }
   }
-}
-
-/**
+}/**
  * @param {string[]} argv
  * @returns {{ ok: true, options: Record<string, unknown> } | { ok: false, error: string }}
  */

@@ -81,10 +81,14 @@ function fixture() {
   const repo = path.join(base, "repo");
   const bin = path.join(base, "bin");
   const remote = path.join(base, "remote");
-  fs.mkdirSync(path.join(repo, "scripts"), { recursive: true });
+  fs.mkdirSync(path.join(repo, "scripts", "lib"), { recursive: true });
   fs.mkdirSync(bin);
   fs.mkdirSync(remote);
   fs.copyFileSync(script, path.join(repo, "scripts", "ci-ssh.sh"));
+  fs.copyFileSync(
+    path.resolve("scripts/lib/ci-history.sh"),
+    path.join(repo, "scripts", "lib", "ci-history.sh"),
+  );
   fs.writeFileSync(path.join(repo, "package.json"), '{"name":"fixture"}\n');
   const git = (...args: string[]) =>
     execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();

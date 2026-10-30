@@ -71,6 +71,8 @@ SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=5 -o Serve
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT" || exit 1
+# shellcheck source=lib/ci-history.sh
+source "$ROOT/scripts/lib/ci-history.sh"
 
 if ! FULL_SHA=$(git rev-parse --verify "${REQUESTED_REF}^{commit}" 2>/dev/null); then
   echo "[ci-deck] Invalid commit ref: ${REQUESTED_REF}" >&2
@@ -137,49 +139,6 @@ exit_code=${exit_code}
 result=${result}
 recorded_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
-}
-
-# Map the run's result / report.json into a history check result. Prefer the
-# check report when present (pass, pass_with_known_failures, fail, aborted);
-# otherwise map passed → pass, a clear check failure → fail, everything else → unknown.
-history_check_result() {
-  local report=${LOCAL_REPORT_DIR}/report.json
-  local mapped=unknown
-  if [[ -f $report ]]; then
-    mapped=$(node -e '
-      const r = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
-      const fromResult = { passed: "pass", passed_with_known_failures: "pass_with_known_failures", failed: "fail", aborted: "aborted" }[r.result];
-      if (fromResult) { process.stdout.write(fromResult); process.exit(0); }
-      if (r.ok === true) { process.stdout.write("pass"); process.exit(0); }
-      if (r.ok === false) { process.stdout.write("fail"); process.exit(0); }
-      process.stdout.write("unknown");
-    ' "$report" 2>/dev/null) || mapped=unknown
-  fi
-  if [[ $mapped == unknown ]]; then
-    case "${RESULT:-}" in
-      passed) mapped=pass ;;
-      remote_check_failed|failed) mapped=fail ;;
-    esac
-  fi
-  printf '%s\n' "$mapped"
-}
-
-# No-op without SONDER_CI_DISPATCH. A recording failure warns only.
-record_history_check() {
-  local dispatch=${SONDER_CI_DISPATCH:-}
-  [[ -n $dispatch ]] || return 0
-  local history_script=${ORCA_HISTORY_SCRIPT:-$ROOT/scripts/orca-history.mjs}
-  local mapped
-  mapped=$(history_check_result)
-  local -a args=(record-check --dispatch "$dispatch" --name ci:deck --commit "$FULL_SHA" --result "$mapped" --source ci:deck)
-  local report=${LOCAL_REPORT_DIR}/report.json
-  [[ -f $report ]] && args+=(--report "$report")
-  local out
-  if out=$(node "$history_script" "${args[@]}" 2>&1); then
-    log "history: recorded ci:deck on ${dispatch} (${mapped})"
-  else
-    log "warning: automatic history record-check failed for ${dispatch}: ${out}"
-  fi
 }
 
 host_reachable() {
@@ -663,5 +622,5 @@ else
 fi
 
 log "Artifacts: ${LOCAL_REPORT_DIR}"
-record_history_check
+record_history_check ci:deck
 exit "$FINAL_EXIT"
