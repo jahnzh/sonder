@@ -66,10 +66,23 @@ function jsonResponse(status, body, headers = {}) {
 function fakeFetch({ usage = () => jsonResponse(200, realUsageBody), profile = () => jsonResponse(200, realProfileBody) } = {}) {
   const calls = [];
   const fetch = async (url, init) => {
-    calls.push({ url: String(url), headers: init?.headers ?? {} });
-    if (String(url).startsWith(CLAUDE_USAGE_URL)) return usage();
-    if (String(url).startsWith(CLAUDE_PROFILE_URL)) return profile();
-    throw new Error(`unexpected url ${url}`);
+    calls.push({ url: String(url), headers: init?.headers ?? {}, signal: init?.signal ?? null });
+    const signal = init?.signal;
+    const run = async () => {
+      if (String(url).startsWith(CLAUDE_USAGE_URL)) return usage(init);
+      if (String(url).startsWith(CLAUDE_PROFILE_URL)) return profile(init);
+      throw new Error(`unexpected url ${url}`);
+    };
+    if (!signal) return run();
+    if (signal.aborted) throw signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
+    return await new Promise((resolve, reject) => {
+      const onAbort = () => reject(signal.reason ?? new DOMException("The operation was aborted.", "AbortError"));
+      signal.addEventListener("abort", onAbort, { once: true });
+      Promise.resolve()
+        .then(run)
+        .then(resolve, reject)
+        .finally(() => signal.removeEventListener("abort", onAbort));
+    });
   };
   return { fetch, calls };
 }
@@ -83,6 +96,7 @@ function read(overrides = {}) {
     hostname: overrides.hostname ?? "test-host",
     localHostname: overrides.localHostname ?? "test-host",
     expectedAccount: overrides.expectedAccount,
+    timeoutMs: overrides.timeoutMs,
   }).then((observation) => ({ observation, calls }));
 }
 
@@ -505,4 +519,18 @@ test("HTTP 429 omits retryAfterSeconds when Retry-After is absent or not a non-n
     assert.equal(observation.reason, "rate_limited");
     assert.equal(observation.retryAfterSeconds, expected);
   }
+});
+
+test("readClaudeUsage honors timeoutMs and reports unavailable/timeout", async () => {
+  const hang = () => new Promise(() => {});
+  const started = Date.now();
+  const { observation, calls } = await read({
+    timeoutMs: 40,
+    fakeFetch: fakeFetch({ profile: hang, usage: hang }),
+  });
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 1_000, `Claude reader ignored timeoutMs (took ${elapsed}ms)`);
+  assert.equal(observation.status, "unavailable");
+  assert.equal(observation.reason, "timeout");
+  assert.ok(calls.every((call) => call.signal), "fetch must receive an AbortSignal from timeoutMs");
 });

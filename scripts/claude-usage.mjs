@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { assessmentVerdict } from "./usage-common.mjs";
 
 export const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 export const CLAUDE_PROFILE_URL = "https://api.anthropic.com/api/oauth/profile";
@@ -79,7 +80,7 @@ function parseRetryAfterSeconds(value) {
   return Number.isFinite(seconds) ? seconds : null;
 }
 
-async function getJson(fetchImpl, url, accessToken) {
+async function getJson(fetchImpl, url, accessToken, timeoutMs = REQUEST_TIMEOUT_MS) {
   let response;
   try {
     response = await fetchImpl(url, {
@@ -90,9 +91,12 @@ async function getJson(fetchImpl, url, accessToken) {
         Accept: "application/json",
         "User-Agent": "sonder-claude-usage",
       },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
+    if (error?.name === "TimeoutError" || error?.code === "TIMEOUT" || /timeout/i.test(String(error?.message ?? ""))) {
+      throw new UsageError("unavailable", "timeout", `${new URL(url).pathname}: timed out after ${timeoutMs} ms`);
+    }
     throw new UsageError("unavailable", "network_error", `${new URL(url).pathname}: ${error?.name ?? "Error"}`);
   }
   const where = `${new URL(url).pathname} answered HTTP ${response.status}`;
@@ -342,10 +346,13 @@ export async function readClaudeUsage({
   host,
   localHostname = os.hostname(),
   expectedAccount,
+  timeoutMs = REQUEST_TIMEOUT_MS,
 } = {}) {
   const observedAt = now();
   const targetHost = host ?? hostname ?? localHostname;
   const isLocalHost = sameHost(targetHost, localHostname);
+  const requestTimeoutMs =
+    typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.trunc(timeoutMs) : REQUEST_TIMEOUT_MS;
   const observation = {
     provider: "claude",
     source: SOURCE,
@@ -375,11 +382,11 @@ export async function readClaudeUsage({
       );
     }
     const { accessToken } = readCredentials(configDir, observedAt);
-    Object.assign(observation.scope, accountScope(await getJson(fetchImpl, CLAUDE_PROFILE_URL, accessToken)));
+    Object.assign(observation.scope, accountScope(await getJson(fetchImpl, CLAUDE_PROFILE_URL, accessToken, requestTimeoutMs)));
     if (expectedAccount && observation.scope.accountUuid !== expectedAccount) {
       throw new UsageError("account_mismatch", "account_mismatch", "The Claude Code login on this host belongs to a different account");
     }
-    const { windows, extraUsage } = interpretUsage(await getJson(fetchImpl, CLAUDE_USAGE_URL, accessToken));
+    const { windows, extraUsage } = interpretUsage(await getJson(fetchImpl, CLAUDE_USAGE_URL, accessToken, requestTimeoutMs));
     observation.windows = windows;
     observation.extraUsage = extraUsage;
     observation.exhaustedWindows = windows
@@ -430,14 +437,8 @@ export function assessClaudeUsage(observation, now = new Date()) {
           reasons: [observation?.detail ?? observation?.reason ?? "no_usage_windows"],
           staleAfter: null,
         };
-  const verdict = (status, reason, resetsAt = earliestClaudeReset(windows)) => ({
-    status,
-    reason,
-    capacityConfirmed: status === "fresh" || status === "low",
-    resetsAt,
-    staleAfter: freshness.staleAfter,
-    freshness: freshness.state,
-  });
+  const verdict = (status, reason, resetsAt = earliestClaudeReset(windows)) =>
+    assessmentVerdict(freshness, status, reason, resetsAt);
   if (observation?.status === "unknown_account" || observation?.status === "account_mismatch") {
     return verdict("unknown", observation.detail ?? observation.reason, null);
   }

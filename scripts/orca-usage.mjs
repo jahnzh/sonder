@@ -9,18 +9,21 @@ import { assessAntigravityUsage, readAntigravityUsage } from "./antigravity-usag
 import { assessClaudeUsage, readClaudeUsage } from "./claude-usage.mjs";
 import { assessCodexUsage, readCodexUsage } from "./codex-usage.mjs";
 import { assessCursorUsage, readCursorUsage } from "./cursor-usage.mjs";
-import { accountFingerprint, redact, scrub } from "./usage-common.mjs";
+import { accountFingerprint, isAccountFingerprint, redact, scrub } from "./usage-common.mjs";
 
 export const POLL_INTERVAL_MS = 60_000;
 export const MAX_BACKOFF_MS = 30 * 60 * 1000;
 const RATE_LIMIT_BACKOFF_MS = 5 * 60 * 1000;
 const HEARTBEAT_STALE_MS = 3 * POLL_INTERVAL_MS;
-const PLANNING_TIMEOUT_MS = 15_000;
+export const PLANNING_TIMEOUT_MS = 15_000;
 const BUSY_TIMEOUT_MS = 5_000;
 const DEFAULT_READINGS_LIMIT = 20;
 // After these the last good reading may belong to another account, so it no longer speaks for this one.
 const ACCOUNT_FAILURES = new Set(["unknown_account", "account_mismatch"]);
 const CREDENTIAL_KEYS = /token|secret|password|api.?key|authorization|cookie|email|account.?id/i;
+/** Scope keys that must never be stored as raw identifiers — fingerprint or drop. */
+const FINGERPRINT_SCOPE_KEYS = /^(account|accountUuid|organizationUuid)$/i;
+const DROP_SCOPE_KEYS = /^codexHome$/i;
 
 /** Cursor's reader takes a Date/ms/`now` string; the collector clock exposes a function. */
 function readCursorForCollector(options = {}) {
@@ -41,7 +44,10 @@ export const PROVIDERS = [
 /** Provider-specific scope shapes collapse to a fingerprint or host string for planner reports. */
 export function reportAccount(scope) {
   if (!scope || typeof scope !== "object") return "unknown";
-  if (typeof scope.account === "string" && scope.account.trim()) return scope.account.trim();
+  if (typeof scope.account === "string" && scope.account.trim()) {
+    // Only trust a string account that is already a fingerprint; anything else is hashed.
+    return isAccountFingerprint(scope.account) ? scope.account.trim() : accountFingerprint(scope.account);
+  }
   if (scope.account && typeof scope.account === "object") {
     if (typeof scope.account.userId === "number" || typeof scope.account.userId === "string") {
       return accountFingerprint(String(scope.account.userId));
@@ -104,11 +110,18 @@ export function backoffDelay(failures, reason) {
 }
 
 /** The last guard before a reading reaches disk; readers already copy only the fields they need. */
-function sanitize(value) {
-  if (typeof value === "string") return scrub(value);
-  if (Array.isArray(value)) return value.map(sanitize);
+function sanitize(value, key = null) {
+  if (typeof value === "string") {
+    if (key && FINGERPRINT_SCOPE_KEYS.test(key)) return accountFingerprint(value);
+    return scrub(value);
+  }
+  if (Array.isArray(value)) return value.map((item) => sanitize(item));
   if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).filter(([key]) => !CREDENTIAL_KEYS.test(key)).map(([key, item]) => [key, sanitize(item)]));
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([entryKey]) => !CREDENTIAL_KEYS.test(entryKey) && !DROP_SCOPE_KEYS.test(entryKey))
+        .map(([entryKey, item]) => [entryKey, sanitize(item, entryKey)]),
+    );
   }
   return value;
 }
@@ -269,21 +282,49 @@ export class UsageStore {
   }
 }
 
+function timedOutObservation(providerName, attemptedAt, timeoutMs) {
+  return {
+    provider: providerName,
+    observedAt: attemptedAt.toISOString(),
+    status: "unavailable",
+    reason: "timeout",
+    detail: `provider did not answer within ${timeoutMs} ms`,
+    windows: null,
+  };
+}
+
 /** One read of one provider, stored whatever the outcome. A reader that throws is a failed reading, not a crash. */
 export async function collectOnce({ store, provider, clock, origin, timeoutMs }) {
   const attemptedAt = clock.now();
   let observation;
   try {
-    observation = await provider.read({ now: clock.now, ...(timeoutMs ? { timeoutMs } : {}) });
+    const readPromise = provider.read({ now: clock.now, ...(timeoutMs ? { timeoutMs } : {}) });
+    if (timeoutMs && timeoutMs > 0) {
+      let timer;
+      const timeoutPromise = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(Object.assign(new Error(`timeout after ${timeoutMs} ms`), { code: "TIMEOUT" })), timeoutMs);
+      });
+      try {
+        observation = await Promise.race([readPromise, timeoutPromise]);
+      } finally {
+        clearTimeout(timer);
+      }
+    } else {
+      observation = await readPromise;
+    }
   } catch (error) {
-    observation = {
-      provider: provider.name,
-      observedAt: attemptedAt.toISOString(),
-      status: "unavailable",
-      reason: "reader_error",
-      detail: redact(error?.message ?? error),
-      windows: null,
-    };
+    if (error?.code === "TIMEOUT" || error?.name === "TimeoutError" || /timeout/i.test(String(error?.message ?? ""))) {
+      observation = timedOutObservation(provider.name, attemptedAt, timeoutMs ?? PLANNING_TIMEOUT_MS);
+    } else {
+      observation = {
+        provider: provider.name,
+        observedAt: attemptedAt.toISOString(),
+        status: "unavailable",
+        reason: "reader_error",
+        detail: redact(error?.message ?? error),
+        windows: null,
+      };
+    }
   }
   return { observation, ...store.recordAttempt({ provider: provider.name, origin, attemptedAt, observation }) };
 }
@@ -361,15 +402,48 @@ export async function refreshProvider({ store, provider, clock, timeoutMs, origi
   return { attempted: true, ok: usable, reason: usable ? null : (observation.reason ?? observation.status) };
 }
 
-/** Refreshes each provider and reports its usage. It never throws: the planner carries on with unknown usage. */
-export async function usageForPlanning({ stateDir = defaultStateDir(), clock = systemClock, providers = PROVIDERS } = {}) {
+/** Refreshes each provider in parallel and reports its usage. It never throws: the planner carries on with unknown usage. */
+export async function usageForPlanning({
+  stateDir = defaultStateDir(),
+  clock = systemClock,
+  providers = PROVIDERS,
+  timeoutMs = PLANNING_TIMEOUT_MS,
+  deadlineMs = timeoutMs,
+} = {}) {
   let store;
   try {
     store = new UsageStore(stateDir);
+    const perProviderMs = timeoutMs > 0 ? timeoutMs : PLANNING_TIMEOUT_MS;
+    // Grace so the overall deadline does not fire in the same tick as per-provider timeouts that just succeeded.
+    const overallMs = (deadlineMs > 0 ? deadlineMs : perProviderMs) + 50;
     const reports = {};
-    for (const provider of providers) {
-      const refresh = await refreshProvider({ store, provider, clock, timeoutMs: PLANNING_TIMEOUT_MS });
+    const refreshOne = async (provider) => {
+      const refresh = await refreshProvider({ store, provider, clock, timeoutMs: perProviderMs });
       reports[provider.name] = { ...usageReport(store, provider, clock.now()), refresh };
+    };
+    let deadlineTimer;
+    const deadline = new Promise((_, reject) => {
+      deadlineTimer = setTimeout(
+        () => reject(Object.assign(new Error(`planning deadline after ${overallMs} ms`), { code: "DEADLINE" })),
+        overallMs,
+      );
+    });
+    try {
+      await Promise.race([Promise.all(providers.map((provider) => refreshOne(provider))), deadline]);
+    } catch (error) {
+      if (error?.code !== "DEADLINE") throw error;
+      // Providers that finished already filled reports; mark any still missing as timed out without touching their peers.
+      for (const provider of providers) {
+        if (reports[provider.name]) continue;
+        const observation = timedOutObservation(provider.name, clock.now(), overallMs);
+        store.recordAttempt({ provider: provider.name, origin: "planner", attemptedAt: clock.now(), observation });
+        reports[provider.name] = {
+          ...usageReport(store, provider, clock.now()),
+          refresh: { attempted: true, ok: false, reason: "timeout" },
+        };
+      }
+    } finally {
+      clearTimeout(deadlineTimer);
     }
     return reports;
   } catch (error) {

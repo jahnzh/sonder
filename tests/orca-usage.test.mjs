@@ -846,3 +846,178 @@ test("planning refreshes every collected provider and keeps raw readings", () =>
     assert.ok(readings.every((row) => row.origin === "planner"));
     store.close();
   }));
+
+test("stored readings and planner reports keep fingerprints only: no raw UUID, email or home path", () =>
+  withState(async (dir) => {
+    const clock = fakeClock();
+    const rawAccountUuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const rawOrganizationUuid = "11111111-2222-3333-4444-555555555555";
+    const rawEmail = "listener@example.com";
+    const rawHome = "/home/secret-user/.codex";
+    const providers = [
+      {
+        name: "claude",
+        assess: assessClaudeUsage,
+        read: async () => ({
+          provider: "claude",
+          observedAt: clock.now().toISOString(),
+          status: "available",
+          reason: null,
+          detail: null,
+          source: { kind: "claude-oauth-usage-endpoint" },
+          scope: {
+            host: "andi",
+            accountUuid: rawAccountUuid,
+            organizationUuid: rawOrganizationUuid,
+            plan: "max",
+          },
+          windows: [{ kind: "session", label: "session", appliesTo: "all", usedPercent: 10, resetsAt: "2026-10-30T23:00:00.000Z" }],
+          exhaustedWindows: [],
+        }),
+      },
+      {
+        name: "codex",
+        assess: assessCodexUsage,
+        read: async () => ({
+          observedAt: clock.now().toISOString(),
+          ...good(),
+          scope: { ...SCOPE, account: rawEmail, codexHome: rawHome },
+        }),
+      },
+      {
+        name: "cursor",
+        assess: assessCursorUsage,
+        read: async () => ({
+          provider: "cursor",
+          observedAt: clock.now().toISOString(),
+          observedAtMs: clock.now().getTime(),
+          status: "ok",
+          reason: null,
+          source: { kind: "cursor-dashboard" },
+          scope: { host: { selector: "local", hostname: "andi" }, account: { known: true, userId: 9, email: rawEmail, planName: "pro" } },
+          windows: [{ id: "included_total", kind: "percentage_allowance", usedPercent: 10, state: "ok" }],
+          reset: { primaryResetAt: "2026-10-31T00:00:00.000Z" },
+          freshness: { state: "fresh", maxAgeMs: 30 * 60 * 1000 },
+          cautions: [],
+          error: null,
+        }),
+      },
+      {
+        name: "antigravity",
+        assess: assessAntigravityUsage,
+        read: async () => ({
+          provider: "antigravity",
+          observedAt: clock.now().toISOString(),
+          status: "available",
+          reason: null,
+          detail: null,
+          source: { kind: "agy-usage" },
+          scope: { host: "andi", account: rawEmail },
+          windows: [{ id: "flash-5h", label: "flash", usedPercent: 5, remainingFraction: 0.95, resetsAt: "2026-10-30T23:00:00.000Z", exhausted: false }],
+          exhaustedWindows: [],
+          groups: [],
+        }),
+      },
+    ];
+    const report = await usageForPlanning({ stateDir: dir, clock, providers });
+    const reportJson = JSON.stringify(report);
+    for (const secret of [rawAccountUuid, rawOrganizationUuid, rawEmail, rawHome]) {
+      assert.equal(reportJson.includes(secret), false, `planner report leaked ${secret}`);
+    }
+    for (const name of ["claude", "codex", "cursor", "antigravity"]) {
+      assert.match(report[name].account, /^sha256:[0-9a-f]{16}$/, `${name} account must be a fingerprint`);
+    }
+    assert.equal(reportAccount({ account: rawEmail }), report.codex.account);
+    assert.equal(reportAccount({ account: "sha256:0123456789abcdef" }), "sha256:0123456789abcdef");
+    assert.notEqual(reportAccount({ account: rawEmail }), rawEmail);
+
+    const dbPath = join(dir, "usage.sqlite");
+    const sqliteBytes = readFileSync(dbPath);
+    const sqliteText = sqliteBytes.toString("utf8");
+    for (const secret of [rawAccountUuid, rawOrganizationUuid, rawEmail, rawHome]) {
+      assert.equal(sqliteText.includes(secret), false, `sqlite leaked ${secret}`);
+    }
+    const store = new UsageStore(dir);
+    const readings = store.listReadings({ limit: 20 });
+    assert.equal(readings.length, 4);
+    for (const reading of readings) {
+      const blob = JSON.stringify(reading);
+      for (const secret of [rawAccountUuid, rawOrganizationUuid, rawEmail, rawHome]) {
+        assert.equal(blob.includes(secret), false, `listReadings leaked ${secret}`);
+      }
+      assert.equal("codexHome" in (reading.scope ?? {}), false);
+    }
+    store.close();
+  }));
+
+test("a hanging provider times out without delaying the others during planning", () =>
+  withState(async (dir) => {
+    const clock = fakeClock();
+    const timeoutMs = 80;
+    const hang = () => new Promise(() => {});
+    const providers = [
+      {
+        name: "claude",
+        assess: assessClaudeUsage,
+        read: async () => ({
+          provider: "claude",
+          observedAt: clock.now().toISOString(),
+          status: "available",
+          reason: null,
+          detail: null,
+          source: { kind: "claude-oauth-usage-endpoint" },
+          scope: { host: "andi", accountUuid: "claude-acct-hang" },
+          windows: [{ kind: "session", label: "session", appliesTo: "all", usedPercent: 20, resetsAt: "2026-10-30T23:00:00.000Z" }],
+          exhaustedWindows: [],
+        }),
+      },
+      { name: "codex", assess: assessCodexUsage, read: hang },
+      {
+        name: "cursor",
+        assess: assessCursorUsage,
+        read: async () => ({
+          provider: "cursor",
+          observedAt: clock.now().toISOString(),
+          observedAtMs: clock.now().getTime(),
+          status: "ok",
+          reason: null,
+          source: { kind: "cursor-dashboard" },
+          scope: { host: { selector: "local", hostname: "andi" }, account: { known: true, userId: 3, planName: "pro" } },
+          windows: [{ id: "included_total", kind: "percentage_allowance", usedPercent: 10, state: "ok" }],
+          reset: { primaryResetAt: "2026-10-31T00:00:00.000Z" },
+          freshness: { state: "fresh", maxAgeMs: 30 * 60 * 1000 },
+          cautions: [],
+          error: null,
+        }),
+      },
+      {
+        name: "antigravity",
+        assess: assessAntigravityUsage,
+        read: async () => ({
+          provider: "antigravity",
+          observedAt: clock.now().toISOString(),
+          status: "available",
+          reason: null,
+          detail: null,
+          source: { kind: "agy-usage" },
+          scope: { host: "andi", account: "sha256:abcdef0123456789" },
+          windows: [{ id: "flash-5h", label: "flash", usedPercent: 5, remainingFraction: 0.95, resetsAt: "2026-10-30T23:00:00.000Z", exhausted: false }],
+          exhaustedWindows: [],
+          groups: [],
+        }),
+      },
+    ];
+    const started = Date.now();
+    const report = await usageForPlanning({ stateDir: dir, clock, providers, timeoutMs });
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 1_000, `planning took ${elapsed}ms; hanging provider blocked others`);
+    assert.equal(report.codex.status, "unavailable");
+    assert.equal(report.codex.refresh.ok, false);
+    assert.match(String(report.codex.refresh.reason ?? report.codex.reason), /timeout/);
+    assert.equal(report.claude.status, "fresh");
+    assert.equal(report.cursor.status, "fresh");
+    assert.equal(report.antigravity.status, "fresh");
+    assert.equal(report.claude.refresh.ok, true);
+    assert.equal(report.cursor.refresh.ok, true);
+    assert.equal(report.antigravity.refresh.ok, true);
+  }));

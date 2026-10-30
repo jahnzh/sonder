@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { UsageError, accountFingerprint, assessFreshness, redact, sameHost } from "./usage-common.mjs";
+import { UsageError, accountFingerprint, assessFreshness, assessmentVerdict, redact, sameHost } from "./usage-common.mjs";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const KILL_GRACE_MS = 2_000;
@@ -332,14 +332,7 @@ function earliestReset(windows) {
 export function assessCodexUsage(observation, now = new Date()) {
   const freshness = assessFreshness(observation, now);
   const windows = codexWindows(observation);
-  const verdict = (status, reason, resetsAt = earliestReset(windows)) => ({
-    status,
-    reason,
-    capacityConfirmed: status === "fresh" || status === "low",
-    resetsAt,
-    staleAfter: freshness.staleAfter,
-    freshness: freshness.state,
-  });
+  const verdict = (status, reason, resetsAt = earliestReset(windows)) => assessmentVerdict(freshness, status, reason, resetsAt);
   if (freshness.state === "unavailable") return verdict("unavailable", observation?.detail ?? freshness.reasons[0], null);
   if (freshness.state === "unknown") return verdict("unknown", observation?.detail ?? freshness.reasons[0], null);
   if (freshness.state === "stale") return verdict("stale", `${freshness.reasons.join(", ")}; last read ${observation.observedAt}: ${describeWindows(windows)}`);

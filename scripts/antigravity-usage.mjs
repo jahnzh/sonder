@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { STALE_AFTER_MS, UsageError, accountFingerprint, assessFreshness, redact, sameHost } from "./usage-common.mjs";
+import { STALE_AFTER_MS, UsageError, accountFingerprint, assessFreshness, assessmentVerdict, redact, sameHost } from "./usage-common.mjs";
 
 export { STALE_AFTER_MS, accountFingerprint, assessFreshness };
 
@@ -501,14 +501,8 @@ function earliestAntigravityReset(windows) {
 export function assessAntigravityUsage(observation, now = new Date()) {
   const freshness = assessFreshness(observation, now);
   const windows = Array.isArray(observation?.windows) ? observation.windows : [];
-  const verdict = (status, reason, resetsAt = earliestAntigravityReset(windows)) => ({
-    status,
-    reason,
-    capacityConfirmed: status === "fresh" || status === "low",
-    resetsAt,
-    staleAfter: freshness.staleAfter,
-    freshness: freshness.state,
-  });
+  const verdict = (status, reason, resetsAt = earliestAntigravityReset(windows)) =>
+    assessmentVerdict(freshness, status, reason, resetsAt);
   if (observation?.status === "unknown_account" || observation?.status === "account_mismatch") {
     return verdict("unknown", observation.detail ?? observation.reason, null);
   }

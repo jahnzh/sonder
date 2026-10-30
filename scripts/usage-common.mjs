@@ -11,10 +11,28 @@ export class UsageError extends Error {
   }
 }
 
+const FINGERPRINT_PATTERN = /^sha256:[0-9a-f]{16}$/;
+
+export function isAccountFingerprint(value) {
+  return typeof value === "string" && FINGERPRINT_PATTERN.test(value.trim());
+}
+
 export function accountFingerprint(account) {
   const value = String(account).trim();
-  if (/^sha256:[0-9a-f]{16}$/.test(value)) return value;
+  if (isAccountFingerprint(value)) return value;
   return `sha256:${createHash("sha256").update(value.toLowerCase()).digest("hex").slice(0, 16)}`;
+}
+
+/** Shared assess* result shape; capacityConfirmed follows status only. */
+export function assessmentVerdict(freshness, status, reason, resetsAt = null) {
+  return {
+    status,
+    reason,
+    capacityConfirmed: status === "fresh" || status === "low",
+    resetsAt,
+    staleAfter: freshness?.staleAfter ?? null,
+    freshness: freshness?.state ?? "unknown",
+  };
 }
 
 /** Replaces links, addresses and anything shaped like a credential, keeping the rest of the text. */
