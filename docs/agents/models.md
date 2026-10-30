@@ -28,7 +28,7 @@ Launch a subagent with `--model`, read the effective model in the launch receipt
 
 ## Observed behaviour (2026-10-30)
 
-- Codex `gpt-6.1-terra` at `max` went `stale_status` twice (#77 after about 94 minutes, #25 after about 45) with its work uncommitted and no `worker_done`, and did not answer a status request. Check `worker-list` liveness, nudge once, then `worker-stop` and finish or respawn. Its uncommitted code was good, so inspect the worktree before discarding it.
+- Codex `gpt-6.1-terra` at `max` went `stale_status` twice (#77 after about 94 minutes, #25 after about 45) with its work uncommitted and no `worker_done`, and did not answer a status request. Follow the liveness playbook in `docs/agents/worker-spec.md` (check `worker-list` liveness, nudge once, then `worker-stop`, preflight `--after-stop` and finish or respawn). Its uncommitted code was good, so inspect the worktree before discarding it.
 - Claude `claude-sonnet-5-5` at `high` was reliable for fix lists on existing code (#79 and #25 review fixes), with mutation proofs for each fix.
 - Cursor `auto` workers can report ambient failures as "noise": check them (the unit suite failures in #78/#36 were a full local disk, #89).
 - Keep concurrency at three workers and one `ci:deck` at a time; check `df -h /` first (keep more than 15 GB free).
