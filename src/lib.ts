@@ -1,5 +1,5 @@
 import Dexie, { type Table } from "dexie";
-import { popPosition, recentPositions, recordPosition, type PositionEntry, type PositionHistory } from "./position-history";
+import { dropPosition, peekPosition, recentPositions, recordPosition, serialQueue, type PositionEntry, type PositionHistory } from "./position-history";
 import type { Book, Progress, Download, DownloadPart, Track } from "./types";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -133,34 +133,57 @@ export const localDB = new Proxy(sharedDB, {
 }) as SonderDB;
 export const authDB = sharedDB;
 
-export async function updatePositionHistory(recordingId: string, entry: PositionEntry) {
-  const table = localDB.positionHistory;
-  await localDB.transaction("rw", table, async () => {
-    const row = await table.get(recordingId);
-    await table.put({ recordingId, entries: recordPosition(row?.entries || [], entry) });
+// Every read and write of one recording's history goes through this queue, so an
+// undo straight after a jump sees the entry that jump wrote.
+const historyQueue = serialQueue();
+
+export function updatePositionHistory(recordingId: string, entry: PositionEntry) {
+  return historyQueue.run(recordingId, async () => {
+    const table = localDB.positionHistory;
+    await localDB.transaction("rw", table, async () => {
+      const row = await table.get(recordingId);
+      await table.put({ recordingId, entries: recordPosition(row?.entries || [], entry) });
+    });
   });
 }
 
-export async function takePositionHistory(recordingId: string) {
-  const table = localDB.positionHistory;
-  return localDB.transaction("rw", table, async () => {
-    const row = await table.get(recordingId);
-    const result = popPosition(row?.entries || [], Date.now());
-    if (result.entries.length) await table.put({ recordingId, entries: result.entries });
-    else if (row) await table.delete(recordingId);
-    return result.entry;
+/** The newest entry, left in place until a restore has actually happened. */
+export function peekPositionHistory(recordingId: string) {
+  return historyQueue.run(recordingId, async () => {
+    const row = await localDB.positionHistory.get(recordingId);
+    return peekPosition(row?.entries || [], Date.now());
   });
 }
 
-export async function prunePositionHistory(recordingId: string) {
-  const table = localDB.positionHistory;
-  await localDB.transaction("rw", table, async () => {
-    const row = await table.get(recordingId);
-    if (!row) return;
-    const entries = recentPositions(row.entries, Date.now());
-    if (entries.length === row.entries.length) return;
-    if (entries.length) await table.put({ recordingId, entries });
-    else await table.delete(recordingId);
+export function forgetPositionHistory(recordingId: string, entry: PositionEntry) {
+  return historyQueue.run(recordingId, async () => {
+    const table = localDB.positionHistory;
+    await localDB.transaction("rw", table, async () => {
+      const row = await table.get(recordingId);
+      if (!row) return;
+      const entries = dropPosition(row.entries, entry, Date.now());
+      if (entries.length) await table.put({ recordingId, entries });
+      else await table.delete(recordingId);
+    });
+  });
+}
+
+/** Resolves once the history writes queued so far for this recording have landed. */
+export function positionHistorySettled(recordingId: string) {
+  return historyQueue.settled(recordingId);
+}
+
+export function prunePositionHistory(recordingId: string) {
+  return historyQueue.run(recordingId, async () => {
+    const table = localDB.positionHistory;
+    await localDB.transaction("rw", table, async () => {
+      const row = await table.get(recordingId);
+      if (!row) return;
+      const entries = recentPositions(row.entries, Date.now());
+      if (entries.length === row.entries.length) return;
+      if (entries.length) await table.put({ recordingId, entries });
+      else await table.delete(recordingId);
+    });
   });
 }
 let syncing = false;

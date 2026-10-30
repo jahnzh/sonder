@@ -8,8 +8,8 @@ import {
   type ReactNode,
 } from "react";
 import { liveQuery } from "dexie";
-import { api, localDB, offlineUrl, prunePositionHistory, saveProgress, syncProgress, takePositionHistory, updatePositionHistory } from "./lib";
-import { HISTORY_LIFETIME, recentPositions, type JumpKind, type PositionEntry } from "./position-history";
+import { api, forgetPositionHistory, localDB, offlineUrl, peekPositionHistory, positionHistorySettled, prunePositionHistory, saveProgress, syncProgress, updatePositionHistory } from "./lib";
+import { HISTORY_LIFETIME, planUndo, recentPositions, restored, type JumpKind, type PositionEntry } from "./position-history";
 import {
   listeningChapters,
   currentChapter,
@@ -43,6 +43,7 @@ import {
   resolveSpeed,
   speedMemory,
 } from "./playback-speed";
+type RecordedPosition = (recordingId: string, entry: PositionEntry) => void;
 type PlayerState = {
   source: "device" | "server" | "torbox" | "remote" | null;
   book: Book | null;
@@ -62,7 +63,11 @@ type PlayerState = {
   volume: number;
   sleep: number | null;
   error: string | null;
-  play: (book: Book, track?: Track, start?: number, options?: { kind?: JumpKind; previous?: Progress | null }) => Promise<void>;
+  /**
+   * `kind: null` moves without recording the position left. `onRecord` sees each
+   * history entry the move writes, so a caller can take it back.
+   */
+  play: (book: Book, track?: Track, start?: number, options?: { kind?: JumpKind | null; previous?: Progress | null; onRecord?: RecordedPosition }) => Promise<void>;
   prepare: (book:Book)=>Promise<void>;
   toggle: () => void;
   pause: () => void;
@@ -185,10 +190,12 @@ export function PlayerProvider({
     onProgressRef.current(p);
     void saveProgress(p);
   }, []);
-  const rememberPosition = useCallback((recordingId: string, entry: PositionEntry) => {
+  const rememberPosition = useCallback((recordingId: string, entry: PositionEntry, onRecord?: RecordedPosition) => {
     void updatePositionHistory(recordingId, entry).catch(() => {
       notifyRef.current?.("Could not save the previous playback position.");
     });
+    // After the write is queued, so a caller taking the entry back queues behind it.
+    onRecord?.(recordingId, entry);
   }, []);
   const currentPosition = useCallback(() => {
     const { book, track } = state.current;
@@ -197,7 +204,7 @@ export function PlayerProvider({
       ? { book, track, position }
       : null;
   }, []);
-  const rememberCurrent = useCallback((kind: JumpKind, targetTrackId?: string, targetPosition?: number) => {
+  const rememberCurrent = useCallback((kind: JumpKind, targetTrackId?: string, targetPosition?: number, onRecord?: RecordedPosition) => {
     const current = currentPosition();
     if (!current || (current.track.id === targetTrackId && current.position === targetPosition)) return;
     rememberPosition(current.book.recordingId, {
@@ -205,11 +212,12 @@ export function PlayerProvider({
       position: current.position,
       timestamp: Date.now(),
       kind,
-    });
+    }, onRecord);
   }, [currentPosition, rememberPosition]);
   useEffect(() => {
     const recordingId = book?.recordingId;
     setHistory(null);
+    let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const table = localDB.positionHistory;
     const subscription = liveQuery(() => table.toArray()).subscribe({
@@ -220,10 +228,14 @@ export function PlayerProvider({
         for (const row of rows)
           if (recentPositions(row.entries, now).length !== row.entries.length)
             void prunePositionHistory(row.recordingId).catch(() => {});
-        if (recordingId) {
-          const row = rows.find((item) => item.recordingId === recordingId);
-          setHistory({ recordingId, available: recentPositions(row?.entries || [], now).length > 0 });
-        }
+        // Show the button for what is stored once the queued writes have landed.
+        if (recordingId)
+          void positionHistorySettled(recordingId)
+            .then(() => table.get(recordingId))
+            .then((row) => {
+              if (live) setHistory({ recordingId, available: recentPositions(row?.entries || [], Date.now()).length > 0 });
+            })
+            .catch(() => {});
         if (allEntries.length) {
           const expires = Math.min(...allEntries.map((entry) => entry.timestamp + HISTORY_LIFETIME));
           timer = setTimeout(() => {
@@ -233,7 +245,7 @@ export function PlayerProvider({
       },
       error: () => { if (recordingId) setHistory({ recordingId, available: false }); },
     });
-    return () => { subscription.unsubscribe(); if (timer) clearTimeout(timer); };
+    return () => { live = false; subscription.unsubscribe(); if (timer) clearTimeout(timer); };
   }, [book?.recordingId]);
   // A server or original choice that fails with no route to the server plays the
   // device copy for this load only; the saved choice stays as it is.
@@ -300,7 +312,10 @@ export function PlayerProvider({
       return true;
     });
   }, [failures]);
-  const play = useCallback(
+  // Jumps that load another track record the position left a moment after they
+  // start; an undo waits for them so it sees that entry.
+  const pendingJumps = useRef(new Set<Promise<void>>());
+  const load = useCallback(
     async (
       b: Book,
       t?: Track,
@@ -310,6 +325,8 @@ export function PlayerProvider({
       jump: JumpKind | null = null,
       previousProgress?: Progress | null,
       saveAfterLoad = false,
+      onRecord?: RecordedPosition,
+      moved?: () => void,
     ) => {
       const request = ++playRequests.current;
       const el = audio.current;
@@ -345,21 +362,25 @@ export function PlayerProvider({
       }
       if (request !== playRequests.current) return;
       const recordMove = (targetPosition: number) => {
-        if (!jump) return;
-        const current = currentPosition();
-        if (current?.book.recordingId === b.recordingId) {
-          rememberCurrent(jump, selected.id, targetPosition);
-          return;
-        }
-        if (current) rememberCurrent("recording");
-        const previous = previousProgress === undefined ? progress : previousProgress;
-        if (t && previous && (previous.trackId !== selected.id || previous.position !== targetPosition)) {
-          rememberPosition(b.recordingId, {
-            trackId: previous.trackId,
-            position: previous.position,
-            timestamp: Date.now(),
-            kind: jump,
-          });
+        try {
+          if (!jump) return;
+          const current = currentPosition();
+          if (current?.book.recordingId === b.recordingId) {
+            rememberCurrent(jump, selected.id, targetPosition, onRecord);
+            return;
+          }
+          if (current) rememberCurrent("recording", undefined, undefined, onRecord);
+          const previous = previousProgress === undefined ? progress : previousProgress;
+          if (t && previous && (previous.trackId !== selected.id || previous.position !== targetPosition)) {
+            rememberPosition(b.recordingId, {
+              trackId: previous.trackId,
+              position: previous.position,
+              timestamp: Date.now(),
+              kind: jump,
+            }, onRecord);
+          }
+        } finally {
+          moved?.();
         }
       };
       if (
@@ -515,6 +536,31 @@ export function PlayerProvider({
     },
     [persist, speedFor, applyRate, recoverOnDevice, failures, currentPosition, rememberCurrent, rememberPosition],
   );
+  const play = useCallback(
+    async (
+      b: Book,
+      t?: Track,
+      start = 0,
+      autoplay = true,
+      forceReload = false,
+      jump: JumpKind | null = null,
+      previousProgress?: Progress | null,
+      saveAfterLoad = false,
+      onRecord?: RecordedPosition,
+    ) => {
+      if (!jump) return load(b, t, start, autoplay, forceReload, jump, previousProgress, saveAfterLoad, onRecord);
+      let moved!: () => void;
+      const gate = new Promise<void>((resolve) => { moved = resolve; });
+      pendingJumps.current.add(gate);
+      void gate.then(() => pendingJumps.current.delete(gate));
+      try {
+        await load(b, t, start, autoplay, forceReload, jump, previousProgress, saveAfterLoad, onRecord, moved);
+      } finally {
+        moved();
+      }
+    },
+    [load],
+  );
   const playRef = useRef(play);
   playRef.current = play;
   const next = useCallback((automatic = false) => {
@@ -549,11 +595,11 @@ export function PlayerProvider({
   const seekTo = useCallback(
     (n: number, kind: JumpKind | null) => {
       const el = audio.current;
-      if (!el.src) return;
+      if (!el.src) return false;
       const max = Number.isFinite(el.duration)
         ? el.duration
         : state.current.length;
-      if (!max) return;
+      if (!max) return false;
       const target = Math.min(max, Math.max(0, n));
       if (kind) rememberCurrent(kind, state.current.track?.id, target);
       el.currentTime = target;
@@ -561,6 +607,7 @@ export function PlayerProvider({
       if (pendingSeek.current !== null) pendingSeek.current = target;
       setPosition(el.currentTime);
       persist();
+      return true;
     },
     [persist, rememberCurrent],
   );
@@ -633,17 +680,37 @@ export function PlayerProvider({
     },
     [seekTrack],
   );
+  // The entry leaves the history only after the position was restored; any
+  // other outcome keeps it, so a failed undo can be tried again.
   const undoJump = useCallback(() => {
     const { book } = state.current;
     if (!book || undoing.current) return;
     undoing.current = true;
-    void takePositionHistory(book.recordingId).then(async (entry) => {
-      if (!entry || state.current.book?.recordingId !== book.recordingId) return;
+    const held = () => state.current.book
+      ? { recordingId: state.current.book.recordingId, trackId: state.current.track?.id }
+      : null;
+    void (async () => {
+      await Promise.all([...pendingJumps.current]);
+      const entry = await peekPositionHistory(book.recordingId);
+      if (!entry) return;
+      const plan = planUndo(entry, {
+        recordingId: book.recordingId,
+        trackIds: book.tracks.map((track) => track.id),
+        current: held(),
+        hasSource: !!audio.current.src,
+      });
       const target = book.tracks.find((track) => track.id === entry.trackId);
-      if (!target) return;
-      if (state.current.track?.id === target.id) seekTo(entry.position, null);
-      else await playRef.current(book, target, entry.position, !audio.current.paused, false, null, undefined, true);
-    }).catch(() => notifyRef.current?.("Could not undo the playback jump."))
+      let done = false;
+      if (plan.action === "seek") done = seekTo(entry.position, null);
+      else if (plan.action === "play" && target) {
+        await playRef.current(book, target, entry.position, !audio.current.paused, false, null, undefined, true);
+        done = restored(entry, book.recordingId, held());
+      }
+      if (done) await forgetPositionHistory(book.recordingId, entry);
+      // Switching recordings meanwhile is the user's own move, not a failure.
+      else if (!(plan.action === "keep" && plan.reason === "recording-changed"))
+        notifyRef.current?.("Could not undo the playback jump.");
+    })().catch(() => notifyRef.current?.("Could not undo the playback jump."))
       .finally(() => { undoing.current = false; });
   }, [seekTo]);
   const toggle = useCallback(() => {
@@ -780,6 +847,8 @@ export function PlayerProvider({
     const failed = () => {
       watchdog.cancel();
       const fail = () => {
+        // The load is abandoned: its source switch must not apply to a later one.
+        sourceSwitch.current = null;
         setLoading(false);
         setPlaying(false);
         if (el.src)
@@ -971,7 +1040,7 @@ export function PlayerProvider({
         sleep,
         error,
         source,
-        play: (book, track, start, options) => play(book, track, start, true, false, options?.kind ?? "play", options?.previous),
+        play: (book, track, start, options) => play(book, track, start, true, false, options?.kind === undefined ? "play" : options.kind, options?.previous, false, options?.onRecord),
         prepare: (book)=>play(book,undefined,0,false),
         toggle,
         pause,

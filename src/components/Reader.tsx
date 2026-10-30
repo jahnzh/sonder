@@ -37,7 +37,7 @@ import {PlaybackExtra,usePlaybackMenu} from "./PlaybackMenu";
 import { readerWords, readerSegment } from "../reader-segments";
 import { currentChapter, playbackTimeline } from "../chapters";
 import { usePlayer } from "../player";
-import { api, localDB } from "../lib";
+import { api, forgetPositionHistory, localDB } from "../lib";
 import {
   loadReader,
   epubFile,
@@ -51,6 +51,7 @@ import {
   syncBookmarks,
 } from "../reading";
 import type { Book } from "../types";
+import type { PositionEntry } from "../position-history";
 import {
   countedBlocks,
   readerSkippedSelector,
@@ -284,6 +285,8 @@ export function ReaderView({
     [scrub, setScrub] = useState<number | null>(null),
     [contentsHidden, setContentsHidden] = useState(() => localStorage.getItem("sonder-reader-contents") === "hidden");
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The history entries the latest Listen from here wrote, so its Undo can take them back.
+  const listenRecords = useRef<{ undone: boolean; entries: { recordingId: string; entry: PositionEntry }[] } | null>(null);
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
   useEffect(() => {
     const media=window.matchMedia("(min-width: 900px)");
@@ -1098,7 +1101,15 @@ export function ReaderView({
     cancelManualSave();
     setFollow(true);
     following.current = "";
-    void p.play(audio, track, interval.start);
+    const records = { undone: false, entries: [] as { recordingId: string; entry: PositionEntry }[] };
+    listenRecords.current = records;
+    void p.play(audio, track, interval.start, {
+      onRecord: (recordingId, entry) => {
+        // The play records after a short wait, so an Undo may already be done.
+        if (records.undone) void forgetPositionHistory(recordingId, entry).catch(() => {});
+        else records.entries.push({ recordingId, entry });
+      },
+    });
     if (undoable) {
       setToast({ previous });
       if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -1110,8 +1121,16 @@ export function ReaderView({
     if (!toast) return;
     const previous = toast.previous;
     const track = previous?.book.tracks.find((track) => track.id === previous.trackId);
+    // The player's Undo jump must not step forward again: drop what the Listen
+    // from here recorded and do not record this move back.
+    const records = listenRecords.current;
+    listenRecords.current = null;
+    if (records) {
+      records.undone = true;
+      for (const { recordingId, entry } of records.entries) void forgetPositionHistory(recordingId, entry).catch(() => {});
+    }
     // Nothing was playing before: Undo just stops the narration again.
-    if (previous && track) void p.play(previous.book, track, previous.position);
+    if (previous && track) void p.play(previous.book, track, previous.position, { kind: null });
     else if (playerRef.current.playing) playerRef.current.toggle();
     setFollow(true);
     following.current = "";

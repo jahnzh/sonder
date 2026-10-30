@@ -148,3 +148,68 @@ test("sign-in page shows the password toggle, busy state and error", async ({ pa
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("button", { name: "Settings", exact: true }).last()).toBeVisible();
 });
+test("one account's position history is not shown to or undoable by another", async ({ page }) => {
+  // The entries of a recording in one account's IndexedDB, or null while it has no row or database.
+  const stored = (name: string, recordingId: string) => page.evaluate(async ({ name, recordingId }) => {
+    const names = name === "other-user"
+      ? (await indexedDB.databases()).map((db) => db.name).filter((item) => item?.startsWith("sonder-user-"))
+      : [name];
+    return Promise.all(names.map((dbName) => new Promise<unknown[] | null>((resolve, reject) => {
+      const open = indexedDB.open(dbName!);
+      open.onerror = () => reject(open.error);
+      open.onsuccess = () => {
+        const db = open.result;
+        if (!db.objectStoreNames.contains("positionHistory")) { db.close(); return resolve(null); }
+        const get = db.transaction("positionHistory").objectStore("positionHistory").get(recordingId);
+        get.onsuccess = () => { db.close(); resolve(get.result?.entries ?? null); };
+        get.onerror = () => reject(get.error);
+      };
+    })));
+  }, { name, recordingId });
+  const openNowPlaying = async (title: string) => {
+    await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
+    const pause = page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true });
+    await expect(pause).toBeVisible();
+    await pause.click();
+    await page.locator(".dock-book").click();
+    const dialog = page.getByRole("dialog", { name: "Now playing", exact: true });
+    await expect(dialog).toBeVisible();
+    return dialog;
+  };
+  await page.goto(base);
+  await page.getByLabel("Password", { exact: true }).fill("admin-password");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).last().click();
+  const users = page.locator("section").filter({ has: page.getByRole("heading", { name: "Users" }) });
+  await users.getByLabel("Username").fill("historian");
+  await users.getByLabel("Password", { exact: true }).fill("historian-password");
+  await users.getByRole("button", { name: "Add user" }).click();
+  await expect(users.getByRole("listitem").filter({ hasText: "historian" })).toBeVisible();
+  const book = (await (await page.request.get(`${base}/api/books`)).json()).find((b: { inLibrary: boolean; tracks: unknown[] }) => b.inLibrary && b.tracks.length);
+  await page.getByRole("button", { name: "My library", exact: true }).last().click();
+  let dialog = await openNowPlaying(book.title);
+  await dialog.getByRole("slider", { name: "Seek in audiobook", exact: true }).fill("120");
+  await expect(dialog.getByRole("button", { name: "Undo jump", exact: true })).toBeVisible();
+  await expect.poll(async () => (await stored("sonder", book.recordingId))[0]?.length).toBe(1);
+  const adminHistory = (await stored("sonder", book.recordingId))[0];
+  await dialog.getByRole("button", { name: "Close dialog", exact: true }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).last().click();
+  await Promise.all([page.waitForEvent("load"), page.getByRole("button", { name: "Sign out" }).click()]);
+  await page.getByLabel("Username").fill("historian");
+  await page.getByLabel("Password", { exact: true }).fill("historian-password");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByRole("button", { name: "Discover", exact: true }).last().click();
+  await page.getByRole("button", { name: `Add ${book.title} to library` }).click();
+  await page.getByRole("button", { name: "My library", exact: true }).last().click();
+  dialog = await openNowPlaying(book.title);
+  // Same recording, other account: no Undo jump and no row in either database.
+  await expect(dialog.getByRole("button", { name: "Undo jump", exact: true })).toHaveCount(0);
+  expect((await stored("other-user", book.recordingId)).every((entries) => entries === null)).toBe(true);
+  await dialog.getByRole("slider", { name: "Seek in audiobook", exact: true }).fill("200");
+  await expect(dialog.getByRole("button", { name: "Undo jump", exact: true })).toBeVisible();
+  await expect.poll(async () => (await stored("other-user", book.recordingId)).filter((entries) => entries).length).toBe(1);
+  await dialog.getByRole("button", { name: "Undo jump", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "Undo jump", exact: true })).toHaveCount(0);
+  // Undoing here took nothing from the other account's history.
+  expect((await stored("sonder", book.recordingId))[0]).toEqual(adminHistory);
+});
