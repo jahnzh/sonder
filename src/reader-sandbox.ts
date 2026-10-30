@@ -47,11 +47,30 @@ export function probeReaderSandbox(doc: Document, timeoutMs = 3000): Promise<boo
   });
 }
 
+// Safari and every browser on iOS run WebKit. A probe that wrongly says "no scripts needed" there would bring
+// back the gesture bug (#37) on devices that cannot be tested here, so they always get scripts as well.
+export function isWebKitEngine(agent: string, platform = "", touchPoints = 0) {
+  if (/iPhone|iPad|iPod/.test(agent)) return true;
+  // iPadOS reports itself as a Mac with a touch screen.
+  if (platform === "MacIntel" && touchPoints > 1) return true;
+  return /AppleWebKit/.test(agent) && !/Chrome|Chromium|Edg|OPR|Android|Firefox/.test(agent);
+}
+
+// The probe's answer, raised to "scripts needed" for any WebKit engine.
+export function scriptsRequired(
+  probeSaysNeeded: boolean,
+  environment?: { userAgent: string; platform?: string; maxTouchPoints?: number },
+) {
+  return probeSaysNeeded || (!!environment && isWebKitEngine(environment.userAgent, environment.platform, environment.maxTouchPoints));
+}
+
 let readerScripts: Promise<boolean> | undefined;
 
 // Share the in-flight result as well as the result itself across reader instances.
 export function readerNeedsScripts(): Promise<boolean> {
   return readerScripts ??= typeof document === "undefined"
     ? Promise.resolve(true)
-    : probeReaderSandbox(document);
+    : probeReaderSandbox(document).then((needs) =>
+        scriptsRequired(needs, typeof navigator === "undefined" ? undefined : navigator),
+      );
 }
