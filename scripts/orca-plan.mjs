@@ -167,7 +167,7 @@ function suitableFrom(result) {
 
 function weakerFrom(result) {
   return (result.rejected ?? [])
-    .filter((row) => typeof row.reason === "string" && row.reason.includes("capability is below the assessed"))
+    .filter((row) => row.rejectionKind === "below-capability")
     .filter((row) => row.usage !== "exhausted")
     .map((row) => ({ ...row, relation: "weaker" }));
 }
@@ -176,9 +176,14 @@ function exhaustedSuitableFrom(result) {
   return (result.rejected ?? []).filter((row) => row.usage === "exhausted");
 }
 
+/** Assignment or a held weaker alternative that occupies a concurrency slot. */
+function heldChoice(row) {
+  return row.assignment ?? row.weakerAlternative ?? null;
+}
+
 function agentLoad(agent, activeWorkers, proposed) {
   const active = activeWorkers.filter((worker) => worker.agent === agent);
-  const proposedFor = proposed.filter((row) => row.assignment?.agent === agent);
+  const proposedFor = proposed.filter((row) => heldChoice(row)?.agent === agent);
   return { active, proposed: proposedFor, count: active.length + proposedFor.length };
 }
 
@@ -205,7 +210,7 @@ function pickCandidate(suitable, { activeWorkers, proposed, remainingTasks, usag
     const load = agentLoad(row.agent, activeWorkers, proposed).count;
     const soleNeeds = uniqueNeedCount(row.agent, remainingTasks);
     const capacity = CAPACITY_RANK[usage.status] ?? CAPACITY_RANK.unknown;
-    return { row, index, load, soleNeeds, capacity, capacityConfirmed: usage.capacityConfirmed === true };
+    return { row, index, load, soleNeeds, capacity };
   });
 
   scored.sort((a, b) => {
@@ -243,7 +248,7 @@ function sharingReport(usageByAgent, activeWorkers, proposed) {
   const agents = new Set([
     ...Object.keys(usageByAgent),
     ...activeWorkers.map((worker) => worker.agent),
-    ...proposed.map((row) => row.assignment?.agent).filter(Boolean),
+    ...proposed.map((row) => heldChoice(row)?.agent).filter(Boolean),
   ]);
   const out = {};
   for (const agent of agents) {
@@ -265,12 +270,15 @@ function sharingReport(usageByAgent, activeWorkers, proposed) {
       refresh: usage.refresh ?? null,
       sharedWith: {
         active: load.active,
-        proposed: load.proposed.map((row) => ({
-          task: row.task,
-          agent: row.assignment.agent,
-          model: row.assignment.model,
-          effort: row.assignment.effort,
-        })),
+        proposed: load.proposed.map((row) => {
+          const held = heldChoice(row);
+          return {
+            task: row.task,
+            agent: held.agent,
+            model: held.model,
+            effort: held.effort,
+          };
+        }),
         note: "Shared allowance only: percentages are provider-specific and not comparable across agents; capacity is a snapshot, not a reservation.",
       },
     };
@@ -282,8 +290,8 @@ function taskPriority(entry) {
   const requirement = entry.result.assessment?.requirement;
   const reqRank = rank(requirement);
   const suitableCount = entry.suitable.length;
-  // Higher requirement first; among equals, scarcer suitable pools first.
-  return { reqRank: reqRank < 0 ? -1 : reqRank, scarcity: -suitableCount };
+  // Higher requirement first; among equals, scarcer suitable pools first (ascending count).
+  return { reqRank: reqRank < 0 ? -1 : reqRank, scarcity: suitableCount };
 }
 
 /**
@@ -454,6 +462,8 @@ export async function planWave({ wave, candidates, usageByAgent = {}, recommendF
         delay.reason =
           `Suitable options are exhausted or unavailable for assessed ${requirement}. ` +
           `Choose the warned weaker alternative or delay. Stronger choices unavailable: ${whyStrongerGone}.`;
+        // Hold the slot and shared load the same way an uncertain suitable choice does.
+        proposed.push(delay);
       }
       decisions.push(delay);
       continue;

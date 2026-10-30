@@ -184,16 +184,61 @@ function exhaustedUsage(agent: string) {
   });
 }
 
-async function withCandidates(fn: (candidates: ReturnType<typeof loadCandidates>, box: ReturnType<typeof sandbox>) => Promise<void>) {
-  const box = sandbox();
-  const prev = process.env.PATH;
-  process.env.PATH = `${box.bin}:${prev}`;
+type RecommendOptions = {
+  task?: string;
+  summary?: string;
+  kind?: string | null;
+  files?: number | null;
+  eligible?: Array<{ agent: string; model: string; effort: string | null }>;
+  judgment?: string;
+  judgmentReason?: string;
+};
+type UsageByAgent = Record<string, unknown>;
+type Candidates = ReturnType<typeof loadCandidates>;
+type RecommendFn = (options: RecommendOptions, candidates: Candidates, usageByAgent: UsageByAgent) => ReturnType<typeof recommend>;
+
+const judgedRecommend: RecommendFn = (options, cands, usage) =>
+  recommend(
+    {
+      ...options,
+      judgment: options.judgment ?? "standard",
+      judgmentReason: options.judgmentReason ?? "test",
+    },
+    cands,
+    usage,
+  );
+
+const plainRecommend: RecommendFn = (options, cands, usage) => recommend(options, cands, usage);
+
+async function withRestoredEnv<T>(keys: string[], fn: () => Promise<T>): Promise<T> {
+  const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   try {
-    await fn(loadCandidates(box.models), box);
+    return await fn();
   } finally {
-    process.env.PATH = prev;
-    clean(box);
+    for (const key of keys) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
   }
+}
+
+async function withoutApiKey<T>(fn: () => Promise<T>): Promise<T> {
+  return withRestoredEnv(["TYPESAFE_API_KEY"], async () => {
+    delete process.env.TYPESAFE_API_KEY;
+    return fn();
+  });
+}
+
+async function withCandidates(fn: (candidates: Candidates, box: ReturnType<typeof sandbox>) => Promise<void>) {
+  const box = sandbox();
+  await withRestoredEnv(["PATH"], async () => {
+    process.env.PATH = `${box.bin}:${process.env.PATH}`;
+    try {
+      await fn(loadCandidates(box.models), box);
+    } finally {
+      clean(box);
+    }
+  });
 }
 
 // --- CLI parsing
@@ -228,21 +273,8 @@ test("parseWave rejects bad shapes and normalizes tasks", () => {
 
 test("respects readiness, dependencies, active workers and concurrency; never starts a worker", async () => {
   await withCandidates(async (candidates) => {
-    const recommendFn = async (options: any, cands: any, usage: any) =>
-      recommend(
-        {
-          ...options,
-          judgment: options.judgment ?? "standard",
-          judgmentReason: options.judgmentReason ?? "test",
-        },
-        cands,
-        usage,
-      );
-
     // Force coordinator judgment by omitting a key so Jev is unavailable.
-    const prevKey = process.env.TYPESAFE_API_KEY;
-    delete process.env.TYPESAFE_API_KEY;
-    try {
+    await withoutApiKey(async () => {
       const wave = parseWave(
         JSON.stringify({
           concurrency: 2,
@@ -257,7 +289,7 @@ test("respects readiness, dependencies, active workers and concurrency; never st
           ],
         }),
       );
-      const plan = await planWave({ wave, candidates, usageByAgent: {}, recommendFn });
+      const plan = await planWave({ wave, candidates, usageByAgent: {}, recommendFn: judgedRecommend });
       assert.equal(plan.launch.started, false);
       assert.equal(plan.concurrency.limit, 2);
       assert.equal(plan.concurrency.active, 1);
@@ -273,18 +305,13 @@ test("respects readiness, dependencies, active workers and concurrency; never st
       assert.equal(byId.b.status, "deferred");
       assert.match(byId.b.reason, /concurrency/);
       assert.equal(byId.c.status, "deferred");
-    } finally {
-      if (prevKey === undefined) delete process.env.TYPESAFE_API_KEY;
-      else process.env.TYPESAFE_API_KEY = prevKey;
-    }
+    });
   });
 });
 
 test("prioritizes scarce capable combinations and lists equivalent alternatives across agents", async () => {
   await withCandidates(async (candidates) => {
-    const prevKey = process.env.TYPESAFE_API_KEY;
-    delete process.env.TYPESAFE_API_KEY;
-    try {
+    await withoutApiKey(async () => {
       const wave = parseWave(
         JSON.stringify({
           concurrency: 3,
@@ -316,7 +343,7 @@ test("prioritizes scarce capable combinations and lists equivalent alternatives 
         wave,
         candidates,
         usageByAgent: {},
-        recommendFn: (options, cands, usage) => recommend(options, cands, usage),
+        recommendFn: plainRecommend,
       });
       const byId = Object.fromEntries(plan.tasks.map((row: any) => [row.task, row]));
       assert.equal(byId.deep.status, "proposed");
@@ -326,18 +353,13 @@ test("prioritizes scarce capable combinations and lists equivalent alternatives 
       assert.equal(byId["std-cursor-only"].assignment.agent, "cursor");
       assert.notEqual(byId["std-open"].assignment.agent, "cursor");
       assert.ok(byId["std-open"].alternatives.some((alt: any) => alt.relation === "equivalent"));
-    } finally {
-      if (prevKey === undefined) delete process.env.TYPESAFE_API_KEY;
-      else process.env.TYPESAFE_API_KEY = prevKey;
-    }
+    });
   });
 });
 
 test("exhausted stronger choices produce a warned weaker alternative or delay", async () => {
   await withCandidates(async (candidates) => {
-    const prevKey = process.env.TYPESAFE_API_KEY;
-    delete process.env.TYPESAFE_API_KEY;
-    try {
+    await withoutApiKey(async () => {
       const usageByAgent = {
         claude: exhaustedUsage("claude"),
         antigravity: freshUsage("antigravity"),
@@ -360,7 +382,7 @@ test("exhausted stronger choices produce a warned weaker alternative or delay", 
         wave,
         candidates,
         usageByAgent,
-        recommendFn: (options, cands, usage) => recommend(options, cands, usage),
+        recommendFn: plainRecommend,
       });
       const [row] = plan.tasks;
       assert.equal(row.status, "needs-decision");
@@ -370,18 +392,14 @@ test("exhausted stronger choices produce a warned weaker alternative or delay", 
       assert.equal(row.weakerAlternative.agent, "antigravity");
       assert.equal(row.launch.started, false);
       assert.equal(row.weakerAlternative.launch.started, false);
-    } finally {
-      if (prevKey === undefined) delete process.env.TYPESAFE_API_KEY;
-      else process.env.TYPESAFE_API_KEY = prevKey;
-    }
+      assert.equal(plan.concurrency.proposed, 1);
+    });
   });
 });
 
 test("suitable unknown usage beside weaker known capacity shows both with uncertainty", async () => {
   await withCandidates(async (candidates) => {
-    const prevKey = process.env.TYPESAFE_API_KEY;
-    delete process.env.TYPESAFE_API_KEY;
-    try {
+    await withoutApiKey(async () => {
       const usageByAgent = {
         claude: unknownUsage(),
         antigravity: freshUsage("antigravity"),
@@ -404,7 +422,7 @@ test("suitable unknown usage beside weaker known capacity shows both with uncert
         wave,
         candidates,
         usageByAgent,
-        recommendFn: (options, cands, usage) => recommend(options, cands, usage),
+        recommendFn: plainRecommend,
       });
       const [row] = plan.tasks;
       assert.equal(row.status, "needs-decision");
@@ -413,18 +431,13 @@ test("suitable unknown usage beside weaker known capacity shows both with uncert
       assert.equal(row.uncertaintyAlternative.agent, "antigravity");
       assert.equal(row.uncertaintyAlternative.capacityConfirmed, true);
       assert.match(row.uncertaintyAlternative.warning, /unconfirmed|unknown|below/i);
-    } finally {
-      if (prevKey === undefined) delete process.env.TYPESAFE_API_KEY;
-      else process.env.TYPESAFE_API_KEY = prevKey;
-    }
+    });
   });
 });
 
 test("plan reports usage provenance, shared allowances and reset windows without comparing percentages", async () => {
   await withCandidates(async (candidates) => {
-    const prevKey = process.env.TYPESAFE_API_KEY;
-    delete process.env.TYPESAFE_API_KEY;
-    try {
+    await withoutApiKey(async () => {
       const usageByAgent = {
         codex: freshUsage("codex"),
         cursor: freshUsage("cursor", { reason: "included 40% used", windows: [{ id: "cursor-month", kind: "monthly", label: "monthly", usedPercent: 40, remainingPercent: 60, resetsAt: new Date(FAR_RESET * 1000).toISOString(), exhausted: false }] }),
@@ -443,7 +456,7 @@ test("plan reports usage provenance, shared allowances and reset windows without
         wave,
         candidates,
         usageByAgent,
-        recommendFn: (options, cands, usage) => recommend(options, cands, usage),
+        recommendFn: plainRecommend,
       });
       assert.equal(plan.allowances.codex.source.kind, "codex-test");
       assert.ok(plan.allowances.codex.windows[0].resetsAt);
@@ -454,18 +467,13 @@ test("plan reports usage provenance, shared allowances and reset windows without
       assert.ok(plan.notes.some((note: string) => /not comparable/i.test(note)));
       // Distinct statuses remain distinct in the report surface.
       assert.equal(plan.usageByAgent.codex.status, "fresh");
-    } finally {
-      if (prevKey === undefined) delete process.env.TYPESAFE_API_KEY;
-      else process.env.TYPESAFE_API_KEY = prevKey;
-    }
+    });
   });
 });
 
 test("handles unknown, stale and low usage distinctly", async () => {
   await withCandidates(async (candidates) => {
-    const prevKey = process.env.TYPESAFE_API_KEY;
-    delete process.env.TYPESAFE_API_KEY;
-    try {
+    await withoutApiKey(async () => {
       const usageByAgent = {
         claude: unknownUsage(),
         cursor: freshUsage("cursor", { status: "stale", capacityConfirmed: false, reason: "older_than_30_minutes", freshness: "stale" }),
@@ -485,7 +493,7 @@ test("handles unknown, stale and low usage distinctly", async () => {
         wave,
         candidates,
         usageByAgent,
-        recommendFn: (options, cands, usage) => recommend(options, cands, usage),
+        recommendFn: plainRecommend,
       });
       const byId = Object.fromEntries(plan.tasks.map((row: any) => [row.task, row]));
       assert.equal(byId.u.assignment.usage, "unknown");
@@ -495,18 +503,13 @@ test("handles unknown, stale and low usage distinctly", async () => {
       assert.equal(plan.allowances.claude.status, "unknown");
       assert.equal(plan.allowances.cursor.status, "stale");
       assert.equal(plan.allowances.codex.status, "low");
-    } finally {
-      if (prevKey === undefined) delete process.env.TYPESAFE_API_KEY;
-      else process.env.TYPESAFE_API_KEY = prevKey;
-    }
+    });
   });
 });
 
 test("repeat planning responds to changed worker and usage state", async () => {
   await withCandidates(async (candidates) => {
-    const prevKey = process.env.TYPESAFE_API_KEY;
-    delete process.env.TYPESAFE_API_KEY;
-    try {
+    await withoutApiKey(async () => {
       const tasks = [
         { id: "a", summary: "A", judgment: "mechanical", judgmentReason: "docs" },
         { id: "b", summary: "B", judgment: "mechanical", judgmentReason: "docs" },
@@ -515,7 +518,7 @@ test("repeat planning responds to changed worker and usage state", async () => {
         wave: parseWave(JSON.stringify({ concurrency: 1, tasks })),
         candidates,
         usageByAgent: {},
-        recommendFn: (options, cands, usage) => recommend(options, cands, usage),
+        recommendFn: plainRecommend,
       });
       assert.equal(first.tasks.filter((row: any) => row.status === "proposed").length, 1);
       assert.equal(first.tasks.filter((row: any) => row.status === "deferred").length, 1);
@@ -532,16 +535,13 @@ test("repeat planning responds to changed worker and usage state", async () => {
         ),
         candidates,
         usageByAgent: { antigravity: exhaustedUsage("antigravity") },
-        recommendFn: (options, cands, usage) => recommend(options, cands, usage),
+        recommendFn: plainRecommend,
       });
       // Slot still full because of the active worker; remaining task stays deferred or delayed under exhausted usage.
       assert.ok(second.tasks.every((row: any) => row.status === "deferred" || row.status === "delay" || row.status === "needs-decision"));
       assert.equal(second.concurrency.active, 1);
       assert.equal(second.concurrency.proposed, 0);
-    } finally {
-      if (prevKey === undefined) delete process.env.TYPESAFE_API_KEY;
-      else process.env.TYPESAFE_API_KEY = prevKey;
-    }
+    });
   });
 });
 
@@ -609,9 +609,7 @@ test("CLI reports Jev failure as needs-judgment without launching", async () => 
 
 test("shared-capacity scenario spreads equivalent work across agents", async () => {
   await withCandidates(async (candidates) => {
-    const prevKey = process.env.TYPESAFE_API_KEY;
-    delete process.env.TYPESAFE_API_KEY;
-    try {
+    await withoutApiKey(async () => {
       const usageByAgent = {
         cursor: freshUsage("cursor"),
         codex: freshUsage("codex"),
@@ -631,15 +629,152 @@ test("shared-capacity scenario spreads equivalent work across agents", async () 
         wave,
         candidates,
         usageByAgent,
-        recommendFn: (options, cands, usage) => recommend(options, cands, usage),
+        recommendFn: plainRecommend,
       });
       const proposed = plan.tasks.filter((row: any) => row.status === "proposed");
       assert.equal(proposed.length, 1); // one free slot
       assert.notEqual(proposed[0].assignment.agent, "cursor");
       assert.ok(plan.allowances.cursor.sharedWith.active.length === 1);
-    } finally {
-      if (prevKey === undefined) delete process.env.TYPESAFE_API_KEY;
-      else process.env.TYPESAFE_API_KEY = prevKey;
-    }
+    });
+  });
+});
+
+test("one-slot wave plans the scarcer suitable pool before the open pool", async () => {
+  await withCandidates(async (candidates) => {
+    await withoutApiKey(async () => {
+      const wave = parseWave(
+        JSON.stringify({
+          concurrency: 1,
+          tasks: [
+            { id: "open", summary: "Open standard work", judgment: "standard", judgmentReason: "clear" },
+            {
+              id: "only-cursor",
+              summary: "Cursor-only standard work",
+              judgment: "standard",
+              judgmentReason: "clear",
+              eligible: ["cursor/composer-2.5"],
+            },
+          ],
+        }),
+      );
+      const plan = await planWave({
+        wave,
+        candidates,
+        usageByAgent: {},
+        recommendFn: plainRecommend,
+      });
+      const byId = Object.fromEntries(plan.tasks.map((row: any) => [row.task, row]));
+      assert.equal(byId["only-cursor"].status, "proposed");
+      assert.equal(byId["only-cursor"].assignment.agent, "cursor");
+      assert.equal(byId.open.status, "deferred");
+      assert.match(byId.open.reason, /concurrency/);
+    });
+  });
+});
+
+test("needs-decision weaker alternative holds a concurrency slot and shared load", async () => {
+  await withCandidates(async (candidates) => {
+    await withoutApiKey(async () => {
+      const usageByAgent = {
+        claude: exhaustedUsage("claude"),
+        antigravity: freshUsage("antigravity"),
+      };
+      const wave = parseWave(
+        JSON.stringify({
+          concurrency: 1,
+          tasks: [
+            {
+              id: "deep",
+              summary: "Needs deep reasoning",
+              judgment: "reasoning-heavy",
+              judgmentReason: "hard bug",
+              eligible: ["claude/claude-opus-5-5/high", "antigravity/gemini-4-argon-high"],
+            },
+            {
+              id: "easy",
+              summary: "Mechanical docs",
+              judgment: "mechanical",
+              judgmentReason: "docs",
+              eligible: ["antigravity/gemini-4-argon-high"],
+            },
+          ],
+        }),
+      );
+      const plan = await planWave({
+        wave,
+        candidates,
+        usageByAgent,
+        recommendFn: plainRecommend,
+      });
+      const byId = Object.fromEntries(plan.tasks.map((row: any) => [row.task, row]));
+      assert.equal(byId.deep.status, "needs-decision");
+      assert.equal(byId.deep.weakerAlternative.agent, "antigravity");
+      assert.equal(byId.easy.status, "deferred");
+      assert.equal(plan.concurrency.proposed, 1);
+      assert.equal(plan.concurrency.remainingSlots, 0);
+      assert.ok(plan.allowances.antigravity.sharedWith.proposed.some((row: any) => row.task === "deep"));
+    });
+  });
+});
+
+test("dependency cycle leaves both tasks blocked", async () => {
+  await withCandidates(async (candidates) => {
+    await withoutApiKey(async () => {
+      const wave = parseWave(
+        JSON.stringify({
+          concurrency: 2,
+          tasks: [
+            { id: "a", summary: "Depends on b", dependsOn: ["b"], judgment: "mechanical", judgmentReason: "docs" },
+            { id: "b", summary: "Depends on a", dependsOn: ["a"], judgment: "mechanical", judgmentReason: "docs" },
+          ],
+        }),
+      );
+      const plan = await planWave({
+        wave,
+        candidates,
+        usageByAgent: {},
+        recommendFn: plainRecommend,
+      });
+      const byId = Object.fromEntries(plan.tasks.map((row: any) => [row.task, row]));
+      assert.equal(byId.a.status, "blocked");
+      assert.match(byId.a.reason, /b/);
+      assert.equal(byId.b.status, "blocked");
+      assert.match(byId.b.reason, /a/);
+      assert.equal(plan.concurrency.proposed, 0);
+    });
+  });
+});
+
+test("pure delay when suitable choices are exhausted and no weaker alternative exists", async () => {
+  await withCandidates(async (candidates) => {
+    await withoutApiKey(async () => {
+      const usageByAgent = { claude: exhaustedUsage("claude") };
+      const wave = parseWave(
+        JSON.stringify({
+          concurrency: 1,
+          tasks: [
+            {
+              id: "deep",
+              summary: "Needs deep reasoning",
+              judgment: "reasoning-heavy",
+              judgmentReason: "hard bug",
+              eligible: ["claude/claude-opus-5-5/high"],
+            },
+          ],
+        }),
+      );
+      const plan = await planWave({
+        wave,
+        candidates,
+        usageByAgent,
+        recommendFn: plainRecommend,
+      });
+      const [row] = plan.tasks;
+      assert.equal(row.status, "delay");
+      assert.equal(row.weakerAlternative, undefined);
+      assert.match(row.reason, /assessed reasoning-heavy/i);
+      assert.match(row.reason, /exhausted|unavailable/i);
+      assert.equal(plan.concurrency.proposed, 0);
+    });
   });
 });

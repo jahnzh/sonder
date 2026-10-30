@@ -60,12 +60,12 @@ A fresh usage poll runs before planning for every agent `scripts/orca-usage.mjs`
 
 ## Balancing rules
 
-1. Capability first: harder assessed requirements are planned before easier ones; among equals, tasks with scarcer suitable pools go first.
+1. Capability first: harder assessed requirements are planned before easier ones; among equals, tasks with **fewer** suitable candidates (scarcer pools) are planned before those with larger pools, so a one-slot wave prefers a sole-capable task over an open one.
 2. Smallest suitable capability wins within a task; scarce sole-capable agents are left for tasks that only they can do when an equivalent alternative exists.
 3. Roughly equivalent alternatives across agents are listed with `relation: "equivalent"`.
 4. Shared load prefers agents with fewer active + proposed workers among equivalents. It does not compare percentage figures across providers or reserve capacity.
-5. Exhausted suitable options may surface a warned weaker alternative (`weakerAlternative`) or a delay. The warning names the assessed requirement and why stronger choices are unavailable.
-6. A suitable choice with unconfirmed usage (`unknown`, `stale`, `unavailable`) beside a weaker choice with confirmed capacity shows both (`uncertaintyAlternative`).
+5. Exhausted suitable options may surface a warned weaker alternative (`weakerAlternative`) as `needs-decision`, or a pure `delay` when no weaker option exists. A `needs-decision` weaker alternative holds a concurrency slot and counts toward that agent's shared load the same way an uncertain suitable assignment does. The warning names the assessed requirement and why stronger choices are unavailable. Recommend marks below-capability rejects with `rejectionKind: "below-capability"` (the planner does not match English reason text).
+6. A suitable choice with unconfirmed usage (`unknown`, `stale`, `unavailable`) beside a weaker choice with confirmed capacity shows both (`uncertaintyAlternative`) and also holds the slot.
 
 ## Related commands
 
