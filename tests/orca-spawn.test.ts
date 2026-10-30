@@ -20,7 +20,7 @@ function setup(receipt = '{"ok":true,"dispatchId":"ctx_abc","model":"gpt-5.3-cod
   const bin = join(dir, "bin");
   const workspaces = join(dir, "ws");
   mkdirSync(bin);
-  mkdirSync(join(workspaces, "wt"), { recursive: true });
+  mkdirSync(workspaces);
   // The preflight reads the base branch with git. `npm run check` runs the unit tests in a `git archive` snapshot
   // that has no .git, so the tests build their own repository instead of using the surrounding checkout.
   const repo = join(dir, "repo");
@@ -31,19 +31,27 @@ function setup(receipt = '{"ok":true,"dispatchId":"ctx_abc","model":"gpt-5.3-cod
     const g = spawnSync("git", args, { cwd: repo, encoding: "utf8" });
     if (g.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${g.stderr}`);
   }
+  // The new worktree "wt" (branch jahnzh/wt, as Orca names it) and a worker's worktree "src" whose local branch
+  // jahnzh/fix-79 differs from the remote name; both are real worktrees of the test repository.
+  for (const [wtName, branch] of [["wt", "jahnzh/wt"], ["src", "jahnzh/fix-79"]]) {
+    const g = spawnSync("git", ["worktree", "add", "-q", "-b", branch, join(workspaces, wtName)], { cwd: repo, encoding: "utf8" });
+    if (g.status !== 0) throw new Error(`git worktree add ${wtName} failed: ${g.stderr}`);
+  }
   writeFileSync(join(dir, "spec.md"), "do the thing\n");
   writeFileSync(join(dir, "receipt"), receipt);
   stub(bin, "orca", `echo "$@" >> "${dir}/orca.log"\necho 'keepalive'\ncat "${dir}/receipt"\nexit $(cat "${dir}/exitcode" 2>/dev/null || echo 0)`);
   stub(bin, "codegraph", `echo "$PWD: $@" >> "${dir}/codegraph.log"`);
+  // The preflight checks free disk space; never ask the real one.
+  stub(bin, "df", `echo "Filesystem 1024-blocks Used Available Capacity Mounted on"\necho "/dev/fake 102626232 1000 99999999 1% /"`);
   stub(bin, "agent", `printf 'Available models\\n\\nauto - Auto\\ngpt-5.3-codex - Codex 5.3\\n'`);
   const run = (args: string[]) =>
     spawnSync("bash", [script, ...args], {
       cwd: repoRoot,
       encoding: "utf8",
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, ORCA_SPAWN_WORKSPACES: workspaces, ORCA_PREFLIGHT_REPO: repo, ORCA_CLI_COMMAND: "orca" },
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, ORCA_SPAWN_WORKSPACES: workspaces, ORCA_PREFLIGHT_REPO: repo, ORCA_PREFLIGHT_DF: join(bin, "df"), ORCA_CLI_COMMAND: "orca" },
     });
   const base = ["--spec-file", join(dir, "spec.md"), "--name", "wt", "--base", "HEAD", "--agent", "cursor"];
-  return { dir, run, base, workspaces, orcaLog: join(dir, "orca.log"), cgLog: join(dir, "codegraph.log") };
+  return { dir, run, base, repo, workspaces, orcaLog: join(dir, "orca.log"), cgLog: join(dir, "codegraph.log") };
 }
 
 test("refuses to run without --model", () => {
@@ -127,6 +135,7 @@ test("happy path prints the dispatch id and model, passes the flags, and runs co
     assert.match(r.stdout, /dispatch: ctx_abc/);
     assert.match(r.stdout, /effective model: gpt-5.3-codex/);
     assert.match(r.stdout, /codegraph init -y running in the background/);
+    assert.match(r.stdout, /^branch: jahnzh\/wt$/m);
     const call = readFileSync(t.orcaLog, "utf8");
     assert.match(call, /orchestration worker-start --spec do the thing/);
     assert.match(call, /--worktree new-top-level --name wt --repo path:.* --base-branch HEAD --agent cursor --model gpt-5.3-codex --effort high --json/);
@@ -254,6 +263,73 @@ test("refuses a spec larger than one command-line argument can hold, before star
     assert.equal(r.status, 1);
     assert.match(r.stderr, /130000 bytes/);
     assert.equal(existsSync(t.orcaLog), false);
+  } finally {
+    rmSync(t.dir, { recursive: true, force: true });
+  }
+});
+
+test("--base-worktree resolves the worktree's local branch and passes it to worker-start", () => {
+  const t = setup();
+  try {
+    const base = t.base.filter((_, i) => t.base[i - 1] !== "--base" && t.base[i] !== "--base");
+    const r = t.run([...base, "--base-worktree", "src", "--model", "gpt-5.3-codex"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /base branch: jahnzh\/fix-79 \(from worktree src\)/);
+    assert.match(readFileSync(t.orcaLog, "utf8"), /--base-branch jahnzh\/fix-79 /);
+    assert.match(r.stdout, /^branch: jahnzh\/wt$/m);
+  } finally {
+    rmSync(t.dir, { recursive: true, force: true });
+  }
+});
+
+test("--base-worktree fails before starting anything when the worktree has no branch", () => {
+  const t = setup();
+  try {
+    const base = t.base.filter((_, i) => t.base[i - 1] !== "--base" && t.base[i] !== "--base");
+    const missing = t.run([...base, "--base-worktree", "nope", "--model", "gpt-5.3-codex"]);
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /cannot resolve a branch from worktree .*\/nope/);
+    // A detached HEAD has no branch name either.
+    const sha = spawnSync("git", ["rev-parse", "HEAD"], { cwd: t.repo, encoding: "utf8" }).stdout.trim();
+    spawnSync("git", ["checkout", "-q", "--detach", sha], { cwd: join(t.workspaces, "src") });
+    const detached = t.run([...base, "--base-worktree", "src", "--model", "gpt-5.3-codex"]);
+    assert.equal(detached.status, 1);
+    assert.match(detached.stderr, /detached HEAD/);
+    assert.equal(existsSync(t.orcaLog), false);
+  } finally {
+    rmSync(t.dir, { recursive: true, force: true });
+  }
+});
+
+test("exactly one of --base and --base-worktree is required", () => {
+  const t = setup();
+  try {
+    const noBase = t.base.filter((_, i) => t.base[i - 1] !== "--base" && t.base[i] !== "--base");
+    const neither = t.run([...noBase, "--model", "gpt-5.3-codex"]);
+    assert.equal(neither.status, 2);
+    assert.match(neither.stderr, /usage:.*--base-worktree/);
+    const both = t.run([...t.base, "--base-worktree", "src", "--model", "gpt-5.3-codex"]);
+    assert.equal(both.status, 2);
+    assert.match(both.stderr, /either --base or --base-worktree/);
+    assert.equal(existsSync(t.orcaLog), false);
+  } finally {
+    rmSync(t.dir, { recursive: true, force: true });
+  }
+});
+
+test("a launched worker whose worktree has no readable branch is a warning, not a failure", () => {
+  const t = setup();
+  try {
+    const plain = join(t.dir, "plain", "wt");
+    mkdirSync(plain, { recursive: true });
+    writeFileSync(
+      join(t.dir, "receipt"),
+      JSON.stringify({ ok: true, result: { dispatchId: "ctx_nb", launch: { effective: { model: "gpt-5.3-codex" } }, effects: [{ kind: "worktree", id: "r::" + plain }] } }),
+    );
+    const r = t.run([...t.base, "--model", "gpt-5.3-codex"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.doesNotMatch(r.stdout, /^branch:/m);
+    assert.match(r.stderr, /could not read the branch/);
   } finally {
     rmSync(t.dir, { recursive: true, force: true });
   }
