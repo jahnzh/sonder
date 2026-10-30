@@ -18,18 +18,20 @@ const SOURCE = {
 };
 
 const LEGACY_WINDOWS = [
-  { field: "five_hour", kind: "session", group: "session", model: null },
-  { field: "seven_day", kind: "weekly_all", group: "weekly", model: null },
-  { field: "seven_day_opus", kind: "weekly_scoped", group: "weekly", model: "Opus" },
-  { field: "seven_day_sonnet", kind: "weekly_scoped", group: "weekly", model: "Sonnet" },
+  { field: "five_hour", kind: "session", group: "session", scope: null },
+  { field: "seven_day", kind: "weekly_all", group: "weekly", scope: null },
+  { field: "seven_day_oauth_apps", kind: "weekly_scoped", group: "weekly", scope: { model: null, surface: "OAuth apps" } },
+  { field: "seven_day_opus", kind: "weekly_scoped", group: "weekly", scope: { model: "Opus", surface: null } },
+  { field: "seven_day_sonnet", kind: "weekly_scoped", group: "weekly", scope: { model: "Sonnet", surface: null } },
 ];
 
 function printUsage(stderr) {
-  stderr(`Usage: node scripts/claude-usage.mjs [--config-dir <dir>] [--expect-account <account-uuid>]
+  stderr(`Usage: node scripts/claude-usage.mjs [--config-dir <dir>] [--host <hostname>] [--expect-account <account-uuid>]
 
 Reads the Claude subscription usage of the Claude Code login on this host and prints one JSON observation.
 --config-dir defaults to $CLAUDE_CONFIG_DIR, then ~/.claude. The token is read from <dir>/.credentials.json,
 used for two read-only GET requests and never printed, stored or refreshed.
+--host reports status "unknown_account" (reason "host_not_local") without reading local credentials when <hostname> is not this host.
 --expect-account reports status "account_mismatch" when the login belongs to another account.
 See docs/agents/claude-usage.md for statuses, windows and limitations.`);
 }
@@ -67,6 +69,14 @@ function readCredentials(configDir, now) {
   return { accessToken: oauth.accessToken };
 }
 
+function parseRetryAfterSeconds(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!/^\d+(?:\.\d+)?$/.test(trimmed)) return null;
+  const seconds = Number(trimmed);
+  return Number.isFinite(seconds) ? seconds : null;
+}
+
 async function getJson(fetchImpl, url, accessToken) {
   let response;
   try {
@@ -86,8 +96,8 @@ async function getJson(fetchImpl, url, accessToken) {
   const where = `${new URL(url).pathname} answered HTTP ${response.status}`;
   if (response.status === 401 || response.status === 403) throw new UsageError("unavailable", "auth_rejected", where);
   if (response.status === 429) {
-    const retryAfter = Number(response.headers.get("retry-after"));
-    throw new UsageError("unavailable", "rate_limited", where, Number.isFinite(retryAfter) && retryAfter >= 0 ? { retryAfterSeconds: retryAfter } : {});
+    const retryAfter = parseRetryAfterSeconds(response.headers.get("retry-after"));
+    throw new UsageError("unavailable", "rate_limited", where, retryAfter !== null ? { retryAfterSeconds: retryAfter } : {});
   }
   if (!response.ok) throw new UsageError("unavailable", "provider_error", where);
   try {
@@ -130,18 +140,28 @@ function windowLabel(kind, scope) {
   return scoped ? `${kind} (${scoped})` : kind;
 }
 
-function scopeOf(raw) {
-  const model = raw?.model?.display_name;
-  const surface = raw?.surface?.display_name;
-  if (typeof model !== "string" && typeof surface !== "string") return null;
-  return { model: typeof model === "string" ? model : null, surface: typeof surface === "string" ? surface : null };
+function readScopeDimension(entry) {
+  if (entry === null || entry === undefined) return { present: false, name: null };
+  const name = typeof entry === "object" && typeof entry.display_name === "string" ? entry.display_name.trim() : "";
+  return { present: true, name: name || null };
+}
+
+function parseScope(raw) {
+  if (raw === null || raw === undefined) return { scope: null, recognized: true };
+  if (typeof raw !== "object" || Array.isArray(raw)) return { scope: null, recognized: false };
+  const model = readScopeDimension(raw.model);
+  const surface = readScopeDimension(raw.surface);
+  const recognized = (!model.present || model.name !== null) && (!surface.present || surface.name !== null);
+  const scope = recognized && (model.name || surface.name) ? { model: model.name, surface: surface.name } : null;
+  return { scope, recognized };
 }
 
 const SHARED_KINDS = new Set(["session", "weekly_all"]);
 
 // "all": drawn on by every model and surface. "scoped": the provider names a model or surface.
 // "unknown": a kind or scope this reader does not recognise, so which candidates it limits is not known.
-function appliesTo(kind, scope) {
+function appliesTo(kind, scope, recognized = true) {
+  if (!recognized) return "unknown";
   if (scope) return "scoped";
   return SHARED_KINDS.has(kind) ? "all" : "unknown";
 }
@@ -151,13 +171,13 @@ function windowsFromLimits(limits) {
     if (!row || typeof row.kind !== "string" || typeof row.percent !== "number") {
       throw malformed(`limits[${index}] has no kind or numeric percent`);
     }
-    const scope = scopeOf(row.scope);
+    const { scope, recognized } = parseScope(row.scope);
     return {
       kind: row.kind,
       group: typeof row.group === "string" ? row.group : null,
       label: windowLabel(row.kind, scope),
       scope,
-      appliesTo: appliesTo(row.kind, scope),
+      appliesTo: appliesTo(row.kind, scope, recognized),
       usedPercent: row.percent,
       resetsAt: isoOrNull(row.resets_at, `limits[${index}]`),
       severity: typeof row.severity === "string" ? row.severity : null,
@@ -168,11 +188,11 @@ function windowsFromLimits(limits) {
 
 function windowsFromLegacyFields(body) {
   const windows = [];
-  for (const { field, kind, group, model } of LEGACY_WINDOWS) {
+  for (const { field, kind, group, scope: legacyScope } of LEGACY_WINDOWS) {
     const raw = body[field];
     if (raw === null || raw === undefined) continue;
     if (typeof raw.utilization !== "number") throw malformed(`${field} has no numeric utilization`);
-    const scope = model ? { model, surface: null } : null;
+    const scope = legacyScope ? { ...legacyScope } : null;
     windows.push({
       kind,
       group,
@@ -213,61 +233,129 @@ export function assessFreshness(observation, now = new Date()) {
   return { state: reasons.length ? "stale" : "fresh", reasons, staleAfter: new Date(staleAfter).toISOString() };
 }
 
+const KNOWN_MODEL_FAMILIES = new Set(["opus", "sonnet", "haiku"]);
+const KNOWN_SURFACES = new Set(["claude code", "claude design"]);
+
 function normalizedName(value) {
   return typeof value === "string" ? value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() : "";
 }
 
-// "claude-opus-5-5" and "Opus" name the same model family; whole-word match on the display name.
-function mentions(candidateName, display) {
-  const wanted = normalizedName(display);
-  return wanted !== "" && ` ${normalizedName(candidateName)} `.includes(` ${wanted} `);
+function candidateModelFamily(name) {
+  const words = normalizedName(name).split(" ").filter(Boolean);
+  if (words.length === 0) return null;
+  if (words.length > 1 && words[0] !== "claude") return null;
+  const families = [];
+  for (const word of words) {
+    if (word === "claude") continue;
+    if (KNOWN_MODEL_FAMILIES.has(word)) {
+      if (!families.includes(word)) families.push(word);
+    } else if (!/^(?:\d+|v\d+|latest|preview)$/.test(word)) {
+      return null;
+    }
+  }
+  return families.length === 1 ? families[0] : null;
+}
+
+function compareModel(scoped, candidateModel) {
+  const wanted = normalizedName(scoped);
+  const candidate = normalizedName(candidateModel);
+  if (!wanted || !candidate) return "unknown";
+  if (candidate === wanted) return "match";
+  if (!KNOWN_MODEL_FAMILIES.has(wanted)) return "unknown";
+  const family = candidateModelFamily(candidate);
+  if (!family) return "unknown";
+  return family === wanted ? "match" : "disjoint";
+}
+
+function compareSurface(scoped, candidateSurface) {
+  const wanted = normalizedName(scoped);
+  const candidate = normalizedName(candidateSurface);
+  if (!wanted || !candidate) return "unknown";
+  if (candidate === wanted) return "match";
+  if (KNOWN_SURFACES.has(wanted) && KNOWN_SURFACES.has(candidate)) return "disjoint";
+  return "unknown";
+}
+
+function windowRelation(window, candidate) {
+  if (window?.appliesTo === "all") return "match";
+  if (window?.appliesTo !== "scoped" || !window.scope || typeof window.scope !== "object") return "unknown";
+  const rawModel = window.scope.model;
+  const rawSurface = window.scope.surface;
+  if (rawModel !== null && rawModel !== undefined && normalizedName(rawModel) === "") return "unknown";
+  if (rawSurface !== null && rawSurface !== undefined && normalizedName(rawSurface) === "") return "unknown";
+  const checks = [];
+  if (rawModel !== null && rawModel !== undefined) checks.push(compareModel(rawModel, candidate?.model));
+  if (rawSurface !== null && rawSurface !== undefined) checks.push(compareSurface(rawSurface, candidate?.surface));
+  if (checks.length === 0) return "unknown";
+  if (checks.every((result) => result === "match")) return "match";
+  if (checks.some((result) => result === "disjoint")) return "disjoint";
+  return "unknown";
 }
 
 /**
  * Whether a candidate (`{ model, surface }`, both optional) can still be run on this subscription.
  * "exhausted": a shared window, or a window scoped to this candidate, is full.
- * "available": every window is below 100% or applies to some other model or surface.
+ * "available": every window is below 100% or applies to a known disjoint model or surface.
  * "unknown": the reading is unusable or stale, or a full window's scope cannot be matched to the candidate
- * (the candidate omits the model or surface it is scoped to, or the provider's scope is unrecognised).
- * Pass `now` to re-judge freshness of a stored observation; otherwise the observation's own freshness is used.
+ * (the candidate omits the model or surface it is scoped to, or the provider's or candidate's scope is unrecognised).
+ * Freshness is re-evaluated at `now` (defaulting to the current time), not trusted from a stored observation.
  */
 export function candidateAvailability(observation, candidate = {}, now) {
-  if (!observation || !Array.isArray(observation.windows) || !["available", "limited", "exhausted"].includes(observation.status)) return "unknown";
-  const freshness = now ? assessFreshness(observation, now) : observation.freshness;
-  if (freshness?.state !== "fresh") return "unknown";
-  if (observation.exhaustedWindows.some((window) => window.appliesTo === "all")) return "exhausted";
+  if (
+    !observation ||
+    !Array.isArray(observation.windows) ||
+    !Array.isArray(observation.exhaustedWindows) ||
+    !["available", "limited", "exhausted"].includes(observation.status)
+  ) {
+    return "unknown";
+  }
+  if (now === undefined && observation.freshness && observation.freshness.state !== "fresh") return "unknown";
+  if (assessFreshness(observation, now ?? new Date()).state !== "fresh") return "unknown";
+  if (observation.status !== "available" && observation.exhaustedWindows.length === 0) return "unknown";
   let verdict = "available";
   for (const window of observation.exhaustedWindows) {
-    if (window.appliesTo !== "scoped") {
-      verdict = "unknown";
-      continue;
-    }
-    const checks = [
-      [window.scope.model, candidate.model],
-      [window.scope.surface, candidate.surface],
-    ].filter(([scoped]) => scoped);
-    if (checks.every(([scoped, name]) => name && mentions(name, scoped))) return "exhausted";
-    if (checks.some(([, name]) => !name) && checks.every(([scoped, name]) => !name || mentions(name, scoped))) verdict = "unknown";
+    const relation = windowRelation(window, candidate);
+    if (relation === "match") return "exhausted";
+    if (relation !== "disjoint") verdict = "unknown";
   }
   return verdict;
 }
 
+function sameHost(requested, local) {
+  if (typeof requested !== "string" || typeof local !== "string") return false;
+  const target = requested.trim().toLowerCase();
+  const current = local.trim().toLowerCase();
+  return target !== "" && current !== "" && target === current;
+}
+
 /**
- * Reads the Claude subscription usage of the Claude Code login in `configDir`.
- * Never throws for provider or login problems: they come back as a status and reason.
+ * Reads the Claude subscription usage of the Claude Code login in `configDir` when targeting the local host.
+ * Never throws for provider, host or login problems: they come back as a status and reason.
  */
 export async function readClaudeUsage({
   configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"),
   fetch: fetchImpl = globalThis.fetch,
   now = () => new Date(),
-  hostname = os.hostname(),
+  hostname,
+  host,
+  localHostname = os.hostname(),
   expectedAccount,
 } = {}) {
   const observedAt = now();
+  const targetHost = host ?? hostname ?? localHostname;
+  const isLocalHost = sameHost(targetHost, localHostname);
   const observation = {
     provider: "claude",
     source: SOURCE,
-    scope: { host: hostname, configDir, accountUuid: null, organizationUuid: null, plan: null, rateLimitTier: null, expectedAccount: expectedAccount ?? null },
+    scope: {
+      host: targetHost,
+      configDir: isLocalHost ? configDir : null,
+      accountUuid: null,
+      organizationUuid: null,
+      plan: null,
+      rateLimitTier: null,
+      expectedAccount: expectedAccount ?? null,
+    },
     observedAt: observedAt.toISOString(),
     status: "unavailable",
     reason: null,
@@ -277,6 +365,13 @@ export async function readClaudeUsage({
     extraUsage: null,
   };
   try {
+    if (!isLocalHost) {
+      throw new UsageError(
+        "unknown_account",
+        "host_not_local",
+        `Cannot read Claude Code credentials for ${targetHost || "an unnamed host"} on ${localHostname}; run the reader on that host`,
+      );
+    }
     const { accessToken } = readCredentials(configDir, observedAt);
     Object.assign(observation.scope, accountScope(await getJson(fetchImpl, CLAUDE_PROFILE_URL, accessToken)));
     if (expectedAccount && observation.scope.accountUuid !== expectedAccount) {
@@ -306,8 +401,9 @@ function parseArgs(argv) {
   const options = {};
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
-    if ((arg === "--config-dir" || arg === "--expect-account") && argv[i + 1]) {
-      options[arg === "--config-dir" ? "configDir" : "expectedAccount"] = argv[i + 1];
+    if ((arg === "--config-dir" || arg === "--expect-account" || arg === "--host") && argv[i + 1] && !argv[i + 1].startsWith("--")) {
+      const key = arg === "--config-dir" ? "configDir" : arg === "--expect-account" ? "expectedAccount" : "hostname";
+      options[key] = argv[i + 1];
       i += 1;
     } else if (arg === "--help" || arg === "-h") {
       options.help = true;
@@ -334,7 +430,12 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
     return 0;
   }
   const { help, ...readOptions } = options;
-  const observation = await readClaudeUsage({ ...readOptions, ...pickDefined(deps, ["fetch", "now", "hostname"]) });
+  const localHostname = deps.localHostname ?? deps.hostname;
+  const observation = await readClaudeUsage({
+    ...readOptions,
+    ...pickDefined(deps, ["fetch", "now"]),
+    ...(localHostname !== undefined ? { localHostname } : {}),
+  });
   stdout(JSON.stringify(observation, null, 2));
   return 0;
 }

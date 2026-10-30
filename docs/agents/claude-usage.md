@@ -4,6 +4,7 @@
 
 ```sh
 node scripts/claude-usage.mjs                                   # login in $CLAUDE_CONFIG_DIR, else ~/.claude
+node scripts/claude-usage.mjs --host <hostname>                 # report non-local target hosts as unknown_account
 node scripts/claude-usage.mjs --expect-account <account-uuid>   # report a different login as account_mismatch
 ```
 
@@ -15,7 +16,7 @@ node scripts/claude-usage.mjs --expect-account <account-uuid>   # report a diffe
 
 ## Supported account
 
-A Claude.ai subscription (Pro or Max) logged in to Claude Code on the host, with credentials in the file store. `scope.plan` is the organization type, for example `claude_pro`, and `scope.rateLimitTier` is the provider's tier. Orca starts Claude workers on this machine, so the reader runs here. To read another host's login, run the reader on that host. That has not been verified.
+A Claude.ai subscription (Pro or Max) logged in to Claude Code on the host, with credentials in the file store. `scope.plan` is the organization type, for example `claude_pro`, and `scope.rateLimitTier` is the provider's tier. Orca starts Claude workers on this machine, so the reader runs here. It reads only the local host's login: when `--host <hostname>` or `readClaudeUsage({ hostname })` names a host other than `os.hostname()`, the reader does not read local credentials as that host's and returns `status: "unknown_account"` (`reason: "host_not_local"`, `scope.configDir: null`). To read another host's login, run the reader on that host. That has not been verified.
 
 ## Windows
 
@@ -27,7 +28,7 @@ Windows come from the response's `limits[]` rows, which the provider calls its o
 | `weekly_all` | The seven-day allowance shared by all models ("Current week (all models)"). |
 | `weekly_scoped` | A seven-day allowance for one model or surface. `scope.model` or `scope.surface` names it. |
 
-Other kinds pass through unchanged. If `limits[]` is missing or empty, the reader falls back to the older named fields: `five_hour`, `seven_day`, `seven_day_opus` and `seven_day_sonnet`. Each window carries `appliesTo` (`all` for `session` and `weekly_all`, `scoped` when `scope` names a model or surface, `unknown` for any other kind or a scoped kind without a scope), `usedPercent` (0 to 100), `resetsAt` (ISO time or `null`), the provider's `severity` (`normal`, `warning` or `critical`) and `active`, which marks the row the provider shows as its headline. Percentages describe Claude's own allowances and are not comparable with other providers' figures.
+Other kinds pass through unchanged. If `limits[]` is missing or empty, the reader falls back to the older named fields: `five_hour`, `seven_day`, `seven_day_oauth_apps` (scoped to surface `OAuth apps`), `seven_day_opus` and `seven_day_sonnet`. Each window carries `appliesTo` (`all` for `session` and `weekly_all`, `scoped` when `scope` names a non-empty model or surface, `unknown` for any other kind or a blank or missing scope), `usedPercent` (0 to 100), `resetsAt` (ISO time or `null`), the provider's `severity` (`normal`, `warning` or `critical`) and `active`, which marks the row the provider shows as its headline. Percentages describe Claude's own allowances and are not comparable with other providers' figures.
 
 `extraUsage` reports whether usage credits are on and whether their spend limit is reached. When credits are on, a full plan window may still allow work, billed as credits.
 
@@ -38,21 +39,21 @@ Other kinds pass through unchanged. If `limits[]` is missing or empty, the reade
 | `available` | `null` | Windows were read and none is full. `critical` severity is a caution, not exhaustion. |
 | `limited` | `null` | Only windows scoped to a model or surface, or of an unrecognised kind, are at 100%. The shared allowance remains, so other models may still run. Use `candidateAvailability` to decide for a candidate. |
 | `exhausted` | `null` | A shared window (`appliesTo: "all"`: the session or the all-models week) is at 100%. Every model is blocked. |
-| `unknown_account` | `not_logged_in`, `account_not_identified` | There is no subscription login, or the profile named no account. No windows are reported. |
+| `unknown_account` | `not_logged_in`, `account_not_identified`, `host_not_local` | There is no subscription login, the profile named no account, or the requested target host is not this host (local credentials are not read). No windows are reported. |
 | `account_mismatch` | `account_mismatch` | The login belongs to an account other than `--expect-account`. The usage endpoint is not called. |
-| `unavailable` | `credentials_expired`, `credentials_unreadable`, `auth_rejected`, `rate_limited`, `provider_error`, `network_error`, `malformed_response`, `no_usage_windows` | No usable reading. `rate_limited` carries `retryAfterSeconds` when the provider sends it. |
+| `unavailable` | `credentials_expired`, `credentials_unreadable`, `auth_rejected`, `rate_limited`, `provider_error`, `network_error`, `malformed_response`, `no_usage_windows` | No usable reading. `rate_limited` carries `retryAfterSeconds` only when the provider sends a non-negative numeric `Retry-After` header. |
 
 `exhaustedWindows` lists every window at 100% as `{ kind, scope, appliesTo }`.
 
 ## Candidate availability
 
-`candidateAvailability(observation, { model, surface }, now?)` answers for one worker candidate, for example `{ model: "claude-sonnet-5-5" }`. A model name matches a scope's display name as a whole word, so `claude-opus-5-5` matches `Opus`.
+`candidateAvailability(observation, { model, surface }, now?)` answers for one worker candidate, for example `{ model: "claude-sonnet-5-5" }`. Recognized bare model scopes (`Opus`, `Sonnet`, `Haiku`) match Claude candidate models by family, and known distinct product surfaces (`Claude Code`, `Claude Design`) are treated as mutually exclusive; an exact normalized match on model or surface also counts as a match. Qualified, umbrella or unrecognised scopes (such as `Opus only`, `Claude 5.5 Opus`, surface `OAuth apps`, or a blank `display_name`) cannot be excluded and yield `unknown`. When `now` is omitted, freshness is re-evaluated against the current time rather than trusting `observation.freshness`.
 
 | Result | Meaning |
 | --- | --- |
 | `exhausted` | A shared window, or a window scoped to this candidate, is full. |
-| `available` | Nothing applying to this candidate is full. |
-| `unknown` | The reading is not usable (`unavailable`, `unknown_account`, `account_mismatch`) or is stale, or a full window is scoped to a model or surface the candidate does not state, or its scope is unrecognised. Never treat it as available. |
+| `available` | Nothing applying to this candidate is full, and every full scoped window belongs to a known disjoint model or surface. |
+| `unknown` | The reading is not usable (`unavailable`, `unknown_account`, `account_mismatch`) or is stale at `now` (defaulting to current time), or a full window is scoped to a model or surface the candidate does not state, or its scope is qualified, blank or unrecognised. Never treat it as available. |
 
 A model with no window in the response is treated as unlimited by that window; the reader cannot see allowances the provider does not report.
 

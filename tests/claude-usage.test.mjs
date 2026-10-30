@@ -80,7 +80,8 @@ function read(overrides = {}) {
     configDir: overrides.configDir ?? configDir(),
     fetch,
     now: () => overrides.now ?? NOW,
-    hostname: "test-host",
+    hostname: overrides.hostname ?? "test-host",
+    localHostname: overrides.localHostname ?? "test-host",
     expectedAccount: overrides.expectedAccount,
   }).then((observation) => ({ observation, calls }));
 }
@@ -179,9 +180,9 @@ test("a full Opus-only window does not exhaust the subscription or the Sonnet ca
   assert.equal(observation.status, "limited");
   assert.deepEqual(observation.exhaustedWindows, [{ kind: "weekly_scoped", scope: { model: "Opus", surface: null }, appliesTo: "scoped" }]);
   assert.equal(observation.windows.find((window) => window.kind === "weekly_all").appliesTo, "all");
-  assert.equal(candidateAvailability(observation, { model: "claude-sonnet-5-5" }), "available");
-  assert.equal(candidateAvailability(observation, { model: "claude-opus-5-5" }), "exhausted");
-  assert.equal(candidateAvailability(observation, {}), "unknown");
+  assert.equal(candidateAvailability(observation, { model: "claude-sonnet-5-5" }, NOW), "available");
+  assert.equal(candidateAvailability(observation, { model: "claude-opus-5-5" }, NOW), "exhausted");
+  assert.equal(candidateAvailability(observation, {}, NOW), "unknown");
 });
 
 test("a full shared window exhausts every candidate", async () => {
@@ -191,8 +192,8 @@ test("a full shared window exhausts every candidate", async () => {
     const observation = await readBody(body);
     assert.equal(observation.status, "exhausted", full);
     assert.deepEqual(observation.exhaustedWindows, [{ kind: full, scope: null, appliesTo: "all" }]);
-    assert.equal(candidateAvailability(observation, { model: "claude-sonnet-5-5" }), "exhausted");
-    assert.equal(candidateAvailability(observation, {}), "exhausted");
+    assert.equal(candidateAvailability(observation, { model: "claude-sonnet-5-5" }, NOW), "exhausted");
+    assert.equal(candidateAvailability(observation, {}, NOW), "exhausted");
   }
 });
 
@@ -200,42 +201,128 @@ test("legacy named fields keep the Opus scope when only seven_day_opus is full",
   const { limits, ...legacy } = realUsageBody;
   const observation = await readBody({ ...legacy, seven_day_opus: { utilization: 100, resets_at: "2026-11-04T15:59:59+00:00" } });
   assert.equal(observation.status, "limited");
-  assert.equal(candidateAvailability(observation, { model: "claude-sonnet-5-5" }), "available");
-  assert.equal(candidateAvailability(observation, { model: "claude-opus-5-5" }), "exhausted");
+  assert.equal(candidateAvailability(observation, { model: "claude-sonnet-5-5" }, NOW), "available");
+  assert.equal(candidateAvailability(observation, { model: "claude-opus-5-5" }, NOW), "exhausted");
 });
 
 test("an unknown model or surface scope is never confirmed available", async () => {
   const surface = await readBody(limitsBody(scopedRow({ surface: { display_name: "Claude Design" } })));
   assert.equal(surface.status, "limited");
-  assert.equal(candidateAvailability(surface, { model: "claude-sonnet-5-5" }), "unknown");
-  assert.equal(candidateAvailability(surface, { model: "claude-sonnet-5-5", surface: "Claude Design" }), "exhausted");
-  assert.equal(candidateAvailability(surface, { model: "claude-sonnet-5-5", surface: "Claude Code" }), "available");
+  assert.equal(candidateAvailability(surface, { model: "claude-sonnet-5-5" }, NOW), "unknown");
+  assert.equal(candidateAvailability(surface, { model: "claude-sonnet-5-5", surface: "Claude Design" }, NOW), "exhausted");
+  assert.equal(candidateAvailability(surface, { model: "claude-sonnet-5-5", surface: "Claude Code" }, NOW), "available");
 
   const unscoped = await readBody(limitsBody(scopedRow(null)));
   assert.equal(unscoped.status, "limited");
   assert.equal(unscoped.exhaustedWindows[0].appliesTo, "unknown");
-  assert.equal(candidateAvailability(unscoped, { model: "claude-sonnet-5-5" }), "unknown");
+  assert.equal(candidateAvailability(unscoped, { model: "claude-sonnet-5-5" }, NOW), "unknown");
 
   const otherKind = await readBody(limitsBody(scopedRow(null, 100, "monthly_pool")));
   assert.equal(otherKind.status, "limited");
-  assert.equal(candidateAvailability(otherKind, { model: "claude-opus-5-5" }), "unknown");
+  assert.equal(candidateAvailability(otherKind, { model: "claude-opus-5-5" }, NOW), "unknown");
 
   const both = await readBody(limitsBody(scopedRow({ model: { display_name: "Opus" }, surface: { display_name: "Claude Design" } })));
-  assert.equal(candidateAvailability(both, { model: "claude-opus-5-5" }), "unknown");
-  assert.equal(candidateAvailability(both, { model: "claude-sonnet-5-5" }), "available");
-  assert.equal(candidateAvailability(both, { model: "claude-opus-5-5", surface: "Claude Design" }), "exhausted");
+  assert.equal(candidateAvailability(both, { model: "claude-opus-5-5" }, NOW), "unknown");
+  assert.equal(candidateAvailability(both, { model: "claude-sonnet-5-5" }, NOW), "available");
+  assert.equal(candidateAvailability(both, { model: "claude-opus-5-5", surface: "Claude Design" }, NOW), "exhausted");
 });
 
 test("nothing full is available for any candidate; unreadable or stale readings are unknown", async () => {
   const observation = await readBody(limitsBody(scopedRow({ model: { display_name: "Opus" } }, 40)));
   assert.equal(observation.status, "available");
-  assert.equal(candidateAvailability(observation, { model: "claude-opus-5-5" }), "available");
-  assert.equal(candidateAvailability(observation, {}), "available");
+  assert.equal(candidateAvailability(observation, { model: "claude-opus-5-5" }, NOW), "available");
+  assert.equal(candidateAvailability(observation, {}, NOW), "available");
   assert.equal(candidateAvailability(observation, { model: "claude-opus-5-5" }, new Date(NOW.getTime() + 31 * 60 * 1000)), "unknown");
 
   const mismatch = (await read({ expectedAccount: "99999999-0000-4000-8000-000000000000" })).observation;
-  assert.equal(candidateAvailability(mismatch, { model: "claude-sonnet-5-5" }), "unknown");
-  assert.equal(candidateAvailability(null, { model: "claude-sonnet-5-5" }), "unknown");
+  assert.equal(candidateAvailability(mismatch, { model: "claude-sonnet-5-5" }, NOW), "unknown");
+  assert.equal(candidateAvailability(null, { model: "claude-sonnet-5-5" }, NOW), "unknown");
+});
+
+test("qualified, unrecognised or blank scopes and stale stored readings without now resolve to unknown", async () => {
+  for (const qualifiedModel of ["Opus only", "Claude 5.5 Opus", "Frontier"]) {
+    const observation = await readBody(limitsBody(scopedRow({ model: { display_name: qualifiedModel } })));
+    assert.equal(candidateAvailability(observation, { model: "claude-opus-5-5" }, NOW), "unknown", qualifiedModel);
+    assert.equal(candidateAvailability(observation, { model: "claude-sonnet-5-5" }, NOW), "unknown", qualifiedModel);
+  }
+
+  const opusOnly = await readBody(limitsBody(scopedRow({ model: { display_name: "Opus" } })));
+  assert.equal(candidateAvailability(opusOnly, { model: "custom-unrecognised-model" }, NOW), "unknown");
+
+  const oauthSurface = await readBody(limitsBody(scopedRow({ surface: { display_name: "OAuth apps" } })));
+  assert.equal(candidateAvailability(oauthSurface, { model: "claude-sonnet-5-5", surface: "Claude Code" }, NOW), "unknown");
+  assert.equal(candidateAvailability(oauthSurface, { model: "claude-sonnet-5-5", surface: "OAuth apps" }, NOW), "exhausted");
+
+  for (const blank of ["", "   "]) {
+    const blankModel = await readBody(limitsBody(scopedRow({ model: { display_name: blank } })));
+    assert.equal(blankModel.exhaustedWindows[0].appliesTo, "unknown");
+    assert.equal(blankModel.exhaustedWindows[0].scope, null);
+    assert.equal(candidateAvailability(blankModel, { model: "claude-opus-5-5" }, NOW), "unknown");
+    assert.equal(candidateAvailability(blankModel, { model: "claude-sonnet-5-5" }, NOW), "unknown");
+
+    const handCrafted = {
+      ...opusOnly,
+      exhaustedWindows: [{ kind: "weekly_scoped", appliesTo: "scoped", scope: { model: blank, surface: null } }],
+    };
+    assert.equal(candidateAvailability(handCrafted, { model: "claude-sonnet-5-5" }, NOW), "unknown");
+  }
+
+  const realNow = new Date();
+  const futureReset = new Date(realNow.getTime() + 60 * 60 * 1000).toISOString();
+  const liveFreshBody = {
+    ...realUsageBody,
+    limits: [
+      { ...realUsageBody.limits[0], resets_at: futureReset },
+      { ...realUsageBody.limits[1], resets_at: futureReset },
+    ],
+  };
+  const staleStored = await read({
+    now: new Date(realNow.getTime() - 31 * 60 * 1000),
+    configDir: configDir({
+      credentials: {
+        accessToken: ACCESS_TOKEN,
+        refreshToken: REFRESH_TOKEN,
+        expiresAt: realNow.getTime() + 60 * 60 * 1000,
+      },
+    }),
+    fakeFetch: fakeFetch({ usage: () => jsonResponse(200, liveFreshBody) }),
+  });
+  assert.equal(staleStored.observation.freshness.state, "fresh");
+  assert.equal(candidateAvailability(staleStored.observation, { model: "claude-sonnet-5-5" }), "unknown");
+
+  const passedResetBody = {
+    ...realUsageBody,
+    limits: [
+      { ...realUsageBody.limits[0], resets_at: new Date(realNow.getTime() - 1000).toISOString() },
+      { ...realUsageBody.limits[1], resets_at: futureReset },
+    ],
+  };
+  const resetPassedStored = await read({
+    now: new Date(realNow.getTime() - 5 * 60 * 1000),
+    configDir: configDir({
+      credentials: {
+        accessToken: ACCESS_TOKEN,
+        refreshToken: REFRESH_TOKEN,
+        expiresAt: realNow.getTime() + 60 * 60 * 1000,
+      },
+    }),
+    fakeFetch: fakeFetch({ usage: () => jsonResponse(200, passedResetBody) }),
+  });
+  assert.equal(resetPassedStored.observation.freshness.state, "fresh");
+  assert.equal(candidateAvailability(resetPassedStored.observation, { model: "claude-sonnet-5-5" }), "unknown");
+
+  const currentReading = await read({
+    now: realNow,
+    configDir: configDir({
+      credentials: {
+        accessToken: ACCESS_TOKEN,
+        refreshToken: REFRESH_TOKEN,
+        expiresAt: realNow.getTime() + 60 * 60 * 1000,
+      },
+    }),
+    fakeFetch: fakeFetch({ usage: () => jsonResponse(200, liveFreshBody) }),
+  });
+  assert.equal(candidateAvailability(currentReading.observation, { model: "claude-sonnet-5-5" }), "available");
 });
 
 test("no Claude login on the host is an unknown account, not unavailable data", async () => {
@@ -339,4 +426,83 @@ test("the command prints one JSON observation", async () => {
   assertNoCredentials(observation);
 
   assert.equal(await main(["--bogus"], { stdout: () => {}, stderr: () => {} }), 2);
+});
+
+test("requesting a non-local target host returns unknown_account without reading local credentials, and legacy seven_day_oauth_apps is preserved", async () => {
+  const brokenDir = mkdtempSync(path.join(tmpdir(), "claude-usage-"));
+  writeFileSync(path.join(brokenDir, ".credentials.json"), "{not json");
+
+  const remote = await read({ configDir: brokenDir, hostname: "remote-worker", localHostname: "test-host" });
+  assert.equal(remote.observation.status, "unknown_account");
+  assert.equal(remote.observation.reason, "host_not_local");
+  assert.equal(remote.observation.scope.host, "remote-worker");
+  assert.equal(remote.observation.scope.configDir, null);
+  assert.equal(remote.observation.scope.accountUuid, null);
+  assert.equal(remote.observation.windows, null);
+  assert.equal(remote.calls.length, 0);
+  assertNoCredentials(remote.observation);
+
+  const defaultLocal = fakeFetch();
+  const remoteAgainstOsHost = await readClaudeUsage({
+    configDir: configDir(),
+    fetch: defaultLocal.fetch,
+    now: () => NOW,
+    hostname: "definitely-not-this-host.invalid",
+  });
+  assert.equal(remoteAgainstOsHost.status, "unknown_account");
+  assert.equal(remoteAgainstOsHost.reason, "host_not_local");
+  assert.equal(remoteAgainstOsHost.scope.host, "definitely-not-this-host.invalid");
+  assert.equal(defaultLocal.calls.length, 0);
+  assertNoCredentials(remoteAgainstOsHost);
+
+  const cliLines = [];
+  const cliFetch = fakeFetch();
+  const cliCode = await main(["--config-dir", configDir(), "--host", "remote-worker"], {
+    fetch: cliFetch.fetch,
+    now: () => NOW,
+    hostname: "test-host",
+    stdout: (line) => cliLines.push(line),
+    stderr: () => {},
+  });
+  assert.equal(cliCode, 0);
+  const cliObs = JSON.parse(cliLines.join("\n"));
+  assert.equal(cliObs.status, "unknown_account");
+  assert.equal(cliObs.reason, "host_not_local");
+  assert.equal(cliObs.scope.host, "remote-worker");
+  assert.equal(cliFetch.calls.length, 0);
+
+  const { limits, ...legacy } = realUsageBody;
+  const legacyOauth = await readBody({
+    ...legacy,
+    seven_day_oauth_apps: { utilization: 100, resets_at: "2026-11-04T15:59:59+00:00" },
+  });
+  assert.equal(legacyOauth.status, "limited");
+  const oauthWindow = legacyOauth.windows.find((window) => window.scope?.surface === "OAuth apps");
+  assert.deepEqual(
+    oauthWindow && { kind: oauthWindow.kind, group: oauthWindow.group, label: oauthWindow.label, scope: oauthWindow.scope, appliesTo: oauthWindow.appliesTo, usedPercent: oauthWindow.usedPercent },
+    { kind: "weekly_scoped", group: "weekly", label: "Current week (OAuth apps)", scope: { model: null, surface: "OAuth apps" }, appliesTo: "scoped", usedPercent: 100 },
+  );
+  assert.equal(candidateAvailability(legacyOauth, { model: "claude-sonnet-5-5", surface: "Claude Code" }, NOW), "unknown");
+  assert.equal(candidateAvailability(legacyOauth, { model: "claude-sonnet-5-5", surface: "OAuth apps" }, NOW), "exhausted");
+});
+
+test("HTTP 429 omits retryAfterSeconds when Retry-After is absent or not a non-negative number", async () => {
+  for (const headers of [{}, { "retry-after": "" }, { "retry-after": "   " }, { "retry-after": "Fri, 30 Oct 2026 10:00:00 GMT" }, { "retry-after": "soon" }, { "retry-after": "-10" }]) {
+    const { observation } = await read({
+      fakeFetch: fakeFetch({ usage: () => jsonResponse(429, { error: "slow down" }, headers) }),
+    });
+    assert.equal(observation.status, "unavailable");
+    assert.equal(observation.reason, "rate_limited");
+    assert.equal("retryAfterSeconds" in observation, false, JSON.stringify(headers));
+    assertNoCredentials(observation);
+  }
+
+  for (const [header, expected] of [["0", 0], ["45", 45]]) {
+    const { observation } = await read({
+      fakeFetch: fakeFetch({ usage: () => jsonResponse(429, { error: "slow down" }, { "retry-after": header }) }),
+    });
+    assert.equal(observation.status, "unavailable");
+    assert.equal(observation.reason, "rate_limited");
+    assert.equal(observation.retryAfterSeconds, expected);
+  }
 });
