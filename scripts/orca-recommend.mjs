@@ -501,17 +501,24 @@ export async function recommend(options, candidates, usageByAgent = {}) {
     learned.demoted?.length
       ? ` Demoted ${learned.demoted.map((d) => `${d.choice}: ${d.effect}`).join("; ")}.`
       : "";
+  const demotionMovedPick =
+    Boolean(learned.demoted?.length) &&
+    first &&
+    baselineFirst &&
+    choiceName(first) !== choiceName(baselineFirst);
   const learningNote = historyLoadNote
     ? ` ${historyLoadNote}.`
     : learned.applied.length
       ? ` Learned adjustment preferred ${choiceName(first)} over baseline ${choiceName(baselineFirst)} from ${learned.applied[0].rawCount} comparable outcomes (mean score ${learned.applied[0].meanScore.toFixed(2)}).${demotionNote}`
       : learned.exploration
         ? ` Exploration pick ${learned.exploration.choice}: suitable but under-observed (${learned.exploration.reason}).${demotionNote}`
-        : learned.demoted?.length
-          ? ` Negative evidence did not promote any choice over the capability-and-usage baseline.${demotionNote}`
-          : learningContext
-            ? " Sparse or missing comparable evidence: falling back to the capability-and-usage baseline."
-            : "";
+        : demotionMovedPick
+          ? ` Negative evidence demoted the baseline; recommending ${choiceName(first)} instead.${demotionNote}`
+          : learned.demoted?.length
+            ? ` Negative evidence did not promote any choice over the capability-and-usage baseline.${demotionNote}`
+            : learningContext
+              ? " Sparse or missing comparable evidence: falling back to the capability-and-usage baseline."
+              : "";
   const recommendation = first
     ? {
         ...first,

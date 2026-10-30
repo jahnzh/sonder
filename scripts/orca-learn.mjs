@@ -523,8 +523,9 @@ function lookupAdjustment(adjustments, candidate, ctx) {
  * }} args
  */
 /**
- * Rank band for a scored candidate. Negative sufficient evidence demotes below the
- * unevidenced baseline band and never promotes a choice.
+ * Rank band for a scored candidate: positive (1) > unevidenced (0) > negative (-1).
+ * Negative evidence demotes below the unevidenced band; it never promotes a choice.
+ * Preference is compared only inside the positive band (see applyLearning sort).
  * @param {{ adjustment: any }} row
  */
 function evidenceBand(row) {
@@ -590,12 +591,20 @@ export function applyLearning({ usable, kind, difficulty, learning, random = Mat
   const applied = [];
   const demoted = [];
   if (withEvidence.length) {
+    // Bands: positive > unevidenced > negative. Preference ranks only inside the
+    // positive band. Equal non-positive peers keep baseline order so a less-bad
+    // negative score never tips the pick away from the baseline.
     orderedTier = [...scored]
       .sort((a, b) => {
-        const bandDiff = evidenceBand(b) - evidenceBand(a);
+        const bandA = evidenceBand(a);
+        const bandB = evidenceBand(b);
+        const bandDiff = bandB - bandA;
         if (bandDiff !== 0) return bandDiff;
-        if (a.adjustment && b.adjustment && b.preference !== a.preference) return b.preference - a.preference;
-        return comparePeerSignals(a, b, sameTier);
+        if (bandA > 0 && a.adjustment && b.adjustment && b.preference !== a.preference) {
+          return b.preference - a.preference;
+        }
+        if (bandA > 0) return comparePeerSignals(a, b, sameTier);
+        return sameTier.indexOf(a.candidate) - sameTier.indexOf(b.candidate);
       })
       .map((row) => row.candidate);
 

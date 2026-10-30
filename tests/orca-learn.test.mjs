@@ -723,6 +723,109 @@ test("baseline stays recommended when the only evidence is bad", async () => {
   }
 });
 
+test("two negative options keep baseline order even when the baseline has the worse mean", async () => {
+  const box = sandbox();
+  try {
+    // Baseline (claude) fails harder: completion fail + check fail ⇒ mean ≈ -1.75.
+    for (const id of ["base_bad1", "base_bad2", "base_bad3"]) {
+      putRecord(box.history, {
+        id,
+        agent: "claude",
+        model: "claude-sonnet-5-5",
+        effort: "high",
+        outcome: "failed",
+        checks: [{ name: "unit", result: "fail" }],
+        completedAt: "2026-10-25T12:00:00.000Z",
+      });
+    }
+    // Peer (cursor) also fails but less hard: failed outcome with a passing check ⇒ mean ≈ -0.5.
+    for (const id of ["peer_bad1", "peer_bad2", "peer_bad3"]) {
+      putRecord(box.history, {
+        id,
+        agent: "cursor",
+        model: "composer-2.5",
+        effort: null,
+        outcome: "failed",
+        checks: [{ name: "unit", result: "pass" }],
+        completedAt: "2026-10-26T12:00:00.000Z",
+      });
+    }
+    const learning = loadLearningContext({
+      historyDir: box.history,
+      learnDir: box.learn,
+      kind: "feature",
+      difficulty: "standard",
+      now: NOW,
+      agentVersions: { cursor: AGENT_VERSION, claude: AGENT_VERSION },
+    });
+    const baseAdj = learning.adjustments.find((a) => a.choice === "claude/claude-sonnet-5-5/high");
+    const peerAdj = learning.adjustments.find((a) => a.choice === "cursor/composer-2.5");
+    assert.ok(baseAdj && peerAdj);
+    assert.ok(baseAdj.meanScore < 0 && peerAdj.meanScore < 0);
+    assert.ok(baseAdj.meanScore < peerAdj.meanScore, "baseline must be the worse (more negative) mean");
+
+    const learned = applyLearning({
+      usable: CANDIDATES.filter((c) => c.capability === "standard"),
+      kind: "feature",
+      difficulty: "standard",
+      learning,
+      random: () => 0.99,
+    });
+    assert.equal(choice(learned.baselineRecommendation), "claude/claude-sonnet-5-5/high");
+    assert.equal(choice(learned.recommendation), "claude/claude-sonnet-5-5/high");
+    assert.equal(learned.applied.length, 0);
+    assert.ok(learned.demoted.some((d) => d.choice === "claude/claude-sonnet-5-5/high"));
+    assert.ok(learned.demoted.some((d) => d.choice === "cursor/composer-2.5"));
+
+    const candidates = [
+      { agent: "claude", model: "claude-sonnet-5-5", effort: "high", capability: "standard", suits: "Analysis", unusable: null },
+      { agent: "cursor", model: "composer-2.5", effort: null, capability: "standard", suits: "Scripting", unusable: null },
+    ];
+    const result = await awaitRecommendWithLearning(box, candidates);
+    assert.equal(choice(result.recommendation), "claude/claude-sonnet-5-5/high");
+    assert.equal(result.learning.applied.length, 0);
+    assert.match(result.recommendation.reason, /Negative evidence did not promote any choice over the capability-and-usage baseline/);
+  } finally {
+    box.cleanup();
+  }
+});
+
+test("demoted baseline yields an unevidenced recommendation and the note says so", async () => {
+  const box = sandbox();
+  try {
+    for (const id of ["demote1", "demote2", "demote3"]) {
+      putRecord(box.history, {
+        id,
+        agent: "claude",
+        model: "claude-sonnet-5-5",
+        effort: "high",
+        outcome: "failed",
+        checks: [{ name: "unit", result: "fail" }],
+        completedAt: "2026-10-25T12:00:00.000Z",
+      });
+    }
+    const candidates = [
+      { agent: "claude", model: "claude-sonnet-5-5", effort: "high", capability: "standard", suits: "Analysis", unusable: null },
+      { agent: "cursor", model: "composer-2.5", effort: null, capability: "standard", suits: "Scripting", unusable: null },
+    ];
+    const result = await awaitRecommendWithLearning(box, candidates);
+    assert.equal(choice(result.baselineRecommendation), "claude/claude-sonnet-5-5/high");
+    assert.equal(choice(result.recommendation), "cursor/composer-2.5");
+    assert.equal(result.learning.applied.length, 0);
+    assert.ok(result.learning.demoted.some((d) => d.choice === "claude/claude-sonnet-5-5/high"));
+    assert.match(
+      result.recommendation.reason,
+      /demoted the baseline|changed the pick|recommending cursor\/composer-2\.5/i,
+    );
+    assert.doesNotMatch(
+      result.recommendation.reason,
+      /Negative evidence did not promote any choice over the capability-and-usage baseline/,
+    );
+  } finally {
+    box.cleanup();
+  }
+});
+
 test("duplicate record ids are counted once", () => {
   const box = sandbox();
   try {
