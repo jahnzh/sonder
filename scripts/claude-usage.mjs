@@ -3,11 +3,14 @@ import { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { assessmentVerdict } from "./usage-common.mjs";
 
 export const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 export const CLAUDE_PROFILE_URL = "https://api.anthropic.com/api/oauth/profile";
 const OAUTH_BETA = "oauth-2025-04-20";
 export const STALE_AFTER_MS = 30 * 60 * 1000;
+/** Shared-window remaining at or under this share is reported as low for collector planning. */
+export const LOW_REMAINING_PERCENT = 10;
 const REQUEST_TIMEOUT_MS = 15_000;
 
 const SOURCE = {
@@ -77,9 +80,10 @@ function parseRetryAfterSeconds(value) {
   return Number.isFinite(seconds) ? seconds : null;
 }
 
-async function getJson(fetchImpl, url, accessToken) {
+async function getJson(fetchImpl, url, accessToken, timeoutMs = REQUEST_TIMEOUT_MS, signal) {
   let response;
   try {
+    const timeout = AbortSignal.timeout(timeoutMs);
     response = await fetchImpl(url, {
       method: "GET",
       headers: {
@@ -88,9 +92,12 @@ async function getJson(fetchImpl, url, accessToken) {
         Accept: "application/json",
         "User-Agent": "sonder-claude-usage",
       },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
     });
   } catch (error) {
+    if (error?.name === "AbortError" || error?.name === "TimeoutError" || error?.code === "TIMEOUT" || /timeout|aborted/i.test(String(error?.message ?? ""))) {
+      throw new UsageError("unavailable", "timeout", `${new URL(url).pathname}: timed out after ${timeoutMs} ms`);
+    }
     throw new UsageError("unavailable", "network_error", `${new URL(url).pathname}: ${error?.name ?? "Error"}`);
   }
   const where = `${new URL(url).pathname} answered HTTP ${response.status}`;
@@ -340,16 +347,21 @@ export async function readClaudeUsage({
   host,
   localHostname = os.hostname(),
   expectedAccount,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+  signal,
 } = {}) {
   const observedAt = now();
   const targetHost = host ?? hostname ?? localHostname;
   const isLocalHost = sameHost(targetHost, localHostname);
+  const requestTimeoutMs =
+    typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.trunc(timeoutMs) : REQUEST_TIMEOUT_MS;
   const observation = {
     provider: "claude",
     source: SOURCE,
     scope: {
       host: targetHost,
-      configDir: isLocalHost ? configDir : null,
+      // Never retain a home-directory path; sanitize also drops configDir on store.
+      configDir: null,
       accountUuid: null,
       organizationUuid: null,
       plan: null,
@@ -373,11 +385,11 @@ export async function readClaudeUsage({
       );
     }
     const { accessToken } = readCredentials(configDir, observedAt);
-    Object.assign(observation.scope, accountScope(await getJson(fetchImpl, CLAUDE_PROFILE_URL, accessToken)));
+    Object.assign(observation.scope, accountScope(await getJson(fetchImpl, CLAUDE_PROFILE_URL, accessToken, requestTimeoutMs, signal)));
     if (expectedAccount && observation.scope.accountUuid !== expectedAccount) {
       throw new UsageError("account_mismatch", "account_mismatch", "The Claude Code login on this host belongs to a different account");
     }
-    const { windows, extraUsage } = interpretUsage(await getJson(fetchImpl, CLAUDE_USAGE_URL, accessToken));
+    const { windows, extraUsage } = interpretUsage(await getJson(fetchImpl, CLAUDE_USAGE_URL, accessToken, requestTimeoutMs, signal));
     observation.windows = windows;
     observation.extraUsage = extraUsage;
     observation.exhaustedWindows = windows
@@ -395,6 +407,67 @@ export async function readClaudeUsage({
   }
   observation.freshness = assessFreshness(observation, observedAt);
   return observation;
+}
+
+function describeClaudeWindows(windows) {
+  return windows
+    .map((window) => `${window.label ?? window.kind} ${window.usedPercent}% used, resets ${window.resetsAt ?? "unreported"}`)
+    .join("; ");
+}
+
+function earliestClaudeReset(windows) {
+  const times = windows.map((window) => Date.parse(window.resetsAt)).filter((time) => !Number.isNaN(time));
+  return times.length ? new Date(Math.min(...times)).toISOString() : null;
+}
+
+/**
+ * What a stored Claude reading says at `now` for collector/planner use.
+ * Status is one of fresh, low, exhausted, stale, unavailable or unknown; only fresh and low confirm capacity.
+ * Scoped (`limited`) exhaustion does not exhaust the whole agent: shared windows still govern the report.
+ */
+export function assessClaudeUsage(observation, now = new Date()) {
+  const windows = Array.isArray(observation?.windows) ? observation.windows : [];
+  const freshness =
+    observation && ["available", "limited", "exhausted", "stale"].includes(observation.status) && windows.length > 0
+      ? assessFreshness(observation, now)
+      : {
+          state:
+            observation?.status === "unavailable"
+              ? "unavailable"
+              : observation?.status === "unknown_account" || observation?.status === "account_mismatch"
+                ? "unknown"
+                : "unknown",
+          reasons: [observation?.detail ?? observation?.reason ?? "no_usage_windows"],
+          staleAfter: null,
+        };
+  const verdict = (status, reason, resetsAt = earliestClaudeReset(windows)) =>
+    assessmentVerdict(freshness, status, reason, resetsAt);
+  if (observation?.status === "unknown_account" || observation?.status === "account_mismatch") {
+    return verdict("unknown", observation.detail ?? observation.reason, null);
+  }
+  if (freshness.state === "unavailable" || observation?.status === "unavailable") {
+    return verdict("unavailable", observation?.detail ?? observation?.reason ?? freshness.reasons[0], null);
+  }
+  if (freshness.state === "unknown") {
+    return verdict("unknown", observation?.detail ?? observation?.reason ?? freshness.reasons[0], null);
+  }
+  if (freshness.state === "stale" || observation?.status === "stale") {
+    return verdict("stale", `${freshness.reasons.join(", ")}; last read ${observation.observedAt}: ${describeClaudeWindows(windows)}`);
+  }
+  if (observation.status === "exhausted") {
+    const blocking = windows.filter((window) => window.appliesTo === "all" && window.usedPercent >= 100);
+    return verdict(
+      "exhausted",
+      describeClaudeWindows(blocking.length ? blocking : windows),
+      earliestClaudeReset(blocking.length ? blocking : windows),
+    );
+  }
+  const shared = windows.filter((window) => window.appliesTo === "all");
+  const capacityWindows = shared.length ? shared : windows;
+  const low = capacityWindows.filter((window) => 100 - window.usedPercent <= LOW_REMAINING_PERCENT);
+  return low.length
+    ? verdict("low", describeClaudeWindows(low), earliestClaudeReset(low))
+    : verdict("fresh", describeClaudeWindows(capacityWindows));
 }
 
 function parseArgs(argv) {

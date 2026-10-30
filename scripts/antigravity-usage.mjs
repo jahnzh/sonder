@@ -4,9 +4,12 @@ import { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { STALE_AFTER_MS, UsageError, accountFingerprint, assessFreshness, redact, sameHost } from "./usage-common.mjs";
+import { STALE_AFTER_MS, UsageError, accountFingerprint, assessFreshness, assessmentVerdict, redact, sameHost } from "./usage-common.mjs";
 
 export { STALE_AFTER_MS, accountFingerprint, assessFreshness };
+
+/** Remaining fraction at or under this share is reported as low for collector planning. */
+export const LOW_REMAINING_FRACTION = 0.1;
 
 const DEFAULT_TIMEOUT_MS = 45_000;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
@@ -92,8 +95,12 @@ function readLogin(home) {
   };
 }
 
-function runAgy(agyPath, command, { home, env, timeoutMs }) {
+function runAgy(agyPath, command, { home, env, timeoutMs, signal }) {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new UsageError("unavailable", "timeout", `agy ${command} was aborted before start`));
+      return;
+    }
     const childEnv = { ...env, HOME: home };
     delete childEnv.AGY_ADC_AUTH;
     let child;
@@ -115,6 +122,8 @@ function runAgy(agyPath, command, { home, env, timeoutMs }) {
       failure = error;
       child.kill("SIGKILL");
     };
+    const onAbort = () => stop(new UsageError("unavailable", "timeout", `agy ${command} was aborted`));
+    signal?.addEventListener("abort", onAbort, { once: true });
     const timer = setTimeout(() => stop(new UsageError("unavailable", "timeout", `agy ${command} did not answer within ${timeoutMs} ms`)), timeoutMs);
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
@@ -130,10 +139,12 @@ function runAgy(agyPath, command, { home, env, timeoutMs }) {
     });
     child.on("error", (error) => {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       reject(failure ?? new UsageError("unavailable", error.code === "ENOENT" ? "cli_not_found" : "cli_error", `Could not start agy (${error.code ?? "error"})`));
     });
     child.on("close", (code) => {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       if (failure) reject(failure);
       else resolve({ code, stdout, stderr });
     });
@@ -404,6 +415,7 @@ export async function readAntigravityUsage({
   host,
   localHostname = os.hostname(),
   expectedAccount,
+  signal,
 } = {}) {
   const observedAt = now();
   const targetHost = host ?? hostname ?? localHostname;
@@ -449,7 +461,7 @@ export async function readAntigravityUsage({
       Object.assign(observation.scope, login.scope);
       throw new UsageError("account_mismatch", "account_mismatch", "The Antigravity CLI login on this host belongs to a different account");
     }
-    const runOptions = { home, env, timeoutMs };
+    const runOptions = { home, env, timeoutMs, signal };
     const secrets = [...login.secrets, ...envSecrets];
     const { windows, groups } = interpretUsage(parsePayload(await runAgy(agyPath, "/usage", runOptions), "/usage", secrets));
     Object.assign(observation.scope, login.scope);
@@ -477,6 +489,53 @@ export async function readAntigravityUsage({
       : (observation.freshness.reasons[0] ?? "stale");
   }
   return observation;
+}
+
+function describeAntigravityWindows(windows) {
+  return windows
+    .map((window) => `${window.label ?? window.id} ${window.usedPercent}% used, resets ${window.resetsAt ?? "unreported"}`)
+    .join("; ");
+}
+
+function earliestAntigravityReset(windows) {
+  const times = windows.map((window) => Date.parse(window.resetsAt)).filter((time) => !Number.isNaN(time));
+  return times.length ? new Date(Math.min(...times)).toISOString() : null;
+}
+
+/**
+ * What a stored Antigravity reading says at `now` for collector/planner use.
+ * Status is one of fresh, low, exhausted, stale, unavailable or unknown; only fresh and low confirm capacity.
+ * Group-scoped (`limited`) exhaustion does not exhaust the whole agent by itself.
+ */
+export function assessAntigravityUsage(observation, now = new Date()) {
+  const freshness = assessFreshness(observation, now);
+  const windows = Array.isArray(observation?.windows) ? observation.windows : [];
+  const verdict = (status, reason, resetsAt = earliestAntigravityReset(windows)) =>
+    assessmentVerdict(freshness, status, reason, resetsAt);
+  if (observation?.status === "unknown_account" || observation?.status === "account_mismatch") {
+    return verdict("unknown", observation.detail ?? observation.reason, null);
+  }
+  if (freshness.state === "unavailable") {
+    return verdict("unavailable", observation?.detail ?? freshness.reasons[0], null);
+  }
+  if (freshness.state === "unknown") {
+    return verdict("unknown", observation?.detail ?? freshness.reasons[0], null);
+  }
+  if (freshness.state === "stale" || observation?.status === "stale") {
+    return verdict("stale", `${freshness.reasons.join(", ")}; last read ${observation.observedAt}: ${describeAntigravityWindows(windows)}`);
+  }
+  if (observation.status === "exhausted") {
+    const blocking = windows.filter((window) => window.exhausted || window.remainingFraction <= 0);
+    return verdict(
+      "exhausted",
+      describeAntigravityWindows(blocking.length ? blocking : windows),
+      earliestAntigravityReset(blocking.length ? blocking : windows),
+    );
+  }
+  const low = windows.filter((window) => !window.exhausted && window.remainingFraction <= LOW_REMAINING_FRACTION);
+  return low.length
+    ? verdict("low", describeAntigravityWindows(low), earliestAntigravityReset(low))
+    : verdict("fresh", describeAntigravityWindows(windows));
 }
 
 const OPTION_KEYS = {

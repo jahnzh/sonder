@@ -97,21 +97,33 @@ function stub(dir: string, name: string, body: string) {
 function sandbox() {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "sonder-recommend-")));
   const bin = join(dir, "bin");
+  const home = join(dir, "home");
   mkdirSync(bin);
+  mkdirSync(home);
   writeFileSync(join(dir, "models.md"), BASELINE);
   writeFileSync(join(dir, "agent-models"), AGENT_MODELS);
   stub(bin, "agent", `cat "${dir}/agent-models"\nexit $(cat "${dir}/agent-exit" 2>/dev/null || echo 0)`);
   stub(bin, "orca", `echo "$@" >> "${dir}/orca.log"`);
   // A baseline with a Codex row makes the command read usage, and that must never reach the real account.
   stub(bin, "codex", `echo called >> "${dir}/codex.log"\nexit 1`);
-  return { dir, bin, orcaLog: join(dir, "orca.log"), models: join(dir, "models.md") };
+  stub(bin, "agy", `echo missing >> "${dir}/agy.log"\nexit 1`);
+  return { dir, bin, home, orcaLog: join(dir, "orca.log"), models: join(dir, "models.md") };
 }
 
 function recommend(box: ReturnType<typeof sandbox>, args: string[], jevUrl: string, env: Record<string, string | undefined> = {}) {
   return new Promise<{ status: number | null; stdout: string; stderr: string; json: any }>((done) => {
     const child = spawn(process.execPath, [script, "--task", "105", "--summary", "Add a parser with unit tests", "--models", box.models, ...args], {
       cwd: box.dir,
-      env: { ...process.env, PATH: `${box.bin}:${process.env.PATH}`, TYPESAFE_API_KEY: API_KEY, ORCA_RECOMMEND_JEV_URL: jevUrl, ORCA_USAGE_STATE_DIR: join(box.dir, "usage-state"), ...env },
+      env: {
+        ...process.env,
+        PATH: `${box.bin}:${process.env.PATH}`,
+        HOME: box.home,
+        CLAUDE_CONFIG_DIR: join(box.dir, "claude"),
+        TYPESAFE_API_KEY: API_KEY,
+        ORCA_RECOMMEND_JEV_URL: jevUrl,
+        ORCA_USAGE_STATE_DIR: join(box.dir, "usage-state"),
+        ...env,
+      },
     });
     let stdout = "";
     let stderr = "";
@@ -496,28 +508,23 @@ test("a judgment given while Jev is conclusive is shown but does not replace the
 
 // --- Usage
 
-test("usage is reported as unknown overall and for every candidate", async () => {
+test("usage is reported as unknown overall and for every candidate when no local login is present", async () => {
   const r = await scenario({ body: LIVE.moderate }, ["--record", "spec.md"], {}, (box) => writeFileSync(join(box.dir, "spec.md"), "# spec\n"));
   try {
-    assert.deepEqual(r.json.usage, {
-      status: "unknown",
-      reason: "no verified usage collector covers this agent",
-      source: null,
-      observedAt: null,
-      account: "unknown",
-      host: "unknown",
-      capacityConfirmed: false,
-    });
+    assert.equal(r.json.usage.status, "unknown");
+    assert.equal(r.json.usage.capacityConfirmed, false);
+    assert.equal(r.json.usage.account, "unknown");
+    assert.equal(r.json.usage.refresh.attempted, true);
     assert.equal(r.json.recommendation.usage, "unknown");
-    assert.deepEqual(r.json.recommendation.usageScope, { account: "unknown", host: "unknown" });
+    assert.equal(r.json.recommendation.usageScope.account, "unknown");
     assert.ok(r.json.alternatives.length > 0);
     for (const alternative of r.json.alternatives) {
       assert.equal(alternative.usage, "unknown");
-      assert.deepEqual(alternative.usageScope, { account: "unknown", host: "unknown" });
+      assert.equal(alternative.usageScope.account, "unknown");
     }
     assert.match(r.json.recommendation.reason, /[Uu]sage is unknown/);
-    assert.match(r.spec("spec.md"), /^- Usage: unknown \(account unknown, host unknown;/m);
-    assert.doesNotMatch(r.stdout, /"available"|"fresh"/);
+    assert.match(r.spec("spec.md"), /^- Usage: unknown \(account unknown, host .+;/m);
+    assert.doesNotMatch(r.stdout, /"status": "fresh"/);
   } finally {
     clean(r.box);
   }
@@ -580,12 +587,14 @@ test("a reading is taken before planning and the plan exposes it with its proven
   }
 });
 
-test("agents without a collector stay unknown beside a confirmed Codex reading", async () => {
+test("a collected agent without local credentials stays unknown beside a confirmed Codex reading", async () => {
   const r = await withCodex(farFuture({}), []);
   try {
     assert.equal(r.json.recommendation.agent, "claude");
     assert.equal(r.json.recommendation.usage, "unknown");
     assert.equal(r.json.usage.status, "unknown");
+    assert.equal(r.json.usageByAgent.claude.refresh.attempted, true);
+    assert.equal(r.json.usageByAgent.claude.capacityConfirmed, false);
     assert.match(r.json.recommendation.reason, /capacity is not confirmed/);
     const codex = r.json.alternatives.find((c: { agent: string }) => c.agent === "codex");
     assert.equal(codex.usage, "fresh");
@@ -702,10 +711,42 @@ test("the exhausted live reply from this account is read end to end", async () =
 });
 
 test("a baseline with no collected agent starts no reader and creates no state", async () => {
-  const r = await scenario({ body: LIVE.moderate });
+  const r = await scenario({ body: LIVE.moderate }, [], {}, (box) => {
+    // Only an agent outside PROVIDERS: the collector must not open state or poll.
+    writeFileSync(
+      box.models,
+      `# Verified Subagent Models
+
+| Agent       | Model ID              | Supported effort values | Capability      | Suits                | Last verified |
+| ----------- | --------------------- | ----------------------- | --------------- | -------------------- | ------------- |
+| manual      | \`hand-picked\`         | none                    | standard        | Manual only          | 2026-10-30    |
+
+## Usage limits
+
+| Not | A model row |
+| --- | ----------- |
+| x   | y           |
+`,
+    );
+  });
   try {
     assert.deepEqual(r.json.usageByAgent, {});
     assert.equal(existsSync(join(r.box.dir, "usage-state")), false);
+  } finally {
+    clean(r.box);
+  }
+});
+
+test("a multi-provider baseline refreshes every collected reader before recommending", async () => {
+  const r = await scenario({ body: LIVE.moderate });
+  try {
+    assert.equal(r.status, 0, r.stderr);
+    for (const name of ["claude", "cursor", "antigravity"]) {
+      assert.ok(r.json.usageByAgent[name], `usageByAgent must include ${name}`);
+      assert.equal(r.json.usageByAgent[name].capacityConfirmed, false);
+      assert.equal(r.json.usageByAgent[name].refresh.attempted, true);
+    }
+    assert.ok(existsSync(join(r.box.dir, "usage-state", "usage.sqlite")));
   } finally {
     clean(r.box);
   }

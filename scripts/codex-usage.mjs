@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { UsageError, accountFingerprint, assessFreshness, redact, sameHost } from "./usage-common.mjs";
+import { UsageError, accountFingerprint, assessFreshness, assessmentVerdict, redact, sameHost } from "./usage-common.mjs";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const KILL_GRACE_MS = 2_000;
@@ -66,8 +66,12 @@ const ACCOUNT = 2;
 const RATE_LIMITS = 3;
 
 /** Asks one short-lived app-server, and resolves once it has exited. */
-function askAppServer(codexPath, { codexHome, env, timeoutMs }) {
+function askAppServer(codexPath, { codexHome, env, timeoutMs, signal }) {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new UsageError("unavailable", "timeout", "codex app-server was aborted before start"));
+      return;
+    }
     const childEnv = { ...env };
     if (codexHome) childEnv.CODEX_HOME = codexHome;
     const args = ["app-server", ...DISABLED_FEATURES.flatMap((feature) => ["--disable", feature])];
@@ -91,6 +95,8 @@ function askAppServer(codexPath, { codexHome, env, timeoutMs }) {
       child.kill("SIGTERM");
       killTimer = setTimeout(() => child.kill("SIGKILL"), KILL_GRACE_MS);
     };
+    const onAbort = () => finish(new UsageError("unavailable", "timeout", "codex app-server was aborted"));
+    signal?.addEventListener("abort", onAbort, { once: true });
     const timer = setTimeout(() => finish(new UsageError("unavailable", "timeout", `codex app-server did not answer within ${timeoutMs} ms`)), timeoutMs);
     const send = (message) => child.stdin.write(`${JSON.stringify(message)}\n`);
     const onMessage = (message) => {
@@ -140,11 +146,13 @@ function askAppServer(codexPath, { codexHome, env, timeoutMs }) {
     child.on("error", (error) => {
       clearTimeout(timer);
       clearTimeout(killTimer);
+      signal?.removeEventListener("abort", onAbort);
       reject(outcome?.error ?? new UsageError("unavailable", error.code === "ENOENT" ? "cli_not_found" : "cli_error", `Could not start codex (${error.code ?? "error"})`));
     });
     child.on("close", (code) => {
       clearTimeout(timer);
       clearTimeout(killTimer);
+      signal?.removeEventListener("abort", onAbort);
       if (outcome?.error) reject(outcome.error);
       else if (outcome) resolve(replies);
       else {
@@ -246,6 +254,7 @@ export async function readCodexUsage({
   host,
   localHostname = os.hostname(),
   expectedAccount,
+  signal,
 } = {}) {
   const observedAt = now();
   const targetHost = host ?? localHostname;
@@ -277,7 +286,7 @@ export async function readCodexUsage({
     if (!sameHost(targetHost, localHostname)) {
       throw new UsageError("unknown_account", "host_not_local", `Cannot read the Codex login of ${redact(targetHost) || "an unnamed host"} on ${localHostname}; run the reader on that host`);
     }
-    const replies = await askAppServer(codexPath, { codexHome, env, timeoutMs });
+    const replies = await askAppServer(codexPath, { codexHome, env, timeoutMs, signal });
     if (typeof replies[INITIALIZE]?.result?.codexHome === "string") observation.scope.codexHome = replies[INITIALIZE].result.codexHome;
     const identity = identify(replies[ACCOUNT]);
     if (hasExpectedAccount && (!trimmedExpectedAccount || identity.account !== observation.scope.expectedAccount)) {
@@ -332,14 +341,7 @@ function earliestReset(windows) {
 export function assessCodexUsage(observation, now = new Date()) {
   const freshness = assessFreshness(observation, now);
   const windows = codexWindows(observation);
-  const verdict = (status, reason, resetsAt = earliestReset(windows)) => ({
-    status,
-    reason,
-    capacityConfirmed: status === "fresh" || status === "low",
-    resetsAt,
-    staleAfter: freshness.staleAfter,
-    freshness: freshness.state,
-  });
+  const verdict = (status, reason, resetsAt = earliestReset(windows)) => assessmentVerdict(freshness, status, reason, resetsAt);
   if (freshness.state === "unavailable") return verdict("unavailable", observation?.detail ?? freshness.reasons[0], null);
   if (freshness.state === "unknown") return verdict("unknown", observation?.detail ?? freshness.reasons[0], null);
   if (freshness.state === "stale") return verdict("stale", `${freshness.reasons.join(", ")}; last read ${observation.observedAt}: ${describeWindows(windows)}`);

@@ -1,14 +1,20 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 import { assessCodexUsage, readCodexUsage } from "../scripts/codex-usage.mjs";
+import { assessClaudeUsage } from "../scripts/claude-usage.mjs";
+import { assessAntigravityUsage } from "../scripts/antigravity-usage.mjs";
+import { assessCursorUsage } from "../scripts/cursor-usage.mjs";
+import { buildDispatchEvaluation, formatEvaluationMarkdown } from "../scripts/orca-dispatch-eval.mjs";
 import {
   MAX_BACKOFF_MS,
   POLL_INTERVAL_MS,
+  PROVIDERS,
   UsageStore,
   backoffDelay,
   collectOnce,
@@ -16,6 +22,8 @@ import {
   defaultStateDir,
   main,
   refreshProvider,
+  reportAccount,
+  reportHost,
   runCollector,
   usageForPlanning,
   usageReport,
@@ -685,9 +693,20 @@ test("the service process reads through codex, refuses a second copy and stops c
   withState(async (dir) => {
     const bin = join(dir, "bin");
     const stateDir = join(dir, "state");
+    const home = join(dir, "home");
     mkdirSync(bin);
+    mkdirSync(home);
     writeFakeCodex(bin, { rateLimits: { result: rateLimits({ resetsAt: FAR_RESET, secondaryResetsAt: FAR_RESET }) } });
-    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, ORCA_USAGE_STATE_DIR: stateDir };
+    writeFileSync(join(bin, "agy"), "#!/usr/bin/env bash\necho missing\nexit 1\n");
+    chmodSync(join(bin, "agy"), 0o755);
+    // Isolate Claude/Cursor/Antigravity credentials so this process never touches the developer's logins.
+    const env = {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      HOME: home,
+      CLAUDE_CONFIG_DIR: join(dir, "claude"),
+      ORCA_USAGE_STATE_DIR: stateDir,
+    };
     const first = startCollector(env);
     let second;
     try {
@@ -714,6 +733,9 @@ test("the service process reads through codex, refuses a second copy and stops c
     assert.ok(status.readings.count >= 1);
     assert.equal(status.usage.codex.host.length > 0, true);
     assert.equal(status.usage.codex.status, "fresh");
+    for (const name of ["claude", "codex", "cursor", "antigravity"]) {
+      assert.ok(status.usage[name], `status must include ${name}`);
+    }
   }));
 
 test("an unavailable login leaves the failure in history with the real error text removed", () =>
@@ -730,4 +752,862 @@ test("an unavailable login leaves the failure in history with the real error tex
     assert.equal(state.next_poll_at, new Date(clock.now().getTime() + 5 * MINUTE).toISOString());
     assert.doesNotMatch(JSON.stringify(store.listReadings()), /127\.0\.0\.1/);
     store.close();
+  }));
+
+test("PROVIDERS lists all four agents with assess functions", () => {
+  assert.deepEqual(
+    PROVIDERS.map((provider) => provider.name),
+    ["claude", "codex", "cursor", "antigravity"],
+  );
+  for (const provider of PROVIDERS) {
+    assert.equal(typeof provider.read, "function");
+    assert.equal(typeof provider.assess, "function");
+  }
+});
+
+test("reportAccount and reportHost normalize Claude, Cursor and fingerprint scopes", () => {
+  assert.equal(reportAccount({ account: "sha256:0123456789abcdef" }), "sha256:0123456789abcdef");
+  assert.match(reportAccount({ accountUuid: "acct-uuid-1" }), /^sha256:[0-9a-f]{16}$/);
+  assert.match(reportAccount({ account: { known: true, userId: 42 } }), /^sha256:[0-9a-f]{16}$/);
+  assert.equal(reportHost({ host: "andi" }), "andi");
+  assert.equal(reportHost({ host: { selector: "local", hostname: "andi" } }), "andi");
+  assert.equal(reportAccount(null), "unknown");
+  assert.equal(reportHost({}), "unknown");
+});
+
+test("planning refreshes every collected provider and keeps raw readings", () =>
+  withState(async (dir) => {
+    const clock = fakeClock();
+    const providers = [
+      {
+        name: "claude",
+        assess: assessClaudeUsage,
+        read: async () => ({
+          provider: "claude",
+          observedAt: clock.now().toISOString(),
+          status: "available",
+          reason: null,
+          detail: null,
+          source: { kind: "claude-oauth-usage-endpoint" },
+          scope: { host: "andi", accountUuid: "claude-acct" },
+          windows: [{ kind: "session", label: "session", appliesTo: "all", usedPercent: 20, resetsAt: "2026-10-30T23:00:00.000Z" }],
+          exhaustedWindows: [],
+        }),
+      },
+      {
+        name: "codex",
+        assess: assessCodexUsage,
+        read: async () => ({ observedAt: clock.now().toISOString(), ...good({ used: 15 }) }),
+      },
+      {
+        name: "cursor",
+        assess: assessCursorUsage,
+        read: async () => ({
+          provider: "cursor",
+          observedAt: clock.now().toISOString(),
+          observedAtMs: clock.now().getTime(),
+          status: "ok",
+          reason: null,
+          source: { kind: "cursor-dashboard" },
+          scope: { host: { selector: "local", hostname: "andi" }, account: { known: true, userId: 7, planName: "pro" } },
+          windows: [{ id: "included_total", kind: "percentage_allowance", usedPercent: 10, display: "ok" }],
+          reset: { primaryResetAt: "2026-10-31T00:00:00.000Z" },
+          freshness: { state: "fresh", maxAgeMs: 30 * 60 * 1000 },
+          cautions: [],
+          error: null,
+        }),
+      },
+      {
+        name: "antigravity",
+        assess: assessAntigravityUsage,
+        read: async () => ({
+          provider: "antigravity",
+          observedAt: clock.now().toISOString(),
+          status: "available",
+          reason: null,
+          detail: null,
+          source: { kind: "agy-usage" },
+          scope: { host: "andi", account: "sha256:abcdef0123456789" },
+          windows: [{ id: "flash-5h", label: "flash", usedPercent: 5, remainingFraction: 0.95, resetsAt: "2026-10-30T23:00:00.000Z", exhausted: false }],
+          exhaustedWindows: [],
+          groups: [],
+        }),
+      },
+    ];
+    const report = await usageForPlanning({ stateDir: dir, clock, providers });
+    assert.equal(report.claude.status, "fresh");
+    assert.equal(report.codex.status, "fresh");
+    assert.equal(report.cursor.status, "fresh");
+    assert.equal(report.antigravity.status, "fresh");
+    assert.match(report.claude.account, /^sha256:/);
+    assert.match(report.cursor.account, /^sha256:/);
+    assert.equal(report.cursor.host, "andi");
+    const store = new UsageStore(dir);
+    const readings = store.listReadings({ limit: 20 });
+    assert.equal(new Set(readings.map((row) => row.provider)).size, 4);
+    assert.ok(readings.every((row) => row.origin === "planner"));
+    store.close();
+  }));
+
+test("stored readings and planner reports keep fingerprints only: no raw UUID, email or home path", () =>
+  withState(async (dir) => {
+    const clock = fakeClock();
+    const rawAccountUuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const rawOrganizationUuid = "11111111-2222-3333-4444-555555555555";
+    const rawEmail = "listener@example.com";
+    const rawHome = "/home/secret-user/.codex";
+    const providers = [
+      {
+        name: "claude",
+        assess: assessClaudeUsage,
+        read: async () => ({
+          provider: "claude",
+          observedAt: clock.now().toISOString(),
+          status: "available",
+          reason: null,
+          detail: null,
+          source: { kind: "claude-oauth-usage-endpoint" },
+          scope: {
+            host: "andi",
+            accountUuid: rawAccountUuid,
+            organizationUuid: rawOrganizationUuid,
+            plan: "max",
+          },
+          windows: [{ kind: "session", label: "session", appliesTo: "all", usedPercent: 10, resetsAt: "2026-10-30T23:00:00.000Z" }],
+          exhaustedWindows: [],
+        }),
+      },
+      {
+        name: "codex",
+        assess: assessCodexUsage,
+        read: async () => ({
+          observedAt: clock.now().toISOString(),
+          ...good(),
+          scope: { ...SCOPE, account: rawEmail, codexHome: rawHome },
+        }),
+      },
+      {
+        name: "cursor",
+        assess: assessCursorUsage,
+        read: async () => ({
+          provider: "cursor",
+          observedAt: clock.now().toISOString(),
+          observedAtMs: clock.now().getTime(),
+          status: "ok",
+          reason: null,
+          source: { kind: "cursor-dashboard" },
+          scope: { host: { selector: "local", hostname: "andi" }, account: { known: true, userId: 9, email: rawEmail, planName: "pro" } },
+          windows: [{ id: "included_total", kind: "percentage_allowance", usedPercent: 10, state: "ok" }],
+          reset: { primaryResetAt: "2026-10-31T00:00:00.000Z" },
+          freshness: { state: "fresh", maxAgeMs: 30 * 60 * 1000 },
+          cautions: [],
+          error: null,
+        }),
+      },
+      {
+        name: "antigravity",
+        assess: assessAntigravityUsage,
+        read: async () => ({
+          provider: "antigravity",
+          observedAt: clock.now().toISOString(),
+          status: "available",
+          reason: null,
+          detail: null,
+          source: { kind: "agy-usage" },
+          scope: { host: "andi", account: rawEmail },
+          windows: [{ id: "flash-5h", label: "flash", usedPercent: 5, remainingFraction: 0.95, resetsAt: "2026-10-30T23:00:00.000Z", exhausted: false }],
+          exhaustedWindows: [],
+          groups: [],
+        }),
+      },
+    ];
+    const report = await usageForPlanning({ stateDir: dir, clock, providers });
+    const reportJson = JSON.stringify(report);
+    for (const secret of [rawAccountUuid, rawOrganizationUuid, rawEmail, rawHome]) {
+      assert.equal(reportJson.includes(secret), false, `planner report leaked ${secret}`);
+    }
+    for (const name of ["claude", "codex", "cursor", "antigravity"]) {
+      assert.match(report[name].account, /^sha256:[0-9a-f]{16}$/, `${name} account must be a fingerprint`);
+    }
+    assert.equal(reportAccount({ account: rawEmail }), report.codex.account);
+    assert.equal(reportAccount({ account: "sha256:0123456789abcdef" }), "sha256:0123456789abcdef");
+    assert.notEqual(reportAccount({ account: rawEmail }), rawEmail);
+
+    const dbPath = join(dir, "usage.sqlite");
+    const sqliteBytes = readFileSync(dbPath);
+    const sqliteText = sqliteBytes.toString("utf8");
+    for (const secret of [rawAccountUuid, rawOrganizationUuid, rawEmail, rawHome]) {
+      assert.equal(sqliteText.includes(secret), false, `sqlite leaked ${secret}`);
+    }
+    const store = new UsageStore(dir);
+    const readings = store.listReadings({ limit: 20 });
+    assert.equal(readings.length, 4);
+    for (const reading of readings) {
+      const blob = JSON.stringify(reading);
+      for (const secret of [rawAccountUuid, rawOrganizationUuid, rawEmail, rawHome]) {
+        assert.equal(blob.includes(secret), false, `listReadings leaked ${secret}`);
+      }
+      assert.equal("codexHome" in (reading.scope ?? {}), false);
+    }
+    store.close();
+  }));
+
+test("a hanging provider times out without delaying the others during planning", () =>
+  withState(async (dir) => {
+    const clock = fakeClock();
+    const timeoutMs = 80;
+    const hang = () => new Promise(() => {});
+    const providers = [
+      {
+        name: "claude",
+        assess: assessClaudeUsage,
+        read: async () => ({
+          provider: "claude",
+          observedAt: clock.now().toISOString(),
+          status: "available",
+          reason: null,
+          detail: null,
+          source: { kind: "claude-oauth-usage-endpoint" },
+          scope: { host: "andi", accountUuid: "claude-acct-hang" },
+          windows: [{ kind: "session", label: "session", appliesTo: "all", usedPercent: 20, resetsAt: "2026-10-30T23:00:00.000Z" }],
+          exhaustedWindows: [],
+        }),
+      },
+      { name: "codex", assess: assessCodexUsage, read: hang },
+      {
+        name: "cursor",
+        assess: assessCursorUsage,
+        read: async () => ({
+          provider: "cursor",
+          observedAt: clock.now().toISOString(),
+          observedAtMs: clock.now().getTime(),
+          status: "ok",
+          reason: null,
+          source: { kind: "cursor-dashboard" },
+          scope: { host: { selector: "local", hostname: "andi" }, account: { known: true, userId: 3, planName: "pro" } },
+          windows: [{ id: "included_total", kind: "percentage_allowance", usedPercent: 10, state: "ok" }],
+          reset: { primaryResetAt: "2026-10-31T00:00:00.000Z" },
+          freshness: { state: "fresh", maxAgeMs: 30 * 60 * 1000 },
+          cautions: [],
+          error: null,
+        }),
+      },
+      {
+        name: "antigravity",
+        assess: assessAntigravityUsage,
+        read: async () => ({
+          provider: "antigravity",
+          observedAt: clock.now().toISOString(),
+          status: "available",
+          reason: null,
+          detail: null,
+          source: { kind: "agy-usage" },
+          scope: { host: "andi", account: "sha256:abcdef0123456789" },
+          windows: [{ id: "flash-5h", label: "flash", usedPercent: 5, remainingFraction: 0.95, resetsAt: "2026-10-30T23:00:00.000Z", exhausted: false }],
+          exhaustedWindows: [],
+          groups: [],
+        }),
+      },
+    ];
+    const started = Date.now();
+    const report = await usageForPlanning({ stateDir: dir, clock, providers, timeoutMs });
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 1_000, `planning took ${elapsed}ms; hanging provider blocked others`);
+    assert.equal(report.codex.status, "unavailable");
+    assert.equal(report.codex.refresh.ok, false);
+    assert.match(String(report.codex.refresh.reason ?? report.codex.reason), /timeout/);
+    assert.equal(report.claude.status, "fresh");
+    assert.equal(report.cursor.status, "fresh");
+    assert.equal(report.antigravity.status, "fresh");
+    assert.equal(report.claude.refresh.ok, true);
+    assert.equal(report.cursor.refresh.ok, true);
+    assert.equal(report.antigravity.refresh.ok, true);
+  }));
+
+// --- Residuals from the independent re-review of 22c9836
+
+function peerClaude(clock) {
+  return {
+    name: "claude",
+    assess: assessClaudeUsage,
+    read: async () => ({
+      provider: "claude",
+      observedAt: clock.now().toISOString(),
+      status: "available",
+      reason: null,
+      detail: null,
+      source: { kind: "claude-oauth-usage-endpoint" },
+      scope: { host: "andi", accountUuid: "claude-peer-acct" },
+      windows: [{ kind: "session", label: "session", appliesTo: "all", usedPercent: 20, resetsAt: "2026-10-30T23:00:00.000Z" }],
+      exhaustedWindows: [],
+    }),
+  };
+}
+
+function peerCodex(clock) {
+  return { name: "codex", assess: assessCodexUsage, read: async () => ({ observedAt: clock.now().toISOString(), ...good({ used: 15 }) }) };
+}
+
+function peerAntigravity(clock) {
+  return {
+    name: "antigravity",
+    assess: assessAntigravityUsage,
+    read: async () => ({
+      provider: "antigravity",
+      observedAt: clock.now().toISOString(),
+      status: "available",
+      reason: null,
+      detail: null,
+      source: { kind: "agy-usage" },
+      scope: { host: "andi", account: "sha256:abcdef0123456789" },
+      windows: [{ id: "flash-5h", label: "flash", usedPercent: 5, remainingFraction: 0.95, resetsAt: "2026-10-30T23:00:00.000Z", exhausted: false }],
+      exhaustedWindows: [],
+      groups: [],
+    }),
+  };
+}
+
+function seedLegacyDatabase(stateDir, observation, { provider = "codex", origin = "poll" } = {}) {
+  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  const file = join(stateDir, "usage.sqlite");
+  const db = new DatabaseSync(file);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS readings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider TEXT NOT NULL,
+      observed_at TEXT NOT NULL,
+      origin TEXT NOT NULL,
+      usable INTEGER NOT NULL,
+      observation TEXT NOT NULL
+    );
+  `);
+  db.prepare("INSERT INTO readings (provider, observed_at, origin, usable, observation) VALUES (?, ?, ?, ?, ?)").run(
+    provider,
+    observation.observedAt ?? START,
+    origin,
+    1,
+    JSON.stringify(observation),
+  );
+  db.close();
+  return file;
+}
+
+test("UsageStore migrates legacy rows on open and never returns raw identifiers from listReadings", () =>
+  withState(async (dir) => {
+    const rawUuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const rawEmail = "legacy-user@example.com";
+    const rawHome = "/home/legacy-user/.codex";
+    const rawCursorUserId = 987654321;
+    const legacy = {
+      provider: "codex",
+      observedAt: START,
+      status: "available",
+      reason: null,
+      detail: `account ${rawUuid} for ${rawEmail}; userId=${rawCursorUserId}; user ${rawCursorUserId}`,
+      source: SOURCE,
+      scope: {
+        host: "andi",
+        account: rawEmail,
+        codexHome: rawHome,
+        accountUuid: rawUuid,
+        userId: rawCursorUserId,
+      },
+      windows: [window("5h", 12, "2026-10-30T23:00:00.000Z")],
+      exhaustedWindows: [],
+    };
+    const dbPath = seedLegacyDatabase(dir, legacy);
+    assert.ok(readFileSync(dbPath).toString("utf8").includes(rawUuid), "precondition: legacy row must be raw on disk");
+    assert.ok(readFileSync(dbPath).toString("utf8").includes(String(rawCursorUserId)), "precondition: legacy Cursor userId must be raw on disk");
+
+    const store = new UsageStore(dir);
+    const listed = store.listReadings({ limit: 5 });
+    assert.equal(listed.length, 1);
+    const blob = JSON.stringify(listed[0]);
+    for (const secret of [rawUuid, rawEmail, rawHome, String(rawCursorUserId)]) {
+      assert.equal(blob.includes(secret), false, `listReadings returned raw ${secret}`);
+    }
+    assert.match(String(listed[0].scope?.account ?? ""), /^sha256:[0-9a-f]{16}$/);
+    assert.match(String(listed[0].scope?.userId ?? ""), /^sha256:[0-9a-f]{16}$/);
+    store.close();
+
+    const after = readFileSync(dbPath).toString("utf8");
+    for (const secret of [rawUuid, rawEmail, rawHome, String(rawCursorUserId)]) {
+      assert.equal(after.includes(secret), false, `legacy migrate left ${secret} on disk`);
+    }
+  }));
+
+test("hostile nested identifiers never reach sqlite, planner reports or evaluation samples", () =>
+  withState(async (dir) => {
+    const clock = fakeClock();
+    const rawUuid = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff";
+    const rawOrg = "11111111-2222-3333-4444-555555555555";
+    const rawEmail = "nested-leak@example.com";
+    const rawHome = "/home/nested-user/.codex";
+    const rawUsersHome = "/Users/nested-user/Library";
+    const rawUserId = 424242;
+    const secrets = [rawUuid, rawOrg, rawEmail, rawHome, rawUsersHome, String(rawUserId)];
+    const hostile = {
+      provider: "codex",
+      observedAt: clock.now().toISOString(),
+      status: "unavailable",
+      reason: "reader_error",
+      detail: `profile failed for ${rawUuid} at ${rawHome}`,
+      source: SOURCE,
+      scope: {
+        host: "andi",
+        account: rawEmail,
+        home: rawHome,
+        CODEX_HOME: rawHome,
+        profile: { uuid: rawUuid, email: rawEmail },
+        account_uuid: rawUuid,
+        organizationUuid: rawOrg,
+      },
+      windows: null,
+      exhaustedWindows: [],
+      error: {
+        message: `boom for ${rawEmail}`,
+        headers: { authorization: "Bearer nested-secret-token", cookie: "sid=abc", "x-account": rawUuid },
+      },
+      notes: ["array", rawUuid, { userId: rawUserId, home: rawUsersHome }],
+      cursorAccount: { userId: rawUserId, email: rawEmail },
+    };
+    const provider = fakeProvider(clock, () => hostile);
+    const store = new UsageStore(dir);
+    await collectOnce({ store, provider, clock, origin: "poll" });
+    store.close();
+
+    const sqliteText = readFileSync(join(dir, "usage.sqlite")).toString("utf8");
+    for (const secret of secrets) {
+      assert.equal(sqliteText.includes(secret), false, `sqlite leaked ${secret}`);
+    }
+
+    const hostileCursorProvider = {
+      name: "cursor",
+      assess: assessCursorUsage,
+      read: async () => ({
+        provider: "cursor",
+        observedAt: clock.now().toISOString(),
+        observedAtMs: clock.now().getTime(),
+        status: "unavailable",
+        reason: "reader_error",
+        detail: `cursor detail ${rawUuid}`,
+        source: { kind: "cursor-dashboard" },
+        scope: {
+          host: { selector: "local", hostname: "andi" },
+          account: { known: true, userId: rawUserId, email: rawEmail, organizationId: rawOrg },
+          profile: { uuid: rawUuid },
+        },
+        windows: [],
+        error: { headers: { authorization: "Bearer x", cookie: "a=b" }, message: rawEmail },
+        freshness: { state: "unknown", maxAgeMs: 30 * 60 * 1000 },
+        cautions: [],
+        reset: { primaryResetAt: null },
+      }),
+    };
+    const report = await usageForPlanning({
+      stateDir: dir,
+      clock,
+      providers: [peerClaude(clock), peerCodex(clock), hostileCursorProvider, peerAntigravity(clock)],
+    });
+    const reportJson = JSON.stringify(report);
+    for (const secret of secrets) {
+      assert.equal(reportJson.includes(secret), false, `planner report leaked ${secret}`);
+    }
+
+    const evaluation = buildDispatchEvaluation({
+      title: "Hostile nested identifier sample",
+      generatedAt: START,
+      liveUsage: report,
+      scenarios: [
+        {
+          id: "hostile-sample",
+          baseline: { agent: "cursor", model: "auto", effort: null },
+          recommended: { agent: "cursor", model: "auto", effort: null },
+          usageByAgent: report,
+        },
+      ],
+    });
+    const sample = `${JSON.stringify(evaluation)}\n${formatEvaluationMarkdown(evaluation)}`;
+    for (const secret of secrets) {
+      assert.equal(sample.includes(secret), false, `evaluation sample leaked ${secret}`);
+    }
+  }));
+
+test("a hanging child-process reader is aborted and planning exits within the deadline margin", { timeout: 15_000 }, () =>
+  withState(async (dir) => {
+    const hangBin = join(dir, "hang-forever");
+    writeFileSync(hangBin, "#!/usr/bin/env bash\nexec sleep 999\n");
+    chmodSync(hangBin, 0o755);
+    const script = join(dir, "plan-with-hang.mjs");
+    writeFileSync(
+      script,
+      `
+import { spawn } from "node:child_process";
+import { usageForPlanning } from ${JSON.stringify(join(repoRoot, "scripts/orca-usage.mjs"))};
+import { assessCodexUsage } from ${JSON.stringify(join(repoRoot, "scripts/codex-usage.mjs"))};
+import { assessClaudeUsage } from ${JSON.stringify(join(repoRoot, "scripts/claude-usage.mjs"))};
+import { assessCursorUsage } from ${JSON.stringify(join(repoRoot, "scripts/cursor-usage.mjs"))};
+import { assessAntigravityUsage } from ${JSON.stringify(join(repoRoot, "scripts/antigravity-usage.mjs"))};
+
+const hangBin = ${JSON.stringify(hangBin)};
+const stateDir = ${JSON.stringify(dir)};
+const timeoutMs = 120;
+const clock = { now: () => new Date("2026-10-30T12:00:00.000Z") };
+
+function hangReader({ signal } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(hangBin, [], { stdio: "ignore" });
+    const fail = (error) => {
+      try { child.kill("SIGKILL"); } catch {}
+      reject(error);
+    };
+    if (signal?.aborted) return fail(Object.assign(new Error("aborted"), { name: "AbortError" }));
+    signal?.addEventListener("abort", () => fail(Object.assign(new Error("aborted"), { name: "AbortError" })), { once: true });
+    child.on("error", fail);
+    // Never resolves unless aborted/killed.
+  });
+}
+
+const providers = [
+  {
+    name: "claude",
+    assess: assessClaudeUsage,
+    read: async () => ({
+      provider: "claude", observedAt: clock.now().toISOString(), status: "available", reason: null, detail: null,
+      source: { kind: "claude-oauth-usage-endpoint" }, scope: { host: "andi", accountUuid: "ok" },
+      windows: [{ kind: "session", label: "session", appliesTo: "all", usedPercent: 10, resetsAt: "2026-10-30T23:00:00.000Z" }],
+      exhaustedWindows: [],
+    }),
+  },
+  { name: "codex", assess: assessCodexUsage, read: hangReader },
+  {
+    name: "cursor",
+    assess: assessCursorUsage,
+    read: async () => ({
+      provider: "cursor", observedAt: clock.now().toISOString(), observedAtMs: clock.now().getTime(), status: "ok", reason: null,
+      source: { kind: "cursor-dashboard" },
+      scope: { host: { selector: "local", hostname: "andi" }, account: { known: true, userId: 1, planName: "pro" } },
+      windows: [{ id: "included_total", kind: "percentage_allowance", usedPercent: 10, state: "ok" }],
+      reset: { primaryResetAt: "2026-10-31T00:00:00.000Z" }, freshness: { state: "fresh", maxAgeMs: 1800000 }, cautions: [], error: null,
+    }),
+  },
+  {
+    name: "antigravity",
+    assess: assessAntigravityUsage,
+    read: async () => ({
+      provider: "antigravity", observedAt: clock.now().toISOString(), status: "available", reason: null, detail: null,
+      source: { kind: "agy-usage" }, scope: { host: "andi", account: "sha256:abcdef0123456789" },
+      windows: [{ id: "flash-5h", label: "flash", usedPercent: 5, remainingFraction: 0.95, resetsAt: "2026-10-30T23:00:00.000Z", exhausted: false }],
+      exhaustedWindows: [], groups: [],
+    }),
+  },
+];
+
+const started = Date.now();
+const report = await usageForPlanning({ stateDir, clock, providers, timeoutMs });
+const elapsed = Date.now() - started;
+if (elapsed > timeoutMs + 800) {
+  console.error(JSON.stringify({ elapsed, timeoutMs, report }));
+  process.exitCode = 2;
+} else if (report.codex?.status === "fresh") {
+  process.exitCode = 3;
+} else {
+  process.exitCode = 0;
+}
+// Do not call process.exit: a leaked child handle must keep this process alive so the parent can detect it.
+`,
+    );
+    const child = spawn(process.execPath, [script], { stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    child.stdout.on("data", (chunk) => (output += chunk));
+    child.stderr.on("data", (chunk) => (output += chunk));
+    const started = Date.now();
+    const code = await Promise.race([
+      new Promise((done) => child.on("close", done)),
+      new Promise((done) => setTimeout(() => done("still-running"), 120 + 1500)),
+    ]);
+    const elapsed = Date.now() - started;
+    if (code === "still-running") {
+      child.kill("SIGKILL");
+      assert.fail(`planning process stayed alive for ${elapsed}ms with a leaked hang child`);
+    }
+    assert.equal(code, 0, output);
+    assert.ok(elapsed < 120 + 800, `planning process took ${elapsed}ms`);
+  }));
+
+test("a Cursor timeout keeps peer readings; assess throws stay isolated; all four throws leave peers unavailable not unknown-from-cascade", () =>
+  withState(async (dir) => {
+    const clock = fakeClock();
+    const timeoutMs = 80;
+
+    const hang = () => new Promise(() => {});
+    const hangCursor = {
+      name: "cursor",
+      assess: assessCursorUsage,
+      read: hang,
+    };
+    const hangReport = await usageForPlanning({
+      stateDir: dir,
+      clock,
+      providers: [peerClaude(clock), peerCodex(clock), hangCursor, peerAntigravity(clock)],
+      timeoutMs,
+    });
+    assert.equal(hangReport.claude.status, "fresh");
+    assert.equal(hangReport.codex.status, "fresh");
+    assert.equal(hangReport.antigravity.status, "fresh");
+    assert.equal(hangReport.cursor.status, "unavailable");
+    assert.match(String(hangReport.cursor.refresh?.reason ?? hangReport.cursor.reason), /timeout/);
+
+    const throwingCursor = {
+      name: "cursor",
+      assess: () => {
+        throw new Error("assess exploded");
+      },
+      read: async () => ({
+        provider: "cursor",
+        observedAt: clock.now().toISOString(),
+        observedAtMs: clock.now().getTime(),
+        status: "ok",
+        reason: null,
+        source: { kind: "cursor-dashboard" },
+        scope: { host: { selector: "local", hostname: "andi" }, account: { known: true, userId: 9, planName: "pro" } },
+        windows: [{ id: "included_total", kind: "percentage_allowance", usedPercent: 10, state: "ok" }],
+        reset: { primaryResetAt: "2026-10-31T00:00:00.000Z" },
+        freshness: { state: "fresh", maxAgeMs: 30 * 60 * 1000 },
+        cautions: [],
+        error: null,
+      }),
+    };
+    const throwReport = await usageForPlanning({
+      stateDir: join(dir, "throw"),
+      clock,
+      providers: [peerClaude(clock), peerCodex(clock), throwingCursor, peerAntigravity(clock)],
+      timeoutMs,
+    });
+    assert.equal(throwReport.claude.status, "fresh");
+    assert.equal(throwReport.codex.status, "fresh");
+    assert.equal(throwReport.antigravity.status, "fresh");
+    assert.equal(throwReport.cursor.status, "unavailable");
+    assert.match(String(throwReport.cursor.reason), /assess exploded|unavailable|reader/i);
+
+    const allThrow = ["claude", "codex", "cursor", "antigravity"].map((name) => ({
+      name,
+      assess: () => {
+        throw new Error(`${name} assess boom`);
+      },
+      read: async () => {
+        throw new Error(`${name} read boom`);
+      },
+    }));
+    const allReport = await usageForPlanning({
+      stateDir: join(dir, "all-throw"),
+      clock,
+      providers: allThrow,
+      timeoutMs,
+    });
+    for (const name of ["claude", "codex", "cursor", "antigravity"]) {
+      assert.ok(allReport[name], `${name} missing`);
+      assert.notEqual(allReport[name].status, "fresh");
+      // Cascade used to stamp every provider with the store-unavailable unknown reason.
+      assert.equal(String(allReport[name].reason ?? "").includes("the usage store is unavailable"), false, `${name} was cascade-poisoned`);
+    }
+  }));
+
+// --- Residuals from the round-3 adversarial review of 67c127f
+
+test("free-text sessionId and session_id pairs never reach sqlite or listReadings", () =>
+  withState(async (dir) => {
+    const clock = fakeClock();
+    const provider = fakeProvider(clock, () => ({
+      provider: "cursor",
+      status: "unavailable",
+      reason: "reader_error",
+      detail: "failed sessionId=sess-7f3a9c1e and session_id: sess-0b2d44aa and \"sessionId\":\"sess-99ee11bb\"",
+      source: { kind: "cursor-dashboard" },
+      scope: { host: { selector: "local", hostname: "andi" }, account: { known: true, planName: "pro" } },
+      windows: null,
+      exhaustedWindows: [],
+      error: null,
+    }));
+    provider.name = "cursor";
+    provider.assess = assessCursorUsage;
+    const store = new UsageStore(dir);
+    await collectOnce({ store, provider, clock, origin: "poll" });
+    const blob = JSON.stringify(store.listReadings({ limit: 5 })[0]);
+    store.close();
+    const file = readFileSync(join(dir, "usage.sqlite")).toString("utf8");
+    for (const raw of ["sess-7f3a9c1e", "sess-0b2d44aa", "sess-99ee11bb"]) {
+      assert.equal(blob.includes(raw), false, `listReadings leaked ${raw}: ${blob}`);
+      assert.equal(file.includes(raw), false, `sqlite leaked ${raw}`);
+    }
+  }));
+
+test("keyed teamId and sessionId fields in a reading never reach sqlite or listReadings", () =>
+  withState(async (dir) => {
+    const clock = fakeClock();
+    const provider = fakeProvider(clock, () => ({
+      provider: "cursor",
+      status: "unavailable",
+      reason: "reader_error",
+      detail: "no detail",
+      source: { kind: "cursor-dashboard" },
+      scope: {
+        host: { selector: "local", hostname: "andi" },
+        account: { known: true, teamId: 424242, sessionId: "sess-7f3a9c1e", planName: "pro" },
+      },
+      windows: null,
+      exhaustedWindows: [],
+      error: null,
+    }));
+    provider.name = "cursor";
+    provider.assess = assessCursorUsage;
+    const store = new UsageStore(dir);
+    await collectOnce({ store, provider, clock, origin: "poll" });
+    const blob = JSON.stringify(store.listReadings({ limit: 5 })[0]);
+    store.close();
+    for (const raw of ["424242", "sess-7f3a9c1e"]) {
+      assert.equal(blob.includes(raw), false, `listReadings leaked ${raw}: ${blob}`);
+      assert.equal(readFileSync(join(dir, "usage.sqlite")).toString("utf8").includes(raw), false, `sqlite leaked ${raw}`);
+    }
+  }));
+
+test("Cursor numeric userId in free-text detail never reaches sqlite or listReadings", () =>
+  withState(async (dir) => {
+    const clock = fakeClock();
+    const rawUserId = 987654321;
+    const id = String(rawUserId);
+    const detail =
+      `userId=${id}; user_id: ${id}; "userId":${id}; user ${id}; ` +
+      `https://api.cursor.com/auth/users/${id}?userId=${id}`;
+    const provider = fakeProvider(clock, () => ({
+      provider: "cursor",
+      status: "unavailable",
+      reason: "reader_error",
+      detail,
+      source: { kind: "cursor-dashboard" },
+      scope: {
+        host: { selector: "local", hostname: "andi" },
+        account: { known: true, userId: rawUserId, planName: "pro" },
+      },
+      windows: null,
+      exhaustedWindows: [],
+      error: null,
+    }));
+    provider.name = "cursor";
+    provider.assess = assessCursorUsage;
+    const store = new UsageStore(dir);
+    await collectOnce({ store, provider, clock, origin: "poll" });
+    const listed = store.listReadings({ limit: 5 });
+    store.close();
+
+    assert.equal(listed.length, 1);
+    const blob = JSON.stringify(listed[0]);
+    assert.equal(blob.includes(id), false, `listReadings leaked Cursor userId: ${blob}`);
+    const sqliteText = readFileSync(join(dir, "usage.sqlite")).toString("utf8");
+    assert.equal(sqliteText.includes(id), false, `sqlite leaked Cursor userId`);
+  }));
+
+test("Windows home and wsl$ paths never reach sqlite or listReadings", () =>
+  withState(async (dir) => {
+    const clock = fakeClock();
+    const winHome = String.raw`C:\Users\win-user\AppData\Roaming\cursor`;
+    const wslHome = String.raw`\\wsl$\Ubuntu\home\wsl-user\.claude`;
+    const provider = fakeProvider(clock, () => ({
+      ...good(),
+      detail: `reader failed under ${winHome} and ${wslHome}`,
+      scope: {
+        host: "andi",
+        account: "sha256:0123456789abcdef",
+        winHome,
+        wslHome,
+      },
+    }));
+    const store = new UsageStore(dir);
+    await collectOnce({ store, provider, clock, origin: "poll" });
+    const listed = store.listReadings({ limit: 5 });
+    store.close();
+
+    const secrets = ["win-user", "wsl-user", winHome, wslHome];
+    const blob = JSON.stringify(listed[0]);
+    const sqliteText = readFileSync(join(dir, "usage.sqlite")).toString("utf8");
+    for (const secret of secrets) {
+      assert.equal(blob.includes(secret), false, `listReadings leaked ${secret}`);
+      assert.equal(sqliteText.includes(secret), false, `sqlite leaked ${secret}`);
+    }
+  }));
+
+test("bare cookie, session and long opaque blobs never reach sqlite or listReadings", () =>
+  withState(async (dir) => {
+    const clock = fakeClock();
+    const cookieVal = "sessionid=abcdefghijklmnopqrstuvwxyz012345";
+    const hexBlob = "0123456789abcdef0123456789abcdef01234567";
+    const b64Blob = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY3ODkwYWJjZA==";
+    const detail =
+      `Cookie: ${cookieVal}; Set-Cookie: ${cookieVal}; Path=/; ` +
+      `Authorization: Bearer ya29.a0AfH6SMC-opaque-google-token-value; ` +
+      `session=${hexBlob}; blob=${b64Blob}`;
+    const provider = fakeProvider(clock, () => ({
+      ...good({ used: 1 }),
+      status: "unavailable",
+      reason: "reader_error",
+      detail,
+      windows: null,
+    }));
+    const store = new UsageStore(dir);
+    await collectOnce({ store, provider, clock, origin: "poll" });
+    const listed = store.listReadings({ limit: 5 });
+    store.close();
+
+    const secrets = [
+      "abcdefghijklmnopqrstuvwxyz012345",
+      hexBlob,
+      b64Blob,
+      "ya29.a0AfH6SMC-opaque-google-token-value",
+    ];
+    const blob = JSON.stringify(listed[0]);
+    const sqliteText = readFileSync(join(dir, "usage.sqlite")).toString("utf8");
+    for (const secret of secrets) {
+      assert.equal(blob.includes(secret), false, `listReadings leaked ${secret}`);
+      assert.equal(sqliteText.includes(secret), false, `sqlite leaked ${secret}`);
+    }
+  }));
+
+test("Claude scope.configDir under home is never stored in sqlite or listReadings", () =>
+  withState(async (dir) => {
+    const clock = fakeClock();
+    const rawConfigDir = "/home/secret-claude-user/.claude";
+    const provider = {
+      name: "claude",
+      assess: assessClaudeUsage,
+      read: async () => ({
+        provider: "claude",
+        observedAt: clock.now().toISOString(),
+        status: "available",
+        reason: null,
+        detail: null,
+        source: { kind: "claude-oauth-usage-endpoint" },
+        scope: {
+          host: "andi",
+          configDir: rawConfigDir,
+          accountUuid: "claude-configdir-acct",
+          organizationUuid: null,
+          plan: "max",
+        },
+        windows: [{ kind: "session", label: "session", appliesTo: "all", usedPercent: 10, resetsAt: "2026-10-30T23:00:00.000Z" }],
+        exhaustedWindows: [],
+      }),
+    };
+    const store = new UsageStore(dir);
+    await collectOnce({ store, provider, clock, origin: "poll" });
+    const listed = store.listReadings({ limit: 5 });
+    store.close();
+
+    assert.equal(listed.length, 1);
+    assert.equal("configDir" in (listed[0].scope ?? {}), false);
+    const blob = JSON.stringify(listed[0]);
+    const sqliteText = readFileSync(join(dir, "usage.sqlite")).toString("utf8");
+    for (const secret of [rawConfigDir, "secret-claude-user"]) {
+      assert.equal(blob.includes(secret), false, `listReadings leaked ${secret}`);
+      assert.equal(sqliteText.includes(secret), false, `sqlite leaked ${secret}`);
+    }
   }));

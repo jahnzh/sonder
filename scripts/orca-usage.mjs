@@ -5,21 +5,85 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { assessAntigravityUsage, readAntigravityUsage } from "./antigravity-usage.mjs";
+import { assessClaudeUsage, readClaudeUsage } from "./claude-usage.mjs";
 import { assessCodexUsage, readCodexUsage } from "./codex-usage.mjs";
-import { redact, scrub } from "./usage-common.mjs";
+import { assessCursorUsage, readCursorUsage } from "./cursor-usage.mjs";
+import { accountFingerprint, isAccountFingerprint, redact, scrub } from "./usage-common.mjs";
 
 export const POLL_INTERVAL_MS = 60_000;
 export const MAX_BACKOFF_MS = 30 * 60 * 1000;
 const RATE_LIMIT_BACKOFF_MS = 5 * 60 * 1000;
 const HEARTBEAT_STALE_MS = 3 * POLL_INTERVAL_MS;
-const PLANNING_TIMEOUT_MS = 15_000;
+export const PLANNING_TIMEOUT_MS = 15_000;
 const BUSY_TIMEOUT_MS = 5_000;
 const DEFAULT_READINGS_LIMIT = 20;
 // After these the last good reading may belong to another account, so it no longer speaks for this one.
 const ACCOUNT_FAILURES = new Set(["unknown_account", "account_mismatch"]);
-const CREDENTIAL_KEYS = /token|secret|password|api.?key|authorization|cookie|email|account.?id/i;
+/** Account-scope keys: fingerprint the value. Matches uuid, user_id/userId, account*, org*. */
+const ACCOUNT_IDENTITY_KEYS = /uuid|user_?id|team_?id|session_?id|account|org/i;
+/** Credential / home / header keys: drop on objects, redaction marker on scalars. */
+const SENSITIVE_KEYS = /email|home|cookie|authorization|token|key|secret|headers|password|config.?dir/i;
+const REDACTION_MARKER = "<redacted>";
+const UUID_VALUE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const EMAIL_VALUE = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+const HOME_PATH_VALUE = /^(?:\/(?:home|Users)\/[^/]+|[A-Za-z]:\\Users\\[^\\]+|\\\\wsl(?:\$|\.localhost)\\)/i;
 
-export const PROVIDERS = [{ name: "codex", read: readCodexUsage, assess: assessCodexUsage }];
+/** Cursor's reader takes a Date/ms/`now` string; the collector clock exposes a function. */
+function readCursorForCollector(options = {}) {
+  const { now, ...rest } = options;
+  return readCursorUsage({
+    ...rest,
+    ...(now !== undefined ? { now: typeof now === "function" ? now() : now } : {}),
+  });
+}
+
+export const PROVIDERS = [
+  { name: "claude", read: readClaudeUsage, assess: assessClaudeUsage },
+  { name: "codex", read: readCodexUsage, assess: assessCodexUsage },
+  { name: "cursor", read: readCursorForCollector, assess: assessCursorUsage },
+  { name: "antigravity", read: readAntigravityUsage, assess: assessAntigravityUsage },
+];
+
+/** Provider-specific scope shapes collapse to a fingerprint or host string for planner reports. */
+export function reportAccount(scope) {
+  if (!scope || typeof scope !== "object") return "unknown";
+  if (typeof scope.account === "string" && scope.account.trim()) {
+    // Only trust a string account that is already a fingerprint; anything else is hashed.
+    return isAccountFingerprint(scope.account) ? scope.account.trim() : accountFingerprint(scope.account);
+  }
+  if (scope.account && typeof scope.account === "object") {
+    if (typeof scope.account.userId === "number" || typeof scope.account.userId === "string") {
+      return accountFingerprint(String(scope.account.userId));
+    }
+    return scope.account.known ? "known" : "unknown";
+  }
+  if (typeof scope.accountUuid === "string" && scope.accountUuid.trim()) {
+    return accountFingerprint(scope.accountUuid.trim());
+  }
+  return "unknown";
+}
+
+export function reportHost(scope) {
+  if (!scope || typeof scope !== "object" || scope.host == null) return "unknown";
+  if (typeof scope.host === "string") return scope.host.trim() || "unknown";
+  if (typeof scope.host === "object") {
+    const hostname = typeof scope.host.hostname === "string" ? scope.host.hostname.trim() : "";
+    if (hostname) return hostname;
+    const selector = typeof scope.host.selector === "string" ? scope.host.selector.trim() : "";
+    if (selector) return selector;
+  }
+  return "unknown";
+}
+
+export function reportPlan(scope) {
+  if (!scope || typeof scope !== "object") return null;
+  if (typeof scope.plan === "string" && scope.plan.trim()) return scope.plan.trim();
+  if (scope.account && typeof scope.account === "object" && typeof scope.account.planName === "string") {
+    return scope.account.planName.trim() || null;
+  }
+  return null;
+}
 
 export const systemClock = {
   now: () => new Date(),
@@ -50,13 +114,57 @@ export function backoffDelay(failures, reason) {
 }
 
 /** The last guard before a reading reaches disk; readers already copy only the fields they need. */
-function sanitize(value) {
-  if (typeof value === "string") return scrub(value);
-  if (Array.isArray(value)) return value.map(sanitize);
+function sanitize(value, key = null) {
+  if (typeof value === "number") {
+    if (key && ACCOUNT_IDENTITY_KEYS.test(key)) return accountFingerprint(String(value));
+    return value;
+  }
+  if (typeof value === "string") {
+    if (key && ACCOUNT_IDENTITY_KEYS.test(key)) return accountFingerprint(value);
+    if (key && SENSITIVE_KEYS.test(key)) return REDACTION_MARKER;
+    if (UUID_VALUE.test(value.trim()) || EMAIL_VALUE.test(value.trim()) || HOME_PATH_VALUE.test(value.trim())) {
+      return REDACTION_MARKER;
+    }
+    return scrub(value);
+  }
+  if (Array.isArray(value)) return value.map((item) => sanitize(item, key));
   if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).filter(([key]) => !CREDENTIAL_KEYS.test(key)).map(([key, item]) => [key, sanitize(item)]));
+    if (key && SENSITIVE_KEYS.test(key)) return REDACTION_MARKER;
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([entryKey]) => !SENSITIVE_KEYS.test(entryKey))
+        .map(([entryKey, item]) => [entryKey, sanitize(item, entryKey)]),
+    );
   }
   return value;
+}
+
+function parseObservation(raw) {
+  try {
+    return sanitize(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+/** Minimal complete observation shape so provider assess* helpers never see a missing scope. */
+function syntheticObservation(providerName, attemptedAt, { status = "unavailable", reason, detail, windows = null } = {}) {
+  return {
+    provider: providerName,
+    observedAt: attemptedAt.toISOString(),
+    status,
+    reason,
+    detail,
+    windows,
+    exhaustedWindows: [],
+    scope: {
+      host: null,
+      account: null,
+      expectedAccount: null,
+    },
+    source: null,
+    error: null,
+  };
 }
 
 const isUsable = (observation) => Array.isArray(observation?.windows) && observation.windows.length > 0;
@@ -105,6 +213,31 @@ export class UsageStore {
         stopped_at TEXT
       );
     `);
+    this.migrateLegacyReadings();
+  }
+
+  /** Rewrite every stored observation through sanitize once so legacy raw identifiers leave the file. */
+  migrateLegacyReadings() {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const rows = this.db.prepare("SELECT id, observation FROM readings").all();
+      const update = this.db.prepare("UPDATE readings SET observation = ?, usable = ? WHERE id = ?");
+      for (const row of rows) {
+        const retained = parseObservation(row.observation);
+        if (!retained) continue;
+        update.run(JSON.stringify(retained), isUsable(retained) ? 1 : 0, row.id);
+      }
+      const states = this.db.prepare("SELECT provider, last_failure_detail FROM provider_state WHERE last_failure_detail IS NOT NULL").all();
+      const updateState = this.db.prepare("UPDATE provider_state SET last_failure_detail = ? WHERE provider = ?");
+      for (const state of states) {
+        if (typeof state.last_failure_detail !== "string") continue;
+        updateState.run(scrub(state.last_failure_detail), state.provider);
+      }
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   close() {
@@ -161,7 +294,7 @@ export class UsageStore {
     const row = this.db
       .prepare(`SELECT observation FROM readings WHERE provider = ? ${usableOnly ? "AND usable = 1" : ""} ORDER BY observed_at DESC, id DESC LIMIT 1`)
       .get(provider);
-    return row ? JSON.parse(row.observation) : null;
+    return row ? parseObservation(row.observation) : null;
   }
 
   lastSuccessAt(provider) {
@@ -172,7 +305,10 @@ export class UsageStore {
     const rows = provider
       ? this.db.prepare("SELECT id, origin, observation FROM readings WHERE provider = ? ORDER BY observed_at DESC, id DESC LIMIT ?").all(provider, limit)
       : this.db.prepare("SELECT id, origin, observation FROM readings ORDER BY observed_at DESC, id DESC LIMIT ?").all(limit);
-    return rows.map(({ id, origin, observation }) => ({ id, origin, ...JSON.parse(observation) }));
+    return rows.flatMap(({ id, origin, observation }) => {
+      const parsed = parseObservation(observation);
+      return parsed ? [{ id, origin, ...parsed }] : [];
+    });
   }
 
   countReadings() {
@@ -215,21 +351,73 @@ export class UsageStore {
   }
 }
 
+function timedOutObservation(providerName, attemptedAt, timeoutMs) {
+  return syntheticObservation(providerName, attemptedAt, {
+    reason: "timeout",
+    detail: `provider did not answer within ${timeoutMs} ms`,
+  });
+}
+
 /** One read of one provider, stored whatever the outcome. A reader that throws is a failed reading, not a crash. */
-export async function collectOnce({ store, provider, clock, origin, timeoutMs }) {
+export async function collectOnce({ store, provider, clock, origin, timeoutMs, signal: outerSignal } = {}) {
   const attemptedAt = clock.now();
+  const controller = new AbortController();
+  const forwardAbort = () => controller.abort();
+  if (outerSignal) {
+    if (outerSignal.aborted) controller.abort();
+    else outerSignal.addEventListener("abort", forwardAbort, { once: true });
+  }
   let observation;
   try {
-    observation = await provider.read({ now: clock.now, ...(timeoutMs ? { timeoutMs } : {}) });
-  } catch (error) {
-    observation = {
-      provider: provider.name,
-      observedAt: attemptedAt.toISOString(),
-      status: "unavailable",
-      reason: "reader_error",
-      detail: redact(error?.message ?? error),
-      windows: null,
+    if (controller.signal.aborted) {
+      throw Object.assign(new Error("aborted"), { name: "AbortError", code: "TIMEOUT" });
+    }
+    const readOptions = {
+      now: clock.now,
+      signal: controller.signal,
+      ...(timeoutMs ? { timeoutMs } : {}),
     };
+    // Settle to a result object so a late abort/timeout rejection is never an unhandled rejection.
+    const readPromise = Promise.resolve(provider.read(readOptions)).then(
+      (value) => ({ ok: true, value }),
+      (error) => ({ ok: false, error }),
+    );
+    if (timeoutMs && timeoutMs > 0) {
+      let timer;
+      const timeoutPromise = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(Object.assign(new Error(`timeout after ${timeoutMs} ms`), { code: "TIMEOUT" }));
+        }, timeoutMs);
+      });
+      try {
+        const result = await Promise.race([readPromise, timeoutPromise]);
+        if (!result.ok) throw result.error;
+        observation = result.value;
+      } finally {
+        clearTimeout(timer);
+      }
+    } else {
+      const result = await readPromise;
+      if (!result.ok) throw result.error;
+      observation = result.value;
+    }
+  } catch (error) {
+    if (
+      error?.code === "TIMEOUT" ||
+      error?.name === "TimeoutError" ||
+      error?.name === "AbortError" ||
+      /timeout|aborted/i.test(String(error?.message ?? ""))
+    ) {
+      observation = timedOutObservation(provider.name, attemptedAt, timeoutMs ?? PLANNING_TIMEOUT_MS);
+    } else {
+      observation = syntheticObservation(provider.name, attemptedAt, {
+        reason: "reader_error",
+        detail: redact(error?.message ?? error),
+      });
+    }
+  } finally {
+    outerSignal?.removeEventListener("abort", forwardAbort);
   }
   return { observation, ...store.recordAttempt({ provider: provider.name, origin, attemptedAt, observation }) };
 }
@@ -244,7 +432,7 @@ export async function runCollector({ store, providers = PROVIDERS, clock = syste
         const state = store.providerState(provider.name);
         let nextPollAt = state ? Date.parse(state.next_poll_at) : 0;
         if (nextPollAt <= clock.now().getTime()) {
-          const result = await collectOnce({ store, provider, clock, origin: "poll" });
+          const result = await collectOnce({ store, provider, clock, origin: "poll", signal });
           nextPollAt = Date.parse(result.nextPollAt);
           if (!result.usable) log(`${provider.name}: ${result.observation.reason ?? result.observation.status}, failure ${result.failures}, next poll ${result.nextPollAt}`);
           else if (state?.consecutive_failures) log(`${provider.name}: recovered after ${state.consecutive_failures} failures`);
@@ -283,45 +471,114 @@ function providerStatus(store, name) {
 export function usageReport(store, provider, now) {
   const latest = store.latestReading(provider.name);
   const reading = latest && ACCOUNT_FAILURES.has(latest.status) ? latest : (store.latestReading(provider.name, { usableOnly: true }) ?? latest);
-  const assessment = reading
-    ? provider.assess(reading, now)
-    : { status: "unknown", reason: "no reading has been taken", capacityConfirmed: false, resetsAt: null, staleAfter: null, freshness: "unknown" };
+  let assessment;
+  try {
+    assessment = reading
+      ? provider.assess(reading, now)
+      : { status: "unknown", reason: "no reading has been taken", capacityConfirmed: false, resetsAt: null, staleAfter: null, freshness: "unknown" };
+  } catch (error) {
+    assessment = {
+      status: "unavailable",
+      reason: redact(error?.message ?? error),
+      capacityConfirmed: false,
+      resetsAt: null,
+      staleAfter: null,
+      freshness: "unknown",
+    };
+  }
   return {
     ...assessment,
     source: reading?.source ?? null,
     observedAt: reading?.observedAt ?? null,
-    account: reading?.scope?.account ?? "unknown",
-    host: reading?.scope?.host ?? "unknown",
-    plan: reading?.scope?.plan ?? null,
+    account: reportAccount(reading?.scope),
+    host: reportHost(reading?.scope),
+    plan: reportPlan(reading?.scope),
     windows: reading?.windows ?? null,
     collector: { ...collectorStatus(store, now), ...providerStatus(store, provider.name) },
   };
 }
 
 /** A planning refresh, except while the provider has told us to slow down: then the reading on file stands. */
-export async function refreshProvider({ store, provider, clock, timeoutMs, origin = "planner" }) {
+export async function refreshProvider({ store, provider, clock, timeoutMs, origin = "planner", signal } = {}) {
   const state = store.providerState(provider.name);
   const rateLimited = state?.consecutive_failures > 0 && state.last_failure_reason === "rate_limited" && Date.parse(state.next_poll_at) > clock.now().getTime();
   if (rateLimited) return { attempted: false, ok: false, reason: "rate_limited_backoff" };
-  const { usable, observation } = await collectOnce({ store, provider, clock, origin, timeoutMs });
+  const { usable, observation } = await collectOnce({ store, provider, clock, origin, timeoutMs, signal });
   return { attempted: true, ok: usable, reason: usable ? null : (observation.reason ?? observation.status) };
 }
 
-/** Refreshes each provider and reports its usage. It never throws: the planner carries on with unknown usage. */
-export async function usageForPlanning({ stateDir = defaultStateDir(), clock = systemClock, providers = PROVIDERS } = {}) {
+/** Refreshes each provider in parallel and reports its usage. It never throws: the planner carries on with unknown usage. */
+export async function usageForPlanning({
+  stateDir = defaultStateDir(),
+  clock = systemClock,
+  providers = PROVIDERS,
+  timeoutMs = PLANNING_TIMEOUT_MS,
+  deadlineMs = timeoutMs,
+} = {}) {
   let store;
+  const abort = new AbortController();
   try {
     store = new UsageStore(stateDir);
+    const perProviderMs = timeoutMs > 0 ? timeoutMs : PLANNING_TIMEOUT_MS;
+    // Grace so the overall deadline does not fire in the same tick as per-provider timeouts that just succeeded.
+    const overallMs = (deadlineMs > 0 ? deadlineMs : perProviderMs) + 50;
     const reports = {};
-    for (const provider of providers) {
-      const refresh = await refreshProvider({ store, provider, clock, timeoutMs: PLANNING_TIMEOUT_MS });
-      reports[provider.name] = { ...usageReport(store, provider, clock.now()), refresh };
+    const refreshOne = async (provider) => {
+      try {
+        const refresh = await refreshProvider({ store, provider, clock, timeoutMs: perProviderMs, signal: abort.signal });
+        reports[provider.name] = { ...usageReport(store, provider, clock.now()), refresh };
+      } catch (error) {
+        reports[provider.name] = {
+          status: "unavailable",
+          reason: redact(error?.message ?? error),
+          capacityConfirmed: false,
+          resetsAt: null,
+          staleAfter: null,
+          freshness: "unknown",
+          source: null,
+          observedAt: null,
+          account: "unknown",
+          host: "unknown",
+          plan: null,
+          windows: null,
+          collector: { ...collectorStatus(store, clock.now()), ...providerStatus(store, provider.name) },
+          refresh: { attempted: true, ok: false, reason: "reader_error" },
+        };
+      }
+    };
+    let deadlineTimer;
+    const deadline = new Promise((_, reject) => {
+      deadlineTimer = setTimeout(
+        () => reject(Object.assign(new Error(`planning deadline after ${overallMs} ms`), { code: "DEADLINE" })),
+        overallMs,
+      );
+    });
+    try {
+      // allSettled semantics: one provider's throw/timeout must never change another's report.
+      await Promise.race([Promise.allSettled(providers.map((provider) => refreshOne(provider))).then(() => {}), deadline]);
+    } catch (error) {
+      if (error?.code !== "DEADLINE") throw error;
+      abort.abort();
+      // Providers that finished already filled reports; mark any still missing as timed out without touching their peers.
+      for (const provider of providers) {
+        if (reports[provider.name]) continue;
+        const observation = timedOutObservation(provider.name, clock.now(), overallMs);
+        store.recordAttempt({ provider: provider.name, origin: "planner", attemptedAt: clock.now(), observation });
+        reports[provider.name] = {
+          ...usageReport(store, provider, clock.now()),
+          refresh: { attempted: true, ok: false, reason: "timeout" },
+        };
+      }
+    } finally {
+      abort.abort();
+      clearTimeout(deadlineTimer);
     }
     return reports;
   } catch (error) {
     const reason = `the usage store is unavailable: ${redact(error?.message ?? error)}`;
     return Object.fromEntries(providers.map(({ name }) => [name, { status: "unknown", reason, capacityConfirmed: false, source: null, observedAt: null, account: "unknown", host: "unknown" }]));
   } finally {
+    abort.abort();
     store?.close();
   }
 }

@@ -91,12 +91,15 @@ function stub(dir: string, name: string, body: string) {
 function sandbox() {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "sonder-plan-")));
   const bin = join(dir, "bin");
+  const home = join(dir, "home");
   mkdirSync(bin);
+  mkdirSync(home);
   writeFileSync(join(dir, "models.md"), BASELINE);
   writeFileSync(join(dir, "agent-models"), AGENT_MODELS);
   stub(bin, "agent", `cat "${dir}/agent-models"\nexit 0`);
   stub(bin, "codex", `echo called >> "${dir}/codex.log"\nexit 1`);
-  return { dir, bin, models: join(dir, "models.md"), wave: join(dir, "wave.json") };
+  stub(bin, "agy", `echo missing >> "${dir}/agy.log"\nexit 1`);
+  return { dir, bin, home, models: join(dir, "models.md"), wave: join(dir, "wave.json") };
 }
 
 const clean = (box: { dir: string }) => rmSync(box.dir, { recursive: true, force: true });
@@ -108,6 +111,8 @@ function runPlan(box: ReturnType<typeof sandbox>, env: Record<string, string | u
       env: {
         ...process.env,
         PATH: `${box.bin}:${process.env.PATH}`,
+        HOME: box.home,
+        CLAUDE_CONFIG_DIR: join(box.dir, "claude"),
         TYPESAFE_API_KEY: API_KEY,
         ORCA_USAGE_STATE_DIR: join(box.dir, "usage-state"),
         ...env,

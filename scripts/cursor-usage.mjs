@@ -489,8 +489,9 @@ function loadLocalCredentials(params) {
  * @returns {Promise<string>}
  */
 async function exchangeApiKeyInMemory(params) {
-  const { endpoint, apiKey, fetchImpl, timeoutMs, nowMs, secretsToScrub } = params;
+  const { endpoint, apiKey, fetchImpl, timeoutMs, nowMs, secretsToScrub, signal } = params;
   const url = `${endpoint.replace(/\/+$/, "")}/auth/exchange_user_api_key`;
+  const timeout = AbortSignal.timeout(timeoutMs);
   const res = await fetchImpl(url, {
     method: "POST",
     headers: {
@@ -499,7 +500,7 @@ async function exchangeApiKeyInMemory(params) {
       "x-cursor-client-type": "cli",
     },
     body: "{}",
-    signal: AbortSignal.timeout(timeoutMs),
+    signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
   });
   const text = await res.text();
   if (!res.ok) {
@@ -546,7 +547,7 @@ async function exchangeApiKeyInMemory(params) {
  * @returns {Promise<Record<string, unknown>>}
  */
 async function callDashboardRpc(params) {
-  const { endpoint, method, body, accessToken, activeTeamId, fetchImpl, timeoutMs, nowMs } = params;
+  const { endpoint, method, body, accessToken, activeTeamId, fetchImpl, timeoutMs, nowMs, signal } = params;
   const baseUrl = endpoint.replace(/\/+$/, "");
   const url = `${baseUrl}/${DASHBOARD_SERVICE}/${method}`;
   /** @type {Record<string, string>} */
@@ -561,11 +562,12 @@ async function callDashboardRpc(params) {
     headers["x-cursor-team-id"] = String(activeTeamId);
   }
 
+  const timeout = AbortSignal.timeout(timeoutMs);
   const res = await fetchImpl(url, {
     method: "POST",
     headers,
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeoutMs),
+    signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
   });
   const text = await res.text();
   if (!res.ok) {
@@ -1076,13 +1078,21 @@ export function evaluateCursorObservation(observation, options = {}) {
         : "";
   }
 
+  const scope = observation.scope && typeof observation.scope === "object" ? observation.scope : {};
+  const account = scope.account && typeof scope.account === "object" ? scope.account : {};
   const expectedAccount =
-    options.expectedAccount !== undefined ? options.expectedAccount ?? null : observation.scope.expectedAccount;
+    options.expectedAccount !== undefined ? options.expectedAccount ?? null : scope.expectedAccount ?? null;
 
   // Preserve `unknown_account` terminal failure states as-is.
   if (observation.status === "unknown_account") {
     return {
       ...observation,
+      scope: {
+        ...scope,
+        account: { ...account },
+        expectedAccount: expectedAccount ?? null,
+        mismatch: scope.mismatch ?? null,
+      },
       evaluatedAt: new Date(evalMs).toISOString(),
       evaluatedAtMs: evalMs,
       usableForPlanning: false,
@@ -1098,15 +1108,15 @@ export function evaluateCursorObservation(observation, options = {}) {
   }
 
   const observedMs = resolveFiniteObservationMs(observation.observedAtMs, observation.observedAt);
-  const knownAccount = Boolean(observation.scope?.account?.known);
+  const knownAccount = Boolean(account.known);
   const matchCheck = knownAccount
-    ? checkExpectedAccount(observation.scope.account, expectedAccount)
+    ? checkExpectedAccount(account, expectedAccount)
     : { verifiedMatch: null, mismatch: null };
 
   const updatedScope = {
-    ...observation.scope,
+    ...scope,
     account: {
-      ...observation.scope.account,
+      ...account,
       verifiedMatch: matchCheck.verifiedMatch,
     },
     expectedAccount: expectedAccount ?? null,
@@ -1436,6 +1446,76 @@ export function evaluateCursorObservation(observation, options = {}) {
 }
 
 /**
+ * What a stored Cursor reading says at `now` for collector/planner use.
+ * Re-runs `evaluateCursorObservation` and maps Cursor statuses onto the collector vocabulary
+ * (fresh, low, exhausted, stale, unavailable, unknown). Only fresh and low confirm capacity.
+ * `limited` (some model buckets exhausted) stays unknown at agent scope so a partial reading is never capacity.
+ *
+ * @param {import("./cursor-usage.d.mts").CursorUsageObservation | null | undefined} observation
+ * @param {number | string | Date} [now]
+ */
+export function assessCursorUsage(observation, now = new Date()) {
+  if (!observation || typeof observation !== "object") {
+    return {
+      status: "unknown",
+      reason: "no reading has been taken",
+      capacityConfirmed: false,
+      resetsAt: null,
+      staleAfter: null,
+      freshness: "unknown",
+    };
+  }
+  try {
+    const evaluated = evaluateCursorObservation(observation, { now });
+    const freshnessState = evaluated.freshness?.state ?? "unknown";
+    const staleAfterMs =
+      typeof evaluated.observedAtMs === "number" && Number.isFinite(evaluated.observedAtMs)
+        ? evaluated.observedAtMs + (evaluated.freshness?.maxAgeMs ?? DEFAULT_MAX_AGE_MS)
+        : null;
+    const resetsAt = evaluated.reset?.primaryResetAt ?? null;
+    const reasonFromCautions = Array.isArray(evaluated.cautions) && evaluated.cautions.length
+      ? evaluated.cautions.join("; ")
+      : null;
+    const reason =
+      evaluated.error?.message ??
+      evaluated.reason ??
+      reasonFromCautions ??
+      evaluated.status;
+
+    /** @type {Record<string, "fresh" | "low" | "exhausted" | "stale" | "unavailable" | "unknown">} */
+    const mapped = {
+      ok: "fresh",
+      low: "low",
+      exhausted: "exhausted",
+      stale: "stale",
+      unavailable: "unavailable",
+      unknown_account: "unknown",
+      account_mismatch: "unknown",
+      limited: "unknown",
+      unknown: "unknown",
+    };
+    const status = mapped[evaluated.status] ?? "unknown";
+    return {
+      status,
+      reason: typeof reason === "string" ? reason : String(reason),
+      capacityConfirmed: status === "fresh" || status === "low",
+      resetsAt,
+      staleAfter: staleAfterMs !== null ? new Date(staleAfterMs).toISOString() : null,
+      freshness: freshnessState,
+    };
+  } catch (error) {
+    return {
+      status: "unavailable",
+      reason: redactSecrets(error?.message ?? error),
+      capacityConfirmed: false,
+      resetsAt: null,
+      staleAfter: null,
+      freshness: "unknown",
+    };
+  }
+}
+
+/**
  * Answers whether a worker candidate (`{ model, surface }`, both optional) can run on this Cursor subscription.
  * Re-evaluates freshness at `now` (defaulting to current wall-clock time) rather than trusting cached `freshness`.
  * Unmapped, blank, qualified, or unrecognised scopes resolve to `"unknown"`, never `"available"`.
@@ -1627,6 +1707,7 @@ export async function readCursorUsage(options = {}) {
     typeof options.timeoutMs === "number" && Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
       ? Math.trunc(options.timeoutMs)
       : DEFAULT_TIMEOUT_MS;
+  const signal = options.signal;
   const modelId =
     options.model === undefined || options.model === null ? null : String(options.model).trim();
   const fetchImpl = options.fetchImpl || globalThis.fetch;
@@ -1842,6 +1923,7 @@ export async function readCursorUsage(options = {}) {
         timeoutMs,
         nowMs,
         secretsToScrub: creds.secretsToScrub,
+        signal,
       });
       effectiveCredSource =
         allowEnvCredentials && env.CURSOR_API_KEY?.trim()
@@ -1855,6 +1937,7 @@ export async function readCursorUsage(options = {}) {
         timeoutMs,
         nowMs,
         secretsToScrub: creds.secretsToScrub,
+        signal,
       });
     }
 
@@ -1896,6 +1979,7 @@ export async function readCursorUsage(options = {}) {
           fetchImpl,
           timeoutMs,
           nowMs,
+        signal,
         });
       } catch (err) {
         if (err instanceof MalformedResponseError) throw err;
@@ -1914,6 +1998,7 @@ export async function readCursorUsage(options = {}) {
         fetchImpl,
         timeoutMs,
         nowMs,
+        signal,
       }),
       callDashboardRpc({
         endpoint: defaultEndpoint,
@@ -1924,6 +2009,7 @@ export async function readCursorUsage(options = {}) {
         fetchImpl,
         timeoutMs,
         nowMs,
+        signal,
       }),
       callOptional("GetPlanInfo", {}),
       callOptional("GetHardLimit", {}),
@@ -2092,6 +2178,7 @@ export async function readCursorUsage(options = {}) {
         fetchImpl,
         timeoutMs,
         nowMs,
+        signal,
       });
       const startMs = parseOptionalEpochMillis(
         cycle.startDateEpochMillis,
@@ -2131,6 +2218,7 @@ export async function readCursorUsage(options = {}) {
             fetchImpl,
             timeoutMs,
             nowMs,
+        signal,
           }),
           callOptional("GetAggregatedUsageEvents", {
             teamId,

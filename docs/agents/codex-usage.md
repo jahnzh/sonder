@@ -20,7 +20,7 @@ node scripts/codex-usage.mjs --codex <path> --codex-home <dir>      # another bi
 
 A ChatGPT account signed in to the Codex CLI on the host. Workers use the same one: Orca's `~/.config/orca/codex-pane-accounts.json` maps Codex panes to `selectionKey: host` and `homeRoute: real-home`, which is `~/.codex`. A pane routed to another Orca account would not match this reading.
 
-`scope.account` is a fingerprint (`sha256:` plus the first 16 hex digits of the SHA-256 of the lower-cased email). `scope.plan` is the plan the response names, `scope.authMethod` is `chatgpt`, and `scope.codexHome` is the home Codex reports. The email, the account id and the upsell banner in the response are not retained. `raw` is a copy of the rate-limit figures only.
+`scope.account` is a fingerprint (`sha256:` plus the first 16 hex digits of the SHA-256 of the lower-cased email). `scope.plan` is the plan the response names and `scope.authMethod` is `chatgpt`. The collector drops `codexHome` before storing a reading (path is not retained). The email, the account id and the upsell banner in the response are not retained. `raw` is a copy of the rate-limit figures only.
 
 Only this host's login is read. Another `--host` returns `unknown_account` / `host_not_local` without starting `codex`; to read another host, run the reader there, which has not been verified.
 

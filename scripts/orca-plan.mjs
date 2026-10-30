@@ -29,10 +29,11 @@ Histories and transcripts are never sent to Jev.
   --learn-dir      Learned-adjustment state (default: $ORCA_LEARN_DIR or artifacts/orca/learning).
   --no-learning    Capability-and-usage baseline only; still shows baselineRecommendation per task.
 
-Takes a fresh usage reading first for each agent scripts/orca-usage.mjs collects. Claude and any
-agent without a collector stay unknown. Shared allowances list active and proposed workers; percentages
-are not compared across providers and capacity is never reserved. Learning may reorder within a
-capability tier when comparable outcomes exist; see docs/agents/learned-adjustments.md.
+Takes a fresh usage reading first for each agent scripts/orca-usage.mjs collects (Claude, Codex,
+Cursor and Antigravity). A failed or unknown reading stays unknown or unavailable and is not capacity.
+Shared allowances list active and proposed workers; percentages are not compared across providers and
+capacity is never reserved. Learning may reorder within a capability tier when comparable outcomes
+exist; see docs/agents/learned-adjustments.md.
 
 Exit codes: 0 a plan was produced (including delays and needs-decision), 1 the wave could not be
 read or had no tasks, 2 bad usage.
