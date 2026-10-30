@@ -1,7 +1,9 @@
 export type CursorUsageStatus =
   | "ok"
   | "low"
+  | "limited"
   | "exhausted"
+  | "unknown"
   | "stale"
   | "unknown_account"
   | "account_mismatch"
@@ -13,7 +15,12 @@ export type CursorWindowStatus =
   | "exhausted"
   | "disabled"
   | "unlimited"
+  | "unknown"
   | "unavailable";
+
+export type CursorAppliesTo = "all" | "scoped" | "unknown";
+
+export type CursorCandidateAvailability = "available" | "exhausted" | "unknown";
 
 export type CursorCredentialSource =
   | "env:CURSOR_AUTH_TOKEN"
@@ -30,7 +37,6 @@ export interface CursorExpectedAccount {
 
 export interface CursorHostMappingEntry {
   transport?: "local";
-  hostname?: string;
   endpoint?: string;
   authFilePath?: string;
   configFilePath?: string;
@@ -41,6 +47,7 @@ export interface CursorPercentageWindow {
   id: "included_total" | "included_auto" | "included_api";
   label: string;
   kind: "percentage_allowance";
+  appliesTo: CursorAppliesTo;
   period: "monthly" | "weekly" | "unspecified";
   usedPercent: number;
   displayPercentUsed: number;
@@ -50,6 +57,7 @@ export interface CursorPercentageWindow {
   bonusSpendCents: number | null;
   totalSpendCents: number | null;
   applicableModels?: string[];
+  modelScopeKnown?: boolean;
   appliesToNamedModelsOutsideAutoBucket?: boolean;
   resetsAt: string | null;
   resetsAtMs: number | null;
@@ -81,17 +89,22 @@ export interface CursorEnterpriseSpendWindow {
   id: "enterprise_spend";
   label: string;
   kind: "cumulative_spend";
+  appliesTo: "all" | "unknown";
   period: "monthly";
   usedCents: number;
   usedDollars: number;
+  limitCents: number | null;
+  limitDollars: number | null;
+  remainingCents: number | null;
+  remainingDollars: number | null;
   previousPeriodCents: number | null;
   previousPeriodDollars: number | null;
-  usedPercent: null;
-  displayPercentUsed: null;
-  remainingPercent: null;
+  usedPercent: number | null;
+  displayPercentUsed: number | null;
+  remainingPercent: number | null;
   resetsAt: string | null;
   resetsAtMs: number | null;
-  status: "unlimited";
+  status: "ok" | "low" | "exhausted" | "disabled" | "unlimited" | "unknown";
 }
 
 export type CursorUsageWindow =
@@ -153,7 +166,7 @@ export interface CursorUsageObservation {
     ageMs: number | null;
     maxAgeMs: number;
     resetPassed: boolean;
-    staleReason: "max_age_exceeded" | "reset_passed" | null;
+    staleReason: "max_age_exceeded" | "reset_passed" | "missing_observed_at" | null;
   };
   reset: {
     billingCycleStartAt: string | null;
@@ -170,8 +183,7 @@ export interface CursorUsageObservation {
   windows: CursorUsageWindow[];
   evaluatedModel: {
     modelId: string | null;
-    bucket: "included_auto" | "included_api" | "enterprise_spend" | "overall";
-    allowOnDemand: boolean;
+    bucket: "included_auto" | "included_api" | "enterprise_spend" | "overall" | "unknown";
   };
   exhaustedWindows: string[];
   cautions: string[];
@@ -192,8 +204,7 @@ export interface ReadCursorUsageOptions {
   authFilePath?: string;
   configFilePath?: string;
   expectedAccount?: CursorExpectedAccount;
-  model?: string;
-  allowOnDemand?: boolean;
+  model?: string | null;
   lowCapacityRemainingPercent?: number;
   maxAgeMs?: number;
   timeoutMs?: number;
@@ -202,14 +213,14 @@ export interface ReadCursorUsageOptions {
   platform?: NodeJS.Platform;
   homedir?: string;
   hostname?: string;
+  localHostname?: string;
   fetchImpl?: typeof fetch;
 }
 
 export interface EvaluateCursorObservationOptions {
   now?: number | string | Date;
   maxAgeMs?: number;
-  model?: string;
-  allowOnDemand?: boolean;
+  model?: string | null;
   lowCapacityRemainingPercent?: number;
   expectedAccount?: CursorExpectedAccount;
 }
@@ -239,6 +250,12 @@ export function evaluateCursorObservation(
   observation: CursorUsageObservation,
   options?: EvaluateCursorObservationOptions,
 ): CursorUsageObservation;
+
+export function candidateAvailability(
+  observation: CursorUsageObservation | null | undefined,
+  candidate?: { model?: string | null; surface?: string | null },
+  now?: number | string | Date,
+): CursorCandidateAvailability;
 
 export function formatCursorUsageText(observation: CursorUsageObservation): string;
 

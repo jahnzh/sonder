@@ -17,8 +17,10 @@ import { fileURLToPath } from "node:url";
 
 import {
   DEFAULT_MAX_AGE_MS,
+  candidateAvailability,
   evaluateCursorObservation,
   formatCursorUsageText,
+  main as runCursorCliMain,
   parseCliArgs,
   readCursorUsage,
   redactSecrets,
@@ -334,8 +336,9 @@ test("reads provider-specific Cursor Pro windows, reset metadata, and partial AP
   assert.deepEqual(getMeCall.body, { teamId: 77 });
 
   assert.equal(obs.provider, "cursor");
-  assert.equal(obs.status, "ok");
-  assert.equal(obs.usableForPlanning, true);
+  // Unscoped observation with exhausted included_api (100%) but available included_auto (9%) reports limited.
+  assert.equal(obs.status, "limited");
+  assert.equal(obs.usableForPlanning, false);
   assert.equal(obs.source.kind, "cursor-dashboard-rpc");
   assert.equal(obs.source.service, "aiserver.v1.DashboardService");
   assert.equal(obs.source.credentialSource, "file:auth.json");
@@ -436,7 +439,7 @@ test("evaluates model-specific Cursor buckets: auto/composer-2.5 ok vs named API
   assert.equal(autoObs.evaluatedModel.bucket, "included_auto");
   assert.equal(autoObs.status, "ok");
 
-  // Named non-Auto model hits the 100%-used included_api bucket -> exhausted by default.
+  // Named non-Auto model hits the 100%-used included_api bucket -> exhausted.
   const namedExhausted = await readCursorUsage({
     homedir: home,
     platform: "linux",
@@ -449,38 +452,17 @@ test("evaluates model-specific Cursor buckets: auto/composer-2.5 ok vs named API
   assert.equal(namedExhausted.status, "exhausted");
   assert.equal(namedExhausted.usableForPlanning, false);
 
-  // With explicit allowOnDemand: true, $20 remaining on-demand budget allows planning with a caution.
-  const namedWithOnDemand = await readCursorUsage({
+  // Even when on-demand spend budget exists ($20 remaining), exhausted included quota remains exhausted.
+  const namedCheck = await readCursorUsage({
     homedir: home,
     platform: "linux",
     env: {},
     now: NOW_MS,
     model: "claude-sonnet-4-5",
-    allowOnDemand: true,
     fetchImpl,
   });
-  assert.equal(namedWithOnDemand.status, "ok");
-  assert.equal(namedWithOnDemand.usableForPlanning, true);
-  assert.ok(namedWithOnDemand.cautions.some((c) => /on-demand/i.test(c)));
-
-  // If on-demand is disabled (or also exhausted), even allowOnDemand: true reports exhausted.
-  const disabledOnDemandFixtures = realDashboardFixtures();
-  (disabledOnDemandFixtures.GetHardLimit as Record<string, unknown>).noUsageBasedAllowed = true;
-  disabledOnDemandFixtures.GetCurrentPeriodUsage.spendLimitUsage.individualLimit = 0;
-  disabledOnDemandFixtures.GetCurrentPeriodUsage.spendLimitUsage.individualRemaining = 0;
-
-  const { fetchImpl: fetchDisabled } = createFetchStub(disabledOnDemandFixtures);
-  const stillExhausted = await readCursorUsage({
-    homedir: home,
-    platform: "linux",
-    env: {},
-    now: NOW_MS,
-    model: "claude-sonnet-4-5",
-    allowOnDemand: true,
-    fetchImpl: fetchDisabled,
-  });
-  assert.equal(stillExhausted.status, "exhausted");
-  assert.equal(stillExhausted.usableForPlanning, false);
+  assert.equal(namedCheck.status, "exhausted");
+  assert.equal(namedCheck.usableForPlanning, false);
 });
 
 test("reports overall subscription exhaustion and low-capacity caution distinctly", async (t) => {
@@ -592,12 +574,15 @@ test("supports weekly included reset windows, unlimited/team on-demand, and Ente
     now: NOW_MS,
     fetchImpl: createFetchStub(enterpriseHandlers).fetchImpl,
   });
-  assert.equal(entObs.status, "ok");
+  // Enterprise account without a verifiable cap reports status: unknown (usableForPlanning: false).
+  assert.equal(entObs.status, "unknown");
+  assert.equal(entObs.usableForPlanning, false);
   assert.equal(entObs.scope.account.isEnterpriseUser, true);
   assert.equal(entObs.scope.account.planName, "Enterprise");
   assert.equal(entObs.evaluatedModel.bucket, "enterprise_spend");
   const entWindow = entObs.windows.find((w) => w.id === "enterprise_spend") as CursorEnterpriseSpendWindow;
   assert.ok(entWindow);
+  assert.equal(entWindow.status, "unknown");
   assert.equal(entWindow.usedCents, 4350);
   assert.equal(entWindow.usedDollars, 43.5);
   assert.equal(entWindow.previousPeriodCents, 2800);
@@ -666,7 +651,8 @@ test("reports missing credentials, expired JWT, unauthenticated, unknown host ma
     now: NOW_MS,
     fetchImpl: createFetchStub(exchangeFixtures).fetchImpl,
   });
-  assert.equal(exchangedObs.status, "ok");
+  // Unscoped observation with exhausted included_api (100%) but available included_auto (9%) reports limited.
+  assert.equal(exchangedObs.status, "limited");
   assert.equal(exchangedObs.source.credentialSource, "env:CURSOR_API_KEY");
   assert.equal(readFileSync(authFile, "utf8"), diskBefore);
   assert.ok(!JSON.stringify(exchangedObs).includes("key_secret_api_key_value_123456"));
@@ -691,7 +677,7 @@ test("reports missing credentials, expired JWT, unauthenticated, unknown host ma
   assert.equal(unauthObs.reason, "unauthenticated");
   assert.equal(unauthObs.usableForPlanning, false);
 
-  // 5. Unmapped remote host -> unknown_account (unknown_host_mapping), never falls back to local quota
+  // 5. Non-local remote host -> unknown_account (host_not_local), never falls back to local quota
   const unmappedHostObs = await readCursorUsage({
     host: "remote-wsl-worker",
     homedir: validHome,
@@ -700,11 +686,11 @@ test("reports missing credentials, expired JWT, unauthenticated, unknown host ma
     env: {},
     now: NOW_MS,
     fetchImpl: () => {
-      throw new Error("must not query local Cursor account for an unmapped target host");
+      throw new Error("must not query local Cursor account for a non-local target host");
     },
   });
   assert.equal(unmappedHostObs.status, "unknown_account");
-  assert.equal(unmappedHostObs.reason, "unknown_host_mapping");
+  assert.equal(unmappedHostObs.reason, "host_not_local");
   assert.equal(unmappedHostObs.scope.host.selector, "remote-wsl-worker");
   assert.equal(unmappedHostObs.scope.host.transport, "unmapped");
   assert.equal(unmappedHostObs.usableForPlanning, false);
@@ -829,6 +815,7 @@ test("marks observations stale after 30 minutes or once a reported reset timesta
     platform: "linux",
     env: {},
     now: NOW_MS,
+    model: "composer-2.5",
     fetchImpl: createFetchStub(realDashboardFixtures()).fetchImpl,
   });
   assert.equal(freshObs.status, "ok");
@@ -836,6 +823,7 @@ test("marks observations stale after 30 minutes or once a reported reset timesta
   // Exactly 30 minutes later: still fresh.
   const atBoundary = evaluateCursorObservation(freshObs, {
     now: NOW_MS + 30 * 60 * 1000,
+    model: "composer-2.5",
   });
   assert.equal(atBoundary.status, "ok");
   assert.equal(atBoundary.freshness.state, "fresh");
@@ -844,6 +832,7 @@ test("marks observations stale after 30 minutes or once a reported reset timesta
   // 30 minutes + 1 ms later: stale (max_age_exceeded), not usable as confirmed capacity.
   const agedOut = evaluateCursorObservation(freshObs, {
     now: NOW_MS + 30 * 60 * 1000 + 1,
+    model: "composer-2.5",
   });
   assert.equal(agedOut.status, "stale");
   assert.equal(agedOut.priorStatus, "ok");
@@ -859,12 +848,14 @@ test("marks observations stale after 30 minutes or once a reported reset timesta
     platform: "linux",
     env: {},
     now: resetMs - 2 * 60 * 1000,
+    model: "composer-2.5",
     fetchImpl: createFetchStub(realDashboardFixtures()).fetchImpl,
   });
   assert.equal(nearResetObs.status, "ok");
 
   const afterReset = evaluateCursorObservation(nearResetObs, {
     now: resetMs,
+    model: "composer-2.5",
   });
   assert.equal(afterReset.status, "stale");
   assert.equal(afterReset.usableForPlanning, false);
@@ -878,6 +869,7 @@ test("marks observations stale after 30 minutes or once a reported reset timesta
     platform: "linux",
     env: {},
     now: resetMs + 5_000,
+    model: "composer-2.5",
     fetchImpl: createFetchStub(realDashboardFixtures()).fetchImpl,
   });
   assert.equal(laggingRolloverObs.status, "stale");
@@ -943,6 +935,8 @@ test("CLI command seam supports --help, --json live HTTP server reads, --evaluat
       String(NOW_MS),
       "--expect-email",
       "cursor-owner@example.com",
+      "--model",
+      "composer-2.5",
     ],
     cleanEnv,
   );
@@ -956,7 +950,7 @@ test("CLI command seam supports --help, --json live HTTP server reads, --evaluat
   const savedPath = join(home, "saved-observation.json");
   writeFileSync(savedPath, liveCli.stdout);
   const staleCli = await runCliAsync(
-    ["--evaluate-file", savedPath, "--now", String(NOW_MS + 45 * 60 * 1000), "--json"],
+    ["--evaluate-file", savedPath, "--now", String(NOW_MS + 45 * 60 * 1000), "--json", "--model", "composer-2.5"],
     cleanEnv,
   );
   assert.equal(staleCli.code, 0);
@@ -964,12 +958,12 @@ test("CLI command seam supports --help, --json live HTTP server reads, --evaluat
   assert.equal(staleParsed.status, "stale");
   assert.equal(staleParsed.freshness.staleReason, "max_age_exceeded");
 
-  // Unmapped host exits 1 with status: unknown_account.
+  // Non-local host exits 1 with status: unknown_account (host_not_local).
   const unmappedCli = await runCliAsync(["--host", "unmapped-worker", "--json"], cleanEnv);
   assert.equal(unmappedCli.code, 1);
   const unmappedParsed = JSON.parse(unmappedCli.stdout);
   assert.equal(unmappedParsed.status, "unknown_account");
-  assert.equal(unmappedParsed.reason, "unknown_host_mapping");
+  assert.equal(unmappedParsed.reason, "host_not_local");
 });
 
 test("cursor-usage documentation records verified source, supported account, windows, live comparison, and limitations", () => {
@@ -984,4 +978,461 @@ test("cursor-usage documentation records verified source, supported account, win
   assert.match(doc, /Live verification against provider displays/);
   assert.match(doc, /## Limitations/);
 });
+
+test("regression (finding 1 - BLOCKING): non-local target hosts return unknown_account (host_not_local) without reading local credentials or stamping hostnames, and explicit authFilePath isolates env and cli-config", async (t) => {
+  const localHome = makeTempHome(t);
+  const localJwt = makeFakeJwt({ exp: Math.floor(NOW_MS / 1000) + 3600 }, "LOCAL_ONLY_JWT_SIG");
+  const { authFile: localAuthFile } = writeAuthFiles(localHome, {
+    accessToken: localJwt,
+    cliConfig: { authInfo: { activeTeamId: 77 } },
+  });
+
+  const envWithCreds = {
+    CURSOR_AUTH_TOKEN: localJwt,
+    CURSOR_API_KEY: "key_local_env_secret_1234567890",
+  };
+
+  // Every non-local host selector must return unknown_account (host_not_local) without reading local credentials,
+  // even when hostMap tries to map it to local transport, omit transport, pass non-object, or point at an authFilePath.
+  const hostMapsToReject: Array<Record<string, unknown> | undefined> = [
+    undefined,
+    { "remote-wsl-worker": {} },
+    { "remote-wsl-worker": { transport: "local", hostname: "remote-wsl-worker" } },
+    { "remote-wsl-worker": "invalid-entry" },
+    { "remote-wsl-worker": { authFilePath: localAuthFile, hostname: "remote-wsl-worker" } },
+  ];
+
+  for (const hostMap of hostMapsToReject) {
+    const stub = createFetchStub(realDashboardFixtures());
+    const obs = await readCursorUsage({
+      host: "remote-wsl-worker",
+      hostMap: hostMap as Record<string, never> | undefined,
+      homedir: localHome,
+      platform: "linux",
+      hostname: "andi-local",
+      env: envWithCreds,
+      now: NOW_MS,
+      fetchImpl: stub.fetchImpl,
+    });
+    assert.equal(obs.status, "unknown_account");
+    assert.equal(obs.reason, "host_not_local");
+    assert.equal(obs.error?.code, "host_not_local");
+    assert.equal(obs.usableForPlanning, false);
+    assert.equal(obs.source.credentialSource, "none");
+    assert.equal(obs.scope.host.hostname, null);
+    assert.equal(stub.calls.length, 0);
+  }
+
+  // Never stamp a foreign hostname onto local credentials via hostMap.local.hostname.
+  const spoofStub = createFetchStub(realDashboardFixtures());
+  const spoofedLocal = await readCursorUsage({
+    host: "local",
+    hostMap: { local: { hostname: "spoofed-remote-box" } as never },
+    homedir: localHome,
+    platform: "linux",
+    hostname: "andi-local",
+    env: envWithCreds,
+    now: NOW_MS,
+    fetchImpl: spoofStub.fetchImpl,
+  });
+  assert.equal(spoofedLocal.status, "unknown_account");
+  assert.equal(spoofedLocal.reason, "host_not_local");
+  assert.equal(spoofedLocal.scope.host.hostname, null);
+  assert.equal(spoofStub.calls.length, 0);
+
+  // Target host matching local hostname reads local credentials cleanly.
+  const matchingLocalStub = createFetchStub(realDashboardFixtures());
+  const matchingHostObs = await readCursorUsage({
+    host: "andi-local",
+    homedir: localHome,
+    platform: "linux",
+    hostname: "andi-local",
+    env: {},
+    now: NOW_MS,
+    model: "composer-2.5",
+    fetchImpl: matchingLocalStub.fetchImpl,
+  });
+  assert.equal(matchingHostObs.status, "ok");
+  assert.equal(matchingHostObs.scope.host.hostname, "andi-local");
+
+  // Explicit authFilePath on local host must NOT prefer ambient CURSOR_AUTH_TOKEN/CURSOR_API_KEY
+  // and must NOT fall back to homedir/.cursor/cli-config.json activeTeamId.
+  const isolatedHome = makeTempHome(t);
+  const explicitToken = makeFakeJwt({ exp: Math.floor(NOW_MS / 1000) + 3600 }, "EXPLICIT_FILE_SIG");
+  const { authFile: explicitAuthFile } = writeAuthFiles(isolatedHome, {
+    accessToken: explicitToken,
+  });
+  const expiredEnvToken = makeFakeJwt({ exp: Math.floor(NOW_MS / 1000) - 3600 }, "EXPIRED_ENV_SIG");
+  const isolatedStub = createFetchStub(realDashboardFixtures());
+  const isolatedObs = await readCursorUsage({
+    host: "local",
+    authFilePath: explicitAuthFile,
+    homedir: localHome, // has cliConfig activeTeamId: 77
+    platform: "linux",
+    hostname: "andi-local",
+    env: {
+      CURSOR_AUTH_TOKEN: expiredEnvToken,
+      CURSOR_API_KEY: "key_ambient_env_should_not_override",
+    },
+    now: NOW_MS,
+    model: "composer-2.5",
+    fetchImpl: isolatedStub.fetchImpl,
+  });
+  assert.equal(isolatedObs.status, "ok");
+  assert.equal(isolatedObs.source.credentialSource, "file:auth.json");
+  assert.equal(isolatedObs.scope.account.activeTeamId, null);
+  const isolatedGetMe = isolatedStub.calls.find((c) => c.path.endsWith("/GetMe"));
+  assert.ok(isolatedGetMe);
+  assert.equal(isolatedGetMe.headers["x-cursor-team-id"], undefined);
+});
+
+test("regression (finding 2a - HIGH): team pooled/hard limits, Enterprise GetHardLimit and unknown caps, and empty planUsage never fabricate available capacity", async (t) => {
+  const home = makeTempHome(t);
+  writeAuthFiles(home, {
+    accessToken: makeFakeJwt({ exp: Math.floor(NOW_MS / 1000) + 3600 }),
+  });
+
+  // 1. Team pooledLimit exhausted -> fixed exhausted (not unlimited!).
+  const teamExhaustedFixtures = realDashboardFixtures();
+  teamExhaustedFixtures.GetCurrentPeriodUsage.spendLimitUsage = {
+    limitType: "team",
+    pooledLimit: "50000",
+    pooledUsed: 50000,
+    pooledRemaining: "0",
+    individualUsed: 1200,
+    individualRemaining: 0,
+  } as unknown as typeof teamExhaustedFixtures.GetCurrentPeriodUsage.spendLimitUsage;
+  delete (teamExhaustedFixtures as Record<string, unknown>).GetHardLimit;
+
+  const teamExhaustedObs = await readCursorUsage({
+    homedir: home,
+    platform: "linux",
+    env: {},
+    now: NOW_MS,
+    fetchImpl: createFetchStub(teamExhaustedFixtures).fetchImpl,
+  });
+  const teamOnDemand = teamExhaustedObs.windows.find((w) => w.id === "on_demand") as CursorOnDemandWindow;
+  assert.equal(teamOnDemand.mode, "fixed");
+  assert.equal(teamOnDemand.usedCents, 50000);
+  assert.equal(teamOnDemand.limitCents, 50000);
+  assert.equal(teamOnDemand.remainingCents, 0);
+  assert.equal(teamOnDemand.status, "exhausted");
+
+  // 2. Team finite hardLimit without pooled usage figures -> unavailable (unknown remaining shared pool, not unlimited!).
+  const teamUnattributedFixtures = realDashboardFixtures();
+  teamUnattributedFixtures.GetCurrentPeriodUsage.spendLimitUsage = {
+    limitType: "team",
+    individualUsed: 500,
+    individualRemaining: 0,
+  } as unknown as typeof teamUnattributedFixtures.GetCurrentPeriodUsage.spendLimitUsage;
+  teamUnattributedFixtures.GetHardLimit = { hardLimit: 200 };
+
+  const teamUnattributedObs = await readCursorUsage({
+    homedir: home,
+    platform: "linux",
+    env: {},
+    now: NOW_MS,
+    fetchImpl: createFetchStub(teamUnattributedFixtures).fetchImpl,
+  });
+  const unattributedOnDemand = teamUnattributedObs.windows.find((w) => w.id === "on_demand") as CursorOnDemandWindow;
+  assert.equal(unattributedOnDemand.mode, "unavailable");
+  assert.equal(unattributedOnDemand.status, "unavailable");
+
+  // 3. Enterprise fallback without a verifiable cap reports unknown (usableForPlanning: false), not ok/unlimited!
+  const baseEnterprise = () => ({
+    GetMe: {
+      authId: "auth0|ent1",
+      userId: 5001,
+      email: "dev@corp.example",
+      teamId: 880,
+      teamName: "Corp Eng",
+      isEnterpriseUser: true,
+    },
+    GetPlanInfo: {
+      planInfo: { planName: "Enterprise", includedUsagePeriod: "INCLUDED_USAGE_PERIOD_MONTHLY" },
+    },
+    GetCurrentPeriodUsage: { enabled: true },
+    GetHardLimit: {} as Record<string, unknown>,
+    GetMonthlyBillingCycle: {
+      startDateEpochMillis: "1792570463000",
+      endDateEpochMillis: "1795248863000",
+    },
+    GetAggregatedUsageEvents: { totalCostCents: 4350 },
+  });
+
+  const entUnknownObs = await readCursorUsage({
+    homedir: home,
+    platform: "linux",
+    env: {},
+    now: NOW_MS,
+    fetchImpl: createFetchStub(baseEnterprise()).fetchImpl,
+  });
+  assert.equal(entUnknownObs.status as string, "unknown");
+  assert.equal(entUnknownObs.usableForPlanning, false);
+  const entUnknownWin = entUnknownObs.windows.find((w) => w.id === "enterprise_spend") as CursorEnterpriseSpendWindow;
+  assert.equal(entUnknownWin.status as string, "unknown");
+
+  // Enterprise with GetHardLimit exceeded by currentSpendCents -> exhausted!
+  const entCapped = baseEnterprise();
+  entCapped.GetHardLimit = { hardLimit: 40 }; // $40.00 = 4000 cents <= 4350 cents spent
+  const entExhaustedObs = await readCursorUsage({
+    homedir: home,
+    platform: "linux",
+    env: {},
+    now: NOW_MS,
+    fetchImpl: createFetchStub(entCapped).fetchImpl,
+  });
+  assert.equal(entExhaustedObs.status, "exhausted");
+  assert.equal(entExhaustedObs.usableForPlanning, false);
+
+  // Enterprise with explicit per-user limit ($50) and unlimited org pool at 90% ($45) -> low with caution!
+  const entLow = baseEnterprise();
+  entLow.GetHardLimit = { hardLimitPerUser: 50, hardLimit: 2147483647 };
+  entLow.GetAggregatedUsageEvents = { totalCostCents: 4500 };
+  const entLowObs = await readCursorUsage({
+    homedir: home,
+    platform: "linux",
+    env: {},
+    now: NOW_MS,
+    fetchImpl: createFetchStub(entLow).fetchImpl,
+  });
+  assert.equal(entLowObs.status, "low");
+  assert.equal(entLowObs.usableForPlanning, true);
+  assert.ok(entLowObs.cautions.some((c) => /low/i.test(c)));
+
+  // 4. Empty { planUsage: {} } must return unavailable (malformed_response), never 0% ok!
+  const emptyPlanFixtures = realDashboardFixtures();
+  emptyPlanFixtures.GetCurrentPeriodUsage = {
+    planUsage: {},
+  } as unknown as typeof emptyPlanFixtures.GetCurrentPeriodUsage;
+  const emptyPlanObs = await readCursorUsage({
+    homedir: home,
+    platform: "linux",
+    env: {},
+    now: NOW_MS,
+    fetchImpl: createFetchStub(emptyPlanFixtures).fetchImpl,
+  });
+  assert.equal(emptyPlanObs.status, "unavailable");
+  assert.equal(emptyPlanObs.reason, "malformed_response");
+  assert.equal(emptyPlanObs.usableForPlanning, false);
+});
+
+test("regression (finding 2b - HIGH): scoped bucket exhaustion yields limited without exhausting unrelated models, unmapped or unrecognised scopes resolve to unknown, and missing totalPercentUsed or apiSpend does not copy overall spend", async (t) => {
+  const home = makeTempHome(t);
+  writeAuthFiles(home, {
+    accessToken: makeFakeJwt({ exp: Math.floor(NOW_MS / 1000) + 3600 }),
+  });
+
+  assert.equal(typeof candidateAvailability, "function");
+
+  // 1. included_auto = 100%, included_api = 20%, included_total = 55% -> unscoped is "limited", usableForPlanning: false.
+  const autoExhaustedFixtures = realDashboardFixtures();
+  autoExhaustedFixtures.GetCurrentPeriodUsage.planUsage.totalPercentUsed = 55;
+  autoExhaustedFixtures.GetCurrentPeriodUsage.planUsage.autoPercentUsed = 100;
+  autoExhaustedFixtures.GetCurrentPeriodUsage.planUsage.apiPercentUsed = 20;
+
+  const autoExhaustedObs = await readCursorUsage({
+    homedir: home,
+    platform: "linux",
+    env: {},
+    now: NOW_MS,
+    fetchImpl: createFetchStub(autoExhaustedFixtures).fetchImpl,
+  });
+  assert.equal(autoExhaustedObs.status as string, "limited");
+  assert.equal(autoExhaustedObs.usableForPlanning, false);
+  assert.equal(candidateAvailability!(autoExhaustedObs, { model: "composer-2.5" }, NOW_MS), "exhausted");
+  assert.equal(candidateAvailability!(autoExhaustedObs, { model: "auto" }, NOW_MS), "exhausted");
+  assert.equal(candidateAvailability!(autoExhaustedObs, { model: "claude-sonnet-4-5" }, NOW_MS), "available");
+  assert.equal(candidateAvailability!(autoExhaustedObs, {}, NOW_MS), "unknown");
+  assert.equal(candidateAvailability!(autoExhaustedObs, { model: "" }, NOW_MS), "unknown");
+  assert.equal(candidateAvailability!(autoExhaustedObs, { model: "composer-2.5 only" }, NOW_MS), "unknown");
+
+  // 2. Low sub-window emits caution and "low" status even when included_total is 40%.
+  const subLowFixtures = realDashboardFixtures();
+  subLowFixtures.GetCurrentPeriodUsage.planUsage.totalPercentUsed = 40;
+  subLowFixtures.GetCurrentPeriodUsage.planUsage.autoPercentUsed = 88;
+  subLowFixtures.GetCurrentPeriodUsage.planUsage.apiPercentUsed = 10;
+  const subLowObs = await readCursorUsage({
+    homedir: home,
+    platform: "linux",
+    env: {},
+    now: NOW_MS,
+    fetchImpl: createFetchStub(subLowFixtures).fetchImpl,
+  });
+  assert.equal(subLowObs.status, "low");
+  assert.ok(subLowObs.cautions.some((c) => c.includes("included_auto")));
+
+  // 3. Omitted autoBucketModels must NOT misroute composer-2.5 to included_api; must resolve to unknown!
+  const noAutoModelsFixtures = realDashboardFixtures();
+  delete (noAutoModelsFixtures.GetCurrentPeriodUsage as Record<string, unknown>).autoBucketModels;
+  noAutoModelsFixtures.GetCurrentPeriodUsage.planUsage.totalPercentUsed = 25;
+  noAutoModelsFixtures.GetCurrentPeriodUsage.planUsage.autoPercentUsed = 100;
+  noAutoModelsFixtures.GetCurrentPeriodUsage.planUsage.apiPercentUsed = 10;
+
+  const unmappedComposerObs = await readCursorUsage({
+    homedir: home,
+    platform: "linux",
+    env: {},
+    now: NOW_MS,
+    model: "composer-2.5",
+    fetchImpl: createFetchStub(noAutoModelsFixtures).fetchImpl,
+  });
+  assert.equal(unmappedComposerObs.status as string, "unknown");
+  assert.equal(unmappedComposerObs.usableForPlanning, false);
+  assert.equal(unmappedComposerObs.evaluatedModel.bucket as string, "unknown");
+  assert.equal(candidateAvailability!(unmappedComposerObs, { model: "composer-2.5" }, NOW_MS), "unknown");
+
+  // 4. included_api must not copy overall includedSpend / limit when apiSpend / apiLimit are absent.
+  const apiWin = autoExhaustedObs.windows.find((w) => w.id === "included_api") as CursorPercentageWindow;
+  assert.equal(apiWin.includedSpendCents, null);
+  assert.equal(apiWin.limitCents, null);
+
+  // 5. Missing totalPercentUsed on Pro (includedSpend: 2000, limit: 2000, autoPercentUsed: 8.83, apiPercentUsed: 100)
+  // must NOT fabricate totalPercentUsed = 100% and break composer-2.5 / auto evaluation.
+  const missingTotalPctFixtures = realDashboardFixtures();
+  delete (missingTotalPctFixtures.GetCurrentPeriodUsage.planUsage as Record<string, unknown>).totalPercentUsed;
+  const missingTotalComposerObs = await readCursorUsage({
+    homedir: home,
+    platform: "linux",
+    env: {},
+    now: NOW_MS,
+    model: "composer-2.5",
+    fetchImpl: createFetchStub(missingTotalPctFixtures).fetchImpl,
+  });
+  assert.equal(missingTotalComposerObs.status, "ok");
+  assert.equal(missingTotalComposerObs.usableForPlanning, true);
+});
+
+test("regression (finding 3 - MEDIUM): verifies expected teamId against GetMe, reports account_mismatch before plan_usage_unavailable, marks missing/NaN observedAtMs stale, and documents ignored refreshToken", async (t) => {
+  const home = makeTempHome(t);
+  writeAuthFiles(home, {
+    accessToken: makeFakeJwt({ exp: Math.floor(NOW_MS / 1000) + 3600 }),
+    cliConfig: { authInfo: { activeTeamId: 77 } },
+  });
+
+  // 1. Local cli-config.json activeTeamId=77 must NOT mask GetMe.teamId=99 (or missing GetMe.teamId) mismatch!
+  const teamFixtures = realDashboardFixtures();
+  (teamFixtures.GetMe as Record<string, unknown>).teamId = 99;
+  const teamMismatchObs = await readCursorUsage({
+    homedir: home,
+    platform: "linux",
+    env: {},
+    now: NOW_MS,
+    expectedAccount: { teamId: 77 },
+    fetchImpl: createFetchStub(teamFixtures).fetchImpl,
+  });
+  assert.equal(teamMismatchObs.status, "account_mismatch");
+  assert.deepEqual(teamMismatchObs.scope.mismatch?.fields, ["teamId"]);
+
+  // 2. Non-Enterprise account without planUsage must report account_mismatch before plan_usage_unavailable!
+  const noPlanFixtures = realDashboardFixtures();
+  delete (noPlanFixtures.GetCurrentPeriodUsage as Record<string, unknown>).planUsage;
+  const mismatchBeforeUnavailable = await readCursorUsage({
+    homedir: home,
+    platform: "linux",
+    env: {},
+    now: NOW_MS,
+    expectedAccount: { email: "expected-other@example.com" },
+    fetchImpl: createFetchStub(noPlanFixtures).fetchImpl,
+  });
+  assert.equal(mismatchBeforeUnavailable.status, "account_mismatch");
+  assert.equal(mismatchBeforeUnavailable.reason, "account_mismatch");
+
+  // Also re-evaluating a saved plan_usage_unavailable observation with mismatched expectedAccount reports account_mismatch.
+  const matchingUnavailable = await readCursorUsage({
+    homedir: home,
+    platform: "linux",
+    env: {},
+    now: NOW_MS,
+    fetchImpl: createFetchStub(noPlanFixtures).fetchImpl,
+  });
+  assert.equal(matchingUnavailable.status, "unavailable");
+  const reevalMismatch = evaluateCursorObservation(matchingUnavailable, {
+    now: NOW_MS,
+    expectedAccount: { email: "expected-other@example.com" },
+  });
+  assert.equal(reevalMismatch.status, "account_mismatch");
+
+  // 3. NaN or missing observedAtMs (with missing/invalid observedAt) must be marked stale, never fresh!
+  const validObs = await readCursorUsage({
+    homedir: home,
+    platform: "linux",
+    env: {},
+    now: NOW_MS,
+    model: "composer-2.5",
+    fetchImpl: createFetchStub(realDashboardFixtures()).fetchImpl,
+  });
+  const nanObs = evaluateCursorObservation(
+    {
+      ...validObs,
+      observedAt: "",
+      observedAtMs: Number.NaN,
+    },
+    { now: NOW_MS },
+  );
+  assert.equal(nanObs.status, "stale");
+  assert.equal(nanObs.usableForPlanning, false);
+  assert.equal(nanObs.freshness.state, "stale");
+
+  // 4. Documentation covers refreshToken non-exchange, host_not_local, and limited/unknown statuses.
+  const doc = readFileSync(join(repoRoot, "docs", "agents", "cursor-usage.md"), "utf8");
+  assert.match(doc, /refreshToken/);
+  assert.match(doc, /host_not_local/);
+  assert.match(doc, /limited/);
+});
+
+test("regression (finding 4 - LOW): rejects unrequested --allow-on-demand flag, scrubs CURSOR_API_KEY alongside CURSOR_AUTH_TOKEN, and redacts credentials in CLI stderr errors", async (t) => {
+  // 1. Unrequested --allow-on-demand CLI flag is removed.
+  assert.equal(parseCliArgs(["--allow-on-demand"]).ok, false);
+
+  // 2. When both CURSOR_AUTH_TOKEN and CURSOR_API_KEY are set, CURSOR_API_KEY is still scrubbed from errors.
+  const home = makeTempHome(t);
+  const authJwt = makeFakeJwt({ exp: Math.floor(NOW_MS / 1000) + 3600 }, "ENV_AUTH_TOKEN_SIG");
+  const customApiKey = "custom_unprefixed_secret_value_99887766";
+  const bothSecretsObs = await readCursorUsage({
+    homedir: home,
+    platform: "linux",
+    env: {
+      CURSOR_AUTH_TOKEN: authJwt,
+      CURSOR_API_KEY: customApiKey,
+    },
+    now: NOW_MS,
+    fetchImpl: async () => {
+      throw new Error(`Echoed both ${authJwt} and ${customApiKey}`);
+    },
+  });
+  const serialized = JSON.stringify(bothSecretsObs);
+  assert.ok(!serialized.includes(authJwt));
+  assert.ok(!serialized.includes("ENV_AUTH_TOKEN_SIG"));
+  assert.ok(!serialized.includes(customApiKey));
+
+  // 3. CLI stderr redacts credentials in --host-map and --evaluate-file error messages.
+  const stderrLines: string[] = [];
+  const badHostMapCode = await runCursorCliMain(
+    ["--host-map", `{bad json with Bearer ${authJwt} and ${customApiKey}`],
+    {
+      stdout: () => {},
+      stderr: (line) => stderrLines.push(line),
+      env: { CURSOR_AUTH_TOKEN: authJwt, CURSOR_API_KEY: customApiKey },
+    },
+  );
+  assert.equal(badHostMapCode, 2);
+
+  const badEvalCode = await runCursorCliMain(
+    ["--evaluate-file", `/nonexistent/path/${customApiKey}/key_1234567890abcdef.json`],
+    {
+      stdout: () => {},
+      stderr: (line) => stderrLines.push(line),
+      env: { CURSOR_AUTH_TOKEN: authJwt, CURSOR_API_KEY: customApiKey },
+    },
+  );
+  assert.equal(badEvalCode, 1);
+
+  const combinedStderr = stderrLines.join("\n");
+  assert.ok(!combinedStderr.includes(authJwt));
+  assert.ok(!combinedStderr.includes("ENV_AUTH_TOKEN_SIG"));
+  assert.ok(!combinedStderr.includes(customApiKey));
+  assert.ok(!combinedStderr.includes("key_1234567890abcdef"));
+});
+
 

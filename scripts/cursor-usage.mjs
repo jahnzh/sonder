@@ -38,16 +38,15 @@ class RpcHttpError extends Error {
 function usageText() {
   return `Usage: node scripts/cursor-usage.mjs [options]
 
-Reads an automatic, read-only Cursor subscription usage observation for the target host
+Reads an automatic, read-only Cursor subscription usage observation for the local host
 via Cursor's DashboardService Connect-RPC endpoints, without writing or retaining credentials.
 
 Options:
   --help, -h                         Show this usage help and exit 0
   --json                             Print structured JSON observation
-  --host <selector>                  Target worker host selector (default: local)
-  --host-map <json-or-file>          Explicit JSON host mapping (or path to JSON file)
+  --host <selector>                  Target worker host selector (default: local; non-local returns unknown_account / host_not_local)
+  --host-map <json-or-file>          Explicit JSON host mapping for local host options (or path to JSON file)
   --model <model-id>                 Evaluate capacity for a specific Cursor model (e.g. auto, composer-2.5)
-  --allow-on-demand                  Count available On-Demand spend budget when included quota is exhausted
   --expect-email <email>             Require active Cursor account email to match
   --expect-user-id <id>              Require active Cursor account numeric userId to match
   --expect-team-id <id>              Require active Cursor account numeric teamId to match
@@ -61,7 +60,7 @@ Options:
   --timeout-ms <ms>                  Per-request timeout in milliseconds (default: ${DEFAULT_TIMEOUT_MS})
 
 Exit codes:
-  0  Observation read or evaluated (status: ok, low, exhausted, or stale)
+  0  Observation read or evaluated (status: ok, low, limited, exhausted, unknown, or stale)
   1  Account unknown, mismatched, or usage data unavailable
   2  Invalid CLI arguments`;
 }
@@ -203,6 +202,37 @@ function parseOptionalNonNegativeNumber(value, label) {
 }
 
 /**
+ * Parses proto3 int32/int64 non-negative integer counts or cent amounts (including 0 / "0").
+ * Omitted, null, or empty string returns `undefined`.
+ * @param {unknown} value
+ * @param {string} label
+ * @returns {number | undefined}
+ */
+function parseOptionalNonNegativeInt64(value, label) {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || value < 0 || !Number.isInteger(value)) {
+      throw new MalformedResponseError(`${label} must be a non-negative integer`);
+    }
+    return value;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!/^\d+$/.test(trimmed)) {
+      throw new MalformedResponseError(`${label} must be a decimal integer string`);
+    }
+    const parsed = Number(trimmed);
+    if (!Number.isSafeInteger(parsed) || parsed < 0) {
+      throw new MalformedResponseError(`${label} is out of safe integer range`);
+    }
+    return parsed;
+  }
+  throw new MalformedResponseError(`${label} has invalid integer type`);
+}
+
+/**
  * Parses proto3 int64 epoch-millisecond timestamps (decimal strings or finite integers).
  * Zero or omitted returns `null`.
  * @param {unknown} value
@@ -301,6 +331,33 @@ function stripModelParameters(modelId) {
 }
 
 /**
+ * Checks whether a model string is a bare Cursor CLI model identifier (not blank, multi-word, or qualified prose).
+ * @param {string} modelId
+ * @returns {boolean}
+ */
+function isValidCursorModelSyntax(modelId) {
+  const trimmed = modelId.trim();
+  if (!trimmed) return false;
+  return /^[A-Za-z0-9][A-Za-z0-9._/-]*(?:\[[A-Za-z0-9._,=-]+\])?$/.test(trimmed);
+}
+
+/**
+ * Checks whether a requested target host selector refers to the local host.
+ * @param {string} requestedHost
+ * @param {string} localHostname
+ * @returns {boolean}
+ */
+function isLocalTargetHost(requestedHost, localHostname) {
+  if (typeof requestedHost !== "string") return false;
+  const target = requestedHost.trim().toLowerCase();
+  if (!target) return false;
+  if (target === "local") return true;
+  if (typeof localHostname !== "string") return false;
+  const current = localHostname.trim().toLowerCase();
+  return current !== "" && target === current;
+}
+
+/**
  * Parses `Retry-After` header (seconds or HTTP-date) into milliseconds.
  * @param {string | null} headerValue
  * @param {number} nowMs
@@ -310,7 +367,8 @@ function parseRetryAfterMs(headerValue, nowMs) {
   if (!headerValue) return null;
   const trimmed = headerValue.trim();
   if (/^\d+$/.test(trimmed)) {
-    return Number(trimmed) * 1000;
+    const ms = Number(trimmed) * 1000;
+    return Number.isFinite(ms) ? ms : null;
   }
   const dateMs = Date.parse(trimmed);
   if (Number.isFinite(dateMs)) {
@@ -321,10 +379,11 @@ function parseRetryAfterMs(headerValue, nowMs) {
 
 /**
  * Reads local Cursor CLI config (`cli-config.json`) read-only for `activeTeamId`.
- * @param {string} configFilePath
+ * @param {string | null} configFilePath
  * @returns {number | null}
  */
 function readActiveTeamId(configFilePath) {
+  if (!configFilePath) return null;
   try {
     if (!fs.existsSync(configFilePath)) return null;
     const parsed = JSON.parse(fs.readFileSync(configFilePath, "utf8"));
@@ -337,16 +396,22 @@ function readActiveTeamId(configFilePath) {
 
 /**
  * Reads credentials read-only from env or `auth.json` without persisting anything.
- * @param {{ authFilePath: string, env: Record<string, string | undefined> }} params
+ * Always records ambient `CURSOR_AUTH_TOKEN` and `CURSOR_API_KEY` in `secretsToScrub`.
+ * When `allowEnvCredentials` is `false` (explicit `authFilePath` override), only `authFilePath` is used for auth.
+ * @param {{ authFilePath: string, env: Record<string, string | undefined>, allowEnvCredentials?: boolean }} params
  */
 function loadLocalCredentials(params) {
-  const { authFilePath, env } = params;
+  const { authFilePath, env, allowEnvCredentials = true } = params;
   /** @type {string[]} */
   const secretsToScrub = [];
 
-  const envAuthToken = env.CURSOR_AUTH_TOKEN?.trim();
-  if (envAuthToken) {
-    secretsToScrub.push(envAuthToken);
+  const envAuthToken = env.CURSOR_AUTH_TOKEN?.trim() || null;
+  if (envAuthToken) secretsToScrub.push(envAuthToken);
+
+  const envApiKey = env.CURSOR_API_KEY?.trim() || null;
+  if (envApiKey) secretsToScrub.push(envApiKey);
+
+  if (allowEnvCredentials && envAuthToken) {
     return {
       accessToken: envAuthToken,
       apiKey: null,
@@ -354,9 +419,6 @@ function loadLocalCredentials(params) {
       secretsToScrub,
     };
   }
-
-  const envApiKey = env.CURSOR_API_KEY?.trim() || null;
-  if (envApiKey) secretsToScrub.push(envApiKey);
 
   let fileAccessToken = null;
   let fileRefreshToken = null;
@@ -383,19 +445,21 @@ function loadLocalCredentials(params) {
     }
   }
 
+  const effectiveEnvApiKey = allowEnvCredentials ? envApiKey : null;
+
   if (fileAccessToken) {
     return {
       accessToken: fileAccessToken,
-      apiKey: envApiKey || fileApiKey,
+      apiKey: effectiveEnvApiKey || fileApiKey,
       credentialSource: /** @type {const} */ ("file:auth.json"),
       secretsToScrub,
     };
   }
 
-  if (envApiKey) {
+  if (effectiveEnvApiKey) {
     return {
       accessToken: null,
-      apiKey: envApiKey,
+      apiKey: effectiveEnvApiKey,
       credentialSource: /** @type {const} */ ("env:CURSOR_API_KEY"),
       secretsToScrub,
     };
@@ -537,7 +601,7 @@ async function callDashboardRpc(params) {
 }
 
 /**
- * Builds the On-Demand spend window matching Cursor Agent CLI's `usage-data.ts` logic.
+ * Builds the On-Demand spend window, accounting for both individual and shared team pooled caps.
  * @param {{ currentUsage: Record<string, unknown>, hardLimit: Record<string, unknown> | null, period: "monthly" | "weekly" | "unspecified", resetsAtMs: number | null, lowRemainingPercent: number }} params
  */
 function buildOnDemandWindow(params) {
@@ -548,7 +612,7 @@ function buildOnDemandWindow(params) {
       ? null
       : assertPlainObject(rawSpend, "GetCurrentPeriodUsage.spendLimitUsage");
 
-  const usedCents = Math.round(
+  const individualUsedCents = Math.round(
     parseOptionalNonNegativeNumber(spend?.individualUsed, "spendLimitUsage.individualUsed") ?? 0,
   );
   const individualLimitRaw = parseOptionalNonNegativeNumber(
@@ -559,7 +623,12 @@ function buildOnDemandWindow(params) {
     spend?.individualRemaining,
     "spendLimitUsage.individualRemaining",
   );
-  const pooledLimitRaw = parseOptionalEpochMillis(spend?.pooledLimit, "spendLimitUsage.pooledLimit");
+  const pooledLimitRaw = parseOptionalNonNegativeInt64(spend?.pooledLimit, "spendLimitUsage.pooledLimit");
+  const pooledUsedRaw = parseOptionalNonNegativeInt64(spend?.pooledUsed, "spendLimitUsage.pooledUsed");
+  const pooledRemainingRaw = parseOptionalNonNegativeInt64(
+    spend?.pooledRemaining,
+    "spendLimitUsage.pooledRemaining",
+  );
   const limitType = typeof spend?.limitType === "string" ? spend.limitType : "";
 
   const hardDisabled =
@@ -568,6 +637,7 @@ function buildOnDemandWindow(params) {
     ? parseOptionalNonNegativeNumber(hardLimit.hardLimit, "GetHardLimit.hardLimit")
     : undefined;
 
+  let usedCents = individualUsedCents;
   /** @type {"fixed" | "unlimited" | "disabled" | "unavailable"} */
   let mode = "unavailable";
   /** @type {"personal" | "team-member" | null} */
@@ -579,6 +649,95 @@ function buildOnDemandWindow(params) {
 
   if (hardDisabled) {
     mode = "disabled";
+  } else if (limitType === "team") {
+    const teamPoolCapCents =
+      pooledLimitRaw !== undefined
+        ? pooledLimitRaw >= UNLIMITED_HARD_LIMIT_DOLLARS * 100
+          ? Number.POSITIVE_INFINITY
+          : pooledLimitRaw
+        : hardLimit !== null
+          ? (hardLimitDollarsRaw ?? 0) >= UNLIMITED_HARD_LIMIT_DOLLARS
+            ? Number.POSITIVE_INFINITY
+            : Math.round((hardLimitDollarsRaw ?? 0) * 100)
+          : undefined;
+
+    if (individualLimitRaw !== undefined) {
+      if (individualLimitRaw <= 0 || teamPoolCapCents === 0) {
+        mode = "disabled";
+      } else {
+        const indivCap = Math.round(individualLimitRaw);
+        const indivRem =
+          individualRemainingRaw !== undefined
+            ? Math.max(0, Math.round(individualRemainingRaw))
+            : Math.max(0, indivCap - individualUsedCents);
+
+        if (teamPoolCapCents !== undefined && Number.isFinite(teamPoolCapCents) && teamPoolCapCents > 0) {
+          if (pooledUsedRaw !== undefined || pooledRemainingRaw !== undefined) {
+            const poolUsed =
+              pooledUsedRaw !== undefined
+                ? pooledUsedRaw
+                : Math.max(0, teamPoolCapCents - /** @type {number} */ (pooledRemainingRaw));
+            const poolRem =
+              pooledRemainingRaw !== undefined
+                ? Math.max(0, pooledRemainingRaw)
+                : Math.max(0, teamPoolCapCents - poolUsed);
+            if (poolRem < indivRem) {
+              mode = "fixed";
+              usedCents = poolUsed;
+              limitCents = teamPoolCapCents;
+              remainingCents = poolRem;
+            } else {
+              mode = "fixed";
+              usedCents = individualUsedCents;
+              limitCents = indivCap;
+              remainingCents = indivRem;
+            }
+          } else if (individualUsedCents >= teamPoolCapCents) {
+            mode = "fixed";
+            usedCents = individualUsedCents;
+            limitCents = teamPoolCapCents;
+            remainingCents = 0;
+          } else {
+            mode = "unavailable";
+            limitCents = Math.min(indivCap, teamPoolCapCents);
+            remainingCents = null;
+          }
+        } else {
+          mode = "fixed";
+          usedCents = individualUsedCents;
+          limitCents = indivCap;
+          remainingCents = indivRem;
+        }
+      }
+    } else if (teamPoolCapCents === Number.POSITIVE_INFINITY) {
+      mode = "unlimited";
+    } else if (teamPoolCapCents !== undefined && teamPoolCapCents <= 0) {
+      mode = "disabled";
+    } else if (teamPoolCapCents !== undefined && Number.isFinite(teamPoolCapCents) && teamPoolCapCents > 0) {
+      if (pooledUsedRaw !== undefined || pooledRemainingRaw !== undefined) {
+        mode = "fixed";
+        limitCents = teamPoolCapCents;
+        usedCents =
+          pooledUsedRaw !== undefined
+            ? pooledUsedRaw
+            : Math.max(0, teamPoolCapCents - /** @type {number} */ (pooledRemainingRaw));
+        remainingCents =
+          pooledRemainingRaw !== undefined
+            ? Math.max(0, pooledRemainingRaw)
+            : Math.max(0, teamPoolCapCents - usedCents);
+      } else if (individualUsedCents >= teamPoolCapCents) {
+        mode = "fixed";
+        limitCents = teamPoolCapCents;
+        usedCents = individualUsedCents;
+        remainingCents = 0;
+      } else {
+        mode = "unavailable";
+        limitCents = teamPoolCapCents;
+        remainingCents = null;
+      }
+    } else {
+      mode = "unavailable";
+    }
   } else if (individualLimitRaw !== undefined) {
     if (individualLimitRaw > 0) {
       mode = "fixed";
@@ -589,15 +748,6 @@ function buildOnDemandWindow(params) {
           : Math.max(0, limitCents - usedCents);
     } else {
       mode = "disabled";
-    }
-  } else if (limitType === "team") {
-    if (hardLimit !== null) {
-      const hl = hardLimitDollarsRaw ?? 0;
-      mode = hl <= 0 ? "disabled" : "unlimited";
-    } else if (pooledLimitRaw !== null && pooledLimitRaw > 0) {
-      mode = "unlimited";
-    } else {
-      mode = "unavailable";
     }
   } else if (hardLimit === null) {
     mode = "unavailable";
@@ -668,7 +818,137 @@ function buildOnDemandWindow(params) {
 }
 
 /**
- * Checks expectedAccount constraints against the resolved Cursor account.
+ * Builds the Enterprise cumulative spend window, consulting `GetHardLimit` when available
+ * and never turning an unknown remaining cap into `"unlimited"` or `"ok"`.
+ * @param {{ currentSpendCents: number, previousSpendCents: number, endMs: number, hardLimit: Record<string, unknown> | null, lowRemainingPercent: number }} params
+ * @returns {import("./cursor-usage.d.mts").CursorEnterpriseSpendWindow}
+ */
+function buildEnterpriseSpendWindow(params) {
+  const { currentSpendCents, previousSpendCents, endMs, hardLimit, lowRemainingPercent } = params;
+  const hardDisabled =
+    hardLimit?.noUsageBasedAllowed === true || hardLimit?.onDemandSpendDisabledByOrganization === true;
+  const teamHardLimitDollars = hardLimit
+    ? parseOptionalNonNegativeNumber(hardLimit.hardLimit, "GetHardLimit.hardLimit")
+    : undefined;
+  const hardLimitPerUserDollars = hardLimit
+    ? parseOptionalNonNegativeNumber(hardLimit.hardLimitPerUser, "GetHardLimit.hardLimitPerUser")
+    : undefined;
+  const perUserMonthlyDollarsRaw = hardLimit
+    ? parseOptionalNonNegativeNumber(
+        hardLimit.perUserMonthlyLimitDollars,
+        "GetHardLimit.perUserMonthlyLimitDollars",
+      )
+    : undefined;
+  const perUserDollars =
+    hardLimitPerUserDollars !== undefined
+      ? hardLimitPerUserDollars
+      : perUserMonthlyDollarsRaw !== undefined && perUserMonthlyDollarsRaw > 0
+        ? perUserMonthlyDollarsRaw
+        : undefined;
+
+  /** @type {number | null} */
+  let limitCents = null;
+  /** @type {number | null} */
+  let remainingCents = null;
+  /** @type {number | null} */
+  let usedPercent = null;
+  /** @type {number | null} */
+  let displayPercentUsed = null;
+  /** @type {number | null} */
+  let remainingPercent = null;
+  /** @type {"ok" | "low" | "exhausted" | "disabled" | "unlimited" | "unknown"} */
+  let status = "unknown";
+  /** @type {"all" | "unknown"} */
+  let appliesTo = "unknown";
+
+  if (hardDisabled || perUserDollars === 0) {
+    limitCents = 0;
+    remainingCents = 0;
+    usedPercent = 100;
+    displayPercentUsed = 100;
+    remainingPercent = 0;
+    status = "disabled";
+    appliesTo = "all";
+  } else {
+    const finitePerUserCents =
+      perUserDollars !== undefined && perUserDollars > 0 && perUserDollars < UNLIMITED_HARD_LIMIT_DOLLARS
+        ? Math.round(perUserDollars * 100)
+        : null;
+    const finiteTeamCents =
+      teamHardLimitDollars !== undefined &&
+      teamHardLimitDollars > 0 &&
+      teamHardLimitDollars < UNLIMITED_HARD_LIMIT_DOLLARS
+        ? Math.round(teamHardLimitDollars * 100)
+        : null;
+    const effectiveMinCapCents =
+      finitePerUserCents !== null && finiteTeamCents !== null
+        ? Math.min(finitePerUserCents, finiteTeamCents)
+        : (finitePerUserCents ?? finiteTeamCents);
+
+    if (effectiveMinCapCents !== null && currentSpendCents >= effectiveMinCapCents) {
+      limitCents = effectiveMinCapCents;
+      remainingCents = 0;
+      usedPercent = (currentSpendCents / effectiveMinCapCents) * 100;
+      displayPercentUsed = toDisplayPercent(usedPercent);
+      remainingPercent = 0;
+      status = "exhausted";
+      appliesTo = "all";
+    } else if (
+      finitePerUserCents !== null &&
+      finiteTeamCents === null &&
+      teamHardLimitDollars !== undefined &&
+      teamHardLimitDollars >= UNLIMITED_HARD_LIMIT_DOLLARS
+    ) {
+      limitCents = finitePerUserCents;
+      remainingCents = Math.max(0, finitePerUserCents - currentSpendCents);
+      usedPercent = (currentSpendCents / finitePerUserCents) * 100;
+      displayPercentUsed = toDisplayPercent(usedPercent);
+      remainingPercent = Math.max(0, 100 - usedPercent);
+      status = classifyPercentageStatus(usedPercent, lowRemainingPercent);
+      appliesTo = "all";
+    } else if (
+      finitePerUserCents === null &&
+      finiteTeamCents === null &&
+      teamHardLimitDollars !== undefined &&
+      teamHardLimitDollars >= UNLIMITED_HARD_LIMIT_DOLLARS &&
+      (perUserDollars === undefined || perUserDollars >= UNLIMITED_HARD_LIMIT_DOLLARS)
+    ) {
+      status = "unlimited";
+      appliesTo = "all";
+    } else {
+      limitCents = effectiveMinCapCents;
+      remainingCents = null;
+      status = "unknown";
+      appliesTo = "unknown";
+    }
+  }
+
+  return {
+    id: "enterprise_spend",
+    label: "Enterprise Billing Period Spend",
+    kind: "cumulative_spend",
+    appliesTo,
+    period: "monthly",
+    usedCents: currentSpendCents,
+    usedDollars: Number((currentSpendCents / 100).toFixed(2)),
+    limitCents,
+    limitDollars: limitCents !== null ? Number((limitCents / 100).toFixed(2)) : null,
+    remainingCents,
+    remainingDollars: remainingCents !== null ? Number((remainingCents / 100).toFixed(2)) : null,
+    previousPeriodCents: previousSpendCents,
+    previousPeriodDollars: Number((previousSpendCents / 100).toFixed(2)),
+    usedPercent,
+    displayPercentUsed,
+    remainingPercent,
+    resetsAt: new Date(endMs).toISOString(),
+    resetsAtMs: endMs,
+    status,
+  };
+}
+
+/**
+ * Checks expectedAccount constraints against the server-verified Cursor `GetMe` account.
+ * Never trusts local `cli-config.json` `activeTeamId` over `GetMe.teamId`.
  * @param {Record<string, unknown>} account
  * @param {{ email?: string, userId?: number, teamId?: number } | null} expected
  */
@@ -692,11 +972,8 @@ function checkExpectedAccount(account, expected) {
   if (expected.userId !== undefined && account.userId !== expected.userId) {
     fields.push("userId");
   }
-  if (expected.teamId !== undefined) {
-    const actualTeam = account.activeTeamId ?? account.teamId;
-    if (actualTeam !== expected.teamId) {
-      fields.push("teamId");
-    }
+  if (expected.teamId !== undefined && account.teamId !== expected.teamId) {
+    fields.push("teamId");
   }
   if (fields.length === 0) {
     return { verifiedMatch: true, mismatch: null };
@@ -708,6 +985,64 @@ function checkExpectedAccount(account, expected) {
       message: `Active Cursor account mismatched expected ${fields.join(", ")}`,
     },
   };
+}
+
+/**
+ * Resolves which included bucket a requested Cursor model belongs to.
+ * Blank, qualified, or unmapped models (e.g. when `autoBucketModels` was omitted) resolve to `"unknown"`,
+ * never silently misrouting to `included_api`.
+ * @param {string} modelInput
+ * @param {import("./cursor-usage.d.mts").CursorPercentageWindow | undefined} autoWindow
+ * @returns {"included_auto" | "included_api" | "unknown"}
+ */
+function resolveCursorModelBucket(modelInput, autoWindow) {
+  if (typeof modelInput !== "string") return "unknown";
+  const trimmed = modelInput.trim();
+  if (!isValidCursorModelSyntax(trimmed)) return "unknown";
+
+  const baseModel = stripModelParameters(trimmed);
+  const baseLower = baseModel.toLowerCase();
+  const fullLower = trimmed.toLowerCase();
+  if (baseLower === "auto" || baseLower === "default") {
+    return "included_auto";
+  }
+
+  const autoModelsKnown =
+    autoWindow?.modelScopeKnown === true &&
+    Array.isArray(autoWindow.applicableModels) &&
+    autoWindow.applicableModels.length > 0;
+  if (!autoModelsKnown) {
+    return "unknown";
+  }
+
+  const autoLowerSet = new Set(
+    /** @type {string[]} */ (autoWindow.applicableModels)
+      .map((m) => (typeof m === "string" ? m.trim().toLowerCase() : ""))
+      .filter(Boolean),
+  );
+  if (autoLowerSet.has(baseLower) || autoLowerSet.has(fullLower)) {
+    return "included_auto";
+  }
+  return "included_api";
+}
+
+/**
+ * Parses a finite positive epoch-millisecond timestamp from `observedAtMs` or ISO `observedAt`.
+ * @param {unknown} msValue
+ * @param {unknown} isoValue
+ * @returns {number | null}
+ */
+function resolveFiniteObservationMs(msValue, isoValue) {
+  if (typeof msValue === "number" && Number.isFinite(msValue) && msValue > 0) {
+    return Math.trunc(msValue);
+  }
+  if (typeof isoValue === "string" && isoValue.trim()) {
+    const parsed = Date.parse(isoValue.trim());
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.trunc(parsed);
+    }
+  }
+  return null;
 }
 
 /**
@@ -727,19 +1062,25 @@ export function evaluateCursorObservation(observation, options = {}) {
     Number.isFinite(options.lowCapacityRemainingPercent)
       ? options.lowCapacityRemainingPercent
       : DEFAULT_LOW_CAPACITY_REMAINING_PERCENT;
-  const modelId =
-    options.model !== undefined
-      ? options.model?.trim() || null
-      : observation.evaluatedModel?.modelId ?? null;
-  const allowOnDemand =
-    options.allowOnDemand !== undefined
-      ? Boolean(options.allowOnDemand)
-      : Boolean(observation.evaluatedModel?.allowOnDemand);
+
+  /** @type {string | null} */
+  let modelId = null;
+  if (options.model === null) {
+    modelId = null;
+  } else if (options.model !== undefined) {
+    modelId = typeof options.model === "string" ? options.model.trim() : "";
+  } else if (observation.evaluatedModel?.modelId !== undefined && observation.evaluatedModel?.modelId !== null) {
+    modelId =
+      typeof observation.evaluatedModel.modelId === "string"
+        ? observation.evaluatedModel.modelId.trim()
+        : "";
+  }
+
   const expectedAccount =
     options.expectedAccount !== undefined ? options.expectedAccount ?? null : observation.scope.expectedAccount;
 
-  // Preserve terminal lookup failure states (`unknown_account` and `unavailable`) as-is.
-  if (observation.status === "unknown_account" || observation.status === "unavailable") {
+  // Preserve `unknown_account` terminal failure states as-is.
+  if (observation.status === "unknown_account") {
     return {
       ...observation,
       evaluatedAt: new Date(evalMs).toISOString(),
@@ -756,8 +1097,12 @@ export function evaluateCursorObservation(observation, options = {}) {
     };
   }
 
-  // Re-verify expected account if provided.
-  const matchCheck = checkExpectedAccount(observation.scope.account, expectedAccount);
+  const observedMs = resolveFiniteObservationMs(observation.observedAtMs, observation.observedAt);
+  const knownAccount = Boolean(observation.scope?.account?.known);
+  const matchCheck = knownAccount
+    ? checkExpectedAccount(observation.scope.account, expectedAccount)
+    : { verifiedMatch: null, mismatch: null };
+
   const updatedScope = {
     ...observation.scope,
     account: {
@@ -768,14 +1113,16 @@ export function evaluateCursorObservation(observation, options = {}) {
     mismatch: matchCheck.mismatch,
   };
 
+  const primaryResetMs = resolveFiniteObservationMs(
+    observation.reset?.primaryResetAtMs,
+    observation.reset?.primaryResetAt,
+  );
   const updatedReset = {
     ...observation.reset,
-    remainingMs:
-      observation.reset.primaryResetAtMs !== null
-        ? Math.max(0, observation.reset.primaryResetAtMs - evalMs)
-        : null,
+    remainingMs: primaryResetMs !== null ? Math.max(0, primaryResetMs - evalMs) : null,
   };
 
+  // Account mismatch takes precedence over `plan_usage_unavailable` whenever the active account is known.
   if (matchCheck.mismatch) {
     return {
       ...observation,
@@ -789,7 +1136,7 @@ export function evaluateCursorObservation(observation, options = {}) {
       freshness: {
         state: "unknown",
         isFresh: false,
-        ageMs: Math.max(0, evalMs - observation.observedAtMs),
+        ageMs: observedMs !== null ? Math.max(0, evalMs - observedMs) : null,
         maxAgeMs,
         resetPassed: false,
         staleReason: null,
@@ -802,6 +1149,24 @@ export function evaluateCursorObservation(observation, options = {}) {
         connectCode: null,
         rateLimited: false,
         retryAfterMs: null,
+      },
+    };
+  }
+
+  if (observation.status === "unavailable") {
+    return {
+      ...observation,
+      scope: updatedScope,
+      evaluatedAt: new Date(evalMs).toISOString(),
+      evaluatedAtMs: evalMs,
+      usableForPlanning: false,
+      freshness: {
+        state: "unknown",
+        isFresh: false,
+        ageMs: null,
+        maxAgeMs,
+        resetPassed: false,
+        staleReason: null,
       },
     };
   }
@@ -824,14 +1189,34 @@ export function evaluateCursorObservation(observation, options = {}) {
           : classifyPercentageStatus(w.usedPercent, lowRemainingPercent),
       };
     }
+    if (
+      w.kind === "cumulative_spend" &&
+      w.status !== "disabled" &&
+      w.status !== "unlimited" &&
+      w.status !== "unknown" &&
+      w.usedPercent !== null &&
+      w.limitCents
+    ) {
+      return {
+        ...w,
+        status:
+          w.usedCents >= w.limitCents
+            ? /** @type {const} */ ("exhausted")
+            : classifyPercentageStatus(w.usedPercent, lowRemainingPercent),
+      };
+    }
     return { ...w };
   });
 
-  const exhaustedWindows = windows.filter((w) => w.status === "exhausted").map((w) => w.id);
+  const exhaustedWindows = windows
+    .filter((w) => w.id !== "on_demand" && (w.status === "exhausted" || w.status === "disabled"))
+    .map((w) => w.id);
   /** @type {string[]} */
   const cautions = [];
 
-  const entWindow = windows.find((w) => w.id === "enterprise_spend");
+  const entWindow = /** @type {import("./cursor-usage.d.mts").CursorEnterpriseSpendWindow | undefined} */ (
+    windows.find((w) => w.id === "enterprise_spend")
+  );
   const totalWindow = /** @type {import("./cursor-usage.d.mts").CursorPercentageWindow | undefined} */ (
     windows.find((w) => w.id === "included_total")
   );
@@ -841,93 +1226,157 @@ export function evaluateCursorObservation(observation, options = {}) {
   const apiWindow = /** @type {import("./cursor-usage.d.mts").CursorPercentageWindow | undefined} */ (
     windows.find((w) => w.id === "included_api")
   );
-  const onDemandWindow = /** @type {import("./cursor-usage.d.mts").CursorOnDemandWindow | undefined} */ (
-    windows.find((w) => w.id === "on_demand")
-  );
 
-  /** @type {"included_auto" | "included_api" | "enterprise_spend" | "overall"} */
+  /** @type {"included_auto" | "included_api" | "enterprise_spend" | "overall" | "unknown"} */
   let bucket = "overall";
-  /** @type {"ok" | "low" | "exhausted"} */
-  let baseStatus = "ok";
+  /** @type {import("./cursor-usage.d.mts").CursorUsageStatus} */
+  let baseStatus = "unknown";
+  /** @type {string | null} */
+  let baseReason = null;
 
-  if (entWindow && !totalWindow) {
-    bucket = "enterprise_spend";
-    baseStatus = "ok";
-    cautions.push(
-      "Enterprise account reports cumulative billing-period spend without a percentage cap in Cursor DashboardService.",
-    );
-  } else if (totalWindow && autoWindow && apiWindow) {
-    const autoSet = new Set(autoWindow.applicableModels || ["auto", "default"]);
-    let targetUsedPercent = totalWindow.usedPercent;
-    let targetLabel = "included_total";
-
-    if (modelId) {
-      const baseModel = stripModelParameters(modelId);
-      if (baseModel === "auto" || baseModel === "default" || autoSet.has(baseModel) || autoSet.has(modelId)) {
-        bucket = "included_auto";
-        targetUsedPercent = Math.max(autoWindow.usedPercent, totalWindow.usedPercent);
-        targetLabel = autoWindow.usedPercent >= totalWindow.usedPercent ? "included_auto" : "included_total";
-      } else {
-        bucket = "included_api";
-        targetUsedPercent = Math.max(apiWindow.usedPercent, totalWindow.usedPercent);
-        targetLabel = apiWindow.usedPercent >= totalWindow.usedPercent ? "included_api" : "included_total";
-      }
-    } else {
-      bucket = "overall";
-      if (
-        totalWindow.usedPercent >= 100 ||
-        (autoWindow.usedPercent >= 100 && apiWindow.usedPercent >= 100)
-      ) {
-        targetUsedPercent = 100;
-      } else {
-        targetUsedPercent = totalWindow.usedPercent;
-        if (apiWindow.status === "exhausted") {
-          cautions.push(
-            "included_api window is exhausted (100% used); named models outside autoBucketModels require On-Demand spend.",
-          );
-        }
-        if (autoWindow.status === "exhausted") {
-          cautions.push(
-            "included_auto window is exhausted (100% used); Auto/Composer models have no remaining included quota.",
-          );
-        }
-      }
-    }
-
-    const rawCapacityStatus = classifyPercentageStatus(targetUsedPercent, lowRemainingPercent);
-    if (rawCapacityStatus === "exhausted") {
-      const onDemandUsable =
-        allowOnDemand &&
-        onDemandWindow !== undefined &&
-        (onDemandWindow.status === "ok" ||
-          onDemandWindow.status === "low" ||
-          onDemandWindow.status === "unlimited");
-      if (onDemandUsable && onDemandWindow) {
-        baseStatus = onDemandWindow.status === "low" ? "low" : "ok";
-        cautions.push(
-          `Included Cursor allowance (${targetLabel}) is exhausted; usage will bill against On-Demand spend.`,
-        );
-      } else {
-        baseStatus = "exhausted";
-      }
-    } else if (rawCapacityStatus === "low") {
+  if (entWindow && !totalWindow && !autoWindow && !apiWindow) {
+    bucket = modelId !== null && !isValidCursorModelSyntax(modelId) ? "unknown" : "enterprise_spend";
+    if (entWindow.status === "exhausted" || entWindow.status === "disabled") {
+      baseStatus = "exhausted";
+      baseReason = "quota_exhausted";
+    } else if (bucket === "unknown" || entWindow.status === "unknown") {
+      baseStatus = "unknown";
+      baseReason = bucket === "unknown" ? "unknown_model_scope" : "enterprise_cap_unknown";
+      cautions.push(
+        "Enterprise account reports cumulative billing-period spend without a verifiable remaining quota cap.",
+      );
+    } else if (entWindow.status === "low") {
       baseStatus = "low";
-      const remaining = Math.max(0, 100 - targetUsedPercent).toFixed(1);
-      cautions.push(`Low remaining Cursor capacity in ${targetLabel} (${remaining}% remaining).`);
+      const remaining = (entWindow.remainingPercent ?? 0).toFixed(1);
+      cautions.push(`Low remaining Cursor capacity in enterprise_spend (${remaining}% remaining).`);
     } else {
       baseStatus = "ok";
     }
+  } else if (totalWindow || autoWindow || apiWindow) {
+    const sharedExhausted =
+      Boolean(totalWindow && totalWindow.usedPercent >= 100) ||
+      Boolean(autoWindow && apiWindow && autoWindow.usedPercent >= 100 && apiWindow.usedPercent >= 100);
+    const otherExhausted = windows.some(
+      (w) =>
+        w.id !== "on_demand" &&
+        w.id !== "included_total" &&
+        w.id !== "included_auto" &&
+        w.id !== "included_api" &&
+        (w.status === "exhausted" || w.status === "disabled"),
+    );
+
+    if (modelId !== null) {
+      bucket = resolveCursorModelBucket(modelId, autoWindow);
+      if (bucket === "unknown") {
+        if (sharedExhausted && isValidCursorModelSyntax(modelId)) {
+          baseStatus = "exhausted";
+          baseReason = "quota_exhausted";
+        } else {
+          baseStatus = "unknown";
+          baseReason = "unknown_model_scope";
+          cautions.push(
+            `Cannot map Cursor model '${modelId || "(blank)"}' to a verified usage bucket.`,
+          );
+        }
+      } else {
+        const scopedWin = bucket === "included_auto" ? autoWindow : apiWindow;
+        if (!scopedWin) {
+          if (sharedExhausted) {
+            baseStatus = "exhausted";
+            baseReason = "quota_exhausted";
+          } else {
+            baseStatus = "unknown";
+            baseReason = "unknown_model_scope";
+            cautions.push(`Bucket '${bucket}' was not reported in GetCurrentPeriodUsage.`);
+          }
+        } else {
+          const targetUsedPercent = totalWindow
+            ? Math.max(scopedWin.usedPercent, totalWindow.usedPercent)
+            : scopedWin.usedPercent;
+          const targetLabel =
+            totalWindow && totalWindow.usedPercent > scopedWin.usedPercent ? "included_total" : bucket;
+          const rawCapacityStatus = classifyPercentageStatus(targetUsedPercent, lowRemainingPercent);
+          if (rawCapacityStatus === "exhausted" || otherExhausted) {
+            baseStatus = otherExhausted && rawCapacityStatus !== "exhausted" ? "unknown" : "exhausted";
+            baseReason = baseStatus === "exhausted" ? "quota_exhausted" : "unknown_model_scope";
+          } else if (rawCapacityStatus === "low") {
+            baseStatus = "low";
+            const remaining = Math.max(0, 100 - targetUsedPercent).toFixed(1);
+            cautions.push(`Low remaining Cursor capacity in ${targetLabel} (${remaining}% remaining).`);
+          } else {
+            baseStatus = "ok";
+          }
+        }
+      }
+    } else {
+      bucket = "overall";
+      if (apiWindow?.status === "exhausted") {
+        cautions.push(
+          "included_api window is exhausted (100% used); named models outside autoBucketModels have no remaining included quota.",
+        );
+      }
+      if (autoWindow?.status === "exhausted") {
+        cautions.push(
+          "included_auto window is exhausted (100% used); Auto/Composer models have no remaining included quota.",
+        );
+      }
+      for (const w of [totalWindow, autoWindow, apiWindow]) {
+        if (w && w.status === "low") {
+          const remaining = Math.max(0, 100 - w.usedPercent).toFixed(1);
+          cautions.push(`Low remaining Cursor capacity in ${w.id} (${remaining}% remaining).`);
+        }
+      }
+
+      const hasCompleteCoverage = Boolean(totalWindow || (autoWindow && apiWindow));
+      if (sharedExhausted) {
+        baseStatus = "exhausted";
+        baseReason = "quota_exhausted";
+      } else if (
+        autoWindow?.status === "exhausted" ||
+        apiWindow?.status === "exhausted" ||
+        otherExhausted
+      ) {
+        baseStatus = "limited";
+        baseReason = "scoped_quota_exhausted";
+      } else if (!hasCompleteCoverage) {
+        baseStatus = "unknown";
+        baseReason = "incomplete_usage_windows";
+      } else if (
+        totalWindow?.status === "low" ||
+        autoWindow?.status === "low" ||
+        apiWindow?.status === "low"
+      ) {
+        baseStatus = "low";
+      } else {
+        baseStatus = "ok";
+      }
+    }
+  } else {
+    baseStatus = "unknown";
+    baseReason = "no_usage_windows";
   }
 
-  const ageMs = Math.max(0, evalMs - observation.observedAtMs);
-  const resetPassed =
-    observation.reset.primaryResetAtMs !== null && evalMs >= observation.reset.primaryResetAtMs;
-  const maxAgeExceeded = evalMs - observation.observedAtMs > maxAgeMs;
+  /** @type {number[]} */
+  const resetCandidatesMs = [];
+  if (primaryResetMs !== null) {
+    resetCandidatesMs.push(primaryResetMs);
+  }
+  for (const w of windows) {
+    const wReset = resolveFiniteObservationMs(w.resetsAtMs, w.resetsAt);
+    if (wReset !== null) resetCandidatesMs.push(wReset);
+  }
 
-  if (resetPassed || maxAgeExceeded) {
+  const resetPassed = resetCandidatesMs.some((rMs) => evalMs >= rMs);
+  const missingObservedAt = observedMs === null;
+  const ageMs = observedMs !== null ? Math.max(0, evalMs - observedMs) : null;
+  const maxAgeExceeded = observedMs !== null && evalMs - observedMs > maxAgeMs;
+
+  if (missingObservedAt || resetPassed || maxAgeExceeded) {
     const staleReason = resetPassed
       ? /** @type {const} */ ("reset_passed")
-      : /** @type {const} */ ("max_age_exceeded");
+      : missingObservedAt
+        ? /** @type {const} */ ("missing_observed_at")
+        : /** @type {const} */ ("max_age_exceeded");
     return {
       ...observation,
       status: "stale",
@@ -950,7 +1399,6 @@ export function evaluateCursorObservation(observation, options = {}) {
       evaluatedModel: {
         modelId,
         bucket,
-        allowOnDemand,
       },
       exhaustedWindows,
       cautions,
@@ -963,7 +1411,7 @@ export function evaluateCursorObservation(observation, options = {}) {
     status: baseStatus,
     priorStatus: null,
     usableForPlanning: baseStatus === "ok" || baseStatus === "low",
-    reason: baseStatus === "exhausted" ? "quota_exhausted" : null,
+    reason: baseReason,
     scope: updatedScope,
     evaluatedAt: new Date(evalMs).toISOString(),
     evaluatedAtMs: evalMs,
@@ -980,7 +1428,6 @@ export function evaluateCursorObservation(observation, options = {}) {
     evaluatedModel: {
       modelId,
       bucket,
-      allowOnDemand,
     },
     exhaustedWindows,
     cautions,
@@ -989,8 +1436,61 @@ export function evaluateCursorObservation(observation, options = {}) {
 }
 
 /**
+ * Answers whether a worker candidate (`{ model, surface }`, both optional) can run on this Cursor subscription.
+ * Re-evaluates freshness at `now` (defaulting to current wall-clock time) rather than trusting cached `freshness`.
+ * Unmapped, blank, qualified, or unrecognised scopes resolve to `"unknown"`, never `"available"`.
+ * @param {import("./cursor-usage.d.mts").CursorUsageObservation | null | undefined} observation
+ * @param {{ model?: string | null, surface?: string | null }} [candidate]
+ * @param {number | string | Date} [now]
+ * @returns {import("./cursor-usage.d.mts").CursorCandidateAvailability}
+ */
+export function candidateAvailability(observation, candidate = {}, now) {
+  if (
+    !observation ||
+    typeof observation !== "object" ||
+    !Array.isArray(observation.windows) ||
+    !["ok", "low", "limited", "exhausted", "unknown"].includes(observation.status)
+  ) {
+    return "unknown";
+  }
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+    return "unknown";
+  }
+  if (now === undefined && observation.freshness && observation.freshness.state !== "fresh") {
+    return "unknown";
+  }
+  const KNOWN_CURSOR_SURFACES = new Set(["cli", "agent", "cursor", "cursor-agent", "ide"]);
+  if (candidate.surface !== undefined && candidate.surface !== null) {
+    const normSurface = typeof candidate.surface === "string" ? candidate.surface.trim().toLowerCase() : "";
+    if (!KNOWN_CURSOR_SURFACES.has(normSurface)) {
+      return "unknown";
+    }
+  }
+
+  const hasModelProp = Object.prototype.hasOwnProperty.call(candidate, "model") && candidate.model !== undefined;
+  if (hasModelProp && (typeof candidate.model !== "string" || !isValidCursorModelSyntax(candidate.model))) {
+    return "unknown";
+  }
+
+  const evaluated = evaluateCursorObservation(observation, {
+    now: now ?? Date.now(),
+    model: hasModelProp ? /** @type {string} */ (candidate.model) : null,
+  });
+  if (evaluated.freshness.state !== "fresh") {
+    return "unknown";
+  }
+  if (evaluated.status === "exhausted") {
+    return "exhausted";
+  }
+  if (evaluated.status === "ok" || evaluated.status === "low") {
+    return "available";
+  }
+  return "unknown";
+}
+
+/**
  * Builds an empty base skeleton for terminal error states (`unknown_account`, `unavailable`).
- * @param {{ status: "unknown_account" | "unavailable", reason: string, endpoint: string, methods: string[], credentialSource: import("./cursor-usage.d.mts").CursorCredentialSource, hostSelector: string, hostTransport: "local" | "unmapped", hostname: string | null, platform: string | null, account?: Partial<import("./cursor-usage.d.mts").CursorUsageObservation["scope"]["account"]>, expectedAccount: import("./cursor-usage.d.mts").CursorExpectedAccount | null, nowMs: number, maxAgeMs: number, modelId: string | null, allowOnDemand: boolean, error: import("./cursor-usage.d.mts").CursorUsageObservation["error"] }} params
+ * @param {{ status: "unknown_account" | "unavailable", reason: string, endpoint: string, methods: string[], credentialSource: import("./cursor-usage.d.mts").CursorCredentialSource, hostSelector: string, hostTransport: "local" | "unmapped", hostname: string | null, platform: string | null, account?: Partial<import("./cursor-usage.d.mts").CursorUsageObservation["scope"]["account"]>, expectedAccount: import("./cursor-usage.d.mts").CursorExpectedAccount | null, nowMs: number, maxAgeMs: number, modelId: string | null, error: import("./cursor-usage.d.mts").CursorUsageObservation["error"] }} params
  * @returns {import("./cursor-usage.d.mts").CursorUsageObservation}
  */
 function buildFailureObservation(params) {
@@ -1019,7 +1519,7 @@ function buildFailureObservation(params) {
       },
       account: {
         known: Boolean(params.account?.known),
-        verifiedMatch: null,
+        verifiedMatch: params.account?.verifiedMatch ?? null,
         userId: params.account?.userId ?? null,
         email: params.account?.email ?? null,
         displayName: params.account?.displayName ?? null,
@@ -1064,7 +1564,6 @@ function buildFailureObservation(params) {
     evaluatedModel: {
       modelId: params.modelId,
       bucket: "overall",
-      allowOnDemand: params.allowOnDemand,
     },
     exhaustedWindows: [],
     cautions: [],
@@ -1081,7 +1580,12 @@ export async function readCursorUsage(options = {}) {
   const env = options.env || process.env;
   const platform = options.platform || process.platform;
   const homedir = options.homedir || os.homedir();
-  const localHostname = options.hostname || os.hostname();
+  const rawLocalHostname =
+    typeof options.localHostname === "string" && options.localHostname.trim()
+      ? options.localHostname.trim()
+      : typeof options.hostname === "string" && options.hostname.trim()
+        ? options.hostname.trim()
+        : os.hostname();
   const nowMs = resolveTimestampMs(options.now);
   const maxAgeMs =
     typeof options.maxAgeMs === "number" && Number.isFinite(options.maxAgeMs) && options.maxAgeMs > 0
@@ -1096,11 +1600,41 @@ export async function readCursorUsage(options = {}) {
     typeof options.timeoutMs === "number" && Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
       ? Math.trunc(options.timeoutMs)
       : DEFAULT_TIMEOUT_MS;
-  const modelId = options.model?.trim() || null;
-  const allowOnDemand = Boolean(options.allowOnDemand);
+  const modelId =
+    options.model === undefined || options.model === null ? null : String(options.model).trim();
   const fetchImpl = options.fetchImpl || globalThis.fetch;
 
-  const hostSelector = options.host?.trim() || "local";
+  const hostSelector =
+    options.host === undefined || options.host === null ? "local" : String(options.host).trim();
+
+  // Never read or substitute local host credentials/quota for a non-local target host,
+  // and never stamp a foreign hostname onto local credentials.
+  if (!isLocalTargetHost(hostSelector, rawLocalHostname)) {
+    return buildFailureObservation({
+      status: "unknown_account",
+      reason: "host_not_local",
+      endpoint: options.endpoint?.trim() || DEFAULT_CURSOR_ENDPOINT,
+      methods: [],
+      credentialSource: "none",
+      hostSelector,
+      hostTransport: "unmapped",
+      hostname: null,
+      platform: null,
+      expectedAccount: options.expectedAccount ?? null,
+      nowMs,
+      maxAgeMs,
+      modelId,
+      error: {
+        code: "host_not_local",
+        message: `Target host '${hostSelector}' is not the local host ('${rawLocalHostname}'); refusing to read or substitute local host Cursor credentials.`,
+        httpStatus: null,
+        connectCode: null,
+        rateLimited: false,
+        retryAfterMs: null,
+      },
+    });
+  }
+
   let hostMap = options.hostMap || null;
   if (!hostMap && env.CURSOR_USAGE_HOST_MAP?.trim()) {
     try {
@@ -1109,14 +1643,57 @@ export async function readCursorUsage(options = {}) {
         hostMap = parsedMap;
       }
     } catch {
-      // ignore invalid env host map and treat non-local hosts as unmapped
+      // ignore invalid env host map
     }
   }
 
-  const mappedEntry = hostMap && Object.prototype.hasOwnProperty.call(hostMap, hostSelector)
-    ? hostMap[hostSelector]
+  const hasMappedEntry =
+    Boolean(hostMap) && Object.prototype.hasOwnProperty.call(hostMap, hostSelector);
+  const rawMappedEntry = hasMappedEntry
+    ? /** @type {unknown} */ (/** @type {Record<string, unknown>} */ (hostMap)[hostSelector])
     : null;
-  const isLocalSelector = hostSelector === "local" || mappedEntry?.transport === "local" || (mappedEntry !== null && !mappedEntry.transport);
+  if (hasMappedEntry) {
+    const entryObj =
+      rawMappedEntry && typeof rawMappedEntry === "object" && !Array.isArray(rawMappedEntry)
+        ? /** @type {Record<string, unknown>} */ (rawMappedEntry)
+        : null;
+    const transportOk =
+      entryObj !== null && (entryObj.transport === undefined || entryObj.transport === "local");
+    const hostnameOk =
+      entryObj !== null &&
+      (entryObj.hostname === undefined ||
+        (typeof entryObj.hostname === "string" &&
+          isLocalTargetHost(entryObj.hostname, rawLocalHostname)));
+    if (!transportOk || !hostnameOk) {
+      return buildFailureObservation({
+        status: "unknown_account",
+        reason: "host_not_local",
+        endpoint: options.endpoint?.trim() || DEFAULT_CURSOR_ENDPOINT,
+        methods: [],
+        credentialSource: "none",
+        hostSelector,
+        hostTransport: "unmapped",
+        hostname: null,
+        platform: null,
+        expectedAccount: options.expectedAccount ?? null,
+        nowMs,
+        maxAgeMs,
+        modelId,
+        error: {
+          code: "host_not_local",
+          message: `Host mapping for '${hostSelector}' targets a non-local transport or hostname; refusing to read or stamp local host Cursor credentials.`,
+          httpStatus: null,
+          connectCode: null,
+          rateLimited: false,
+          retryAfterMs: null,
+        },
+      });
+    }
+  }
+
+  const mappedEntry = hasMappedEntry
+    ? /** @type {import("./cursor-usage.d.mts").CursorHostMappingEntry} */ (rawMappedEntry)
+    : null;
 
   const defaultEndpoint =
     options.endpoint?.trim() ||
@@ -1126,46 +1703,24 @@ export async function readCursorUsage(options = {}) {
     DEFAULT_CURSOR_ENDPOINT;
 
   const expectedAccount = options.expectedAccount ?? mappedEntry?.expectedAccount ?? null;
+  const effectiveHostname = rawLocalHostname;
 
-  // Never substitute local host credentials/quota for an unmapped non-local target host.
-  if (!isLocalSelector) {
-    return buildFailureObservation({
-      status: "unknown_account",
-      reason: "unknown_host_mapping",
-      endpoint: defaultEndpoint,
-      methods: [],
-      credentialSource: "none",
-      hostSelector,
-      hostTransport: "unmapped",
-      hostname: null,
-      platform: null,
-      expectedAccount,
-      nowMs,
-      maxAgeMs,
-      modelId,
-      allowOnDemand,
-      error: {
-        code: "unknown_host_mapping",
-        message: `Target host '${hostSelector}' has no verified Cursor account mapping; refusing to substitute local host quota.`,
-        httpStatus: null,
-        connectCode: null,
-        rateLimited: false,
-        retryAfterMs: null,
-      },
-    });
-  }
-
-  const effectiveHostname = mappedEntry?.hostname || localHostname;
+  const explicitAuthFilePath =
+    options.authFilePath?.trim() || mappedEntry?.authFilePath?.trim() || undefined;
+  const explicitConfigFilePath =
+    options.configFilePath?.trim() || mappedEntry?.configFilePath?.trim() || undefined;
   const { authFilePath, configFilePath } = resolveCursorCredentialPaths({
     platform,
     homedir,
     env,
-    authFilePath: options.authFilePath || mappedEntry?.authFilePath,
-    configFilePath: options.configFilePath || mappedEntry?.configFilePath,
+    authFilePath: explicitAuthFilePath,
+    configFilePath: explicitConfigFilePath,
   });
 
-  const activeTeamId = readActiveTeamId(configFilePath);
-  const creds = loadLocalCredentials({ authFilePath, env });
+  const activeTeamId =
+    explicitAuthFilePath && !explicitConfigFilePath ? null : readActiveTeamId(configFilePath);
+  const allowEnvCredentials = !explicitAuthFilePath;
+  const creds = loadLocalCredentials({ authFilePath, env, allowEnvCredentials });
   /** @type {string[]} */
   const methodsCalled = [];
 
@@ -1184,7 +1739,6 @@ export async function readCursorUsage(options = {}) {
       nowMs,
       maxAgeMs,
       modelId,
-      allowOnDemand,
       error: {
         code: "missing_credentials",
         message: "No Cursor credentials found on target host (checked CURSOR_AUTH_TOKEN, CURSOR_API_KEY, and auth.json).",
@@ -1217,7 +1771,6 @@ export async function readCursorUsage(options = {}) {
           nowMs,
           maxAgeMs,
           modelId,
-          allowOnDemand,
           error: {
             code: "expired_credentials",
             message: "Stored Cursor session token is expired; run `agent login` on the target host.",
@@ -1236,9 +1789,10 @@ export async function readCursorUsage(options = {}) {
         nowMs,
         secretsToScrub: creds.secretsToScrub,
       });
-      effectiveCredSource = env.CURSOR_API_KEY?.trim()
-        ? "env:CURSOR_API_KEY"
-        : "file:auth.json(apiKey)";
+      effectiveCredSource =
+        allowEnvCredentials && env.CURSOR_API_KEY?.trim()
+          ? "env:CURSOR_API_KEY"
+          : "file:auth.json(apiKey)";
     } else if (!bearerToken && creds.apiKey) {
       bearerToken = await exchangeApiKeyInMemory({
         endpoint: defaultEndpoint,
@@ -1265,7 +1819,6 @@ export async function readCursorUsage(options = {}) {
         nowMs,
         maxAgeMs,
         modelId,
-        allowOnDemand,
         error: {
           code: "missing_credentials",
           message: "Unable to resolve a usable Cursor bearer token.",
@@ -1340,7 +1893,6 @@ export async function readCursorUsage(options = {}) {
         nowMs,
         maxAgeMs,
         modelId,
-        allowOnDemand,
         error: {
           code: "unidentified_account",
           message: "Cursor GetMe returned neither userId nor email.",
@@ -1415,10 +1967,40 @@ export async function readCursorUsage(options = {}) {
       includedUsagePeriod,
     };
 
+    const matchCheck = checkExpectedAccount(accountSummary, expectedAccount);
+    accountSummary.verifiedMatch = matchCheck.verifiedMatch;
+
     /** @type {import("./cursor-usage.d.mts").CursorUsageWindow[]} */
     const windows = [];
 
     if (currentUsage.planUsage === undefined || currentUsage.planUsage === null) {
+      if (matchCheck.mismatch) {
+        const mismatchSkeleton = buildFailureObservation({
+          status: "unavailable",
+          reason: "account_mismatch",
+          endpoint: defaultEndpoint,
+          methods: [...new Set(methodsCalled)],
+          credentialSource: effectiveCredSource,
+          hostSelector,
+          hostTransport: "local",
+          hostname: effectiveHostname,
+          platform,
+          account: accountSummary,
+          expectedAccount,
+          nowMs,
+          maxAgeMs,
+          modelId,
+          error: null,
+        });
+        return evaluateCursorObservation(mismatchSkeleton, {
+          now: nowMs,
+          maxAgeMs,
+          model: modelId,
+          lowCapacityRemainingPercent: lowRemainingPercent,
+          expectedAccount: expectedAccount ?? undefined,
+        });
+      }
+
       if (!isEnterpriseUser || teamId === null || userId === null) {
         return buildFailureObservation({
           status: "unavailable",
@@ -1435,7 +2017,6 @@ export async function readCursorUsage(options = {}) {
           nowMs,
           maxAgeMs,
           modelId,
-          allowOnDemand,
           error: {
             code: "plan_usage_unavailable",
             message: "Usage details are not available for this Cursor plan via DashboardService.",
@@ -1512,22 +2093,15 @@ export async function readCursorUsage(options = {}) {
         );
       }
 
-      windows.push({
-        id: "enterprise_spend",
-        label: "Enterprise Billing Period Spend",
-        kind: "cumulative_spend",
-        period: "monthly",
-        usedCents: currentSpendCents,
-        usedDollars: Number((currentSpendCents / 100).toFixed(2)),
-        previousPeriodCents: previousSpendCents,
-        previousPeriodDollars: Number((previousSpendCents / 100).toFixed(2)),
-        usedPercent: null,
-        displayPercentUsed: null,
-        remainingPercent: null,
-        resetsAt: new Date(endMs).toISOString(),
-        resetsAtMs: endMs,
-        status: "unlimited",
-      });
+      windows.push(
+        buildEnterpriseSpendWindow({
+          currentSpendCents,
+          previousSpendCents,
+          endMs,
+          hardLimit: hardLimitResp,
+          lowRemainingPercent,
+        }),
+      );
     } else {
       const planUsage = assertPlainObject(currentUsage.planUsage, "GetCurrentPeriodUsage.planUsage");
       const totalSpendCents =
@@ -1542,12 +2116,6 @@ export async function readCursorUsage(options = {}) {
         planUsage.totalPercentUsed,
         "planUsage.totalPercentUsed",
       );
-      const totalPercentUsed =
-        explicitTotalPct !== undefined
-          ? explicitTotalPct
-          : limitCents !== null && limitCents > 0 && includedSpendCents !== null
-            ? (includedSpendCents / limitCents) * 100
-            : 0;
 
       const explicitAutoPct = parseOptionalNonNegativeNumber(
         planUsage.autoPercentUsed,
@@ -1555,12 +2123,15 @@ export async function readCursorUsage(options = {}) {
       );
       const autoSpend = parseOptionalNonNegativeNumber(planUsage.autoSpend, "planUsage.autoSpend");
       const autoLimit = parseOptionalNonNegativeNumber(planUsage.autoLimit, "planUsage.autoLimit");
+      const hasAutoWindow =
+        explicitAutoPct !== undefined ||
+        (autoLimit !== undefined && autoLimit > 0 && autoSpend !== undefined);
       const autoPercentUsed =
         explicitAutoPct !== undefined
           ? explicitAutoPct
           : autoLimit !== undefined && autoLimit > 0 && autoSpend !== undefined
             ? (autoSpend / autoLimit) * 100
-            : 0;
+            : null;
 
       const explicitApiPct = parseOptionalNonNegativeNumber(
         planUsage.apiPercentUsed,
@@ -1568,21 +2139,36 @@ export async function readCursorUsage(options = {}) {
       );
       const apiSpend = parseOptionalNonNegativeNumber(planUsage.apiSpend, "planUsage.apiSpend");
       const apiLimit = parseOptionalNonNegativeNumber(planUsage.apiLimit, "planUsage.apiLimit");
+      const hasApiWindow =
+        explicitApiPct !== undefined ||
+        (apiLimit !== undefined && apiLimit > 0 && apiSpend !== undefined);
       const apiPercentUsed =
         explicitApiPct !== undefined
           ? explicitApiPct
           : apiLimit !== undefined && apiLimit > 0 && apiSpend !== undefined
             ? (apiSpend / apiLimit) * 100
-            : 0;
+            : null;
 
+      if (explicitTotalPct === undefined && !hasAutoWindow && !hasApiWindow) {
+        throw new MalformedResponseError(
+          "GetCurrentPeriodUsage.planUsage reported no usable percentage windows",
+        );
+      }
+
+      /** @type {string[]} */
       let rawAutoModels = [];
       if (currentUsage.autoBucketModels !== undefined) {
         if (!Array.isArray(currentUsage.autoBucketModels)) {
           throw new MalformedResponseError("GetCurrentPeriodUsage.autoBucketModels must be an array");
         }
-        rawAutoModels = currentUsage.autoBucketModels.filter((m) => typeof m === "string" && m.trim());
+        rawAutoModels = currentUsage.autoBucketModels
+          .filter((m) => typeof m === "string" && m.trim())
+          .map((m) => m.trim());
       }
-      const applicableAutoModels = [...new Set(["auto", ...rawAutoModels])];
+      const autoModelsKnown = rawAutoModels.length > 0;
+      const applicableAutoModels = autoModelsKnown
+        ? [...new Set(["auto", "default", ...rawAutoModels])]
+        : ["auto", "default"];
 
       const primaryIncludedResetMs =
         includedUsageResetsAtMs !== null &&
@@ -1592,27 +2178,33 @@ export async function readCursorUsage(options = {}) {
       const primaryIncludedResetIso =
         primaryIncludedResetMs !== null ? new Date(primaryIncludedResetMs).toISOString() : null;
 
-      windows.push(
-        {
+      if (explicitTotalPct !== undefined) {
+        windows.push({
           id: "included_total",
           label: "Included",
           kind: "percentage_allowance",
+          appliesTo: "all",
           period: includedUsagePeriod,
-          usedPercent: totalPercentUsed,
-          displayPercentUsed: toDisplayPercent(totalPercentUsed),
-          remainingPercent: Math.max(0, 100 - totalPercentUsed),
+          usedPercent: explicitTotalPct,
+          displayPercentUsed: toDisplayPercent(explicitTotalPct),
+          remainingPercent: Math.max(0, 100 - explicitTotalPct),
           includedSpendCents,
           limitCents,
           bonusSpendCents,
           totalSpendCents,
           resetsAt: primaryIncludedResetIso,
           resetsAtMs: primaryIncludedResetMs,
-          status: classifyPercentageStatus(totalPercentUsed, lowRemainingPercent),
-        },
-        {
+          status: classifyPercentageStatus(explicitTotalPct, lowRemainingPercent),
+        });
+      }
+
+      if (autoPercentUsed !== null) {
+        windows.push({
           id: "included_auto",
           label: "Auto",
           kind: "percentage_allowance",
+          appliesTo: autoModelsKnown ? "scoped" : "unknown",
+          modelScopeKnown: autoModelsKnown,
           period: includedUsagePeriod,
           usedPercent: autoPercentUsed,
           displayPercentUsed: toDisplayPercent(autoPercentUsed),
@@ -1625,24 +2217,32 @@ export async function readCursorUsage(options = {}) {
           resetsAt: primaryIncludedResetIso,
           resetsAtMs: primaryIncludedResetMs,
           status: classifyPercentageStatus(autoPercentUsed, lowRemainingPercent),
-        },
-        {
+        });
+      }
+
+      if (apiPercentUsed !== null) {
+        windows.push({
           id: "included_api",
           label: "API",
           kind: "percentage_allowance",
+          appliesTo: autoModelsKnown ? "scoped" : "unknown",
+          modelScopeKnown: autoModelsKnown,
           period: includedUsagePeriod,
           usedPercent: apiPercentUsed,
           displayPercentUsed: toDisplayPercent(apiPercentUsed),
           remainingPercent: Math.max(0, 100 - apiPercentUsed),
-          includedSpendCents: apiSpend ?? includedSpendCents,
-          limitCents: apiLimit ?? limitCents,
+          includedSpendCents: apiSpend ?? null,
+          limitCents: apiLimit ?? null,
           bonusSpendCents: null,
           totalSpendCents: null,
-          appliesToNamedModelsOutsideAutoBucket: true,
+          appliesToNamedModelsOutsideAutoBucket: autoModelsKnown,
           resetsAt: primaryIncludedResetIso,
           resetsAtMs: primaryIncludedResetMs,
           status: classifyPercentageStatus(apiPercentUsed, lowRemainingPercent),
-        },
+        });
+      }
+
+      windows.push(
         buildOnDemandWindow({
           currentUsage,
           hardLimit: hardLimitResp,
@@ -1718,7 +2318,6 @@ export async function readCursorUsage(options = {}) {
       evaluatedModel: {
         modelId,
         bucket: "overall",
-        allowOnDemand,
       },
       exhaustedWindows: [],
       cautions: [],
@@ -1728,8 +2327,7 @@ export async function readCursorUsage(options = {}) {
     return evaluateCursorObservation(rawObservation, {
       now: nowMs,
       maxAgeMs,
-      model: modelId ?? undefined,
-      allowOnDemand,
+      model: modelId,
       lowCapacityRemainingPercent: lowRemainingPercent,
       expectedAccount: expectedAccount ?? undefined,
     });
@@ -1751,7 +2349,6 @@ export async function readCursorUsage(options = {}) {
         nowMs,
         maxAgeMs,
         modelId,
-        allowOnDemand,
         error: {
           code: "malformed_response",
           message: redactSecrets(err.message, creds.secretsToScrub),
@@ -1790,7 +2387,6 @@ export async function readCursorUsage(options = {}) {
         nowMs,
         maxAgeMs,
         modelId,
-        allowOnDemand,
         error: {
           code: reason,
           message: redactSecrets(err.message, creds.secretsToScrub),
@@ -1817,7 +2413,6 @@ export async function readCursorUsage(options = {}) {
       nowMs,
       maxAgeMs,
       modelId,
-      allowOnDemand,
       error: {
         code: "network_error",
         message: redactSecrets(rawMsg, creds.secretsToScrub),
@@ -1854,9 +2449,9 @@ export function formatCursorUsageText(obs) {
     `observedAt=${obs.observedAt} reset=${obs.reset.primaryResetAt || "unknown"}${obs.reset.resetDescription ? ` (${obs.reset.resetDescription})` : ""}`,
   );
 
-  if (obs.evaluatedModel.modelId) {
+  if (obs.evaluatedModel.modelId !== null) {
     lines.push(
-      `model=${obs.evaluatedModel.modelId} bucket=${obs.evaluatedModel.bucket} allowOnDemand=${obs.evaluatedModel.allowOnDemand}`,
+      `model=${obs.evaluatedModel.modelId || "(blank)"} bucket=${obs.evaluatedModel.bucket}`,
     );
   }
 
@@ -1874,7 +2469,8 @@ export function formatCursorUsageText(obs) {
         lines.push(`window.on_demand: $${w.usedDollars} used (mode=${w.mode}, status=${w.status})`);
       }
     } else if (w.kind === "cumulative_spend") {
-      lines.push(`window.enterprise_spend: $${w.usedDollars} current cycle (status=${w.status})`);
+      const capPart = w.limitDollars !== null ? ` / $${w.limitDollars}` : "";
+      lines.push(`window.enterprise_spend: $${w.usedDollars}${capPart} current cycle (status=${w.status})`);
     }
   }
 
@@ -1897,7 +2493,6 @@ export function parseCliArgs(argv) {
   const options = {
     help: false,
     json: false,
-    allowOnDemand: false,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -1910,10 +2505,6 @@ export function parseCliArgs(argv) {
       options.json = true;
       continue;
     }
-    if (arg === "--allow-on-demand") {
-      options.allowOnDemand = true;
-      continue;
-    }
 
     const next = () => {
       if (i + 1 >= argv.length) return null;
@@ -1923,7 +2514,7 @@ export function parseCliArgs(argv) {
 
     if (arg === "--host") {
       const val = next();
-      if (!val) return { ok: false, error: "Missing value for --host" };
+      if (val === null) return { ok: false, error: "Missing value for --host" };
       options.host = val;
     } else if (arg === "--host-map") {
       const val = next();
@@ -1931,7 +2522,7 @@ export function parseCliArgs(argv) {
       options.hostMapRaw = val;
     } else if (arg === "--model") {
       const val = next();
-      if (!val) return { ok: false, error: "Missing value for --model" };
+      if (val === null) return { ok: false, error: "Missing value for --model" };
       options.model = val;
     } else if (arg === "--expect-email") {
       const val = next();
@@ -2008,11 +2599,14 @@ export async function main(argv = process.argv.slice(2), io = {}) {
   const stdout = io.stdout || ((line) => console.log(line));
   const stderr = io.stderr || ((line) => console.error(line));
   const env = io.env || process.env;
+  const envSecrets = [env.CURSOR_AUTH_TOKEN, env.CURSOR_API_KEY]
+    .filter((s) => typeof s === "string" && s.trim().length > 0)
+    .map((s) => /** @type {string} */ (s).trim());
 
   const parsed = parseCliArgs(argv);
   if (!parsed.ok) {
     stderr(usageText());
-    stderr(parsed.error);
+    stderr(redactSecrets(parsed.error, envSecrets));
     return 2;
   }
   const opts = parsed.options;
@@ -2048,7 +2642,12 @@ export async function main(argv = process.argv.slice(2), io = {}) {
       }
       hostMap = candidate;
     } catch (err) {
-      stderr(`Invalid --host-map: ${err instanceof Error ? err.message : String(err)}`);
+      stderr(
+        redactSecrets(
+          `Invalid --host-map: ${err instanceof Error ? err.message : String(err)}`,
+          envSecrets,
+        ),
+      );
       return 2;
     }
   }
@@ -2062,7 +2661,6 @@ export async function main(argv = process.argv.slice(2), io = {}) {
         now: /** @type {number | undefined} */ (opts.now),
         maxAgeMs: /** @type {number | undefined} */ (opts.maxAgeMs),
         model: /** @type {string | undefined} */ (opts.model),
-        allowOnDemand: Boolean(opts.allowOnDemand),
         lowCapacityRemainingPercent: /** @type {number | undefined} */ (
           opts.lowCapacityRemainingPercent
         ),
@@ -2070,7 +2668,10 @@ export async function main(argv = process.argv.slice(2), io = {}) {
       });
     } catch (err) {
       stderr(
-        `Failed to evaluate saved observation: ${err instanceof Error ? err.message : String(err)}`,
+        redactSecrets(
+          `Failed to evaluate saved observation: ${err instanceof Error ? err.message : String(err)}`,
+          envSecrets,
+        ),
       );
       return 1;
     }
@@ -2083,7 +2684,6 @@ export async function main(argv = process.argv.slice(2), io = {}) {
       configFilePath: /** @type {string | undefined} */ (opts.configFilePath),
       expectedAccount,
       model: /** @type {string | undefined} */ (opts.model),
-      allowOnDemand: Boolean(opts.allowOnDemand),
       lowCapacityRemainingPercent: /** @type {number | undefined} */ (
         opts.lowCapacityRemainingPercent
       ),
@@ -2118,7 +2718,12 @@ if (isDirectCli) {
       process.exit(code);
     },
     (err) => {
-      console.error(redactSecrets(err instanceof Error ? err.message : String(err)));
+      const cliEnvSecrets = [process.env.CURSOR_AUTH_TOKEN, process.env.CURSOR_API_KEY]
+        .filter((s) => typeof s === "string" && s.trim().length > 0)
+        .map((s) => /** @type {string} */ (s).trim());
+      console.error(
+        redactSecrets(err instanceof Error ? err.message : String(err), cliEnvSecrets),
+      );
       process.exit(1);
     },
   );
