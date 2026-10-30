@@ -387,6 +387,7 @@ export function PlayerDock({
               <PlaybackOptions kind="speed" book={b} />
             </div></PlaybackExtra>
             </div>
+            {p.canUndoJump && <button className="button subtle player-undo-jump" onClick={p.undoJump}>Undo jump</button>}
             <PlaybackExtra>
             <details className="player-extra-options" open={!hasReader}><summary>Downloads</summary>
             <section

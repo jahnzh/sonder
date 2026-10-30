@@ -19,6 +19,7 @@ export function DeviceReset({ notify }: { notify: (message: string, error?: bool
       // Wait for queued local progress writes; the reset leaves IndexedDB and
       // device files intact, including any progress still waiting to sync.
       await localDB.progress.toArray().catch(() => {});
+      await localDB.positionHistory.clear();
       if ("serviceWorker" in navigator) {
         const registrations = await navigator.serviceWorker.getRegistrations();
         await Promise.all(registrations.filter(registration =>

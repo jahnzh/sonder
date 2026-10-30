@@ -1,4 +1,5 @@
 import Dexie, { type Table } from "dexie";
+import { popPosition, recentPositions, recordPosition, type PositionEntry, type PositionHistory } from "./position-history";
 import type { Book, Progress, Download, DownloadPart, Track } from "./types";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -63,6 +64,7 @@ export async function api<T = unknown>(
 class SonderDB extends Dexie {
   books!: Table<Book, string>;
   progress!: Table<Progress & { pending?: boolean }, string>;
+  positionHistory!: Table<PositionHistory, string>;
   downloads!: Table<Download, string>;
   preferences!: Table<{ key: string; value: unknown }, string>;
   downloadParts!: Table<DownloadPart, string>;
@@ -83,6 +85,7 @@ class SonderDB extends Dexie {
       downloadChunks: "[trackId+offset],trackId",
     });
     this.version(3).stores({});
+    this.version(4).stores({ positionHistory: "recordingId" });
   }
 }
 const sharedDB = new SonderDB();
@@ -102,7 +105,7 @@ export function isAdmin() { return currentRole === "admin"; }
 export function userStorageKey(key: string) { return currentUserId === 1 ? key : `sonder-user-${currentUserId}:${key}`; }
 export const localDB = new Proxy(sharedDB, {
   get(target, prop) {
-    const db = ["books", "progress", "preferences"].includes(String(prop)) ? personalDB : target;
+    const db = ["books", "progress", "positionHistory", "preferences"].includes(String(prop)) ? personalDB : target;
     if (prop === "preferences" && personalDB !== sharedDB) {
       const table = personalDB.preferences;
       return new Proxy(table, { get(obj, key) {
@@ -129,6 +132,37 @@ export const localDB = new Proxy(sharedDB, {
   },
 }) as SonderDB;
 export const authDB = sharedDB;
+
+export async function updatePositionHistory(recordingId: string, entry: PositionEntry) {
+  const table = localDB.positionHistory;
+  await localDB.transaction("rw", table, async () => {
+    const row = await table.get(recordingId);
+    await table.put({ recordingId, entries: recordPosition(row?.entries || [], entry) });
+  });
+}
+
+export async function takePositionHistory(recordingId: string) {
+  const table = localDB.positionHistory;
+  return localDB.transaction("rw", table, async () => {
+    const row = await table.get(recordingId);
+    const result = popPosition(row?.entries || [], Date.now());
+    if (result.entries.length) await table.put({ recordingId, entries: result.entries });
+    else if (row) await table.delete(recordingId);
+    return result.entry;
+  });
+}
+
+export async function prunePositionHistory(recordingId: string) {
+  const table = localDB.positionHistory;
+  await localDB.transaction("rw", table, async () => {
+    const row = await table.get(recordingId);
+    if (!row) return;
+    const entries = recentPositions(row.entries, Date.now());
+    if (entries.length === row.entries.length) return;
+    if (entries.length) await table.put({ recordingId, entries });
+    else await table.delete(recordingId);
+  });
+}
 let syncing = false;
 export async function syncProgress() {
   if (syncing || !navigator.onLine) return;
