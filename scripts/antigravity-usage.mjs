@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 export const STALE_AFTER_MS = 30 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 45_000;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
-const AUTH_PROMPT = "Authentication required";
+const AUTH_PROMPTS = ["Authentication required", "Authentication expired"];
 
 const SOURCE = {
   kind: "antigravity-cli-usage-command",
@@ -20,13 +20,28 @@ const SOURCE = {
 
 const WINDOW_KINDS = { "5h": "five_hour", weekly: "weekly" };
 
+const MODEL_FAMILY_IDS = {
+  "Gemini Flash": ["gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low"],
+  "Gemini Pro": [],
+  "Gemini 4 Argon": ["gemini-4-argon-high", "gemini-4-argon-medium", "gemini-4-argon-low"],
+  "Claude Opus": ["claude-opus-5-5-high", "claude-opus-5-5-medium", "claude-opus-5-5-low"],
+  "Claude Sonnet": ["claude-sonnet-5-5-high", "claude-sonnet-5-5-medium", "claude-sonnet-5-5-low"],
+  "Claude Haiku": [],
+  "GPT-OSS": ["gpt-oss-120b-medium"],
+};
+
+const EFFORT_WORDS = new Set(["low", "medium", "high", "xhigh", "max"]);
+const GEMINI_FAMILIES = { flash: "Gemini Flash", pro: "Gemini Pro", argon: "Gemini 4 Argon" };
+const CLAUDE_FAMILIES = { opus: "Claude Opus", sonnet: "Claude Sonnet", haiku: "Claude Haiku" };
+
 function printUsage(stderr) {
-  stderr(`Usage: node scripts/antigravity-usage.mjs [--home <dir>] [--agy <path>] [--expect-account <email or sha256:fingerprint>]
+  stderr(`Usage: node scripts/antigravity-usage.mjs [--home <dir>] [--agy <path>] [--host <hostname>] [--expect-account <email or sha256:fingerprint>]
 
 Reads the Antigravity quota of the agy login on this host and prints one JSON observation.
 --home defaults to the current user's home; the login is <home>/.gemini/antigravity-cli/antigravity-oauth-token.
 Only its account email and sign-in method are read; tokens are never printed or stored. Usage comes from
 "agy -p /usage --output-format json", which spends no quota. --agy defaults to agy on PATH.
+--host reports status "unknown_account" (reason "host_not_local") without reading local credentials when <hostname> is not this host.
 --expect-account reports status "account_mismatch" when the login belongs to another account.
 See docs/agents/antigravity-usage.md for statuses, windows and limitations.`);
 }
@@ -50,12 +65,43 @@ export function accountFingerprint(account) {
   return `sha256:${createHash("sha256").update(value.toLowerCase()).digest("hex").slice(0, 16)}`;
 }
 
-function redact(text) {
-  return String(text)
-    .replace(/https?:\/\/\S+/g, "<url>")
-    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "<email>")
+function redact(text, secrets = []) {
+  let out = String(text)
+    .replace(/https?:\/\/\S+/gi, "<url>")
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "<email>");
+  const literals = [...new Set(
+    secrets
+      .filter((secret) => typeof secret === "string" && secret.trim().length >= 6)
+      .map((secret) => secret.trim()),
+  )].sort((a, b) => b.length - a.length);
+  for (const secret of literals) {
+    out = out.replaceAll(secret, "<redacted>");
+  }
+  return out
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer <redacted>")
+    .replace(/\bBasic\s+[A-Za-z0-9+/=]{8,}/gi, "Basic <redacted>")
+    .replace(/\bya29\.[A-Za-z0-9._-]+/g, "<redacted>")
+    .replace(/\b1\/\/[A-Za-z0-9._-]+/g, "<redacted>")
+    .replace(/\bAIza[0-9A-Za-z_-]{16,}/g, "<redacted>")
+    .replace(/\bsk-[A-Za-z0-9_-]{12,}/g, "<redacted>")
+    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+/g, "<redacted>")
+    .replace(/\b(access_token|refresh_token|id_token|api_key|apikey|client_secret|x-goog-api-key|authorization|token|secret|password)(["']?\s*[:=]\s*["']?)(?!Bearer\b|Basic\b|<redacted>)([^\s"',;})\]]+)/gi, "$1$2<redacted>")
     .trim()
     .slice(0, 300);
+}
+
+function sameHost(requested, local) {
+  if (typeof requested !== "string" || typeof local !== "string") return false;
+  const target = requested.trim().toLowerCase();
+  const current = local.trim().toLowerCase();
+  return target !== "" && current !== "" && target === current;
+}
+
+function hasAdcOverride(env) {
+  const raw = env?.AGY_ADC_AUTH;
+  if (raw === undefined || raw === null) return false;
+  const value = String(raw).trim();
+  return value !== "" && !/^(?:0|false)$/i.test(value);
 }
 
 function readLogin(home) {
@@ -73,25 +119,34 @@ function readLogin(home) {
     throw new UsageError("unavailable", "credentials_unreadable", "The login file is not valid JSON");
   }
   const token = login?.token;
-  if (!token || (typeof token.access_token !== "string" && typeof token.refresh_token !== "string")) {
+  const accessToken = typeof token?.access_token === "string" ? token.access_token.trim() : "";
+  const refreshToken = typeof token?.refresh_token === "string" ? token.refresh_token.trim() : "";
+  const idToken = typeof token?.id_token === "string" ? token.id_token.trim() : "";
+  if (!token || (!accessToken && !refreshToken)) {
     throw new UsageError("unknown_account", "not_signed_in", "The login file holds no sign-in");
   }
-  if (typeof login.id_token_email !== "string" || !login.id_token_email.includes("@")) {
+  const email = typeof login.id_token_email === "string" ? login.id_token_email.trim() : "";
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     throw new UsageError("unknown_account", "account_not_identified", "The login file does not name the account");
   }
   return {
-    account: accountFingerprint(login.id_token_email),
-    authMethod: typeof login.auth_method === "string" ? login.auth_method : null,
+    scope: {
+      account: accountFingerprint(email),
+      authMethod: typeof login.auth_method === "string" && login.auth_method.trim() ? login.auth_method.trim() : null,
+    },
+    secrets: [email, accessToken, refreshToken, idToken].filter(Boolean),
   };
 }
 
 function runAgy(agyPath, command, { home, env, timeoutMs }) {
   return new Promise((resolve, reject) => {
+    const childEnv = { ...env, HOME: home };
+    delete childEnv.AGY_ADC_AUTH;
     let child;
     try {
       child = spawn(agyPath, ["-p", command, "--output-format", "json"], {
         cwd: os.tmpdir(),
-        env: { ...env, HOME: home },
+        env: childEnv,
         stdio: ["ignore", "pipe", "pipe"],
       });
     } catch (error) {
@@ -115,7 +170,7 @@ function runAgy(agyPath, command, { home, env, timeoutMs }) {
     });
     child.stderr.on("data", (chunk) => {
       stderr = (stderr + chunk).slice(-MAX_OUTPUT_BYTES);
-      if (stderr.includes(AUTH_PROMPT)) {
+      if (AUTH_PROMPTS.some((prompt) => stderr.includes(prompt))) {
         stop(new UsageError("unavailable", "auth_required", "agy asked to sign in; run agy interactively on this host to sign in again"));
       }
     });
@@ -131,17 +186,26 @@ function runAgy(agyPath, command, { home, env, timeoutMs }) {
   });
 }
 
-function parsePayload({ code, stdout }, command) {
+function parsePayload({ code, stdout, stderr = "" }, command, secrets = []) {
   let payload;
   try {
     payload = JSON.parse(stdout);
   } catch {
-    if (code !== 0) throw new UsageError("unavailable", "cli_error", `agy ${command} exited with code ${code} without a JSON result`);
+    if (code !== 0) {
+      const detail = stderr.trim() ? `: ${redact(stderr, secrets)}` : " without a JSON result";
+      throw new UsageError("unavailable", "cli_error", `agy ${command} exited with code ${code}${detail}`);
+    }
     throw malformed(`agy ${command} did not print JSON`);
   }
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw malformed(`agy ${command} printed JSON that is not an object`);
   if (payload.status !== "SUCCESS") {
-    throw new UsageError("unavailable", "cli_error", typeof payload.error === "string" && payload.error ? redact(payload.error) : `agy ${command} reported status ${redact(payload.status)}`);
+    throw new UsageError(
+      "unavailable",
+      "cli_error",
+      typeof payload.error === "string" && payload.error
+        ? redact(payload.error, secrets)
+        : `agy ${command} reported status ${redact(payload.status, secrets)}`,
+    );
   }
   return payload;
 }
@@ -153,9 +217,83 @@ function isoOrNull(value, what) {
   return new Date(time).toISOString();
 }
 
-function groupModels(description) {
-  const match = typeof description === "string" ? /^Models within this group:\s*(.+)$/.exec(description.trim()) : null;
-  return match ? match[1].split(",").map((name) => name.trim()).filter(Boolean) : null;
+function normalizeTokens(value) {
+  if (typeof value !== "string") return [];
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(" ").filter(Boolean);
+}
+
+export function resolveModelFamily(name) {
+  const words = normalizeTokens(name);
+  if (words.length === 0) return null;
+  if (words[0] === "gemini") {
+    const families = [];
+    for (const word of words.slice(1)) {
+      if (GEMINI_FAMILIES[word]) {
+        if (!families.includes(GEMINI_FAMILIES[word])) families.push(GEMINI_FAMILIES[word]);
+      } else if (!/^\d+$/.test(word) && !EFFORT_WORDS.has(word)) {
+        return null;
+      }
+    }
+    return families.length === 1 ? families[0] : null;
+  }
+  if (words[0] === "claude") {
+    const families = [];
+    for (const word of words.slice(1)) {
+      if (CLAUDE_FAMILIES[word]) {
+        if (!families.includes(CLAUDE_FAMILIES[word])) families.push(CLAUDE_FAMILIES[word]);
+      } else if (!/^\d+$/.test(word) && !EFFORT_WORDS.has(word)) {
+        return null;
+      }
+    }
+    return families.length === 1 ? families[0] : null;
+  }
+  if (words[0] === "gpt" && words[1] === "oss") {
+    for (const word of words.slice(2)) {
+      if (!/^\d+b?$/.test(word) && !EFFORT_WORDS.has(word)) return null;
+    }
+    return "GPT-OSS";
+  }
+  return null;
+}
+
+function uniqueModelIds(families) {
+  return [...new Set(families.flatMap((family) => MODEL_FAMILY_IDS[family] ?? []))];
+}
+
+function resolveGroupModels(name, description) {
+  const match = typeof description === "string" ? /Models within this group:\s*([^\n.]+)/i.exec(description.trim()) : null;
+  if (match) {
+    const models = match[1].split(",").map((entry) => entry.trim()).filter(Boolean);
+    if (models.length === 0) return { models: null, families: [], modelIds: [], recognized: false };
+    const resolved = models.map((entry) => resolveModelFamily(entry));
+    const families = [...new Set(resolved.filter(Boolean))];
+    return {
+      models,
+      families,
+      modelIds: uniqueModelIds(families),
+      recognized: resolved.every((family) => family !== null),
+    };
+  }
+  const family = resolveModelFamily(name);
+  if (family) {
+    return {
+      models: [family],
+      families: [family],
+      modelIds: uniqueModelIds([family]),
+      recognized: true,
+    };
+  }
+  return { models: null, families: [], modelIds: [], recognized: false };
+}
+
+function sharesGeminiQuotaOnUltra(entry) {
+  return (
+    entry.groupWindows.length === 0 &&
+    entry.families.length === 1 &&
+    entry.families[0] === "Gemini 4 Argon" &&
+    typeof entry.description === "string" &&
+    /included as part of the .*gemini quota bucket/i.test(entry.description)
+  );
 }
 
 export function interpretUsage(payload) {
@@ -163,7 +301,7 @@ export function interpretUsage(payload) {
   const groupsIn = payload.command.data?.groups;
   if (!Array.isArray(groupsIn)) throw malformed("The /usage result has no list of groups");
   const windows = [];
-  const groups = groupsIn.map((group, groupIndex) => {
+  const entries = groupsIn.map((group, groupIndex) => {
     if (!group || typeof group.name !== "string" || !Array.isArray(group.buckets)) {
       throw malformed(`groups[${groupIndex}] has no name or list of buckets`);
     }
@@ -188,42 +326,144 @@ export function interpretUsage(payload) {
     windows.push(...groupWindows);
     return {
       name: group.name,
-      models: groupModels(group.description),
-      windowIds: groupWindows.map((window) => window.id),
-      exhausted: groupWindows.some((window) => window.exhausted),
+      description: group.description,
+      groupWindows,
+      ...resolveGroupModels(group.name, group.description),
     };
   });
   if (windows.length === 0) throw new UsageError("unavailable", "no_usage_windows", "The /usage result reported no quota buckets");
-  return { windows, groups };
-}
 
-async function readCredits(agyPath, options) {
-  try {
-    const remaining = parsePayload(await runAgy(agyPath, "/credits", options), "/credits").command?.data?.remaining_credits;
-    return typeof remaining === "number" && Number.isFinite(remaining) ? { remaining } : null;
-  } catch (error) {
-    if (error instanceof UsageError) return null;
-    throw error;
+  const geminiShared = entries.find(
+    (entry) => entry.groupWindows.length > 0 && entry.families.some((family) => family === "Gemini Flash" || family === "Gemini Pro"),
+  );
+  for (const entry of entries) {
+    if (geminiShared && sharesGeminiQuotaOnUltra(entry)) {
+      if (!geminiShared.families.includes("Gemini 4 Argon")) {
+        geminiShared.families.push("Gemini 4 Argon");
+        geminiShared.models = [...(geminiShared.models ?? []), "Gemini 4 Argon"];
+        geminiShared.modelIds = uniqueModelIds(geminiShared.families);
+      }
+      entry.sharedWindows = geminiShared.groupWindows;
+      entry.recognized = entry.recognized && geminiShared.recognized;
+    }
   }
+
+  const groups = entries.map((entry) => {
+    const effectiveWindows = entry.sharedWindows ?? entry.groupWindows;
+    const appliesTo = entry.recognized && effectiveWindows.length > 0 ? "group" : "unknown";
+    return {
+      name: entry.name,
+      models: entry.models,
+      modelIds: entry.modelIds,
+      appliesTo,
+      windowIds: effectiveWindows.map((window) => window.id),
+      exhausted: effectiveWindows.some((window) => window.exhausted),
+    };
+  });
+  return { windows, groups };
 }
 
 export function assessFreshness(observation, now = new Date()) {
   const observedAt = Date.parse(observation?.observedAt);
   if (Number.isNaN(observedAt)) return { state: "stale", reasons: ["no_observation_time"], staleAfter: null };
+  if (
+    (observation?.status !== undefined && !["available", "limited", "exhausted", "stale"].includes(observation.status)) ||
+    !Array.isArray(observation?.windows) ||
+    observation.windows.length === 0
+  ) {
+    return {
+      state: "unknown",
+      reasons: [typeof observation?.reason === "string" ? observation.reason : "no_usage_windows"],
+      staleAfter: null,
+    };
+  }
   const reasons = [];
   if (now.getTime() - observedAt > STALE_AFTER_MS) reasons.push("older_than_30_minutes");
-  for (const window of observation.windows ?? []) {
+  for (const window of observation.windows) {
     const resetsAt = Date.parse(window.resetsAt);
     if (!Number.isNaN(resetsAt) && resetsAt <= now.getTime()) reasons.push(`reset_passed:${window.id}`);
   }
-  const resets = (observation.windows ?? []).map((window) => Date.parse(window.resetsAt)).filter((time) => !Number.isNaN(time));
+  const resets = observation.windows.map((window) => Date.parse(window.resetsAt)).filter((time) => !Number.isNaN(time));
   const staleAfter = Math.min(observedAt + STALE_AFTER_MS, ...resets);
   return { state: reasons.length ? "stale" : "fresh", reasons, staleAfter: new Date(staleAfter).toISOString() };
 }
 
 /**
- * Reads the Antigravity quota of the agy login under `home`.
- * Never throws for CLI, login or provider problems: they come back as a status and reason.
+ * Returns the allowance group(s) and usage windows that govern `candidate` (`{ model }`),
+ * or `null` when the model cannot be mapped to a reported allowance window.
+ */
+export function applicableWindows(observation, candidate = {}) {
+  if (!observation || !Array.isArray(observation.windows) || !Array.isArray(observation.groups)) return null;
+  const family = resolveModelFamily(candidate?.model);
+  if (!family) return null;
+  const matchingGroups = observation.groups.filter(
+    (group) =>
+      Array.isArray(group.models) &&
+      group.models.some((entry) => resolveModelFamily(entry) === family) &&
+      Array.isArray(group.windowIds) &&
+      group.windowIds.length > 0,
+  );
+  if (matchingGroups.length === 0) return null;
+  const windowIdSet = new Set(matchingGroups.flatMap((group) => group.windowIds));
+  const windows = observation.windows.filter((window) => windowIdSet.has(window.id));
+  if (windows.length === 0) return null;
+  return {
+    family,
+    groups: matchingGroups.map((group) => group.name),
+    windowIds: windows.map((window) => window.id),
+    windows,
+  };
+}
+
+/**
+ * Whether `candidate` (`{ model }`) has remaining Antigravity quota in `observation`.
+ * "exhausted": an allowance window mapped to this candidate has nothing left.
+ * "available": the candidate maps to reported allowance windows with remaining capacity,
+ *   and every exhausted group in the observation belongs to a known disjoint model family.
+ * "unknown": the reading is unusable or stale at `now` (defaulting to current time), the candidate
+ *   model is omitted, unmapped or unrecognised, or an exhausted group's scope is unrecognised.
+ */
+export function candidateAvailability(observation, candidate = {}, now) {
+  if (
+    !observation ||
+    !Array.isArray(observation.windows) ||
+    !Array.isArray(observation.groups) ||
+    !Array.isArray(observation.exhaustedWindows) ||
+    !["available", "limited", "exhausted"].includes(observation.status)
+  ) {
+    return "unknown";
+  }
+  if (now === undefined && observation.freshness && observation.freshness.state !== "fresh") return "unknown";
+  if (assessFreshness(observation, now ?? new Date()).state !== "fresh") return "unknown";
+  if (observation.status !== "available" && observation.exhaustedWindows.length === 0) return "unknown";
+
+  const applicable = applicableWindows(observation, candidate);
+  if (!applicable) return "unknown";
+  if (applicable.windows.some((window) => window.exhausted || window.remainingFraction <= 0)) {
+    return "exhausted";
+  }
+  const coveredWindowIds = new Set(observation.groups.flatMap((group) => group.windowIds ?? []));
+  if (observation.exhaustedWindows.some((id) => !coveredWindowIds.has(id))) return "unknown";
+
+  for (const group of observation.groups) {
+    const groupExhausted =
+      group.exhausted ||
+      (Array.isArray(group.windowIds) && group.windowIds.some((id) => observation.exhaustedWindows.includes(id)));
+    if (!groupExhausted) continue;
+    const groupRecognized =
+      group.appliesTo === "group" &&
+      Array.isArray(group.models) &&
+      group.models.length > 0 &&
+      group.models.every((entry) => resolveModelFamily(entry) !== null);
+    if (!groupRecognized) return "unknown";
+    if (group.models.some((entry) => resolveModelFamily(entry) === applicable.family)) return "exhausted";
+  }
+  return "available";
+}
+
+/**
+ * Reads the Antigravity quota of the agy login under `home` when targeting the local host.
+ * Never throws for CLI, host, login or provider problems: they come back as a status and reason.
  */
 export async function readAntigravityUsage({
   home = os.homedir(),
@@ -231,19 +471,26 @@ export async function readAntigravityUsage({
   env = process.env,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   now = () => new Date(),
-  hostname = os.hostname(),
+  hostname,
+  host,
+  localHostname = os.hostname(),
   expectedAccount,
 } = {}) {
   const observedAt = now();
+  const targetHost = host ?? hostname ?? localHostname;
+  const isLocalHost = sameHost(targetHost, localHostname);
+  const envSecrets = [env?.GEMINI_API_KEY, env?.GOOGLE_API_KEY].filter((value) => typeof value === "string" && value.trim() !== "");
+  const hasExpectedAccount = expectedAccount !== undefined && expectedAccount !== null;
+  const trimmedExpectedAccount = hasExpectedAccount ? String(expectedAccount).trim() : "";
   const observation = {
     provider: "antigravity",
     source: SOURCE,
     scope: {
-      host: hostname,
-      home,
+      host: targetHost,
+      home: isLocalHost ? home : null,
       account: null,
       authMethod: null,
-      expectedAccount: expectedAccount ? accountFingerprint(expectedAccount) : null,
+      expectedAccount: trimmedExpectedAccount ? accountFingerprint(trimmedExpectedAccount) : null,
     },
     observedAt: observedAt.toISOString(),
     status: "unavailable",
@@ -252,20 +499,41 @@ export async function readAntigravityUsage({
     windows: null,
     groups: null,
     exhaustedWindows: [],
-    credits: null,
   };
   try {
-    Object.assign(observation.scope, readLogin(home));
-    if (observation.scope.expectedAccount && observation.scope.account !== observation.scope.expectedAccount) {
+    if (!isLocalHost) {
+      throw new UsageError(
+        "unknown_account",
+        "host_not_local",
+        `Cannot read Antigravity CLI credentials for ${redact(targetHost, envSecrets) || "an unnamed host"} on ${localHostname}; run the reader on that host`,
+      );
+    }
+    if (hasAdcOverride(env)) {
+      throw new UsageError(
+        "unknown_account",
+        "account_not_identified",
+        "AGY_ADC_AUTH overrides the Antigravity CLI login file, so the active account cannot be identified",
+      );
+    }
+    const login = readLogin(home);
+    if (hasExpectedAccount && (!trimmedExpectedAccount || login.scope.account !== observation.scope.expectedAccount)) {
+      Object.assign(observation.scope, login.scope);
       throw new UsageError("account_mismatch", "account_mismatch", "The Antigravity CLI login on this host belongs to a different account");
     }
     const runOptions = { home, env, timeoutMs };
-    const { windows, groups } = interpretUsage(parsePayload(await runAgy(agyPath, "/usage", runOptions), "/usage"));
+    const secrets = [...login.secrets, ...envSecrets];
+    const { windows, groups } = interpretUsage(parsePayload(await runAgy(agyPath, "/usage", runOptions), "/usage", secrets));
+    Object.assign(observation.scope, login.scope);
     observation.windows = windows;
     observation.groups = groups;
     observation.exhaustedWindows = windows.filter((window) => window.exhausted).map((window) => window.id);
-    observation.status = observation.exhaustedWindows.length ? "exhausted" : "available";
-    observation.credits = await readCredits(agyPath, runOptions);
+    const activeGroups = groups.filter((group) => group.windowIds.length > 0);
+    const allGroupsExhausted =
+      activeGroups.length > 0 &&
+      groups.every((group) => group.appliesTo === "group" && group.windowIds.length > 0 && group.exhausted);
+    observation.status = observation.exhaustedWindows.length === 0
+      ? "available"
+      : allGroupsExhausted ? "exhausted" : "limited";
   } catch (error) {
     if (!(error instanceof UsageError)) throw error;
     observation.status = error.status;
@@ -273,17 +541,29 @@ export async function readAntigravityUsage({
     observation.detail = error.detail;
   }
   observation.freshness = assessFreshness(observation, observedAt);
+  if (observation.freshness.state === "stale" && ["available", "limited", "exhausted"].includes(observation.status)) {
+    observation.status = "stale";
+    observation.reason = observation.freshness.reasons.some((reason) => reason.startsWith("reset_passed:"))
+      ? "reset_passed"
+      : (observation.freshness.reasons[0] ?? "stale");
+  }
   return observation;
 }
 
-const OPTION_KEYS = { "--home": "home", "--agy": "agyPath", "--expect-account": "expectedAccount" };
+const OPTION_KEYS = {
+  "--home": "home",
+  "--agy": "agyPath",
+  "--host": "host",
+  "--expect-account": "expectedAccount",
+};
 
 function parseArgs(argv) {
   const options = {};
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
-    if (OPTION_KEYS[arg] && argv[i + 1]) {
-      options[OPTION_KEYS[arg]] = argv[i + 1];
+    const next = argv[i + 1];
+    if (OPTION_KEYS[arg] && typeof next === "string" && next.trim() !== "" && !next.startsWith("-")) {
+      options[OPTION_KEYS[arg]] = next;
       i += 1;
     } else if (arg === "--help" || arg === "-h") {
       options.help = true;
@@ -310,7 +590,12 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
     return 0;
   }
   const { help, ...readOptions } = options;
-  const observation = await readAntigravityUsage({ ...readOptions, ...pickDefined(deps, ["env", "now", "hostname", "timeoutMs"]) });
+  const localHostname = deps.localHostname ?? deps.hostname;
+  const observation = await readAntigravityUsage({
+    ...readOptions,
+    ...pickDefined(deps, ["env", "now", "timeoutMs"]),
+    ...(localHostname !== undefined ? { localHostname } : {}),
+  });
   stdout(JSON.stringify(observation, null, 2));
   return 0;
 }
