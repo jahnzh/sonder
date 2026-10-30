@@ -8,7 +8,7 @@ import { defineConfig } from "@playwright/test";
 const port = Number(process.env.PLAYWRIGHT_PORT || 4174);
 export default defineConfig({
   testDir: "./tests/e2e",
-  testMatch: /(now-playing-layout|device-reset)\.spec\.ts/,
+  testMatch: /(now-playing-layout|device-reset|pwa-shortcut)\.spec\.ts/,
   fullyParallel: false,
   workers: 1,
   // A hang outside a test (adb, the tunnel) is otherwise bounded only by fixture timeouts.
