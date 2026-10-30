@@ -20,7 +20,9 @@ import {
   clearStreamCache,
 } from "../playback-sources";
 import {
+  activeStamp,
   lowConfidenceWarning,
+  replaceNotice,
   resumeLabel,
   savedLabel,
   sourceSwitchOffer,
@@ -161,12 +163,16 @@ export function MediaManager({
         localDB.progress.get(selected.recordingId),
       ]);
       if (!live) return;
-      const activeUpdated = p.playing
-        ? Date.now()
-        : Math.max(
-            activeSaved?.updatedAt || 0,
-            versions.find((v) => v.recordingId === playingBook.recordingId)?.progress?.updatedAt || 0,
-          );
+      const activeUpdated = activeStamp(
+        playingBook,
+        playingTrack.id,
+        p.position,
+        Math.max(
+          activeSaved?.updatedAt || 0,
+          versions.find((v) => v.recordingId === playingBook.recordingId)?.progress?.updatedAt || 0,
+        ),
+        Date.now(),
+      );
       const value = sourceSwitchOffer({
         active: {
           recordingId: playingBook.recordingId,
@@ -199,8 +205,9 @@ export function MediaManager({
         await p.setPlaybackSource(choice);
       else {
         const track = selected.tracks.find((t) => t.id === start?.trackId);
-        if (start && track) await p.play(selected, track, start.position);
-        else await p.play(selected);
+        if (start && track)
+          await p.play(selected, track, start.position, { kind: "recording", saveAfterLoad: true });
+        else await p.play(selected, undefined, undefined, { kind: "recording" });
       }
     });
   const actualTrack =
@@ -398,10 +405,14 @@ export function MediaManager({
               <button
                 className="button subtle"
                 disabled={busy || !state || !!currentFaults.recording}
+                aria-describedby={pendingOffer.saved ? "media-start-notice" : undefined}
                 onClick={() => void useVersion({ trackId: selected.tracks[0].id, position: 0 })}
               >
                 {START_LABEL}
               </button>
+              {pendingOffer.saved && (
+                <p id="media-start-notice">{replaceNotice(selected, pendingOffer.saved)}</p>
+              )}
               {lowConfidenceWarning(pendingOffer.mapping) && (
                 <p role="status">{lowConfidenceWarning(pendingOffer.mapping)}</p>
               )}

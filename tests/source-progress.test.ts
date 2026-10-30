@@ -1,11 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  activeStamp,
   bookPosition,
   hms,
   lowConfidenceWarning,
   mapSourcePosition,
   normalizeTitle,
+  replaceNotice,
   resumeLabel,
   savedLabel,
   sourceSwitchOffer,
@@ -235,4 +237,56 @@ test("no offer without a place to carry over, for the same recording, or without
   assert.equal(sourceSwitchOffer({ active: { ...active, position: 300 }, target: { ...target, recordingId: "ra" } }), null);
   const unknown = { recordingId: "rb", book: { tracks: [track("b", 0)] } };
   assert.equal(sourceSwitchOffer({ active: { ...active, position: 300 }, target: unknown }), null);
+});
+
+test("a paused recording holding a place counts as listened to now, not at its last save", () => {
+  const activeBook = { tracks: [track("a", 1500)] };
+  const targetBook = { tracks: [track("b", 1500)] };
+  const lastSave = 1000;
+  const now = 5000;
+  // The target was saved after the active recording's last save, but before it was paused.
+  const target = { recordingId: "rb", book: targetBook, progress: progress("rb", "b", 3000) };
+  const stamped = (position: number) => ({
+    recordingId: "ra",
+    book: activeBook,
+    trackId: "a",
+    position,
+    updatedAt: activeStamp(activeBook, "a", position, lastSave, now),
+  });
+  const offer = sourceSwitchOffer({ active: stamped(600), target })!;
+  assert.equal(offer.mapping.position, 600);
+  assert.equal(offer.saved, target.progress);
+  // Without a place of at least a second there is nothing live, so the last save stands.
+  assert.equal(activeStamp(activeBook, "a", 0.5, lastSave, now), lastSave);
+  assert.equal(activeStamp(activeBook, "missing", 600, lastSave, now), lastSave);
+  // A target saved after the pause still wins.
+  assert.equal(
+    sourceSwitchOffer({ active: stamped(600), target: { ...target, progress: progress("rb", "b", 6000) } }),
+    null,
+  );
+});
+
+test("Start from beginning names the saved position it replaces", () => {
+  const book = { tracks: [track("a", 100), track("b", 100)] };
+  assert.equal(
+    replaceNotice(book, progress("rb", "b", 1, 42)),
+    "Start from beginning replaces your saved position at 00:02:22",
+  );
+});
+
+test("the share of the book still works when only some tracks have a known duration", () => {
+  const from = { tracks: [track("a", 400)] };
+  const to = { tracks: [track("x", 100), track("y", 0), track("z", 100)] };
+  const mapped = mapSourcePosition(from, { trackId: "a", position: 300 }, to)!;
+  // 75% of the 200 s that are known, skipping the unknown track.
+  assert.equal(mapped.method, "fraction");
+  assert.equal(mapped.trackId, "z");
+  assert.equal(mapped.position, 50);
+  assert.equal(mapped.bookPosition, 150);
+  assert.equal(mapped.confidence, "low");
+  assert.equal(mapped.durationsDiffer, true);
+  assert.equal(
+    mapSourcePosition(from, { trackId: "a", position: 300 }, { tracks: [track("y", 0), track("w", 0)] }),
+    null,
+  );
 });

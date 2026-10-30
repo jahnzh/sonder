@@ -82,6 +82,27 @@ async function progressOf(page: Page, release: Release) {
   const books = await (await page.request.get("/api/books")).json();
   return books.find((b: any) => b.id === release.id).progress || { position: -1, updatedAt: 0 };
 }
+async function idb<T>(page: Page, store: string, key: string): Promise<T | undefined> {
+  return page.evaluate(async ({ store, key }) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("sonder");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const row = await new Promise<any>((resolve, reject) => {
+      const request = db.transaction(store).objectStore(store).get(key);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    db.close();
+    return row;
+  }, { store, key });
+}
+// The device's own progress row, not the server's.
+const localPosition = async (page: Page, release: Release) =>
+  ((await idb<{ position: number }>(page, "progress", release.recordingId))?.position ?? -1);
+const historyOf = async (page: Page, release: Release) =>
+  ((await idb<{ entries: { position: number; kind: string }[] }>(page, "positionHistory", release.recordingId))?.entries ?? []);
 const save = (page: Page, release: Release, position: number, updatedAt: number) =>
   page.request.post("/api/progress", { data: { recordingId: release.recordingId, trackId: release.trackId, position, duration: 640, updatedAt } });
 const french = (_name: string) => chapters(["Chapitre 1", "Chapitre 2", "Chapitre 3", "Chapitre 4"], 160);
@@ -104,6 +125,9 @@ test("Resume at the matching chapter carries the place over and leaves the other
   await expect.poll(async () => (await audioState(page)).src).toContain(other.trackId);
   await expect.poll(async () => (await audioState(page)).position).toBeGreaterThanOrEqual(370);
   expect((await audioState(page)).position).toBeLessThan(380);
+  // The landing is saved when the load applies it, not on the next 5 s progress tick.
+  await expect.poll(() => localPosition(page, other), { timeout: 2000 }).toBeGreaterThanOrEqual(370);
+  expect(await localPosition(page, other)).toBeLessThan(380);
   await expect.poll(async () => (await progressOf(page, other)).position).toBeGreaterThanOrEqual(370);
   await expect.poll(async () => (await progressOf(page, first)).position).toBeCloseTo(250, 0);
 });
@@ -118,6 +142,53 @@ test("Start from beginning plays the other recording from 0:00", async ({ page }
   await expect.poll(async () => (await audioState(page)).position).toBeLessThan(10);
   await expect.poll(async () => (await progressOf(page, other)).position).toBeLessThan(10);
   await expect.poll(async () => (await progressOf(page, first)).position).toBeCloseTo(250, 0);
+});
+
+test("Start from beginning says which saved position it replaces, then writes 0:00", async ({ page }) => {
+  await instrument(page);
+  const { first, other } = await twoReleases(page, "Replace", { duration: 640, chapters: french("") });
+  expect((await save(page, other, 42, Date.now() - 60000)).ok()).toBe(true);
+  const dialog = await listenAt(page, first, 250);
+  await dialog.getByRole("button", { name: /French Reader/ }).click();
+  const offer = dialog.getByRole("group", { name: "Where to resume", exact: true });
+  const start = offer.getByRole("button", { name: "Start from beginning", exact: true });
+  await expect(offer.getByText("Start from beginning replaces your saved position at 00:00:42", { exact: true })).toBeVisible();
+  await expect(start).toHaveAccessibleDescription("Start from beginning replaces your saved position at 00:00:42");
+  await start.click();
+  await expect.poll(async () => (await audioState(page)).src).toContain(other.trackId);
+  await expect.poll(async () => (await progressOf(page, other)).position, { timeout: 2000 }).toBeLessThan(10);
+  expect(await localPosition(page, other)).toBeLessThan(10);
+  // The replaced checkpoint stays in the position history of the target, labelled as a recording switch.
+  await expect.poll(() => historyOf(page, other)).toEqual([expect.objectContaining({ position: 42, kind: "recording" })]);
+});
+
+test("closing the dialog without choosing does not switch recordings", async ({ page }) => {
+  await instrument(page);
+  const { first, other } = await twoReleases(page, "Dismiss", { duration: 640, chapters: french("") });
+  const dialog = await listenAt(page, first, 250);
+  await dialog.getByRole("button", { name: /French Reader/ }).click();
+  await expect(dialog.getByRole("group", { name: "Where to resume", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  expect((await audioState(page)).src).toContain(first.trackId);
+  expect((await audioState(page)).position).toBeCloseTo(250, 0);
+  expect(await localPosition(page, other)).toBe(-1);
+  expect((await progressOf(page, other)).position).toBe(-1);
+});
+
+test("a recording paused in the player still gets the offer when the target was saved after its last save", async ({ page }) => {
+  await instrument(page);
+  const { first, other } = await twoReleases(page, "Paused", { duration: 640, chapters: french("") });
+  // Saved after the first recording's save (made when it is paused) but before the dialog opens.
+  const savedAt = Date.now() + 8000;
+  expect((await save(page, other, 42, savedAt)).ok()).toBe(true);
+  const dialog = await listenAt(page, first, 250);
+  await expect.poll(() => page.evaluate((at) => Date.now() > at, savedAt), { timeout: 15000 }).toBe(true);
+  await dialog.getByRole("button", { name: /French Reader/ }).click();
+  const offer = dialog.getByRole("group", { name: "Where to resume", exact: true });
+  await expect(offer.getByRole("button", { name: "Resume at Chapitre 3 (00:06:10)", exact: true })).toBeVisible();
+  await expect(offer.getByRole("button", { name: "Resume saved position (00:00:42)", exact: true })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Use this version", exact: true })).toHaveCount(0);
 });
 
 test("a recording without chapters resumes by the share of the book and warns when that is an estimate", async ({ page }) => {

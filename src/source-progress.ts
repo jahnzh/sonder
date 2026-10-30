@@ -1,4 +1,4 @@
-import { absoluteSeekTarget, listeningChapters } from "./chapters";
+import { listeningChapters } from "./chapters";
 import type { Progress, Track } from "./types";
 // Client only: the server must not import this file.
 type Timeline = { tracks: Track[] };
@@ -37,6 +37,36 @@ export function bookPosition(
     totalOf(book.tracks.slice(0, index)) +
     Math.min(finite(position), finite(book.tracks[index].duration) || Infinity)
   );
+}
+const unknownDuration = (book: Timeline) =>
+  book.tracks.some((track) => !(track.duration > 0));
+/**
+ * The timestamp that stands for the player's recording when it is compared with
+ * the target's checkpoint. A recording holding a place of at least a second is
+ * being listened to now, whether it plays or is paused, so it counts as `now`
+ * and not as its last saved time; otherwise the last saved time.
+ */
+export function activeStamp(
+  book: Timeline,
+  trackId: string,
+  position: number,
+  savedAt: number,
+  now: number,
+) {
+  return (bookPosition(book, trackId, position) ?? 0) >= 1 ? now : savedAt;
+}
+/** Where a position lands on the timeline of the tracks with a known duration; unknown ones are skipped. */
+function fractionLanding(tracks: Track[], seconds: number) {
+  const known = tracks.filter((track) => track.duration > 0);
+  const total = totalOf(known);
+  if (!total) return null;
+  let remaining = Math.max(0, Math.min(seconds, total));
+  for (const [index, track] of known.entries()) {
+    if (remaining < track.duration || index === known.length - 1)
+      return { track, position: Math.min(remaining, track.duration) };
+    remaining -= track.duration;
+  }
+  return null;
 }
 const hasChapters = (book: Timeline) =>
   book.tracks.length > 1 || book.tracks.some((track) => track.chapters?.length);
@@ -82,6 +112,8 @@ export function mapSourcePosition(
   const durationsDiffer =
     !fromTotal ||
     !toTotal ||
+    unknownDuration(from) ||
+    unknownDuration(to) ||
     Math.abs(fromTotal - toTotal) / Math.max(fromTotal, toTotal) >
       MAX_DURATION_GAP;
   if (!from.tracks.some((track) => track.id === at.trackId) || !to.tracks.length)
@@ -130,7 +162,8 @@ export function mapSourcePosition(
   }
   const absolute = bookPosition(from, at.trackId, position);
   if (!fromTotal || !toTotal || absolute === null) return null;
-  const landing = absoluteSeekTarget(
+  // A track of unknown length counts as empty on both sides, so the share is of the known part.
+  const landing = fractionLanding(
     to.tracks,
     (Math.min(absolute, fromTotal) / fromTotal) * toTotal,
   );
@@ -171,6 +204,9 @@ export const resumeLabel = (mapping: SourceMapping) =>
 export const savedLabel = (book: Timeline, saved: Progress) =>
   `Resume saved position (${hms(bookPosition(book, saved.trackId, saved.position) ?? saved.position)})`;
 export const START_LABEL = "Start from beginning";
+/** Starting over replaces the target's own checkpoint; say which one. */
+export const replaceNotice = (book: Timeline, saved: Progress) =>
+  `${START_LABEL} replaces your saved position at ${hms(bookPosition(book, saved.trackId, saved.position) ?? saved.position)}`;
 export function lowConfidenceWarning(mapping: SourceMapping) {
   if (mapping.confidence !== "low") return null;
   return mapping.durationsDiffer
