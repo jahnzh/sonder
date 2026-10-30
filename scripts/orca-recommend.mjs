@@ -4,6 +4,8 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PROVIDERS, usageForPlanning } from "./orca-usage.mjs";
+import { applyLearning, defaultLearnDir, loadLearningContext } from "./orca-learn.mjs";
+import { defaultDir as defaultHistoryDir } from "./orca-history.mjs";
 
 const JEV_URL = "https://api.typesafe.ai/v1/systemone";
 // Pinned, not jev-latest: an alias can move and change answers without any change here.
@@ -56,9 +58,11 @@ const QUESTIONS = {
 const USAGE = `Usage: node scripts/orca-recommend.mjs --task <id> --summary <text> [--kind <kind>] [--files <n>]
          [--eligible <agent>/<model>[/<effort>]]... [--judgment <requirement> --judgment-reason <text>]
          [--override <agent>/<model>[/<effort>] --override-reason <text>] [--record <spec-file>] [--models <file>]
+         [--history-dir <dir>] [--learn-dir <dir>] [--no-learning] [--agent-version <agent>=<version>]...
 
 Recommends a worker for one ready task and prints JSON. It never starts a worker: pass launch.args to
 scripts/orca-spawn.sh. Only --summary, --kind and --files are sent to Jev, so keep the summary shareable.
+History and transcripts are never sent to Jev. Learning never launches a worker.
 
   --summary          The task in at most ${MAX_SUMMARY_LENGTH} characters.
   --kind             ${TASK_KINDS.join(", ")}.
@@ -68,9 +72,15 @@ scripts/orca-spawn.sh. Only --summary, --kind and --files are sent to Jev, so ke
   --override         The worker chosen instead of the recommendation. Needs --override-reason.
   --record           Write the choice into this spec's "## Model choice" section.
   --models           The capability baseline (default: docs/agents/models.md).
+  --history-dir      Worker history directory (default: $ORCA_HISTORY_DIR or artifacts/orca/history).
+  --learn-dir        Learned-adjustment state (default: $ORCA_LEARN_DIR or artifacts/orca/learning).
+  --no-learning      Use only the capability-and-usage baseline (still prints baselineRecommendation).
+  --agent-version    Current agent tooling version for comparability; repeatable as <agent>=<version>.
 
 Takes a fresh usage reading first for each agent scripts/orca-usage.mjs collects. Candidates with exhausted usage
 are rejected, and only "fresh" and "low" usage confirm any capacity; see docs/agents/usage-collector.md.
+When history has enough comparable outcomes, learning may reorder within the smallest suitable capability
+tier; the baseline pick is always shown beside any adjusted recommendation (see docs/agents/learned-adjustments.md).
 
 Exit codes: 0 a worker was chosen, 1 nothing suitable or an override was refused, 2 bad usage,
 3 Jev gave no usable assessment and no --judgment was supplied.
@@ -88,7 +98,7 @@ function parseChoice(value) {
  * @returns {{ help: true } | { error: string } | { options: Record<string, any> }}
  */
 export function parseCliArgs(argv) {
-  const options = { eligible: [] };
+  const options = { eligible: [], agentVersions: {}, learning: undefined };
   const flags = {
     "--task": "task",
     "--summary": "summary",
@@ -100,20 +110,35 @@ export function parseCliArgs(argv) {
     "--override-reason": "overrideReason",
     "--record": "record",
     "--models": "models",
+    "--history-dir": "historyDir",
+    "--learn-dir": "learnDir",
   };
-  for (let i = 0; i < argv.length; i += 2) {
+  for (let i = 0; i < argv.length; ) {
     const flag = argv[i];
     if (flag === "--help" || flag === "-h") return { help: true };
-    if (flag !== "--eligible" && !flags[flag]) return { error: `unknown option: ${flag}` };
-    const value = argv[i + 1];
-    if (value === undefined || value.startsWith("-")) return { error: `${flag} needs a value` };
-    if (flag === "--eligible") {
-      const choice = parseChoice(value);
-      if (!choice) return { error: `--eligible must be <agent>/<model>[/<effort>], got: ${value}` };
-      options.eligible.push(choice);
-    } else {
-      options[flags[flag]] = value;
+    if (flag === "--no-learning") {
+      options.learning = false;
+      i += 1;
+      continue;
     }
+    if (flag === "--eligible" || flag === "--agent-version" || flags[flag]) {
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith("-")) return { error: `${flag} needs a value` };
+      if (flag === "--eligible") {
+        const choice = parseChoice(value);
+        if (!choice) return { error: `--eligible must be <agent>/<model>[/<effort>], got: ${value}` };
+        options.eligible.push(choice);
+      } else if (flag === "--agent-version") {
+        const eq = value.indexOf("=");
+        if (eq <= 0 || eq === value.length - 1) return { error: `--agent-version must be <agent>=<version>, got: ${value}` };
+        options.agentVersions[value.slice(0, eq)] = value.slice(eq + 1);
+      } else {
+        options[flags[flag]] = value;
+      }
+      i += 2;
+      continue;
+    }
+    return { error: `unknown option: ${flag}` };
   }
   if (!options.task?.trim() || !options.summary?.trim()) return { error: "--task and --summary are required" };
   if (options.summary.length > MAX_SUMMARY_LENGTH) return { error: `--summary is ${options.summary.length} characters; the limit is ${MAX_SUMMARY_LENGTH}` };
@@ -133,6 +158,8 @@ export function parseCliArgs(argv) {
   }
   if (options.record !== undefined && (!options.record.trim() || !existsSync(options.record))) return { error: `spec file not found: ${options.record}` };
   if (options.models !== undefined && !options.models.trim()) return { error: "--models must not be blank" };
+  if (options.historyDir !== undefined && !options.historyDir.trim()) return { error: "--history-dir must not be blank" };
+  if (options.learnDir !== undefined && !options.learnDir.trim()) return { error: "--learn-dir must not be blank" };
   return { options };
 }
 
@@ -416,18 +443,88 @@ export async function recommend(options, candidates, usageByAgent = {}) {
   }
   // Smallest suitable first, so a scarce strong model is not spent on easier work; sort() keeps table order within a level.
   usable.sort((a, b) => rank(a.capability) - rank(b.capability));
-  const [first, ...others] = usable;
-  const alternatives = others.map((c) => ({ ...c, relation: c.capability === first.capability ? "equivalent" : "stronger" }));
+  const baselineFirst = usable[0] ?? null;
+
+  let learningContext = null;
+  if (sanitizedOptions.learning === false) {
+    learningContext = null;
+  } else if (sanitizedOptions.learning && typeof sanitizedOptions.learning === "object") {
+    learningContext = sanitizedOptions.learning;
+  } else {
+    const historyDir = sanitizedOptions.historyDir ?? process.env.ORCA_HISTORY_DIR?.trim() ?? defaultHistoryDir();
+    // Stay on the baseline when no history directory exists yet, so empty checkouts and
+    // unit tests without fixtures are deterministic.
+    if (existsSync(historyDir) || sanitizedOptions.historyDir || process.env.ORCA_HISTORY_DIR?.trim()) {
+      try {
+        learningContext = loadLearningContext({
+          historyDir,
+          learnDir: sanitizedOptions.learnDir ?? defaultLearnDir(),
+          kind: sanitizedOptions.kind ?? null,
+          difficulty: requirement,
+          now: sanitizedOptions.now ?? process.env.ORCA_LEARN_NOW ?? new Date().toISOString(),
+          agentVersions: sanitizedOptions.agentVersions ?? {},
+        });
+      } catch {
+        // Missing or unreadable history must not block a baseline recommendation.
+        learningContext = null;
+      }
+    }
+  }
+
+  const learned = applyLearning({
+    usable,
+    kind: sanitizedOptions.kind ?? null,
+    difficulty: requirement,
+    learning: learningContext,
+    random: sanitizedOptions.random ?? Math.random,
+  });
+  const ordered = learned.ordered.length ? learned.ordered : usable;
+  const [first, ...others] = ordered;
+  const alternatives = others.map((c) => ({
+    ...c,
+    relation: first && c.capability === first.capability ? "equivalent" : "stronger",
+  }));
   const hasEquivalent = alternatives.some((c) => c.relation === "equivalent");
+  const baselineRecommendation = baselineFirst
+    ? {
+        ...baselineFirst,
+        reason:
+          `${describeAssessment(assessment)}. ${choiceName(baselineFirst)} is the smallest documented capability that meets it (${baselineFirst.capability}): ${baselineFirst.suits}. ` +
+          `${describeUsage(usageOf(baselineFirst.agent))}${hasEquivalent ? "; equivalent choices are not balanced by quota" : ""}.`,
+      }
+    : null;
+  const learningNote = learned.applied.length
+    ? ` Learned adjustment preferred ${choiceName(first)} over baseline ${choiceName(baselineFirst)} from ${learned.applied[0].rawCount} comparable outcomes (mean score ${learned.applied[0].meanScore.toFixed(2)}).`
+    : learned.exploration
+      ? ` Exploration pick ${learned.exploration.choice}: suitable but under-observed (${learned.exploration.reason}).`
+      : learningContext
+        ? " Sparse or missing comparable evidence: falling back to the capability-and-usage baseline."
+        : "";
   const recommendation = first
     ? {
         ...first,
         reason:
           `${describeAssessment(assessment)}. ${choiceName(first)} is the smallest documented capability that meets it (${first.capability}): ${first.suits}. ` +
-          `${describeUsage(usageOf(first.agent))}${hasEquivalent ? "; equivalent choices are not balanced by quota" : ""}.`,
+          `${describeUsage(usageOf(first.agent))}${hasEquivalent ? "; equivalent choices are not balanced by quota" : ""}.` +
+          learningNote,
+        exploration: learned.exploration
+          ? { uncertain: true, reason: learned.exploration.reason, evidenceCount: learned.exploration.evidenceCount }
+          : undefined,
       }
     : null;
-  const result = { ...base, recommendation, alternatives, rejected };
+  const learningReport = {
+    enabled: Boolean(learningContext?.enabled),
+    resetAt: learned.resetAt ?? learningContext?.resetAt ?? null,
+    rule: learned.rule ?? learningContext?.rule ?? null,
+    baselineRecommendation: baselineRecommendation
+      ? { agent: baselineRecommendation.agent, model: baselineRecommendation.model, effort: baselineRecommendation.effort }
+      : null,
+    applied: learned.applied,
+    uncertain: learned.uncertain,
+    versionMismatches: learned.versionMismatches ?? [],
+    exploration: learned.exploration,
+  };
+  const result = { ...base, recommendation, baselineRecommendation, alternatives, rejected, learning: learningReport };
 
   if (sanitizedOptions.override) {
     const refused = refuseOverride(sanitizedOptions.override, candidates);
@@ -435,13 +532,27 @@ export async function recommend(options, candidates, usageByAgent = {}) {
     const { capability } = candidates.find((c) => choiceName(c) === choiceName(sanitizedOptions.override));
     const usage = usageOf(sanitizedOptions.override.agent);
     const warnings = [rank(capability) < rank(requirement) ? `${capability} capability is below the assessed ${requirement}` : null, usageWarning(sanitizedOptions.override.agent, usage)];
-    const decision = { kind: "override", ...sanitizedOptions.override, reason: sanitizedOptions.overrideReason, warning: warnings.filter(Boolean).join("; ") || null };
+    const decision = {
+      kind: "override",
+      ...sanitizedOptions.override,
+      reason: sanitizedOptions.overrideReason,
+      warning: warnings.filter(Boolean).join("; ") || null,
+      note: "an override is a choice, not a label of the recommendation being wrong",
+    };
     return { ...result, usage, status: "overridden", decision, launch: { started: false, args: launchArgs(sanitizedOptions.override) } };
   }
   if (!recommendation) return { ...result, status: "no-suitable-candidate" };
   const { agent, model, effort, reason } = recommendation;
   const usage = usageOf(agent);
-  const decision = { kind: "recommendation", agent, model, effort, reason, warning: usageWarning(agent, usage) };
+  const decision = {
+    kind: "recommendation",
+    agent,
+    model,
+    effort,
+    reason,
+    warning: usageWarning(agent, usage),
+    exploration: recommendation.exploration ?? null,
+  };
   return { ...result, usage, status: "recommended", decision, launch: { started: false, args: launchArgs(decision) } };
 }
 

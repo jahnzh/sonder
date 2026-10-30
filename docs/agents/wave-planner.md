@@ -1,6 +1,6 @@
 # Wave planner
 
-`scripts/orca-plan.mjs` recommends a coordinated assignment for a ready wave of tasks (#110, part of #103). It builds on `scripts/orca-recommend.mjs` for each task's Jev assessment and capability match, then balances concurrency, dependencies and shared usage across the wave. It never starts a worker. Worker history (#111) is not an input; learning from outcomes is #112.
+`scripts/orca-plan.mjs` recommends a coordinated assignment for a ready wave of tasks (#110, part of #103). It builds on `scripts/orca-recommend.mjs` for each task's Jev assessment and capability match, then balances concurrency, dependencies and shared usage across the wave. It never starts a worker. When worker history has enough comparable outcomes, learning (#112) may reorder within a capability tier; each task still shows `baselineRecommendation` beside any adjusted pick (see `docs/agents/learned-adjustments.md`). Transcripts are never read or sent to Jev.
 
 ```sh
 node scripts/orca-plan.mjs --wave <file.json> [--models docs/agents/models.md] [--concurrency <n>]
@@ -54,7 +54,7 @@ Only `--summary`, `--kind` and `--files` equivalents leave the machine for Jev. 
   - `deferred` — concurrency full; replan when a slot frees
   - `blocked` / `not-ready` / `needs-judgment`
 - **`allowances`**: per-agent usage with provenance (`source`, `observedAt`, `freshness`), reset windows, and `sharedWith.active` / `sharedWith.proposed`. The note states that percentages are provider-specific and not comparable, and that capacity is a snapshot, not a reservation.
-- **`notes`**: reminders that the planner never launches, that unknown/stale/low/exhausted stay distinct, and that history is not an input.
+- **`notes`**: reminders that the planner never launches, that unknown/stale/low/exhausted stay distinct, and that learning keeps the baseline visible and never reads transcripts.
 
 A fresh usage poll runs before planning for every agent `scripts/orca-usage.mjs` collects (Codex today). Claude and any agent without a collector stay `unknown`; do not treat that as capacity. Re-run the command when workers finish or usage changes.
 
@@ -72,4 +72,5 @@ A fresh usage poll runs before planning for every agent `scripts/orca-usage.mjs`
 - Single-task recommendation: `scripts/orca-recommend.mjs` (see "Recommend a worker" in `docs/agents/worker-spec.md`)
 - Usage collector: `docs/agents/usage-collector.md`
 - Capability baseline: `docs/agents/models.md`
-- Outcome history (not used here): `docs/agents/worker-history.md`
+- Outcome history: `docs/agents/worker-history.md`
+- Learned adjustments: `docs/agents/learned-adjustments.md`

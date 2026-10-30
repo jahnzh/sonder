@@ -69,6 +69,7 @@ Agent skills setup follows the main flow from https://www.aihero.dev/skills-setu
 
 - Ask for a worker recommendation with `scripts/orca-recommend.mjs` (see "Recommend a worker" in `docs/agents/worker-spec.md`). It never starts a worker.
 - Plan a ready wave together with `scripts/orca-plan.mjs`; read `docs/agents/wave-planner.md` first. It never starts a worker.
+- Inspect or reset learned recommendation adjustments with `node scripts/orca-learn.mjs`; read `docs/agents/learned-adjustments.md` first. It never starts a worker and never deletes raw history.
 - Spawn a worker with `scripts/orca-spawn.sh`, and write its spec from `docs/agents/worker-spec.md`.
 - Coordinator state and spec templates: see `docs/agents/worker-spec.md`.
 - Read the Orca inbox with `node scripts/orca-check.mjs`; after a session restart follow "Resume after a restart" in `docs/agents/worker-spec.md`.
