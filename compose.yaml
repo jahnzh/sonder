@@ -17,6 +17,9 @@ services:
       APP_PASSWORD: ${APP_PASSWORD:?Set APP_PASSWORD in .env before starting the server}
       MEDIA_ROOT: ${MEDIA_ROOT:-/mnt/usb_4t_1/sonder}
       REQUIRE_MEDIA_MOUNT: "true"
+      # Content-Security-Policy: report-only (default) logs violations without blocking; enforce blocks; off sends none.
+      # Set CSP_MODE=enforce in .env once a few days of real use show no `csp violation:` lines in the log.
+      CSP_MODE: ${CSP_MODE:-report-only}
     volumes:
       - ./data:/app/data
       - ${MEDIA_ROOT:-/mnt/usb_4t_1/sonder}:${MEDIA_ROOT:-/mnt/usb_4t_1/sonder}
