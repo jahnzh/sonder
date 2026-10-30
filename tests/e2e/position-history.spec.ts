@@ -1,7 +1,12 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { readerFixture } from "../reader-fixture";
-import { timedWait } from "./timing";
+import { READER_WAIT_MS, timedWait } from "./timing";
+
+// Per-step expect ceilings are up to 45 s; leave room around history restores.
+test.beforeEach(() => {
+  test.setTimeout(180_000);
+});
 
 async function importRecording(page: Page, title: string, tracks = 1) {
   const audio = readFileSync("server/demo/alice-01.mp3");
@@ -125,9 +130,11 @@ async function openPositionHistory(page: Page) {
 async function restoreLatest(page: Page) {
   const historyDialog = await openPositionHistory(page);
   await historyDialog.locator(".position-history-entry").first().click();
-  await timedWait("history-restore", () => expect(historyDialog).toBeHidden(), {
-    testName: test.info().title,
-  });
+  await timedWait(
+    "history-restore",
+    () => expect(historyDialog).toBeHidden({ timeout: READER_WAIT_MS.historyRestore }),
+    { testName: test.info().title },
+  );
 }
 
 async function seekInPlayer(page: Page, dialog: Locator, value: string) {

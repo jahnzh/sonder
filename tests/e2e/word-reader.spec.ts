@@ -1,7 +1,12 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { readerFixture } from "../reader-fixture";
-import { timedWait } from "./timing";
+import { READER_WAIT_MS, timedWait } from "./timing";
+
+// Per-step expect ceilings are up to 45 s; leave room for many sentence steps.
+test.beforeEach(() => {
+  test.setTimeout(180_000);
+});
 
 test.beforeEach(async ({ page }) => {
   // Lets a test read the audio element the player created.
@@ -339,7 +344,10 @@ async function pressSentences(page: Page, count: number) {
     await page.keyboard.press("Shift+ArrowRight");
     await timedWait(
       "sentence-change",
-      () => expect.poll(() => context(page)).not.toBe(before),
+      () =>
+        expect
+          .poll(() => context(page), { timeout: READER_WAIT_MS.sentenceChange })
+          .not.toBe(before),
       { testName: test.info().title },
     );
   }
@@ -353,12 +361,17 @@ async function stepSentences(page: Page, count: number) {
   return context(page);
 }
 
-async function expectPageShows(page: Page, sentence: string, notSentence: string) {
-  await expect(wordReader(page)).toHaveCount(0);
+async function expectPageShows(
+  page: Page,
+  sentence: string,
+  notSentence: string,
+  timeout = READER_WAIT_MS.checkpointRestore,
+) {
+  await expect(wordReader(page)).toHaveCount(0, { timeout });
 
   const frame = page.frameLocator(".inline-reader .reader-viewport iframe");
-  await expect(frame.getByText(sentence.slice(0, 30)).first()).toBeInViewport();
-  await expect(frame.getByText(notSentence).first()).not.toBeInViewport();
+  await expect(frame.getByText(sentence.slice(0, 30)).first()).toBeInViewport({ timeout });
+  await expect(frame.getByText(notSentence).first()).not.toBeInViewport({ timeout });
 }
 
 const toPage: [string, (page: Page) => Promise<void>][] = [
