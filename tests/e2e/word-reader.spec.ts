@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { readerFixture } from "../reader-fixture";
+import { timedWait } from "./timing";
 
 test.beforeEach(async ({ page }) => {
   // Lets a test read the audio element the player created.
@@ -336,7 +337,11 @@ async function pressSentences(page: Page, count: number) {
   for (let i = 0; i < count; i++) {
     const before = await context(page);
     await page.keyboard.press("Shift+ArrowRight");
-    await expect.poll(() => context(page)).not.toBe(before);
+    await timedWait(
+      "sentence-change",
+      () => expect.poll(() => context(page)).not.toBe(before),
+      { testName: test.info().title },
+    );
   }
 }
 
@@ -410,8 +415,14 @@ test("a checkpoint written in Word mode restores the sentence in Page mode after
     })
     .toBe(sentence.slice(0, 30));
   await setDisplay(page, "book");
-  await openReader(page, "Word reload");
-  await expectPageShows(page, sentence, first.slice(0, 30));
+  await timedWait(
+    "checkpoint-restore",
+    async () => {
+      await openReader(page, "Word reload");
+      await expectPageShows(page, sentence, first.slice(0, 30));
+    },
+    { testName: test.info().title },
+  );
 });
 
 test("stepping onto a sentence without timing shows it and saves what is shown", async ({ page }, testInfo) => {
