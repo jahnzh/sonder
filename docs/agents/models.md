@@ -2,21 +2,31 @@
 
 Verified model IDs and effort settings for spawning subagents.
 
-| Agent       | Model ID              | Supported effort values | Suits                                                                      | Last verified |
-| ----------- | --------------------- | ----------------------- | -------------------------------------------------------------------------- | ------------- |
-| claude      | `claude-opus-5-5`     | `high`                  | Reasoning-heavy work such as bug reproduction, timing issues and cross-file changes | 2026-10-28    |
-| claude      | `claude-sonnet-5-5`   | `medium`, `high`        | Analysis, diagnosis and scripting with a clear spec                        | 2026-10-28    |
-| antigravity | `gemini-4-argon-high` | none                    | Small mechanical changes and documentation                                 | 2026-10-28    |
-| cursor      | `composer-2.5`        | none                    | Scripting with a clear spec                                                | 2026-10-28    |
-| antigravity | `gemini-3.8-flash-high` | none                  | Small mechanical changes with a clear spec (#80 font redraw)               | 2026-10-30    |
-| cursor      | `auto`                | none                    | Test-infrastructure and review work (#34, #36/#78, reviews of #77 and #25) | 2026-10-30    |
-| codex       | `gpt-6.1-terra`       | `max`                   | Larger client changes; went silent twice (see below)                       | 2026-10-30    |
+| Agent       | Model ID              | Supported effort values | Capability      | Suits                                                                      | Last verified |
+| ----------- | --------------------- | ----------------------- | --------------- | -------------------------------------------------------------------------- | ------------- |
+| claude      | `claude-opus-5-5`     | `high`                  | reasoning-heavy | Reasoning-heavy work such as bug reproduction, timing issues and cross-file changes | 2026-10-28    |
+| claude      | `claude-sonnet-5-5`   | `medium`, `high`        | standard        | Analysis, diagnosis and scripting with a clear spec                        | 2026-10-28    |
+| antigravity | `gemini-4-argon-high` | none                    | mechanical      | Small mechanical changes and documentation                                 | 2026-10-28    |
+| cursor      | `composer-2.5`        | none                    | standard        | Scripting with a clear spec                                                | 2026-10-28    |
+| antigravity | `gemini-3.8-flash-high` | none                  | mechanical      | Small mechanical changes with a clear spec (#80 font redraw)               | 2026-10-30    |
+| cursor      | `auto`                | none                    | standard        | Test-infrastructure and review work (#34, #36/#78, reviews of #77 and #25) | 2026-10-30    |
+| codex       | `gpt-6.1-terra`       | `max`                   | standard        | Larger client changes; went silent twice (see below)                       | 2026-10-30    |
 
 Cursor's full list is available with `agent --list-models`.
 
+## Capability
+
+`scripts/orca-recommend.mjs` reads this table, so give every new row a Capability, keep effort values in backticks in ascending order, and keep this as the first table in the file. A row with any other Capability value is never recommended.
+
+- `reasoning-heavy`: bug reproduction, timing or rendering issues, metric and analysis work, cross-file refactors.
+- `standard`: analysis, diagnosis and scripting with a clear spec.
+- `mechanical`: a scripted change with a clear spec, a small UI edit, documentation.
+
+A row meets its own level and those below it. The levels are the coordinator's reading of the Suits column and the observations below, not a measurement. Codex is `standard` rather than `reasoning-heavy` because it went silent twice.
+
 ## Usage limits
 
-Usage-limit figures are supplied by the user, as no tool reports them. The coordinator should spread workers across providers and keep the number concurrent modest.
+Usage-limit figures are supplied by the user, as no tool reports them, so `scripts/orca-recommend.mjs` reports usage as `unknown`. The coordinator should spread workers across providers and keep the number concurrent modest.
 
 ## Cursor status
 
