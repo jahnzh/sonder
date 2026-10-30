@@ -272,12 +272,13 @@ test("switching audiobook versions resumes each recording's own checkpoint",asyn
   await manage(page);
   const dialog=page.getByRole("dialog",{name:"Versions & sources",exact:true});
   await dialog.getByRole("button",{name:/French Reader/}).click();
-  await dialog.getByRole("button",{name:"Use this version",exact:true}).click();
+  // French has an older checkpoint than the English place being left: it is offered, not applied.
+  await dialog.getByRole("button",{name:"Resume saved position (00:00:42)",exact:true}).click();
   await expect.poll(async()=>(await audioState(page)).src).toContain(french.tracks[0].id);
   await expect.poll(async()=>(await audioState(page)).position).toBeGreaterThanOrEqual(42);
   expect((await audioState(page)).position).toBeLessThan(50);
   await dialog.getByRole("button",{name:/English Reader/}).click();
-  await dialog.getByRole("button",{name:"Use this version",exact:true}).click();
+  await dialog.getByRole("button",{name:"Resume saved position (00:03:30)",exact:true}).click();
   await expect.poll(async()=>(await audioState(page)).src).toContain(english.tracks[0].id);
   await expect.poll(async()=>(await audioState(page)).position).toBeGreaterThanOrEqual(210);
   expect((await audioState(page)).position).toBeLessThan(220);
