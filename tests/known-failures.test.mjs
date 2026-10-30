@@ -4,7 +4,14 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
-import { loadKnownFailures, classifyBrowserRun, evaluateBrowserRun, validateKnownFailures } from "../scripts/known-failures.mjs";
+import {
+  loadKnownFailures,
+  classifyBrowserRun,
+  evaluateBrowserRun,
+  validateKnownFailures,
+  collectPlaywrightTests,
+  slowestPlaywrightTests,
+} from "../scripts/known-failures.mjs";
 import { playwrightReport, knownFailuresDocument } from "./playwright-report-fixture.mjs";
 
 const SPEC = "tests/e2e/device-reset.spec.ts";
@@ -208,4 +215,49 @@ test("a flaky test that passed on retry is not a failure and a listed flaky test
     assert.equal(outcome.result, "passed_with_known_failures");
     assert.equal(outcome.listedPassed.length, 1);
     assert.equal(outcome.listedPassed[0].outcome, "flaky");
+});
+
+test("slowestPlaywrightTests ranks by results[].duration from a real Playwright JSON sample", () => {
+    const samplePath = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "playwright-json-duration-sample.json");
+    const sample = JSON.parse(fs.readFileSync(samplePath, "utf8"));
+    // The sample was copied from a real Playwright 1.64.1 run; duration lives on results[].
+    assert.equal(sample.suites[0].suites[0].specs[0].tests[0].results[0].duration, 62);
+    assert.equal(sample.stats.duration, 556.371);
+    const collected = collectPlaywrightTests(sample);
+    assert.equal(collected.ok, true);
+    assert.equal(collected.tests.length, 1);
+    assert.equal(collected.tests[0].durationMs, 62);
+    assert.equal(collected.tests[0].title, "sample suite › tiny sample for duration shape");
+    const ranked = slowestPlaywrightTests(sample, {limit: 10});
+    assert.equal(ranked.ok, true);
+    assert.deepEqual(ranked.tests, [{
+        project: "chromium",
+        file: "tiny.spec.ts",
+        title: "sample suite › tiny sample for duration shape",
+        durationMs: 62,
+        status: "expected",
+    }]);
+});
+
+test("slowestPlaywrightTests returns the longest 10 and keeps the max duration across repeats", () => {
+    const tests = [
+        {project: "chromium", file: SPEC, title: "a", status: "expected", duration: 100},
+        {project: "chromium", file: SPEC, title: "b", status: "expected", duration: 5000},
+        {project: "firefox", file: LAYOUT, title: "c", status: "expected", duration: 4000},
+        // A second run of "b" keeps the longer duration when keys merge.
+        {project: "chromium", file: SPEC, title: "b", status: "expected", duration: 9000},
+        {project: "webkit", file: SPEC, title: "d", status: "expected", duration: 3000},
+    ];
+    for (let i = 1; i <= 8; i++) {
+        tests.push({project: "chromium", file: SPEC, title: `extra ${i}`, status: "expected", duration: i * 10});
+    }
+    const ranked = slowestPlaywrightTests(playwrightReport(tests), {limit: 10});
+    assert.equal(ranked.ok, true);
+    assert.equal(ranked.tests.length, 10);
+    assert.equal(ranked.tests[0].durationMs, 9000);
+    assert.equal(ranked.tests[0].title, "b");
+    assert.equal(ranked.tests[1].durationMs, 4000);
+    // 12 distinct tests after merging the two "b" runs; the 10th is extra 3 at 30ms.
+    assert.equal(ranked.tests.at(-1).durationMs, 30);
+    assert.equal(ranked.tests.at(-1).title, "extra 3");
 });

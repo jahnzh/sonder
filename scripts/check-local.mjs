@@ -19,7 +19,7 @@ import {
   cleanupDirectory,
   writeReportFiles,
 } from "./check-local-support.mjs";
-import { loadKnownFailures, evaluateBrowserRun } from "./known-failures.mjs";
+import { loadKnownFailures, evaluateBrowserRun, readSlowestPlaywrightTests } from "./known-failures.mjs";
 
 const STAGE_DEFINITIONS = [
   { name: "install", command: "npm", args: ["ci"], fullCommand: "npm ci" },
@@ -43,8 +43,9 @@ Options:
                          (default: artifacts/ci/<sha>/<run-id>/ in repo root)
   --known-failures <file>
                          JSON list of known browser failures (project, spec file,
-                         title). The browser stage also writes a Playwright JSON
-                         report; if every failing test is listed the result is
+                         title). The browser stage always writes a Playwright JSON
+                         report (also used to list the slowest 10 tests); with this
+                         flag, if every failing test is listed the result is
                          passed_with_known_failures and the exit code is 0. Any
                          other failure still fails. Relative paths resolve
                          against the calling checkout. See docs/LOCAL_CHECKS.md.
@@ -408,8 +409,9 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       const logFileName = `stage-${stageIndex}-${stageDef.name}.log`;
       const logFilePath = path.join(outputDir, logFileName);
 
-      // With a known-failures list the browser stage also writes a JSON report next to the list output.
-      const jsonReport = knownFailures && stageDef.name === "browser";
+      // The browser stage always writes a JSON report so the check can list the slowest tests;
+      // with a known-failures list that same report is also used to classify failures.
+      const jsonReport = stageDef.name === "browser";
       const stageArgs = jsonReport ? [...stageDef.args, "--", "--reporter=list,json"] : stageDef.args;
       const stageEnv = {...childEnv, NODE_ENV: stageDef.name === "build" ? "production" : "test"};
       if (jsonReport) stageEnv.PLAYWRIGHT_JSON_OUTPUT_NAME = playwrightReportPath;
@@ -495,6 +497,15 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     if (toleratedStage) toleratedStage.toleratedBy = "known-failures";
     const blockingStage = toleratedStage ? null : firstFailedStage;
 
+    // 6c. Slowest browser tests from the Playwright JSON report (empty when the report is missing).
+    let browserSlowestTests = [];
+    let browserSlowestError = null;
+    if (browserStage && browserStage.status !== "skipped") {
+      const slowest = readSlowestPlaywrightTests(playwrightReportPath, {limit: 10});
+      if (slowest.ok) browserSlowestTests = slowest.tests;
+      else browserSlowestError = slowest.error ?? "could not rank browser tests";
+    }
+
     const completedAt = new Date().toISOString();
     const totalDurationMs = Date.now() - startTime;
     const isOverallSuccess = !blockingStage && !interruptedSignal && !artifactError;
@@ -526,6 +537,8 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       signal: interruptedSignal,
       artifactError,
       failedStage: blockingStage ? blockingStage.name : null,
+      browserSlowestTests,
+      ...(browserSlowestError ? {browserSlowestError} : {}),
       ...(knownFailures ? {knownFailures: {
         file: knownFailures.file,
         evaluated: gate !== null,
@@ -556,6 +569,15 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
         console.error(`\n[check-local] Checks failed: ${interruptedSignal || artifactError || blockingStage?.name}.`);
       }
       if (gate) console.log(`[check-local] ${gate.summary}`);
+      if (browserSlowestTests.length) {
+        console.log(`[check-local] Slowest browser tests:`);
+        for (const [index, entry] of browserSlowestTests.entries()) {
+          const seconds = (entry.durationMs / 1000).toFixed(1);
+          console.log(`  ${index + 1}. ${seconds}s ${entry.project} ${entry.file} › ${entry.title}`);
+        }
+      } else if (browserSlowestError) {
+        console.log(`[check-local] Slowest browser tests unavailable: ${browserSlowestError}`);
+      }
       console.log(`[check-local] Summary report: ${path.join(outputDir, "report.json")}`);
     }
 

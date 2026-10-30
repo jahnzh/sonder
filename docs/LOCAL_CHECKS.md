@@ -20,7 +20,9 @@ Port leases coordinate runners that use the current contender protocol. Do not o
 npm run check -- --ref <commit> --known-failures tests/known-failures.wsl-host.json
 ```
 
-Without `--known-failures` the runner behaves as described above. With it, the browser stage runs `npm run test:browser -- --reporter=list,json` and writes the Playwright JSON report to `playwright-results.json` in the report directory. Each failed test is matched by exact (project, spec file, full title) against the list; the title includes `describe` blocks joined with ` › `, as the list reporter prints it. The path is resolved against the calling checkout.
+The browser stage always runs with `--reporter=list,json` and writes `playwright-results.json` in the report directory. `report.json` includes `browserSlowestTests` (the 10 longest tests by Playwright `results[].duration`, in milliseconds) and prints them in the summary unless `--silent`.
+
+Without `--known-failures` the runner behaves as described above. With it, each failed test is matched by exact (project, spec file, full title) against the list; the title includes `describe` blocks joined with ` › `, as the list reporter prints it. The path is resolved against the calling checkout.
 
 The list is `{"version":1,"entries":[...]}`. Each entry has `project`, `file` (repository path), `title`, `kind` (`environment` or `intermittent`), `reason`, and optionally `issue`. A missing, unparsable or invalid list stops the run before any stage starts.
 
