@@ -9,8 +9,10 @@ import {
   MIN_COMPARABLE_COUNT,
   MIN_WEIGHTED_EVIDENCE,
   applyLearning,
+  attributableCost,
   buildAdjustments,
   collectEvidence,
+  evidenceFromView,
   evidenceWeight,
   inspectLearning,
   loadLearningContext,
@@ -154,6 +156,27 @@ test("evidence weight halves over the configured half-life", () => {
   assert.equal(evidenceWeight("2026-10-30T12:00:00.000Z", "2026-10-30T12:00:00.000Z"), 1);
 });
 
+test("future-dated or invalid completedAt get zero weight and are excluded", () => {
+  assert.equal(evidenceWeight("2026-11-01T12:00:00.000Z", NOW), 0);
+  assert.equal(evidenceWeight("not-a-date", NOW), 0);
+  const box = sandbox();
+  try {
+    putRecord(box.history, {
+      id: "ctx_future",
+      agent: "cursor",
+      model: "composer-2.5",
+      effort: null,
+      completedAt: "2026-11-15T12:00:00.000Z",
+    });
+    const store = openStore(box.history);
+    const row = evidenceFromView(viewRecord(store, store.getRecord("ctx_future")), { now: NOW });
+    assert.equal(row.included, false);
+    assert.match(row.reason, /future-dated or invalid/);
+  } finally {
+    box.cleanup();
+  }
+});
+
 test("missing outcomes and shared usage never count as success or per-worker cost", () => {
   const box = sandbox();
   try {
@@ -192,7 +215,11 @@ test("missing outcomes and shared usage never count as success or per-worker cos
     const view = viewRecord(store, store.getRecord("ctx_shared"));
     const { signals } = signalContributions(view);
     assert.ok(signals.some((s) => s.name === "sharedUsage" && s.value === 0));
-    assert.ok(signals.some((s) => s.name === "attributableUsage" && /unknown|no per-worker/.test(s.detail)));
+    const usageSignal = signals.find((s) => s.name === "attributableUsage");
+    assert.equal(usageSignal.available, false);
+    assert.match(usageSignal.detail, /not available/i);
+    assert.ok(/no per-worker|unknown/i.test(usageSignal.detail));
+    assert.ok(signals.some((s) => s.name === "elapsed" && s.available === true && typeof s.ms === "number"));
   } finally {
     box.cleanup();
   }
@@ -569,6 +596,362 @@ test("buildAdjustments ignores evidence that does not match kind or difficulty",
   }
 });
 
+test("all-failure corpus demotes the choice and never promotes it over the baseline", () => {
+  const box = sandbox();
+  try {
+    for (const id of ["f1", "f2", "f3"]) {
+      putRecord(box.history, {
+        id,
+        agent: "cursor",
+        model: "composer-2.5",
+        effort: null,
+        outcome: "failed",
+        checks: [{ name: "unit", result: "fail" }],
+        completedAt: "2026-10-25T12:00:00.000Z",
+      });
+    }
+    const learning = loadLearningContext({
+      historyDir: box.history,
+      learnDir: box.learn,
+      kind: "feature",
+      difficulty: "standard",
+      now: NOW,
+      agentVersions: { cursor: AGENT_VERSION, claude: AGENT_VERSION },
+    });
+    const adj = learning.adjustments.find((a) => a.choice === "cursor/composer-2.5");
+    assert.ok(adj);
+    assert.ok(adj.meanScore < 0);
+    const learned = applyLearning({
+      usable: CANDIDATES.filter((c) => c.capability === "standard"),
+      kind: "feature",
+      difficulty: "standard",
+      learning,
+      random: () => 0.99,
+    });
+    assert.equal(choice(learned.baselineRecommendation), "claude/claude-sonnet-5-5/high");
+    assert.equal(choice(learned.recommendation), "claude/claude-sonnet-5-5/high");
+    assert.equal(learned.applied.length, 0);
+    assert.ok(learned.demoted.some((d) => d.choice === "cursor/composer-2.5" && /demoted/i.test(d.effect)));
+    assert.ok(learned.ordered.findIndex((c) => choice(c) === "cursor/composer-2.5") >
+      learned.ordered.findIndex((c) => choice(c) === "claude/claude-sonnet-5-5/high"));
+  } finally {
+    box.cleanup();
+  }
+});
+
+test("mixed corpus promotes positive evidence and demotes negative evidence below the baseline band", () => {
+  const box = sandbox();
+  try {
+    for (const id of ["good1", "good2", "good3"]) {
+      putRecord(box.history, {
+        id,
+        agent: "cursor",
+        model: "composer-2.5",
+        effort: null,
+        outcome: "succeeded",
+        completedAt: "2026-10-25T12:00:00.000Z",
+      });
+    }
+    for (const id of ["bad1", "bad2", "bad3"]) {
+      putRecord(box.history, {
+        id,
+        agent: "claude",
+        model: "claude-sonnet-5-5",
+        effort: "high",
+        outcome: "failed",
+        checks: [{ name: "unit", result: "fail" }],
+        completedAt: "2026-10-26T12:00:00.000Z",
+      });
+    }
+    // A third standard-tier option with no evidence stays in the unevidenced band above demotions.
+    const usable = [
+      ...CANDIDATES.filter((c) => c.capability === "standard"),
+      { agent: "cursor", model: "auto", effort: null, capability: "standard", suits: "Review", usage: "unknown" },
+    ];
+    const learning = loadLearningContext({
+      historyDir: box.history,
+      learnDir: box.learn,
+      kind: "feature",
+      difficulty: "standard",
+      now: NOW,
+      agentVersions: { cursor: AGENT_VERSION, claude: AGENT_VERSION },
+    });
+    const learned = applyLearning({
+      usable,
+      kind: "feature",
+      difficulty: "standard",
+      learning,
+      random: () => 0.99,
+    });
+    assert.equal(choice(learned.recommendation), "cursor/composer-2.5");
+    assert.ok(learned.applied.some((a) => a.choice === "cursor/composer-2.5"));
+    assert.ok(learned.demoted.some((d) => d.choice === "claude/claude-sonnet-5-5/high"));
+    const order = learned.ordered.map(choice);
+    assert.ok(order.indexOf("cursor/composer-2.5") < order.indexOf("cursor/auto"));
+    assert.ok(order.indexOf("cursor/auto") < order.indexOf("claude/claude-sonnet-5-5/high"));
+  } finally {
+    box.cleanup();
+  }
+});
+
+test("baseline stays recommended when the only evidence is bad", async () => {
+  const box = sandbox();
+  try {
+    for (const id of ["onlybad1", "onlybad2", "onlybad3"]) {
+      putRecord(box.history, {
+        id,
+        agent: "cursor",
+        model: "composer-2.5",
+        effort: null,
+        outcome: "failed",
+        checks: [{ name: "unit", result: "fail" }],
+        completedAt: "2026-10-25T12:00:00.000Z",
+      });
+    }
+    const candidates = [
+      { agent: "claude", model: "claude-sonnet-5-5", effort: "high", capability: "standard", suits: "Analysis", unusable: null },
+      { agent: "cursor", model: "composer-2.5", effort: null, capability: "standard", suits: "Scripting", unusable: null },
+    ];
+    const result = await awaitRecommendWithLearning(box, candidates);
+    assert.equal(choice(result.baselineRecommendation), "claude/claude-sonnet-5-5/high");
+    assert.equal(choice(result.recommendation), "claude/claude-sonnet-5-5/high");
+    assert.equal(result.learning.applied.length, 0);
+    assert.ok(result.learning.demoted.some((d) => d.choice === "cursor/composer-2.5"));
+    assert.match(result.recommendation.reason, /[Nn]egative evidence|Demoted/);
+  } finally {
+    box.cleanup();
+  }
+});
+
+test("duplicate record ids are counted once", () => {
+  const box = sandbox();
+  try {
+    putRecord(box.history, {
+      id: "dup1",
+      agent: "cursor",
+      model: "composer-2.5",
+      effort: null,
+      completedAt: "2026-10-25T12:00:00.000Z",
+    });
+    const store = openStore(box.history);
+    const row = evidenceFromView(viewRecord(store, store.getRecord("dup1")), { now: NOW });
+    const doubled = [row, { ...row }, { ...row, id: "dup2", completedAt: "2026-10-26T12:00:00.000Z" }, { ...row, id: "dup3", completedAt: "2026-10-27T12:00:00.000Z" }];
+    // Four entries but dup1 appears thrice — rawCount must be 3 unique ids.
+    const { adjustments } = buildAdjustments(doubled, { kind: "feature", difficulty: "standard" });
+    assert.equal(adjustments.length, 1);
+    assert.equal(adjustments[0].rawCount, 3);
+    assert.deepEqual(
+      adjustments[0].evidence.map((e) => e.id).sort(),
+      ["dup1", "dup2", "dup3"],
+    );
+  } finally {
+    box.cleanup();
+  }
+});
+
+test("attributable usage is a separate peer signal and never comes from shared usage", () => {
+  const box = sandbox();
+  try {
+    for (const [id, tokens] of [
+      ["u1", 100],
+      ["u2", 100],
+      ["u3", 100],
+    ]) {
+      putRecord(box.history, {
+        id,
+        agent: "cursor",
+        model: "composer-2.5",
+        effort: null,
+        completedAt: "2026-10-25T12:00:00.000Z",
+        attributable: [{ source: "provider per-session meter", metrics: { input_tokens: tokens }, at: "2026-10-25T12:00:00.000Z" }],
+      });
+    }
+    for (const [id, tokens] of [
+      ["v1", 900],
+      ["v2", 900],
+      ["v3", 900],
+    ]) {
+      putRecord(box.history, {
+        id,
+        agent: "claude",
+        model: "claude-sonnet-5-5",
+        effort: "high",
+        completedAt: "2026-10-25T12:00:00.000Z",
+        attributable: [{ source: "provider per-session meter", metrics: { input_tokens: tokens }, at: "2026-10-25T12:00:00.000Z" }],
+      });
+    }
+    const store = openStore(box.history);
+    const view = viewRecord(store, store.getRecord("u1"));
+    const { total, signals } = signalContributions(view);
+    const usage = signals.find((s) => s.name === "attributableUsage");
+    assert.equal(usage.value, 0);
+    assert.equal(usage.available, true);
+    assert.equal(attributableCost(view.usage.attributable), 100);
+    assert.ok(total > 0, "quality mean still comes from completion/checks, not usage");
+
+    const learning = loadLearningContext({
+      historyDir: box.history,
+      learnDir: box.learn,
+      kind: "feature",
+      difficulty: "standard",
+      now: NOW,
+      agentVersions: { cursor: AGENT_VERSION, claude: AGENT_VERSION },
+    });
+    const cursorAdj = learning.adjustments.find((a) => a.choice === "cursor/composer-2.5");
+    const claudeAdj = learning.adjustments.find((a) => a.choice === "claude/claude-sonnet-5-5/high");
+    assert.equal(cursorAdj.meanAttributableCost, 100);
+    assert.equal(claudeAdj.meanAttributableCost, 900);
+    // Equal positive quality → lower attributable cost wins the peer tiebreaker.
+    const learned = applyLearning({
+      usable: CANDIDATES.filter((c) => c.capability === "standard"),
+      kind: "feature",
+      difficulty: "standard",
+      learning,
+      random: () => 0.99,
+    });
+    assert.equal(choice(learned.recommendation), "cursor/composer-2.5");
+  } finally {
+    box.cleanup();
+  }
+});
+
+test("elapsed appears as a separate low-weight signal when the record has it", () => {
+  const box = sandbox();
+  try {
+    putRecord(box.history, { id: "el1", completedAt: "2026-10-25T12:00:00.000Z" });
+    const store = openStore(box.history);
+    const view = viewRecord(store, store.getRecord("el1"));
+    assert.equal(view.signals.elapsed.status, "known");
+    const { signals, total, elapsedMs } = signalContributions(view);
+    const elapsed = signals.find((s) => s.name === "elapsed");
+    assert.ok(elapsed);
+    assert.equal(elapsed.value, 0);
+    assert.equal(elapsed.ms, view.signals.elapsed.ms);
+    assert.equal(elapsedMs, view.signals.elapsed.ms);
+    assert.equal(
+      signals.filter((s) => s.name === "elapsed").length,
+      1,
+    );
+    // Elapsed does not change the quality total by itself beyond other signals.
+    assert.equal(typeof total, "number");
+  } finally {
+    box.cleanup();
+  }
+});
+
+test("unreadable history surfaces a learning note and keeps the baseline", async () => {
+  const box = sandbox();
+  try {
+    writeFileSync(join(box.history, "records", "corrupt.json"), "{not-json", { mode: 0o600 });
+    const candidates = [
+      { agent: "claude", model: "claude-sonnet-5-5", effort: "high", capability: "standard", suits: "Analysis", unusable: null },
+      { agent: "cursor", model: "composer-2.5", effort: null, capability: "standard", suits: "Scripting", unusable: null },
+    ];
+    const result = await recommend(
+      {
+        task: "112",
+        summary: "Scripted change with a clear spec",
+        kind: "feature",
+        files: 2,
+        eligible: [],
+        judgment: "standard",
+        judgmentReason: "fixture judgment for unreadable history",
+        historyDir: box.history,
+        learnDir: box.learn,
+        now: NOW,
+        agentVersions: { cursor: AGENT_VERSION, claude: AGENT_VERSION },
+        random: () => 0.99,
+      },
+      candidates,
+      {},
+    );
+    assert.equal(result.status, "recommended");
+    assert.equal(choice(result.recommendation), "claude/claude-sonnet-5-5/high");
+    assert.equal(choice(result.baselineRecommendation), "claude/claude-sonnet-5-5/high");
+    assert.match(result.learning.note, /history unreadable:/);
+    assert.match(result.learning.note, /baseline used/);
+    assert.match(result.recommendation.reason, /history unreadable:/);
+  } finally {
+    box.cleanup();
+  }
+});
+
+test("Jev request body never contains history", async () => {
+  const box = sandbox();
+  const previousFetch = globalThis.fetch;
+  const previousKey = process.env.TYPESAFE_API_KEY;
+  /** @type {any[]} */
+  const bodies = [];
+  try {
+    for (const id of ["jev1", "jev2", "jev3"]) {
+      putRecord(box.history, {
+        id,
+        agent: "cursor",
+        model: "composer-2.5",
+        effort: null,
+        completedAt: "2026-10-25T12:00:00.000Z",
+      });
+    }
+    process.env.TYPESAFE_API_KEY = "test-key-do-not-print";
+    globalThis.fetch = async (_url, init) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return new Response(
+        JSON.stringify({
+          model: "jev-1.14.0",
+          answers: {
+            enough_information: { type: "noul", noul: 0.41 },
+            reasoning: {
+              type: "score",
+              score: 1,
+              confidence: 1,
+              legend: { "0": "Mechanical", "1": "Moderate", "2": "Deep" },
+              probabilities: { "0": 0, "1": 1, "2": 0 },
+            },
+            wide_change: { type: "noul", noul: 0.1 },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+    const candidates = [
+      { agent: "claude", model: "claude-sonnet-5-5", effort: "high", capability: "standard", suits: "Analysis", unusable: null },
+      { agent: "cursor", model: "composer-2.5", effort: null, capability: "standard", suits: "Scripting", unusable: null },
+    ];
+    const result = await recommend(
+      {
+        task: "112",
+        summary: "Scripted change with a clear spec",
+        kind: "feature",
+        files: 2,
+        eligible: [],
+        historyDir: box.history,
+        learnDir: box.learn,
+        now: NOW,
+        agentVersions: { cursor: AGENT_VERSION, claude: AGENT_VERSION },
+        random: () => 0.99,
+      },
+      candidates,
+      {},
+    );
+    assert.equal(result.status, "recommended");
+    assert.equal(bodies.length, 1);
+    const payload = JSON.stringify(bodies[0]);
+    assert.equal(payload.includes("jev1"), false);
+    assert.equal(payload.includes("composer-2.5"), false);
+    assert.equal(payload.includes(box.history), false);
+    assert.equal(payload.includes("history"), false);
+    assert.equal(payload.includes("learning"), false);
+    assert.deepEqual(Object.keys(bodies[0]).sort(), ["model", "questions", "state"]);
+    assert.deepEqual(Object.keys(bodies[0].state).sort(), ["estimated_files", "kind", "task"]);
+    assert.equal(bodies[0].state.task, "Scripted change with a clear spec");
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.TYPESAFE_API_KEY;
+    else process.env.TYPESAFE_API_KEY = previousKey;
+    box.cleanup();
+  }
+});
+
 test("documentation lists the learn commands in the agent gate list", () => {
   const agents = readFileSync(join(repoRoot, "AGENTS.md"), "utf8");
   assert.match(agents, /scripts\/orca-learn\.mjs/);
@@ -579,7 +962,40 @@ test("documentation lists the learn commands in the agent gate list", () => {
   assert.match(doc, /baselineRecommendation|baseline/);
   assert.match(doc, /shared usage/i);
   assert.match(doc, /override/i);
+  assert.match(doc, /decay-weighted mean|combined score/i);
+  assert.match(doc, /demotes|demoted/i);
+  assert.match(doc, /not available/i);
+  assert.doesNotMatch(doc, /no single opaque quality score/);
 });
+
+async function awaitRecommendWithLearning(box, candidates) {
+  return recommend(
+    {
+      task: "112",
+      summary: "Scripted change with a clear spec",
+      kind: "feature",
+      files: 2,
+      eligible: [],
+      judgment: "standard",
+      judgmentReason: "fixture judgment for learning test",
+      historyDir: box.history,
+      learnDir: box.learn,
+      now: NOW,
+      agentVersions: { cursor: AGENT_VERSION, claude: AGENT_VERSION },
+      random: () => 0.99,
+      learning: loadLearningContext({
+        historyDir: box.history,
+        learnDir: box.learn,
+        kind: "feature",
+        difficulty: "standard",
+        now: NOW,
+        agentVersions: { cursor: AGENT_VERSION, claude: AGENT_VERSION },
+      }),
+    },
+    candidates,
+    {},
+  );
+}
 
 function choice(row) {
   if (!row) return null;

@@ -446,6 +446,8 @@ export async function recommend(options, candidates, usageByAgent = {}) {
   const baselineFirst = usable[0] ?? null;
 
   let learningContext = null;
+  /** @type {string | null} */
+  let historyLoadNote = null;
   if (sanitizedOptions.learning === false) {
     learningContext = null;
   } else if (sanitizedOptions.learning && typeof sanitizedOptions.learning === "object") {
@@ -464,9 +466,11 @@ export async function recommend(options, candidates, usageByAgent = {}) {
           now: sanitizedOptions.now ?? process.env.ORCA_LEARN_NOW ?? new Date().toISOString(),
           agentVersions: sanitizedOptions.agentVersions ?? {},
         });
-      } catch {
+      } catch (error) {
         // Missing or unreadable history must not block a baseline recommendation.
         learningContext = null;
+        const reason = error instanceof Error ? error.message : String(error);
+        historyLoadNote = `history unreadable: ${reason}, baseline used`;
       }
     }
   }
@@ -493,13 +497,21 @@ export async function recommend(options, candidates, usageByAgent = {}) {
           `${describeUsage(usageOf(baselineFirst.agent))}${hasEquivalent ? "; equivalent choices are not balanced by quota" : ""}.`,
       }
     : null;
-  const learningNote = learned.applied.length
-    ? ` Learned adjustment preferred ${choiceName(first)} over baseline ${choiceName(baselineFirst)} from ${learned.applied[0].rawCount} comparable outcomes (mean score ${learned.applied[0].meanScore.toFixed(2)}).`
-    : learned.exploration
-      ? ` Exploration pick ${learned.exploration.choice}: suitable but under-observed (${learned.exploration.reason}).`
-      : learningContext
-        ? " Sparse or missing comparable evidence: falling back to the capability-and-usage baseline."
-        : "";
+  const demotionNote =
+    learned.demoted?.length
+      ? ` Demoted ${learned.demoted.map((d) => `${d.choice}: ${d.effect}`).join("; ")}.`
+      : "";
+  const learningNote = historyLoadNote
+    ? ` ${historyLoadNote}.`
+    : learned.applied.length
+      ? ` Learned adjustment preferred ${choiceName(first)} over baseline ${choiceName(baselineFirst)} from ${learned.applied[0].rawCount} comparable outcomes (mean score ${learned.applied[0].meanScore.toFixed(2)}).${demotionNote}`
+      : learned.exploration
+        ? ` Exploration pick ${learned.exploration.choice}: suitable but under-observed (${learned.exploration.reason}).${demotionNote}`
+        : learned.demoted?.length
+          ? ` Negative evidence did not promote any choice over the capability-and-usage baseline.${demotionNote}`
+          : learningContext
+            ? " Sparse or missing comparable evidence: falling back to the capability-and-usage baseline."
+            : "";
   const recommendation = first
     ? {
         ...first,
@@ -520,9 +532,11 @@ export async function recommend(options, candidates, usageByAgent = {}) {
       ? { agent: baselineRecommendation.agent, model: baselineRecommendation.model, effort: baselineRecommendation.effort }
       : null,
     applied: learned.applied,
+    demoted: learned.demoted ?? [],
     uncertain: learned.uncertain,
     versionMismatches: learned.versionMismatches ?? [],
     exploration: learned.exploration,
+    note: historyLoadNote,
   };
   const result = { ...base, recommendation, baselineRecommendation, alternatives, rejected, learning: learningReport };
 

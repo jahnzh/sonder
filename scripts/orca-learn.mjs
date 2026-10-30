@@ -112,13 +112,31 @@ export function openLearnState(dir) {
   };
 }
 
-/** Half-life exponential decay. Age at or before a reset epoch contributes nothing. */
+/** Half-life exponential decay. Invalid or future-dated timestamps contribute nothing. */
 export function evidenceWeight(at, now, halfLifeMs = HALF_LIFE_MS) {
   const then = Date.parse(at);
   const nowMs = Date.parse(now);
-  if (Number.isNaN(then) || Number.isNaN(nowMs)) return 0;
-  const age = Math.max(0, nowMs - then);
+  if (Number.isNaN(then) || Number.isNaN(nowMs) || then > nowMs) return 0;
+  const age = nowMs - then;
   return Math.pow(0.5, age / halfLifeMs);
+}
+
+/** Sum of numeric meter values on attributable entries; null when none are recorded. */
+export function attributableCost(attributable) {
+  if (!attributable || attributable.status !== "recorded" || !attributable.entries?.length) return null;
+  let total = 0;
+  let saw = false;
+  for (const entry of attributable.entries) {
+    const metrics = entry?.metrics;
+    if (!metrics || typeof metrics !== "object") continue;
+    for (const value of Object.values(metrics)) {
+      if (typeof value === "number" && Number.isFinite(value)) {
+        total += value;
+        saw = true;
+      }
+    }
+  }
+  return saw ? total : null;
 }
 
 /**
@@ -200,16 +218,30 @@ export function signalContributions(view) {
     signals.push({ name: "retries", value: 0, detail: "none linked" });
   }
 
+  // Attributable usage stays out of the quality total. When recorded, its numeric meters feed a
+  // separate peer tiebreaker in applyLearning; shared usage never becomes a per-worker cost.
   const attributable = view.usage.attributable;
+  const cost = attributableCost(attributable);
   if (attributable.status === "recorded") {
     signals.push({
       name: "attributableUsage",
       value: 0,
-      detail: "recorded; compared among peers when both have attributable meters, never fabricated from shared usage",
+      detail:
+        cost === null
+          ? "recorded but no numeric meters — not available for ranking; kept apart from quality"
+          : `recorded cost ${cost}; kept apart from quality; peer tiebreaker only when peers also have meters`,
+      available: cost !== null,
+      cost,
       entries: attributable.entries,
     });
   } else {
-    signals.push({ name: "attributableUsage", value: 0, detail: attributable.reason ?? "unknown" });
+    signals.push({
+      name: "attributableUsage",
+      value: 0,
+      detail: `not available — ${attributable.reason ?? "no per-worker meter has been recorded"}`,
+      available: false,
+      cost: null,
+    });
   }
 
   if (view.usage.shared?.length) {
@@ -218,6 +250,18 @@ export function signalContributions(view) {
       value: 0,
       detail: "present but ignored for learning — shared change is not a per-worker cost",
       count: view.usage.shared.length,
+    });
+  }
+
+  // Elapsed time is a separate low-weight peer tiebreaker when known; it does not enter the quality mean.
+  const elapsed = view.signals.elapsed;
+  if (elapsed?.status === "known" && typeof elapsed.ms === "number" && Number.isFinite(elapsed.ms)) {
+    signals.push({
+      name: "elapsed",
+      value: 0,
+      detail: `${elapsed.ms}ms — kept apart from quality; low-weight peer tiebreaker when peers also have elapsed`,
+      available: true,
+      ms: elapsed.ms,
     });
   }
 
@@ -230,7 +274,7 @@ export function signalContributions(view) {
     });
   }
 
-  return { total, signals };
+  return { total, signals, attributableCost: cost, elapsedMs: elapsed?.status === "known" ? elapsed.ms : null };
 }
 
 /**
@@ -267,7 +311,17 @@ export function evidenceFromView(view, { resetAt = null, now }) {
     difficulty: view.task.difficulty,
   });
   const weight = evidenceWeight(completedAt, now);
-  const { total, signals } = signalContributions(view);
+  if (weight === 0) {
+    return {
+      id: view.id,
+      included: false,
+      reason: "future-dated or invalid completedAt",
+      outcome,
+      key: null,
+      completedAt,
+    };
+  }
+  const { total, signals, attributableCost: cost, elapsedMs } = signalContributions(view);
   return {
     id: view.id,
     included: true,
@@ -279,7 +333,9 @@ export function evidenceFromView(view, { resetAt = null, now }) {
     weightedScore: total * weight,
     signals,
     selectionKind: view.selection?.kind ?? UNKNOWN,
-    attributable: view.usage.attributable.status === "recorded",
+    attributable: cost !== null,
+    attributableCost: cost,
+    elapsedMs: typeof elapsedMs === "number" && Number.isFinite(elapsedMs) ? elapsedMs : null,
   };
 }
 
@@ -289,7 +345,10 @@ export function evidenceFromView(view, { resetAt = null, now }) {
  */
 export function collectEvidence(store, opts) {
   const evidence = [];
+  const seen = new Set();
   for (const id of store.recordIds()) {
+    if (seen.has(id)) continue;
+    seen.add(id);
     const record = store.getRecord(id);
     if (!record) continue;
     const view = viewRecord(store, record);
@@ -306,8 +365,13 @@ export function collectEvidence(store, opts) {
 export function buildAdjustments(evidence, filter = {}) {
   /** @type {Map<string, any>} */
   const buckets = new Map();
+  const seenIds = new Set();
   for (const row of evidence) {
     if (!row?.included || !row.key) continue;
+    if (row.id != null) {
+      if (seenIds.has(row.id)) continue;
+      seenIds.add(row.id);
+    }
     const parts = parseComparabilityKey(row.key);
     if (filter.kind && parts.kind !== filter.kind) continue;
     if (filter.difficulty && parts.difficulty !== filter.difficulty) continue;
@@ -320,6 +384,10 @@ export function buildAdjustments(evidence, filter = {}) {
         weightedScore: 0,
         weightedCount: 0,
         rawCount: 0,
+        attributableCostSum: 0,
+        attributableCostCount: 0,
+        elapsedSum: 0,
+        elapsedCount: 0,
       });
     }
     const bucket = buckets.get(row.key);
@@ -332,10 +400,20 @@ export function buildAdjustments(evidence, filter = {}) {
       weightedScore: row.weightedScore,
       signals: row.signals,
       selectionKind: row.selectionKind,
+      attributableCost: row.attributableCost ?? null,
+      elapsedMs: row.elapsedMs ?? null,
     });
     bucket.weightedScore += row.weightedScore;
     bucket.weightedCount += row.weight;
     bucket.rawCount += 1;
+    if (typeof row.attributableCost === "number" && Number.isFinite(row.attributableCost)) {
+      bucket.attributableCostSum += row.attributableCost;
+      bucket.attributableCostCount += 1;
+    }
+    if (typeof row.elapsedMs === "number" && Number.isFinite(row.elapsedMs)) {
+      bucket.elapsedSum += row.elapsedMs;
+      bucket.elapsedCount += 1;
+    }
   }
 
   const adjustments = [];
@@ -347,6 +425,9 @@ export function buildAdjustments(evidence, filter = {}) {
       ...bucket,
       meanScore: mean,
       preference: mean,
+      meanAttributableCost:
+        bucket.attributableCostCount > 0 ? bucket.attributableCostSum / bucket.attributableCostCount : null,
+      meanElapsedMs: bucket.elapsedCount > 0 ? bucket.elapsedSum / bucket.elapsedCount : null,
       sufficient,
       uncertain: !sufficient,
       rule: {
@@ -357,6 +438,10 @@ export function buildAdjustments(evidence, filter = {}) {
       evidence: bucket.outcomes,
     };
     delete entry.outcomes;
+    delete entry.attributableCostSum;
+    delete entry.attributableCostCount;
+    delete entry.elapsedSum;
+    delete entry.elapsedCount;
     if (sufficient) adjustments.push(entry);
     else uncertain.push(entry);
   }
@@ -437,6 +522,34 @@ function lookupAdjustment(adjustments, candidate, ctx) {
  *   random?: () => number,
  * }} args
  */
+/**
+ * Rank band for a scored candidate. Negative sufficient evidence demotes below the
+ * unevidenced baseline band and never promotes a choice.
+ * @param {{ adjustment: any }} row
+ */
+function evidenceBand(row) {
+  if (!row.adjustment) return 0;
+  if (row.adjustment.preference > 0) return 1;
+  if (row.adjustment.preference < 0) return -1;
+  return 0;
+}
+
+/**
+ * Secondary peer signals: lower attributable cost, then lower elapsed, only when both sides have them.
+ * @param {{ adjustment: any, candidate: any }} a
+ * @param {{ adjustment: any, candidate: any }} b
+ * @param {any[]} sameTier
+ */
+function comparePeerSignals(a, b, sameTier) {
+  const aCost = a.adjustment?.meanAttributableCost;
+  const bCost = b.adjustment?.meanAttributableCost;
+  if (typeof aCost === "number" && typeof bCost === "number" && aCost !== bCost) return aCost - bCost;
+  const aElapsed = a.adjustment?.meanElapsedMs;
+  const bElapsed = b.adjustment?.meanElapsedMs;
+  if (typeof aElapsed === "number" && typeof bElapsed === "number" && aElapsed !== bElapsed) return aElapsed - bElapsed;
+  return sameTier.indexOf(a.candidate) - sameTier.indexOf(b.candidate);
+}
+
 export function applyLearning({ usable, kind, difficulty, learning, random = Math.random }) {
   const baselineFirst = usable[0] ?? null;
   const empty = {
@@ -444,6 +557,7 @@ export function applyLearning({ usable, kind, difficulty, learning, random = Mat
     recommendation: baselineFirst,
     ordered: [...usable],
     applied: [],
+    demoted: [],
     uncertain: [],
     exploration: null,
     usedLearning: false,
@@ -474,20 +588,28 @@ export function applyLearning({ usable, kind, difficulty, learning, random = Mat
 
   let orderedTier = [...sameTier];
   const applied = [];
+  const demoted = [];
   if (withEvidence.length) {
     orderedTier = [...scored]
       .sort((a, b) => {
-        if (a.adjustment && b.adjustment) {
-          if (b.preference !== a.preference) return b.preference - a.preference;
-        } else if (a.adjustment && !b.adjustment) return -1;
-        else if (!a.adjustment && b.adjustment) return 1;
-        return sameTier.indexOf(a.candidate) - sameTier.indexOf(b.candidate);
+        const bandDiff = evidenceBand(b) - evidenceBand(a);
+        if (bandDiff !== 0) return bandDiff;
+        if (a.adjustment && b.adjustment && b.preference !== a.preference) return b.preference - a.preference;
+        return comparePeerSignals(a, b, sameTier);
       })
       .map((row) => row.candidate);
 
     for (const row of scored) {
       if (!row.adjustment) continue;
-      if (orderedTier[0] && choiceName(orderedTier[0]) === choiceName(row.candidate) && choiceName(baselineFirst) !== choiceName(row.candidate)) {
+      const evidence = row.adjustment.evidence.map((e) => ({
+        id: e.id,
+        outcome: e.outcome,
+        completedAt: e.completedAt,
+        weight: e.weight,
+        score: e.score,
+        selectionKind: e.selectionKind,
+      }));
+      if (row.preference > 0 && orderedTier[0] && choiceName(orderedTier[0]) === choiceName(row.candidate) && choiceName(baselineFirst) !== choiceName(row.candidate)) {
         applied.push({
           choice: choiceName(row.candidate),
           key: row.key,
@@ -495,15 +617,20 @@ export function applyLearning({ usable, kind, difficulty, learning, random = Mat
           rawCount: row.adjustment.rawCount,
           weightedCount: row.adjustment.weightedCount,
           meanScore: row.adjustment.meanScore,
-          evidence: row.adjustment.evidence.map((e) => ({
-            id: e.id,
-            outcome: e.outcome,
-            completedAt: e.completedAt,
-            weight: e.weight,
-            score: e.score,
-            selectionKind: e.selectionKind,
-          })),
+          evidence,
           effect: `preferred over baseline ${choiceName(baselineFirst)} within capability ${tier}`,
+        });
+      }
+      if (row.preference < 0) {
+        demoted.push({
+          choice: choiceName(row.candidate),
+          key: row.key,
+          preference: row.preference,
+          rawCount: row.adjustment.rawCount,
+          weightedCount: row.adjustment.weightedCount,
+          meanScore: row.adjustment.meanScore,
+          evidence,
+          effect: `demoted below unevidenced options within capability ${tier} because mean score ${row.adjustment.meanScore.toFixed(2)} is negative`,
         });
       }
     }
@@ -564,10 +691,11 @@ export function applyLearning({ usable, kind, difficulty, learning, random = Mat
     recommendation,
     ordered: [...orderedTier, ...stronger],
     applied,
+    demoted,
     uncertain,
     versionMismatches,
     exploration,
-    usedLearning: applied.length > 0 || exploration !== null,
+    usedLearning: applied.length > 0 || demoted.length > 0 || exploration !== null,
     resetAt: learning.resetAt ?? null,
     rule: learning.rule,
   };

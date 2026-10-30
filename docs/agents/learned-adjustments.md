@@ -27,9 +27,11 @@ Further gates:
 - At least **3** comparable records with a known completion (`succeeded` or `failed`). Missing/`unknown` outcomes are excluded — they are not success.
 - Each record’s weight decays with half-life **30 days** from `completedAt` (else `updatedAt`). Old evidence loses weight.
 - An adjustment applies only when the **sum of decayed weights ≥ 2.0**; otherwise the combination stays `uncertain` and the baseline is used.
-- Quality signals stay separate: completion, checks, reviews, follow-up fixes, retries, and attributable usage. There is no single opaque quality score.
-- Shared usage is never treated as a per-worker cost and never enters the score.
+- Quality signals stay named and inspectable: completion, checks, reviews, follow-up fixes and retries. Each included record **sums** those contributions into one per-outcome score; an adjustment’s `preference` / `meanScore` is the decay-weighted mean of those scores. Ranking within a capability tier uses that mean — it is not a hidden model, but it is a combined score built from the listed signals.
+- Attributable usage and elapsed time are kept **apart** from that quality mean. When a record has them, they are listed on the evidence and used only as low-weight peer tiebreakers (lower cost / lower elapsed) when comparing peers that both have the meter. When attributable usage is missing, the signal is explicitly **not available**. Shared usage is never treated as a per-worker cost and never enters any score.
+- Sufficient **negative** evidence demotes a choice below unevidenced options in the same capability tier; it never promotes that choice over the baseline. The recommendation report lists `demoted` entries with the reason.
 - An override is recorded as a choice, not as a correctness label for the original recommendation. Learning scores the launched worker’s outcomes.
+- Future-dated or invalid `completedAt` values get weight 0 and are excluded. Duplicate record ids are counted once.
 - Different agent versions are never pooled. Evidence from another version is listed under `versionMismatches` and does not move the pick.
 - Suitable under-observed combinations may be proposed occasionally (~10% when the corpus already has some included evidence), marked `exploration` / `uncertain`. Nothing launches autonomously.
 
