@@ -225,7 +225,7 @@ for browser in "${BROWSERS[@]}"; do
   SONDER_ANDROID_BIDI_PORT=$BIDI_PORT \
   SONDER_ANDROID_LOG="$out/relay.log" \
     npx playwright test -c playwright.android.config.ts "--project=android-${browser}" \
-      --reporter=list,json --output "$out/test-results" >"$out/playwright.log" 2>&1
+      --reporter=list,json --output "$out/test-results" ${SONDER_ANDROID_GREP:+--grep "$SONDER_ANDROID_GREP"} >"$out/playwright.log" 2>&1
   rc=$?
   tail -n 5 "$out/playwright.log"
   stats=""

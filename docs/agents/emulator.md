@@ -67,3 +67,11 @@ The implementer's acceptance run at `ba930ac` passed 11/11 in Chrome and 11/11 i
 - **`cmd: Can't find service: activity`**: Android's system server died. Seen when Firefox's GPU process hung on SwiftShader during a resize; the launcher's `EMULATOR_PREFS` keep Firefox rendering in software. Stop and start the emulator.
 - **A Firefox page that never becomes stable or resizes**: the same GPU-process cause; check `relay.log` and `adb logcat` for `Killing GPU process`.
 - **The emulator log**: `~/sonder-emu/state/<name>.log` on the Deck.
+
+## Home-screen shortcut and system Back (#85, #84)
+
+`tests/e2e/pwa-shortcut.spec.ts` (Firefox only) drives the real UI with `adb input` and `uiautomator dump` (helpers `androidUiDump`, `androidShell`, `androidScreenshot`, `pressAndroidBack` in `tests/android/fixtures.ts`): menu (three dots, at 672,112) > More > Add to Home screen > ADD > the launcher's "Add to home screen" > Home > tap the Sonder icon > Back twice. Run only it: `SONDER_ANDROID_GREP="home-screen shortcut" bash scripts/test-android-emulator.sh firefox`.
+
+- Firefox for Android 159 on `http://127.0.0.1` offers only **Add to Home screen** (no **Install**). The icon opens the app in a normal Firefox tab (`org.mozilla.fenix.HomeActivity`, address bar visible), not a standalone window. In that tab one Back goes to Firefox's start page (the "Continue: Sonder" tile), a second Back leaves to the launcher. No grey screen reproduced.
+- A true installed app needs a secure origin: on a phone Firefox then offers **Add app to homepage** (the owner's phone shows this for `https://sonder.pecori.no`; it is the case behind #84) and opens a standalone window, not a Firefox tab. Not covered here: it needs the test server behind a certificate the emulator trusts (adb root, CA in the system store).
+- Find nodes by text or content description from the dump, never by fixed coordinates, except the toolbar menu button. Dialog buttons are upper case (`ADD`).

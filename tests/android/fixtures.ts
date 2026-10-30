@@ -9,6 +9,36 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { screenSizeFor, type Size } from "./viewport";
 
+let activeDevice: AndroidDevice | undefined;
+// Presses the system Back key on the emulator (what the Android navigation gesture sends).
+export async function pressAndroidBack() {
+  if (!activeDevice) throw new Error("No Android device is running");
+  await activeDevice.shell("input keyevent KEYCODE_BACK");
+}
+
+// A screenshot of the whole emulator screen (the page's own screenshot cannot show a closed tab or the browser's UI).
+export async function androidScreenshot(path: string) {
+  if (!activeDevice) throw new Error("No Android device is running");
+  await activeDevice.screenshot({ path });
+}
+
+export async function androidTap(x: number, y: number) {
+  if (!activeDevice) throw new Error("No Android device is running");
+  await activeDevice.shell(`input tap ${x} ${y}`);
+}
+
+export async function androidShell(command: string) {
+  if (!activeDevice) throw new Error("No Android device is running");
+  return activeDevice.shell(command);
+}
+
+// The text, content description and bounds of every node on the emulator screen (uiautomator).
+export async function androidUiDump(): Promise<string> {
+  if (!activeDevice) throw new Error("No Android device is running");
+  await activeDevice.shell("uiautomator dump /sdcard/ui.xml");
+  return (await activeDevice.shell("cat /sdcard/ui.xml")).toString();
+}
+
 export type AndroidBrowser = "chrome" | "firefox";
 
 const CHROME_PACKAGE = "com.android.chrome";
@@ -71,7 +101,9 @@ const android = base.extend<{}, { androidDevice: AndroidDevice }>({
       const port = Number(process.env.SONDER_ANDROID_ADB_PORT || 15037);
       const [device] = await _android.devices({ host, port, omitDriverInstall: true });
       if (!device) throw new Error(`No Android device on the adb server at ${host}:${port}`);
+      activeDevice = device;
       await use(device);
+      activeDevice = undefined;
       await device.shell("wm size reset").catch(() => {});
       await device.close();
     },
