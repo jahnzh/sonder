@@ -75,6 +75,7 @@ Agent skills setup follows the main flow from https://www.aihero.dev/skills-setu
 - Before running `npm run test:android` or the Android emulator on the Steam Deck, read `docs/agents/emulator.md`.
 - Before running CI on the WSL host, read `docs/agents/ci-host.md`; run `npm run check -- --known-failures tests/known-failures.wsl-host.json` so a run with only the known failures passes.
 - Before reading or interpreting Antigravity quota (`node scripts/antigravity-usage.mjs`), read `docs/agents/antigravity-usage.md`.
+- Before reading or interpreting Cursor usage (`node scripts/cursor-usage.mjs`), read `docs/agents/cursor-usage.md`.
 - Install the pre-push hook once per clone with `scripts/install-hooks.sh`.
 
 ## Spawning subagents
