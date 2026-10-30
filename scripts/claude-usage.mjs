@@ -80,9 +80,10 @@ function parseRetryAfterSeconds(value) {
   return Number.isFinite(seconds) ? seconds : null;
 }
 
-async function getJson(fetchImpl, url, accessToken, timeoutMs = REQUEST_TIMEOUT_MS) {
+async function getJson(fetchImpl, url, accessToken, timeoutMs = REQUEST_TIMEOUT_MS, signal) {
   let response;
   try {
+    const timeout = AbortSignal.timeout(timeoutMs);
     response = await fetchImpl(url, {
       method: "GET",
       headers: {
@@ -91,10 +92,10 @@ async function getJson(fetchImpl, url, accessToken, timeoutMs = REQUEST_TIMEOUT_
         Accept: "application/json",
         "User-Agent": "sonder-claude-usage",
       },
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
     });
   } catch (error) {
-    if (error?.name === "TimeoutError" || error?.code === "TIMEOUT" || /timeout/i.test(String(error?.message ?? ""))) {
+    if (error?.name === "AbortError" || error?.name === "TimeoutError" || error?.code === "TIMEOUT" || /timeout|aborted/i.test(String(error?.message ?? ""))) {
       throw new UsageError("unavailable", "timeout", `${new URL(url).pathname}: timed out after ${timeoutMs} ms`);
     }
     throw new UsageError("unavailable", "network_error", `${new URL(url).pathname}: ${error?.name ?? "Error"}`);
@@ -347,6 +348,7 @@ export async function readClaudeUsage({
   localHostname = os.hostname(),
   expectedAccount,
   timeoutMs = REQUEST_TIMEOUT_MS,
+  signal,
 } = {}) {
   const observedAt = now();
   const targetHost = host ?? hostname ?? localHostname;
@@ -382,11 +384,11 @@ export async function readClaudeUsage({
       );
     }
     const { accessToken } = readCredentials(configDir, observedAt);
-    Object.assign(observation.scope, accountScope(await getJson(fetchImpl, CLAUDE_PROFILE_URL, accessToken, requestTimeoutMs)));
+    Object.assign(observation.scope, accountScope(await getJson(fetchImpl, CLAUDE_PROFILE_URL, accessToken, requestTimeoutMs, signal)));
     if (expectedAccount && observation.scope.accountUuid !== expectedAccount) {
       throw new UsageError("account_mismatch", "account_mismatch", "The Claude Code login on this host belongs to a different account");
     }
-    const { windows, extraUsage } = interpretUsage(await getJson(fetchImpl, CLAUDE_USAGE_URL, accessToken, requestTimeoutMs));
+    const { windows, extraUsage } = interpretUsage(await getJson(fetchImpl, CLAUDE_USAGE_URL, accessToken, requestTimeoutMs, signal));
     observation.windows = windows;
     observation.extraUsage = extraUsage;
     observation.exhaustedWindows = windows

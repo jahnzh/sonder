@@ -39,7 +39,9 @@ export function assessmentVerdict(freshness, status, reason, resetsAt = null) {
 export function scrub(text, secrets = []) {
   let out = String(text)
     .replace(/https?:\/\/\S+/gi, "<url>")
-    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "<email>");
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "<email>")
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "<redacted>")
+    .replace(/(^|[\s"'=:])(\/(?:home|Users)\/[A-Za-z0-9._-]+(?:\/[^\s"',;})\]]*)?)/g, "$1<redacted>");
   const literals = [...new Set(
     secrets
       .filter((secret) => typeof secret === "string" && secret.trim().length >= 6)

@@ -95,8 +95,12 @@ function readLogin(home) {
   };
 }
 
-function runAgy(agyPath, command, { home, env, timeoutMs }) {
+function runAgy(agyPath, command, { home, env, timeoutMs, signal }) {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new UsageError("unavailable", "timeout", `agy ${command} was aborted before start`));
+      return;
+    }
     const childEnv = { ...env, HOME: home };
     delete childEnv.AGY_ADC_AUTH;
     let child;
@@ -118,6 +122,8 @@ function runAgy(agyPath, command, { home, env, timeoutMs }) {
       failure = error;
       child.kill("SIGKILL");
     };
+    const onAbort = () => stop(new UsageError("unavailable", "timeout", `agy ${command} was aborted`));
+    signal?.addEventListener("abort", onAbort, { once: true });
     const timer = setTimeout(() => stop(new UsageError("unavailable", "timeout", `agy ${command} did not answer within ${timeoutMs} ms`)), timeoutMs);
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
@@ -133,10 +139,12 @@ function runAgy(agyPath, command, { home, env, timeoutMs }) {
     });
     child.on("error", (error) => {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       reject(failure ?? new UsageError("unavailable", error.code === "ENOENT" ? "cli_not_found" : "cli_error", `Could not start agy (${error.code ?? "error"})`));
     });
     child.on("close", (code) => {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       if (failure) reject(failure);
       else resolve({ code, stdout, stderr });
     });
@@ -407,6 +415,7 @@ export async function readAntigravityUsage({
   host,
   localHostname = os.hostname(),
   expectedAccount,
+  signal,
 } = {}) {
   const observedAt = now();
   const targetHost = host ?? hostname ?? localHostname;
@@ -452,7 +461,7 @@ export async function readAntigravityUsage({
       Object.assign(observation.scope, login.scope);
       throw new UsageError("account_mismatch", "account_mismatch", "The Antigravity CLI login on this host belongs to a different account");
     }
-    const runOptions = { home, env, timeoutMs };
+    const runOptions = { home, env, timeoutMs, signal };
     const secrets = [...login.secrets, ...envSecrets];
     const { windows, groups } = interpretUsage(parsePayload(await runAgy(agyPath, "/usage", runOptions), "/usage", secrets));
     Object.assign(observation.scope, login.scope);
