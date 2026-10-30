@@ -97,7 +97,7 @@ Run `scripts/orca-spawn.sh --spec-file <file> --name <worktree> (--base <branch>
 
 ## Record the outcome
 
-After `worker_done` and before `worker-release`, run `node scripts/orca-history.mjs capture --dispatch <dispatch_id> --recommendation <recommend output>`, then record checks, reviews and links as they happen. Unavailable information is stored as unknown. See `docs/agents/worker-history.md`.
+Lifecycle capture is automatic: `scripts/orca-spawn.sh` captures after a successful launch, and `scripts/orca-check.mjs` captures again for each `worker_done` that names a `dispatchId` (before `worker-release`). Failures are warnings only and do not break the dispatch. Still run a manual `node scripts/orca-history.mjs capture --dispatch <dispatch_id> --recommendation <recommend output>` to attach the recommendation, then record checks, reviews and links as they happen. Unavailable information is stored as unknown. See `docs/agents/worker-history.md`.
 
 ## Read the inbox
 

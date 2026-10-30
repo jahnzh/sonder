@@ -55,14 +55,30 @@ function envSecrets(env) {
     .sort((a, b) => b.length - a.length);
 }
 
+/** Credential-looking key names: whole value is redacted (quoted value, or to end of line when unquoted). */
+const CREDENTIAL_KEY =
+  /(?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|secret|password|passwd|token|authorization|bearer|cookie|credential)/i;
+
 /**
- * Removes credentials from text: the values of secret-looking environment variables, and common token shapes.
+ * Removes credentials from text: the values of secret-looking environment variables, credential-named
+ * key=value / key: value / JSON forms (whole value), and common token shapes.
  * @param {string} text
  * @param {NodeJS.ProcessEnv} [env]
  */
 export function redactText(text, env = process.env) {
   let out = String(text);
   for (const secret of envSecrets(env)) out = out.replaceAll(secret, "[redacted]");
+  out = out.replace(
+    new RegExp(
+      String.raw`(["']?)([A-Za-z0-9_]*${CREDENTIAL_KEY.source}[A-Za-z0-9_]*)\1(\s*[:=]\s*)(?:"([^"]*)"|'([^']*)'|([^\r\n]*))`,
+      "gi",
+    ),
+    (_match, quote, key, sep, doubleQuoted, singleQuoted, _unquoted) => {
+      if (doubleQuoted !== undefined) return `${quote}${key}${quote}${sep}"[redacted]"`;
+      if (singleQuoted !== undefined) return `${quote}${key}${quote}${sep}'[redacted]'`;
+      return `${quote}${key}${quote}${sep}[redacted]`;
+    },
+  );
   return out
     .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, "[redacted]")
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, "Bearer [redacted]")
@@ -74,11 +90,7 @@ export function redactText(text, env = process.env) {
     .replace(/\bgh[pousr]_[A-Za-z0-9]{20,}/g, "[redacted]")
     .replace(/\bgithub_pat_[A-Za-z0-9_]{20,}/g, "[redacted]")
     .replace(/\bAKIA[0-9A-Z]{16}\b/g, "[redacted]")
-    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+/g, "[redacted]")
-    .replace(
-      /\b([A-Za-z0-9_]*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|secret|password|passwd|token)[A-Za-z0-9_]*)(["']?\s*[:=]\s*["']?)(?!\[redacted\])([^\s"',;})\]]{6,})/gi,
-      "$1$2[redacted]",
-    );
+    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+/g, "[redacted]");
 }
 
 function redactDeep(value, env) {
@@ -187,6 +199,18 @@ function installedVersion(agent, env) {
   const run = spawnSync(argv[0], argv.slice(1), { encoding: "utf8", timeout: 10000, env });
   const text = run.status === 0 ? run.stdout.trim().split("\n")[0] : "";
   return text ? text.slice(0, 120) : null;
+}
+
+/** True only when the dispatch's host is this machine, so a local `agent --version` is the worker's. */
+export function isLocalWorkerHost(host) {
+  if (!host || host === UNKNOWN) return false;
+  if (typeof host === "string") return host === "local";
+  if (typeof host === "object") {
+    const kind = host.kind ?? host.hostKind;
+    const id = host.id ?? host.hostId;
+    return kind === "local" || id === "local";
+  }
+  return false;
 }
 
 /** Orca stamps dispatches as UTC "YYYY-MM-DD HH:MM:SS". */
@@ -463,6 +487,14 @@ function need(record, id) {
   return record;
 }
 
+/** Mutate a record, stamp updatedAt, redact and save. */
+function mutate(store, record, env, now, fn) {
+  fn(record);
+  record.updatedAt = now;
+  store.putRecord(redactDeep(record, env));
+  return record;
+}
+
 function capture(store, options, env, now) {
   const id = requireId(options.dispatch, "--dispatch");
   const observed = observeDispatch(orca(["worker-show", "--dispatch", id], env));
@@ -485,7 +517,7 @@ function capture(store, options, env, now) {
   if (options.files !== undefined) record.task.files = options.files;
   if (options.agentVersion) {
     record.versions.agent = { value: options.agentVersion, basis: "coordinator", observedAt: now };
-  } else if (!isKnown(record.versions.agent) && isKnown(record.agent.name)) {
+  } else if (!isKnown(record.versions.agent) && isKnown(record.agent.name) && isLocalWorkerHost(record.host)) {
     const value = installedVersion(record.agent.name, env);
     if (value) record.versions.agent = { value, basis: "installed on this host when first captured", observedAt: now };
   }
@@ -511,9 +543,9 @@ function recordCheck(store, options, env, now) {
     detail = { reportResult: known(report.result), failedStage: report.failedStage ?? null, knownFailures: report.knownFailures?.summary ?? null };
     source = source ?? "npm run check report";
   }
-  record.signals.checks.push({ name: options.name, result, commit: known(commit), source: known(source), detail, at: now });
-  record.updatedAt = now;
-  store.putRecord(redactDeep(record, env));
+  mutate(store, record, env, now, (r) => {
+    r.signals.checks.push({ name: options.name, result, commit: known(commit), source: known(source), detail, at: now });
+  });
   return viewRecord(store, store.getRecord(record.id)).signals.checks;
 }
 
@@ -522,12 +554,13 @@ function recordReview(store, options, env, now) {
   const findings = Object.fromEntries(SEVERITIES.map((severity) => [severity, options[severity] ?? UNKNOWN]));
   if (options.reviewerDispatch) {
     const reviewer = need(store.getRecord(options.reviewerDispatch), options.reviewerDispatch);
-    reviewer.links.push({ kind: "review_of", target: record.id, evidence: options.evidence ?? "the reviewer dispatch was named when the review was recorded", at: now });
-    store.putRecord(redactDeep(reviewer, env));
+    mutate(store, reviewer, env, now, (r) => {
+      r.links.push({ kind: "review_of", target: record.id, evidence: options.evidence ?? "the reviewer dispatch was named when the review was recorded", at: now });
+    });
   }
-  record.signals.reviews.push({ findings, reviewerDispatch: options.reviewerDispatch ?? UNKNOWN, evidence: known(options.evidence), at: now });
-  record.updatedAt = now;
-  store.putRecord(redactDeep(record, env));
+  mutate(store, record, env, now, (r) => {
+    r.signals.reviews.push({ findings, reviewerDispatch: options.reviewerDispatch ?? UNKNOWN, evidence: known(options.evidence), at: now });
+  });
   return viewRecord(store, store.getRecord(record.id)).signals.reviews;
 }
 
@@ -535,18 +568,18 @@ function link(store, options, env, now) {
   if (options.from === options.to) throw new HistoryError("a record cannot be linked to itself");
   const from = need(store.getRecord(options.from), options.from);
   need(store.getRecord(options.to), options.to);
-  from.links = from.links.filter((existing) => !(existing.kind === options.kind && existing.target === options.to));
-  from.links.push({ kind: options.kind, target: options.to, evidence: options.evidence, at: now });
-  from.updatedAt = now;
-  store.putRecord(redactDeep(from, env));
+  mutate(store, from, env, now, (r) => {
+    r.links = r.links.filter((existing) => !(existing.kind === options.kind && existing.target === options.to));
+    r.links.push({ kind: options.kind, target: options.to, evidence: options.evidence, at: now });
+  });
   return viewRecord(store, store.getRecord(from.id)).links;
 }
 
 function recordUsage(store, options, env, now) {
   const record = need(store.getRecord(options.dispatch), options.dispatch);
-  record.usage.attributable.push({ source: options.source, metrics: options.metrics, at: now });
-  record.updatedAt = now;
-  store.putRecord(redactDeep(record, env));
+  mutate(store, record, env, now, (r) => {
+    r.usage.attributable.push({ source: options.source, metrics: options.metrics, at: now });
+  });
   return viewRecord(store, store.getRecord(record.id)).usage.attributable;
 }
 

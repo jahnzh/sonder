@@ -10,6 +10,7 @@
 # The launch receipt is read as JSON: {"ok": true, "result": {"dispatchId", "launch": {"effective": {"model"}}, "effects": [...]}}.
 # The worktree path comes from result.effects. codegraph init -y runs in the background, so a worker that
 # starts at once may call CodeGraph before the index exists; it builds its own if .codegraph is missing.
+# After a successful launch it also runs `orca-history.mjs capture --dispatch <id>` (failures are warnings only).
 # Once worker-start has succeeded the script never exits non-zero, so a caller cannot start a second worker.
 set -u
 
@@ -155,4 +156,15 @@ if [ -d "$worktree" ]; then
   fi
 else
   echo "warning: worktree $worktree not found; the worker is running. Run codegraph init -y there once it exists." >&2
+fi
+
+# Automatic history capture at dispatch. Failures are warnings only — the worker is already running.
+# ORCA_HISTORY_SCRIPT overrides the capture entry point (tests); unset ORCA_HISTORY_AUTO=0 to skip.
+if [ -n "${dispatch:-}" ] && [ "${ORCA_HISTORY_AUTO:-1}" != "0" ]; then
+  history_script="${ORCA_HISTORY_SCRIPT:-$root/scripts/orca-history.mjs}"
+  if capture_out=$(node "$history_script" capture --dispatch "$dispatch" 2>&1); then
+    echo "history: captured $dispatch"
+  else
+    echo "warning: automatic history capture failed for $dispatch (worker still running): $capture_out" >&2
+  fi
 fi

@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { redactText } from "../scripts/orca-history.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const script = join(repoRoot, "scripts", "orca-history.mjs");
@@ -41,6 +42,21 @@ if (!fs.existsSync(file)) {
 process.stdout.write(fs.readFileSync(file, "utf8"));
 `;
 
+/** Env keys the history CLI and its stubs need; do not spread the whole process environment. */
+const SANDBOX_ENV_KEYS = [
+  "PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "LC_CTYPE",
+  "NODE_OPTIONS", "npm_config_cache", "ORCA_CLI_COMMAND", "ORCA_STUB_DIR", "ORCA_HISTORY_DIR",
+  "ORCA_HISTORY_NOW", "TYPESAFE_API_KEY", "SONDER_TEST_SECRET_TOKEN", "ORCA_RECOMMEND_JEV_URL",
+];
+
+function sandboxEnv(overrides = {}) {
+  const env = {};
+  for (const key of SANDBOX_ENV_KEYS) {
+    if (process.env[key] !== undefined) env[key] = process.env[key];
+  }
+  return { ...env, ...overrides };
+}
+
 function sandbox() {
   const root = mkdtempSync(join(tmpdir(), "orca-history-"));
   const stub = join(root, "stub");
@@ -56,7 +72,15 @@ function sandbox() {
     stub,
     history,
     bin,
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, ORCA_CLI_COMMAND: orca, ORCA_STUB_DIR: stub, ORCA_HISTORY_DIR: history, ORCA_HISTORY_NOW: "2026-10-30T12:00:00.000Z", TYPESAFE_API_KEY: "", SONDER_TEST_SECRET_TOKEN: ENV_SECRET },
+    env: sandboxEnv({
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      ORCA_CLI_COMMAND: orca,
+      ORCA_STUB_DIR: stub,
+      ORCA_HISTORY_DIR: history,
+      ORCA_HISTORY_NOW: "2026-10-30T12:00:00.000Z",
+      TYPESAFE_API_KEY: "",
+      SONDER_TEST_SECRET_TOKEN: ENV_SECRET,
+    }),
     cleanup: () => rmSync(root, { recursive: true, force: true }),
     /** One CLI invocation is one process, so repeating it is a restart. */
     cli(args, env = {}) {
@@ -79,6 +103,10 @@ function sandbox() {
       terminal.title = "token=" + ENV_SECRET + " private title";
       terminal.preview = "password=correct-horse-battery private preview";
       worker.startOptions.spec = "SPEC-BODY-MUST-NOT-BE-KEPT";
+      if (changes.host) {
+        dispatch.hostScope = changes.host;
+        projection.host = changes.host;
+      }
       if (changes.completed) {
         dispatch.status = "completed";
         dispatch.completedAt = changes.completed;
@@ -717,11 +745,52 @@ test("the recommender sends Jev nothing from the history, transcripts included",
   }
 });
 
+test("credential-named keys redact the whole value, including spaces, in key=value, key: value, quoted and JSON forms", () => {
+  const cases = [
+    ["password=correct horse battery", "password=[redacted]", "correct horse battery"],
+    ["passwd: correct horse battery", "passwd: [redacted]", "correct horse battery"],
+    ['secret="correct horse battery"', 'secret="[redacted]"', "correct horse battery"],
+    ["token: 'correct horse battery'", "token: '[redacted]'", "correct horse battery"],
+    ['{"password":"correct horse battery","ok":true}', '"password":"[redacted]"', "correct horse battery"],
+    ["authorization: correct horse battery", "authorization: [redacted]", "correct horse battery"],
+    ["cookie=session=abc def", "cookie=[redacted]", "session=abc def"],
+    ["api_key=correct horse battery", "api_key=[redacted]", "correct horse battery"],
+  ];
+  for (const [input, kept, forbidden] of cases) {
+    const out = redactText(input, {});
+    assert.match(out, new RegExp(kept.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), input);
+    assert.ok(!out.includes(forbidden), `${input} still contains ${forbidden}: ${out}`);
+  }
+  assert.equal(redactText("password=correct horse battery note", {}), "password=[redacted]");
+});
+
+test("a remote dispatch does not record the locally installed agent version", () => {
+  const box = sandbox();
+  try {
+    box.stage("ctx_remote", { host: { kind: "remote", id: "deck" } });
+    const view = box.cli(["capture", "--dispatch", "ctx_remote"]).json;
+    assert.equal(view.host.kind, "remote");
+    assert.equal(view.versions.agent, "unknown");
+    const withFlag = box.cli(["capture", "--dispatch", "ctx_remote", "--agent-version", "claude 2.1.0 on deck"]).json;
+    assert.equal(withFlag.versions.agent.value, "claude 2.1.0 on deck");
+    assert.equal(withFlag.versions.agent.basis, "coordinator");
+  } finally {
+    box.cleanup();
+  }
+});
+
 test("the coordinator documentation points at the history command and its privacy rules", () => {
   const doc = readFileSync(join(repoRoot, "docs", "agents", "worker-history.md"), "utf8");
   for (const command of ["capture", "record-check", "record-review", "link", "record-shared-usage", "delete --all --yes", "transcript --id"]) assert.ok(doc.includes(command), command);
   assert.match(doc, /Unknown is not zero/);
   assert.match(doc, /never print them/);
+  assert.match(doc, /automatic/i);
+  assert.match(doc, /orca-check/);
+  assert.match(doc, /orca-spawn/);
+  assert.match(doc, /unknown unless.*worker host|observed on the worker host/i);
+  assert.doesNotMatch(doc, /Capturing and recording are manual steps: nothing runs them at `worker_done`/);
   assert.match(readFileSync(join(repoRoot, "AGENTS.md"), "utf8"), /docs\/agents\/worker-history\.md/);
-  assert.match(readFileSync(join(repoRoot, "docs", "agents", "worker-spec.md"), "utf8"), /orca-history\.mjs capture/);
+  const spec = readFileSync(join(repoRoot, "docs", "agents", "worker-spec.md"), "utf8");
+  assert.match(spec, /orca-history\.mjs capture/);
+  assert.match(spec, /automatic/i);
 });

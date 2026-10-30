@@ -17,7 +17,18 @@ Run `--help` for every option. The directory is `--dir`, else `ORCA_HISTORY_DIR`
 
 ## When to capture
 
-Capture after the worker reports `worker_done` and **before** `worker-release`, and again after checks or reviews so the lifecycle is complete. Capturing is repeatable: it merges, appends a lifecycle event only when the state changed, and never replaces a known value with `unknown`.
+### Automatic
+
+Orca has no lifecycle hook of its own. The repository entry points trigger capture:
+
+- `scripts/orca-spawn.sh` runs `orca-history.mjs capture --dispatch <id>` after a successful `worker-start`. A capture failure is a warning only; the worker keeps running. Set `ORCA_HISTORY_AUTO=0` to skip.
+- `scripts/orca-check.mjs` runs the same capture for every `worker_done` whose payload includes `dispatchId`. A capture failure is printed to stderr and does not change the check exit code. Capture before `worker-release` so Orca can still read the transcript.
+
+Automatic capture does not pass `--recommendation`, `--kind`, `--files` or `--agent-version`. Capturing is repeatable: a later manual capture merges, appends a lifecycle event only when the state changed, and never replaces a known value with `unknown`.
+
+### Manual
+
+Attach the recommendation, record checks, reviews and links as they happen:
 
 ```sh
 node scripts/orca-recommend.mjs --task <n> --summary "<…>" --kind feature > artifacts/orca/recommend-<n>.json   # at selection time
@@ -33,7 +44,7 @@ node scripts/orca-history.mjs record-check --dispatch <dispatch_id> --name "npm 
 | Lifecycle (status, worker state, outcome, times, events), elapsed time, failure count, retry of | `worker-show`; elapsed only once the dispatch has completed |
 | Task type and size | `--kind`, `--files`, or the `request` of the recommendation file |
 | Difficulty, who assessed it (`jev` or `coordinator`), Jev version and uncertainty, selection, override with reason, whether the launch matches the decision | the recommendation file |
-| Agent version | `--agent-version`, else the version installed on this host at first capture (it may differ from the one the worker ran) |
+| Agent version | `--agent-version` (observed on the worker host), else the version installed on this host at first capture when the dispatch host is local; otherwise `unknown` |
 | Checks | `record-check`; `--report` reads an `npm run check` `report.json` |
 | Review findings | `record-review`, per severity; a severity you do not give is `unknown` |
 | Follow-up fixes, reviews and retries of other workers | `link` with evidence, or Orca's `retryOfDispatchId` |
@@ -52,7 +63,7 @@ Records are not linked by guesswork. `link` needs both records to exist and a st
 
 ## Transcripts
 
-`capture` stores the worker's transcript (or its terminal tail when Orca has no transcript) in `transcripts/<id>.jsonl`, apart from the record. Credentials are removed before anything is written: the values of environment variables whose names contain KEY, TOKEN, SECRET, PASSWORD or CREDENTIAL, bearer and basic headers, private keys, and common token shapes. This is pattern matching, not a guarantee; do not rely on it for a secret it cannot recognise.
+`capture` stores the worker's transcript (or its terminal tail when Orca has no transcript) in `transcripts/<id>.jsonl`, apart from the record. Credentials are removed before anything is written: the values of environment variables whose names contain KEY, TOKEN, SECRET, PASSWORD or CREDENTIAL; whole values of credential-named keys (`password`, `token`, `authorization`, `cookie`, and similar) in `key=value`, `key: value`, quoted and JSON forms; bearer and basic headers; private keys; and common token shapes. This is pattern matching, not a guarantee; do not rely on it for a secret it cannot recognise.
 
 Transcripts are for investigating a past outcome. `list` and `show` never print them, the record holds only metadata (count, source, whether Orca clipped it), and `scripts/orca-recommend.mjs` sends Jev only its summary, kind and file count. Planning and learning read records, not transcripts. Orca bounds what `worker-read` returns; when it clips, the record says `complete: false`. Capture before releasing a worker so Orca can still read it.
 
@@ -63,5 +74,5 @@ Transcripts are for investigating a past outcome. `list` and `show` never print 
 ## Not covered
 
 - The history is read by people and by later work on recommendations; nothing in `orca-recommend.mjs` reads it yet.
-- Capturing and recording are manual steps: nothing runs them at `worker_done`.
+- Recommendation attachment, checks, reviews and links stay manual; only the lifecycle `capture` itself is automatic via `orca-spawn` and `orca-check`.
 - Concurrent writers to one record are not coordinated beyond atomic replacement; capture one dispatch at a time.

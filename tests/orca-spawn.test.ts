@@ -44,14 +44,26 @@ function setup(receipt = '{"ok":true,"dispatchId":"ctx_abc","model":"gpt-5.3-cod
   // The preflight checks free disk space; never ask the real one.
   stub(bin, "df", `echo "Filesystem 1024-blocks Used Available Capacity Mounted on"\necho "/dev/fake 102626232 1000 99999999 1% /"`);
   stub(bin, "agent", `printf 'Available models\\n\\nauto - Auto\\ngpt-5.3-codex - Codex 5.3\\n'`);
-  const run = (args: string[]) =>
+  const historyStub = join(dir, "history-stub.mjs");
+  writeFileSync(historyStub, `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(join(dir, "history.log"))}, process.argv.slice(2).join(" ") + "\\n");\nif (process.env.ORCA_HISTORY_STUB_FAIL === "1") { console.error("stub capture failed"); process.exit(1); }\n`);
+  const run = (args: string[], env: Record<string, string> = {}) =>
     spawnSync("bash", [script, ...args], {
       cwd: repoRoot,
       encoding: "utf8",
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, ORCA_SPAWN_WORKSPACES: workspaces, ORCA_PREFLIGHT_REPO: repo, ORCA_PREFLIGHT_DF: join(bin, "df"), ORCA_CLI_COMMAND: "orca" },
+      env: {
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        HOME: process.env.HOME ?? "",
+        TMPDIR: process.env.TMPDIR ?? dir,
+        ORCA_SPAWN_WORKSPACES: workspaces,
+        ORCA_PREFLIGHT_REPO: repo,
+        ORCA_PREFLIGHT_DF: join(bin, "df"),
+        ORCA_CLI_COMMAND: "orca",
+        ORCA_HISTORY_SCRIPT: historyStub,
+        ...env,
+      },
     });
   const base = ["--spec-file", join(dir, "spec.md"), "--name", "wt", "--base", "HEAD", "--agent", "cursor"];
-  return { dir, run, base, repo, workspaces, orcaLog: join(dir, "orca.log"), cgLog: join(dir, "codegraph.log") };
+  return { dir, run, base, repo, workspaces, orcaLog: join(dir, "orca.log"), cgLog: join(dir, "codegraph.log"), historyLog: join(dir, "history.log") };
 }
 
 test("refuses to run without --model", () => {
@@ -330,6 +342,30 @@ test("a launched worker whose worktree has no readable branch is a warning, not 
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.doesNotMatch(r.stdout, /^branch:/m);
     assert.match(r.stderr, /could not read the branch/);
+  } finally {
+    rmSync(t.dir, { recursive: true, force: true });
+  }
+});
+
+test("a successful launch automatically captures the dispatch in worker history", () => {
+  const t = setup();
+  try {
+    const r = t.run([...t.base, "--model", "gpt-5.3-codex"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(readFileSync(t.historyLog, "utf8"), /^capture --dispatch ctx_abc$/m);
+    assert.match(r.stdout, /history: captured ctx_abc/);
+  } finally {
+    rmSync(t.dir, { recursive: true, force: true });
+  }
+});
+
+test("a failed automatic history capture does not fail the spawn", () => {
+  const t = setup();
+  try {
+    const r = t.run([...t.base, "--model", "gpt-5.3-codex"], { ORCA_HISTORY_STUB_FAIL: "1" });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stderr, /warning: automatic history capture failed/);
+    assert.match(readFileSync(t.historyLog, "utf8"), /capture --dispatch ctx_abc/);
   } finally {
     rmSync(t.dir, { recursive: true, force: true });
   }
