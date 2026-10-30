@@ -17,14 +17,17 @@ export function KeyboardHelpDialog({
       className="keyboard-help-dialog"
     >
       <dl className="keyboard-shortcuts">
-        {KEYBOARD_SHORTCUTS.map(({ keys, action }) => (
+        {KEYBOARD_SHORTCUTS.map(({ keys, action, word }) => (
           <div key={action}>
             <dt>
               {keys.map((key) => (
                 <kbd key={key}>{key}</kbd>
               ))}
             </dt>
-            <dd>{action}</dd>
+            <dd>
+              <span>{action}</span>
+              {word ? <small className="muted">{word}</small> : null}
+            </dd>
           </div>
         ))}
       </dl>

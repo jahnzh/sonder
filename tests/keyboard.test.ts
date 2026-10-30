@@ -101,8 +101,11 @@ test("each key is listed once, with its meaning in every context", () => {
   const keys = KEYBOARD_SHORTCUTS.flatMap((entry) => entry.keys);
   assert.deepEqual(keys, [...new Set(keys)]);
   const arrows = KEYBOARD_SHORTCUTS.find((entry) => entry.keys.includes("←"));
-  assert.match(arrows?.action ?? "", /30 seconds/);
-  assert.match(arrows?.action ?? "", /Word mode, step one word/);
+  assert.equal(arrows?.action, "Skip 30 seconds back or forward");
+  assert.match(arrows?.word ?? "", /step one word/);
   const space = KEYBOARD_SHORTCUTS.find((entry) => entry.keys.includes("Space"));
-  assert.match(space?.action ?? "", /Word mode/);
+  assert.equal(space?.action, "Play or pause");
+  assert.match(space?.word ?? "", /start or stop the words/);
+  const shift = KEYBOARD_SHORTCUTS.find((entry) => entry.keys.includes("Shift+→"));
+  assert.match(shift?.word ?? "", /Word mode/);
 });

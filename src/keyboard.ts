@@ -124,17 +124,20 @@ export function playbackKeyAction({
     return canSeek ? { type: "skip", seconds: 30 } : null;
   return null;
 }
-export const KEYBOARD_SHORTCUTS: { keys: string[]; action: string }[] = [
+/** One row per key; `word` is what the key does instead while the Word reader is open. */
+export const KEYBOARD_SHORTCUTS: { keys: string[]; action: string; word?: string }[] = [
   {
     keys: ["Space"],
-    action: "Play or pause. In Word mode without narration, start or stop the words",
+    action: "Play or pause",
+    word: "Word mode without narration: start or stop the words",
   },
   {
     keys: ["←", "→"],
-    action: "Skip 30 seconds back or forward. In Word mode, step one word",
+    action: "Skip 30 seconds back or forward",
+    word: "Word mode: step one word",
   },
   { keys: ["/"], action: "Search" },
   { keys: ["f"], action: "Follow the audio in the reader" },
   { keys: ["p"], action: "Switch the reader to Page view" },
-  { keys: ["Shift+←", "Shift+→"], action: "In Word mode, step one sentence" },
+  { keys: ["Shift+←", "Shift+→"], action: "Step one sentence", word: "Word mode only" },
 ];
