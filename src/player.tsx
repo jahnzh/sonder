@@ -65,9 +65,11 @@ type PlayerState = {
   error: string | null;
   /**
    * `kind: null` moves without recording the position left. `onRecord` sees each
-   * history entry the move writes, so a caller can take it back.
+   * history entry the move writes, so a caller can take it back. `saveAfterLoad`
+   * saves the landing as soon as the load has applied it, instead of on the next
+   * progress tick.
    */
-  play: (book: Book, track?: Track, start?: number, options?: { kind?: JumpKind | null; previous?: Progress | null; onRecord?: RecordedPosition }) => Promise<void>;
+  play: (book: Book, track?: Track, start?: number, options?: { kind?: JumpKind | null; previous?: Progress | null; onRecord?: RecordedPosition; saveAfterLoad?: boolean }) => Promise<void>;
   prepare: (book:Book)=>Promise<void>;
   toggle: () => void;
   pause: () => void;
@@ -1033,7 +1035,7 @@ export function PlayerProvider({
         sleep,
         error,
         source,
-        play: (book, track, start, options) => play(book, track, start, true, false, options?.kind === undefined ? "play" : options.kind, options?.previous, false, options?.onRecord),
+        play: (book, track, start, options) => play(book, track, start, true, false, options?.kind === undefined ? "play" : options.kind, options?.previous, options?.saveAfterLoad ?? false, options?.onRecord),
         prepare: (book)=>play(book,undefined,0,false),
         toggle,
         pause,

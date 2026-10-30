@@ -336,6 +336,16 @@
 .media-source-settings > button {
   justify-self: start;
 }
+.media-resume-offer {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+.media-resume-offer .button {
+  min-height: 44px;
+  white-space: normal;
+  text-align: left;
+}
 .media-management-actions {
   display: flex;
   flex-wrap: wrap;
