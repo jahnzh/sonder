@@ -325,10 +325,30 @@ export function ReaderView({
     jumpEpoch = useRef(0),
     // Follow jumps in flight with the pages hidden.
     hiddenJumps = useRef(0),
-    highlight = useRef<string | null>(null);
+    highlight = useRef<string | null>(null),
+    following = useRef("");
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
   const [followRevision,setFollowRevision]=useState(0);
   const followRef=useRef(follow);
   followRef.current=follow;
+  const redrawHighlight = () => {
+    if (!mountedRef.current) return;
+    if (following.current || highlight.current) {
+      following.current = "";
+      setFollowRevision((value) => value + 1);
+    }
+  };
+  useEffect(() => {
+    const onWindowFonts = () => {
+      redrawHighlight();
+    };
+    document.fonts?.ready?.then(onWindowFonts).catch(() => {});
+    document.fonts?.addEventListener?.("loadingdone", onWindowFonts);
+    return () => {
+      document.fonts?.removeEventListener?.("loadingdone", onWindowFonts);
+    };
+  }, []);
   const followRetry=useRef<{key:string;attempts:number;timer:ReturnType<typeof setTimeout>|null}>({key:"",attempts:0,timer:null});
   useEffect(()=>()=>{if(followRetry.current.timer)clearTimeout(followRetry.current.timer);},[]);
   const playbackMenu = usePlaybackMenu();
@@ -430,6 +450,7 @@ export function ReaderView({
   useEffect(() => {
     if (!book || !viewport.current) return;
     let disposed = false;
+    let cleanChapterFonts: (() => void) | null = null;
     const host = viewport.current;
     void (async () => {
       try {
@@ -631,6 +652,18 @@ export function ReaderView({
           } catch {}
         });
         view.hooks.content.register((content: Contents) => {
+          cleanChapterFonts?.();
+          let active = true;
+          const doc = content.document;
+          const onFonts = () => {
+            if (!disposed && active) redrawHighlight();
+          };
+          doc?.fonts?.ready?.then(onFonts).catch(() => {});
+          doc?.fonts?.addEventListener?.("loadingdone", onFonts);
+          cleanChapterFonts = () => {
+            active = false;
+            doc?.fonts?.removeEventListener?.("loadingdone", onFonts);
+          };
           let start: {x:number; y:number; time:number} | null = null;
           let hold: ReturnType<typeof setTimeout> | null = null;
           let held = false;
@@ -682,6 +715,10 @@ export function ReaderView({
             }
           });
         });
+        view.hooks.unloaded?.register?.(() => {
+          cleanChapterFonts?.();
+          cleanChapterFonts = null;
+        });
         automatic.current = performance.now() + 1200;
         try {
           await view.display(latest.current?.cfi || book.sections[0].href);
@@ -697,7 +734,7 @@ export function ReaderView({
             lastWidth=host.clientWidth;lastHeight=host.clientHeight;
             settleAfterLayout(view);
             view.resize(host.clientWidth, host.clientHeight);
-            if(following.current){following.current="";setFollowRevision(value=>value+1);}
+            redrawHighlight();
           }
         });
         observer.observe(host);
@@ -716,6 +753,8 @@ export function ReaderView({
     })();
     return () => {
       disposed = true;
+      cleanChapterFonts?.();
+      cleanChapterFonts = null;
       setRendered(false);
       (rendition.current as any)?.__observer?.disconnect();
       // epub.js throws when destroyed before its view finished initializing,
@@ -999,7 +1038,6 @@ export function ReaderView({
       fromAudio();
     }
   }, [map, rendered]);
-  const following = useRef("");
   useEffect(() => { ++jumpEpoch.current; following.current=""; }, [map?.recordingId,p.book?.recordingId]);
   useEffect(() => {
     if (

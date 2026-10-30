@@ -123,6 +123,8 @@ export function collectPlaywrightTests(report) {
         const interrupted = last?.status === "interrupted";
         const failed = test.status === "unexpected" || interrupted;
         const title = [...trail, spec.title].join(" › ");
+        // results[].duration is milliseconds; shape taken from a real Playwright 1.64 JSON report.
+        const durationMs = Number.isFinite(last?.duration) ? last.duration : null;
         const record = {
           project: test.projectName,
           file: repoPath(spec.file),
@@ -130,12 +132,25 @@ export function collectPlaywrightTests(report) {
           status: test.status,
           failed,
           interrupted,
+          durationMs,
           message: failed ? firstLine(last?.error?.message ?? last?.errors?.[0]?.message) : "",
         };
         const key = entryKey(record.project, record.file, record.title);
         const previous = byKey.get(key);
-        // Repeated tests under one key fail if any repetition failed.
-        if (!previous || (record.failed && !previous.failed)) byKey.set(key, record);
+        // Repeated tests under one key fail if any repetition failed; keep the longest duration.
+        if (!previous) {
+          byKey.set(key, record);
+        } else {
+          const prefer = record.failed && !previous.failed ? record : previous;
+          const duration = Math.max(
+            Number.isFinite(previous.durationMs) ? previous.durationMs : -1,
+            Number.isFinite(record.durationMs) ? record.durationMs : -1,
+          );
+          byKey.set(key, {
+            ...prefer,
+            durationMs: duration >= 0 ? duration : null,
+          });
+        }
       }
     }
     for (const child of suite.suites ?? []) visit(child, trail, false);
@@ -144,6 +159,42 @@ export function collectPlaywrightTests(report) {
   if (malformed) return { ok: false, error: `malformed Playwright report: ${malformed}` };
 
   return { ok: true, tests: [...byKey.values()], errors: report.errors, stats: report.stats };
+}
+
+/**
+ * Rank Playwright JSON-report tests by results[].duration (ms), longest first.
+ * Returns up to `limit` entries for the check report summary.
+ */
+export function slowestPlaywrightTests(report, {limit = 10} = {}) {
+  const collected = collectPlaywrightTests(report);
+  if (!collected.ok) return collected;
+  const tests = collected.tests
+    .filter((t) => Number.isFinite(t.durationMs))
+    .sort((a, b) => b.durationMs - a.durationMs || a.title.localeCompare(b.title))
+    .slice(0, Math.max(0, limit))
+    .map(({project, file, title, durationMs, status}) => ({project, file, title, durationMs, status}));
+  return {ok: true, tests};
+}
+
+/**
+ * Read a Playwright JSON report from disk and return its slowest tests.
+ */
+export function readSlowestPlaywrightTests(reportPath, {limit = 10} = {}) {
+  let report;
+  try {
+    report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+  } catch (error) {
+    return {
+      ok: false,
+      error: error.code === "ENOENT"
+        ? "Playwright JSON report was not written"
+        : `Playwright JSON report is unreadable: ${error.message}`,
+      tests: [],
+    };
+  }
+  const ranked = slowestPlaywrightTests(report, {limit});
+  if (!ranked.ok) return {...ranked, tests: []};
+  return ranked;
 }
 
 function outcomeOf(test) {

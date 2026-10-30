@@ -1,0 +1,70 @@
+{
+  "_comment": "Trimmed from a real Playwright 1.64.1 JSON report (artifacts/pw-json-sample). results[].duration is milliseconds.",
+  "config": {
+    "configFile": "/work/sonder/artifacts/pw-json-sample/playwright.config.ts",
+    "rootDir": "/work/sonder/artifacts/pw-json-sample",
+    "version": "1.64.1"
+  },
+  "suites": [
+    {
+      "title": "tiny.spec.ts",
+      "file": "tiny.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "sample suite",
+          "file": "tiny.spec.ts",
+          "line": 2,
+          "column": 6,
+          "specs": [
+            {
+              "title": "tiny sample for duration shape",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 62,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-30T00:19:59.232Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "640bd639e28d259f6418-b521fc2bff8afc4571bf",
+              "file": "tiny.spec.ts",
+              "line": 3,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-10-30T00:19:58.812Z",
+    "duration": 556.371,
+    "expected": 1,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}
