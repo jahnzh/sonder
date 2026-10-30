@@ -6,6 +6,7 @@ import {
   createCheckpointSaver,
   createPositionEstimator,
   narratedWordIndex,
+  narrationActive,
   seekInside,
   paragraphStarts,
   timeForWord,
@@ -305,4 +306,14 @@ test("stepping onto a sentence moves the audio only when that is possible withou
   assert.equal(audioMove({ mapped: true, sameFile: false, playing: true }), "play");
   assert.equal(audioMove({ mapped: true, sameFile: false, playing: false }), "none");
   assert.equal(audioMove({ mapped: false, sameFile: true, playing: true }), "none");
+});
+
+test("the display stays on the narration in a gap while the audio plays, and not when it is paused or elsewhere", () => {
+  const base = { follow: true, inSentence: false, playing: true, recordingActive: true };
+  assert.equal(narrationActive(base), true, "playing in a gap between mapped sentences");
+  assert.equal(narrationActive({ ...base, inSentence: true }), true);
+  assert.equal(narrationActive({ ...base, inSentence: true, playing: false }), true, "paused inside a sentence");
+  assert.equal(narrationActive({ ...base, playing: false }), false, "paused in a gap reads by words per minute");
+  assert.equal(narrationActive({ ...base, recordingActive: false }), false, "another recording is playing");
+  assert.equal(narrationActive({ ...base, follow: false }), false);
 });

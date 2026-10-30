@@ -14,6 +14,7 @@ import { keyEventContext, wordKeyAction } from "../keyboard";
 import {
   createPositionEstimator,
   narratedWordIndex,
+  narrationActive,
   orpIndex,
   paragraphStarts,
   scheduleWords,
@@ -99,7 +100,12 @@ export function WordReader({
   );
   // While the narration plays for this recording the display stays on it,
   // also in a gap between aligned sentences.
-  const withNarration = follow && (!!interval || (playing && recordingActive));
+  const withNarration = narrationActive({
+    follow,
+    inSentence: !!interval,
+    playing,
+    recordingActive,
+  });
   const timed = useMemo(
     () =>
       interval

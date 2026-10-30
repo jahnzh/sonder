@@ -295,3 +295,17 @@ export function audioMove(target: {
   if (target.sameFile) return "seek";
   return target.playing ? "play" : "none";
 }
+
+/**
+ * Whether the display follows the narration. While the audio plays for this
+ * recording it does so also in a gap between aligned sentences, instead of
+ * dropping to the words-per-minute reader and its slider.
+ */
+export function narrationActive(state: {
+  follow: boolean;
+  inSentence: boolean;
+  playing: boolean;
+  recordingActive: boolean;
+}): boolean {
+  return state.follow && (state.inSentence || (state.playing && state.recordingActive));
+}
