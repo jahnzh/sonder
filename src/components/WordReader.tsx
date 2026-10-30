@@ -7,14 +7,19 @@ import {
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
 } from "react";
+import { MoreHorizontal } from "lucide-react";
 import type { AlignmentInterval, ReaderBook } from "../reading-types";
 import { readerWords, type ReaderWord } from "../reader-segments";
+import { keyEventContext, wordKeyAction } from "../keyboard";
 import {
+  createPositionEstimator,
+  narratedWordIndex,
   orpIndex,
+  paragraphStarts,
   scheduleWords,
+  timeForWord,
   timedWordsForParagraph,
   wordAtTime,
-  type TimedWord,
 } from "../word-timing";
 import "../word-reader.css";
 
@@ -29,43 +34,18 @@ function splitOrp(text: string) {
   };
 }
 
-/** Global index of a timed word inside the flat readerWords list. */
-function globalIndex(words: ReaderWord[], timed: TimedWord): number {
-  let local = 0;
-  for (let i = 0; i < words.length; i++) {
-    if (words[i].paragraphId !== timed.paragraphId) continue;
-    if (local === timed.index) return i;
-    local += 1;
-  }
-  return Math.max(
-    0,
-    words.findIndex((word) => word.paragraphId === timed.paragraphId),
-  );
-}
-
-function timeForWord(
-  words: ReaderWord[],
-  index: number,
-  interval: AlignmentInterval | undefined,
-  intervals: AlignmentInterval[],
-): number | undefined {
-  const word = words[index];
-  if (!word) return undefined;
-  const match =
-    intervals.find((item) => item.paragraphId === word.paragraphId) ||
-    (interval?.paragraphId === word.paragraphId ? interval : undefined);
-  if (!match) return undefined;
-  const timed = timedWordsForParagraph(words, word.paragraphId, match.start, match.end);
-  const local = words
-    .slice(0, index + 1)
-    .filter((item) => item.paragraphId === word.paragraphId).length - 1;
-  return timed[local]?.start;
-}
+export type WordSeek = {
+  /** Start of the word in the narration, when its sentence is aligned. */
+  time?: number;
+  /** The words advanced on their own (words per minute), nobody stepped. */
+  auto?: boolean;
+};
 
 export function WordReader({
   book,
   interval,
   intervals = [],
+  recordingActive,
   position,
   playing,
   speed,
@@ -74,6 +54,8 @@ export function WordReader({
   wpm,
   selectedParagraph,
   ignoreKeys,
+  controlsVisible,
+  showControlsButton,
   onWpm,
   onWord,
   onTogglePlay,
@@ -84,6 +66,8 @@ export function WordReader({
   book: ReaderBook;
   interval?: AlignmentInterval;
   intervals?: AlignmentInterval[];
+  /** The player has the recording the sync map belongs to. */
+  recordingActive: boolean;
   position: number;
   playing: boolean;
   speed: number;
@@ -92,15 +76,30 @@ export function WordReader({
   wpm: number;
   selectedParagraph?: string;
   ignoreKeys?: boolean;
+  controlsVisible: boolean;
+  /** Touch layouts hide the top bar until asked for; desktop always shows it. */
+  showControlsButton: boolean;
   onWpm: (wpm: number) => void;
   onWord: (word: ReaderWord, index: number) => void;
   onTogglePlay: () => void;
-  onSeek: (word: ReaderWord, index: number, time?: number) => void;
+  onSeek: (word: ReaderWord, index: number, seek: WordSeek) => void;
   onStepSentence: (direction: -1 | 1) => void;
   onToggleControls: () => void;
 }) {
   const words = useMemo(() => readerWords(book), [book.fingerprint]);
-  const withNarration = follow && !!interval;
+  const starts = useMemo(() => paragraphStarts(words), [words]);
+  const paragraphText = useMemo(
+    () =>
+      new Map(
+        book.sections.flatMap((section) =>
+          section.paragraphs.map((fragment) => [fragment.id, fragment.text.trim()] as const),
+        ),
+      ),
+    [book.fingerprint],
+  );
+  // While the narration plays for this recording the display stays on it,
+  // also in a gap between aligned sentences.
+  const withNarration = follow && (!!interval || (playing && recordingActive));
   const timed = useMemo(
     () =>
       interval
@@ -108,9 +107,31 @@ export function WordReader({
         : [],
     [words, interval?.paragraphId, interval?.start, interval?.end],
   );
-  const narrated = withNarration ? wordAtTime(timed, position) : undefined;
-  const narratedIndex =
-    narrated && words.length ? globalIndex(words, narrated) : 0;
+
+  const estimator = useMemo(() => createPositionEstimator(), []);
+  const [estimated, setEstimated] = useState(position);
+  useEffect(() => {
+    estimator.sync(position, playing, speed);
+    setEstimated(position);
+  }, [position, playing, speed]);
+  // The audio element reports its position about four times a second; a word
+  // is shorter than that at higher speeds, so extrapolate between reports.
+  useEffect(() => {
+    if (!withNarration || !playing) return;
+    let frame = 0;
+    let last = -1;
+    const run = () => {
+      const at = estimator.estimate();
+      const index = wordAtTime(timed, at)?.index ?? -1;
+      if (index !== last) {
+        last = index;
+        setEstimated(at);
+      }
+      frame = requestAnimationFrame(run);
+    };
+    frame = requestAnimationFrame(run);
+    return () => cancelAnimationFrame(frame);
+  }, [withNarration, playing, timed]);
 
   const [manualIndex, setManualIndex] = useState(0);
   const [wpmRunning, setWpmRunning] = useState(false);
@@ -118,6 +139,18 @@ export function WordReader({
   const wordEl = useRef<HTMLParagraphElement>(null);
   const pivot = useRef<HTMLSpanElement>(null);
   const wpmToken = useRef(0);
+  // The word on screen, so a change of mode or a missing sentence keeps it.
+  const shown = useRef(0);
+
+  const narratedIndex = narratedWordIndex(
+    starts,
+    words.length,
+    timed,
+    playing ? estimated : position,
+    shown.current,
+  );
+  const resolvedIndex = withNarration ? narratedIndex : manualIndex;
+  shown.current = resolvedIndex;
 
   useEffect(() => {
     if (withNarration) {
@@ -125,24 +158,16 @@ export function WordReader({
       return;
     }
     const paragraphId = selectedParagraph || words[0]?.paragraphId;
-    const first = Math.max(
-      0,
-      words.findIndex((word) => word.paragraphId === paragraphId),
-    );
-    setManualIndex((current) =>
-      words[current]?.paragraphId === paragraphId ? current : first,
-    );
+    const first = (paragraphId && starts.get(paragraphId)) || 0;
+    setManualIndex((current) => {
+      if (words[shown.current]?.paragraphId === paragraphId) return shown.current;
+      return words[current]?.paragraphId === paragraphId ? current : first;
+    });
   }, [withNarration, selectedParagraph, book.fingerprint]);
 
-  const resolvedIndex = withNarration ? narratedIndex : manualIndex;
   const current = words[Math.max(0, Math.min(words.length - 1, resolvedIndex))];
   const parts = splitOrp(current?.text || "");
-  const sentence = current
-    ? book.sections
-        .flatMap((section) => section.paragraphs)
-        .find((fragment) => fragment.id === current.paragraphId)
-        ?.text.trim() || ""
-    : "";
+  const sentence = current ? paragraphText.get(current.paragraphId) || "" : "";
   const paused = withNarration ? !playing : !wpmRunning;
   const fastNote = withNarration && speed > 2.5;
 
@@ -160,10 +185,14 @@ export function WordReader({
     if (current) onWord(current, resolvedIndex);
   }, [current?.paragraphId, current?.text, resolvedIndex]);
 
+  // The scheduler outlives renders; it reads what the Reader passes now.
+  const onSeekRef = useRef(onSeek);
+  onSeekRef.current = onSeek;
+
   useEffect(() => {
     if (withNarration || !wpmRunning || !words.length) return;
     const token = ++wpmToken.current;
-    const start = resolvedIndex;
+    const start = shown.current;
     let first = true;
     const scheduler = scheduleWords(words, start, wpm, (next) => {
       if (token !== wpmToken.current) return;
@@ -174,7 +203,7 @@ export function WordReader({
       }
       setManualIndex(next);
       const word = words[next];
-      if (word) onSeek(word, next);
+      if (word) onSeekRef.current(word, next, { auto: true });
       if (next >= words.length - 1) setWpmRunning(false);
     });
     return () => {
@@ -183,47 +212,62 @@ export function WordReader({
     // Restart only when play/wpm changes, not on every word advance.
   }, [withNarration, wpmRunning, wpm, book.fingerprint]);
 
+  // A hidden tab keeps its timers; the words must not keep reading by themselves.
+  useEffect(() => {
+    const stop = () => setWpmRunning(false);
+    const visibility = () => {
+      if (document.hidden) stop();
+    };
+    document.addEventListener("visibilitychange", visibility);
+    window.addEventListener("pagehide", stop);
+    return () => {
+      document.removeEventListener("visibilitychange", visibility);
+      window.removeEventListener("pagehide", stop);
+    };
+  }, []);
+
   const stepWord = (direction: -1 | 1) => {
     if (!words.length) return;
     const next = Math.max(0, Math.min(words.length - 1, resolvedIndex + direction));
     const word = words[next];
     if (!word) return;
     setWpmRunning(false);
-    if (!withNarration) setManualIndex(next);
-    const time = timeForWord(words, next, interval, intervals);
-    onSeek(word, next, time);
+    setManualIndex(next);
+    onSeek(word, next, { time: timeForWord(words, starts, next, intervals) });
   };
 
+  const handleKey = (event: KeyboardEvent) => {
+    const action = wordKeyAction({
+      key: event.key,
+      shiftKey: event.shiftKey,
+      repeat: event.repeat,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      altKey: event.altKey,
+      defaultPrevented: event.defaultPrevented,
+      ...keyEventContext(event),
+      ignored: ignoreKeys || !!host.current?.closest('[data-state="closed"]'),
+    });
+    if (!action) return;
+    event.preventDefault();
+    if (action.type === "toggle") {
+      if (withNarration) onTogglePlay();
+      else setWpmRunning((value) => !value);
+    } else if (action.type === "step") stepWord(action.direction);
+    else if (action.type === "sentence") {
+      setWpmRunning(false);
+      onStepSentence(action.direction);
+    }
+  };
+  const keyRef = useRef(handleKey);
+  keyRef.current = handleKey;
   useEffect(() => {
-    const key = (event: KeyboardEvent) => {
-      if (ignoreKeys) return;
-      if (event.ctrlKey || event.metaKey || event.altKey) return;
-      if ((event.target as HTMLElement)?.closest("input,select,textarea,button")) return;
-      if (host.current?.closest('[data-state="closed"]')) return;
-      if (event.key === " ") {
-        event.preventDefault();
-        if (withNarration) onTogglePlay();
-        else setWpmRunning((value) => !value);
-        return;
-      }
-      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-        event.preventDefault();
-        const direction: -1 | 1 = event.key === "ArrowLeft" ? -1 : 1;
-        if (event.shiftKey) {
-          setWpmRunning(false);
-          onStepSentence(direction);
-        } else stepWord(direction);
-      }
-    };
+    const key = (event: KeyboardEvent) => keyRef.current(event);
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  });
+  }, []);
 
-  const onTap = (event: ReactMouseEvent) => {
-    if ((event.target as HTMLElement).closest("label,input,button")) {
-      onToggleControls();
-      return;
-    }
+  const onTap = (_event: ReactMouseEvent) => {
     if (withNarration) onTogglePlay();
     else setWpmRunning((value) => !value);
   };
@@ -232,7 +276,10 @@ export function WordReader({
     <div
       className="word-reader"
       ref={host}
+      role="group"
+      tabIndex={0}
       aria-label="Word reader"
+      data-keys={ignoreKeys ? "false" : "true"}
       data-word-index={resolvedIndex}
       data-paused={paused ? "true" : "false"}
       onClick={onTap}
@@ -284,6 +331,22 @@ export function WordReader({
           ) : null}
         </>
       )}
+      {showControlsButton ? (
+        <button
+          type="button"
+          className="word-reader-controls-toggle"
+          aria-label={controlsVisible ? "Hide reader controls" : "Show reader controls"}
+          aria-expanded={controlsVisible}
+          onClick={(event) => {
+            event.stopPropagation();
+            // A pointer click leaves focus on the button, which would swallow the keys.
+            if (event.detail > 0) host.current?.focus({ preventScroll: true });
+            onToggleControls();
+          }}
+        >
+          <MoreHorizontal size={22} />
+        </button>
+      ) : null}
     </div>
   );
 }

@@ -31,6 +31,7 @@ import { fontFamilies, paletteFor } from "../appearance";
 import { ReadingSync } from "./ReadingSync";
 import { LyricsReader } from "./LyricsReader";
 import { WordReader } from "./WordReader";
+import { audioMove, createCheckpointSaver, seekInside } from "../word-timing";
 import { PlaybackSource } from "./PlaybackSource";
 import { PlaybackOptions } from "./PlaybackOptions";
 import { PlaybackTimeline } from "./PlaybackTimeline";
@@ -731,6 +732,9 @@ export function ReaderView({
         }
         if (disposed) return;
         setRendered(true);
+        // A Word mode checkpoint is a sentence without a CFI; go to that sentence.
+        if (latest.current && !latest.current.cfi)
+          void jumpRef.current(latest.current.paragraphId, false).catch(() => false);
         let lastWidth=0,lastHeight=0;
         const observer = new ResizeObserver(() => {
           if (!disposed && host.clientHeight > 0) {
@@ -820,6 +824,10 @@ export function ReaderView({
     const timer = setTimeout(() => {
       const player=playerRef.current,current=mapRef.current;
       if(followRef.current && current && player.book?.recordingId===current.recordingId && current.intervals.some(interval=>interval.trackId===player.track?.id && interval.start<=player.position && interval.end>player.position))return;
+      if (latest.current && !latest.current.cfi) {
+        void jumpRef.current(latest.current.paragraphId, false).catch(() => false);
+        return;
+      }
       const restore = latest.current?.cfi || book?.sections[0]?.href;
       if (restore && rendition.current === view)
         void displayAutomatically(view, restore).catch(() => {});
@@ -1277,6 +1285,8 @@ export function ReaderView({
   const timing = currentInterval ? (currentInterval.verified ? "" : " · estimated timings") : "";
   const overlayDisplay = preferences.display === "segment" || preferences.display === "word";
   const showContents = desktop && preferences.display === "book" && !contentsHidden;
+  // The sentence locator alone: the pages do not move in Word mode, so the CFI
+  // of the page last shown would not belong to this sentence.
   const locateParagraph = (paragraphId: string) => {
     const all = sections.flatMap((section) => section.paragraphs);
     const section = sections.find((entry) =>
@@ -1285,7 +1295,6 @@ export function ReaderView({
     const fragment = section?.paragraphs.find((entry) => entry.id === paragraphId);
     if (!section || !fragment) return null;
     return {
-      cfi: latest.current?.cfi,
       section: section.index,
       paragraphId,
       quote: fragment.text.slice(0, 300),
@@ -1294,30 +1303,68 @@ export function ReaderView({
         Math.max(1, all.length - 1),
     };
   };
+  // A paused book stays paused: another file would have to start playing to be shown.
+  const moveAudioTo = (paragraphId: string, time?: number) => {
+    const mapped = map?.intervals.find((item) => item.paragraphId === paragraphId);
+    const audioBook = books.find((item) => item.recordingId === map?.recordingId);
+    const track = audioBook?.tracks.find((item) => item.id === mapped?.trackId);
+    if (!mapped || !audioBook || !track) return false;
+    const at = time ?? seekInside(mapped.start, mapped.end);
+    const move = audioMove({
+      mapped: true,
+      sameFile: p.book?.recordingId === audioBook.recordingId && p.track?.id === track.id,
+      playing: p.playing,
+    });
+    if (move === "none") return false;
+    following.current = "";
+    if (move === "seek") p.seek(at);
+    else void p.play(audioBook, track, at);
+    return true;
+  };
+  // Word mode saves like page turns do: after a pause, and not for every sentence it reads by itself.
+  const wordSaver = useMemo(
+    () =>
+      createCheckpointSaver<{ value: TextLocator; origin: "reading" | "listening" }>(
+        ({ value, origin }) =>
+          void saveReading(id, value, origin, mapRef.current?.recordingId).catch(() => {}),
+      ),
+    [id],
+  );
+  useEffect(() => {
+    const hidden = () => {
+      if (document.hidden) wordSaver.flush();
+    };
+    const flush = () => wordSaver.flush();
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", hidden);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", hidden);
+      wordSaver.flush();
+    };
+  }, [wordSaver]);
+  // Whatever way the display changes to Page, the page goes to the sentence Word mode was on.
+  const previousDisplay = useRef(preferences.display);
+  useEffect(() => {
+    const was = previousDisplay.current;
+    previousDisplay.current = preferences.display;
+    if (was !== "word" || preferences.display === "word") return;
+    wordSaver.flush();
+    if (preferences.display === "book" && latest.current?.paragraphId)
+      void jumpRef.current(latest.current.paragraphId, false);
+  }, [preferences.display]);
   const wordSentenceStep = (direction: -1 | 1) => {
     const paragraphs = sections.flatMap((section) => section.paragraphs);
     const at = paragraphs.findIndex((fragment) => fragment.id === latest.current?.paragraphId);
     const next = paragraphs[Math.max(0, Math.min(paragraphs.length - 1, (at < 0 ? 0 : at) + direction))];
     if (!next) return;
     const value = locateParagraph(next.id);
-    if (value) {
-      latest.current = value;
-      setLocator(value);
-      void saveReading(id, value, follow ? "listening" : "reading").catch(() => {});
-    }
-    const mapped = map?.intervals.find((item) => item.paragraphId === next.id);
-    const audioBook = books.find((item) => item.recordingId === map?.recordingId);
-    const track = audioBook?.tracks.find((item) => item.id === mapped?.trackId);
-    if (mapped && audioBook && track && follow) {
-      following.current = "";
-      if (p.book?.recordingId === audioBook.recordingId && p.track?.id === track.id) {
-        p.seek(mapped.start);
-      } else {
-        void p.play(audioBook, track, mapped.start);
-      }
-      return;
-    }
-    setFollow(false);
+    if (!value) return;
+    const moved = follow && moveAudioTo(next.id);
+    if (follow && !moved) setFollow(false);
+    latest.current = value;
+    setLocator(value);
+    wordSaver.request({ value, origin: moved ? "listening" : "reading" });
   };
   const openMore = () => {
     setPanel(null);
@@ -1347,13 +1394,7 @@ export function ReaderView({
           <button
             key={value}
             aria-pressed={preferences.display === value}
-            onClick={fromMenu(() => {
-              editReader({ display: value });
-              // Keep the CFI + sentence locator; bring Page mode back to that sentence.
-              if (value === "book" && latest.current?.paragraphId) {
-                void jumpRef.current(latest.current.paragraphId);
-              }
-            })}
+            onClick={fromMenu(() => editReader({ display: value }))}
           >
             {value === "book" ? "Page" : value === "segment" ? "Lyrics" : "Word"}
           </button>
@@ -1467,6 +1508,7 @@ export function ReaderView({
             book={book}
             interval={currentInterval}
             intervals={map?.intervals || []}
+            recordingActive={!!map && map.recordingId === p.book?.recordingId}
             position={p.position}
             playing={p.playing}
             speed={p.speed || 1}
@@ -1475,6 +1517,8 @@ export function ReaderView({
             wpm={preferences.wordWpm}
             selectedParagraph={locator?.paragraphId}
             ignoreKeys={!!panel}
+            controlsVisible={controls}
+            showControlsButton={!desktop}
             onWpm={(wordWpm) => editReader({ wordWpm })}
             onToggleControls={() => setControlsVisible((value) => !value)}
             onTogglePlay={() => p.toggle()}
@@ -1486,29 +1530,17 @@ export function ReaderView({
               latest.current = value;
               setLocator(value);
             }}
-            onSeek={(word, _index, time) => {
+            onSeek={(word, _index, { time, auto }) => {
               const value = locateParagraph(word.paragraphId);
-              const paragraphChanged = !!value && latest.current?.paragraphId !== value.paragraphId;
-              if (value) {
-                latest.current = value;
-                setLocator(value);
-                if (paragraphChanged) {
-                  void saveReading(id, value, follow ? "listening" : "reading").catch(() => {});
-                }
-              }
-              if (time != null && follow) {
-                const mapped = map?.intervals.find((item) => item.paragraphId === word.paragraphId) || currentInterval;
-                const audioBook = books.find((item) => item.recordingId === map?.recordingId);
-                const track = audioBook?.tracks.find((item) => item.id === mapped?.trackId);
-                if (mapped && audioBook && track) {
-                  following.current = "";
-                  if (p.book?.recordingId === audioBook.recordingId && p.track?.id === track.id) {
-                    p.seek(time);
-                  } else {
-                    void p.play(audioBook, track, time);
-                  }
-                }
-              }
+              if (!value) return;
+              const moved = !auto && follow && time != null && moveAudioTo(word.paragraphId, time);
+              // A sentence without timing, or audio that stays where it is, ends the narration follow.
+              if (!auto && follow && !moved) setFollow(false);
+              const paragraphChanged = latest.current?.paragraphId !== value.paragraphId;
+              latest.current = value;
+              setLocator(value);
+              if (paragraphChanged)
+                wordSaver.request({ value, origin: moved ? "listening" : "reading" }, auto);
             }}
           />}
           {desktop && preferences.display === "book" && <>

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { playbackKeyAction } from "../src/keyboard.ts";
+import { KEYBOARD_SHORTCUTS, playbackKeyAction, wordKeyAction } from "../src/keyboard.ts";
 test("Space toggles playback and arrow keys seek 30 seconds when playback is available", () => {
   assert.deepEqual(playbackKeyAction({ key: " " }), { type: "toggle" });
   assert.deepEqual(playbackKeyAction({ key: "ArrowLeft" }), {
@@ -58,4 +58,51 @@ test("README lists every keyboard shortcut", async () => {
   const line = readFileSync("README.md", "utf8").split("\n").find(l => l.startsWith("Keyboard shortcuts:")) ?? "";
   for (const { keys } of KEYBOARD_SHORTCUTS)
     for (const key of keys) assert.ok(line.includes(`\`${key}\``), key);
+});
+
+test("the player leaves Space and the arrow keys to the Word reader while it is open", () => {
+  for (const key of [" ", "ArrowLeft", "ArrowRight"])
+    assert.equal(playbackKeyAction({ key, wordReaderKeys: true }), null, key);
+  // Without the Word reader nothing changes.
+  assert.deepEqual(playbackKeyAction({ key: " ", wordReaderKeys: false }), { type: "toggle" });
+});
+test("Word mode turns Space and the arrows into one action each", () => {
+  assert.deepEqual(wordKeyAction({ key: " " }), { type: "toggle" });
+  assert.deepEqual(wordKeyAction({ key: "ArrowRight" }), { type: "step", direction: 1 });
+  assert.deepEqual(wordKeyAction({ key: "ArrowLeft" }), { type: "step", direction: -1 });
+  assert.deepEqual(wordKeyAction({ key: "ArrowRight", shiftKey: true }), { type: "sentence", direction: 1 });
+  assert.deepEqual(wordKeyAction({ key: "ArrowLeft", shiftKey: true }), { type: "sentence", direction: -1 });
+  assert.equal(wordKeyAction({ key: "f" }), null);
+  assert.equal(wordKeyAction({ key: "ArrowUp" }), null);
+});
+test("a key already handled, or held down, does not act twice in Word mode", () => {
+  for (const key of [" ", "ArrowLeft", "ArrowRight"]) {
+    assert.equal(wordKeyAction({ key, defaultPrevented: true }), null, key);
+    assert.deepEqual(wordKeyAction({ key, repeat: true }), { type: "hold" }, key);
+  }
+  assert.equal(wordKeyAction({ key: " ", repeat: true, defaultPrevented: true }), null);
+  assert.equal(wordKeyAction({ key: "f", repeat: true }), null);
+});
+test("Word mode ignores the situations the player ignores, and a reader panel", () => {
+  for (const targetTag of ["INPUT", "TEXTAREA", "SELECT", "BUTTON", "SUMMARY", "A"])
+    for (const key of [" ", "ArrowLeft", "ArrowRight"])
+      assert.equal(wordKeyAction({ key, targetTag }), null, `${key} on ${targetTag}`);
+  assert.equal(wordKeyAction({ key: " ", targetTag: "DIV" })?.type, "toggle");
+  for (const key of [" ", "ArrowLeft", "ArrowRight"]) {
+    assert.equal(wordKeyAction({ key, dialogOpen: true }), null);
+    assert.equal(wordKeyAction({ key, contentEditable: true }), null);
+    assert.equal(wordKeyAction({ key, ctrlKey: true }), null);
+    assert.equal(wordKeyAction({ key, metaKey: true }), null);
+    assert.equal(wordKeyAction({ key, altKey: true }), null);
+    assert.equal(wordKeyAction({ key, ignored: true }), null);
+  }
+});
+test("each key is listed once, with its meaning in every context", () => {
+  const keys = KEYBOARD_SHORTCUTS.flatMap((entry) => entry.keys);
+  assert.deepEqual(keys, [...new Set(keys)]);
+  const arrows = KEYBOARD_SHORTCUTS.find((entry) => entry.keys.includes("←"));
+  assert.match(arrows?.action ?? "", /30 seconds/);
+  assert.match(arrows?.action ?? "", /Word mode, step one word/);
+  const space = KEYBOARD_SHORTCUTS.find((entry) => entry.keys.includes("Space"));
+  assert.match(space?.action ?? "", /Word mode/);
 });

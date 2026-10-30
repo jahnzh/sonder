@@ -60,6 +60,17 @@ export function keepPlaybackSpeed(input: Appearance, stored: Appearance): Appear
     ? { ...input, playback: { ...input.playback, speed: stored.playback.speed } }
     : input;
 }
+/**
+ * Older clients drop `reader.wordWpm` when they save; a body without it must
+ * not reset the stored words per minute to the default. `sent` is the body as
+ * received, since parsing fills in the default.
+ */
+export function keepWordWpm(input: Appearance, stored: Appearance, sent: unknown): Appearance {
+  const reader = (sent as { reader?: { wordWpm?: unknown } } | null)?.reader;
+  return reader?.wordWpm === undefined
+    ? { ...input, reader: { ...input.reader, wordWpm: stored.reader.wordWpm } }
+    : input;
+}
 /** What this client sends: an unset default speed goes out as null, so the server clears it too. */
 export function appearanceToSave(value: Appearance): Appearance {
   return {

@@ -149,3 +149,149 @@ export function timedWordsForParagraph(
   const words = all.filter((word) => word.paragraphId === paragraphId);
   return interpolateWordTimes(words, start, end);
 }
+
+/** Index in the flat word list of the first word of each paragraph. */
+export function paragraphStarts(words: { paragraphId: string }[]): Map<string, number> {
+  const starts = new Map<string, number>();
+  words.forEach((word, index) => {
+    if (!starts.has(word.paragraphId)) starts.set(word.paragraphId, index);
+  });
+  return starts;
+}
+
+/**
+ * Flat index of the word the narration is on. A sentence with no words, or
+ * one that is not in the book, leaves nothing to show, so the previous word
+ * stays instead of the display jumping to the start of the book.
+ */
+export function narratedWordIndex(
+  starts: Map<string, number>,
+  wordCount: number,
+  timed: TimedWord[],
+  position: number,
+  previous: number,
+): number {
+  const clamp = (index: number) => Math.max(0, Math.min(wordCount - 1, index));
+  const hit = wordAtTime(timed, position);
+  const first = hit ? starts.get(hit.paragraphId) : undefined;
+  return first === undefined || !hit ? clamp(previous) : clamp(first + hit.index);
+}
+
+/** Start time of one word inside its sentence's alignment interval, if the sentence is aligned. */
+export function timeForWord(
+  words: ReaderWord[],
+  starts: Map<string, number>,
+  index: number,
+  intervals: { paragraphId: string; start: number; end: number }[],
+): number | undefined {
+  const word = words[index];
+  const first = word ? starts.get(word.paragraphId) : undefined;
+  if (!word || first === undefined) return undefined;
+  const match = intervals.find((item) => item.paragraphId === word.paragraphId);
+  if (!match) return undefined;
+  const timed = timedWordsForParagraph(words, word.paragraphId, match.start, match.end)[
+    index - first
+  ];
+  return timed && seekInside(timed.start, timed.end);
+}
+
+/**
+ * Seeking compressed audio can land a few milliseconds before the requested
+ * time, which would show the word or sentence before; aim a little inside.
+ */
+export function seekInside(start: number, end: number): number {
+  return start + Math.min(0.05, Math.max(0, end - start) / 2);
+}
+
+export type PositionEstimator = {
+  /** Records the audio position the player just reported. */
+  sync: (position: number, playing: boolean, speed: number) => void;
+  /** Audio position now, extrapolated from the last report. */
+  estimate: () => number;
+};
+
+/**
+ * The audio element reports its position about four times a second, which is
+ * coarser than a word at normal speed. Between reports the position is
+ * extrapolated from the clock at the playback speed.
+ */
+export function createPositionEstimator(
+  now: () => number = () => performance.now(),
+): PositionEstimator {
+  let base = 0;
+  let at = 0;
+  let rate = 0;
+  return {
+    sync: (position, playing, speed) => {
+      base = position;
+      at = now();
+      rate = playing && Number.isFinite(speed) && speed > 0 ? speed : 0;
+    },
+    estimate: () => base + (Math.max(0, now() - at) / 1000) * rate,
+  };
+}
+
+export type CheckpointSaver<T> = {
+  request: (value: T, auto?: boolean) => void;
+  /** Saves a pending value now (page hidden, reader closed). */
+  flush: () => void;
+  cancel: () => void;
+};
+
+/**
+ * Collapses a burst of reading-position changes into one save, like the page
+ * turns do. While the words advance on their own, saves are also at least
+ * `autoGapMs` apart, so a book that reads itself does not queue a Hardcover
+ * write for every sentence.
+ */
+export function createCheckpointSaver<T>(
+  save: (value: T) => void,
+  options: { debounceMs?: number; autoGapMs?: number } = {},
+  clock: WordClock = defaultClock,
+): CheckpointSaver<T> {
+  const debounceMs = options.debounceMs ?? 500;
+  const autoGapMs = options.autoGapMs ?? 5000;
+  let pending: { value: T } | null = null;
+  let timer: unknown = null;
+  let lastSaved = -Infinity;
+  const clear = () => {
+    if (timer != null) clock.clearTimeout(timer);
+    timer = null;
+  };
+  const flush = () => {
+    clear();
+    if (!pending) return;
+    const { value } = pending;
+    pending = null;
+    lastSaved = clock.now();
+    save(value);
+  };
+  return {
+    request: (value, auto = false) => {
+      pending = { value };
+      clear();
+      const now = clock.now();
+      const due = auto ? Math.max(now + debounceMs, lastSaved + autoGapMs) : now + debounceMs;
+      timer = clock.setTimeout(flush, due - now);
+    },
+    flush,
+    cancel: () => {
+      clear();
+      pending = null;
+    },
+  };
+}
+
+/**
+ * How stepping onto a sentence moves the narration. A file that is not loaded
+ * has to be started to be shown, so a book that is not playing stays where it is.
+ */
+export function audioMove(target: {
+  mapped: boolean;
+  sameFile: boolean;
+  playing: boolean;
+}): "seek" | "play" | "none" {
+  if (!target.mapped) return "none";
+  if (target.sameFile) return "seek";
+  return target.playing ? "play" : "none";
+}
