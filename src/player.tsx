@@ -7,7 +7,9 @@ import {
   useCallback,
   type ReactNode,
 } from "react";
-import { api, localDB, offlineUrl, saveProgress, syncProgress } from "./lib";
+import { liveQuery } from "dexie";
+import { api, forgetPositionHistory, localDB, offlineUrl, peekPositionHistory, positionHistorySettled, prunePositionHistory, saveProgress, syncProgress, updatePositionHistory } from "./lib";
+import { HISTORY_LIFETIME, planUndo, recentPositions, restored, type JumpKind, type PositionEntry } from "./position-history";
 import {
   listeningChapters,
   currentChapter,
@@ -41,6 +43,7 @@ import {
   resolveSpeed,
   speedMemory,
 } from "./playback-speed";
+type RecordedPosition = (recordingId: string, entry: PositionEntry) => void;
 type PlayerState = {
   source: "device" | "server" | "torbox" | "remote" | null;
   book: Book | null;
@@ -60,7 +63,11 @@ type PlayerState = {
   volume: number;
   sleep: number | null;
   error: string | null;
-  play: (book: Book, track?: Track, start?: number) => Promise<void>;
+  /**
+   * `kind: null` moves without recording the position left. `onRecord` sees each
+   * history entry the move writes, so a caller can take it back.
+   */
+  play: (book: Book, track?: Track, start?: number, options?: { kind?: JumpKind | null; previous?: Progress | null; onRecord?: RecordedPosition }) => Promise<void>;
   prepare: (book:Book)=>Promise<void>;
   toggle: () => void;
   pause: () => void;
@@ -69,6 +76,8 @@ type PlayerState = {
   seekTrack: (trackId: string, position: number) => void;
   seekBook: (position: number) => void;
   skip: (n: number) => void;
+  canUndoJump: boolean;
+  undoJump: () => void;
   /** Without a recording id, sets the speed of the book in the player. */
   setSpeed: (n: number, recordingId?: string) => void;
   setVolume: (n: number) => void;
@@ -111,6 +120,11 @@ export function PlayerProvider({
   onProgressRef.current = onProgress;
   const lastSave = useRef(0);
   const pendingSeek = useRef<number | null>(null);
+  const persistAfterLoad = useRef(false);
+  const sourceSwitch = useRef<{ recordingId: string; entry: PositionEntry } | null>(null);
+  const undoing = useRef(false);
+  const pendingSkips = useRef<Promise<void> | null>(null);
+  const [history, setHistory] = useState<{ recordingId: string; available: boolean } | null>(null);
   const knownDurations = useRef(new Map<string, number>());
   const objectUrl = useRef<string | null>(null);
   const sleepEnd = useRef<number | null>(null);
@@ -176,6 +190,63 @@ export function PlayerProvider({
     onProgressRef.current(p);
     void saveProgress(p);
   }, []);
+  const rememberPosition = useCallback((recordingId: string, entry: PositionEntry, onRecord?: RecordedPosition) => {
+    void updatePositionHistory(recordingId, entry).catch(() => {
+      notifyRef.current?.("Could not save the previous playback position.");
+    });
+    // After the write is queued, so a caller taking the entry back queues behind it.
+    onRecord?.(recordingId, entry);
+  }, []);
+  const currentPosition = useCallback(() => {
+    const { book, track } = state.current;
+    const position = pendingSeek.current ?? audio.current.currentTime;
+    return book && track && Number.isFinite(position)
+      ? { book, track, position }
+      : null;
+  }, []);
+  const rememberCurrent = useCallback((kind: JumpKind, targetTrackId?: string, targetPosition?: number, onRecord?: RecordedPosition) => {
+    const current = currentPosition();
+    if (!current || (current.track.id === targetTrackId && current.position === targetPosition)) return;
+    rememberPosition(current.book.recordingId, {
+      trackId: current.track.id,
+      position: current.position,
+      timestamp: Date.now(),
+      kind,
+    }, onRecord);
+  }, [currentPosition, rememberPosition]);
+  useEffect(() => {
+    const recordingId = book?.recordingId;
+    setHistory(null);
+    let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const table = localDB.positionHistory;
+    const subscription = liveQuery(() => table.toArray()).subscribe({
+      next: (rows) => {
+        if (timer) clearTimeout(timer);
+        const now = Date.now();
+        const allEntries = rows.flatMap((row) => recentPositions(row.entries, now));
+        for (const row of rows)
+          if (recentPositions(row.entries, now).length !== row.entries.length)
+            void prunePositionHistory(row.recordingId).catch(() => {});
+        // Show the button for what is stored once the queued writes have landed.
+        if (recordingId)
+          void positionHistorySettled(recordingId)
+            .then(() => table.get(recordingId))
+            .then((row) => {
+              if (live) setHistory({ recordingId, available: recentPositions(row?.entries || [], Date.now()).length > 0 });
+            })
+            .catch(() => {});
+        if (allEntries.length) {
+          const expires = Math.min(...allEntries.map((entry) => entry.timestamp + HISTORY_LIFETIME));
+          timer = setTimeout(() => {
+            for (const row of rows) void prunePositionHistory(row.recordingId).catch(() => {});
+          }, Math.max(0, expires - Date.now()));
+        }
+      },
+      error: () => { if (recordingId) setHistory({ recordingId, available: false }); },
+    });
+    return () => { live = false; subscription.unsubscribe(); if (timer) clearTimeout(timer); };
+  }, [book?.recordingId]);
   // A server or original choice that fails with no route to the server plays the
   // device copy for this load only; the saved choice stays as it is.
   // `stillNeeded` is checked once the probe is back: a stall that cleared
@@ -241,13 +312,21 @@ export function PlayerProvider({
       return true;
     });
   }, [failures]);
-  const play = useCallback(
+  // Jumps that load another track record the position left a moment after they
+  // start; an undo waits for them so it sees that entry.
+  const pendingJumps = useRef(new Set<Promise<void>>());
+  const load = useCallback(
     async (
       b: Book,
       t?: Track,
       start = 0,
       autoplay = true,
       forceReload = false,
+      jump: JumpKind | null = null,
+      previousProgress?: Progress | null,
+      saveAfterLoad = false,
+      onRecord?: RecordedPosition,
+      moved?: () => void,
     ) => {
       const request = ++playRequests.current;
       const el = audio.current;
@@ -282,6 +361,28 @@ export function PlayerProvider({
         return;
       }
       if (request !== playRequests.current) return;
+      const recordMove = (targetPosition: number) => {
+        try {
+          if (!jump) return;
+          const current = currentPosition();
+          if (current?.book.recordingId === b.recordingId) {
+            rememberCurrent(jump, selected.id, targetPosition, onRecord);
+            return;
+          }
+          if (current) rememberCurrent("recording", undefined, undefined, onRecord);
+          const previous = previousProgress === undefined ? progress : previousProgress;
+          if (t && previous && (previous.trackId !== selected.id || previous.position !== targetPosition)) {
+            rememberPosition(b.recordingId, {
+              trackId: previous.trackId,
+              position: previous.position,
+              timestamp: Date.now(),
+              kind: jump,
+            }, onRecord);
+          }
+        } finally {
+          moved?.();
+        }
+      };
       if (
         !forceReload &&
         current?.id === selected.id &&
@@ -290,6 +391,7 @@ export function PlayerProvider({
       ) {
         applyRate(rate);
         if (t) {
+          recordMove(Math.max(0, Math.min(start, Number.isFinite(el.duration) ? el.duration : start)));
           el.currentTime = Math.max(
             0,
             Math.min(start, Number.isFinite(el.duration) ? el.duration : start),
@@ -307,7 +409,9 @@ export function PlayerProvider({
         }
         return;
       }
-      const targetPosition = t
+      const targetPosition = jump === "source" && current?.id === selected.id
+        ? pendingSeek.current ?? el.currentTime
+        : t
         ? start
         : current?.id === selected.id
           ? pendingSeek.current ?? el.currentTime
@@ -333,6 +437,12 @@ export function PlayerProvider({
         if (local) URL.revokeObjectURL(local);
         return;
       }
+      recordMove(targetPosition);
+      const sourcePosition = jump === "source" ? currentPosition() : null;
+      sourceSwitch.current = sourcePosition ? {
+        recordingId: sourcePosition.book.recordingId,
+        entry: { trackId: sourcePosition.track.id, position: sourcePosition.position, timestamp: Date.now(), kind: "source" },
+      } : null;
       if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
       objectUrl.current = local;
       streamLoad.current =
@@ -373,6 +483,7 @@ export function PlayerProvider({
           })
           .catch(() => {});
       pendingSeek.current = targetPosition;
+      persistAfterLoad.current = saveAfterLoad;
       setBook(b);
       setTrack(selected);
       setPosition(pendingSeek.current);
@@ -423,11 +534,36 @@ export function PlayerProvider({
         }
       }
     },
-    [persist, speedFor, applyRate, recoverOnDevice, failures],
+    [persist, speedFor, applyRate, recoverOnDevice, failures, currentPosition, rememberCurrent, rememberPosition],
+  );
+  const play = useCallback(
+    async (
+      b: Book,
+      t?: Track,
+      start = 0,
+      autoplay = true,
+      forceReload = false,
+      jump: JumpKind | null = null,
+      previousProgress?: Progress | null,
+      saveAfterLoad = false,
+      onRecord?: RecordedPosition,
+    ) => {
+      if (!jump) return load(b, t, start, autoplay, forceReload, jump, previousProgress, saveAfterLoad, onRecord);
+      let moved!: () => void;
+      const gate = new Promise<void>((resolve) => { moved = resolve; });
+      pendingJumps.current.add(gate);
+      void gate.then(() => pendingJumps.current.delete(gate));
+      try {
+        await load(b, t, start, autoplay, forceReload, jump, previousProgress, saveAfterLoad, onRecord, moved);
+      } finally {
+        moved();
+      }
+    },
+    [load],
   );
   const playRef = useRef(play);
   playRef.current = play;
-  const next = useCallback(() => {
+  const next = useCallback((automatic = false) => {
     const { book, track } = state.current;
     if (!book || !track) return;
     const all = listeningChapters(book),
@@ -436,7 +572,7 @@ export function PlayerProvider({
       (c) => c.track.id === current?.track.id && c.start === current?.start,
     );
     const target = all[idx + 1];
-    if (target) void playRef.current(book, target.track, target.start);
+    if (target) void playRef.current(book, target.track, target.start, true, false, automatic ? null : "chapter");
   }, []);
   const previous = useCallback(() => {
     const { book, track } = state.current;
@@ -444,6 +580,7 @@ export function PlayerProvider({
     const all = listeningChapters(book),
       current = currentChapter(book, track.id, audio.current.currentTime);
     if (current && audio.current.currentTime - current.start > 3) {
+      rememberCurrent("chapter", track.id, current.start);
       audio.current.currentTime = current.start;
       setPosition(current.start);
       persist();
@@ -453,51 +590,66 @@ export function PlayerProvider({
       (c) => c.track.id === current?.track.id && c.start === current?.start,
     );
     const target = all[Math.max(0, idx - 1)];
-    if (target) void playRef.current(book, target.track, target.start);
-  }, [persist]);
-  const seek = useCallback(
-    (n: number) => {
+    if (target) void playRef.current(book, target.track, target.start, true, false, "chapter");
+  }, [persist, rememberCurrent]);
+  const seekTo = useCallback(
+    (n: number, kind: JumpKind | null) => {
       const el = audio.current;
-      if (!el.src) return;
+      if (!el.src) return false;
       const max = Number.isFinite(el.duration)
         ? el.duration
         : state.current.length;
-      if (!max) return;
+      if (!max) return false;
       const target = Math.min(max, Math.max(0, n));
+      if (kind) rememberCurrent(kind, state.current.track?.id, target);
       el.currentTime = target;
       // A load still waiting for its saved position takes the newest target.
       if (pendingSeek.current !== null) pendingSeek.current = target;
       setPosition(el.currentTime);
       persist();
+      return true;
     },
-    [persist],
+    [persist, rememberCurrent],
   );
-  const skip = useCallback(
-    (n: number) => {
+  const seek = useCallback((n: number) => seekTo(n, "seek"), [seekTo]);
+  const performSkip = useCallback(
+    (n: number, recordingId: string) => {
       const { book, track } = state.current;
-      if (!book || !track) return;
+      if (!book || !track || book.recordingId !== recordingId) return;
       const target = relativeSeekTarget(
         book.tracks.map((track) => ({
           ...track,
           duration: knownDurations.current.get(track.id) || track.duration,
         })),
         track.id,
-        audio.current.currentTime,
+        pendingSeek.current ?? audio.current.currentTime,
         n,
         audio.current.duration,
       );
       if (!target) return;
-      if (target.track.id === track.id) seek(target.position);
+      if (target.track.id === track.id) seekTo(target.position, "skip");
       else
-        void playRef.current(
+        return playRef.current(
           book,
           book.tracks.find((t) => t.id === target.track.id),
           target.position,
           !audio.current.paused,
+          false,
+          "skip",
         );
     },
-    [seek],
+    [seekTo],
   );
+  const skip = useCallback((n: number) => {
+    const recordingId = state.current.book?.recordingId;
+    if (!recordingId) return;
+    const running = pendingSkips.current;
+    const work = running ? running.then(() => performSkip(n, recordingId)) : performSkip(n, recordingId);
+    if (!work) return;
+    const queued = work.catch(() => notifyRef.current?.("Could not skip playback."));
+    pendingSkips.current = queued;
+    void queued.finally(() => { if (pendingSkips.current === queued) pendingSkips.current = null; });
+  }, [performSkip]);
   const seekTrack = useCallback(
     (trackId: string, position: number) => {
       const { book, track } = state.current;
@@ -506,7 +658,7 @@ export function PlayerProvider({
       else {
         const target = book.tracks.find((track) => track.id === trackId);
         if (target)
-          void playRef.current(book, target, position, !audio.current.paused);
+          void playRef.current(book, target, position, !audio.current.paused, false, "seek");
       }
     },
     [seek],
@@ -528,6 +680,39 @@ export function PlayerProvider({
     },
     [seekTrack],
   );
+  // The entry leaves the history only after the position was restored; any
+  // other outcome keeps it, so a failed undo can be tried again.
+  const undoJump = useCallback(() => {
+    const { book } = state.current;
+    if (!book || undoing.current) return;
+    undoing.current = true;
+    const held = () => state.current.book
+      ? { recordingId: state.current.book.recordingId, trackId: state.current.track?.id }
+      : null;
+    void (async () => {
+      await Promise.all([...pendingJumps.current]);
+      const entry = await peekPositionHistory(book.recordingId);
+      if (!entry) return;
+      const plan = planUndo(entry, {
+        recordingId: book.recordingId,
+        trackIds: book.tracks.map((track) => track.id),
+        current: held(),
+        hasSource: !!audio.current.src,
+      });
+      const target = book.tracks.find((track) => track.id === entry.trackId);
+      let done = false;
+      if (plan.action === "seek") done = seekTo(entry.position, null);
+      else if (plan.action === "play" && target) {
+        await playRef.current(book, target, entry.position, !audio.current.paused, false, null, undefined, true);
+        done = restored(entry, book.recordingId, held());
+      }
+      if (done) await forgetPositionHistory(book.recordingId, entry);
+      // Switching recordings meanwhile is the user's own move, not a failure.
+      else if (!(plan.action === "keep" && plan.reason === "recording-changed"))
+        notifyRef.current?.("Could not undo the playback jump.");
+    })().catch(() => notifyRef.current?.("Could not undo the playback jump."))
+      .finally(() => { undoing.current = false; });
+  }, [seekTo]);
   const toggle = useCallback(() => {
     const el = audio.current;
     if (!el.src) {
@@ -562,6 +747,7 @@ export function PlayerProvider({
         pendingSeek.current ?? audio.current.currentTime,
         !audio.current.paused,
         true,
+        "source",
       );
     },
     [failures],
@@ -615,10 +801,18 @@ export function PlayerProvider({
         );
         pendingSeek.current = null;
       }
+      const switched = sourceSwitch.current;
+      sourceSwitch.current = null;
+      if (switched && state.current.book?.recordingId === switched.recordingId &&
+          state.current.track?.id === switched.entry.trackId && el.currentTime !== switched.entry.position) {
+        rememberPosition(switched.recordingId, switched.entry);
+        persistAfterLoad.current = true;
+      }
       setLoading(false);
       if (streamLoad.current) failures.clear();
       if (!objectUrl.current) noticedFor.current = null;
-      if (el.paused) persist();
+      if (el.paused || persistAfterLoad.current) persist();
+      persistAfterLoad.current = false;
     };
     const started = () => {
       watchdog.cancel();
@@ -641,7 +835,7 @@ export function PlayerProvider({
       const { book, track } = state.current;
       if (!book || !track) return;
       const index = book.tracks.findIndex((t) => t.id === track.id);
-      if (index < book.tracks.length - 1) next();
+      if (index < book.tracks.length - 1) next(true);
       else {
         void api(`/library/${book.id}`, {
           method: "PATCH",
@@ -653,6 +847,8 @@ export function PlayerProvider({
     const failed = () => {
       watchdog.cancel();
       const fail = () => {
+        // The load is abandoned: its source switch must not apply to a later one.
+        sourceSwitch.current = null;
         setLoading(false);
         setPlaying(false);
         if (el.src)
@@ -779,7 +975,7 @@ export function PlayerProvider({
       window.removeEventListener("keydown", keydown);
       navigator.serviceWorker?.removeEventListener("message", mediaSource);
     };
-  }, [persist, next, previous, skip, seek, toggle, recoverOnDevice, failures]);
+  }, [persist, next, previous, skip, seek, toggle, recoverOnDevice, failures, rememberPosition]);
   const speedTarget = book?.recordingId ?? fallback?.recordingId;
   useEffect(() => {
     // Shows the fallback book's speed before playback and follows a changed
@@ -844,7 +1040,7 @@ export function PlayerProvider({
         sleep,
         error,
         source,
-        play,
+        play: (book, track, start, options) => play(book, track, start, true, false, options?.kind === undefined ? "play" : options.kind, options?.previous, false, options?.onRecord),
         prepare: (book)=>play(book,undefined,0,false),
         toggle,
         pause,
@@ -853,6 +1049,8 @@ export function PlayerProvider({
         seekTrack,
         seekBook,
         skip,
+        canUndoJump: !!book && history?.recordingId === book.recordingId && history.available,
+        undoJump,
         setSpeed,
         setVolume,
         setSleep,

@@ -29,7 +29,7 @@ export function Chapters({
           <button
             key={`${c.track.id}-${c.start}`}
             className={`chapter-row ${active ? "selected" : ""}`}
-            onClick={() => { void p.play(book, c.track, c.start); onSelect?.(); }}
+            onClick={() => { void p.play(book, c.track, c.start, { kind: "chapter" }); onSelect?.(); }}
           >
             <span className="chapter-index">
               {active && p.playing ? (

@@ -476,6 +476,8 @@
 .playback-ebook-edition { display: flex; gap: 10px; align-items: center; flex-shrink: 0; font-size: 12px; }
 .playback-ebook-edition select { min-width: 0; flex: 1; min-height: 36px; width: 100%; }
 .now-playing-transport { flex-shrink: 0; }
+.player-undo-jump { align-self: center; flex-shrink: 0; }
+.player-undo-jump.is-idle { visibility: hidden; }
 .with-reader .chapter-playing { margin-top: 6px; }
 .with-reader .playback-source { margin-block: 4px; justify-content: center; }
 .with-reader .timeline-scope { margin-top: 4px; }

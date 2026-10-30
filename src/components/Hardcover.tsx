@@ -518,6 +518,7 @@ export function HardcoverBookTools({
   const resume = async () => {
     setBusy("resume");
     try {
+      const previous = (await localDB.progress.get(book.recordingId)) || book.progress || null;
       const result = await api<{ progress: Progress }>(
         "/hardcover/progress/pull",
         {
@@ -536,6 +537,7 @@ export function HardcoverBookTools({
             { ...book, progress: result.progress },
             track,
             result.progress.position,
+            { kind: "hardcover", previous },
           );
       }
       changed();

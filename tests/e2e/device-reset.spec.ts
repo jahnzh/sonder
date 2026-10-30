@@ -33,10 +33,11 @@ withProfile("reset refreshes the app shell while preserving device data", async 
       request.onerror = () => reject(request.error);
     });
     await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(["preferences", "downloadParts", "downloadChunks"], "readwrite");
+      const tx = db.transaction(["preferences", "downloadParts", "downloadChunks", "positionHistory"], "readwrite");
       tx.objectStore("preferences").put({key:"reset-test",value:"keep"});
       tx.objectStore("downloadParts").put({trackId:"reset-test",recordingId:"reset-test",loaded:4,total:8,mime:"audio/mpeg",version:"v1"});
       tx.objectStore("downloadChunks").put({trackId:"reset-test",offset:0,blob:new Blob(["test"])});
+      tx.objectStore("positionHistory").put({recordingId:"reset-test",entries:[{trackId:"reset-test",position:40,timestamp:Date.now(),kind:"seek"}]});
       tx.oncomplete = () => resolve();
       // tx.error is still null while a failed request's error bubbles up; report that request's error.
       tx.onerror = (event) => reject((event.target as IDBRequest).error);
@@ -60,10 +61,11 @@ withProfile("reset refreshes the app shell while preserving device data", async 
     const value=await new Promise<any>((resolve,reject)=>{const r=db.transaction("preferences").objectStore("preferences").get("reset-test");r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
     const part=await new Promise<any>((resolve,reject)=>{const r=db.transaction("downloadParts").objectStore("downloadParts").get("reset-test");r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
     const chunk=await new Promise<any>((resolve,reject)=>{const r=db.transaction("downloadChunks").objectStore("downloadChunks").get(["reset-test",0]);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
+    const history=await new Promise<any>((resolve,reject)=>{const r=db.transaction("positionHistory").objectStore("positionHistory").get("reset-test");r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
     db.close();
-    return {local:localStorage.getItem("sonder-reset-test"), stored:value?.value, loaded:part?.loaded, chunk:await chunk.blob.text(), other:(await caches.keys()).includes("another-app-test")};
+    return {local:localStorage.getItem("sonder-reset-test"), stored:value?.value, loaded:part?.loaded, chunk:await chunk.blob.text(), history, other:(await caches.keys()).includes("another-app-test")};
   });
-  expect(state).toEqual({local:"keep",stored:"keep",loaded:4,chunk:"test",other:true});
+  expect(state).toEqual({local:"keep",stored:"keep",loaded:4,chunk:"test",history:undefined,other:true});
 });
 
 test("reset leaves the offline shell intact when the server cannot be reached", async ({ page, context }) => {

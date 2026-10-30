@@ -335,9 +335,10 @@ function LibraryApp({
           method: "POST",
           body: JSON.stringify({ bookId: b.id }),
         });
-      else if (action === "remove")
+      else if (action === "remove") {
         await api(`/library/${b.id}`, { method: "DELETE" });
-      else
+        await localDB.positionHistory.delete(b.recordingId);
+      } else
         await api(`/library/${b.id}`, {
           method: "PATCH",
           body: JSON.stringify({ status: action }),
