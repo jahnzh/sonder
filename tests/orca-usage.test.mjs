@@ -1415,6 +1415,33 @@ test("a Cursor timeout keeps peer readings; assess throws stay isolated; all fou
 
 // --- Residuals from the round-3 adversarial review of 67c127f
 
+test("free-text sessionId and session_id pairs never reach sqlite or listReadings", () =>
+  withState(async (dir) => {
+    const clock = fakeClock();
+    const provider = fakeProvider(clock, () => ({
+      provider: "cursor",
+      status: "unavailable",
+      reason: "reader_error",
+      detail: "failed sessionId=sess-7f3a9c1e and session_id: sess-0b2d44aa and \"sessionId\":\"sess-99ee11bb\"",
+      source: { kind: "cursor-dashboard" },
+      scope: { host: { selector: "local", hostname: "andi" }, account: { known: true, planName: "pro" } },
+      windows: null,
+      exhaustedWindows: [],
+      error: null,
+    }));
+    provider.name = "cursor";
+    provider.assess = assessCursorUsage;
+    const store = new UsageStore(dir);
+    await collectOnce({ store, provider, clock, origin: "poll" });
+    const blob = JSON.stringify(store.listReadings({ limit: 5 })[0]);
+    store.close();
+    const file = readFileSync(join(dir, "usage.sqlite")).toString("utf8");
+    for (const raw of ["sess-7f3a9c1e", "sess-0b2d44aa", "sess-99ee11bb"]) {
+      assert.equal(blob.includes(raw), false, `listReadings leaked ${raw}: ${blob}`);
+      assert.equal(file.includes(raw), false, `sqlite leaked ${raw}`);
+    }
+  }));
+
 test("keyed teamId and sessionId fields in a reading never reach sqlite or listReadings", () =>
   withState(async (dir) => {
     const clock = fakeClock();

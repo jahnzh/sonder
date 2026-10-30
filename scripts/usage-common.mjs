@@ -37,7 +37,7 @@ export function assessmentVerdict(freshness, status, reason, resetsAt = null) {
 
 /** Sensitive free-text keys whose values are redacted in key=value / key: value / JSON pairs. */
 const SCRUB_SENSITIVE_KEYS =
-  "user_?id|account_?id|org_?id|team_?id|uuid|email|cookie|session|access_token|refresh_token|id_token|api_key|apikey|client_secret|x-goog-api-key|authorization|token|key|secret|password";
+  "user_?id|account_?id|org_?id|team_?id|session_?id|uuid|email|cookie|session|access_token|refresh_token|id_token|api_key|apikey|client_secret|x-goog-api-key|authorization|token|key|secret|password";
 
 /** Replaces links, addresses and anything shaped like a credential, keeping the rest of the text. */
 export function scrub(text, secrets = []) {
