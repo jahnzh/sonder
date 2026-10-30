@@ -13,7 +13,7 @@ node scripts/orca-history.mjs delete --id <id>      # one record with its transc
 node scripts/orca-history.mjs delete --all --yes
 ```
 
-Run `--help` for every option. The directory is `--dir`, else `ORCA_HISTORY_DIR`, else `artifacts/orca/history` (gitignored). Each record is one JSON file named for the dispatch, so it survives restarts and is replaced atomically. Files are readable only by the owner.
+Run `--help` for every option. The directory is `--dir`, else `ORCA_HISTORY_DIR`, else `artifacts/orca/history` under the main checkout (gitignored). The main checkout is the parent of `git rev-parse --git-common-dir`, so a capture from the main tree and a `record-check` from a worker worktree share one store; outside a git repository the current checkout is used. Each record is one JSON file named for the dispatch, so it survives restarts and is replaced atomically. Files are readable only by the owner.
 
 ## When to capture
 

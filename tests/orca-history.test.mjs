@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { redactText } from "../scripts/orca-history.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -789,8 +789,92 @@ test("the coordinator documentation points at the history command and its privac
   assert.match(doc, /orca-spawn/);
   assert.match(doc, /unknown unless.*worker host|observed on the worker host/i);
   assert.doesNotMatch(doc, /Capturing and recording are manual steps: nothing runs them at `worker_done`/);
+  assert.match(doc, /git-common-dir|main checkout|any worktree/i);
   assert.match(readFileSync(join(repoRoot, "AGENTS.md"), "utf8"), /docs\/agents\/worker-history\.md/);
   const spec = readFileSync(join(repoRoot, "docs", "agents", "worker-spec.md"), "utf8");
   assert.match(spec, /orca-history\.mjs capture/);
   assert.match(spec, /automatic/i);
+});
+
+/**
+ * Builds a throwaway main checkout with a linked worktree and copies of the history
+ * scripts. `npm run check` runs unit tests in a `git archive` with no `.git`, so the
+ * test must not read the surrounding checkout's git state.
+ */
+function historyWorktreeFixture() {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "orca-history-wt-")));
+  const main = join(root, "main");
+  const wt = join(root, "wt");
+  mkdirSync(join(main, "scripts"), { recursive: true });
+  for (const name of ["orca-history.mjs", "orca-check.mjs", "orca-learn.mjs"]) {
+    cpSync(join(repoRoot, "scripts", name), join(main, "scripts", name));
+  }
+  writeFileSync(join(main, "README"), "fixture\n");
+  for (const args of [
+    ["init", "-q", "-b", "main"],
+    ["add", "README", "scripts"],
+    ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "init"],
+  ]) {
+    const g = spawnSync("git", args, { cwd: main, encoding: "utf8" });
+    if (g.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${g.stderr}`);
+  }
+  const add = spawnSync("git", ["worktree", "add", "-q", "-b", "jahnzh/wt", wt], { cwd: main, encoding: "utf8" });
+  if (add.status !== 0) throw new Error(`git worktree add failed: ${add.stderr}`);
+  return {
+    root,
+    main,
+    wt,
+    async load(checkout) {
+      return import(pathToFileURL(join(checkout, "scripts", "orca-history.mjs")).href);
+    },
+    async loadLearn(checkout) {
+      return import(pathToFileURL(join(checkout, "scripts", "orca-learn.mjs")).href);
+    },
+    cleanup() {
+      spawnSync("git", ["worktree", "remove", "--force", wt], { cwd: main, encoding: "utf8" });
+      rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
+
+test("default history store is shared between the main checkout and a linked worktree", async () => {
+  const t = historyWorktreeFixture();
+  try {
+    const mainHist = await t.load(t.main);
+    const wtHist = await t.load(t.wt);
+    const expected = join(t.main, "artifacts", "orca", "history");
+    assert.equal(mainHist.defaultDir({}), expected);
+    assert.equal(wtHist.defaultDir({}), expected);
+
+    mainHist.openStore(mainHist.defaultDir({})).putRecord({ id: "ctx_from_main", schema: 1 });
+    assert.equal(wtHist.openStore(wtHist.defaultDir({})).getRecord("ctx_from_main")?.id, "ctx_from_main");
+
+    wtHist.openStore(wtHist.defaultDir({})).putRecord({ id: "ctx_from_wt", schema: 1 });
+    assert.equal(mainHist.openStore(mainHist.defaultDir({})).getRecord("ctx_from_wt")?.id, "ctx_from_wt");
+
+    assert.equal(wtHist.defaultDir({ ORCA_HISTORY_DIR: "/tmp/orca-history-override" }), "/tmp/orca-history-override");
+
+    const mainLearn = await t.loadLearn(t.main);
+    const wtLearn = await t.loadLearn(t.wt);
+    const expectedLearn = join(t.main, "artifacts", "orca", "learning");
+    assert.equal(mainLearn.defaultLearnDir({}), expectedLearn);
+    assert.equal(wtLearn.defaultLearnDir({}), expectedLearn);
+    assert.equal(wtLearn.defaultLearnDir({ ORCA_LEARN_DIR: "/tmp/orca-learn-override" }), "/tmp/orca-learn-override");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("default history store falls back to the current checkout outside a git repository", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "orca-history-nogit-")));
+  try {
+    mkdirSync(join(root, "scripts"), { recursive: true });
+    for (const name of ["orca-history.mjs", "orca-check.mjs"]) {
+      cpSync(join(repoRoot, "scripts", name), join(root, "scripts", name));
+    }
+    const hist = await import(pathToFileURL(join(root, "scripts", "orca-history.mjs")).href);
+    assert.equal(hist.defaultDir({}), join(root, "artifacts", "orca", "history"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

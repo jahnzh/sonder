@@ -7,7 +7,7 @@ node scripts/orca-learn.mjs inspect [--history-dir <dir>] [--learn-dir <dir>] [-
 node scripts/orca-learn.mjs reset --yes [--learn-dir <dir>]
 ```
 
-Run `--help` for every option. Directories default to `$ORCA_HISTORY_DIR` / `artifacts/orca/history` and `$ORCA_LEARN_DIR` / `artifacts/orca/learning` (both gitignored).
+Run `--help` for every option. Directories default to `$ORCA_HISTORY_DIR` / `artifacts/orca/history` and `$ORCA_LEARN_DIR` / `artifacts/orca/learning` under the main checkout (both gitignored), resolved the same way as worker history so every worktree shares one store.
 
 ## Minimum evidence rule
 

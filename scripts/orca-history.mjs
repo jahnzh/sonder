@@ -20,7 +20,8 @@ const SHARED_PREFIX = "use_";
 const USAGE = `Usage: node scripts/orca-history.mjs <command> [options]
 
 Keeps a local record of what happened to each worker, so later recommendations rest on evidence.
-Records and transcripts live in --dir (default: $ORCA_HISTORY_DIR, else artifacts/orca/history under the repository).
+Records and transcripts live in --dir (default: $ORCA_HISTORY_DIR, else artifacts/orca/history under the main checkout).
+The main checkout is the parent of git rev-parse --git-common-dir, so every worktree shares one store; outside a git repo the current checkout is used.
 Information that cannot be established is stored as "unknown"; nothing is guessed or linked without evidence.
 
   capture --dispatch <id> [--recommendation <file>] [--kind <kind>] [--files <n>] [--agent-version <text>] [--no-transcript]
@@ -758,9 +759,28 @@ export function parseCliArgs(argv) {
   return problem ? problem : { command, options };
 }
 
+/**
+ * Root of the main working tree for this repository, shared by every linked worktree.
+ * Parent of `git rev-parse --git-common-dir` when inside a git repo; otherwise `fromDir`.
+ * @param {string} [fromDir]
+ */
+export function mainCheckoutRoot(fromDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..")) {
+  const start = path.resolve(fromDir);
+  const run = spawnSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
+    cwd: start,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (run.status === 0) {
+    const common = run.stdout.trim();
+    if (common) return path.dirname(common);
+  }
+  return start;
+}
+
 export function defaultDir(env = process.env) {
   if (env.ORCA_HISTORY_DIR?.trim()) return env.ORCA_HISTORY_DIR;
-  return path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "artifacts", "orca", "history");
+  return path.join(mainCheckoutRoot(), "artifacts", "orca", "history");
 }
 
 /** Runs one command and returns what the CLI prints. */
