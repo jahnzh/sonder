@@ -171,7 +171,7 @@ function listedCursorModels() {
 }
 
 /** Why a candidate cannot be launched at all, or null. */
-function loadCandidates(file) {
+export function loadCandidates(file) {
   const candidates = parseBaseline(readFileSync(file, "utf8"));
   const cursorModels = candidates.some((c) => c.agent === "cursor") ? listedCursorModels() : undefined;
   return candidates.map((candidate) => {
