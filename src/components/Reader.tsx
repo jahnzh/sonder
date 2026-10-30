@@ -732,9 +732,6 @@ export function ReaderView({
         }
         if (disposed) return;
         setRendered(true);
-        // A Word mode checkpoint is a sentence without a CFI; go to that sentence.
-        if (latest.current && !latest.current.cfi)
-          void jumpRef.current(latest.current.paragraphId, false).catch(() => false);
         let lastWidth=0,lastHeight=0;
         const observer = new ResizeObserver(() => {
           if (!disposed && host.clientHeight > 0) {
@@ -824,6 +821,7 @@ export function ReaderView({
     const timer = setTimeout(() => {
       const player=playerRef.current,current=mapRef.current;
       if(followRef.current && current && player.book?.recordingId===current.recordingId && current.intervals.some(interval=>interval.trackId===player.track?.id && interval.start<=player.position && interval.end>player.position))return;
+      // A Word mode checkpoint is a sentence without a CFI; go to that sentence.
       if (latest.current && !latest.current.cfi) {
         void jumpRef.current(latest.current.paragraphId, false).catch(() => false);
         return;
