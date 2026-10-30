@@ -25,6 +25,19 @@ Rules:
 Completion: your report lists every bullet of the issue's Proposal, and next to each the test name or command that shows it works. Say plainly what you could not verify. A bullet with no evidence is not done.
 ```
 
+## Coordinator verification
+
+Verification steps run by the coordinator before landing:
+
+1. Merge `main`.
+2. `tsc` and `npm test`.
+3. `npm run build`.
+4. Run the worker's specs with a distinct `PLAYWRIGHT_PORT`.
+5. Run new or changed e2e specs also with `--repeat-each 2` (tests that reuse a book title break under repeats and combined runs: use a unique title per test).
+6. Mutation proofs via `scripts/mutate.mjs`.
+7. ONE `ci:deck` at a time read with `scripts/ci-result.sh`, never a rerun to get a pass.
+8. Landing with `scripts/orca-land.sh`.
+
 ## Template
 
 Fill in this skeleton directly below the rules block:
@@ -57,6 +70,8 @@ Fill in this skeleton directly below the rules block:
 Your report lists every bullet of the Proposal, and next to each the test name or command that shows it works; say plainly what you could not verify; a bullet with no evidence is not done.
 ```
 
+Specialized templates: see [docs/agents/spec-templates/](spec-templates/) for feature (`feature.md`), review (`review.md`), and fix (`fix.md`) specs.
+
 ## Spawn
 
 Run `scripts/orca-spawn.sh --spec-file <file> --name <worktree> (--base <branch> | --base-worktree <name>) --agent <id> --model <id> [--effort <level>]` to launch a worker. It requires `--model` and exactly one of `--base` and `--base-worktree`, runs `scripts/orca-preflight.sh`, starts the worker, and checks the effective model in the receipt. `--base-worktree <name>` uses the branch checked out in that worktree, for a worker whose local branch name differs from the remote one (`jahnzh/fix-79` against `fix/79-offline-stall`). After the launch the script prints `branch: <name>`, the new worktree's real local branch, for push and cleanup. The preflight also fails when free space on `/` (or on the workspaces filesystem) is below `ORCA_MIN_FREE_GB` (default 15) and names what to clean.
@@ -76,3 +91,34 @@ A restart deletes the session scratchpad and stops background waits, so keep spe
 ## Usage limits
 
 A worker that hits a Claude usage limit reports `failed`, but may resume after the reset and finish. Judge it by its branch (`git log`, `git status`) and its transcript (`orca orchestration worker-read --dispatch <dispatch_id>`), not by the report.
+
+## Coordinator state
+
+Keep one `artifacts/orca/STATE.md` (gitignored) listing for each in-flight item: issue, worktree, local branch, head sha, Deck status, next action.
+
+Wakeups: the prompt is one line, `Read artifacts/orca/STATE.md and do its next action`, and the coordinator updates the file whenever it schedules one; never paste the run state into the prompt (stale wakeups re-fired after work was done about 12 times this session).
+
+## Review policy
+
+Any change touching keyboard handling, persistence/progress, security or shared schemas gets an independent read-only review before the Deck run, by a different model family than the implementer (reviews found a blocking or high bug in 4 of 5 features this session).
+
+- Reviewer spec template: `docs/agents/spec-templates/review.md`.
+- Fix findings with a `docs/agents/spec-templates/fix.md` spec.
+- The Deck run runs on the final head only.
+
+## Liveness playbook
+
+When `orca orchestration worker-list` shows projection `stale_status` for more than 30 minutes:
+1. Send one status request.
+2. If no answer in 20 minutes: run `orca orchestration worker-stop --dispatch <id>`.
+3. Run `bash scripts/orca-preflight.sh --after-stop <worktree>`.
+4. Inspect the worktree (uncommitted work is often good).
+5. Finish the work yourself or respawn on the same worktree.
+
+## Gotchas
+
+- A completed dispatch's mailbox is closed, so send to `run:<run_id>` or start a new dispatch.
+- A worker's local branch can differ from its remote name, so use `orca-spawn.sh --base-worktree`.
+- Heartbeats are hidden by `orca-check.mjs` unless `--heartbeats`.
+- `pkill -f` and `pgrep -f` match their own shell: kill by PID.
+- `gh pr edit` fails on this repo: see `docs/agents/issue-tracker.md`.
