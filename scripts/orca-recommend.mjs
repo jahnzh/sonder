@@ -13,12 +13,21 @@ const TASK_KINDS = ["feature", "fix", "refactor", "test", "docs", "review"];
 const REQUIREMENTS = ["mechanical", "standard", "reasoning-heavy"];
 
 // Starting points from TypeSafe's docs, checked against seven live tasks on jev-1.14.0 but not tuned.
+// One reasoning level must hold >= MIN_REASONING_PROBABILITY so split distributions stay inconclusive.
 const MIN_REASONING_CONFIDENCE = 0.5;
+const MIN_REASONING_PROBABILITY = 0.7;
 const NOUL_NO = 0.3;
 const NOUL_YES = 0.7;
 
 // Replaced by real observations when a verified collector exists.
-const UNKNOWN_USAGE = { status: "unknown", reason: "no verified usage collector is connected", source: null, observedAt: null };
+const UNKNOWN_USAGE = {
+  status: "unknown",
+  reason: "no verified usage collector is connected",
+  source: null,
+  observedAt: null,
+  account: "unknown",
+  host: "unknown",
+};
 
 // Narrow questions, combined in assessJev: TypeSafe advises against one multi-factor question.
 const REASONING_LEVELS = [
@@ -90,19 +99,18 @@ export function parseCliArgs(argv) {
   for (let i = 0; i < argv.length; i += 2) {
     const flag = argv[i];
     if (flag === "--help" || flag === "-h") return { help: true };
+    if (flag !== "--eligible" && !flags[flag]) return { error: `unknown option: ${flag}` };
     const value = argv[i + 1];
-    if (value === undefined) return { error: `${flag} needs a value` };
+    if (value === undefined || value.startsWith("-")) return { error: `${flag} needs a value` };
     if (flag === "--eligible") {
       const choice = parseChoice(value);
       if (!choice) return { error: `--eligible must be <agent>/<model>[/<effort>], got: ${value}` };
       options.eligible.push(choice);
-    } else if (flags[flag]) {
-      options[flags[flag]] = value;
     } else {
-      return { error: `unknown option: ${flag}` };
+      options[flags[flag]] = value;
     }
   }
-  if (!options.task || !options.summary) return { error: "--task and --summary are required" };
+  if (!options.task?.trim() || !options.summary?.trim()) return { error: "--task and --summary are required" };
   if (options.summary.length > MAX_SUMMARY_LENGTH) return { error: `--summary is ${options.summary.length} characters; the limit is ${MAX_SUMMARY_LENGTH}` };
   if (options.kind !== undefined && !TASK_KINDS.includes(options.kind)) return { error: `--kind must be one of ${TASK_KINDS.join(", ")}` };
   if (options.files !== undefined) {
@@ -111,12 +119,15 @@ export function parseCliArgs(argv) {
   }
   if (options.judgment !== undefined && !REQUIREMENTS.includes(options.judgment)) return { error: `--judgment must be one of ${REQUIREMENTS.join(", ")}` };
   if ((options.judgment === undefined) !== (options.judgmentReason === undefined)) return { error: "--judgment and --judgment-reason go together" };
+  if (options.judgmentReason !== undefined && !options.judgmentReason.trim()) return { error: "--judgment-reason must not be blank" };
   if ((options.override === undefined) !== (options.overrideReason === undefined)) return { error: "--override and --override-reason go together" };
+  if (options.overrideReason !== undefined && !options.overrideReason.trim()) return { error: "--override-reason must not be blank" };
   if (options.override !== undefined) {
     options.override = parseChoice(options.override);
     if (!options.override) return { error: "--override must be <agent>/<model>[/<effort>]" };
   }
-  if (options.record !== undefined && !existsSync(options.record)) return { error: `spec file not found: ${options.record}` };
+  if (options.record !== undefined && (!options.record.trim() || !existsSync(options.record))) return { error: `spec file not found: ${options.record}` };
+  if (options.models !== undefined && !options.models.trim()) return { error: "--models must not be blank" };
   return { options };
 }
 
@@ -134,7 +145,9 @@ export function parseBaseline(text) {
   const [agent, model, efforts, capability, suits] = ["Agent", "Model ID", "Supported effort values", "Capability", "Suits"].map(column);
   if ([agent, model, efforts, capability, suits].includes(-1)) throw new Error("the baseline table lacks a required column");
   return rows.slice(2).flatMap((row) => {
-    const listed = [...row[efforts].matchAll(/`([^`]+)`/g)].map((match) => match[1]);
+    const listed = [...row[efforts].matchAll(/`([^`]+)`/g)]
+      .map((match) => match[1].trim())
+      .filter((effort) => effort && effort.toLowerCase() !== "none");
     return (listed.length ? listed : [null]).map((effort) => ({
       agent: row[agent],
       model: row[model].replaceAll("`", ""),
@@ -166,8 +179,15 @@ function loadCandidates(file) {
 }
 
 const choiceName = ({ agent, model, effort }) => [agent, model, effort].filter(Boolean).join("/");
-const inUnit = (value) => typeof value === "number" && value >= 0 && value <= 1;
+const inRange = (value, max) => typeof value === "number" && value >= 0 && value <= max;
+const inUnit = (value) => inRange(value, 1);
 const rank = (requirement) => REQUIREMENTS.indexOf(requirement);
+
+function redactSecret(text) {
+  if (typeof text !== "string") return text;
+  const key = process.env.TYPESAFE_API_KEY?.trim();
+  return key ? text.replaceAll(key, "[redacted]") : text;
+}
 
 /** Reads the three answers, or throws a message that says which one is wrong. */
 function readAnswers(body) {
@@ -177,19 +197,41 @@ function readAnswers(body) {
     if (answers[name]?.type !== "noul" || !inUnit(answers[name].noul)) throw new Error(`${name} is not a valid noul answer`);
   }
   const reasoning = answers.reasoning;
-  const probabilities = REASONING_LEVELS.map((_, level) => reasoning?.probabilities?.[level]);
-  const total = probabilities.reduce((sum, p) => sum + p, 0);
-  if (reasoning?.type !== "score" || !inUnit(reasoning.confidence) || !probabilities.every(inUnit) || Math.abs(total - 1) > 0.02) {
+  const rawProbabilities = reasoning?.probabilities;
+  const validProbabilities =
+    rawProbabilities !== null &&
+    typeof rawProbabilities === "object" &&
+    !Array.isArray(rawProbabilities) &&
+    Object.keys(rawProbabilities).length === REASONING_LEVELS.length;
+  const levelProbabilities = REASONING_LEVELS.map((_, level) => rawProbabilities?.[String(level)]);
+  const total = levelProbabilities.reduce((sum, p) => sum + p, 0);
+  if (
+    reasoning?.type !== "score" ||
+    !inRange(reasoning.score, REASONING_LEVELS.length - 1) ||
+    !inUnit(reasoning.confidence) ||
+    !validProbabilities ||
+    !levelProbabilities.every(inUnit) ||
+    Math.abs(total - 1) > 0.02
+  ) {
     throw new Error("reasoning is not a valid score answer");
   }
-  // A tie takes the higher level: capability comes before saving a stronger model.
-  const level = probabilities.reduce((best, p, i) => (p >= probabilities[best] ? i : best), 0);
-  return { level, confidence: reasoning.confidence, enoughInformation: answers.enough_information.noul, wideChange: answers.wide_change.noul };
+  const level = levelProbabilities.reduce((best, p, i) => (p >= levelProbabilities[best] ? i : best), 0);
+  const probabilities = Object.fromEntries(REASONING_LEVELS.map((_, i) => [String(i), levelProbabilities[i]]));
+  return {
+    level,
+    levelProbability: levelProbabilities[level],
+    score: reasoning.score,
+    probabilities,
+    confidence: reasoning.confidence,
+    enoughInformation: answers.enough_information.noul,
+    wideChange: answers.wide_change.noul,
+  };
 }
 
 /** Reads the requirement from the answers, or null when they do not settle it. */
-function requirementFrom({ level, confidence, enoughInformation, wideChange }) {
-  if (confidence < MIN_REASONING_CONFIDENCE || enoughInformation < NOUL_NO) return null;
+function requirementFrom({ level, levelProbability, confidence, enoughInformation, wideChange }) {
+  // Split distributions (< MIN_REASONING_PROBABILITY) and "no" enough_information (<= NOUL_NO) stay inconclusive.
+  if (confidence < MIN_REASONING_CONFIDENCE || levelProbability < MIN_REASONING_PROBABILITY || enoughInformation <= NOUL_NO) return null;
   // Breadth only moves moderate work, so doubt about it elsewhere is harmless. A cross-file change is
   // reasoning-heavy under AGENTS.md, while a mechanical rename across many files stays mechanical.
   if (level !== 1) return REQUIREMENTS[level];
@@ -202,9 +244,9 @@ async function assessJev(options) {
   const report = { status: "unavailable", requestedModel: JEV_MODEL, version: null, detail: null, uncertainty: null };
   const key = process.env.TYPESAFE_API_KEY?.trim();
   if (!key) return { ...report, detail: "TYPESAFE_API_KEY is not set" };
-  const redact = (text) => text.replaceAll(key, "[redacted]").slice(0, 200);
+  const redact = (text) => redactSecret(text).slice(0, 200);
 
-  const state = { task: options.summary };
+  const state = { task: redactSecret(options.summary) };
   if (options.kind !== undefined) state.kind = options.kind;
   if (options.files !== undefined) state.estimated_files = options.files;
 
@@ -237,21 +279,28 @@ async function assessJev(options) {
     body = JSON.parse(text);
     answers = readAnswers(body);
   } catch (error) {
-    return { ...report, status: "invalid", version: typeof body?.model === "string" ? body.model : null, detail: redact(error.message) };
+    return { ...report, status: "invalid", version: typeof body?.model === "string" ? redact(body.model) : null, detail: redact(error.message) };
   }
   const requirement = requirementFrom(answers);
   return {
     ...report,
     status: requirement ? "ok" : "inconclusive",
-    version: body.model,
+    version: redact(body.model),
     requirement,
     detail: requirement ? null : "the answers do not settle the requirement",
     uncertainty: {
       conclusive: requirement !== null,
+      reasoningScore: answers.score,
       reasoningConfidence: answers.confidence,
+      reasoningProbabilities: answers.probabilities,
       enoughInformation: answers.enoughInformation,
       wideChange: answers.wideChange,
-      thresholds: { minReasoningConfidence: MIN_REASONING_CONFIDENCE, noulNo: NOUL_NO, noulYes: NOUL_YES },
+      thresholds: {
+        minReasoningConfidence: MIN_REASONING_CONFIDENCE,
+        minReasoningProbability: MIN_REASONING_PROBABILITY,
+        noulNo: NOUL_NO,
+        noulYes: NOUL_YES,
+      },
     },
   };
 }
@@ -279,6 +328,22 @@ function describeAssessment({ source, requirement, jev, coordinator }) {
   return `Jev ${jev.version} assessed it ${requirement} (reasoning confidence ${reasoningConfidence}, wide change ${wideChange})`;
 }
 
+function describeJevReport(jev) {
+  const parts = [];
+  if (jev?.version) parts.push(redactSecret(jev.version));
+  if (jev?.uncertainty) {
+    const u = jev.uncertainty;
+    parts.push(
+      `reasoning score ${u.reasoningScore}`,
+      `reasoning confidence ${u.reasoningConfidence}`,
+      `probabilities ${JSON.stringify(u.reasoningProbabilities)}`,
+      `enough information ${u.enoughInformation}`,
+      `wide change ${u.wideChange}`,
+    );
+  }
+  return parts.length ? ` (${parts.join(", ")})` : "";
+}
+
 function launchArgs({ agent, model, effort }) {
   return ["--agent", agent, "--model", model, ...(effort ? ["--effort", effort] : [])];
 }
@@ -288,29 +353,38 @@ function launchArgs({ agent, model, effort }) {
  * @param {ReturnType<typeof loadCandidates>} candidates
  */
 export async function recommend(options, candidates) {
-  const jev = await assessJev(options);
+  const sanitizedOptions = {
+    ...options,
+    task: redactSecret(options.task),
+    summary: redactSecret(options.summary),
+    judgmentReason: options.judgmentReason !== undefined ? redactSecret(options.judgmentReason) : undefined,
+    overrideReason: options.overrideReason !== undefined ? redactSecret(options.overrideReason) : undefined,
+  };
+  const jev = await assessJev(sanitizedOptions);
   const { requirement: jevRequirement, ...jevReport } = jev;
   const conclusive = jev.status === "ok";
-  const given = options.judgment ? { requirement: options.judgment, reason: options.judgmentReason, used: !conclusive } : null;
+  const given = sanitizedOptions.judgment ? { requirement: sanitizedOptions.judgment, reason: sanitizedOptions.judgmentReason, used: !conclusive } : null;
   const requirement = conclusive ? jevRequirement : (given?.requirement ?? null);
   const assessment = { source: conclusive ? "jev" : given ? "coordinator" : null, requirement, jev: jevReport, coordinator: given };
-  const base = { task: options.task, assessment, fallback: null, recommendation: null, alternatives: [], rejected: [], usage: UNKNOWN_USAGE, decision: null, launch: null };
+  const base = { task: sanitizedOptions.task, assessment, fallback: null, recommendation: null, alternatives: [], rejected: [], usage: UNKNOWN_USAGE, decision: null, launch: null };
 
   if (!requirement) return { ...base, status: "needs-judgment" };
-  if (!conclusive) base.fallback = { because: jev.status, detail: jev.detail, requirement, reason: given.reason };
+  if (!conclusive) {
+    base.fallback = { because: jev.status, detail: jev.detail, version: jev.version, uncertainty: jev.uncertainty, requirement, reason: given.reason };
+  }
 
   const usable = [];
-  const rejected = options.eligible.flatMap((choice) => {
+  const rejected = sanitizedOptions.eligible.flatMap((choice) => {
     const reason = undocumented(choice, candidates);
     return reason ? [{ ...choice, reason }] : [];
   });
-  const named = (c) => options.eligible.some((e) => e.agent === c.agent && e.model === c.model && (e.effort === null || e.effort === c.effort));
+  const named = (c) => sanitizedOptions.eligible.some((e) => e.agent === c.agent && e.model === c.model && (e.effort === null || e.effort === c.effort));
   for (const { unusable, ...candidate } of candidates) {
     const { agent, model, effort } = candidate;
-    if (options.eligible.length && !named(candidate)) continue;
+    if (sanitizedOptions.eligible.length && !named(candidate)) continue;
     if (unusable) rejected.push({ agent, model, effort, reason: unusable });
     else if (rank(candidate.capability) < rank(requirement)) rejected.push({ agent, model, effort, reason: `${candidate.capability} capability is below the assessed ${requirement}` });
-    else usable.push({ ...candidate, usage: UNKNOWN_USAGE.status });
+    else usable.push({ ...candidate, usage: UNKNOWN_USAGE.status, usageScope: { account: UNKNOWN_USAGE.account, host: UNKNOWN_USAGE.host } });
   }
   // Smallest suitable first, so a scarce strong model is not spent on easier work; sort() keeps table order within a level.
   usable.sort((a, b) => rank(a.capability) - rank(b.capability));
@@ -327,13 +401,13 @@ export async function recommend(options, candidates) {
     : null;
   const result = { ...base, recommendation, alternatives, rejected };
 
-  if (options.override) {
-    const refused = refuseOverride(options.override, candidates);
-    if (refused) return { ...result, status: "override-refused", refused: { ...options.override, reason: refused } };
-    const { capability } = candidates.find((c) => choiceName(c) === choiceName(options.override));
+  if (sanitizedOptions.override) {
+    const refused = refuseOverride(sanitizedOptions.override, candidates);
+    if (refused) return { ...result, status: "override-refused", refused: { ...sanitizedOptions.override, reason: refused } };
+    const { capability } = candidates.find((c) => choiceName(c) === choiceName(sanitizedOptions.override));
     const warning = rank(capability) < rank(requirement) ? `${capability} capability is below the assessed ${requirement}` : null;
-    const decision = { kind: "override", ...options.override, reason: options.overrideReason, warning };
-    return { ...result, status: "overridden", decision, launch: { started: false, args: launchArgs(options.override) } };
+    const decision = { kind: "override", ...sanitizedOptions.override, reason: sanitizedOptions.overrideReason, warning };
+    return { ...result, status: "overridden", decision, launch: { started: false, args: launchArgs(sanitizedOptions.override) } };
   }
   if (!recommendation) return { ...result, status: "no-suitable-candidate" };
   const { agent, model, effort, reason } = recommendation;
@@ -352,13 +426,17 @@ function modelChoiceSection({ decision, recommendation, assessment, fallback, us
     `- Agent: ${decision.agent}`,
     `- Model: ${decision.model}`,
     `- Effort: ${decision.effort ?? "none"}`,
-    `- Why: ${oneLine(decision.reason)}`,
+    `- Why: ${oneLine(redactSecret(decision.reason))}`,
     `- Decision: ${decided}`,
-    `- Assessment: ${oneLine(describeAssessment(assessment))}`,
+    `- Assessment: ${oneLine(redactSecret(describeAssessment(assessment)))}`,
   ];
-  if (fallback) lines.push(`- Fallback: coordinator judgment ${fallback.requirement} because Jev was ${fallback.because}: ${oneLine(fallback.detail ?? "")}`);
+  if (fallback) {
+    lines.push(
+      `- Fallback: coordinator judgment ${fallback.requirement} because Jev was ${fallback.because}${describeJevReport(assessment.jev)}: ${oneLine(redactSecret(fallback.detail ?? ""))}`,
+    );
+  }
   if (decision.warning) lines.push(`- Warning: ${decision.warning}`);
-  lines.push(`- Usage: ${usage.status} (${usage.reason})`);
+  lines.push(`- Usage: ${usage.status} (account ${usage.account}, host ${usage.host}; ${usage.reason})`);
   return lines.join("\n");
 }
 
@@ -379,7 +457,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
   if ("error" in parsed) {
     console.error(USAGE);
-    console.error(parsed.error);
+    console.error(redactSecret(parsed.error));
     return 2;
   }
   const { options } = parsed;
@@ -389,25 +467,35 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     candidates = loadCandidates(options.models);
   } catch (error) {
-    console.error(`cannot read the capability baseline ${options.models}: ${error.message}`);
+    console.error(redactSecret(`cannot read the capability baseline ${options.models}: ${error.message}`));
     return 1;
   }
   const result = await recommend(options, candidates);
-  console.log(JSON.stringify(result, null, 2));
 
   if (result.status === "needs-judgment") {
+    console.log(JSON.stringify(result, null, 2));
     console.error(`Jev gave no usable assessment (${result.assessment.jev.status}: ${result.assessment.jev.detail}). Rerun with --judgment <requirement> --judgment-reason <text>.`);
     return 3;
   }
   if (result.status === "override-refused") {
+    console.log(JSON.stringify(result, null, 2));
     console.error(`override refused: ${choiceName(result.refused)}: ${result.refused.reason}`);
     return 1;
   }
   if (!result.decision) {
+    console.log(JSON.stringify(result, null, 2));
     console.error(`nothing suitable for ${result.assessment.requirement}; see "rejected"`);
     return 1;
   }
-  if (options.record) writeFileSync(options.record, withModelChoice(readFileSync(options.record, "utf8"), modelChoiceSection(result)));
+  if (options.record) {
+    try {
+      writeFileSync(options.record, withModelChoice(readFileSync(options.record, "utf8"), modelChoiceSection(result)));
+    } catch (error) {
+      console.error(`cannot write spec file ${options.record}: ${redactSecret(error.message)}`);
+      return 1;
+    }
+  }
+  console.log(JSON.stringify(result, null, 2));
   return 0;
 }
 

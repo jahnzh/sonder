@@ -200,12 +200,43 @@ test("a wide change does not raise mechanical work", async () => {
   }
 });
 
-test("a tie between two reasoning levels takes the higher one", async () => {
-  const r = await scenario({ body: liveBody(0.5, 1.5, 0.5, { "0": 0, "1": 0.5, "2": 0.5 }, 0.1) });
+test("split reasoning distributions and 0.3 enoughInformation are inconclusive, and uncertainty includes score and probabilities", async () => {
+  const split = await scenario({ body: liveBody(0.5, 1.49, 0.8, { "0": 0, "1": 0.51, "2": 0.49 }, 0.1) });
+  const tie = await scenario({ body: liveBody(0.5, 1.5, 0.5, { "0": 0, "1": 0.5, "2": 0.5 }, 0.1) });
+  const boundaryNoInfo = await scenario({ body: liveBody(0.3, 1, 1, { "0": 0, "1": 1, "2": 0 }, 0.1) });
+  const justEnoughInfo = await scenario({ body: liveBody(0.31, 1, 1, { "0": 0, "1": 1, "2": 0 }, 0.3) });
+  const badScore = await scenario({ body: liveBody(0.5, 2.5, 0.9, { "0": 0, "1": 0, "2": 1 }, 0.1) });
+  const extraProbKey = await scenario({ body: liveBody(0.5, 2, 0.9, { "0": 0, "1": 0, "2": 1, "3": 0.2 }, 0.1) });
   try {
-    assert.equal(r.json.assessment.requirement, "reasoning-heavy");
+    assert.equal(split.status, 3);
+    assert.equal(split.json.status, "needs-judgment");
+    assert.equal(split.json.assessment.jev.status, "inconclusive");
+    assert.equal(split.json.assessment.requirement, null);
+    assert.equal(split.json.assessment.jev.uncertainty.conclusive, false);
+    assert.equal(split.json.assessment.jev.uncertainty.reasoningScore, 1.49);
+    assert.deepEqual(split.json.assessment.jev.uncertainty.reasoningProbabilities, { "0": 0, "1": 0.51, "2": 0.49 });
+
+    assert.equal(tie.status, 3);
+    assert.equal(tie.json.assessment.jev.status, "inconclusive");
+
+    assert.equal(boundaryNoInfo.status, 3);
+    assert.equal(boundaryNoInfo.json.assessment.jev.status, "inconclusive");
+
+    assert.equal(justEnoughInfo.status, 0, justEnoughInfo.stderr);
+    assert.equal(justEnoughInfo.json.assessment.requirement, "standard");
+
+    assert.equal(badScore.status, 3);
+    assert.equal(badScore.json.assessment.jev.status, "invalid");
+
+    assert.equal(extraProbKey.status, 3);
+    assert.equal(extraProbKey.json.assessment.jev.status, "invalid");
   } finally {
-    clean(r.box);
+    clean(split.box);
+    clean(tie.box);
+    clean(boundaryNoInfo.box);
+    clean(justEnoughInfo.box);
+    clean(badScore.box);
+    clean(extraProbKey.box);
   }
 });
 
@@ -350,7 +381,9 @@ test("reports the version Jev answered with and its uncertainty", async () => {
     assert.equal(r.json.assessment.jev.status, "ok");
     assert.equal(r.json.assessment.jev.requestedModel, "jev-1.14.0");
     assert.equal(r.json.assessment.jev.version, "jev-1.15.0");
+    assert.equal(r.json.assessment.jev.uncertainty.reasoningScore, 1.99);
     assert.equal(r.json.assessment.jev.uncertainty.reasoningConfidence, 0.98);
+    assert.deepEqual(r.json.assessment.jev.uncertainty.reasoningProbabilities, { "0": 0, "1": 0.01, "2": 0.99 });
     assert.equal(r.json.assessment.jev.uncertainty.enoughInformation, 0.4);
     assert.equal(r.json.assessment.jev.uncertainty.wideChange, 0.34);
     assert.equal(r.json.assessment.jev.uncertainty.conclusive, true);
@@ -458,13 +491,25 @@ test("a judgment given while Jev is conclusive is shown but does not replace the
 // --- Usage
 
 test("usage is reported as unknown overall and for every candidate", async () => {
-  const r = await scenario({ body: LIVE.moderate });
+  const r = await scenario({ body: LIVE.moderate }, ["--record", "spec.md"], {}, (box) => writeFileSync(join(box.dir, "spec.md"), "# spec\n"));
   try {
-    assert.deepEqual(r.json.usage, { status: "unknown", reason: "no verified usage collector is connected", source: null, observedAt: null });
+    assert.deepEqual(r.json.usage, {
+      status: "unknown",
+      reason: "no verified usage collector is connected",
+      source: null,
+      observedAt: null,
+      account: "unknown",
+      host: "unknown",
+    });
     assert.equal(r.json.recommendation.usage, "unknown");
+    assert.deepEqual(r.json.recommendation.usageScope, { account: "unknown", host: "unknown" });
     assert.ok(r.json.alternatives.length > 0);
-    for (const alternative of r.json.alternatives) assert.equal(alternative.usage, "unknown");
+    for (const alternative of r.json.alternatives) {
+      assert.equal(alternative.usage, "unknown");
+      assert.deepEqual(alternative.usageScope, { account: "unknown", host: "unknown" });
+    }
     assert.match(r.json.recommendation.reason, /[Uu]sage is unknown/);
+    assert.match(r.spec("spec.md"), /^- Usage: unknown \(account unknown, host unknown;/m);
     assert.doesNotMatch(r.stdout, /"available"|"fresh"/);
   } finally {
     clean(r.box);
@@ -648,6 +693,118 @@ test("usage errors exit 2 before Jev is called", async () => {
   } finally {
     await jev.close();
     clean(box);
+  }
+});
+
+test("rejects whitespace-only summaries and reasons and option values that are flags", async () => {
+  const cases = [
+    ["--task", "1", "--summary", "   \t\n"],
+    ["--task", "   ", "--summary", "valid summary"],
+    ["--task", "1", "--summary", "valid", "--override", "cursor/composer-2.5", "--override-reason", "   \n\t "],
+    ["--task", "1", "--summary", "valid", "--override", "cursor/composer-2.5", "--override-reason", ""],
+    ["--task", "1", "--summary", "valid", "--judgment", "standard", "--judgment-reason", "   "],
+    ["--task", "1", "--summary", "valid", "--judgment", "standard", "--judgment-reason", ""],
+    ["--task", "1", "--summary", "valid", "--override", "cursor/composer-2.5", "--override-reason", "--help"],
+    ["--task", "1", "--summary", "--kind", "--files", "2"],
+  ];
+  const box = sandbox();
+  const jev = await fakeJev({ body: LIVE.deep });
+  try {
+    for (const args of cases) {
+      const child = await new Promise<{ status: number | null; stderr: string }>((done) => {
+        const proc = spawn(process.execPath, [script, "--models", box.models, ...args], {
+          cwd: box.dir,
+          env: { ...process.env, PATH: `${box.bin}:${process.env.PATH}`, TYPESAFE_API_KEY: API_KEY, ORCA_RECOMMEND_JEV_URL: jev.url },
+        });
+        let stderr = "";
+        proc.stderr.on("data", (chunk) => (stderr += chunk));
+        proc.on("close", (status) => done({ status, stderr }));
+      });
+      assert.equal(child.status, 2, args.join(" "));
+      assert.match(child.stderr, /[Uu]sage/);
+    }
+    assert.equal(jev.requests.length, 0);
+  } finally {
+    await jev.close();
+    clean(box);
+  }
+});
+
+test("recording an inconclusive fallback includes Jev version and uncertainty, and a directory record path exits non-zero cleanly", async () => {
+  const fallbackRun = await scenario(
+    { body: { ...LIVE.moderateMaybeWide, model: "jev-1.15.0" } },
+    ["--judgment", "reasoning-heavy", "--judgment-reason", "Crosses sync boundary", "--record", "spec.md"],
+    {},
+    (box) => writeFileSync(join(box.dir, "spec.md"), templateSpec),
+  );
+  const dirRun = await scenario({ body: LIVE.deep }, ["--record", "spec-dir"], {}, (box) => mkdirSync(join(box.dir, "spec-dir")));
+  try {
+    assert.equal(fallbackRun.status, 0, fallbackRun.stderr);
+    const spec = fallbackRun.spec("spec.md");
+    assert.match(spec, /Fallback: coordinator judgment reasoning-heavy because Jev was inconclusive/);
+    assert.match(spec, /jev-1\.15\.0/);
+    assert.match(spec, /reasoning score 1\.18/);
+    assert.match(spec, /reasoning confidence 0\.73/);
+    assert.match(spec, /"1":0\.82/);
+    assert.match(spec, /"2":0\.18/);
+    assert.match(spec, /enough information 0\.33/);
+    assert.match(spec, /wide change 0\.66/);
+
+    assert.equal(dirRun.status, 1);
+    assert.equal(dirRun.json, null);
+    assert.match(dirRun.stderr, /spec-dir/);
+    assert.doesNotMatch(dirRun.stderr, /at Object\.|at main/);
+  } finally {
+    clean(fallbackRun.box);
+    clean(dirRun.box);
+  }
+});
+
+test("redacts TYPESAFE_API_KEY from Jev version and from summary and reason inputs", async () => {
+  const okRun = await scenario(
+    { body: { ...LIVE.moderate, model: `jev-1.14.0-${API_KEY}` } },
+    ["--summary", `Fix parser using ${API_KEY}`, "--override", "cursor/composer-2.5", "--override-reason", `Prefer cursor (${API_KEY})`, "--record", "spec.md"],
+    {},
+    (box) => writeFileSync(join(box.dir, "spec.md"), templateSpec),
+  );
+  const invalidRun = await scenario(
+    { body: { model: `jev-bad-${API_KEY}`, answers: {} } },
+    ["--judgment", "standard", "--judgment-reason", `Manual judgment (${API_KEY})`, "--record", "spec.md"],
+    {},
+    (box) => writeFileSync(join(box.dir, "spec.md"), templateSpec),
+  );
+  try {
+    assert.equal(okRun.status, 0, okRun.stderr);
+    assert.equal(JSON.stringify(okRun.jev.requests[0].body).includes(API_KEY), false);
+    assert.match(okRun.jev.requests[0].body.state.task, /\[redacted\]/);
+    assert.equal(`${okRun.stdout}${okRun.stderr}${okRun.spec("spec.md")}`.includes(API_KEY), false);
+    assert.match(okRun.json.assessment.jev.version, /\[redacted\]/);
+    assert.match(okRun.json.decision.reason, /\[redacted\]/);
+    assert.match(okRun.spec("spec.md"), /\[redacted\]/);
+
+    assert.equal(invalidRun.status, 0, invalidRun.stderr);
+    assert.equal(`${invalidRun.stdout}${invalidRun.stderr}${invalidRun.spec("spec.md")}`.includes(API_KEY), false);
+    assert.match(invalidRun.json.assessment.jev.version, /\[redacted\]/);
+    assert.match(invalidRun.json.assessment.coordinator.reason, /\[redacted\]/);
+    assert.match(invalidRun.spec("spec.md"), /\[redacted\]/);
+  } finally {
+    clean(okRun.box);
+    clean(invalidRun.box);
+  }
+});
+
+test("parseBaseline treats a backticked none effort as no effort", async () => {
+  const r = await scenario({ body: LIVE.mechanical }, ["--record", "spec.md"], {}, (box) => {
+    writeFileSync(box.models, BASELINE.replace("| `gemini-4-argon-high` | none                    |", "| `gemini-4-argon-high` | `none`                  |"));
+    writeFileSync(join(box.dir, "spec.md"), templateSpec);
+  });
+  try {
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.json.recommendation.effort, null);
+    assert.deepEqual(r.json.launch.args, ["--agent", "antigravity", "--model", "gemini-4-argon-high"]);
+    assert.match(r.spec("spec.md"), /^- Effort: none$/m);
+  } finally {
+    clean(r.box);
   }
 });
 
