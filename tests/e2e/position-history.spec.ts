@@ -112,19 +112,25 @@ async function revealReaderControls(page: Page) {
 async function openPlaybackOptions(page: Page) {
   const dialog = page.getByRole("dialog", { name: "Now playing", exact: true });
   await expect(dialog).toBeVisible();
-  const options = page.getByRole("region", { name: "Playback options" });
+  const options = page.locator(".playback-options-panel");
   if (!(await options.isVisible())) {
-    // Reader-open: player-bar list button (dialog heading is clipped). Otherwise the heading trigger.
-    const list = dialog.getByRole("region", { name: "Player", exact: true }).getByRole("button", { name: "Chapters", exact: true });
-    if (await list.isVisible()) await list.click();
-    else await dialog.getByRole("button", { name: "Playback options", exact: true }).click();
+    // With the reader, the dialog heading ⋯ (aria-label "Playback options") is clipped under
+    // the reader chrome (#22); the reader's top-bar ⋯ (aria-label "More") opens the same panel.
+    // Never use the Chapters button. DOM click avoids the clipped heading's hit-target.
+    const inline = dialog.locator(".inline-reader");
+    if (await inline.count()) {
+      await revealReaderControls(page);
+      await inline.getByRole("button", { name: "More", exact: true }).evaluate((el: HTMLButtonElement) => el.click());
+    } else {
+      await dialog.locator(".playback-menu-trigger").evaluate((el: HTMLButtonElement) => el.click());
+    }
   }
   await expect(options).toBeVisible();
   return options;
 }
 
 async function closePlaybackOptions(page: Page) {
-  const options = page.getByRole("region", { name: "Playback options" });
+  const options = page.locator(".playback-options-panel");
   if (await options.isVisible()) {
     await options.getByRole("button", { name: "Close playback options", exact: true }).click();
     await expect(options).toBeHidden();
@@ -504,8 +510,8 @@ test("Listen from here records the position left and the expanded player restore
   await setPosition(page, 170.25);
   await expect(room).toHaveAttribute("data-current-passage", /.+/);
   await revealReaderControls(page);
-  await page.locator(".inline-reader .reader-topbar").getByRole("button", { name: "More", exact: true }).click();
-  await page.getByRole("region", { name: "Playback options" }).getByRole("button", { name: "Listen from here", exact: true }).click();
+  await page.locator(".inline-reader .reader-topbar").getByRole("button", { name: "More", exact: true }).evaluate((el: HTMLButtonElement) => el.click());
+  await page.locator(".playback-options-panel").getByRole("button", { name: "Listen from here", exact: true }).click();
   await expect.poll(async () => (await history(page, book.recordingId)).length).toBe(1);
   expect((await history(page, book.recordingId))[0]).toMatchObject({ trackId: book.tracks[0].id, position: 170.25 });
   const pause = room.getByRole("button", { name: "Pause narration", exact: true });
@@ -542,7 +548,7 @@ test("a toast Undo for Listen from here takes back what it recorded and is not r
   await expect(toast).toBeVisible();
   await expect.poll(async () => (await history(page, book.recordingId)).map((entry: any) => entry.position)).toEqual([170.25]);
   await expect((await openPlaybackOptions(page)).getByRole("button", { name: "Position history", exact: true })).toBeEnabled();
-  await page.keyboard.press("Escape");
+  await closePlaybackOptions(page);
   await toast.getByRole("button", { name: "Undo", exact: true }).click();
   await expect(toast).toBeHidden();
   await room.getByRole("button", { name: "Pause narration", exact: true }).click();
@@ -696,6 +702,20 @@ test("reader-open Now Playing still exposes Position history from Playback optio
   await restoreLatest(page);
   await expect.poll(async () => (await audioState(page)).position).toBeCloseTo(55.25, 5);
   await expect.poll(async () => (await history(page, book.recordingId)).length).toBe(0);
+});
+
+test("inline reader Chapters button opens ebook Contents, not Playback options", async ({ page }) => {
+  const book = await importWithEbook(page, "Chapters opens contents");
+  await instrument(page);
+  await page.goto("/");
+  await startPaused(page, book.title);
+  const dialog = await openReaderPlayer(page);
+  await revealReaderControls(page);
+  const player = dialog.getByRole("region", { name: "Player", exact: true });
+  await player.getByRole("button", { name: "Chapters", exact: true }).click();
+  const contents = page.locator(".inline-reader").getByRole("complementary", { name: "Reader options" });
+  await expect(contents.getByRole("heading", { name: "Contents", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Playback options" })).toBeHidden();
 });
 
 test.describe("failed source loads", () => {

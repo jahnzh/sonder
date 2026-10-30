@@ -1,4 +1,4 @@
-import { useRef, useState, type RefObject } from "react";
+import { type RefObject } from "react";
 import { History } from "lucide-react";
 import { Dialog } from "./ui/dialog";
 import { usePlayer } from "../player";
@@ -58,11 +58,11 @@ export function PositionHistoryDialog({
       title="Position history"
       className="position-history-dialog"
     >
-      <div className="position-history-list" role="list">
-        {p.positionHistory.length === 0 ? (
-          <p className="position-history-empty">No jumps in the last 24 hours</p>
-        ) : (
-          [...p.positionHistory].reverse().map((entry) => {
+      {p.positionHistory.length === 0 ? (
+        <p className="position-history-empty">No jumps in the last 24 hours</p>
+      ) : (
+        <ul className="position-history-list">
+          {[...p.positionHistory].reverse().map((entry) => {
             const playing = p.book;
             const track = playing?.tracks.find((item) => item.id === entry.trackId);
             const chapter = playing && track
@@ -70,34 +70,22 @@ export function PositionHistoryDialog({
               : null;
             const label = `${jumpKindLabel[entry.kind]} · ${clock(entry.position)}${chapter ? ` · ${chapter.replace(/^\d+[. -]*/, "")}` : ""}`;
             return (
-              <button
-                key={`${entry.timestamp}-${entry.trackId}-${entry.position}-${entry.kind}`}
-                type="button"
-                className="button subtle position-history-entry"
-                role="listitem"
-                onClick={() => {
-                  p.restoreJump(entry);
-                  onOpenChange(false);
-                }}
-              >
-                {label}
-              </button>
+              <li key={`${entry.timestamp}-${entry.trackId}-${entry.position}-${entry.kind}`}>
+                <button
+                  type="button"
+                  className="button subtle position-history-entry"
+                  onClick={() => {
+                    p.restoreJump(entry);
+                    onOpenChange(false);
+                  }}
+                >
+                  {label}
+                </button>
+              </li>
             );
-          })
-        )}
-      </div>
+          })}
+        </ul>
+      )}
     </Dialog>
-  );
-}
-
-/** Convenience wrapper when button and dialog can share a fragment (e.g. quick links). */
-export function PositionHistoryControl() {
-  const [open, setOpen] = useState(false);
-  const trigger = useRef<HTMLButtonElement>(null);
-  return (
-    <>
-      <PositionHistoryButton triggerRef={trigger} onClick={() => setOpen(true)} />
-      <PositionHistoryDialog open={open} onOpenChange={setOpen} triggerRef={trigger} />
-    </>
   );
 }

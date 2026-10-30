@@ -176,11 +176,18 @@ async function revealReaderControls(page: Page) {
 async function openPlaybackOptions(page: Page) {
   const dialog = page.getByRole("dialog", { name: "Now playing", exact: true });
   await expect(dialog).toBeVisible();
-  const options = page.getByRole("region", { name: "Playback options" });
+  const options = page.locator(".playback-options-panel");
   if (!(await options.isVisible())) {
-    const list = dialog.getByRole("region", { name: "Player", exact: true }).getByRole("button", { name: "Chapters", exact: true });
-    if (await list.isVisible()) await list.click();
-    else await dialog.getByRole("button", { name: "Playback options", exact: true }).click();
+    // With the reader, the dialog heading ⋯ (aria-label "Playback options") is clipped under
+    // the reader chrome (#22); the reader's top-bar ⋯ (aria-label "More") opens the same panel.
+    // Never use the Chapters button. DOM click avoids the clipped heading's hit-target.
+    const inline = dialog.locator(".inline-reader");
+    if (await inline.count()) {
+      await revealReaderControls(page);
+      await inline.getByRole("button", { name: "More", exact: true }).evaluate((el: HTMLButtonElement) => el.click());
+    } else {
+      await dialog.locator(".playback-menu-trigger").evaluate((el: HTMLButtonElement) => el.click());
+    }
   }
   await expect(options).toBeVisible();
   return options;
@@ -191,7 +198,7 @@ async function positionHistoryButton(page: Page) {
 }
 
 async function closePlaybackOptions(page: Page) {
-  const options = page.getByRole("region", { name: "Playback options" });
+  const options = page.locator(".playback-options-panel");
   if (await options.isVisible()) {
     await options.getByRole("button", { name: "Close playback options", exact: true }).click();
     await expect(options).toBeHidden();
