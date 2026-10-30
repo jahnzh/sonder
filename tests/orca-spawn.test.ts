@@ -45,7 +45,18 @@ function setup(receipt = '{"ok":true,"dispatchId":"ctx_abc","model":"gpt-5.3-cod
   stub(bin, "df", `echo "Filesystem 1024-blocks Used Available Capacity Mounted on"\necho "/dev/fake 102626232 1000 99999999 1% /"`);
   stub(bin, "agent", `printf 'Available models\\n\\nauto - Auto\\ngpt-5.3-codex - Codex 5.3\\n'`);
   const historyStub = join(dir, "history-stub.mjs");
-  writeFileSync(historyStub, `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(join(dir, "history.log"))}, process.argv.slice(2).join(" ") + "\\n");\nif (process.env.ORCA_HISTORY_STUB_FAIL === "1") { console.error("stub capture failed"); process.exit(1); }\n`);
+  writeFileSync(
+    historyStub,
+    `import { appendFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(join(dir, "history.log"))}, args.join(" ") + "\\n");
+const mode = process.env.ORCA_HISTORY_STUB_FAIL || "";
+if (mode === "1" || (mode === "link" && args[0] === "link") || (mode === "capture" && args[0] === "capture")) {
+  console.error("stub " + (args[0] || "history") + " failed");
+  process.exit(1);
+}
+`,
+  );
   const run = (args: string[], env: Record<string, string> = {}) =>
     spawnSync("bash", [script, ...args], {
       cwd: repoRoot,
@@ -366,6 +377,53 @@ test("a failed automatic history capture does not fail the spawn", () => {
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stderr, /warning: automatic history capture failed/);
     assert.match(readFileSync(t.historyLog, "utf8"), /capture --dispatch ctx_abc/);
+  } finally {
+    rmSync(t.dir, { recursive: true, force: true });
+  }
+});
+
+test("--fix-of links the new dispatch after capture", () => {
+  const t = setup();
+  try {
+    const r = t.run([...t.base, "--model", "gpt-5.3-codex", "--fix-of", "ctx_earlier"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const log = readFileSync(t.historyLog, "utf8");
+    assert.match(log, /^capture --dispatch ctx_abc$/m);
+    assert.match(
+      log,
+      /^link --from ctx_abc --to ctx_earlier --kind fix_of --evidence orca-spawn --fix-of$/m,
+    );
+    assert.match(r.stdout, /history: linked ctx_abc as fix_of ctx_earlier/);
+  } finally {
+    rmSync(t.dir, { recursive: true, force: true });
+  }
+});
+
+test("--review-of links the new dispatch after capture", () => {
+  const t = setup();
+  try {
+    const r = t.run([...t.base, "--model", "gpt-5.3-codex", "--review-of", "ctx_impl"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const log = readFileSync(t.historyLog, "utf8");
+    assert.match(
+      log,
+      /^link --from ctx_abc --to ctx_impl --kind review_of --evidence orca-spawn --review-of$/m,
+    );
+    assert.match(r.stdout, /history: linked ctx_abc as review_of ctx_impl/);
+  } finally {
+    rmSync(t.dir, { recursive: true, force: true });
+  }
+});
+
+test("a failed automatic history link does not fail the spawn", () => {
+  const t = setup();
+  try {
+    const r = t.run([...t.base, "--model", "gpt-5.3-codex", "--fix-of", "ctx_earlier"], {
+      ORCA_HISTORY_STUB_FAIL: "link",
+    });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stderr, /warning: automatic history link \(fix_of\) failed/);
+    assert.match(readFileSync(t.historyLog, "utf8"), /link --from ctx_abc --to ctx_earlier/);
   } finally {
     rmSync(t.dir, { recursive: true, force: true });
   }

@@ -6,6 +6,7 @@ import {
   formatCheckLines,
   formatMessageLine,
   parseCliArgs,
+  parseFindingsLine,
   runOrcaCheck,
   main,
 } from "../scripts/orca-check.mjs";
@@ -576,4 +577,68 @@ test("worker_done without a dispatchId skips capture and still prints", () => {
   assert.deepEqual(captured, []);
   assert.match(logs[0], /m1 worker_done/);
   assert.match(errors.join("\n"), /no dispatchId/);
+});
+
+test("parseFindingsLine reads the documented Findings counts line", () => {
+  assert.deepEqual(parseFindingsLine("Summary.\nFindings: blocking=1 high=2 medium=0 low=3\nDone."), {
+    blocking: 1,
+    high: 2,
+    medium: 0,
+    low: 3,
+  });
+  assert.equal(parseFindingsLine("no counts here"), null);
+});
+
+test("worker_done with a Findings line records a review for the reviewing dispatch", () => {
+  const reviews = [];
+  const done = workerDone("m1", "ctx_review");
+  done.body = "Reviewed the branch.\nFindings: blocking=0 high=1 medium=2 low=0\nNothing left.";
+  const { outcome, errors, logs } = runScripted(
+    {},
+    [deliveryEnvelope("del_done", [done])],
+    { t: 0 },
+    {
+      captureHistory: () => {},
+      recordReview: (id, findings) => reviews.push({ id, findings }),
+    },
+  );
+  assert.equal(outcome.exitCode, 0);
+  assert.deepEqual(reviews, [{ id: "ctx_review", findings: { blocking: 0, high: 1, medium: 2, low: 0 } }]);
+  assert.match(logs[0], /m1 worker_done/);
+  assert.doesNotMatch(errors.join("\n"), /no Findings line/);
+});
+
+test("worker_done without a Findings line records nothing and prints one reminder", () => {
+  const reviews = [];
+  const { outcome, errors } = runScripted(
+    {},
+    [deliveryEnvelope("del_done", [workerDone("m1", "ctx_impl")])],
+    { t: 0 },
+    {
+      captureHistory: () => {},
+      recordReview: (id, findings) => reviews.push({ id, findings }),
+    },
+  );
+  assert.equal(outcome.exitCode, 0);
+  assert.deepEqual(reviews, []);
+  assert.match(errors.join("\n"), /history: worker_done for ctx_impl has no Findings line; skipping automatic record-review/);
+});
+
+test("a failed automatic record-review does not fail the check", () => {
+  const done = workerDone("m1", "ctx_review");
+  done.body = "Findings: blocking=0 high=0 medium=0 low=0";
+  const { outcome, errors } = runScripted(
+    {},
+    [deliveryEnvelope("del_done", [done])],
+    { t: 0 },
+    {
+      captureHistory: () => {},
+      recordReview: () => {
+        throw new Error("no record for ctx_review");
+      },
+    },
+  );
+  assert.equal(outcome.exitCode, 0);
+  assert.match(errors.join("\n"), /automatic record-review failed for ctx_review/);
+  assert.match(errors.join("\n"), /no record for ctx_review/);
 });

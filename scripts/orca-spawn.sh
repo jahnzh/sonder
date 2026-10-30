@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Start an Orca worker with a required model, after the preflight.
-#   orca-spawn.sh --spec-file <file> --name <worktree> (--base <branch> | --base-worktree <name>) --agent <id> --model <id> [--effort <level>] [--doc <path>...]
+#   orca-spawn.sh --spec-file <file> --name <worktree> (--base <branch> | --base-worktree <name>) --agent <id> --model <id> [--effort <level>] [--doc <path>...] [--fix-of <dispatch>] [--review-of <dispatch>]
 # Exactly one of --base and --base-worktree is required. --base-worktree uses the branch checked out in the worktree
 # <name> under the workspaces directory, so the local branch name need not match the remote one.
 # Without --doc the preflight checks AGENTS.md and CLAUDE.md on the base.
@@ -11,15 +11,18 @@
 # The worktree path comes from result.effects. codegraph init -y runs in the background, so a worker that
 # starts at once may call CodeGraph before the index exists; it builds its own if .codegraph is missing.
 # After a successful launch it also runs `orca-history.mjs capture --dispatch <id>` (failures are warnings only).
-# Once worker-start has succeeded the script never exits non-zero, so a caller cannot start a second worker.
+# Optional --fix-of / --review-of link the new dispatch to an earlier one after capture (kind fix_of or
+# review_of); a link failure warns only. Once worker-start has succeeded the script never exits non-zero,
+# so a caller cannot start a second worker.
 set -u
 
 usage() {
-  echo "usage: orca-spawn.sh --spec-file <file> --name <worktree> (--base <branch> | --base-worktree <name>) --agent <id> --model <id> [--effort <level>] [--doc <path>...]" >&2
+  echo "usage: orca-spawn.sh --spec-file <file> --name <worktree> (--base <branch> | --base-worktree <name>) --agent <id> --model <id> [--effort <level>] [--doc <path>...] [--fix-of <dispatch>] [--review-of <dispatch>]" >&2
   exit 2
 }
 
 spec_file="" name="" base="" base_worktree="" agent="" model="" effort=""
+fix_of="" review_of=""
 docs=()
 while [ $# -gt 0 ]; do
   [ $# -ge 2 ] || usage
@@ -32,6 +35,8 @@ while [ $# -gt 0 ]; do
     --model) model=$2 ;;
     --effort) effort=$2 ;;
     --doc) docs+=("$2") ;;
+    --fix-of) fix_of=$2 ;;
+    --review-of) review_of=$2 ;;
     *) usage ;;
   esac
   shift 2
@@ -160,11 +165,28 @@ fi
 
 # Automatic history capture at dispatch. Failures are warnings only — the worker is already running.
 # ORCA_HISTORY_SCRIPT overrides the capture entry point (tests); unset ORCA_HISTORY_AUTO=0 to skip.
+# --fix-of / --review-of link after a successful capture; link failures are warnings only.
 if [ -n "${dispatch:-}" ] && [ "${ORCA_HISTORY_AUTO:-1}" != "0" ]; then
   history_script="${ORCA_HISTORY_SCRIPT:-$root/scripts/orca-history.mjs}"
+  captured=0
   if capture_out=$(node "$history_script" capture --dispatch "$dispatch" 2>&1); then
     echo "history: captured $dispatch"
+    captured=1
   else
     echo "warning: automatic history capture failed for $dispatch (worker still running): $capture_out" >&2
+  fi
+  if [ "$captured" -eq 1 ] && [ -n "$fix_of" ]; then
+    if link_out=$(node "$history_script" link --from "$dispatch" --to "$fix_of" --kind fix_of --evidence "orca-spawn --fix-of" 2>&1); then
+      echo "history: linked $dispatch as fix_of $fix_of"
+    else
+      echo "warning: automatic history link (fix_of) failed for $dispatch → $fix_of: $link_out" >&2
+    fi
+  fi
+  if [ "$captured" -eq 1 ] && [ -n "$review_of" ]; then
+    if link_out=$(node "$history_script" link --from "$dispatch" --to "$review_of" --kind review_of --evidence "orca-spawn --review-of" 2>&1); then
+      echo "history: linked $dispatch as review_of $review_of"
+    else
+      echo "warning: automatic history link (review_of) failed for $dispatch → $review_of: $link_out" >&2
+    fi
   fi
 fi

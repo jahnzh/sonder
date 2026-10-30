@@ -1,36 +1,72 @@
 #!/usr/bin/env bash
-# Summarise the newest (or named) Deck/SSH CI run under artifacts/ci/.
+# Summarise Deck/SSH CI runs under artifacts/ci/.
 #
-# Usage: scripts/ci-result.sh <worktree-or-run-dir> [sha-prefix]
+# Usage: scripts/ci-result.sh [--host deck|wsl] <worktree-or-run-dir> [sha-prefix]
 #
-# Finds the newest artifacts/ci/<sha>*/<run>/ directory (optionally filtered by
-# sha-prefix). When several match, picks the newest by mtime and names the others.
-# Prints commit, exit_code, result from ci-deck-result.txt; then from
-# check-report.json: knownFailures.summary, each new failure as
+# Finds every artifacts/ci/<sha>*/<run>/ directory (optionally filtered by
+# sha-prefix and/or --host). Prints each run with its host and result. For a
+# finished run, also prints knownFailures.summary, each new failure as
 # "project file title: first line of message", and the slowest 5 tests when
-# browserSlowestTests is present.
+# browserSlowestTests is present. Recognises both ci-deck-result.txt and
+# ci-ssh-result.txt.
+#
+# --host deck keeps Steam Deck runs (ci-deck-result.txt / host containing
+# steamdeck or deck@). --host wsl keeps WSL/SSH runs (ci-ssh-result.txt or
+# anything that is not a Deck run).
 #
 # Exit codes:
-#   0  result=passed and 0 new failures
-#   1  finished but failed / has new failures / missing report fields
+#   0  every selected finished run has result=passed and 0 new failures
+#   1  at least one selected finished run failed / has new failures / missing report fields
 #   2  bad usage or no matching run directory
-#   3  run still going (no ci-deck-result.txt yet)
+#   3  at least one selected run is still going (no result file yet) and none failed
 set -uo pipefail
 shopt -s nullglob
 
 usage() {
-  echo "usage: scripts/ci-result.sh <worktree-or-run-dir> [sha-prefix]" >&2
+  echo "usage: scripts/ci-result.sh [--host deck|wsl] <worktree-or-run-dir> [sha-prefix]" >&2
   exit 2
 }
 
-if [[ ${1:-} == -h || ${1:-} == --help ]]; then
-  echo "usage: scripts/ci-result.sh <worktree-or-run-dir> [sha-prefix]"
-  exit 0
-fi
-[[ $# -ge 1 && $# -le 2 ]] || usage
+HOST_FILTER=""
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help)
+      echo "usage: scripts/ci-result.sh [--host deck|wsl] <worktree-or-run-dir> [sha-prefix]"
+      exit 0
+      ;;
+    --host)
+      [[ $# -ge 2 ]] || usage
+      HOST_FILTER=$2
+      [[ $HOST_FILTER == deck || $HOST_FILTER == wsl ]] || {
+        echo "usage: --host must be deck or wsl" >&2
+        exit 2
+      }
+      shift 2
+      ;;
+    --host=*)
+      HOST_FILTER=${1#--host=}
+      [[ $HOST_FILTER == deck || $HOST_FILTER == wsl ]] || {
+        echo "usage: --host must be deck or wsl" >&2
+        exit 2
+      }
+      shift
+      ;;
+    -*)
+      echo "unknown option: $1" >&2
+      usage
+      ;;
+    *)
+      POSITIONAL+=("$1")
+      shift
+      ;;
+  esac
+done
 
-TARGET=$1
-SHA_PREFIX=${2:-}
+[[ ${#POSITIONAL[@]} -ge 1 && ${#POSITIONAL[@]} -le 2 ]] || usage
+
+TARGET=${POSITIONAL[0]}
+SHA_PREFIX=${POSITIONAL[1]:-}
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 
 if [[ ! -e $TARGET ]]; then
@@ -39,11 +75,45 @@ if [[ ! -e $TARGET ]]; then
 fi
 TARGET=$(cd "$TARGET" && pwd -P)
 
-# Resolve to a single run directory (…/artifacts/ci/<sha>/<run>).
-resolve_run_dir() {
+result_file_for() {
+  local dir=$1
+  if [[ -f $dir/ci-deck-result.txt ]]; then
+    printf '%s\n' "$dir/ci-deck-result.txt"
+  elif [[ -f $dir/ci-ssh-result.txt ]]; then
+    printf '%s\n' "$dir/ci-ssh-result.txt"
+  else
+    return 1
+  fi
+}
+
+# Classify a run as deck or wsl from its result file name and host= line.
+classify_host() {
+  local dir=$1
+  local file host=""
+  if ! file=$(result_file_for "$dir"); then
+    echo "unknown"
+    return
+  fi
+  case $(basename "$file") in
+    ci-deck-result.txt) echo deck; return ;;
+    ci-ssh-result.txt) echo wsl; return ;;
+  esac
+  while IFS= read -r line || [[ -n $line ]]; do
+    case $line in
+      host=*) host=${line#host=} ;;
+    esac
+  done <"$file"
+  if [[ $host == *steamdeck* || $host == deck@* || $host == *deck@* ]]; then
+    echo deck
+  else
+    echo wsl
+  fi
+}
+
+# Collect every matching run directory under artifacts/ci (or a direct run dir).
+collect_run_dirs() {
   local target=$1 prefix=$2
-  # Already a run dir (has result file or check-report, or looks like …/ci/<sha>/<run>).
-  if [[ -f $target/ci-deck-result.txt || -f $target/check-report.json ]]; then
+  if result_file_for "$target" >/dev/null || [[ -f $target/check-report.json ]]; then
     printf '%s\n' "$target"
     return 0
   fi
@@ -52,10 +122,8 @@ resolve_run_dir() {
   if [[ -d $target/artifacts/ci ]]; then
     search_root=$target/artifacts/ci
   elif [[ -d $target/ci ]]; then
-    # Passed artifacts/ itself
     search_root=$target/ci
   elif [[ $(basename "$(dirname "$target")") == ci ]]; then
-    # Passed artifacts/ci/<sha>
     search_root=$(dirname "$target")
     prefix=$(basename "$target")
   elif [[ -d $ROOT/artifacts/ci && $target == "$ROOT" ]]; then
@@ -72,13 +140,11 @@ resolve_run_dir() {
     pattern="$search_root/"*
   fi
 
-  # Collect run dirs: each sha dir's immediate children.
   local -a runs=()
   local sha_dir run_dir
   for sha_dir in $pattern; do
     [[ -d $sha_dir ]] || continue
-    # If pattern matched a run dir directly (unlikely), skip; we want sha level.
-    if [[ -f $sha_dir/ci-deck-result.txt || -f $sha_dir/check-report.json ]]; then
+    if result_file_for "$sha_dir" >/dev/null || [[ -f $sha_dir/check-report.json ]]; then
       runs+=("$sha_dir")
       continue
     fi
@@ -93,62 +159,55 @@ resolve_run_dir() {
     return 2
   fi
 
-  # Newest by mtime; mention the others.
-  local newest="" newest_mtime=-1
-  local -a others=()
+  # Newest first by mtime so output order is stable and useful.
+  local -a sorted=()
   local r m
+  local -a with_mtime=()
   for r in "${runs[@]}"; do
     m=$(stat -c %Y "$r" 2>/dev/null || stat -f %m "$r")
-    if (( m > newest_mtime )); then
-      [[ -n $newest ]] && others+=("$newest")
-      newest=$r
-      newest_mtime=$m
-    else
-      others+=("$r")
-    fi
+    with_mtime+=("$m|$r")
   done
+  local line
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    sorted+=("${line#*|}")
+  done < <(printf '%s\n' "${with_mtime[@]}" | sort -t'|' -k1,1nr)
 
-  if [[ ${#others[@]} -gt 0 ]]; then
-    echo "using newest: $newest" >&2
-    echo "other matching runs:" >&2
-    local o
-    for o in "${others[@]}"; do
-      echo "  $o" >&2
-    done
-  fi
-  printf '%s\n' "$newest"
+  printf '%s\n' "${sorted[@]}"
 }
 
-RUN_DIR=$(resolve_run_dir "$TARGET" "$SHA_PREFIX") || exit $?
+# Print one run's summary and detail. Sets globals: _run_failed _run_running
+print_run() {
+  local RUN_DIR=$1
+  local RESULT_FILE REPORT_FILE
+  RESULT_FILE=$(result_file_for "$RUN_DIR" || true)
+  REPORT_FILE=$RUN_DIR/check-report.json
 
-RESULT_FILE=$RUN_DIR/ci-deck-result.txt
-REPORT_FILE=$RUN_DIR/check-report.json
+  local commit="" exit_code="" result="" host=""
+  if [[ -n ${RESULT_FILE:-} && -f $RESULT_FILE ]]; then
+    while IFS= read -r line || [[ -n $line ]]; do
+      case $line in
+        commit=*) commit=${line#commit=} ;;
+        exit_code=*) exit_code=${line#exit_code=} ;;
+        result=*) result=${line#result=} ;;
+        host=*) host=${line#host=} ;;
+      esac
+    done <"$RESULT_FILE"
+  else
+    _run_running=1
+    echo "host=${host:-unknown} result=running run_dir=$RUN_DIR"
+    return
+  fi
 
-if [[ ! -f $RESULT_FILE ]]; then
-  echo "running"
+  echo "host=${host:-unknown} result=${result:-unknown} run_dir=$RUN_DIR"
+  echo "commit=$commit"
+  echo "exit_code=$exit_code"
+  echo "result=$result"
   echo "run_dir=$RUN_DIR"
-  exit 3
-fi
 
-# Parse key=value lines from the result file.
-commit="" exit_code="" result=""
-while IFS= read -r line || [[ -n $line ]]; do
-  case $line in
-    commit=*) commit=${line#commit=} ;;
-    exit_code=*) exit_code=${line#exit_code=} ;;
-    result=*) result=${line#result=} ;;
-  esac
-done <"$RESULT_FILE"
-
-echo "commit=$commit"
-echo "exit_code=$exit_code"
-echo "result=$result"
-echo "run_dir=$RUN_DIR"
-
-new_count=0
-if [[ -f $REPORT_FILE ]]; then
-  # Node parses the real check-report.json shape (knownFailures.new, browserSlowestTests).
-  eval "$(node --input-type=module -e "
+  local new_count=0
+  if [[ -f $REPORT_FILE ]]; then
+    eval "$(node --input-type=module -e "
 import fs from 'node:fs';
 const report = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
 const kf = report.knownFailures && typeof report.knownFailures === 'object' ? report.knownFailures : null;
@@ -183,32 +242,74 @@ if (slow) {
 }
 " "$REPORT_FILE")"
 
-  echo "knownFailures.summary=$SUMMARY"
-  new_count=${NEW_COUNT:-0}
-  if [[ ${new_count:-0} -gt 0 ]]; then
-    echo "new failures:"
-    i=0
-    while [[ $i -lt $new_count ]]; do
-      eval "echo \"  \$NEW_$i\""
-      i=$((i + 1))
-    done
+    echo "knownFailures.summary=$SUMMARY"
+    new_count=${NEW_COUNT:-0}
+    if [[ ${new_count:-0} -gt 0 ]]; then
+      echo "new failures:"
+      i=0
+      while [[ $i -lt $new_count ]]; do
+        eval "echo \"  \$NEW_$i\""
+        i=$((i + 1))
+      done
+    else
+      echo "new failures: 0"
+    fi
+    if [[ -n ${SLOW_COUNT:-} ]]; then
+      echo "slowest browser tests:"
+      i=0
+      while [[ $i -lt $SLOW_COUNT ]]; do
+        eval "echo \"  \$SLOW_$i\""
+        i=$((i + 1))
+      done
+    fi
   else
-    echo "new failures: 0"
+    echo "check-report.json missing under $RUN_DIR" >&2
+    _run_failed=1
+    return
   fi
-  if [[ -n ${SLOW_COUNT:-} ]]; then
-    echo "slowest browser tests:"
-    i=0
-    while [[ $i -lt $SLOW_COUNT ]]; do
-      eval "echo \"  \$SLOW_$i\""
-      i=$((i + 1))
-    done
+
+  if [[ $result == passed && ${new_count:-0} -eq 0 ]]; then
+    return
   fi
-else
-  echo "check-report.json missing under $RUN_DIR" >&2
-  exit 1
+  _run_failed=1
+}
+
+mapfile -t ALL_RUNS < <(collect_run_dirs "$TARGET" "$SHA_PREFIX") || exit $?
+if [[ ${#ALL_RUNS[@]} -eq 0 ]]; then
+  echo "no run directories matching ${SHA_PREFIX:-*}" >&2
+  exit 2
 fi
 
-if [[ $result == passed && ${new_count:-0} -eq 0 ]]; then
-  exit 0
+RUNS=()
+for r in "${ALL_RUNS[@]}"; do
+  [[ -n $r ]] || continue
+  if [[ -n $HOST_FILTER ]]; then
+    kind=$(classify_host "$r")
+    [[ $kind == "$HOST_FILTER" ]] || continue
+  fi
+  RUNS+=("$r")
+done
+
+if [[ ${#RUNS[@]} -eq 0 ]]; then
+  echo "no run directories matching host=${HOST_FILTER} under the selection" >&2
+  exit 2
 fi
-exit 1
+
+_run_failed=0
+_run_running=0
+first=1
+for r in "${RUNS[@]}"; do
+  if [[ $first -eq 0 ]]; then
+    echo "---"
+  fi
+  first=0
+  print_run "$r"
+done
+
+if [[ $_run_failed -ne 0 ]]; then
+  exit 1
+fi
+if [[ $_run_running -ne 0 ]]; then
+  exit 3
+fi
+exit 0

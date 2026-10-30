@@ -47,6 +47,12 @@ Report all findings categorized by severity:
 - `MEDIUM`: Code smells, performance bottlenecks, incomplete edge case handling.
 - `LOW`: Stylistic nits, minor documentation discrepancies.
 
+End the `worker_done` body with this exact counts line so `scripts/orca-check.mjs` can record the review automatically (N are non-negative integers):
+
+```text
+Findings: blocking=N high=N medium=N low=N
+```
+
 ## Constraints
 
 - Read-only: must not edit or commit.
@@ -54,4 +60,4 @@ Report all findings categorized by severity:
 
 ## Done when
 
-Send `worker_done` within 30 minutes even if incomplete. Your report lists findings categorized by severity (BLOCKING/HIGH/MEDIUM/LOW) and addresses each numbered focus item.
+Send `worker_done` within 30 minutes even if incomplete. Your report lists findings categorized by severity (BLOCKING/HIGH/MEDIUM/LOW), includes the `Findings: blocking=N high=N medium=N low=N` line, and addresses each numbered focus item.

@@ -103,11 +103,11 @@ The spawn checks do not change: the model stays explicit, the preflight runs, an
 
 ## Spawn
 
-Run `scripts/orca-spawn.sh --spec-file <file> --name <worktree> (--base <branch> | --base-worktree <name>) --agent <id> --model <id> [--effort <level>]` to launch a worker. It requires `--model` and exactly one of `--base` and `--base-worktree`, runs `scripts/orca-preflight.sh`, starts the worker, and checks the effective model in the receipt. `--base-worktree <name>` uses the branch checked out in that worktree, for a worker whose local branch name differs from the remote one (`jahnzh/fix-79` against `fix/79-offline-stall`). After the launch the script prints `branch: <name>`, the new worktree's real local branch, for push and cleanup. The preflight also fails when free space on `/` (or on the workspaces filesystem) is below `ORCA_MIN_FREE_GB` (default 15) and names what to clean.
+Run `scripts/orca-spawn.sh --spec-file <file> --name <worktree> (--base <branch> | --base-worktree <name>) --agent <id> --model <id> [--effort <level>] [--fix-of <dispatch>] [--review-of <dispatch>]` to launch a worker. It requires `--model` and exactly one of `--base` and `--base-worktree`, runs `scripts/orca-preflight.sh`, starts the worker, and checks the effective model in the receipt. `--base-worktree <name>` uses the branch checked out in that worktree, for a worker whose local branch name differs from the remote one (`jahnzh/fix-79` against `fix/79-offline-stall`). After the launch the script prints `branch: <name>`, the new worktree's real local branch, for push and cleanup. `--fix-of` / `--review-of` link the new dispatch to an earlier one after capture. The preflight also fails when free space on `/` (or on the workspaces filesystem) is below `ORCA_MIN_FREE_GB` (default 15) and names what to clean.
 
 ## Record the outcome
 
-Lifecycle capture is automatic: `scripts/orca-spawn.sh` captures after a successful launch, and `scripts/orca-check.mjs` captures again for each `worker_done` that names a `dispatchId` (before `worker-release`). Failures are warnings only and do not break the dispatch. Still run a manual `node scripts/orca-history.mjs capture --dispatch <dispatch_id> --recommendation <recommend output>` to attach the recommendation, then record checks, reviews and links as they happen. Unavailable information is stored as unknown. See `docs/agents/worker-history.md`.
+Lifecycle capture is automatic: `scripts/orca-spawn.sh` captures after a successful launch, and `scripts/orca-check.mjs` captures again for each `worker_done` that names a `dispatchId` (before `worker-release`). Spawn `--fix-of` / `--review-of` link the new dispatch after capture. Reviewers must put `Findings: blocking=N high=N medium=N low=N` on its own line in the `worker_done` body so `orca-check` can `record-review` automatically; without that line it records nothing and prints one reminder. CI scripts record a check when `SONDER_CI_DISPATCH` is set. Failures are warnings only and do not break the dispatch or the CI exit code. Still run a manual `node scripts/orca-history.mjs capture --dispatch <dispatch_id> --recommendation <recommend output>` to attach the recommendation. Unavailable information is stored as unknown. See `docs/agents/worker-history.md`.
 
 ## Read the inbox
 
@@ -137,6 +137,13 @@ Any change touching keyboard handling, persistence/progress, security or shared 
 
 - Reviewer spec template: `docs/agents/spec-templates/review.md`.
 - Fix findings with a `docs/agents/spec-templates/fix.md` spec.
+- Spawn the reviewer with `scripts/orca-spawn.sh … --review-of <implementer-dispatch>` and a fix worker with `--fix-of <reviewed-dispatch>`.
+- The reviewer's `worker_done` body must include exactly one counts line so history can record it:
+
+```text
+Findings: blocking=N high=N medium=N low=N
+```
+
 - The Deck run runs on the final head only.
 
 ## Liveness playbook

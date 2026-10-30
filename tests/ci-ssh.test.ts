@@ -332,3 +332,48 @@ test("a stalled bundle upload is cut at the transfer cap and counts as connectiv
   assert.match(out.output, /Could not copy the bundle/);
   assert.ok(Date.now() - started < 20_000, "the upload was cut near the cap, not after the stub's 30 s sleep");
 });
+
+test("without SONDER_CI_DISPATCH the finished check is not recorded in history", () => {
+  const f = fixture();
+  const historyLog = path.join(f.base, "history.log");
+  const historyStub = path.join(f.base, "history-stub.mjs");
+  fs.writeFileSync(
+    historyStub,
+    `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(historyLog)}, process.argv.slice(2).join(" ") + "\\n");\n`,
+  );
+  const out = f.run(f.second, { ORCA_HISTORY_SCRIPT: historyStub, STUB_SSH_MODE: "down" });
+  assert.equal(out.status, 0, out.output);
+  assert.equal(fs.existsSync(historyLog), false);
+});
+
+test("SONDER_CI_DISPATCH records ci:ssh on the named dispatch", () => {
+  const f = fixture();
+  const historyLog = path.join(f.base, "history.log");
+  const historyStub = path.join(f.base, "history-stub.mjs");
+  fs.writeFileSync(
+    historyStub,
+    `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(historyLog)}, process.argv.slice(2).join(" ") + "\\n");\n`,
+  );
+  const out = f.run(f.second, {
+    ORCA_HISTORY_SCRIPT: historyStub,
+    SONDER_CI_DISPATCH: "ctx_worker",
+    STUB_SSH_MODE: "down",
+  });
+  assert.equal(out.status, 0, out.output);
+  const log = fs.readFileSync(historyLog, "utf8");
+  assert.match(log, new RegExp(`record-check --dispatch ctx_worker --name ci:ssh --commit ${f.second} --result pass`));
+  assert.match(out.output, /history: recorded ci:ssh on ctx_worker \(pass\)/);
+});
+
+test("a failed automatic history record-check does not change the ci-ssh exit code", () => {
+  const f = fixture();
+  const historyStub = path.join(f.base, "history-stub.mjs");
+  fs.writeFileSync(historyStub, `console.error("stub record-check failed"); process.exit(1);\n`);
+  const out = f.run(f.second, {
+    ORCA_HISTORY_SCRIPT: historyStub,
+    SONDER_CI_DISPATCH: "ctx_worker",
+    STUB_SSH_MODE: "down",
+  });
+  assert.equal(out.status, 0, out.output);
+  assert.match(out.output, /warning: automatic history record-check failed/);
+});
