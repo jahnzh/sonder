@@ -366,7 +366,7 @@ export async function recommend(options, candidates) {
   const given = sanitizedOptions.judgment ? { requirement: sanitizedOptions.judgment, reason: sanitizedOptions.judgmentReason, used: !conclusive } : null;
   const requirement = conclusive ? jevRequirement : (given?.requirement ?? null);
   const assessment = { source: conclusive ? "jev" : given ? "coordinator" : null, requirement, jev: jevReport, coordinator: given };
-  const base = { task: sanitizedOptions.task, assessment, fallback: null, recommendation: null, alternatives: [], rejected: [], usage: UNKNOWN_USAGE, decision: null, launch: null };
+  const base = { task: sanitizedOptions.task, request: { kind: sanitizedOptions.kind ?? null, files: sanitizedOptions.files ?? null }, assessment, fallback: null, recommendation: null, alternatives: [], rejected: [], usage: UNKNOWN_USAGE, decision: null, launch: null };
 
   if (!requirement) return { ...base, status: "needs-judgment" };
   if (!conclusive) {

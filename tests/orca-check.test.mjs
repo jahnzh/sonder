@@ -47,22 +47,25 @@ const heartbeat = (id) => ({
   body: "phase=implementing",
   payload: { taskId: "task_1", dispatchId: "ctx_1", phase: "implementing" },
 });
-const workerDone = (id) => ({
+const workerDone = (id, dispatchId = "ctx_done1") => ({
   id,
   type: "worker_done",
   subject: "succeeded",
   sender: "term_worker",
   body: "Done.",
-  payload: { outcome: "succeeded" },
+  payload: { outcome: "succeeded", taskId: "task_1", dispatchId },
 });
 
 // Runs runOrcaCheck with a scripted queue of orca replies; returns the printed text and the argv of every call.
 // A reply of "timeout" is Orca's own wait timing out: the empty queue with timedOut true.
-function runScripted(options, replies, clock = { t: 0 }) {
+function runScripted(options, replies, clock = { t: 0 }, extraHooks = {}) {
   const calls = [];
   const logs = [];
+  const errors = [];
   const origLog = console.log;
+  const origErr = console.error;
   console.log = (line) => logs.push(line);
+  console.error = (line) => errors.push(String(line));
   let outcome;
   try {
     outcome = runOrcaCheck(options, {
@@ -78,12 +81,16 @@ function runScripted(options, replies, clock = { t: 0 }) {
         if (typeof clock.advance === "number") clock.t += clock.advance;
         return { status: 0, stdout: JSON.stringify(envelope), stderr: '{"_keepalive":true}\n' };
       },
+      // Tests that do not care about history get a no-op; capture tests override this.
+      captureHistory: () => {},
+      ...extraHooks,
     });
   } finally {
     console.log = origLog;
+    console.error = origErr;
   }
   assert.equal(replies.length, 0, "scripted replies left over");
-  return { outcome, logs, calls };
+  return { outcome, logs, calls, errors };
 }
 
 const multiMessageEnvelope = {
@@ -107,7 +114,7 @@ const multiMessageEnvelope = {
         subject: "succeeded",
         sender: "term_worker_terminal_handle",
         body: "Finished the parser and tests. Nothing left for the coordinator.",
-        payload: { outcome: "succeeded", taskId: "task_cda427e7c32f" },
+        payload: { outcome: "succeeded", taskId: "task_cda427e7c32f", dispatchId: "ctx_49536e0c743e" },
       },
     ],
     count: 2,
@@ -323,7 +330,7 @@ test("formatMessageLine matches the coordinator-facing shape", () => {
   const line = formatMessageLine(multiMessageEnvelope.result.messages[1]);
   assert.equal(
     line,
-    "msg_worker_done_1 worker_done | succeeded | term_worker_terminal_han | Finished the parser and tests. Nothing left for the coordinator. | {\"outcome\":\"succeeded\",\"taskId\":\"task_cda427e7c32f\"}",
+    "msg_worker_done_1 worker_done | succeeded | term_worker_terminal_han | Finished the parser and tests. Nothing left for the coordinator. | {\"outcome\":\"succeeded\",\"taskId\":\"task_cda427e7c32f\",\"dispatchId\":\"ctx_49536e0c743e\"}",
   );
 });
 
@@ -520,14 +527,53 @@ test("an Orca error during the heartbeat loop is reported, real stale_delivery s
     },
     _meta: { runtimeId: "22eeea5e-ba22-4ef8-bca5-bcaa34e2199e" },
   };
-  const errors = [];
-  const origError = console.error;
-  console.error = (line) => errors.push(line);
-  try {
-    const { outcome } = runScripted({ waitSeconds: 90 }, [deliveryEnvelope("del_hb1", [heartbeat("m1")]), stale]);
-    assert.equal(outcome.exitCode, 1);
-  } finally {
-    console.error = origError;
-  }
+  const { outcome, errors } = runScripted({ waitSeconds: 90 }, [deliveryEnvelope("del_hb1", [heartbeat("m1")]), stale]);
+  assert.equal(outcome.exitCode, 1);
   assert.deepEqual(errors, ["stale_delivery: Delivery del_bogus does not belong to this mailbox."]);
+});
+
+test("worker_done triggers automatic history capture for each dispatchId", () => {
+  const captured = [];
+  const { outcome, logs } = runScripted(
+    {},
+    [deliveryEnvelope("del_done", [workerDone("m1", "ctx_auto1"), heartbeat("h1"), workerDone("m2", "ctx_auto2")])],
+    { t: 0 },
+    { captureHistory: (id) => captured.push(id) },
+  );
+  assert.equal(outcome.exitCode, 0);
+  assert.deepEqual(captured, ["ctx_auto1", "ctx_auto2"]);
+  assert.match(logs[0], /m1 worker_done/);
+});
+
+test("a failed automatic capture does not fail the check", () => {
+  const { outcome, errors, logs } = runScripted(
+    {},
+    [deliveryEnvelope("del_done", [workerDone("m1", "ctx_boom")])],
+    { t: 0 },
+    {
+      captureHistory: () => {
+        throw new Error("history store is locked");
+      },
+    },
+  );
+  assert.equal(outcome.exitCode, 0);
+  assert.match(logs[0], /m1 worker_done/);
+  assert.match(errors.join("\n"), /ctx_boom/);
+  assert.match(errors.join("\n"), /history store is locked/);
+});
+
+test("worker_done without a dispatchId skips capture and still prints", () => {
+  const captured = [];
+  const done = workerDone("m1");
+  delete done.payload.dispatchId;
+  const { outcome, errors, logs } = runScripted(
+    {},
+    [deliveryEnvelope("del_done", [done])],
+    { t: 0 },
+    { captureHistory: (id) => captured.push(id) },
+  );
+  assert.equal(outcome.exitCode, 0);
+  assert.deepEqual(captured, []);
+  assert.match(logs[0], /m1 worker_done/);
+  assert.match(errors.join("\n"), /no dispatchId/);
 });

@@ -13,7 +13,9 @@ Runs $ORCA_CLI_COMMAND orchestration check --json (default command: orca), strip
 --wait defaults to ${DEFAULT_WAIT_SECONDS}s and cannot exceed ${MAX_WAIT_SECONDS}s.
 A delivery that holds only heartbeats is acknowledged and the wait continues; a delivery with any other message is
 printed without its heartbeats and left for the caller to ack. When only heartbeats arrived, the count line ends
-with heartbeats=<n>. --heartbeats prints every delivery as Orca returns it and acks nothing.`);
+with heartbeats=<n>. --heartbeats prints every delivery as Orca returns it and acks nothing.
+Each worker_done whose payload names a dispatchId also runs orca-history capture for that dispatch; a capture
+failure is printed to stderr and does not change the check exit code.`);
 }
 
 /**
@@ -144,6 +146,63 @@ export function formatCheckLines(result, opts = {}) {
 /** @param {unknown} message */
 function isHeartbeat(message) {
   return !!message && typeof message === "object" && /** @type {Record<string, unknown>} */ (message).type === "heartbeat";
+}
+
+/**
+ * @param {unknown} message
+ * @returns {string | null}
+ */
+export function dispatchIdOfWorkerDone(message) {
+  if (!message || typeof message !== "object") return null;
+  const msg = /** @type {Record<string, unknown>} */ (message);
+  if (msg.type !== "worker_done") return null;
+  const payload = msg.payload;
+  if (!payload || typeof payload !== "object") return null;
+  const id = /** @type {Record<string, unknown>} */ (payload).dispatchId;
+  return typeof id === "string" && id ? id : null;
+}
+
+/**
+ * Runs `orca-history capture` for one dispatch. Failures are the caller's to swallow.
+ * @param {string} dispatchId
+ * @param {NodeJS.ProcessEnv} [env]
+ */
+export function defaultCaptureHistory(dispatchId, env = process.env) {
+  const script = fileURLToPath(new URL("./orca-history.mjs", import.meta.url));
+  const run = spawnSync(process.execPath, [script, "capture", "--dispatch", dispatchId], {
+    encoding: "utf8",
+    env,
+    timeout: 120000,
+    maxBuffer: 10 * 1024 * 1024,
+  });
+  if (run.error) throw new Error(run.error.message);
+  if (run.status !== 0) {
+    throw new Error((run.stderr || run.stdout || `capture exited ${run.status}`).trim().slice(0, 300));
+  }
+}
+
+/**
+ * After a worker_done message, capture that dispatch. Never throws; never changes the check exit code.
+ * @param {unknown[]} messages
+ * @param {{ captureHistory?: (dispatchId: string) => void }} [hooks]
+ */
+export function autoCaptureWorkerDone(messages, hooks = {}) {
+  const capture = hooks.captureHistory || defaultCaptureHistory;
+  for (const message of messages) {
+    if (!message || typeof message !== "object") continue;
+    if (/** @type {Record<string, unknown>} */ (message).type !== "worker_done") continue;
+    const id = dispatchIdOfWorkerDone(message);
+    if (!id) {
+      console.error("history: worker_done has no dispatchId; skipping automatic capture");
+      continue;
+    }
+    try {
+      capture(id);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error(`history: automatic capture failed for ${id}: ${detail}`);
+    }
+  }
 }
 
 /**
@@ -318,6 +377,9 @@ export function runOrcaCheck(options, hooks = {}) {
     hidden += messages.length - shown.length;
     result = { ...result, messages: shown };
   }
+
+  // Lifecycle capture: every worker_done in this batch updates the history record. Failures are logged only.
+  autoCaptureWorkerDone(Array.isArray(result.messages) ? result.messages : [], hooks);
 
   const lines = [];
   const formatOpts = { hidden };

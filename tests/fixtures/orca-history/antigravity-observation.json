@@ -1,0 +1,76 @@
+{
+  "provider": "antigravity",
+  "source": {
+    "kind": "antigravity-cli-usage-command",
+    "command": "agy -p /usage --output-format json",
+    "official": true,
+    "note": "The Antigravity CLI's read-only /usage command in print mode; it starts no agent turn, spends no quota and leaves no conversation. The JSON payload has no published schema"
+  },
+  "scope": {
+    "host": "andi",
+    "home": null,
+    "account": "sha256:84f4d41978459895",
+    "authMethod": "consumer",
+    "expectedAccount": null
+  },
+  "observedAt": "2026-10-30T11:37:24.555Z",
+  "status": "limited",
+  "reason": null,
+  "windows": [
+    {
+      "id": "gemini-weekly",
+      "kind": "weekly",
+      "group": "Gemini Models",
+      "label": "Gemini Models: Weekly Limit Remaining",
+      "remainingFraction": 0.933912456035614,
+      "usedPercent": 6.61,
+      "resetsAt": "2026-11-05T23:16:23.000Z",
+      "exhausted": false
+    },
+    {
+      "id": "gemini-5h",
+      "kind": "five_hour",
+      "group": "Gemini Models",
+      "label": "Gemini Models: Five Hour Limit Remaining",
+      "remainingFraction": 0.9190038442611694,
+      "usedPercent": 8.1,
+      "resetsAt": "2026-10-30T12:16:22.000Z",
+      "exhausted": false
+    },
+    {
+      "id": "3p-weekly",
+      "kind": "weekly",
+      "group": "Claude and GPT models",
+      "label": "Claude and GPT models: Weekly Limit Remaining",
+      "remainingFraction": 1,
+      "usedPercent": 0,
+      "resetsAt": "2026-11-06T11:37:26.000Z",
+      "exhausted": false
+    },
+    {
+      "id": "3p-5h",
+      "kind": "five_hour",
+      "group": "Claude and GPT models",
+      "label": "Claude and GPT models: Five Hour Limit Remaining",
+      "remainingFraction": 1,
+      "usedPercent": 0,
+      "resetsAt": "2026-10-30T16:37:26.000Z",
+      "exhausted": false
+    },
+    {
+      "id": "gemini-argon-wtu-weekly",
+      "kind": "weekly",
+      "group": "Gemini 4 Argon",
+      "label": "Gemini 4 Argon: Gemini 4 Argon Weekly Limit",
+      "remainingFraction": 0,
+      "usedPercent": 100,
+      "resetsAt": "2026-11-06T08:55:59.000Z",
+      "exhausted": true
+    }
+  ],
+  "freshness": {
+    "state": "fresh",
+    "reasons": [],
+    "staleAfter": "2026-10-30T12:07:24.555Z"
+  }
+}

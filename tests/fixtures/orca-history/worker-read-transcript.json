@@ -1,0 +1,114 @@
+{
+  "id": "59851e27-6281-4891-954e-1db302a0c306",
+  "ok": true,
+  "result": {
+    "dispatchId": "ctx_b4c6c1294c38",
+    "source": "transcript",
+    "sourceIdentity": "82PjCjtPMb3TDtpaGudxutiONsvchaFp",
+    "provider": "claude",
+    "transcript": {
+      "messages": [
+        {
+          "id": "e93378ea-eefc-402b-947c-dd077cf83bcf",
+          "role": "assistant",
+          "blocks": [
+            {
+              "type": "tool-call",
+              "name": "Bash",
+              "input": {
+                "command": "git status --short"
+              },
+              "callId": "toolu_01EGg8L5n4mpPsjQLSW7c7Dk"
+            }
+          ],
+          "timestamp": 1793360127869,
+          "source": "transcript",
+          "parentId": "090003ad-0ac5-4e0f-b011-2d96eb4f5f55"
+        },
+        {
+          "id": "b351c993-c60a-46b0-a857-5cabf1c2056b",
+          "role": "tool",
+          "blocks": [
+            {
+              "type": "tool-result",
+              "output": "M scripts/orca-history.mjs",
+              "callId": "toolu_01EGg8L5n4mpPsjQLSW7c7Dk"
+            }
+          ],
+          "timestamp": 1793360128353,
+          "source": "transcript",
+          "parentId": "e93378ea-eefc-402b-947c-dd077cf83bcf"
+        }
+      ],
+      "nextCursor": null,
+      "limited": false,
+      "returnedMessageCount": 2
+    },
+    "cursor": "owr1_eyJ2IjoxLCJkIjoiY3R4X2I0YzZjMTI5NGMzOCIsInMiOiJ0cmFuc2NyaXB0IiwiaSI6IjgyUGpDanRQTWIzVER0cGFHdWR4dXRpT05zdmNoYUZwIiwicCI6ODc4NjIwLCJjIjoiY1p2bUlXbVVUQkhCYXplMURwNTlVazFBZ3FEeG5EUTgifQ",
+    "status": {
+      "worker": "ready",
+      "terminal": "running",
+      "liveness": "live"
+    },
+    "fallbackReason": null,
+    "warnings": [],
+    "sourceExact": true,
+    "contentComplete": true,
+    "clipping": [],
+    "projection": {
+      "id": "ctx_b4c6c1294c38",
+      "dispatchId": "ctx_b4c6c1294c38",
+      "taskId": "task_731602ca44bf",
+      "runId": "run_dc5c4e2cd60a",
+      "role": "worker",
+      "parent": null,
+      "provider": {
+        "id": "claude",
+        "model": null
+      },
+      "host": {
+        "kind": "local",
+        "id": "local"
+      },
+      "workspace": {
+        "id": "9e9b9113-643d-4064-be3a-bb8bab47f2d9::/home/jahn/orca/workspaces/audiobook_streamer/issue-111-worker",
+        "kind": "folder_or_worktree"
+      },
+      "stage": {
+        "worker": "ready",
+        "dispatch": "dispatched",
+        "detail": "input_accepted",
+        "activity": "working"
+      },
+      "outcome": "in_progress",
+      "liveness": {
+        "verdict": "live",
+        "observedAt": 1793360132428,
+        "source": "agent_status"
+      },
+      "evidence": {
+        "durable": true,
+        "liveStatus": "fresh",
+        "lastObservedAt": 1793360132428
+      },
+      "resource": {
+        "state": "owned",
+        "id": "wtr_0906f5107506",
+        "ownerDispatchId": "ctx_b4c6c1294c38",
+        "releaseState": "not_requested",
+        "terminalState": "active"
+      },
+      "nextAction": {
+        "kind": "none",
+        "argv": []
+      },
+      "attention": {
+        "categories": [],
+        "requiresAction": false
+      }
+    }
+  },
+  "_meta": {
+    "runtimeId": "22eeea5e-ba22-4ef8-bca5-bcaa34e2199e"
+  }
+}
