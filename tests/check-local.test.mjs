@@ -314,7 +314,8 @@ test("1. Stage order: executes npm ci -> npm run build -> npm test -> npm run te
         assert.deepEqual(logs[0].argv, ["ci"]);
         assert.deepEqual(logs[1].argv, ["run", "build"]);
         assert.deepEqual(logs[2].argv, ["test"]);
-        assert.deepEqual(logs[3].argv, ["run", "test:browser"]);
+        assert.deepEqual(logs[3].argv, ["run", "test:browser", "--", "--reporter=list,json"]);
+        assert.equal(logs[3].env.PLAYWRIGHT_JSON_OUTPUT_NAME, path.join(result.outputDir, "playwright-results.json"));
         // Verify build preceded browser
         assert.ok(logs[1].timestamp <= logs[3].timestamp, "Build must run before browser tests");
         const report = result.report;
@@ -325,6 +326,7 @@ test("1. Stage order: executes npm ci -> npm run build -> npm test -> npm run te
         assert.equal(report.stages[1].status, "passed");
         assert.equal(report.stages[2].status, "passed");
         assert.equal(report.stages[3].status, "passed");
+        assert.ok(Array.isArray(report.browserSlowestTests));
     }
     finally {
         fixture.cleanup();
@@ -1069,7 +1071,7 @@ test("known failures: failures in an earlier stage are never tolerated and keep 
     }
 });
 
-test("known failures: without the flag the browser stage, report and exit code are unchanged", async () => {
+test("known failures: without the flag knownFailures is absent but the browser JSON report is still written", async () => {
     const fixture = setupGitFixture();
     try {
         const result = await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: knownFailuresEnv(fixture, null, "5")});
@@ -1077,8 +1079,56 @@ test("known failures: without the flag the browser stage, report and exit code a
         assert.equal(result.report.result, "failed");
         assert.equal("knownFailures" in result.report, false);
         const logs = readNpmLogs(fixture.npmLogPath);
-        assert.deepEqual(logs[3].argv, ["run", "test:browser"]);
-        assert.equal(logs[3].env.PLAYWRIGHT_JSON_OUTPUT_NAME, undefined);
+        assert.deepEqual(logs[3].argv, ["run", "test:browser", "--", "--reporter=list,json"]);
+        assert.equal(logs[3].env.PLAYWRIGHT_JSON_OUTPUT_NAME, path.join(result.outputDir, "playwright-results.json"));
+    }
+    finally {
+        fixture.cleanup();
+    }
+});
+
+test("browser stage: report.json lists the slowest 10 tests from the Playwright JSON report", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const tests = [];
+        for (let i = 1; i <= 12; i++) {
+            tests.push({
+                project: "chromium",
+                file: SPEC,
+                title: `slow test ${String(i).padStart(2, "0")}`,
+                status: "expected",
+                duration: i * 1000,
+            });
+        }
+        const reportFile = path.join(fixture.tempBase, "stub-playwright.json");
+        fs.writeFileSync(reportFile, JSON.stringify(playwrightReport(tests)));
+        const result = await runCheckLocal(["--silent"], {
+            cwd: fixture.repoDir,
+            env: {
+                PATH: `${fixture.binDir}:${process.env.PATH}`,
+                STUB_NPM_LOG: fixture.npmLogPath,
+                STUB_NPM_JSON_REPORT: reportFile,
+            },
+        });
+        assert.equal(result.exitCode, 0);
+        assert.equal(result.report.browserSlowestTests.length, 10);
+        assert.deepEqual(
+            result.report.browserSlowestTests.map((t) => [t.durationMs, t.title]),
+            [
+                [12000, "slow test 12"],
+                [11000, "slow test 11"],
+                [10000, "slow test 10"],
+                [9000, "slow test 09"],
+                [8000, "slow test 08"],
+                [7000, "slow test 07"],
+                [6000, "slow test 06"],
+                [5000, "slow test 05"],
+                [4000, "slow test 04"],
+                [3000, "slow test 03"],
+            ],
+        );
+        const written = JSON.parse(fs.readFileSync(path.join(result.outputDir, "report.json"), "utf8"));
+        assert.deepEqual(written.browserSlowestTests, result.report.browserSlowestTests);
     }
     finally {
         fixture.cleanup();

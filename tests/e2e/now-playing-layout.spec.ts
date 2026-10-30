@@ -22,14 +22,21 @@ async function open(page:Page,browserName:string,title:string,[width,height]:rea
  const dock=page.locator(".player-dock");
  await expect(dock.locator(".dock-book")).toContainText(title);
  if(browserName==="chromium")await dock.getByRole("button",{name:"Pause",exact:true}).click();
- else await expect(async()=>{
-  const pause=dock.getByRole("button",{name:"Pause",exact:true}),play=dock.getByRole("button",{name:"Play",exact:true});
-  if(await pause.isVisible())await pause.click({timeout:1000});
-  await expect(play).toBeVisible({timeout:1000});
-  await page.waitForTimeout(500);
-  await expect(play).toBeVisible({timeout:100});
- }).toPass({timeout:20000});
- // WebKit may start the audio between the loop above and here, which turns Play into Pause; the layout
+ else{
+  // Headless Firefox/WebKit may refuse to start, or restart after a pause; wait on the Play control
+  // instead of sleeping between clicks.
+  const pause=dock.getByRole("button",{name:"Pause",exact:true});
+  const play=dock.getByRole("button",{name:"Play",exact:true});
+  await expect.poll(async()=>{
+   if(await pause.isVisible()){
+    try{await pause.click({timeout:1000});}
+    catch{/* Pause raced away or was not clickable; retry on the next poll. */}
+   }
+   return play.isVisible();
+  },{timeout:20000}).toBe(true);
+  await expect(play).toBeVisible();
+ }
+ // WebKit may start the audio between the wait above and here, which turns Play into Pause; the layout
  // checks that follow do not depend on which one the dock shows.
  await expect(dock.getByRole("button",{name:/^(Play|Pause)$/})).toBeVisible();
  await page.mouse.move(0,0);
@@ -37,7 +44,7 @@ async function open(page:Page,browserName:string,title:string,[width,height]:rea
  await page.locator(".dock-book").click();
  const dialog=page.getByRole("dialog",{name:"Now playing",exact:true});
  await expect(dialog).toBeVisible();
- // Let the open animation (scale/translate) finish before measuring.
+ // Wait until the open animation (scale/translate) has finished before measuring.
  await expect.poll(()=>dialog.evaluate(el=>el.getAnimations().length)).toBe(0);
  return dialog;
 }

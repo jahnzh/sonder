@@ -42,6 +42,7 @@ export function playwrightReport(tests, {errors = [], stats = null} = {}) {
                     status: interrupted ? "skipped" : t.status,
                     results: [{
                         status: resultStatus,
+                        duration: Number.isFinite(t.duration) ? t.duration : 0,
                         errors: failed ? [{message: "Error: \u001b[31mexpected\u001b[39m 1\nsecond line"}] : [],
                         ...(failed ? {error: {message: "Error: \u001b[31mexpected\u001b[39m 1\nsecond line"}} : {}),
                     }],
