@@ -19,6 +19,16 @@ import {
   deviceFaultKey,
   clearStreamCache,
 } from "../playback-sources";
+import {
+  activeStamp,
+  lowConfidenceWarning,
+  replaceNotice,
+  resumeLabel,
+  savedLabel,
+  sourceSwitchOffer,
+  START_LABEL,
+  type SourceSwitchOffer,
+} from "../source-progress";
 import type {
   Book,
   Download as DownloadRecord,
@@ -68,7 +78,8 @@ export function MediaManager({
     [scope, setScope] = useState<keyof typeof scopeLabel>("recording"),
     [reason, setReason] = useState<MediaFault["reason"]>("bad-audio"),
     [note, setNote] = useState(""),
-    [removal, setRemoval] = useState<"device" | "server" | null>(null);
+    [removal, setRemoval] = useState<"device" | "server" | null>(null),
+    [offer, setOffer] = useState<{ recordingId: string; value: SourceSwitchOffer } | null>(null);
   const versions = books.filter(
     (version) => version.workId === book?.workId && version.tracks.length,
   );
@@ -132,7 +143,73 @@ export function MediaManager({
       window.removeEventListener("online", changed);
     };
   }, [selected?.recordingId, !!book]);
+  // Where the playing recording's place lands in the selected one, when that needs a choice.
+  const playingBook = p.book, playingTrack = p.track;
+  useEffect(() => {
+    let live = true;
+    if (
+      !selected ||
+      !playingBook ||
+      !playingTrack ||
+      playingBook.workId !== selected.workId ||
+      playingBook.recordingId === selected.recordingId
+    ) {
+      setOffer(null);
+      return;
+    }
+    void (async () => {
+      const [activeSaved, targetSaved] = await Promise.all([
+        localDB.progress.get(playingBook.recordingId),
+        localDB.progress.get(selected.recordingId),
+      ]);
+      if (!live) return;
+      const activeUpdated = activeStamp(
+        playingBook,
+        playingTrack.id,
+        p.position,
+        Math.max(
+          activeSaved?.updatedAt || 0,
+          versions.find((v) => v.recordingId === playingBook.recordingId)?.progress?.updatedAt || 0,
+        ),
+        Date.now(),
+      );
+      const value = sourceSwitchOffer({
+        active: {
+          recordingId: playingBook.recordingId,
+          book: playingBook,
+          trackId: playingTrack.id,
+          position: p.position,
+          updatedAt: activeUpdated,
+        },
+        target: {
+          recordingId: selected.recordingId,
+          book: selected,
+          progress:
+            targetSaved && targetSaved.updatedAt > (selected.progress?.updatedAt || 0)
+              ? targetSaved
+              : selected.progress,
+        },
+      });
+      setOffer(value ? { recordingId: selected.recordingId, value } : null);
+    })();
+    return () => {
+      live = false;
+    };
+  }, [selected?.recordingId, playingBook?.recordingId, playingTrack?.id, Math.floor(p.position), p.playing, books]);
   if (!selected) return null;
+  const pendingOffer = offer?.recordingId === selected.recordingId && p.book?.recordingId !== selected.recordingId ? offer.value : null;
+  const useVersion = (start?: { trackId: string; position: number }) =>
+    run(async () => {
+      await setPreferredSource(selected.recordingId, choice);
+      if (p.book?.recordingId === selected.recordingId)
+        await p.setPlaybackSource(choice);
+      else {
+        const track = selected.tracks.find((t) => t.id === start?.trackId);
+        if (start && track)
+          await p.play(selected, track, start.position, { kind: "recording", saveAfterLoad: true });
+        else await p.play(selected, undefined, undefined, { kind: "recording" });
+      }
+    });
   const actualTrack =
     p.book?.recordingId === selected.recordingId
       ? p.track
@@ -305,25 +382,53 @@ export function MediaManager({
           </label>
           <p>
             Source changes keep your place in this recording. Another recording
-            resumes its own saved position.
+            resumes its own saved position, or asks where to resume.
           </p>
-          <button
-            className="button primary"
-            disabled={busy || !state || !!currentFaults.recording}
-            onClick={() =>
-              void run(async () => {
-                await setPreferredSource(selected.recordingId, choice);
-                if (p.book?.recordingId === selected.recordingId)
-                  await p.setPlaybackSource(choice);
-                else await p.play(selected);
-              })
-            }
-          >
-            <Play size={16} />{" "}
-            {p.book?.recordingId === selected.recordingId
-              ? "Apply source"
-              : "Use this version"}
-          </button>
+          {pendingOffer ? (
+            <div className="media-resume-offer" role="group" aria-label="Where to resume">
+              <button
+                className="button primary"
+                disabled={busy || !state || !!currentFaults.recording}
+                onClick={() => void useVersion(pendingOffer.mapping)}
+              >
+                <Play size={16} /> {resumeLabel(pendingOffer.mapping)}
+              </button>
+              {pendingOffer.saved && (
+                <button
+                  className="button subtle"
+                  disabled={busy || !state || !!currentFaults.recording}
+                  onClick={() => void useVersion(pendingOffer.saved!)}
+                >
+                  {savedLabel(selected, pendingOffer.saved)}
+                </button>
+              )}
+              <button
+                className="button subtle"
+                disabled={busy || !state || !!currentFaults.recording}
+                aria-describedby={pendingOffer.saved ? "media-start-notice" : undefined}
+                onClick={() => void useVersion({ trackId: selected.tracks[0].id, position: 0 })}
+              >
+                {START_LABEL}
+              </button>
+              {pendingOffer.saved && (
+                <p id="media-start-notice">{replaceNotice(selected, pendingOffer.saved)}</p>
+              )}
+              {lowConfidenceWarning(pendingOffer.mapping) && (
+                <p role="status">{lowConfidenceWarning(pendingOffer.mapping)}</p>
+              )}
+            </div>
+          ) : (
+            <button
+              className="button primary"
+              disabled={busy || !state || !!currentFaults.recording}
+              onClick={() => void useVersion()}
+            >
+              <Play size={16} />{" "}
+              {p.book?.recordingId === selected.recordingId
+                ? "Apply source"
+                : "Use this version"}
+            </button>
+          )}
           {p.book?.recordingId === selected.recordingId && (
             <p>
               Current position: {clock(p.position)} ·{" "}

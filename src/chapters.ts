@@ -6,7 +6,7 @@ export type ListeningChapter = {
   start: number;
   end: number;
 };
-export function listeningChapters(book: Book): ListeningChapter[] {
+export function listeningChapters(book: Pick<Book, "tracks">): ListeningChapter[] {
   return book.tracks.flatMap((track) =>
     track.chapters?.length
       ? track.chapters.map((c, index) => ({
