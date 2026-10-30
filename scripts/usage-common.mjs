@@ -35,13 +35,20 @@ export function assessmentVerdict(freshness, status, reason, resetsAt = null) {
   };
 }
 
+/** Sensitive free-text keys whose values are redacted in key=value / key: value / JSON pairs. */
+const SCRUB_SENSITIVE_KEYS =
+  "user_?id|account_?id|org_?id|team_?id|uuid|email|cookie|session|access_token|refresh_token|id_token|api_key|apikey|client_secret|x-goog-api-key|authorization|token|key|secret|password";
+
 /** Replaces links, addresses and anything shaped like a credential, keeping the rest of the text. */
 export function scrub(text, secrets = []) {
   let out = String(text)
     .replace(/https?:\/\/\S+/gi, "<url>")
     .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "<email>")
     .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "<redacted>")
-    .replace(/(^|[\s"'=:])(\/(?:home|Users)\/[A-Za-z0-9._-]+(?:\/[^\s"',;})\]]*)?)/g, "$1<redacted>");
+    .replace(/(^|[\s"'=:])(\/(?:home|Users)\/[A-Za-z0-9._-]+(?:\/[^\s"',;})\]]*)?)/g, "$1<redacted>")
+    .replace(/(^|[\s"'=:])([A-Za-z]:\\Users\\[A-Za-z0-9._-]+(?:\\[^\s"',;})\]]*)?)/gi, "$1<redacted>")
+    .replace(/(^|[\s"'=:])(\\\\wsl(?:\$|\.localhost)\\[^\s"',;})\]]+)/gi, "$1<redacted>")
+    .replace(/\b(Cookie|Set-Cookie|Authorization)\s*:\s*[^\r\n]+/gi, "$1: <redacted>");
   const literals = [...new Set(
     secrets
       .filter((secret) => typeof secret === "string" && secret.trim().length >= 6)
@@ -58,7 +65,10 @@ export function scrub(text, secrets = []) {
     .replace(/\bAIza[0-9A-Za-z_-]{16,}/g, "<redacted>")
     .replace(/\bsk-[A-Za-z0-9_-]{12,}/g, "<redacted>")
     .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+/g, "<redacted>")
-    .replace(/\b(access_token|refresh_token|id_token|api_key|apikey|client_secret|x-goog-api-key|authorization|token|secret|password)(["']?\s*[:=]\s*["']?)(?!Bearer\b|Basic\b|<redacted>)([^\s"',;})\]]+)/gi, "$1$2<redacted>");
+    .replace(new RegExp(`\\b(${SCRUB_SENSITIVE_KEYS})(["']?\\s*[:=]\\s*["']?)(?!Bearer\\b|Basic\\b|<redacted>)([^\\s"',;})\\]]+)`, "gi"), "$1$2<redacted>")
+    .replace(/\buser\s+\d{5,}\b/gi, "user <redacted>")
+    .replace(/\b[0-9a-f]{32,}\b/gi, "<redacted>")
+    .replace(/\b[A-Za-z0-9+/]{32,}={0,2}\b/g, "<redacted>");
 }
 
 export function redact(text, secrets = []) {

@@ -360,7 +360,8 @@ export async function readClaudeUsage({
     source: SOURCE,
     scope: {
       host: targetHost,
-      configDir: isLocalHost ? configDir : null,
+      // Never retain a home-directory path; sanitize also drops configDir on store.
+      configDir: null,
       accountUuid: null,
       organizationUuid: null,
       plan: null,

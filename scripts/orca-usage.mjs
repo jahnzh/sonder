@@ -23,11 +23,11 @@ const ACCOUNT_FAILURES = new Set(["unknown_account", "account_mismatch"]);
 /** Account-scope keys: fingerprint the value. Matches uuid, user_id/userId, account*, org*. */
 const ACCOUNT_IDENTITY_KEYS = /uuid|user_?id|account|org/i;
 /** Credential / home / header keys: drop on objects, redaction marker on scalars. */
-const SENSITIVE_KEYS = /email|home|cookie|authorization|token|key|secret|headers|password/i;
+const SENSITIVE_KEYS = /email|home|cookie|authorization|token|key|secret|headers|password|config.?dir/i;
 const REDACTION_MARKER = "<redacted>";
 const UUID_VALUE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EMAIL_VALUE = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
-const HOME_PATH_VALUE = /^\/(?:home|Users)\/[^/]+/;
+const HOME_PATH_VALUE = /^(?:\/(?:home|Users)\/[^/]+|[A-Za-z]:\\Users\\[^\\]+|\\\\wsl(?:\$|\.localhost)\\)/i;
 
 /** Cursor's reader takes a Date/ms/`now` string; the collector clock exposes a function. */
 function readCursorForCollector(options = {}) {

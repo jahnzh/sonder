@@ -1097,32 +1097,41 @@ test("UsageStore migrates legacy rows on open and never returns raw identifiers 
     const rawUuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
     const rawEmail = "legacy-user@example.com";
     const rawHome = "/home/legacy-user/.codex";
+    const rawCursorUserId = 987654321;
     const legacy = {
       provider: "codex",
       observedAt: START,
       status: "available",
       reason: null,
-      detail: `account ${rawUuid} for ${rawEmail}`,
+      detail: `account ${rawUuid} for ${rawEmail}; userId=${rawCursorUserId}; user ${rawCursorUserId}`,
       source: SOURCE,
-      scope: { host: "andi", account: rawEmail, codexHome: rawHome, accountUuid: rawUuid },
+      scope: {
+        host: "andi",
+        account: rawEmail,
+        codexHome: rawHome,
+        accountUuid: rawUuid,
+        userId: rawCursorUserId,
+      },
       windows: [window("5h", 12, "2026-10-30T23:00:00.000Z")],
       exhaustedWindows: [],
     };
     const dbPath = seedLegacyDatabase(dir, legacy);
     assert.ok(readFileSync(dbPath).toString("utf8").includes(rawUuid), "precondition: legacy row must be raw on disk");
+    assert.ok(readFileSync(dbPath).toString("utf8").includes(String(rawCursorUserId)), "precondition: legacy Cursor userId must be raw on disk");
 
     const store = new UsageStore(dir);
     const listed = store.listReadings({ limit: 5 });
     assert.equal(listed.length, 1);
     const blob = JSON.stringify(listed[0]);
-    for (const secret of [rawUuid, rawEmail, rawHome]) {
+    for (const secret of [rawUuid, rawEmail, rawHome, String(rawCursorUserId)]) {
       assert.equal(blob.includes(secret), false, `listReadings returned raw ${secret}`);
     }
     assert.match(String(listed[0].scope?.account ?? ""), /^sha256:[0-9a-f]{16}$/);
+    assert.match(String(listed[0].scope?.userId ?? ""), /^sha256:[0-9a-f]{16}$/);
     store.close();
 
     const after = readFileSync(dbPath).toString("utf8");
-    for (const secret of [rawUuid, rawEmail, rawHome]) {
+    for (const secret of [rawUuid, rawEmail, rawHome, String(rawCursorUserId)]) {
       assert.equal(after.includes(secret), false, `legacy migrate left ${secret} on disk`);
     }
   }));
@@ -1401,5 +1410,148 @@ test("a Cursor timeout keeps peer readings; assess throws stay isolated; all fou
       assert.notEqual(allReport[name].status, "fresh");
       // Cascade used to stamp every provider with the store-unavailable unknown reason.
       assert.equal(String(allReport[name].reason ?? "").includes("the usage store is unavailable"), false, `${name} was cascade-poisoned`);
+    }
+  }));
+
+// --- Residuals from the round-3 adversarial review of 67c127f
+
+test("Cursor numeric userId in free-text detail never reaches sqlite or listReadings", () =>
+  withState(async (dir) => {
+    const clock = fakeClock();
+    const rawUserId = 987654321;
+    const id = String(rawUserId);
+    const detail =
+      `userId=${id}; user_id: ${id}; "userId":${id}; user ${id}; ` +
+      `https://api.cursor.com/auth/users/${id}?userId=${id}`;
+    const provider = fakeProvider(clock, () => ({
+      provider: "cursor",
+      status: "unavailable",
+      reason: "reader_error",
+      detail,
+      source: { kind: "cursor-dashboard" },
+      scope: {
+        host: { selector: "local", hostname: "andi" },
+        account: { known: true, userId: rawUserId, planName: "pro" },
+      },
+      windows: null,
+      exhaustedWindows: [],
+      error: null,
+    }));
+    provider.name = "cursor";
+    provider.assess = assessCursorUsage;
+    const store = new UsageStore(dir);
+    await collectOnce({ store, provider, clock, origin: "poll" });
+    const listed = store.listReadings({ limit: 5 });
+    store.close();
+
+    assert.equal(listed.length, 1);
+    const blob = JSON.stringify(listed[0]);
+    assert.equal(blob.includes(id), false, `listReadings leaked Cursor userId: ${blob}`);
+    const sqliteText = readFileSync(join(dir, "usage.sqlite")).toString("utf8");
+    assert.equal(sqliteText.includes(id), false, `sqlite leaked Cursor userId`);
+  }));
+
+test("Windows home and wsl$ paths never reach sqlite or listReadings", () =>
+  withState(async (dir) => {
+    const clock = fakeClock();
+    const winHome = String.raw`C:\Users\win-user\AppData\Roaming\cursor`;
+    const wslHome = String.raw`\\wsl$\Ubuntu\home\wsl-user\.claude`;
+    const provider = fakeProvider(clock, () => ({
+      ...good(),
+      detail: `reader failed under ${winHome} and ${wslHome}`,
+      scope: {
+        host: "andi",
+        account: "sha256:0123456789abcdef",
+        winHome,
+        wslHome,
+      },
+    }));
+    const store = new UsageStore(dir);
+    await collectOnce({ store, provider, clock, origin: "poll" });
+    const listed = store.listReadings({ limit: 5 });
+    store.close();
+
+    const secrets = ["win-user", "wsl-user", winHome, wslHome];
+    const blob = JSON.stringify(listed[0]);
+    const sqliteText = readFileSync(join(dir, "usage.sqlite")).toString("utf8");
+    for (const secret of secrets) {
+      assert.equal(blob.includes(secret), false, `listReadings leaked ${secret}`);
+      assert.equal(sqliteText.includes(secret), false, `sqlite leaked ${secret}`);
+    }
+  }));
+
+test("bare cookie, session and long opaque blobs never reach sqlite or listReadings", () =>
+  withState(async (dir) => {
+    const clock = fakeClock();
+    const cookieVal = "sessionid=abcdefghijklmnopqrstuvwxyz012345";
+    const hexBlob = "0123456789abcdef0123456789abcdef01234567";
+    const b64Blob = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY3ODkwYWJjZA==";
+    const detail =
+      `Cookie: ${cookieVal}; Set-Cookie: ${cookieVal}; Path=/; ` +
+      `Authorization: Bearer ya29.a0AfH6SMC-opaque-google-token-value; ` +
+      `session=${hexBlob}; blob=${b64Blob}`;
+    const provider = fakeProvider(clock, () => ({
+      ...good({ used: 1 }),
+      status: "unavailable",
+      reason: "reader_error",
+      detail,
+      windows: null,
+    }));
+    const store = new UsageStore(dir);
+    await collectOnce({ store, provider, clock, origin: "poll" });
+    const listed = store.listReadings({ limit: 5 });
+    store.close();
+
+    const secrets = [
+      "abcdefghijklmnopqrstuvwxyz012345",
+      hexBlob,
+      b64Blob,
+      "ya29.a0AfH6SMC-opaque-google-token-value",
+    ];
+    const blob = JSON.stringify(listed[0]);
+    const sqliteText = readFileSync(join(dir, "usage.sqlite")).toString("utf8");
+    for (const secret of secrets) {
+      assert.equal(blob.includes(secret), false, `listReadings leaked ${secret}`);
+      assert.equal(sqliteText.includes(secret), false, `sqlite leaked ${secret}`);
+    }
+  }));
+
+test("Claude scope.configDir under home is never stored in sqlite or listReadings", () =>
+  withState(async (dir) => {
+    const clock = fakeClock();
+    const rawConfigDir = "/home/secret-claude-user/.claude";
+    const provider = {
+      name: "claude",
+      assess: assessClaudeUsage,
+      read: async () => ({
+        provider: "claude",
+        observedAt: clock.now().toISOString(),
+        status: "available",
+        reason: null,
+        detail: null,
+        source: { kind: "claude-oauth-usage-endpoint" },
+        scope: {
+          host: "andi",
+          configDir: rawConfigDir,
+          accountUuid: "claude-configdir-acct",
+          organizationUuid: null,
+          plan: "max",
+        },
+        windows: [{ kind: "session", label: "session", appliesTo: "all", usedPercent: 10, resetsAt: "2026-10-30T23:00:00.000Z" }],
+        exhaustedWindows: [],
+      }),
+    };
+    const store = new UsageStore(dir);
+    await collectOnce({ store, provider, clock, origin: "poll" });
+    const listed = store.listReadings({ limit: 5 });
+    store.close();
+
+    assert.equal(listed.length, 1);
+    assert.equal("configDir" in (listed[0].scope ?? {}), false);
+    const blob = JSON.stringify(listed[0]);
+    const sqliteText = readFileSync(join(dir, "usage.sqlite")).toString("utf8");
+    for (const secret of [rawConfigDir, "secret-claude-user"]) {
+      assert.equal(blob.includes(secret), false, `listReadings leaked ${secret}`);
+      assert.equal(sqliteText.includes(secret), false, `sqlite leaked ${secret}`);
     }
   }));
