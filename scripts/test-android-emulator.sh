@@ -18,6 +18,8 @@
 # Results: artifacts/android-emulator/<sha>/<run>/ with summary.txt and deck-after.txt, and per browser
 # emulator.txt (boot time, memory after boot and after the run), report.json (Playwright JSON),
 # playwright.log, test-results/, logcat.txt and, for Firefox, relay.log (what the BiDi relay changed).
+# summary.txt always ends with finished_at= and exit= (also on early exits). Per-browser lines include
+# expected/unexpected/flaky/skipped from report.json's stats; zero expected (passed) is a failure.
 #
 # Exit status: 0 every browser passed; 1 a browser's specs failed; 2 usage; 3 setup failed here
 # (dist/ missing, a local port in use, the tunnel did not come up, adb forwarding failed); 4 the specs
@@ -95,6 +97,9 @@ cleanup() {
 on_signal() {
   log "Interrupted; cleaning up"
   cleanup
+  if [[ -f ${RUN_DIR:-}/summary.txt ]]; then
+    finish "$1"
+  fi
   exit "$1"
 }
 trap 'on_signal 130' INT
@@ -120,11 +125,34 @@ mkdir -p "$RUN_DIR"
   echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } >"$RUN_DIR/summary.txt"
 
+# Always ends summary.txt with finished_at= and exit= so a reader can tell a complete file from a truncated one.
+finish() {
+  local code=$1
+  echo "finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$RUN_DIR/summary.txt"
+  echo "exit=${code}" >>"$RUN_DIR/summary.txt"
+  exit "$code"
+}
+
+# Reads report.json stats into expected=/unexpected=/flaky=/skipped=. Exit 2 when expected is 0.
+report_stats() {
+  node --input-type=module -e '
+import fs from "node:fs";
+const report = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const s = report.stats ?? {};
+const expected = Number(s.expected) || 0;
+const unexpected = Number(s.unexpected) || 0;
+const flaky = Number(s.flaky) || 0;
+const skipped = Number(s.skipped) || 0;
+process.stdout.write(`expected=${expected} unexpected=${unexpected} flaky=${flaky} skipped=${skipped}`);
+process.exit(expected === 0 ? 2 : 0);
+' "$1"
+}
+
 fail_setup() {
   log "$1"
   echo "result=setup_failed" >>"$RUN_DIR/summary.txt"
   cleanup
-  exit 3
+  finish 3
 }
 
 open_tunnel() {
@@ -151,9 +179,9 @@ for browser in "${BROWSERS[@]}"; do
   # run's, and this script must not stop it. Refuse instead of testing on it.
   if bash "$EMU" status 2>/dev/null | grep -q '^running=yes'; then
     log "An emulator is already running on ${HOST}; stop it with scripts/emulator-deck.sh stop first"
-    echo "result=emulator_already_running exit=8" >>"$RUN_DIR/summary.txt"
+    echo "result=emulator_already_running" >>"$RUN_DIR/summary.txt"
     cleanup
-    exit 8
+    finish 8
   fi
   # Set before the start: the unit survives this SSH session, so an interrupt during the (long) start must
   # still stop it. A refusal (status 8) started nothing and resets the flag below.
@@ -164,11 +192,11 @@ for browser in "${BROWSERS[@]}"; do
   cat "$out/emulator.txt"
   if [[ $rc -ne 0 ]]; then
     log "The emulator did not start (status ${rc}); see $out/emulator-start.log"
-    echo "result=emulator_start_failed exit=${rc}" >>"$RUN_DIR/summary.txt"
+    echo "result=emulator_start_failed" >>"$RUN_DIR/summary.txt"
     # 8 is a refusal: nothing was started, so there is nothing of ours to stop.
     [[ $rc -eq 8 ]] && EMULATOR_STARTED=0
     cleanup
-    exit "$rc"
+    finish "$rc"
   fi
 
   if [[ $browser == firefox ]]; then
@@ -176,9 +204,9 @@ for browser in "${BROWSERS[@]}"; do
     rc=$?
     if [[ $rc -ne 0 ]]; then
       log "Firefox could not be installed (status ${rc}); see $out/emulator-start.log"
-      echo "result=firefox_install_failed exit=${rc}" >>"$RUN_DIR/summary.txt"
+      echo "result=firefox_install_failed" >>"$RUN_DIR/summary.txt"
       cleanup
-      exit "$rc"
+      finish "$rc"
     fi
   fi
   if [[ -z $TUNNEL_SOCKET ]] && ! open_tunnel "$out/emulator-start.log"; then
@@ -200,7 +228,20 @@ for browser in "${BROWSERS[@]}"; do
       --reporter=list,json --output "$out/test-results" >"$out/playwright.log" 2>&1
   rc=$?
   tail -n 5 "$out/playwright.log"
-  echo "${browser}=$([[ $rc -eq 0 ]] && echo passed || echo failed) exit=${rc}" >>"$RUN_DIR/summary.txt"
+  stats=""
+  stats_rc=0
+  if [[ -f $out/report.json ]]; then
+    stats=$(report_stats "$out/report.json") || stats_rc=$?
+  else
+    stats="expected=0 unexpected=0 flaky=0 skipped=0"
+    stats_rc=2
+  fi
+  # Zero passed (expected=0) is a failure even when Playwright's process exit was 0.
+  if [[ $stats_rc -eq 2 ]]; then
+    log "${browser}: report.json has zero passed tests"
+    rc=1
+  fi
+  echo "${browser}=$([[ $rc -eq 0 ]] && echo passed || echo failed) exit=${rc} ${stats}" >>"$RUN_DIR/summary.txt"
   [[ $rc -eq 0 ]] || FINAL_EXIT=1
 
   # Memory over this browser's run and the device log (process kills, crashes), before the container goes.
@@ -216,7 +257,5 @@ if ! grep -q '^running=no$' "$RUN_DIR/deck-after.txt" 2>/dev/null || ! grep -q '
   log "Could not confirm that the emulator is gone from ${HOST}; see $RUN_DIR/deck-after.txt"
   [[ $FINAL_EXIT -eq 0 ]] && FINAL_EXIT=4
 fi
-echo "finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$RUN_DIR/summary.txt"
-echo "exit=${FINAL_EXIT}" >>"$RUN_DIR/summary.txt"
 log "Artifacts: ${RUN_DIR}"
-exit "$FINAL_EXIT"
+finish "$FINAL_EXIT"

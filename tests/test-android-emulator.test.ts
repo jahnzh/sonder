@@ -37,9 +37,11 @@ exit 0
 
 // \`npx playwright test\` logs the browser it was run for and writes a JSON report.
 // STUB_NPX_FAIL names a browser whose run fails.
+// STUB_NPX_STATS overrides the stats object written to report.json (real Playwright shape).
 const npxStub = `#!/usr/bin/env bash
 echo "browser=$SONDER_ANDROID_BROWSER port=$PLAYWRIGHT_PORT adb=$SONDER_ANDROID_ADB_PORT bidi=$SONDER_ANDROID_BIDI_PORT log=$SONDER_ANDROID_LOG args=$*" >>"$STUB_LOG.npx"
-echo '{"stats":{}}' >"$PLAYWRIGHT_JSON_OUTPUT_NAME"
+stats=\${STUB_NPX_STATS:-'{"startTime":"2026-01-01T00:00:00.000Z","duration":1,"expected":2,"unexpected":0,"flaky":0,"skipped":0}'}
+printf '{"stats":%s}\\n' "$stats" >"$PLAYWRIGHT_JSON_OUTPUT_NAME"
 echo "  2 passed"
 [[ \${STUB_NPX_FAIL:-} == "$SONDER_ANDROID_BROWSER" ]] && exit 1
 exit 0
@@ -59,8 +61,11 @@ function fixture({ built = true } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-test-android-"));
   const repo = path.join(base, "repo");
   const bin = path.join(base, "bin");
+  // Unique TMPDIR per fixture so tunnel dirs never land in the real /tmp.
+  const tmpdir = path.join(base, "tmp");
   fs.mkdirSync(path.join(repo, "scripts"), { recursive: true });
   fs.mkdirSync(bin);
+  fs.mkdirSync(tmpdir);
   fs.copyFileSync(script, path.join(repo, "scripts", "test-android-emulator.sh"));
   fs.writeFileSync(path.join(repo, "scripts", "emulator-deck.sh"), emulatorStub, { mode: 0o755 });
   if (built) {
@@ -97,6 +102,7 @@ function fixture({ built = true } = {}) {
         env: {
           ...cleanEnv(),
           PATH: `${bin}:${process.env.PATH}`,
+          TMPDIR: tmpdir,
           SONDER_ANDROID_APP_PORT: String(ports.app),
           SONDER_ANDROID_ADB_PORT: String(ports.adb),
           SONDER_ANDROID_BIDI_PORT: String(ports.bidi),
@@ -124,8 +130,9 @@ function fixture({ built = true } = {}) {
         return [line.slice(0, at), line.slice(at + 1)];
       }),
     );
+  const summaryText = () => fs.readFileSync(path.join(runDir(), "summary.txt"), "utf8");
   const emuCalls = () => read("emu").split("\n").filter(Boolean);
-  return { repo, sha, ports, run, read, runDir, summary, emuCalls, interrupt };
+  return { base, repo, sha, ports, tmpdir, run, read, runDir, summary, summaryText, emuCalls, interrupt };
 }
 
 test("a passing run boots the emulator for each browser, tunnels once and leaves it stopped", async () => {
@@ -152,9 +159,10 @@ test("a passing run boots the emulator for each browser, tunnels once and leaves
   assert.match(runs[1], /^browser=firefox .*log=\S+\/firefox\/relay\.log .*--project=android-firefox /);
   const summary = f.summary();
   assert.equal(summary.commit, f.sha);
-  assert.equal(summary.chrome, "passed exit=0");
-  assert.equal(summary.firefox, "passed exit=0");
+  assert.equal(summary.chrome, "passed exit=0 expected=2 unexpected=0 flaky=0 skipped=0");
+  assert.equal(summary.firefox, "passed exit=0 expected=2 unexpected=0 flaky=0 skipped=0");
   assert.equal(summary.exit, "0");
+  assert.match(f.summaryText(), /^finished_at=\d{4}-\d{2}-\d{2}T/m);
   for (const file of ["chrome/report.json", "firefox/report.json", "chrome/playwright.log", "firefox/logcat.txt", "deck-after.txt"]) {
     assert.ok(fs.existsSync(path.join(f.runDir(), file)), file);
   }
@@ -167,9 +175,20 @@ test("a failing browser fails the run, and the other browser and the cleanup sti
   const f = fixture();
   const out = await f.run([], { STUB_NPX_FAIL: "chrome" });
   assert.equal(out.status, 1, out.output);
-  assert.equal(f.summary().chrome, "failed exit=1");
-  assert.equal(f.summary().firefox, "passed exit=0");
+  assert.equal(f.summary().chrome, "failed exit=1 expected=2 unexpected=0 flaky=0 skipped=0");
+  assert.equal(f.summary().firefox, "passed exit=0 expected=2 unexpected=0 flaky=0 skipped=0");
   assert.ok(f.emuCalls().includes("stop"));
+});
+
+test("zero passed tests in report.json fail the run even when Playwright exits 0", async () => {
+  const f = fixture();
+  const out = await f.run(["chrome"], {
+    STUB_NPX_STATS: '{"startTime":"2026-01-01T00:00:00.000Z","duration":1,"expected":0,"unexpected":0,"flaky":0,"skipped":0}',
+  });
+  assert.equal(out.status, 1, out.output);
+  assert.match(f.summary().chrome, /^failed exit=1 expected=0 unexpected=0 flaky=0 skipped=0$/);
+  assert.equal(f.summary().exit, "1");
+  assert.match(f.summaryText(), /^finished_at=/m);
 });
 
 test("only the named browser runs, and Chrome alone needs no Firefox install", async () => {
@@ -188,7 +207,9 @@ test("a refused emulator start (a CI run is active) is passed on and nothing els
   assert.deepEqual(f.emuCalls(), ["status", "start", "status"]);
   assert.equal(f.read("ssh"), "");
   assert.equal(f.read("npx"), "");
-  assert.equal(f.summary().result, "emulator_start_failed exit=8");
+  assert.equal(f.summary().result, "emulator_start_failed");
+  assert.equal(f.summary().exit, "8");
+  assert.match(f.summaryText(), /^finished_at=/m);
 });
 
 test("a tunnel that does not come up stops the emulator and fails setup", async () => {
@@ -250,7 +271,24 @@ test("an emulator that is already running is refused and not stopped", async () 
   assert.equal(out.status, 8, out.output);
   assert.equal(f.emuCalls().includes("start"), false);
   assert.equal(f.emuCalls().includes("stop"), false);
-  assert.equal(f.summary().result, "emulator_already_running exit=8");
+  assert.equal(f.summary().result, "emulator_already_running");
+  assert.equal(f.summary().exit, "8");
+  assert.match(f.summaryText(), /^finished_at=/m);
+});
+
+test("tunnel directories use TMPDIR and leave nothing in the real /tmp", async () => {
+  const f = fixture();
+  const marker = "sonder-android-tunnel-";
+  const before = new Set(fs.readdirSync("/tmp").filter((name) => name.startsWith(marker)));
+  const out = await f.run(["chrome"]);
+  assert.equal(out.status, 0, out.output);
+  const ssh = f.read("ssh").split("\n").filter(Boolean)[0] ?? "";
+  const socketFlag = ssh.match(/-S (\S+)/);
+  assert.ok(socketFlag, ssh);
+  assert.ok(socketFlag[1].startsWith(`${f.tmpdir}/`), socketFlag[1]);
+  const after = fs.readdirSync("/tmp").filter((name) => name.startsWith(marker) && !before.has(name));
+  assert.deepEqual(after, []);
+  assert.equal(fs.readdirSync(f.tmpdir).filter((name) => name.startsWith(marker)).length, 0);
 });
 
 test("an interrupt while the emulator is starting still stops it", async () => {
@@ -261,4 +299,6 @@ test("an interrupt while the emulator is starting still stops it", async () => {
   const out = await running;
   assert.equal(out.status, 130, out.output);
   assert.ok(f.emuCalls().includes("stop"), f.emuCalls().join(","));
+  assert.equal(f.summary().exit, "130");
+  assert.match(f.summaryText(), /^finished_at=/m);
 });

@@ -11,9 +11,9 @@ npm run test:android   # both browsers; or: bash scripts/test-android-emulator.s
 
 `scripts/test-android-emulator.sh` boots a fresh emulator for each browser, opens one SSH connection with the tunnels, runs `playwright.android.config.ts` for that browser and stops the emulator again; at the end it closes the tunnels and records what the Deck still runs. It runs `now-playing-layout` and `device-reset`; add a spec by importing `test` from `tests/e2e/fixtures.ts` and adding it to the config's `testMatch`. It is not part of `npm run test:browser` or `npm run check`.
 
-Results go to `artifacts/android-emulator/<sha>/<run>/`: `summary.txt` (per-browser result), `deck-after.txt` (the Deck after cleanup), and per browser `emulator.txt` (boot seconds, memory after boot and after the run), `report.json`, `playwright.log`, `test-results/`, `logcat.txt` and, for Firefox, `relay.log`.
+Results go to `artifacts/android-emulator/<sha>/<run>/`: `summary.txt` (per-browser result with `expected`/`unexpected`/`flaky`/`skipped` from each `report.json`, and always `finished_at=`/`exit=` even on early exits), `deck-after.txt` (the Deck after cleanup), and per browser `emulator.txt` (boot seconds, memory after boot and after the run), `report.json`, `playwright.log`, `test-results/`, `logcat.txt` and, for Firefox, `relay.log`. Zero passed tests count as a failure.
 
-`scripts/emulator-deck.sh start|stop|status|install-apk <apk>|install-firefox|adb <args>` manages the emulator by hand. Exit codes and environment variables are in the header of each script.
+`scripts/emulator-deck.sh start|stop|status|install-apk <apk>|install-firefox|adb <args>` manages the emulator by hand. Exit codes and environment variables are in the header of each script. `start` re-checks for a CI run at launch (after setup; remote exit 18 → 8). Preflight image pull and `install-firefox` use `SETUP_TIMEOUT` (1800 s), not the 120 s `CALL_TIMEOUT`.
 
 ## Host and layout
 
@@ -25,7 +25,7 @@ Results go to `artifacts/android-emulator/<sha>/<run>/`: `summary.txt` (per-brow
 
 ## Resources
 
-- `start` refuses while a `sonder-ci-run-*` container or unit is active. A CI run uses `--memory 6g`, so never run both. `ci-deck.sh` does not check for the emulator: stop it (`scripts/emulator-deck.sh stop`) before dispatching CI.
+- `start` refuses while a `sonder-ci-run-*` container or unit is active (checked in preflight and again at launch, since first-time setup can take up to `SETUP_TIMEOUT`). A CI run uses `--memory 6g`, so never run both. `ci-deck.sh` does not check for the emulator: stop it (`scripts/emulator-deck.sh stop`) before dispatching CI.
 - Container limit `--memory 4600m --cpus 4` (4.82 GB). Measured: cold boot 39–45 s with `-wipe-data`; anon memory 3.35–3.44 GB after boot, rising to 4.3–4.6 GB by the end of one browser's run, so the container ends each run at its limit. That is why each browser gets its own boot: with both in one boot, Chrome's page closed mid-run ("Target page, context or browser has been closed").
 - The emulator raises the RAM of this image to 2560 MB whatever `hw.ramSize` or `-memory` say.
 - The Deck backs memory with transparent huge pages (`always`). Disabling them for the emulator (`prctl(PR_SET_THP_DISABLE)`) cut anon memory by about 0.3 GB but made the Chrome run 50% slower and time out; it was dropped.

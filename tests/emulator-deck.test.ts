@@ -34,7 +34,16 @@ echo "$*" >>"$STUB_LOG.podman"
 state=$STUB_STATE
 has() { grep -qx "$1" "$state/containers" 2>/dev/null; }
 case "$1" in
-  ps) cat "$state/containers" 2>/dev/null; exit 0 ;;
+  ps)
+    # STUB_CI_AFTER_PREFLIGHT: first ps (preflight) is clean; later ones show a CI container that appeared during setup.
+    if [[ \${STUB_CI_AFTER_PREFLIGHT:-} == 1 ]]; then
+      if [[ -f $state/seen-ps ]]; then
+        echo "sonder-ci-run-late"
+        exit 0
+      fi
+      touch "$state/seen-ps"
+    fi
+    cat "$state/containers" 2>/dev/null; exit 0 ;;
   image) [[ -f $state/image ]]; exit $? ;;
   pull) [[ \${STUB_PULL:-ok} == fail ]] && exit 125; touch "$state/image"; exit 0 ;;
   container) has "$3"; exit $? ;;
@@ -100,11 +109,14 @@ echo "\${STUB_LINGER:-yes}"
 `;
 
 // Downloads write STUB_CURL_CONTENT, which never matches a pinned checksum.
+// STUB_CURL_FAIL=1 makes curl exit non-zero after creating the .part file (to assert cleanup).
 const curlStub = `#!/usr/bin/env bash
 echo "$*" >>"$STUB_LOG.curl"
 out=""
 while [[ $# -gt 0 ]]; do [[ $1 == -o ]] && out=$2; shift; done
 printf '%s' "\${STUB_CURL_CONTENT:-not the real file}" >"$out"
+[[ \${STUB_CURL_FAIL:-} == 1 ]] && exit 22
+exit 0
 `;
 
 function cleanEnv() {
@@ -224,6 +236,16 @@ test("start refuses while a CI container or a CI unit is active, before anything
   }
 });
 
+test("start re-checks for a CI run at launch after preflight, and maps exit 18 to 8", (t) => {
+  const f = fixture();
+  t.after(f.stopUnits);
+  const out = f.run(["start"], { STUB_CI_AFTER_PREFLIGHT: "1" });
+  assert.equal(out.status, 8, out.output);
+  assert.match(out.output, /a CI run is active/);
+  assert.equal(f.read("systemd").includes("--unit"), false);
+  assert.equal(f.runCalls().length, 0);
+});
+
 test("stop removes only this container and stops only this unit", (t) => {
   const f = fixture();
   t.after(f.stopUnits);
@@ -328,6 +350,24 @@ test("install-firefox refuses an APK that does not match the pinned SHA-256", (t
   assert.equal(out.status, 10, out.output);
   assert.match(f.read("curl"), /archive\.mozilla\.org\/pub\/fenix\/releases\/159\.0\/android\/fenix-159\.0-android-x86_64\//);
   assert.equal(f.read("adb"), "");
+});
+
+test("a failed Firefox download removes the .part file", (t) => {
+  const f = fixture();
+  t.after(f.stopUnits);
+  assert.equal(f.run(["start"]).status, 0);
+  const out = f.run(["install-firefox"], { STUB_CURL_FAIL: "1" });
+  assert.equal(out.status, 10, out.output);
+  assert.match(out.output, /download=fail/);
+  const downloads = fs.existsSync(path.join(f.remote, "downloads")) ? fs.readdirSync(path.join(f.remote, "downloads")) : [];
+  assert.equal(downloads.some((name) => name.endsWith(".part")), false, downloads.join(","));
+});
+
+test("preflight and install-firefox use SETUP_TIMEOUT rather than CALL_TIMEOUT", () => {
+  const source = fs.readFileSync(script, "utf8");
+  assert.match(source, /REMOTE_TIMEOUT=\$SETUP_TIMEOUT remote_step preflight/);
+  assert.match(source, /REMOTE_TIMEOUT=\$SETUP_TIMEOUT remote_step install_firefox/);
+  assert.match(source, /timeout "\$\{REMOTE_TIMEOUT:-\$CALL_TIMEOUT\}"/);
 });
 
 test("install-firefox installs a verified APK once and skips a version already on the device", (t) => {

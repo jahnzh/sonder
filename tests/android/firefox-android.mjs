@@ -50,8 +50,10 @@ export function geckoViewConfig({ port, prefs }) {
 // application window, and Fenix opens none without a VIEW intent. The performancetest extra makes
 // Fenix skip onboarding when adb is enabled and the device is charging, as the emulator always is.
 export function startCommand(url) {
+  // Allowlist keeps the URL free of shell metacharacters other than those in a normal http(s) URL.
+  // Quote -d so a literal & in the query string cannot background a command inside `adb shell`.
   if (!/^https?:\/\/[A-Za-z0-9.:[\]/_?&=%-]*$/.test(url)) throw new Error(`Unexpected start URL: ${url}`);
-  return `am start -n ${FIREFOX_PACKAGE}/${FIREFOX_ACTIVITY} -a android.intent.action.VIEW -d ${url} --ez performancetest true`;
+  return `am start -n ${FIREFOX_PACKAGE}/${FIREFOX_ACTIVITY} -a android.intent.action.VIEW -d '${url}' --ez performancetest true`;
 }
 
 // The BiDi relay between Playwright and Firefox for Android. Firefox for Android 159 differs from
