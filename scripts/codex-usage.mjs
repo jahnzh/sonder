@@ -327,7 +327,7 @@ function earliestReset(windows) {
 
 /**
  * What a stored reading says at `now`, re-evaluated rather than trusted from the time it was taken.
- * Status is one of fresh, low, exhausted, stale or unknown; only fresh and low confirm any capacity.
+ * Status is one of fresh, low, exhausted, stale, unavailable or unknown; only fresh and low confirm any capacity.
  */
 export function assessCodexUsage(observation, now = new Date()) {
   const freshness = assessFreshness(observation, now);
@@ -340,6 +340,7 @@ export function assessCodexUsage(observation, now = new Date()) {
     staleAfter: freshness.staleAfter,
     freshness: freshness.state,
   });
+  if (freshness.state === "unavailable") return verdict("unavailable", observation?.detail ?? freshness.reasons[0], null);
   if (freshness.state === "unknown") return verdict("unknown", observation?.detail ?? freshness.reasons[0], null);
   if (freshness.state === "stale") return verdict("stale", `${freshness.reasons.join(", ")}; last read ${observation.observedAt}: ${describeWindows(windows)}`);
   if (observation.status === "exhausted") {

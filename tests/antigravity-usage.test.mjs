@@ -599,7 +599,7 @@ test("scopes group exhaustion to matching models with status limited, and resolv
   assert.equal(candidateAvailability(staleStored, { model: "gemini-4-argon-high" }), "unknown");
 });
 
-test("rejects AGY_ADC_AUTH overrides and empty tokens, clears unverified scope.account on CLI failure, and reports passed-reset status stale and failed-read freshness unknown", async () => {
+test("rejects AGY_ADC_AUTH overrides and empty tokens, clears unverified scope.account on CLI failure, and reports passed-reset status stale and failed-read freshness unavailable", async () => {
   const agy = fakeAgy(okScenario());
   const adcObs = await read({
     home: makeHome(),
@@ -631,7 +631,7 @@ test("rejects AGY_ADC_AUTH overrides and empty tokens, clears unverified scope.a
   assert.equal(authFailed.reason, "auth_required");
   assert.equal(authFailed.scope.account, null);
   assert.equal(authFailed.scope.authMethod, null);
-  assert.equal(authFailed.freshness.state, "unknown");
+  assert.equal(authFailed.freshness.state, "unavailable");
 
   const cliFailed = await read({
     home: makeHome(),
@@ -641,7 +641,7 @@ test("rejects AGY_ADC_AUTH overrides and empty tokens, clears unverified scope.a
   assert.equal(cliFailed.reason, "cli_error");
   assert.equal(cliFailed.scope.account, null);
   assert.equal(cliFailed.scope.authMethod, null);
-  assert.equal(cliFailed.freshness.state, "unknown");
+  assert.equal(cliFailed.freshness.state, "unavailable");
 
   const pastResetUsage = clone(realUsagePayload);
   pastResetUsage.command.data.groups[0].buckets[1].remaining_fraction = 0;

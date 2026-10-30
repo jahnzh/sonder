@@ -506,6 +506,7 @@ test("usage is reported as unknown overall and for every candidate", async () =>
       observedAt: null,
       account: "unknown",
       host: "unknown",
+      capacityConfirmed: false,
     });
     assert.equal(r.json.recommendation.usage, "unknown");
     assert.deepEqual(r.json.recommendation.usageScope, { account: "unknown", host: "unknown" });
@@ -634,19 +635,34 @@ test("low usage stays recommendable with a caution", async () => {
   }
 });
 
-test("a failed refresh leaves usage unknown, never available, and the plan continues", async () => {
-  for (const behaviour of [{ rateLimits: { error: REAL_ERRORS.http500 } }, { exitCode: 1 }, { rateLimits: { error: REAL_ERRORS.noLogin } }]) {
+test("a provider failure leaves usage unavailable with the failure reason, never confirmed, and the plan continues", async () => {
+  for (const behaviour of [{ rateLimits: { error: REAL_ERRORS.http500 } }, { exitCode: 1 }]) {
     const r = await withCodex(behaviour, CODEX);
     try {
       assert.equal(r.json.status, "recommended");
-      assert.equal(r.json.recommendation.usage, "unknown");
+      assert.equal(r.json.recommendation.usage, "unavailable");
+      assert.equal(r.json.usage.status, "unavailable");
       assert.equal(r.json.usage.capacityConfirmed, false);
       assert.equal(r.json.usage.refresh.ok, false);
-      assert.match(r.json.recommendation.reason, /Usage is unknown, so capacity is not confirmed/);
-      assert.doesNotMatch(r.json.recommendation.reason, /snapshot/);
+      assert.match(r.json.recommendation.reason, /provider data unavailable \(/);
+      assert.doesNotMatch(r.json.recommendation.reason, /snapshot|Usage is unknown/);
     } finally {
       clean(r.box);
     }
+  }
+});
+
+test("an unknown login leaves usage unknown, never available, and the plan continues", async () => {
+  const r = await withCodex({ rateLimits: { error: REAL_ERRORS.noLogin } }, CODEX);
+  try {
+    assert.equal(r.json.status, "recommended");
+    assert.equal(r.json.recommendation.usage, "unknown");
+    assert.equal(r.json.usage.capacityConfirmed, false);
+    assert.equal(r.json.usage.refresh.ok, false);
+    assert.match(r.json.recommendation.reason, /Usage is unknown, so capacity is not confirmed/);
+    assert.doesNotMatch(r.json.recommendation.reason, /snapshot|provider data unavailable/);
+  } finally {
+    clean(r.box);
   }
 });
 
@@ -1138,7 +1154,8 @@ test("every row of docs/agents/models.md has a capability the command can use", 
     assert.equal(r.json.rejected.filter((c: any) => /capability$/.test(c.reason) && !/below/.test(c.reason)).length, 0, JSON.stringify(r.json.rejected));
     assert.ok(r.json.alternatives.length > 0);
     assert.ok(existsSync(join(box.dir, "codex.log")), "the usage read went to the stub, not the installed codex");
-    assert.equal(r.json.usageByAgent.codex.status, "unknown");
+    assert.equal(r.json.usageByAgent.codex.status, "unavailable");
+    assert.equal(r.json.usageByAgent.codex.capacityConfirmed, false);
   } finally {
     await jev.close();
     clean(box);

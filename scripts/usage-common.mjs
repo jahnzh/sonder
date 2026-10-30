@@ -55,6 +55,13 @@ export function sameHost(requested, local) {
 export function assessFreshness(observation, now = new Date()) {
   const observedAt = Date.parse(observation?.observedAt);
   if (Number.isNaN(observedAt)) return { state: "stale", reasons: ["no_observation_time"], staleAfter: null };
+  if (observation?.status === "unavailable") {
+    return {
+      state: "unavailable",
+      reasons: [typeof observation?.reason === "string" ? observation.reason : "unavailable"],
+      staleAfter: null,
+    };
+  }
   if (
     (observation?.status !== undefined && !["available", "limited", "exhausted", "stale"].includes(observation.status)) ||
     !Array.isArray(observation?.windows) ||

@@ -28,6 +28,7 @@ const UNKNOWN_USAGE = {
   observedAt: null,
   account: "unknown",
   host: "unknown",
+  capacityConfirmed: false,
 };
 
 // Narrow questions, combined in assessJev: TypeSafe advises against one multi-factor question.
@@ -352,6 +353,7 @@ function describeUsage(usage) {
   if (usage.status === "fresh") return `Usage read ${usage.observedAt}: ${usage.reason}. That is a snapshot, not reserved capacity`;
   if (usage.status === "low") return `Usage is low, read ${usage.observedAt}: ${usage.reason}`;
   if (usage.status === "stale") return `Usage is stale (${usage.reason}), so capacity is not confirmed`;
+  if (usage.status === "unavailable") return `provider data unavailable (${usage.reason})`;
   return "Usage is unknown, so capacity is not confirmed";
 }
 

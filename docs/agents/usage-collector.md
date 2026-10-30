@@ -44,11 +44,11 @@ To remove it: `systemctl --user disable --now orca-usage-collector.service`, the
 
 ## Planning
 
-`scripts/orca-recommend.mjs` takes a reading for each collected agent in the baseline before it plans, and needs neither the service nor the network to carry on: if the read fails, usage is reported as `unknown`. The one exception to refreshing is an active 429 backoff, when it uses the reading on file and `usage.refresh.reason` says `rate_limited_backoff`.
+`scripts/orca-recommend.mjs` takes a reading for each collected agent in the baseline before it plans, and needs neither the service nor the network to carry on: a provider or CLI failure is reported as `unavailable` with the failure reason; an unknown account or missing collector stays `unknown`. The one exception to refreshing is an active 429 backoff, when it uses the reading on file and `usage.refresh.reason` says `rate_limited_backoff`.
 
 `usageByAgent` holds the report for each collected agent, and `usage` the report for the chosen worker. A reading stays current through a failed poll until it expires after 30 minutes or at a passed reset. A login problem (`unknown_account`, `account_mismatch`) ends it at once, because the last reading may be another account's.
 
-Each candidate's `usage` is the assessment. `exhausted` moves it to `rejected`, with the reset in the reason; `low` adds `decision.warning`; only `fresh` and `low` have `capacityConfirmed: true`. An override onto exhausted usage goes through with a warning. Usage does not yet reorder candidates: `stale` and `unknown` candidates stay in table order, and balancing is #110.
+Each candidate's `usage` is the assessment (`fresh`, `low`, `exhausted`, `stale`, `unavailable` or `unknown`). `exhausted` moves it to `rejected`, with the reset in the reason; `low` adds `decision.warning`; only `fresh` and `low` have `capacityConfirmed: true`. `unavailable` and `unknown` both leave capacity unconfirmed; the planner text for `unavailable` is `provider data unavailable (<reason>)`. An override onto exhausted usage goes through with a warning. Usage does not yet reorder candidates: `stale`, `unavailable` and `unknown` candidates stay in table order, and balancing is #110.
 
 ## Stored data
 

@@ -101,7 +101,7 @@ for (const [name, error, status, reason] of [
     assert.equal(observation.reason, reason);
     assert.equal(observation.windows, null);
     assert.equal(observation.scope.account, null, "a failed read must not name an account");
-    assert.equal(observation.freshness.state, "unknown");
+    assert.equal(observation.freshness.state, status === "unavailable" ? "unavailable" : "unknown");
     assert.doesNotMatch(observation.detail, /127\.0\.0\.1|token_expired|me@example\.com/);
   });
 }
@@ -263,11 +263,19 @@ test("a reset already past when the reading was taken is stale at once", async (
   assert.equal(assessCodexUsage(observation, READ_AT).status, "stale");
 });
 
-test("a failed reading is unknown and says why", async () => {
+test("a failed reading is unavailable and says why", async () => {
   const assessment = assessCodexUsage(await read({ rateLimits: { error: REAL_ERRORS.http429 } }), later(1));
-  assert.equal(assessment.status, "unknown");
+  assert.equal(assessment.status, "unavailable");
+  assert.equal(assessment.freshness, "unavailable");
   assert.equal(assessment.capacityConfirmed, false);
   assert.match(assessment.reason, /429/);
+});
+
+test("an unknown account stays unknown, distinct from unavailable", async () => {
+  const assessment = assessCodexUsage(await read({ rateLimits: { error: REAL_ERRORS.noLogin } }), later(1));
+  assert.equal(assessment.status, "unknown");
+  assert.equal(assessment.freshness, "unknown");
+  assert.equal(assessment.capacityConfirmed, false);
 });
 
 // --- Command line

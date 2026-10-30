@@ -57,7 +57,8 @@ Each window has `id`, `limitId`, `kind`, `label`, `durationMinutes`, `usedPercen
 | `low` | yes | Current, with 10% or less left in a window. A caution level chosen by hand, not a measurement. |
 | `exhausted` | no | Current, and `resetsAt` is when the blocking window resets. |
 | `stale` | no | Over 30 minutes old, or a reported reset has passed. `reason` gives which, and the old figures. |
-| `unknown` | no | No usable reading. |
+| `unavailable` | no | The provider or CLI could not be read (`rate_limited`, `auth_required`, `provider_error`, and the other unavailable observation reasons). Distinct from unknown: a failure was observed. |
+| `unknown` | no | No usable reading for another reason (no reading yet, unknown account, unconfirmed ordinary usage). |
 
 A confirmed reading is a snapshot of a shared allowance, not reserved capacity.
 

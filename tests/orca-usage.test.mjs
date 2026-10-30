@@ -437,6 +437,20 @@ test("a lost or changed login stops the last good reading from speaking for the 
     store.close();
   }));
 
+test("a provider failure with no usable reading is unavailable, distinct from unknown", () =>
+  withState(async (dir) => {
+    const store = new UsageStore(dir);
+    const clock = fakeClock();
+    const provider = fakeProvider(clock, () => failed("rate_limited", "unavailable", "The usage endpoint answered HTTP 429"));
+    await collectOnce({ store, provider, clock, origin: "poll" });
+    const report = usageReport(store, provider, clock.now());
+    assert.equal(report.status, "unavailable");
+    assert.equal(report.freshness, "unavailable");
+    assert.equal(report.capacityConfirmed, false);
+    assert.match(report.reason, /429|rate_limited/);
+    store.close();
+  }));
+
 // --- Planning
 
 test("planning takes a new reading first and stores it", () =>
