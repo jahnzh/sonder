@@ -5,6 +5,7 @@ import {readerFixture} from "../reader-fixture";
 import {skipOnMobile} from "./mobile";
 // Geometry regression checks for issues #1 (seek/heading alignment) and #2 (reader-first Now Playing).
 const sizes=[[360,740],[390,844],[430,932],[1280,800]] as const;
+const readerCentreSizes=[[360,740],[390,844],[412,915]] as const;
 const centre=async(l:Locator)=>{const b=(await l.boundingBox())!;return {x:b.x+b.width/2,y:b.y+b.height/2,box:b};};
 async function importBook(request:APIRequestContext,title:string,withEbook:boolean){
  const response=await request.post("/api/import",{multipart:{title,author:"Layout QA",file:{name:"Narration.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
@@ -164,6 +165,36 @@ for(const size of sizes){
   await dialog.locator(".inline-reader").getByRole("button",{name:"Search this book",exact:true}).focus();
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
+ });
+}
+
+for(const size of readerCentreSizes){
+ test(`reader player transport is centred at ${size[0]}px`,async({page,browserName})=>{
+  const [width,height]=size;
+  const dialog=await open(page,browserName,"Layout reader",size);
+  const player=dialog.getByRole("region",{name:"Player",exact:true});
+  await expect(player).toBeVisible();
+  const play=await centre(player.getByRole("button",{name:/^(Play|Pause) narration$/}));
+  const bar=await centre(player);
+  expect(Math.abs(play.x-bar.x)).toBeLessThanOrEqual(2);
+  // Nothing from the Now Playing shell reserves a row below the reader transport.
+  await expect(dialog.locator(".player-undo-jump")).toHaveCount(0);
+  await expect(dialog.getByRole("button",{name:"Undo jump",exact:true})).toHaveCount(0);
+  const below=await dialog.evaluate(()=>{
+   const bar=document.querySelector<HTMLElement>(".reader-player");
+   const main=document.querySelector<HTMLElement>(".now-playing-main");
+   if(!bar||!main)return Infinity;
+   const bottom=bar.getBoundingClientRect().bottom;
+   return Math.max(0,...[...main.children].map((child)=>{
+    const el=child as HTMLElement;
+    // Reader fills the column; transport is hidden with an ebook; alerts may still paint.
+    if(el.classList.contains("playback-reader")||el.classList.contains("error-text"))return 0;
+    if(getComputedStyle(el).display==="none")return 0;
+    const box=el.getBoundingClientRect();
+    return box.height>0?box.bottom-bottom:0;
+   }));
+  });
+  expect(below).toBeLessThanOrEqual(2);
  });
 }
 
