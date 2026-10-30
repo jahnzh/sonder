@@ -208,6 +208,14 @@ export async function runMutate(options, hooks = {}) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  // --help before the `--` that starts the test command prints the usage and succeeds.
+  const dashes = argv.indexOf("--");
+  if ((dashes < 0 ? argv : argv.slice(0, dashes)).some((a) => a === "--help" || a === "-h")) {
+    console.log(
+      "usage: node scripts/mutate.mjs --file <path> --search <text> --replace <text> [--compile \"<cmd>\"] -- <test command...>",
+    );
+    return 0;
+  }
   const parsed = parseArgs(argv);
   if (!parsed.ok) usage(parsed.error);
   return runMutate(parsed.options);
