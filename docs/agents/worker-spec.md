@@ -59,11 +59,11 @@ Your report lists every bullet of the Proposal, and next to each the test name o
 
 ## Spawn
 
-Run `scripts/orca-spawn.sh --spec-file <file> --name <worktree> --base <branch> --agent <id> --model <id> [--effort <level>]` to launch a worker. It requires `--model`, runs `scripts/orca-preflight.sh`, starts the worker, and checks the effective model in the receipt.
+Run `scripts/orca-spawn.sh --spec-file <file> --name <worktree> (--base <branch> | --base-worktree <name>) --agent <id> --model <id> [--effort <level>]` to launch a worker. It requires `--model` and exactly one of `--base` and `--base-worktree`, runs `scripts/orca-preflight.sh`, starts the worker, and checks the effective model in the receipt. `--base-worktree <name>` uses the branch checked out in that worktree, for a worker whose local branch name differs from the remote one (`jahnzh/fix-79` against `fix/79-offline-stall`). After the launch the script prints `branch: <name>`, the new worktree's real local branch, for push and cleanup. The preflight also fails when free space on `/` (or on the workspaces filesystem) is below `ORCA_MIN_FREE_GB` (default 15) and names what to clean.
 
 ## Read the inbox
 
-Run `node scripts/orca-check.mjs [--run <run_id>] [--wait [<seconds>]] [--ack <delivery_id>]`. Waits are capped at 100 seconds because the shell tool stops commands at about 120 seconds, and `--wait` also works as a timer.
+Run `node scripts/orca-check.mjs [--run <run_id>] [--wait [<seconds>]] [--ack <delivery_id>] [--heartbeats]`. Waits are capped at 100 seconds because the shell tool stops commands at about 120 seconds, and `--wait` also works as a timer. A delivery with only heartbeats is acknowledged and the wait goes on; if only heartbeats arrive before the wait ends, the output is one line `count=0 delivery=null timedOut=true heartbeats=<n>`. A delivery that also holds another message is printed without its heartbeats and left for you to ack. `--heartbeats` prints every delivery as Orca returns it and acks nothing.
 
 ## Resume after a restart
 

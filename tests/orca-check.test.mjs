@@ -10,12 +10,13 @@ import {
   main,
 } from "../scripts/orca-check.mjs";
 
+// Copied from a real `orca orchestration check --terminal <handle> --json` on an empty queue.
 const emptyResultEnvelope = {
-  id: "d23a7b42-e1f0-4e55-b533-acabaad58dee",
+  id: "c215f7fa-e4b1-4827-92a2-0fd4a02ee6ba",
   ok: true,
   result: {
-    runId: "run_561373069493",
-    dispatchId: "ctx_49536e0c743e",
+    runId: "run_61b9802dae51",
+    dispatchId: "ctx_4a3bf35d1371",
     deliveryId: null,
     messages: [],
     count: 0,
@@ -24,8 +25,66 @@ const emptyResultEnvelope = {
     timedOut: false,
     cancelled: false,
     connectionLost: false,
+    mutation: { requestId: "c3f3df17-48c0-478e-961c-501436bfda5d", replayed: false },
   },
+  _meta: { runtimeId: "22eeea5e-ba22-4ef8-bca5-bcaa34e2199e" },
 };
+
+// The same envelope with a delivery in it. Message fields follow the shape this script already read
+// (id, type, subject, sender, body, payload); only the delivery is built by hand.
+function deliveryEnvelope(deliveryId, messages) {
+  return {
+    ...emptyResultEnvelope,
+    result: { ...emptyResultEnvelope.result, deliveryId, messages, count: messages.length },
+  };
+}
+
+const heartbeat = (id) => ({
+  id,
+  type: "heartbeat",
+  subject: "alive",
+  sender: "term_worker",
+  body: "phase=implementing",
+  payload: { taskId: "task_1", dispatchId: "ctx_1", phase: "implementing" },
+});
+const workerDone = (id) => ({
+  id,
+  type: "worker_done",
+  subject: "succeeded",
+  sender: "term_worker",
+  body: "Done.",
+  payload: { outcome: "succeeded" },
+});
+
+// Runs runOrcaCheck with a scripted queue of orca replies; returns the printed text and the argv of every call.
+// A reply of "timeout" is Orca's own wait timing out: the empty queue with timedOut true.
+function runScripted(options, replies, clock = { t: 0 }) {
+  const calls = [];
+  const logs = [];
+  const origLog = console.log;
+  console.log = (line) => logs.push(line);
+  let outcome;
+  try {
+    outcome = runOrcaCheck(options, {
+      now: () => clock.t,
+      runOrca: (args) => {
+        calls.push(args);
+        const next = replies.shift();
+        assert.ok(next, "orca was called more often than the test scripted");
+        const envelope =
+          next === "timeout"
+            ? { ...emptyResultEnvelope, result: { ...emptyResultEnvelope.result, timedOut: true } }
+            : next;
+        if (typeof clock.advance === "number") clock.t += clock.advance;
+        return { status: 0, stdout: JSON.stringify(envelope), stderr: '{"_keepalive":true}\n' };
+      },
+    });
+  } finally {
+    console.log = origLog;
+  }
+  assert.equal(replies.length, 0, "scripted replies left over");
+  return { outcome, logs, calls };
+}
 
 const multiMessageEnvelope = {
   id: "batch-1",
@@ -139,7 +198,7 @@ test("parseCliArgs defaults --wait to 90 seconds", () => {
   assert.equal(parsed.options.waitSeconds, 90);
 });
 
-test("runOrcaCheck prints count, delivery, timedOut and message lines", () => {
+test("a mixed delivery prints the other messages without the heartbeat and acks nothing", () => {
   const logs = [];
   const origLog = console.log;
   console.log = (line) => logs.push(line);
@@ -158,9 +217,9 @@ test("runOrcaCheck prints count, delivery, timedOut and message lines", () => {
     assert.equal(outcome.exitCode, 0);
     assert.equal(logs.length, 1);
     const outputLines = logs[0].split("\n");
-    assert.equal(outputLines[0], "count=2 delivery=del_abc123 timedOut=false");
-    assert.equal(outputLines.length, 3);
-    assert.match(outputLines[1], /^msg_heartbeat_1 heartbeat \| alive \| /);
+    assert.equal(outputLines[0], "count=2 delivery=del_abc123 timedOut=false heartbeats=1");
+    assert.equal(outputLines.length, 2);
+    assert.match(outputLines[1], /^msg_worker_done_1 worker_done \| succeeded \| /);
   } finally {
     console.log = origLog;
   }
@@ -322,6 +381,153 @@ test("--ack prints the ack line and then the next batch when messages remain", (
   }
   const lines = logs[0].split("\n");
   assert.equal(lines[0], "acked=del_old remaining=2");
-  assert.equal(lines[1], "count=2 delivery=del_abc123 timedOut=false");
-  assert.equal(lines.length, 4);
+  assert.equal(lines[1], "count=2 delivery=del_abc123 timedOut=false heartbeats=1");
+  assert.equal(lines.length, 3);
+});
+
+test("a heartbeat-only delivery is acked and the wait goes on with the time left", () => {
+  const clock = { t: 0, advance: 30000 };
+  const { logs, calls } = runScripted(
+    { terminal: "term_x", waitSeconds: 90 },
+    [
+      deliveryEnvelope("del_hb1", [heartbeat("m1")]),
+      deliveryEnvelope("del_done", [workerDone("m2")]),
+    ],
+    clock,
+  );
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].includes("--ack"), false);
+  assert.deepEqual(calls[0].slice(-3), ["--wait", "--timeout-ms", "90000"]);
+  assert.deepEqual(calls[1].slice(-5), ["--ack", "del_hb1", "--wait", "--timeout-ms", "60000"]);
+  assert.equal(logs.length, 1);
+  assert.deepEqual(logs[0].split("\n").map((l) => l.split(" | ")[0]), [
+    "count=1 delivery=del_done timedOut=false heartbeats=1",
+    "m2 worker_done",
+  ]);
+});
+
+test("several heartbeat deliveries in a row are all acked, in order", () => {
+  const { logs, calls } = runScripted(
+    { waitSeconds: 90 },
+    [
+      deliveryEnvelope("del_a", [heartbeat("m1"), heartbeat("m2")]),
+      deliveryEnvelope("del_b", [heartbeat("m3")]),
+      deliveryEnvelope("del_c", [{ id: "m4", type: "question", subject: "which?", sender: "term_w", body: "A or B", payload: null }]),
+    ],
+  );
+  assert.equal(calls[1][calls[1].indexOf("--ack") + 1], "del_a");
+  assert.equal(calls[2][calls[2].indexOf("--ack") + 1], "del_b");
+  assert.match(logs[0], /^count=1 delivery=del_c timedOut=false heartbeats=3\nm4 question \| which\?/);
+});
+
+test("heartbeats seen and then Orca's wait times out: one liveness line", () => {
+  const { logs, outcome } = runScripted(
+    { waitSeconds: 90 },
+    [deliveryEnvelope("del_hb1", [heartbeat("m1"), heartbeat("m2")]), "timeout"],
+  );
+  assert.equal(outcome.exitCode, 0);
+  assert.deepEqual(logs, ["count=0 delivery=null timedOut=true heartbeats=2"]);
+});
+
+test("when the budget runs out between heartbeats, the last call acks without blocking", () => {
+  const clock = { t: 0, advance: 60000 };
+  const { logs, calls } = runScripted(
+    { waitSeconds: 100 },
+    [
+      deliveryEnvelope("del_a", [heartbeat("m1")]),
+      deliveryEnvelope("del_b", [heartbeat("m2")]),
+      emptyResultEnvelope,
+    ],
+    clock,
+  );
+  assert.equal(calls.length, 3);
+  assert.equal(calls[1].includes("--wait"), true);
+  assert.equal(calls[2].includes("--wait"), false);
+  assert.equal(calls[2][calls[2].indexOf("--ack") + 1], "del_b");
+  assert.deepEqual(logs, ["count=0 delivery=null timedOut=true heartbeats=2"]);
+});
+
+test("a message that arrives with the final ack is still printed", () => {
+  const clock = { t: 0, advance: 100000 };
+  const { logs } = runScripted(
+    { waitSeconds: 100 },
+    [deliveryEnvelope("del_a", [heartbeat("m1")]), deliveryEnvelope("del_b", [workerDone("m2")])],
+    clock,
+  );
+  assert.match(logs[0], /^count=1 delivery=del_b timedOut=false heartbeats=1\nm2 worker_done/);
+});
+
+test("without --wait a heartbeat-only delivery is acked once and the next read is returned", () => {
+  const { logs, calls } = runScripted({ terminal: "term_x" }, [
+    deliveryEnvelope("del_hb1", [heartbeat("m1")]),
+    emptyResultEnvelope,
+  ]);
+  assert.equal(calls[1].includes("--wait"), false);
+  assert.equal(calls[1][calls[1].indexOf("--ack") + 1], "del_hb1");
+  assert.deepEqual(logs, ["count=0 delivery=null timedOut=false heartbeats=1"]);
+});
+
+test("an ack that returns the same delivery does not loop", () => {
+  const { calls } = runScripted({ ack: "del_hb1" }, [deliveryEnvelope("del_hb1", [heartbeat("m1")])]);
+  assert.equal(calls.length, 1);
+});
+
+test("--ack of an earlier delivery is sent first and the heartbeats behind it are acked too", () => {
+  const { logs, calls } = runScripted({ ack: "del_old", waitSeconds: 90 }, [
+    deliveryEnvelope("del_hb1", [heartbeat("m1")]),
+    emptyResultEnvelope,
+  ]);
+  assert.equal(calls[0][calls[0].indexOf("--ack") + 1], "del_old");
+  assert.equal(calls[1][calls[1].indexOf("--ack") + 1], "del_hb1");
+  assert.deepEqual(logs[0].split("\n"), [
+    "acked=del_old remaining=0",
+    "count=0 delivery=null timedOut=false heartbeats=1",
+  ]);
+});
+
+test("--heartbeats prints the heartbeat delivery as Orca returned it and acks nothing", () => {
+  const { logs, calls } = runScripted(
+    { terminal: "term_x", waitSeconds: 90, heartbeats: true },
+    [deliveryEnvelope("del_hb1", [heartbeat("m1")])],
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].includes("--ack"), false);
+  assert.match(logs[0], /^count=1 delivery=del_hb1 timedOut=false\nm1 heartbeat \| alive \| /);
+});
+
+test("--heartbeats keeps the heartbeat line in a mixed delivery", () => {
+  const { logs } = runScripted({ heartbeats: true }, [
+    deliveryEnvelope("del_mix", [heartbeat("m1"), workerDone("m2")]),
+  ]);
+  const lines = logs[0].split("\n");
+  assert.equal(lines[0], "count=2 delivery=del_mix timedOut=false");
+  assert.equal(lines.length, 3);
+});
+
+test("parseCliArgs reads --heartbeats and it is off by default", () => {
+  assert.equal(parseCliArgs([]).options.heartbeats, false);
+  assert.equal(parseCliArgs(["--heartbeats", "--wait", "30"]).options.heartbeats, true);
+});
+
+test("an Orca error during the heartbeat loop is reported, real stale_delivery shape", () => {
+  const stale = {
+    id: "c9053f44-0134-482f-9f32-df9f0875f92e",
+    ok: false,
+    error: {
+      code: "stale_delivery",
+      message: "Delivery del_bogus does not belong to this mailbox.",
+      data: { orchestrationRequestId: "3b8f1b65-dde2-4d92-ad22-9d95920f7f6b" },
+    },
+    _meta: { runtimeId: "22eeea5e-ba22-4ef8-bca5-bcaa34e2199e" },
+  };
+  const errors = [];
+  const origError = console.error;
+  console.error = (line) => errors.push(line);
+  try {
+    const { outcome } = runScripted({ waitSeconds: 90 }, [deliveryEnvelope("del_hb1", [heartbeat("m1")]), stale]);
+    assert.equal(outcome.exitCode, 1);
+  } finally {
+    console.error = origError;
+  }
+  assert.deepEqual(errors, ["stale_delivery: Delivery del_bogus does not belong to this mailbox."]);
 });
