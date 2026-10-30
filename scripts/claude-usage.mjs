@@ -137,6 +137,15 @@ function scopeOf(raw) {
   return { model: typeof model === "string" ? model : null, surface: typeof surface === "string" ? surface : null };
 }
 
+const SHARED_KINDS = new Set(["session", "weekly_all"]);
+
+// "all": drawn on by every model and surface. "scoped": the provider names a model or surface.
+// "unknown": a kind or scope this reader does not recognise, so which candidates it limits is not known.
+function appliesTo(kind, scope) {
+  if (scope) return "scoped";
+  return SHARED_KINDS.has(kind) ? "all" : "unknown";
+}
+
 function windowsFromLimits(limits) {
   return limits.map((row, index) => {
     if (!row || typeof row.kind !== "string" || typeof row.percent !== "number") {
@@ -148,6 +157,7 @@ function windowsFromLimits(limits) {
       group: typeof row.group === "string" ? row.group : null,
       label: windowLabel(row.kind, scope),
       scope,
+      appliesTo: appliesTo(row.kind, scope),
       usedPercent: row.percent,
       resetsAt: isoOrNull(row.resets_at, `limits[${index}]`),
       severity: typeof row.severity === "string" ? row.severity : null,
@@ -168,6 +178,7 @@ function windowsFromLegacyFields(body) {
       group,
       label: windowLabel(kind, scope),
       scope,
+      appliesTo: appliesTo(kind, scope),
       usedPercent: raw.utilization,
       resetsAt: isoOrNull(raw.resets_at, field),
       severity: null,
@@ -200,6 +211,45 @@ export function assessFreshness(observation, now = new Date()) {
   const resets = (observation.windows ?? []).map((window) => Date.parse(window.resetsAt)).filter((time) => !Number.isNaN(time));
   const staleAfter = Math.min(observedAt + STALE_AFTER_MS, ...resets);
   return { state: reasons.length ? "stale" : "fresh", reasons, staleAfter: new Date(staleAfter).toISOString() };
+}
+
+function normalizedName(value) {
+  return typeof value === "string" ? value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() : "";
+}
+
+// "claude-opus-5-5" and "Opus" name the same model family; whole-word match on the display name.
+function mentions(candidateName, display) {
+  const wanted = normalizedName(display);
+  return wanted !== "" && ` ${normalizedName(candidateName)} `.includes(` ${wanted} `);
+}
+
+/**
+ * Whether a candidate (`{ model, surface }`, both optional) can still be run on this subscription.
+ * "exhausted": a shared window, or a window scoped to this candidate, is full.
+ * "available": every window is below 100% or applies to some other model or surface.
+ * "unknown": the reading is unusable or stale, or a full window's scope cannot be matched to the candidate
+ * (the candidate omits the model or surface it is scoped to, or the provider's scope is unrecognised).
+ * Pass `now` to re-judge freshness of a stored observation; otherwise the observation's own freshness is used.
+ */
+export function candidateAvailability(observation, candidate = {}, now) {
+  if (!observation || !Array.isArray(observation.windows) || !["available", "limited", "exhausted"].includes(observation.status)) return "unknown";
+  const freshness = now ? assessFreshness(observation, now) : observation.freshness;
+  if (freshness?.state !== "fresh") return "unknown";
+  if (observation.exhaustedWindows.some((window) => window.appliesTo === "all")) return "exhausted";
+  let verdict = "available";
+  for (const window of observation.exhaustedWindows) {
+    if (window.appliesTo !== "scoped") {
+      verdict = "unknown";
+      continue;
+    }
+    const checks = [
+      [window.scope.model, candidate.model],
+      [window.scope.surface, candidate.surface],
+    ].filter(([scoped]) => scoped);
+    if (checks.every(([scoped, name]) => name && mentions(name, scoped))) return "exhausted";
+    if (checks.some(([, name]) => !name) && checks.every(([scoped, name]) => !name || mentions(name, scoped))) verdict = "unknown";
+  }
+  return verdict;
 }
 
 /**
@@ -235,8 +285,12 @@ export async function readClaudeUsage({
     const { windows, extraUsage } = interpretUsage(await getJson(fetchImpl, CLAUDE_USAGE_URL, accessToken));
     observation.windows = windows;
     observation.extraUsage = extraUsage;
-    observation.exhaustedWindows = windows.filter((window) => window.usedPercent >= 100).map((window) => window.kind);
-    observation.status = observation.exhaustedWindows.length ? "exhausted" : "available";
+    observation.exhaustedWindows = windows
+      .filter((window) => window.usedPercent >= 100)
+      .map(({ kind, scope, appliesTo }) => ({ kind, scope, appliesTo }));
+    observation.status = observation.exhaustedWindows.some((window) => window.appliesTo === "all")
+      ? "exhausted"
+      : observation.exhaustedWindows.length ? "limited" : "available";
   } catch (error) {
     if (!(error instanceof UsageError)) throw error;
     observation.status = error.status;
