@@ -72,6 +72,25 @@ Your report lists every bullet of the Proposal, and next to each the test name o
 
 Specialized templates: see [docs/agents/spec-templates/](spec-templates/) for feature (`feature.md`), review (`review.md`), and fix (`fix.md`) specs.
 
+## Recommend a worker
+
+Before a spawn, ask for a recommendation for the ready task:
+
+```bash
+node scripts/orca-recommend.mjs --task <n> --summary "<one shareable paragraph>" [--kind <kind>] [--files <n>] --record <spec-file>
+```
+
+The command reads the Jev key from `TYPESAFE_API_KEY` in the environment. Keep the key out of the repository, command lines and worker specs. The command prints JSON and never starts a worker. Pass its `launch.args` to `scripts/orca-spawn.sh`. Run `--help` for every option.
+
+- `--summary` (at most 600 characters), `--kind` and `--files` are all that leaves the machine. Write the summary to be shared: no transcripts, secrets or private text. TypeSafe's Jev answers three narrow questions; the command combines them with the Capability column of `docs/agents/models.md`. It recommends the smallest suitable model and lists the other suitable choices under `alternatives` and the unsuitable ones with their reasons under `rejected`.
+- `assessment.jev` gives the Jev version that answered and its uncertainty. The thresholds are TypeSafe's starting points, checked on a few live tasks and not tuned; the model is pinned so an alias cannot move them.
+- `usage.status` is `unknown` until a verified collector exists. Unknown is not available: spread work across providers yourself, and treat the order of `equivalent` alternatives as table order, not as quota balancing.
+- Exit 3 means Jev was `unavailable`, `invalid` or `inconclusive`. Rerun with `--judgment <mechanical|standard|reasoning-heavy> --judgment-reason "<why>"`; the fallback is recorded in `fallback` and in the spec.
+- To choose differently, add `--override <agent>/<model>[/<effort>] --override-reason "<why>"`. The recommendation and the reason are both recorded. An override below the assessed requirement is recorded with a warning; a model or effort missing from the baseline is refused, so add and verify its row first. An override does not replace the assessment.
+- `--record` fills the spec's `## Model choice` section. Without it, write the choice and its reason there yourself.
+
+The spawn checks do not change: the model stays explicit, the preflight runs, and the effective model in the receipt is compared with the requested one. A non-zero exit from `orca-spawn.sh` is not evidence that no worker started: the model check fails after the launch, and `outcome_unknown` exits 1. Read the receipt it prints and run `orca orchestration worker-show --dispatch <dispatch_id>` before any retry, following the recovery commands in the receipt. Never run the spawn again to find out.
+
 ## Spawn
 
 Run `scripts/orca-spawn.sh --spec-file <file> --name <worktree> (--base <branch> | --base-worktree <name>) --agent <id> --model <id> [--effort <level>]` to launch a worker. It requires `--model` and exactly one of `--base` and `--base-worktree`, runs `scripts/orca-preflight.sh`, starts the worker, and checks the effective model in the receipt. `--base-worktree <name>` uses the branch checked out in that worktree, for a worker whose local branch name differs from the remote one (`jahnzh/fix-79` against `fix/79-offline-stall`). After the launch the script prints `branch: <name>`, the new worktree's real local branch, for push and cleanup. The preflight also fails when free space on `/` (or on the workspaces filesystem) is below `ORCA_MIN_FREE_GB` (default 15) and names what to clean.
