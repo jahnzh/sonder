@@ -21,7 +21,7 @@ const DEFAULT_READINGS_LIMIT = 20;
 // After these the last good reading may belong to another account, so it no longer speaks for this one.
 const ACCOUNT_FAILURES = new Set(["unknown_account", "account_mismatch"]);
 /** Account-scope keys: fingerprint the value. Matches uuid, user_id/userId, account*, org*. */
-const ACCOUNT_IDENTITY_KEYS = /uuid|user_?id|account|org/i;
+const ACCOUNT_IDENTITY_KEYS = /uuid|user_?id|team_?id|session_?id|account|org/i;
 /** Credential / home / header keys: drop on objects, redaction marker on scalars. */
 const SENSITIVE_KEYS = /email|home|cookie|authorization|token|key|secret|headers|password|config.?dir/i;
 const REDACTION_MARKER = "<redacted>";
