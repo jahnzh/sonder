@@ -4,6 +4,8 @@ export type CspMode = "report-only" | "enforce" | "off";
 
 export const CSP_REPORT_PATH = "/api/csp-report";
 const REPORT_LIMIT = 20;
+const REPORT_GLOBAL_LIMIT = 200;
+const REPORT_CLIENTS = 1000;
 const REPORT_WINDOW_MS = 60_000;
 const REPORT_BODY_LIMIT = 8 * 1024;
 
@@ -119,7 +121,14 @@ export function registerCsp(app: FastifyInstance, options: CspOptions): void {
       const type = String(reply.getHeader("content-type") ?? "");
       if (/^text\/html\b/i.test(type) || path === "/sw.js") reply.header(header[0], header[1]);
     });
-  const stored: number[] = [];
+  // Each client address has its own quota, so one client cannot use up everyone's reports and blind the log;
+  // a larger global ceiling still bounds the total, and the table of addresses is bounded too.
+  const stored = new Map<string, number[]>();
+  const everyone: number[] = [];
+  const within = (times: number[], at: number) => {
+    while (times.length && at - times[0] >= REPORT_WINDOW_MS) times.shift();
+    return times;
+  };
   // A child scope so the lenient parsers below don't touch the JSON handling of every other route.
   void app.register(async (scope) => {
     scope.removeAllContentTypeParsers();
@@ -136,10 +145,17 @@ export function registerCsp(app: FastifyInstance, options: CspOptions): void {
         payload = undefined;
       }
       const at = now();
-      while (stored.length && at - stored[0] >= REPORT_WINDOW_MS) stored.shift();
+      within(everyone, at);
+      if (stored.size > REPORT_CLIENTS) {
+        for (const [address, times] of stored) if (!within(times, at).length) stored.delete(address);
+        if (stored.size > REPORT_CLIENTS) stored.clear();
+      }
+      const mine = within(stored.get(req.ip) ?? [], at);
+      stored.set(req.ip, mine);
       for (const line of violationLines(payload)) {
-        if (stored.length >= REPORT_LIMIT) return reply.code(429).send();
-        stored.push(at);
+        if (mine.length >= REPORT_LIMIT || everyone.length >= REPORT_GLOBAL_LIMIT) return reply.code(429).send();
+        mine.push(at);
+        everyone.push(at);
         report(line);
       }
       return reply.code(204).send();

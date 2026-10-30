@@ -228,3 +228,23 @@ test("at most 20 violations are stored per minute, and the window then reopens",
   assert.equal(lines.length, 41);
   await app.close();
 });
+
+test("one client using up its quota does not stop another client's reports", async () => {
+  const lines: string[] = [];
+  const app = Fastify();
+  registerCsp(app, { mode: "report-only", report: (line) => lines.push(line), now: () => 1_000 });
+  const post = (address: string, n: number) =>
+    app.inject({
+      method: "POST",
+      url: "/api/csp-report",
+      remoteAddress: address,
+      headers: { "content-type": "application/csp-report" },
+      payload: JSON.stringify({ "csp-report": { "effective-directive": "img-src", "blocked-uri": `https://x.example/${n}` } }),
+    });
+  for (let n = 0; n < 25; n++) await post("203.0.113.9", n);
+  assert.equal(lines.length, 20);
+  assert.equal((await post("203.0.113.9", 99)).statusCode, 429);
+  // Another address still gets through while the first one is refused.
+  assert.equal((await post("198.51.100.4", 1)).statusCode, 204);
+  assert.equal(lines.length, 21);
+});
