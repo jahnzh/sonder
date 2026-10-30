@@ -30,6 +30,7 @@ import { useAppearance } from "./Appearance";
 import { fontFamilies, paletteFor } from "../appearance";
 import { ReadingSync } from "./ReadingSync";
 import { LyricsReader } from "./LyricsReader";
+import { WordReader } from "./WordReader";
 import { PlaybackSource } from "./PlaybackSource";
 import { PlaybackOptions } from "./PlaybackOptions";
 import { PlaybackTimeline } from "./PlaybackTimeline";
@@ -368,9 +369,9 @@ export function ReaderView({
   playerRef.current = p;
   const { appearance, saveReader } = useAppearance();
   const preferences = appearance.reader;
-  // Switching Page/Lyrics doesn't change how the EPUB is styled; re-theming
+  // Switching Page/Lyrics/Word doesn't change how the EPUB is styled; re-theming
   // would re-paginate the whole book for nothing.
-  const themeKey = JSON.stringify({ ...appearance, reader: { ...appearance.reader, display: undefined, segmentWords: undefined } });
+  const themeKey = JSON.stringify({ ...appearance, reader: { ...appearance.reader, display: undefined, segmentWords: undefined, wordWpm: undefined } });
   const words = useMemo(() => book ? readerWords(book) : [], [book?.fingerprint]);
   const currentInterval = map?.recordingId === p.book?.recordingId
     ? map?.intervals.find(interval => interval.trackId === p.track?.id && interval.start <= p.position && interval.end > p.position)
@@ -1208,9 +1209,10 @@ export function ReaderView({
     const key = (event: KeyboardEvent) => {
       // The Now Playing reader stays mounted while its dialog is closed.
       if (event.ctrlKey || event.metaKey || event.altKey || (event.target as HTMLElement)?.closest("input,select,textarea,button") || panel || viewport.current?.closest('[data-state="closed"]')) return;
-      if (preferences.display === "segment" && event.key.toLowerCase() === "f") { event.preventDefault(); setFollow(true); following.current=""; }
-      else if (preferences.display === "segment" && event.key.toLowerCase() === "p") { event.preventDefault(); editReader({display:"book"}); }
-      else if (!p.book && (event.key === "ArrowLeft" || event.key === "ArrowRight")) { event.preventDefault(); pageAction.current(event.key === "ArrowLeft" ? "previous" : "next"); }
+      const overlay = preferences.display === "segment" || preferences.display === "word";
+      if (overlay && event.key.toLowerCase() === "f") { event.preventDefault(); setFollow(true); following.current=""; }
+      else if (overlay && event.key.toLowerCase() === "p") { event.preventDefault(); editReader({display:"book"}); }
+      else if (!p.book && preferences.display === "book" && (event.key === "ArrowLeft" || event.key === "ArrowRight")) { event.preventDefault(); pageAction.current(event.key === "ArrowLeft" ? "previous" : "next"); }
     };
     window.addEventListener("keydown",key); return () => window.removeEventListener("keydown",key);
   }, [panel,preferences.display,p.book,appearance]);
@@ -1273,7 +1275,50 @@ export function ReaderView({
   };
   const controls = controlsVisible || desktop;
   const timing = currentInterval ? (currentInterval.verified ? "" : " · estimated timings") : "";
+  const overlayDisplay = preferences.display === "segment" || preferences.display === "word";
   const showContents = desktop && preferences.display === "book" && !contentsHidden;
+  const locateParagraph = (paragraphId: string) => {
+    const all = sections.flatMap((section) => section.paragraphs);
+    const section = sections.find((entry) =>
+      entry.paragraphs.some((fragment) => fragment.id === paragraphId),
+    );
+    const fragment = section?.paragraphs.find((entry) => entry.id === paragraphId);
+    if (!section || !fragment) return null;
+    return {
+      cfi: latest.current?.cfi,
+      section: section.index,
+      paragraphId,
+      quote: fragment.text.slice(0, 300),
+      progression:
+        all.findIndex((entry) => entry.id === paragraphId) /
+        Math.max(1, all.length - 1),
+    };
+  };
+  const wordSentenceStep = (direction: -1 | 1) => {
+    const paragraphs = sections.flatMap((section) => section.paragraphs);
+    const at = paragraphs.findIndex((fragment) => fragment.id === latest.current?.paragraphId);
+    const next = paragraphs[Math.max(0, Math.min(paragraphs.length - 1, (at < 0 ? 0 : at) + direction))];
+    if (!next) return;
+    const value = locateParagraph(next.id);
+    if (value) {
+      latest.current = value;
+      setLocator(value);
+      void saveReading(id, value, follow ? "listening" : "reading").catch(() => {});
+    }
+    const mapped = map?.intervals.find((item) => item.paragraphId === next.id);
+    const audioBook = books.find((item) => item.recordingId === map?.recordingId);
+    const track = audioBook?.tracks.find((item) => item.id === mapped?.trackId);
+    if (mapped && audioBook && track && follow) {
+      following.current = "";
+      if (p.book?.recordingId === audioBook.recordingId && p.track?.id === track.id) {
+        p.seek(mapped.start);
+      } else {
+        void p.play(audioBook, track, mapped.start);
+      }
+      return;
+    }
+    setFollow(false);
+  };
   const openMore = () => {
     setPanel(null);
     if (playbackMenu) playbackMenu.open();
@@ -1298,9 +1343,19 @@ export function ReaderView({
   const moreItems = (
     <div className="reader-more">
       <div className="reader-mode-switch" role="group" aria-label="Reading mode">
-        {(["book", "segment"] as const).map((value) => (
-          <button key={value} aria-pressed={preferences.display === value} onClick={fromMenu(() => editReader({ display: value }))}>
-            {value === "book" ? "Page" : "Lyrics"}
+        {(["book", "segment", "word"] as const).map((value) => (
+          <button
+            key={value}
+            aria-pressed={preferences.display === value}
+            onClick={fromMenu(() => {
+              editReader({ display: value });
+              // Keep the CFI + sentence locator; bring Page mode back to that sentence.
+              if (value === "book" && latest.current?.paragraphId) {
+                void jumpRef.current(latest.current.paragraphId);
+              }
+            })}
+          >
+            {value === "book" ? "Page" : value === "segment" ? "Lyrics" : "Word"}
           </button>
         ))}
       </div>
@@ -1390,10 +1445,10 @@ export function ReaderView({
         )}
         <div className="reader-page-area">
           <div
-            className={`reader-viewport ${preferences.display === "segment" ? "segment-underlay" : ""}`}
+            className={`reader-viewport ${overlayDisplay ? "segment-underlay" : ""}`}
             ref={viewport}
             aria-label="Ebook pages"
-            aria-hidden={preferences.display === "segment"}
+            aria-hidden={overlayDisplay}
           />
           {preferences.display === "segment" && book && <LyricsReader
             book={book} interval={currentInterval} position={p.position} hasMap={!!map?.intervals.length} follow={follow} size={preferences.size} selectedParagraph={locator?.paragraphId} ignoreKeys={!!panel}
@@ -1408,11 +1463,60 @@ export function ReaderView({
               void p.play(audio,track,interval.start+fraction*(interval.end-interval.start));
             }}
           />}
+          {preferences.display === "word" && book && <WordReader
+            book={book}
+            interval={currentInterval}
+            intervals={map?.intervals || []}
+            position={p.position}
+            playing={p.playing}
+            speed={p.speed || 1}
+            follow={follow}
+            size={preferences.size}
+            wpm={preferences.wordWpm}
+            selectedParagraph={locator?.paragraphId}
+            ignoreKeys={!!panel}
+            onWpm={(wordWpm) => editReader({ wordWpm })}
+            onToggleControls={() => setControlsVisible((value) => !value)}
+            onTogglePlay={() => p.toggle()}
+            onStepSentence={wordSentenceStep}
+            onWord={(word) => {
+              const value = locateParagraph(word.paragraphId);
+              if (!value) return;
+              if (latest.current?.paragraphId === value.paragraphId) return;
+              latest.current = value;
+              setLocator(value);
+            }}
+            onSeek={(word, _index, time) => {
+              const value = locateParagraph(word.paragraphId);
+              const paragraphChanged = !!value && latest.current?.paragraphId !== value.paragraphId;
+              if (value) {
+                latest.current = value;
+                setLocator(value);
+                if (paragraphChanged) {
+                  void saveReading(id, value, follow ? "listening" : "reading").catch(() => {});
+                }
+              }
+              if (time != null && follow) {
+                const mapped = map?.intervals.find((item) => item.paragraphId === word.paragraphId) || currentInterval;
+                const audioBook = books.find((item) => item.recordingId === map?.recordingId);
+                const track = audioBook?.tracks.find((item) => item.id === mapped?.trackId);
+                if (mapped && audioBook && track) {
+                  following.current = "";
+                  if (p.book?.recordingId === audioBook.recordingId && p.track?.id === track.id) {
+                    p.seek(time);
+                  } else {
+                    void p.play(audioBook, track, time);
+                  }
+                }
+              }
+            }}
+          />}
           {desktop && preferences.display === "book" && <>
             <button className="reader-edge reader-edge-previous" aria-label="Previous page" onClick={()=>turn(-1)}><ArrowLeft size={22}/></button>
             <button className="reader-edge reader-edge-next" aria-label="Next page" onClick={()=>turn(1)}><ArrowRight size={22}/></button>
           </>}
           {desktop && book && preferences.display === "segment" && <aside className="reader-lyrics-info" aria-label="Lyrics information"><strong>{book.title}</strong><span>{book.author}</span><span>{currentInterval ? currentInterval.verified ? "Following narration" : "Estimated sentence timings" : "Reading sync"}</span><p>Keyboard shortcuts</p><span>Space · play or pause</span><span>← / → · skip 30 seconds</span><span>↑ / ↓ · previous or next line</span><span>F · back to narration</span><span>P · page mode</span></aside>}
+          {desktop && book && preferences.display === "word" && <aside className="reader-lyrics-info" aria-label="Word information"><strong>{book.title}</strong><span>{book.author}</span><span>{currentInterval ? currentInterval.verified ? "Following narration" : "Estimated word timings" : "Words per minute"}</span><p>Keyboard shortcuts</p><span>Space · play or pause</span><span>← / → · previous or next word</span><span>Shift+← / → · previous or next sentence</span><span>F · back to narration</span><span>P · page mode</span></aside>}
           <div className="reader-floating">
             {toast && (
               <div className="reader-toast" role="status">

@@ -59,4 +59,6 @@ export const KEYBOARD_SHORTCUTS: { keys: string[]; action: string }[] = [
   { keys: ["/"], action: "Search" },
   { keys: ["f"], action: "Follow the audio in the reader" },
   { keys: ["p"], action: "Switch the reader to Page view" },
+  { keys: ["←", "→"], action: "In Word mode, step one word" },
+  { keys: ["Shift+←", "Shift+→"], action: "In Word mode, step one sentence" },
 ];

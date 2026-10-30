@@ -35,8 +35,9 @@ export const appearanceSchema = z.object({
       margin: z.number().min(8).max(80).default(20),
       width: z.number().min(350).max(1100).default(720),
       mode: z.enum(["paginated", "scroll"]).default("paginated"),
-      display: z.enum(["book", "segment"]).default("book"),
+      display: z.enum(["book", "segment", "word"]).default("book"),
       segmentWords: z.number().int().min(1).max(160).default(30),
+      wordWpm: z.number().int().min(100).max(900).default(300),
     })
     .default({
       theme: "app",
@@ -48,6 +49,7 @@ export const appearanceSchema = z.object({
       mode: "paginated",
       display: "book",
       segmentWords: 30,
+      wordWpm: 300,
     }),
 });
 export type Appearance = z.infer<typeof appearanceSchema>;
