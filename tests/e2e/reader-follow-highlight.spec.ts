@@ -1,11 +1,11 @@
 import {test,expect,type Page} from "@playwright/test";
 import {readFileSync} from "node:fs";
 import {readerFixture} from "../reader-fixture";
-import {READER_WAIT_MS,timedWait} from "./timing";
+import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
 // The service worker would answer the script request below before page.route sees it.
 test.use({serviceWorkers:"block"});
 // Per-step expect ceilings are up to 45 s; leave room for many highlight waits.
-test.beforeEach(()=>{test.setTimeout(180_000);});
+installReaderWaitBudget(test);
 test.afterEach(async({page})=>{await page.unrouteAll({behavior:"wait"});});
 // Chapter one: counted blocks inside <nav> and text inside <svg> before the narrated text (#69).
 const navChapter=`<nav epub:type="landmarks" xmlns:epub="http://www.idpf.org/2007/ops"><ol><li>Skip to the story</li><li>Notes on this edition</li></ol></nav>`+

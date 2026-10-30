@@ -1,12 +1,10 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { readerFixture } from "../reader-fixture";
-import { READER_WAIT_MS, timedWait } from "./timing";
+import { installReaderWaitBudget, READER_WAIT_MS, timedWait } from "./timing";
 
 // Per-step expect ceilings are up to 45 s; leave room around history restores.
-test.beforeEach(() => {
-  test.setTimeout(180_000);
-});
+installReaderWaitBudget(test);
 
 async function importRecording(page: Page, title: string, tracks = 1) {
   const audio = readFileSync("server/demo/alice-01.mp3");

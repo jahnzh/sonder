@@ -6,7 +6,8 @@
  *
  * Each file is tagged with the current --label (default "default"). Pass
  * --label again before the next file to group runs by host. Steps whose max
- * is above 5000 ms are flagged SLOW.
+ * is above SLOW_MS (10000, same as SLOW_STEP_MS in tests/e2e/timing.ts) are
+ * flagged SLOW.
  *
  * Exit: 0 ok, 2 bad usage / missing file.
  */
@@ -14,11 +15,13 @@ import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SLOW_MS = 5000;
+/** Keep in sync with SLOW_STEP_MS in tests/e2e/timing.ts (10 s). */
+const SLOW_MS = 10_000;
 
 function usage(stream = process.stderr) {
   stream.write(
-    "usage: node scripts/summarize-e2e-timing.mjs [--label <host>] <file...>\n",
+    "usage: node scripts/summarize-e2e-timing.mjs [--label <host>] <file...>\n" +
+      "  Steps whose max is above 10000 ms (SLOW_STEP_MS) are flagged SLOW.\n",
   );
 }
 

@@ -1,12 +1,10 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { readerFixture } from "../reader-fixture";
-import { READER_WAIT_MS, timedWait } from "./timing";
+import { installReaderWaitBudget, READER_WAIT_MS, timedWait } from "./timing";
 
 // Per-step expect ceilings are up to 45 s; leave room for many sentence steps.
-test.beforeEach(() => {
-  test.setTimeout(180_000);
-});
+installReaderWaitBudget(test);
 
 test.beforeEach(async ({ page }) => {
   // Lets a test read the audio element the player created.

@@ -17,11 +17,15 @@ export const READER_WAIT_MS = {
 } as const;
 
 /**
- * A step slower than this still passes (the ceiling is higher) but is recorded
- * and printed as a "slow step" warning at process exit so a real slowdown is
- * visible and not hidden by the larger wait.
+ * A step slower than this still passes (the ceiling is higher) but is printed
+ * immediately as a "slow step" warning on stderr so a real slowdown is visible
+ * and not hidden by the larger wait. Must stay in sync with SLOW_MS in
+ * scripts/summarize-e2e-timing.mjs.
  */
 export const SLOW_STEP_MS = 10_000;
+
+/** Per-spec Playwright timeout: room for many 45 s expect ceilings. */
+export const READER_SPEC_TIMEOUT_MS = 180_000;
 
 /** One measured wait when SONDER_E2E_TIMING=1. */
 export type TimingRecord = {
@@ -42,8 +46,21 @@ export type SlowStep = {
   test: string;
 };
 
-let slowSteps: SlowStep[] = [];
-let flushRegistered = false;
+/** Minimal Playwright `test` surface used by installReaderWaitBudget. */
+export type ReaderSpecTest = {
+  beforeEach: (fn: () => void) => void;
+  setTimeout: (ms: number) => void;
+};
+
+/**
+ * Shared beforeEach that raises the Playwright test timeout for the three
+ * instrumented reader specs (word-reader, follow-highlight, position-history).
+ */
+export function installReaderWaitBudget(testApi: ReaderSpecTest): void {
+  testApi.beforeEach(() => {
+    testApi.setTimeout(READER_SPEC_TIMEOUT_MS);
+  });
+}
 
 export function timingEnabled(env: TimingEnv = process.env): boolean {
   return env.SONDER_E2E_TIMING === "1";
@@ -61,38 +78,27 @@ export function appendTimingRecord(filePath: string, record: TimingRecord): void
 }
 
 /** Format one slow-step warning line (stable for unit tests and CI logs). */
-export function formatSlowStepWarning(step: string, elapsedMs: number): string {
-  return `slow step ${step} ${elapsedMs}`;
+export function formatSlowStepWarning(
+  test: string,
+  step: string,
+  elapsedMs: number,
+): string {
+  return `slow step ${test} ${step} ${elapsedMs}`;
 }
 
-export function recordSlowStep(step: string, elapsedMs: number, test: string): void {
-  if (elapsedMs <= SLOW_STEP_MS) return;
-  slowSteps.push({ step, elapsedMs, test });
-  ensureSlowStepFlush();
-}
-
-/** Print and clear recorded slow steps. Returns how many were printed. */
-export function flushSlowStepWarnings(
+/**
+ * Print a slow-step warning immediately on stderr (or `write`). Playwright
+ * ends workers with process.exit(), which skips beforeExit, so buffering until
+ * exit loses the warning.
+ */
+export function recordSlowStep(
+  step: string,
+  elapsedMs: number,
+  test: string,
   write: (line: string) => void = (line) => console.warn(line),
-): number {
-  const pending = slowSteps.splice(0);
-  for (const item of pending) {
-    write(formatSlowStepWarning(item.step, item.elapsedMs));
-  }
-  return pending.length;
-}
-
-/** Test hook: drop recorded slow steps without printing. */
-export function resetSlowStepsForTests(): void {
-  slowSteps = [];
-}
-
-function ensureSlowStepFlush(): void {
-  if (flushRegistered) return;
-  flushRegistered = true;
-  process.on("beforeExit", () => {
-    flushSlowStepWarnings();
-  });
+): void {
+  if (elapsedMs <= SLOW_STEP_MS) return;
+  write(formatSlowStepWarning(test, step, elapsedMs));
 }
 
 export type TimedWaitOptions = {
@@ -101,13 +107,15 @@ export type TimedWaitOptions = {
   env?: TimingEnv;
   now?: () => number;
   write?: (filePath: string, record: TimingRecord) => void;
+  /** Override stderr for unit tests. */
+  warn?: (line: string) => void;
   onSlow?: (step: string, elapsedMs: number, test: string) => void;
 };
 
 /**
  * Run `work` and always measure elapsed ms. When SONDER_E2E_TIMING=1, also
- * append a JSONL timing record. Steps slower than SLOW_STEP_MS are recorded
- * and printed once at process exit (`slow step <name> <ms>`).
+ * append a JSONL timing record. Steps slower than SLOW_STEP_MS print
+ * immediately (`slow step <test> <name> <ms>` on stderr).
  */
 export async function timedWait<T>(
   step: string,
@@ -131,7 +139,11 @@ export async function timedWait<T>(
       });
     }
     if (elapsedMs > SLOW_STEP_MS) {
-      (options.onSlow ?? recordSlowStep)(step, elapsedMs, testName);
+      if (options.onSlow) {
+        options.onSlow(step, elapsedMs, testName);
+      } else {
+        recordSlowStep(step, elapsedMs, testName, options.warn);
+      }
     }
   }
 }
