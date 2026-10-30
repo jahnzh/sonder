@@ -77,6 +77,8 @@ Agent skills setup follows the main flow from https://www.aihero.dev/skills-setu
 - After a worker finishes, keep its outcome and transcript with `node scripts/orca-history.mjs`; read `docs/agents/worker-history.md` first.
 - Before reading or interpreting Antigravity quota (`node scripts/antigravity-usage.mjs`), read `docs/agents/antigravity-usage.md`.
 - Before reading or interpreting Cursor usage (`node scripts/cursor-usage.mjs`), read `docs/agents/cursor-usage.md`.
+- Before reading or interpreting Codex usage (`node scripts/codex-usage.mjs`), read `docs/agents/codex-usage.md`.
+- Before installing, checking or recovering the usage collector (`scripts/orca-usage.mjs`), or judging `usage` in a recommendation, read `docs/agents/usage-collector.md`.
 - Install the pre-push hook once per clone with `scripts/install-hooks.sh`.
 
 ## Spawning subagents

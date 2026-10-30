@@ -7,6 +7,10 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+// @ts-expect-error The collector is plain JavaScript without type declarations.
+import { UsageStore } from "../scripts/orca-usage.mjs";
+// @ts-expect-error The fixture is plain JavaScript without type declarations.
+import { FAR_RESET, REAL_ERRORS, REAL_EXHAUSTED, fakeCodexCalls, rateLimits, writeFakeCodex } from "./codex-fixture.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const script = join(repoRoot, "scripts", "orca-recommend.mjs");
@@ -98,6 +102,8 @@ function sandbox() {
   writeFileSync(join(dir, "agent-models"), AGENT_MODELS);
   stub(bin, "agent", `cat "${dir}/agent-models"\nexit $(cat "${dir}/agent-exit" 2>/dev/null || echo 0)`);
   stub(bin, "orca", `echo "$@" >> "${dir}/orca.log"`);
+  // A baseline with a Codex row makes the command read usage, and that must never reach the real account.
+  stub(bin, "codex", `echo called >> "${dir}/codex.log"\nexit 1`);
   return { dir, bin, orcaLog: join(dir, "orca.log"), models: join(dir, "models.md") };
 }
 
@@ -105,7 +111,7 @@ function recommend(box: ReturnType<typeof sandbox>, args: string[], jevUrl: stri
   return new Promise<{ status: number | null; stdout: string; stderr: string; json: any }>((done) => {
     const child = spawn(process.execPath, [script, "--task", "105", "--summary", "Add a parser with unit tests", "--models", box.models, ...args], {
       cwd: box.dir,
-      env: { ...process.env, PATH: `${box.bin}:${process.env.PATH}`, TYPESAFE_API_KEY: API_KEY, ORCA_RECOMMEND_JEV_URL: jevUrl, ...env },
+      env: { ...process.env, PATH: `${box.bin}:${process.env.PATH}`, TYPESAFE_API_KEY: API_KEY, ORCA_RECOMMEND_JEV_URL: jevUrl, ORCA_USAGE_STATE_DIR: join(box.dir, "usage-state"), ...env },
     });
     let stdout = "";
     let stderr = "";
@@ -495,11 +501,12 @@ test("usage is reported as unknown overall and for every candidate", async () =>
   try {
     assert.deepEqual(r.json.usage, {
       status: "unknown",
-      reason: "no verified usage collector is connected",
+      reason: "no verified usage collector covers this agent",
       source: null,
       observedAt: null,
       account: "unknown",
       host: "unknown",
+      capacityConfirmed: false,
     });
     assert.equal(r.json.recommendation.usage, "unknown");
     assert.deepEqual(r.json.recommendation.usageScope, { account: "unknown", host: "unknown" });
@@ -520,6 +527,185 @@ test("equivalent candidates are not ordered as though usage were known", async (
   const r = await scenario({ body: LIVE.moderate });
   try {
     assert.match(r.json.recommendation.reason, /not balanced/);
+  } finally {
+    clean(r.box);
+  }
+});
+
+// --- Collected usage
+
+const CODEX_ROW = "| codex       | `gpt-6.1-terra`       | `max`                   | standard        | Larger changes       | 2026-10-30    |\n";
+const CODEX = ["--eligible", "codex/gpt-6.1-terra/max"];
+const farFuture = (figures: object) => ({ rateLimits: { result: rateLimits({ ...figures, resetsAt: FAR_RESET, secondaryResetsAt: FAR_RESET }) } });
+
+async function withCodex(behaviour: object, args: string[], prepare?: (box: ReturnType<typeof sandbox>, stateDir: string) => void) {
+  const r = await scenario({ body: LIVE.moderate }, args, {}, (box) => {
+    writeFileSync(box.models, BASELINE.replace("| cursor      | `retired-model`", `${CODEX_ROW}| cursor      | \`retired-model\``));
+    writeFakeCodex(box.bin, behaviour);
+    prepare?.(box, join(box.dir, "usage-state"));
+  });
+  return r;
+}
+
+function usageReads(box: { bin: string }) {
+  return fakeCodexCalls(box.bin).filter((call: { method?: string }) => call.method === "account/rateLimits/read").length;
+}
+
+test("a reading is taken before planning and the plan exposes it with its provenance", async () => {
+  const r = await withCodex(farFuture({ primary: 40 }), [...CODEX, "--record", "spec.md"], (box) => writeFileSync(join(box.dir, "spec.md"), "# spec\n"));
+  try {
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(usageReads(r.box), 1);
+    assert.equal(r.json.status, "recommended");
+    assert.equal(r.json.recommendation.usage, "fresh");
+    assert.match(r.json.recommendation.usageScope.account, /^sha256:[0-9a-f]{16}$/);
+    assert.equal(r.json.usage.status, "fresh");
+    assert.equal(r.json.usage.capacityConfirmed, true);
+    assert.equal(r.json.usage.source.kind, "codex-app-server-rate-limits");
+    assert.ok(Date.parse(r.json.usage.observedAt) > 0);
+    assert.equal(r.json.usage.resetsAt, new Date(FAR_RESET * 1000).toISOString());
+    assert.equal(r.json.usage.freshness, "fresh");
+    assert.equal(r.json.usage.refresh.attempted, true);
+    assert.ok("lastSuccessAt" in r.json.usage.collector);
+    assert.deepEqual(r.json.usageByAgent.codex, r.json.usage);
+    assert.equal(r.json.decision.warning, null);
+    assert.match(r.json.recommendation.reason, /snapshot, not reserved capacity/);
+    assert.match(r.spec("spec.md"), /^- Usage: fresh \(account sha256:[0-9a-f]{16}, host .+; 5h limit 40% used.*read .* from codex-app-server-rate-limits\)$/m);
+
+    const store = new UsageStore(join(r.box.dir, "usage-state"));
+    assert.equal(store.listReadings()[0].origin, "planner");
+    store.close();
+  } finally {
+    clean(r.box);
+  }
+});
+
+test("agents without a collector stay unknown beside a confirmed Codex reading", async () => {
+  const r = await withCodex(farFuture({}), []);
+  try {
+    assert.equal(r.json.recommendation.agent, "claude");
+    assert.equal(r.json.recommendation.usage, "unknown");
+    assert.equal(r.json.usage.status, "unknown");
+    assert.match(r.json.recommendation.reason, /capacity is not confirmed/);
+    const codex = r.json.alternatives.find((c: { agent: string }) => c.agent === "codex");
+    assert.equal(codex.usage, "fresh");
+    assert.equal(r.json.usageByAgent.codex.status, "fresh");
+  } finally {
+    clean(r.box);
+  }
+});
+
+test("exhausted Codex usage rejects the candidate and names the reset", async () => {
+  const r = await withCodex(farFuture({ primary: 100, allowed: false, reached: "rate_limit_reached" }), CODEX);
+  try {
+    assert.equal(r.status, 1);
+    assert.equal(r.json.status, "no-suitable-candidate");
+    assert.equal(r.json.decision, null);
+    const [rejected] = r.json.rejected;
+    assert.equal(rejected.agent, "codex");
+    assert.equal(rejected.usage, "exhausted");
+    assert.match(rejected.reason, /codex usage is exhausted: rate_limit_reached: 5h limit 100% used, resets 2100/);
+    assert.equal(r.json.usageByAgent.codex.status, "exhausted");
+    assert.equal(r.json.usageByAgent.codex.capacityConfirmed, false);
+  } finally {
+    clean(r.box);
+  }
+});
+
+test("an override onto exhausted usage goes through with a warning", async () => {
+  const r = await withCodex(farFuture({ primary: 100, allowed: false, reached: "rate_limit_reached" }), ["--override", "codex/gpt-6.1-terra/max", "--override-reason", "only codex knows this area"]);
+  try {
+    assert.equal(r.json.status, "overridden");
+    assert.equal(r.json.usage.status, "exhausted");
+    assert.match(r.json.decision.warning, /codex usage is exhausted/);
+  } finally {
+    clean(r.box);
+  }
+});
+
+test("low usage stays recommendable with a caution", async () => {
+  const r = await withCodex(farFuture({ primary: 93 }), CODEX);
+  try {
+    assert.equal(r.json.status, "recommended");
+    assert.equal(r.json.recommendation.usage, "low");
+    assert.match(r.json.decision.warning, /codex usage is low: 5h limit 93% used/);
+    assert.match(r.json.recommendation.reason, /Usage is low/);
+  } finally {
+    clean(r.box);
+  }
+});
+
+test("a provider failure leaves usage unavailable with the failure reason, never confirmed, and the plan continues", async () => {
+  for (const behaviour of [{ rateLimits: { error: REAL_ERRORS.http500 } }, { exitCode: 1 }]) {
+    const r = await withCodex(behaviour, CODEX);
+    try {
+      assert.equal(r.json.status, "recommended");
+      assert.equal(r.json.recommendation.usage, "unavailable");
+      assert.equal(r.json.usage.status, "unavailable");
+      assert.equal(r.json.usage.capacityConfirmed, false);
+      assert.equal(r.json.usage.refresh.ok, false);
+      assert.match(r.json.recommendation.reason, /provider data unavailable \(/);
+      assert.doesNotMatch(r.json.recommendation.reason, /snapshot|Usage is unknown/);
+    } finally {
+      clean(r.box);
+    }
+  }
+});
+
+test("an unknown login leaves usage unknown, never available, and the plan continues", async () => {
+  const r = await withCodex({ rateLimits: { error: REAL_ERRORS.noLogin } }, CODEX);
+  try {
+    assert.equal(r.json.status, "recommended");
+    assert.equal(r.json.recommendation.usage, "unknown");
+    assert.equal(r.json.usage.capacityConfirmed, false);
+    assert.equal(r.json.usage.refresh.ok, false);
+    assert.match(r.json.recommendation.reason, /Usage is unknown, so capacity is not confirmed/);
+    assert.doesNotMatch(r.json.recommendation.reason, /snapshot|provider data unavailable/);
+  } finally {
+    clean(r.box);
+  }
+});
+
+test("a stale reading is shown as stale and does not confirm capacity", async () => {
+  const seedStale = (_box: unknown, stateDir: string) => {
+    const store = new UsageStore(stateDir);
+    const observedAt = new Date(Date.now() - 45 * 60_000);
+    const windows = [{ id: "codex-5h", limitId: "codex", kind: "five_hour", label: "5h limit", durationMinutes: 300, usedPercent: 10, remainingPercent: 90, resetsAt: new Date(FAR_RESET * 1000).toISOString(), exhausted: false }];
+    store.recordAttempt({
+      provider: "codex",
+      origin: "poll",
+      attemptedAt: observedAt,
+      observation: { provider: "codex", observedAt: observedAt.toISOString(), status: "available", reason: null, detail: null, windows, exhaustedWindows: [], scope: { host: "andi", account: "sha256:0123456789abcdef" }, source: { kind: "codex-app-server-rate-limits" } },
+    });
+    store.close();
+  };
+  const r = await withCodex({ rateLimits: { error: REAL_ERRORS.http500 } }, CODEX, seedStale);
+  try {
+    assert.equal(r.json.status, "recommended");
+    assert.equal(r.json.recommendation.usage, "stale");
+    assert.equal(r.json.usage.capacityConfirmed, false);
+    assert.match(r.json.recommendation.reason, /Usage is stale .*older_than_30_minutes.*so capacity is not confirmed/);
+  } finally {
+    clean(r.box);
+  }
+});
+
+test("the exhausted live reply from this account is read end to end", async () => {
+  const r = await withCodex({ rateLimits: { result: REAL_EXHAUSTED } }, CODEX);
+  try {
+    // Its reset was on 2026-10-30, so what it says depends on when the test runs; it never confirms capacity.
+    assert.equal(r.json.usageByAgent.codex.capacityConfirmed, false);
+    assert.ok(["exhausted", "stale"].includes(r.json.usageByAgent.codex.status));
+  } finally {
+    clean(r.box);
+  }
+});
+
+test("a baseline with no collected agent starts no reader and creates no state", async () => {
+  const r = await scenario({ body: LIVE.moderate });
+  try {
+    assert.deepEqual(r.json.usageByAgent, {});
+    assert.equal(existsSync(join(r.box.dir, "usage-state")), false);
   } finally {
     clean(r.box);
   }
@@ -967,6 +1153,9 @@ test("every row of docs/agents/models.md has a capability the command can use", 
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.json.rejected.filter((c: any) => /capability$/.test(c.reason) && !/below/.test(c.reason)).length, 0, JSON.stringify(r.json.rejected));
     assert.ok(r.json.alternatives.length > 0);
+    assert.ok(existsSync(join(box.dir, "codex.log")), "the usage read went to the stub, not the installed codex");
+    assert.equal(r.json.usageByAgent.codex.status, "unavailable");
+    assert.equal(r.json.usageByAgent.codex.capacityConfirmed, false);
   } finally {
     await jev.close();
     clean(box);

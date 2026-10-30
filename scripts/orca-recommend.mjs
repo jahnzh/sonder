@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { PROVIDERS, usageForPlanning } from "./orca-usage.mjs";
 
 const JEV_URL = "https://api.typesafe.ai/v1/systemone";
 // Pinned, not jev-latest: an alias can move and change answers without any change here.
@@ -19,14 +20,15 @@ const MIN_REASONING_PROBABILITY = 0.7;
 const NOUL_NO = 0.3;
 const NOUL_YES = 0.7;
 
-// Replaced by real observations when a verified collector exists.
+// For agents scripts/orca-usage.mjs does not collect yet.
 const UNKNOWN_USAGE = {
   status: "unknown",
-  reason: "no verified usage collector is connected",
+  reason: "no verified usage collector covers this agent",
   source: null,
   observedAt: null,
   account: "unknown",
   host: "unknown",
+  capacityConfirmed: false,
 };
 
 // Narrow questions, combined in assessJev: TypeSafe advises against one multi-factor question.
@@ -67,9 +69,12 @@ scripts/orca-spawn.sh. Only --summary, --kind and --files are sent to Jev, so ke
   --record           Write the choice into this spec's "## Model choice" section.
   --models           The capability baseline (default: docs/agents/models.md).
 
+Takes a fresh usage reading first for each agent scripts/orca-usage.mjs collects. Candidates with exhausted usage
+are rejected, and only "fresh" and "low" usage confirm any capacity; see docs/agents/usage-collector.md.
+
 Exit codes: 0 a worker was chosen, 1 nothing suitable or an override was refused, 2 bad usage,
 3 Jev gave no usable assessment and no --judgment was supplied.
-Reads TYPESAFE_API_KEY. ORCA_RECOMMEND_JEV_URL and ORCA_RECOMMEND_JEV_TIMEOUT_MS replace the endpoint and timeout (tests).`;
+Reads TYPESAFE_API_KEY and ORCA_USAGE_STATE_DIR. ORCA_RECOMMEND_JEV_URL and ORCA_RECOMMEND_JEV_TIMEOUT_MS replace the endpoint and timeout (tests).`;
 
 /** @param {string} value */
 function parseChoice(value) {
@@ -344,6 +349,18 @@ function describeJevReport(jev) {
   return parts.length ? ` (${parts.join(", ")})` : "";
 }
 
+function describeUsage(usage) {
+  if (usage.status === "fresh") return `Usage read ${usage.observedAt}: ${usage.reason}. That is a snapshot, not reserved capacity`;
+  if (usage.status === "low") return `Usage is low, read ${usage.observedAt}: ${usage.reason}`;
+  if (usage.status === "stale") return `Usage is stale (${usage.reason}), so capacity is not confirmed`;
+  if (usage.status === "unavailable") return `provider data unavailable (${usage.reason})`;
+  return "Usage is unknown, so capacity is not confirmed";
+}
+
+function usageWarning(agent, usage) {
+  return usage.status === "exhausted" || usage.status === "low" ? `${agent} usage is ${usage.status}: ${usage.reason}` : null;
+}
+
 function launchArgs({ agent, model, effort }) {
   return ["--agent", agent, "--model", model, ...(effort ? ["--effort", effort] : [])];
 }
@@ -351,8 +368,9 @@ function launchArgs({ agent, model, effort }) {
 /**
  * @param {Record<string, any>} options
  * @param {ReturnType<typeof loadCandidates>} candidates
+ * @param {Record<string, any>} usageByAgent Reports from usageForPlanning; other agents stay unknown.
  */
-export async function recommend(options, candidates) {
+export async function recommend(options, candidates, usageByAgent = {}) {
   const sanitizedOptions = {
     ...options,
     task: redactSecret(options.task),
@@ -366,7 +384,8 @@ export async function recommend(options, candidates) {
   const given = sanitizedOptions.judgment ? { requirement: sanitizedOptions.judgment, reason: sanitizedOptions.judgmentReason, used: !conclusive } : null;
   const requirement = conclusive ? jevRequirement : (given?.requirement ?? null);
   const assessment = { source: conclusive ? "jev" : given ? "coordinator" : null, requirement, jev: jevReport, coordinator: given };
-  const base = { task: sanitizedOptions.task, request: { kind: sanitizedOptions.kind ?? null, files: sanitizedOptions.files ?? null }, assessment, fallback: null, recommendation: null, alternatives: [], rejected: [], usage: UNKNOWN_USAGE, decision: null, launch: null };
+  const usageOf = (agent) => usageByAgent[agent] ?? UNKNOWN_USAGE;
+  const base = { task: sanitizedOptions.task, request: { kind: sanitizedOptions.kind ?? null, files: sanitizedOptions.files ?? null }, assessment, fallback: null, recommendation: null, alternatives: [], rejected: [], usage: UNKNOWN_USAGE, usageByAgent, decision: null, launch: null };
 
   if (!requirement) return { ...base, status: "needs-judgment" };
   if (!conclusive) {
@@ -382,9 +401,11 @@ export async function recommend(options, candidates) {
   for (const { unusable, ...candidate } of candidates) {
     const { agent, model, effort } = candidate;
     if (sanitizedOptions.eligible.length && !named(candidate)) continue;
+    const usage = usageOf(agent);
     if (unusable) rejected.push({ agent, model, effort, reason: unusable });
     else if (rank(candidate.capability) < rank(requirement)) rejected.push({ agent, model, effort, reason: `${candidate.capability} capability is below the assessed ${requirement}` });
-    else usable.push({ ...candidate, usage: UNKNOWN_USAGE.status, usageScope: { account: UNKNOWN_USAGE.account, host: UNKNOWN_USAGE.host } });
+    else if (usage.status === "exhausted") rejected.push({ agent, model, effort, reason: usageWarning(agent, usage), usage: usage.status });
+    else usable.push({ ...candidate, usage: usage.status, usageScope: { account: usage.account, host: usage.host } });
   }
   // Smallest suitable first, so a scarce strong model is not spent on easier work; sort() keeps table order within a level.
   usable.sort((a, b) => rank(a.capability) - rank(b.capability));
@@ -396,7 +417,7 @@ export async function recommend(options, candidates) {
         ...first,
         reason:
           `${describeAssessment(assessment)}. ${choiceName(first)} is the smallest documented capability that meets it (${first.capability}): ${first.suits}. ` +
-          `Usage is unknown, so capacity is not confirmed${hasEquivalent ? " and equivalent choices are not balanced by quota" : ""}.`,
+          `${describeUsage(usageOf(first.agent))}${hasEquivalent ? "; equivalent choices are not balanced by quota" : ""}.`,
       }
     : null;
   const result = { ...base, recommendation, alternatives, rejected };
@@ -405,14 +426,16 @@ export async function recommend(options, candidates) {
     const refused = refuseOverride(sanitizedOptions.override, candidates);
     if (refused) return { ...result, status: "override-refused", refused: { ...sanitizedOptions.override, reason: refused } };
     const { capability } = candidates.find((c) => choiceName(c) === choiceName(sanitizedOptions.override));
-    const warning = rank(capability) < rank(requirement) ? `${capability} capability is below the assessed ${requirement}` : null;
-    const decision = { kind: "override", ...sanitizedOptions.override, reason: sanitizedOptions.overrideReason, warning };
-    return { ...result, status: "overridden", decision, launch: { started: false, args: launchArgs(sanitizedOptions.override) } };
+    const usage = usageOf(sanitizedOptions.override.agent);
+    const warnings = [rank(capability) < rank(requirement) ? `${capability} capability is below the assessed ${requirement}` : null, usageWarning(sanitizedOptions.override.agent, usage)];
+    const decision = { kind: "override", ...sanitizedOptions.override, reason: sanitizedOptions.overrideReason, warning: warnings.filter(Boolean).join("; ") || null };
+    return { ...result, usage, status: "overridden", decision, launch: { started: false, args: launchArgs(sanitizedOptions.override) } };
   }
   if (!recommendation) return { ...result, status: "no-suitable-candidate" };
   const { agent, model, effort, reason } = recommendation;
-  const decision = { kind: "recommendation", agent, model, effort, reason, warning: null };
-  return { ...result, status: "recommended", decision, launch: { started: false, args: launchArgs(decision) } };
+  const usage = usageOf(agent);
+  const decision = { kind: "recommendation", agent, model, effort, reason, warning: usageWarning(agent, usage) };
+  return { ...result, usage, status: "recommended", decision, launch: { started: false, args: launchArgs(decision) } };
 }
 
 const oneLine = (text) => text.replace(/\s+/g, " ").trim();
@@ -436,7 +459,8 @@ function modelChoiceSection({ decision, recommendation, assessment, fallback, us
     );
   }
   if (decision.warning) lines.push(`- Warning: ${decision.warning}`);
-  lines.push(`- Usage: ${usage.status} (account ${usage.account}, host ${usage.host}; ${usage.reason})`);
+  const evidence = usage.observedAt ? `; read ${usage.observedAt} from ${usage.source?.kind}` : "";
+  lines.push(`- Usage: ${usage.status} (account ${usage.account}, host ${usage.host}; ${oneLine(usage.reason)}${evidence})`);
   return lines.join("\n");
 }
 
@@ -470,7 +494,10 @@ export async function main(argv = process.argv.slice(2)) {
     console.error(redactSecret(`cannot read the capability baseline ${options.models}: ${error.message}`));
     return 1;
   }
-  const result = await recommend(options, candidates);
+  // A reading for every collected agent in the baseline, taken first so the plan reflects current usage.
+  const collected = PROVIDERS.filter((provider) => candidates.some((candidate) => candidate.agent === provider.name));
+  const usage = collected.length ? await usageForPlanning({ providers: collected }) : {};
+  const result = await recommend(options, candidates, usage);
 
   if (result.status === "needs-judgment") {
     console.log(JSON.stringify(result, null, 2));
