@@ -1,6 +1,8 @@
 import {test,expect,type Page} from "@playwright/test";
 import {readFileSync} from "node:fs";
 import {readerFixture} from "../reader-fixture";
+// The service worker would answer the script request below before page.route sees it.
+test.use({serviceWorkers:"block"});
 test.afterEach(async({page})=>{await page.unrouteAll({behavior:"wait"});});
 // Chapter one: counted blocks inside <nav> and text inside <svg> before the narrated text (#69).
 const navChapter=`<nav epub:type="landmarks" xmlns:epub="http://www.idpf.org/2007/ops"><ol><li>Skip to the story</li><li>Notes on this edition</li></ol></nav>`+
@@ -34,7 +36,11 @@ async function fixture(page:Page,title:string){
 async function highlighted(page:Page){
  const follow=page.locator(".inline-reader .reader-viewport .sonder-follow");
  await expect(follow).toHaveAttribute("data-epubcfi",/^epubcfi\(/);
- if(!await page.evaluate(()=>"ePub" in window))await page.addScriptTag({path:"node_modules/epubjs/dist/epub.min.js"});
+ if(!await page.evaluate(()=>"ePub" in window)){
+  // An inline script (addScriptTag with a path) would be refused by the app's script-src 'self' (#76), so serve the file from the app's own origin.
+  await page.route("**/__epub-test.js",route=>route.fulfill({path:"node_modules/epubjs/dist/epub.min.js",contentType:"text/javascript"}));
+  await page.addScriptTag({url:"/__epub-test.js"});
+ }
  const cfi=(await follow.getAttribute("data-epubcfi"))!;
  return page.locator(".inline-reader .reader-viewport iframe").evaluate((iframe:HTMLIFrameElement,cfi)=>
   new (window as any).ePub.CFI(cfi).toRange(iframe.contentDocument).toString().replace(/\s+/g," "),cfi);
