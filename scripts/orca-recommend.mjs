@@ -171,7 +171,7 @@ function listedCursorModels() {
 }
 
 /** Why a candidate cannot be launched at all, or null. */
-function loadCandidates(file) {
+export function loadCandidates(file) {
   const candidates = parseBaseline(readFileSync(file, "utf8"));
   const cursorModels = candidates.some((c) => c.agent === "cursor") ? listedCursorModels() : undefined;
   return candidates.map((candidate) => {
@@ -403,8 +403,15 @@ export async function recommend(options, candidates, usageByAgent = {}) {
     if (sanitizedOptions.eligible.length && !named(candidate)) continue;
     const usage = usageOf(agent);
     if (unusable) rejected.push({ agent, model, effort, reason: unusable });
-    else if (rank(candidate.capability) < rank(requirement)) rejected.push({ agent, model, effort, reason: `${candidate.capability} capability is below the assessed ${requirement}` });
-    else if (usage.status === "exhausted") rejected.push({ agent, model, effort, reason: usageWarning(agent, usage), usage: usage.status });
+    else if (rank(candidate.capability) < rank(requirement)) {
+      rejected.push({
+        agent,
+        model,
+        effort,
+        rejectionKind: "below-capability",
+        reason: `${candidate.capability} capability is below the assessed ${requirement}`,
+      });
+    } else if (usage.status === "exhausted") rejected.push({ agent, model, effort, reason: usageWarning(agent, usage), usage: usage.status });
     else usable.push({ ...candidate, usage: usage.status, usageScope: { account: usage.account, host: usage.host } });
   }
   // Smallest suitable first, so a scarce strong model is not spent on easier work; sort() keeps table order within a level.

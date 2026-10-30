@@ -48,7 +48,7 @@ To remove it: `systemctl --user disable --now orca-usage-collector.service`, the
 
 `usageByAgent` holds the report for each collected agent, and `usage` the report for the chosen worker. A reading stays current through a failed poll until it expires after 30 minutes or at a passed reset. A login problem (`unknown_account`, `account_mismatch`) ends it at once, because the last reading may be another account's.
 
-Each candidate's `usage` is the assessment (`fresh`, `low`, `exhausted`, `stale`, `unavailable` or `unknown`). `exhausted` moves it to `rejected`, with the reset in the reason; `low` adds `decision.warning`; only `fresh` and `low` have `capacityConfirmed: true`. `unavailable` and `unknown` both leave capacity unconfirmed; the planner text for `unavailable` is `provider data unavailable (<reason>)`. An override onto exhausted usage goes through with a warning. Usage does not yet reorder candidates: `stale`, `unavailable` and `unknown` candidates stay in table order, and balancing is #110.
+Each candidate's `usage` is the assessment (`fresh`, `low`, `exhausted`, `stale`, `unavailable` or `unknown`). `exhausted` moves it to `rejected`, with the reset in the reason; `low` adds `decision.warning`; only `fresh` and `low` have `capacityConfirmed: true`. `unavailable` and `unknown` both leave capacity unconfirmed; the planner text for `unavailable` is `provider data unavailable (<reason>)`. An override onto exhausted usage goes through with a warning. Single-task `orca-recommend.mjs` keeps equivalent alternatives in table order; wave-level balancing across tasks, shared allowances and concurrency is `scripts/orca-plan.mjs` (see `docs/agents/wave-planner.md`).
 
 ## Stored data
 

@@ -72,6 +72,16 @@ Your report lists every bullet of the Proposal, and next to each the test name o
 
 Specialized templates: see [docs/agents/spec-templates/](spec-templates/) for feature (`feature.md`), review (`review.md`), and fix (`fix.md`) specs.
 
+## Plan a ready wave
+
+When several tasks are ready together, plan them as a wave before spawning:
+
+```bash
+node scripts/orca-plan.mjs --wave <wave.json>
+```
+
+The command takes a fresh usage reading, assesses each ready task through `scripts/orca-recommend.mjs`, then balances dependencies, concurrency, scarce capable combinations and shared allowances. It prints JSON and never starts a worker. See `docs/agents/wave-planner.md` for the wave file shape, statuses (`proposed`, `needs-decision`, `delay`, `deferred`, `blocked`) and capacity notes. Re-run it when workers finish or usage changes. Pass each accepted `launch.args` to `scripts/orca-spawn.sh`; preflight and receipt checks are unchanged. Worker history is not an input.
+
 ## Recommend a worker
 
 Before a spawn, ask for a recommendation for the ready task:
@@ -84,7 +94,7 @@ The command reads the Jev key from `TYPESAFE_API_KEY` in the environment. Keep t
 
 - `--summary` (at most 600 characters), `--kind` and `--files` are all that leaves the machine. Write the summary to be shared: no transcripts, secrets or private text. TypeSafe's Jev answers three narrow questions; the command combines them with the Capability column of `docs/agents/models.md`. It recommends the smallest suitable model and lists the other suitable choices under `alternatives` and the unsuitable ones with their reasons under `rejected`.
 - `assessment.jev` gives the Jev version that answered and its uncertainty (`reasoningScore`, `reasoningConfidence`, `reasoningProbabilities`, `enoughInformation`, `wideChange`). One reasoning level must hold probability `>= 0.7` with `confidence >= 0.5` and `enoughInformation > 0.3` (moderate work also needs `wideChange <= 0.3` or `>= 0.7`), so split distributions are treated as `inconclusive`. The thresholds are TypeSafe's starting points, checked on a few live tasks and not tuned; the model is pinned so an alias cannot move them.
-- `usage` is the chosen worker's usage and `usageByAgent` every collected agent's. The command takes a fresh Codex reading first; other agents stay `unknown` until connected. Only `fresh` and `low` confirm capacity, `exhausted` candidates move to `rejected`, and unknown is not available. Spread work across providers yourself, and treat the order of `equivalent` alternatives as table order, not as quota balancing. See `docs/agents/usage-collector.md`.
+- `usage` is the chosen worker's usage and `usageByAgent` every collected agent's. The command takes a fresh Codex reading first; other agents stay `unknown` until connected. Only `fresh` and `low` confirm capacity, `exhausted` candidates move to `rejected`, and unknown is not available. For a single task, equivalent alternatives stay in table order; for a ready wave, use `scripts/orca-plan.mjs` to balance shared capacity across tasks. See `docs/agents/usage-collector.md` and `docs/agents/wave-planner.md`.
 - Exit 3 means Jev was `unavailable`, `invalid` or `inconclusive`. Rerun with `--judgment <mechanical|standard|reasoning-heavy> --judgment-reason "<why>"`; the fallback is recorded in `fallback` and in the spec.
 - To choose differently, add `--override <agent>/<model>[/<effort>] --override-reason "<why>"`. The recommendation and the reason are both recorded. An override below the assessed requirement is recorded with a warning; a model or effort missing from the baseline is refused, so add and verify its row first. An override does not replace the assessment.
 - `--record` fills the spec's `## Model choice` section. Without it, write the choice and its reason there yourself.
