@@ -34,7 +34,7 @@ import {
   stallHandler,
   stallWatchdog,
 } from "./device-fallback";
-import { BLOCKING_DIALOG_SELECTOR, playbackKeyAction } from "./keyboard";
+import { keyEventContext, playbackKeyAction, wordReaderOwnsKeys } from "./keyboard";
 import { useAppearance } from "./components/Appearance";
 import {
   applySpeed,
@@ -886,23 +886,16 @@ export function PlayerProvider({
       void syncProgress().catch(() => {});
     };
     const keydown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      const interactive = target?.closest?.(
-        "input,textarea,select,button,summary,a[href]",
-      );
       const action = playbackKeyAction({
         key: event.key,
         ctrlKey: event.ctrlKey,
         metaKey: event.metaKey,
         altKey: event.altKey,
         defaultPrevented: event.defaultPrevented,
-        targetTag: interactive?.tagName ?? target?.tagName ?? null,
-        contentEditable:
-          !!target?.isContentEditable ||
-          target?.getAttribute?.("contenteditable") === "true",
-        dialogOpen: !!document.querySelector(BLOCKING_DIALOG_SELECTOR),
+        ...keyEventContext(event),
         canPlay: !!(state.current.book || fallbackRef.current?.tracks.length),
         canSeek: !!(state.current.book && state.current.track),
+        wordReaderKeys: wordReaderOwnsKeys(),
       });
       if (!action) return;
       event.preventDefault();

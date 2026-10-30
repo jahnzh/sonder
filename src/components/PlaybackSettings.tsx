@@ -96,13 +96,14 @@ export function PlaybackSettings({
               ...appearance,
               reader: {
                 ...appearance.reader,
-                display: event.target.value as "book" | "segment",
+                display: event.target.value as "book" | "segment" | "word",
               },
             })
           }
         >
           <option value="book">Page</option>
           <option value="segment">Lyrics</option>
+          <option value="word">Word</option>
         </select>
       </label>
       <p className="muted">

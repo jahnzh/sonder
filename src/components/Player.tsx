@@ -349,7 +349,13 @@ export function PlayerDock({
             </PlaybackExtra>
             <PlaybackTimeline book={p.book || b} />
             <div className="player-transport-row">
-            {hasReader && <div className="player-transport-display"><button className="button subtle" onClick={()=>void saveReader({display:appearance.reader.display==="book"?"segment":"book"}).catch(()=>{})}>{appearance.reader.display === "book" ? "Lyrics" : "Page"}</button></div>}
+            {hasReader && <div className="player-transport-display"><button className="button subtle" onClick={() => {
+              const order = ["book", "segment", "word"] as const;
+              const current = (order as readonly string[]).includes(appearance.reader.display)
+                ? appearance.reader.display as typeof order[number]
+                : "book";
+              void saveReader({ display: order[(order.indexOf(current) + 1) % order.length] }).catch(() => {});
+            }}>{appearance.reader.display === "book" ? "Lyrics" : appearance.reader.display === "segment" ? "Word" : "Page"}</button></div>}
             <div className="transport large">
               <button
                 className="seek-button"

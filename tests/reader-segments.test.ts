@@ -16,7 +16,12 @@ test("segment windows follow the current sentence and estimated word position wh
 test("older reader preferences retain full-book mode and customizable segment length validates",()=>{
  const reader=appearanceSchema.parse({reader:{mode:"scroll"}}).reader;
  assert.equal(reader.display,"book");assert.equal(reader.segmentWords,30);
+ assert.equal(reader.wordWpm,300);
  assert.equal(appearanceSchema.parse({reader:{display:"segment",segmentWords:1}}).reader.segmentWords,1);
+ assert.equal(appearanceSchema.parse({reader:{display:"word",wordWpm:450}}).reader.display,"word");
+ assert.equal(appearanceSchema.parse({reader:{display:"word"}}).reader.wordWpm,300);
  assert.equal(appearanceSchema.safeParse({reader:{segmentWords:0}}).success,false);
  assert.equal(appearanceSchema.safeParse({reader:{segmentWords:4.5}}).success,false);
+ assert.equal(appearanceSchema.safeParse({reader:{wordWpm:99}}).success,false);
+ assert.equal(appearanceSchema.safeParse({reader:{wordWpm:901}}).success,false);
 });
