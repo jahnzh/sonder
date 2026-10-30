@@ -31,6 +31,7 @@ import { PlaybackReader } from "./PlaybackReader";
 import { PlaybackSource } from "./PlaybackSource";
 import { PlaybackOptions } from "./PlaybackOptions";
 import {PlaybackMenuContext,PlaybackExtra} from "./PlaybackMenu";
+import { PositionHistoryButton, PositionHistoryDialog } from "./PositionHistoryDialog";
 import { PlaybackTimeline } from "./PlaybackTimeline";
 import { useAppearance } from "./Appearance";
 import { ReaderShortcut } from "./ReaderShortcut";
@@ -72,8 +73,10 @@ export function PlayerDock({
   const [hasReader, setHasReader] = useState(() => hasKnownReader(b?.workId));
   const [chaptersOpen,setChaptersOpen] = useState(false);
   const [optionsOpen,setOptionsOpen] = useState(false);
+  const [historyOpen,setHistoryOpen] = useState(false);
   const [optionsHost,setOptionsHost] = useState<HTMLDivElement|null>(null);
   const optionsTrigger=useRef<HTMLButtonElement>(null);
+  const historyTrigger=useRef<HTMLButtonElement>(null);
   useEffect(()=>{
     const open=(event:Event)=>{if((event as CustomEvent).detail.workId===b?.workId)setExpanded(true);};
     window.addEventListener("sonder:playback-reader",open);
@@ -115,7 +118,13 @@ export function PlayerDock({
   },[expanded,b?.id,p.book?.id]);
   useEffect(()=>{
     if(!optionsOpen)return;
-    const outside=(event:PointerEvent)=>{const target=event.target as Node;if(!optionsHost?.contains(target) && !optionsTrigger.current?.contains(target))setOptionsOpen(false);};
+    const outside=(event:PointerEvent)=>{
+      const target=event.target as Node;
+      if(optionsHost?.contains(target) || optionsTrigger.current?.contains(target)) return;
+      // Nested dialogs (Position history, keyboard help) portal outside the panel.
+      if((target as Element).closest?.('.dialog-content, [role="dialog"]')) return;
+      setOptionsOpen(false);
+    };
     document.addEventListener("pointerdown",outside,true);
     return()=>document.removeEventListener("pointerdown",outside,true);
   },[optionsOpen,optionsHost]);
@@ -281,16 +290,26 @@ export function PlayerDock({
             ?.originalEvent?.target as Element | undefined;
           if (target?.closest?.(".player-dock")) event.preventDefault();
         }}
-        actions={hasReader && <>
-          <h2 className="now-playing-heading-title">{(p.book || b).title}</h2>
+        actions={<>
+          {hasReader && <h2 className="now-playing-heading-title">{(p.book || b).title}</h2>}
           <button ref={optionsTrigger} className="icon-button playback-menu-trigger" aria-label="Playback options" aria-expanded={optionsOpen} onClick={()=>setOptionsOpen(!optionsOpen)}><MoreHorizontal size={23}/></button>
         </>}
       >
-        {hasReader && optionsOpen && <button className="playback-options-backdrop" aria-label="Dismiss playback options" onClick={()=>setOptionsOpen(false)}/>}
-        {hasReader && <div className="playback-options-panel" ref={setOptionsHost} hidden={!optionsOpen} role="region" aria-label="Playback options">
+        {optionsOpen && <button className="playback-options-backdrop" aria-label="Dismiss playback options" onClick={()=>setOptionsOpen(false)}/>}
+        <div
+          className="playback-options-panel"
+          ref={setOptionsHost}
+          hidden={!optionsOpen}
+          role="region"
+          aria-label="Playback options"
+        >
           <div className="playback-options-heading"><h3>Playback options</h3><button className="icon-button" aria-label="Close playback options" onClick={()=>{setOptionsOpen(false);optionsTrigger.current?.focus();}}><X size={20}/></button></div>
-        </div>}
-        <PlaybackMenuContext.Provider value={hasReader ? {host:optionsHost,open:()=>setOptionsOpen(true),close:()=>setOptionsOpen(false)} : null}>
+          <div className="player-quick-links">
+            <PositionHistoryButton triggerRef={historyTrigger} onClick={() => setHistoryOpen(true)} />
+          </div>
+        </div>
+        <PositionHistoryDialog open={historyOpen} onOpenChange={setHistoryOpen} triggerRef={historyTrigger} />
+        <PlaybackMenuContext.Provider value={hasReader ? {host:optionsHost,open:()=>setOptionsOpen(true),close:()=>setOptionsOpen(false)} : {host:null,open:()=>setOptionsOpen(true),close:()=>setOptionsOpen(false)}}>
         <div className="now-playing-layout">
           <div className="now-playing-main">
             <PlaybackExtra>

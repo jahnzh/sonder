@@ -11,6 +11,7 @@ export function Dialog({
   className = "",
   onEscapeKeyDown,
   onPointerDownOutside,
+  onCloseAutoFocus,
   actions,
   forceMount,
 }: {
@@ -22,6 +23,7 @@ export function Dialog({
   className?: string;
   onEscapeKeyDown?: (event: KeyboardEvent) => void;
   onPointerDownOutside?: (event: CustomEvent<{ originalEvent: PointerEvent }>) => void;
+  onCloseAutoFocus?: (event: Event) => void;
   actions?: ReactNode;
   forceMount?: boolean;
 }) {
@@ -81,6 +83,7 @@ export function Dialog({
           aria-describedby={description ? descriptionId : undefined}
           onEscapeKeyDown={onEscapeKeyDown}
           onPointerDownOutside={onPointerDownOutside}
+          onCloseAutoFocus={onCloseAutoFocus}
           onOpenAutoFocus={(event) => {
             event.preventDefault();
             if (forceMount || !content.current) return;
