@@ -79,11 +79,7 @@ type PlayerState = {
   seekBook: (position: number) => void;
   skip: (n: number) => void;
   canUndoJump: boolean;
-  /** Recent positions for the book in the player, oldest first. */
-  positionHistory: PositionEntry[];
   undoJump: () => void;
-  /** Restore one history entry the same way as undoJump, then drop it. */
-  restoreJump: (entry: PositionEntry) => void;
   /** Without a recording id, sets the speed of the book in the player. */
   setSpeed: (n: number, recordingId?: string) => void;
   setVolume: (n: number) => void;
@@ -130,7 +126,7 @@ export function PlayerProvider({
   const sourceSwitch = useRef<{ recordingId: string; entry: PositionEntry } | null>(null);
   const undoing = useRef(false);
   const pendingSkips = useRef<Promise<void> | null>(null);
-  const [history, setHistory] = useState<{ recordingId: string; entries: PositionEntry[] } | null>(null);
+  const [history, setHistory] = useState<{ recordingId: string; available: boolean } | null>(null);
   const knownDurations = useRef(new Map<string, number>());
   const objectUrl = useRef<string | null>(null);
   const sleepEnd = useRef<number | null>(null);
@@ -239,7 +235,7 @@ export function PlayerProvider({
           void positionHistorySettled(recordingId)
             .then(() => table.get(recordingId))
             .then((row) => {
-              if (live) setHistory({ recordingId, entries: recentPositions(row?.entries || [], Date.now()) });
+              if (live) setHistory({ recordingId, available: recentPositions(row?.entries || [], Date.now()).length > 0 });
             })
             .catch(() => {});
         if (allEntries.length) {
@@ -249,7 +245,7 @@ export function PlayerProvider({
           }, Math.max(0, expires - Date.now()));
         }
       },
-      error: () => { if (recordingId) setHistory({ recordingId, entries: [] }); },
+      error: () => { if (recordingId) setHistory({ recordingId, available: false }); },
     });
     return () => { live = false; subscription.unsubscribe(); if (timer) clearTimeout(timer); };
   }, [book?.recordingId]);
@@ -688,7 +684,7 @@ export function PlayerProvider({
   );
   // The entry leaves the history only after the position was restored; any
   // other outcome keeps it, so a failed undo can be tried again.
-  const restoreJump = useCallback((chosen?: PositionEntry) => {
+  const undoJump = useCallback(() => {
     const { book } = state.current;
     if (!book || undoing.current) return;
     undoing.current = true;
@@ -697,7 +693,7 @@ export function PlayerProvider({
       : null;
     void (async () => {
       await Promise.all([...pendingJumps.current]);
-      const entry = chosen ?? await peekPositionHistory(book.recordingId);
+      const entry = await peekPositionHistory(book.recordingId);
       if (!entry) return;
       const plan = planUndo(entry, {
         recordingId: book.recordingId,
@@ -719,7 +715,6 @@ export function PlayerProvider({
     })().catch(() => notifyRef.current?.("Could not undo the playback jump."))
       .finally(() => { undoing.current = false; });
   }, [seekTo]);
-  const undoJump = useCallback(() => restoreJump(), [restoreJump]);
   const toggle = useCallback(() => {
     const el = audio.current;
     if (!el.src) {
@@ -1049,10 +1044,8 @@ export function PlayerProvider({
         seekTrack,
         seekBook,
         skip,
-        canUndoJump: !!book && history?.recordingId === book.recordingId && history.entries.length > 0,
-        positionHistory: book && history?.recordingId === book.recordingId ? history.entries : [],
+        canUndoJump: !!book && history?.recordingId === book.recordingId && history.available,
         undoJump,
-        restoreJump,
         setSpeed,
         setVolume,
         setSleep,

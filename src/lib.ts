@@ -155,14 +155,6 @@ export function peekPositionHistory(recordingId: string) {
   });
 }
 
-/** Recent position history for one recording, oldest first. */
-export function listPositionHistory(recordingId: string) {
-  return historyQueue.run(recordingId, async () => {
-    const row = await localDB.positionHistory.get(recordingId);
-    return recentPositions(row?.entries || [], Date.now());
-  });
-}
-
 export function forgetPositionHistory(recordingId: string, entry: PositionEntry) {
   return historyQueue.run(recordingId, async () => {
     const table = localDB.positionHistory;
