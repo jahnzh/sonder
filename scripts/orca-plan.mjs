@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * Coordinated wave planner for ready tasks (#110). Builds on scripts/orca-recommend.mjs;
- * never starts a worker. History (#111) is not an input; learning from it is #112.
+ * never starts a worker. Learning from worker history (#112) may reorder within a capability
+ * tier; the baseline recommendation stays visible beside any adjustment.
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -14,18 +15,24 @@ const DEFAULT_CONCURRENCY = 3;
 const TASK_KINDS = ["feature", "fix", "refactor", "test", "docs", "review"];
 
 const USAGE = `Usage: node scripts/orca-plan.mjs --wave <file.json> [--models <file>] [--concurrency <n>]
+         [--history-dir <dir>] [--learn-dir <dir>] [--no-learning]
 
 Plans a ready wave of tasks together and prints JSON. It never starts a worker: pass each
 assignment's launch.args to scripts/orca-spawn.sh after the existing preflight checks.
 Build on scripts/orca-recommend.mjs for each task; this command only coordinates across the wave.
+Histories and transcripts are never sent to Jev.
 
   --wave           JSON file describing the wave (see docs/agents/wave-planner.md). Use - for stdin.
   --models         The capability baseline (default: docs/agents/models.md).
   --concurrency    Max concurrent workers including active ones (default: ${DEFAULT_CONCURRENCY}, or the wave's concurrency).
+  --history-dir    Worker history directory (default: $ORCA_HISTORY_DIR or artifacts/orca/history).
+  --learn-dir      Learned-adjustment state (default: $ORCA_LEARN_DIR or artifacts/orca/learning).
+  --no-learning    Capability-and-usage baseline only; still shows baselineRecommendation per task.
 
 Takes a fresh usage reading first for each agent scripts/orca-usage.mjs collects. Claude and any
 agent without a collector stay unknown. Shared allowances list active and proposed workers; percentages
-are not compared across providers and capacity is never reserved.
+are not compared across providers and capacity is never reserved. Learning may reorder within a
+capability tier when comparable outcomes exist; see docs/agents/learned-adjustments.md.
 
 Exit codes: 0 a plan was produced (including delays and needs-decision), 1 the wave could not be
 read or had no tasks, 2 bad usage.
@@ -41,15 +48,27 @@ const CAPACITY_RANK = { fresh: 0, low: 1, unknown: 2, stale: 3, unavailable: 4, 
  * @returns {{ help: true } | { error: string } | { options: Record<string, any> }}
  */
 export function parseCliArgs(argv) {
-  const options = {};
-  const flags = { "--wave": "wave", "--models": "models", "--concurrency": "concurrency" };
-  for (let i = 0; i < argv.length; i += 2) {
+  const options = { learning: undefined };
+  const flags = {
+    "--wave": "wave",
+    "--models": "models",
+    "--concurrency": "concurrency",
+    "--history-dir": "historyDir",
+    "--learn-dir": "learnDir",
+  };
+  for (let i = 0; i < argv.length; ) {
     const flag = argv[i];
     if (flag === "--help" || flag === "-h") return { help: true };
+    if (flag === "--no-learning") {
+      options.learning = false;
+      i += 1;
+      continue;
+    }
     if (!flags[flag]) return { error: `unknown option: ${flag}` };
     const value = argv[i + 1];
     if (value === undefined || (value.startsWith("-") && value !== "-")) return { error: `${flag} needs a value` };
     options[flags[flag]] = value;
+    i += 2;
   }
   if (!options.wave?.trim()) return { error: "--wave is required" };
   if (options.concurrency !== undefined) {
@@ -59,6 +78,8 @@ export function parseCliArgs(argv) {
     options.concurrency = Number(options.concurrency);
   }
   if (options.models !== undefined && !options.models.trim()) return { error: "--models must not be blank" };
+  if (options.historyDir !== undefined && !options.historyDir.trim()) return { error: "--history-dir must not be blank" };
+  if (options.learnDir !== undefined && !options.learnDir.trim()) return { error: "--learn-dir must not be blank" };
   return { options };
 }
 
@@ -300,9 +321,10 @@ function taskPriority(entry) {
  *   candidates: ReturnType<typeof loadCandidates>,
  *   usageByAgent?: Record<string, any>,
  *   recommendFn?: typeof recommend,
+ *   learningOptions?: Record<string, any>,
  * }} args
  */
-export async function planWave({ wave, candidates, usageByAgent = {}, recommendFn = recommend }) {
+export async function planWave({ wave, candidates, usageByAgent = {}, recommendFn = recommend, learningOptions = {} }) {
   const waveTaskIds = new Set(wave.tasks.map((task) => task.id));
   const entries = [];
 
@@ -342,6 +364,7 @@ export async function planWave({ wave, candidates, usageByAgent = {}, recommendF
       eligible: task.eligible,
       judgment: task.judgment,
       judgmentReason: task.judgmentReason,
+      ...learningOptions,
     };
     const result = await recommendFn(options, candidates, usageByAgent);
     entries.push({
@@ -515,6 +538,8 @@ export async function planWave({ wave, candidates, usageByAgent = {}, recommendF
       assessment: result.assessment,
       assignment,
       recommendation: result.recommendation,
+      baselineRecommendation: result.baselineRecommendation ?? null,
+      learning: result.learning ?? null,
       alternatives: [...equivalents, ...stronger],
       rejected: result.rejected,
       warning: usage.status === "low" ? `${pick.agent} usage is low: ${usage.reason}` : null,
@@ -595,7 +620,7 @@ export async function planWave({ wave, candidates, usageByAgent = {}, recommendF
       "Provider usage percentages are not comparable across agents.",
       "Active and proposed workers share allowances; projected capacity is uncertain and not reserved.",
       "Unknown, stale, low and exhausted usage are distinct; only fresh and low confirm capacity.",
-      "Worker history is not an input to this plan.",
+      "Learning may reorder within a capability tier from comparable history; baselineRecommendation stays visible; transcripts are never read or sent to Jev.",
     ],
     tasks: ordered,
     launch: { started: false },
@@ -642,7 +667,12 @@ export async function main(argv = process.argv.slice(2)) {
 
   const collected = PROVIDERS.filter((provider) => candidates.some((candidate) => candidate.agent === provider.name));
   const usageByAgent = collected.length ? await usageForPlanning({ providers: collected }) : {};
-  const plan = await planWave({ wave, candidates, usageByAgent });
+  const learningOptions = {
+    learning: options.learning,
+    historyDir: options.historyDir,
+    learnDir: options.learnDir,
+  };
+  const plan = await planWave({ wave, candidates, usageByAgent, learningOptions });
   console.log(JSON.stringify(plan, null, 2));
   return 0;
 }

@@ -71,8 +71,11 @@ Transcripts are for investigating a past outcome. `list` and `show` never print 
 
 `list` summarises every record, `show` prints one record or shared usage change, and `transcript` prints the stored transcript. `delete --id` removes a record with its transcript (it also removes the worker from shared usage changes, and links to it then show `targetState: "not recorded"`) or one shared usage change. `delete --all --yes` removes everything. Deleted data is gone: the files are removed, not archived.
 
+## Learning
+
+`scripts/orca-learn.mjs` (and through it `orca-recommend.mjs` / `orca-plan.mjs`) reads these structured records to adjust recommendations conservatively. Transcripts stay reference-only. See `docs/agents/learned-adjustments.md` for the evidence rule, inspect/reset commands and how the baseline stays visible.
+
 ## Not covered
 
-- The history is read by people and by later work on recommendations; nothing in `orca-recommend.mjs` reads it yet.
 - Recommendation attachment, checks, reviews and links stay manual; only the lifecycle `capture` itself is automatic via `orca-spawn` and `orca-check`.
 - Concurrent writers to one record are not coordinated beyond atomic replacement; capture one dispatch at a time.
