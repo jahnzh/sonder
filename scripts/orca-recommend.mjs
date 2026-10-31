@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { PROVIDERS, usageForPlanning } from "./orca-usage.mjs";
 import { applyLearning, defaultLearnDir, loadLearningContext } from "./orca-learn.mjs";
 import { defaultDir as defaultHistoryDir } from "./orca-history.mjs";
+import { OPENCODE_MODEL } from "./opencode-config.mjs";
 
 const JEV_URL = "https://api.typesafe.ai/v1/systemone";
 // Pinned, not jev-latest: an alias can move and change answers without any change here.
@@ -87,9 +88,12 @@ Exit codes: 0 a worker was chosen, 1 nothing suitable or an override was refused
 Reads TYPESAFE_API_KEY and ORCA_USAGE_STATE_DIR. ORCA_RECOMMEND_JEV_URL and ORCA_RECOMMEND_JEV_TIMEOUT_MS replace the endpoint and timeout (tests).`;
 
 /** @param {string} value */
-function parseChoice(value) {
+export function parseChoice(value) {
   const parts = value.split("/");
   if (parts.length < 2 || parts.length > 3 || parts.some((part) => !part)) return null;
+  if (parts[0] === "opencode") {
+    return parts.length === 3 ? { agent: parts[0], model: `${parts[1]}/${parts[2]}`, effort: null } : null;
+  }
   return { agent: parts[0], model: parts[1], effort: parts[2] ?? null };
 }
 
@@ -204,6 +208,7 @@ export function loadCandidates(file) {
   return candidates.map((candidate) => {
     let unusable = null;
     if (!REQUIREMENTS.includes(candidate.capability)) unusable = "no documented capability";
+    else if (candidate.agent === "opencode" && candidate.model !== OPENCODE_MODEL) unusable = "not the supported OpenCode model";
     else if (candidate.agent === "cursor" && cursorModels === null) unusable = "agent --list-models failed, so the launch would refuse it";
     else if (candidate.agent === "cursor" && !cursorModels.has(candidate.model)) unusable = "agent --list-models does not list it";
     return { ...candidate, unusable };
@@ -405,6 +410,7 @@ function formatBucketUsage(usage) {
     buckets.find((bucket) => bucket.id === "gemini-argon-wtu-weekly") ??
     buckets.find((bucket) => bucket.id === "gemini-weekly" || bucket.id === "3p-weekly") ??
     [...buckets].sort((a, b) => (b.usedPercent ?? 0) - (a.usedPercent ?? 0))[0];
+  if (scoped.id === "opencode-nris") return shortBucketLabel(scoped);
   const pct =
     typeof scoped.usedPercent === "number" && Number.isFinite(scoped.usedPercent)
       ? `${(Math.round(scoped.usedPercent * 10) / 10).toFixed(1)}%`
@@ -509,7 +515,9 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
     if (sanitizedOptions.eligible.length && !named(candidate)) continue;
     const usage = usageOf(candidate);
     if (unusable) rejected.push({ agent, model, effort, reason: unusable });
-    else if (rank(candidate.capability) < rank(requirement)) {
+    else if (agent === "opencode" && usage.status === "unavailable") {
+      rejected.push({ agent, model, effort, reason: `provider data unavailable (${usage.reason})`, usage: usage.status });
+    } else if (rank(candidate.capability) < rank(requirement)) {
       rejected.push({
         agent,
         model,
@@ -632,6 +640,9 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
     if (refused) return { ...result, status: "override-refused", refused: { ...sanitizedOptions.override, reason: refused } };
     const { capability } = candidates.find((c) => choiceName(c) === choiceName(sanitizedOptions.override));
     const usage = usageOf(sanitizedOptions.override);
+    if (sanitizedOptions.override.agent === "opencode" && usage.status === "unavailable") {
+      return { ...result, status: "override-refused", refused: { ...sanitizedOptions.override, reason: `provider data unavailable (${usage.reason})` } };
+    }
     const warnings = [
       rank(capability) < rank(requirement) ? `${capability} capability is below the assessed ${requirement}` : null,
       usageWarning(sanitizedOptions.override.agent, usage, sanitizedOptions.override),

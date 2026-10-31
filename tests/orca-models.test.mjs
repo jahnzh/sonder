@@ -50,6 +50,7 @@ function fixture() {
       cwd: root,
       env: {
         ...process.env,
+        HOME: root,
         PATH: bin,
         ORCA_USAGE_STATE_DIR: path.join(root, "state"),
         // Short injected deadline so the hung-provider test stays fast; production keeps 30s.

@@ -754,10 +754,10 @@ test("an unavailable login leaves the failure in history with the real error tex
     store.close();
   }));
 
-test("PROVIDERS lists all four agents with assess functions", () => {
+test("PROVIDERS lists all five agents with assess functions", () => {
   assert.deepEqual(
     PROVIDERS.map((provider) => provider.name),
-    ["claude", "codex", "cursor", "antigravity"],
+    ["claude", "codex", "cursor", "opencode", "antigravity"],
   );
   for (const provider of PROVIDERS) {
     assert.equal(typeof provider.read, "function");

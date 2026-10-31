@@ -13,6 +13,7 @@ Verified model IDs and effort settings for spawning subagents.
 | codex       | `gpt-6.1-terra`       | `max`                   | standard        | Larger client changes; went silent twice (see below)                       | 2026-10-30    |
 | antigravity | `claude-opus-5-5-high` | none                   | reasoning-heavy | Reasoning-heavy work through Antigravity's Claude and GPT models bucket, separate from Claude Code | 2026-10-31    |
 | antigravity | `claude-sonnet-5-5-medium` | none               | standard        | Analysis, diagnosis and scripting with a clear spec, through Antigravity's Claude and GPT models bucket | 2026-10-31    |
+| opencode | `nris/Qwen3.8-27B` | none | mechanical | Small mechanical changes with a clear spec through the owner's NRIS endpoint (one small 27B model; free; this week only) | 2026-10-31 |
 
 Cursor's full list is available with `agent --list-models`.
 
@@ -28,11 +29,11 @@ A row meets its own level and those below it. The levels are the coordinator's r
 
 ## Usage limits
 
-`scripts/orca-recommend.mjs` and `scripts/orca-plan.mjs` refresh Claude, Codex, Cursor and Antigravity usage from the collector before recommending (`docs/agents/usage-collector.md`). Failed or missing readings stay `unknown` / `unavailable` and are never treated as confirmed capacity. For a ready wave, the planner balances shared allowances and concurrency across tasks without comparing provider percentages (`docs/agents/wave-planner.md`). The coordinator still keeps the number concurrent modest (default plan limit: three).
+`scripts/orca-recommend.mjs` and `scripts/orca-plan.mjs` refresh Claude, Codex, Cursor, Antigravity and OpenCode usage from the collector before recommending (`docs/agents/usage-collector.md`). Failed or missing readings stay `unknown` / `unavailable` and are never treated as confirmed capacity. For a ready wave, the planner balances shared allowances and concurrency across tasks without comparing provider percentages (`docs/agents/wave-planner.md`). The coordinator still keeps the number concurrent modest (default plan limit: three).
 
 ## Quota buckets
 
-Each documented model draws from a provider-specific quota bucket. The recommender and planner assess **per candidate** (`agent/model`), not one number per agent. Readers: `scripts/antigravity-usage.mjs`, `scripts/cursor-usage.mjs`, `scripts/claude-usage.mjs`, `scripts/codex-usage.mjs` (`assessCandidateUsage`).
+Each documented model draws from a provider-specific quota bucket. The recommender and planner assess **per candidate** (`agent/model`), not one number per agent. Readers: `scripts/antigravity-usage.mjs`, `scripts/cursor-usage.mjs`, `scripts/claude-usage.mjs`, `scripts/codex-usage.mjs`, `scripts/opencode-usage.mjs` (`assessCandidateUsage`).
 
 | Agent | Model | Bucket (owner UI / reader id) | Reader |
 | --- | --- | --- | --- |
@@ -43,8 +44,15 @@ Each documented model draws from a provider-specific quota bucket. The recommend
 | cursor | named API models outside that list | Other Models (`included_api`) plus Plan | `cursor-usage.mjs` |
 | claude | every documented Claude model | shared Claude session / week windows | `claude-usage.mjs` |
 | codex | every documented Codex model | one Codex allowance (`codex-5h`, `codex-weekly`) | `codex-usage.mjs` |
+| opencode | `nris/Qwen3.8-27B` | NRIS gateway (`opencode-nris`), no quota; temporary access | `opencode-usage.mjs` |
 
 Unrecognised model ids stay `unknown` (never treated as available). Exhaustion of Argon or Other Models does not exhaust Flash or Cursor Models. When a candidate has weekly and 5-hour windows, status follows the **worst** window and the reason names that window's reset.
+
+### OpenCode notes
+
+- The only permitted model is `nris/Qwen3.8-27B`. The OpenCode built-in models have no configured credentials and must not be used. Effort has no effect.
+- Access is unlimited but temporary, may disappear at any time, and defaults to expiry at `2026-11-07T00:00:00Z`. See `docs/agents/opencode-usage.md` for the expiry override, reachability check and failure behavior.
+- Orca's OpenCode launch rejects `--model`; `scripts/orca-spawn.sh` checks that the configured default matches the recorded requested model, then launches without `--model` or `--effort`. The receipt cannot verify the effective model, so this row is based on the separately verified default-model launch on 2026-10-31.
 
 ### Antigravity (`agy`) notes
 
@@ -65,7 +73,7 @@ Orca's agent status hooks are not installed for cursor (`orca agent hooks status
 
 ## How to verify
 
-Launch a subagent with `--model`, read the effective model in the launch receipt, and update the "Last verified" date in the table above.
+For providers that support it, launch a subagent with `--model`, read the effective model in the launch receipt, and update the "Last verified" date in the table above. OpenCode uses the default-model procedure in its notes instead.
 
 ## Observed behaviour (2026-10-30)
 
