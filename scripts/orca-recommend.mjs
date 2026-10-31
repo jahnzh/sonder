@@ -376,7 +376,55 @@ function describeJevReport(jev) {
   return parts.length ? ` (${parts.join(", ")})` : "";
 }
 
-function describeUsage(usage) {
+function shortBucketLabel(bucket) {
+  const label = String(bucket?.label ?? bucket?.id ?? "quota");
+  const id = String(bucket?.id ?? "");
+  if (/argon/i.test(label) || /argon/i.test(id)) return "Gemini 4 Argon";
+  if (/gemini/i.test(label) || /^gemini-/i.test(id)) {
+    if (/5h|five.?hour/i.test(label) || /5h/i.test(id)) return "Gemini Models 5-hour";
+    return "Gemini Models weekly";
+  }
+  if (/claude and gpt|3p-/i.test(label) || /^3p-/i.test(id)) {
+    if (/5h|five.?hour/i.test(label) || /5h/i.test(id)) return "Claude and GPT models 5-hour";
+    return "Claude and GPT models weekly";
+  }
+  if (id === "included_auto" || /cursor models|^auto$/i.test(label)) return "Cursor Models";
+  if (id === "included_api" || /other models|^api$/i.test(label)) return "Other Models";
+  if (id === "included_total" || /plan|^included$/i.test(label)) return "Plan";
+  if (id === "on_demand" || /on-?demand/i.test(label)) return "On-demand";
+  const head = label.split(":")[0].trim();
+  return head || label;
+}
+
+function formatBucketUsage(usage) {
+  const buckets = Array.isArray(usage.buckets) ? usage.buckets : [];
+  if (!buckets.length) return usage.reason ?? usage.status;
+  // Prefer the model-scoped Cursor/Antigravity bucket over a parent Plan/total window.
+  const scoped =
+    buckets.find((bucket) => bucket.id === "included_auto" || bucket.id === "included_api") ??
+    buckets.find((bucket) => bucket.id === "gemini-argon-wtu-weekly") ??
+    buckets.find((bucket) => bucket.id === "gemini-weekly" || bucket.id === "3p-weekly") ??
+    [...buckets].sort((a, b) => (b.usedPercent ?? 0) - (a.usedPercent ?? 0))[0];
+  const pct =
+    typeof scoped.usedPercent === "number" && Number.isFinite(scoped.usedPercent)
+      ? `${(Math.round(scoped.usedPercent * 10) / 10).toFixed(1)}%`
+      : "?%";
+  return `${shortBucketLabel(scoped)} ${pct} used`;
+}
+
+function describeUsage(usage, choice = null) {
+  if (choice && Array.isArray(usage.buckets) && usage.buckets.length) {
+    const named = `${choiceName(choice)}: ${formatBucketUsage(usage)}`;
+    if (usage.status === "fresh") return named;
+    if (usage.status === "low") return `${named}, low`;
+    if (usage.status === "exhausted") {
+      const reset = usage.resetsAt ? `, resets ${usage.resetsAt}` : "";
+      return `${named}, exhausted${reset}`;
+    }
+    if (usage.status === "stale") return `${named}, stale (${usage.reason})`;
+    if (usage.status === "unavailable") return `${named}, unavailable (${usage.reason})`;
+    return `${named}, unknown`;
+  }
   if (usage.status === "fresh") return `Usage read ${usage.observedAt}: ${usage.reason}. That is a snapshot, not reserved capacity`;
   if (usage.status === "low") return `Usage is low, read ${usage.observedAt}: ${usage.reason}`;
   if (usage.status === "stale") return `Usage is stale (${usage.reason}), so capacity is not confirmed`;
@@ -384,8 +432,13 @@ function describeUsage(usage) {
   return "Usage is unknown, so capacity is not confirmed";
 }
 
-function usageWarning(agent, usage) {
-  return usage.status === "exhausted" || usage.status === "low" ? `${agent} usage is ${usage.status}: ${usage.reason}` : null;
+function usageWarning(agent, usage, choice = null) {
+  if (usage.status !== "exhausted" && usage.status !== "low") return null;
+  if (choice && Array.isArray(usage.buckets) && usage.buckets.length) {
+    const reset = usage.status === "exhausted" && usage.resetsAt ? `, resets ${usage.resetsAt}` : "";
+    return `${choiceName(choice)} usage is ${usage.status}: ${formatBucketUsage(usage)}${reset}`;
+  }
+  return `${agent} usage is ${usage.status}: ${usage.reason}`;
 }
 
 function launchArgs({ agent, model, effort }) {
@@ -395,9 +448,10 @@ function launchArgs({ agent, model, effort }) {
 /**
  * @param {Record<string, any>} options
  * @param {ReturnType<typeof loadCandidates>} candidates
- * @param {Record<string, any>} usageByAgent Reports from usageForPlanning; other agents stay unknown.
+ * @param {Record<string, any>} usageByAgent Reports from usageForPlanning; kept for the summary only.
+ * @param {Record<string, any>} [usageByCandidate] Per `agent/model` assessments; a missing key is unknown, never the agent report.
  */
-export async function recommend(options, candidates, usageByAgent = {}) {
+export async function recommend(options, candidates, usageByAgent = {}, usageByCandidate = {}) {
   const sanitizedOptions = {
     ...options,
     task: redactSecret(options.task),
@@ -411,8 +465,33 @@ export async function recommend(options, candidates, usageByAgent = {}) {
   const given = sanitizedOptions.judgment ? { requirement: sanitizedOptions.judgment, reason: sanitizedOptions.judgmentReason, used: !conclusive } : null;
   const requirement = conclusive ? jevRequirement : (given?.requirement ?? null);
   const assessment = { source: conclusive ? "jev" : given ? "coordinator" : null, requirement, jev: jevReport, coordinator: given };
-  const usageOf = (agent) => usageByAgent[agent] ?? UNKNOWN_USAGE;
-  const base = { task: sanitizedOptions.task, request: { kind: sanitizedOptions.kind ?? null, files: sanitizedOptions.files ?? null }, assessment, fallback: null, recommendation: null, alternatives: [], rejected: [], usage: UNKNOWN_USAGE, usageByAgent, decision: null, launch: null };
+  const usageOf = (choice) => {
+    const key = `${choice.agent}/${choice.model}`;
+    if (Object.hasOwn(usageByCandidate, key)) return usageByCandidate[key];
+    return {
+      status: "unknown",
+      reason: `no per-model quota reading for ${key}`,
+      source: null,
+      observedAt: null,
+      account: "unknown",
+      host: "unknown",
+      capacityConfirmed: false,
+    };
+  };
+  const base = {
+    task: sanitizedOptions.task,
+    request: { kind: sanitizedOptions.kind ?? null, files: sanitizedOptions.files ?? null },
+    assessment,
+    fallback: null,
+    recommendation: null,
+    alternatives: [],
+    rejected: [],
+    usage: UNKNOWN_USAGE,
+    usageByAgent,
+    usageByCandidate,
+    decision: null,
+    launch: null,
+  };
 
   if (!requirement) return { ...base, status: "needs-judgment" };
   if (!conclusive) {
@@ -428,7 +507,7 @@ export async function recommend(options, candidates, usageByAgent = {}) {
   for (const { unusable, ...candidate } of candidates) {
     const { agent, model, effort } = candidate;
     if (sanitizedOptions.eligible.length && !named(candidate)) continue;
-    const usage = usageOf(agent);
+    const usage = usageOf(candidate);
     if (unusable) rejected.push({ agent, model, effort, reason: unusable });
     else if (rank(candidate.capability) < rank(requirement)) {
       rejected.push({
@@ -438,8 +517,9 @@ export async function recommend(options, candidates, usageByAgent = {}) {
         rejectionKind: "below-capability",
         reason: `${candidate.capability} capability is below the assessed ${requirement}`,
       });
-    } else if (usage.status === "exhausted") rejected.push({ agent, model, effort, reason: usageWarning(agent, usage), usage: usage.status });
-    else usable.push({ ...candidate, usage: usage.status, usageScope: { account: usage.account, host: usage.host } });
+    } else if (usage.status === "exhausted") {
+      rejected.push({ agent, model, effort, reason: usageWarning(agent, usage, candidate), usage: usage.status });
+    } else usable.push({ ...candidate, usage: usage.status, usageScope: { account: usage.account, host: usage.host } });
   }
   // Smallest suitable first, so a scarce strong model is not spent on easier work; sort() keeps table order within a level.
   usable.sort((a, b) => rank(a.capability) - rank(b.capability));
@@ -494,7 +574,7 @@ export async function recommend(options, candidates, usageByAgent = {}) {
         ...baselineFirst,
         reason:
           `${describeAssessment(assessment)}. ${choiceName(baselineFirst)} is the smallest documented capability that meets it (${baselineFirst.capability}): ${baselineFirst.suits}. ` +
-          `${describeUsage(usageOf(baselineFirst.agent))}${hasEquivalent ? "; equivalent choices are not balanced by quota" : ""}.`,
+          `${describeUsage(usageOf(baselineFirst), baselineFirst)}${hasEquivalent ? "; equivalent choices are not balanced by quota" : ""}.`,
       }
     : null;
   const demotionNote =
@@ -524,7 +604,7 @@ export async function recommend(options, candidates, usageByAgent = {}) {
         ...first,
         reason:
           `${describeAssessment(assessment)}. ${choiceName(first)} is the smallest documented capability that meets it (${first.capability}): ${first.suits}. ` +
-          `${describeUsage(usageOf(first.agent))}${hasEquivalent ? "; equivalent choices are not balanced by quota" : ""}.` +
+          `${describeUsage(usageOf(first), first)}${hasEquivalent ? "; equivalent choices are not balanced by quota" : ""}.` +
           learningNote,
         exploration: learned.exploration
           ? { uncertain: true, reason: learned.exploration.reason, evidenceCount: learned.exploration.evidenceCount }
@@ -551,8 +631,11 @@ export async function recommend(options, candidates, usageByAgent = {}) {
     const refused = refuseOverride(sanitizedOptions.override, candidates);
     if (refused) return { ...result, status: "override-refused", refused: { ...sanitizedOptions.override, reason: refused } };
     const { capability } = candidates.find((c) => choiceName(c) === choiceName(sanitizedOptions.override));
-    const usage = usageOf(sanitizedOptions.override.agent);
-    const warnings = [rank(capability) < rank(requirement) ? `${capability} capability is below the assessed ${requirement}` : null, usageWarning(sanitizedOptions.override.agent, usage)];
+    const usage = usageOf(sanitizedOptions.override);
+    const warnings = [
+      rank(capability) < rank(requirement) ? `${capability} capability is below the assessed ${requirement}` : null,
+      usageWarning(sanitizedOptions.override.agent, usage, sanitizedOptions.override),
+    ];
     const decision = {
       kind: "override",
       ...sanitizedOptions.override,
@@ -564,14 +647,14 @@ export async function recommend(options, candidates, usageByAgent = {}) {
   }
   if (!recommendation) return { ...result, status: "no-suitable-candidate" };
   const { agent, model, effort, reason } = recommendation;
-  const usage = usageOf(agent);
+  const usage = usageOf(recommendation);
   const decision = {
     kind: "recommendation",
     agent,
     model,
     effort,
     reason,
-    warning: usageWarning(agent, usage),
+    warning: usageWarning(agent, usage, recommendation),
     exploration: recommendation.exploration ?? null,
   };
   return { ...result, usage, status: "recommended", decision, launch: { started: false, args: launchArgs(decision) } };
@@ -579,7 +662,7 @@ export async function recommend(options, candidates, usageByAgent = {}) {
 
 const oneLine = (text) => text.replace(/\s+/g, " ").trim();
 
-function modelChoiceSection({ decision, recommendation, assessment, fallback, usage }) {
+export function modelChoiceSection({ decision, recommendation, assessment, fallback, usage }) {
   const decided =
     decision.kind === "recommendation" ? "recommendation accepted" : `coordinator override of ${recommendation ? choiceName(recommendation) : "no suitable recommendation"}`;
   const lines = [
@@ -599,7 +682,13 @@ function modelChoiceSection({ decision, recommendation, assessment, fallback, us
   }
   if (decision.warning) lines.push(`- Warning: ${decision.warning}`);
   const evidence = usage.observedAt ? `; read ${usage.observedAt} from ${usage.source?.kind}` : "";
-  lines.push(`- Usage: ${usage.status} (account ${usage.account}, host ${usage.host}; ${oneLine(usage.reason)}${evidence})`);
+  const bucketBit =
+    Array.isArray(usage.buckets) && usage.buckets.length
+      ? formatBucketUsage(usage)
+      : oneLine(usage.reason ?? usage.status);
+  lines.push(
+    `- Usage: ${usage.status} — ${bucketBit} (account ${usage.account}, host ${usage.host}${evidence})`,
+  );
   return lines.join("\n");
 }
 
@@ -635,8 +724,9 @@ export async function main(argv = process.argv.slice(2)) {
   }
   // A reading for every collected agent in the baseline, taken first so the plan reflects current usage.
   const collected = PROVIDERS.filter((provider) => candidates.some((candidate) => candidate.agent === provider.name));
-  const usage = collected.length ? await usageForPlanning({ providers: collected }) : {};
-  const result = await recommend(options, candidates, usage);
+  const usage = collected.length ? await usageForPlanning({ providers: collected, candidates }) : {};
+  const usageByCandidate = usage.usageByCandidate ?? {};
+  const result = await recommend(options, candidates, usage, usageByCandidate);
 
   if (result.status === "needs-judgment") {
     console.log(JSON.stringify(result, null, 2));

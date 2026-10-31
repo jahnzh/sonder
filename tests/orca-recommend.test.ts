@@ -523,7 +523,7 @@ test("usage is reported as unknown overall and for every candidate when no local
       assert.equal(alternative.usageScope.account, "unknown");
     }
     assert.match(r.json.recommendation.reason, /[Uu]sage is unknown/);
-    assert.match(r.spec("spec.md"), /^- Usage: unknown \(account unknown, host .+;/m);
+    assert.match(r.spec("spec.md"), /^- Usage: unknown — .+ \(account unknown, host .+;/m);
     assert.doesNotMatch(r.stdout, /"status": "fresh"/);
   } finally {
     clean(r.box);
@@ -574,10 +574,15 @@ test("a reading is taken before planning and the plan exposes it with its proven
     assert.equal(r.json.usage.freshness, "fresh");
     assert.equal(r.json.usage.refresh.attempted, true);
     assert.ok("lastSuccessAt" in r.json.usage.collector);
-    assert.deepEqual(r.json.usageByAgent.codex, r.json.usage);
+    assert.equal(r.json.usageByAgent.codex.status, "fresh");
+    assert.ok(r.json.usageByCandidate["codex/gpt-6.1-terra"]);
+    assert.deepEqual(r.json.usage, r.json.usageByCandidate["codex/gpt-6.1-terra"]);
     assert.equal(r.json.decision.warning, null);
-    assert.match(r.json.recommendation.reason, /snapshot, not reserved capacity/);
-    assert.match(r.spec("spec.md"), /^- Usage: fresh \(account sha256:[0-9a-f]{16}, host .+; 5h limit 40% used.*read .* from codex-app-server-rate-limits\)$/m);
+    assert.match(r.json.recommendation.reason, /codex\/gpt-6\.1-terra\/max:.*(5h limit 40(?:\.0)?% used|Weekly limit 64(?:\.0)?% used)/);
+    assert.match(
+      r.spec("spec.md"),
+      /^- Usage: fresh — (?:5h limit 40(?:\.0)?% used|Weekly limit 64(?:\.0)?% used) \(account sha256:[0-9a-f]{16}, host .+; read .* from codex-app-server-rate-limits\)$/m,
+    );
 
     const store = new UsageStore(join(r.box.dir, "usage-state"));
     assert.equal(store.listReadings()[0].origin, "planner");
@@ -613,7 +618,8 @@ test("exhausted Codex usage rejects the candidate and names the reset", async ()
     const [rejected] = r.json.rejected;
     assert.equal(rejected.agent, "codex");
     assert.equal(rejected.usage, "exhausted");
-    assert.match(rejected.reason, /codex usage is exhausted: rate_limit_reached: 5h limit 100% used, resets 2100/);
+    assert.match(rejected.reason, /codex\/gpt-6\.1-terra\/max usage is exhausted: 5h limit 100(?:\.0)?% used/);
+    assert.match(rejected.reason, /2100/);
     assert.equal(r.json.usageByAgent.codex.status, "exhausted");
     assert.equal(r.json.usageByAgent.codex.capacityConfirmed, false);
   } finally {
@@ -626,7 +632,7 @@ test("an override onto exhausted usage goes through with a warning", async () =>
   try {
     assert.equal(r.json.status, "overridden");
     assert.equal(r.json.usage.status, "exhausted");
-    assert.match(r.json.decision.warning, /codex usage is exhausted/);
+    assert.match(r.json.decision.warning, /codex\/gpt-6\.1-terra\/max usage is exhausted/);
   } finally {
     clean(r.box);
   }
@@ -637,8 +643,8 @@ test("low usage stays recommendable with a caution", async () => {
   try {
     assert.equal(r.json.status, "recommended");
     assert.equal(r.json.recommendation.usage, "low");
-    assert.match(r.json.decision.warning, /codex usage is low: 5h limit 93% used/);
-    assert.match(r.json.recommendation.reason, /Usage is low/);
+    assert.match(r.json.decision.warning, /codex\/gpt-6\.1-terra\/max usage is low: 5h limit 93(?:\.0)?% used/);
+    assert.match(r.json.recommendation.reason, /5h limit 93(?:\.0)?% used, low/);
   } finally {
     clean(r.box);
   }
@@ -693,7 +699,7 @@ test("a stale reading is shown as stale and does not confirm capacity", async ()
     assert.equal(r.json.status, "recommended");
     assert.equal(r.json.recommendation.usage, "stale");
     assert.equal(r.json.usage.capacityConfirmed, false);
-    assert.match(r.json.recommendation.reason, /Usage is stale .*older_than_30_minutes.*so capacity is not confirmed/);
+    assert.match(r.json.recommendation.reason, /codex\/gpt-6\.1-terra\/max:.*stale \(.*older_than_30_minutes/);
   } finally {
     clean(r.box);
   }

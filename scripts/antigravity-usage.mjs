@@ -502,6 +502,15 @@ function earliestAntigravityReset(windows) {
   return times.length ? new Date(Math.min(...times)).toISOString() : null;
 }
 
+function antigravityBuckets(windows) {
+  return windows.map((window) => ({
+    id: window.id,
+    label: window.label ?? window.id,
+    usedPercent: window.usedPercent ?? null,
+    resetsAt: window.resetsAt ?? null,
+  }));
+}
+
 /**
  * What a stored Antigravity reading says at `now` for collector/planner use.
  * Status is one of fresh, low, exhausted, stale, unavailable or unknown; only fresh and low confirm capacity.
@@ -536,6 +545,72 @@ export function assessAntigravityUsage(observation, now = new Date()) {
   return low.length
     ? verdict("low", describeAntigravityWindows(low), earliestAntigravityReset(low))
     : verdict("fresh", describeAntigravityWindows(windows));
+}
+
+/**
+ * Assessment for one candidate model: only the allowance windows that govern that model.
+ * Unrecognised models are unknown (never treated as available). Status vocabulary matches assessAntigravityUsage.
+ */
+export function assessCandidateUsage(observation, candidate = {}, now = new Date()) {
+  const freshness = assessFreshness(observation, now);
+  const withBuckets = (assessment, buckets) => ({ ...assessment, buckets });
+  if (observation?.status === "unknown_account" || observation?.status === "account_mismatch") {
+    return withBuckets(
+      assessmentVerdict(freshness, "unknown", observation.detail ?? observation.reason, null),
+      [],
+    );
+  }
+  if (freshness.state === "unavailable") {
+    return withBuckets(
+      assessmentVerdict(freshness, "unavailable", observation?.detail ?? freshness.reasons[0], null),
+      [],
+    );
+  }
+  if (freshness.state === "unknown") {
+    return withBuckets(
+      assessmentVerdict(freshness, "unknown", observation?.detail ?? freshness.reasons[0], null),
+      [],
+    );
+  }
+  const applicable = applicableWindows(observation, candidate);
+  if (!applicable) {
+    return withBuckets(
+      assessmentVerdict(freshness, "unknown", "unrecognised model or no matching allowance", null),
+      [],
+    );
+  }
+  const windows = applicable.windows;
+  const buckets = antigravityBuckets(windows);
+  if (freshness.state === "stale" || observation?.status === "stale") {
+    return withBuckets(
+      assessmentVerdict(
+        freshness,
+        "stale",
+        `${freshness.reasons.join(", ")}; last read ${observation.observedAt}: ${describeAntigravityWindows(windows)}`,
+        earliestAntigravityReset(windows),
+      ),
+      buckets,
+    );
+  }
+  const blocking = windows.filter((window) => window.exhausted || window.remainingFraction <= 0);
+  if (blocking.length) {
+    return withBuckets(
+      assessmentVerdict(
+        freshness,
+        "exhausted",
+        describeAntigravityWindows(blocking),
+        earliestAntigravityReset(blocking),
+      ),
+      buckets,
+    );
+  }
+  const low = windows.filter((window) => !window.exhausted && window.remainingFraction <= LOW_REMAINING_FRACTION);
+  return withBuckets(
+    low.length
+      ? assessmentVerdict(freshness, "low", describeAntigravityWindows(low), earliestAntigravityReset(low))
+      : assessmentVerdict(freshness, "fresh", describeAntigravityWindows(windows), earliestAntigravityReset(windows)),
+    buckets,
+  );
 }
 
 const OPTION_KEYS = {

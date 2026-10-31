@@ -154,7 +154,7 @@ export function parseWave(text, cli = {}) {
   return { concurrency, activeWorkers, completed, tasks, raw };
 }
 
-function usageOf(usageByAgent, agent) {
+function usageOfAgent(usageByAgent, agent) {
   return (
     usageByAgent[agent] ?? {
       status: "unknown",
@@ -167,6 +167,29 @@ function usageOf(usageByAgent, agent) {
     }
   );
 }
+
+function usageOf(usageByAgent, usageByCandidate, choice) {
+  if (choice && typeof choice === "object" && choice.agent && choice.model) {
+    const key = `${choice.agent}/${choice.model}`;
+    if (Object.hasOwn(usageByCandidate ?? {}, key)) return usageByCandidate[key];
+    return {
+      status: "unknown",
+      reason: `no per-model quota reading for ${key}`,
+      source: null,
+      observedAt: null,
+      account: "unknown",
+      host: "unknown",
+      capacityConfirmed: false,
+    };
+  }
+  // Agent-string lookups stay on the summary map only (allowances / provenance).
+  return usageOfAgent(usageByAgent, choice);
+}
+
+function bucketIds(usage) {
+  return new Set((Array.isArray(usage?.buckets) ? usage.buckets : []).map((bucket) => bucket.id).filter(Boolean));
+}
+
 
 function unmetDependencies(task, waveTaskIds, completed) {
   return task.dependsOn.filter((dep) => {
@@ -222,13 +245,13 @@ function uniqueNeedCount(agent, remainingTasks) {
  * Prefer spreading across providers among roughly equivalent choices, then confirmed capacity,
  * without treating percentages as comparable. Scarce sole-capable agents are saved for tasks that need them.
  */
-function pickCandidate(suitable, { activeWorkers, proposed, remainingTasks, usageByAgent }) {
+function pickCandidate(suitable, { activeWorkers, proposed, remainingTasks, usageByAgent, usageByCandidate = {} }) {
   if (!suitable.length) return null;
   const minCap = Math.min(...suitable.map((row) => rank(row.capability)));
   const atFloor = suitable.filter((row) => rank(row.capability) === minCap);
 
   const scored = atFloor.map((row, index) => {
-    const usage = usageOf(usageByAgent, row.agent);
+    const usage = usageOf(usageByAgent, usageByCandidate, row);
     const load = agentLoad(row.agent, activeWorkers, proposed).count;
     const soleNeeds = uniqueNeedCount(row.agent, remainingTasks);
     const capacity = CAPACITY_RANK[usage.status] ?? CAPACITY_RANK.unknown;
@@ -266,15 +289,17 @@ function describeWindows(usage) {
   }));
 }
 
-function sharingReport(usageByAgent, activeWorkers, proposed) {
+function sharingReport(usageByAgent, activeWorkers, proposed, usageByCandidate = {}) {
   const agents = new Set([
     ...Object.keys(usageByAgent),
     ...activeWorkers.map((worker) => worker.agent),
     ...proposed.map((row) => heldChoice(row)?.agent).filter(Boolean),
   ]);
   const out = {};
+  const note =
+    "Shared allowance only: percentages are provider-specific and not comparable across agents; capacity is a snapshot, not a reservation. Candidates share an allowance only when they share a quota bucket.";
   for (const agent of agents) {
-    const usage = usageOf(usageByAgent, agent);
+    const usage = usageOfAgent(usageByAgent, agent);
     const load = agentLoad(agent, activeWorkers, proposed);
     out[agent] = {
       status: usage.status,
@@ -301,11 +326,78 @@ function sharingReport(usageByAgent, activeWorkers, proposed) {
             effort: held.effort,
           };
         }),
-        note: "Shared allowance only: percentages are provider-specific and not comparable across agents; capacity is a snapshot, not a reservation.",
+        note,
       },
     };
   }
-  return out;
+
+  const byBucket = {};
+  const workers = [
+    ...activeWorkers.map((worker) => ({
+      kind: "active",
+      task: worker.dispatchId ?? null,
+      dispatchId: worker.dispatchId ?? null,
+      agent: worker.agent,
+      model: worker.model,
+      effort: worker.effort ?? null,
+      usage: usageOf(usageByAgent, usageByCandidate, worker),
+    })),
+    ...proposed.map((row) => {
+      const held = heldChoice(row);
+      return {
+        kind: "proposed",
+        task: row.task,
+        dispatchId: null,
+        agent: held.agent,
+        model: held.model,
+        effort: held.effort,
+        usage: usageOf(usageByAgent, usageByCandidate, held),
+      };
+    }),
+  ];
+  for (const worker of workers) {
+    const buckets = Array.isArray(worker.usage?.buckets) ? worker.usage.buckets : [];
+    for (const bucket of buckets) {
+      if (!bucket?.id) continue;
+      const key = `${worker.agent}/${bucket.id}`;
+      if (!byBucket[key]) {
+        byBucket[key] = {
+          agent: worker.agent,
+          buckets: [bucket],
+          status: worker.usage.status,
+          reason: worker.usage.reason,
+          capacityConfirmed: worker.usage.capacityConfirmed === true,
+          source: worker.usage.source ?? null,
+          observedAt: worker.usage.observedAt ?? null,
+          freshness: worker.usage.freshness ?? null,
+          account: worker.usage.account ?? "unknown",
+          host: worker.usage.host ?? "unknown",
+          resetsAt: bucket.resetsAt ?? worker.usage.resetsAt ?? null,
+          sharedWith: { active: [], proposed: [], note },
+        };
+      }
+      const entry = {
+        task: worker.task,
+        agent: worker.agent,
+        model: worker.model,
+        effort: worker.effort,
+        ...(worker.dispatchId ? { dispatchId: worker.dispatchId } : {}),
+      };
+      if (worker.kind === "active") byBucket[key].sharedWith.active.push(entry);
+      else byBucket[key].sharedWith.proposed.push(entry);
+    }
+  }
+  // Drop cross-bucket leakage: only keep workers whose usage actually includes this bucket id.
+  for (const [key, report] of Object.entries(byBucket)) {
+    const bucketId = key.slice(key.indexOf("/") + 1);
+    const keep = (row) => {
+      const usage = usageOf(usageByAgent, usageByCandidate, row);
+      return bucketIds(usage).has(bucketId);
+    };
+    report.sharedWith.active = report.sharedWith.active.filter(keep);
+    report.sharedWith.proposed = report.sharedWith.proposed.filter(keep);
+  }
+  return { allowances: out, allowancesByBucket: byBucket };
 }
 
 function taskPriority(entry) {
@@ -321,11 +413,19 @@ function taskPriority(entry) {
  *   wave: ReturnType<typeof parseWave>,
  *   candidates: ReturnType<typeof loadCandidates>,
  *   usageByAgent?: Record<string, any>,
+ *   usageByCandidate?: Record<string, any>,
  *   recommendFn?: typeof recommend,
  *   learningOptions?: Record<string, any>,
  * }} args
  */
-export async function planWave({ wave, candidates, usageByAgent = {}, recommendFn = recommend, learningOptions = {} }) {
+export async function planWave({
+  wave,
+  candidates,
+  usageByAgent = {},
+  usageByCandidate = {},
+  recommendFn = recommend,
+  learningOptions = {},
+}) {
   const waveTaskIds = new Set(wave.tasks.map((task) => task.id));
   const entries = [];
 
@@ -367,7 +467,7 @@ export async function planWave({ wave, candidates, usageByAgent = {}, recommendF
       judgmentReason: task.judgmentReason,
       ...learningOptions,
     };
-    const result = await recommendFn(options, candidates, usageByAgent);
+    const result = await recommendFn(options, candidates, usageByAgent, usageByCandidate);
     entries.push({
       task,
       status: "assessed",
@@ -426,20 +526,21 @@ export async function planWave({ wave, candidates, usageByAgent = {}, recommendF
 
     const remainingTasks = remaining.map((row) => ({
       id: row.task.id,
-      suitable: row.suitable.filter((candidate) => usageOf(usageByAgent, candidate.agent).status !== "exhausted"),
+      suitable: row.suitable.filter((candidate) => usageOf(usageByAgent, usageByCandidate, candidate).status !== "exhausted"),
     }));
 
-    const available = suitable.filter((row) => usageOf(usageByAgent, row.agent).status !== "exhausted");
+    const available = suitable.filter((row) => usageOf(usageByAgent, usageByCandidate, row).status !== "exhausted");
     const pick = pickCandidate(available, {
       activeWorkers: wave.activeWorkers,
       proposed,
       remainingTasks,
       usageByAgent,
+      usageByCandidate,
     });
 
     if (!pick) {
       const weakerAvailable = weaker.filter((row) => {
-        const usage = usageOf(usageByAgent, row.agent);
+        const usage = usageOf(usageByAgent, usageByCandidate, row);
         return usage.status !== "exhausted";
       });
       const weakerPick = pickCandidate(
@@ -448,7 +549,7 @@ export async function planWave({ wave, candidates, usageByAgent = {}, recommendF
           capability: candidates.find((c) => choiceName(c) === choiceName(row))?.capability ?? "mechanical",
           suits: candidates.find((c) => choiceName(c) === choiceName(row))?.suits ?? "",
         })),
-        { activeWorkers: wave.activeWorkers, proposed, remainingTasks: [], usageByAgent },
+        { activeWorkers: wave.activeWorkers, proposed, remainingTasks: [], usageByAgent, usageByCandidate },
       );
       const requirement = result.assessment.requirement;
       const whyStrongerGone = exhaustedSuitable.length
@@ -471,7 +572,7 @@ export async function planWave({ wave, candidates, usageByAgent = {}, recommendF
       };
 
       if (weakerPick) {
-        const usage = usageOf(usageByAgent, weakerPick.agent);
+        const usage = usageOf(usageByAgent, usageByCandidate, weakerPick);
         delay.weakerAlternative = {
           ...weakerPick,
           usage: usage.status,
@@ -493,11 +594,11 @@ export async function planWave({ wave, candidates, usageByAgent = {}, recommendF
       continue;
     }
 
-    const usage = usageOf(usageByAgent, pick.agent);
+    const usage = usageOf(usageByAgent, usageByCandidate, pick);
     const equivalents = available
       .filter((row) => choiceName(row) !== choiceName(pick) && rank(row.capability) === rank(pick.capability))
       .map((row) => {
-        const rowUsage = usageOf(usageByAgent, row.agent);
+        const rowUsage = usageOf(usageByAgent, usageByCandidate, row);
         return {
           ...row,
           usage: rowUsage.status,
@@ -509,7 +610,7 @@ export async function planWave({ wave, candidates, usageByAgent = {}, recommendF
     const stronger = available
       .filter((row) => choiceName(row) !== choiceName(pick) && rank(row.capability) > rank(pick.capability))
       .map((row) => {
-        const rowUsage = usageOf(usageByAgent, row.agent);
+        const rowUsage = usageOf(usageByAgent, usageByCandidate, row);
         return {
           ...row,
           usage: rowUsage.status,
@@ -552,7 +653,7 @@ export async function planWave({ wave, candidates, usageByAgent = {}, recommendF
     if (!usage.capacityConfirmed) {
       const knownWeaker = weaker
         .map((row) => {
-          const rowUsage = usageOf(usageByAgent, row.agent);
+          const rowUsage = usageOf(usageByAgent, usageByCandidate, row);
           const baseline = candidates.find((c) => choiceName(c) === choiceName(row));
           return {
             ...row,
@@ -603,7 +704,12 @@ export async function planWave({ wave, candidates, usageByAgent = {}, recommendF
   }
 
   const ordered = wave.tasks.map((task) => byId.get(task.id)).filter(Boolean);
-  const allowances = sharingReport(usageByAgent, wave.activeWorkers, proposed);
+  const { allowances, allowancesByBucket } = sharingReport(
+    usageByAgent,
+    wave.activeWorkers,
+    proposed,
+    usageByCandidate,
+  );
 
   return {
     status: "planned",
@@ -615,7 +721,9 @@ export async function planWave({ wave, candidates, usageByAgent = {}, recommendF
     },
     activeWorkers: wave.activeWorkers,
     usageByAgent,
+    usageByCandidate,
     allowances,
+    allowancesByBucket,
     notes: [
       "The planner never starts a worker; pass launch.args through scripts/orca-spawn.sh and the existing preflight/receipt checks.",
       "Provider usage percentages are not comparable across agents.",
@@ -667,13 +775,14 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   const collected = PROVIDERS.filter((provider) => candidates.some((candidate) => candidate.agent === provider.name));
-  const usageByAgent = collected.length ? await usageForPlanning({ providers: collected }) : {};
+  const usageByAgent = collected.length ? await usageForPlanning({ providers: collected, candidates }) : {};
+  const usageByCandidate = usageByAgent.usageByCandidate ?? {};
   const learningOptions = {
     learning: options.learning,
     historyDir: options.historyDir,
     learnDir: options.learnDir,
   };
-  const plan = await planWave({ wave, candidates, usageByAgent, learningOptions });
+  const plan = await planWave({ wave, candidates, usageByAgent, usageByCandidate, learningOptions });
   console.log(JSON.stringify(plan, null, 2));
   return 0;
 }

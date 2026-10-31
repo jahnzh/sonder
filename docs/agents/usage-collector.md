@@ -2,6 +2,21 @@
 
 `scripts/orca-usage.mjs` keeps a local history of provider usage and feeds `scripts/orca-recommend.mjs` / `scripts/orca-plan.mjs`. It starts with the machine as a systemd user service and polls every minute whether or not any orchestration is running. It collects Claude, Codex, Cursor and Antigravity (#106, #107–#109, #113). Each provider keeps its own windows and interpretation; percentages are never compared across agents. Reader details: `docs/agents/claude-usage.md`, `docs/agents/codex-usage.md`, `docs/agents/cursor-usage.md`, `docs/agents/antigravity-usage.md`.
 
+## Provider contract (per-candidate quota)
+
+Every usage reader must export `assessCandidateUsage(observation, candidate, now)` next to `assess*Usage`:
+
+1. Resolve `candidate.model` to the allowance bucket(s) that model draws from (reuse the reader's family/bucket helpers; do not duplicate mapping tables).
+2. Return the shared assessment shape (`status` one of `fresh` | `low` | `exhausted` | `stale` | `unavailable` | `unknown`, `reason`, `resetsAt`, `source`-ready fields via `usageReport`, `capacityConfirmed`, plus `buckets: [{ id, label, usedPercent, resetsAt }]` naming those windows).
+3. Return `unknown` (never `fresh` / available) when the model cannot be placed on a reported bucket.
+4. Register the function as `assessCandidate` on that provider's `PROVIDERS` row in `scripts/orca-usage.mjs`.
+
+### Adding a provider or model
+
+1. Add or update the row in `docs/agents/models.md` and the **Quota buckets** section (which bucket the model draws from, which reader).
+2. Capture a real reading (redact to fingerprints only) under `tests/fixtures/` when the live shape matters; fabricate clearly labelled fixtures only for shapes the account cannot produce today.
+3. Add tests for `fresh` / `low` / `exhausted` / `unknown` on that candidate path, and that another bucket's exhaustion does not flip an unrelated candidate.
+
 ```sh
 node scripts/orca-usage.mjs status                       # collector health, last success, current usage; reads nothing new
 node scripts/orca-usage.mjs refresh                      # take one reading now
@@ -46,9 +61,9 @@ To remove it: `systemctl --user disable --now orca-usage-collector.service`, the
 
 `scripts/orca-recommend.mjs` takes a reading for each collected agent in the baseline before it plans, and needs neither the service nor the network to carry on: a provider or CLI failure is reported as `unavailable` with the failure reason; an unknown account or missing collector stays `unknown`. The one exception to refreshing is an active 429 backoff, when it uses the reading on file and `usage.refresh.reason` says `rate_limited_backoff`.
 
-`usageByAgent` holds the report for each collected agent, and `usage` the report for the chosen worker. A reading stays current through a failed poll until it expires after 30 minutes or at a passed reset. A login problem (`unknown_account`, `account_mismatch`) ends it at once, because the last reading may be another account's.
+`usageByAgent` holds the agent-level summary for each collected agent, and `usage` the report for the chosen worker. `usageForPlanning` also builds `usageByCandidate` keyed `agent/model` for every row in `docs/agents/models.md`, using each provider's `assessCandidate` (same vocabulary, plus `buckets: [{ id, label, usedPercent, resetsAt }]` for the windows that govern that model). A reading stays current through a failed poll until it expires after 30 minutes or at a passed reset. A login problem (`unknown_account`, `account_mismatch`) ends it at once, because the last reading may be another account's.
 
-Each candidate's `usage` is the assessment (`fresh`, `low`, `exhausted`, `stale`, `unavailable` or `unknown`). `exhausted` moves it to `rejected`, with the reset in the reason; `low` adds `decision.warning`; only `fresh` and `low` have `capacityConfirmed: true`. `unavailable` and `unknown` both leave capacity unconfirmed; the planner text for `unavailable` is `provider data unavailable (<reason>)`. An override onto exhausted usage goes through with a warning. Single-task `orca-recommend.mjs` keeps equivalent alternatives in table order; wave-level balancing across tasks, shared allowances and concurrency is `scripts/orca-plan.mjs` (see `docs/agents/wave-planner.md`).
+Each candidate is judged from **its** assessment (`fresh`, `low`, `exhausted`, `stale`, `unavailable` or `unknown`), not from another model's bucket on the same agent. `exhausted` moves only that candidate to `rejected`, with the bucket's reset in the reason; `low` warns only that candidate; only `fresh` and `low` have `capacityConfirmed: true`. Recommendation reasons name the bucket and percent (for example `antigravity/gemini-3.8-flash-high: Gemini Models weekly 8.7% used`, `cursor/auto: Cursor Models 25.3% used`). Cursor's agent summary follows Cursor Models when Other Models is exhausted, and still mentions Other Models separately. `unavailable` and `unknown` both leave capacity unconfirmed; the planner text for `unavailable` is `provider data unavailable (<reason>)`. An override onto exhausted usage goes through with a warning. Single-task `orca-recommend.mjs` keeps equivalent alternatives in table order; wave-level balancing across tasks, shared allowances and concurrency is `scripts/orca-plan.mjs` (see `docs/agents/wave-planner.md`).
 
 ## Stored data
 

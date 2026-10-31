@@ -28,6 +28,34 @@ A row meets its own level and those below it. The levels are the coordinator's r
 
 `scripts/orca-recommend.mjs` and `scripts/orca-plan.mjs` refresh Claude, Codex, Cursor and Antigravity usage from the collector before recommending (`docs/agents/usage-collector.md`). Failed or missing readings stay `unknown` / `unavailable` and are never treated as confirmed capacity. For a ready wave, the planner balances shared allowances and concurrency across tasks without comparing provider percentages (`docs/agents/wave-planner.md`). The coordinator still keeps the number concurrent modest (default plan limit: three).
 
+## Quota buckets
+
+Each documented model draws from a provider-specific quota bucket. The recommender and planner assess **per candidate** (`agent/model`), not one number per agent. Readers: `scripts/antigravity-usage.mjs`, `scripts/cursor-usage.mjs`, `scripts/claude-usage.mjs`, `scripts/codex-usage.mjs` (`assessCandidateUsage`).
+
+| Agent | Model | Bucket (owner UI / reader id) | Reader |
+| --- | --- | --- | --- |
+| antigravity | `gemini-3.8-flash-high` | Gemini Models (`gemini-weekly`, `gemini-5h`) | `antigravity-usage.mjs` |
+| antigravity | `gemini-4-argon-high` | Gemini 4 Argon (`gemini-argon-wtu-weekly`) — separate from Gemini Models | `antigravity-usage.mjs` |
+| cursor | `auto`, `composer-2.5` (and other `included_auto` applicable models) | Cursor Models (`included_auto`) plus Plan (`included_total`) | `cursor-usage.mjs` |
+| cursor | named API models outside that list | Other Models (`included_api`) plus Plan | `cursor-usage.mjs` |
+| claude | every documented Claude model | shared Claude session / week windows | `claude-usage.mjs` |
+| codex | every documented Codex model | one Codex allowance (`codex-5h`, `codex-weekly`) | `codex-usage.mjs` |
+
+Unrecognised model ids stay `unknown` (never treated as available). Exhaustion of Argon or Other Models does not exhaust Flash or Cursor Models. When a candidate has weekly and 5-hour windows, status follows the **worst** window and the reason names that window's reset.
+
+### Antigravity (`agy`) notes
+
+- `agy models` (subcommand) is the source for what Antigravity can run. Effort is baked into the model id (`…-low` / `…-medium` / `…-high`), so verified table rows keep Effort `none`. The CLI also accepts `--effort`; do not change launch behaviour until a row is re-verified with it.
+- Only `gemini-4-argon-high` and `gemini-3.8-flash-high` are **verified** rows today (a row needs a real launch check). Other ids from `agy models` are recognised for quota mapping but not verified for spawn:
+
+| Model id | Quota bucket |
+| --- | --- |
+| `gemini-4-argon-low`, `gemini-4-argon-medium` | Gemini 4 Argon |
+| `gemini-3.8-flash-low`, `gemini-3.8-flash-medium` | Gemini Models |
+| `claude-opus-5-5-{low,medium,high}`, `claude-sonnet-5-5-{low,medium,high}`, `gpt-oss-120b-medium` | Claude and GPT models |
+
+- The owner UI may render the Argon limit as two rows ("Gemini 4 Argon" and "Weekly"); raw `/usage` has a single Argon weekly window. That is not a global weekly cap and does not affect Gemini Models or third-party groups.
+
 ## Cursor status
 
 Orca's agent status hooks are not installed for cursor (`orca agent hooks status` shows `cursor: not_installed`), so cursor workers report no provider and an `unverifiable` liveness on the board. They still send orchestration heartbeats. Enabling the hook writes `~/.cursor/hooks.json` and is the user's decision.

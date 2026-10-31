@@ -1454,6 +1454,120 @@ export function evaluateCursorObservation(observation, options = {}) {
  * @param {import("./cursor-usage.d.mts").CursorUsageObservation | null | undefined} observation
  * @param {number | string | Date} [now]
  */
+/** @type {Record<string, "fresh" | "low" | "exhausted" | "stale" | "unavailable" | "unknown">} */
+const CURSOR_ASSESSMENT_STATUS = {
+  ok: "fresh",
+  low: "low",
+  exhausted: "exhausted",
+  stale: "stale",
+  unavailable: "unavailable",
+  unknown_account: "unknown",
+  account_mismatch: "unknown",
+  limited: "unknown",
+  unknown: "unknown",
+};
+
+function mapCursorEvaluation(evaluated) {
+  const freshnessState = evaluated.freshness?.state ?? "unknown";
+  const staleAfterMs =
+    typeof evaluated.observedAtMs === "number" && Number.isFinite(evaluated.observedAtMs)
+      ? evaluated.observedAtMs + (evaluated.freshness?.maxAgeMs ?? DEFAULT_MAX_AGE_MS)
+      : null;
+  const resetsAt = evaluated.reset?.primaryResetAt ?? null;
+  const reasonFromCautions =
+    Array.isArray(evaluated.cautions) && evaluated.cautions.length ? evaluated.cautions.join("; ") : null;
+  const reason =
+    evaluated.error?.message ?? evaluated.reason ?? reasonFromCautions ?? evaluated.status;
+  const status = CURSOR_ASSESSMENT_STATUS[evaluated.status] ?? "unknown";
+  return {
+    status,
+    reason: typeof reason === "string" ? reason : String(reason),
+    capacityConfirmed: status === "fresh" || status === "low",
+    resetsAt,
+    staleAfter: staleAfterMs !== null ? new Date(staleAfterMs).toISOString() : null,
+    freshness: freshnessState,
+  };
+}
+
+function cursorBucketsForModel(evaluated) {
+  const bucket = evaluated.evaluatedModel?.bucket;
+  const windows = Array.isArray(evaluated.windows) ? evaluated.windows : [];
+  /** @type {Set<string>} */
+  const ids = new Set();
+  if (bucket === "included_auto" || bucket === "included_api") {
+    ids.add(bucket);
+    ids.add("included_total");
+  } else if (bucket === "enterprise_spend") {
+    ids.add("enterprise_spend");
+  } else if (bucket && bucket !== "unknown" && bucket !== "overall") {
+    ids.add(bucket);
+  }
+  return windows
+    .filter((window) => ids.has(window.id))
+    .map((window) => ({
+      id: window.id,
+      label: cursorBucketUiLabel(window.id, window.label ?? window.id),
+      usedPercent: window.usedPercent ?? null,
+      resetsAt: window.resetsAt ?? null,
+    }));
+}
+
+/** Owner UI labels for Cursor quota rows (dashboard /usage panel). */
+export function cursorBucketUiLabel(id, fallback = null) {
+  const labels = {
+    included_auto: "Cursor Models",
+    included_api: "Other Models",
+    included_total: "Plan",
+    on_demand: "On-demand",
+  };
+  return labels[id] ?? fallback ?? id;
+}
+
+function formatCursorPercent(usedPercent) {
+  if (typeof usedPercent !== "number" || !Number.isFinite(usedPercent)) return "?%";
+  return `${(Math.round(usedPercent * 10) / 10).toFixed(1)}%`;
+}
+
+/**
+ * When Other Models (included_api) is exhausted but Cursor Models still has capacity,
+ * the agent-level report follows Cursor Models rather than collapsing to unknown/limited.
+ */
+function assessCursorAgentFromWindows(evaluated) {
+  const windows = Array.isArray(evaluated.windows) ? evaluated.windows : [];
+  const auto = windows.find((window) => window.id === "included_auto");
+  const api = windows.find((window) => window.id === "included_api");
+  const total = windows.find((window) => window.id === "included_total");
+  if (!auto) return null;
+  const apiExhausted = api && (api.status === "exhausted" || api.usedPercent >= 100);
+  const autoExhausted = auto.status === "exhausted" || auto.usedPercent >= 100;
+  if (!apiExhausted || autoExhausted) return null;
+  if (evaluated.status !== "limited" && evaluated.reason !== "scoped_quota_exhausted") return null;
+
+  const lowRemaining = DEFAULT_LOW_CAPACITY_REMAINING_PERCENT;
+  const autoStatus =
+    auto.usedPercent >= 100
+      ? "exhausted"
+      : 100 - auto.usedPercent <= lowRemaining
+        ? "low"
+        : "ok";
+  const mapped = CURSOR_ASSESSMENT_STATUS[autoStatus] ?? "unknown";
+  const base = mapCursorEvaluation({ ...evaluated, status: autoStatus, reason: null });
+  const otherNote = apiExhausted ? `; Other Models exhausted` : "";
+  return {
+    ...base,
+    status: mapped,
+    capacityConfirmed: mapped === "fresh" || mapped === "low",
+    reason: `Cursor Models ${formatCursorPercent(auto.usedPercent)} used${otherNote}`,
+    resetsAt: auto.resetsAt ?? total?.resetsAt ?? base.resetsAt,
+    buckets: [auto, total].filter(Boolean).map((window) => ({
+      id: window.id,
+      label: cursorBucketUiLabel(window.id, window.label),
+      usedPercent: window.usedPercent ?? null,
+      resetsAt: window.resetsAt ?? null,
+    })),
+  };
+}
+
 export function assessCursorUsage(observation, now = new Date()) {
   if (!observation || typeof observation !== "object") {
     return {
@@ -1467,42 +1581,7 @@ export function assessCursorUsage(observation, now = new Date()) {
   }
   try {
     const evaluated = evaluateCursorObservation(observation, { now });
-    const freshnessState = evaluated.freshness?.state ?? "unknown";
-    const staleAfterMs =
-      typeof evaluated.observedAtMs === "number" && Number.isFinite(evaluated.observedAtMs)
-        ? evaluated.observedAtMs + (evaluated.freshness?.maxAgeMs ?? DEFAULT_MAX_AGE_MS)
-        : null;
-    const resetsAt = evaluated.reset?.primaryResetAt ?? null;
-    const reasonFromCautions = Array.isArray(evaluated.cautions) && evaluated.cautions.length
-      ? evaluated.cautions.join("; ")
-      : null;
-    const reason =
-      evaluated.error?.message ??
-      evaluated.reason ??
-      reasonFromCautions ??
-      evaluated.status;
-
-    /** @type {Record<string, "fresh" | "low" | "exhausted" | "stale" | "unavailable" | "unknown">} */
-    const mapped = {
-      ok: "fresh",
-      low: "low",
-      exhausted: "exhausted",
-      stale: "stale",
-      unavailable: "unavailable",
-      unknown_account: "unknown",
-      account_mismatch: "unknown",
-      limited: "unknown",
-      unknown: "unknown",
-    };
-    const status = mapped[evaluated.status] ?? "unknown";
-    return {
-      status,
-      reason: typeof reason === "string" ? reason : String(reason),
-      capacityConfirmed: status === "fresh" || status === "low",
-      resetsAt,
-      staleAfter: staleAfterMs !== null ? new Date(staleAfterMs).toISOString() : null,
-      freshness: freshnessState,
-    };
+    return assessCursorAgentFromWindows(evaluated) ?? mapCursorEvaluation(evaluated);
   } catch (error) {
     return {
       status: "unavailable",
@@ -1511,6 +1590,84 @@ export function assessCursorUsage(observation, now = new Date()) {
       resetsAt: null,
       staleAfter: null,
       freshness: "unknown",
+    };
+  }
+}
+
+/**
+ * Assessment for one Cursor candidate model: only the included_auto / included_api (plus included_total)
+ * windows that govern that model. Unrecognised models are unknown.
+ */
+export function assessCandidateUsage(observation, candidate = {}, now = new Date()) {
+  if (!observation || typeof observation !== "object") {
+    return {
+      status: "unknown",
+      reason: "no reading has been taken",
+      capacityConfirmed: false,
+      resetsAt: null,
+      staleAfter: null,
+      freshness: "unknown",
+      buckets: [],
+    };
+  }
+  const model = candidate?.model;
+  if (typeof model !== "string" || !model.trim()) {
+    return {
+      status: "unknown",
+      reason: "candidate model omitted",
+      capacityConfirmed: false,
+      resetsAt: null,
+      staleAfter: null,
+      freshness: "unknown",
+      buckets: [],
+    };
+  }
+  try {
+    const evaluated = evaluateCursorObservation(observation, { now, model: model.trim() });
+    const assessment = mapCursorEvaluation(evaluated);
+    const buckets = cursorBucketsForModel(evaluated);
+    if (evaluated.evaluatedModel?.bucket === "unknown" && assessment.status !== "exhausted") {
+      return {
+        ...assessment,
+        status: "unknown",
+        capacityConfirmed: false,
+        reason: assessment.reason || "unrecognised model or no matching allowance",
+        buckets: [],
+      };
+    }
+    const scoped =
+      buckets.find((bucket) => bucket.id === evaluated.evaluatedModel?.bucket) ??
+      buckets.find((bucket) => bucket.id === "included_auto" || bucket.id === "included_api") ??
+      buckets[0];
+    if (assessment.status === "exhausted") {
+      return {
+        ...assessment,
+        resetsAt: scoped?.resetsAt ?? assessment.resetsAt,
+        reason:
+          scoped != null
+            ? `${scoped.label} ${formatCursorPercent(scoped.usedPercent ?? 100)} used, resets ${scoped.resetsAt ?? "unreported"}`
+            : assessment.reason,
+        buckets,
+      };
+    }
+    if (scoped && (assessment.status === "fresh" || assessment.status === "low")) {
+      const suffix = assessment.status === "low" ? ", low" : "";
+      return {
+        ...assessment,
+        reason: `${scoped.label} ${formatCursorPercent(scoped.usedPercent)} used${suffix}`,
+        buckets,
+      };
+    }
+    return { ...assessment, buckets };
+  } catch (error) {
+    return {
+      status: "unavailable",
+      reason: redactSecrets(error?.message ?? error),
+      capacityConfirmed: false,
+      resetsAt: null,
+      staleAfter: null,
+      freshness: "unknown",
+      buckets: [],
     };
   }
 }

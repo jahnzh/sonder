@@ -470,6 +470,63 @@ export function assessClaudeUsage(observation, now = new Date()) {
     : verdict("fresh", describeClaudeWindows(capacityWindows));
 }
 
+function claudeBuckets(windows) {
+  return windows.map((window) => ({
+    id: window.kind ?? window.id ?? window.label,
+    label: window.label ?? window.kind ?? window.id,
+    usedPercent: window.usedPercent ?? null,
+    resetsAt: window.resetsAt ?? null,
+  }));
+}
+
+/**
+ * Per-candidate Claude assessment. Shared `appliesTo: "all"` windows govern every recognised model;
+ * scoped windows (seven_day_opus / seven_day_sonnet / …) only affect matching candidates.
+ * An unrecognised model id is unknown.
+ */
+export function assessCandidateUsage(observation, candidate = {}, now = new Date()) {
+  const model = candidate?.model;
+  if (model !== undefined && model !== null && model !== "") {
+    if (typeof model !== "string" || candidateModelFamily(model) === null) {
+      return {
+        status: "unknown",
+        reason: "unrecognised model or no matching allowance",
+        capacityConfirmed: false,
+        resetsAt: null,
+        staleAfter: null,
+        freshness: "unknown",
+        buckets: [],
+      };
+    }
+  }
+  const windows = Array.isArray(observation?.windows) ? observation.windows : [];
+  const applicable = windows.filter((window) => windowRelation(window, candidate) === "match");
+  const capacityWindows = applicable.length ? applicable : windows.filter((window) => window.appliesTo === "all");
+  const exhaustedScoped = (Array.isArray(observation?.exhaustedWindows) ? observation.exhaustedWindows : []).filter(
+    (window) => windowRelation(window, candidate) === "match",
+  );
+  const scopedObservation = {
+    ...(observation ?? {}),
+    windows: capacityWindows.length ? capacityWindows : windows,
+    exhaustedWindows: exhaustedScoped,
+    status:
+      exhaustedScoped.length && observation?.status === "limited"
+        ? "exhausted"
+        : observation?.status === "limited"
+          ? "available"
+          : observation?.status,
+  };
+  // When only a disjoint scoped window is exhausted, do not treat the whole agent as exhausted for this candidate.
+  if (observation?.status === "limited" && exhaustedScoped.length === 0) {
+    scopedObservation.status = "available";
+  }
+  if (exhaustedScoped.length) {
+    scopedObservation.status = "exhausted";
+  }
+  const assessment = assessClaudeUsage(scopedObservation, now);
+  return { ...assessment, buckets: claudeBuckets(capacityWindows.length ? capacityWindows : windows) };
+}
+
 function parseArgs(argv) {
   const options = {};
   for (let i = 0; i < argv.length; i += 1) {
