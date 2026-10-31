@@ -15,6 +15,7 @@ import {
   evidenceFromView,
   evidenceWeight,
   inspectLearning,
+  learnedBucketShareFrom,
   loadLearningContext,
   openLearnState,
   resetLearning,
@@ -79,6 +80,7 @@ function putRecord(historyDir, {
   selectionKind = "recommendation",
   attributable = [],
   shared = [],
+  bucketCost = null,
 }) {
   const record = {
     schema: 1,
@@ -137,7 +139,7 @@ function putRecord(historyDir, {
       reviews: reviews.map((r) => ({ findings: r, reviewerDispatch: "unknown", evidence: "test", at: completedAt })),
     },
     links: followUpFixes.map((target) => ({ kind: "fix_of", target, evidence: "test", at: completedAt })),
-    usage: { attributable, shared },
+    usage: { attributable, shared, bucketCost },
     transcript: { status: "stored", path: `transcripts/${id}.jsonl`, lines: 0, complete: true, source: "none" },
   };
   writeFileSync(join(historyDir, "records", `${id}.json`), `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
@@ -1104,3 +1106,101 @@ function choice(row) {
   if (!row) return null;
   return [row.agent, row.model, row.effort].filter((part) => part !== undefined && part !== null && part !== "").join("/");
 }
+
+test("buildAdjustments aggregates meanBucketDeltaPercent and bucketDeltaCount", () => {
+  const box = sandbox();
+  try {
+    for (let i = 1; i <= 3; i++) {
+      putRecord(box.history, {
+        id: `ctx_bucket_${i}`,
+        agent: "claude",
+        model: "claude-sonnet-5-5",
+        effort: "high",
+        kind: "feature",
+        difficulty: "standard",
+        bucketCost: {
+          status: "recorded",
+          bucketId: "3p-weekly",
+          deltaPercent: 10 + i * 2, // 12, 14, 16 -> avg 14.0
+          valid: true,
+        },
+      });
+    }
+    const learning = loadLearningContext({
+      historyDir: box.history,
+      learnDir: box.learn,
+      kind: "feature",
+      difficulty: "standard",
+      now: NOW,
+      agentVersions: { claude: AGENT_VERSION },
+    });
+    assert.equal(learning.adjustments.length, 1);
+    const adj = learning.adjustments[0];
+    assert.equal(adj.meanBucketDeltaPercent, 14.0);
+    assert.equal(adj.bucketDeltaCount, 3);
+
+    const learnedShare = learnedBucketShareFrom(learning, {
+      agent: "claude",
+      model: "claude-sonnet-5-5",
+      effort: "high",
+    });
+    assert.equal(learnedShare, 14.0);
+
+    const inspected = box.cli(["inspect", "--kind", "feature", "--difficulty", "standard"]).json;
+    assert.equal(inspected.adjustments[0].meanBucketDeltaPercent, 14.0);
+    assert.equal(inspected.adjustments[0].bucketDeltaCount, 3);
+  } finally {
+    box.cleanup();
+  }
+});
+
+test("comparePeerSignals uses meanBucketDeltaPercent as tiebreaker when attributable cost is equal", () => {
+  const box = sandbox();
+  try {
+    // Two peers in standard tier: claude (delta 15%) vs cursor (delta 5%), both succeeding with pass checks
+    for (let i = 1; i <= 3; i++) {
+      putRecord(box.history, {
+        id: `claude_${i}`,
+        agent: "claude",
+        model: "claude-sonnet-5-5",
+        effort: "high",
+        kind: "feature",
+        difficulty: "standard",
+        bucketCost: { status: "recorded", bucketId: "3p-weekly", deltaPercent: 15.0, valid: true },
+      });
+      putRecord(box.history, {
+        id: `cursor_${i}`,
+        agent: "cursor",
+        model: "composer-2.5",
+        effort: null,
+        kind: "feature",
+        difficulty: "standard",
+        bucketCost: { status: "recorded", bucketId: "included_auto", deltaPercent: 5.0, valid: true },
+      });
+    }
+    const usable = [
+      { agent: "claude", model: "claude-sonnet-5-5", effort: "high", capability: "standard" },
+      { agent: "cursor", model: "composer-2.5", effort: null, capability: "standard" },
+    ];
+    const learning = loadLearningContext({
+      historyDir: box.history,
+      learnDir: box.learn,
+      kind: "feature",
+      difficulty: "standard",
+      now: NOW,
+      agentVersions: { claude: AGENT_VERSION, cursor: AGENT_VERSION },
+    });
+    const learned = applyLearning({
+      usable,
+      kind: "feature",
+      difficulty: "standard",
+      learning,
+      random: () => 0.99,
+    });
+    // Cursor has lower bucket delta (5% < 15%), so cursor is preferred
+    assert.equal(learned.recommendation.agent, "cursor");
+    assert.equal(learned.ordered[0].agent, "cursor");
+  } finally {
+    box.cleanup();
+  }
+});

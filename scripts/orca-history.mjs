@@ -5,6 +5,8 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseAllJsonValues } from "./orca-check.mjs";
+import { documentedLastingBucketId } from "./orca-routing.mjs";
+import { defaultStateDir as defaultUsageStateDir, UsageStore } from "./orca-usage.mjs";
 
 const SCHEMA = 1;
 const UNKNOWN = "unknown";
@@ -35,6 +37,8 @@ Information that cannot be established is stored as "unknown"; nothing is guesse
       Usage that a per-worker meter attributes to this worker alone. Never derived from a shared change.
   record-shared-usage --provider <agent> --before <observation.json> --after <observation.json> --workers <id,id,...>
       Keeps the change between two usage observations of one allowance, shared by the listed workers and anything else on the account.
+  record-bucket-cost --dispatch <id> [--usage-dir <dir>] [--bucket <id>] [--delta <n>] [--before <n>] [--after <n>]
+      Keeps the percent delta of the worker's binding bucket over its lifetime. Defaults to querying the usage collector.
   list                    Summaries of every record (no transcripts).
   show --id <id>          One record, or one shared usage change (no transcripts).
   transcript --id <id>    The redacted transcript. For reference only: planning and learning read records, never this.
@@ -280,7 +284,7 @@ function newRecord(id, now) {
     retries: { failureCount: UNKNOWN, retryOf: null },
     signals: { checks: [], reviews: [] },
     links: [],
-    usage: { attributable: [], shared: [] },
+    usage: { attributable: [], shared: [], bucketCost: null },
     transcript: { status: UNKNOWN },
   };
 }
@@ -403,8 +407,9 @@ export function viewRecord(store, record) {
       elapsed: elapsedOf(record.lifecycle),
     },
     usage: {
-      attributable: record.usage.attributable.length ? { status: "recorded", entries: record.usage.attributable } : { status: UNKNOWN, reason: "no per-worker meter has been recorded" },
+      attributable: record.usage.attributable?.length ? { status: "recorded", entries: record.usage.attributable } : { status: UNKNOWN, reason: "no per-worker meter has been recorded" },
       shared: sharedUsage,
+      bucketCost: record.usage?.bucketCost ?? { status: UNKNOWN, reason: "no bucket cost delta recorded" },
     },
     links: record.links.map((link) => ({ ...link, targetState: store.getRecord(link.target) ? "recorded" : "not recorded" })),
     transcript: record.transcript,
@@ -421,6 +426,9 @@ function summarize(view) {
     checks: view.signals.checks.status,
     reviews: view.signals.reviews.status,
     followUpFixes: view.signals.followUpFixes.status,
+    bucketCost: view.usage.bucketCost?.valid
+      ? `${view.usage.bucketCost.deltaPercent}% (${view.usage.bucketCost.bucketId})`
+      : (view.usage.bucketCost?.status ?? UNKNOWN),
     elapsedMs: view.signals.elapsed.ms ?? UNKNOWN,
     transcript: view.transcript.status,
     updatedAt: view.updatedAt,
@@ -523,6 +531,35 @@ function capture(store, options, env, now) {
     if (value) record.versions.agent = { value, basis: "installed on this host when first captured", observedAt: now };
   }
   if (options.transcript !== false) captureTranscript(store, record, env, now);
+  if (
+    (!record.usage.bucketCost || record.usage.bucketCost.status === "unavailable" || options.refreshBucketCost) &&
+    (record.lifecycle.outcome !== "in_progress" || isKnown(record.lifecycle.completedAt)) &&
+    isKnown(record.lifecycle.dispatchedAt) &&
+    isKnown(record.lifecycle.completedAt)
+  ) {
+    const usageDir = options.usageDir ?? defaultUsageStateDir(env);
+    if (existsSync(path.join(usageDir, "usage.sqlite"))) {
+      let usageStore = null;
+      try {
+        usageStore = new UsageStore(usageDir);
+        const model = isKnown(record.agent.effectiveModel) ? record.agent.effectiveModel : record.agent.requestedModel;
+        const cost = computeLifetimeBucketCost({
+          agent: record.agent.name,
+          model,
+          dispatchedAt: record.lifecycle.dispatchedAt,
+          completedAt: record.lifecycle.completedAt,
+          usageStore,
+        });
+        if (cost && cost.status !== "unavailable") {
+          record.usage.bucketCost = cost;
+        }
+      } catch {
+        // Non-blocking in capture
+      } finally {
+        if (usageStore) usageStore.close();
+      }
+    }
+  }
   store.putRecord(redactDeep(record, env));
   return viewRecord(store, store.getRecord(id));
 }
@@ -645,6 +682,156 @@ function recordSharedUsage(store, options, env, now) {
   return entry;
 }
 
+/**
+ * Computes the lifetime bucket cost delta for a worker from UsageStore observations.
+ */
+export function computeLifetimeBucketCost({
+  agent,
+  model,
+  dispatchedAt,
+  completedAt,
+  usageStore,
+}) {
+  if (!agent || agent === UNKNOWN) {
+    return { status: "unknown", reason: "agent is unknown" };
+  }
+  if (!dispatchedAt || dispatchedAt === UNKNOWN || !completedAt || completedAt === UNKNOWN) {
+    return { status: "unknown", reason: "dispatchedAt or completedAt unknown" };
+  }
+  if (agent === "opencode") {
+    return {
+      status: "recorded",
+      bucketId: "unlimited",
+      usedPercentBefore: null,
+      usedPercentAfter: null,
+      deltaPercent: 0,
+      observedBeforeAt: null,
+      observedAfterAt: null,
+      valid: true,
+      note: "opencode has no quota limit",
+    };
+  }
+  if (!usageStore) {
+    return { status: "unavailable", reason: "no usage store available" };
+  }
+  const readingBefore = usageStore.readingPreceding(agent, dispatchedAt);
+  const readingAfter = usageStore.readingFollowing(agent, completedAt);
+  if (!readingBefore || !readingAfter) {
+    const missing = !readingBefore && !readingAfter ? "before and after readings" : !readingBefore ? "before reading" : "after reading";
+    return {
+      status: "unavailable",
+      reason: `no usable ${missing} for ${agent} near worker lifetime`,
+    };
+  }
+
+  let bucketId = documentedLastingBucketId(agent, model);
+  if (!bucketId) {
+    const obs = readingBefore.observation ?? {};
+    if (Array.isArray(obs.groups)) {
+      const group = obs.groups.find((g) => (g.modelIds ?? []).includes(model) || (g.models ?? []).includes(model));
+      if (group && Array.isArray(group.windowIds)) {
+        bucketId = group.windowIds.find((id) => !id.includes("5h") && !id.includes("session")) ?? group.windowIds[0];
+      }
+    }
+    if (!bucketId && Array.isArray(obs.windows) && obs.windows.length === 1) {
+      bucketId = obs.windows[0].id;
+    }
+  }
+
+  if (!bucketId) {
+    return {
+      status: "unmatched",
+      reason: `could not match model ${model ?? "unknown"} to a quota bucket on ${agent}`,
+    };
+  }
+
+  const windowBefore = (readingBefore.observation?.windows ?? []).find((w) => w.id === bucketId);
+  const windowAfter = (readingAfter.observation?.windows ?? []).find((w) => w.id === bucketId);
+
+  if (!windowBefore || !windowAfter) {
+    return {
+      status: "missing_window",
+      bucketId,
+      reason: `bucket ${bucketId} not present in ${!windowBefore ? "before" : "after"} reading`,
+    };
+  }
+
+  if (
+    windowBefore.resetsAt &&
+    windowAfter.resetsAt &&
+    windowBefore.resetsAt !== windowAfter.resetsAt
+  ) {
+    return {
+      status: "reset",
+      bucketId,
+      usedPercentBefore: windowBefore.usedPercent,
+      usedPercentAfter: windowAfter.usedPercent,
+      deltaPercent: null,
+      observedBeforeAt: readingBefore.observedAt,
+      observedAfterAt: readingAfter.observedAt,
+      valid: false,
+      note: "the quota bucket reset between the readings, so the change is not meaningful",
+    };
+  }
+
+  const rawDelta = windowAfter.usedPercent - windowBefore.usedPercent;
+  const deltaPercent = Math.round(Math.max(0, rawDelta) * 100) / 100;
+  return {
+    status: "recorded",
+    bucketId,
+    usedPercentBefore: windowBefore.usedPercent,
+    usedPercentAfter: windowAfter.usedPercent,
+    deltaPercent,
+    observedBeforeAt: readingBefore.observedAt,
+    observedAfterAt: readingAfter.observedAt,
+    valid: true,
+    note: null,
+  };
+}
+
+function recordBucketCost(store, options, env, now) {
+  const record = need(store.getRecord(options.dispatch), options.dispatch);
+  let cost = null;
+  if (options.delta !== undefined) {
+    const delta = Number(options.delta);
+    if (!Number.isFinite(delta)) throw new HistoryError("--delta must be a number");
+    const bucketId = options.bucket ?? documentedLastingBucketId(record.agent.name, record.agent.effectiveModel) ?? UNKNOWN;
+    const before = options.before !== undefined ? Number(options.before) : null;
+    const after = options.after !== undefined ? Number(options.after) : null;
+    cost = {
+      status: "recorded",
+      bucketId,
+      usedPercentBefore: before,
+      usedPercentAfter: after,
+      deltaPercent: delta,
+      observedBeforeAt: record.lifecycle.dispatchedAt ?? now,
+      observedAfterAt: record.lifecycle.completedAt ?? now,
+      valid: true,
+      note: options.evidence ?? null,
+    };
+  } else {
+    const usageDir = options.usageDir ?? defaultUsageStateDir(env);
+    let usageStore = null;
+    try {
+      usageStore = new UsageStore(usageDir);
+      const model = isKnown(record.agent.effectiveModel) ? record.agent.effectiveModel : record.agent.requestedModel;
+      cost = computeLifetimeBucketCost({
+        agent: record.agent.name,
+        model,
+        dispatchedAt: record.lifecycle.dispatchedAt,
+        completedAt: record.lifecycle.completedAt,
+        usageStore,
+      });
+    } finally {
+      if (usageStore) usageStore.close();
+    }
+  }
+  mutate(store, record, env, now, (r) => {
+    r.usage.bucketCost = cost;
+  });
+  return viewRecord(store, store.getRecord(record.id)).usage.bucketCost;
+}
+
 function showEntry(store, id) {
   requireId(id, "--id");
   const record = store.getRecord(id);
@@ -684,9 +871,10 @@ const VALUE_FLAGS = {
   "--source": "source", "--evidence": "evidence", "--reviewer-dispatch": "reviewerDispatch", "--from": "from", "--to": "to",
   "--metric": "metric", "--provider": "provider", "--before": "before", "--after": "after", "--workers": "workers", "--id": "id",
   "--blocking": "blocking", "--high": "high", "--medium": "medium", "--low": "low",
+  "--usage-dir": "usageDir", "--bucket": "bucket", "--delta": "delta",
 };
-const BOOLEAN_FLAGS = { "--no-transcript": "noTranscript", "--all": "all", "--yes": "yes" };
-const COMMANDS = ["capture", "record-check", "record-review", "link", "record-usage", "record-shared-usage", "list", "show", "transcript", "delete"];
+const BOOLEAN_FLAGS = { "--no-transcript": "noTranscript", "--all": "all", "--yes": "yes", "--refresh-bucket-cost": "refreshBucketCost" };
+const COMMANDS = ["capture", "record-check", "record-review", "link", "record-usage", "record-shared-usage", "record-bucket-cost", "list", "show", "transcript", "delete"];
 
 /** @param {string[]} argv */
 export function parseCliArgs(argv) {
@@ -746,6 +934,9 @@ export function parseCliArgs(argv) {
     if (!problem) options.workers = options.workers.split(",").map((id) => id.trim()).filter(Boolean);
     if (!problem && !options.workers.length) problem = { error: "--workers must name at least one dispatch" };
   }
+  if (command === "record-bucket-cost") {
+    problem = required("dispatch");
+  }
   if (command === "show" || command === "transcript") problem = required("id");
   if (command === "delete") {
     if (options.all) problem = options.id ? { error: "use --id or --all, not both" } : !options.yes ? { error: "delete --all removes every record and transcript; add --yes" } : null;
@@ -793,6 +984,7 @@ export function run(command, options, { env = process.env, now = new Date().toIS
     case "link": return link(store, options, env, now);
     case "record-usage": return recordUsage(store, options, env, now);
     case "record-shared-usage": return recordSharedUsage(store, options, env, now);
+    case "record-bucket-cost": return recordBucketCost(store, options, env, now);
     case "list": {
       const records = store.recordIds().map((id) => summarize(viewRecord(store, store.getRecord(id))));
       return { records, sharedUsage: store.sharedIds() };

@@ -274,7 +274,36 @@ export function signalContributions(view) {
     });
   }
 
-  return { total, signals, attributableCost: cost, elapsedMs: elapsed?.status === "known" ? elapsed.ms : null };
+  // Bucket cost delta is kept apart from quality. It feeds learned expected share for routing and peer tiebreaking.
+  const bucketCost = view.usage?.bucketCost;
+  if (bucketCost?.valid && typeof bucketCost.deltaPercent === "number") {
+    signals.push({
+      name: "bucketCost",
+      value: 0,
+      detail: `recorded bucket delta ${bucketCost.deltaPercent}% on ${bucketCost.bucketId}; kept apart from quality; peer tiebreaker and expected share forecasting`,
+      available: true,
+      bucketId: bucketCost.bucketId,
+      deltaPercent: bucketCost.deltaPercent,
+    });
+  } else {
+    signals.push({
+      name: "bucketCost",
+      value: 0,
+      detail: `not available — ${bucketCost?.reason ?? bucketCost?.note ?? "no bucket cost delta recorded"}`,
+      available: false,
+      bucketId: bucketCost?.bucketId ?? null,
+      deltaPercent: null,
+    });
+  }
+
+  return {
+    total,
+    signals,
+    attributableCost: cost,
+    elapsedMs: elapsed?.status === "known" ? elapsed.ms : null,
+    bucketDeltaPercent: bucketCost?.valid ? bucketCost.deltaPercent : null,
+    bucketId: bucketCost?.bucketId ?? null,
+  };
 }
 
 /**
@@ -321,7 +350,7 @@ export function evidenceFromView(view, { resetAt = null, now }) {
       completedAt,
     };
   }
-  const { total, signals, attributableCost: cost, elapsedMs } = signalContributions(view);
+  const { total, signals, attributableCost: cost, elapsedMs, bucketDeltaPercent, bucketId } = signalContributions(view);
   return {
     id: view.id,
     included: true,
@@ -336,6 +365,8 @@ export function evidenceFromView(view, { resetAt = null, now }) {
     attributable: cost !== null,
     attributableCost: cost,
     elapsedMs: typeof elapsedMs === "number" && Number.isFinite(elapsedMs) ? elapsedMs : null,
+    bucketDeltaPercent: typeof bucketDeltaPercent === "number" && Number.isFinite(bucketDeltaPercent) ? bucketDeltaPercent : null,
+    bucketId: bucketId ?? null,
   };
 }
 
@@ -386,6 +417,8 @@ export function buildAdjustments(evidence, filter = {}) {
         rawCount: 0,
         attributableCostSum: 0,
         attributableCostCount: 0,
+        bucketDeltaSum: 0,
+        bucketDeltaCount: 0,
         elapsedSum: 0,
         elapsedCount: 0,
       });
@@ -401,6 +434,8 @@ export function buildAdjustments(evidence, filter = {}) {
       signals: row.signals,
       selectionKind: row.selectionKind,
       attributableCost: row.attributableCost ?? null,
+      bucketDeltaPercent: row.bucketDeltaPercent ?? null,
+      bucketId: row.bucketId ?? null,
       elapsedMs: row.elapsedMs ?? null,
     });
     bucket.weightedScore += row.weightedScore;
@@ -409,6 +444,10 @@ export function buildAdjustments(evidence, filter = {}) {
     if (typeof row.attributableCost === "number" && Number.isFinite(row.attributableCost)) {
       bucket.attributableCostSum += row.attributableCost;
       bucket.attributableCostCount += 1;
+    }
+    if (typeof row.bucketDeltaPercent === "number" && Number.isFinite(row.bucketDeltaPercent)) {
+      bucket.bucketDeltaSum += row.bucketDeltaPercent;
+      bucket.bucketDeltaCount += 1;
     }
     if (typeof row.elapsedMs === "number" && Number.isFinite(row.elapsedMs)) {
       bucket.elapsedSum += row.elapsedMs;
@@ -427,6 +466,9 @@ export function buildAdjustments(evidence, filter = {}) {
       preference: mean,
       meanAttributableCost:
         bucket.attributableCostCount > 0 ? bucket.attributableCostSum / bucket.attributableCostCount : null,
+      meanBucketDeltaPercent:
+        bucket.bucketDeltaCount > 0 ? Math.round((bucket.bucketDeltaSum / bucket.bucketDeltaCount) * 10) / 10 : null,
+      bucketDeltaCount: bucket.bucketDeltaCount,
       meanElapsedMs: bucket.elapsedCount > 0 ? bucket.elapsedSum / bucket.elapsedCount : null,
       sufficient,
       uncertain: !sufficient,
@@ -440,6 +482,7 @@ export function buildAdjustments(evidence, filter = {}) {
     delete entry.outcomes;
     delete entry.attributableCostSum;
     delete entry.attributableCostCount;
+    delete entry.bucketDeltaSum;
     delete entry.elapsedSum;
     delete entry.elapsedCount;
     if (sufficient) adjustments.push(entry);
@@ -536,7 +579,7 @@ function evidenceBand(row) {
 }
 
 /**
- * Secondary peer signals: lower attributable cost, then lower elapsed, only when both sides have them.
+ * Secondary peer signals: lower attributable cost, lower bucket delta, then lower elapsed, only when both sides have them.
  * @param {{ adjustment: any, candidate: any }} a
  * @param {{ adjustment: any, candidate: any }} b
  * @param {any[]} sameTier
@@ -545,10 +588,42 @@ function comparePeerSignals(a, b, sameTier) {
   const aCost = a.adjustment?.meanAttributableCost;
   const bCost = b.adjustment?.meanAttributableCost;
   if (typeof aCost === "number" && typeof bCost === "number" && aCost !== bCost) return aCost - bCost;
+  const aDelta = a.adjustment?.meanBucketDeltaPercent;
+  const bDelta = b.adjustment?.meanBucketDeltaPercent;
+  if (typeof aDelta === "number" && typeof bDelta === "number" && aDelta !== bDelta) return aDelta - bDelta;
   const aElapsed = a.adjustment?.meanElapsedMs;
   const bElapsed = b.adjustment?.meanElapsedMs;
   if (typeof aElapsed === "number" && typeof bElapsed === "number" && aElapsed !== bElapsed) return aElapsed - bElapsed;
   return sameTier.indexOf(a.candidate) - sameTier.indexOf(b.candidate);
+}
+
+/**
+ * Returns the learned bucket share percent for a candidate from learning adjustments.
+ * @param {ReturnType<typeof loadLearningContext> | { adjustments?: any[] }} learning
+ * @param {{ agent: string, model: string, effort?: string | null }} candidate
+ * @param {{ kind?: string | null, difficulty?: string | null }} [filter]
+ * @returns {number | null}
+ */
+export function learnedBucketShareFrom(learning, candidate, { kind = null, difficulty = null } = {}) {
+  if (!learning?.adjustments || !Array.isArray(learning.adjustments)) return null;
+  const matches = learning.adjustments.filter(
+    (adj) =>
+      adj.agent === candidate.agent &&
+      adj.model === candidate.model &&
+      (candidate.effort === undefined || candidate.effort === null || adj.effort === candidate.effort || adj.effort === null) &&
+      typeof adj.meanBucketDeltaPercent === "number" &&
+      adj.bucketDeltaCount > 0,
+  );
+  if (!matches.length) return null;
+  if (kind || difficulty) {
+    const contextual = matches.find(
+      (adj) => (!kind || adj.kind === kind) && (!difficulty || adj.difficulty === difficulty),
+    );
+    if (contextual) return contextual.meanBucketDeltaPercent;
+  }
+  const totalDelta = matches.reduce((sum, adj) => sum + adj.meanBucketDeltaPercent * adj.bucketDeltaCount, 0);
+  const totalCount = matches.reduce((sum, adj) => sum + adj.bucketDeltaCount, 0);
+  return totalCount > 0 ? Math.round((totalDelta / totalCount) * 10) / 10 : matches[0].meanBucketDeltaPercent;
 }
 
 export function applyLearning({ usable, kind, difficulty, learning, random = Math.random }) {

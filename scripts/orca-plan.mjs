@@ -637,23 +637,24 @@ export async function planWave({
 
   const committedFor = (choice) =>
     committedShareFor(shareCommitted, choice, usageByCandidate, resolvedPolicy, now);
-  const passesShareGuards = (choice) => {
+  const passesShareGuards = (choice, learning = null) => {
     if (!resolvedPolicy?.allow) return true;
     const usage = usageOf(usageByAgent, usageByCandidate, choice);
     if (burnPressure(usage, resolvedPolicy, now).skip) return false;
-    if (expectedShareSkip(usage, resolvedPolicy, choice, now, { committedPercent: committedFor(choice) })) return false;
+    if (expectedShareSkip(usage, resolvedPolicy, choice, now, { committedPercent: committedFor(choice), learning })) return false;
     return true;
   };
-  const commitShare = (choice) => {
+  const commitShare = (choice, learning = null) => {
     if (!resolvedPolicy?.allow || !choice?.agent) return;
     const key = bindingBucketIdFor(choice, usageByCandidate, resolvedPolicy, now);
     if (!key) return;
-    shareCommitted[key] = (shareCommitted[key] ?? 0) + expectedShareFor(resolvedPolicy, choice);
+    shareCommitted[key] = (shareCommitted[key] ?? 0) + expectedShareFor(resolvedPolicy, choice, learning);
   };
 
   while (remaining.length) {
     const entry = remaining.shift();
     const { task, result, suitable, weaker, exhaustedSuitable } = entry;
+    const entryLearning = result?.learning ?? null;
     const bucketLoad = countBucketLoad({
       activeWorkers: cappedWave.activeWorkers,
       proposed,
@@ -697,7 +698,7 @@ export async function planWave({
 
     const available = suitable
       .filter((row) => usageOf(usageByAgent, usageByCandidate, row).status !== "exhausted")
-      .filter((row) => passesShareGuards(row));
+      .filter((row) => passesShareGuards(row, entryLearning));
     const pick = pickCandidate(available, {
       activeWorkers: cappedWave.activeWorkers,
       proposed,
@@ -739,7 +740,7 @@ export async function planWave({
         .filter((row) => {
           const usage = usageOf(usageByAgent, usageByCandidate, row);
           if (usage.status === "exhausted") return false;
-          return passesShareGuards(row);
+          return passesShareGuards(row, entryLearning);
         })
         .filter((row) => underBucketCap(row, bucketLoad, resolvedPolicy, usageByCandidate, now))
         .map((row) => ({
@@ -801,7 +802,7 @@ export async function planWave({
           `Suitable options are exhausted or unavailable for assessed ${requirement}. ` +
           `Choose the warned weaker alternative or delay. Stronger choices unavailable: ${whyStrongerGone}.`;
         // Hold the slot and shared load the same way an uncertain suitable choice does.
-        commitShare(weakerPick);
+        commitShare(weakerPick, entryLearning);
         proposed.push(delay);
       }
       decisions.push(delay);
@@ -918,7 +919,7 @@ export async function planWave({
           };
         })
         .filter((row) => row.capacityConfirmed)
-        .filter((row) => passesShareGuards(row))
+        .filter((row) => passesShareGuards(row, entryLearning))
         .filter((row) => underBucketCap(row, bucketLoad, resolvedPolicy, usageByCandidate, now));
       const rankedWeaker = rankWeakerByTierThenPressure(knownWeaker, resolvedPolicy);
       if (rankedWeaker.length) {
@@ -942,8 +943,8 @@ export async function planWave({
 
     // Conservatively reserve both the unconfirmed primary and any uncertainty alternative so
     // subsequent proposals cannot overdraw either bucket if the coordinator picks either side.
-    commitShare(pick);
-    if (decision.uncertaintyAlternative) commitShare(decision.uncertaintyAlternative);
+    commitShare(pick, entryLearning);
+    if (decision.uncertaintyAlternative) commitShare(decision.uncertaintyAlternative, entryLearning);
     proposed.push(decision);
     decisions.push(decision);
   }

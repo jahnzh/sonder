@@ -54,7 +54,7 @@ Reports name the pressure, binding bucket label, percent left and reset. The old
 
 One Opus 5.5 (high) worker on Antigravity moved the Claude and GPT models weekly bucket from **3.7% to 50.7% used in about 10 minutes** (2026-10-31). A bucket that looks large can be small for high-effort work.
 
-`expectedBucketSharePercent` values are **first guesses** (Opus high 35, Sonnet medium 12, Codex terra max 10, Cursor auto 3, Gemini Flash 3). Part C will replace them with measured deltas from worker history. Until then the chooser still reports the expected share and refuses a dispatch that would leave the binding window under the safety floor after that share.
+`expectedBucketSharePercent` values serve as initial fallback guesses (Opus high 35, Sonnet medium 12, Codex terra max 10, Cursor auto 3, Gemini Flash 3). Worker history records measured lifetime bucket cost deltas (`usage.bucketCost`), learning aggregates them into `meanBucketDeltaPercent` (#124 Part C), and the chooser uses the learned bucket delta when available instead of the fallback guess. In all cases the chooser reports the expected share (annotated with source: learned vs policy) and refuses a dispatch that would leave the binding window under the safety floor after that share.
 
 ## How to change
 

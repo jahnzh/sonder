@@ -7,7 +7,9 @@ node scripts/orca-history.mjs capture --dispatch <id> [--recommendation <file>] 
 node scripts/orca-history.mjs record-check  --dispatch <id> --name <name> (--result <result> | --report <report.json>)
 node scripts/orca-history.mjs record-review --dispatch <id> [--blocking <n>] [--high <n>] [--medium <n>] [--low <n>]
 node scripts/orca-history.mjs link --from <later> --to <earlier> --kind fix_of|review_of|retry_of --evidence "<why>"
+node scripts/orca-history.mjs record-usage --dispatch <id> --source <meter> --metric <name>=<number>
 node scripts/orca-history.mjs record-shared-usage --provider <agent> --before <obs.json> --after <obs.json> --workers <id,id>
+node scripts/orca-history.mjs record-bucket-cost --dispatch <id> [--usage-dir <dir>] [--bucket <id>] [--delta <n>]
 node scripts/orca-history.mjs list | show --id <id> | transcript --id <id>
 node scripts/orca-history.mjs delete --id <id>      # one record with its transcript, or one shared usage change
 node scripts/orca-history.mjs delete --all --yes
@@ -49,7 +51,7 @@ node scripts/orca-history.mjs record-check --dispatch <dispatch_id> --name "npm 
 | Checks | `record-check`; `--report` reads an `npm run check` `report.json` |
 | Review findings | `record-review`, per severity; a severity you do not give is `unknown` |
 | Follow-up fixes, reviews and retries of other workers | `link` with evidence, or Orca's `retryOfDispatchId` |
-| Usage | see below |
+| Usage | attributable per-worker meters, shared allowance changes, and lifetime bucket cost deltas (see below) |
 
 Anything Orca or the coordinator did not provide is `unknown`. Unknown is not zero: no checks recorded is not "checks passed", and no linked fix is not "no fix was needed".
 
@@ -61,6 +63,7 @@ Records are not linked by guesswork. `link` needs both records to exist and a st
 
 - **Attributable usage** (`record-usage`) is for a per-worker meter. None of the four readers provides one today, and `worker-read` carries no token counts, so this stays `unknown` unless you record a figure from a meter that belongs to that worker alone.
 - **Shared usage** (`record-shared-usage`) keeps the change between two reader observations of one allowance, per window, with the workers that ran on that agent in between. It is stored once, as a shared change, with `perWorkerCost: "unknown"`. The allowance is shared with the user's own sessions and with every listed worker, so the change is never divided or assigned to a worker. A window whose `resetsAt` moved between the readings has no change recorded. Observations must come from the same provider and account; a worker on another agent is refused.
+- **Lifetime bucket cost** (`record-bucket-cost`, also auto-computed on `capture` of completed workers) computes the percent delta of the worker's binding bucket over its lifetime (`dispatchedAt` to `completedAt`) using minute-by-minute observations from `UsageStore` (`~/.local/state/orca-usage/usage.sqlite`). Providers with no quota limit (such as OpenCode) are recorded with delta 0% and `bucketId: "unlimited"`. If the quota window reset between the readings, `deltaPercent` is stored as null and marked invalid so resets do not distort learning. This feeds learned adjustments and replaces initial guess shares in routing and wave planning.
 
 ## Transcripts
 

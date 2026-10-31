@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 // @ts-expect-error Plain JS module under test.
-import { activeWorkersFromWorkerList, bindingBucketIdFor, burnPressure, committedShareFor, countBucketLoad, documentedLastingBucketId, effectiveBucketLoad, expectedShareFor, expectedShareSkip, isFiveHourBucket, loadPolicy, NO_POLICY, parsePolicy, policyVerdict, rankByPressure, resolvePolicy } from "../scripts/orca-routing.mjs";
+import { activeWorkersFromWorkerList, bindingBucketIdFor, burnPressure, committedShareFor, countBucketLoad, documentedLastingBucketId, effectiveBucketLoad, expectedShareDetailsFor, expectedShareFor, expectedShareSkip, isFiveHourBucket, learnedBucketShareFrom, loadPolicy, NO_POLICY, parsePolicy, policyVerdict, rankByPressure, resolvePolicy } from "../scripts/orca-routing.mjs";
 // @ts-expect-error Plain JS module under test.
 import { modelChoiceSection, parseCliArgs as parseRecommendArgs, recommend } from "../scripts/orca-recommend.mjs";
 // @ts-expect-error Plain JS module under test.
@@ -539,6 +539,41 @@ test("expectedShareFor reads the listed share and falls back to maxBucketSharePe
   assert.equal(expectedShareFor(p, { agent: "cursor", model: "auto" }), 3);
   assert.equal(expectedShareFor(p, { agent: "cursor", model: "composer-2.5" }), 25, "unlisted models use the default share");
   assert.equal(expectedShareFor({ ...p, maxBucketSharePerWorkerPercent: 8 }, { agent: "cursor", model: "composer-2.5" }), 8);
+});
+
+test("expectedShareFor and expectedShareDetailsFor prioritize learned share over policy guess", () => {
+  const p = policy();
+  const candidate = { agent: "antigravity", model: "claude-opus-5-5-high" };
+  // Default without learning: 35% from policy
+  assert.equal(expectedShareFor(p, candidate), 35);
+  assert.deepEqual(expectedShareDetailsFor(p, candidate), { percent: 35, source: "policy" });
+
+  // With learned context: average bucket cost of 18.5%
+  const learning = {
+    adjustments: [
+      {
+        agent: "antigravity",
+        model: "claude-opus-5-5-high",
+        effort: null,
+        meanBucketDeltaPercent: 18.5,
+        bucketDeltaCount: 3,
+      },
+    ],
+  };
+  assert.equal(expectedShareFor(p, candidate, learning), 18.5);
+  assert.deepEqual(expectedShareDetailsFor(p, candidate, learning), { percent: 18.5, source: "learned" });
+
+  // expectedShareSkip uses the learned share
+  const tightUsage = usage("fresh", [{ id: "3p-weekly", label: "3P Weekly", usedPercent: 70, resetsAt: inDays(4) }]);
+  assert.match(
+    expectedShareSkip(tightUsage, p, candidate, NOW)!,
+    /expected share 35% would leave -5%/,
+  );
+  assert.equal(
+    expectedShareSkip(tightUsage, p, candidate, NOW, { learning }),
+    null,
+    "allowed with learned share 18.5%",
+  );
 });
 
 test("expectedShareSkip refuses when percentLeft minus share would fall under the safety floor", () => {

@@ -6,7 +6,8 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { redactText } from "../scripts/orca-history.mjs";
+import { computeLifetimeBucketCost, redactText } from "../scripts/orca-history.mjs";
+import { UsageStore } from "../scripts/orca-usage.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const script = join(repoRoot, "scripts", "orca-history.mjs");
@@ -806,7 +807,7 @@ function historyWorktreeFixture() {
   const main = join(root, "main");
   const wt = join(root, "wt");
   mkdirSync(join(main, "scripts"), { recursive: true });
-  for (const name of ["orca-history.mjs", "orca-check.mjs", "orca-learn.mjs"]) {
+  for (const name of readdirSync(join(repoRoot, "scripts")).filter((f) => f.endsWith(".mjs"))) {
     cpSync(join(repoRoot, "scripts", name), join(main, "scripts", name));
   }
   writeFileSync(join(main, "README"), "fixture\n");
@@ -869,12 +870,130 @@ test("default history store falls back to the current checkout outside a git rep
   const root = realpathSync(mkdtempSync(join(tmpdir(), "orca-history-nogit-")));
   try {
     mkdirSync(join(root, "scripts"), { recursive: true });
-    for (const name of ["orca-history.mjs", "orca-check.mjs"]) {
+    for (const name of readdirSync(join(repoRoot, "scripts")).filter((f) => f.endsWith(".mjs"))) {
       cpSync(join(repoRoot, "scripts", name), join(root, "scripts", name));
     }
     const hist = await import(pathToFileURL(join(root, "scripts", "orca-history.mjs")).href);
     assert.equal(hist.defaultDir({}), join(root, "artifacts", "orca", "history"));
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("computeLifetimeBucketCost calculates bucket delta from UsageStore observations", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "usage-test-")));
+  try {
+    const store = new UsageStore(root);
+    const beforeObs = {
+      provider: "antigravity",
+      observedAt: "2026-10-31T19:20:00.000Z",
+      windows: [
+        { id: "3p-weekly", usedPercent: 40.0, resetsAt: "2026-11-07T12:00:00.000Z" },
+        { id: "gemini-weekly", usedPercent: 10.0, resetsAt: "2026-11-07T12:00:00.000Z" },
+      ],
+    };
+    const afterObs = {
+      provider: "antigravity",
+      observedAt: "2026-10-31T19:40:00.000Z",
+      windows: [
+        { id: "3p-weekly", usedPercent: 52.5, resetsAt: "2026-11-07T12:00:00.000Z" },
+        { id: "gemini-weekly", usedPercent: 10.0, resetsAt: "2026-11-07T12:00:00.000Z" },
+      ],
+    };
+    store.recordAttempt({ provider: "antigravity", origin: "poll", attemptedAt: new Date("2026-10-31T19:20:00.000Z"), observation: beforeObs });
+    store.recordAttempt({ provider: "antigravity", origin: "poll", attemptedAt: new Date("2026-10-31T19:40:00.000Z"), observation: afterObs });
+
+    const cost = computeLifetimeBucketCost({
+      agent: "antigravity",
+      model: "claude-sonnet-5-5-medium",
+      dispatchedAt: "2026-10-31T19:25:00.000Z",
+      completedAt: "2026-10-31T19:35:00.000Z",
+      usageStore: store,
+    });
+    assert.equal(cost.status, "recorded");
+    assert.equal(cost.bucketId, "3p-weekly");
+    assert.equal(cost.deltaPercent, 12.5);
+    assert.equal(cost.usedPercentBefore, 40.0);
+    assert.equal(cost.usedPercentAfter, 52.5);
+    assert.equal(cost.valid, true);
+
+    // Opencode returns unlimited / 0 delta
+    const openCost = computeLifetimeBucketCost({
+      agent: "opencode",
+      model: "nris/Qwen3.8-27B",
+      dispatchedAt: "2026-10-31T19:25:00.000Z",
+      completedAt: "2026-10-31T19:35:00.000Z",
+      usageStore: store,
+    });
+    assert.equal(openCost.status, "recorded");
+    assert.equal(openCost.bucketId, "unlimited");
+    assert.equal(openCost.deltaPercent, 0);
+    assert.equal(openCost.valid, true);
+
+    store.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("computeLifetimeBucketCost marks delta invalid when window resets mid-run", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "usage-test-reset-")));
+  try {
+    const store = new UsageStore(root);
+    const beforeObs = {
+      provider: "antigravity",
+      observedAt: "2026-10-31T19:20:00.000Z",
+      windows: [
+        { id: "3p-weekly", usedPercent: 95.0, resetsAt: "2026-10-31T19:30:00.000Z" },
+      ],
+    };
+    const afterObs = {
+      provider: "antigravity",
+      observedAt: "2026-10-31T19:40:00.000Z",
+      windows: [
+        { id: "3p-weekly", usedPercent: 5.0, resetsAt: "2026-11-07T19:30:00.000Z" },
+      ],
+    };
+    store.recordAttempt({ provider: "antigravity", origin: "poll", attemptedAt: new Date("2026-10-31T19:20:00.000Z"), observation: beforeObs });
+    store.recordAttempt({ provider: "antigravity", origin: "poll", attemptedAt: new Date("2026-10-31T19:40:00.000Z"), observation: afterObs });
+
+    const cost = computeLifetimeBucketCost({
+      agent: "antigravity",
+      model: "claude-opus-5-5-high",
+      dispatchedAt: "2026-10-31T19:25:00.000Z",
+      completedAt: "2026-10-31T19:35:00.000Z",
+      usageStore: store,
+    });
+    assert.equal(cost.status, "reset");
+    assert.equal(cost.bucketId, "3p-weekly");
+    assert.equal(cost.deltaPercent, null);
+    assert.equal(cost.valid, false);
+    assert.match(cost.note, /reset between the readings/);
+
+    store.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("record-bucket-cost CLI records explicit or collector bucket cost", () => {
+  const box = sandbox();
+  try {
+    box.stage("ctx_cost", { completed: "2026-10-30 12:34:56" });
+    box.cli(["capture", "--dispatch", "ctx_cost", "--no-transcript"]);
+
+    const recorded = box.cli(["record-bucket-cost", "--dispatch", "ctx_cost", "--delta", "14.5", "--bucket", "3p-weekly", "--before", "10", "--after", "24.5"]);
+    assert.equal(recorded.json.status, "recorded");
+    assert.equal(recorded.json.deltaPercent, 14.5);
+    assert.equal(recorded.json.bucketId, "3p-weekly");
+
+    const view = box.cli(["show", "--id", "ctx_cost"]).json;
+    assert.equal(view.usage.bucketCost.deltaPercent, 14.5);
+    assert.equal(view.usage.bucketCost.valid, true);
+
+    const list = box.cli(["list"]).json;
+    assert.equal(list.records[0].bucketCost, "14.5% (3p-weekly)");
+  } finally {
+    box.cleanup();
   }
 });

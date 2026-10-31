@@ -253,12 +253,54 @@ export function policyVerdict(policy, candidate) {
   return null;
 }
 
-export function expectedShareFor(policy, candidate) {
-  const listed = (policy.expectedBucketSharePercent ?? []).find(
-    (row) => row.agent === candidate.agent && row.model === candidate.model,
+/**
+ * Extracts a learned bucket share percent for a candidate from learning adjustments.
+ * @param {any} learning
+ * @param {{ agent: string, model: string, effort?: string | null }} candidate
+ * @param {{ kind?: string | null, difficulty?: string | null }} [filter]
+ * @returns {number | null}
+ */
+export function learnedBucketShareFrom(learning, candidate, { kind = null, difficulty = null } = {}) {
+  if (!learning || !candidate) return null;
+  if (typeof learning === "number") return learning;
+  const adjustments = learning.adjustments ?? (Array.isArray(learning) ? learning : null);
+  if (!adjustments || !Array.isArray(adjustments)) return null;
+  const matches = adjustments.filter(
+    (adj) =>
+      adj.agent === candidate.agent &&
+      adj.model === candidate.model &&
+      (candidate.effort === undefined || candidate.effort === null || adj.effort === candidate.effort || adj.effort === null) &&
+      typeof adj.meanBucketDeltaPercent === "number" &&
+      adj.bucketDeltaCount > 0,
   );
-  if (listed) return listed.percent;
-  return policy.maxBucketSharePerWorkerPercent ?? 25;
+  if (!matches.length) return null;
+  if (kind || difficulty) {
+    const contextual = matches.find(
+      (adj) => (!kind || adj.kind === kind) && (!difficulty || adj.difficulty === difficulty),
+    );
+    if (contextual) return contextual.meanBucketDeltaPercent;
+  }
+  const totalDelta = matches.reduce((sum, adj) => sum + adj.meanBucketDeltaPercent * adj.bucketDeltaCount, 0);
+  const totalCount = matches.reduce((sum, adj) => sum + adj.bucketDeltaCount, 0);
+  return totalCount > 0 ? Math.round((totalDelta / totalCount) * 10) / 10 : matches[0].meanBucketDeltaPercent;
+}
+
+export function expectedShareDetailsFor(policy, candidate, learning = null) {
+  if (learning) {
+    const learned = learnedBucketShareFrom(learning, candidate);
+    if (learned !== null) {
+      return { percent: learned, source: "learned" };
+    }
+  }
+  const listed = (policy?.expectedBucketSharePercent ?? []).find(
+    (row) => row.agent === candidate?.agent && row.model === candidate?.model,
+  );
+  if (listed) return { percent: listed.percent, source: "policy" };
+  return { percent: policy?.maxBucketSharePerWorkerPercent ?? 25, source: "default" };
+}
+
+export function expectedShareFor(policy, candidate, learning = null) {
+  return expectedShareDetailsFor(policy, candidate, learning).percent;
 }
 
 function round1(n) {
@@ -383,7 +425,7 @@ function bindingFromUsageBuckets(usage, policy, now) {
  * pick cannot overdraw headroom reserved by an earlier proposal.
  * @returns {string | null} skip reason
  */
-export function expectedShareSkip(usage, policy, candidate, now = new Date(), { committedPercent = 0 } = {}) {
+export function expectedShareSkip(usage, policy, candidate, now = new Date(), { committedPercent = 0, learning = null } = {}) {
   const pressure = burnPressure(usage, policy, now);
   let binding = pressure.binding;
   if (pressure.skip) return pressure.skip;
@@ -394,7 +436,7 @@ export function expectedShareSkip(usage, policy, candidate, now = new Date(), { 
     binding = derived.binding;
   }
   if (!binding) return null;
-  const share = expectedShareFor(policy, candidate);
+  const share = expectedShareFor(policy, candidate, learning);
   const floor = policy.safetyFloorPercent ?? 10;
   const committed = typeof committedPercent === "number" && Number.isFinite(committedPercent) ? committedPercent : 0;
   // Exact remainder vs floor — do not round before the comparison (e.g. 87.04% used + 3% share

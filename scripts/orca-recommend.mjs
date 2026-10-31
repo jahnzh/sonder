@@ -10,6 +10,7 @@ import { OPENCODE_MODEL } from "./opencode-config.mjs";
 import {
   NO_POLICY,
   burnPressure,
+  expectedShareDetailsFor,
   expectedShareFor,
   expectedShareSkip,
   formatBurnReason,
@@ -464,14 +465,15 @@ function launchArgs({ agent, model, effort }) {
  * @param {Record<string, any>} usageByAgent Reports from usageForPlanning; kept for the summary only.
  * @param {Record<string, any>} [usageByCandidate] Per `agent/model` assessments; a missing key is unknown, never the agent report.
  */
-function withPressureFields(candidate, usage, policy, now) {
+function withPressureFields(candidate, usage, policy, now, learning = null) {
   const report = burnPressure(usage, policy, now);
-  const expectedSharePercent = expectedShareFor(policy, candidate);
+  const shareDetails = expectedShareDetailsFor(policy, candidate, learning);
   return {
     ...candidate,
     pressure: report.pressure,
     binding: report.binding,
-    expectedSharePercent,
+    expectedSharePercent: shareDetails.percent,
+    expectedShareSource: shareDetails.source,
     burn: report,
   };
 }
@@ -561,6 +563,36 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
     base.fallback = { because: jev.status, detail: jev.detail, version: jev.version, uncertainty: jev.uncertainty, requirement, reason: given.reason };
   }
 
+  let learningContext = null;
+  /** @type {string | null} */
+  let historyLoadNote = null;
+  if (sanitizedOptions.learning === false) {
+    learningContext = null;
+  } else if (sanitizedOptions.learning && typeof sanitizedOptions.learning === "object") {
+    learningContext = sanitizedOptions.learning;
+  } else {
+    const historyDir = sanitizedOptions.historyDir ?? process.env.ORCA_HISTORY_DIR?.trim() ?? defaultHistoryDir();
+    // Stay on the baseline when no history directory exists yet, so empty checkouts and
+    // unit tests without fixtures are deterministic.
+    if (existsSync(historyDir) || sanitizedOptions.historyDir || process.env.ORCA_HISTORY_DIR?.trim()) {
+      try {
+        learningContext = loadLearningContext({
+          historyDir,
+          learnDir: sanitizedOptions.learnDir ?? defaultLearnDir(),
+          kind: sanitizedOptions.kind ?? null,
+          difficulty: requirement,
+          now: sanitizedOptions.now ?? process.env.ORCA_LEARN_NOW ?? new Date().toISOString(),
+          agentVersions: sanitizedOptions.agentVersions ?? {},
+        });
+      } catch (error) {
+        // Missing or unreadable history must not block a baseline recommendation.
+        learningContext = null;
+        const reason = error instanceof Error ? error.message : String(error);
+        historyLoadNote = `history unreadable: ${reason}, baseline used`;
+      }
+    }
+  }
+
   const usable = [];
   const excluded = [];
   const rejected = sanitizedOptions.eligible.flatMap((choice) => {
@@ -616,6 +648,7 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
           usage,
           policy,
           now,
+          learningContext,
         ),
         rejectionKind: "below-capability",
         reason: `${candidate.capability} capability is below the assessed ${requirement}`,
@@ -625,7 +658,7 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
       rejected.push({ agent, model, effort, reason: usageWarning(agent, usage, candidate), usage: usage.status });
     } else {
       const floorSkip = policy.allow ? burnPressure(usage, policy, now).skip : null;
-      const shareSkip = policy.allow ? expectedShareSkip(usage, policy, candidate, now) : null;
+      const shareSkip = policy.allow ? expectedShareSkip(usage, policy, candidate, now, { learning: learningContext }) : null;
       const skip = floorSkip || shareSkip;
       if (skip) {
         rejected.push({
@@ -643,6 +676,7 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
             usage,
             policy,
             now,
+            learningContext,
           ),
         );
       }
@@ -692,36 +726,6 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
       ? `no available allowed candidate at ${requirement}; ${choiceName(baselineFirst)} is ${baselineFirst.capability}`
       : null;
 
-  let learningContext = null;
-  /** @type {string | null} */
-  let historyLoadNote = null;
-  if (sanitizedOptions.learning === false) {
-    learningContext = null;
-  } else if (sanitizedOptions.learning && typeof sanitizedOptions.learning === "object") {
-    learningContext = sanitizedOptions.learning;
-  } else {
-    const historyDir = sanitizedOptions.historyDir ?? process.env.ORCA_HISTORY_DIR?.trim() ?? defaultHistoryDir();
-    // Stay on the baseline when no history directory exists yet, so empty checkouts and
-    // unit tests without fixtures are deterministic.
-    if (existsSync(historyDir) || sanitizedOptions.historyDir || process.env.ORCA_HISTORY_DIR?.trim()) {
-      try {
-        learningContext = loadLearningContext({
-          historyDir,
-          learnDir: sanitizedOptions.learnDir ?? defaultLearnDir(),
-          kind: sanitizedOptions.kind ?? null,
-          difficulty: requirement,
-          now: sanitizedOptions.now ?? process.env.ORCA_LEARN_NOW ?? new Date().toISOString(),
-          agentVersions: sanitizedOptions.agentVersions ?? {},
-        });
-      } catch (error) {
-        // Missing or unreadable history must not block a baseline recommendation.
-        learningContext = null;
-        const reason = error instanceof Error ? error.message : String(error);
-        historyLoadNote = `history unreadable: ${reason}, baseline used`;
-      }
-    }
-  }
-
   const learned = applyLearning({
     usable: learningPool,
     kind: sanitizedOptions.kind ?? null,
@@ -768,11 +772,13 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
         : null;
     const usageText = describeUsage(usage, pick);
     const balanceText = burnText ? `; ${burnText}` : balance(pick, rest);
+    const shareDetails = expectedShareDetailsFor(policy, pick, learningContext);
     return {
       ...pick,
       pressure: burn.pressure,
       binding: burn.binding,
-      expectedSharePercent: expectedShareFor(policy, pick),
+      expectedSharePercent: shareDetails.percent,
+      expectedShareSource: shareDetails.source,
       reason:
         `${describeAssessment(assessment)}. ${choiceName(pick)} is the smallest documented capability that meets it (${pick.capability}): ${pick.suits}. ` +
         `${usageText}${balanceText}.`,

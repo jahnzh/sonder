@@ -331,6 +331,56 @@ export class UsageStore {
     return row ? parseObservation(row.observation) : null;
   }
 
+  readingPreceding(provider, timestamp, { maxDistanceMs = 2 * 3600 * 1000 } = {}) {
+    if (!timestamp) return null;
+    const targetMs = Date.parse(timestamp);
+    if (Number.isNaN(targetMs)) return null;
+    const row = this.db
+      .prepare("SELECT observation, observed_at FROM readings WHERE provider = ? AND usable = 1 AND observed_at <= ? ORDER BY observed_at DESC, id DESC LIMIT 1")
+      .get(provider, timestamp);
+    if (row) {
+      const obsMs = Date.parse(row.observed_at);
+      if (!Number.isNaN(obsMs) && Math.abs(targetMs - obsMs) <= maxDistanceMs) {
+        return { observation: parseObservation(row.observation), observedAt: row.observed_at };
+      }
+    }
+    const nextRow = this.db
+      .prepare("SELECT observation, observed_at FROM readings WHERE provider = ? AND usable = 1 AND observed_at > ? ORDER BY observed_at ASC, id ASC LIMIT 1")
+      .get(provider, timestamp);
+    if (nextRow) {
+      const nextMs = Date.parse(nextRow.observed_at);
+      if (!Number.isNaN(nextMs) && nextMs - targetMs <= 120_000) {
+        return { observation: parseObservation(nextRow.observation), observedAt: nextRow.observed_at };
+      }
+    }
+    return null;
+  }
+
+  readingFollowing(provider, timestamp, { maxDistanceMs = 2 * 3600 * 1000 } = {}) {
+    if (!timestamp) return null;
+    const targetMs = Date.parse(timestamp);
+    if (Number.isNaN(targetMs)) return null;
+    const row = this.db
+      .prepare("SELECT observation, observed_at FROM readings WHERE provider = ? AND usable = 1 AND observed_at >= ? ORDER BY observed_at ASC, id ASC LIMIT 1")
+      .get(provider, timestamp);
+    if (row) {
+      const obsMs = Date.parse(row.observed_at);
+      if (!Number.isNaN(obsMs) && Math.abs(obsMs - targetMs) <= maxDistanceMs) {
+        return { observation: parseObservation(row.observation), observedAt: row.observed_at };
+      }
+    }
+    const prevRow = this.db
+      .prepare("SELECT observation, observed_at FROM readings WHERE provider = ? AND usable = 1 AND observed_at < ? ORDER BY observed_at DESC, id DESC LIMIT 1")
+      .get(provider, timestamp);
+    if (prevRow) {
+      const prevMs = Date.parse(prevRow.observed_at);
+      if (!Number.isNaN(prevMs) && targetMs - prevMs <= 120_000) {
+        return { observation: parseObservation(prevRow.observation), observedAt: prevRow.observed_at };
+      }
+    }
+    return null;
+  }
+
   lastSuccessAt(provider) {
     return this.db.prepare("SELECT MAX(observed_at) AS at FROM readings WHERE provider = ? AND usable = 1").get(provider).at;
   }
