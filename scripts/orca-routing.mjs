@@ -360,22 +360,48 @@ export function burnPressure(usage, policy = NO_POLICY, now = new Date()) {
 }
 
 /**
+ * Lasting (or 5-hour-only) binding derived from raw bucket usedPercent, even when capacity is
+ * unconfirmed. Used so stale readings still face expected-share / safety-floor arithmetic.
+ */
+function bindingFromUsageBuckets(usage, policy, now) {
+  if (!usage || typeof usage !== "object") return { binding: null, skip: null };
+  const nowMs = typeof now === "number" ? now : Date.parse(String(now));
+  const floor = policy.safetyFloorPercent ?? 10;
+  const buckets = Array.isArray(usage.buckets) ? usage.buckets : [];
+  const lasting = buckets.filter((bucket) => !isFiveHourBucket(bucket) && typeof bucket.usedPercent === "number");
+  const fiveHour = buckets.filter((bucket) => isFiveHourBucket(bucket) && typeof bucket.usedPercent === "number");
+  const pool = lasting.length ? lasting : fiveHour;
+  if (!pool.length) return { binding: null, skip: null };
+  return bindingFromBuckets(pool, nowMs, floor);
+}
+
+/**
  * Refuse when the expected worker share would push the binding window under the safety floor.
  * `committedPercent` is share already reserved by earlier proposals in the same wave (same binding bucket).
+ * Stale / unconfirmed readings with bucket usedPercent still face this check so a later wave
+ * pick cannot overdraw headroom reserved by an earlier proposal.
  * @returns {string | null} skip reason
  */
 export function expectedShareSkip(usage, policy, candidate, now = new Date(), { committedPercent = 0 } = {}) {
   const pressure = burnPressure(usage, policy, now);
-  if (!pressure.binding || pressure.skip) return pressure.skip;
+  let binding = pressure.binding;
+  if (pressure.skip) return pressure.skip;
+  if (!binding) {
+    // Stale/unknown: burnPressure drops the binding, but usedPercent is still usable for share math.
+    const derived = bindingFromUsageBuckets(usage, policy, now);
+    if (derived.skip) return derived.skip;
+    binding = derived.binding;
+  }
+  if (!binding) return null;
   const share = expectedShareFor(policy, candidate);
   const floor = policy.safetyFloorPercent ?? 10;
   const committed = typeof committedPercent === "number" && Number.isFinite(committedPercent) ? committedPercent : 0;
-  const effectiveLeft = round1(pressure.binding.percentLeft - committed);
+  const effectiveLeft = round1(binding.percentLeft - committed);
   const remaining = round1(effectiveLeft - share);
   if (remaining < floor) {
     const committedNote = committed > 0 ? ` (${committed}% already committed in this wave)` : "";
     return (
-      `${pressure.binding.bucket} has ${effectiveLeft}% left${committedNote}; ` +
+      `${binding.bucket} has ${effectiveLeft}% left${committedNote}; ` +
       `expected share ${share}% would leave ${remaining}%, under the ${floor}% safety floor`
     );
   }
@@ -538,6 +564,10 @@ export function activeWorkersFromWorkerList(text) {
           );
         }
         expectedTotal = meta.total;
+      } else if (typeof meta.total === "number" && Number.isFinite(meta.total) && meta.total !== expectedTotal) {
+        throw new Error(
+          `worker-list pages disagree on page.total: page 0 has ${expectedTotal}, page ${i} has ${meta.total}`,
+        );
       }
       const last = i === pages.length - 1;
       if (!last) {
@@ -642,16 +672,14 @@ export function documentedLastingBucketId(agent, model) {
 
 /**
  * Binding bucket id for an active/proposed worker.
- * Known models always use their static documented lasting bucket so unconfirmed / stale /
- * 5-hour-only readings share one key with fresh weekly peers (e.g. Opus+Sonnet → `3p-weekly`).
- * Model-less / unrecognised models stay `agent/unknown`; an unrecognised model with a
- * confirmed lasting burn-pressure binding still uses that live id.
+ * Prefer the observed lasting burn-pressure binding when present (live Ultra Gemini pool,
+ * Cursor Plan/`included_total`, …). Fall back to the static documented lasting bucket when
+ * usage is missing, stale, or unconfirmed so peers still share one key (e.g. Opus+Sonnet →
+ * `3p-weekly`). Model-less / unrecognised models stay `agent/unknown`.
  */
 export function bindingBucketIdFor(choice, usageByCandidate = {}, policy = NO_POLICY, now = new Date()) {
   if (!choice?.agent) return null;
   if (!choice.model) return `${choice.agent}/unknown`;
-  const documented = documentedLastingBucketId(choice.agent, choice.model);
-  if (documented) return `${choice.agent}/${documented}`;
   const key = `${choice.agent}/${choice.model}`;
   const usage = usageByCandidate[key];
   if (usage) {
@@ -660,6 +688,8 @@ export function bindingBucketIdFor(choice, usageByCandidate = {}, policy = NO_PO
       return `${choice.agent}/${report.binding.bucketId}`;
     }
   }
+  const documented = documentedLastingBucketId(choice.agent, choice.model);
+  if (documented) return `${choice.agent}/${documented}`;
   return `${choice.agent}/unknown`;
 }
 

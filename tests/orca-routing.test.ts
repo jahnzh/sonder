@@ -899,12 +899,14 @@ test("paginated worker-list receipts refuse broken cursor continuity and repeate
   const wrongCursor = mk([base.result.workers[1]], { limit: 1, total: 3, hasMore: false, nextCursor: null }, "cursor-page-3");
   assert.throws(() => activeWorkersFromWorkerList(JSON.stringify([page1, wrongCursor])), /cursor|continuit/i);
   // Repeated first page: same nextCursor chain would under-count after dedup if continuity were ignored.
+  // Keep page.total consistent (2) so the refusal is about cursor/duplicate continuity, not a total mismatch.
+  const page1two = mk([base.result.workers[0]], { limit: 1, total: 2, hasMore: true, nextCursor: "cursor-page-2" });
   const repeat = mk([base.result.workers[0]], { limit: 1, total: 2, hasMore: true, nextCursor: "cursor-page-2" }, "cursor-page-2");
   const last = mk([base.result.workers[1]], { limit: 1, total: 2, hasMore: false, nextCursor: null }, "cursor-page-2");
-  assert.throws(() => activeWorkersFromWorkerList(JSON.stringify([page1, repeat, last])), /cursor|continuit|repeat|duplicate/i);
+  assert.throws(() => activeWorkersFromWorkerList(JSON.stringify([page1two, repeat, last])), /cursor|continuit|repeat|duplicate/i);
   // Missing cursor annotation on a follow-on page.
   const bare = mk([base.result.workers[1]], { limit: 1, total: 2, hasMore: false, nextCursor: null });
-  assert.throws(() => activeWorkersFromWorkerList(JSON.stringify([page1, bare])), /cursor|continuit/i);
+  assert.throws(() => activeWorkersFromWorkerList(JSON.stringify([page1two, bare])), /cursor|continuit/i);
 });
 
 test("expectedShareSkip accounts for already-committed wave share", () => {
@@ -1160,8 +1162,9 @@ test("learned adjustment is not undone by a later pressure re-sort", async () =>
 test("uncertaintyAlternative reserves the alternative's bucket and expected share", async () => {
   // Suitable standard Claude is unknown; weaker mechanical Flash is confirmed → uncertaintyAlternative.
   // Reserving the primary would leave Flash free; the alt's bucket/share must be held instead.
+  // Claude weekly needs headroom above the default 25% share so an unknown primary is still offerable.
   const u = liveUsage(
-    { geminiWeek: { usedPercent: 50 } },
+    { geminiWeek: { usedPercent: 50 }, claudeWeek: { usedPercent: 40 } },
     {
       "claude/claude-sonnet-5-5": "unknown",
       "antigravity/claude-sonnet-5-5-medium": "exhausted",
@@ -1266,7 +1269,8 @@ test("uncertaintyAlternative branch filters weaker options that fail share or fl
     "cursor/composer-2.5": "exhausted",
   } as const;
   const planOne = (flashUsage: ReturnType<typeof usage>) => {
-    const u = liveUsage({}, baseStatuses);
+    // Unknown Claude still faces expected-share against bucket usedPercent; leave weekly headroom.
+    const u = liveUsage({ claudeWeek: { usedPercent: 40 } }, baseStatuses);
     return withoutKey(() =>
       planWave({
         wave: wave({
@@ -1354,8 +1358,9 @@ test("multi-page worker-list input without page metadata on every page is refuse
 
 test("needs-decision reserves the unconfirmed primary so a later proposal cannot overdraw it", async () => {
   // Primary Claude unknown + Flash confirmed → needs-decision. Cap 1 per bucket: both buckets hold a slot.
+  // Unknown Claude still faces expected-share; leave weekly headroom above the default 25% share.
   const u = liveUsage(
-    {},
+    { claudeWeek: { usedPercent: 40 } },
     {
       "claude/claude-sonnet-5-5": "unknown",
       "antigravity/claude-sonnet-5-5-medium": "exhausted",
@@ -1773,4 +1778,223 @@ test("uncertaintyAlternative prefers a higher capability tier before burn pressu
       reason: row.reason,
     })}`,
   );
+});
+
+// --- Round-6 review findings
+
+test("expectedShareSkip still checks committed share when usage is stale", () => {
+  const p = policy();
+  // 40% left; Opus expects 35%. Alone that leaves 5% under the floor; with 12% already
+  // committed (a prior Sonnet) it leaves -7%. Stale must not bypass either check.
+  const stale = usage("stale", [{ ...B.thirdWeek, usedPercent: 60 }, B.third5h]);
+  assert.match(
+    expectedShareSkip(stale, p, { agent: "antigravity", model: "claude-opus-5-5-high" }, NOW)!,
+    /under the 10% safety floor|expected share/,
+  );
+  assert.match(
+    expectedShareSkip(stale, p, { agent: "antigravity", model: "claude-opus-5-5-high" }, NOW, {
+      committedPercent: 12,
+    })!,
+    /under the 10% safety floor|expected share|already committed/,
+  );
+  // Stale with enough headroom still passes (50% left, Sonnet 12% → 38% >= floor).
+  const roomy = usage("stale", [{ ...B.thirdWeek, usedPercent: 50 }, B.third5h]);
+  assert.equal(
+    expectedShareSkip(roomy, p, { agent: "antigravity", model: "claude-sonnet-5-5-medium" }, NOW),
+    null,
+  );
+});
+
+test("wave share guard refuses a stale Opus after a fresh Sonnet would overdraw the bucket", async () => {
+  // 40% left; Sonnet 12% then Opus 35% → 40-12-35=-7 under the floor. Stale Opus must not slip through.
+  const base = liveUsage(
+    { thirdWeek: { usedPercent: 60 } },
+    {
+      "codex/gpt-6.1-terra": "exhausted",
+      "cursor/auto": "exhausted",
+      "cursor/composer-2.5": "exhausted",
+      "antigravity/gemini-3.8-flash-high": "exhausted",
+      "claude/claude-opus-5-5": "exhausted",
+      "claude/claude-sonnet-5-5": "exhausted",
+    },
+  );
+  const usageByCandidate = {
+    ...base,
+    "antigravity/claude-sonnet-5-5-medium": usage("fresh", [{ ...B.thirdWeek, usedPercent: 60 }, B.third5h]),
+    "antigravity/claude-opus-5-5-high": usage("stale", [{ ...B.thirdWeek, usedPercent: 60 }, B.third5h]),
+  };
+  const p: any = await withoutKey(() =>
+    planWave({
+      wave: wave({
+        concurrency: 3,
+        tasks: [
+          {
+            id: "a",
+            summary: "A",
+            judgment: "standard",
+            judgmentReason: "clear",
+            eligible: ["antigravity/claude-sonnet-5-5-medium"],
+          },
+          {
+            id: "b",
+            summary: "B",
+            judgment: "standard",
+            judgmentReason: "clear",
+            eligible: ["antigravity/claude-opus-5-5-high"],
+          },
+        ],
+      }),
+      candidates: CANDIDATES,
+      usageByAgent: {},
+      usageByCandidate,
+      learningOptions: { learning: false, now: NOW },
+      policy: { ...policy(), maxConcurrentPerBucket: 3, maxConcurrentTotal: 3 },
+      now: NOW,
+    }),
+  );
+  const byId = Object.fromEntries(p.tasks.map((t: { task: string }) => [t.task, t]));
+  assert.equal(named(byId.a.assignment), "antigravity/claude-sonnet-5-5-medium");
+  assert.notEqual(
+    named(byId.b.assignment),
+    "antigravity/claude-opus-5-5-high",
+    `stale Opus must not overdraw after Sonnet: ${JSON.stringify({
+      status: byId.b.status,
+      assignment: named(byId.b.assignment ?? null),
+      reason: byId.b.reason,
+    })}`,
+  );
+});
+
+test("bindingBucketIdFor prefers the observed live binding over the static documented id", () => {
+  const p = policy();
+  // Ultra plan: Argon's live windows are the shared Gemini weekly pool, not gemini-argon-wtu-weekly.
+  const ultra = {
+    "antigravity/gemini-4-argon-high": usage("fresh", [{ ...B.geminiWeek, usedPercent: 20 }, B.gemini5h]),
+    "antigravity/gemini-3.8-flash-high": usage("fresh", [{ ...B.geminiWeek, usedPercent: 20 }, B.gemini5h]),
+    "cursor/auto": usage("fresh", [B.cursorPlan, B.cursorAuto]),
+  };
+  assert.equal(
+    bindingBucketIdFor({ agent: "antigravity", model: "gemini-4-argon-high" }, ultra, p, NOW),
+    "antigravity/gemini-weekly",
+  );
+  assert.equal(
+    bindingBucketIdFor({ agent: "antigravity", model: "gemini-3.8-flash-high" }, ultra, p, NOW),
+    "antigravity/gemini-weekly",
+  );
+  // Cursor auto's tighter live binding is Plan (included_total), not the static included_auto.
+  assert.equal(bindingBucketIdFor({ agent: "cursor", model: "auto" }, ultra, p, NOW), "cursor/included_total");
+  // Missing / stale usage still falls back to the documented lasting id.
+  assert.equal(
+    bindingBucketIdFor({ agent: "antigravity", model: "gemini-4-argon-high" }, {}, p, NOW),
+    "antigravity/gemini-argon-wtu-weekly",
+  );
+  assert.equal(
+    bindingBucketIdFor(
+      { agent: "antigravity", model: "gemini-4-argon-high" },
+      { "antigravity/gemini-4-argon-high": usage("stale", [{ ...B.geminiWeek, usedPercent: 20 }]) },
+      p,
+      NOW,
+    ),
+    "antigravity/gemini-argon-wtu-weekly",
+  );
+});
+
+test("two live Argon workers and a proposed Flash share one Gemini bucket cap", async () => {
+  // Static ids would split Argon (gemini-argon-wtu-weekly) from Flash (gemini-weekly) and bypass the cap.
+  const allowBoth = {
+    ...policy(),
+    allow: [
+      { agent: "antigravity", models: ["gemini-4-argon-high", "gemini-3.8-flash-high"] },
+      { agent: "cursor", models: ["auto", "composer-2.5"] },
+      { agent: "codex", models: ["gpt-6.1-terra"] },
+    ],
+    maxConcurrentPerBucket: 2,
+    maxConcurrentTotal: 5,
+  };
+  const shared = usage("fresh", [{ ...B.geminiWeek, usedPercent: 20 }, B.gemini5h]);
+  const usageByCandidate = {
+    ...liveUsage(
+      {},
+      {
+        "codex/gpt-6.1-terra": "exhausted",
+        "cursor/auto": "exhausted",
+        "cursor/composer-2.5": "exhausted",
+        "antigravity/claude-opus-5-5-high": "exhausted",
+        "antigravity/claude-sonnet-5-5-medium": "exhausted",
+        "claude/claude-opus-5-5": "exhausted",
+        "claude/claude-sonnet-5-5": "exhausted",
+      },
+    ),
+    "antigravity/gemini-4-argon-high": shared,
+    "antigravity/gemini-3.8-flash-high": shared,
+  };
+  const activeWorkers = [
+    { agent: "antigravity", model: "gemini-4-argon-high", dispatchId: "ctx_argon_a" },
+    { agent: "antigravity", model: "gemini-4-argon-high", dispatchId: "ctx_argon_b" },
+  ];
+  const argonKey = bindingBucketIdFor(
+    { agent: "antigravity", model: "gemini-4-argon-high" },
+    usageByCandidate,
+    allowBoth,
+    NOW,
+  );
+  const flashKey = bindingBucketIdFor(
+    { agent: "antigravity", model: "gemini-3.8-flash-high" },
+    usageByCandidate,
+    allowBoth,
+    NOW,
+  );
+  assert.equal(argonKey, "antigravity/gemini-weekly");
+  assert.equal(flashKey, "antigravity/gemini-weekly");
+  const load = countBucketLoad({
+    activeWorkers,
+    usageByCandidate,
+    policy: allowBoth,
+    now: NOW,
+  });
+  assert.equal(load[argonKey].count, 2);
+  assert.equal(effectiveBucketLoad(load, flashKey, "antigravity") < 2, false);
+
+  const p: any = await withoutKey(() =>
+    planWave({
+      wave: wave({
+        concurrency: 5,
+        activeWorkers,
+        tasks: [{ id: "mech", summary: "Mech", judgment: "mechanical", judgmentReason: "docs" }],
+      }),
+      candidates: CANDIDATES,
+      usageByAgent: {},
+      usageByCandidate,
+      learningOptions: { learning: false, now: NOW },
+      policy: allowBoth,
+      now: NOW,
+    }),
+  );
+  const [t] = p.tasks;
+  assert.notEqual(
+    named(t.assignment),
+    "antigravity/gemini-3.8-flash-high",
+    `Flash must respect the shared Gemini cap with two Argon workers: ${JSON.stringify({
+      status: t.status,
+      assignment: named(t.assignment ?? null),
+      reason: t.reason,
+      bucketLoad: p.bucketLoad,
+    })}`,
+  );
+});
+
+test("multi-page worker-list refuses pages that disagree on page.total", () => {
+  const base = JSON.parse(readFileSync(join(repoRoot, "tests", "fixtures", "routing", "worker-list.json"), "utf8"));
+  const mk = (workers: unknown[], page: Record<string, unknown>, cursor?: string | null) => ({
+    ...base,
+    ...(cursor !== undefined ? { cursor } : {}),
+    result: { ...base.result, workers, page },
+  });
+  // Page 0 says total=2; page 1 says total=3 (a worker added between paginated requests).
+  const page1 = mk([base.result.workers[0]], { limit: 1, total: 2, hasMore: true, nextCursor: "cursor-page-2" });
+  const page2 = mk([base.result.workers[1]], { limit: 1, total: 3, hasMore: false, nextCursor: null }, "cursor-page-2");
+  assert.throws(() => activeWorkersFromWorkerList(JSON.stringify([page1, page2])), /total/i);
+  // Matching totals across pages still succeed.
+  const ok2 = mk([base.result.workers[1]], { limit: 1, total: 2, hasMore: false, nextCursor: null }, "cursor-page-2");
+  assert.equal(activeWorkersFromWorkerList(JSON.stringify([page1, ok2])).length, 2);
 });
