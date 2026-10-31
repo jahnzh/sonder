@@ -576,6 +576,38 @@ test("expectedShareFor and expectedShareDetailsFor prioritize learned share over
   );
 });
 
+test("planWave propagates expectedShareSource to task assignment", async () => {
+  const p = policy();
+  const usageByCandidate = {
+    "cursor/auto": usage("fresh", [{ id: "included_total", label: "Plan", usedPercent: 10, resetsAt: inDays(20) }]),
+  };
+  const res: any = await withoutKey(() =>
+    planWave({
+      wave: wave({
+        concurrency: 1,
+        tasks: [
+          {
+            id: "t1",
+            summary: "t1",
+            judgment: "mechanical",
+            judgmentReason: "mech",
+            eligible: ["cursor/auto"],
+          },
+        ],
+      }),
+      candidates: CANDIDATES,
+      usageByAgent: {},
+      usageByCandidate,
+      learningOptions: { learning: false, now: NOW },
+      policy: p,
+      now: NOW,
+    }),
+  );
+  assert.equal(res.tasks[0].status, "proposed");
+  assert.equal(res.tasks[0].assignment.expectedSharePercent, 3);
+  assert.equal(res.tasks[0].assignment.expectedShareSource, "policy");
+});
+
 test("expectedShareSkip refuses when percentLeft minus share would fall under the safety floor", () => {
   const p = policy();
   // 30% left with listed 10% share → 20% remaining >= 10% floor → allowed.

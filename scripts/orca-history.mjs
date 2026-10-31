@@ -724,6 +724,17 @@ export function computeLifetimeBucketCost({
     };
   }
 
+  const accountBefore = readingBefore.observation?.account;
+  const accountAfter = readingAfter.observation?.account;
+  if (accountBefore && accountAfter && accountBefore !== accountAfter) {
+    return {
+      status: "account_mismatch",
+      reason: `before reading account (${accountBefore}) does not match after reading account (${accountAfter})`,
+      valid: false,
+      deltaPercent: null,
+    };
+  }
+
   let bucketId = documentedLastingBucketId(agent, model);
   if (!bucketId) {
     const obs = readingBefore.observation ?? {};
@@ -756,11 +767,11 @@ export function computeLifetimeBucketCost({
     };
   }
 
-  if (
-    windowBefore.resetsAt &&
-    windowAfter.resetsAt &&
-    windowBefore.resetsAt !== windowAfter.resetsAt
-  ) {
+  const isReset =
+    (windowBefore.resetsAt && windowAfter.resetsAt && windowBefore.resetsAt !== windowAfter.resetsAt) ||
+    windowAfter.usedPercent < windowBefore.usedPercent - 0.5;
+
+  if (isReset) {
     return {
       status: "reset",
       bucketId,

@@ -906,8 +906,8 @@ test("computeLifetimeBucketCost calculates bucket delta from UsageStore observat
     const cost = computeLifetimeBucketCost({
       agent: "antigravity",
       model: "claude-sonnet-5-5-medium",
-      dispatchedAt: "2026-10-31T19:25:00.000Z",
-      completedAt: "2026-10-31T19:35:00.000Z",
+      dispatchedAt: "2026-10-31T19:21:00.000Z",
+      completedAt: "2026-10-31T19:39:00.000Z",
       usageStore: store,
     });
     assert.equal(cost.status, "recorded");
@@ -921,14 +921,24 @@ test("computeLifetimeBucketCost calculates bucket delta from UsageStore observat
     const openCost = computeLifetimeBucketCost({
       agent: "opencode",
       model: "nris/Qwen3.8-27B",
-      dispatchedAt: "2026-10-31T19:25:00.000Z",
-      completedAt: "2026-10-31T19:35:00.000Z",
+      dispatchedAt: "2026-10-31T19:21:00.000Z",
+      completedAt: "2026-10-31T19:39:00.000Z",
       usageStore: store,
     });
     assert.equal(openCost.status, "recorded");
     assert.equal(openCost.bucketId, "unlimited");
     assert.equal(openCost.deltaPercent, 0);
     assert.equal(openCost.valid, true);
+
+    // Distance > 120s returns unavailable
+    const staleCost = computeLifetimeBucketCost({
+      agent: "antigravity",
+      model: "claude-sonnet-5-5-medium",
+      dispatchedAt: "2026-10-31T19:25:00.000Z",
+      completedAt: "2026-10-31T19:35:00.000Z",
+      usageStore: store,
+    });
+    assert.equal(staleCost.status, "unavailable");
 
     store.close();
   } finally {
@@ -949,19 +959,19 @@ test("computeLifetimeBucketCost marks delta invalid when window resets mid-run",
     };
     const afterObs = {
       provider: "antigravity",
-      observedAt: "2026-10-31T19:40:00.000Z",
+      observedAt: "2026-10-31T19:22:00.000Z",
       windows: [
         { id: "3p-weekly", usedPercent: 5.0, resetsAt: "2026-11-07T19:30:00.000Z" },
       ],
     };
     store.recordAttempt({ provider: "antigravity", origin: "poll", attemptedAt: new Date("2026-10-31T19:20:00.000Z"), observation: beforeObs });
-    store.recordAttempt({ provider: "antigravity", origin: "poll", attemptedAt: new Date("2026-10-31T19:40:00.000Z"), observation: afterObs });
+    store.recordAttempt({ provider: "antigravity", origin: "poll", attemptedAt: new Date("2026-10-31T19:22:00.000Z"), observation: afterObs });
 
     const cost = computeLifetimeBucketCost({
       agent: "antigravity",
       model: "claude-opus-5-5-high",
-      dispatchedAt: "2026-10-31T19:25:00.000Z",
-      completedAt: "2026-10-31T19:35:00.000Z",
+      dispatchedAt: "2026-10-31T19:20:30.000Z",
+      completedAt: "2026-10-31T19:21:30.000Z",
       usageStore: store,
     });
     assert.equal(cost.status, "reset");
@@ -969,6 +979,26 @@ test("computeLifetimeBucketCost marks delta invalid when window resets mid-run",
     assert.equal(cost.deltaPercent, null);
     assert.equal(cost.valid, false);
     assert.match(cost.note, /reset between the readings/);
+
+    // Percentage drop without reset timestamp change also flags reset
+    const dropAfterObs = {
+      provider: "antigravity",
+      observedAt: "2026-10-31T19:22:00.000Z",
+      windows: [
+        { id: "3p-weekly", usedPercent: 10.0, resetsAt: "2026-10-31T19:30:00.000Z" },
+      ],
+    };
+    store.recordAttempt({ provider: "antigravity", origin: "poll", attemptedAt: new Date("2026-10-31T19:22:00.000Z"), observation: dropAfterObs });
+    const dropCost = computeLifetimeBucketCost({
+      agent: "antigravity",
+      model: "claude-opus-5-5-high",
+      dispatchedAt: "2026-10-31T19:20:30.000Z",
+      completedAt: "2026-10-31T19:21:30.000Z",
+      usageStore: store,
+    });
+    assert.equal(dropCost.status, "reset");
+    assert.equal(dropCost.valid, false);
+    assert.equal(dropCost.deltaPercent, null);
 
     store.close();
   } finally {

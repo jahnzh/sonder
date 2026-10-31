@@ -1149,6 +1149,52 @@ test("buildAdjustments aggregates meanBucketDeltaPercent and bucketDeltaCount", 
     const inspected = box.cli(["inspect", "--kind", "feature", "--difficulty", "standard"]).json;
     assert.equal(inspected.adjustments[0].meanBucketDeltaPercent, 14.0);
     assert.equal(inspected.adjustments[0].bucketDeltaCount, 3);
+
+    // Verify decay-weighting when records have different ages
+    const boxDecay = sandbox();
+    try {
+      // 3 records to meet MIN_COMPARABLE_COUNT
+      // 1 fresh (weight 1.0, delta 20%)
+      putRecord(boxDecay.history, {
+        id: "fresh_1",
+        agent: "claude",
+        model: "claude-sonnet-5-5",
+        effort: "high",
+        completedAt: NOW,
+        bucketCost: { status: "recorded", bucketId: "3p-weekly", deltaPercent: 20.0, valid: true },
+      });
+      // 1 30 days old (weight 0.5, delta 10%)
+      const thirtyDaysAgo = new Date(Date.parse(NOW) - 30 * 24 * 3600 * 1000).toISOString();
+      putRecord(boxDecay.history, {
+        id: "old_1",
+        agent: "claude",
+        model: "claude-sonnet-5-5",
+        effort: "high",
+        completedAt: thirtyDaysAgo,
+        bucketCost: { status: "recorded", bucketId: "3p-weekly", deltaPercent: 10.0, valid: true },
+      });
+      // 1 fresh (weight 1.0, delta 20%)
+      putRecord(boxDecay.history, {
+        id: "fresh_2",
+        agent: "claude",
+        model: "claude-sonnet-5-5",
+        effort: "high",
+        completedAt: NOW,
+        bucketCost: { status: "recorded", bucketId: "3p-weekly", deltaPercent: 20.0, valid: true },
+      });
+      const decayLearning = loadLearningContext({
+        historyDir: boxDecay.history,
+        learnDir: boxDecay.learn,
+        kind: "feature",
+        difficulty: "standard",
+        now: NOW,
+        agentVersions: { claude: AGENT_VERSION },
+      });
+      // Weighted sum: 20*1 + 10*0.5 + 20*1 = 45; weight sum: 1 + 0.5 + 1 = 2.5; 45 / 2.5 = 18.0
+      assert.equal(decayLearning.adjustments[0].meanBucketDeltaPercent, 18.0);
+    } finally {
+      boxDecay.cleanup();
+    }
   } finally {
     box.cleanup();
   }

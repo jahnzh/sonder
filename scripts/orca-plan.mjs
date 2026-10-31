@@ -872,6 +872,7 @@ export async function planWave({
       pressure: pick.pressure ?? pickBurn.pressure,
       binding: pick.binding ?? pickBurn.binding,
       expectedSharePercent: pick.expectedSharePercent,
+      expectedShareSource: pick.expectedShareSource ?? "default",
       reason:
         !reassigned && result.recommendation?.reason && resolvedPolicy?.allow
           ? result.recommendation.reason

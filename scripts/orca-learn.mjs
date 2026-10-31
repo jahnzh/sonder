@@ -417,7 +417,8 @@ export function buildAdjustments(evidence, filter = {}) {
         rawCount: 0,
         attributableCostSum: 0,
         attributableCostCount: 0,
-        bucketDeltaSum: 0,
+        weightedBucketDeltaSum: 0,
+        weightedBucketDeltaCount: 0,
         bucketDeltaCount: 0,
         elapsedSum: 0,
         elapsedCount: 0,
@@ -446,7 +447,8 @@ export function buildAdjustments(evidence, filter = {}) {
       bucket.attributableCostCount += 1;
     }
     if (typeof row.bucketDeltaPercent === "number" && Number.isFinite(row.bucketDeltaPercent)) {
-      bucket.bucketDeltaSum += row.bucketDeltaPercent;
+      bucket.weightedBucketDeltaSum += (row.bucketDeltaPercent * row.weight);
+      bucket.weightedBucketDeltaCount += row.weight;
       bucket.bucketDeltaCount += 1;
     }
     if (typeof row.elapsedMs === "number" && Number.isFinite(row.elapsedMs)) {
@@ -467,7 +469,9 @@ export function buildAdjustments(evidence, filter = {}) {
       meanAttributableCost:
         bucket.attributableCostCount > 0 ? bucket.attributableCostSum / bucket.attributableCostCount : null,
       meanBucketDeltaPercent:
-        bucket.bucketDeltaCount > 0 ? Math.round((bucket.bucketDeltaSum / bucket.bucketDeltaCount) * 10) / 10 : null,
+        bucket.weightedBucketDeltaCount > 0
+          ? Math.round((bucket.weightedBucketDeltaSum / bucket.weightedBucketDeltaCount) * 10) / 10
+          : null,
       bucketDeltaCount: bucket.bucketDeltaCount,
       meanElapsedMs: bucket.elapsedCount > 0 ? bucket.elapsedSum / bucket.elapsedCount : null,
       sufficient,
@@ -597,34 +601,7 @@ function comparePeerSignals(a, b, sameTier) {
   return sameTier.indexOf(a.candidate) - sameTier.indexOf(b.candidate);
 }
 
-/**
- * Returns the learned bucket share percent for a candidate from learning adjustments.
- * @param {ReturnType<typeof loadLearningContext> | { adjustments?: any[] }} learning
- * @param {{ agent: string, model: string, effort?: string | null }} candidate
- * @param {{ kind?: string | null, difficulty?: string | null }} [filter]
- * @returns {number | null}
- */
-export function learnedBucketShareFrom(learning, candidate, { kind = null, difficulty = null } = {}) {
-  if (!learning?.adjustments || !Array.isArray(learning.adjustments)) return null;
-  const matches = learning.adjustments.filter(
-    (adj) =>
-      adj.agent === candidate.agent &&
-      adj.model === candidate.model &&
-      (candidate.effort === undefined || candidate.effort === null || adj.effort === candidate.effort || adj.effort === null) &&
-      typeof adj.meanBucketDeltaPercent === "number" &&
-      adj.bucketDeltaCount > 0,
-  );
-  if (!matches.length) return null;
-  if (kind || difficulty) {
-    const contextual = matches.find(
-      (adj) => (!kind || adj.kind === kind) && (!difficulty || adj.difficulty === difficulty),
-    );
-    if (contextual) return contextual.meanBucketDeltaPercent;
-  }
-  const totalDelta = matches.reduce((sum, adj) => sum + adj.meanBucketDeltaPercent * adj.bucketDeltaCount, 0);
-  const totalCount = matches.reduce((sum, adj) => sum + adj.bucketDeltaCount, 0);
-  return totalCount > 0 ? Math.round((totalDelta / totalCount) * 10) / 10 : matches[0].meanBucketDeltaPercent;
-}
+export { learnedBucketShareFrom } from "./orca-routing.mjs";
 
 export function applyLearning({ usable, kind, difficulty, learning, random = Math.random }) {
   const baselineFirst = usable[0] ?? null;
