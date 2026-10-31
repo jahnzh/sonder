@@ -72,12 +72,16 @@ fi
 
 [ ${#docs[@]} -gt 0 ] || docs=(AGENTS.md CLAUDE.md)
 
-root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+root=$script_dir/..
+if common_git=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && [ -n "$common_git" ]; then
+  root=$(cd "$common_git/.." && pwd -P)
+fi
 workspaces=${ORCA_SPAWN_WORKSPACES:-/home/jahn/orca/workspaces/audiobook_streamer}
 worktree=$workspaces/$name
 
 if [ "$agent" = "opencode" ]; then
-  if ! node "$root/scripts/opencode-config.mjs" verify "$model"; then
+  if ! node "$script_dir/opencode-config.mjs" verify "$model"; then
     exit 1
   fi
   echo "OpenCode default model verified: $model; worker-start uses that default."

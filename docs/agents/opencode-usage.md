@@ -7,3 +7,7 @@ The only supported candidate is `nris/Qwen3.8-27B`. A successful probe before ex
 Access expires at `2026-11-07T00:00:00Z` by default. Set `ORCA_OPENCODE_EXPIRES_AT` to an ISO timestamp to change the deadline. At or after that time the reading is `unavailable` with reason `access expired`, even if an earlier successful reading is still stored. Invalid expiry, missing or invalid configuration, a different default model, an unsuccessful gateway response, or a network failure also report `unavailable` with a concise reason. A failed OpenCode probe supersedes any previous success immediately; a successful reading becomes stale after 30 minutes or at expiry, whichever comes first.
 
 The collector polls this reader alongside the other providers. The recommender and planner skip OpenCode on an unavailable reading and continue with other candidates. `scripts/orca-spawn.sh` checks the configured default model and passes no model or effort flag to Orca for OpenCode; a successful receipt cannot confirm the effective model. Model discovery lists built-in models as unusable and does not offer them as candidates. See `docs/agents/models.md` and `docs/agents/usage-collector.md`.
+
+## Verification (2026-10-31)
+
+Live launch verification dispatch `ctx_4357a7dfe6c6` (task `task_75febcb7a839`) launched via `scripts/orca-spawn.sh --agent opencode --model nris/Qwen3.8-27B`, executed read-only verification in worktree `verify-opencode2`, and delivered `worker_done` confirming Qwen 3.8 27B FP8 on Node v24.22.1.

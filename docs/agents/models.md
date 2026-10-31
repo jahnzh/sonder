@@ -13,7 +13,7 @@ Verified model IDs and effort settings for spawning subagents.
 | codex       | `gpt-6.1-terra`       | `max`                   | standard        | Larger client changes; went silent twice (see below)                       | 2026-10-30    |
 | antigravity | `claude-opus-5-5-high` | none                   | reasoning-heavy | Reasoning-heavy work through Antigravity's Claude and GPT models bucket, separate from Claude Code | 2026-10-31    |
 | antigravity | `claude-sonnet-5-5-medium` | none               | standard        | Analysis, diagnosis and scripting with a clear spec, through Antigravity's Claude and GPT models bucket | 2026-10-31    |
-| opencode | `nris/Qwen3.8-27B` | none | mechanical | Small mechanical changes with a clear spec through the owner's NRIS endpoint (one small 27B model; free; this week only) | 2026-10-31 |
+| opencode    | `nris/Qwen3.8-27B`    | none                    | mechanical      | Small mechanical changes with a clear spec through the owner's NRIS endpoint (one small 27B model; free; this week only) | 2026-10-31    |
 
 Cursor's full list is available with `agent --list-models`.
 
