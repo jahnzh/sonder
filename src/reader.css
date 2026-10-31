@@ -458,8 +458,8 @@
   right: 0;
   bottom: 0;
   display: grid;
-  /* Equal side tracks keep the transport on the bar centre even when chapters
-     (one icon) and extras (sleep + speed) have different widths. */
+  /* Equal side tracks keep the transport on the bar centre even when the leading
+     group (Chapters + Back to narration) and extras (sleep + speed) have different widths. */
   grid-template-columns: 1fr auto 1fr;
   grid-template-areas:
     "line line line"
@@ -902,16 +902,18 @@
     height: 88px;
     padding: 0 24px;
     column-gap: 24px;
-    grid-template-columns: 1fr minmax(0, 560px) 1fr;
+    /* Leading (Back to narration; Chapters is the sidebar) sits in the control
+       row immediately before the transport, not in the title/info cell. */
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 560px) minmax(0, 1fr);
     grid-template-areas:
-      "info transport extras"
-      "info scrub extras";
+      "info leading transport extras"
+      "info . scrub extras";
     align-content: center;
   }
   .reader-player[data-controls="true"] {
     grid-template-areas:
-      "info transport extras"
-      "info scrub extras";
+      "info leading transport extras"
+      "info . scrub extras";
   }
   .reader-player .reader-player-info,
   .reader-player[data-controls="true"] .reader-player-info {
@@ -929,8 +931,8 @@
     content: none;
   }
   .reader-player-leading {
-    grid-area: info;
-    justify-self: end;
+    grid-area: leading;
+    justify-self: center;
     align-self: center;
     margin: 0;
   }

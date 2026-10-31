@@ -6,6 +6,8 @@ import {skipOnMobile} from "./mobile";
 // Geometry regression checks for issues #1 (seek/heading alignment) and #2 (reader-first Now Playing).
 const sizes=[[360,740],[390,844],[430,932],[1280,800]] as const;
 const readerCentreSizes=[[360,740],[390,844],[412,915]] as const;
+// Desktop (#122): Back to narration stays in the control row at these widths.
+const readerDesktopSizes=[[900,800],[1100,800],[1280,800]] as const;
 const centre=async(l:Locator)=>{const b=(await l.boundingBox())!;return {x:b.x+b.width/2,y:b.y+b.height/2,box:b};};
 async function importBook(request:APIRequestContext,title:string,withEbook:boolean){
  const response=await request.post("/api/import",{multipart:{title,author:"Layout QA",file:{name:"Narration.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
@@ -217,6 +219,48 @@ async function assertReaderTransportCentred(dialog:Locator,player:Locator){
  expect(chaptersBox.x+chaptersBox.width).toBeLessThanOrEqual(backBox.x+1);
  expect(backBox.x+backBox.width).toBeLessThanOrEqual(rewindBox.x+1);
 }
+/** Desktop: Back to narration sits in the control row before Back 30; Chapters is the sidebar. */
+async function assertDesktopBackNarration(dialog:Locator,player:Locator){
+ await expect(dialog.locator(".player-undo-jump")).toHaveCount(0);
+ const order=await player.evaluate((bar)=>{
+  const names=["Chapters","Back to narration","Back 30 seconds"];
+  const buttons=[...bar.querySelectorAll("button")].filter((button)=>names.includes(button.getAttribute("aria-label")||""));
+  const visible=buttons.filter((button)=>getComputedStyle(button).display!=="none");
+  return {
+   dom:buttons.map((button)=>button.getAttribute("aria-label")),
+   visual:visible
+    .slice()
+    .sort((a,b)=>a.getBoundingClientRect().left-b.getBoundingClientRect().left)
+    .map((button)=>button.getAttribute("aria-label")),
+  };
+ });
+ expect(order.dom).toEqual(["Chapters","Back to narration","Back 30 seconds"]);
+ expect(order.visual).toEqual(["Back to narration","Back 30 seconds"]);
+ const back=player.getByRole("button",{name:"Back to narration",exact:true});
+ const rewind=player.getByRole("button",{name:"Back 30 seconds",exact:true});
+ const play=player.getByRole("button",{name:/^(Play|Pause) narration$/});
+ const info=player.locator(".reader-player-info");
+ const backBox=(await back.boundingBox())!;
+ const rewindBox=(await rewind.boundingBox())!;
+ const playBox=(await play.boundingBox())!;
+ const infoBox=(await info.boundingBox())!;
+ expect(backBox.width).toBeGreaterThanOrEqual(44);
+ expect(backBox.height).toBeGreaterThanOrEqual(44);
+ expect(backBox.x+backBox.width).toBeLessThanOrEqual(rewindBox.x+1);
+ // Same control row as the transport (not the title/info cell).
+ expect(Math.abs((backBox.y+backBox.height/2)-(playBox.y+playBox.height/2))).toBeLessThanOrEqual(2);
+ expect(infoBox.height).toBeGreaterThan(0);
+ expect(infoBox.x+infoBox.width).toBeLessThanOrEqual(backBox.x+1);
+ const playVsMain=await dialog.evaluate(()=>{
+  const play=document.querySelector<HTMLElement>(".reader-play");
+  const main=document.querySelector<HTMLElement>(".now-playing-main");
+  if(!play||!main)return null;
+  const playBox=play.getBoundingClientRect(),mainBox=main.getBoundingClientRect();
+  return {x:playBox.left+playBox.width/2-(mainBox.left+mainBox.width/2),y:playBox.top+playBox.height/2-(mainBox.top+mainBox.height/2)};
+ });
+ expect(playVsMain).not.toBeNull();
+ return playVsMain!;
+}
 async function setReadingMode(page:Page,dialog:Locator,mode:"Page"|"Lyrics"|"Word"){
  const room=dialog.locator(".inline-reader");
  if(await room.locator(".reader-topbar").isHidden()){
@@ -276,6 +320,38 @@ for(const size of readerCentreSizes){
    }
   });
  }
+}
+for(const size of readerDesktopSizes){
+ test(`reader Back to narration stays in the desktop control row at ${size[0]}px`,async({page,browserName,request})=>{
+  skipOnMobile(true,"desktop layout (min-width: 900px) is not reachable on a phone profile");
+  const {book,ebookId}=await installLayoutAlignment(request,"Layout reader");
+  const map=await(await request.get(`/api/alignments?ebookId=${ebookId}`)).json();
+  const job=map.jobs[0];
+  const detail=await(await request.get(`/api/alignments/${job.id}/map`)).json();
+  const interval=detail.intervals.find((entry:any)=>entry.section===1&&entry.start>104)||detail.intervals[0];
+  expect((await request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[0].id,position:interval.start+1,duration:book.tracks[0].duration,updatedAt:Date.now()}})).ok()).toBe(true);
+  const dialog=await open(page,browserName,"Layout reader",size);
+  const player=dialog.getByRole("region",{name:"Player",exact:true});
+  await expect(player).toBeVisible();
+  await expect(page.getByLabel("Contents sidebar")).toBeVisible();
+  const back=player.getByRole("button",{name:"Back to narration",exact:true});
+  await expect(back).toBeVisible();
+  await expect(back).toBeDisabled();
+  const disabledPlay=await assertDesktopBackNarration(dialog,player);
+  const pageBox=(await dialog.locator(".inline-reader .reader-viewport").boundingBox())!;
+  await page.mouse.click(pageBox.x+pageBox.width*0.9,pageBox.y+pageBox.height/2);
+  await expect(back).toBeEnabled();
+  const enabledPlay=await assertDesktopBackNarration(dialog,player);
+  // Transport must not move when the control flips between disabled and enabled.
+  expect(Math.abs(enabledPlay.x-disabledPlay.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs(enabledPlay.y-disabledPlay.y)).toBeLessThanOrEqual(1);
+  for(const mode of ["Lyrics","Word"] as const){
+   await setReadingMode(page,dialog,mode);
+   await expect(back).toBeEnabled();
+   await assertDesktopBackNarration(dialog,player);
+   await setReadingMode(page,dialog,"Page");
+  }
+ });
 }
 
  test("Now Playing keeps keyboard focus inside the open dialog",async({page,browserName})=>{
