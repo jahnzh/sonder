@@ -1,0 +1,14 @@
+{
+  "baseName": "lisa",
+  "provider": "ssh-host",
+  "host": "audiobooks.amatox.in",
+  "sshPort": 2269,
+  "sshUsername": "jahn",
+  "identityFile": "/home/jahn/homelab/.keys/id_ed25519",
+  "identitiesOnly": true,
+  "projectRoot": "/home/jahn/projects/sonder",
+  "repoUrl": "git@github.com:jahnzh/sonder.git",
+  "repoRef": "main",
+  "agentCli": "agy",
+  "agentModel": "gemini-3.8-flash-medium"
+}
