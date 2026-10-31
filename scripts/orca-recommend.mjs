@@ -828,6 +828,7 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
     baselineRecommendation: baselineRecommendation
       ? { agent: baselineRecommendation.agent, model: baselineRecommendation.model, effort: baselineRecommendation.effort }
       : null,
+    adjustments: learningContext?.adjustments ?? [],
     applied: learned.applied,
     demoted: learned.demoted ?? [],
     uncertain: learned.uncertain,

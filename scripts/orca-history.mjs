@@ -553,8 +553,8 @@ function capture(store, options, env, now) {
         if (cost && cost.status !== "unavailable") {
           record.usage.bucketCost = cost;
         }
-      } catch {
-        // Non-blocking in capture
+      } catch (err) {
+        console.warn(`history: failed to compute lifetime bucket cost for ${id}: ${err?.message ?? err}`);
       } finally {
         if (usageStore) usageStore.close();
       }

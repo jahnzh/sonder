@@ -486,7 +486,8 @@ export function buildAdjustments(evidence, filter = {}) {
     delete entry.outcomes;
     delete entry.attributableCostSum;
     delete entry.attributableCostCount;
-    delete entry.bucketDeltaSum;
+    delete entry.weightedBucketDeltaSum;
+    delete entry.weightedBucketDeltaCount;
     delete entry.elapsedSum;
     delete entry.elapsedCount;
     if (sufficient) adjustments.push(entry);
