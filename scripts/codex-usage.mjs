@@ -10,7 +10,8 @@ const KILL_GRACE_MS = 2_000;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const CLIENT_INFO = { name: "sonder_usage", title: "Sonder usage reader", version: "1.0.0" };
 
-// Codex's own allowance. The account's other buckets are recorded but not interpreted: none has been observed.
+// Main Codex allowance. Agent-level assessCodexUsage uses only this limit id; assessCandidateUsage
+// may resolve another limit when a bucket declares limitName / normalModelSlug.
 const CODEX_LIMIT_ID = "codex";
 // A caution level, chosen by hand: a window at or under this share left is reported as low.
 export const LOW_REMAINING_PERCENT = 10;
@@ -396,8 +397,9 @@ function windowsForLimit(observation, limitId) {
 }
 
 /**
- * Per-candidate Codex assessment. Windows are filtered to the limit id that governs the model.
- * Unplaceable models stay unknown when other limit ids exist beside the main codex bucket.
+ * Per-candidate Codex assessment. Resolves the model's limit id, then applies the worst-window
+ * rule to ONLY that bucket's windows (never re-filters through the main `codex` limit).
+ * Unplaceable models stay unknown when other limit ids exist; never fail open to fresh.
  */
 export function assessCandidateUsage(observation, candidate = {}, now = new Date()) {
   if (
@@ -422,34 +424,62 @@ export function assessCandidateUsage(observation, candidate = {}, now = new Date
     };
   }
   const windows = windowsForLimit(observation, limitId);
-  if (!windows.length && ["unavailable", "unknown", "stale"].includes(observation?.status)) {
-    return { ...assessCodexUsage(observation, now), buckets: [] };
+  if (!windows.length) {
+    if (["unavailable", "unknown", "stale"].includes(observation?.status)) {
+      return { ...assessCodexUsage(observation, now), buckets: [] };
+    }
+    return {
+      status: "unknown",
+      reason: "unrecognised model or no matching allowance",
+      capacityConfirmed: false,
+      resetsAt: null,
+      staleAfter: null,
+      freshness: "unknown",
+      buckets: [],
+    };
   }
+
+  const freshness = assessFreshness(observation, now);
+  const buckets = windows.map((window) => ({
+    id: window.id ?? window.limitId ?? window.label,
+    label: window.label ?? window.id ?? "Codex",
+    usedPercent: window.usedPercent ?? null,
+    resetsAt: window.resetsAt ?? null,
+  }));
+  const withBuckets = (assessment) => ({ ...assessment, buckets });
+  const verdict = (status, reason, resetsAt = earliestReset(windows)) =>
+    withBuckets(assessmentVerdict(freshness, status, reason, resetsAt));
+
+  if (freshness.state === "unavailable") {
+    return verdict("unavailable", observation?.detail ?? freshness.reasons[0], null);
+  }
+  if (freshness.state === "unknown") {
+    return verdict("unknown", observation?.detail ?? freshness.reasons[0], null);
+  }
+  if (freshness.state === "stale") {
+    return verdict(
+      "stale",
+      `${freshness.reasons.join(", ")}; last read ${observation.observedAt}: ${describeWindows(windows)}`,
+    );
+  }
+
   const limitExhausted =
     windows.some((window) => window.exhausted || window.remainingPercent <= 0) ||
     (limitId === CODEX_LIMIT_ID &&
       observation?.status === "exhausted" &&
       (Boolean(observation?.limitReached) ||
         (observation?.exhaustedWindows ?? []).some((id) => String(id).startsWith(`${CODEX_LIMIT_ID}-`))));
-  const scoped = {
-    ...(observation ?? {}),
-    windows,
-    status: limitExhausted
-      ? "exhausted"
-      : observation?.status === "exhausted"
-        ? "available"
-        : observation?.status,
-  };
-  const assessment = assessCodexUsage(scoped, now);
-  return {
-    ...assessment,
-    buckets: windows.map((window) => ({
-      id: window.id ?? window.limitId ?? window.label,
-      label: window.label ?? window.id ?? "Codex",
-      usedPercent: window.usedPercent ?? null,
-      resetsAt: window.resetsAt ?? null,
-    })),
-  };
+
+  if (limitExhausted) {
+    const blocking = windows.filter((window) => window.exhausted || window.remainingPercent <= 0);
+    const shown = blocking.length ? blocking : windows;
+    return verdict("exhausted", describeWindows(shown), earliestReset(blocking));
+  }
+
+  const low = windows.filter((window) => window.remainingPercent <= LOW_REMAINING_PERCENT);
+  return low.length
+    ? verdict("low", describeWindows(low), earliestReset(low))
+    : verdict("fresh", describeWindows(windows));
 }
 
 const OPTION_KEYS = {

@@ -191,9 +191,9 @@ test("codex assessCandidateUsage applies the one bucket to every model", () => {
   );
 });
 
-test("codex second limit id is model-specific; unmapped models stay unknown (fabricated)", () => {
-  // Fabricated shape: not a live reading. A second limit declares normalModelSlug.
-  const observation = {
+/** Fabricated second Codex limit id (not a live reading). Main `codex` stays fresh. */
+function fabricatedCodexSecondLimit({ specialUsedPercent, specialRemainingPercent, specialExhausted }) {
+  return {
     provider: "codex",
     status: "available",
     observedAt: "2026-10-31T12:00:00.000Z",
@@ -211,13 +211,13 @@ test("codex second limit id is model-specific; unmapped models stay unknown (fab
         limitId: "special-research",
         id: "special-research-5h",
         label: "Special research 5h",
-        usedPercent: 100,
-        remainingPercent: 0,
-        exhausted: true,
+        usedPercent: specialUsedPercent,
+        remainingPercent: specialRemainingPercent,
+        exhausted: specialExhausted,
         resetsAt: "2026-11-01T00:00:00.000Z",
       },
     ],
-    exhaustedWindows: ["special-research-5h"],
+    exhaustedWindows: specialExhausted ? ["special-research-5h"] : [],
     raw: {
       rateLimitsByLimitId: {
         codex: { limitId: "codex", limitName: null, normalModelSlug: null },
@@ -229,14 +229,83 @@ test("codex second limit id is model-specific; unmapped models stay unknown (fab
       },
     },
   };
+}
+
+test("codex fabricated second limit id low: candidate is low with reason; main bucket stays fresh", () => {
+  const observation = fabricatedCodexSecondLimit({
+    specialUsedPercent: 95,
+    specialRemainingPercent: 5,
+    specialExhausted: false,
+  });
   const main = assessCodexCandidate(observation, { model: "gpt-6.1-terra" }, NOW);
   const special = assessCodexCandidate(observation, { model: "research-preview" }, NOW);
-  const unknown = assessCodexCandidate(observation, { model: "mystery-slug" }, NOW);
   assert.equal(main.status, "fresh");
+  assert.match(main.reason, /5h limit/);
   assert.ok(main.buckets.every((b) => String(b.id).startsWith("codex")));
-  assert.equal(special.status, "exhausted");
+  assert.equal(special.status, "low");
+  assert.equal(special.capacityConfirmed, true);
+  assert.match(special.reason, /Special research 5h/);
+  assert.match(special.reason, /95% used/);
+  assert.match(special.reason, /2026-11-01T00:00:00\.000Z/);
+  assert.equal(special.resetsAt, "2026-11-01T00:00:00.000Z");
   assert.ok(special.buckets.some((b) => b.id === "special-research-5h"));
+  assert.ok(!special.buckets.some((b) => String(b.id).startsWith("codex")));
+});
+
+test("codex fabricated second limit id exhausted: reason and resetsAt come from that bucket", () => {
+  const observation = fabricatedCodexSecondLimit({
+    specialUsedPercent: 100,
+    specialRemainingPercent: 0,
+    specialExhausted: true,
+  });
+  const main = assessCodexCandidate(observation, { model: "gpt-6.1-terra" }, NOW);
+  const special = assessCodexCandidate(observation, { model: "research-preview" }, NOW);
+  assert.equal(main.status, "fresh");
+  assert.equal(special.status, "exhausted");
+  assert.equal(special.capacityConfirmed, false);
+  assert.match(special.reason, /Special research 5h/);
+  assert.match(special.reason, /100% used/);
+  assert.match(special.reason, /2026-11-01T00:00:00\.000Z/);
+  assert.equal(special.resetsAt, "2026-11-01T00:00:00.000Z");
+  assert.ok(special.buckets.some((b) => b.id === "special-research-5h"));
+});
+
+test("codex candidate that cannot be placed with extra limit ids is unknown, never fresh", () => {
+  const observation = fabricatedCodexSecondLimit({
+    specialUsedPercent: 100,
+    specialRemainingPercent: 0,
+    specialExhausted: true,
+  });
+  const unknown = assessCodexCandidate(observation, { model: "mystery-slug" }, NOW);
+  const omitted = assessCodexCandidate(observation, {}, NOW);
   assert.equal(unknown.status, "unknown");
+  assert.equal(unknown.capacityConfirmed, false);
+  assert.notEqual(unknown.status, "fresh");
+  assert.equal(omitted.status, "unknown");
+  assert.equal(omitted.capacityConfirmed, false);
+});
+
+test("fail-open audit: other providers return unknown when model/bucket resolution fails", () => {
+  // antigravity: applicableWindows returns null → unknown (scripts/antigravity-usage.mjs ~576)
+  const agy = assessAntigravityCandidate(AGY, { model: "not-a-real-model" }, NOW);
+  assert.equal(agy.status, "unknown");
+  assert.equal(agy.capacityConfirmed, false);
+  assert.match(agy.reason, /unrecognised model or no matching allowance/);
+
+  // cursor: evaluatedModel.bucket === "unknown" forced to unknown (scripts/cursor-usage.mjs ~1629)
+  const cursor = assessCursorCandidate(CURSOR, { model: "???" }, NOW);
+  assert.equal(cursor.status, "unknown");
+  assert.equal(cursor.capacityConfirmed, false);
+
+  // claude: candidateModelFamily null → unknown before shared-window fallback (scripts/claude-usage.mjs ~490)
+  const claude = assessClaudeCandidate(
+    { status: "available", windows: [], exhaustedWindows: [], observedAt: NOW.toISOString() },
+    { model: "mystery" },
+    NOW,
+  );
+  assert.equal(claude.status, "unknown");
+  assert.equal(claude.capacityConfirmed, false);
+  assert.match(claude.reason, /unrecognised model or no matching allowance/);
 });
 
 test("claude Opus scoped exhaustion leaves Sonnet fresh (fabricated)", () => {
