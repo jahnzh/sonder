@@ -11,6 +11,8 @@ Verified model IDs and effort settings for spawning subagents.
 | antigravity | `gemini-3.8-flash-high` | none                  | mechanical      | Small mechanical changes with a clear spec (#80 font redraw)               | 2026-10-30    |
 | cursor      | `auto`                | none                    | standard        | Test-infrastructure and review work (#34, #36/#78, reviews of #77 and #25) | 2026-10-30    |
 | codex       | `gpt-6.1-terra`       | `max`                   | standard        | Larger client changes; went silent twice (see below)                       | 2026-10-30    |
+| antigravity | `claude-opus-5-5-high` | none                   | reasoning-heavy | Reasoning-heavy work through Antigravity's Claude and GPT models bucket, separate from Claude Code | 2026-10-31    |
+| antigravity | `claude-sonnet-5-5-medium` | none               | standard        | Analysis, diagnosis and scripting with a clear spec, through Antigravity's Claude and GPT models bucket | 2026-10-31    |
 
 Cursor's full list is available with `agent --list-models`.
 
@@ -36,6 +38,7 @@ Each documented model draws from a provider-specific quota bucket. The recommend
 | --- | --- | --- | --- |
 | antigravity | `gemini-3.8-flash-high` | Gemini Models (`gemini-weekly`, `gemini-5h`) | `antigravity-usage.mjs` |
 | antigravity | `gemini-4-argon-high` | Gemini 4 Argon (`gemini-argon-wtu-weekly`) — separate from Gemini Models | `antigravity-usage.mjs` |
+| antigravity | `claude-opus-5-5-high`, `claude-sonnet-5-5-medium` | Claude and GPT models (`3p-weekly`, `3p-5h`) — separate from Gemini Models and from Claude Code | `antigravity-usage.mjs` |
 | cursor | `auto`, `composer-2.5` (and other `included_auto` applicable models) | Cursor Models (`included_auto`) plus Plan (`included_total`) | `cursor-usage.mjs` |
 | cursor | named API models outside that list | Other Models (`included_api`) plus Plan | `cursor-usage.mjs` |
 | claude | every documented Claude model | shared Claude session / week windows | `claude-usage.mjs` |
@@ -46,13 +49,13 @@ Unrecognised model ids stay `unknown` (never treated as available). Exhaustion o
 ### Antigravity (`agy`) notes
 
 - `agy models` (subcommand) is the source for what Antigravity can run. Effort is baked into the model id (`…-low` / `…-medium` / `…-high`), so verified table rows keep Effort `none`. The CLI also accepts `--effort`; do not change launch behaviour until a row is re-verified with it.
-- Only `gemini-4-argon-high` and `gemini-3.8-flash-high` are **verified** rows today (a row needs a real launch check). Other ids from `agy models` are recognised for quota mapping but not verified for spawn:
+- Only `gemini-4-argon-high`, `gemini-3.8-flash-high`, `claude-opus-5-5-high` and `claude-sonnet-5-5-medium` are **verified** rows today (the two Claude rows passed a real launch on 2026-10-31: the receipt showed the requested effective model, a read-only task ran and the worker reported its own model id) (a row needs a real launch check). Other ids from `agy models` are recognised for quota mapping but not verified for spawn:
 
 | Model id | Quota bucket |
 | --- | --- |
 | `gemini-4-argon-low`, `gemini-4-argon-medium` | Gemini 4 Argon |
 | `gemini-3.8-flash-low`, `gemini-3.8-flash-medium` | Gemini Models |
-| `claude-opus-5-5-{low,medium,high}`, `claude-sonnet-5-5-{low,medium,high}`, `gpt-oss-120b-medium` | Claude and GPT models |
+| `claude-opus-5-5-{low,medium}`, `claude-sonnet-5-5-{low,high}`, `gpt-oss-120b-medium` | Claude and GPT models |
 
 - The owner UI may render the Argon limit as two rows ("Gemini 4 Argon" and "Weekly"); raw `/usage` has a single Argon weekly window. That is not a global weekly cap and does not affect Gemini Models or third-party groups.
 
