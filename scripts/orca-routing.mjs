@@ -361,17 +361,21 @@ export function burnPressure(usage, policy = NO_POLICY, now = new Date()) {
 
 /**
  * Refuse when the expected worker share would push the binding window under the safety floor.
+ * `committedPercent` is share already reserved by earlier proposals in the same wave (same binding bucket).
  * @returns {string | null} skip reason
  */
-export function expectedShareSkip(usage, policy, candidate, now = new Date()) {
+export function expectedShareSkip(usage, policy, candidate, now = new Date(), { committedPercent = 0 } = {}) {
   const pressure = burnPressure(usage, policy, now);
   if (!pressure.binding || pressure.skip) return pressure.skip;
   const share = expectedShareFor(policy, candidate);
   const floor = policy.safetyFloorPercent ?? 10;
-  const remaining = round1(pressure.binding.percentLeft - share);
+  const committed = typeof committedPercent === "number" && Number.isFinite(committedPercent) ? committedPercent : 0;
+  const effectiveLeft = round1(pressure.binding.percentLeft - committed);
+  const remaining = round1(effectiveLeft - share);
   if (remaining < floor) {
+    const committedNote = committed > 0 ? ` (${committed}% already committed in this wave)` : "";
     return (
-      `${pressure.binding.bucket} has ${pressure.binding.percentLeft}% left; ` +
+      `${pressure.binding.bucket} has ${effectiveLeft}% left${committedNote}; ` +
       `expected share ${share}% would leave ${remaining}%, under the ${floor}% safety floor`
     );
   }
@@ -451,11 +455,12 @@ function workersFromReceipt(raw, { allowIncomplete = false } = {}) {
     if (dispatch === "completed" || stage === "succeeded" || stage === "failed" || stage === "cancelled") continue;
     if (worker?.resource?.ownershipState === "released") continue;
     const provider = worker?.projection?.provider;
-    if (!provider || typeof provider.id !== "string") continue;
+    // Providerless workers still occupy a concurrency slot; map them to the unknown bucket.
+    const agent = typeof provider?.id === "string" && provider.id.trim() ? provider.id : "unknown";
     active.push({
-      agent: provider.id,
-      model: provider.model ?? null,
-      effort: provider.effort ?? null,
+      agent,
+      model: provider && typeof provider === "object" ? (provider.model ?? null) : null,
+      effort: provider && typeof provider === "object" ? (provider.effort ?? null) : null,
       dispatchId: worker.dispatchId ?? worker.projection?.dispatchId ?? null,
       task: worker.taskId ?? worker.projection?.taskId ?? null,
     });
@@ -467,6 +472,8 @@ function workersFromReceipt(raw, { allowIncomplete = false } = {}) {
  * Active workers from an `orca orchestration worker-list --json` receipt.
  * Accepts one receipt, an array of page receipts, or `{ pages: [...] }`. A single
  * page with `page.hasMore: true` is refused — paginate with `--cursor` until complete.
+ * Multi-page input must be contiguous: every non-last page has `hasMore` + `nextCursor`,
+ * the last page completes the sequence, and raw worker counts must match `page.total`.
  * @param {string} text
  */
 export function activeWorkersFromWorkerList(text) {
@@ -479,6 +486,45 @@ export function activeWorkersFromWorkerList(text) {
   const pages = Array.isArray(raw) ? raw : Array.isArray(raw?.pages) ? raw.pages : null;
   if (pages) {
     if (!pages.length) throw new Error("worker-list pages array is empty");
+    let expectedTotal = null;
+    let rawCount = 0;
+    let expectedCursor = null;
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i];
+      const meta = page?.result?.page;
+      const workers = page?.result?.workers;
+      if (!Array.isArray(workers)) throw new Error("worker-list receipt has no result.workers array");
+      rawCount += workers.length;
+      if (meta && typeof meta === "object") {
+        if (i === 0 && typeof meta.total === "number") expectedTotal = meta.total;
+        const last = i === pages.length - 1;
+        if (!last) {
+          if (meta.hasMore !== true) {
+            throw new Error(
+              `worker-list pages have a gap: page ${i} has hasMore=${meta.hasMore}, but more pages follow`,
+            );
+          }
+          if (meta.nextCursor == null || meta.nextCursor === "") {
+            throw new Error(
+              `worker-list pages have a gap: page ${i} is incomplete but has no nextCursor`,
+            );
+          }
+          expectedCursor = meta.nextCursor;
+        } else if (meta.hasMore === true) {
+          throw new Error(
+            `worker-list receipt is incomplete: last page still has hasMore true (continue with page.nextCursor ${meta.nextCursor ?? "?"})`,
+          );
+        } else if (expectedCursor != null && pages.length > 1) {
+          // Continuity: a multi-page set must not skip; total check below catches a missing middle.
+          expectedCursor = null;
+        }
+      }
+    }
+    if (expectedTotal != null && rawCount !== expectedTotal) {
+      throw new Error(
+        `worker-list pages are missing workers (or a middle page): got ${rawCount} workers across ${pages.length} pages, page.total is ${expectedTotal}`,
+      );
+    }
     const merged = [];
     const seen = new Set();
     for (let i = 0; i < pages.length; i++) {
@@ -516,11 +562,22 @@ export function bindingBucketIdFor(choice, usageByCandidate = {}, policy = NO_PO
 /**
  * Count toward a bucket cap, including model-less / ambiguous workers for the same agent
  * so they cannot evade `maxConcurrentPerBucket` under a separate `agent/unknown` key.
+ * When the candidate itself maps to `agent/unknown`, known same-agent buckets count too —
+ * otherwise two Sonnets at cap would still allow an unknown Opus on that agent.
  */
 export function effectiveBucketLoad(load, key, agent) {
   if (!key) return 0;
   const direct = load[key]?.count ?? 0;
-  if (key.endsWith("/unknown")) return direct;
+  if (key.endsWith("/unknown")) {
+    if (!agent) return direct;
+    let total = 0;
+    for (const [bucketKey, row] of Object.entries(load)) {
+      if (bucketKey === `${agent}/unknown` || bucketKey.startsWith(`${agent}/`)) {
+        total += row?.count ?? 0;
+      }
+    }
+    return total;
+  }
   const ambiguous = agent ? (load[`${agent}/unknown`]?.count ?? 0) : 0;
   return direct + ambiguous;
 }

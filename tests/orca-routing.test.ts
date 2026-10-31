@@ -608,7 +608,8 @@ test("model-less and unknown-bucket active workers count toward the real bucket 
   assert.equal(load["antigravity/3p-weekly"].count, 1);
   // Cap check for the real bucket must include the ambiguous worker.
   assert.equal(effectiveBucketLoad(load, "antigravity/3p-weekly", "antigravity"), 2);
-  assert.equal(effectiveBucketLoad(load, "antigravity/unknown", "antigravity"), 1);
+  // Unknown-bucket candidates must also count every known same-agent worker.
+  assert.equal(effectiveBucketLoad(load, "antigravity/unknown", "antigravity"), 2);
 });
 
 test("a model-less active worker blocks another launch on the same agent's binding bucket", async () => {
@@ -783,4 +784,313 @@ test("wave reassignment recalculates the pick reason and keeps the upgrade warni
   // Must describe the actual pick (Codex), not the recommender's original agy Sonnet reason alone.
   assert.match(t.assignment.reason, /codex\/gpt-6\.1-terra/);
   assert.doesNotMatch(t.assignment.reason, /Wave pick antigravity\/claude-sonnet-5-5-medium|antigravity\/claude-sonnet-5-5-medium is the smallest/);
+});
+
+// --- Round-2 review findings
+
+test("providerless active workers still count toward total and unknown-bucket concurrency", () => {
+  const base = JSON.parse(readFileSync(join(repoRoot, "tests", "fixtures", "routing", "worker-list.json"), "utf8"));
+  const providerless = {
+    ...base.result.workers[0],
+    dispatchId: "ctx_providerless",
+    taskId: "task_providerless",
+    workerState: "ready",
+    dispatchStatus: "dispatched",
+    resource: { ...base.result.workers[0].resource, ownershipState: "owned", releaseState: "not_requested" },
+    projection: {
+      ...base.result.workers[0].projection,
+      dispatchId: "ctx_providerless",
+      taskId: "task_providerless",
+      provider: null,
+      stage: { worker: "ready", dispatch: "dispatched", detail: "input_accepted", activity: "working" },
+      outcome: "in_progress",
+    },
+  };
+  const text = JSON.stringify({
+    ...base,
+    result: {
+      ...base.result,
+      workers: [base.result.workers[0], providerless, base.result.workers[2]],
+      counts: { active: 2, reclaimable: 0, retained: 0, released: 1 },
+    },
+  });
+  const active = activeWorkersFromWorkerList(text);
+  assert.equal(active.length, 2);
+  assert.ok(active.some((w: { dispatchId: string }) => w.dispatchId === "ctx_providerless"));
+  const mystery = active.find((w: { dispatchId: string }) => w.dispatchId === "ctx_providerless");
+  assert.equal(mystery.agent, "unknown");
+  assert.equal(mystery.model, null);
+  const load = countBucketLoad({ activeWorkers: active, usageByCandidate: liveUsage(), policy: policy(), now: NOW });
+  assert.ok(load["unknown/unknown"]?.count >= 1);
+});
+
+test("an unknown-bucket candidate counts known same-agent load against the bucket cap", () => {
+  const p = policy();
+  const u = liveUsage();
+  // Two known Sonnet workers fill the Claude/GPT weekly cap.
+  const activeWorkers = [
+    { agent: "antigravity", model: "claude-sonnet-5-5-medium", dispatchId: "ctx_a" },
+    { agent: "antigravity", model: "claude-sonnet-5-5-medium", dispatchId: "ctx_b" },
+  ];
+  const load = countBucketLoad({ activeWorkers, usageByCandidate: u, policy: p, now: NOW });
+  assert.equal(load["antigravity/3p-weekly"].count, 2);
+  // Opus with no usage reading maps to antigravity/unknown — must still see the two Sonnets.
+  const unknownKey = bindingBucketIdFor({ agent: "antigravity", model: "claude-opus-5-5-high" }, {}, p, NOW);
+  assert.equal(unknownKey, "antigravity/unknown");
+  assert.equal(effectiveBucketLoad(load, unknownKey, "antigravity"), 2);
+  assert.equal(effectiveBucketLoad(load, unknownKey, "antigravity") < (p.maxConcurrentPerBucket ?? 2), false);
+});
+
+test("paginated worker-list receipts refuse a missing middle page", () => {
+  const base = JSON.parse(readFileSync(join(repoRoot, "tests", "fixtures", "routing", "worker-list.json"), "utf8"));
+  const mk = (workers: unknown[], page: Record<string, unknown>) => ({
+    ...base,
+    result: { ...base.result, workers, page },
+  });
+  const page1 = mk([base.result.workers[0]], { limit: 1, total: 3, hasMore: true, nextCursor: "cursor-page-2" });
+  const page3 = mk([base.result.workers[1]], { limit: 1, total: 3, hasMore: false, nextCursor: null });
+  // First+last without the middle page: raw worker count 2 !== total 3.
+  assert.throws(() => activeWorkersFromWorkerList(JSON.stringify([page1, page3])), /gap|missing|page|total|incomplete|cursor/i);
+  const page2 = mk(
+    [{ ...base.result.workers[2], workerState: "ready", dispatchStatus: "dispatched", resource: { ...base.result.workers[2].resource, ownershipState: "owned" }, projection: { ...base.result.workers[2].projection, provider: { id: "cursor", model: "auto" }, stage: { worker: "ready", dispatch: "dispatched" }, outcome: "in_progress" } }],
+    { limit: 1, total: 3, hasMore: true, nextCursor: "cursor-page-3" },
+  );
+  const page3ok = mk([base.result.workers[1]], { limit: 1, total: 3, hasMore: false, nextCursor: null });
+  assert.equal(activeWorkersFromWorkerList(JSON.stringify([page1, page2, page3ok])).length, 3);
+});
+
+test("expectedShareSkip accounts for already-committed wave share", () => {
+  const p = policy();
+  // 50% left; Opus share 35% → first pick ok, second with 35% already committed is not.
+  const half = usage("fresh", [{ ...B.thirdWeek, usedPercent: 50 }, B.third5h]);
+  assert.equal(expectedShareSkip(half, p, { agent: "antigravity", model: "claude-opus-5-5-high" }, NOW), null);
+  assert.match(
+    expectedShareSkip(half, p, { agent: "antigravity", model: "claude-opus-5-5-high" }, NOW, { committedPercent: 35 })!,
+    /under the 10% safety floor|expected share/,
+  );
+});
+
+test("wave proposals accumulate expected share so a second pick cannot overdraw the bucket", async () => {
+  // 50% left on Claude/GPT weekly; each Opus expects 35%. Two Opus proposals would leave -20%.
+  const u = liveUsage(
+    { thirdWeek: { usedPercent: 50 } },
+    {
+      "codex/gpt-6.1-terra": "exhausted",
+      "cursor/auto": "exhausted",
+      "cursor/composer-2.5": "exhausted",
+      "antigravity/claude-sonnet-5-5-medium": "exhausted",
+      "antigravity/gemini-3.8-flash-high": "exhausted",
+    },
+  );
+  const p = await plan(
+    wave({
+      concurrency: 3,
+      tasks: [
+        { id: "a", summary: "A", judgment: "reasoning-heavy", judgmentReason: "hard" },
+        { id: "b", summary: "B", judgment: "reasoning-heavy", judgmentReason: "hard" },
+      ],
+    }),
+    { policy: { ...policy(), maxConcurrentTotal: 3, maxConcurrentPerBucket: 3 } },
+    u,
+  );
+  const proposed = p.tasks.filter((t: { status: string }) => t.status === "proposed" || t.status === "needs-decision");
+  const opus = proposed.filter((t: { assignment?: { model?: string } }) => t.assignment?.model === "claude-opus-5-5-high");
+  assert.ok(
+    opus.length <= 1,
+    `expected at most one Opus proposal, got ${opus.length}: ${JSON.stringify(
+      p.tasks.map((t: { status: string; assignment?: { agent: string; model: string; effort?: string | null } | null }) => ({
+        status: t.status,
+        assignment: named(t.assignment ?? null),
+      })),
+    )}`,
+  );
+  assert.ok(
+    p.tasks.some((t: { status: string }) => t.status === "delay" || t.status === "deferred" || t.status === "needs-decision"),
+    "second task should not silently propose another Opus over the share floor",
+  );
+});
+
+test("uncertaintyAlternative must pass floor, expected-share and bucket-cap guards", async () => {
+  // Suitable standard on Claude is unknown; weaker Codex has only 5% left — share 10% must refuse it.
+  const u = liveUsage(
+    { codexWeek: { usedPercent: 95 } },
+    {
+      "claude/claude-sonnet-5-5": "unknown",
+      "antigravity/claude-sonnet-5-5-medium": "exhausted",
+      "antigravity/claude-opus-5-5-high": "exhausted",
+      "antigravity/gemini-3.8-flash-high": "exhausted",
+      "cursor/auto": "exhausted",
+      "cursor/composer-2.5": "exhausted",
+    },
+  );
+  // Make claude allowed for this test by using a custom policy that allows it.
+  const allowClaude = {
+    ...policy(),
+    allow: [...policy().allow, { agent: "claude", models: ["claude-sonnet-5-5"] }],
+    reserve: policy().reserve.filter((r: { agent: string }) => r.agent !== "claude"),
+  };
+  const p: any = await withoutKey(() =>
+    planWave({
+      wave: wave({
+        concurrency: 2,
+        tasks: [
+          {
+            id: "std",
+            summary: "Standard",
+            judgment: "standard",
+            judgmentReason: "clear",
+            eligible: ["claude/claude-sonnet-5-5/medium", "codex/gpt-6.1-terra/max"],
+          },
+        ],
+      }),
+      candidates: CANDIDATES,
+      usageByAgent: {},
+      usageByCandidate: {
+        ...u,
+        "claude/claude-sonnet-5-5": { ...u["claude/claude-sonnet-5-5"], status: "unknown", capacityConfirmed: false },
+        "codex/gpt-6.1-terra": usage("fresh", [{ ...B.codexWeek, usedPercent: 95 }, B.codex5h]),
+      },
+      learningOptions: { learning: false, now: NOW },
+      policy: allowClaude,
+      now: NOW,
+    }),
+  );
+  const row = p.tasks[0];
+  if (row.uncertaintyAlternative) {
+    assert.notEqual(named(row.uncertaintyAlternative), "codex/gpt-6.1-terra/max");
+  }
+  // Codex with 5% left must appear in rejected/excluded share path when considered, not as a offered alt.
+  assert.ok(!row.uncertaintyAlternative || named(row.uncertaintyAlternative) !== "codex/gpt-6.1-terra/max");
+});
+
+test("uncertainty path keeps upgrade warnings when the wave reassigns", async () => {
+  const activeWorkers = [
+    { agent: "antigravity", model: "gemini-3.8-flash-high", dispatchId: "ctx_1" },
+    { agent: "antigravity", model: "gemini-3.8-flash-high", dispatchId: "ctx_2" },
+  ];
+  const p = await plan(
+    wave({
+      concurrency: 5,
+      activeWorkers,
+      tasks: [{ id: "m", summary: "Mech", judgment: "mechanical", judgmentReason: "docs" }],
+    }),
+    { policy: { ...policy(), maxConcurrentTotal: 5 } },
+  );
+  const t = p.tasks[0];
+  assert.equal(t.status, "proposed");
+  assert.notEqual(named(t.assignment), "antigravity/gemini-3.8-flash-high");
+  assert.match(String(t.warning ?? t.assignment?.reason ?? ""), /mechanical|no available|capability|standard|reasoning/i);
+});
+
+test("capped-tier upgrades rank eligible stronger candidates by burn pressure", async () => {
+  // Flash capped; among standard/reasoning upgrades, prefer highest pressure (agy Sonnet over low-pressure Cursor).
+  const mechActive = [
+    { agent: "antigravity", model: "gemini-3.8-flash-high", dispatchId: "ctx_1" },
+    { agent: "antigravity", model: "gemini-3.8-flash-high", dispatchId: "ctx_2" },
+  ];
+  const u = liveUsage(
+    {
+      // Sonnet: high pressure (lots left, soon reset)
+      thirdWeek: { usedPercent: 10, resetsAt: inDays(2) },
+      // Cursor: lower pressure
+      cursorAuto: { usedPercent: 80, resetsAt: inDays(20) },
+      cursorPlan: { usedPercent: 80, resetsAt: inDays(20) },
+      // Codex: mid
+      codexWeek: { usedPercent: 50, resetsAt: inDays(5) },
+    },
+    {},
+  );
+  const p = await plan(
+    wave({
+      concurrency: 5,
+      activeWorkers: mechActive,
+      tasks: [{ id: "m", summary: "Mech", judgment: "mechanical", judgmentReason: "docs" }],
+    }),
+    { policy: { ...policy(), maxConcurrentTotal: 5 } },
+    u,
+  );
+  assert.equal(p.tasks[0].status, "proposed");
+  assert.equal(named(p.tasks[0].assignment), "antigravity/claude-sonnet-5-5-medium");
+});
+
+test("when a confirmed stronger upgrade is bucket-capped the unknown lower-tier remains offerable", async () => {
+  // Standard (Codex) unknown; Opus confirmed but bucket already at cap → should not pure-delay; offer unknown Codex path.
+  const activeWorkers = [
+    { agent: "antigravity", model: "claude-opus-5-5-high", dispatchId: "ctx_a" },
+    { agent: "antigravity", model: "claude-opus-5-5-high", dispatchId: "ctx_b" },
+  ];
+  const u = liveUsage(
+    {},
+    {
+      "codex/gpt-6.1-terra": "unknown",
+      "cursor/auto": "exhausted",
+      "cursor/composer-2.5": "exhausted",
+      "antigravity/claude-sonnet-5-5-medium": "exhausted",
+      "antigravity/gemini-3.8-flash-high": "exhausted",
+    },
+  );
+  const p = await plan(
+    wave({
+      concurrency: 5,
+      activeWorkers,
+      tasks: [{ id: "std", summary: "Standard", judgment: "standard", judgmentReason: "clear" }],
+    }),
+    { policy: { ...policy(), maxConcurrentTotal: 5 } },
+    u,
+  );
+  const t = p.tasks[0];
+  // Must not delay with nothing to offer: either propose/needs-decision on unknown Codex, or show it as uncertainty/weaker alt.
+  assert.notEqual(t.status, "delay");
+  const offered =
+    named(t.assignment) === "codex/gpt-6.1-terra/max" ||
+    named(t.uncertaintyAlternative) === "codex/gpt-6.1-terra/max" ||
+    named(t.weakerAlternative) === "codex/gpt-6.1-terra/max";
+  assert.ok(offered, JSON.stringify({ status: t.status, assignment: named(t.assignment ?? null), unc: named(t.uncertaintyAlternative ?? null), weak: named(t.weakerAlternative ?? null), reason: t.reason }));
+});
+
+test("learned adjustment is not undone by a later pressure re-sort", async () => {
+  // Baseline pressure prefers Sonnet (high); learning prefers Codex. Selection and report must agree on Codex.
+  const u = liveUsage({
+    thirdWeek: { usedPercent: 5, resetsAt: inDays(1) },
+    codexWeek: { usedPercent: 70, resetsAt: inDays(10) },
+  });
+  const learning = {
+    enabled: true,
+    resetAt: null,
+    adjustments: [
+      {
+        key: "codex|gpt-6.1-terra|max|unknown|feature|standard",
+        agent: "codex",
+        model: "gpt-6.1-terra",
+        effort: "max",
+        agentVersion: "unknown",
+        kind: "feature",
+        difficulty: "standard",
+        choice: "codex/gpt-6.1-terra/max",
+        preference: 0.9,
+        meanScore: 0.9,
+        rawCount: 5,
+        weightedCount: 5,
+        sufficient: true,
+        uncertain: false,
+        evidence: [
+          { id: "e1", outcome: "succeeded", completedAt: NOW, weight: 1, score: 1, selectionKind: "baseline" },
+          { id: "e2", outcome: "succeeded", completedAt: NOW, weight: 1, score: 1, selectionKind: "baseline" },
+          { id: "e3", outcome: "succeeded", completedAt: NOW, weight: 1, score: 1, selectionKind: "baseline" },
+          { id: "e4", outcome: "succeeded", completedAt: NOW, weight: 1, score: 1, selectionKind: "baseline" },
+          { id: "e5", outcome: "succeeded", completedAt: NOW, weight: 1, score: 1, selectionKind: "baseline" },
+        ],
+      },
+    ],
+    uncertain: [],
+    evidence: [{ included: true }],
+    rule: { minComparableCount: 3, minWeightedEvidence: 2, halfLifeDays: 30 },
+    agentVersions: {},
+  };
+  const r = await choose("standard", { learning, kind: "feature", random: () => 0.99 }, u);
+  assert.equal(named(r.recommendation), "codex/gpt-6.1-terra/max");
+  assert.ok(r.learning.applied.length >= 1);
+  assert.match(r.recommendation.reason, /Learned adjustment preferred codex\/gpt-6\.1-terra\/max/);
+  assert.doesNotMatch(r.recommendation.reason, /preferred codex\/gpt-6\.1-terra\/max over baseline codex\/gpt-6\.1-terra\/max/);
+  assert.notEqual(named(r.baselineRecommendation), named(r.recommendation));
 });

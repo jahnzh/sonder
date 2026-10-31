@@ -16,7 +16,9 @@ import {
   burnPressure,
   countBucketLoad,
   effectiveBucketLoad,
+  expectedShareFor,
   expectedShareSkip,
+  rankByPressure,
   resolvePolicy,
   shortBucketLabel,
 } from "./orca-routing.mjs";
@@ -281,6 +283,16 @@ function underBucketCap(row, load, policy, usageByCandidate, now) {
   return effectiveBucketLoad(load, key, row.agent) < maxPer;
 }
 
+function capacityConfirmedFor(row, usageByAgent, usageByCandidate) {
+  const usage = usageOf(usageByAgent, usageByCandidate, row);
+  return usage.capacityConfirmed === true || usage.status === "fresh" || usage.status === "low";
+}
+
+function pickByPressure(rows, policy) {
+  if (!rows.length) return null;
+  return policy?.allow ? rankByPressure(rows, policy)[0] : rows[0];
+}
+
 function pickCandidate(
   suitable,
   { activeWorkers, proposed, remainingTasks, usageByAgent, usageByCandidate = {}, policy = NO_POLICY, now = new Date(), bucketLoad = null },
@@ -292,18 +304,37 @@ function pickCandidate(
   if (policy?.allow) {
     const load = bucketLoad ?? countBucketLoad({ activeWorkers, proposed, usageByCandidate, policy, now });
     const uncapped = (rows) => rows.filter((row) => underBucketCap(row, load, policy, usageByCandidate, now));
-    atFloor = uncapped(atFloor);
-    if (atFloor.length) {
-      // recommend already ranked by pressure; keep that order among uncapped rows.
-      return atFloor[0];
-    }
-    // Required tier is capped: try the next stronger capability tiers before giving up.
+    const confirmed = (rows) => rows.filter((row) => capacityConfirmedFor(row, usageByAgent, usageByCandidate));
+    const unconfirmed = (rows) => rows.filter((row) => !capacityConfirmedFor(row, usageByAgent, usageByCandidate));
+
+    // Prefer confirmed capacity at the capability floor, then stronger confirmed tiers (by pressure).
+    const confirmedFloor = uncapped(confirmed(atFloor));
+    if (confirmedFloor.length) return pickByPressure(confirmedFloor, policy);
+
     const stronger = suitable.filter((row) => rank(row.capability) > minCap);
     const strongerRanks = [...new Set(stronger.map((row) => rank(row.capability)))].sort((a, b) => a - b);
     for (const nextRank of strongerRanks) {
-      const tier = uncapped(stronger.filter((row) => rank(row.capability) === nextRank));
-      if (tier.length) return tier[0];
+      const tier = uncapped(confirmed(stronger.filter((row) => rank(row.capability) === nextRank)));
+      if (tier.length) return pickByPressure(tier, policy);
     }
+
+    // Confirmed stronger upgrade was capped (or absent): offer unknown/stale lower-tier fallbacks.
+    const unconfirmedFloor = uncapped(unconfirmed(atFloor));
+    if (unconfirmedFloor.length) return pickByPressure(unconfirmedFloor, policy);
+    for (const nextRank of strongerRanks) {
+      const tier = uncapped(unconfirmed(stronger.filter((row) => rank(row.capability) === nextRank)));
+      if (tier.length) return pickByPressure(tier, policy);
+    }
+
+    // Suitable may list only the upgraded confirmed tier plus uncertain-fallback rows at a lower rank.
+    const fallbacks = uncapped(
+      suitable.filter(
+        (row) =>
+          row.relation === "uncertain-fallback" ||
+          (rank(row.capability) < minCap && !capacityConfirmedFor(row, usageByAgent, usageByCandidate)),
+      ),
+    );
+    if (fallbacks.length) return pickByPressure(fallbacks, policy);
     return null;
   }
 
@@ -570,6 +601,26 @@ export async function planWave({
   const proposed = [];
   const decisions = [];
   const remaining = [...assignable];
+  /** @type {Record<string, number>} share already reserved per binding bucket key within this wave */
+  const shareCommitted = {};
+
+  const committedFor = (choice) => {
+    const key = bindingBucketIdFor(choice, usageByCandidate, resolvedPolicy, now);
+    return key ? (shareCommitted[key] ?? 0) : 0;
+  };
+  const passesShareGuards = (choice) => {
+    if (!resolvedPolicy?.allow) return true;
+    const usage = usageOf(usageByAgent, usageByCandidate, choice);
+    if (burnPressure(usage, resolvedPolicy, now).skip) return false;
+    if (expectedShareSkip(usage, resolvedPolicy, choice, now, { committedPercent: committedFor(choice) })) return false;
+    return true;
+  };
+  const commitShare = (choice) => {
+    if (!resolvedPolicy?.allow || !choice?.agent) return;
+    const key = bindingBucketIdFor(choice, usageByCandidate, resolvedPolicy, now);
+    if (!key) return;
+    shareCommitted[key] = (shareCommitted[key] ?? 0) + expectedShareFor(resolvedPolicy, choice);
+  };
 
   while (remaining.length) {
     const entry = remaining.shift();
@@ -615,7 +666,9 @@ export async function planWave({
       suitable: row.suitable.filter((candidate) => usageOf(usageByAgent, usageByCandidate, candidate).status !== "exhausted"),
     }));
 
-    const available = suitable.filter((row) => usageOf(usageByAgent, usageByCandidate, row).status !== "exhausted");
+    const available = suitable
+      .filter((row) => usageOf(usageByAgent, usageByCandidate, row).status !== "exhausted")
+      .filter((row) => passesShareGuards(row));
     const pick = pickCandidate(available, {
       activeWorkers: cappedWave.activeWorkers,
       proposed,
@@ -653,15 +706,13 @@ export async function planWave({
         continue;
       }
 
-      const weakerAvailable = weaker.filter((row) => {
-        const usage = usageOf(usageByAgent, usageByCandidate, row);
-        if (usage.status === "exhausted") return false;
-        if (resolvedPolicy?.allow) {
-          if (burnPressure(usage, resolvedPolicy, now).skip) return false;
-          if (expectedShareSkip(usage, resolvedPolicy, row, now)) return false;
-        }
-        return true;
-      });
+      const weakerAvailable = weaker
+        .filter((row) => {
+          const usage = usageOf(usageByAgent, usageByCandidate, row);
+          if (usage.status === "exhausted") return false;
+          return passesShareGuards(row);
+        })
+        .filter((row) => underBucketCap(row, bucketLoad, resolvedPolicy, usageByCandidate, now));
       const weakerPick = pickCandidate(
         weakerAvailable.map((row) => ({
           ...row,
@@ -717,6 +768,7 @@ export async function planWave({
           `Suitable options are exhausted or unavailable for assessed ${requirement}. ` +
           `Choose the warned weaker alternative or delay. Stronger choices unavailable: ${whyStrongerGone}.`;
         // Hold the slot and shared load the same way an uncertain suitable choice does.
+        commitShare(weakerPick);
         proposed.push(delay);
       }
       decisions.push(delay);
@@ -829,9 +881,12 @@ export async function planWave({
             capacityConfirmed: rowUsage.capacityConfirmed === true,
           };
         })
-        .filter((row) => row.capacityConfirmed);
-      if (knownWeaker.length) {
-        const alt = knownWeaker[0];
+        .filter((row) => row.capacityConfirmed)
+        .filter((row) => passesShareGuards(row))
+        .filter((row) => underBucketCap(row, bucketLoad, resolvedPolicy, usageByCandidate, now));
+      const rankedWeaker = resolvedPolicy?.allow ? rankByPressure(knownWeaker, resolvedPolicy) : knownWeaker;
+      if (rankedWeaker.length) {
+        const alt = rankedWeaker[0];
         decision.status = "needs-decision";
         decision.uncertaintyAlternative = {
           ...alt,
@@ -849,6 +904,7 @@ export async function planWave({
       }
     }
 
+    commitShare(pick);
     proposed.push(decision);
     decisions.push(decision);
   }

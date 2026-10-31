@@ -645,20 +645,31 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
   const atOrAbove = usable.filter((c) => rank(c.capability) >= requiredRank);
   const availableRanks = [...new Set(atOrAbove.map((c) => rank(c.capability)))].sort((a, b) => a - b);
   let chosenRank = availableRanks.find((r) => r >= requiredRank) ?? -1;
+  /** @type {number | null} */
+  let unconfirmedRequiredRank = null;
   if (chosenRank >= 0) {
     const tierHasConfirmed = atOrAbove.some((c) => rank(c.capability) === chosenRank && capacityConfirmed(c));
     if (!tierHasConfirmed) {
       const strongerConfirmed = availableRanks.find(
         (r) => r > chosenRank && atOrAbove.some((c) => rank(c.capability) === r && capacityConfirmed(c)),
       );
-      if (strongerConfirmed != null) chosenRank = strongerConfirmed;
+      if (strongerConfirmed != null) {
+        unconfirmedRequiredRank = chosenRank;
+        chosenRank = strongerConfirmed;
+      }
     }
   }
   const tier = chosenRank < 0 ? [] : atOrAbove.filter((c) => rank(c.capability) === chosenRank);
   const stronger = chosenRank < 0 ? [] : atOrAbove.filter((c) => rank(c.capability) > chosenRank);
-  // Within the tier, burn pressure ranks when a policy allow-list is active; else keep table order.
-  const tierOrdered = policy.allow ? rankByPressure(tier, policy) : [...tier].sort((a, b) => 0);
-  const usableOrdered = [...tierOrdered, ...stronger];
+  // Keep unknown/stale candidates at the pre-upgrade rank so a capped stronger tier can still fall back.
+  const uncertainFallback =
+    unconfirmedRequiredRank == null
+      ? []
+      : atOrAbove.filter((c) => rank(c.capability) === unconfirmedRequiredRank && !capacityConfirmed(c));
+  // Within each tier, burn pressure ranks when a policy allow-list is active; else keep table order.
+  const tierOrdered = policy.allow ? rankByPressure(tier, policy) : [...tier];
+  const strongerOrdered = policy.allow ? rankByPressure(stronger, policy) : [...stronger];
+  const usableOrdered = [...tierOrdered, ...strongerOrdered, ...uncertainFallback];
   // Preserve below-tier rejects already recorded; drop higher-than-chosen from usable path is fine (they stay as stronger alts only when chosenRank is required).
   const learningPool = usableOrdered.length ? usableOrdered : usable.sort((a, b) => rank(a.capability) - rank(b.capability));
   const baselineFirst = learningPool[0] ?? null;
@@ -706,17 +717,23 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
   });
   let ordered = learned.ordered.length ? learned.ordered : learningPool;
   // Learning may reorder within the tier but must not promote a lower capability or escape the policy set.
+  // Do not re-sort by pressure after learning: the pool was already pressure-ranked, and a second
+  // sort would undo an applied adjustment while the report still claimed learning preferred a pick.
   if (policy.allow && ordered.length) {
     const floor = rank(ordered[0].capability);
     const sameTier = ordered.filter((c) => rank(c.capability) === floor);
     const rest = ordered.filter((c) => rank(c.capability) !== floor);
-    ordered = [...rankByPressure(sameTier, policy), ...rest];
+    ordered = [...sameTier, ...rest];
   }
   const [first, ...others] = ordered;
-  const alternatives = others.map((c) => ({
-    ...c,
-    relation: first && c.capability === first.capability ? "equivalent" : "stronger",
-  }));
+  const alternatives = others.map((c) => {
+    if (!first) return { ...c, relation: "stronger" };
+    const cmp = rank(c.capability) - rank(first.capability);
+    return {
+      ...c,
+      relation: cmp === 0 ? "equivalent" : cmp > 0 ? "stronger" : "uncertain-fallback",
+    };
+  });
   const hasEquivalent = alternatives.some((c) => c.relation === "equivalent");
   const balance = (pick, rest) => pressureBalanceNote(pick, rest, usageOf, policy, now, hasEquivalent || Boolean(policy.allow && pick));
   const annotate = (pick, rest) => {
