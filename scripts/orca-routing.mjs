@@ -269,6 +269,38 @@ function round2(n) {
   return Math.round(n * 100) / 100;
 }
 
+function bindingFromBuckets(buckets, nowMs, floor) {
+  const scored = [...buckets].sort((a, b) => {
+    const leftA = 100 - a.usedPercent;
+    const leftB = 100 - b.usedPercent;
+    if (leftA !== leftB) return leftA - leftB;
+    return String(a.id).localeCompare(String(b.id));
+  });
+  const bindingBucket = scored[0];
+  const percentLeft = round1(100 - bindingBucket.usedPercent);
+  const resetMs = bindingBucket.resetsAt ? Date.parse(bindingBucket.resetsAt) : NaN;
+  let daysToReset = Number.isFinite(resetMs) ? (resetMs - nowMs) / DAY_MS : 0.05;
+  if (!(daysToReset > 0)) daysToReset = 0.05;
+  // Keep exact synthetic day counts (tests use whole-day resets) without tiny float noise.
+  if (Math.abs(daysToReset - Math.round(daysToReset)) < 1e-9) daysToReset = Math.round(daysToReset);
+  const label = shortBucketLabel(bindingBucket);
+  const binding = {
+    bucketId: bindingBucket.id,
+    bucket: label,
+    percentLeft,
+    daysToReset,
+    resetsAt: bindingBucket.resetsAt ?? null,
+    boost: 1,
+  };
+  if (percentLeft < floor) {
+    return {
+      binding,
+      skip: `${label} has ${percentLeft}% left, under the ${floor}% safety floor`,
+    };
+  }
+  return { binding, skip: null };
+}
+
 /**
  * Burn pressure for one candidate usage reading.
  * @param {object} usage assessCandidateUsage-shaped report
@@ -294,57 +326,36 @@ export function burnPressure(usage, policy = NO_POLICY, now = new Date()) {
   const buckets = Array.isArray(usage.buckets) ? usage.buckets : [];
   const lasting = buckets.filter((bucket) => !isFiveHourBucket(bucket) && typeof bucket.usedPercent === "number");
   if (!lasting.length) {
-    return { pressure: null, skip: null, reason: "no non-5-hour window to score burn pressure", binding: null };
-  }
-
-  lasting.sort((a, b) => {
-    const leftA = 100 - a.usedPercent;
-    const leftB = 100 - b.usedPercent;
-    if (leftA !== leftB) return leftA - leftB;
-    return String(a.id).localeCompare(String(b.id));
-  });
-  const bindingBucket = lasting[0];
-  const percentLeft = round1(100 - bindingBucket.usedPercent);
-  const resetMs = bindingBucket.resetsAt ? Date.parse(bindingBucket.resetsAt) : NaN;
-  let daysToReset = Number.isFinite(resetMs) ? (resetMs - nowMs) / DAY_MS : 0.05;
-  if (!(daysToReset > 0)) daysToReset = 0.05;
-  // Keep exact synthetic day counts (tests use whole-day resets) without tiny float noise.
-  if (Math.abs(daysToReset - Math.round(daysToReset)) < 1e-9) daysToReset = Math.round(daysToReset);
-
-  const label = shortBucketLabel(bindingBucket);
-  if (percentLeft < floor) {
+    // 5-hour windows do not score burn pressure, but a fresh 5-hour-only reading still
+    // faces the safety floor (and expected-share via expectedShareSkip) so it cannot bypass them.
+    const fiveHour = buckets.filter((bucket) => isFiveHourBucket(bucket) && typeof bucket.usedPercent === "number");
+    if (!fiveHour.length) {
+      return { pressure: null, skip: null, reason: "no non-5-hour window to score burn pressure", binding: null };
+    }
+    const { binding, skip } = bindingFromBuckets(fiveHour, nowMs, floor);
     return {
       pressure: null,
-      skip: `${label} has ${percentLeft}% left, under the ${floor}% safety floor`,
-      reason: null,
-      binding: {
-        bucketId: bindingBucket.id,
-        bucket: label,
-        percentLeft,
-        daysToReset,
-        resetsAt: bindingBucket.resetsAt ?? null,
-        boost: 1,
-      },
+      skip,
+      reason: skip ? null : "no non-5-hour window to score burn pressure",
+      binding,
     };
   }
 
+  const { binding, skip } = bindingFromBuckets(lasting, nowMs, floor);
+  if (skip) {
+    return { pressure: null, skip, reason: null, binding };
+  }
+
   let boost = 1;
-  if (boostFactor !== 1 && daysToReset <= EXPIRE_WITHIN_DAYS && percentLeft > EXPIRE_MIN_LEFT) {
+  if (boostFactor !== 1 && binding.daysToReset <= EXPIRE_WITHIN_DAYS && binding.percentLeft > EXPIRE_MIN_LEFT) {
     boost = boostFactor;
   }
-  const pressure = round2((percentLeft / Math.max(daysToReset, 0.05)) * boost);
+  const pressure = round2((binding.percentLeft / Math.max(binding.daysToReset, 0.05)) * boost);
   return {
     pressure,
     skip: null,
     reason: null,
-    binding: {
-      bucketId: bindingBucket.id,
-      bucket: label,
-      percentLeft,
-      daysToReset,
-      resetsAt: bindingBucket.resetsAt ?? null,
-      boost,
-    },
+    binding: { ...binding, boost },
   };
 }
 
@@ -368,7 +379,8 @@ export function expectedShareSkip(usage, policy, candidate, now = new Date()) {
 }
 
 /**
- * Highest pressure first; ties within 5% of the higher pressure follow policy.order; nulls keep input order at the end.
+ * Highest pressure first; ties within 5% of a band's maximum follow policy.order; nulls keep input order at the end.
+ * Bands are formed transitively against the band leader so pairwise non-transitive 5% edges cannot invert order.
  * @template {{ agent: string, pressure: number | null }} T
  * @param {T[]} rows
  * @param {{ order?: string[] }} policy
@@ -381,23 +393,29 @@ export function rankByPressure(rows, policy = NO_POLICY) {
     return i < 0 ? order.length + 1 : i;
   };
   const indexed = rows.map((row, index) => ({ row, index }));
-  indexed.sort((a, b) => {
-    const pa = a.row.pressure;
-    const pb = b.row.pressure;
-    const aKnown = typeof pa === "number" && Number.isFinite(pa);
-    const bKnown = typeof pb === "number" && Number.isFinite(pb);
-    if (aKnown !== bKnown) return aKnown ? -1 : 1;
-    if (!aKnown && !bKnown) return a.index - b.index;
-    const high = Math.max(pa, pb);
-    const tied = high > 0 ? Math.abs(pa - pb) <= high * TIE_FRACTION : pa === pb;
-    if (tied) {
-      const byAgent = agentRank(a.row.agent) - agentRank(b.row.agent);
-      if (byAgent !== 0) return byAgent;
-      return a.index - b.index;
-    }
-    return pb - pa;
+  const known = indexed.filter((entry) => typeof entry.row.pressure === "number" && Number.isFinite(entry.row.pressure));
+  const unknown = indexed.filter((entry) => !(typeof entry.row.pressure === "number" && Number.isFinite(entry.row.pressure)));
+  known.sort((a, b) => {
+    if (b.row.pressure !== a.row.pressure) return b.row.pressure - a.row.pressure;
+    return a.index - b.index;
   });
-  return indexed.map((entry) => entry.row);
+  let band = -1;
+  let bandMax = null;
+  for (const entry of known) {
+    if (bandMax == null || bandMax <= 0 || bandMax - entry.row.pressure > bandMax * TIE_FRACTION) {
+      band += 1;
+      bandMax = entry.row.pressure;
+    }
+    entry.band = band;
+  }
+  known.sort((a, b) => {
+    if (a.band !== b.band) return a.band - b.band;
+    const byAgent = agentRank(a.row.agent) - agentRank(b.row.agent);
+    if (byAgent !== 0) return byAgent;
+    return a.index - b.index;
+  });
+  unknown.sort((a, b) => a.index - b.index);
+  return [...known, ...unknown].map((entry) => entry.row);
 }
 
 export function formatBurnReason(choiceName, pressureReport, runnerUp = null) {
@@ -414,19 +432,18 @@ export function formatBurnReason(choiceName, pressureReport, runnerUp = null) {
   return text;
 }
 
-/**
- * Active workers from an `orca orchestration worker-list --json` receipt.
- * @param {string} text
- */
-export function activeWorkersFromWorkerList(text) {
-  let raw;
-  try {
-    raw = JSON.parse(text);
-  } catch (error) {
-    throw new Error(`worker-list JSON is invalid: ${error.message}`);
-  }
+function workersFromReceipt(raw, { allowIncomplete = false } = {}) {
   const workers = raw?.result?.workers;
   if (!Array.isArray(workers)) throw new Error("worker-list receipt has no result.workers array");
+  const page = raw?.result?.page;
+  if (!allowIncomplete && page && page.hasMore === true) {
+    const total = page.total ?? "?";
+    const limit = page.limit ?? workers.length;
+    throw new Error(
+      `worker-list receipt is incomplete: page.hasMore is true (total ${total}, limit ${limit}); ` +
+        `pass every page as a JSON array or { "pages": [...] } (continue with page.nextCursor)`,
+    );
+  }
   const active = [];
   for (const worker of workers) {
     const stage = worker?.projection?.stage?.worker ?? worker?.workerState;
@@ -447,6 +464,40 @@ export function activeWorkersFromWorkerList(text) {
 }
 
 /**
+ * Active workers from an `orca orchestration worker-list --json` receipt.
+ * Accepts one receipt, an array of page receipts, or `{ pages: [...] }`. A single
+ * page with `page.hasMore: true` is refused — paginate with `--cursor` until complete.
+ * @param {string} text
+ */
+export function activeWorkersFromWorkerList(text) {
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`worker-list JSON is invalid: ${error.message}`);
+  }
+  const pages = Array.isArray(raw) ? raw : Array.isArray(raw?.pages) ? raw.pages : null;
+  if (pages) {
+    if (!pages.length) throw new Error("worker-list pages array is empty");
+    const merged = [];
+    const seen = new Set();
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i];
+      const last = i === pages.length - 1;
+      const rows = workersFromReceipt(page, { allowIncomplete: !last });
+      for (const row of rows) {
+        const key = row.dispatchId ?? `${row.agent}/${row.model}/${row.task}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(row);
+      }
+    }
+    return merged;
+  }
+  return workersFromReceipt(raw);
+}
+
+/**
  * Binding bucket id for an active/proposed worker, from usageByCandidate when present.
  */
 export function bindingBucketIdFor(choice, usageByCandidate = {}, policy = NO_POLICY, now = new Date()) {
@@ -460,6 +511,18 @@ export function bindingBucketIdFor(choice, usageByCandidate = {}, policy = NO_PO
   const five = (usage.buckets ?? []).find((bucket) => isFiveHourBucket(bucket));
   if (five?.id) return `${choice.agent}/${five.id}`;
   return `${choice.agent}/unknown`;
+}
+
+/**
+ * Count toward a bucket cap, including model-less / ambiguous workers for the same agent
+ * so they cannot evade `maxConcurrentPerBucket` under a separate `agent/unknown` key.
+ */
+export function effectiveBucketLoad(load, key, agent) {
+  if (!key) return 0;
+  const direct = load[key]?.count ?? 0;
+  if (key.endsWith("/unknown")) return direct;
+  const ambiguous = agent ? (load[`${agent}/unknown`]?.count ?? 0) : 0;
+  return direct + ambiguous;
 }
 
 export function countBucketLoad({ activeWorkers = [], proposed = [], usageByCandidate = {}, policy = NO_POLICY, now = new Date() }) {

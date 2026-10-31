@@ -636,10 +636,24 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
   }
 
   // Capability is a hard filter: smallest tier that still has an available allowed candidate.
+  // If that tier has only unknown/stale capacity, prefer a confirmed stronger tier when one exists.
   const requiredRank = rank(requirement);
+  const capacityConfirmed = (c) => {
+    const reading = usageOf(c);
+    return reading.capacityConfirmed === true || reading.status === "fresh" || reading.status === "low";
+  };
   const atOrAbove = usable.filter((c) => rank(c.capability) >= requiredRank);
   const availableRanks = [...new Set(atOrAbove.map((c) => rank(c.capability)))].sort((a, b) => a - b);
-  const chosenRank = availableRanks.find((r) => r >= requiredRank) ?? -1;
+  let chosenRank = availableRanks.find((r) => r >= requiredRank) ?? -1;
+  if (chosenRank >= 0) {
+    const tierHasConfirmed = atOrAbove.some((c) => rank(c.capability) === chosenRank && capacityConfirmed(c));
+    if (!tierHasConfirmed) {
+      const strongerConfirmed = availableRanks.find(
+        (r) => r > chosenRank && atOrAbove.some((c) => rank(c.capability) === r && capacityConfirmed(c)),
+      );
+      if (strongerConfirmed != null) chosenRank = strongerConfirmed;
+    }
+  }
   const tier = chosenRank < 0 ? [] : atOrAbove.filter((c) => rank(c.capability) === chosenRank);
   const stronger = chosenRank < 0 ? [] : atOrAbove.filter((c) => rank(c.capability) > chosenRank);
   // Within the tier, burn pressure ranks when a policy allow-list is active; else keep table order.
@@ -791,10 +805,33 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
     if (refused) return { ...result, status: "override-refused", refused: { ...sanitizedOptions.override, reason: refused } };
     const { capability } = candidates.find((c) => choiceName(c) === choiceName(sanitizedOptions.override));
     const usage = usageOf(sanitizedOptions.override);
-    const deviation = policyVerdict(policy, sanitizedOptions.override);
-    const policyDeviation = deviation
-      ? `${choiceName(sanitizedOptions.override)} is ${deviation.policy === "reserve" ? "reserved" : "not allowed"}: ${deviation.reason}`
-      : null;
+    const deviationNotes = [];
+    const verdict = policyVerdict(policy, sanitizedOptions.override);
+    if (verdict) {
+      deviationNotes.push(
+        `${choiceName(sanitizedOptions.override)} is ${verdict.policy === "reserve" ? "reserved" : "not allowed"}: ${verdict.reason}`,
+      );
+    }
+    if (policy.allow) {
+      const floorSkip = burnPressure(usage, policy, now).skip;
+      if (floorSkip) deviationNotes.push(`bypasses safety floor: ${floorSkip}`);
+      const shareSkip = expectedShareSkip(usage, policy, sanitizedOptions.override, now);
+      if (shareSkip && shareSkip !== floorSkip) deviationNotes.push(`bypasses expected share: ${shareSkip}`);
+    }
+    if (sanitizedOptions.reviewOf && policy.reviewerOnDifferentPool) {
+      const sameAgent = sanitizedOptions.override.agent === sanitizedOptions.reviewOf.agent;
+      const overrideBinding = burnPressure(usage, policy, now).binding;
+      const sameBucket =
+        reviewOfBinding?.bucketId &&
+        overrideBinding?.bucketId &&
+        reviewOfBinding.bucketId === overrideBinding.bucketId;
+      if (sameAgent || sameBucket) {
+        deviationNotes.push(
+          `bypasses reviewer-pool rule: must run on a different pool from the implementer ${choiceName(sanitizedOptions.reviewOf)}`,
+        );
+      }
+    }
+    const policyDeviation = deviationNotes.length ? deviationNotes.join("; ") : null;
     const warnings = [
       rank(capability) < rank(requirement) ? `${capability} capability is below the assessed ${requirement}` : null,
       usageWarning(sanitizedOptions.override.agent, usage, sanitizedOptions.override),

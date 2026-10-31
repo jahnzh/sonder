@@ -15,6 +15,8 @@ import {
   bindingBucketIdFor,
   burnPressure,
   countBucketLoad,
+  effectiveBucketLoad,
+  expectedShareSkip,
   resolvePolicy,
   shortBucketLabel,
 } from "./orca-routing.mjs";
@@ -272,6 +274,13 @@ function uniqueNeedCount(agent, remainingTasks) {
  * without treating percentages as comparable. Scarce sole-capable agents are saved for tasks that need them.
  * With a routing policy allow-list, prefer highest burn pressure within the tier (already ordered by recommend).
  */
+function underBucketCap(row, load, policy, usageByCandidate, now) {
+  const maxPer = policy.maxConcurrentPerBucket ?? 2;
+  const key = bindingBucketIdFor(row, usageByCandidate, policy, now);
+  if (!key) return true;
+  return effectiveBucketLoad(load, key, row.agent) < maxPer;
+}
+
 function pickCandidate(
   suitable,
   { activeWorkers, proposed, remainingTasks, usageByAgent, usageByCandidate = {}, policy = NO_POLICY, now = new Date(), bucketLoad = null },
@@ -281,15 +290,21 @@ function pickCandidate(
   let atFloor = suitable.filter((row) => rank(row.capability) === minCap);
 
   if (policy?.allow) {
-    const maxPer = policy.maxConcurrentPerBucket ?? 2;
     const load = bucketLoad ?? countBucketLoad({ activeWorkers, proposed, usageByCandidate, policy, now });
-    atFloor = atFloor.filter((row) => {
-      const key = bindingBucketIdFor(row, usageByCandidate, policy, now);
-      return !key || (load[key]?.count ?? 0) < maxPer;
-    });
-    if (!atFloor.length) return null;
-    // recommend already ranked by pressure; keep that order among uncapped rows.
-    return atFloor[0];
+    const uncapped = (rows) => rows.filter((row) => underBucketCap(row, load, policy, usageByCandidate, now));
+    atFloor = uncapped(atFloor);
+    if (atFloor.length) {
+      // recommend already ranked by pressure; keep that order among uncapped rows.
+      return atFloor[0];
+    }
+    // Required tier is capped: try the next stronger capability tiers before giving up.
+    const stronger = suitable.filter((row) => rank(row.capability) > minCap);
+    const strongerRanks = [...new Set(stronger.map((row) => rank(row.capability)))].sort((a, b) => a - b);
+    for (const nextRank of strongerRanks) {
+      const tier = uncapped(stronger.filter((row) => rank(row.capability) === nextRank));
+      if (tier.length) return tier[0];
+    }
+    return null;
   }
 
   const scored = atFloor.map((row, index) => {
@@ -615,13 +630,12 @@ export async function planWave({
     if (!pick) {
       const minCapRank = available.length ? Math.min(...available.map((row) => rank(row.capability))) : -1;
       const atFloor = available.filter((row) => rank(row.capability) === minCapRank);
+      const strongerAvailable = available.filter((row) => rank(row.capability) > minCapRank);
       const cappedOut =
         resolvedPolicy?.allow &&
         atFloor.length > 0 &&
-        atFloor.every((row) => {
-          const key = bindingBucketIdFor(row, usageByCandidate, resolvedPolicy, now);
-          return key && (bucketLoad[key]?.count ?? 0) >= (resolvedPolicy.maxConcurrentPerBucket ?? 2);
-        });
+        atFloor.every((row) => !underBucketCap(row, bucketLoad, resolvedPolicy, usageByCandidate, now)) &&
+        strongerAvailable.every((row) => !underBucketCap(row, bucketLoad, resolvedPolicy, usageByCandidate, now));
       if (cappedOut) {
         const sample = atFloor[0];
         decisions.push({
@@ -641,7 +655,12 @@ export async function planWave({
 
       const weakerAvailable = weaker.filter((row) => {
         const usage = usageOf(usageByAgent, usageByCandidate, row);
-        return usage.status !== "exhausted";
+        if (usage.status === "exhausted") return false;
+        if (resolvedPolicy?.allow) {
+          if (burnPressure(usage, resolvedPolicy, now).skip) return false;
+          if (expectedShareSkip(usage, resolvedPolicy, row, now)) return false;
+        }
+        return true;
       });
       const weakerPick = pickCandidate(
         weakerAvailable.map((row) => ({
@@ -738,6 +757,23 @@ export async function planWave({
       });
 
     const runner = equivalents[0];
+    const reassigned =
+      result.recommendation && choiceName(result.recommendation) !== choiceName(pick);
+    const upgradeWarning =
+      rank(pick.capability) > rank(result.assessment.requirement)
+        ? `no available allowed candidate at ${result.assessment.requirement}; ${choiceName(pick)} is ${pick.capability}`
+        : null;
+    const pickReason = resolvedPolicy?.allow
+      ? `Assessed ${result.assessment.requirement}. Wave pick ${choiceName(pick)}` +
+        (pickBurn.pressure != null && pickBurn.binding
+          ? ` by burn pressure ${pickBurn.pressure}%/day on ${pickBurn.binding.bucket}`
+          : "") +
+        (runner ? `; runner-up ${choiceName(runner)}` : "") +
+        (reassigned && result.recommendation
+          ? ` (recommender preferred ${choiceName(result.recommendation)}; reassigned for wave load)`
+          : "")
+      : `${result.recommendation && !reassigned ? result.recommendation.reason : `Assessed ${result.assessment.requirement}`}. ` +
+        `Wave pick ${choiceName(pick)} after balancing shared load and scarce capable combinations across the ready set.`;
     const assignment = {
       agent: pick.agent,
       model: pick.model,
@@ -750,17 +786,10 @@ export async function planWave({
       pressure: pick.pressure ?? pickBurn.pressure,
       binding: pick.binding ?? pickBurn.binding,
       expectedSharePercent: pick.expectedSharePercent,
-      reason: resolvedPolicy?.allow
-        ? (result.recommendation?.reason ??
-          `Assessed ${result.assessment.requirement}. Wave pick ${choiceName(pick)}` +
-            (pickBurn.pressure != null && pickBurn.binding
-              ? ` by burn pressure ${pickBurn.pressure}%/day on ${pickBurn.binding.bucket}`
-              : "") +
-            (runner
-              ? `; runner-up ${choiceName(runner)}`
-              : ""))
-        : `${result.recommendation?.reason ?? `Assessed ${result.assessment.requirement}`}. ` +
-          `Wave pick ${choiceName(pick)} after balancing shared load and scarce capable combinations across the ready set.`,
+      reason:
+        !reassigned && result.recommendation?.reason && resolvedPolicy?.allow
+          ? result.recommendation.reason
+          : pickReason,
     };
 
     const decision = {
@@ -774,7 +803,13 @@ export async function planWave({
       alternatives: [...equivalents, ...stronger],
       rejected: result.rejected,
       excluded: result.excluded,
-      warning: usage.status === "low" ? `${pick.agent} usage is low: ${usage.reason}` : null,
+      warning: [
+        upgradeWarning,
+        result.decision?.warning && reassigned ? null : result.decision?.warning,
+        usage.status === "low" ? `${pick.agent} usage is low: ${usage.reason}` : null,
+      ]
+        .filter(Boolean)
+        .join("; ") || null,
       launch: { started: false, args: launchArgs(pick) },
       capacityNote: "Snapshot only — not reserved capacity. Replan when workers or usage change.",
     };

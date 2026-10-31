@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 // @ts-expect-error Plain JS module under test.
-import { activeWorkersFromWorkerList, burnPressure, isFiveHourBucket, loadPolicy, NO_POLICY, parsePolicy, policyVerdict, rankByPressure, resolvePolicy } from "../scripts/orca-routing.mjs";
+import { activeWorkersFromWorkerList, bindingBucketIdFor, burnPressure, countBucketLoad, effectiveBucketLoad, expectedShareFor, expectedShareSkip, isFiveHourBucket, loadPolicy, NO_POLICY, parsePolicy, policyVerdict, rankByPressure, resolvePolicy } from "../scripts/orca-routing.mjs";
 // @ts-expect-error Plain JS module under test.
 import { modelChoiceSection, parseCliArgs as parseRecommendArgs, recommend } from "../scripts/orca-recommend.mjs";
 // @ts-expect-error Plain JS module under test.
@@ -414,11 +414,17 @@ test("active workers count against the per-bucket cap, so the next pick moves to
 test("proposed workers count against the per-bucket cap within one wave", async () => {
   const tasks = ["a", "b", "c"].map((id) => ({ id, summary: id, judgment: "mechanical", judgmentReason: "docs" }));
   const p = await plan(wave({ concurrency: 3, tasks }));
-  const picks = p.tasks.map((t: { assignment?: { agent: string; model: string } }) => named(t.assignment ?? null));
-  assert.equal(picks.filter((n: string | null) => n === "antigravity/gemini-3.8-flash-high").length, 2, JSON.stringify(picks));
-  const third = p.tasks.find((t: { status: string }) => t.status !== "proposed");
-  assert.match(third.reason, /bucket cap 2/);
-  assert.match(third.reason, /Gemini Models weekly|gemini-weekly/);
+  const picks = p.tasks.map((t: { assignment?: { agent: string; model: string }; status: string; warning?: string | null; reason?: string }) => ({
+    status: t.status,
+    pick: named(t.assignment ?? null),
+    warning: t.warning,
+  }));
+  assert.equal(picks.filter((row: { pick: string | null }) => row.pick === "antigravity/gemini-3.8-flash-high").length, 2, JSON.stringify(picks));
+  // Third mechanical task upgrades to a stronger uncapped tier instead of delaying on the capped flash bucket.
+  const third = picks.find((row: { pick: string | null }) => row.pick !== "antigravity/gemini-3.8-flash-high");
+  assert.equal(third?.status, "proposed");
+  assert.ok(third?.pick, JSON.stringify(picks));
+  assert.notEqual(third?.pick, "antigravity/gemini-3.8-flash-high");
 });
 
 test("a wave reviewer task runs on a different pool from its implementer", async () => {
@@ -511,4 +517,270 @@ test("the routing policy is documented field by field and linked from the dispat
   assert.equal(agents.split("\n").filter((l) => l.includes("docs/agents/routing-policy.md")).length, 1);
   assert.match(readFileSync(join(repoRoot, "docs", "agents", "models.md"), "utf8"), /docs\/agents\/routing-policy\.md/);
   assert.match(readFileSync(join(repoRoot, "docs", "agents", "wave-planner.md"), "utf8"), /--policy/);
+});
+
+// --- Review findings (ctx_81b4675c47c4)
+
+test("expectedShareFor reads the listed share and falls back to maxBucketSharePerWorkerPercent", () => {
+  const p = policy();
+  assert.equal(expectedShareFor(p, { agent: "antigravity", model: "claude-opus-5-5-high" }), 35);
+  assert.equal(expectedShareFor(p, { agent: "antigravity", model: "claude-sonnet-5-5-medium" }), 12);
+  assert.equal(expectedShareFor(p, { agent: "codex", model: "gpt-6.1-terra" }), 10);
+  assert.equal(expectedShareFor(p, { agent: "cursor", model: "auto" }), 3);
+  assert.equal(expectedShareFor(p, { agent: "cursor", model: "composer-2.5" }), 25, "unlisted models use the default share");
+  assert.equal(expectedShareFor({ ...p, maxBucketSharePerWorkerPercent: 8 }, { agent: "cursor", model: "composer-2.5" }), 8);
+});
+
+test("expectedShareSkip refuses when percentLeft minus share would fall under the safety floor", () => {
+  const p = policy();
+  // 30% left with listed 10% share → 20% remaining >= 10% floor → allowed.
+  const tight = usage("fresh", [{ id: "codex-weekly", label: "Weekly limit", usedPercent: 70, resetsAt: inDays(4) }]);
+  assert.equal(expectedShareSkip(tight, p, { agent: "codex", model: "gpt-6.1-terra" }, NOW), null);
+  // Unlisted model uses 25% default: 30 - 25 = 5 < 10.
+  assert.match(
+    expectedShareSkip(tight, p, { agent: "codex", model: "unlisted-terra" }, NOW)!,
+    /Weekly limit has 30% left; expected share 25% would leave 5%, under the 10% safety floor/,
+  );
+  // 19% left, share 10% → 9% < 10.
+  const justUnder = usage("fresh", [{ id: "w", label: "Weekly", usedPercent: 81, resetsAt: inDays(4) }]);
+  assert.match(expectedShareSkip(justUnder, p, { agent: "codex", model: "gpt-6.1-terra" }, NOW)!, /would leave 9%, under the 10%/);
+  // Exactly at the floor after share is allowed (20 - 10 = 10).
+  const atFloor = usage("fresh", [{ id: "w", label: "Weekly", usedPercent: 80, resetsAt: inDays(4) }]);
+  assert.equal(expectedShareSkip(atFloor, p, { agent: "codex", model: "gpt-6.1-terra" }, NOW), null);
+});
+
+test("a recommender expected-share refuse names the window and leaves a safer candidate", async () => {
+  // Opus share 35%: with 40% left, 40-35=5 < 10 floor → refuse Opus; Sonnet share 12% still fits.
+  const u = liveUsage({ thirdWeek: { usedPercent: 60 } });
+  const r = await choose("reasoning-heavy", {}, u);
+  assert.equal(r.status, "no-suitable-candidate");
+  const opus = r.rejected.find((c: { model: string }) => c.model === "claude-opus-5-5-high");
+  assert.equal(opus.rejectionKind, "expected-share");
+  assert.match(opus.reason, /expected share 35% would leave 5%, under the 10% safety floor/);
+
+  const std = await choose("standard", {}, u);
+  assert.ok(!std.rejected.some((c: { model: string; rejectionKind?: string }) => c.model === "claude-sonnet-5-5-medium" && c.rejectionKind === "expected-share"));
+  assert.ok(["antigravity/claude-sonnet-5-5-medium", "codex/gpt-6.1-terra/max", "cursor/auto", "cursor/composer-2.5"].includes(named(std.recommendation) ?? ""));
+});
+
+test("a fresh five-hour-only reading is subject to the safety floor and expected-share checks", () => {
+  const p = policy();
+  const under = usage("fresh", [{ id: "codex-5h", label: "5h limit", usedPercent: 95, resetsAt: inDays(0.1) }]);
+  const floor = burnPressure(under, p, NOW);
+  assert.equal(floor.pressure, null, "5-hour windows do not score burn pressure");
+  assert.match(floor.skip!, /5h limit has 5% left, under the 10% safety floor/);
+  assert.equal(floor.binding?.bucketId, "codex-5h");
+
+  const share = expectedShareSkip(
+    usage("fresh", [{ id: "codex-5h", label: "5h limit", usedPercent: 80, resetsAt: inDays(0.1) }]),
+    p,
+    { agent: "codex", model: "unlisted-terra" },
+    NOW,
+  );
+  assert.match(share!, /expected share 25% would leave -5%, under the 10% safety floor|expected share 25% would leave/);
+});
+
+test("fresh five-hour-only capacity does not enter usable when under the floor", async () => {
+  const only5h = {
+    "codex/gpt-6.1-terra": usage("fresh", [{ id: "codex-5h", label: "5h limit", usedPercent: 96, resetsAt: inDays(0.1) }]),
+    "cursor/auto": usage("fresh", [B.cursorPlan, B.cursorAuto]),
+    "cursor/composer-2.5": usage("fresh", [B.cursorPlan, B.cursorAuto]),
+    "antigravity/claude-sonnet-5-5-medium": usage("exhausted", [B.thirdWeek, B.third5h]),
+    "antigravity/claude-opus-5-5-high": usage("exhausted", [B.thirdWeek, B.third5h]),
+    "antigravity/gemini-3.8-flash-high": usage("exhausted", [B.geminiWeek, B.gemini5h]),
+  };
+  const r = await choose("standard", {}, only5h);
+  assert.match(named(r.recommendation) ?? "", /^cursor\//);
+  const codex = r.rejected.find((c: { model: string }) => c.model === "gpt-6.1-terra");
+  assert.equal(codex.rejectionKind, "safety-floor");
+});
+
+test("model-less and unknown-bucket active workers count toward the real bucket cap", () => {
+  const p = policy();
+  const u = liveUsage();
+  const activeWorkers = [
+    { agent: "antigravity", model: "claude-opus-5-5-high" },
+    { agent: "antigravity", model: null },
+  ];
+  const load = countBucketLoad({ activeWorkers, usageByCandidate: u, policy: p, now: NOW });
+  assert.equal(bindingBucketIdFor({ agent: "antigravity", model: null }, u, p, NOW), "antigravity/unknown");
+  assert.equal(load["antigravity/unknown"].count, 1);
+  assert.equal(load["antigravity/3p-weekly"].count, 1);
+  // Cap check for the real bucket must include the ambiguous worker.
+  assert.equal(effectiveBucketLoad(load, "antigravity/3p-weekly", "antigravity"), 2);
+  assert.equal(effectiveBucketLoad(load, "antigravity/unknown", "antigravity"), 1);
+});
+
+test("a model-less active worker blocks another launch on the same agent's binding bucket", async () => {
+  const activeWorkers = [
+    { agent: "antigravity", model: "claude-opus-5-5-high", dispatchId: "ctx_a" },
+    { agent: "antigravity", model: null, dispatchId: "ctx_b" },
+  ];
+  const p = await plan(
+    wave({ concurrency: 5, activeWorkers, tasks: [{ id: "std", summary: "Standard", judgment: "standard", judgmentReason: "clear" }] }),
+    { policy: { ...policy(), maxConcurrentTotal: 5 } },
+  );
+  assert.equal(named(p.tasks[0].assignment), "codex/gpt-6.1-terra/max");
+});
+
+test("rankByPressure tie-breaking is transitive inside the 5% band", () => {
+  const order = { order: ["antigravity", "codex", "cursor"] };
+  // Pairwise: 100~96 and 96~92, but 100 is not within 5% of 92. Sort must not put 92 above 100.
+  const rows = [
+    { agent: "cursor", pressure: 92 },
+    { agent: "codex", pressure: 96 },
+    { agent: "antigravity", pressure: 100 },
+  ];
+  assert.deepEqual(
+    rankByPressure(rows, order).map((r: { agent: string; pressure: number }) => `${r.agent}:${r.pressure}`),
+    ["antigravity:100", "codex:96", "cursor:92"],
+  );
+  // Contiguous band: 100, 97, 95 are one band (each within 5% of the band max 100) → policy order.
+  assert.deepEqual(
+    rankByPressure(
+      [
+        { agent: "cursor", pressure: 97 },
+        { agent: "codex", pressure: 100 },
+        { agent: "antigravity", pressure: 95 },
+      ],
+      order,
+    ).map((r: { agent: string }) => r.agent),
+    ["antigravity", "codex", "cursor"],
+  );
+});
+
+test("stale or unknown lower-tier capacity does not block a confirmed stronger candidate", async () => {
+  const u = liveUsage(
+    {},
+    {
+      "antigravity/claude-sonnet-5-5-medium": "stale",
+      "codex/gpt-6.1-terra": "unknown",
+      "cursor/auto": "stale",
+      "cursor/composer-2.5": "unknown",
+    },
+  );
+  const r = await choose("standard", {}, u);
+  assert.equal(named(r.recommendation), "antigravity/claude-opus-5-5-high");
+  assert.match(r.decision.warning, /no available allowed candidate at standard; antigravity\/claude-opus-5-5-high is reasoning-heavy/);
+});
+
+test("an override that bypasses the floor, share, or reviewer rule records a policy deviation", async () => {
+  const underFloor = liveUsage({ thirdWeek: { usedPercent: 95 } }, { "antigravity/claude-opus-5-5-high": "low" });
+  const floor = await choose("reasoning-heavy", {
+    override: { agent: "antigravity", model: "claude-opus-5-5-high", effort: null },
+    overrideReason: "force opus",
+  }, underFloor);
+  assert.equal(floor.status, "overridden");
+  assert.match(floor.decision.policyDeviation, /safety floor/i);
+  assert.match(floor.decision.warning, /deviates from the routing policy/);
+
+  const share = await choose("reasoning-heavy", {
+    override: { agent: "antigravity", model: "claude-opus-5-5-high", effort: null },
+    overrideReason: "force opus",
+  }, liveUsage({ thirdWeek: { usedPercent: 60 } }));
+  assert.match(share.decision.policyDeviation, /expected share/i);
+
+  const review = await choose("standard", {
+    override: { agent: "antigravity", model: "claude-sonnet-5-5-medium", effort: null },
+    overrideReason: "same pool",
+    reviewOf: { agent: "antigravity", model: "claude-opus-5-5-high", effort: null },
+  });
+  assert.match(review.decision.policyDeviation, /reviewer|different pool/i);
+});
+
+test("worker-list parsing merges paginated receipts and refuses an incomplete first page", () => {
+  const base = JSON.parse(readFileSync(join(repoRoot, "tests", "fixtures", "routing", "worker-list.json"), "utf8"));
+  const page1 = {
+    ...base,
+    result: {
+      ...base.result,
+      workers: [base.result.workers[0]],
+      page: { limit: 1, total: 2, hasMore: true, nextCursor: "cursor-page-2" },
+    },
+  };
+  const page2 = {
+    ...base,
+    result: {
+      ...base.result,
+      workers: [base.result.workers[1]],
+      page: { limit: 1, total: 2, hasMore: false, nextCursor: null },
+    },
+  };
+  assert.throws(() => activeWorkersFromWorkerList(JSON.stringify(page1)), /hasMore|incomplete|page/i);
+  assert.deepEqual(activeWorkersFromWorkerList(JSON.stringify([page1, page2])), [
+    { agent: "codex", model: "gpt-6.1-terra", effort: null, dispatchId: "ctx_test1", task: "task_test1" },
+    { agent: "antigravity", model: null, effort: null, dispatchId: "ctx_test2", task: "task_test2" },
+  ]);
+  assert.deepEqual(activeWorkersFromWorkerList(JSON.stringify({ pages: [page1, page2] })), [
+    { agent: "codex", model: "gpt-6.1-terra", effort: null, dispatchId: "ctx_test1", task: "task_test1" },
+    { agent: "antigravity", model: null, effort: null, dispatchId: "ctx_test2", task: "task_test2" },
+  ]);
+});
+
+test("when the required tier is bucket-capped the planner tries an eligible stronger tier", async () => {
+  const activeWorkers = [
+    { agent: "antigravity", model: "claude-sonnet-5-5-medium", dispatchId: "ctx_a" },
+    { agent: "antigravity", model: "claude-sonnet-5-5-medium", dispatchId: "ctx_b" },
+    { agent: "codex", model: "gpt-6.1-terra", dispatchId: "ctx_c" },
+    { agent: "codex", model: "gpt-6.1-terra", dispatchId: "ctx_d" },
+    { agent: "cursor", model: "auto", dispatchId: "ctx_e" },
+    { agent: "cursor", model: "composer-2.5", dispatchId: "ctx_f" },
+  ];
+  // All standard-tier buckets are at cap 2; Opus (reasoning-heavy) still has room on the same 3p-weekly? 
+  // Sonnet and Opus share 3p-weekly, so Opus is also capped. Use a policy that puts Opus on a distinct allow with room.
+  // Simpler: exhaust/cap standard agents via active load, leave Opus uncapped by using maxConcurrentPerBucket:1 on
+  // standard buckets only — instead, mark cursor/codex exhausted and fill agy sonnet bucket, while Opus is allowed
+  // as upgrade when standard is capped. Cap sonnet's bucket with 2 sonnet workers; Opus shares that bucket though.
+  // Use separate buckets: make standard candidates all cursor/codex capped, Opus on antigravity with room.
+  const u = liveUsage({}, { "codex/gpt-6.1-terra": "exhausted", "cursor/auto": "exhausted", "cursor/composer-2.5": "exhausted" });
+  // Two active sonnets fill the 3p-weekly cap; Opus shares it — so also capped. Change approach:
+  // mechanical requirement with flash capped, and a standard/reasoning available as stronger.
+  const mechActive = [
+    { agent: "antigravity", model: "gemini-3.8-flash-high", dispatchId: "ctx_1" },
+    { agent: "antigravity", model: "gemini-3.8-flash-high", dispatchId: "ctx_2" },
+  ];
+  const p = await plan(
+    wave({
+      concurrency: 5,
+      activeWorkers: mechActive,
+      tasks: [{ id: "m", summary: "Mech", judgment: "mechanical", judgmentReason: "docs" }],
+    }),
+    { policy: { ...policy(), maxConcurrentTotal: 5 } },
+    liveUsage(),
+  );
+  // Flash bucket capped → should upgrade to a standard/reasoning allowed candidate rather than delay.
+  assert.equal(p.tasks[0].status, "proposed");
+  assert.notEqual(named(p.tasks[0].assignment), "antigravity/gemini-3.8-flash-high");
+  assert.match(p.tasks[0].warning ?? p.tasks[0].assignment.reason, /mechanical|standard|reasoning|no available|capability|burn pressure/i);
+});
+
+test("below-capability alternatives must still pass the safety floor and expected-share guards", async () => {
+  // Reasoning-heavy with Opus exhausted; Sonnet (below-capability) under the floor must not be offered.
+  const u = liveUsage({ thirdWeek: { usedPercent: 95 } }, { "antigravity/claude-opus-5-5-high": "exhausted", "antigravity/claude-sonnet-5-5-medium": "low" });
+  const p = await plan(
+    wave({ tasks: [{ id: "deep", summary: "Deep", judgment: "reasoning-heavy", judgmentReason: "hard" }] }),
+    {},
+    u,
+  );
+  const row = p.tasks[0];
+  assert.ok(row.status === "delay" || row.status === "needs-decision");
+  if (row.weakerAlternative) {
+    assert.notEqual(named(row.weakerAlternative), "antigravity/claude-sonnet-5-5-medium");
+  }
+});
+
+test("wave reassignment recalculates the pick reason and keeps the upgrade warning", async () => {
+  const activeWorkers = [
+    { agent: "antigravity", model: "claude-opus-5-5-high", dispatchId: "ctx_a" },
+    { agent: "antigravity", model: "claude-opus-5-5-high", dispatchId: "ctx_b" },
+  ];
+  const p = await plan(
+    wave({ concurrency: 5, activeWorkers, tasks: [{ id: "std", summary: "Standard", judgment: "standard", judgmentReason: "clear" }] }),
+    { policy: { ...policy(), maxConcurrentTotal: 5 } },
+  );
+  const t = p.tasks[0];
+  assert.equal(named(t.assignment), "codex/gpt-6.1-terra/max");
+  // Must describe the actual pick (Codex), not the recommender's original agy Sonnet reason alone.
+  assert.match(t.assignment.reason, /codex\/gpt-6\.1-terra/);
+  assert.doesNotMatch(t.assignment.reason, /Wave pick antigravity\/claude-sonnet-5-5-medium|antigravity\/claude-sonnet-5-5-medium is the smallest/);
 });
