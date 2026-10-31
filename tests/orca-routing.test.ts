@@ -261,7 +261,7 @@ test("reasoning-heavy prefers antigravity/claude-opus-5-5-high and lists Claude 
   assert.equal(named(r.recommendation), "antigravity/claude-opus-5-5-high");
   assert.equal(r.recommendation.binding.bucket, "Claude and GPT models weekly");
   assert.ok(Math.abs(r.recommendation.pressure - 11.23) < 0.01, String(r.recommendation.pressure));
-  assert.equal(r.recommendation.binding.percentLeft, 76.7);
+  assert.equal(r.recommendation.binding.percentLeft, 100 - B.thirdWeek.usedPercent);
   assert.equal(r.recommendation.binding.resetsAt, B.thirdWeek.resetsAt);
   assert.match(r.recommendation.reason, /burn pressure 11\.23%\/day on Claude and GPT models weekly \(76\.7% left, resets 2026-11-07T13:20:13\.000Z\)/);
   assert.doesNotMatch(r.recommendation.reason, /not balanced/);
@@ -1784,12 +1784,13 @@ test("uncertaintyAlternative prefers a higher capability tier before burn pressu
 
 test("expectedShareSkip still checks committed share when usage is stale", () => {
   const p = policy();
-  // 40% left; Opus expects 35%. Alone that leaves 5% under the floor; with 12% already
-  // committed (a prior Sonnet) it leaves -7%. Stale must not bypass either check.
-  const stale = usage("stale", [{ ...B.thirdWeek, usedPercent: 60 }, B.third5h]);
-  assert.match(
-    expectedShareSkip(stale, p, { agent: "antigravity", model: "claude-opus-5-5-high" }, NOW)!,
-    /under the 10% safety floor|expected share/,
+  // 50% left; Opus expects 35% → alone leaves 15% (>= floor). With 12% already committed
+  // (a prior Sonnet) it leaves 3% under the floor. Stale must not bypass the cumulative check.
+  const stale = usage("stale", [{ ...B.thirdWeek, usedPercent: 50 }, B.third5h]);
+  assert.equal(
+    expectedShareSkip(stale, p, { agent: "antigravity", model: "claude-opus-5-5-high" }, NOW),
+    null,
+    "stale Opus must pass alone when headroom covers its share",
   );
   assert.match(
     expectedShareSkip(stale, p, { agent: "antigravity", model: "claude-opus-5-5-high" }, NOW, {
@@ -1806,9 +1807,9 @@ test("expectedShareSkip still checks committed share when usage is stale", () =>
 });
 
 test("wave share guard refuses a stale Opus after a fresh Sonnet would overdraw the bucket", async () => {
-  // 40% left; Sonnet 12% then Opus 35% → 40-12-35=-7 under the floor. Stale Opus must not slip through.
+  // 50% left; Opus alone 50-35=15 >= floor. Sonnet 12% then Opus 35% → 50-12-35=3 under the floor.
   const base = liveUsage(
-    { thirdWeek: { usedPercent: 60 } },
+    { thirdWeek: { usedPercent: 50 } },
     {
       "codex/gpt-6.1-terra": "exhausted",
       "cursor/auto": "exhausted",
@@ -1820,9 +1821,34 @@ test("wave share guard refuses a stale Opus after a fresh Sonnet would overdraw 
   );
   const usageByCandidate = {
     ...base,
-    "antigravity/claude-sonnet-5-5-medium": usage("fresh", [{ ...B.thirdWeek, usedPercent: 60 }, B.third5h]),
-    "antigravity/claude-opus-5-5-high": usage("stale", [{ ...B.thirdWeek, usedPercent: 60 }, B.third5h]),
+    "antigravity/claude-sonnet-5-5-medium": usage("fresh", [{ ...B.thirdWeek, usedPercent: 50 }, B.third5h]),
+    "antigravity/claude-opus-5-5-high": usage("stale", [{ ...B.thirdWeek, usedPercent: 50 }, B.third5h]),
   };
+  // Alone, stale Opus is a valid pick (proves the failure is cumulative, not individual).
+  const alone: any = await withoutKey(() =>
+    planWave({
+      wave: wave({
+        concurrency: 3,
+        tasks: [
+          {
+            id: "solo",
+            summary: "Solo",
+            judgment: "standard",
+            judgmentReason: "clear",
+            eligible: ["antigravity/claude-opus-5-5-high"],
+          },
+        ],
+      }),
+      candidates: CANDIDATES,
+      usageByAgent: {},
+      usageByCandidate,
+      learningOptions: { learning: false, now: NOW },
+      policy: { ...policy(), maxConcurrentPerBucket: 3, maxConcurrentTotal: 3 },
+      now: NOW,
+    }),
+  );
+  assert.equal(named(alone.tasks[0].assignment), "antigravity/claude-opus-5-5-high");
+
   const p: any = await withoutKey(() =>
     planWave({
       wave: wave({
@@ -1883,11 +1909,12 @@ test("bindingBucketIdFor prefers the observed live binding over the static docum
   );
   // Cursor auto's tighter live binding is Plan (included_total), not the static included_auto.
   assert.equal(bindingBucketIdFor({ agent: "cursor", model: "auto" }, ultra, p, NOW), "cursor/included_total");
-  // Missing / stale usage still falls back to the documented lasting id.
+  // Missing usage falls back to the documented lasting id.
   assert.equal(
     bindingBucketIdFor({ agent: "antigravity", model: "gemini-4-argon-high" }, {}, p, NOW),
     "antigravity/gemini-argon-wtu-weekly",
   );
+  // Stale usage with observed lasting buckets still binds to that pool (not the static Argon id).
   assert.equal(
     bindingBucketIdFor(
       { agent: "antigravity", model: "gemini-4-argon-high" },
@@ -1895,7 +1922,7 @@ test("bindingBucketIdFor prefers the observed live binding over the static docum
       p,
       NOW,
     ),
-    "antigravity/gemini-argon-wtu-weekly",
+    "antigravity/gemini-weekly",
   );
 });
 
@@ -1997,4 +2024,204 @@ test("multi-page worker-list refuses pages that disagree on page.total", () => {
   // Matching totals across pages still succeed.
   const ok2 = mk([base.result.workers[1]], { limit: 1, total: 2, hasMore: false, nextCursor: null }, "cursor-page-2");
   assert.equal(activeWorkersFromWorkerList(JSON.stringify([page1, ok2])).length, 2);
+});
+
+// --- Round-7 review findings
+
+test("stale Ultra Argon and Flash share gemini-weekly so cumulative share refuses the second", async () => {
+  // Ultra plan: both observe gemini-weekly. 35% left; Argon default share 25% alone leaves 10%.
+  // Flash share 3% after Argon's 25% commitment leaves 7% under the floor.
+  const allowBoth = {
+    ...policy(),
+    allow: [
+      { agent: "antigravity", models: ["gemini-4-argon-high", "gemini-3.8-flash-high"] },
+      { agent: "cursor", models: ["auto", "composer-2.5"] },
+      { agent: "codex", models: ["gpt-6.1-terra"] },
+    ],
+    reserve: (policy().reserve ?? []).filter(
+      (row: { agent?: string; models?: string[] }) =>
+        !(row.agent === "antigravity" && row.models?.includes("gemini-4-argon-high")),
+    ),
+    maxConcurrentPerBucket: 3,
+    maxConcurrentTotal: 3,
+  };
+  const staleShared = usage("stale", [{ ...B.geminiWeek, usedPercent: 65 }, B.gemini5h]);
+  const usageByCandidate = {
+    ...liveUsage(
+      {},
+      {
+        "codex/gpt-6.1-terra": "exhausted",
+        "cursor/auto": "exhausted",
+        "cursor/composer-2.5": "exhausted",
+        "antigravity/claude-opus-5-5-high": "exhausted",
+        "antigravity/claude-sonnet-5-5-medium": "exhausted",
+        "claude/claude-opus-5-5": "exhausted",
+        "claude/claude-sonnet-5-5": "exhausted",
+      },
+    ),
+    "antigravity/gemini-4-argon-high": staleShared,
+    "antigravity/gemini-3.8-flash-high": staleShared,
+  };
+  assert.equal(
+    bindingBucketIdFor({ agent: "antigravity", model: "gemini-4-argon-high" }, usageByCandidate, allowBoth, NOW),
+    "antigravity/gemini-weekly",
+  );
+  assert.equal(
+    bindingBucketIdFor({ agent: "antigravity", model: "gemini-3.8-flash-high" }, usageByCandidate, allowBoth, NOW),
+    "antigravity/gemini-weekly",
+  );
+  assert.equal(
+    expectedShareSkip(staleShared, allowBoth, { agent: "antigravity", model: "gemini-4-argon-high" }, NOW),
+    null,
+  );
+  assert.match(
+    expectedShareSkip(staleShared, allowBoth, { agent: "antigravity", model: "gemini-3.8-flash-high" }, NOW, {
+      committedPercent: 25,
+    })!,
+    /already committed|under the 10% safety floor/,
+  );
+
+  const p: any = await withoutKey(() =>
+    planWave({
+      wave: wave({
+        concurrency: 3,
+        tasks: [
+          {
+            id: "a",
+            summary: "A",
+            judgment: "mechanical",
+            judgmentReason: "docs",
+            eligible: ["antigravity/gemini-4-argon-high"],
+          },
+          {
+            id: "b",
+            summary: "B",
+            judgment: "mechanical",
+            judgmentReason: "docs",
+            eligible: ["antigravity/gemini-3.8-flash-high"],
+          },
+        ],
+      }),
+      candidates: CANDIDATES,
+      usageByAgent: {},
+      usageByCandidate,
+      learningOptions: { learning: false, now: NOW },
+      policy: allowBoth,
+      now: NOW,
+    }),
+  );
+  const byId = Object.fromEntries(p.tasks.map((t: { task: string }) => [t.task, t]));
+  assert.equal(named(byId.a.assignment), "antigravity/gemini-4-argon-high");
+  assert.notEqual(
+    named(byId.b.assignment),
+    "antigravity/gemini-3.8-flash-high",
+    `stale Flash must not overdraw gemini-weekly after Argon: ${JSON.stringify({
+      status: byId.b.status,
+      assignment: named(byId.b.assignment ?? null),
+      reason: byId.b.reason,
+    })}`,
+  );
+});
+
+test("two active cursor/composer workers without readings block a Plan-bound cursor/auto candidate", async () => {
+  // No readings → static included_auto. Live auto binds to included_total (Plan). Same account plan.
+  const usageByCandidate = {
+    ...liveUsage(
+      {},
+      {
+        "codex/gpt-6.1-terra": "exhausted",
+        "cursor/composer-2.5": "exhausted",
+        "antigravity/claude-opus-5-5-high": "exhausted",
+        "antigravity/claude-sonnet-5-5-medium": "exhausted",
+        "antigravity/gemini-3.8-flash-high": "exhausted",
+        "claude/claude-opus-5-5": "exhausted",
+        "claude/claude-sonnet-5-5": "exhausted",
+      },
+    ),
+    "cursor/auto": usage("fresh", [B.cursorPlan, B.cursorAuto]),
+  };
+  const activeWorkers = [
+    { agent: "cursor", model: "composer-2.4", dispatchId: "ctx_c1" },
+    { agent: "cursor", model: "composer-2.4", dispatchId: "ctx_c2" },
+  ];
+  const load = countBucketLoad({
+    activeWorkers,
+    usageByCandidate: {},
+    policy: policy(),
+    now: NOW,
+  });
+  assert.equal(load["cursor/included_auto"]?.count, 2);
+  assert.equal(
+    bindingBucketIdFor({ agent: "cursor", model: "auto" }, usageByCandidate, policy(), NOW),
+    "cursor/included_total",
+  );
+  assert.equal(effectiveBucketLoad(load, "cursor/included_total", "cursor"), 2);
+  assert.equal(effectiveBucketLoad(load, "cursor/included_total", "cursor") < (policy().maxConcurrentPerBucket ?? 2), false);
+
+  const p: any = await withoutKey(() =>
+    planWave({
+      wave: wave({
+        concurrency: 5,
+        activeWorkers,
+        tasks: [{ id: "std", summary: "Std", judgment: "standard", judgmentReason: "clear", eligible: ["cursor/auto"] }],
+      }),
+      candidates: CANDIDATES,
+      usageByAgent: {},
+      usageByCandidate,
+      learningOptions: { learning: false, now: NOW },
+      policy: policy(),
+      now: NOW,
+    }),
+  );
+  assert.notEqual(
+    named(p.tasks[0].assignment),
+    "cursor/auto",
+    `Plan-bound auto must respect included_* cap from reading-less composers: ${JSON.stringify({
+      status: p.tasks[0].status,
+      assignment: named(p.tasks[0].assignment ?? null),
+      reason: p.tasks[0].reason,
+      bucketLoad: p.bucketLoad,
+    })}`,
+  );
+});
+
+test("multi-page worker-list refuses later pages with missing, null, or string total", () => {
+  const base = JSON.parse(readFileSync(join(repoRoot, "tests", "fixtures", "routing", "worker-list.json"), "utf8"));
+  const mk = (workers: unknown[], page: Record<string, unknown>, cursor?: string | null) => ({
+    ...base,
+    ...(cursor !== undefined ? { cursor } : {}),
+    result: { ...base.result, workers, page },
+  });
+  const page0 = mk([base.result.workers[0]], { limit: 1, total: 2, hasMore: true, nextCursor: "cursor-page-2" });
+  for (const badTotal of [undefined, null, "2"]) {
+    const page: Record<string, unknown> = { limit: 1, hasMore: false, nextCursor: null };
+    if (badTotal !== undefined) page.total = badTotal;
+    const later = mk([base.result.workers[1]], page, "cursor-page-2");
+    assert.throws(
+      () => activeWorkersFromWorkerList(JSON.stringify([page0, later])),
+      /total/i,
+      `later page.total=${String(badTotal)} must be rejected`,
+    );
+  }
+});
+
+test("expectedShareSkip uses exact floating-point remainder against the safety floor", () => {
+  const p = policy();
+  // 87.04% used → 12.96% left. Cursor auto share 3% → exact remainder 9.96 < 10.
+  // Premature round1(12.96)=13 would incorrectly leave 10 and pass.
+  const fractional = usage("fresh", [
+    { id: "included_total", label: "Plan", usedPercent: 87.04, resetsAt: inDays(20) },
+  ]);
+  const left = burnPressure(fractional, p, NOW).binding?.percentLeft ?? 0;
+  assert.ok(Math.abs(left - (100 - 87.04)) < 1e-9, String(left));
+  assert.ok(left - 3 < 10, "exact remainder must sit under the floor before any rounding");
+  assert.match(
+    expectedShareSkip(fractional, p, { agent: "cursor", model: "auto" }, NOW)!,
+    /would leave 10%, under the 10% safety floor|would leave 9\.96%|under the 10% safety floor/,
+  );
+  // Integer headroom that truly leaves 10% after share still passes.
+  const atFloor = usage("fresh", [
+    { id: "included_total", label: "Plan", usedPercent: 87, resetsAt: inDays(20) },
+  ]);
+  assert.equal(expectedShareSkip(atFloor, p, { agent: "cursor", model: "auto" }, NOW), null);
 });

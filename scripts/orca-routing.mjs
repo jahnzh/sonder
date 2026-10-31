@@ -277,7 +277,8 @@ function bindingFromBuckets(buckets, nowMs, floor) {
     return String(a.id).localeCompare(String(b.id));
   });
   const bindingBucket = scored[0];
-  const percentLeft = round1(100 - bindingBucket.usedPercent);
+  // Keep exact headroom for floor / share arithmetic; round only when formatting strings.
+  const percentLeft = 100 - bindingBucket.usedPercent;
   const resetMs = bindingBucket.resetsAt ? Date.parse(bindingBucket.resetsAt) : NaN;
   let daysToReset = Number.isFinite(resetMs) ? (resetMs - nowMs) / DAY_MS : 0.05;
   if (!(daysToReset > 0)) daysToReset = 0.05;
@@ -295,7 +296,7 @@ function bindingFromBuckets(buckets, nowMs, floor) {
   if (percentLeft < floor) {
     return {
       binding,
-      skip: `${label} has ${percentLeft}% left, under the ${floor}% safety floor`,
+      skip: `${label} has ${round1(percentLeft)}% left, under the ${floor}% safety floor`,
     };
   }
   return { binding, skip: null };
@@ -396,13 +397,15 @@ export function expectedShareSkip(usage, policy, candidate, now = new Date(), { 
   const share = expectedShareFor(policy, candidate);
   const floor = policy.safetyFloorPercent ?? 10;
   const committed = typeof committedPercent === "number" && Number.isFinite(committedPercent) ? committedPercent : 0;
-  const effectiveLeft = round1(binding.percentLeft - committed);
-  const remaining = round1(effectiveLeft - share);
+  // Exact remainder vs floor — do not round before the comparison (e.g. 87.04% used + 3% share
+  // leaves 9.96%, which must fail a 10% floor even though round1(12.96)=13).
+  const effectiveLeft = binding.percentLeft - committed;
+  const remaining = effectiveLeft - share;
   if (remaining < floor) {
     const committedNote = committed > 0 ? ` (${committed}% already committed in this wave)` : "";
     return (
-      `${binding.bucket} has ${effectiveLeft}% left${committedNote}; ` +
-      `expected share ${share}% would leave ${remaining}%, under the ${floor}% safety floor`
+      `${binding.bucket} has ${round1(effectiveLeft)}% left${committedNote}; ` +
+      `expected share ${share}% would leave ${round1(remaining)}%, under the ${floor}% safety floor`
     );
   }
   return null;
@@ -453,11 +456,11 @@ export function formatBurnReason(choiceName, pressureReport, runnerUp = null) {
   const { binding, pressure } = pressureReport;
   let text =
     `burn pressure ${pressure}%/day on ${binding.bucket} ` +
-    `(${binding.percentLeft}% left, resets ${binding.resetsAt ?? "unreported"})`;
+    `(${round1(binding.percentLeft)}% left, resets ${binding.resetsAt ?? "unreported"})`;
   if (runnerUp?.name && runnerUp.pressure != null && runnerUp.binding) {
     text +=
       `; runner-up ${runnerUp.name}: burn pressure ${runnerUp.pressure}%/day on ${runnerUp.binding.bucket} ` +
-      `(${runnerUp.binding.percentLeft}% left, resets ${runnerUp.binding.resetsAt ?? "unreported"})`;
+      `(${round1(runnerUp.binding.percentLeft)}% left, resets ${runnerUp.binding.resetsAt ?? "unreported"})`;
   }
   return text;
 }
@@ -564,10 +567,19 @@ export function activeWorkersFromWorkerList(text) {
           );
         }
         expectedTotal = meta.total;
-      } else if (typeof meta.total === "number" && Number.isFinite(meta.total) && meta.total !== expectedTotal) {
-        throw new Error(
-          `worker-list pages disagree on page.total: page 0 has ${expectedTotal}, page ${i} has ${meta.total}`,
-        );
+      } else {
+        // Later pages must carry the same finite total — missing/null/string totals cannot
+        // silently skip the completeness check.
+        if (typeof meta.total !== "number" || !Number.isFinite(meta.total)) {
+          throw new Error(
+            `worker-list pages lack a numeric page.total on page ${i} (got ${meta.total}); expected ${expectedTotal}`,
+          );
+        }
+        if (meta.total !== expectedTotal) {
+          throw new Error(
+            `worker-list pages disagree on page.total: page 0 has ${expectedTotal}, page ${i} has ${meta.total}`,
+          );
+        }
       }
       const last = i === pages.length - 1;
       if (!last) {
@@ -687,6 +699,15 @@ export function bindingBucketIdFor(choice, usageByCandidate = {}, policy = NO_PO
     if (report.binding?.bucketId && !isFiveHourBucket({ id: report.binding.bucketId, label: report.binding.bucket })) {
       return `${choice.agent}/${report.binding.bucketId}`;
     }
+    // Stale/unconfirmed: burnPressure drops the binding, but lasting usedPercent still names the
+    // shared pool (e.g. Ultra Argon+Flash → gemini-weekly) so share/cap math stays coherent.
+    const derived = bindingFromUsageBuckets(usage, policy, now);
+    if (
+      derived.binding?.bucketId &&
+      !isFiveHourBucket({ id: derived.binding.bucketId, label: derived.binding.bucket })
+    ) {
+      return `${choice.agent}/${derived.binding.bucketId}`;
+    }
   }
   const documented = documentedLastingBucketId(choice.agent, choice.model);
   if (documented) return `${choice.agent}/${documented}`;
@@ -749,7 +770,20 @@ export function effectiveBucketLoad(load, key, agent) {
     return total;
   }
   const ambiguous = agent ? (load[`${agent}/unknown`]?.count ?? 0) : 0;
-  return direct + ambiguous + providerless;
+  let total = direct + ambiguous + providerless;
+  // Cursor Plan (`included_total`) and per-surface `included_*` windows draw from the same
+  // account allowance — workers without readings (static included_auto) must still cap a
+  // live Plan candidate, and the reverse.
+  if (key === "cursor/included_total") {
+    for (const [bucketKey, row] of Object.entries(load)) {
+      if (bucketKey !== key && bucketKey.startsWith("cursor/included_")) {
+        total += row?.count ?? 0;
+      }
+    }
+  } else if (key.startsWith("cursor/included_")) {
+    total += load["cursor/included_total"]?.count ?? 0;
+  }
+  return total;
 }
 
 export function countBucketLoad({ activeWorkers = [], proposed = [], usageByCandidate = {}, policy = NO_POLICY, now = new Date() }) {
