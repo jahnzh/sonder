@@ -473,7 +473,8 @@ function workersFromReceipt(raw, { allowIncomplete = false } = {}) {
  * Accepts one receipt, an array of page receipts, or `{ pages: [...] }`. A single
  * page with `page.hasMore: true` is refused — paginate with `--cursor` until complete.
  * Multi-page input must be contiguous: every non-last page has `hasMore` + `nextCursor`,
- * the last page completes the sequence, and raw worker counts must match `page.total`.
+ * each follow-on page stamps `cursor` equal to the previous `nextCursor`, the last page
+ * completes the sequence, and raw worker counts must match `page.total`.
  * @param {string} text
  */
 export function activeWorkersFromWorkerList(text) {
@@ -489,12 +490,34 @@ export function activeWorkersFromWorkerList(text) {
     let expectedTotal = null;
     let rawCount = 0;
     let expectedCursor = null;
+    const seenNextCursors = new Set();
     for (let i = 0; i < pages.length; i++) {
       const page = pages[i];
       const meta = page?.result?.page;
       const workers = page?.result?.workers;
       if (!Array.isArray(workers)) throw new Error("worker-list receipt has no result.workers array");
       rawCount += workers.length;
+
+      const pageCursor = page?.cursor ?? meta?.cursor;
+      if (i === 0) {
+        if (pageCursor != null && pageCursor !== "") {
+          throw new Error(
+            `worker-list pages break cursor continuity: page 0 must not carry a request cursor (got ${pageCursor})`,
+          );
+        }
+      } else if (expectedCursor != null) {
+        if (pageCursor == null || pageCursor === "") {
+          throw new Error(
+            `worker-list pages break cursor continuity: page ${i} is missing cursor ${expectedCursor} from the previous nextCursor`,
+          );
+        }
+        if (pageCursor !== expectedCursor) {
+          throw new Error(
+            `worker-list pages break cursor continuity: page ${i} expected cursor ${expectedCursor}, got ${pageCursor}`,
+          );
+        }
+      }
+
       if (meta && typeof meta === "object") {
         if (i === 0 && typeof meta.total === "number") expectedTotal = meta.total;
         const last = i === pages.length - 1;
@@ -509,13 +532,18 @@ export function activeWorkersFromWorkerList(text) {
               `worker-list pages have a gap: page ${i} is incomplete but has no nextCursor`,
             );
           }
+          if (seenNextCursors.has(meta.nextCursor)) {
+            throw new Error(
+              `worker-list pages break cursor continuity: repeated nextCursor ${meta.nextCursor} at page ${i}`,
+            );
+          }
+          seenNextCursors.add(meta.nextCursor);
           expectedCursor = meta.nextCursor;
         } else if (meta.hasMore === true) {
           throw new Error(
             `worker-list receipt is incomplete: last page still has hasMore true (continue with page.nextCursor ${meta.nextCursor ?? "?"})`,
           );
-        } else if (expectedCursor != null && pages.length > 1) {
-          // Continuity: a multi-page set must not skip; total check below catches a missing middle.
+        } else {
           expectedCursor = null;
         }
       }
@@ -564,13 +592,24 @@ export function bindingBucketIdFor(choice, usageByCandidate = {}, policy = NO_PO
  * so they cannot evade `maxConcurrentPerBucket` under a separate `agent/unknown` key.
  * When the candidate itself maps to `agent/unknown`, known same-agent buckets count too —
  * otherwise two Sonnets at cap would still allow an unknown Opus on that agent.
+ * Providerless workers (`unknown/...`) count against every real agent bucket (and the
+ * global active set already includes them via `activeWorkers.length`).
  */
 export function effectiveBucketLoad(load, key, agent) {
   if (!key) return 0;
+  let providerless = 0;
+  for (const [bucketKey, row] of Object.entries(load)) {
+    if (bucketKey === "unknown/unknown" || bucketKey.startsWith("unknown/")) {
+      providerless += row?.count ?? 0;
+    }
+  }
   const direct = load[key]?.count ?? 0;
+  if (key === "unknown/unknown" || key.startsWith("unknown/")) {
+    return direct;
+  }
   if (key.endsWith("/unknown")) {
-    if (!agent) return direct;
-    let total = 0;
+    if (!agent || agent === "unknown") return direct;
+    let total = providerless;
     for (const [bucketKey, row] of Object.entries(load)) {
       if (bucketKey === `${agent}/unknown` || bucketKey.startsWith(`${agent}/`)) {
         total += row?.count ?? 0;
@@ -579,7 +618,7 @@ export function effectiveBucketLoad(load, key, agent) {
     return total;
   }
   const ambiguous = agent ? (load[`${agent}/unknown`]?.count ?? 0) : 0;
-  return direct + ambiguous;
+  return direct + ambiguous + providerless;
 }
 
 export function countBucketLoad({ activeWorkers = [], proposed = [], usageByCandidate = {}, policy = NO_POLICY, now = new Date() }) {
@@ -592,7 +631,8 @@ export function countBucketLoad({ activeWorkers = [], proposed = [], usageByCand
   };
   for (const worker of activeWorkers) bump(worker);
   for (const row of proposed) {
-    const choice = row.assignment ?? row.weakerAlternative ?? row;
+    // Prefer uncertaintyAlternative / weakerAlternative when the slot is held for a needs-decision.
+    const choice = row.uncertaintyAlternative ?? row.weakerAlternative ?? row.assignment ?? row;
     if (choice?.agent) bump(choice);
   }
   return load;

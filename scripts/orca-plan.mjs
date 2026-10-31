@@ -251,9 +251,9 @@ function exhaustedSuitableFrom(result) {
   return (result.rejected ?? []).filter((row) => row.usage === "exhausted");
 }
 
-/** Assignment or a held weaker alternative that occupies a concurrency slot. */
+/** Assignment or a held weaker/uncertainty alternative that occupies a concurrency slot. */
 function heldChoice(row) {
-  return row.assignment ?? row.weakerAlternative ?? null;
+  return row.uncertaintyAlternative ?? row.weakerAlternative ?? row.assignment ?? null;
 }
 
 function agentLoad(agent, activeWorkers, proposed) {
@@ -290,6 +290,10 @@ function capacityConfirmedFor(row, usageByAgent, usageByCandidate) {
 
 function pickByPressure(rows, policy) {
   if (!rows.length) return null;
+  // Keep the recommender's primary (including a learned adjustment) when it is still eligible.
+  // Re-sorting by burn pressure here would undo learning within the tier.
+  const primary = rows.find((row) => row.relation === "primary");
+  if (primary) return primary;
   return policy?.allow ? rankByPressure(rows, policy)[0] : rows[0];
 }
 
@@ -904,7 +908,9 @@ export async function planWave({
       }
     }
 
-    commitShare(pick);
+    // Reserve the held choice: when an uncertaintyAlternative is offered, its bucket/share
+    // occupies the slot for subsequent proposals (not the unconfirmed primary).
+    commitShare(decision.uncertaintyAlternative ?? pick);
     proposed.push(decision);
     decisions.push(decision);
   }

@@ -701,6 +701,7 @@ test("worker-list parsing merges paginated receipts and refuses an incomplete fi
   };
   const page2 = {
     ...base,
+    cursor: "cursor-page-2",
     result: {
       ...base.result,
       workers: [base.result.workers[1]],
@@ -727,7 +728,7 @@ test("when the required tier is bucket-capped the planner tries an eligible stro
     { agent: "cursor", model: "auto", dispatchId: "ctx_e" },
     { agent: "cursor", model: "composer-2.5", dispatchId: "ctx_f" },
   ];
-  // All standard-tier buckets are at cap 2; Opus (reasoning-heavy) still has room on the same 3p-weekly? 
+  // All standard-tier buckets are at cap 2; Opus (reasoning-heavy) still has room on the same 3p-weekly?
   // Sonnet and Opus share 3p-weekly, so Opus is also capped. Use a policy that puts Opus on a distinct allow with room.
   // Simpler: exhaust/cap standard agents via active load, leave Opus uncapped by using maxConcurrentPerBucket:1 on
   // standard buckets only — instead, mark cursor/codex exhausted and fill agy sonnet bucket, while Opus is allowed
@@ -824,6 +825,26 @@ test("providerless active workers still count toward total and unknown-bucket co
   assert.ok(load["unknown/unknown"]?.count >= 1);
 });
 
+test("providerless active workers count against every real agent bucket cap", () => {
+  const p = policy();
+  const u = liveUsage();
+  // One known Sonnet plus one providerless worker must fill a cap of 2 on the Sonnet bucket.
+  const activeWorkers = [
+    { agent: "antigravity", model: "claude-sonnet-5-5-medium", dispatchId: "ctx_a" },
+    { agent: "unknown", model: null, dispatchId: "ctx_providerless" },
+  ];
+  const load = countBucketLoad({ activeWorkers, usageByCandidate: u, policy: p, now: NOW });
+  const sonnetKey = bindingBucketIdFor({ agent: "antigravity", model: "claude-sonnet-5-5-medium" }, u, p, NOW);
+  assert.equal(sonnetKey, "antigravity/3p-weekly");
+  assert.equal(load["antigravity/3p-weekly"]?.count, 1);
+  assert.equal(load["unknown/unknown"]?.count, 1);
+  assert.equal(effectiveBucketLoad(load, sonnetKey, "antigravity"), 2);
+  assert.equal(effectiveBucketLoad(load, sonnetKey, "antigravity") < (p.maxConcurrentPerBucket ?? 2), false);
+  // Same for an unrelated agent's bucket: providerless still consumes a slot there.
+  const codexKey = bindingBucketIdFor({ agent: "codex", model: "gpt-6.1-terra" }, u, p, NOW);
+  assert.equal(effectiveBucketLoad(load, codexKey, "codex"), 1);
+});
+
 test("an unknown-bucket candidate counts known same-agent load against the bucket cap", () => {
   const p = policy();
   const u = liveUsage();
@@ -843,20 +864,42 @@ test("an unknown-bucket candidate counts known same-agent load against the bucke
 
 test("paginated worker-list receipts refuse a missing middle page", () => {
   const base = JSON.parse(readFileSync(join(repoRoot, "tests", "fixtures", "routing", "worker-list.json"), "utf8"));
-  const mk = (workers: unknown[], page: Record<string, unknown>) => ({
+  const mk = (workers: unknown[], page: Record<string, unknown>, cursor?: string | null) => ({
     ...base,
+    ...(cursor !== undefined ? { cursor } : {}),
     result: { ...base.result, workers, page },
   });
   const page1 = mk([base.result.workers[0]], { limit: 1, total: 3, hasMore: true, nextCursor: "cursor-page-2" });
-  const page3 = mk([base.result.workers[1]], { limit: 1, total: 3, hasMore: false, nextCursor: null });
-  // First+last without the middle page: raw worker count 2 !== total 3.
+  const page3 = mk([base.result.workers[1]], { limit: 1, total: 3, hasMore: false, nextCursor: null }, "cursor-page-3");
+  // First+last without the middle page: raw worker count 2 !== total 3, and cursor chain breaks.
   assert.throws(() => activeWorkersFromWorkerList(JSON.stringify([page1, page3])), /gap|missing|page|total|incomplete|cursor/i);
   const page2 = mk(
     [{ ...base.result.workers[2], workerState: "ready", dispatchStatus: "dispatched", resource: { ...base.result.workers[2].resource, ownershipState: "owned" }, projection: { ...base.result.workers[2].projection, provider: { id: "cursor", model: "auto" }, stage: { worker: "ready", dispatch: "dispatched" }, outcome: "in_progress" } }],
     { limit: 1, total: 3, hasMore: true, nextCursor: "cursor-page-3" },
+    "cursor-page-2",
   );
-  const page3ok = mk([base.result.workers[1]], { limit: 1, total: 3, hasMore: false, nextCursor: null });
+  const page3ok = mk([base.result.workers[1]], { limit: 1, total: 3, hasMore: false, nextCursor: null }, "cursor-page-3");
   assert.equal(activeWorkersFromWorkerList(JSON.stringify([page1, page2, page3ok])).length, 3);
+});
+
+test("paginated worker-list receipts refuse broken cursor continuity and repeated pages", () => {
+  const base = JSON.parse(readFileSync(join(repoRoot, "tests", "fixtures", "routing", "worker-list.json"), "utf8"));
+  const mk = (workers: unknown[], page: Record<string, unknown>, cursor?: string | null) => ({
+    ...base,
+    ...(cursor !== undefined ? { cursor } : {}),
+    result: { ...base.result, workers, page },
+  });
+  const page1 = mk([base.result.workers[0]], { limit: 1, total: 3, hasMore: true, nextCursor: "cursor-page-2" });
+  // Page stamped with the wrong request cursor (skipped middle).
+  const wrongCursor = mk([base.result.workers[1]], { limit: 1, total: 3, hasMore: false, nextCursor: null }, "cursor-page-3");
+  assert.throws(() => activeWorkersFromWorkerList(JSON.stringify([page1, wrongCursor])), /cursor|continuit/i);
+  // Repeated first page: same nextCursor chain would under-count after dedup if continuity were ignored.
+  const repeat = mk([base.result.workers[0]], { limit: 1, total: 2, hasMore: true, nextCursor: "cursor-page-2" }, "cursor-page-2");
+  const last = mk([base.result.workers[1]], { limit: 1, total: 2, hasMore: false, nextCursor: null }, "cursor-page-2");
+  assert.throws(() => activeWorkersFromWorkerList(JSON.stringify([page1, repeat, last])), /cursor|continuit|repeat|duplicate/i);
+  // Missing cursor annotation on a follow-on page.
+  const bare = mk([base.result.workers[1]], { limit: 1, total: 2, hasMore: false, nextCursor: null });
+  assert.throws(() => activeWorkersFromWorkerList(JSON.stringify([page1, bare])), /cursor|continuit/i);
 });
 
 test("expectedShareSkip accounts for already-committed wave share", () => {
@@ -1093,4 +1136,156 @@ test("learned adjustment is not undone by a later pressure re-sort", async () =>
   assert.match(r.recommendation.reason, /Learned adjustment preferred codex\/gpt-6\.1-terra\/max/);
   assert.doesNotMatch(r.recommendation.reason, /preferred codex\/gpt-6\.1-terra\/max over baseline codex\/gpt-6\.1-terra\/max/);
   assert.notEqual(named(r.baselineRecommendation), named(r.recommendation));
+
+  // Wave planner must keep the learned primary; re-sorting by pressure would flip back to Sonnet.
+  const planned = await plan(
+    wave({
+      concurrency: 2,
+      tasks: [{ id: "std", summary: "Standard", judgment: "standard", judgmentReason: "clear", kind: "feature" }],
+    }),
+    { learningOptions: { learning, kind: "feature", random: () => 0.99, now: NOW }, policy: { ...policy(), maxConcurrentTotal: 2 } },
+    u,
+  );
+  assert.equal(named(planned.tasks[0].assignment), "codex/gpt-6.1-terra/max");
+  assert.match(String(planned.tasks[0].assignment?.reason ?? ""), /Learned adjustment preferred codex\/gpt-6\.1-terra\/max/);
+});
+
+// --- Round-3 review findings
+
+test("uncertaintyAlternative reserves the alternative's bucket and expected share", async () => {
+  // Suitable standard Claude is unknown; weaker mechanical Flash is confirmed → uncertaintyAlternative.
+  // Reserving the primary would leave Flash free; the alt's bucket/share must be held instead.
+  const u = liveUsage(
+    { geminiWeek: { usedPercent: 50 } },
+    {
+      "claude/claude-sonnet-5-5": "unknown",
+      "antigravity/claude-sonnet-5-5-medium": "exhausted",
+      "antigravity/claude-opus-5-5-high": "exhausted",
+      "codex/gpt-6.1-terra": "exhausted",
+      "cursor/auto": "exhausted",
+      "cursor/composer-2.5": "exhausted",
+    },
+  );
+  const allowClaude = {
+    ...policy(),
+    allow: [...policy().allow, { agent: "claude", models: ["claude-sonnet-5-5"] }],
+    reserve: policy().reserve.filter((r: { agent: string }) => r.agent !== "claude"),
+    expectedBucketSharePercent: [
+      ...policy().expectedBucketSharePercent.filter(
+        (r: { agent: string; model: string }) => !(r.agent === "antigravity" && r.model === "gemini-3.8-flash-high"),
+      ),
+      { agent: "antigravity", model: "gemini-3.8-flash-high", percent: 35 },
+    ],
+    maxConcurrentTotal: 3,
+    maxConcurrentPerBucket: 2,
+  };
+  const usageByCandidate = {
+    ...u,
+    "claude/claude-sonnet-5-5": { ...u["claude/claude-sonnet-5-5"], status: "unknown", capacityConfirmed: false },
+    "antigravity/gemini-3.8-flash-high": usage("fresh", [{ ...B.geminiWeek, usedPercent: 50 }, B.gemini5h]),
+  };
+  const p: any = await withoutKey(() =>
+    planWave({
+      wave: wave({
+        concurrency: 3,
+        tasks: [
+          {
+            id: "first",
+            summary: "First",
+            judgment: "standard",
+            judgmentReason: "clear",
+            eligible: ["claude/claude-sonnet-5-5/medium", "antigravity/gemini-3.8-flash-high"],
+          },
+          {
+            id: "second",
+            summary: "Second",
+            judgment: "mechanical",
+            judgmentReason: "docs",
+            eligible: ["antigravity/gemini-3.8-flash-high"],
+          },
+        ],
+      }),
+      candidates: CANDIDATES,
+      usageByAgent: {},
+      usageByCandidate,
+      learningOptions: { learning: false, now: NOW },
+      policy: allowClaude,
+      now: NOW,
+    }),
+  );
+  const first = p.tasks.find((t: { task: string }) => t.task === "first");
+  const second = p.tasks.find((t: { task: string }) => t.task === "second");
+  assert.equal(first.status, "needs-decision");
+  assert.ok(first.uncertaintyAlternative, "uncertainty branch must offer the weaker confirmed option");
+  assert.equal(named(first.uncertaintyAlternative), "antigravity/gemini-3.8-flash-high");
+  assert.equal(first.assignment?.agent, "claude");
+  // Bucket load must follow the alternative (Flash), not the unknown primary.
+  const flashKey = bindingBucketIdFor(
+    { agent: "antigravity", model: "gemini-3.8-flash-high" },
+    usageByCandidate,
+    allowClaude,
+    NOW,
+  );
+  assert.equal(flashKey, "antigravity/gemini-weekly");
+  assert.ok(
+    (p.bucketLoad?.[flashKey]?.count ?? 0) >= 1,
+    `expected Flash bucket reserved after uncertaintyAlternative: ${JSON.stringify(p.bucketLoad)}`,
+  );
+  // 50% left, Flash share 35%: after first reserves 35%, second's 35% would leave -20% under the floor.
+  assert.notEqual(named(second.assignment), "antigravity/gemini-3.8-flash-high");
+  assert.ok(
+    second.status === "delay" || second.status === "deferred" || second.status === "needs-decision",
+    `second task must not propose another Flash over the reserved share: ${JSON.stringify({ status: second.status, assignment: named(second.assignment ?? null), reason: second.reason })}`,
+  );
+});
+
+test("uncertaintyAlternative branch filters weaker options that fail share or floor guards", async () => {
+  // Mirrors scripts/orca-plan.mjs uncertainty path: knownWeaker must pass passesShareGuards + underBucketCap.
+  const u = liveUsage(
+    { codexWeek: { usedPercent: 95 } },
+    {
+      "claude/claude-sonnet-5-5": "unknown",
+      "antigravity/claude-sonnet-5-5-medium": "exhausted",
+      "antigravity/claude-opus-5-5-high": "exhausted",
+      "antigravity/gemini-3.8-flash-high": "exhausted",
+      "cursor/auto": "exhausted",
+      "cursor/composer-2.5": "exhausted",
+    },
+  );
+  const allowClaude = {
+    ...policy(),
+    allow: [...policy().allow, { agent: "claude", models: ["claude-sonnet-5-5"] }],
+    reserve: policy().reserve.filter((r: { agent: string }) => r.agent !== "claude"),
+  };
+  const p: any = await withoutKey(() =>
+    planWave({
+      wave: wave({
+        concurrency: 2,
+        tasks: [
+          {
+            id: "std",
+            summary: "Standard",
+            judgment: "standard",
+            judgmentReason: "clear",
+            eligible: ["claude/claude-sonnet-5-5/medium", "codex/gpt-6.1-terra/max"],
+          },
+        ],
+      }),
+      candidates: CANDIDATES,
+      usageByAgent: {},
+      usageByCandidate: {
+        ...u,
+        "claude/claude-sonnet-5-5": { ...u["claude/claude-sonnet-5-5"], status: "unknown", capacityConfirmed: false },
+        "codex/gpt-6.1-terra": usage("fresh", [{ ...B.codexWeek, usedPercent: 95 }, B.codex5h]),
+      },
+      learningOptions: { learning: false, now: NOW },
+      policy: allowClaude,
+      now: NOW,
+    }),
+  );
+  const row = p.tasks[0];
+  assert.equal(row.assignment?.agent, "claude");
+  assert.equal(row.assignment?.capacityConfirmed, false);
+  // Codex at 5% left fails the share/floor guard — must not become uncertaintyAlternative.
+  assert.equal(row.uncertaintyAlternative, undefined);
 });
