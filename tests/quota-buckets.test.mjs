@@ -568,6 +568,271 @@ test("recorded Model choice Usage line names the candidate bucket and percent", 
   assert.match(section, /^- Usage: fresh — Cursor Models 25\.\d% used \(account sha256:2c339aff19d5eec2, host andi; read .* from cursor-dashboard-rpc\)$/m);
 });
 
+test("missing usageByCandidate key is unknown even when the agent report is fresh (recommend)", async () => {
+  const usageByAgent = {
+    antigravity: {
+      status: "fresh",
+      capacityConfirmed: true,
+      account: "sha256:84f4d41978459895",
+      host: "andi",
+      reason: "agent-level fresh",
+      source: { kind: "agy-test" },
+      observedAt: AGY.observedAt,
+      freshness: "fresh",
+    },
+  };
+  const result = await recommend(
+    {
+      task: "missing-key",
+      summary: "Mechanical flash work",
+      judgment: "mechanical",
+      judgmentReason: "docs",
+      eligible: [choice("antigravity/gemini-3.8-flash-high")],
+      learning: false,
+    },
+    CANDIDATES,
+    usageByAgent,
+    {},
+  );
+  assert.equal(result.usage.status, "unknown");
+  assert.equal(result.usage.capacityConfirmed, false);
+  assert.match(result.usage.reason, /no per-model quota reading for antigravity\/gemini-3.8-flash-high/);
+  assert.equal(result.recommendation?.usage, "unknown");
+  assert.notEqual(result.usage.status, "fresh");
+  assert.equal(result.usageByAgent.antigravity.status, "fresh");
+});
+
+test("present usageByCandidate key stays fresh when agent report is also fresh (recommend)", async () => {
+  const candidate = {
+    ...assessAntigravityCandidate(AGY, { model: "gemini-3.8-flash-high" }, NOW),
+    account: "sha256:84f4d41978459895",
+    host: "andi",
+    source: { kind: "agy-test" },
+    observedAt: AGY.observedAt,
+    freshness: "fresh",
+  };
+  const usageByAgent = {
+    antigravity: {
+      status: "fresh",
+      capacityConfirmed: true,
+      account: "sha256:84f4d41978459895",
+      host: "andi",
+      reason: "agent-level fresh",
+      source: { kind: "agy-test" },
+      observedAt: AGY.observedAt,
+      freshness: "fresh",
+    },
+  };
+  const usageByCandidate = { "antigravity/gemini-3.8-flash-high": candidate };
+  const result = await recommend(
+    {
+      task: "present-key",
+      summary: "Mechanical flash work",
+      judgment: "mechanical",
+      judgmentReason: "docs",
+      eligible: [choice("antigravity/gemini-3.8-flash-high")],
+      learning: false,
+    },
+    CANDIDATES,
+    usageByAgent,
+    usageByCandidate,
+  );
+  assert.equal(result.usage.status, "fresh");
+  assert.equal(result.usage.capacityConfirmed, true);
+  assert.equal(result.recommendation?.usage, "fresh");
+  assert.deepEqual(result.usage, candidate);
+});
+
+test("recommend with only usageByAgent (no usageByCandidate) reads each candidate as unknown", async () => {
+  const usageByAgent = {
+    antigravity: {
+      status: "fresh",
+      capacityConfirmed: true,
+      account: "sha256:84f4d41978459895",
+      host: "andi",
+      reason: "agent-level fresh",
+      source: { kind: "agy-test" },
+      observedAt: AGY.observedAt,
+      freshness: "fresh",
+    },
+  };
+  const result = await recommend(
+    {
+      task: "legacy-agent-only",
+      summary: "Mechanical flash work",
+      judgment: "mechanical",
+      judgmentReason: "docs",
+      eligible: [choice("antigravity/gemini-3.8-flash-high")],
+      learning: false,
+    },
+    CANDIDATES,
+    usageByAgent,
+  );
+  assert.equal(result.usage.status, "unknown");
+  assert.equal(result.usage.capacityConfirmed, false);
+  assert.match(result.usage.reason, /no per-model quota reading for antigravity\/gemini-3.8-flash-high/);
+  assert.equal(result.recommendation?.usage, "unknown");
+  assert.equal(result.usageByAgent.antigravity.status, "fresh");
+});
+
+test("missing usageByCandidate key is unknown even when the agent report is fresh (plan)", async () => {
+  const usageByAgent = {
+    cursor: {
+      status: "fresh",
+      capacityConfirmed: true,
+      account: "sha256:2c339aff19d5eec2",
+      host: "andi",
+      reason: "agent-level fresh",
+      source: { kind: "cursor-test" },
+      observedAt: CURSOR.observedAt,
+      freshness: "fresh",
+    },
+    antigravity: {
+      ...assessAntigravityCandidate(AGY, { model: "gemini-3.8-flash-high" }, NOW),
+      account: "sha256:84f4d41978459895",
+      host: "andi",
+      source: { kind: "agy-test" },
+      observedAt: AGY.observedAt,
+      freshness: "fresh",
+    },
+  };
+  const usageByCandidate = {
+    // Only the weaker mechanical flash has a per-model reading. cursor/auto is missing
+    // despite a fresh agent report, so it must stay unknown / unconfirmed.
+    "antigravity/gemini-3.8-flash-high": {
+      ...assessAntigravityCandidate(AGY, { model: "gemini-3.8-flash-high" }, NOW),
+      account: "sha256:84f4d41978459895",
+      host: "andi",
+      source: { kind: "agy-test" },
+      observedAt: AGY.observedAt,
+      freshness: "fresh",
+    },
+  };
+  const wave = parseWave(
+    JSON.stringify({
+      concurrency: 1,
+      tasks: [
+        {
+          id: "std",
+          summary: "Standard work",
+          judgment: "standard",
+          judgmentReason: "clear",
+          eligible: ["cursor/auto", "antigravity/gemini-3.8-flash-high"],
+        },
+      ],
+    }),
+  );
+  const plan = await planWave({
+    wave,
+    candidates: CANDIDATES,
+    usageByAgent,
+    usageByCandidate,
+    recommendFn: recommend,
+  });
+  const [row] = plan.tasks;
+  // Suitable auto is unknown (missing key); confirmed flash is weaker and shown with a warning.
+  assert.equal(row.status, "needs-decision");
+  assert.equal(row.assignment?.agent, "cursor");
+  assert.equal(row.assignment?.model, "auto");
+  assert.equal(row.assignment?.usage, "unknown");
+  assert.equal(row.assignment?.capacityConfirmed, false);
+  assert.match(row.reason, /unconfirmed|unknown/i);
+  assert.equal(row.uncertaintyAlternative?.agent, "antigravity");
+  assert.equal(row.uncertaintyAlternative?.capacityConfirmed, true);
+  assert.match(row.uncertaintyAlternative?.warning ?? "", /unconfirmed|unknown|below/i);
+  assert.equal(plan.usageByAgent.cursor.status, "fresh");
+  assert.equal(plan.allowances.cursor.status, "fresh");
+});
+
+test("present usageByCandidate key stays fresh for planning when agent report is fresh", async () => {
+  const flash = {
+    ...assessAntigravityCandidate(AGY, { model: "gemini-3.8-flash-high" }, NOW),
+    account: "sha256:84f4d41978459895",
+    host: "andi",
+    source: { kind: "agy-test" },
+    observedAt: AGY.observedAt,
+    freshness: "fresh",
+  };
+  const usageByAgent = {
+    antigravity: {
+      status: "fresh",
+      capacityConfirmed: true,
+      account: "sha256:84f4d41978459895",
+      host: "andi",
+      reason: "agent-level fresh",
+      source: { kind: "agy-test" },
+      observedAt: AGY.observedAt,
+      freshness: "fresh",
+    },
+  };
+  const wave = parseWave(
+    JSON.stringify({
+      concurrency: 1,
+      tasks: [
+        {
+          id: "flash-task",
+          summary: "Flash work",
+          judgment: "mechanical",
+          judgmentReason: "docs",
+          eligible: ["antigravity/gemini-3.8-flash-high"],
+        },
+      ],
+    }),
+  );
+  const plan = await planWave({
+    wave,
+    candidates: CANDIDATES.filter((c) => c.agent === "antigravity"),
+    usageByAgent,
+    usageByCandidate: { "antigravity/gemini-3.8-flash-high": flash },
+    recommendFn: recommend,
+  });
+  const [row] = plan.tasks;
+  assert.equal(row.status, "proposed");
+  assert.equal(row.assignment.usage, "fresh");
+  assert.equal(row.assignment.capacityConfirmed, true);
+});
+
+test("plan with only usageByAgent (no usageByCandidate) reads each candidate as unknown", async () => {
+  const usageByAgent = {
+    antigravity: {
+      status: "fresh",
+      capacityConfirmed: true,
+      account: "sha256:84f4d41978459895",
+      host: "andi",
+      reason: "agent-level fresh",
+      source: { kind: "agy-test" },
+      observedAt: AGY.observedAt,
+      freshness: "fresh",
+    },
+  };
+  const wave = parseWave(
+    JSON.stringify({
+      concurrency: 1,
+      tasks: [
+        {
+          id: "flash-task",
+          summary: "Flash work",
+          judgment: "mechanical",
+          judgmentReason: "docs",
+          eligible: ["antigravity/gemini-3.8-flash-high"],
+        },
+      ],
+    }),
+  );
+  const plan = await planWave({
+    wave,
+    candidates: CANDIDATES.filter((c) => c.agent === "antigravity"),
+    usageByAgent,
+    recommendFn: recommend,
+  });
+  const [row] = plan.tasks;
+  assert.equal(row.assignment.usage, "unknown");
+  assert.equal(row.assignment.capacityConfirmed, false);
+  assert.match(row.warning ?? row.reason, /unknown|no per-model quota reading/i);
+  assert.equal(plan.usageByAgent.antigravity.status, "fresh");
+  assert.equal(plan.allowances.antigravity.status, "fresh");
+});
+
 test("PROVIDERS expose assessCandidate next to assess", () => {
   for (const provider of PROVIDERS) {
     assert.equal(typeof provider.assess, "function", provider.name);

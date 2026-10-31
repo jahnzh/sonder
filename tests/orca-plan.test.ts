@@ -170,6 +170,16 @@ function freshUsage(agent: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** Older plan tests passed only usageByAgent and relied on the agent-report fallback. Mirror explicitly. */
+function usageByCandidateFromAgents(candidates: Candidates, usageByAgent: UsageByAgent): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const c of candidates) {
+    const report = usageByAgent[c.agent];
+    if (report) out[`${c.agent}/${c.model}`] = report;
+  }
+  return out;
+}
+
 function exhaustedUsage(agent: string) {
   return freshUsage(agent, {
     status: "exhausted",
@@ -387,6 +397,7 @@ test("exhausted stronger choices produce a warned weaker alternative or delay", 
         wave,
         candidates,
         usageByAgent,
+        usageByCandidate: usageByCandidateFromAgents(candidates, usageByAgent),
         recommendFn: plainRecommend,
       });
       const [row] = plan.tasks;
@@ -427,6 +438,7 @@ test("suitable unknown usage beside weaker known capacity shows both with uncert
         wave,
         candidates,
         usageByAgent,
+        usageByCandidate: usageByCandidateFromAgents(candidates, usageByAgent),
         recommendFn: plainRecommend,
       });
       const [row] = plan.tasks;
@@ -498,6 +510,7 @@ test("handles unknown, stale and low usage distinctly", async () => {
         wave,
         candidates,
         usageByAgent,
+        usageByCandidate: usageByCandidateFromAgents(candidates, usageByAgent),
         recommendFn: plainRecommend,
       });
       const byId = Object.fromEntries(plan.tasks.map((row: any) => [row.task, row]));
@@ -709,6 +722,7 @@ test("needs-decision weaker alternative holds a concurrency slot and shared load
         wave,
         candidates,
         usageByAgent,
+        usageByCandidate: usageByCandidateFromAgents(candidates, usageByAgent),
         recommendFn: plainRecommend,
       });
       const byId = Object.fromEntries(plan.tasks.map((row: any) => [row.task, row]));
@@ -772,6 +786,7 @@ test("pure delay when suitable choices are exhausted and no weaker alternative e
         wave,
         candidates,
         usageByAgent,
+        usageByCandidate: usageByCandidateFromAgents(candidates, usageByAgent),
         recommendFn: plainRecommend,
       });
       const [row] = plan.tasks;

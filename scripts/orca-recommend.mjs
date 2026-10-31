@@ -448,8 +448,8 @@ function launchArgs({ agent, model, effort }) {
 /**
  * @param {Record<string, any>} options
  * @param {ReturnType<typeof loadCandidates>} candidates
- * @param {Record<string, any>} usageByAgent Reports from usageForPlanning; other agents stay unknown.
- * @param {Record<string, any>} [usageByCandidate] Per `agent/model` assessments; fall back to the agent report when missing.
+ * @param {Record<string, any>} usageByAgent Reports from usageForPlanning; kept for the summary only.
+ * @param {Record<string, any>} [usageByCandidate] Per `agent/model` assessments; a missing key is unknown, never the agent report.
  */
 export async function recommend(options, candidates, usageByAgent = {}, usageByCandidate = {}) {
   const sanitizedOptions = {
@@ -465,8 +465,19 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
   const given = sanitizedOptions.judgment ? { requirement: sanitizedOptions.judgment, reason: sanitizedOptions.judgmentReason, used: !conclusive } : null;
   const requirement = conclusive ? jevRequirement : (given?.requirement ?? null);
   const assessment = { source: conclusive ? "jev" : given ? "coordinator" : null, requirement, jev: jevReport, coordinator: given };
-  const usageOfAgent = (agent) => usageByAgent[agent] ?? UNKNOWN_USAGE;
-  const usageOf = (choice) => usageByCandidate[`${choice.agent}/${choice.model}`] ?? usageOfAgent(choice.agent);
+  const usageOf = (choice) => {
+    const key = `${choice.agent}/${choice.model}`;
+    if (Object.hasOwn(usageByCandidate, key)) return usageByCandidate[key];
+    return {
+      status: "unknown",
+      reason: `no per-model quota reading for ${key}`,
+      source: null,
+      observedAt: null,
+      account: "unknown",
+      host: "unknown",
+      capacityConfirmed: false,
+    };
+  };
   const base = {
     task: sanitizedOptions.task,
     request: { kind: sanitizedOptions.kind ?? null, files: sanitizedOptions.files ?? null },

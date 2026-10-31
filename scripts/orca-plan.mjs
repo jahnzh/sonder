@@ -170,10 +170,19 @@ function usageOfAgent(usageByAgent, agent) {
 
 function usageOf(usageByAgent, usageByCandidate, choice) {
   if (choice && typeof choice === "object" && choice.agent && choice.model) {
-    return (
-      usageByCandidate[`${choice.agent}/${choice.model}`] ?? usageOfAgent(usageByAgent, choice.agent)
-    );
+    const key = `${choice.agent}/${choice.model}`;
+    if (Object.hasOwn(usageByCandidate ?? {}, key)) return usageByCandidate[key];
+    return {
+      status: "unknown",
+      reason: `no per-model quota reading for ${key}`,
+      source: null,
+      observedAt: null,
+      account: "unknown",
+      host: "unknown",
+      capacityConfirmed: false,
+    };
   }
+  // Agent-string lookups stay on the summary map only (allowances / provenance).
   return usageOfAgent(usageByAgent, choice);
 }
 
