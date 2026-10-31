@@ -1279,6 +1279,11 @@ export function ReaderView({
     following.current = "";
     followRetry.current.attempts = 0;
   };
+  // Tab leaves the scrubber; only keys that move the thumb count as scrubbing.
+  const followScrubKey = (event: { key: string }) => {
+    if (event.key === "Tab") return;
+    followScrub();
+  };
   const controls = controlsVisible || desktop;
   const timing = currentInterval ? (currentInterval.verified ? "" : " · estimated timings") : "";
   const overlayDisplay = preferences.display === "segment" || preferences.display === "word";
@@ -1555,11 +1560,6 @@ export function ReaderView({
                 <button onClick={undoListen}>Undo</button>
               </div>
             )}
-            {!follow && currentInterval && (
-              <button className="reader-back-narration" onClick={() => {cancelManualSave(); setFollow(true); following.current=""; followRetry.current.attempts=0; setError("");}}>
-                <BookToHeadphones size={20} /> Back to narration
-              </button>
-            )}
           </div>
         </div>
       </div>
@@ -1571,7 +1571,7 @@ export function ReaderView({
         <div className="reader-player-line" aria-hidden="true"><i style={{ width: `${barPercent}%` }} /></div>
         {audio ? (
           // Scrubbing the narration brings the page back to following it.
-          <div className="reader-audio-timeline" onPointerDownCapture={followScrub} onKeyDownCapture={followScrub} onChangeCapture={followScrub}>
+          <div className="reader-audio-timeline" onPointerDownCapture={followScrub} onKeyDownCapture={followScrubKey} onChangeCapture={followScrub}>
             <PlaybackTimeline book={audio.book} compact scoped />
           </div>
         ) : <input
@@ -1589,7 +1589,17 @@ export function ReaderView({
           onKeyUp={commitScrub}
           onBlur={commitScrub}
         />}
-        <button className="icon-button reader-player-chapters" aria-label="Chapters" onClick={() => setPanel(panel === "contents" ? null : "contents")}><List size={21} /></button>
+        <div className="reader-player-leading">
+          <button className="icon-button reader-player-chapters" aria-label="Chapters" onClick={() => setPanel(panel === "contents" ? null : "contents")}><List size={21} /></button>
+          <button
+            className="icon-button reader-back-narration"
+            aria-label="Back to narration"
+            disabled={follow || !currentInterval}
+            onClick={() => {cancelManualSave(); setFollow(true); following.current=""; followRetry.current.attempts=0; setError("");}}
+          >
+            <BookToHeadphones size={20} />
+          </button>
+        </div>
         <div className="reader-transport">
           <button className="icon-button" aria-label="Back 30 seconds" disabled={!p.book} onClick={()=>p.skip(-30)}><RotateCcw size={26}/><span>30</span></button>
           <button className="reader-play" aria-label={p.playing ? "Pause narration" : "Play narration"} disabled={!p.book} onClick={p.toggle}>{p.playing ? <Pause size={24} fill="currentColor"/> : <Play size={24} fill="currentColor"/>}</button>

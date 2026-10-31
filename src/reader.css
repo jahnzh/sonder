@@ -458,8 +458,8 @@
   right: 0;
   bottom: 0;
   display: grid;
-  /* Equal side tracks keep the transport on the bar centre even when chapters
-     (one icon) and extras (sleep + speed) have different widths. */
+  /* Equal side tracks keep the transport on the bar centre even when the leading
+     group (Chapters + Back to narration) and extras (sleep + speed) have different widths. */
   grid-template-columns: 1fr auto 1fr;
   grid-template-areas:
     "line line line"
@@ -612,16 +612,27 @@
 .reader-player .reader-audio-timeline .dock-progress {
   flex-wrap: nowrap;
 }
-.reader-player-chapters {
+/* Leading sits after the scrubber in the DOM (tab order) and is placed by grid area. */
+.reader-player-leading {
   grid-area: chapters;
   justify-self: start;
+  display: flex;
+  align-items: center;
+  gap: 0;
   margin: 2px 0 12px 10px;
+}
+.reader-player-chapters {
+  margin: 0;
 }
 .reader-player .icon-button {
   width: 44px;
   height: 44px;
   border-radius: 14px;
   color: var(--text);
+}
+.reader-player .icon-button:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 .reader-transport {
   grid-area: transport;
@@ -696,22 +707,8 @@
 .reader-floating > * {
   pointer-events: auto;
 }
-.reader-back-narration {
-  height: 44px;
-  padding: 0 18px 0 12px;
-  border: 0;
-  border-radius: 22px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--accent);
-  color: var(--on-accent);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: pointer;
-  box-shadow: 0 6px 20px color-mix(in srgb, var(--shadow) 35%, transparent);
+.reader-player .reader-back-narration {
+  flex: 0 0 auto;
 }
 .reader-toast {
   display: flex;
@@ -906,6 +903,9 @@
     height: 88px;
     padding: 0 24px;
     column-gap: 24px;
+    /* Balanced 1fr | 560px | 1fr keeps the transport on the bar centre (as on
+       main). Leading is grid-placed at the end of the left track on the
+       control row — not a fourth column that shifts Play. */
     grid-template-columns: 1fr minmax(0, 560px) 1fr;
     grid-template-areas:
       "info transport extras"
@@ -923,6 +923,11 @@
     flex-direction: column;
     gap: 2px;
     padding: 0;
+    /* Leave room for Back to narration, which shares this cell via grid placement. */
+    max-width: calc(100% - 52px);
+    justify-self: start;
+    align-self: center;
+    min-width: 0;
   }
   .reader-player-info strong {
     font-size: 14px;
@@ -931,6 +936,15 @@
   }
   .reader-player-info span::before {
     content: none;
+  }
+  .reader-player-leading {
+    /* Same left track as info, control row only — DOM stays after the scrubber. */
+    grid-area: auto;
+    grid-column: 1;
+    grid-row: 1;
+    justify-self: end;
+    align-self: center;
+    margin: 0;
   }
   .reader-player-chapters {
     display: none;

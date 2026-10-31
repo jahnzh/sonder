@@ -122,10 +122,25 @@ test("page controls and lyrics follow the prepared narration",async({page})=>{
   await expect(lyrics.locator(".lyrics-line").first()).toBeVisible();
   await lyrics.locator(".lyrics-line").nth(3).click();
   await expect(lyrics.locator(".lyrics-line.current")).toHaveCount(1);
+  const player=page.getByRole("region",{name:"Player",exact:true});
+  const backToNarration=player.getByRole("button",{name:"Back to narration",exact:true});
+  // Always in the player bar between Chapters and Back 30 seconds (#122).
+  await expect(backToNarration).toBeVisible();
+  await expect(backToNarration).toBeDisabled();
+  const order=await player.evaluate((bar)=>{
+   const names=["Chapters","Back to narration","Back 30 seconds"];
+   const buttons=[...bar.querySelectorAll("button")].filter((button)=>names.includes(button.getAttribute("aria-label")||""));
+   return {
+    dom:buttons.map((button)=>button.getAttribute("aria-label")),
+    visual:[...buttons].sort((a,b)=>a.getBoundingClientRect().left-b.getBoundingClientRect().left).map((button)=>button.getAttribute("aria-label")),
+   };
+  });
+  expect(order.dom).toEqual(["Chapters","Back to narration","Back 30 seconds"]);
+  expect(order.visual).toEqual(["Chapters","Back to narration","Back 30 seconds"]);
   await lyrics.hover(); await page.mouse.wheel(0,250);
-  await expect(page.getByRole("button",{name:"Back to narration"})).toBeVisible();
-  await page.getByRole("button",{name:"Back to narration"}).click();
-  await expect(page.getByRole("button",{name:"Back to narration"})).toBeHidden();
+  await expect(backToNarration).toBeEnabled();
+  await backToNarration.click();
+  await expect(backToNarration).toBeDisabled();
   await page.setViewportSize({width:320,height:740});
   await page.setViewportSize({width:1440,height:900});
   await expect(lyrics.locator(".lyrics-line.current")).toBeInViewport();
@@ -251,7 +266,7 @@ test("back to narration right after a Contents navigation keeps following", asyn
   chapter.click();
   const wait=()=>{
    const back=scope.querySelector<HTMLButtonElement>(".reader-back-narration");
-   if(chapter.getAttribute("aria-current")==="location"&&back){back.click();done();}
+   if(chapter.getAttribute("aria-current")==="location"&&back&&!back.disabled){back.click();done();}
    else requestAnimationFrame(wait);
   };
   wait();
@@ -259,7 +274,7 @@ test("back to narration right after a Contents navigation keeps following", asyn
  await expect(two).toHaveAttribute("aria-current","location");
  await page.waitForTimeout(1500);
  await expect(two).toHaveAttribute("aria-current","location");
- await expect(room.locator(".reader-back-narration")).toBeHidden();
+ await expect(room.locator(".reader-back-narration")).toBeDisabled();
 });
 
 // Records on every animation frame which paragraphs of which chapter are painted in the reader viewport.
