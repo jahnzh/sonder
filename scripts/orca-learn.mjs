@@ -12,7 +12,7 @@ import { defaultDir as defaultHistoryDir, mainCheckoutRoot, openStore, viewRecor
 export const SCHEMA = 1;
 export const MIN_COMPARABLE_COUNT = 3;
 export const MIN_WEIGHTED_EVIDENCE = 2;
-export const MIN_BUCKET_DELTA_COUNT = 1;
+export const MIN_BUCKET_DELTA_COUNT = 2;
 export const HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000;
 export const EXPLORATION_RATE = 0.1;
 export const UNKNOWN = "unknown";

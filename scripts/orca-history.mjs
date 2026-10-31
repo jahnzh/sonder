@@ -820,7 +820,9 @@ function recordBucketCost(store, options, env, now) {
     if (!Number.isFinite(delta) || delta < 0) throw new HistoryError("--delta must be a non-negative number");
     const bucketId = options.bucket ?? documentedLastingBucketId(record.agent.name, record.agent.effectiveModel) ?? UNKNOWN;
     const before = options.before !== undefined ? Number(options.before) : null;
+    if (before !== null && !Number.isFinite(before)) throw new HistoryError("--before must be a number");
     const after = options.after !== undefined ? Number(options.after) : null;
+    if (after !== null && !Number.isFinite(after)) throw new HistoryError("--after must be a number");
     const isReset = before !== null && after !== null && after < before - 0.5;
     cost = {
       status: isReset ? "reset" : "recorded",

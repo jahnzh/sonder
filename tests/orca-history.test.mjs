@@ -1045,6 +1045,15 @@ test("record-bucket-cost CLI records explicit or collector bucket cost", () => {
     assert.equal(resetRecorded.json.status, "reset");
     assert.equal(resetRecorded.json.valid, false);
     assert.equal(resetRecorded.json.deltaPercent, null);
+
+    // Non-numeric before/after rejected
+    const nonNumericBefore = box.cli(["record-bucket-cost", "--dispatch", "ctx_cost", "--delta", "5", "--before", "invalid"]);
+    assert.equal(nonNumericBefore.status, 1);
+    assert.match(nonNumericBefore.err, /--before must be a number/);
+
+    const nonNumericAfter = box.cli(["record-bucket-cost", "--dispatch", "ctx_cost", "--delta", "5", "--after", "invalid"]);
+    assert.equal(nonNumericAfter.status, 1);
+    assert.match(nonNumericAfter.err, /--after must be a number/);
   } finally {
     box.cleanup();
   }
