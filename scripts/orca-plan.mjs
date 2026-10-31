@@ -14,6 +14,7 @@ import {
   activeWorkersFromWorkerList,
   bindingBucketIdFor,
   burnPressure,
+  committedShareFor,
   countBucketLoad,
   effectiveBucketLoad,
   expectedShareFor,
@@ -305,6 +306,22 @@ function pickByPressure(rows, policy) {
   const primary = rows.find((row) => row.relation === "primary");
   if (primary) return primary;
   return policy?.allow ? rankByPressure(rows, policy)[0] : rows[0];
+}
+
+/**
+ * Weaker alternatives for a harder task: higher capability tiers first (standard before
+ * mechanical), then burn pressure within each tier. Pressure alone must not promote Flash
+ * over a confirmed Sonnet.
+ */
+function rankWeakerByTierThenPressure(rows, policy) {
+  if (!rows.length) return [];
+  const tiers = [...new Set(rows.map((row) => rank(row.capability)))].sort((a, b) => b - a);
+  const out = [];
+  for (const tier of tiers) {
+    const group = rows.filter((row) => rank(row.capability) === tier);
+    out.push(...(policy?.allow ? rankByPressure(group, policy) : group));
+  }
+  return out;
 }
 
 function pickCandidate(
@@ -618,10 +635,8 @@ export async function planWave({
   /** @type {Record<string, number>} share already reserved per binding bucket key within this wave */
   const shareCommitted = {};
 
-  const committedFor = (choice) => {
-    const key = bindingBucketIdFor(choice, usageByCandidate, resolvedPolicy, now);
-    return key ? (shareCommitted[key] ?? 0) : 0;
-  };
+  const committedFor = (choice) =>
+    committedShareFor(shareCommitted, choice, usageByCandidate, resolvedPolicy, now);
   const passesShareGuards = (choice) => {
     if (!resolvedPolicy?.allow) return true;
     const usage = usageOf(usageByAgent, usageByCandidate, choice);
@@ -726,13 +741,17 @@ export async function planWave({
           if (usage.status === "exhausted") return false;
           return passesShareGuards(row);
         })
-        .filter((row) => underBucketCap(row, bucketLoad, resolvedPolicy, usageByCandidate, now));
-      const weakerPick = pickCandidate(
-        weakerAvailable.map((row) => ({
+        .filter((row) => underBucketCap(row, bucketLoad, resolvedPolicy, usageByCandidate, now))
+        .map((row) => ({
           ...row,
           capability: candidates.find((c) => choiceName(c) === choiceName(row))?.capability ?? "mechanical",
           suits: candidates.find((c) => choiceName(c) === choiceName(row))?.suits ?? "",
-        })),
+        }));
+      // Closest weaker tier first (standard before mechanical); pickCandidate alone prefers the floor.
+      const closestWeaker = rankWeakerByTierThenPressure(weakerAvailable, resolvedPolicy);
+      const topTier = closestWeaker.length ? rank(closestWeaker[0].capability) : -1;
+      const weakerPick = pickCandidate(
+        closestWeaker.filter((row) => rank(row.capability) === topTier),
         {
           activeWorkers: cappedWave.activeWorkers,
           proposed,
@@ -901,7 +920,7 @@ export async function planWave({
         .filter((row) => row.capacityConfirmed)
         .filter((row) => passesShareGuards(row))
         .filter((row) => underBucketCap(row, bucketLoad, resolvedPolicy, usageByCandidate, now));
-      const rankedWeaker = resolvedPolicy?.allow ? rankByPressure(knownWeaker, resolvedPolicy) : knownWeaker;
+      const rankedWeaker = rankWeakerByTierThenPressure(knownWeaker, resolvedPolicy);
       if (rankedWeaker.length) {
         const alt = rankedWeaker[0];
         decision.status = "needs-decision";

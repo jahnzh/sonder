@@ -531,7 +531,14 @@ export function activeWorkersFromWorkerList(text) {
         }
       }
 
-      if (i === 0 && typeof meta.total === "number") expectedTotal = meta.total;
+      if (i === 0) {
+        if (typeof meta.total !== "number" || !Number.isFinite(meta.total)) {
+          throw new Error(
+            `worker-list pages lack a numeric page.total on page 0 (got ${meta.total}); cannot prove the page set is complete`,
+          );
+        }
+        expectedTotal = meta.total;
+      }
       const last = i === pages.length - 1;
       if (!last) {
         if (meta.hasMore !== true) {
@@ -551,29 +558,53 @@ export function activeWorkersFromWorkerList(text) {
         }
         seenNextCursors.add(meta.nextCursor);
         expectedCursor = meta.nextCursor;
-      } else if (meta.hasMore === true) {
+      } else if (meta.hasMore !== false) {
         throw new Error(
-          `worker-list receipt is incomplete: last page still has hasMore true (continue with page.nextCursor ${meta.nextCursor ?? "?"})`,
+          `worker-list receipt is incomplete: last page must have hasMore false (got ${meta.hasMore}; continue with page.nextCursor ${meta.nextCursor ?? "?"})`,
         );
       } else {
         expectedCursor = null;
       }
     }
-    if (expectedTotal != null && rawCount !== expectedTotal) {
+    if (rawCount !== expectedTotal) {
       throw new Error(
         `worker-list pages are missing workers (or a middle page): got ${rawCount} workers across ${pages.length} pages, page.total is ${expectedTotal}`,
       );
     }
+    // Dedup across every raw worker (including completed/released) so padded duplicates cannot
+    // satisfy page.total then disappear when only active rows are kept.
+    const seenRaw = new Set();
+    for (let i = 0; i < pages.length; i++) {
+      const workers = pages[i]?.result?.workers;
+      for (const worker of workers) {
+        const provider = worker?.projection?.provider;
+        const agent = typeof provider?.id === "string" && provider.id.trim() ? provider.id : "unknown";
+        const model = provider && typeof provider === "object" ? (provider.model ?? null) : null;
+        const task = worker.taskId ?? worker.projection?.taskId ?? null;
+        const key = worker.dispatchId ?? worker.projection?.dispatchId ?? `${agent}/${model}/${task}`;
+        if (seenRaw.has(key)) {
+          throw new Error(`worker-list pages contain duplicate worker dispatch ${key}`);
+        }
+        seenRaw.add(key);
+      }
+    }
+    if (seenRaw.size !== expectedTotal) {
+      throw new Error(
+        `worker-list pages are missing workers (or a middle page): got ${seenRaw.size} unique workers across ${pages.length} pages, page.total is ${expectedTotal}`,
+      );
+    }
     const merged = [];
-    const seen = new Set();
+    const seenActive = new Set();
     for (let i = 0; i < pages.length; i++) {
       const page = pages[i];
       const last = i === pages.length - 1;
       const rows = workersFromReceipt(page, { allowIncomplete: !last, enforcePageTotal: false });
       for (const row of rows) {
         const key = row.dispatchId ?? `${row.agent}/${row.model}/${row.task}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
+        if (seenActive.has(key)) {
+          throw new Error(`worker-list pages contain duplicate worker dispatch ${key}`);
+        }
+        seenActive.add(key);
         merged.push(row);
       }
     }
@@ -583,19 +614,78 @@ export function activeWorkersFromWorkerList(text) {
 }
 
 /**
- * Binding bucket id for an active/proposed worker, from usageByCandidate when present.
+ * Static lasting (non-5-hour) quota bucket id for a documented candidate model, from
+ * docs/agents/models.md. Used when usage is missing, stale, or unconfirmed so peers that
+ * share a pool keep one bucket key. Returns null for unrecognised models.
+ * @param {string} agent
+ * @param {string | null | undefined} model
+ * @returns {string | null}
+ */
+export function documentedLastingBucketId(agent, model) {
+  if (typeof agent !== "string" || !agent.trim()) return null;
+  if (typeof model !== "string" || !model.trim()) return null;
+  const m = model.trim().toLowerCase();
+  if (agent === "antigravity") {
+    if (/^claude-(?:opus|sonnet)-5-5(?:-|$)/.test(m) || /^gpt-oss-/.test(m)) return "3p-weekly";
+    if (/^gemini-3\.8-flash(?:-|$)/.test(m)) return "gemini-weekly";
+    if (/^gemini-4-argon(?:-|$)/.test(m)) return "gemini-argon-wtu-weekly";
+    return null;
+  }
+  if (agent === "cursor") {
+    if (m === "auto" || m === "default" || m.startsWith("composer-")) return "included_auto";
+    return null;
+  }
+  if (agent === "codex") return "codex-weekly";
+  if (agent === "claude") return "weekly_all";
+  return null;
+}
+
+/**
+ * Binding bucket id for an active/proposed worker.
+ * Known models always use their static documented lasting bucket so unconfirmed / stale /
+ * 5-hour-only readings share one key with fresh weekly peers (e.g. Opus+Sonnet → `3p-weekly`).
+ * Model-less / unrecognised models stay `agent/unknown`; an unrecognised model with a
+ * confirmed lasting burn-pressure binding still uses that live id.
  */
 export function bindingBucketIdFor(choice, usageByCandidate = {}, policy = NO_POLICY, now = new Date()) {
   if (!choice?.agent) return null;
   if (!choice.model) return `${choice.agent}/unknown`;
+  const documented = documentedLastingBucketId(choice.agent, choice.model);
+  if (documented) return `${choice.agent}/${documented}`;
   const key = `${choice.agent}/${choice.model}`;
   const usage = usageByCandidate[key];
-  if (!usage) return `${choice.agent}/unknown`;
-  const report = burnPressure(usage, policy, now);
-  if (report.binding?.bucketId) return `${choice.agent}/${report.binding.bucketId}`;
-  const five = (usage.buckets ?? []).find((bucket) => isFiveHourBucket(bucket));
-  if (five?.id) return `${choice.agent}/${five.id}`;
+  if (usage) {
+    const report = burnPressure(usage, policy, now);
+    if (report.binding?.bucketId && !isFiveHourBucket({ id: report.binding.bucketId, label: report.binding.bucket })) {
+      return `${choice.agent}/${report.binding.bucketId}`;
+    }
+  }
   return `${choice.agent}/unknown`;
+}
+
+/**
+ * Wave expected-share already reserved for `choice`'s binding bucket, including ambiguous
+ * `agent/unknown` share against a known same-agent bucket (and the reverse).
+ * @param {Record<string, number>} shareCommitted
+ * @param {{ agent?: string, model?: string | null }} choice
+ */
+export function committedShareFor(shareCommitted, choice, usageByCandidate = {}, policy = NO_POLICY, now = new Date()) {
+  const key = bindingBucketIdFor(choice, usageByCandidate, policy, now);
+  if (!key || !shareCommitted || typeof shareCommitted !== "object") return 0;
+  const agent = choice?.agent;
+  let total = shareCommitted[key] ?? 0;
+  if (!agent) return total;
+  if (key.endsWith("/unknown")) {
+    for (const [bucketKey, amount] of Object.entries(shareCommitted)) {
+      if (bucketKey !== key && bucketKey.startsWith(`${agent}/`) && typeof amount === "number") {
+        total += amount;
+      }
+    }
+    return total;
+  }
+  const ambiguous = shareCommitted[`${agent}/unknown`];
+  if (typeof ambiguous === "number") total += ambiguous;
+  return total;
 }
 
 /**

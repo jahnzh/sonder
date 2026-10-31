@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 // @ts-expect-error Plain JS module under test.
-import { activeWorkersFromWorkerList, bindingBucketIdFor, burnPressure, countBucketLoad, effectiveBucketLoad, expectedShareFor, expectedShareSkip, isFiveHourBucket, loadPolicy, NO_POLICY, parsePolicy, policyVerdict, rankByPressure, resolvePolicy } from "../scripts/orca-routing.mjs";
+import { activeWorkersFromWorkerList, bindingBucketIdFor, burnPressure, committedShareFor, countBucketLoad, documentedLastingBucketId, effectiveBucketLoad, expectedShareFor, expectedShareSkip, isFiveHourBucket, loadPolicy, NO_POLICY, parsePolicy, policyVerdict, rankByPressure, resolvePolicy } from "../scripts/orca-routing.mjs";
 // @ts-expect-error Plain JS module under test.
 import { modelChoiceSection, parseCliArgs as parseRecommendArgs, recommend } from "../scripts/orca-recommend.mjs";
 // @ts-expect-error Plain JS module under test.
@@ -855,8 +855,13 @@ test("an unknown-bucket candidate counts known same-agent load against the bucke
   ];
   const load = countBucketLoad({ activeWorkers, usageByCandidate: u, policy: p, now: NOW });
   assert.equal(load["antigravity/3p-weekly"].count, 2);
-  // Opus with no usage reading maps to antigravity/unknown — must still see the two Sonnets.
-  const unknownKey = bindingBucketIdFor({ agent: "antigravity", model: "claude-opus-5-5-high" }, {}, p, NOW);
+  // Documented Opus with no usage reading still binds to 3p-weekly (not agent/unknown).
+  const opusKey = bindingBucketIdFor({ agent: "antigravity", model: "claude-opus-5-5-high" }, {}, p, NOW);
+  assert.equal(opusKey, "antigravity/3p-weekly");
+  assert.equal(effectiveBucketLoad(load, opusKey, "antigravity"), 2);
+  assert.equal(effectiveBucketLoad(load, opusKey, "antigravity") < (p.maxConcurrentPerBucket ?? 2), false);
+  // A truly undocumented model still maps to agent/unknown and must see the same-agent load.
+  const unknownKey = bindingBucketIdFor({ agent: "antigravity", model: "not-a-real-model" }, {}, p, NOW);
   assert.equal(unknownKey, "antigravity/unknown");
   assert.equal(effectiveBucketLoad(load, unknownKey, "antigravity"), 2);
   assert.equal(effectiveBucketLoad(load, unknownKey, "antigravity") < (p.maxConcurrentPerBucket ?? 2), false);
@@ -1533,5 +1538,239 @@ test("uncertaintyAlternative prefers the higher-pressure below-capability option
     named(row.uncertaintyAlternative),
     "codex/gpt-6.1-terra/max",
     `expected higher-pressure Codex over Cursor: ${JSON.stringify({ alt: named(row.uncertaintyAlternative ?? null), reason: row.reason })}`,
+  );
+});
+
+// --- Round-5 review findings
+
+test("documentedLastingBucketId maps known models to static lasting bucket ids", () => {
+  assert.equal(documentedLastingBucketId("antigravity", "claude-opus-5-5-high"), "3p-weekly");
+  assert.equal(documentedLastingBucketId("antigravity", "claude-sonnet-5-5-medium"), "3p-weekly");
+  assert.equal(documentedLastingBucketId("antigravity", "gemini-3.8-flash-high"), "gemini-weekly");
+  assert.equal(documentedLastingBucketId("antigravity", "gemini-4-argon-high"), "gemini-argon-wtu-weekly");
+  assert.equal(documentedLastingBucketId("cursor", "auto"), "included_auto");
+  assert.equal(documentedLastingBucketId("cursor", "composer-2.5"), "included_auto");
+  assert.equal(documentedLastingBucketId("codex", "gpt-6.1-terra"), "codex-weekly");
+  assert.equal(documentedLastingBucketId("antigravity", "not-a-real-model"), null);
+  assert.equal(documentedLastingBucketId("antigravity", null), null);
+});
+
+test("bindingBucketIdFor uses the documented lasting bucket when usage is missing, stale, or unconfirmed", () => {
+  const p = policy();
+  assert.equal(
+    bindingBucketIdFor({ agent: "antigravity", model: "claude-opus-5-5-high" }, {}, p, NOW),
+    "antigravity/3p-weekly",
+  );
+  assert.equal(
+    bindingBucketIdFor({ agent: "cursor", model: "auto" }, {}, p, NOW),
+    "cursor/included_auto",
+  );
+  // Stale reading with only a 5-hour window must not bind to 3p-5h (that splits from fresh weekly peers).
+  const stale5h = {
+    "antigravity/claude-opus-5-5-high": usage("stale", [{ ...B.third5h, usedPercent: 10 }]),
+  };
+  assert.equal(
+    bindingBucketIdFor({ agent: "antigravity", model: "claude-opus-5-5-high" }, stale5h, p, NOW),
+    "antigravity/3p-weekly",
+  );
+  // Fresh confirmed lasting binding still wins when present.
+  assert.equal(
+    bindingBucketIdFor({ agent: "antigravity", model: "claude-sonnet-5-5-medium" }, liveUsage(), p, NOW),
+    "antigravity/3p-weekly",
+  );
+  // Model-less stays ambiguous.
+  assert.equal(bindingBucketIdFor({ agent: "antigravity", model: null }, liveUsage(), p, NOW), "antigravity/unknown");
+});
+
+test("unconfirmed Opus and confirmed Sonnet share the same 3p-weekly key so wave share cannot overdraw", async () => {
+  // 50% left; Opus expects 35%, Sonnet 12%. If Opus reserved agent/unknown, Sonnet would still fit;
+  // with a shared 3p-weekly key, 50-35-12=3 < 10 floor → second pick must refuse Sonnet on that bucket.
+  const u = liveUsage(
+    { thirdWeek: { usedPercent: 50 } },
+    {
+      "antigravity/claude-opus-5-5-high": "unknown",
+      "codex/gpt-6.1-terra": "exhausted",
+      "cursor/auto": "exhausted",
+      "cursor/composer-2.5": "exhausted",
+      "antigravity/gemini-3.8-flash-high": "exhausted",
+      "claude/claude-opus-5-5": "exhausted",
+      "claude/claude-sonnet-5-5": "exhausted",
+    },
+  );
+  const usageByCandidate = {
+    ...u,
+    "antigravity/claude-opus-5-5-high": {
+      ...u["antigravity/claude-opus-5-5-high"],
+      status: "unknown",
+      capacityConfirmed: false,
+    },
+    "antigravity/claude-sonnet-5-5-medium": usage("fresh", [{ ...B.thirdWeek, usedPercent: 50 }, B.third5h]),
+  };
+  assert.equal(
+    bindingBucketIdFor({ agent: "antigravity", model: "claude-opus-5-5-high" }, usageByCandidate, policy(), NOW),
+    "antigravity/3p-weekly",
+  );
+  assert.equal(
+    bindingBucketIdFor({ agent: "antigravity", model: "claude-sonnet-5-5-medium" }, usageByCandidate, policy(), NOW),
+    "antigravity/3p-weekly",
+  );
+  const p: any = await withoutKey(() =>
+    planWave({
+      wave: wave({
+        concurrency: 3,
+        tasks: [
+          {
+            id: "deep",
+            summary: "Deep",
+            judgment: "reasoning-heavy",
+            judgmentReason: "hard",
+            eligible: ["antigravity/claude-opus-5-5-high", "antigravity/claude-sonnet-5-5-medium"],
+          },
+          {
+            id: "std",
+            summary: "Standard",
+            judgment: "standard",
+            judgmentReason: "clear",
+            eligible: ["antigravity/claude-sonnet-5-5-medium"],
+          },
+        ],
+      }),
+      candidates: CANDIDATES,
+      usageByAgent: {},
+      usageByCandidate,
+      learningOptions: { learning: false, now: NOW },
+      policy: { ...policy(), maxConcurrentTotal: 3, maxConcurrentPerBucket: 2 },
+      now: NOW,
+    }),
+  );
+  const deep = p.tasks.find((t: { task: string }) => t.task === "deep");
+  const std = p.tasks.find((t: { task: string }) => t.task === "std");
+  assert.equal(named(deep.assignment), "antigravity/claude-opus-5-5-high");
+  assert.notEqual(
+    named(std.assignment),
+    "antigravity/claude-sonnet-5-5-medium",
+    `Sonnet must not ignore Opus share on 3p-weekly: ${JSON.stringify({ status: std.status, assignment: named(std.assignment ?? null), reason: std.reason })}`,
+  );
+});
+
+test("committedShareFor includes ambiguous agent/unknown share against a known same-agent bucket", () => {
+  const p = policy();
+  const shareCommitted = {
+    "antigravity/unknown": 35,
+    "antigravity/3p-weekly": 12,
+  };
+  assert.equal(
+    committedShareFor(shareCommitted, { agent: "antigravity", model: "claude-sonnet-5-5-medium" }, liveUsage(), p, NOW),
+    47,
+  );
+  assert.equal(
+    committedShareFor(shareCommitted, { agent: "antigravity", model: null }, liveUsage(), p, NOW),
+    47,
+  );
+});
+
+test("multi-page worker-list without numeric total or final hasMore false is refused", () => {
+  const base = JSON.parse(readFileSync(join(repoRoot, "tests", "fixtures", "routing", "worker-list.json"), "utf8"));
+  const mk = (workers: unknown[], page: Record<string, unknown>, cursor?: string | null) => ({
+    ...base,
+    ...(cursor !== undefined ? { cursor } : {}),
+    result: { ...base.result, workers, page },
+  });
+  const page1 = mk([base.result.workers[0]], { limit: 1, hasMore: true, nextCursor: "cursor-page-2" });
+  const page2 = mk([base.result.workers[1]], { limit: 1, hasMore: false, nextCursor: null }, "cursor-page-2");
+  // Missing total on page 0.
+  assert.throws(() => activeWorkersFromWorkerList(JSON.stringify([page1, page2])), /total/i);
+
+  const withTotal = mk([base.result.workers[0]], { limit: 1, total: 2, hasMore: true, nextCursor: "cursor-page-2" });
+  // Last page hasMore omitted (not strictly false).
+  const lastNoHasMore = mk([base.result.workers[1]], { limit: 1, total: 2, nextCursor: null }, "cursor-page-2");
+  assert.throws(() => activeWorkersFromWorkerList(JSON.stringify([withTotal, lastNoHasMore])), /hasMore/i);
+});
+
+test("multi-page worker-list refuses duplicate dispatches that pad page.total", () => {
+  const base = JSON.parse(readFileSync(join(repoRoot, "tests", "fixtures", "routing", "worker-list.json"), "utf8"));
+  const mk = (workers: unknown[], page: Record<string, unknown>, cursor?: string | null) => ({
+    ...base,
+    ...(cursor !== undefined ? { cursor } : {}),
+    result: { ...base.result, workers, page },
+  });
+  // Two pages, each listing the same active worker; rawCount=2 matches total=2, silent dedup would hide the gap.
+  const page1 = mk([base.result.workers[0]], { limit: 1, total: 2, hasMore: true, nextCursor: "cursor-page-2" });
+  const page2 = mk([base.result.workers[0]], { limit: 1, total: 2, hasMore: false, nextCursor: null }, "cursor-page-2");
+  assert.throws(
+    () => activeWorkersFromWorkerList(JSON.stringify([page1, page2])),
+    /duplicate worker dispatch/i,
+  );
+});
+
+test("uncertaintyAlternative prefers a higher capability tier before burn pressure", async () => {
+  // Reasoning-heavy Opus unconfirmed; Flash has higher pressure than Sonnet, but Sonnet is standard.
+  // Ranking by pressure alone would offer Flash; tier-descending must offer Sonnet.
+  const u = liveUsage(
+    {
+      thirdWeek: { usedPercent: 40 },
+      geminiWeek: { usedPercent: 5 },
+    },
+    {
+      "antigravity/claude-opus-5-5-high": "unknown",
+      "codex/gpt-6.1-terra": "exhausted",
+      "cursor/auto": "exhausted",
+      "cursor/composer-2.5": "exhausted",
+      "claude/claude-opus-5-5": "exhausted",
+      "claude/claude-sonnet-5-5": "exhausted",
+    },
+  );
+  const usageByCandidate = {
+    ...u,
+    "antigravity/claude-opus-5-5-high": {
+      ...u["antigravity/claude-opus-5-5-high"],
+      status: "unknown",
+      capacityConfirmed: false,
+    },
+    "antigravity/claude-sonnet-5-5-medium": usage("fresh", [{ ...B.thirdWeek, usedPercent: 40 }, B.third5h]),
+    "antigravity/gemini-3.8-flash-high": usage("fresh", [{ ...B.geminiWeek, usedPercent: 5 }, B.gemini5h]),
+  };
+  const sonnetBurn = burnPressure(usageByCandidate["antigravity/claude-sonnet-5-5-medium"], policy(), NOW);
+  const flashBurn = burnPressure(usageByCandidate["antigravity/gemini-3.8-flash-high"], policy(), NOW);
+  assert.ok(
+    (flashBurn.pressure ?? 0) > (sonnetBurn.pressure ?? 0),
+    `Flash pressure ${flashBurn.pressure} should exceed Sonnet ${sonnetBurn.pressure} so the test exercises tier-over-pressure`,
+  );
+  const p: any = await withoutKey(() =>
+    planWave({
+      wave: wave({
+        concurrency: 2,
+        tasks: [
+          {
+            id: "deep",
+            summary: "Deep",
+            judgment: "reasoning-heavy",
+            judgmentReason: "hard",
+            eligible: [
+              "antigravity/claude-opus-5-5-high",
+              "antigravity/claude-sonnet-5-5-medium",
+              "antigravity/gemini-3.8-flash-high",
+            ],
+          },
+        ],
+      }),
+      candidates: CANDIDATES,
+      usageByAgent: {},
+      usageByCandidate,
+      learningOptions: { learning: false, now: NOW },
+      policy: policy(),
+      now: NOW,
+    }),
+  );
+  const row = p.tasks[0];
+  assert.equal(row.status, "needs-decision");
+  assert.equal(named(row.assignment), "antigravity/claude-opus-5-5-high");
+  assert.equal(
+    named(row.uncertaintyAlternative),
+    "antigravity/claude-sonnet-5-5-medium",
+    `standard Sonnet must beat higher-pressure mechanical Flash: ${JSON.stringify({
+      alt: named(row.uncertaintyAlternative ?? null),
+      reason: row.reason,
+    })}`,
   );
 });
