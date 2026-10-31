@@ -148,7 +148,7 @@ for(const size of sizes){
   // The bar is the narration's position; the page follows it.
   await expect(player.getByRole("slider",{name:/^Seek in /})).toBeVisible();
   await expect(player.getByRole("slider",{name:"Position in book"})).toHaveCount(0);
-  const names=["Close reader","Bookmark current sentence","Search this book","Reader appearance","More","Back 30 seconds","Play narration","Forward 30 seconds","Sleep timer"];
+  const names=["Close reader","Bookmark current sentence","Search this book","Reader appearance","More","Back to narration","Back 30 seconds","Play narration","Forward 30 seconds","Sleep timer"];
   if(width<900)names.push("Chapters");
   for(const name of names){
    // The transport button reads "Play narration" or "Pause narration" depending on whether the tap above started playback.
@@ -168,34 +168,114 @@ for(const size of sizes){
  });
 }
 
-for(const size of readerCentreSizes){
- test(`reader player transport is centred at ${size[0]}px`,async({page,browserName})=>{
-  const [width,height]=size;
-  const dialog=await open(page,browserName,"Layout reader",size);
-  const player=dialog.getByRole("region",{name:"Player",exact:true});
-  await expect(player).toBeVisible();
-  const play=await centre(player.getByRole("button",{name:/^(Play|Pause) narration$/}));
-  const bar=await centre(player);
-  expect(Math.abs(play.x-bar.x)).toBeLessThanOrEqual(2);
-  // Nothing from the Now Playing shell reserves a row below the reader transport.
-  await expect(dialog.locator(".player-undo-jump")).toHaveCount(0);
-  await expect(dialog.getByRole("button",{name:"Undo jump",exact:true})).toHaveCount(0);
-  const below=await dialog.evaluate(()=>{
-   const bar=document.querySelector<HTMLElement>(".reader-player");
-   const main=document.querySelector<HTMLElement>(".now-playing-main");
-   if(!bar||!main)return Infinity;
-   const bottom=bar.getBoundingClientRect().bottom;
-   return Math.max(0,...[...main.children].map((child)=>{
-    const el=child as HTMLElement;
-    // Reader fills the column; transport is hidden with an ebook; alerts may still paint.
-    if(el.classList.contains("playback-reader")||el.classList.contains("error-text"))return 0;
-    if(getComputedStyle(el).display==="none")return 0;
-    const box=el.getBoundingClientRect();
-    return box.height>0?box.bottom-bottom:0;
-   }));
-  });
-  expect(below).toBeLessThanOrEqual(2);
+async function installLayoutAlignment(request:APIRequestContext,title:string){
+ const books=await(await request.get("/api/books")).json();
+ const book=books.find((entry:any)=>entry.title===title);
+ expect(book).toBeTruthy();
+ const ebooks=await(await request.get("/api/ebooks")).json();
+ const ebook=ebooks.find((entry:any)=>entry.workId===book.workId&&entry.format==="epub");
+ expect(ebook).toBeTruthy();
+ const existing=await(await request.get(`/api/alignments?ebookId=${ebook.id}`)).json();
+ if(existing.jobs?.length)return {book,ebookId:ebook.id as string};
+ const manifest=await(await request.get(`/api/reader/${ebook.id}`)).json();
+ const created=await request.post("/api/alignments",{data:{ebookId:ebook.id,recordingId:book.recordingId,pairings:manifest.sections.map((section:any)=>({section:section.index,trackId:book.tracks[0].id,start:section.index*100,duration:95}))}});
+ expect(created.ok()).toBe(true);
+ await expect.poll(async()=>{
+  const jobs=(await(await request.get(`/api/alignments?ebookId=${ebook.id}`)).json()).jobs;
+  return jobs[0]?.sectionsDone.length;
+ },{timeout:15000}).toBe(manifest.sections.length);
+ return {book,ebookId:ebook.id as string};
+}
+async function assertReaderTransportCentred(dialog:Locator,player:Locator){
+ const play=await centre(player.getByRole("button",{name:/^(Play|Pause) narration$/}));
+ const bar=await centre(player);
+ expect(Math.abs(play.x-bar.x)).toBeLessThanOrEqual(2);
+ await expect(dialog.locator(".player-undo-jump")).toHaveCount(0);
+ await expect(dialog.getByRole("button",{name:"Undo jump",exact:true})).toHaveCount(0);
+ const below=await dialog.evaluate(()=>{
+  const bar=document.querySelector<HTMLElement>(".reader-player");
+  const main=document.querySelector<HTMLElement>(".now-playing-main");
+  if(!bar||!main)return Infinity;
+  const bottom=bar.getBoundingClientRect().bottom;
+  return Math.max(0,...[...main.children].map((child)=>{
+   const el=child as HTMLElement;
+   if(el.classList.contains("playback-reader")||el.classList.contains("error-text"))return 0;
+   if(getComputedStyle(el).display==="none")return 0;
+   const box=el.getBoundingClientRect();
+   return box.height>0?box.bottom-bottom:0;
+  }));
  });
+ expect(below).toBeLessThanOrEqual(2);
+ const back=player.getByRole("button",{name:"Back to narration",exact:true});
+ const chapters=player.getByRole("button",{name:"Chapters",exact:true});
+ const rewind=player.getByRole("button",{name:"Back 30 seconds",exact:true});
+ const backBox=(await back.boundingBox())!;
+ expect(backBox.width).toBeGreaterThanOrEqual(44);
+ expect(backBox.height).toBeGreaterThanOrEqual(44);
+ const chaptersBox=(await chapters.boundingBox())!;
+ const rewindBox=(await rewind.boundingBox())!;
+ expect(chaptersBox.x+chaptersBox.width).toBeLessThanOrEqual(backBox.x+1);
+ expect(backBox.x+backBox.width).toBeLessThanOrEqual(rewindBox.x+1);
+}
+async function setReadingMode(page:Page,dialog:Locator,mode:"Page"|"Lyrics"|"Word"){
+ const room=dialog.locator(".inline-reader");
+ if(await room.locator(".reader-topbar").isHidden()){
+  if(await room.locator(".lyrics-reader,.word-reader").count())await room.locator(".lyrics-reader,.word-reader").first().evaluate((el:HTMLElement)=>el.click());
+  else{
+   const box=(await room.locator(".reader-viewport").boundingBox())!;
+   await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
+  }
+  await expect(room.locator(".reader-topbar")).toBeVisible();
+ }
+ await room.locator(".reader-topbar").getByRole("button",{name:"More",exact:true}).click();
+ await page.locator(".reader-more:visible").getByRole("group",{name:"Reading mode"}).getByRole("button",{name:mode,exact:true}).click();
+}
+for(const size of readerCentreSizes){
+ for(const state of ["disabled","enabled"] as const){
+  test(`reader player transport is centred at ${size[0]}px with Back to narration ${state}`,async({page,browserName,request})=>{
+   const [width]=size;
+   const {book,ebookId}=await installLayoutAlignment(request,"Layout reader");
+   const map=await(await request.get(`/api/alignments?ebookId=${ebookId}`)).json();
+   const job=map.jobs[0];
+   const detail=await(await request.get(`/api/alignments/${job.id}/map`)).json();
+   const interval=detail.intervals.find((entry:any)=>entry.section===1&&entry.start>104)||detail.intervals[0];
+   expect((await request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[0].id,position:interval.start+1,duration:book.tracks[0].duration,updatedAt:Date.now()}})).ok()).toBe(true);
+   const dialog=await open(page,browserName,"Layout reader",size);
+   const player=dialog.getByRole("region",{name:"Player",exact:true});
+   await expect(player).toBeVisible();
+   const back=player.getByRole("button",{name:"Back to narration",exact:true});
+   await expect(back).toBeVisible();
+   if(state==="disabled")await expect(back).toBeDisabled();
+   else{
+    const pageBox=(await dialog.locator(".inline-reader .reader-viewport").boundingBox())!;
+    await page.mouse.click(pageBox.x+pageBox.width*0.9,pageBox.y+pageBox.height/2);
+    await expect(back).toBeEnabled();
+   }
+   await assertReaderTransportCentred(dialog,player);
+   if(width===360){
+    for(const name of ["Sleep timer",/^Playback speed/] as const){
+     const box=(await player.getByRole("button",{name,exact:typeof name==="string"}).boundingBox())!;
+     expect(box.x).toBeGreaterThanOrEqual(0);
+     expect(box.x+box.width).toBeLessThanOrEqual(width);
+    }
+    const room=dialog.locator(".inline-reader");
+    if(await room.locator(".reader-topbar").isHidden()){
+     const box=(await room.locator(".reader-viewport").boundingBox())!;
+     await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
+    }
+    const more=(await room.getByRole("button",{name:"More",exact:true}).boundingBox())!;
+    expect(more.x).toBeGreaterThanOrEqual(0);
+    expect(more.x+more.width).toBeLessThanOrEqual(width);
+   }
+   for(const mode of ["Lyrics","Word"] as const){
+    await setReadingMode(page,dialog,mode);
+    if(state==="enabled")await expect(back).toBeEnabled();
+    else await expect(back).toBeDisabled();
+    await assertReaderTransportCentred(dialog,player);
+    await setReadingMode(page,dialog,"Page");
+   }
+  });
+ }
 }
 
  test("Now Playing keeps keyboard focus inside the open dialog",async({page,browserName})=>{

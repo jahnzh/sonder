@@ -612,16 +612,26 @@
 .reader-player .reader-audio-timeline .dock-progress {
   flex-wrap: nowrap;
 }
-.reader-player-chapters {
+.reader-player-leading {
   grid-area: chapters;
   justify-self: start;
+  display: flex;
+  align-items: center;
+  gap: 0;
   margin: 2px 0 12px 10px;
+}
+.reader-player-chapters {
+  margin: 0;
 }
 .reader-player .icon-button {
   width: 44px;
   height: 44px;
   border-radius: 14px;
   color: var(--text);
+}
+.reader-player .icon-button:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 .reader-transport {
   grid-area: transport;
@@ -696,22 +706,8 @@
 .reader-floating > * {
   pointer-events: auto;
 }
-.reader-back-narration {
-  height: 44px;
-  padding: 0 18px 0 12px;
-  border: 0;
-  border-radius: 22px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--accent);
-  color: var(--on-accent);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: pointer;
-  box-shadow: 0 6px 20px color-mix(in srgb, var(--shadow) 35%, transparent);
+.reader-player .reader-back-narration {
+  flex: 0 0 auto;
 }
 .reader-toast {
   display: flex;
@@ -931,6 +927,12 @@
   }
   .reader-player-info span::before {
     content: none;
+  }
+  .reader-player-leading {
+    grid-area: info;
+    justify-self: end;
+    align-self: center;
+    margin: 0;
   }
   .reader-player-chapters {
     display: none;

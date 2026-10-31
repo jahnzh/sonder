@@ -73,7 +73,7 @@ try {
  await expect(options.getByRole('button',{name:'Versions & sources',exact:true})).toBeVisible();
  await expect(options.getByRole('button',{name:'Listen from here',exact:true})).toBeVisible();
  await expect(options.getByRole('group',{name:'Reading mode',exact:true})).toBeVisible();
- await expect(page.getByRole('button',{name:'Back to narration',exact:true})).toHaveCount(0);
+ await expect(page.getByRole('button',{name:'Back to narration',exact:true})).toBeDisabled();
  await page.screenshot({path:'artifacts/live-reader-options-mobile.png'});
  await options.getByRole('button',{name:'Close playback options',exact:true}).click();
  report.checks.push({name:'EPUB fills Now Playing; More holds playback and reader options',ebookId:ebook.id});
