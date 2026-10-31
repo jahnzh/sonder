@@ -1,11 +1,12 @@
 {
   "version": 1,
   "decidedAt": "2026-10-31",
-  "decision": "Owner policy C: workers run on Cursor Models, Antigravity Claude Opus 5.5 / Sonnet 5.5 / Gemini 3.8 Flash and Codex gpt-6.1-terra; Claude Code is reserved for the coordinator; Gemini 4 Argon is excluded while exhausted.",
+  "decision": "Owner policy C: workers run on Cursor Models, Antigravity Claude Opus 5.5 / Sonnet 5.5 / Gemini 3.8 Flash, Codex gpt-6.1-terra and OpenCode Qwen3.8-27B; Claude Code is reserved for the coordinator; Gemini 4 Argon is excluded while exhausted.",
   "allow": [
     { "agent": "cursor", "models": ["auto", "composer-*"] },
     { "agent": "antigravity", "models": ["claude-opus-5-5-high", "claude-sonnet-5-5-medium", "gemini-3.8-flash-high"] },
-    { "agent": "codex", "models": ["gpt-6.1-terra"] }
+    { "agent": "codex", "models": ["gpt-6.1-terra"] },
+    { "agent": "opencode", "models": ["nris/Qwen3.8-27B"] }
   ],
   "reserve": [
     {
@@ -19,7 +20,7 @@
       "reason": "Gemini 4 Argon is excluded while its weekly bucket is exhausted (owner decision 2026-10-31); remove this entry and allow it again after it resets"
     }
   ],
-  "order": ["antigravity", "codex", "cursor"],
+  "order": ["antigravity", "codex", "cursor", "opencode"],
   "safetyFloorPercent": 10,
   "maxConcurrentPerBucket": 2,
   "maxConcurrentTotal": 3,

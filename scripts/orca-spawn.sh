@@ -72,9 +72,20 @@ fi
 
 [ ${#docs[@]} -gt 0 ] || docs=(AGENTS.md CLAUDE.md)
 
-root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+root=$script_dir/..
+if common_git=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && [ -n "$common_git" ]; then
+  root=$(cd "$common_git/.." && pwd -P)
+fi
 workspaces=${ORCA_SPAWN_WORKSPACES:-/home/jahn/orca/workspaces/audiobook_streamer}
 worktree=$workspaces/$name
+
+if [ "$agent" = "opencode" ]; then
+  if ! node "$script_dir/opencode-config.mjs" verify "$model"; then
+    exit 1
+  fi
+  echo "OpenCode default model verified: $model; worker-start uses that default."
+fi
 
 if [ -n "$base_worktree" ]; then
   base=$(git -C "$workspaces/$base_worktree" branch --show-current 2>/dev/null)
@@ -87,7 +98,11 @@ fi
 
 # One command-line argument is limited to about 128 KiB (MAX_ARG_STRLEN), and worker-start takes the spec as one
 # argument. Refuse early, before anything is started, with a message the caller can act on.
-spec_bytes=$(wc -c < "$spec_file")
+spec_text=$(cat "$spec_file")
+if [ "$agent" = "opencode" ]; then
+  printf -v spec_text '%s\n\nVerified OpenCode launch default: %s\n' "$spec_text" "$model"
+fi
+spec_bytes=$(printf '%s' "$spec_text" | wc -c)
 if [ "$spec_bytes" -gt 120000 ]; then
   echo "spec file is $spec_bytes bytes; a single argument is limited to about 131072. Shorten it, or put the long text in a file in the repository and name that file in the spec." >&2
   exit 1
@@ -99,9 +114,12 @@ if ! out=$(bash "$root/scripts/orca-preflight.sh" "$base" "$worktree" "${docs[@]
   exit 1
 fi
 
-args=(orchestration worker-start --spec "$(cat "$spec_file")" --worktree new-top-level
-  --name "$name" --repo "path:$root" --base-branch "$base" --agent "$agent" --model "$model")
-[ -z "$effort" ] || args+=(--effort "$effort")
+args=(orchestration worker-start --spec "$spec_text" --worktree new-top-level
+  --name "$name" --repo "path:$root" --base-branch "$base" --agent "$agent")
+if [ "$agent" != "opencode" ]; then
+  args+=(--model "$model")
+  [ -z "$effort" ] || args+=(--effort "$effort")
+fi
 args+=(--json)
 
 receipt=$(${ORCA_CLI_COMMAND:-orca} "${args[@]}" 2>&1)
@@ -130,10 +148,13 @@ parsed=$(printf '%s\n' "$receipt" | node -e '
     pick(res.dispatchId, d.id, d.dispatchId) ?? "",
     pick(res.launch?.effective?.model, res.effectiveModel, res.model, d.model) ?? "",
     wtPath,
-  ].join("\t"));
+  ].map((value) => value || "-").join("\t"));
 ') || { echo "worker-start gave no JSON receipt (exit $status):" >&2; echo "$receipt" >&2; exit 1; }
 
 IFS=$'\t' read -r ok dispatch effective receipt_worktree <<< "$parsed"
+[ "$dispatch" != "-" ] || dispatch=""
+[ "$effective" != "-" ] || effective=""
+[ "$receipt_worktree" != "-" ] || receipt_worktree=""
 echo "dispatch: ${dispatch:-unknown}"
 echo "effective model: ${effective:-unknown}"
 
@@ -142,7 +163,9 @@ if [ "$ok" != "true" ] || [ "$status" -ne 0 ]; then
   echo "$receipt" >&2
   exit 1
 fi
-if [ "$effective" != "$model" ]; then
+if [ "$agent" = "opencode" ]; then
+  echo "OpenCode uses the verified configured default; effective-model receipt comparison skipped."
+elif [ "$effective" != "$model" ]; then
   echo "effective model '${effective:-unknown}' differs from requested '$model'" >&2
   exit 1
 fi

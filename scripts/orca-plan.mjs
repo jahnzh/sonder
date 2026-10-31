@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PROVIDERS, usageForPlanning } from "./orca-usage.mjs";
-import { loadCandidates, recommend } from "./orca-recommend.mjs";
+import { loadCandidates, parseChoice, recommend } from "./orca-recommend.mjs";
 import {
   NO_POLICY,
   activeWorkersFromWorkerList,
@@ -47,7 +47,7 @@ Histories and transcripts are never sent to Jev.
   --no-learning    Capability-and-usage baseline only; still shows baselineRecommendation per task.
 
 Takes a fresh usage reading first for each agent scripts/orca-usage.mjs collects (Claude, Codex,
-Cursor and Antigravity). A failed or unknown reading stays unknown or unavailable and is not capacity.
+Cursor, Antigravity and OpenCode). A failed or unknown reading stays unknown or unavailable and is not capacity.
 With a routing policy, burn pressure and per-bucket concurrency caps apply (docs/agents/routing-policy.md).
 Shared allowances list active and proposed workers; capacity is never reserved. Learning may reorder
 within a capability tier when comparable outcomes exist; see docs/agents/learned-adjustments.md.
@@ -150,20 +150,20 @@ export function parseWave(text, cli = {}) {
     }
     const eligible = (task.eligible ?? []).map((value, j) => {
       if (typeof value !== "string") throw new Error(`tasks[${i}].eligible[${j}] must be a string`);
-      const parts = value.split("/");
-      if (parts.length < 2 || parts.length > 3 || parts.some((part) => !part)) {
+      const choice = parseChoice(value);
+      if (!choice) {
         throw new Error(`tasks[${i}].eligible[${j}] must be <agent>/<model>[/<effort>]`);
       }
-      return { agent: parts[0], model: parts[1], effort: parts[2] ?? null };
+      return choice;
     });
     let reviewOf = undefined;
     if (task.reviewOf !== undefined) {
       if (typeof task.reviewOf !== "string") throw new Error(`tasks[${i}].reviewOf must be <agent>/<model>[/<effort>]`);
-      const parts = task.reviewOf.split("/");
-      if (parts.length < 2 || parts.length > 3 || parts.some((part) => !part)) {
+      const choice = parseChoice(task.reviewOf);
+      if (!choice) {
         throw new Error(`tasks[${i}].reviewOf must be <agent>/<model>[/<effort>]`);
       }
-      reviewOf = { agent: parts[0], model: parts[1], effort: parts[2] ?? null };
+      reviewOf = choice;
     }
     return {
       id: String(task.id),

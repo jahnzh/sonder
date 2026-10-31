@@ -11,6 +11,7 @@ Allowed workers:
 - Cursor Models: `auto`, `composer-*` (free / included_auto bucket)
 - Antigravity: `claude-opus-5-5-high`, `claude-sonnet-5-5-medium`, `gemini-3.8-flash-high`
 - Codex: `gpt-6.1-terra`
+- OpenCode: `nris/Qwen3.8-27B` (free, no quota, temporary)
 
 Reserved / excluded:
 

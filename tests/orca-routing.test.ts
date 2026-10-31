@@ -115,9 +115,19 @@ test("the repository policy holds the owner's policy C", () => {
   assert.equal(p.maxConcurrentTotal, 3);
   assert.equal(p.expiringBoost, 1);
   assert.equal(p.reviewerOnDifferentPool, true);
-  assert.deepEqual(p.order, ["antigravity", "codex", "cursor"]);
-  for (const allowed of ["cursor/auto", "cursor/composer-2.5", "antigravity/claude-opus-5-5-high", "antigravity/claude-sonnet-5-5-medium", "antigravity/gemini-3.8-flash-high", "codex/gpt-6.1-terra"]) {
-    const [agent, model] = allowed.split("/");
+  assert.deepEqual(p.order, ["antigravity", "codex", "cursor", "opencode"]);
+  for (const allowed of [
+    "cursor/auto",
+    "cursor/composer-2.5",
+    "antigravity/claude-opus-5-5-high",
+    "antigravity/claude-sonnet-5-5-medium",
+    "antigravity/gemini-3.8-flash-high",
+    "codex/gpt-6.1-terra",
+    "opencode/nris/Qwen3.8-27B",
+  ]) {
+    const slash = allowed.indexOf("/");
+    const agent = allowed.slice(0, slash);
+    const model = allowed.slice(slash + 1);
     assert.equal(policyVerdict(p, { agent, model }), null, allowed);
   }
   const claude = policyVerdict(p, { agent: "claude", model: "claude-opus-5-5" });

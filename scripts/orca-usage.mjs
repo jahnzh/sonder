@@ -25,6 +25,11 @@ import {
   assessCandidateUsage as assessCursorCandidate,
   readCursorUsage,
 } from "./cursor-usage.mjs";
+import {
+  assessOpencodeUsage,
+  assessCandidateUsage as assessOpencodeCandidate,
+  readOpencodeUsage,
+} from "./opencode-usage.mjs";
 import { accountFingerprint, isAccountFingerprint, redact, scrub } from "./usage-common.mjs";
 
 export const POLL_INTERVAL_MS = 60_000;
@@ -58,6 +63,7 @@ export const PROVIDERS = [
   { name: "claude", read: readClaudeUsage, assess: assessClaudeUsage, assessCandidate: assessClaudeCandidate },
   { name: "codex", read: readCodexUsage, assess: assessCodexUsage, assessCandidate: assessCodexCandidate },
   { name: "cursor", read: readCursorForCollector, assess: assessCursorUsage, assessCandidate: assessCursorCandidate },
+  { name: "opencode", read: readOpencodeUsage, assess: assessOpencodeUsage, assessCandidate: assessOpencodeCandidate },
   {
     name: "antigravity",
     read: readAntigravityUsage,
@@ -193,7 +199,9 @@ function syntheticObservation(providerName, attemptedAt, { status = "unavailable
   };
 }
 
-const isUsable = (observation) => Array.isArray(observation?.windows) && observation.windows.length > 0;
+const isUsable = (observation) =>
+  (observation?.provider === "opencode" && observation.status === "available" && observation.unlimited === true) ||
+  (Array.isArray(observation?.windows) && observation.windows.length > 0);
 
 function processAlive(pid) {
   try {
@@ -498,7 +506,10 @@ function providerStatus(store, name) {
  */
 export function usageReport(store, provider, now, candidate = null) {
   const latest = store.latestReading(provider.name);
-  const reading = latest && ACCOUNT_FAILURES.has(latest.status) ? latest : (store.latestReading(provider.name, { usableOnly: true }) ?? latest);
+  // A failed OpenCode probe means the gateway is currently unusable, even if a prior
+  // successful probe has not aged out. Other providers retain their normal grace period.
+  const reading = latest && (ACCOUNT_FAILURES.has(latest.status) || (provider.name === "opencode" && latest.status !== "available"))
+    ? latest : (store.latestReading(provider.name, { usableOnly: true }) ?? latest);
   let assessment;
   try {
     if (!reading) {
@@ -535,6 +546,7 @@ export function usageReport(store, provider, now, candidate = null) {
     host: reportHost(reading?.scope),
     plan: reportPlan(reading?.scope),
     windows: reading?.windows ?? null,
+    ...(provider.name === "opencode" ? { unlimited: reading?.unlimited === true } : {}),
     collector: { ...collectorStatus(store, now), ...providerStatus(store, provider.name) },
   };
 }
