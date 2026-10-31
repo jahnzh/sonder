@@ -612,6 +612,10 @@
 .reader-player .reader-audio-timeline .dock-progress {
   flex-wrap: nowrap;
 }
+/* Phone: children keep their own grid areas. Desktop: one left-track flex/subgrid. */
+.reader-player-start {
+  display: contents;
+}
 .reader-player-leading {
   grid-area: chapters;
   justify-self: start;
@@ -902,18 +906,29 @@
     height: 88px;
     padding: 0 24px;
     column-gap: 24px;
-    /* Leading (Back to narration; Chapters is the sidebar) sits in the control
-       row immediately before the transport, not in the title/info cell. */
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 560px) minmax(0, 1fr);
+    /* Balanced 1fr | 560px | 1fr keeps the transport on the bar centre (as on
+       main). Leading shares the left track with info, at the end of the
+       control row next to the transport — not a fourth column that shifts Play. */
+    grid-template-columns: 1fr minmax(0, 560px) 1fr;
     grid-template-areas:
-      "info leading transport extras"
-      "info . scrub extras";
+      "info transport extras"
+      "info scrub extras";
     align-content: center;
   }
   .reader-player[data-controls="true"] {
     grid-template-areas:
-      "info leading transport extras"
-      "info . scrub extras";
+      "info transport extras"
+      "info scrub extras";
+  }
+  .reader-player-start {
+    display: grid;
+    grid-area: info;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: subgrid;
+    grid-row: 1 / 3;
+    column-gap: 8px;
+    min-width: 0;
+    align-self: stretch;
   }
   .reader-player .reader-player-info,
   .reader-player[data-controls="true"] .reader-player-info {
@@ -921,6 +936,11 @@
     flex-direction: column;
     gap: 2px;
     padding: 0;
+    grid-area: auto;
+    grid-column: 1;
+    grid-row: 1 / -1;
+    align-self: center;
+    min-width: 0;
   }
   .reader-player-info strong {
     font-size: 14px;
@@ -931,8 +951,10 @@
     content: none;
   }
   .reader-player-leading {
-    grid-area: leading;
-    justify-self: center;
+    grid-area: auto;
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
     align-self: center;
     margin: 0;
   }

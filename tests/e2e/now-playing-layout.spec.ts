@@ -219,8 +219,9 @@ async function assertReaderTransportCentred(dialog:Locator,player:Locator){
  expect(chaptersBox.x+chaptersBox.width).toBeLessThanOrEqual(backBox.x+1);
  expect(backBox.x+backBox.width).toBeLessThanOrEqual(rewindBox.x+1);
 }
-/** Desktop: Back to narration sits in the control row before Back 30; Chapters is the sidebar. */
-async function assertDesktopBackNarration(dialog:Locator,player:Locator){
+/** Desktop: Back to narration sits in the control row before Back 30; Chapters is the sidebar.
+ *  Transport stays bar-centred (same 1fr | 560px | 1fr principle as main) in both button states. */
+async function assertDesktopBackNarration(dialog:Locator,player:Locator,width:number){
  await expect(dialog.locator(".player-undo-jump")).toHaveCount(0);
  const order=await player.evaluate((bar)=>{
   const names=["Chapters","Back to narration","Back 30 seconds"];
@@ -244,13 +245,28 @@ async function assertDesktopBackNarration(dialog:Locator,player:Locator){
  const rewindBox=(await rewind.boundingBox())!;
  const playBox=(await play.boundingBox())!;
  const infoBox=(await info.boundingBox())!;
+ const playCentre=await centre(play);
+ const barCentre=await centre(player);
+ // Main's desktop bar centred the transport on the player region; assert that centre, not main's pixels.
+ expect(Math.abs(playCentre.x-barCentre.x)).toBeLessThanOrEqual(2);
  expect(backBox.width).toBeGreaterThanOrEqual(44);
  expect(backBox.height).toBeGreaterThanOrEqual(44);
  expect(backBox.x+backBox.width).toBeLessThanOrEqual(rewindBox.x+1);
- // Same control row as the transport (not the title/info cell).
+ // Same control row as the transport (not the title/info cell), between info and the transport.
  expect(Math.abs((backBox.y+backBox.height/2)-(playBox.y+playBox.height/2))).toBeLessThanOrEqual(2);
  expect(infoBox.height).toBeGreaterThan(0);
  expect(infoBox.x+infoBox.width).toBeLessThanOrEqual(backBox.x+1);
+ expect(backBox.x+backBox.width).toBeLessThanOrEqual(playBox.x+1);
+ if(width===900){
+  const overlap=await player.evaluate(()=>{
+   const title=document.querySelector(".reader-player-info strong");
+   const button=document.querySelector(".reader-back-narration");
+   if(!title||!button)return true;
+   const a=title.getBoundingClientRect(),b=button.getBoundingClientRect();
+   return a.right>b.left+1&&a.left<b.right-1&&a.bottom>b.top+1&&a.top<b.bottom-1;
+  });
+  expect(overlap).toBe(false);
+ }
  const playVsMain=await dialog.evaluate(()=>{
   const play=document.querySelector<HTMLElement>(".reader-play");
   const main=document.querySelector<HTMLElement>(".now-playing-main");
@@ -324,6 +340,7 @@ for(const size of readerCentreSizes){
 for(const size of readerDesktopSizes){
  test(`reader Back to narration stays in the desktop control row at ${size[0]}px`,async({page,browserName,request})=>{
   skipOnMobile(true,"desktop layout (min-width: 900px) is not reachable on a phone profile");
+  const [width]=size;
   const {book,ebookId}=await installLayoutAlignment(request,"Layout reader");
   const map=await(await request.get(`/api/alignments?ebookId=${ebookId}`)).json();
   const job=map.jobs[0];
@@ -337,18 +354,18 @@ for(const size of readerDesktopSizes){
   const back=player.getByRole("button",{name:"Back to narration",exact:true});
   await expect(back).toBeVisible();
   await expect(back).toBeDisabled();
-  const disabledPlay=await assertDesktopBackNarration(dialog,player);
+  const disabledPlay=await assertDesktopBackNarration(dialog,player,width);
   const pageBox=(await dialog.locator(".inline-reader .reader-viewport").boundingBox())!;
   await page.mouse.click(pageBox.x+pageBox.width*0.9,pageBox.y+pageBox.height/2);
   await expect(back).toBeEnabled();
-  const enabledPlay=await assertDesktopBackNarration(dialog,player);
+  const enabledPlay=await assertDesktopBackNarration(dialog,player,width);
   // Transport must not move when the control flips between disabled and enabled.
   expect(Math.abs(enabledPlay.x-disabledPlay.x)).toBeLessThanOrEqual(1);
   expect(Math.abs(enabledPlay.y-disabledPlay.y)).toBeLessThanOrEqual(1);
   for(const mode of ["Lyrics","Word"] as const){
    await setReadingMode(page,dialog,mode);
    await expect(back).toBeEnabled();
-   await assertDesktopBackNarration(dialog,player);
+   await assertDesktopBackNarration(dialog,player,width);
    await setReadingMode(page,dialog,"Page");
   }
  });
