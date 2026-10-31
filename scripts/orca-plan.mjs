@@ -251,14 +251,22 @@ function exhaustedSuitableFrom(result) {
   return (result.rejected ?? []).filter((row) => row.usage === "exhausted");
 }
 
-/** Assignment or a held weaker/uncertainty alternative that occupies a concurrency slot. */
-function heldChoice(row) {
-  return row.uncertaintyAlternative ?? row.weakerAlternative ?? row.assignment ?? null;
+/** Choices a proposed row holds against load: both primary and alternative on needs-decision. */
+function heldChoices(row) {
+  const held = [];
+  if (row.uncertaintyAlternative?.agent || row.weakerAlternative?.agent) {
+    if (row.assignment?.agent) held.push(row.assignment);
+    if (row.uncertaintyAlternative?.agent) held.push(row.uncertaintyAlternative);
+    if (row.weakerAlternative?.agent) held.push(row.weakerAlternative);
+  } else if (row.assignment?.agent) {
+    held.push(row.assignment);
+  }
+  return held;
 }
 
 function agentLoad(agent, activeWorkers, proposed) {
   const active = activeWorkers.filter((worker) => worker.agent === agent);
-  const proposedFor = proposed.filter((row) => heldChoice(row)?.agent === agent);
+  const proposedFor = proposed.filter((row) => heldChoices(row).some((choice) => choice.agent === agent));
   return { active, proposed: proposedFor, count: active.length + proposedFor.length };
 }
 
@@ -277,6 +285,8 @@ function uniqueNeedCount(agent, remainingTasks) {
  * With a routing policy allow-list, prefer highest burn pressure within the tier (already ordered by recommend).
  */
 function underBucketCap(row, load, policy, usageByCandidate, now) {
+  // No allow-list means no per-bucket concurrency policy — only the global wave limit applies.
+  if (!policy?.allow) return true;
   const maxPer = policy.maxConcurrentPerBucket ?? 2;
   const key = bindingBucketIdFor(row, usageByCandidate, policy, now);
   if (!key) return true;
@@ -394,7 +404,7 @@ function sharingReport(usageByAgent, activeWorkers, proposed, usageByCandidate =
   const agents = new Set([
     ...Object.keys(usageByAgent),
     ...activeWorkers.map((worker) => worker.agent),
-    ...proposed.map((row) => heldChoice(row)?.agent).filter(Boolean),
+    ...proposed.flatMap((row) => heldChoices(row).map((choice) => choice.agent)),
   ]);
   const out = {};
   const note =
@@ -418,15 +428,16 @@ function sharingReport(usageByAgent, activeWorkers, proposed, usageByCandidate =
       refresh: usage.refresh ?? null,
       sharedWith: {
         active: load.active,
-        proposed: load.proposed.map((row) => {
-          const held = heldChoice(row);
-          return {
-            task: row.task,
-            agent: held.agent,
-            model: held.model,
-            effort: held.effort,
-          };
-        }),
+        proposed: load.proposed.flatMap((row) =>
+          heldChoices(row)
+            .filter((held) => held.agent === agent)
+            .map((held) => ({
+              task: row.task,
+              agent: held.agent,
+              model: held.model,
+              effort: held.effort,
+            })),
+        ),
         note,
       },
     };
@@ -443,9 +454,8 @@ function sharingReport(usageByAgent, activeWorkers, proposed, usageByCandidate =
       effort: worker.effort ?? null,
       usage: usageOf(usageByAgent, usageByCandidate, worker),
     })),
-    ...proposed.map((row) => {
-      const held = heldChoice(row);
-      return {
+    ...proposed.flatMap((row) =>
+      heldChoices(row).map((held) => ({
         kind: "proposed",
         task: row.task,
         dispatchId: null,
@@ -453,8 +463,8 @@ function sharingReport(usageByAgent, activeWorkers, proposed, usageByCandidate =
         model: held.model,
         effort: held.effort,
         usage: usageOf(usageByAgent, usageByCandidate, held),
-      };
-    }),
+      })),
+    ),
   ];
   for (const worker of workers) {
     const buckets = Array.isArray(worker.usage?.buckets) ? worker.usage.buckets : [];
@@ -875,6 +885,7 @@ export async function planWave({
       const knownWeaker = weaker
         .map((row) => {
           const rowUsage = usageOf(usageByAgent, usageByCandidate, row);
+          const rowBurn = burnPressure(rowUsage, resolvedPolicy, now);
           const baseline = candidates.find((c) => choiceName(c) === choiceName(row));
           return {
             ...row,
@@ -883,6 +894,8 @@ export async function planWave({
             usage: rowUsage.status,
             usageScope: { account: rowUsage.account, host: rowUsage.host },
             capacityConfirmed: rowUsage.capacityConfirmed === true,
+            pressure: row.pressure ?? rowBurn.pressure,
+            binding: row.binding ?? rowBurn.binding,
           };
         })
         .filter((row) => row.capacityConfirmed)
@@ -908,9 +921,10 @@ export async function planWave({
       }
     }
 
-    // Reserve the held choice: when an uncertaintyAlternative is offered, its bucket/share
-    // occupies the slot for subsequent proposals (not the unconfirmed primary).
-    commitShare(decision.uncertaintyAlternative ?? pick);
+    // Conservatively reserve both the unconfirmed primary and any uncertainty alternative so
+    // subsequent proposals cannot overdraw either bucket if the coordinator picks either side.
+    commitShare(pick);
+    if (decision.uncertaintyAlternative) commitShare(decision.uncertaintyAlternative);
     proposed.push(decision);
     decisions.push(decision);
   }

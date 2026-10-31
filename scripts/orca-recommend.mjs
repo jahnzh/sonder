@@ -600,12 +600,18 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
 
     if (unusable) rejected.push({ agent, model, effort, reason: unusable });
     else if (rank(candidate.capability) < rank(requirement)) {
+      // Attach burn pressure so planners ranking below-capability alternatives (uncertainty /
+      // weaker paths) order by pressure instead of preserving baseline table order.
       rejected.push({
-        agent,
-        model,
-        effort,
+        ...withPressureFields(
+          { agent, model, effort, capability: candidate.capability, suits: candidate.suits },
+          usage,
+          policy,
+          now,
+        ),
         rejectionKind: "below-capability",
         reason: `${candidate.capability} capability is below the assessed ${requirement}`,
+        usage: usage.status,
       });
     } else if (usage.status === "exhausted") {
       rejected.push({ agent, model, effort, reason: usageWarning(agent, usage, candidate), usage: usage.status });

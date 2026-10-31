@@ -1240,14 +1240,122 @@ test("uncertaintyAlternative reserves the alternative's bucket and expected shar
 });
 
 test("uncertaintyAlternative branch filters weaker options that fail share or floor guards", async () => {
-  // Mirrors scripts/orca-plan.mjs uncertainty path: knownWeaker must pass passesShareGuards + underBucketCap.
+  // Flash is mechanical (genuinely weaker than a standard task). Exercise floor and expected-share separately.
+  const allowClaude = {
+    ...policy(),
+    allow: [...policy().allow, { agent: "claude", models: ["claude-sonnet-5-5"] }],
+    reserve: policy().reserve.filter((r: { agent: string }) => r.agent !== "claude"),
+    expectedBucketSharePercent: [
+      ...policy().expectedBucketSharePercent.filter(
+        (r: { agent: string; model: string }) => !(r.agent === "antigravity" && r.model === "gemini-3.8-flash-high"),
+      ),
+      { agent: "antigravity", model: "gemini-3.8-flash-high", percent: 35 },
+    ],
+  };
+  const baseStatuses = {
+    "claude/claude-sonnet-5-5": "unknown",
+    "antigravity/claude-sonnet-5-5-medium": "exhausted",
+    "antigravity/claude-opus-5-5-high": "exhausted",
+    "codex/gpt-6.1-terra": "exhausted",
+    "cursor/auto": "exhausted",
+    "cursor/composer-2.5": "exhausted",
+  } as const;
+  const planOne = (flashUsage: ReturnType<typeof usage>) => {
+    const u = liveUsage({}, baseStatuses);
+    return withoutKey(() =>
+      planWave({
+        wave: wave({
+          concurrency: 2,
+          tasks: [
+            {
+              id: "std",
+              summary: "Standard",
+              judgment: "standard",
+              judgmentReason: "clear",
+              eligible: ["claude/claude-sonnet-5-5/medium", "antigravity/gemini-3.8-flash-high"],
+            },
+          ],
+        }),
+        candidates: CANDIDATES,
+        usageByAgent: {},
+        usageByCandidate: {
+          ...u,
+          "claude/claude-sonnet-5-5": { ...u["claude/claude-sonnet-5-5"], status: "unknown", capacityConfirmed: false },
+          "antigravity/gemini-3.8-flash-high": flashUsage,
+        },
+        learningOptions: { learning: false, now: NOW },
+        policy: allowClaude,
+        now: NOW,
+      }),
+    );
+  };
+
+  // Floor failure: 5% left is under the 10% safety floor (burnPressure.skip).
+  const floorFail: any = await planOne(usage("fresh", [{ ...B.geminiWeek, usedPercent: 95 }, B.gemini5h]));
+  assert.equal(floorFail.tasks[0].assignment?.agent, "claude");
+  assert.equal(floorFail.tasks[0].assignment?.capacityConfirmed, false);
+  assert.equal(floorFail.tasks[0].uncertaintyAlternative, undefined);
+
+  // Expected-share failure (floor itself passes): 40% left, Flash share 35% → 5% under the 10% floor.
+  const shareFail: any = await planOne(usage("fresh", [{ ...B.geminiWeek, usedPercent: 60 }, B.gemini5h]));
+  assert.equal(shareFail.tasks[0].assignment?.agent, "claude");
+  assert.equal(shareFail.tasks[0].uncertaintyAlternative, undefined);
+});
+
+// --- Round-4 review findings
+
+test("a single worker-list receipt with page.total greater than the worker count is refused", () => {
+  const base = JSON.parse(readFileSync(join(repoRoot, "tests", "fixtures", "routing", "worker-list.json"), "utf8"));
+  // total=2, one worker, hasMore=false — previously accepted and silently dropped the missing worker.
+  const incomplete = {
+    ...base,
+    result: {
+      ...base.result,
+      workers: [base.result.workers[0]],
+      page: { limit: 1, total: 2, hasMore: false, nextCursor: null },
+    },
+  };
+  assert.throws(() => activeWorkersFromWorkerList(JSON.stringify(incomplete)), /total|incomplete|missing/i);
+});
+
+test("multi-page worker-list input without page metadata on every page is refused", () => {
+  const base = JSON.parse(readFileSync(join(repoRoot, "tests", "fixtures", "routing", "worker-list.json"), "utf8"));
+  const withMeta = {
+    ...base,
+    result: {
+      ...base.result,
+      workers: [base.result.workers[0]],
+      page: { limit: 1, total: 2, hasMore: true, nextCursor: "cursor-page-2" },
+    },
+  };
+  const withoutMeta = {
+    ...base,
+    cursor: "cursor-page-2",
+    result: {
+      ...base.result,
+      workers: [base.result.workers[1]],
+      // page metadata absent — previously accepted and skipped continuity checks.
+    },
+  };
+  delete (withoutMeta.result as { page?: unknown }).page;
+  assert.throws(() => activeWorkersFromWorkerList(JSON.stringify([withMeta, withoutMeta])), /page|metadata|incomplete|continuit/i);
+  const bothBare = [
+    { ...base, result: { ...base.result, workers: [base.result.workers[0]] } },
+    { ...base, result: { ...base.result, workers: [base.result.workers[1]] } },
+  ];
+  for (const page of bothBare) delete (page.result as { page?: unknown }).page;
+  assert.throws(() => activeWorkersFromWorkerList(JSON.stringify(bothBare)), /page|metadata|incomplete/i);
+});
+
+test("needs-decision reserves the unconfirmed primary so a later proposal cannot overdraw it", async () => {
+  // Primary Claude unknown + Flash confirmed → needs-decision. Cap 1 per bucket: both buckets hold a slot.
   const u = liveUsage(
-    { codexWeek: { usedPercent: 95 } },
+    {},
     {
       "claude/claude-sonnet-5-5": "unknown",
       "antigravity/claude-sonnet-5-5-medium": "exhausted",
       "antigravity/claude-opus-5-5-high": "exhausted",
-      "antigravity/gemini-3.8-flash-high": "exhausted",
+      "codex/gpt-6.1-terra": "exhausted",
       "cursor/auto": "exhausted",
       "cursor/composer-2.5": "exhausted",
     },
@@ -1256,36 +1364,174 @@ test("uncertaintyAlternative branch filters weaker options that fail share or fl
     ...policy(),
     allow: [...policy().allow, { agent: "claude", models: ["claude-sonnet-5-5"] }],
     reserve: policy().reserve.filter((r: { agent: string }) => r.agent !== "claude"),
+    maxConcurrentTotal: 3,
+    maxConcurrentPerBucket: 1,
   };
+  const usageByCandidate = {
+    ...u,
+    "claude/claude-sonnet-5-5": { ...u["claude/claude-sonnet-5-5"], status: "unknown", capacityConfirmed: false },
+    "antigravity/gemini-3.8-flash-high": usage("fresh", [{ ...B.geminiWeek, usedPercent: 20 }, B.gemini5h]),
+  };
+  const p: any = await withoutKey(() =>
+    planWave({
+      wave: wave({
+        concurrency: 3,
+        tasks: [
+          {
+            id: "first",
+            summary: "First",
+            judgment: "standard",
+            judgmentReason: "clear",
+            eligible: ["claude/claude-sonnet-5-5/medium", "antigravity/gemini-3.8-flash-high"],
+          },
+          {
+            id: "second",
+            summary: "Second",
+            judgment: "standard",
+            judgmentReason: "clear",
+            eligible: ["claude/claude-sonnet-5-5/high"],
+          },
+        ],
+      }),
+      candidates: CANDIDATES,
+      usageByAgent: {},
+      usageByCandidate,
+      learningOptions: { learning: false, now: NOW },
+      policy: allowClaude,
+      now: NOW,
+    }),
+  );
+  const first = p.tasks.find((t: { task: string }) => t.task === "first");
+  const second = p.tasks.find((t: { task: string }) => t.task === "second");
+  assert.equal(first.status, "needs-decision");
+  assert.equal(first.assignment?.agent, "claude");
+  assert.ok(first.uncertaintyAlternative);
+  const primaryKey = bindingBucketIdFor(
+    { agent: "claude", model: "claude-sonnet-5-5" },
+    usageByCandidate,
+    allowClaude,
+    NOW,
+  );
+  assert.ok(
+    (p.bucketLoad?.[primaryKey!]?.count ?? 0) >= 1,
+    `unconfirmed primary bucket must be reserved: ${JSON.stringify(p.bucketLoad)}`,
+  );
+  assert.notEqual(named(second.assignment), "claude/claude-sonnet-5-5/high");
+  assert.ok(
+    second.status === "delay" || second.status === "deferred" || second.status === "needs-decision",
+    `second must not overdraw the reserved primary bucket: ${JSON.stringify({ status: second.status, assignment: named(second.assignment ?? null), reason: second.reason })}`,
+  );
+});
+
+test("without a policy, underBucketCap does not block a weaker fallback", async () => {
+  // Two active Flash workers would fill maxConcurrentPerBucket=2 on NO_POLICY, but with allow:null
+  // bucket caps must not apply — a free global slot still gets the weaker alternative.
+  const activeWorkers = [
+    { agent: "antigravity", model: "gemini-3.8-flash-high", dispatchId: "ctx_a" },
+    { agent: "antigravity", model: "gemini-3.8-flash-high", dispatchId: "ctx_b" },
+  ];
+  const u = liveUsage({}, { "antigravity/claude-opus-5-5-high": "exhausted", "claude/claude-opus-5-5": "exhausted" });
+  const p: any = await withoutKey(() =>
+    planWave({
+      wave: wave({
+        concurrency: 3,
+        activeWorkers,
+        tasks: [
+          {
+            id: "deep",
+            summary: "Deep",
+            judgment: "reasoning-heavy",
+            judgmentReason: "hard",
+            eligible: ["antigravity/claude-opus-5-5-high", "antigravity/gemini-3.8-flash-high"],
+          },
+        ],
+      }),
+      candidates: CANDIDATES,
+      usageByAgent: {},
+      usageByCandidate: u,
+      learningOptions: { learning: false, now: NOW },
+      policy: NO_POLICY,
+      now: NOW,
+    }),
+  );
+  const row = p.tasks[0];
+  assert.equal(row.status, "needs-decision");
+  assert.equal(named(row.weakerAlternative), "antigravity/gemini-3.8-flash-high");
+});
+
+test("below-capability rejected rows carry burn pressure so rankByPressure can order them", async () => {
+  const r = await choose("reasoning-heavy");
+  const below = (r.rejected ?? []).filter((c: { rejectionKind?: string }) => c.rejectionKind === "below-capability");
+  assert.ok(below.length >= 2, `expected multiple below-capability rejects, got ${below.length}`);
+  for (const row of below) {
+    assert.equal(typeof row.pressure, "number", named(row) ?? undefined);
+    assert.ok(row.binding, named(row) ?? undefined);
+  }
+  const ranked = rankByPressure(below, policy());
+  assert.ok(ranked[0].pressure >= ranked[ranked.length - 1].pressure);
+});
+
+test("uncertaintyAlternative prefers the higher-pressure below-capability option", async () => {
+  // Opus unknown; Sonnet exhausted; Cursor (low pressure) and Codex (high pressure) both confirmed weaker.
+  // Without pressure on below-capability rows, baseline order kept Cursor; Codex must win by pressure.
+  const u = liveUsage(
+    {
+      cursorAuto: { usedPercent: 70 },
+      cursorPlan: { usedPercent: 70 },
+      codexWeek: { usedPercent: 10 },
+    },
+    {
+      "antigravity/claude-opus-5-5-high": "unknown",
+      "antigravity/claude-sonnet-5-5-medium": "exhausted",
+      "antigravity/gemini-3.8-flash-high": "exhausted",
+      "cursor/composer-2.5": "exhausted",
+      "claude/claude-opus-5-5": "exhausted",
+      "claude/claude-sonnet-5-5": "exhausted",
+    },
+  );
+  const usageByCandidate = {
+    ...u,
+    "antigravity/claude-opus-5-5-high": { ...u["antigravity/claude-opus-5-5-high"], status: "unknown", capacityConfirmed: false },
+    "cursor/auto": usage("fresh", [
+      { ...B.cursorAuto, usedPercent: 70 },
+      { ...B.cursorPlan, usedPercent: 70 },
+    ]),
+    "codex/gpt-6.1-terra": usage("fresh", [{ ...B.codexWeek, usedPercent: 10 }, B.codex5h]),
+  };
+  const cursorBurn = burnPressure(usageByCandidate["cursor/auto"], policy(), NOW);
+  const codexBurn = burnPressure(usageByCandidate["codex/gpt-6.1-terra"], policy(), NOW);
+  assert.ok(
+    (codexBurn.pressure ?? 0) > (cursorBurn.pressure ?? 0) + 1,
+    `Codex pressure ${codexBurn.pressure} should beat Cursor ${cursorBurn.pressure}`,
+  );
   const p: any = await withoutKey(() =>
     planWave({
       wave: wave({
         concurrency: 2,
         tasks: [
           {
-            id: "std",
-            summary: "Standard",
-            judgment: "standard",
-            judgmentReason: "clear",
-            eligible: ["claude/claude-sonnet-5-5/medium", "codex/gpt-6.1-terra/max"],
+            id: "deep",
+            summary: "Deep",
+            judgment: "reasoning-heavy",
+            judgmentReason: "hard",
+            eligible: ["antigravity/claude-opus-5-5-high", "cursor/auto", "codex/gpt-6.1-terra/max"],
           },
         ],
       }),
       candidates: CANDIDATES,
       usageByAgent: {},
-      usageByCandidate: {
-        ...u,
-        "claude/claude-sonnet-5-5": { ...u["claude/claude-sonnet-5-5"], status: "unknown", capacityConfirmed: false },
-        "codex/gpt-6.1-terra": usage("fresh", [{ ...B.codexWeek, usedPercent: 95 }, B.codex5h]),
-      },
+      usageByCandidate,
       learningOptions: { learning: false, now: NOW },
-      policy: allowClaude,
+      policy: policy(),
       now: NOW,
     }),
   );
   const row = p.tasks[0];
-  assert.equal(row.assignment?.agent, "claude");
-  assert.equal(row.assignment?.capacityConfirmed, false);
-  // Codex at 5% left fails the share/floor guard — must not become uncertaintyAlternative.
-  assert.equal(row.uncertaintyAlternative, undefined);
+  assert.equal(row.status, "needs-decision");
+  assert.equal(named(row.assignment), "antigravity/claude-opus-5-5-high");
+  assert.equal(
+    named(row.uncertaintyAlternative),
+    "codex/gpt-6.1-terra/max",
+    `expected higher-pressure Codex over Cursor: ${JSON.stringify({ alt: named(row.uncertaintyAlternative ?? null), reason: row.reason })}`,
+  );
 });

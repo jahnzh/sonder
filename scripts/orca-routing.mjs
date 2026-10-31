@@ -436,7 +436,7 @@ export function formatBurnReason(choiceName, pressureReport, runnerUp = null) {
   return text;
 }
 
-function workersFromReceipt(raw, { allowIncomplete = false } = {}) {
+function workersFromReceipt(raw, { allowIncomplete = false, enforcePageTotal = !allowIncomplete } = {}) {
   const workers = raw?.result?.workers;
   if (!Array.isArray(workers)) throw new Error("worker-list receipt has no result.workers array");
   const page = raw?.result?.page;
@@ -446,6 +446,13 @@ function workersFromReceipt(raw, { allowIncomplete = false } = {}) {
     throw new Error(
       `worker-list receipt is incomplete: page.hasMore is true (total ${total}, limit ${limit}); ` +
         `pass every page as a JSON array or { "pages": [...] } (continue with page.nextCursor)`,
+    );
+  }
+  // Single-receipt only: a final page with hasMore=false can still omit workers (total > length).
+  // Multi-page merges disable this and check rawCount against page.total across all pages instead.
+  if (enforcePageTotal && page && typeof page.total === "number" && workers.length !== page.total) {
+    throw new Error(
+      `worker-list receipt is incomplete: got ${workers.length} workers, page.total is ${page.total}`,
     );
   }
   const active = [];
@@ -497,6 +504,12 @@ export function activeWorkersFromWorkerList(text) {
       const workers = page?.result?.workers;
       if (!Array.isArray(workers)) throw new Error("worker-list receipt has no result.workers array");
       rawCount += workers.length;
+      // Multi-page input must carry page metadata on every page so continuity cannot be skipped.
+      if (!meta || typeof meta !== "object") {
+        throw new Error(
+          `worker-list pages lack page metadata on page ${i}; each page needs result.page with total/hasMore/nextCursor`,
+        );
+      }
 
       const pageCursor = page?.cursor ?? meta?.cursor;
       if (i === 0) {
@@ -518,34 +531,32 @@ export function activeWorkersFromWorkerList(text) {
         }
       }
 
-      if (meta && typeof meta === "object") {
-        if (i === 0 && typeof meta.total === "number") expectedTotal = meta.total;
-        const last = i === pages.length - 1;
-        if (!last) {
-          if (meta.hasMore !== true) {
-            throw new Error(
-              `worker-list pages have a gap: page ${i} has hasMore=${meta.hasMore}, but more pages follow`,
-            );
-          }
-          if (meta.nextCursor == null || meta.nextCursor === "") {
-            throw new Error(
-              `worker-list pages have a gap: page ${i} is incomplete but has no nextCursor`,
-            );
-          }
-          if (seenNextCursors.has(meta.nextCursor)) {
-            throw new Error(
-              `worker-list pages break cursor continuity: repeated nextCursor ${meta.nextCursor} at page ${i}`,
-            );
-          }
-          seenNextCursors.add(meta.nextCursor);
-          expectedCursor = meta.nextCursor;
-        } else if (meta.hasMore === true) {
+      if (i === 0 && typeof meta.total === "number") expectedTotal = meta.total;
+      const last = i === pages.length - 1;
+      if (!last) {
+        if (meta.hasMore !== true) {
           throw new Error(
-            `worker-list receipt is incomplete: last page still has hasMore true (continue with page.nextCursor ${meta.nextCursor ?? "?"})`,
+            `worker-list pages have a gap: page ${i} has hasMore=${meta.hasMore}, but more pages follow`,
           );
-        } else {
-          expectedCursor = null;
         }
+        if (meta.nextCursor == null || meta.nextCursor === "") {
+          throw new Error(
+            `worker-list pages have a gap: page ${i} is incomplete but has no nextCursor`,
+          );
+        }
+        if (seenNextCursors.has(meta.nextCursor)) {
+          throw new Error(
+            `worker-list pages break cursor continuity: repeated nextCursor ${meta.nextCursor} at page ${i}`,
+          );
+        }
+        seenNextCursors.add(meta.nextCursor);
+        expectedCursor = meta.nextCursor;
+      } else if (meta.hasMore === true) {
+        throw new Error(
+          `worker-list receipt is incomplete: last page still has hasMore true (continue with page.nextCursor ${meta.nextCursor ?? "?"})`,
+        );
+      } else {
+        expectedCursor = null;
       }
     }
     if (expectedTotal != null && rawCount !== expectedTotal) {
@@ -558,7 +569,7 @@ export function activeWorkersFromWorkerList(text) {
     for (let i = 0; i < pages.length; i++) {
       const page = pages[i];
       const last = i === pages.length - 1;
-      const rows = workersFromReceipt(page, { allowIncomplete: !last });
+      const rows = workersFromReceipt(page, { allowIncomplete: !last, enforcePageTotal: false });
       for (const row of rows) {
         const key = row.dispatchId ?? `${row.agent}/${row.model}/${row.task}`;
         if (seen.has(key)) continue;
@@ -631,9 +642,19 @@ export function countBucketLoad({ activeWorkers = [], proposed = [], usageByCand
   };
   for (const worker of activeWorkers) bump(worker);
   for (const row of proposed) {
-    // Prefer uncertaintyAlternative / weakerAlternative when the slot is held for a needs-decision.
-    const choice = row.uncertaintyAlternative ?? row.weakerAlternative ?? row.assignment ?? row;
-    if (choice?.agent) bump(choice);
+    // needs-decision may keep launch args for an unconfirmed primary while offering an alternative —
+    // conservatively count both so neither bucket can be overdrawn if the coordinator picks either.
+    const held = [];
+    if (row.uncertaintyAlternative?.agent || row.weakerAlternative?.agent) {
+      if (row.assignment?.agent) held.push(row.assignment);
+      if (row.uncertaintyAlternative?.agent) held.push(row.uncertaintyAlternative);
+      if (row.weakerAlternative?.agent) held.push(row.weakerAlternative);
+    } else if (row.assignment?.agent) {
+      held.push(row.assignment);
+    } else if (row?.agent) {
+      held.push(row);
+    }
+    for (const choice of held) bump(choice);
   }
   return load;
 }
