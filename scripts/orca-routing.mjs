@@ -771,17 +771,27 @@ export function effectiveBucketLoad(load, key, agent) {
   }
   const ambiguous = agent ? (load[`${agent}/unknown`]?.count ?? 0) : 0;
   let total = direct + ambiguous + providerless;
-  // Cursor Plan (`included_total`) and per-surface `included_*` windows draw from the same
-  // account allowance — workers without readings (static included_auto) must still cap a
-  // live Plan candidate, and the reverse.
-  if (key === "cursor/included_total") {
+  // Cursor Plan (`included_total`) and every per-surface `included_*` window draw from the
+  // same account allowance — distinct surfaces (e.g. included_api vs included_auto) and
+  // reading-less static bindings must still cap each other.
+  if (key.startsWith("cursor/included_")) {
     for (const [bucketKey, row] of Object.entries(load)) {
       if (bucketKey !== key && bucketKey.startsWith("cursor/included_")) {
         total += row?.count ?? 0;
       }
     }
-  } else if (key.startsWith("cursor/included_")) {
-    total += load["cursor/included_total"]?.count ?? 0;
+  }
+  // Claude session + weekly_* windows share one subscription — an active weekly_sonnet
+  // worker must block a live weekly_all (or session) candidate under the same cap.
+  if (key === "claude/session" || key.startsWith("claude/weekly_")) {
+    for (const [bucketKey, row] of Object.entries(load)) {
+      if (
+        bucketKey !== key &&
+        (bucketKey === "claude/session" || bucketKey.startsWith("claude/weekly_"))
+      ) {
+        total += row?.count ?? 0;
+      }
+    }
   }
   return total;
 }

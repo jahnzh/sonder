@@ -2185,6 +2185,40 @@ test("two active cursor/composer workers without readings block a Plan-bound cur
   );
 });
 
+test("two active claude/weekly_sonnet workers block a claude/weekly_all candidate under cap 2", () => {
+  const load = {
+    "claude/weekly_sonnet": { count: 2, bucketId: "weekly_sonnet", agent: "claude" },
+  };
+  assert.equal(effectiveBucketLoad(load, "claude/weekly_all", "claude"), 2);
+  assert.equal(effectiveBucketLoad(load, "claude/weekly_all", "claude") < 2, false);
+  // Symmetric: weekly_all load also fills a weekly_sonnet candidate.
+  assert.equal(
+    effectiveBucketLoad(
+      { "claude/weekly_all": { count: 2, bucketId: "weekly_all", agent: "claude" } },
+      "claude/weekly_sonnet",
+      "claude",
+    ),
+    2,
+  );
+});
+
+test("two active cursor/included_api workers block a cursor/included_auto candidate under cap 2", () => {
+  const load = {
+    "cursor/included_api": { count: 2, bucketId: "included_api", agent: "cursor" },
+  };
+  assert.equal(effectiveBucketLoad(load, "cursor/included_auto", "cursor"), 2);
+  assert.equal(effectiveBucketLoad(load, "cursor/included_auto", "cursor") < 2, false);
+  // Symmetric: included_auto load also fills an included_api candidate.
+  assert.equal(
+    effectiveBucketLoad(
+      { "cursor/included_auto": { count: 2, bucketId: "included_auto", agent: "cursor" } },
+      "cursor/included_api",
+      "cursor",
+    ),
+    2,
+  );
+});
+
 test("multi-page worker-list refuses later pages with missing, null, or string total", () => {
   const base = JSON.parse(readFileSync(join(repoRoot, "tests", "fixtures", "routing", "worker-list.json"), "utf8"));
   const mk = (workers: unknown[], page: Record<string, unknown>, cursor?: string | null) => ({
