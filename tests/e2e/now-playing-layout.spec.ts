@@ -108,6 +108,8 @@ for(const size of sizes){
   expect(Math.abs((await centre(dialog.getByRole("heading",{name:"Now playing",exact:true}))).y-close.y)).toBeLessThanOrEqual(1);
  });
  test(`reader-first Now Playing is aligned at ${size[0]}px`,async({page,browserName})=>{
+  // On the Steam Deck this WebKit test takes 18-45 s (33 runs), right under the global 45 s limit, so it flakes with host load.
+  test.setTimeout(READER_SPEC_TIMEOUT_MS);
   skipOnMobile(size[0]>=900,"desktop layout (min-width: 900px) is not reachable on a phone profile");
   const [width,height]=size;
   const dialog=await open(page,browserName,"Layout reader",size);
