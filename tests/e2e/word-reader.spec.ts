@@ -336,6 +336,8 @@ test("opened in Word mode with the bar hidden, a touch user reaches the top bar 
 
 /** Presses Shift+→ `count` times in Word mode, each time waiting for the sentence on screen to change. */
 async function pressSentences(page: Page, count: number) {
+  await expect(wordReader(page)).toBeVisible();
+  await wordReader(page).focus();
   // The sentence on screen follows a moment after the key; wait for it before the next press.
   for (let i = 0; i < count; i++) {
     const before = await context(page);
