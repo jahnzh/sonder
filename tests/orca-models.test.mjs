@@ -48,7 +48,13 @@ function fixture() {
     command,
     run: (...args) => spawnSync(process.execPath, [script, ...args], {
       cwd: root,
-      env: { ...process.env, PATH: bin, ORCA_USAGE_STATE_DIR: path.join(root, "state") },
+      env: {
+        ...process.env,
+        PATH: bin,
+        ORCA_USAGE_STATE_DIR: path.join(root, "state"),
+        // Short injected deadline so the hung-provider test stays fast; production keeps 30s.
+        ORCA_MODELS_PROVIDER_TIMEOUT_MS: "200",
+      },
       encoding: "utf8",
     }),
     seed: (observations) => {
@@ -152,6 +158,113 @@ test("list keeps other providers visible when a provider fails", () => {
     assert.equal(diff.status, 0, diff.stderr);
     assert.match(diff.stdout, /antigravity\/gemini-3\.8-flash-high.*verified.*mechanical.*LIST UNAVAILABLE/);
     assert.doesNotMatch(diff.stdout, /antigravity\/gemini-3\.8-flash-high.*STALE ROW/);
+  } finally {
+    f.close();
+  }
+});
+
+test("without a collector reading, cursor/auto, claude and codex stay UNMAPPED and never free or CANDIDATE", () => {
+  const f = fixture();
+  try {
+    const listed = JSON.parse(f.run("list", "--json").stdout);
+    assert.deepEqual(listed.providers.cursor.freeBucketModels, []);
+    assert.doesNotMatch(f.run("list").stdout, /Cursor Models bucket \(\d+\):.*\bauto\b/);
+
+    const diff = f.run("diff");
+    assert.equal(diff.status, 0, diff.stderr);
+    assert.match(diff.stdout, /cursor\/auto verified \(standard\) bucket=unknown \(no reading\) usage=unknown UNMAPPED/);
+    assert.doesNotMatch(diff.stdout, /cursor\/auto[^\n]*included_auto/);
+    assert.doesNotMatch(diff.stdout, /cursor\/auto[^\n]*CANDIDATE/);
+    assert.match(diff.stdout, /claude\/claude-opus-5-5 verified \(reasoning-heavy\) bucket=documented, no reading usage=unknown UNMAPPED/);
+    assert.doesNotMatch(diff.stdout, /claude\/claude-opus-5-5[^\n]*Claude session\/week/);
+    assert.doesNotMatch(diff.stdout, /claude\/claude-opus-5-5[^\n]*CANDIDATE/);
+    assert.match(diff.stdout, /codex\/gpt-6\.1-terra verified \(standard\) bucket=documented, no reading usage=unknown UNMAPPED/);
+    assert.doesNotMatch(diff.stdout, /codex\/gpt-6\.1-terra[^\n]*Codex allowance/);
+    assert.doesNotMatch(diff.stdout, /codex\/gpt-6\.1-terra[^\n]*CANDIDATE/);
+  } finally {
+    f.close();
+  }
+});
+
+test("with a collector reading, bucket and free-bucket membership come from the reading", () => {
+  const f = fixture();
+  try {
+    const observedAt = new Date().toISOString();
+    f.seed([
+      ...observations(),
+      {
+        provider: "claude",
+        status: "available",
+        observedAt,
+        windows: [
+          {
+            kind: "session",
+            group: "session",
+            label: "Current session",
+            appliesTo: "all",
+            usedPercent: 41,
+            resetsAt: new Date(Date.now() + 3_600_000).toISOString(),
+          },
+          {
+            kind: "weekly_all",
+            group: "weekly",
+            label: "Current week (all models)",
+            appliesTo: "all",
+            usedPercent: 20,
+            resetsAt: new Date(Date.now() + 86_400_000).toISOString(),
+          },
+        ],
+        exhaustedWindows: [],
+      },
+      {
+        provider: "codex",
+        status: "available",
+        observedAt,
+        windows: [
+          {
+            limitId: "codex",
+            id: "codex-5h",
+            label: "Codex 5h",
+            usedPercent: 20,
+            remainingPercent: 80,
+            exhausted: false,
+            resetsAt: new Date(Date.now() + 3_600_000).toISOString(),
+          },
+        ],
+        exhaustedWindows: [],
+        raw: { rateLimitsByLimitId: { codex: { limitId: "codex", limitName: null, normalModelSlug: null } } },
+      },
+    ]);
+    const listed = JSON.parse(f.run("list", "--json").stdout);
+    assert.deepEqual(listed.providers.cursor.freeBucketModels, ["auto", "composer-2.5"]);
+    const diff = f.run("diff");
+    assert.equal(diff.status, 0, diff.stderr);
+    assert.match(diff.stdout, /cursor\/auto verified \(standard\) bucket=included_auto,included_total usage=fresh/);
+    assert.doesNotMatch(diff.stdout, /cursor\/auto[^\n]*UNMAPPED/);
+    assert.match(diff.stdout, /claude\/claude-opus-5-5 verified \(reasoning-heavy\) bucket=session,weekly_all usage=fresh/);
+    assert.doesNotMatch(diff.stdout, /claude\/claude-opus-5-5[^\n]*(documented, no reading|Claude session\/week|UNMAPPED)/);
+    assert.match(diff.stdout, /codex\/gpt-6\.1-terra verified \(standard\) bucket=codex-5h usage=fresh/);
+    assert.doesNotMatch(diff.stdout, /codex\/gpt-6\.1-terra[^\n]*(documented, no reading|Codex allowance|UNMAPPED)/);
+  } finally {
+    f.close();
+  }
+});
+
+test("a hung provider hits the per-provider timeout while others still report", () => {
+  const f = fixture();
+  try {
+    f.command("agy", "while true; do sleep 60; done");
+    const started = Date.now();
+    const result = f.run("list", "--json");
+    const elapsed = Date.now() - started;
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(elapsed < 5_000, `provider timeout ignored (took ${elapsed}ms)`);
+    const { providers } = JSON.parse(result.stdout);
+    assert.equal(providers.antigravity.status, "unavailable");
+    assert.match(providers.antigravity.message, /timed out/);
+    assert.equal(providers.cursor.count, 3);
+    assert.equal(providers.claude.status, "documented");
+    assert.equal(providers.codex.status, "documented");
   } finally {
     f.close();
   }

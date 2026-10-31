@@ -3,13 +3,18 @@ import { execFile } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+// parseBaseline is enough: discovery only needs the verified table rows, not loadCandidates.
 import { parseBaseline } from "./orca-recommend.mjs";
 import { defaultStateDir, PROVIDERS } from "./orca-usage.mjs";
 import { applicableWindows, resolveModelFamily } from "./antigravity-usage.mjs";
 import { evaluateCursorObservation } from "./cursor-usage.mjs";
 import { scrub } from "./usage-common.mjs";
 
-const PROVIDER_TIMEOUT_MS = 30_000;
+// ORCA_MODELS_PROVIDER_TIMEOUT_MS overrides the per-provider deadline (tests).
+const PROVIDER_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.ORCA_MODELS_PROVIDER_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 30_000;
+})();
 const USAGE = `Usage: node scripts/orca-models.mjs list [--json]
        node scripts/orca-models.mjs diff
        node scripts/orca-models.mjs verify <agent>/<model> [--base <branch>] [--write <dir>]`;
@@ -92,19 +97,22 @@ function collectorReadings() {
 }
 
 function candidateDetails(agent, model, reading, verified) {
+  // No collector reading: bucket membership and usage are unknown. Never synthesize a free
+  // bucket or a documented label — report UNMAPPED and a no-reading bucket label instead.
+  if (!reading) {
+    const bucketLabel = agent === "claude" || agent === "codex" ? "documented, no reading" : "unknown (no reading)";
+    return { buckets: [], status: "unknown", bucketLabel };
+  }
   const provider = PROVIDERS.find((item) => item.name === agent);
   let assessment = { status: "unknown", buckets: [] };
-  if (reading) {
-    try { assessment = provider.assessCandidate(reading, { model }, new Date()); } catch { /* malformed collector reading */ }
-  }
+  try { assessment = provider.assessCandidate(reading, { model }, new Date()); } catch { /* malformed collector reading */ }
   let buckets = [];
   if (agent === "antigravity" && resolveModelFamily(model)) {
     buckets = applicableWindows(reading, { model })?.windowIds ?? [];
   } else if (agent === "cursor") {
     try {
-      // The reader itself resolves Auto without a model scope; named models need the collector's scope.
-      const source = reading ?? { status: "unknown", observedAt: new Date().toISOString(), windows: [{ id: "included_auto", kind: "percentage_allowance", usedPercent: 0 }] };
-      const bucket = evaluateCursorObservation(source, { model }).evaluatedModel?.bucket;
+      // Named models need the collector's model scope; Auto resolves from the reading's windows.
+      const bucket = evaluateCursorObservation(reading, { model }).evaluatedModel?.bucket;
       if (bucket && bucket !== "unknown" && bucket !== "overall") {
         buckets = [bucket, ...(assessment.buckets ?? []).map((window) => window.id).filter((id) => id === "included_total")];
       }
@@ -114,7 +122,7 @@ function candidateDetails(agent, model, reading, verified) {
     if (!buckets.length && verified) buckets = [agent === "claude" ? "Claude session/week" : "Codex allowance"];
   }
   buckets = buckets.filter((bucket) => typeof bucket === "string" && scrub(bucket) === bucket);
-  return { buckets, status: assessment.status ?? "unknown" };
+  return { buckets, status: assessment.status ?? "unknown", bucketLabel: buckets.join(",") || "unknown" };
 }
 
 function addCursorFreeBucket(providers, readings) {
@@ -140,13 +148,13 @@ function printDiff(providers, candidates, readings) {
       const entry = verified.get(model.id);
       const usage = candidateDetails(agent, model.id, readings[agent], Boolean(entry));
       const flags = [!usage.buckets.length ? "UNMAPPED" : null, !entry && ["fresh", "low"].includes(usage.status) && usage.buckets.length ? "CANDIDATE" : null].filter(Boolean);
-      console.log(`  ${agent}/${model.id} ${entry ? `verified (${entry.capability})` : "UNVERIFIED"} bucket=${usage.buckets.join(",") || "unknown"} usage=${usage.status}${flags.length ? ` ${flags.join(" ")}` : ""}`);
+      console.log(`  ${agent}/${model.id} ${entry ? `verified (${entry.capability})` : "UNVERIFIED"} bucket=${usage.bucketLabel} usage=${usage.status}${flags.length ? ` ${flags.join(" ")}` : ""}`);
     }
     for (const [model, entry] of verified) {
       if (!offered.has(model)) {
         const usage = candidateDetails(agent, model, readings[agent], true);
         const flag = provider.status === "ok" ? "STALE ROW" : "LIST UNAVAILABLE";
-        console.log(`  ${agent}/${model} verified (${entry.capability}) bucket=${usage.buckets.join(",") || "unknown"} usage=${usage.status}${usage.buckets.length ? "" : " UNMAPPED"} ${flag}`);
+        console.log(`  ${agent}/${model} verified (${entry.capability}) bucket=${usage.bucketLabel} usage=${usage.status}${usage.buckets.length ? "" : " UNMAPPED"} ${flag}`);
       }
     }
   }
