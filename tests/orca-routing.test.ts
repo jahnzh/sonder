@@ -1,0 +1,514 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+// @ts-expect-error Plain JS module under test.
+import { activeWorkersFromWorkerList, burnPressure, isFiveHourBucket, loadPolicy, NO_POLICY, parsePolicy, policyVerdict, rankByPressure, resolvePolicy } from "../scripts/orca-routing.mjs";
+// @ts-expect-error Plain JS module under test.
+import { modelChoiceSection, parseCliArgs as parseRecommendArgs, recommend } from "../scripts/orca-recommend.mjs";
+// @ts-expect-error Plain JS module under test.
+import { parseCliArgs as parsePlanArgs, parseWave, planWave } from "../scripts/orca-plan.mjs";
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const POLICY_FILE = join(repoRoot, "docs", "agents", "routing-policy.json");
+const NOW = "2026-10-31T17:25:00.000Z";
+const DAY = 86_400_000;
+const inDays = (days: number) => new Date(Date.parse(NOW) + days * DAY).toISOString();
+
+type Bucket = { id: string; label: string; usedPercent: number; resetsAt: string | null };
+function usage(status: string, buckets: Bucket[]) {
+  return {
+    status,
+    reason: buckets.map((b) => `${b.label} ${b.usedPercent}% used`).join("; "),
+    capacityConfirmed: status === "fresh" || status === "low",
+    source: { kind: "test" },
+    observedAt: NOW,
+    account: "sha256:0000000000000000",
+    host: "test",
+    resetsAt: buckets[0]?.resetsAt ?? null,
+    buckets,
+  };
+}
+
+// Bucket figures copied from a live `usageByCandidate` reading on 2026-10-31 (account and host removed).
+const B = {
+  claudeSession: { id: "session", label: "Current session", usedPercent: 26, resetsAt: "2026-10-31T18:29:59.818Z" },
+  claudeWeek: { id: "weekly_all", label: "Current week (all models)", usedPercent: 90, resetsAt: "2026-11-04T15:59:59.818Z" },
+  argon: { id: "gemini-argon-wtu-weekly", label: "Gemini 4 Argon: Gemini 4 Argon Weekly Limit", usedPercent: 99.19, resetsAt: "2026-11-06T08:55:59.000Z" },
+  cursorPlan: { id: "included_total", label: "Plan", usedPercent: 31.71428571428571, resetsAt: "2026-11-21T08:14:23.000Z" },
+  cursorAuto: { id: "included_auto", label: "Cursor Models", usedPercent: 28.297777777777778, resetsAt: "2026-11-21T08:14:23.000Z" },
+  geminiWeek: { id: "gemini-weekly", label: "Gemini Models: Weekly Limit Remaining", usedPercent: 8.67, resetsAt: "2026-11-05T23:16:23.000Z" },
+  gemini5h: { id: "gemini-5h", label: "Gemini Models: Five Hour Limit Remaining", usedPercent: 0.04, resetsAt: "2026-10-31T17:33:32.000Z" },
+  codex5h: { id: "codex-5h", label: "5h limit", usedPercent: 2, resetsAt: "2026-10-31T22:24:09.000Z" },
+  codexWeek: { id: "codex-weekly", label: "Weekly limit", usedPercent: 65, resetsAt: "2026-11-04T11:06:09.000Z" },
+  thirdWeek: { id: "3p-weekly", label: "Claude and GPT models: Weekly Limit Remaining", usedPercent: 23.32, resetsAt: "2026-11-07T13:20:13.000Z" },
+  third5h: { id: "3p-5h", label: "Claude and GPT models: Five Hour Limit Remaining", usedPercent: 46.63, resetsAt: "2026-10-31T18:20:13.000Z" },
+};
+
+function liveUsage(changes: Partial<Record<keyof typeof B, Partial<Bucket>>> = {}, statuses: Record<string, string> = {}) {
+  const b = Object.fromEntries(Object.entries(B).map(([k, v]) => [k, { ...v, ...(changes[k as keyof typeof B] ?? {}) }])) as typeof B;
+  const rows: Record<string, ReturnType<typeof usage>> = {
+    "claude/claude-opus-5-5": usage("low", [b.claudeSession, b.claudeWeek]),
+    "claude/claude-sonnet-5-5": usage("low", [b.claudeSession, b.claudeWeek]),
+    "antigravity/gemini-4-argon-high": usage("low", [b.argon]),
+    "cursor/composer-2.5": usage("fresh", [b.cursorPlan, b.cursorAuto]),
+    "antigravity/gemini-3.8-flash-high": usage("fresh", [b.geminiWeek, b.gemini5h]),
+    "cursor/auto": usage("fresh", [b.cursorPlan, b.cursorAuto]),
+    "codex/gpt-6.1-terra": usage("fresh", [b.codex5h, b.codexWeek]),
+    "antigravity/claude-opus-5-5-high": usage("fresh", [b.thirdWeek, b.third5h]),
+    "antigravity/claude-sonnet-5-5-medium": usage("fresh", [b.thirdWeek, b.third5h]),
+  };
+  for (const [key, status] of Object.entries(statuses)) rows[key] = { ...rows[key], status, capacityConfirmed: status === "fresh" || status === "low" };
+  return rows;
+}
+
+// The rows of docs/agents/models.md on 2026-10-31.
+const row = (agent: string, model: string, effort: string | null, capability: string) => ({ agent, model, effort, capability, suits: `${capability} work`, unusable: null });
+const CANDIDATES = [
+  row("claude", "claude-opus-5-5", "high", "reasoning-heavy"),
+  row("claude", "claude-sonnet-5-5", "medium", "standard"),
+  row("claude", "claude-sonnet-5-5", "high", "standard"),
+  row("antigravity", "gemini-4-argon-high", null, "mechanical"),
+  row("cursor", "composer-2.5", null, "standard"),
+  row("antigravity", "gemini-3.8-flash-high", null, "mechanical"),
+  row("cursor", "auto", null, "standard"),
+  row("codex", "gpt-6.1-terra", "max", "standard"),
+  row("antigravity", "claude-opus-5-5-high", null, "reasoning-heavy"),
+  row("antigravity", "claude-sonnet-5-5-medium", null, "standard"),
+];
+
+const named = (c: { agent: string; model: string; effort?: string | null } | null) => (c ? [c.agent, c.model, c.effort].filter(Boolean).join("/") : null);
+const policy = () => loadPolicy(POLICY_FILE);
+
+async function withoutKey<T>(fn: () => Promise<T>): Promise<T> {
+  const previous = process.env.TYPESAFE_API_KEY;
+  delete process.env.TYPESAFE_API_KEY;
+  try {
+    return await fn();
+  } finally {
+    if (previous !== undefined) process.env.TYPESAFE_API_KEY = previous;
+  }
+}
+
+function choose(requirement: string, extra: Record<string, unknown> = {}, usageByCandidate = liveUsage(), candidates: unknown[] = CANDIDATES): Promise<any> {
+  return withoutKey(() =>
+    recommend(
+      { task: "t", summary: "x", eligible: [], judgment: requirement, judgmentReason: "r", learning: false, now: NOW, policy: policy(), ...extra },
+      candidates,
+      {},
+      usageByCandidate,
+    ),
+  );
+}
+
+// --- 1. Policy file
+
+test("the repository policy holds the owner's policy C", () => {
+  const p = policy();
+  assert.equal(p.source, POLICY_FILE);
+  assert.equal(p.decidedAt, "2026-10-31");
+  assert.equal(p.safetyFloorPercent, 10);
+  assert.equal(p.maxConcurrentPerBucket, 2);
+  assert.equal(p.maxConcurrentTotal, 3);
+  assert.equal(p.expiringBoost, 1);
+  assert.equal(p.reviewerOnDifferentPool, true);
+  assert.deepEqual(p.order, ["antigravity", "codex", "cursor"]);
+  for (const allowed of ["cursor/auto", "cursor/composer-2.5", "antigravity/claude-opus-5-5-high", "antigravity/claude-sonnet-5-5-medium", "antigravity/gemini-3.8-flash-high", "codex/gpt-6.1-terra"]) {
+    const [agent, model] = allowed.split("/");
+    assert.equal(policyVerdict(p, { agent, model }), null, allowed);
+  }
+  const claude = policyVerdict(p, { agent: "claude", model: "claude-opus-5-5" });
+  assert.equal(claude.policy, "reserve");
+  assert.match(claude.reason, /coordinator/);
+  const argon = policyVerdict(p, { agent: "antigravity", model: "gemini-4-argon-high" });
+  assert.equal(argon.policy, "reserve");
+  assert.match(argon.reason, /exhausted/);
+  const other = policyVerdict(p, { agent: "cursor", model: "gpt-9-other" });
+  assert.equal(other.policy, "not-allowed");
+  assert.match(other.reason, /not in the routing policy allow list/);
+});
+
+test("the policy is validated on load with errors that name the file and the field", () => {
+  const good = JSON.parse(readFileSync(POLICY_FILE, "utf8"));
+  const bad = (change: Record<string, unknown>) => JSON.stringify({ ...good, ...change });
+  assert.throws(() => parsePolicy("{ not json", "p.json"), /p\.json: .*not valid JSON/);
+  assert.throws(() => parsePolicy("[]", "p.json"), /p\.json: .*must be a JSON object/);
+  assert.throws(() => parsePolicy(bad({ surprise: 1 }), "p.json"), /p\.json: unknown field "surprise"/);
+  assert.throws(() => parsePolicy(bad({ safetyFloorPercent: 120 }), "p.json"), /p\.json: safetyFloorPercent must be a number from 0 to 100/);
+  assert.throws(() => parsePolicy(bad({ safetyFloorPercent: "10" }), "p.json"), /safetyFloorPercent/);
+  assert.throws(() => parsePolicy(bad({ maxConcurrentPerBucket: 0 }), "p.json"), /maxConcurrentPerBucket must be a positive whole number/);
+  assert.throws(() => parsePolicy(bad({ maxConcurrentTotal: 1.5 }), "p.json"), /maxConcurrentTotal must be a positive whole number/);
+  assert.throws(() => parsePolicy(bad({ expiringBoost: 0 }), "p.json"), /expiringBoost must be a number greater than 0/);
+  assert.throws(() => parsePolicy(bad({ reviewerOnDifferentPool: "yes" }), "p.json"), /reviewerOnDifferentPool must be true or false/);
+  assert.throws(() => parsePolicy(bad({ allow: "cursor" }), "p.json"), /allow must be an array/);
+  assert.throws(() => parsePolicy(bad({ allow: [{ agent: "cursor" }] }), "p.json"), /allow\[0\]\.models must be a non-empty array/);
+  assert.throws(() => parsePolicy(bad({ allow: [{ agent: "cursor", models: ["a*b"] }] }), "p.json"), /allow\[0\]\.models\[0\]/);
+  assert.throws(() => parsePolicy(bad({ reserve: [{ agent: "claude", models: ["*"] }] }), "p.json"), /reserve\[0\]\.reason must be a non-empty string/);
+  assert.throws(() => parsePolicy(bad({ order: ["codex", "codex"] }), "p.json"), /order must list each agent once/);
+  const { safetyFloorPercent: _drop, ...missing } = good;
+  assert.throws(() => parsePolicy(JSON.stringify(missing), "p.json"), /p\.json: safetyFloorPercent is required/);
+  assert.throws(() => loadPolicy(join(tmpdir(), "no-such-routing-policy.json")), /cannot read the routing policy/);
+});
+
+test("the policy defaults to routing-policy.json beside the baseline, and --policy replaces it", () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "sonder-routing-")));
+  try {
+    const models = join(dir, "models.md");
+    writeFileSync(models, "| Agent |\n");
+    assert.equal(resolvePolicy({ models }).source, null, "no file beside the baseline means no policy");
+    assert.equal(resolvePolicy({ models }).allow, null);
+    writeFileSync(join(dir, "routing-policy.json"), readFileSync(POLICY_FILE, "utf8"));
+    assert.equal(resolvePolicy({ models }).source, join(dir, "routing-policy.json"));
+    const other = join(dir, "other.json");
+    writeFileSync(other, JSON.stringify({ ...JSON.parse(readFileSync(POLICY_FILE, "utf8")), safetyFloorPercent: 25 }));
+    assert.equal(resolvePolicy({ models, policy: other }).safetyFloorPercent, 25);
+    assert.throws(() => resolvePolicy({ models, policy: join(dir, "missing.json") }), /cannot read the routing policy/);
+    assert.equal(resolvePolicy({ models: join(repoRoot, "docs", "agents", "models.md") }).source, POLICY_FILE);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// --- 2. Burn pressure
+
+test("5-hour windows are recognised by id and label", () => {
+  for (const bucket of [B.claudeSession, B.gemini5h, B.codex5h, B.third5h]) assert.equal(isFiveHourBucket(bucket), true, bucket.id);
+  for (const bucket of [B.claudeWeek, B.argon, B.cursorPlan, B.cursorAuto, B.geminiWeek, B.codexWeek, B.thirdWeek]) assert.equal(isFiveHourBucket(bucket), false, bucket.id);
+});
+
+test("pressure uses the binding non-5-hour window: percent left over days to reset", () => {
+  const p = policy();
+  // The 5-hour window has less left, but it never counts toward pressure.
+  const u = usage("fresh", [
+    { id: "codex-5h", label: "5h limit", usedPercent: 95, resetsAt: inDays(0.1) },
+    { id: "codex-weekly", label: "Weekly limit", usedPercent: 40, resetsAt: inDays(4) },
+  ]);
+  const r = burnPressure(u, p, NOW);
+  assert.equal(r.skip, null);
+  assert.equal(r.pressure, 15);
+  assert.equal(r.binding.bucketId, "codex-weekly");
+  assert.equal(r.binding.bucket, "Weekly limit");
+  assert.equal(r.binding.percentLeft, 60);
+  assert.equal(r.binding.daysToReset, 4);
+  assert.equal(r.binding.resetsAt, inDays(4));
+
+  // Cursor: the Plan window has less left than Cursor Models, so it binds.
+  const cursor = burnPressure(liveUsage()["cursor/auto"], p, NOW);
+  assert.equal(cursor.binding.bucketId, "included_total");
+  assert.equal(cursor.binding.bucket, "Plan");
+  assert.ok(Math.abs(cursor.pressure - 3.31) < 0.01, String(cursor.pressure));
+
+  // A reset already passed counts as 0.05 days, not zero or negative.
+  const due = burnPressure(usage("fresh", [{ id: "w", label: "Weekly", usedPercent: 50, resetsAt: inDays(-1) }]), p, NOW);
+  assert.equal(due.pressure, 1000);
+  assert.equal(due.binding.daysToReset, 0.05);
+});
+
+test("a binding window under the safety floor skips the candidate and names the window", () => {
+  const r = burnPressure(usage("low", [{ id: "codex-weekly", label: "Weekly limit", usedPercent: 92.5, resetsAt: inDays(3) }]), policy(), NOW);
+  assert.equal(r.pressure, null);
+  assert.match(r.skip, /Weekly limit has 7\.5% left, under the 10% safety floor/);
+  // Exactly at the floor is not under it.
+  assert.equal(burnPressure(usage("low", [{ id: "w", label: "Weekly", usedPercent: 90, resetsAt: inDays(5) }]), policy(), NOW).skip, null);
+  // A 5-hour window under the floor does not skip.
+  assert.equal(burnPressure(usage("low", [{ id: "x-5h", label: "5h limit", usedPercent: 99, resetsAt: inDays(0.1) }, { id: "w", label: "Weekly", usedPercent: 10, resetsAt: inDays(5) }]), policy(), NOW).skip, null);
+});
+
+test("expiringBoost multiplies pressure only within 48 hours of reset with more than 20% left", () => {
+  const boosted = { ...policy(), expiringBoost: 2 };
+  const at = (usedPercent: number, days: number) => burnPressure(usage("fresh", [{ id: "w", label: "Weekly", usedPercent, resetsAt: inDays(days) }]), boosted, NOW);
+  assert.equal(at(50, 1).pressure, 100);
+  assert.equal(at(50, 1).binding.boost, 2);
+  assert.equal(at(85, 1).pressure, 15, "20% or less left gets no boost");
+  assert.equal(at(50, 3).pressure, 50 / 3 > 0 ? Math.round((50 / 3) * 100) / 100 : 0, "more than 48 hours gets no boost");
+  assert.equal(at(50, 3).binding.boost, 1);
+  // The repository default of 1.0 has no effect.
+  assert.equal(burnPressure(usage("fresh", [{ id: "w", label: "Weekly", usedPercent: 50, resetsAt: inDays(1) }]), policy(), NOW).pressure, 50);
+});
+
+test("pressure is not computed for usage that does not confirm capacity", () => {
+  for (const status of ["unknown", "stale", "unavailable"]) {
+    const r = burnPressure(usage(status, [B.codexWeek]), policy(), NOW);
+    assert.equal(r.pressure, null, status);
+    assert.equal(r.skip, null, status);
+    assert.match(r.reason, new RegExp(status));
+  }
+  assert.match(burnPressure(usage("fresh", [B.codex5h]), policy(), NOW).reason, /no non-5-hour window/);
+});
+
+test("ranking: highest pressure first, ties within 5% by the policy order, unknown pressure last in input order", () => {
+  const rows = [
+    { agent: "cursor", pressure: 10 },
+    { agent: "codex", pressure: 9.7 },
+    { agent: "antigravity", pressure: 5 },
+    { agent: "claude", pressure: null },
+    { agent: "other", pressure: 20 },
+    { agent: "manual", pressure: null },
+  ];
+  assert.deepEqual(rankByPressure(rows, { order: ["antigravity", "codex", "cursor"] }).map((r: { agent: string }) => r.agent), ["other", "codex", "cursor", "antigravity", "claude", "manual"]);
+  // 9.4 is more than 5% below 10, so it is not a tie.
+  assert.deepEqual(rankByPressure([{ agent: "cursor", pressure: 10 }, { agent: "codex", pressure: 9.4 }], { order: ["antigravity", "codex", "cursor"] }).map((r: { agent: string }) => r.agent), ["cursor", "codex"]);
+});
+
+// --- 3. Chooser (live reading of 2026-10-31)
+
+test("reasoning-heavy prefers antigravity/claude-opus-5-5-high and lists Claude Code as reserved, not dropped", async () => {
+  const r = await choose("reasoning-heavy");
+  assert.equal(r.status, "recommended");
+  assert.equal(named(r.recommendation), "antigravity/claude-opus-5-5-high");
+  assert.equal(r.recommendation.binding.bucket, "Claude and GPT models weekly");
+  assert.ok(Math.abs(r.recommendation.pressure - 11.23) < 0.01, String(r.recommendation.pressure));
+  assert.equal(r.recommendation.binding.percentLeft, 76.7);
+  assert.equal(r.recommendation.binding.resetsAt, B.thirdWeek.resetsAt);
+  assert.match(r.recommendation.reason, /burn pressure 11\.23%\/day on Claude and GPT models weekly \(76\.7% left, resets 2026-11-07T13:20:13\.000Z\)/);
+  assert.doesNotMatch(r.recommendation.reason, /not balanced/);
+  const claude = r.excluded.find((c: { agent: string; model: string }) => c.agent === "claude" && c.model === "claude-opus-5-5");
+  assert.equal(claude.policy, "reserve");
+  assert.match(claude.reason, /coordinator/);
+  assert.ok(!r.rejected.some((c: { agent: string }) => c.agent === "claude"), "excluded rows are not rejections");
+  assert.equal(r.policy.source, POLICY_FILE);
+});
+
+test("standard chooses the highest pressure and names the runner-up's pressure, bucket, percent and reset", async () => {
+  const r = await choose("standard");
+  // Live: agy Claude and GPT models (76.7% left over 6.8 days) outranks Codex weekly (35% over 3.7 days).
+  assert.equal(named(r.recommendation), "antigravity/claude-sonnet-5-5-medium");
+  assert.equal(named(r.alternatives[0]), "codex/gpt-6.1-terra/max");
+  assert.match(r.recommendation.reason, /runner-up codex\/gpt-6\.1-terra\/max: burn pressure 9\.37%\/day on Weekly limit \(35(?:\.0)?% left, resets 2026-11-04T11:06:09\.000Z\)/);
+  assert.deepEqual(
+    r.alternatives.filter((c: { relation: string }) => c.relation === "equivalent").map(named),
+    ["codex/gpt-6.1-terra/max", "cursor/composer-2.5", "cursor/auto"],
+  );
+  for (const alt of r.alternatives) assert.ok("pressure" in alt && "binding" in alt, named(alt) ?? undefined);
+  assert.equal(r.baselineRecommendation.agent, "antigravity");
+});
+
+test("standard prefers Codex while its weekly bucket has headroom and resets soonest", async () => {
+  const r = await choose("standard", {}, liveUsage({ thirdWeek: { usedPercent: 60 } }));
+  assert.equal(named(r.recommendation), "codex/gpt-6.1-terra/max");
+});
+
+test("mechanical prefers antigravity Gemini Flash and lists Argon as reserved", async () => {
+  const r = await choose("mechanical");
+  assert.equal(named(r.recommendation), "antigravity/gemini-3.8-flash-high");
+  const argon = r.excluded.find((c: { model: string }) => c.model === "gemini-4-argon-high");
+  assert.equal(argon.policy, "reserve");
+});
+
+test("ties within 5% go by the policy order", async () => {
+  // Codex weekly at 41.85% left over 3.7369 days is 11.20/day, within 5% of agy's 11.23.
+  const r = await choose("standard", {}, liveUsage({ codexWeek: { usedPercent: 58.15 } }));
+  assert.equal(named(r.recommendation), "antigravity/claude-sonnet-5-5-medium");
+  const reordered = await choose("standard", { policy: { ...policy(), order: ["codex", "antigravity", "cursor"] } }, liveUsage({ codexWeek: { usedPercent: 58.15 } }));
+  assert.equal(named(reordered.recommendation), "codex/gpt-6.1-terra/max");
+});
+
+test("a candidate under the safety floor is rejected with a reason that names the window", async () => {
+  const r = await choose("standard", {}, liveUsage({ thirdWeek: { usedPercent: 95 } }, { "antigravity/claude-sonnet-5-5-medium": "low", "antigravity/claude-opus-5-5-high": "low" }));
+  assert.equal(named(r.recommendation), "codex/gpt-6.1-terra/max");
+  const floor = r.rejected.find((c: { model: string }) => c.model === "claude-sonnet-5-5-medium");
+  assert.equal(floor.rejectionKind, "safety-floor");
+  assert.match(floor.reason, /Claude and GPT models weekly has 5% left, under the 10% safety floor/);
+});
+
+test("capability is a hard filter: never lower, higher only with a warning when the required tier has nothing available", async () => {
+  const noStandard = liveUsage({}, { "codex/gpt-6.1-terra": "exhausted", "cursor/auto": "exhausted", "cursor/composer-2.5": "exhausted", "antigravity/claude-sonnet-5-5-medium": "exhausted" });
+  const up = await choose("standard", {}, noStandard);
+  assert.equal(named(up.recommendation), "antigravity/claude-opus-5-5-high");
+  assert.match(up.decision.warning, /no available allowed candidate at standard; antigravity\/claude-opus-5-5-high is reasoning-heavy/);
+
+  const noDeep = await choose("reasoning-heavy", {}, liveUsage({}, { "antigravity/claude-opus-5-5-high": "exhausted" }));
+  assert.equal(noDeep.status, "no-suitable-candidate");
+  assert.equal(noDeep.recommendation, null);
+});
+
+test("a candidate outside the allow list is excluded with the policy reason", async () => {
+  const candidates = [...CANDIDATES, row("cursor", "gpt-9-other", null, "standard")];
+  const r = await choose("standard", {}, liveUsage(), candidates);
+  const other = r.excluded.find((c: { model: string }) => c.model === "gpt-9-other");
+  assert.equal(other.policy, "not-allowed");
+  assert.match(other.reason, /not in the routing policy allow list/);
+});
+
+test("an override still works and records that it deviates from the policy", async () => {
+  const r = await choose("reasoning-heavy", { override: { agent: "claude", model: "claude-opus-5-5", effort: "high" }, overrideReason: "owner asked" });
+  assert.equal(r.status, "overridden");
+  assert.match(r.decision.policyDeviation, /claude\/claude-opus-5-5\/high is reserved: .*coordinator/);
+  assert.match(r.decision.warning, /deviates from the routing policy/);
+  assert.match(modelChoiceSection(r), /^- Policy: deviates from the routing policy: claude\/claude-opus-5-5\/high is reserved/m);
+
+  const within = await choose("standard", { override: { agent: "codex", model: "gpt-6.1-terra", effort: "max" }, overrideReason: "codex knows it" });
+  assert.equal(within.decision.policyDeviation, null);
+  assert.doesNotMatch(modelChoiceSection(within), /^- Policy:/m);
+});
+
+// --- 4. Reviewer pool
+
+test("--review-of picks a reviewer on a different agent and bucket than the implementer", async () => {
+  assert.deepEqual(parseRecommendArgs(["--task", "t", "--summary", "x", "--review-of", "antigravity/claude-sonnet-5-5-medium"]).options.reviewOf, { agent: "antigravity", model: "claude-sonnet-5-5-medium", effort: null });
+  assert.match(parseRecommendArgs(["--task", "t", "--summary", "x", "--review-of", "nope"]).error, /--review-of/);
+
+  const r = await choose("standard", { reviewOf: { agent: "antigravity", model: "claude-sonnet-5-5-medium", effort: null } });
+  assert.equal(named(r.recommendation), "codex/gpt-6.1-terra/max");
+  const same = r.excluded.find((c: { model: string }) => c.model === "claude-sonnet-5-5-medium");
+  assert.equal(same.policy, "reviewer-pool");
+  assert.match(same.reason, /different pool from the implementer antigravity\/claude-sonnet-5-5-medium/);
+  assert.ok(r.excluded.some((c: { model: string; policy: string }) => c.model === "gemini-3.8-flash-high" && c.policy === "reviewer-pool"), "the same agent is excluded even on another bucket");
+
+  const off = await choose("standard", { reviewOf: { agent: "antigravity", model: "claude-sonnet-5-5-medium", effort: null }, policy: { ...policy(), reviewerOnDifferentPool: false } });
+  assert.equal(named(off.recommendation), "antigravity/claude-sonnet-5-5-medium");
+});
+
+// --- Planner
+
+function wave(spec: Record<string, unknown>) {
+  return parseWave(JSON.stringify(spec));
+}
+const plan = (w: ReturnType<typeof parseWave>, extra: Record<string, unknown> = {}, usageByCandidate = liveUsage()): Promise<any> =>
+  withoutKey(() => planWave({ wave: w, candidates: CANDIDATES, usageByAgent: {}, usageByCandidate, learningOptions: { learning: false, now: NOW }, policy: policy(), now: NOW, ...extra }));
+
+test("the planner reads --policy and --workers, and a wave task may name reviewOf", () => {
+  const parsed = parsePlanArgs(["--wave", "w.json", "--policy", "p.json", "--workers", "workers.json"]);
+  assert.equal(parsed.options.policy, "p.json");
+  assert.equal(parsed.options.workers, "workers.json");
+  const w = wave({ tasks: [{ id: "r", summary: "Review", reviewOf: "codex/gpt-6.1-terra" }] });
+  assert.deepEqual(w.tasks[0].reviewOf, { agent: "codex", model: "gpt-6.1-terra", effort: null });
+  assert.throws(() => wave({ tasks: [{ id: "r", summary: "Review", reviewOf: "codex" }] }), /tasks\[0\]\.reviewOf must be <agent>\/<model>/);
+});
+
+test("the planner caps total concurrency at the policy's maxConcurrentTotal", async () => {
+  const tasks = ["a", "b", "c", "d"].map((id) => ({ id, summary: id, judgment: "mechanical", judgmentReason: "docs" }));
+  const p = await plan(wave({ concurrency: 5, tasks }), { policy: { ...policy(), maxConcurrentPerBucket: 9 } });
+  assert.equal(p.concurrency.limit, 3);
+  assert.equal(p.concurrency.requested, 5);
+  assert.equal(p.concurrency.proposed, 3);
+});
+
+test("the planner chooses by pressure and reports it in each assignment", async () => {
+  const p = await plan(wave({ tasks: [{ id: "std", summary: "Standard", judgment: "standard", judgmentReason: "clear" }] }));
+  const [t] = p.tasks;
+  assert.equal(t.status, "proposed");
+  assert.equal(named(t.assignment), "antigravity/claude-sonnet-5-5-medium");
+  assert.ok(Math.abs(t.assignment.pressure - 11.23) < 0.01);
+  assert.equal(t.assignment.binding.bucket, "Claude and GPT models weekly");
+  assert.match(t.assignment.reason, /burn pressure 11\.23%\/day/);
+  assert.match(t.assignment.reason, /runner-up codex\/gpt-6\.1-terra\/max/);
+  assert.ok(t.excluded.some((c: { agent: string }) => c.agent === "claude"));
+  assert.equal(p.policy.source, POLICY_FILE);
+});
+
+test("active workers count against the per-bucket cap, so the next pick moves to another bucket", async () => {
+  const activeWorkers = [
+    { agent: "antigravity", model: "claude-opus-5-5-high", dispatchId: "ctx_a" },
+    { agent: "antigravity", model: "claude-opus-5-5-high", dispatchId: "ctx_b" },
+  ];
+  const p = await plan(wave({ concurrency: 5, activeWorkers, tasks: [{ id: "std", summary: "Standard", judgment: "standard", judgmentReason: "clear" }] }), { policy: { ...policy(), maxConcurrentTotal: 5 } });
+  const [t] = p.tasks;
+  assert.equal(named(t.assignment), "codex/gpt-6.1-terra/max", "agy sonnet shares the Claude and GPT models bucket with the two active workers");
+  assert.ok(p.bucketLoad["antigravity/3p-weekly"].count >= 2);
+});
+
+test("proposed workers count against the per-bucket cap within one wave", async () => {
+  const tasks = ["a", "b", "c"].map((id) => ({ id, summary: id, judgment: "mechanical", judgmentReason: "docs" }));
+  const p = await plan(wave({ concurrency: 3, tasks }));
+  const picks = p.tasks.map((t: { assignment?: { agent: string; model: string } }) => named(t.assignment ?? null));
+  assert.equal(picks.filter((n: string | null) => n === "antigravity/gemini-3.8-flash-high").length, 2, JSON.stringify(picks));
+  const third = p.tasks.find((t: { status: string }) => t.status !== "proposed");
+  assert.match(third.reason, /bucket cap 2/);
+  assert.match(third.reason, /Gemini Models weekly|gemini-weekly/);
+});
+
+test("a wave reviewer task runs on a different pool from its implementer", async () => {
+  const p = await plan(wave({ tasks: [{ id: "rev", summary: "Review", judgment: "standard", judgmentReason: "clear", kind: "review", reviewOf: "antigravity/claude-sonnet-5-5-medium" }] }));
+  assert.equal(named(p.tasks[0].assignment), "codex/gpt-6.1-terra/max");
+});
+
+test("active workers are read from an orca worker-list receipt", () => {
+  // tests/fixtures/routing/worker-list.json is a real `orca orchestration worker-list --json` receipt with identifiers replaced.
+  const text = readFileSync(join(repoRoot, "tests", "fixtures", "routing", "worker-list.json"), "utf8");
+  assert.deepEqual(activeWorkersFromWorkerList(text), [
+    { agent: "codex", model: "gpt-6.1-terra", effort: null, dispatchId: "ctx_test1", task: "task_test1" },
+    { agent: "antigravity", model: null, effort: null, dispatchId: "ctx_test2", task: "task_test2" },
+  ]);
+  assert.throws(() => activeWorkersFromWorkerList("{}"), /worker-list/);
+});
+
+test("without a policy every baseline row stays allowed", () => {
+  assert.equal(NO_POLICY.allow, null);
+  assert.equal(policyVerdict(NO_POLICY, { agent: "claude", model: "claude-opus-5-5" }), null);
+});
+
+// --- CLI
+
+function run(script: string, args: string[], cwd: string) {
+  return new Promise<{ status: number | null; stdout: string; stderr: string }>((done) => {
+    const child = spawn(process.execPath, [join(repoRoot, "scripts", script), ...args], {
+      cwd,
+      env: { ...process.env, TYPESAFE_API_KEY: "", ORCA_USAGE_STATE_DIR: join(cwd, "usage-state"), HOME: join(cwd, "home") },
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (c) => (stdout += c));
+    child.stderr.on("data", (c) => (stderr += c));
+    child.on("close", (status) => done({ status, stdout, stderr }));
+  });
+}
+
+const MANUAL_BASELINE = `# Verified Subagent Models
+
+| Agent  | Model ID          | Supported effort values | Capability | Suits  | Last verified |
+| ------ | ----------------- | ----------------------- | ---------- | ------ | ------------- |
+| manual | \`hand-picked\`   | none                    | standard   | Manual | 2026-10-31    |
+| manual | \`held-back\`     | none                    | standard   | Manual | 2026-10-31    |
+`;
+
+test("the recommender CLI applies --policy and refuses a broken policy with a clear error", async () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "sonder-routing-cli-")));
+  try {
+    mkdirSync(join(dir, "home"));
+    writeFileSync(join(dir, "models.md"), MANUAL_BASELINE);
+    const policyFile = join(dir, "custom-policy.json");
+    writeFileSync(
+      policyFile,
+      JSON.stringify({ ...JSON.parse(readFileSync(POLICY_FILE, "utf8")), allow: [{ agent: "manual", models: ["hand-*"] }], reserve: [{ agent: "manual", models: ["held-back"], reason: "kept for the owner" }] }),
+    );
+    const args = ["--task", "t", "--summary", "x", "--judgment", "standard", "--judgment-reason", "r", "--no-learning", "--models", join(dir, "models.md")];
+    const ok = await run("orca-recommend.mjs", [...args, "--policy", policyFile], dir);
+    assert.equal(ok.status, 0, ok.stderr);
+    const json = JSON.parse(ok.stdout);
+    assert.equal(named(json.recommendation), "manual/hand-picked");
+    assert.deepEqual(json.excluded.map((c: { model: string; policy: string; reason: string }) => [c.model, c.policy, c.reason]), [["held-back", "reserve", "kept for the owner"]]);
+    assert.equal(json.policy.source, policyFile);
+
+    const none = await run("orca-recommend.mjs", args, dir);
+    assert.equal(JSON.parse(none.stdout).policy.source, null, "no routing-policy.json beside this baseline");
+
+    writeFileSync(policyFile, "{ broken");
+    const broken = await run("orca-recommend.mjs", [...args, "--policy", policyFile], dir);
+    assert.equal(broken.status, 1);
+    assert.match(broken.stderr, /custom-policy\.json: .*not valid JSON/);
+
+    writeFileSync(join(dir, "wave.json"), JSON.stringify({ tasks: [{ id: "1", summary: "x", judgment: "standard", judgmentReason: "r" }] }));
+    const planBroken = await run("orca-plan.mjs", ["--wave", join(dir, "wave.json"), "--models", join(dir, "models.md"), "--policy", policyFile, "--no-learning"], dir);
+    assert.equal(planBroken.status, 1);
+    assert.match(planBroken.stderr, /custom-policy\.json: .*not valid JSON/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// --- Docs
+
+test("the routing policy is documented field by field and linked from the dispatch docs", () => {
+  const doc = readFileSync(join(repoRoot, "docs", "agents", "routing-policy.md"), "utf8");
+  for (const field of Object.keys(JSON.parse(readFileSync(POLICY_FILE, "utf8")))) assert.match(doc, new RegExp("`" + field + "`"), field);
+  assert.match(doc, /2026-10-31/);
+  assert.match(doc, /How to change/i);
+  const agents = readFileSync(join(repoRoot, "AGENTS.md"), "utf8");
+  assert.equal(agents.split("\n").filter((l) => l.includes("docs/agents/routing-policy.md")).length, 1);
+  assert.match(readFileSync(join(repoRoot, "docs", "agents", "models.md"), "utf8"), /docs\/agents\/routing-policy\.md/);
+  assert.match(readFileSync(join(repoRoot, "docs", "agents", "wave-planner.md"), "utf8"), /--policy/);
+});

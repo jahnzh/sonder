@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "decidedAt": "2026-10-31",
+  "decision": "Owner policy C: workers run on Cursor Models, Antigravity Claude Opus 5.5 / Sonnet 5.5 / Gemini 3.8 Flash and Codex gpt-6.1-terra; Claude Code is reserved for the coordinator; Gemini 4 Argon is excluded while exhausted.",
+  "allow": [
+    { "agent": "cursor", "models": ["auto", "composer-*"] },
+    { "agent": "antigravity", "models": ["claude-opus-5-5-high", "claude-sonnet-5-5-medium", "gemini-3.8-flash-high"] },
+    { "agent": "codex", "models": ["gpt-6.1-terra"] }
+  ],
+  "reserve": [
+    {
+      "agent": "claude",
+      "models": ["*"],
+      "reason": "Claude Code's own subscription is the coordinator's fuel and is reserved for the coordinator (owner decision 2026-10-31)"
+    },
+    {
+      "agent": "antigravity",
+      "models": ["gemini-4-argon-high"],
+      "reason": "Gemini 4 Argon is excluded while its weekly bucket is exhausted (owner decision 2026-10-31); remove this entry and allow it again after it resets"
+    }
+  ],
+  "order": ["antigravity", "codex", "cursor"],
+  "safetyFloorPercent": 10,
+  "maxConcurrentPerBucket": 2,
+  "maxConcurrentTotal": 3,
+  "expiringBoost": 1.0,
+  "reviewerOnDifferentPool": true,
+  "maxBucketSharePerWorkerPercent": 25,
+  "expectedBucketSharePercent": [
+    { "agent": "antigravity", "model": "claude-opus-5-5-high", "percent": 35 },
+    { "agent": "antigravity", "model": "claude-sonnet-5-5-medium", "percent": 12 },
+    { "agent": "codex", "model": "gpt-6.1-terra", "percent": 10 },
+    { "agent": "cursor", "model": "auto", "percent": 3 },
+    { "agent": "antigravity", "model": "gemini-3.8-flash-high", "percent": 3 }
+  ],
+  "bucketCostNotes": "One Opus 5.5 (high) worker on antigravity moved the Claude and GPT models weekly bucket from 3.7% to 50.7% used in about 10 minutes (2026-10-31). A bucket that looks large can be small for high-effort work. expectedBucketSharePercent values are first guesses; part C will replace them with measured values from worker history."
+}

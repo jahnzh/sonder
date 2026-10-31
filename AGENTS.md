@@ -74,6 +74,7 @@ Agent skills setup follows the main flow from https://www.aihero.dev/skills-setu
 - Coordinator state and spec templates: see `docs/agents/worker-spec.md`.
 - Read the Orca inbox with `node scripts/orca-check.mjs`; after a session restart follow "Resume after a restart" in `docs/agents/worker-spec.md`.
 - Before judging an agent or model capacity, read the **Quota buckets** section in `docs/agents/models.md`: quota is per model bucket, never one number per agent.
+- Read `docs/agents/routing-policy.md` before changing dispatch rules.
 - Before reading or interpreting Claude subscription usage (`node scripts/claude-usage.mjs`), read `docs/agents/claude-usage.md`.
 - Before running CI on the Steam Deck, read `docs/agents/ci-deck.md`.
 - Before running `npm run test:android` or the Android emulator on the Steam Deck, read `docs/agents/emulator.md`.

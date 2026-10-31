@@ -28,7 +28,7 @@ A row meets its own level and those below it. The levels are the coordinator's r
 
 ## Usage limits
 
-`scripts/orca-recommend.mjs` and `scripts/orca-plan.mjs` refresh Claude, Codex, Cursor and Antigravity usage from the collector before recommending (`docs/agents/usage-collector.md`). Failed or missing readings stay `unknown` / `unavailable` and are never treated as confirmed capacity. For a ready wave, the planner balances shared allowances and concurrency across tasks without comparing provider percentages (`docs/agents/wave-planner.md`). The coordinator still keeps the number concurrent modest (default plan limit: three).
+`scripts/orca-recommend.mjs` and `scripts/orca-plan.mjs` refresh Claude, Codex, Cursor and Antigravity usage from the collector before recommending (`docs/agents/usage-collector.md`). Failed or missing readings stay `unknown` / `unavailable` and are never treated as confirmed capacity. Which agents and models may run is governed by `docs/agents/routing-policy.md` (policy C allow-list, safety floor, burn-pressure ranking, concurrency caps). For a ready wave, the planner applies that policy across tasks (`docs/agents/wave-planner.md`). The coordinator still keeps the number concurrent modest (default plan limit: three).
 
 ## Quota buckets
 
