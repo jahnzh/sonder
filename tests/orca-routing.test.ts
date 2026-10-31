@@ -2200,6 +2200,52 @@ test("two active claude/weekly_sonnet workers block a claude/weekly_all candidat
     ),
     2,
   );
+  // Session also pools with weekly_all.
+  assert.equal(
+    effectiveBucketLoad(
+      { "claude/session": { count: 2, bucketId: "session", agent: "claude" } },
+      "claude/weekly_all",
+      "claude",
+    ),
+    2,
+  );
+});
+
+test("two active claude workers block a weekly_all-bound claude candidate in planWave", async () => {
+  const allowClaude = {
+    ...policy(),
+    allow: [
+      { agent: "claude", models: ["claude-opus-5-5", "claude-sonnet-5-5"] },
+      { agent: "cursor", models: ["auto"] },
+      { agent: "codex", models: ["gpt-6.1-terra"] },
+    ],
+    maxConcurrentPerBucket: 2,
+    maxConcurrentTotal: 5,
+  };
+  const activeWorkers = [
+    { agent: "claude", model: "claude-opus-5-5", dispatchId: "ctx_cl1" },
+    { agent: "claude", model: "claude-opus-5-5", dispatchId: "ctx_cl2" },
+  ];
+  const p: any = await withoutKey(() =>
+    planWave({
+      wave: wave({
+        concurrency: 5,
+        activeWorkers,
+        tasks: [{ id: "std", summary: "Std", judgment: "standard", judgmentReason: "clear", eligible: ["claude/claude-sonnet-5-5"] }],
+      }),
+      candidates: CANDIDATES,
+      usageByAgent: {},
+      usageByCandidate: {},
+      learningOptions: { learning: false, now: NOW },
+      policy: allowClaude,
+      now: NOW,
+    }),
+  );
+  assert.notEqual(
+    named(p.tasks[0].assignment),
+    "claude/claude-sonnet-5-5",
+    "active Claude workers must cap candidate Claude models in planWave",
+  );
 });
 
 test("two active cursor/included_api workers block a cursor/included_auto candidate under cap 2", () => {
