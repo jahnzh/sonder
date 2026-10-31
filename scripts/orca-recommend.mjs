@@ -7,6 +7,17 @@ import { PROVIDERS, usageForPlanning } from "./orca-usage.mjs";
 import { applyLearning, defaultLearnDir, loadLearningContext } from "./orca-learn.mjs";
 import { defaultDir as defaultHistoryDir } from "./orca-history.mjs";
 import { OPENCODE_MODEL } from "./opencode-config.mjs";
+import {
+  NO_POLICY,
+  burnPressure,
+  expectedShareFor,
+  expectedShareSkip,
+  formatBurnReason,
+  policyVerdict,
+  rankByPressure,
+  resolvePolicy,
+  shortBucketLabel as routingShortBucketLabel,
+} from "./orca-routing.mjs";
 
 const JEV_URL = "https://api.typesafe.ai/v1/systemone";
 // Pinned, not jev-latest: an alias can move and change answers without any change here.
@@ -59,6 +70,7 @@ const QUESTIONS = {
 const USAGE = `Usage: node scripts/orca-recommend.mjs --task <id> --summary <text> [--kind <kind>] [--files <n>]
          [--eligible <agent>/<model>[/<effort>]]... [--judgment <requirement> --judgment-reason <text>]
          [--override <agent>/<model>[/<effort>] --override-reason <text>] [--record <spec-file>] [--models <file>]
+         [--policy <file>] [--review-of <agent>/<model>[/<effort>]]
          [--history-dir <dir>] [--learn-dir <dir>] [--no-learning] [--agent-version <agent>=<version>]...
 
 Recommends a worker for one ready task and prints JSON. It never starts a worker: pass launch.args to
@@ -73,6 +85,8 @@ History and transcripts are never sent to Jev. Learning never launches a worker.
   --override         The worker chosen instead of the recommendation. Needs --override-reason.
   --record           Write the choice into this spec's "## Model choice" section.
   --models           The capability baseline (default: docs/agents/models.md).
+  --policy           Routing policy JSON (default: routing-policy.json beside --models). See docs/agents/routing-policy.md.
+  --review-of        Pick a reviewer on a different agent and quota bucket than this implementer (policy reviewerOnDifferentPool).
   --history-dir      Worker history directory (default: $ORCA_HISTORY_DIR or artifacts/orca/history).
   --learn-dir        Learned-adjustment state (default: $ORCA_LEARN_DIR or artifacts/orca/learning).
   --no-learning      Use only the capability-and-usage baseline (still prints baselineRecommendation).
@@ -80,8 +94,10 @@ History and transcripts are never sent to Jev. Learning never launches a worker.
 
 Takes a fresh usage reading first for each agent scripts/orca-usage.mjs collects. Candidates with exhausted usage
 are rejected, and only "fresh" and "low" usage confirm any capacity; see docs/agents/usage-collector.md.
+With a routing policy, capability is a hard filter and burn pressure ranks within the tier (docs/agents/routing-policy.md).
 When history has enough comparable outcomes, learning may reorder within the smallest suitable capability
-tier; the baseline pick is always shown beside any adjusted recommendation (see docs/agents/learned-adjustments.md).
+tier but never past the policy; the baseline pick is always shown beside any adjusted recommendation
+(see docs/agents/learned-adjustments.md).
 
 Exit codes: 0 a worker was chosen, 1 nothing suitable or an override was refused, 2 bad usage,
 3 Jev gave no usable assessment and no --judgment was supplied.
@@ -114,6 +130,8 @@ export function parseCliArgs(argv) {
     "--override-reason": "overrideReason",
     "--record": "record",
     "--models": "models",
+    "--policy": "policy",
+    "--review-of": "reviewOf",
     "--history-dir": "historyDir",
     "--learn-dir": "learnDir",
   };
@@ -160,8 +178,13 @@ export function parseCliArgs(argv) {
     options.override = parseChoice(options.override);
     if (!options.override) return { error: "--override must be <agent>/<model>[/<effort>]" };
   }
+  if (options.reviewOf !== undefined) {
+    options.reviewOf = parseChoice(options.reviewOf);
+    if (!options.reviewOf) return { error: "--review-of must be <agent>/<model>[/<effort>]" };
+  }
   if (options.record !== undefined && (!options.record.trim() || !existsSync(options.record))) return { error: `spec file not found: ${options.record}` };
   if (options.models !== undefined && !options.models.trim()) return { error: "--models must not be blank" };
+  if (options.policy !== undefined && !String(options.policy).trim()) return { error: "--policy must not be blank" };
   if (options.historyDir !== undefined && !options.historyDir.trim()) return { error: "--history-dir must not be blank" };
   if (options.learnDir !== undefined && !options.learnDir.trim()) return { error: "--learn-dir must not be blank" };
   return { options };
@@ -382,23 +405,7 @@ function describeJevReport(jev) {
 }
 
 function shortBucketLabel(bucket) {
-  const label = String(bucket?.label ?? bucket?.id ?? "quota");
-  const id = String(bucket?.id ?? "");
-  if (/argon/i.test(label) || /argon/i.test(id)) return "Gemini 4 Argon";
-  if (/gemini/i.test(label) || /^gemini-/i.test(id)) {
-    if (/5h|five.?hour/i.test(label) || /5h/i.test(id)) return "Gemini Models 5-hour";
-    return "Gemini Models weekly";
-  }
-  if (/claude and gpt|3p-/i.test(label) || /^3p-/i.test(id)) {
-    if (/5h|five.?hour/i.test(label) || /5h/i.test(id)) return "Claude and GPT models 5-hour";
-    return "Claude and GPT models weekly";
-  }
-  if (id === "included_auto" || /cursor models|^auto$/i.test(label)) return "Cursor Models";
-  if (id === "included_api" || /other models|^api$/i.test(label)) return "Other Models";
-  if (id === "included_total" || /plan|^included$/i.test(label)) return "Plan";
-  if (id === "on_demand" || /on-?demand/i.test(label)) return "On-demand";
-  const head = label.split(":")[0].trim();
-  return head || label;
+  return routingShortBucketLabel(bucket);
 }
 
 function formatBucketUsage(usage) {
@@ -457,6 +464,36 @@ function launchArgs({ agent, model, effort }) {
  * @param {Record<string, any>} usageByAgent Reports from usageForPlanning; kept for the summary only.
  * @param {Record<string, any>} [usageByCandidate] Per `agent/model` assessments; a missing key is unknown, never the agent report.
  */
+function withPressureFields(candidate, usage, policy, now) {
+  const report = burnPressure(usage, policy, now);
+  const expectedSharePercent = expectedShareFor(policy, candidate);
+  return {
+    ...candidate,
+    pressure: report.pressure,
+    binding: report.binding,
+    expectedSharePercent,
+    burn: report,
+  };
+}
+
+function pressureBalanceNote(first, others, usageOf, policy, now, hasEquivalent) {
+  if (!hasEquivalent) return "";
+  if (policy?.allow) {
+    const firstUsage = usageOf(first);
+    const firstBurn = burnPressure(firstUsage, policy, now);
+    const runner = others.find((c) => c.capability === first.capability);
+    if (firstBurn.pressure != null && firstBurn.binding) {
+      const runnerBurn = runner ? burnPressure(usageOf(runner), policy, now) : null;
+      const burn = formatBurnReason(choiceName(first), firstBurn, runnerBurn?.pressure != null && runnerBurn.binding
+        ? { name: choiceName(runner), pressure: runnerBurn.pressure, binding: runnerBurn.binding }
+        : null);
+      return burn ? `; ${burn}` : "";
+    }
+    return "; equivalent choices have no confirmed burn pressure";
+  }
+  return "; equivalent choices are not balanced by quota";
+}
+
 export async function recommend(options, candidates, usageByAgent = {}, usageByCandidate = {}) {
   const sanitizedOptions = {
     ...options,
@@ -465,6 +502,15 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
     judgmentReason: options.judgmentReason !== undefined ? redactSecret(options.judgmentReason) : undefined,
     overrideReason: options.overrideReason !== undefined ? redactSecret(options.overrideReason) : undefined,
   };
+  const policy =
+    sanitizedOptions.policy && typeof sanitizedOptions.policy === "object"
+      ? sanitizedOptions.policy
+      : sanitizedOptions.policy
+        ? resolvePolicy({ policy: sanitizedOptions.policy, models: sanitizedOptions.models })
+        : sanitizedOptions.models
+          ? resolvePolicy({ models: sanitizedOptions.models })
+          : { ...NO_POLICY };
+  const now = sanitizedOptions.now ?? new Date().toISOString();
   const jev = await assessJev(sanitizedOptions);
   const { requirement: jevRequirement, ...jevReport } = jev;
   const conclusive = jev.status === "ok";
@@ -492,6 +538,17 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
     recommendation: null,
     alternatives: [],
     rejected: [],
+    excluded: [],
+    policy: {
+      source: policy.source ?? null,
+      decidedAt: policy.decidedAt ?? null,
+      safetyFloorPercent: policy.safetyFloorPercent,
+      maxConcurrentPerBucket: policy.maxConcurrentPerBucket,
+      maxConcurrentTotal: policy.maxConcurrentTotal,
+      reviewerOnDifferentPool: policy.reviewerOnDifferentPool,
+      order: policy.order ?? null,
+      allow: policy.allow,
+    },
     usage: UNKNOWN_USAGE,
     usageByAgent,
     usageByCandidate,
@@ -505,33 +562,135 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
   }
 
   const usable = [];
+  const excluded = [];
   const rejected = sanitizedOptions.eligible.flatMap((choice) => {
     const reason = undocumented(choice, candidates);
     return reason ? [{ ...choice, reason }] : [];
   });
   const named = (c) => sanitizedOptions.eligible.some((e) => e.agent === c.agent && e.model === c.model && (e.effort === null || e.effort === c.effort));
+
+  let reviewOfBinding = null;
+  if (sanitizedOptions.reviewOf && policy.reviewerOnDifferentPool) {
+    reviewOfBinding = burnPressure(usageOf(sanitizedOptions.reviewOf), policy, now).binding;
+  }
+
   for (const { unusable, ...candidate } of candidates) {
     const { agent, model, effort } = candidate;
     if (sanitizedOptions.eligible.length && !named(candidate)) continue;
     const usage = usageOf(candidate);
+
+    const verdict = policyVerdict(policy, candidate);
+    if (verdict) {
+      excluded.push({ agent, model, effort, policy: verdict.policy, reason: verdict.reason });
+      continue;
+    }
+
+    if (sanitizedOptions.reviewOf && policy.reviewerOnDifferentPool) {
+      const sameAgent = agent === sanitizedOptions.reviewOf.agent;
+      const candidateBinding = burnPressure(usage, policy, now).binding;
+      const sameBucket =
+        reviewOfBinding?.bucketId &&
+        candidateBinding?.bucketId &&
+        reviewOfBinding.bucketId === candidateBinding.bucketId;
+      if (sameAgent || sameBucket) {
+        excluded.push({
+          agent,
+          model,
+          effort,
+          policy: "reviewer-pool",
+          reason: `must run on a different pool from the implementer ${choiceName(sanitizedOptions.reviewOf)}`,
+        });
+        continue;
+      }
+    }
+
     if (unusable) rejected.push({ agent, model, effort, reason: unusable });
     else if (agent === "opencode" && usage.status === "unavailable") {
       rejected.push({ agent, model, effort, reason: `provider data unavailable (${usage.reason})`, usage: usage.status });
     } else if (rank(candidate.capability) < rank(requirement)) {
+      // Attach burn pressure so planners ranking below-capability alternatives (uncertainty /
+      // weaker paths) order by pressure instead of preserving baseline table order.
       rejected.push({
-        agent,
-        model,
-        effort,
+        ...withPressureFields(
+          { agent, model, effort, capability: candidate.capability, suits: candidate.suits },
+          usage,
+          policy,
+          now,
+        ),
         rejectionKind: "below-capability",
         reason: `${candidate.capability} capability is below the assessed ${requirement}`,
+        usage: usage.status,
       });
     } else if (usage.status === "exhausted") {
       rejected.push({ agent, model, effort, reason: usageWarning(agent, usage, candidate), usage: usage.status });
-    } else usable.push({ ...candidate, usage: usage.status, usageScope: { account: usage.account, host: usage.host } });
+    } else {
+      const floorSkip = policy.allow ? burnPressure(usage, policy, now).skip : null;
+      const shareSkip = policy.allow ? expectedShareSkip(usage, policy, candidate, now) : null;
+      const skip = floorSkip || shareSkip;
+      if (skip) {
+        rejected.push({
+          agent,
+          model,
+          effort,
+          rejectionKind: floorSkip ? "safety-floor" : "expected-share",
+          reason: skip,
+          usage: usage.status,
+        });
+      } else {
+        usable.push(
+          withPressureFields(
+            { ...candidate, usage: usage.status, usageScope: { account: usage.account, host: usage.host } },
+            usage,
+            policy,
+            now,
+          ),
+        );
+      }
+    }
   }
-  // Smallest suitable first, so a scarce strong model is not spent on easier work; sort() keeps table order within a level.
-  usable.sort((a, b) => rank(a.capability) - rank(b.capability));
-  const baselineFirst = usable[0] ?? null;
+
+  // Capability is a hard filter: smallest tier that still has an available allowed candidate.
+  // If that tier has only unknown/stale capacity, prefer a confirmed stronger tier when one exists.
+  const requiredRank = rank(requirement);
+  const capacityConfirmed = (c) => {
+    const reading = usageOf(c);
+    return reading.capacityConfirmed === true || reading.status === "fresh" || reading.status === "low";
+  };
+  const atOrAbove = usable.filter((c) => rank(c.capability) >= requiredRank);
+  const availableRanks = [...new Set(atOrAbove.map((c) => rank(c.capability)))].sort((a, b) => a - b);
+  let chosenRank = availableRanks.find((r) => r >= requiredRank) ?? -1;
+  /** @type {number | null} */
+  let unconfirmedRequiredRank = null;
+  if (chosenRank >= 0) {
+    const tierHasConfirmed = atOrAbove.some((c) => rank(c.capability) === chosenRank && capacityConfirmed(c));
+    if (!tierHasConfirmed) {
+      const strongerConfirmed = availableRanks.find(
+        (r) => r > chosenRank && atOrAbove.some((c) => rank(c.capability) === r && capacityConfirmed(c)),
+      );
+      if (strongerConfirmed != null) {
+        unconfirmedRequiredRank = chosenRank;
+        chosenRank = strongerConfirmed;
+      }
+    }
+  }
+  const tier = chosenRank < 0 ? [] : atOrAbove.filter((c) => rank(c.capability) === chosenRank);
+  const stronger = chosenRank < 0 ? [] : atOrAbove.filter((c) => rank(c.capability) > chosenRank);
+  // Keep unknown/stale candidates at the pre-upgrade rank so a capped stronger tier can still fall back.
+  const uncertainFallback =
+    unconfirmedRequiredRank == null
+      ? []
+      : atOrAbove.filter((c) => rank(c.capability) === unconfirmedRequiredRank && !capacityConfirmed(c));
+  // Within each tier, burn pressure ranks when a policy allow-list is active; else keep table order.
+  const tierOrdered = policy.allow ? rankByPressure(tier, policy) : [...tier];
+  const strongerOrdered = policy.allow ? rankByPressure(stronger, policy) : [...stronger];
+  const usableOrdered = [...tierOrdered, ...strongerOrdered, ...uncertainFallback];
+  // Preserve below-tier rejects already recorded; drop higher-than-chosen from usable path is fine (they stay as stronger alts only when chosenRank is required).
+  const learningPool = usableOrdered.length ? usableOrdered : usable.sort((a, b) => rank(a.capability) - rank(b.capability));
+  const baselineFirst = learningPool[0] ?? null;
+  const capabilityUpgradeWarning =
+    baselineFirst && rank(baselineFirst.capability) > requiredRank
+      ? `no available allowed candidate at ${requirement}; ${choiceName(baselineFirst)} is ${baselineFirst.capability}`
+      : null;
 
   let learningContext = null;
   /** @type {string | null} */
@@ -564,25 +723,64 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
   }
 
   const learned = applyLearning({
-    usable,
+    usable: learningPool,
     kind: sanitizedOptions.kind ?? null,
     difficulty: requirement,
     learning: learningContext,
     random: sanitizedOptions.random ?? Math.random,
   });
-  const ordered = learned.ordered.length ? learned.ordered : usable;
+  let ordered = learned.ordered.length ? learned.ordered : learningPool;
+  // Learning may reorder within the tier but must not promote a lower capability or escape the policy set.
+  // Do not re-sort by pressure after learning: the pool was already pressure-ranked, and a second
+  // sort would undo an applied adjustment while the report still claimed learning preferred a pick.
+  if (policy.allow && ordered.length) {
+    const floor = rank(ordered[0].capability);
+    const sameTier = ordered.filter((c) => rank(c.capability) === floor);
+    const rest = ordered.filter((c) => rank(c.capability) !== floor);
+    ordered = [...sameTier, ...rest];
+  }
   const [first, ...others] = ordered;
-  const alternatives = others.map((c) => ({
-    ...c,
-    relation: first && c.capability === first.capability ? "equivalent" : "stronger",
-  }));
+  const alternatives = others.map((c) => {
+    if (!first) return { ...c, relation: "stronger" };
+    const cmp = rank(c.capability) - rank(first.capability);
+    return {
+      ...c,
+      relation: cmp === 0 ? "equivalent" : cmp > 0 ? "stronger" : "uncertain-fallback",
+    };
+  });
   const hasEquivalent = alternatives.some((c) => c.relation === "equivalent");
+  const balance = (pick, rest) => pressureBalanceNote(pick, rest, usageOf, policy, now, hasEquivalent || Boolean(policy.allow && pick));
+  const annotate = (pick, rest) => {
+    if (!pick) return null;
+    const usage = usageOf(pick);
+    const burn = burnPressure(usage, policy, now);
+    const runner = rest.find((c) => c.capability === pick.capability);
+    const runnerBurn = runner ? burnPressure(usageOf(runner), policy, now) : null;
+    const burnText =
+      policy.allow && burn.pressure != null && burn.binding
+        ? formatBurnReason(
+            choiceName(pick),
+            burn,
+            runnerBurn?.pressure != null && runnerBurn.binding
+              ? { name: choiceName(runner), pressure: runnerBurn.pressure, binding: runnerBurn.binding }
+              : null,
+          )
+        : null;
+    const usageText = describeUsage(usage, pick);
+    const balanceText = burnText ? `; ${burnText}` : balance(pick, rest);
+    return {
+      ...pick,
+      pressure: burn.pressure,
+      binding: burn.binding,
+      expectedSharePercent: expectedShareFor(policy, pick),
+      reason:
+        `${describeAssessment(assessment)}. ${choiceName(pick)} is the smallest documented capability that meets it (${pick.capability}): ${pick.suits}. ` +
+        `${usageText}${balanceText}.`,
+    };
+  };
   const baselineRecommendation = baselineFirst
     ? {
-        ...baselineFirst,
-        reason:
-          `${describeAssessment(assessment)}. ${choiceName(baselineFirst)} is the smallest documented capability that meets it (${baselineFirst.capability}): ${baselineFirst.suits}. ` +
-          `${describeUsage(usageOf(baselineFirst), baselineFirst)}${hasEquivalent ? "; equivalent choices are not balanced by quota" : ""}.`,
+        ...annotate(baselineFirst, learningPool.slice(1)),
       }
     : null;
   const demotionNote =
@@ -607,13 +805,11 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
             : learningContext
               ? " Sparse or missing comparable evidence: falling back to the capability-and-usage baseline."
               : "";
-  const recommendation = first
+  const annotatedFirst = first ? annotate(first, others) : null;
+  const recommendation = annotatedFirst
     ? {
-        ...first,
-        reason:
-          `${describeAssessment(assessment)}. ${choiceName(first)} is the smallest documented capability that meets it (${first.capability}): ${first.suits}. ` +
-          `${describeUsage(usageOf(first), first)}${hasEquivalent ? "; equivalent choices are not balanced by quota" : ""}.` +
-          learningNote,
+        ...annotatedFirst,
+        reason: `${annotatedFirst.reason}${learningNote}`,
         exploration: learned.exploration
           ? { uncertain: true, reason: learned.exploration.reason, evidenceCount: learned.exploration.evidenceCount }
           : undefined,
@@ -633,7 +829,7 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
     exploration: learned.exploration,
     note: historyLoadNote,
   };
-  const result = { ...base, recommendation, baselineRecommendation, alternatives, rejected, learning: learningReport };
+  const result = { ...base, recommendation, baselineRecommendation, alternatives, rejected, excluded, learning: learningReport };
 
   if (sanitizedOptions.override) {
     const refused = refuseOverride(sanitizedOptions.override, candidates);
@@ -643,15 +839,44 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
     if (sanitizedOptions.override.agent === "opencode" && usage.status === "unavailable") {
       return { ...result, status: "override-refused", refused: { ...sanitizedOptions.override, reason: `provider data unavailable (${usage.reason})` } };
     }
+    const deviationNotes = [];
+    const verdict = policyVerdict(policy, sanitizedOptions.override);
+    if (verdict) {
+      deviationNotes.push(
+        `${choiceName(sanitizedOptions.override)} is ${verdict.policy === "reserve" ? "reserved" : "not allowed"}: ${verdict.reason}`,
+      );
+    }
+    if (policy.allow) {
+      const floorSkip = burnPressure(usage, policy, now).skip;
+      if (floorSkip) deviationNotes.push(`bypasses safety floor: ${floorSkip}`);
+      const shareSkip = expectedShareSkip(usage, policy, sanitizedOptions.override, now);
+      if (shareSkip && shareSkip !== floorSkip) deviationNotes.push(`bypasses expected share: ${shareSkip}`);
+    }
+    if (sanitizedOptions.reviewOf && policy.reviewerOnDifferentPool) {
+      const sameAgent = sanitizedOptions.override.agent === sanitizedOptions.reviewOf.agent;
+      const overrideBinding = burnPressure(usage, policy, now).binding;
+      const sameBucket =
+        reviewOfBinding?.bucketId &&
+        overrideBinding?.bucketId &&
+        reviewOfBinding.bucketId === overrideBinding.bucketId;
+      if (sameAgent || sameBucket) {
+        deviationNotes.push(
+          `bypasses reviewer-pool rule: must run on a different pool from the implementer ${choiceName(sanitizedOptions.reviewOf)}`,
+        );
+      }
+    }
+    const policyDeviation = deviationNotes.length ? deviationNotes.join("; ") : null;
     const warnings = [
       rank(capability) < rank(requirement) ? `${capability} capability is below the assessed ${requirement}` : null,
       usageWarning(sanitizedOptions.override.agent, usage, sanitizedOptions.override),
+      policyDeviation ? "deviates from the routing policy" : null,
     ];
     const decision = {
       kind: "override",
       ...sanitizedOptions.override,
       reason: sanitizedOptions.overrideReason,
       warning: warnings.filter(Boolean).join("; ") || null,
+      policyDeviation,
       note: "an override is a choice, not a label of the recommendation being wrong",
     };
     return { ...result, usage, status: "overridden", decision, launch: { started: false, args: launchArgs(sanitizedOptions.override) } };
@@ -665,7 +890,8 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
     model,
     effort,
     reason,
-    warning: usageWarning(agent, usage, recommendation),
+    warning: [capabilityUpgradeWarning, usageWarning(agent, usage, recommendation)].filter(Boolean).join("; ") || null,
+    policyDeviation: null,
     exploration: recommendation.exploration ?? null,
   };
   return { ...result, usage, status: "recommended", decision, launch: { started: false, args: launchArgs(decision) } };
@@ -690,6 +916,9 @@ export function modelChoiceSection({ decision, recommendation, assessment, fallb
     lines.push(
       `- Fallback: coordinator judgment ${fallback.requirement} because Jev was ${fallback.because}${describeJevReport(assessment.jev)}: ${oneLine(redactSecret(fallback.detail ?? ""))}`,
     );
+  }
+  if (decision.policyDeviation) {
+    lines.push(`- Policy: deviates from the routing policy: ${oneLine(redactSecret(decision.policyDeviation))}`);
   }
   if (decision.warning) lines.push(`- Warning: ${decision.warning}`);
   const evidence = usage.observedAt ? `; read ${usage.observedAt} from ${usage.source?.kind}` : "";
@@ -725,6 +954,13 @@ export async function main(argv = process.argv.slice(2)) {
   }
   const { options } = parsed;
   options.models ??= path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "docs", "agents", "models.md");
+
+  try {
+    options.policy = resolvePolicy({ models: options.models, policy: options.policy });
+  } catch (error) {
+    console.error(redactSecret(error.message));
+    return 1;
+  }
 
   let candidates;
   try {

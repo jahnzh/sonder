@@ -9,12 +9,27 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PROVIDERS, usageForPlanning } from "./orca-usage.mjs";
 import { loadCandidates, parseChoice, recommend } from "./orca-recommend.mjs";
+import {
+  NO_POLICY,
+  activeWorkersFromWorkerList,
+  bindingBucketIdFor,
+  burnPressure,
+  committedShareFor,
+  countBucketLoad,
+  effectiveBucketLoad,
+  expectedShareFor,
+  expectedShareSkip,
+  rankByPressure,
+  resolvePolicy,
+  shortBucketLabel,
+} from "./orca-routing.mjs";
 
 const REQUIREMENTS = ["mechanical", "standard", "reasoning-heavy"];
 const DEFAULT_CONCURRENCY = 3;
 const TASK_KINDS = ["feature", "fix", "refactor", "test", "docs", "review"];
 
 const USAGE = `Usage: node scripts/orca-plan.mjs --wave <file.json> [--models <file>] [--concurrency <n>]
+         [--policy <file>] [--workers <worker-list.json>]
          [--history-dir <dir>] [--learn-dir <dir>] [--no-learning]
 
 Plans a ready wave of tasks together and prints JSON. It never starts a worker: pass each
@@ -24,6 +39,8 @@ Histories and transcripts are never sent to Jev.
 
   --wave           JSON file describing the wave (see docs/agents/wave-planner.md). Use - for stdin.
   --models         The capability baseline (default: docs/agents/models.md).
+  --policy         Routing policy JSON (default: routing-policy.json beside --models). See docs/agents/routing-policy.md.
+  --workers        Active workers from \`orca orchestration worker-list --json\` (counts toward bucket caps).
   --concurrency    Max concurrent workers including active ones (default: ${DEFAULT_CONCURRENCY}, or the wave's concurrency).
   --history-dir    Worker history directory (default: $ORCA_HISTORY_DIR or artifacts/orca/history).
   --learn-dir      Learned-adjustment state (default: $ORCA_LEARN_DIR or artifacts/orca/learning).
@@ -31,9 +48,9 @@ Histories and transcripts are never sent to Jev.
 
 Takes a fresh usage reading first for each agent scripts/orca-usage.mjs collects (Claude, Codex,
 Cursor, Antigravity and OpenCode). A failed or unknown reading stays unknown or unavailable and is not capacity.
-Shared allowances list active and proposed workers; percentages are not compared across providers and
-capacity is never reserved. Learning may reorder within a capability tier when comparable outcomes
-exist; see docs/agents/learned-adjustments.md.
+With a routing policy, burn pressure and per-bucket concurrency caps apply (docs/agents/routing-policy.md).
+Shared allowances list active and proposed workers; capacity is never reserved. Learning may reorder
+within a capability tier when comparable outcomes exist; see docs/agents/learned-adjustments.md.
 
 Exit codes: 0 a plan was produced (including delays and needs-decision), 1 the wave could not be
 read or had no tasks, 2 bad usage.
@@ -53,6 +70,8 @@ export function parseCliArgs(argv) {
   const flags = {
     "--wave": "wave",
     "--models": "models",
+    "--policy": "policy",
+    "--workers": "workers",
     "--concurrency": "concurrency",
     "--history-dir": "historyDir",
     "--learn-dir": "learnDir",
@@ -72,6 +91,8 @@ export function parseCliArgs(argv) {
     i += 2;
   }
   if (!options.wave?.trim()) return { error: "--wave is required" };
+  if (options.policy !== undefined && !String(options.policy).trim()) return { error: "--policy must not be blank" };
+  if (options.workers !== undefined && !String(options.workers).trim()) return { error: "--workers must not be blank" };
   if (options.concurrency !== undefined) {
     if (!/^\d+$/.test(options.concurrency) || Number(options.concurrency) < 1) {
       return { error: "--concurrency must be a positive whole number" };
@@ -135,6 +156,15 @@ export function parseWave(text, cli = {}) {
       }
       return choice;
     });
+    let reviewOf = undefined;
+    if (task.reviewOf !== undefined) {
+      if (typeof task.reviewOf !== "string") throw new Error(`tasks[${i}].reviewOf must be <agent>/<model>[/<effort>]`);
+      const choice = parseChoice(task.reviewOf);
+      if (!choice) {
+        throw new Error(`tasks[${i}].reviewOf must be <agent>/<model>[/<effort>]`);
+      }
+      reviewOf = choice;
+    }
     return {
       id: String(task.id),
       summary: task.summary,
@@ -145,6 +175,7 @@ export function parseWave(text, cli = {}) {
       eligible,
       judgment: task.judgment,
       judgmentReason: task.judgmentReason,
+      reviewOf,
     };
   });
 
@@ -221,14 +252,22 @@ function exhaustedSuitableFrom(result) {
   return (result.rejected ?? []).filter((row) => row.usage === "exhausted");
 }
 
-/** Assignment or a held weaker alternative that occupies a concurrency slot. */
-function heldChoice(row) {
-  return row.assignment ?? row.weakerAlternative ?? null;
+/** Choices a proposed row holds against load: both primary and alternative on needs-decision. */
+function heldChoices(row) {
+  const held = [];
+  if (row.uncertaintyAlternative?.agent || row.weakerAlternative?.agent) {
+    if (row.assignment?.agent) held.push(row.assignment);
+    if (row.uncertaintyAlternative?.agent) held.push(row.uncertaintyAlternative);
+    if (row.weakerAlternative?.agent) held.push(row.weakerAlternative);
+  } else if (row.assignment?.agent) {
+    held.push(row.assignment);
+  }
+  return held;
 }
 
 function agentLoad(agent, activeWorkers, proposed) {
   const active = activeWorkers.filter((worker) => worker.agent === agent);
-  const proposedFor = proposed.filter((row) => heldChoice(row)?.agent === agent);
+  const proposedFor = proposed.filter((row) => heldChoices(row).some((choice) => choice.agent === agent));
   return { active, proposed: proposedFor, count: active.length + proposedFor.length };
 }
 
@@ -244,11 +283,91 @@ function uniqueNeedCount(agent, remainingTasks) {
 /**
  * Prefer spreading across providers among roughly equivalent choices, then confirmed capacity,
  * without treating percentages as comparable. Scarce sole-capable agents are saved for tasks that need them.
+ * With a routing policy allow-list, prefer highest burn pressure within the tier (already ordered by recommend).
  */
-function pickCandidate(suitable, { activeWorkers, proposed, remainingTasks, usageByAgent, usageByCandidate = {} }) {
+function underBucketCap(row, load, policy, usageByCandidate, now) {
+  // No allow-list means no per-bucket concurrency policy — only the global wave limit applies.
+  if (!policy?.allow) return true;
+  const maxPer = policy.maxConcurrentPerBucket ?? 2;
+  const key = bindingBucketIdFor(row, usageByCandidate, policy, now);
+  if (!key) return true;
+  return effectiveBucketLoad(load, key, row.agent) < maxPer;
+}
+
+function capacityConfirmedFor(row, usageByAgent, usageByCandidate) {
+  const usage = usageOf(usageByAgent, usageByCandidate, row);
+  return usage.capacityConfirmed === true || usage.status === "fresh" || usage.status === "low";
+}
+
+function pickByPressure(rows, policy) {
+  if (!rows.length) return null;
+  // Keep the recommender's primary (including a learned adjustment) when it is still eligible.
+  // Re-sorting by burn pressure here would undo learning within the tier.
+  const primary = rows.find((row) => row.relation === "primary");
+  if (primary) return primary;
+  return policy?.allow ? rankByPressure(rows, policy)[0] : rows[0];
+}
+
+/**
+ * Weaker alternatives for a harder task: higher capability tiers first (standard before
+ * mechanical), then burn pressure within each tier. Pressure alone must not promote Flash
+ * over a confirmed Sonnet.
+ */
+function rankWeakerByTierThenPressure(rows, policy) {
+  if (!rows.length) return [];
+  const tiers = [...new Set(rows.map((row) => rank(row.capability)))].sort((a, b) => b - a);
+  const out = [];
+  for (const tier of tiers) {
+    const group = rows.filter((row) => rank(row.capability) === tier);
+    out.push(...(policy?.allow ? rankByPressure(group, policy) : group));
+  }
+  return out;
+}
+
+function pickCandidate(
+  suitable,
+  { activeWorkers, proposed, remainingTasks, usageByAgent, usageByCandidate = {}, policy = NO_POLICY, now = new Date(), bucketLoad = null },
+) {
   if (!suitable.length) return null;
   const minCap = Math.min(...suitable.map((row) => rank(row.capability)));
-  const atFloor = suitable.filter((row) => rank(row.capability) === minCap);
+  let atFloor = suitable.filter((row) => rank(row.capability) === minCap);
+
+  if (policy?.allow) {
+    const load = bucketLoad ?? countBucketLoad({ activeWorkers, proposed, usageByCandidate, policy, now });
+    const uncapped = (rows) => rows.filter((row) => underBucketCap(row, load, policy, usageByCandidate, now));
+    const confirmed = (rows) => rows.filter((row) => capacityConfirmedFor(row, usageByAgent, usageByCandidate));
+    const unconfirmed = (rows) => rows.filter((row) => !capacityConfirmedFor(row, usageByAgent, usageByCandidate));
+
+    // Prefer confirmed capacity at the capability floor, then stronger confirmed tiers (by pressure).
+    const confirmedFloor = uncapped(confirmed(atFloor));
+    if (confirmedFloor.length) return pickByPressure(confirmedFloor, policy);
+
+    const stronger = suitable.filter((row) => rank(row.capability) > minCap);
+    const strongerRanks = [...new Set(stronger.map((row) => rank(row.capability)))].sort((a, b) => a - b);
+    for (const nextRank of strongerRanks) {
+      const tier = uncapped(confirmed(stronger.filter((row) => rank(row.capability) === nextRank)));
+      if (tier.length) return pickByPressure(tier, policy);
+    }
+
+    // Confirmed stronger upgrade was capped (or absent): offer unknown/stale lower-tier fallbacks.
+    const unconfirmedFloor = uncapped(unconfirmed(atFloor));
+    if (unconfirmedFloor.length) return pickByPressure(unconfirmedFloor, policy);
+    for (const nextRank of strongerRanks) {
+      const tier = uncapped(unconfirmed(stronger.filter((row) => rank(row.capability) === nextRank)));
+      if (tier.length) return pickByPressure(tier, policy);
+    }
+
+    // Suitable may list only the upgraded confirmed tier plus uncertain-fallback rows at a lower rank.
+    const fallbacks = uncapped(
+      suitable.filter(
+        (row) =>
+          row.relation === "uncertain-fallback" ||
+          (rank(row.capability) < minCap && !capacityConfirmedFor(row, usageByAgent, usageByCandidate)),
+      ),
+    );
+    if (fallbacks.length) return pickByPressure(fallbacks, policy);
+    return null;
+  }
 
   const scored = atFloor.map((row, index) => {
     const usage = usageOf(usageByAgent, usageByCandidate, row);
@@ -266,6 +385,15 @@ function pickCandidate(suitable, { activeWorkers, proposed, remainingTasks, usag
     return a.index - b.index;
   });
   return scored[0].row;
+}
+
+function bucketCapReason(row, usageByCandidate, policy, now, load) {
+  const key = bindingBucketIdFor(row, usageByCandidate, policy, now);
+  const usage = usageByCandidate[`${row.agent}/${row.model}`];
+  const binding = burnPressure(usage ?? {}, policy, now).binding;
+  const label = binding ? shortBucketLabel({ id: binding.bucketId, label: binding.bucket }) : key;
+  const id = binding?.bucketId ?? key?.split("/").slice(1).join("/");
+  return `bucket cap ${policy.maxConcurrentPerBucket} on ${label}${id ? ` (${id})` : ""}`;
 }
 
 function launchArgs({ agent, model, effort }) {
@@ -293,7 +421,7 @@ function sharingReport(usageByAgent, activeWorkers, proposed, usageByCandidate =
   const agents = new Set([
     ...Object.keys(usageByAgent),
     ...activeWorkers.map((worker) => worker.agent),
-    ...proposed.map((row) => heldChoice(row)?.agent).filter(Boolean),
+    ...proposed.flatMap((row) => heldChoices(row).map((choice) => choice.agent)),
   ]);
   const out = {};
   const note =
@@ -317,15 +445,16 @@ function sharingReport(usageByAgent, activeWorkers, proposed, usageByCandidate =
       refresh: usage.refresh ?? null,
       sharedWith: {
         active: load.active,
-        proposed: load.proposed.map((row) => {
-          const held = heldChoice(row);
-          return {
-            task: row.task,
-            agent: held.agent,
-            model: held.model,
-            effort: held.effort,
-          };
-        }),
+        proposed: load.proposed.flatMap((row) =>
+          heldChoices(row)
+            .filter((held) => held.agent === agent)
+            .map((held) => ({
+              task: row.task,
+              agent: held.agent,
+              model: held.model,
+              effort: held.effort,
+            })),
+        ),
         note,
       },
     };
@@ -342,9 +471,8 @@ function sharingReport(usageByAgent, activeWorkers, proposed, usageByCandidate =
       effort: worker.effort ?? null,
       usage: usageOf(usageByAgent, usageByCandidate, worker),
     })),
-    ...proposed.map((row) => {
-      const held = heldChoice(row);
-      return {
+    ...proposed.flatMap((row) =>
+      heldChoices(row).map((held) => ({
         kind: "proposed",
         task: row.task,
         dispatchId: null,
@@ -352,8 +480,8 @@ function sharingReport(usageByAgent, activeWorkers, proposed, usageByCandidate =
         model: held.model,
         effort: held.effort,
         usage: usageOf(usageByAgent, usageByCandidate, held),
-      };
-    }),
+      })),
+    ),
   ];
   for (const worker of workers) {
     const buckets = Array.isArray(worker.usage?.buckets) ? worker.usage.buckets : [];
@@ -425,12 +553,21 @@ export async function planWave({
   usageByCandidate = {},
   recommendFn = recommend,
   learningOptions = {},
+  policy = NO_POLICY,
+  now = new Date().toISOString(),
 }) {
-  const waveTaskIds = new Set(wave.tasks.map((task) => task.id));
+  const resolvedPolicy = policy && typeof policy === "object" ? policy : resolvePolicy({ policy });
+  const requestedConcurrency = wave.concurrency;
+  const limit = resolvedPolicy?.allow
+    ? Math.min(requestedConcurrency, resolvedPolicy.maxConcurrentTotal ?? requestedConcurrency)
+    : requestedConcurrency;
+  const cappedWave = { ...wave, concurrency: limit };
+
+  const waveTaskIds = new Set(cappedWave.tasks.map((task) => task.id));
   const entries = [];
 
-  for (const task of wave.tasks) {
-    const unmet = unmetDependencies(task, waveTaskIds, wave.completed);
+  for (const task of cappedWave.tasks) {
+    const unmet = unmetDependencies(task, waveTaskIds, cappedWave.completed);
     if (!task.ready) {
       entries.push({
         task,
@@ -465,6 +602,9 @@ export async function planWave({
       eligible: task.eligible,
       judgment: task.judgment,
       judgmentReason: task.judgmentReason,
+      reviewOf: task.reviewOf,
+      policy: resolvedPolicy,
+      now,
       ...learningOptions,
     };
     const result = await recommendFn(options, candidates, usageByAgent, usageByCandidate);
@@ -488,14 +628,39 @@ export async function planWave({
       return String(a.task.id).localeCompare(String(b.task.id));
     });
 
-  const slots = Math.max(0, wave.concurrency - wave.activeWorkers.length);
+  const slots = Math.max(0, cappedWave.concurrency - cappedWave.activeWorkers.length);
   const proposed = [];
   const decisions = [];
   const remaining = [...assignable];
+  /** @type {Record<string, number>} share already reserved per binding bucket key within this wave */
+  const shareCommitted = {};
+
+  const committedFor = (choice) =>
+    committedShareFor(shareCommitted, choice, usageByCandidate, resolvedPolicy, now);
+  const passesShareGuards = (choice) => {
+    if (!resolvedPolicy?.allow) return true;
+    const usage = usageOf(usageByAgent, usageByCandidate, choice);
+    if (burnPressure(usage, resolvedPolicy, now).skip) return false;
+    if (expectedShareSkip(usage, resolvedPolicy, choice, now, { committedPercent: committedFor(choice) })) return false;
+    return true;
+  };
+  const commitShare = (choice) => {
+    if (!resolvedPolicy?.allow || !choice?.agent) return;
+    const key = bindingBucketIdFor(choice, usageByCandidate, resolvedPolicy, now);
+    if (!key) return;
+    shareCommitted[key] = (shareCommitted[key] ?? 0) + expectedShareFor(resolvedPolicy, choice);
+  };
 
   while (remaining.length) {
     const entry = remaining.shift();
     const { task, result, suitable, weaker, exhaustedSuitable } = entry;
+    const bucketLoad = countBucketLoad({
+      activeWorkers: cappedWave.activeWorkers,
+      proposed,
+      usageByCandidate,
+      policy: resolvedPolicy,
+      now,
+    });
 
     if (result.status === "needs-judgment") {
       decisions.push({
@@ -515,10 +680,11 @@ export async function planWave({
         task: task.id,
         status: "deferred",
         assessment: result.assessment,
-        reason: `concurrency limit ${wave.concurrency} with ${wave.activeWorkers.length} active and ${proposed.length} proposed; replan when a slot frees`,
+        reason: `concurrency limit ${cappedWave.concurrency} with ${cappedWave.activeWorkers.length} active and ${proposed.length} proposed; replan when a slot frees`,
         recommendation: result.recommendation,
         alternatives: result.alternatives,
         rejected: result.rejected,
+        excluded: result.excluded,
         launch: { started: false, args: null },
       });
       continue;
@@ -529,27 +695,73 @@ export async function planWave({
       suitable: row.suitable.filter((candidate) => usageOf(usageByAgent, usageByCandidate, candidate).status !== "exhausted"),
     }));
 
-    const available = suitable.filter((row) => usageOf(usageByAgent, usageByCandidate, row).status !== "exhausted");
+    const available = suitable
+      .filter((row) => usageOf(usageByAgent, usageByCandidate, row).status !== "exhausted")
+      .filter((row) => passesShareGuards(row));
     const pick = pickCandidate(available, {
-      activeWorkers: wave.activeWorkers,
+      activeWorkers: cappedWave.activeWorkers,
       proposed,
       remainingTasks,
       usageByAgent,
       usageByCandidate,
+      policy: resolvedPolicy,
+      now,
+      bucketLoad,
     });
 
     if (!pick) {
-      const weakerAvailable = weaker.filter((row) => {
-        const usage = usageOf(usageByAgent, usageByCandidate, row);
-        return usage.status !== "exhausted";
-      });
-      const weakerPick = pickCandidate(
-        weakerAvailable.map((row) => ({
+      const minCapRank = available.length ? Math.min(...available.map((row) => rank(row.capability))) : -1;
+      const atFloor = available.filter((row) => rank(row.capability) === minCapRank);
+      const strongerAvailable = available.filter((row) => rank(row.capability) > minCapRank);
+      const cappedOut =
+        resolvedPolicy?.allow &&
+        atFloor.length > 0 &&
+        atFloor.every((row) => !underBucketCap(row, bucketLoad, resolvedPolicy, usageByCandidate, now)) &&
+        strongerAvailable.every((row) => !underBucketCap(row, bucketLoad, resolvedPolicy, usageByCandidate, now));
+      if (cappedOut) {
+        const sample = atFloor[0];
+        decisions.push({
+          task: task.id,
+          status: "delay",
+          assessment: result.assessment,
+          reason: bucketCapReason(sample, usageByCandidate, resolvedPolicy, now, bucketLoad),
+          recommendation: result.recommendation,
+          alternatives: result.alternatives,
+          rejected: result.rejected,
+          excluded: result.excluded,
+          launch: { started: false, args: null },
+          capacityNote: "Capacity is never reserved; replan after a reset or worker change.",
+        });
+        continue;
+      }
+
+      const weakerAvailable = weaker
+        .filter((row) => {
+          const usage = usageOf(usageByAgent, usageByCandidate, row);
+          if (usage.status === "exhausted") return false;
+          return passesShareGuards(row);
+        })
+        .filter((row) => underBucketCap(row, bucketLoad, resolvedPolicy, usageByCandidate, now))
+        .map((row) => ({
           ...row,
           capability: candidates.find((c) => choiceName(c) === choiceName(row))?.capability ?? "mechanical",
           suits: candidates.find((c) => choiceName(c) === choiceName(row))?.suits ?? "",
-        })),
-        { activeWorkers: wave.activeWorkers, proposed, remainingTasks: [], usageByAgent, usageByCandidate },
+        }));
+      // Closest weaker tier first (standard before mechanical); pickCandidate alone prefers the floor.
+      const closestWeaker = rankWeakerByTierThenPressure(weakerAvailable, resolvedPolicy);
+      const topTier = closestWeaker.length ? rank(closestWeaker[0].capability) : -1;
+      const weakerPick = pickCandidate(
+        closestWeaker.filter((row) => rank(row.capability) === topTier),
+        {
+          activeWorkers: cappedWave.activeWorkers,
+          proposed,
+          remainingTasks: [],
+          usageByAgent,
+          usageByCandidate,
+          policy: resolvedPolicy,
+          now,
+          bucketLoad,
+        },
       );
       const requirement = result.assessment.requirement;
       const whyStrongerGone = exhaustedSuitable.length
@@ -566,6 +778,7 @@ export async function planWave({
         recommendation: null,
         alternatives: result.alternatives,
         rejected: result.rejected,
+        excluded: result.excluded,
         exhaustedSuitable,
         launch: { started: false, args: null },
         capacityNote: "Capacity is never reserved; replan after a reset or worker change.",
@@ -588,6 +801,7 @@ export async function planWave({
           `Suitable options are exhausted or unavailable for assessed ${requirement}. ` +
           `Choose the warned weaker alternative or delay. Stronger choices unavailable: ${whyStrongerGone}.`;
         // Hold the slot and shared load the same way an uncertain suitable choice does.
+        commitShare(weakerPick);
         proposed.push(delay);
       }
       decisions.push(delay);
@@ -595,15 +809,19 @@ export async function planWave({
     }
 
     const usage = usageOf(usageByAgent, usageByCandidate, pick);
+    const pickBurn = burnPressure(usage, resolvedPolicy, now);
     const equivalents = available
       .filter((row) => choiceName(row) !== choiceName(pick) && rank(row.capability) === rank(pick.capability))
       .map((row) => {
         const rowUsage = usageOf(usageByAgent, usageByCandidate, row);
+        const rowBurn = burnPressure(rowUsage, resolvedPolicy, now);
         return {
           ...row,
           usage: rowUsage.status,
           usageScope: { account: rowUsage.account, host: rowUsage.host },
           capacityConfirmed: rowUsage.capacityConfirmed === true,
+          pressure: rowBurn.pressure,
+          binding: rowBurn.binding,
           relation: "equivalent",
         };
       });
@@ -611,15 +829,36 @@ export async function planWave({
       .filter((row) => choiceName(row) !== choiceName(pick) && rank(row.capability) > rank(pick.capability))
       .map((row) => {
         const rowUsage = usageOf(usageByAgent, usageByCandidate, row);
+        const rowBurn = burnPressure(rowUsage, resolvedPolicy, now);
         return {
           ...row,
           usage: rowUsage.status,
           usageScope: { account: rowUsage.account, host: rowUsage.host },
           capacityConfirmed: rowUsage.capacityConfirmed === true,
+          pressure: rowBurn.pressure,
+          binding: rowBurn.binding,
           relation: "stronger",
         };
       });
 
+    const runner = equivalents[0];
+    const reassigned =
+      result.recommendation && choiceName(result.recommendation) !== choiceName(pick);
+    const upgradeWarning =
+      rank(pick.capability) > rank(result.assessment.requirement)
+        ? `no available allowed candidate at ${result.assessment.requirement}; ${choiceName(pick)} is ${pick.capability}`
+        : null;
+    const pickReason = resolvedPolicy?.allow
+      ? `Assessed ${result.assessment.requirement}. Wave pick ${choiceName(pick)}` +
+        (pickBurn.pressure != null && pickBurn.binding
+          ? ` by burn pressure ${pickBurn.pressure}%/day on ${pickBurn.binding.bucket}`
+          : "") +
+        (runner ? `; runner-up ${choiceName(runner)}` : "") +
+        (reassigned && result.recommendation
+          ? ` (recommender preferred ${choiceName(result.recommendation)}; reassigned for wave load)`
+          : "")
+      : `${result.recommendation && !reassigned ? result.recommendation.reason : `Assessed ${result.assessment.requirement}`}. ` +
+        `Wave pick ${choiceName(pick)} after balancing shared load and scarce capable combinations across the ready set.`;
     const assignment = {
       agent: pick.agent,
       model: pick.model,
@@ -629,9 +868,13 @@ export async function planWave({
       usage: usage.status,
       usageScope: { account: usage.account, host: usage.host },
       capacityConfirmed: usage.capacityConfirmed === true,
+      pressure: pick.pressure ?? pickBurn.pressure,
+      binding: pick.binding ?? pickBurn.binding,
+      expectedSharePercent: pick.expectedSharePercent,
       reason:
-        `${result.recommendation?.reason ?? `Assessed ${result.assessment.requirement}`}. ` +
-        `Wave pick ${choiceName(pick)} after balancing shared load and scarce capable combinations across the ready set.`,
+        !reassigned && result.recommendation?.reason && resolvedPolicy?.allow
+          ? result.recommendation.reason
+          : pickReason,
     };
 
     const decision = {
@@ -644,7 +887,14 @@ export async function planWave({
       learning: result.learning ?? null,
       alternatives: [...equivalents, ...stronger],
       rejected: result.rejected,
-      warning: usage.status === "low" ? `${pick.agent} usage is low: ${usage.reason}` : null,
+      excluded: result.excluded,
+      warning: [
+        upgradeWarning,
+        result.decision?.warning && reassigned ? null : result.decision?.warning,
+        usage.status === "low" ? `${pick.agent} usage is low: ${usage.reason}` : null,
+      ]
+        .filter(Boolean)
+        .join("; ") || null,
       launch: { started: false, args: launchArgs(pick) },
       capacityNote: "Snapshot only — not reserved capacity. Replan when workers or usage change.",
     };
@@ -654,6 +904,7 @@ export async function planWave({
       const knownWeaker = weaker
         .map((row) => {
           const rowUsage = usageOf(usageByAgent, usageByCandidate, row);
+          const rowBurn = burnPressure(rowUsage, resolvedPolicy, now);
           const baseline = candidates.find((c) => choiceName(c) === choiceName(row));
           return {
             ...row,
@@ -662,11 +913,16 @@ export async function planWave({
             usage: rowUsage.status,
             usageScope: { account: rowUsage.account, host: rowUsage.host },
             capacityConfirmed: rowUsage.capacityConfirmed === true,
+            pressure: row.pressure ?? rowBurn.pressure,
+            binding: row.binding ?? rowBurn.binding,
           };
         })
-        .filter((row) => row.capacityConfirmed);
-      if (knownWeaker.length) {
-        const alt = knownWeaker[0];
+        .filter((row) => row.capacityConfirmed)
+        .filter((row) => passesShareGuards(row))
+        .filter((row) => underBucketCap(row, bucketLoad, resolvedPolicy, usageByCandidate, now));
+      const rankedWeaker = rankWeakerByTierThenPressure(knownWeaker, resolvedPolicy);
+      if (rankedWeaker.length) {
+        const alt = rankedWeaker[0];
         decision.status = "needs-decision";
         decision.uncertaintyAlternative = {
           ...alt,
@@ -684,6 +940,10 @@ export async function planWave({
       }
     }
 
+    // Conservatively reserve both the unconfirmed primary and any uncertainty alternative so
+    // subsequent proposals cannot overdraw either bucket if the coordinator picks either side.
+    commitShare(pick);
+    if (decision.uncertaintyAlternative) commitShare(decision.uncertaintyAlternative);
     proposed.push(decision);
     decisions.push(decision);
   }
@@ -703,30 +963,49 @@ export async function planWave({
     }
   }
 
-  const ordered = wave.tasks.map((task) => byId.get(task.id)).filter(Boolean);
+  const ordered = cappedWave.tasks.map((task) => byId.get(task.id)).filter(Boolean);
   const { allowances, allowancesByBucket } = sharingReport(
     usageByAgent,
-    wave.activeWorkers,
+    cappedWave.activeWorkers,
     proposed,
     usageByCandidate,
   );
+  const bucketLoad = countBucketLoad({
+    activeWorkers: cappedWave.activeWorkers,
+    proposed,
+    usageByCandidate,
+    policy: resolvedPolicy,
+    now,
+  });
 
   return {
     status: "planned",
-    concurrency: {
-      limit: wave.concurrency,
-      active: wave.activeWorkers.length,
-      proposed: proposed.length,
-      remainingSlots: Math.max(0, wave.concurrency - wave.activeWorkers.length - proposed.length),
+    policy: {
+      source: resolvedPolicy.source ?? null,
+      decidedAt: resolvedPolicy.decidedAt ?? null,
+      maxConcurrentPerBucket: resolvedPolicy.maxConcurrentPerBucket,
+      maxConcurrentTotal: resolvedPolicy.maxConcurrentTotal,
+      safetyFloorPercent: resolvedPolicy.safetyFloorPercent,
+      reviewerOnDifferentPool: resolvedPolicy.reviewerOnDifferentPool,
     },
-    activeWorkers: wave.activeWorkers,
+    concurrency: {
+      limit: cappedWave.concurrency,
+      requested: requestedConcurrency,
+      active: cappedWave.activeWorkers.length,
+      proposed: proposed.length,
+      remainingSlots: Math.max(0, cappedWave.concurrency - cappedWave.activeWorkers.length - proposed.length),
+    },
+    activeWorkers: cappedWave.activeWorkers,
+    bucketLoad,
     usageByAgent,
     usageByCandidate,
     allowances,
     allowancesByBucket,
     notes: [
       "The planner never starts a worker; pass launch.args through scripts/orca-spawn.sh and the existing preflight/receipt checks.",
-      "Provider usage percentages are not comparable across agents.",
+      resolvedPolicy?.allow
+        ? "Routing policy ranks by burn pressure within a capability tier and caps concurrency per bucket."
+        : "Provider usage percentages are not comparable across agents.",
       "Active and proposed workers share allowances; projected capacity is uncertain and not reserved.",
       "Unknown, stale, low and exhausted usage are distinct; only fresh and low confirm capacity.",
       "Learning may reorder within a capability tier from comparable history; baselineRecommendation stays visible; transcripts are never read or sent to Jev.",
@@ -750,6 +1029,14 @@ export async function main(argv = process.argv.slice(2)) {
   const { options } = parsed;
   options.models ??= path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "docs", "agents", "models.md");
 
+  let policy;
+  try {
+    policy = resolvePolicy({ models: options.models, policy: options.policy });
+  } catch (error) {
+    console.error(error.message);
+    return 1;
+  }
+
   let waveText;
   try {
     waveText = options.wave === "-" ? readFileSync(0, "utf8") : readFileSync(options.wave, "utf8");
@@ -764,6 +1051,16 @@ export async function main(argv = process.argv.slice(2)) {
   } catch (error) {
     console.error(error.message);
     return 1;
+  }
+
+  if (options.workers) {
+    try {
+      const listed = activeWorkersFromWorkerList(readFileSync(options.workers, "utf8"));
+      wave = { ...wave, activeWorkers: [...wave.activeWorkers, ...listed] };
+    } catch (error) {
+      console.error(`cannot read workers file ${options.workers}: ${error.message}`);
+      return 1;
+    }
   }
 
   let candidates;
@@ -782,7 +1079,7 @@ export async function main(argv = process.argv.slice(2)) {
     historyDir: options.historyDir,
     learnDir: options.learnDir,
   };
-  const plan = await planWave({ wave, candidates, usageByAgent, usageByCandidate, learningOptions });
+  const plan = await planWave({ wave, candidates, usageByAgent, usageByCandidate, learningOptions, policy });
   console.log(JSON.stringify(plan, null, 2));
   return 0;
 }

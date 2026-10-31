@@ -1,0 +1,256 @@
+{
+  "id": "00000000-0000-0000-0000-000000000000",
+  "ok": true,
+  "result": {
+    "workers": [
+      {
+        "dispatchId": "ctx_test1",
+        "taskId": "task_test1",
+        "runId": "run_test",
+        "workerState": "ready",
+        "dispatchStatus": "dispatched",
+        "agentTerminalHandle": "term_test1",
+        "terminalState": "active",
+        "resource": {
+          "id": "wtr_test1",
+          "ownershipState": "owned",
+          "releaseState": "not_requested",
+          "retainedReason": null,
+          "terminalHandle": "term_test1",
+          "worktreeId": "00000000-0000-0000-0000-000000000001::/tmp/worktree-1",
+          "endpointId": "00000000-0000-0000-0000-000000000001",
+          "endpointIncarnation": "00000000-0000-0000-0000-000000000001::/tmp/worktree-1@@0:00000000-0000-0000-0000-000000000001",
+          "originDispatchId": "ctx_test1",
+          "ownerDispatchId": "ctx_test1",
+          "releaseRequestedAt": null,
+          "releaseCompletedAt": null,
+          "releaseError": null,
+          "recoveryAttemptCount": 0,
+          "lastRecoveryAt": null,
+          "archive": {
+            "source": null,
+            "status": null
+          }
+        },
+        "projection": {
+          "id": "ctx_test1",
+          "dispatchId": "ctx_test1",
+          "taskId": "task_test1",
+          "runId": "run_test",
+          "role": "worker",
+          "parent": null,
+          "provider": {
+            "id": "codex",
+            "model": "gpt-6.1-terra"
+          },
+          "host": {
+            "kind": "local",
+            "id": "local"
+          },
+          "workspace": {
+            "id": "00000000-0000-0000-0000-000000000001::/tmp/worktree-1",
+            "kind": "folder_or_worktree"
+          },
+          "stage": {
+            "worker": "ready",
+            "dispatch": "dispatched",
+            "detail": "input_accepted",
+            "activity": "working"
+          },
+          "outcome": "in_progress",
+          "liveness": {
+            "verdict": "live",
+            "observedAt": 1793467567360,
+            "source": "agent_status"
+          },
+          "evidence": {
+            "durable": true,
+            "liveStatus": "fresh",
+            "lastObservedAt": 1793467567360
+          },
+          "resource": {
+            "state": "owned"
+          },
+          "nextAction": {
+            "kind": "none",
+            "argv": []
+          },
+          "attention": {
+            "categories": [],
+            "requiresAction": false
+          }
+        }
+      },
+      {
+        "dispatchId": "ctx_test2",
+        "taskId": "task_test2",
+        "runId": "run_test",
+        "workerState": "ready",
+        "dispatchStatus": "dispatched",
+        "agentTerminalHandle": "term_test2",
+        "terminalState": "active",
+        "resource": {
+          "id": "wtr_test2",
+          "ownershipState": "owned",
+          "releaseState": "not_requested",
+          "retainedReason": null,
+          "terminalHandle": "term_test2",
+          "worktreeId": "00000000-0000-0000-0000-000000000002::/tmp/worktree-2",
+          "endpointId": "00000000-0000-0000-0000-000000000002",
+          "endpointIncarnation": "00000000-0000-0000-0000-000000000002::/tmp/worktree-2@@0:00000000-0000-0000-0000-000000000002",
+          "originDispatchId": "ctx_test2",
+          "ownerDispatchId": "ctx_test2",
+          "releaseRequestedAt": null,
+          "releaseCompletedAt": null,
+          "releaseError": null,
+          "recoveryAttemptCount": 0,
+          "lastRecoveryAt": null,
+          "archive": {
+            "source": null,
+            "status": null
+          }
+        },
+        "projection": {
+          "id": "ctx_test2",
+          "dispatchId": "ctx_test2",
+          "taskId": "task_test2",
+          "runId": "run_test",
+          "role": "worker",
+          "parent": null,
+          "provider": {
+            "id": "antigravity",
+            "model": null
+          },
+          "host": {
+            "kind": "local",
+            "id": "local"
+          },
+          "workspace": {
+            "id": "00000000-0000-0000-0000-000000000002::/tmp/worktree-2",
+            "kind": "folder_or_worktree"
+          },
+          "stage": {
+            "worker": "ready",
+            "dispatch": "dispatched",
+            "detail": "input_accepted",
+            "activity": "working"
+          },
+          "outcome": "in_progress",
+          "liveness": {
+            "verdict": "live",
+            "observedAt": 1793467568649,
+            "source": "agent_status"
+          },
+          "evidence": {
+            "durable": true,
+            "liveStatus": "fresh",
+            "lastObservedAt": 1793467568649
+          },
+          "resource": {
+            "state": "owned"
+          },
+          "nextAction": {
+            "kind": "none",
+            "argv": []
+          },
+          "attention": {
+            "categories": [],
+            "requiresAction": false
+          }
+        }
+      },
+      {
+        "dispatchId": "ctx_test3",
+        "taskId": "task_test3",
+        "runId": "run_test",
+        "workerState": "succeeded",
+        "dispatchStatus": "completed",
+        "agentTerminalHandle": "term_test3",
+        "terminalState": "released",
+        "resource": {
+          "id": "wtr_test3",
+          "ownershipState": "released",
+          "releaseState": "released",
+          "retainedReason": null,
+          "terminalHandle": "term_test3",
+          "worktreeId": "00000000-0000-0000-0000-000000000003::/tmp/worktree-3",
+          "endpointId": "00000000-0000-0000-0000-000000000003",
+          "endpointIncarnation": "00000000-0000-0000-0000-000000000003::/tmp/worktree-3@@0:00000000-0000-0000-0000-000000000003",
+          "originDispatchId": "ctx_test3",
+          "ownerDispatchId": "ctx_test3",
+          "releaseRequestedAt": "2026-10-31 14:40:38",
+          "releaseCompletedAt": "2026-10-31 14:40:38",
+          "releaseError": null,
+          "recoveryAttemptCount": 0,
+          "lastRecoveryAt": null,
+          "archive": {
+            "source": "terminal",
+            "status": "captured"
+          }
+        },
+        "projection": {
+          "id": "ctx_test3",
+          "dispatchId": "ctx_test3",
+          "taskId": "task_test3",
+          "runId": "run_test",
+          "role": "worker",
+          "parent": null,
+          "provider": null,
+          "host": {
+            "kind": "local",
+            "id": "local"
+          },
+          "workspace": {
+            "id": "00000000-0000-0000-0000-000000000003::/tmp/worktree-3",
+            "kind": "folder_or_worktree"
+          },
+          "stage": {
+            "worker": "succeeded",
+            "dispatch": "completed",
+            "detail": "settled",
+            "activity": "unknown"
+          },
+          "outcome": "succeeded",
+          "liveness": {
+            "verdict": "exited",
+            "source": "resource_release"
+          },
+          "evidence": {
+            "durable": true,
+            "liveStatus": "unavailable",
+            "lastObservedAt": null
+          },
+          "resource": {
+            "state": "released"
+          },
+          "nextAction": {
+            "kind": "none",
+            "argv": []
+          },
+          "attention": {
+            "categories": [
+              "root_completion"
+            ],
+            "requiresAction": false
+          }
+        }
+      }
+    ],
+    "counts": {
+      "active": 2,
+      "reclaimable": 0,
+      "retained": 0,
+      "released": 1
+    },
+    "page": {
+      "limit": 100,
+      "total": 3,
+      "hasMore": false,
+      "nextCursor": null
+    },
+    "warnings": [],
+    "scope": {
+      "source": "all"
+    }
+  }
+}
