@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PROVIDERS, usageForPlanning } from "./orca-usage.mjs";
-import { loadCandidates, recommend } from "./orca-recommend.mjs";
+import { loadCandidates, parseChoice, recommend } from "./orca-recommend.mjs";
 
 const REQUIREMENTS = ["mechanical", "standard", "reasoning-heavy"];
 const DEFAULT_CONCURRENCY = 3;
@@ -30,7 +30,7 @@ Histories and transcripts are never sent to Jev.
   --no-learning    Capability-and-usage baseline only; still shows baselineRecommendation per task.
 
 Takes a fresh usage reading first for each agent scripts/orca-usage.mjs collects (Claude, Codex,
-Cursor and Antigravity). A failed or unknown reading stays unknown or unavailable and is not capacity.
+Cursor, Antigravity and OpenCode). A failed or unknown reading stays unknown or unavailable and is not capacity.
 Shared allowances list active and proposed workers; percentages are not compared across providers and
 capacity is never reserved. Learning may reorder within a capability tier when comparable outcomes
 exist; see docs/agents/learned-adjustments.md.
@@ -129,11 +129,11 @@ export function parseWave(text, cli = {}) {
     }
     const eligible = (task.eligible ?? []).map((value, j) => {
       if (typeof value !== "string") throw new Error(`tasks[${i}].eligible[${j}] must be a string`);
-      const parts = value.split("/");
-      if (parts.length < 2 || parts.length > 3 || parts.some((part) => !part)) {
+      const choice = parseChoice(value);
+      if (!choice) {
         throw new Error(`tasks[${i}].eligible[${j}] must be <agent>/<model>[/<effort>]`);
       }
-      return { agent: parts[0], model: parts[1], effort: parts[2] ?? null };
+      return choice;
     });
     return {
       id: String(task.id),

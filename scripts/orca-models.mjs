@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 // parseBaseline is enough: discovery only needs the verified table rows, not loadCandidates.
-import { parseBaseline } from "./orca-recommend.mjs";
+import { parseBaseline, parseChoice } from "./orca-recommend.mjs";
 import { defaultStateDir, PROVIDERS } from "./orca-usage.mjs";
 import { applicableWindows, resolveModelFamily } from "./antigravity-usage.mjs";
 import { evaluateCursorObservation } from "./cursor-usage.mjs";
 import { scrub } from "./usage-common.mjs";
+import { configuredModel, OPENCODE_MODEL, readOpencodeConfig } from "./opencode-config.mjs";
 
 // ORCA_MODELS_PROVIDER_TIMEOUT_MS overrides the per-provider deadline (tests).
 const PROVIDER_TIMEOUT_MS = (() => {
@@ -22,7 +24,7 @@ const USAGE = `Usage: node scripts/orca-models.mjs list [--json]
 function run(command, args, timeout) {
   return new Promise((resolve) => {
     execFile(command, args, { encoding: "utf8", timeout, killSignal: "SIGKILL", maxBuffer: 2 * 1024 * 1024 }, (error, stdout) => {
-      resolve(error ? { error: error.killed ? "timed out" : "command failed" } : { stdout });
+      resolve(error ? { error: error.killed ? "timed out" : "command failed", notFound: error.code === "ENOENT" } : { stdout });
     });
   });
 }
@@ -45,6 +47,21 @@ function documentedModels(candidates, agent) {
 }
 
 async function discover(agent, candidates) {
+  if (agent === "opencode") {
+    let result = await run("opencode", ["models"], PROVIDER_TIMEOUT_MS);
+    if (result.notFound) result = await run(path.join(os.homedir(), ".opencode", "bin", "opencode"), ["models"], PROVIDER_TIMEOUT_MS);
+    if (result.error) return { status: "unavailable", message: result.error, models: [], count: 0 };
+    let config;
+    try { config = readOpencodeConfig(); } catch { /* no configured provider */ }
+    const usable = configuredModel(config);
+    const ids = new Set(result.stdout.split(/\r?\n/).map((line) => line.trim()).filter((id) => /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(id) && scrub(id) === id));
+    const models = [...ids].map((id) => {
+      const permitted = usable && id === OPENCODE_MODEL;
+      const reason = permitted ? null : id.startsWith("openai/") ? "built-in without credentials" : "not the configured default model";
+      return { id, label: id, usable: permitted, reason };
+    });
+    return models.length ? { status: "ok", models, count: models.length } : { status: "unavailable", message: "no models found in provider output", models, count: 0 };
+  }
   if (agent === "antigravity" || agent === "cursor") {
     const result = await run(agent === "antigravity" ? "agy" : "agent", agent === "antigravity" ? ["models"] : ["--list-models"], PROVIDER_TIMEOUT_MS);
     if (result.error) return { status: "unavailable", message: result.error, models: [], count: 0 };
@@ -67,7 +84,7 @@ async function discover(agent, candidates) {
 }
 
 async function listProviders(candidates) {
-  const agents = ["antigravity", "cursor", "claude", "codex"];
+  const agents = ["antigravity", "cursor", "claude", "codex", "opencode"];
   return Object.fromEntries(await Promise.all(agents.map(async (agent) => [agent, await discover(agent, candidates)])));
 }
 
@@ -82,7 +99,7 @@ function collectorReadings() {
       try {
         const newest = latest.get(name);
         const parsed = newest ? JSON.parse(newest.observation) : null;
-        if (["unknown_account", "account_mismatch"].includes(parsed?.status)) return [name, parsed];
+        if (["unknown_account", "account_mismatch"].includes(parsed?.status) || (name === "opencode" && parsed?.status !== "available")) return [name, parsed];
         const good = usable.get(name);
         return [name, good ? JSON.parse(good.observation) : parsed];
       } catch {
@@ -117,6 +134,8 @@ function candidateDetails(agent, model, reading, verified) {
         buckets = [bucket, ...(assessment.buckets ?? []).map((window) => window.id).filter((id) => id === "included_total")];
       }
     } catch { /* unknown bucket */ }
+  } else if (agent === "opencode") {
+    buckets = (assessment.buckets ?? []).map((bucket) => bucket.id).filter(Boolean);
   } else if (agent === "claude" || agent === "codex") {
     buckets = (assessment.buckets ?? []).map((bucket) => bucket.id).filter(Boolean);
     if (!buckets.length && verified) buckets = [agent === "claude" ? "Claude session/week" : "Codex allowance"];
@@ -135,7 +154,7 @@ function printList(providers) {
   for (const [agent, provider] of Object.entries(providers)) {
     console.log(`${agent}: ${provider.count} models${provider.message ? ` (${provider.message})` : ""}`);
     if (agent === "cursor") console.log(`  Cursor Models bucket (${provider.freeBucketModels.length}): ${provider.freeBucketModels.join(", ") || "none mapped"}`);
-    for (const model of provider.models) console.log(`  ${model.id} - ${model.label}`);
+    for (const model of provider.models) console.log(`  ${model.id} - ${model.label}${model.usable === false ? ` (unusable: ${model.reason})` : ""}`);
   }
 }
 
@@ -147,7 +166,7 @@ function printDiff(providers, candidates, readings) {
     for (const model of provider.models) {
       const entry = verified.get(model.id);
       const usage = candidateDetails(agent, model.id, readings[agent], Boolean(entry));
-      const flags = [!usage.buckets.length ? "UNMAPPED" : null, !entry && ["fresh", "low"].includes(usage.status) && usage.buckets.length ? "CANDIDATE" : null].filter(Boolean);
+      const flags = [model.usable === false ? `UNUSABLE (${model.reason})` : null, !usage.buckets.length ? "UNMAPPED" : null, model.usable !== false && !entry && ["fresh", "low"].includes(usage.status) && usage.buckets.length ? "CANDIDATE" : null].filter(Boolean);
       console.log(`  ${agent}/${model.id} ${entry ? `verified (${entry.capability})` : "UNVERIFIED"} bucket=${usage.bucketLabel} usage=${usage.status}${flags.length ? ` ${flags.join(" ")}` : ""}`);
     }
     for (const [model, entry] of verified) {
@@ -165,8 +184,11 @@ function shellQuote(value) {
 }
 
 function verify(args) {
-  const choice = /^([a-z]+)\/([A-Za-z0-9][A-Za-z0-9._-]*)$/.exec(args[0] ?? "");
-  if (!choice || !["antigravity", "cursor", "claude", "codex"].includes(choice[1])) return 2;
+  const choice = parseChoice(args[0] ?? "");
+  if (!choice || choice.effort || !["antigravity", "cursor", "claude", "codex", "opencode"].includes(choice.agent)) return 2;
+  if (choice.agent === "opencode") {
+    try { if (choice.model !== OPENCODE_MODEL || !configuredModel(readOpencodeConfig())) return 2; } catch { return 2; }
+  } else if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(choice.model)) return 2;
   let base = "main";
   let directory;
   const seen = new Set();
@@ -178,8 +200,9 @@ function verify(args) {
     if (flag === "--base") base = value;
     else directory = value;
   }
-  const [, agent, model] = choice;
-  const filename = `model-verification-${agent}-${model}.md`;
+  const { agent, model } = choice;
+  const safeModel = model.replaceAll("/", "-");
+  const filename = `model-verification-${agent}-${safeModel}.md`;
   const specFile = directory ? path.join(directory, filename) : filename;
   const spec = `# Read-only model verification
 
@@ -194,7 +217,7 @@ Make no changes to files, git, or external systems; do not launch workers.
     mkdirSync(directory, { recursive: true });
     writeFileSync(specFile, spec, { flag: "wx" });
   }
-  const launch = ["scripts/orca-spawn.sh", "--spec-file", specFile, "--name", `verify-model-${agent}-${model}`, "--base", base, "--agent", agent, "--model", model].map(shellQuote).join(" ");
+  const launch = ["scripts/orca-spawn.sh", "--spec-file", specFile, "--name", `verify-model-${agent}-${safeModel}`, "--base", base, "--agent", agent, "--model", model].map(shellQuote).join(" ");
   console.log(`${directory ? "Spec written to" : "Save this spec to"} ${specFile} before a real launch.\n\n${launch}\n\n${spec}`);
   return 0;
 }
