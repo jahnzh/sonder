@@ -65,6 +65,36 @@ test("it installs an enabled service that starts with the machine and runs this 
   }
 });
 
+test("the service PATH also reaches agy, so the Antigravity reader can start it", () => {
+  const box = sandbox();
+  try {
+    const agyBin = join(box.dir, "agy-bin");
+    mkdirSync(agyBin);
+    stub(agyBin, "agy", "exit 0");
+    const run = spawnSync("bash", [box.installer], {
+      encoding: "utf8",
+      env: { ...process.env, HOME: box.home, XDG_CONFIG_HOME: "", PATH: `${box.bin}:${agyBin}:${process.env.PATH}` },
+    });
+    assert.equal(run.status, 0, run.stderr);
+    const unit = readFileSync(box.unit, "utf8");
+    const path = unit.match(/^Environment=PATH=(.*)$/m)[1].split(":");
+    assert.ok(path.includes(agyBin), `the service PATH must hold the agy directory: ${path.join(":")}`);
+    assert.ok(path.includes(box.bin), "codex stays reachable");
+  } finally {
+    clean(box);
+  }
+});
+
+test("a machine without agy still installs, because the other readers do not need it", () => {
+  const box = sandbox();
+  try {
+    const run = install(box);
+    assert.equal(run.status, 0, run.stderr);
+  } finally {
+    clean(box);
+  }
+});
+
 test("--print shows the unit and changes nothing", () => {
   const box = sandbox();
   try {

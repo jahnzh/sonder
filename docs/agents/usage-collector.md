@@ -19,7 +19,7 @@ scripts/install-usage-collector.sh           # installs, enables and restarts th
 scripts/install-usage-collector.sh --print   # shows the unit and changes nothing
 ```
 
-The installer writes `~/.config/systemd/user/orca-usage-collector.service`, which runs the scripts in place, so a worktree is refused. It records the current `node` and `codex` paths: rerun it after changing Node version or moving `codex`, and after pulling new collector code. A user service starts at boot only with lingering on (`loginctl show-user $USER --property=Linger`); the installer warns if it is off.
+The installer writes `~/.config/systemd/user/orca-usage-collector.service`, which runs the scripts in place, so a worktree is refused. It records the current `node`, `codex` and (when present) `agy` paths: rerun it after changing Node version or moving `codex`, and after pulling new collector code. A user service starts at boot only with lingering on (`loginctl show-user $USER --property=Linger`); the installer warns if it is off.
 
 To remove it: `systemctl --user disable --now orca-usage-collector.service`, then delete the unit file. The history stays until you delete it.
 

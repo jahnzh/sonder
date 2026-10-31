@@ -50,7 +50,14 @@ codex_path="$(command -v codex)" || {
 }
 
 # The service has none of the login shell's PATH, and codex is a node script.
+# agy (the Antigravity reader's CLI) is optional: without it that reader reports cli_not_found.
 service_path="$(dirname "$codex_path"):$(dirname "$node_path"):/usr/local/bin:/usr/bin:/bin"
+if agy_path="$(command -v agy)"; then
+  case ":$service_path:" in
+    *":$(dirname "$agy_path"):"*) ;;
+    *) service_path="$service_path:$(dirname "$agy_path")" ;;
+  esac
+fi
 rendered="$(sed -e "s|@REPO@|$repo|g" -e "s|@NODE@|$node_path|g" -e "s|@PATH@|$service_path|g" "$repo/deploy/$UNIT")"
 
 if [ "$print_only" = true ]; then
