@@ -940,6 +940,17 @@ test("computeLifetimeBucketCost calculates bucket delta from UsageStore observat
     });
     assert.equal(staleCost.status, "unavailable");
 
+    // Same-reading returns unavailable instead of recording spurious 0 delta
+    const sameReadingCost = computeLifetimeBucketCost({
+      agent: "antigravity",
+      model: "claude-sonnet-5-5-medium",
+      dispatchedAt: "2026-10-31T19:20:10.000Z",
+      completedAt: "2026-10-31T19:20:40.000Z",
+      usageStore: store,
+    });
+    assert.equal(sameReadingCost.status, "unavailable");
+    assert.match(sameReadingCost.reason, /no usable after reading|no observation followed worker completion/i);
+
     store.close();
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -1023,6 +1034,17 @@ test("record-bucket-cost CLI records explicit or collector bucket cost", () => {
 
     const list = box.cli(["list"]).json;
     assert.equal(list.records[0].bucketCost, "14.5% (3p-weekly)");
+
+    // Negative delta is rejected
+    const negativeRun = box.cli(["record-bucket-cost", "--dispatch", "ctx_cost", "--delta", "-5"]);
+    assert.equal(negativeRun.status, 1);
+    assert.match(negativeRun.err, /--delta must be a non-negative number/);
+
+    // Drop in usage marks reset
+    const resetRecorded = box.cli(["record-bucket-cost", "--dispatch", "ctx_cost", "--delta", "5", "--before", "20", "--after", "10"]);
+    assert.equal(resetRecorded.json.status, "reset");
+    assert.equal(resetRecorded.json.valid, false);
+    assert.equal(resetRecorded.json.deltaPercent, null);
   } finally {
     box.cleanup();
   }

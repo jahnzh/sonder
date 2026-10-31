@@ -724,6 +724,18 @@ export function computeLifetimeBucketCost({
     };
   }
 
+  const beforeMs = Date.parse(readingBefore.observedAt);
+  const afterMs = Date.parse(readingAfter.observedAt);
+  if (
+    readingBefore.observedAt === readingAfter.observedAt ||
+    (!Number.isNaN(beforeMs) && !Number.isNaN(afterMs) && afterMs <= beforeMs)
+  ) {
+    return {
+      status: "unavailable",
+      reason: "before and after resolved to the same reading; no observation followed worker completion",
+    };
+  }
+
   const accountBefore = readingBefore.observation?.account;
   const accountAfter = readingAfter.observation?.account;
   if (accountBefore && accountAfter && accountBefore !== accountAfter) {
@@ -805,19 +817,20 @@ function recordBucketCost(store, options, env, now) {
   let cost = null;
   if (options.delta !== undefined) {
     const delta = Number(options.delta);
-    if (!Number.isFinite(delta)) throw new HistoryError("--delta must be a number");
+    if (!Number.isFinite(delta) || delta < 0) throw new HistoryError("--delta must be a non-negative number");
     const bucketId = options.bucket ?? documentedLastingBucketId(record.agent.name, record.agent.effectiveModel) ?? UNKNOWN;
     const before = options.before !== undefined ? Number(options.before) : null;
     const after = options.after !== undefined ? Number(options.after) : null;
+    const isReset = before !== null && after !== null && after < before - 0.5;
     cost = {
-      status: "recorded",
+      status: isReset ? "reset" : "recorded",
       bucketId,
       usedPercentBefore: before,
       usedPercentAfter: after,
-      deltaPercent: delta,
+      deltaPercent: isReset ? null : Math.max(0, delta),
       observedBeforeAt: record.lifecycle.dispatchedAt ?? now,
       observedAfterAt: record.lifecycle.completedAt ?? now,
-      valid: true,
+      valid: !isReset,
       note: options.evidence ?? null,
     };
   } else {

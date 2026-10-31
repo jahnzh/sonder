@@ -574,6 +574,38 @@ test("expectedShareFor and expectedShareDetailsFor prioritize learned share over
     null,
     "allowed with learned share 18.5%",
   );
+
+  // Insufficient adjustment does not override policy share
+  const uncertainLearning = {
+    adjustments: [
+      {
+        agent: "antigravity",
+        model: "claude-opus-5-5-high",
+        effort: null,
+        meanBucketDeltaPercent: 18.5,
+        bucketDeltaCount: 3,
+        sufficient: false,
+      },
+    ],
+  };
+  assert.equal(expectedShareFor(p, candidate, uncertainLearning), 35);
+  assert.deepEqual(expectedShareDetailsFor(p, candidate, uncertainLearning), { percent: 35, source: "policy" });
+
+  // Insufficient bucket delta count does not override policy share
+  const lowSampleLearning = {
+    adjustments: [
+      {
+        agent: "antigravity",
+        model: "claude-opus-5-5-high",
+        effort: null,
+        meanBucketDeltaPercent: 18.5,
+        bucketDeltaCount: 1,
+        rule: { minBucketDeltaCount: 2 },
+      },
+    ],
+  };
+  assert.equal(expectedShareFor(p, candidate, lowSampleLearning), 35);
+  assert.deepEqual(expectedShareDetailsFor(p, candidate, lowSampleLearning), { percent: 35, source: "policy" });
 });
 
 test("planWave propagates expectedShareSource to task assignment", async () => {

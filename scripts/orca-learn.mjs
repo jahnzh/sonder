@@ -12,6 +12,7 @@ import { defaultDir as defaultHistoryDir, mainCheckoutRoot, openStore, viewRecor
 export const SCHEMA = 1;
 export const MIN_COMPARABLE_COUNT = 3;
 export const MIN_WEIGHTED_EVIDENCE = 2;
+export const MIN_BUCKET_DELTA_COUNT = 1;
 export const HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000;
 export const EXPLORATION_RATE = 0.1;
 export const UNKNOWN = "unknown";
@@ -479,6 +480,7 @@ export function buildAdjustments(evidence, filter = {}) {
       rule: {
         minComparableCount: MIN_COMPARABLE_COUNT,
         minWeightedEvidence: MIN_WEIGHTED_EVIDENCE,
+        minBucketDeltaCount: MIN_BUCKET_DELTA_COUNT,
         halfLifeDays: HALF_LIFE_MS / (24 * 60 * 60 * 1000),
       },
       evidence: bucket.outcomes,
@@ -530,6 +532,7 @@ export function loadLearningContext({
     rule: {
       minComparableCount: MIN_COMPARABLE_COUNT,
       minWeightedEvidence: MIN_WEIGHTED_EVIDENCE,
+      minBucketDeltaCount: MIN_BUCKET_DELTA_COUNT,
       halfLifeDays: HALF_LIFE_MS / (24 * 60 * 60 * 1000),
       explorationRate: EXPLORATION_RATE,
       comparability: "agent|model|effort|agentVersion|kind|difficulty",

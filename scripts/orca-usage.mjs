@@ -370,18 +370,8 @@ export class UsageStore {
     const row = this.db.prepare(query).get(...args);
     if (row) {
       const obsMs = Date.parse(row.observed_at);
-      if (!Number.isNaN(obsMs) && Math.abs(obsMs - targetMs) <= maxDistanceMs) {
+      if (!Number.isNaN(obsMs) && obsMs - targetMs <= maxDistanceMs) {
         return { observation: parseObservation(row.observation), observedAt: row.observed_at };
-      }
-    }
-    const prevQuery = account
-      ? "SELECT observation, observed_at FROM readings WHERE provider = ? AND account = ? AND usable = 1 AND observed_at < ? ORDER BY observed_at DESC, id DESC LIMIT 1"
-      : "SELECT observation, observed_at FROM readings WHERE provider = ? AND usable = 1 AND observed_at < ? ORDER BY observed_at DESC, id DESC LIMIT 1";
-    const prevRow = this.db.prepare(prevQuery).get(...args);
-    if (prevRow) {
-      const prevMs = Date.parse(prevRow.observed_at);
-      if (!Number.isNaN(prevMs) && targetMs - prevMs <= maxDistanceMs) {
-        return { observation: parseObservation(prevRow.observation), observedAt: prevRow.observed_at };
       }
     }
     return null;

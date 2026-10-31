@@ -856,7 +856,7 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
     if (policy.allow) {
       const floorSkip = burnPressure(usage, policy, now).skip;
       if (floorSkip) deviationNotes.push(`bypasses safety floor: ${floorSkip}`);
-      const shareSkip = expectedShareSkip(usage, policy, sanitizedOptions.override, now);
+      const shareSkip = expectedShareSkip(usage, policy, sanitizedOptions.override, now, { learning: learningContext });
       if (shareSkip && shareSkip !== floorSkip) deviationNotes.push(`bypasses expected share: ${shareSkip}`);
     }
     if (sanitizedOptions.reviewOf && policy.reviewerOnDifferentPool) {

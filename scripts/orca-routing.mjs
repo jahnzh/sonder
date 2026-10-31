@@ -260,23 +260,28 @@ export function policyVerdict(policy, candidate) {
  * @param {{ kind?: string | null, difficulty?: string | null }} [filter]
  * @returns {number | null}
  */
-export function learnedBucketShareFrom(learning, candidate, { kind = null, difficulty = null } = {}) {
+export function learnedBucketShareFrom(learning, candidate, { kind = null, difficulty = null, minBucketDeltaCount = null } = {}) {
   if (!learning || !candidate) return null;
   if (typeof learning === "number") return learning;
   const adjustments = learning.adjustments ?? (Array.isArray(learning) ? learning : null);
   if (!adjustments || !Array.isArray(adjustments)) return null;
+  const targetKind = kind ?? candidate.kind ?? null;
+  const targetDiff = difficulty ?? candidate.difficulty ?? null;
   const matches = adjustments.filter(
     (adj) =>
       adj.agent === candidate.agent &&
       adj.model === candidate.model &&
       (candidate.effort === undefined || candidate.effort === null || adj.effort === candidate.effort || adj.effort === null) &&
+      (adj.sufficient === undefined || adj.sufficient === true) &&
       typeof adj.meanBucketDeltaPercent === "number" &&
+      Number.isFinite(adj.meanBucketDeltaPercent) &&
+      adj.bucketDeltaCount >= (minBucketDeltaCount ?? adj.rule?.minBucketDeltaCount ?? 1) &&
       adj.bucketDeltaCount > 0,
   );
   if (!matches.length) return null;
-  if (kind || difficulty) {
+  if (targetKind || targetDiff) {
     const contextual = matches.find(
-      (adj) => (!kind || adj.kind === kind) && (!difficulty || adj.difficulty === difficulty),
+      (adj) => (!targetKind || adj.kind === targetKind) && (!targetDiff || adj.difficulty === targetDiff),
     );
     if (contextual) return contextual.meanBucketDeltaPercent;
   }
@@ -425,7 +430,8 @@ function bindingFromUsageBuckets(usage, policy, now) {
  * pick cannot overdraw headroom reserved by an earlier proposal.
  * @returns {string | null} skip reason
  */
-export function expectedShareSkip(usage, policy, candidate, now = new Date(), { committedPercent = 0, learning = null } = {}) {
+export function expectedShareSkip(usage, policy, candidate, now = new Date(), options = {}) {
+  const { committedPercent = 0, learning = null } = options ?? {};
   const pressure = burnPressure(usage, policy, now);
   let binding = pressure.binding;
   if (pressure.skip) return pressure.skip;
