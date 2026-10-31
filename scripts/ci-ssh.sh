@@ -15,7 +15,9 @@
 # SONDER_CI_POST_STATUS (0 skips the GitHub status), SONDER_CI_MAX_WAIT (seconds,
 # default 1800), SONDER_CI_POLL_INTERVAL (seconds, default 15),
 # SONDER_CI_REMOTE_BASE (default /tmp), SONDER_CI_LOOPBACK_PORT (default 4399),
-# SONDER_CI_KNOWN_FAILURES (repository path, default tests/known-failures.wsl-host.json).
+# SONDER_CI_KNOWN_FAILURES (repository path, default tests/known-failures.wsl-host.json),
+# SONDER_CI_DISPATCH (when set, records the finished check on that worker history
+# dispatch; a recording failure warns only and never changes the exit code).
 #
 # No `set -e`: every step handles its own failure so a failing step can never
 # skip the code that records the outcome.
@@ -56,6 +58,8 @@ SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=5 -o Serve
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT" || exit 1
+# shellcheck source=lib/ci-history.sh
+source "$ROOT/scripts/lib/ci-history.sh"
 
 if ! FULL_SHA=$(git rev-parse --verify "${REQUESTED_REF}^{commit}" 2>/dev/null); then
   echo "[ci-ssh] Invalid commit ref: ${REQUESTED_REF}" >&2
@@ -553,4 +557,5 @@ else
 fi
 
 log "Artifacts: ${LOCAL_REPORT_DIR}"
+record_history_check ci:ssh
 exit "$FINAL_EXIT"

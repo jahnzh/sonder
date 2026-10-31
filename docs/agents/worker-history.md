@@ -13,22 +13,23 @@ node scripts/orca-history.mjs delete --id <id>      # one record with its transc
 node scripts/orca-history.mjs delete --all --yes
 ```
 
-Run `--help` for every option. The directory is `--dir`, else `ORCA_HISTORY_DIR`, else `artifacts/orca/history` (gitignored). Each record is one JSON file named for the dispatch, so it survives restarts and is replaced atomically. Files are readable only by the owner.
+Run `--help` for every option. The directory is `--dir`, else `ORCA_HISTORY_DIR`, else `artifacts/orca/history` under the main checkout (gitignored). The main checkout is the parent of `git rev-parse --git-common-dir`, so a capture from the main tree and a `record-check` from a worker worktree share one store; outside a git repository the current checkout is used. Each record is one JSON file named for the dispatch, so it survives restarts and is replaced atomically. Files are readable only by the owner.
 
 ## When to capture
 
 ### Automatic
 
-Orca has no lifecycle hook of its own. The repository entry points trigger capture:
+Orca has no lifecycle hook of its own. The repository entry points trigger capture and the safe follow-ups:
 
-- `scripts/orca-spawn.sh` runs `orca-history.mjs capture --dispatch <id>` after a successful `worker-start`. A capture failure is a warning only; the worker keeps running. Set `ORCA_HISTORY_AUTO=0` to skip.
-- `scripts/orca-check.mjs` runs the same capture for every `worker_done` whose payload includes `dispatchId`. A capture failure is printed to stderr and does not change the check exit code. Capture before `worker-release` so Orca can still read the transcript.
+- `scripts/orca-spawn.sh` runs `orca-history.mjs capture --dispatch <id>` after a successful `worker-start`. Optional `--fix-of <dispatch>` / `--review-of <dispatch>` then run `link` (kinds `fix_of` / `review_of`, evidence `orca-spawn --fix-of` / `orca-spawn --review-of`). Failures are warnings only; the worker keeps running. Set `ORCA_HISTORY_AUTO=0` to skip.
+- `scripts/orca-check.mjs` runs the same capture for every `worker_done` whose payload includes `dispatchId`. When the `worker_done` body includes a line `Findings: blocking=N high=N medium=N low=N` and the reviewing dispatch has a `review_of` link (from spawn `--review-of`), it runs `record-review` on the reviewed dispatch with `--reviewer-dispatch`; without the line or without a link it records nothing and prints one reminder. Failures are printed to stderr and do not change the check exit code. Capture before `worker-release` so Orca can still read the transcript.
+- `scripts/ci-deck.sh` / `scripts/ci-ssh.sh` run `record-check` (names `ci:deck` / `ci:ssh`) when `SONDER_CI_DISPATCH` is set. Result is `pass`, `pass_with_known_failures`, `fail` or `unknown` from the run's result and `report.json` knownFailures. Unset `SONDER_CI_DISPATCH` is a no-op. A recording failure warns only and never changes the CI exit code.
 
 Automatic capture does not pass `--recommendation`, `--kind`, `--files` or `--agent-version`. Capturing is repeatable: a later manual capture merges, appends a lifecycle event only when the state changed, and never replaces a known value with `unknown`.
 
 ### Manual
 
-Attach the recommendation, record checks, reviews and links as they happen:
+Attach the recommendation (still manual). Re-record a check, review or link by hand when the automatic path did not apply:
 
 ```sh
 node scripts/orca-recommend.mjs --task <n> --summary "<…>" --kind feature > artifacts/orca/recommend-<n>.json   # at selection time
@@ -77,5 +78,5 @@ Transcripts are for investigating a past outcome. `list` and `show` never print 
 
 ## Not covered
 
-- Recommendation attachment, checks, reviews and links stay manual; only the lifecycle `capture` itself is automatic via `orca-spawn` and `orca-check`.
+- Recommendation attachment stays manual; lifecycle capture, CI `record-check` (via `SONDER_CI_DISPATCH`), Findings-line `record-review`, and spawn `--fix-of` / `--review-of` links are automatic.
 - Concurrent writers to one record are not coordinated beyond atomic replacement; capture one dispatch at a time.

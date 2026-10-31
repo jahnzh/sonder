@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -15,7 +16,30 @@ A delivery that holds only heartbeats is acknowledged and the wait continues; a 
 printed without its heartbeats and left for the caller to ack. When only heartbeats arrived, the count line ends
 with heartbeats=<n>. --heartbeats prints every delivery as Orca returns it and acks nothing.
 Each worker_done whose payload names a dispatchId also runs orca-history capture for that dispatch; a capture
-failure is printed to stderr and does not change the check exit code.`);
+failure is printed to stderr and does not change the check exit code.
+A worker_done body that includes a line \`Findings: blocking=N high=N medium=N low=N\` also records
+record-review on the dispatch named by that reviewer's review_of link (with --reviewer-dispatch);
+without the line or without a review_of link, nothing is recorded and one reminder is printed.`);
+}
+
+/** Exact line reviewers emit in the worker_done body so orca-check can record-review automatically. */
+export const FINDINGS_LINE_RE =
+  /^Findings:\s*blocking=(\d+)\s+high=(\d+)\s+medium=(\d+)\s+low=(\d+)\s*$/m;
+
+/**
+ * @param {unknown} text
+ * @returns {{ blocking: number, high: number, medium: number, low: number } | null}
+ */
+export function parseFindingsLine(text) {
+  if (typeof text !== "string") return null;
+  const match = text.match(FINDINGS_LINE_RE);
+  if (!match) return null;
+  return {
+    blocking: Number(match[1]),
+    high: Number(match[2]),
+    medium: Number(match[3]),
+    low: Number(match[4]),
+  };
 }
 
 /**
@@ -205,7 +229,138 @@ export function autoCaptureWorkerDone(messages, hooks = {}) {
   }
 }
 
+/** Same allowlist as scripts/orca-history.mjs requireId / safeId. */
+const SAFE_HISTORY_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+function historyDir(env = process.env) {
+  if (env.ORCA_HISTORY_DIR?.trim()) return env.ORCA_HISTORY_DIR;
+  return path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "artifacts", "orca", "history");
+}
+
 /**
+ * The dispatch a reviewer was linked to via `orca-spawn --review-of` (kind review_of).
+ * @param {string} reviewerDispatchId
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string | null}
+ */
+export function resolveReviewedDispatch(reviewerDispatchId, env = process.env) {
+  if (!SAFE_HISTORY_ID.test(reviewerDispatchId)) return null;
+  const file = path.join(historyDir(env), "records", `${reviewerDispatchId}.json`);
+  try {
+    const record = JSON.parse(readFileSync(file, "utf8"));
+    const links = Array.isArray(record?.links) ? record.links : [];
+    const link = links.find(
+      (entry) =>
+        entry &&
+        entry.kind === "review_of" &&
+        typeof entry.target === "string" &&
+        SAFE_HISTORY_ID.test(entry.target),
+    );
+    return link ? link.target : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Runs `orca-history record-review` on the reviewed dispatch. Failures are the caller's to swallow.
+ * When the reviewing dispatch has no review_of link, records nothing and prints one reminder.
+ * @param {string} reviewerDispatchId
+ * @param {{ blocking: number, high: number, medium: number, low: number }} findings
+ * @param {NodeJS.ProcessEnv} [env]
+ */
+export function defaultRecordReview(reviewerDispatchId, findings, env = process.env) {
+  const reviewedId = resolveReviewedDispatch(reviewerDispatchId, env);
+  if (!reviewedId) {
+    console.error(
+      `history: worker_done for ${reviewerDispatchId} has Findings but no review_of link; skipping automatic record-review`,
+    );
+    return;
+  }
+  const script = fileURLToPath(new URL("./orca-history.mjs", import.meta.url));
+  const run = spawnSync(
+    process.execPath,
+    [
+      script,
+      "record-review",
+      "--dispatch",
+      reviewedId,
+      "--reviewer-dispatch",
+      reviewerDispatchId,
+      "--blocking",
+      String(findings.blocking),
+      "--high",
+      String(findings.high),
+      "--medium",
+      String(findings.medium),
+      "--low",
+      String(findings.low),
+      "--evidence",
+      "worker_done Findings line",
+    ],
+    {
+      encoding: "utf8",
+      env,
+      timeout: 120000,
+      maxBuffer: 10 * 1024 * 1024,
+    },
+  );
+  if (run.error) throw new Error(run.error.message);
+  if (run.status !== 0) {
+    throw new Error((run.stderr || run.stdout || `record-review exited ${run.status}`).trim().slice(0, 300));
+  }
+}
+
+/**
+ * After a worker_done message, record-review when the body has a Findings line and the
+ * reviewing dispatch has a review_of link. Never throws; never changes the exit code.
+ * @param {unknown[]} messages
+ * @param {{
+ *   recordReview?: (reviewedId: string, findings: { blocking: number, high: number, medium: number, low: number }, reviewerId: string) => void,
+ *   resolveReviewedDispatch?: (reviewerId: string) => string | null,
+ * }} [hooks]
+ */
+export function autoRecordReviewWorkerDone(messages, hooks = {}) {
+  const resolve = hooks.resolveReviewedDispatch || ((id) => resolveReviewedDispatch(id));
+  for (const message of messages) {
+    if (!message || typeof message !== "object") continue;
+    if (/** @type {Record<string, unknown>} */ (message).type !== "worker_done") continue;
+    const msg = /** @type {Record<string, unknown>} */ (message);
+    const body = typeof msg.body === "string" ? msg.body : "";
+    const findings = parseFindingsLine(body);
+    const reviewerId = dispatchIdOfWorkerDone(message);
+    if (!findings) {
+      console.error(
+        `history: worker_done${reviewerId ? ` for ${reviewerId}` : ""} has no Findings line; skipping automatic record-review`,
+      );
+      continue;
+    }
+    if (!reviewerId) {
+      console.error("history: worker_done has Findings but no dispatchId; skipping automatic record-review");
+      continue;
+    }
+    try {
+      if (hooks.recordReview) {
+        const reviewedId = resolve(reviewerId);
+        if (!reviewedId) {
+          console.error(
+            `history: worker_done for ${reviewerId} has Findings but no review_of link; skipping automatic record-review`,
+          );
+          continue;
+        }
+        hooks.recordReview(reviewedId, findings, reviewerId);
+      } else {
+        defaultRecordReview(reviewerId, findings);
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      const reviewedId = resolve(reviewerId);
+      console.error(
+        `history: automatic record-review failed for ${reviewedId || reviewerId}: ${detail}`,
+      );
+    }
+  }
+}/**
  * @param {string[]} argv
  * @returns {{ ok: true, options: Record<string, unknown> } | { ok: false, error: string }}
  */
@@ -304,7 +459,7 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
 
 /**
  * @param {Record<string, unknown>} options
- * @param {{ runOrca?: (args: string[]) => { status: number | null, stdout: string, stderr: string }, now?: () => number }} [hooks]
+ * @param {{ runOrca?: (args: string[]) => { status: number | null, stdout: string, stderr: string }, now?: () => number, captureHistory?: (dispatchId: string) => void, recordReview?: (dispatchId: string, findings: { blocking: number, high: number, medium: number, low: number }) => void }} [hooks]
  */
 export function runOrcaCheck(options, hooks = {}) {
   const orca = process.env.ORCA_CLI_COMMAND || "orca";
@@ -378,8 +533,10 @@ export function runOrcaCheck(options, hooks = {}) {
     result = { ...result, messages: shown };
   }
 
-  // Lifecycle capture: every worker_done in this batch updates the history record. Failures are logged only.
-  autoCaptureWorkerDone(Array.isArray(result.messages) ? result.messages : [], hooks);
+  // Lifecycle capture and optional review findings: every worker_done updates history. Failures are logged only.
+  const batch = Array.isArray(result.messages) ? result.messages : [];
+  autoCaptureWorkerDone(batch, hooks);
+  autoRecordReviewWorkerDone(batch, hooks);
 
   const lines = [];
   const formatOpts = { hidden };

@@ -7,7 +7,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, chmodSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { defaultDir as defaultHistoryDir, openStore, viewRecord } from "./orca-history.mjs";
+import { defaultDir as defaultHistoryDir, mainCheckoutRoot, openStore, viewRecord } from "./orca-history.mjs";
 
 export const SCHEMA = 1;
 export const MIN_COMPARABLE_COUNT = 3;
@@ -32,7 +32,7 @@ a worker.
       Does not delete history records, shared usage or transcripts.
 
 Exit codes: 0 done, 1 failed, 2 bad usage.
-Reads ORCA_HISTORY_DIR and ORCA_LEARN_DIR. ORCA_LEARN_NOW / --now replaces the clock (tests).`;
+Reads ORCA_HISTORY_DIR and ORCA_LEARN_DIR (defaults: artifacts/orca/history and artifacts/orca/learning under the main checkout, shared across worktrees). ORCA_LEARN_NOW / --now replaces the clock (tests).`;
 
 const choiceName = ({ agent, model, effort }) => [agent, model, effort].filter((part) => part !== undefined && part !== null && part !== "" && part !== UNKNOWN).join("/");
 
@@ -74,7 +74,7 @@ export function parseComparabilityKey(key) {
   };
 }
 
-export function defaultLearnDir(env = process.env, repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..")) {
+export function defaultLearnDir(env = process.env, repoRoot = mainCheckoutRoot()) {
   return env.ORCA_LEARN_DIR?.trim() || path.join(repoRoot, "artifacts", "orca", "learning");
 }
 

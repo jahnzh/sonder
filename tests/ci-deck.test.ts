@@ -39,7 +39,12 @@ if [[ $1 == run && $2 == check ]]; then
   while [[ $# -gt 0 ]]; do [[ $1 == --output-dir ]] && out=$2; shift; done
   if [[ -n $out ]]; then
     mkdir -p "$out"
-    echo "{\\"ok\\":\${STUB_NPM_REPORT_OK:-true}}" >"$out/report.json"
+    result=\${STUB_NPM_REPORT_RESULT:-}
+    if [[ -n \$result ]]; then
+      echo "{\\"ok\\":\${STUB_NPM_REPORT_OK:-true},\\"result\\":\\"\$result\\"}" >"$out/report.json"
+    else
+      echo "{\\"ok\\":\${STUB_NPM_REPORT_OK:-true}}" >"$out/report.json"
+    fi
   fi
   case "\${STUB_NPM_MODE:-pass}" in
     fail) exit "\${STUB_NPM_EXIT:-7}" ;;
@@ -137,12 +142,16 @@ function fixture() {
   const bin = path.join(base, "bin");
   const remote = path.join(base, "remote");
   const podmanState = path.join(base, "podman-state");
-  fs.mkdirSync(path.join(repo, "scripts"), { recursive: true });
+  fs.mkdirSync(path.join(repo, "scripts", "lib"), { recursive: true });
   fs.mkdirSync(bin);
   fs.mkdirSync(remote);
   fs.mkdirSync(podmanState);
   fs.writeFileSync(path.join(podmanState, "image"), "");
   fs.copyFileSync(script, path.join(repo, "scripts", "ci-deck.sh"));
+  fs.copyFileSync(
+    path.resolve("scripts/lib/ci-history.sh"),
+    path.join(repo, "scripts", "lib", "ci-history.sh"),
+  );
   fs.writeFileSync(path.join(repo, "package.json"), '{"name":"fixture"}\n');
   const git = (...args: string[]) =>
     execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
@@ -502,4 +511,74 @@ test("a running Android emulator stops the run as a host failure before anything
   assert.equal(f.result(f.second).result, "host_emulator_active");
   assert.equal(f.checkCalls().length, 0);
   assert.match(f.read(f.logs.gh), /emulator running/);
+});
+
+test("without SONDER_CI_DISPATCH the finished check is not recorded in history", () => {
+  const f = fixture();
+  const historyLog = path.join(f.base, "history.log");
+  const historyStub = path.join(f.base, "history-stub.mjs");
+  fs.writeFileSync(
+    historyStub,
+    `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(historyLog)}, process.argv.slice(2).join(" ") + "\\n");\n`,
+  );
+  const out = f.run(f.second, { ORCA_HISTORY_SCRIPT: historyStub, STUB_SSH_MODE: "down" });
+  assert.equal(out.status, 0, out.output);
+  assert.equal(fs.existsSync(historyLog), false);
+});
+
+test("SONDER_CI_DISPATCH records ci:deck on the named dispatch", () => {
+  const f = fixture();
+  const historyLog = path.join(f.base, "history.log");
+  const historyStub = path.join(f.base, "history-stub.mjs");
+  fs.writeFileSync(
+    historyStub,
+    `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(historyLog)}, process.argv.slice(2).join(" ") + "\\n");\n`,
+  );
+  const out = f.run(f.second, {
+    ORCA_HISTORY_SCRIPT: historyStub,
+    SONDER_CI_DISPATCH: "ctx_worker",
+    STUB_SSH_MODE: "down",
+  });
+  assert.equal(out.status, 0, out.output);
+  const log = fs.readFileSync(historyLog, "utf8");
+  assert.match(log, new RegExp(`record-check --dispatch ctx_worker --name ci:deck --commit ${f.second} --result pass`));
+  assert.match(out.output, /history: recorded ci:deck on ctx_worker \(pass\)/);
+});
+
+test("a failed automatic history record-check does not change the ci-deck exit code", () => {
+  const f = fixture();
+  const historyStub = path.join(f.base, "history-stub.mjs");
+  fs.writeFileSync(
+    historyStub,
+    `console.error("stub record-check failed"); process.exit(1);\n`,
+  );
+  const out = f.run(f.second, {
+    ORCA_HISTORY_SCRIPT: historyStub,
+    SONDER_CI_DISPATCH: "ctx_worker",
+    STUB_SSH_MODE: "down",
+  });
+  assert.equal(out.status, 0, out.output);
+  assert.match(out.output, /warning: automatic history record-check failed/);
+});
+
+test("SONDER_CI_DISPATCH maps passed_with_known_failures from the check report", () => {
+  const f = fixture();
+  const historyLog = path.join(f.base, "history.log");
+  const historyStub = path.join(f.base, "history-stub.mjs");
+  fs.writeFileSync(
+    historyStub,
+    `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(historyLog)}, process.argv.slice(2).join(" ") + "\\n");\n`,
+  );
+  const out = f.run(f.second, {
+    ORCA_HISTORY_SCRIPT: historyStub,
+    SONDER_CI_DISPATCH: "ctx_worker",
+    STUB_SSH_MODE: "down",
+    STUB_NPM_REPORT_OK: "true",
+    STUB_NPM_REPORT_RESULT: "passed_with_known_failures",
+  });
+  assert.equal(out.status, 0, out.output);
+  assert.match(
+    fs.readFileSync(historyLog, "utf8"),
+    /record-check --dispatch ctx_worker --name ci:deck .* --result pass_with_known_failures/,
+  );
 });
