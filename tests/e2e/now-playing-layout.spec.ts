@@ -7,7 +7,9 @@ import {skipOnMobile} from "./mobile";
 const sizes=[[360,740],[390,844],[430,932],[1280,800]] as const;
 const readerCentreSizes=[[360,740],[390,844],[412,915]] as const;
 // Desktop (#122): Back to narration stays in the control row at these widths.
-const readerDesktopSizes=[[900,800],[1100,800],[1280,800]] as const;
+const readerDesktopSizes=[[900,800],[1100,800],[1280,800],[1600,800]] as const;
+// DOM / Tab order must match main at phone and desktop widths (#122 review).
+const readerOrderSizes=[[390,844],[1280,800]] as const;
 const centre=async(l:Locator)=>{const b=(await l.boundingBox())!;return {x:b.x+b.width/2,y:b.y+b.height/2,box:b};};
 async function importBook(request:APIRequestContext,title:string,withEbook:boolean){
  const response=await request.post("/api/import",{multipart:{title,author:"Layout QA",file:{name:"Narration.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
@@ -219,6 +221,43 @@ async function assertReaderTransportCentred(dialog:Locator,player:Locator){
  expect(chaptersBox.x+chaptersBox.width).toBeLessThanOrEqual(backBox.x+1);
  expect(backBox.x+backBox.width).toBeLessThanOrEqual(rewindBox.x+1);
 }
+/** Scrubber, Chapters, Back to narration, Back 30 — in that DOM index order at every width. */
+async function assertPlayerControlDomOrder(player:Locator){
+ const order=await player.evaluate((bar)=>{
+  const scrub=bar.querySelector<HTMLElement>(".reader-audio-timeline input[type=range], .reader-scrubber");
+  const chapters=bar.querySelector<HTMLElement>('[aria-label="Chapters"]');
+  const back=bar.querySelector<HTMLElement>('[aria-label="Back to narration"]');
+  const rewind=bar.querySelector<HTMLElement>('[aria-label="Back 30 seconds"]');
+  if(!scrub||!chapters||!back||!rewind)return null;
+  const all=[...bar.querySelectorAll("*")];
+  const index=(el:Element)=>all.indexOf(el);
+  return {scrub:index(scrub),chapters:index(chapters),back:index(back),rewind:index(rewind)};
+ });
+ expect(order).not.toBeNull();
+ expect(order!.scrub).toBeLessThan(order!.chapters);
+ expect(order!.chapters).toBeLessThan(order!.back);
+ expect(order!.back).toBeLessThan(order!.rewind);
+}
+/** Tab from the scrubber reaches Chapters (when shown), then Back to narration when enabled, then Back 30. */
+async function assertPlayerControlTabOrder(page:Page,player:Locator,backEnabled:boolean){
+ const scrub=player.getByRole("slider",{name:/^Seek in /});
+ await scrub.focus();
+ await expect(scrub).toBeFocused();
+ // Chapters is display:none on desktop; query the node directly so Playwright does not wait for a11y visibility.
+ const chaptersNode=player.locator(".reader-player-chapters");
+ const chaptersShown=await chaptersNode.evaluate((el)=>getComputedStyle(el).display!=="none");
+ await page.keyboard.press("Tab");
+ if(chaptersShown){
+  await expect(player.getByRole("button",{name:"Chapters",exact:true})).toBeFocused();
+  await page.keyboard.press("Tab");
+ }
+ const back=player.getByRole("button",{name:"Back to narration",exact:true});
+ if(backEnabled){
+  await expect(back).toBeFocused();
+  await page.keyboard.press("Tab");
+ }else await expect(back).toBeDisabled();
+ await expect(player.getByRole("button",{name:"Back 30 seconds",exact:true})).toBeFocused();
+}
 /** Desktop: Back to narration sits in the control row before Back 30; Chapters is the sidebar.
  *  Transport stays bar-centred (same 1fr | 560px | 1fr principle as main) in both button states. */
 async function assertDesktopBackNarration(dialog:Locator,player:Locator,width:number){
@@ -368,6 +407,64 @@ for(const size of readerDesktopSizes){
    await assertDesktopBackNarration(dialog,player,width);
    await setReadingMode(page,dialog,"Page");
   }
+ });
+}
+for(const size of readerOrderSizes){
+ test(`reader player control DOM order is scrubber then Chapters then Back to narration at ${size[0]}px`,async({page,browserName,request})=>{
+  const [width]=size;
+  if(width>=900)skipOnMobile(true,"desktop layout (min-width: 900px) is not reachable on a phone profile");
+  const {book,ebookId}=await installLayoutAlignment(request,"Layout reader");
+  const map=await(await request.get(`/api/alignments?ebookId=${ebookId}`)).json();
+  const job=map.jobs[0];
+  const detail=await(await request.get(`/api/alignments/${job.id}/map`)).json();
+  const interval=detail.intervals.find((entry:any)=>entry.section===1&&entry.start>104)||detail.intervals[0];
+  expect((await request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[0].id,position:interval.start+1,duration:book.tracks[0].duration,updatedAt:Date.now()}})).ok()).toBe(true);
+  const dialog=await open(page,browserName,"Layout reader",size);
+  const player=dialog.getByRole("region",{name:"Player",exact:true});
+  await expect(player).toBeVisible();
+  if(width<900){
+   const room=dialog.locator(".inline-reader");
+   if(await room.locator(".reader-topbar").isHidden()){
+    const box=(await room.locator(".reader-viewport").boundingBox())!;
+    await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
+   }
+  }
+  await expect(player.getByRole("slider",{name:/^Seek in /})).toBeVisible();
+  await assertPlayerControlDomOrder(player);
+ });
+ test(`reader player Tab order from scrubber reaches Chapters then Back to narration at ${size[0]}px`,async({page,browserName,request})=>{
+  skipOnMobile(true,"needs a hardware keyboard (Tab)");
+  const [width]=size;
+  const {book,ebookId}=await installLayoutAlignment(request,"Layout reader");
+  const map=await(await request.get(`/api/alignments?ebookId=${ebookId}`)).json();
+  const job=map.jobs[0];
+  const detail=await(await request.get(`/api/alignments/${job.id}/map`)).json();
+  const interval=detail.intervals.find((entry:any)=>entry.section===1&&entry.start>104)||detail.intervals[0];
+  expect((await request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[0].id,position:interval.start+1,duration:book.tracks[0].duration,updatedAt:Date.now()}})).ok()).toBe(true);
+  const dialog=await open(page,browserName,"Layout reader",size);
+  const player=dialog.getByRole("region",{name:"Player",exact:true});
+  await expect(player).toBeVisible();
+  if(width<900){
+   const room=dialog.locator(".inline-reader");
+   if(await room.locator(".reader-topbar").isHidden()){
+    const box=(await room.locator(".reader-viewport").boundingBox())!;
+    await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
+   }
+  }
+  const back=player.getByRole("button",{name:"Back to narration",exact:true});
+  await expect(back).toBeDisabled();
+  await assertPlayerControlTabOrder(page,player,false);
+  const pageBox=(await dialog.locator(".inline-reader .reader-viewport").boundingBox())!;
+  await page.mouse.click(pageBox.x+pageBox.width*0.9,pageBox.y+pageBox.height/2);
+  await expect(back).toBeEnabled();
+  if(width<900){
+   const room=dialog.locator(".inline-reader");
+   if(await room.locator(".reader-topbar").isHidden()){
+    const box=(await room.locator(".reader-viewport").boundingBox())!;
+    await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
+   }
+  }
+  await assertPlayerControlTabOrder(page,player,true);
  });
 }
 
