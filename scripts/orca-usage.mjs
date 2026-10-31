@@ -5,10 +5,26 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { assessAntigravityUsage, readAntigravityUsage } from "./antigravity-usage.mjs";
-import { assessClaudeUsage, readClaudeUsage } from "./claude-usage.mjs";
-import { assessCodexUsage, readCodexUsage } from "./codex-usage.mjs";
-import { assessCursorUsage, readCursorUsage } from "./cursor-usage.mjs";
+import {
+  assessAntigravityUsage,
+  assessCandidateUsage as assessAntigravityCandidate,
+  readAntigravityUsage,
+} from "./antigravity-usage.mjs";
+import {
+  assessClaudeUsage,
+  assessCandidateUsage as assessClaudeCandidate,
+  readClaudeUsage,
+} from "./claude-usage.mjs";
+import {
+  assessCodexUsage,
+  assessCandidateUsage as assessCodexCandidate,
+  readCodexUsage,
+} from "./codex-usage.mjs";
+import {
+  assessCursorUsage,
+  assessCandidateUsage as assessCursorCandidate,
+  readCursorUsage,
+} from "./cursor-usage.mjs";
 import { accountFingerprint, isAccountFingerprint, redact, scrub } from "./usage-common.mjs";
 
 export const POLL_INTERVAL_MS = 60_000;
@@ -39,11 +55,21 @@ function readCursorForCollector(options = {}) {
 }
 
 export const PROVIDERS = [
-  { name: "claude", read: readClaudeUsage, assess: assessClaudeUsage },
-  { name: "codex", read: readCodexUsage, assess: assessCodexUsage },
-  { name: "cursor", read: readCursorForCollector, assess: assessCursorUsage },
-  { name: "antigravity", read: readAntigravityUsage, assess: assessAntigravityUsage },
+  { name: "claude", read: readClaudeUsage, assess: assessClaudeUsage, assessCandidate: assessClaudeCandidate },
+  { name: "codex", read: readCodexUsage, assess: assessCodexUsage, assessCandidate: assessCodexCandidate },
+  { name: "cursor", read: readCursorForCollector, assess: assessCursorUsage, assessCandidate: assessCursorCandidate },
+  {
+    name: "antigravity",
+    read: readAntigravityUsage,
+    assess: assessAntigravityUsage,
+    assessCandidate: assessAntigravityCandidate,
+  },
 ];
+
+/** Baseline table key: agent/model (effort is not part of the quota key). */
+export function candidateUsageKey(candidate) {
+  return `${candidate.agent}/${candidate.model}`;
+}
 
 /** Provider-specific scope shapes collapse to a fingerprint or host string for planner reports. */
 export function reportAccount(scope) {
@@ -467,15 +493,29 @@ function providerStatus(store, name) {
   };
 }
 
-/** What the store knows about one provider at `now`: never more than its newest reading supports. */
-export function usageReport(store, provider, now) {
+/** What the store knows about one provider at `now`: never more than its newest reading supports.
+ * Pass `candidate` (`{ model }`) to assess only that model's buckets via `provider.assessCandidate`.
+ */
+export function usageReport(store, provider, now, candidate = null) {
   const latest = store.latestReading(provider.name);
   const reading = latest && ACCOUNT_FAILURES.has(latest.status) ? latest : (store.latestReading(provider.name, { usableOnly: true }) ?? latest);
   let assessment;
   try {
-    assessment = reading
-      ? provider.assess(reading, now)
-      : { status: "unknown", reason: "no reading has been taken", capacityConfirmed: false, resetsAt: null, staleAfter: null, freshness: "unknown" };
+    if (!reading) {
+      assessment = {
+        status: "unknown",
+        reason: "no reading has been taken",
+        capacityConfirmed: false,
+        resetsAt: null,
+        staleAfter: null,
+        freshness: "unknown",
+        ...(candidate ? { buckets: [] } : {}),
+      };
+    } else if (candidate && typeof provider.assessCandidate === "function") {
+      assessment = provider.assessCandidate(reading, candidate, now);
+    } else {
+      assessment = provider.assess(reading, now);
+    }
   } catch (error) {
     assessment = {
       status: "unavailable",
@@ -484,6 +524,7 @@ export function usageReport(store, provider, now) {
       resetsAt: null,
       staleAfter: null,
       freshness: "unknown",
+      ...(candidate ? { buckets: [] } : {}),
     };
   }
   return {
@@ -507,16 +548,61 @@ export async function refreshProvider({ store, provider, clock, timeoutMs, origi
   return { attempted: true, ok: usable, reason: usable ? null : (observation.reason ?? observation.status) };
 }
 
-/** Refreshes each provider in parallel and reports its usage. It never throws: the planner carries on with unknown usage. */
+/** Refreshes each provider in parallel and reports its usage. It never throws: the planner carries on with unknown usage.
+ * When `candidates` is set (baseline table rows), also fills non-enumerable `usageByCandidate` keyed `agent/model`.
+ */
 export async function usageForPlanning({
   stateDir = defaultStateDir(),
   clock = systemClock,
   providers = PROVIDERS,
   timeoutMs = PLANNING_TIMEOUT_MS,
   deadlineMs = timeoutMs,
+  candidates = [],
 } = {}) {
   let store;
   const abort = new AbortController();
+  const attachCandidates = (reports) => {
+    const usageByCandidate = {};
+    const now = clock.now();
+    for (const candidate of candidates) {
+      if (!candidate?.agent || !candidate?.model) continue;
+      const provider = providers.find((row) => row.name === candidate.agent);
+      if (!provider?.assessCandidate) continue;
+      const key = candidateUsageKey(candidate);
+      if (usageByCandidate[key]) continue;
+      try {
+        const agentReport = reports[provider.name];
+        const assessed = usageReport(store, provider, now, { model: candidate.model });
+        usageByCandidate[key] = {
+          ...assessed,
+          refresh: agentReport?.refresh ?? null,
+        };
+      } catch (error) {
+        usageByCandidate[key] = {
+          status: "unavailable",
+          reason: redact(error?.message ?? error),
+          capacityConfirmed: false,
+          resetsAt: null,
+          staleAfter: null,
+          freshness: "unknown",
+          buckets: [],
+          source: null,
+          observedAt: null,
+          account: "unknown",
+          host: "unknown",
+          plan: null,
+          windows: null,
+          refresh: { attempted: false, ok: false, reason: "assess_error" },
+        };
+      }
+    }
+    Object.defineProperty(reports, "usageByCandidate", {
+      value: usageByCandidate,
+      enumerable: false,
+      configurable: true,
+    });
+    return reports;
+  };
   try {
     store = new UsageStore(stateDir);
     const perProviderMs = timeoutMs > 0 ? timeoutMs : PLANNING_TIMEOUT_MS;
@@ -573,10 +659,21 @@ export async function usageForPlanning({
       abort.abort();
       clearTimeout(deadlineTimer);
     }
-    return reports;
+    return attachCandidates(reports);
   } catch (error) {
     const reason = `the usage store is unavailable: ${redact(error?.message ?? error)}`;
-    return Object.fromEntries(providers.map(({ name }) => [name, { status: "unknown", reason, capacityConfirmed: false, source: null, observedAt: null, account: "unknown", host: "unknown" }]));
+    const reports = Object.fromEntries(
+      providers.map(({ name }) => [
+        name,
+        { status: "unknown", reason, capacityConfirmed: false, source: null, observedAt: null, account: "unknown", host: "unknown" },
+      ]),
+    );
+    Object.defineProperty(reports, "usageByCandidate", {
+      value: {},
+      enumerable: false,
+      configurable: true,
+    });
+    return reports;
   } finally {
     abort.abort();
     store?.close();

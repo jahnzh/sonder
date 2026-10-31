@@ -1,0 +1,138 @@
+{
+  "provider": "antigravity",
+  "source": {
+    "kind": "antigravity-cli-usage-command",
+    "command": "agy -p /usage --output-format json",
+    "official": true,
+    "note": "The Antigravity CLI's read-only /usage command in print mode; it starts no agent turn, spends no quota and leaves no conversation. The JSON payload has no published schema"
+  },
+  "scope": {
+    "host": "andi",
+    "account": "sha256:84f4d41978459895",
+    "authMethod": "consumer",
+    "expectedAccount": null
+  },
+  "observedAt": "2026-10-31T12:00:00.000Z",
+  "status": "available",
+  "reason": null,
+  "detail": null,
+  "windows": [
+    {
+      "id": "gemini-weekly",
+      "kind": "weekly",
+      "group": "Gemini Models",
+      "label": "Gemini Models: Weekly Limit Remaining",
+      "remainingFraction": 0.9134536385536194,
+      "usedPercent": 8.65,
+      "resetsAt": "2026-11-05T23:16:23.000Z",
+      "exhausted": false
+    },
+    {
+      "id": "gemini-5h",
+      "kind": "five_hour",
+      "group": "Gemini Models",
+      "label": "Gemini Models: Five Hour Limit Remaining",
+      "remainingFraction": 1,
+      "usedPercent": 0,
+      "resetsAt": "2026-10-31T17:24:42.000Z",
+      "exhausted": false
+    },
+    {
+      "id": "3p-weekly",
+      "kind": "weekly",
+      "group": "Claude and GPT models",
+      "label": "Claude and GPT models: Weekly Limit Remaining",
+      "remainingFraction": 1,
+      "usedPercent": 0,
+      "resetsAt": "2026-11-07T12:24:42.000Z",
+      "exhausted": false
+    },
+    {
+      "id": "3p-5h",
+      "kind": "five_hour",
+      "group": "Claude and GPT models",
+      "label": "Claude and GPT models: Five Hour Limit Remaining",
+      "remainingFraction": 1,
+      "usedPercent": 0,
+      "resetsAt": "2026-10-31T17:24:42.000Z",
+      "exhausted": false
+    },
+    {
+      "id": "gemini-argon-wtu-weekly",
+      "kind": "weekly",
+      "group": "Gemini 4 Argon",
+      "label": "Gemini 4 Argon: Gemini 4 Argon Weekly Limit",
+      "remainingFraction": 0.008081999607384205,
+      "usedPercent": 99.19,
+      "resetsAt": "2026-11-06T08:55:59.000Z",
+      "exhausted": false
+    }
+  ],
+  "groups": [
+    {
+      "name": "Gemini Models",
+      "models": [
+        "Gemini Flash",
+        "Gemini Pro"
+      ],
+      "modelIds": [
+        "gemini-3.8-flash-high",
+        "gemini-3.8-flash-medium",
+        "gemini-3.8-flash-low"
+      ],
+      "appliesTo": "group",
+      "windowIds": [
+        "gemini-weekly",
+        "gemini-5h"
+      ],
+      "exhausted": false
+    },
+    {
+      "name": "Claude and GPT models",
+      "models": [
+        "Claude Opus",
+        "Claude Sonnet",
+        "GPT-OSS"
+      ],
+      "modelIds": [
+        "claude-opus-5-5-high",
+        "claude-opus-5-5-medium",
+        "claude-opus-5-5-low",
+        "claude-sonnet-5-5-high",
+        "claude-sonnet-5-5-medium",
+        "claude-sonnet-5-5-low",
+        "gpt-oss-120b-medium"
+      ],
+      "appliesTo": "group",
+      "windowIds": [
+        "3p-weekly",
+        "3p-5h"
+      ],
+      "exhausted": false
+    },
+    {
+      "name": "Gemini 4 Argon",
+      "models": [
+        "Gemini 4 Argon"
+      ],
+      "modelIds": [
+        "gemini-4-argon-high",
+        "gemini-4-argon-medium",
+        "gemini-4-argon-low"
+      ],
+      "appliesTo": "group",
+      "windowIds": [
+        "gemini-argon-wtu-weekly"
+      ],
+      "exhausted": false
+    }
+  ],
+  "exhaustedWindows": [],
+  "freshness": {
+    "state": "fresh",
+    "reasons": [],
+    "staleAfter": "2026-10-31T12:54:39.811Z",
+    "ageMs": 0,
+    "isFresh": true
+  }
+}

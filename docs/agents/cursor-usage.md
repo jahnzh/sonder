@@ -62,12 +62,14 @@ Cursor's Agent CLI (`agent`, verified on `2026.10.22-27dcf5f`) does not expose a
 
 Standard plans (`Pro`, `Pro+`, `Ultra`, `Teams`) return up to four provider-specific windows for the active billing period (an empty `planUsage: {}` with no usable percentage windows returns `status: "unavailable"`, `reason: "malformed_response"`):
 
-| Window ID | Cursor UI label | Scope (`appliesTo`) | Meaning |
+| Window ID | Owner UI label | Scope (`appliesTo`) | Meaning |
 | --- | --- | --- | --- |
-| `included_total` | `Included` | `all` | Blended percentage used across the subscription's included allowance (`totalPercentUsed`). Emitted only when `totalPercentUsed` is reported (never fabricated from `includedSpend / limit`). |
-| `included_auto` | `Auto` (`Cursor Models` in Orca) | `scoped` (or `unknown` if `autoBucketModels` omitted) | Included percentage used for `auto`, `default`, and models listed in `autoBucketModels` (including verified repo models `auto` and `composer-2.5`). |
-| `included_api` | `API` (`Other Models` in Orca) | `scoped` (or `unknown` if `autoBucketModels` omitted) | Included percentage used for named third-party API models outside `autoBucketModels` (`apiSpend` / `apiLimit` when reported, else `null`). Can be `100%` exhausted while `included_auto` still has capacity. |
-| `on_demand` | `On-Demand` | informational | Paid usage-based spend window (`mode`: `fixed`, `unlimited`, `disabled`, or `unavailable`), supporting both `user` limits and `team` `pooledLimit`/`pooledUsed`/`pooledRemaining` (a finite team `hardLimit` without pooled usage figures reports `mode: "unavailable"`). Never overrides exhausted included subscription quota. |
+| `included_total` | Plan | `all` | Blended percentage used across the subscription's included allowance (`totalPercentUsed`). Emitted only when `totalPercentUsed` is reported (never fabricated from `includedSpend / limit`). |
+| `included_auto` | Cursor Models | `scoped` (or `unknown` if `autoBucketModels` omitted) | Included percentage used for `auto`, `default`, and models listed in `autoBucketModels` / `applicableModels` (including verified repo models `auto` and `composer-2.5`). |
+| `included_api` | Other Models | `scoped` (or `unknown` if `autoBucketModels` omitted) | Included percentage used for named third-party API models outside `autoBucketModels` (`apiSpend` / `apiLimit` when reported, else `null`). Can be `100%` exhausted while `included_auto` still has capacity. |
+| `on_demand` | On-demand | informational | Paid usage-based spend window (`mode`: `fixed`, `unlimited`, `disabled`, or `unavailable`), supporting both `user` limits and `team` `pooledLimit`/`pooledUsed`/`pooledRemaining` (a finite team `hardLimit` without pooled usage figures reports `mode: "unavailable"`). Never overrides exhausted included subscription quota. |
+
+Collector / planner assessments (`assessCursorUsage`, `assessCandidateUsage`) use those owner UI labels in `reason` and `buckets[].label`. When Other Models is exhausted but Cursor Models still has capacity, `assessCursorUsage` reports `fresh`/`low` from Cursor Models (and mentions Other Models exhausted) instead of collapsing to `unknown`/`scoped_quota_exhausted`. `assessCandidateUsage(observation, { model }, now)` assesses only the candidate's bucket.
 
 Enterprise accounts without `planUsage` return `enterprise_spend` (`kind: "cumulative_spend"`), reporting current-cycle and comparable previous-period spend in cents/dollars and consulting `GetHardLimit`. When `GetHardLimit` disables spend or current spend reaches a finite `hardLimit` / `hardLimitPerUser` / `perUserMonthlyLimitDollars`, it reports `disabled` or `exhausted`; when no verifiable remaining cap is available, it reports `status: "unknown"` (`usableForPlanning: false`) rather than `unlimited`.
 

@@ -353,6 +353,105 @@ export function assessCodexUsage(observation, now = new Date()) {
   return low.length ? verdict("low", describeWindows(low), earliestReset(low)) : verdict("fresh", describeWindows(windows));
 }
 
+/**
+ * Resolve which rate-limit bucket id governs `candidate.model`.
+ * Uses `limitName` / `normalModelSlug` when a bucket declares them; otherwise the main `codex`
+ * limit is the default for ordinary Codex models. Returns `null` when the model cannot be placed
+ * and extra limit ids exist (caller must treat that as unknown, never available).
+ */
+export function resolveCodexLimitId(observation, candidate = {}) {
+  const byId =
+    observation?.raw?.rateLimitsByLimitId && typeof observation.raw.rateLimitsByLimitId === "object"
+      ? observation.raw.rateLimitsByLimitId
+      : null;
+  const limitIds = byId
+    ? Object.keys(byId)
+    : [...new Set((observation?.windows ?? []).map((window) => window.limitId).filter(Boolean))];
+  if (limitIds.length === 0) return null;
+
+  const model = typeof candidate?.model === "string" ? candidate.model.trim().toLowerCase() : "";
+  if (byId && model) {
+    for (const [limitId, bucket] of Object.entries(byId)) {
+      if (!bucket || typeof bucket !== "object") continue;
+      const slug =
+        typeof bucket.normalModelSlug === "string" ? bucket.normalModelSlug.trim().toLowerCase() : "";
+      const name = typeof bucket.limitName === "string" ? bucket.limitName.trim().toLowerCase() : "";
+      if (slug && (model === slug || model.includes(slug) || slug.includes(model))) return limitId;
+      if (name && (model === name || model.includes(name) || name.includes(model))) return limitId;
+    }
+  }
+
+  const hasExtra = limitIds.some((id) => id !== CODEX_LIMIT_ID);
+  if (!model) return hasExtra ? null : CODEX_LIMIT_ID;
+  if (limitIds.includes(CODEX_LIMIT_ID)) {
+    // Ordinary Codex model ids (gpt-*, o*, codex-*) default to the main codex bucket.
+    if (/^(gpt-|o\d|codex)/i.test(model) || !hasExtra) return CODEX_LIMIT_ID;
+    return null;
+  }
+  return hasExtra ? null : limitIds[0];
+}
+
+function windowsForLimit(observation, limitId) {
+  return (observation?.windows ?? []).filter((window) => window.limitId === limitId);
+}
+
+/**
+ * Per-candidate Codex assessment. Windows are filtered to the limit id that governs the model.
+ * Unplaceable models stay unknown when other limit ids exist beside the main codex bucket.
+ */
+export function assessCandidateUsage(observation, candidate = {}, now = new Date()) {
+  if (
+    observation?.status === "unavailable" ||
+    observation?.status === "unknown_account" ||
+    observation?.status === "account_mismatch" ||
+    ((["unavailable", "unknown", "stale"].includes(observation?.status)) &&
+      (!Array.isArray(observation?.windows) || observation.windows.length === 0))
+  ) {
+    return { ...assessCodexUsage(observation, now), buckets: [] };
+  }
+  const limitId = resolveCodexLimitId(observation, candidate);
+  if (!limitId) {
+    return {
+      status: "unknown",
+      reason: "unrecognised model or no matching allowance",
+      capacityConfirmed: false,
+      resetsAt: null,
+      staleAfter: null,
+      freshness: "unknown",
+      buckets: [],
+    };
+  }
+  const windows = windowsForLimit(observation, limitId);
+  if (!windows.length && ["unavailable", "unknown", "stale"].includes(observation?.status)) {
+    return { ...assessCodexUsage(observation, now), buckets: [] };
+  }
+  const limitExhausted =
+    windows.some((window) => window.exhausted || window.remainingPercent <= 0) ||
+    (limitId === CODEX_LIMIT_ID &&
+      observation?.status === "exhausted" &&
+      (Boolean(observation?.limitReached) ||
+        (observation?.exhaustedWindows ?? []).some((id) => String(id).startsWith(`${CODEX_LIMIT_ID}-`))));
+  const scoped = {
+    ...(observation ?? {}),
+    windows,
+    status: limitExhausted
+      ? "exhausted"
+      : observation?.status === "exhausted"
+        ? "available"
+        : observation?.status,
+  };
+  const assessment = assessCodexUsage(scoped, now);
+  return {
+    ...assessment,
+    buckets: windows.map((window) => ({
+      id: window.id ?? window.limitId ?? window.label,
+      label: window.label ?? window.id ?? "Codex",
+      usedPercent: window.usedPercent ?? null,
+      resetsAt: window.resetsAt ?? null,
+    })),
+  };
+}
+
 const OPTION_KEYS = {
   "--codex": "codexPath",
   "--codex-home": "codexHome",
