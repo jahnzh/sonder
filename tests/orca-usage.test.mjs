@@ -713,18 +713,19 @@ function hostileReading(name, clock, { usable }) {
   // Every header map we push carries the full cookie (with Path/HttpOnly), not just the bare session id.
   const hostileHeaders = { ...f.headerMap, cookie: f.cookies[0] };
   if (name === "opencode") {
-    // The opencode reader retains no detail or error field; reason, source and bucket are its free text.
+    // The opencode reader retains no detail or error field; reason, source and bucket are its free text,
+    // so every fixture value its keyed scope cannot carry must ride in those strings.
     return {
       provider: name,
       observedAt,
       status: usable ? "available" : "unavailable",
-      reason: usable ? null : f.errorStrings.join("; "),
-      source: { kind: "opencode-gateway-probe", official: false, note: `probe at ${f.homePaths.windows} via ${f.homePaths.wsl} with ${f.authorization[0]}` },
+      reason: usable ? null : `${f.errorStrings.join("; ")}; cookie: ${f.cookies[0]}; teamId: ${f.numericUserIds[1]}`,
+      source: { kind: "opencode-gateway-probe", official: false, note: `probe at ${f.homePaths.windows} via ${f.homePaths.wsl} from ${f.homePaths.macos} for ${f.emails[1]} (account ${f.uuids[1]}) with ${f.authorization[0]}` },
       scope: { host: "andi", wslPath: f.homePaths.wsl },
       windows: [],
       unlimited: usable,
       capacityConfirmed: usable,
-      bucket: { id: "opencode-nris", label: `NRIS gateway for ${f.emails[0]} (${f.opaqueBlobs[1]})` },
+      bucket: { id: "opencode-nris", label: `NRIS gateway for ${f.emails[0]} (${f.opaqueBlobs[1]} / ${f.opaqueBlobs[0]})` },
       expiresAt: "2026-11-07T00:00:00.000Z",
     };
   }
@@ -733,8 +734,8 @@ function hostileReading(name, clock, { usable }) {
     observedAt,
     status: usable ? "available" : "unavailable",
     reason: usable ? null : "reader_error",
-    detail: usable ? null : f.errorStrings.join("; "),
-    source: { kind: `${name}-hostile-probe`, official: true, note: `probe for ${f.emails[1]} signed in under ${f.homePaths.linux} via ${f.homePaths.wsl}` },
+    detail: usable ? null : `${f.errorStrings.join("; ")}; cookie: ${f.cookies[0]}; ${f.opaqueBlobs[1]}`,
+    source: { kind: `${name}-hostile-probe`, official: true, note: `probe for ${f.emails[1]} signed in under ${f.homePaths.linux} via ${f.homePaths.wsl} from ${f.homePaths.windows} or ${f.homePaths.macos} with ${f.authorization[0]}` },
     scope: {
       host: "andi",
       account: f.emails[0],
@@ -847,15 +848,19 @@ test("the shared hostile fixture never reaches the state files, listReadings or 
     const hostileProviders = PROVIDERS.map((provider) => ({ ...provider, read: async () => hostileReading(provider.name, clock, { usable }) }));
     // Every fixture value must actually be pushed through the pipeline, or the absence asserted below proves nothing.
     // Walk the readings' own strings (not a JSON blob, which escapes the backslashes in the path fixtures).
-    const leaves = [];
-    const walkLeaves = (value) => {
+    // The check is per-provider on purpose: each stored shape must carry every value in its own readings,
+    // so a shape that stops carrying one value fails even though another provider's reading still seeds it.
+    const walkLeaves = (leaves, value) => {
       if (typeof value === "string") leaves.push(value);
       else if (typeof value === "number") leaves.push(String(value));
-      else if (value && typeof value === "object") Object.values(value).forEach(walkLeaves);
+      else if (value && typeof value === "object") Object.values(value).forEach((item) => walkLeaves(leaves, item));
     };
-    for (const provider of PROVIDERS) for (const usable of [false, true]) walkLeaves(hostileReading(provider.name, clock, { usable }));
-    const seeded = leaves.join("\n");
-    for (const secret of HOSTILE_SECRETS) assert.ok(seeded.includes(secret), `hostileReading never seeds ${secret}, so its absence would prove nothing`);
+    for (const provider of PROVIDERS) {
+      const leaves = [];
+      for (const usable of [false, true]) walkLeaves(leaves, hostileReading(provider.name, clock, { usable }));
+      const seeded = leaves.join("\n");
+      for (const secret of HOSTILE_SECRETS) assert.ok(seeded.includes(secret), `${provider.name}'s hostileReading never seeds ${secret}, so its absence would prove nothing`);
+    }
     const store = new UsageStore(dir);
     // A failed reading first, so the hostile detail also passes through the provider_state columns.
     usable = false;
@@ -1328,12 +1333,14 @@ test("UsageStore migrates legacy rows on open and never returns raw identifiers 
         account: f.emails[0],
         codexHome: f.homePaths.linux,
         home: f.homePaths.macos,
+        wslPath: f.homePaths.wsl,
+        winHome: f.homePaths.windows,
         accountUuid: f.uuids[0],
         organizationUuid: f.uuids[1],
         userId: f.numericUserIds[0],
         teamId: f.numericUserIds[1],
         email: f.emails[1],
-        headers: f.headerMap,
+        headers: { ...f.headerMap, cookie: f.cookies[0] },
       },
       windows: [window("5h", 12, "2026-10-30T23:00:00.000Z")],
       exhaustedWindows: [],
@@ -1354,6 +1361,10 @@ test("UsageStore migrates legacy rows on open and never returns raw identifiers 
     assert.ok(before.includes(f.uuids[0]), "precondition: legacy row must be raw on disk");
     assert.ok(before.includes(f.emails[0]), "precondition: legacy row must be raw on disk");
     assert.ok(before.includes(String(f.numericUserIds[0])), "precondition: legacy Cursor userId must be raw on disk");
+    assert.ok(before.includes(f.cookies[0]), "precondition: the full cookie must be raw on disk");
+    // The path fixtures carry backslashes, which JSON.stringify doubles on disk, so compare against the escaped form.
+    assert.ok(before.includes(JSON.stringify(f.homePaths.wsl).slice(1, -1)), "precondition: the wsl path must be raw on disk");
+    assert.ok(before.includes(JSON.stringify(f.homePaths.windows).slice(1, -1)), "precondition: the Windows home must be raw on disk");
 
     const store = new UsageStore(dir);
     const listed = store.listReadings({ limit: 5 });
