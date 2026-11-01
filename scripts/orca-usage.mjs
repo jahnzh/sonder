@@ -252,6 +252,7 @@ export class UsageStore {
 
   /** Rewrite every stored observation through sanitize once so legacy raw identifiers leave the file. */
   migrateLegacyReadings() {
+    let changed = false;
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const rows = this.db.prepare("SELECT id, observation FROM readings").all();
@@ -259,19 +260,26 @@ export class UsageStore {
       for (const row of rows) {
         const retained = parseObservation(row.observation);
         if (!retained) continue;
-        update.run(JSON.stringify(retained), isUsable(retained) ? 1 : 0, row.id);
+        const next = JSON.stringify(retained);
+        if (next !== row.observation) changed = true;
+        update.run(next, isUsable(retained) ? 1 : 0, row.id);
       }
       const states = this.db.prepare("SELECT provider, last_failure_detail FROM provider_state WHERE last_failure_detail IS NOT NULL").all();
       const updateState = this.db.prepare("UPDATE provider_state SET last_failure_detail = ? WHERE provider = ?");
       for (const state of states) {
         if (typeof state.last_failure_detail !== "string") continue;
-        updateState.run(scrub(state.last_failure_detail), state.provider);
+        const scrubbed = scrub(state.last_failure_detail);
+        if (scrubbed !== state.last_failure_detail) changed = true;
+        updateState.run(scrubbed, state.provider);
       }
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
       throw error;
     }
+    // An UPDATE leaves the replaced row's old bytes behind on the page, so the legacy values still sit in the
+    // file until it is rebuilt; VACUUM only when something actually moved, so routine opens stay cheap.
+    if (changed) this.db.exec("VACUUM");
   }
 
   close() {

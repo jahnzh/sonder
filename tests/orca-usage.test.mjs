@@ -678,6 +678,191 @@ test("the database is private to the user", () =>
     store.close();
   }));
 
+// --- Shared hostile-identifier fixture (issue #120)
+
+/** The one fixture every leak check shares: add a new form here and every test below catches it. */
+const HOSTILE = JSON.parse(readFileSync(join(repoRoot, "tests", "fixtures", "hostile-identifiers.json"), "utf8"));
+
+/** Every distinct seeded value, string or number; each must be absent from all stored output. */
+function hostileSecrets(fixture) {
+  const found = new Set();
+  const walk = (value) => {
+    if (typeof value === "string") found.add(value);
+    else if (typeof value === "number") found.add(String(value));
+    else if (Array.isArray(value)) value.forEach(walk);
+    else if (value && typeof value === "object") Object.values(value).forEach(walk);
+  };
+  walk(fixture);
+  return [...found];
+}
+
+const HOSTILE_SECRETS = hostileSecrets(HOSTILE);
+const HOSTILE_RESET = "2026-10-30T23:00:00.000Z";
+
+function assertNoHostileSecrets(haystack, where) {
+  for (const secret of HOSTILE_SECRETS) {
+    assert.equal(haystack.includes(secret), false, `${where} leaked ${secret}`);
+  }
+}
+
+/** A reading in the provider's own shape with an identifier in every field it can carry.
+ *  `usable` mirrors what the readers report on success: windows, and `unlimited` for opencode. */
+function hostileReading(name, clock, { usable }) {
+  const f = HOSTILE;
+  const observedAt = clock.now().toISOString();
+  if (name === "opencode") {
+    // The opencode reader retains no detail or error field; reason, source and bucket are its free text.
+    return {
+      provider: name,
+      observedAt,
+      status: usable ? "available" : "unavailable",
+      reason: usable ? null : f.errorStrings.join("; "),
+      source: { kind: "opencode-gateway-probe", official: false, note: `probe at ${f.homePaths.windows} with ${f.authorization[0]}` },
+      scope: { host: "andi" },
+      windows: [],
+      unlimited: usable,
+      capacityConfirmed: usable,
+      bucket: { id: "opencode-nris", label: `NRIS gateway for ${f.emails[0]} (${f.opaqueBlobs[1]})` },
+      expiresAt: "2026-11-07T00:00:00.000Z",
+    };
+  }
+  const reading = {
+    provider: name,
+    observedAt,
+    status: usable ? "available" : "unavailable",
+    reason: usable ? null : "reader_error",
+    detail: usable ? null : f.errorStrings.join("; "),
+    source: { kind: `${name}-hostile-probe`, official: true, note: `probe for ${f.emails[1]} signed in under ${f.homePaths.linux}` },
+    scope: {
+      host: "andi",
+      account: f.emails[0],
+      accountUuid: f.uuids[0],
+      organizationUuid: f.uuids[1],
+      userId: f.numericUserIds[0],
+      teamId: f.numericUserIds[1],
+      sessionId: f.uuids[1],
+      home: f.homePaths.linux,
+      email: f.emails[1],
+      headers: f.headerMap,
+      expectedAccount: f.emails[0],
+    },
+    windows: [
+      { id: `${name}-hostile-5h`, kind: "5h", label: f.uuids[0], usedPercent: 12, remainingPercent: 88, resetsAt: HOSTILE_RESET, exhausted: false },
+      { id: `${name}-hostile-weekly`, kind: "weekly", label: "weekly", usedPercent: 40, remainingPercent: 60, resetsAt: HOSTILE_RESET, exhausted: false },
+    ],
+    exhaustedWindows: [],
+    notes: f.nested,
+    freshness: { state: usable ? "fresh" : "unavailable" },
+  };
+  if (name === "claude") {
+    reading.scope = { ...reading.scope, configDir: f.homePaths.macos };
+    reading.windows = [
+      { kind: "session", label: f.uuids[0], appliesTo: "all", usedPercent: 12, remainingPercent: 88, resetsAt: HOSTILE_RESET },
+      { kind: "weekly_all", label: "weekly", appliesTo: "all", usedPercent: 40, remainingPercent: 60, resetsAt: HOSTILE_RESET },
+    ];
+    reading.extraUsage = { enabled: false, spendLimitReached: false };
+    return reading;
+  }
+  if (name === "codex") {
+    reading.scope = { ...reading.scope, codexHome: f.homePaths.linux };
+    reading.ordinaryUsageAllowed = true;
+    reading.limitReached = null;
+    reading.credits = { hasCredits: false, unlimited: false };
+    reading.raw = {
+      ordinaryUsageAllowed: true,
+      rateLimitsByLimitId: {
+        codex: {
+          limitId: "codex",
+          limitName: f.uuids[1],
+          normalModelSlug: null,
+          primary: { usedPercent: 12, windowDurationMins: 300, resetsAt: 1793365434 },
+          secondary: { usedPercent: 40, windowDurationMins: 10080, resetsAt: 1793790369 },
+          credits: { hasCredits: false, unlimited: false, balance: "0" },
+          spendControlReached: false,
+          planType: "plus",
+          rateLimitReachedType: null,
+        },
+      },
+    };
+    return reading;
+  }
+  if (name === "cursor") {
+    reading.status = usable ? "ok" : "unavailable";
+    reading.observedAtMs = clock.now().getTime();
+    reading.scope = {
+      host: { selector: "local", transport: "local", hostname: "andi", platform: "linux" },
+      account: {
+        known: true,
+        verifiedMatch: null,
+        userId: f.numericUserIds[0],
+        email: f.emails[0],
+        displayName: "Hostile Reader",
+        publicUserId: f.uuids[0],
+        teamId: f.numericUserIds[1],
+        teamName: "Hostile Team",
+        activeTeamId: f.numericUserIds[1],
+        organizationId: f.uuids[1],
+        isEnterpriseUser: false,
+        planName: "pro",
+        planPrice: 20,
+        includedUsagePeriod: "monthly",
+      },
+      expectedAccount: f.emails[0],
+      mismatch: null,
+    };
+    reading.windows = [
+      { id: "included_total", kind: "percentage_allowance", label: f.uuids[0], usedPercent: 12, state: "ok", resetsAt: HOSTILE_RESET },
+      { id: "included_auto", kind: "percentage_allowance", label: "auto", usedPercent: 40, state: "ok", resetsAt: HOSTILE_RESET },
+    ];
+    reading.reset = { primaryResetAt: HOSTILE_RESET };
+    reading.cautions = [f.errorStrings[1]];
+    reading.error = { code: f.uuids[1], message: f.errorStrings[0], httpStatus: 401, connectCode: null, rateLimited: false, retryAfterMs: null, headers: f.headerMap };
+    return reading;
+  }
+  if (name === "antigravity") {
+    reading.scope = { host: "andi", home: f.homePaths.linux, account: f.emails[0], authMethod: "chatgpt", expectedAccount: f.emails[0] };
+    reading.windows = [
+      { id: "flash-5h", kind: "5h", group: "Gemini Flash", label: `${f.uuids[0]}: flash`, remainingFraction: 0.88, usedPercent: 12, resetsAt: HOSTILE_RESET, exhausted: false },
+      { id: "flash-weekly", kind: "weekly", group: "Gemini Flash", label: "flash weekly", remainingFraction: 0.6, usedPercent: 40, resetsAt: HOSTILE_RESET, exhausted: false },
+    ];
+    reading.groups = [
+      { name: "Gemini Flash", models: ["Gemini 3 Flash"], modelIds: [f.uuids[1]], appliesTo: "group", windowIds: ["flash-5h", "flash-weekly"], exhausted: false },
+    ];
+    return reading;
+  }
+  // A provider not modelled above: the generic shape still pushes the fixture through everything the store can see.
+  return reading;
+}
+
+test("the shared hostile fixture never reaches the state files, listReadings or planner reports, from any provider", () =>
+  withState(async (dir) => {
+    assert.ok(HOSTILE_SECRETS.length > 10, "the fixture must stay non-trivial");
+    assert.ok(HOSTILE_SECRETS.every((secret) => secret.length >= 6), "every fixture secret must be long enough to search for");
+    assert.equal(new Set(PROVIDERS.map((provider) => provider.name)).size, PROVIDERS.length, "provider names must stay unique");
+    const clock = fakeClock();
+    let usable = true;
+    const hostileProviders = PROVIDERS.map((provider) => ({ ...provider, read: async () => hostileReading(provider.name, clock, { usable }) }));
+    const store = new UsageStore(dir);
+    // A failed reading first, so the hostile detail also passes through the provider_state columns.
+    usable = false;
+    for (const provider of hostileProviders) await collectOnce({ store, provider, clock, origin: "poll" });
+    usable = true;
+    for (const provider of hostileProviders) await collectOnce({ store, provider, clock, origin: "poll" });
+    store.close();
+    assertNoHostileSecrets(allBytes(dir), "the raw state files");
+
+    const reopened = new UsageStore(dir);
+    const readings = reopened.listReadings({ limit: PROVIDERS.length * 2 });
+    assert.equal(readings.length, PROVIDERS.length * 2, "one usable and one failed reading per provider");
+    for (const reading of readings) assertNoHostileSecrets(JSON.stringify(reading), `listReadings for ${reading.provider}`);
+    reopened.close();
+
+    const report = await usageForPlanning({ stateDir: dir, clock, providers: hostileProviders });
+    for (const provider of PROVIDERS) assert.ok(report[provider.name], `${provider.name} missing from the planner report`);
+    assertNoHostileSecrets(JSON.stringify(report), "the planner report");
+    assertNoHostileSecrets(allBytes(dir), "the raw state files after planning");
+  }));
+
 // --- The real process
 
 function startCollector(env) {
@@ -1067,7 +1252,7 @@ function peerAntigravity(clock) {
   };
 }
 
-function seedLegacyDatabase(stateDir, observation, { provider = "codex", origin = "poll" } = {}) {
+function seedLegacyDatabase(stateDir, observation, { provider = "codex", origin = "poll", state = null } = {}) {
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const file = join(stateDir, "usage.sqlite");
   const db = new DatabaseSync(file);
@@ -1088,52 +1273,83 @@ function seedLegacyDatabase(stateDir, observation, { provider = "codex", origin 
     1,
     JSON.stringify(observation),
   );
+  if (state) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS provider_state (
+        provider TEXT PRIMARY KEY,
+        consecutive_failures INTEGER NOT NULL,
+        last_attempt_at TEXT NOT NULL,
+        next_poll_at TEXT NOT NULL,
+        last_failure_at TEXT,
+        last_failure_reason TEXT,
+        last_failure_detail TEXT
+      );
+    `);
+    db.prepare("INSERT INTO provider_state (provider, consecutive_failures, last_attempt_at, next_poll_at, last_failure_at, last_failure_reason, last_failure_detail) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+      state.provider,
+      state.consecutiveFailures,
+      state.lastAttemptAt,
+      state.nextPollAt,
+      state.lastFailureAt,
+      state.lastFailureReason,
+      state.lastFailureDetail,
+    );
+  }
   db.close();
   return file;
 }
 
 test("UsageStore migrates legacy rows on open and never returns raw identifiers from listReadings", () =>
   withState(async (dir) => {
-    const rawUuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
-    const rawEmail = "legacy-user@example.com";
-    const rawHome = "/home/legacy-user/.codex";
-    const rawCursorUserId = 987654321;
+    const f = HOSTILE;
     const legacy = {
       provider: "codex",
       observedAt: START,
       status: "available",
       reason: null,
-      detail: `account ${rawUuid} for ${rawEmail}; userId=${rawCursorUserId}; user ${rawCursorUserId}`,
+      detail: `${f.errorStrings[0]}; user ${f.numericUserIds[0]}; userId=${f.numericUserIds[1]}`,
       source: SOURCE,
       scope: {
         host: "andi",
-        account: rawEmail,
-        codexHome: rawHome,
-        accountUuid: rawUuid,
-        userId: rawCursorUserId,
+        account: f.emails[0],
+        codexHome: f.homePaths.linux,
+        home: f.homePaths.macos,
+        accountUuid: f.uuids[0],
+        organizationUuid: f.uuids[1],
+        userId: f.numericUserIds[0],
+        teamId: f.numericUserIds[1],
+        email: f.emails[1],
+        headers: f.headerMap,
       },
       windows: [window("5h", 12, "2026-10-30T23:00:00.000Z")],
       exhaustedWindows: [],
+      notes: f.nested,
     };
-    const dbPath = seedLegacyDatabase(dir, legacy);
-    assert.ok(readFileSync(dbPath).toString("utf8").includes(rawUuid), "precondition: legacy row must be raw on disk");
-    assert.ok(readFileSync(dbPath).toString("utf8").includes(String(rawCursorUserId)), "precondition: legacy Cursor userId must be raw on disk");
+    const dbPath = seedLegacyDatabase(dir, legacy, {
+      state: {
+        provider: "codex",
+        consecutiveFailures: 1,
+        lastAttemptAt: START,
+        nextPollAt: "2026-10-30T12:02:00.000Z",
+        lastFailureAt: START,
+        lastFailureReason: "reader_error",
+        lastFailureDetail: f.errorStrings.join("; "),
+      },
+    });
+    const before = readFileSync(dbPath).toString("utf8");
+    assert.ok(before.includes(f.uuids[0]), "precondition: legacy row must be raw on disk");
+    assert.ok(before.includes(f.emails[0]), "precondition: legacy row must be raw on disk");
+    assert.ok(before.includes(String(f.numericUserIds[0])), "precondition: legacy Cursor userId must be raw on disk");
 
     const store = new UsageStore(dir);
     const listed = store.listReadings({ limit: 5 });
     assert.equal(listed.length, 1);
-    const blob = JSON.stringify(listed[0]);
-    for (const secret of [rawUuid, rawEmail, rawHome, String(rawCursorUserId)]) {
-      assert.equal(blob.includes(secret), false, `listReadings returned raw ${secret}`);
-    }
+    assertNoHostileSecrets(JSON.stringify(listed[0]), "listReadings returned a raw identifier");
     assert.match(String(listed[0].scope?.account ?? ""), /^sha256:[0-9a-f]{16}$/);
     assert.match(String(listed[0].scope?.userId ?? ""), /^sha256:[0-9a-f]{16}$/);
     store.close();
 
-    const after = readFileSync(dbPath).toString("utf8");
-    for (const secret of [rawUuid, rawEmail, rawHome, String(rawCursorUserId)]) {
-      assert.equal(after.includes(secret), false, `legacy migrate left ${secret} on disk`);
-    }
+    assertNoHostileSecrets(readFileSync(dbPath).toString("utf8"), "the legacy migrate left a raw identifier on disk");
   }));
 
 test("hostile nested identifiers never reach sqlite, planner reports or evaluation samples", () =>
