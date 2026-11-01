@@ -144,7 +144,7 @@ test("SONDER_ANDROID_BROWSER selects chrome or firefox and rejects anything else
 test("Chrome retry settings use defaults for invalid values and accept valid overrides", () => {
   const defaults = { attempts: 3, perAttemptTimeoutMs: 50_000 };
   assert.deepEqual(chromeContextRetrySettings({}), defaults);
-  for (const value of ["oops", "", " ", "0", "-1", "Infinity"]) {
+  for (const value of ["oops", "", " ", "0", "-1", "1.5", "Infinity"]) {
     assert.deepEqual(chromeContextRetrySettings({
       SONDER_ANDROID_CONTEXT_ATTEMPTS: value,
       SONDER_ANDROID_CONTEXT_ATTEMPT_TIMEOUT_MS: value,
@@ -152,6 +152,7 @@ test("Chrome retry settings use defaults for invalid values and accept valid ove
   }
   for (const value of ["1.5", "9007199254740992"]) {
     assert.equal(chromeContextRetrySettings({ SONDER_ANDROID_CONTEXT_ATTEMPTS: value }).attempts, 3);
+    assert.equal(chromeContextRetrySettings({ SONDER_ANDROID_CONTEXT_ATTEMPT_TIMEOUT_MS: value }).perAttemptTimeoutMs, 50_000);
   }
   assert.deepEqual(chromeContextRetrySettings({
     SONDER_ANDROID_CONTEXT_ATTEMPTS: "4",

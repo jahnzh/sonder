@@ -3,8 +3,11 @@
 // `_android` (CDP over adb), `firefox` through WebDriver BiDi via firefox-bidi-launcher.mjs.
 // scripts/test-android-emulator.sh sets up the emulator, the tunnels and these variables.
 // Chrome context setup retries SONDER_ANDROID_CONTEXT_ATTEMPTS times (default 3), with a
-// SONDER_ANDROID_CONTEXT_ATTEMPT_TIMEOUT_MS timeout per attempt (default 50000). Invalid values
-// use the defaults. The test body, including assertions, is outside the retry and never retried.
+// SONDER_ANDROID_CONTEXT_ATTEMPT_TIMEOUT_MS timeout per attempt (default 50000). Both knobs must
+// be positive integers; invalid values use the defaults. The product of attempts and
+// per-attempt timeout is expected to fit inside the 180 000 ms fixture timeout in
+// playwright.android.config.ts (larger overrides make the context fixture time out). The test
+// body, including assertions, is outside the retry and never retried.
 import { _android, firefox, test as base, type AndroidDevice, type BrowserContext, type Page } from "@playwright/test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -60,7 +63,7 @@ export function chromeContextRetrySettings(env: NodeJS.ProcessEnv = process.env)
   const timeout = Number(env.SONDER_ANDROID_CONTEXT_ATTEMPT_TIMEOUT_MS);
   return {
     attempts: Number.isSafeInteger(attempts) && attempts > 0 ? attempts : 3,
-    perAttemptTimeoutMs: Number.isFinite(timeout) && timeout > 0 ? timeout : 50_000,
+    perAttemptTimeoutMs: Number.isSafeInteger(timeout) && timeout > 0 ? timeout : 50_000,
   };
 }
 
