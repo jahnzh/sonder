@@ -33,7 +33,7 @@ Results go to `artifacts/android-emulator/<sha>/<run>/`: `summary.txt` (per-brow
 ## How the browsers are driven
 
 - **Network.** The adb server runs in the container on the Deck's `127.0.0.1:5037`. The SSH connection forwards it to `SONDER_ANDROID_ADB_PORT` (15037) here and sends the Deck's app port back to `tests/browser-server.ts` here. `adb reverse` makes the emulator's `127.0.0.1:<port>` that server. The page is on `127.0.0.1`, a secure context, so its service worker registers, which `10.0.2.2` would not give. The app never reaches `sonder.pecori.no`.
-- **Chrome**: Playwright `_android` (`launchBrowser`) over the forwarded adb server, after `pm clear` for a fresh profile per test.
+- **Chrome**: Playwright `_android` (`launchBrowser`) over the forwarded adb server. Context setup (force-stop, `pm clear` for a fresh profile, and launch) has a bounded retry: by default 3 attempts of 50 seconds each, configurable with `SONDER_ANDROID_CONTEXT_ATTEMPTS` and `SONDER_ANDROID_CONTEXT_ATTEMPT_TIMEOUT_MS`. Both knobs are positive integers and the attempts × timeout product is expected to fit the suite's 180 s fixture timeout. Attempts and their outcomes are logged under `[android-context]` in `playwright.log`. The test body, including assertions, is never retried.
 - **Firefox**: Playwright's WebDriver BiDi backend (`firefox` with `channel: "moz-firefox"`) with `tests/android/firefox-bidi-launcher.mjs` as the executable. The launcher writes a GeckoView config (`--remote-debugging-port`), sets Firefox as the debug app, starts it with the `performancetest` extra (skips onboarding), and relays BiDi. The relay's changes, all logged to `relay.log`, are documented in `BidiRelay` in `tests/android/firefox-android.mjs`.
 - **Viewport.** Neither browser emulates a viewport on Android, so `page.setViewportSize` resizes the screen with `wm size` until the CSS viewport matches (`tests/android/fixtures.ts`). Chrome's toolbars take 80 CSS px of height, Firefox's 88.
 
@@ -54,9 +54,9 @@ The implementer's acceptance run at `ba930ac` passed 11/11 in Chrome and 11/11 i
 | 2 | 9/11 | 10/11 | Chrome reader-first at 390px (`page.goto: Target page, context or browser has been closed`) and the keyboard-focus test (context setup timeout). Firefox: the same 360px test. |
 | 3 (Chrome only, `SONDER_EMU_MEMORY=6g`) | 10/11 | not run | Chrome reader-first at 1280px: context setup timeout. |
 
-- **Chrome hangs creating the browser context** in a different test each run (about 1 in 11 to 2 in 11). It is not tied to the memory limit: with 6 GB the emulator still grows to 5.9 GB by the end of a run and the hang still happened, so the default stays at 4600m. The cause is open (#71); the leak-like growth of the emulator's anonymous memory during a run is the lead.
+- **Chrome hangs creating the browser context** in a different test each run (about 1 in 11 to 2 in 11). It is not tied to the memory limit: with 6 GB the emulator still grows to 5.9 GB by the end of a run and the hang still happened, so the default stays at 4600m. The root cause remains open (#71); bounded context-setup retries address the symptom, and the leak-like growth of the emulator's anonymous memory during a run is the lead.
 - **Firefox reader-first at 360px failed every time, and was a test assumption (#70, fixed).** The page snapshot showed the transport button labelled `Pause narration`: the tap the test makes on the page starts narration on a real Firefox for Android (it never starts in headless desktop Firefox), and the control toggles between `Play narration` and `Pause narration`. The test now accepts either. Firefox for Android then passed 11/11.
-- The scripts do not retry tests, so a failure is reported as `failed exit=1`; read `playwright.log` and `report.json` before treating a failure as a product bug.
+- The scripts do not retry test bodies, although Chrome context fixture setup now retries as described above. A failure is reported as `failed exit=1`; read `playwright.log` and `report.json` before treating a failure as a product bug.
 - Boot takes 38 to 45 s. The container ends a run at its memory limit.
 
 ## Failure modes

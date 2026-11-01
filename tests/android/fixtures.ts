@@ -2,11 +2,18 @@
 // (issue #66). SONDER_ANDROID_BROWSER selects the browser: `chrome` is driven through Playwright's
 // `_android` (CDP over adb), `firefox` through WebDriver BiDi via firefox-bidi-launcher.mjs.
 // scripts/test-android-emulator.sh sets up the emulator, the tunnels and these variables.
+// Chrome context setup retries SONDER_ANDROID_CONTEXT_ATTEMPTS times (default 3), with a
+// SONDER_ANDROID_CONTEXT_ATTEMPT_TIMEOUT_MS timeout per attempt (default 50000). Both knobs must
+// be positive integers; invalid values use the defaults. The product of attempts and
+// per-attempt timeout is expected to fit inside the 180 000 ms fixture timeout in
+// playwright.android.config.ts (larger overrides make the context fixture time out). The test
+// body, including assertions, is outside the retry and never retried.
 import { _android, firefox, test as base, type AndroidDevice, type BrowserContext, type Page } from "@playwright/test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { withBoundedRetry } from "./context-retry";
 import { screenSizeFor, type Size } from "./viewport";
 
 let activeDevice: AndroidDevice | undefined;
@@ -49,6 +56,15 @@ export function androidBrowser(env: NodeJS.ProcessEnv = process.env): AndroidBro
   if (!value) return undefined;
   if (value !== "chrome" && value !== "firefox") throw new Error(`SONDER_ANDROID_BROWSER must be chrome or firefox, not ${value}`);
   return value;
+}
+
+export function chromeContextRetrySettings(env: NodeJS.ProcessEnv = process.env) {
+  const attempts = Number(env.SONDER_ANDROID_CONTEXT_ATTEMPTS);
+  const timeout = Number(env.SONDER_ANDROID_CONTEXT_ATTEMPT_TIMEOUT_MS);
+  return {
+    attempts: Number.isSafeInteger(attempts) && attempts > 0 ? attempts : 3,
+    perAttemptTimeoutMs: Number.isSafeInteger(timeout) && timeout > 0 ? timeout : 50_000,
+  };
 }
 
 const metrics = (page: Page) =>
@@ -113,10 +129,17 @@ const android = base.extend<{}, { androidDevice: AndroidDevice }>({
     let context: BrowserContext;
     let userDataDir: string | undefined;
     if (androidBrowser() === "chrome") {
-      // A fresh profile for every test, as a desktop context would have.
-      await androidDevice.shell(`am force-stop ${CHROME_PACKAGE}`);
-      await androidDevice.shell(`pm clear ${CHROME_PACKAGE}`);
-      context = await androidDevice.launchBrowser({ pkg: CHROME_PACKAGE, baseURL });
+      context = await withBoundedRetry({
+        ...chromeContextRetrySettings(),
+        label: "chrome",
+        log: (line) => console.error(`[android-context] ${line}`),
+        create: async () => {
+          // A fresh profile for every attempt, as a desktop context would have.
+          await androidDevice.shell(`am force-stop ${CHROME_PACKAGE}`);
+          await androidDevice.shell(`pm clear ${CHROME_PACKAGE}`);
+          return androidDevice.launchBrowser({ pkg: CHROME_PACKAGE, baseURL });
+        },
+      });
     } else {
       // Firefox for Android has no BiDi pages outside the default user context, so this is the
       // persistent context; the launcher clears the app's data before every launch.

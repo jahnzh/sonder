@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { BidiRelay, EMULATOR_PREFS, geckoViewConfig, readUserPrefs, startCommand } from "./android/firefox-android.mjs";
 import { screenSizeFor } from "./android/viewport";
-import { androidBrowser } from "./android/fixtures";
+import { androidBrowser, chromeContextRetrySettings } from "./android/fixtures";
 
 const androidDir = path.dirname(fileURLToPath(import.meta.url)) + "/android";
 
@@ -38,9 +38,10 @@ test("the GeckoView config enables the remote agent on the given port with the p
 });
 
 test("android helpers do not import playwright-core/lib/utilsBundle", () => {
-  for (const file of ["firefox-android.mjs", "firefox-bidi-launcher.mjs"]) {
+  for (const file of ["firefox-android.mjs", "firefox-bidi-launcher.mjs", "context-retry.ts"]) {
     const source = fs.readFileSync(path.join(androidDir, file), "utf8");
     assert.equal(source.includes("playwright-core/lib/utilsBundle"), false, file);
+    if (file === "context-retry.ts") assert.doesNotMatch(source, /(?:playwright-core|@playwright\/test|["']playwright(?:\/|["']))/);
   }
 });
 
@@ -138,4 +139,23 @@ test("SONDER_ANDROID_BROWSER selects chrome or firefox and rejects anything else
   assert.equal(androidBrowser({ SONDER_ANDROID_BROWSER: "chrome" }), "chrome");
   assert.equal(androidBrowser({ SONDER_ANDROID_BROWSER: "firefox" }), "firefox");
   assert.throws(() => androidBrowser({ SONDER_ANDROID_BROWSER: "safari" }), /chrome or firefox/);
+});
+
+test("Chrome retry settings use defaults for invalid values and accept valid overrides", () => {
+  const defaults = { attempts: 3, perAttemptTimeoutMs: 50_000 };
+  assert.deepEqual(chromeContextRetrySettings({}), defaults);
+  for (const value of ["oops", "", " ", "0", "-1", "1.5", "Infinity"]) {
+    assert.deepEqual(chromeContextRetrySettings({
+      SONDER_ANDROID_CONTEXT_ATTEMPTS: value,
+      SONDER_ANDROID_CONTEXT_ATTEMPT_TIMEOUT_MS: value,
+    }), defaults);
+  }
+  for (const value of ["1.5", "9007199254740992"]) {
+    assert.equal(chromeContextRetrySettings({ SONDER_ANDROID_CONTEXT_ATTEMPTS: value }).attempts, 3);
+    assert.equal(chromeContextRetrySettings({ SONDER_ANDROID_CONTEXT_ATTEMPT_TIMEOUT_MS: value }).perAttemptTimeoutMs, 50_000);
+  }
+  assert.deepEqual(chromeContextRetrySettings({
+    SONDER_ANDROID_CONTEXT_ATTEMPTS: "4",
+    SONDER_ANDROID_CONTEXT_ATTEMPT_TIMEOUT_MS: "2500",
+  }), { attempts: 4, perAttemptTimeoutMs: 2500 });
 });
