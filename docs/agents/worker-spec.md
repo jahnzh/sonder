@@ -14,7 +14,7 @@ Code navigation: run `codegraph init -y` once in your worktree first (about 30 s
 Rules:
 - Do not push, merge or open a PR. Do not run `docker compose`, and do not touch `.env`, `data/` or production media.
 - The WSL host is `192.168.1.119`. Work there only under `~/sonder-replication/`, and never touch `~/sonder-replication/issue6-1793194927`. Live verification scripts (`scripts/verify-*.mjs`) never run on the host.
-- Verify with unit tests only: `npx tsx --test <file>` and `npm test`. Do not run the browser tests or `npm run check`; the coordinator runs them.
+- Verify with typecheck and unit tests: `npx tsc --noEmit`, `npx tsx --test <file>` and `npm test`. Run before reporting. Do not run the browser tests or `npm run check`; the coordinator runs them.
 - Make unit tests build every repository, file and directory they need in a temporary directory. `npm run check` runs them in a `git archive` snapshot that has no `.git`, so a test that reads the surrounding checkout passes locally and fails there.
 - Commands that take longer than 90 seconds go in the background with output in a log file that you poll, so you can read coordinator messages between polls: `orca orchestration check --terminal <your_handle> --json`.
 - Check every command flag, option and environment variable with `--help` or grep before you use it or write it into a file. Do not assume one exists.
