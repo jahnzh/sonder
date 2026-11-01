@@ -22,6 +22,11 @@
 # default tests/known-failures.wsl-host.json), SONDER_CI_DISPATCH (when set,
 # records the finished check on that worker history dispatch; a recording
 # failure warns only and never changes the exit code).
+# SONDER_LOCAL_MIN_FREE_GB (default 10, whole GB): below this, a non-fatal
+# warning is printed at the start naming the stale local directory families and
+# their combined size. SONDER_LOCAL_DF replaces the df command that reads the
+# local free space (tests). SONDER_LOCAL_STALE_DIR (default $TMPDIR or /tmp) is
+# where the families are looked up. The warning never changes the exit code.
 #
 # No `set -e`: every step handles its own failure so a failing step can never
 # skip the code that records the outcome.
@@ -170,6 +175,53 @@ image_matches_lockfile() {
     return 1
   fi
   return 0
+}
+
+# Non-fatal warning when the LOCAL disk is below the threshold, naming the stale directory
+# families and their combined size (issue #89). The remote host's disk is judged by the preflight
+# itself; this only warns about the machine running the script. SONDER_LOCAL_MIN_FREE_GB (default
+# 10, whole GB) is the threshold; SONDER_LOCAL_DF replaces the df command (tests); SONDER_LOCAL_
+# STALE_DIR (default $TMPDIR or /tmp) is where the families are looked up. Always returns 0: it
+# must never fail the run or change the exit code.
+warn_local_disk() {
+  local df_cmd=${SONDER_LOCAL_DF:-df}
+  local min_gb=${SONDER_LOCAL_MIN_FREE_GB:-10}
+  local stale_dir=${SONDER_LOCAL_STALE_DIR:-${TMPDIR:-/tmp}}
+  local line free_kb free_gb fam dir kb total_kb parts msg
+  line=$("$df_cmd" -Pk / 2>/dev/null | awk 'NR==2 {print $4}')
+  [[ $line =~ ^[0-9]+$ ]] || return 0
+  free_kb=$line
+  free_gb=$((free_kb / 1024 / 1024))
+  [[ $free_gb -lt $min_gb ]] || return 0
+  total_kb=0
+  parts=""
+  for fam in "sonder-browser-" "sonder-local-check-" "playwright_chromiumdev_profile-"; do
+    kb=0
+    for dir in "$stale_dir/$fam"*; do
+      [[ -d $dir ]] || continue
+      kb=$(( kb + $(du -sk "$dir" 2>/dev/null | cut -f1) ))
+    done
+    total_kb=$(( total_kb + kb ))
+    parts="${parts:+$parts, }${stale_dir}/${fam}* ($(format_kb "$kb"))"
+  done
+  msg="[ci-deck] low disk: / has $(awk -v kb="$free_kb" 'BEGIN { printf "%.1f", kb / 1024 / 1024 }') GB free, below SONDER_LOCAL_MIN_FREE_GB=$min_gb. Stale directory families: $parts [$(format_kb "$total_kb") total]."
+  if command -v docker >/dev/null 2>&1; then
+    msg="$msg If docker is installed, also try: docker builder prune"
+  fi
+  echo "$msg" >&2
+  return 0
+}
+
+# Format 1K-blocks as a short human-readable size (GB/MB/KB).
+format_kb() {
+  local kb=$1
+  if [ "$kb" -ge $((1024 * 1024)) ]; then
+    awk -v kb="$kb" 'BEGIN { printf "%.1f GB", kb / 1024 / 1024 }'
+  elif [ "$kb" -ge 1024 ]; then
+    awk -v kb="$kb" 'BEGIN { printf "%.1f MB", kb / 1024 }'
+  else
+    printf '%d KB' "$kb"
+  fi
 }
 
 # Gates the run on the Deck's prerequisites. Returns 0 when ready, 3 when podman is
@@ -564,6 +616,9 @@ trap 'on_signal 130' INT
 trap 'on_signal 143' TERM
 
 post_commit_status pending "CI running on ${SONDER_CI_HOST}"
+
+# Non-fatal local-disk warning at the start of the run, before the ssh preflight (issue #89).
+warn_local_disk
 
 FINAL_EXIT=0
 DESCRIPTION=""

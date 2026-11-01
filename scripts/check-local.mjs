@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 import {
   parseCliArgs,
   generateRunId,
@@ -30,6 +31,133 @@ const STAGE_DEFINITIONS = [
 
 const PLAYWRIGHT_REPORT_NAME = "playwright-results.json";
 
+// --- Local free-disk warning (issue #89) ---------------------------------------------------
+// When the LOCAL disk is below a threshold at startup, print a non-fatal warning to stderr that
+// names the stale directory families and their combined size. It never changes the exit code.
+// SONDER_LOCAL_MIN_FREE_GB (default 10, whole GB) is the threshold. The read/size/docker inputs
+// are injectable so tests exercise a temp directory and a fixed df reading instead of the host.
+const STALE_FAMILIES = [
+  "sonder-browser-",
+  "sonder-local-check-",
+  "playwright_chromiumdev_profile-",
+];
+
+function formatBytes(bytes) {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+// Recursive size of a directory tree in bytes (0 when it cannot be read).
+export function dirBytes(dir) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  let total = 0;
+  for (const entry of entries) {
+    let st;
+    try {
+      st = fs.statSync(path.join(dir, entry.name));
+    } catch {
+      continue;
+    }
+    if (st.isDirectory()) total += dirBytes(path.join(dir, entry.name));
+    else if (st.isFile()) total += st.size;
+  }
+  return total;
+}
+
+// The directories directly under `tmpDir` whose name starts with `prefix`, with their combined size.
+export function staleFamilySize(tmpDir, prefix) {
+  let entries;
+  try {
+    entries = fs.readdirSync(tmpDir, { withFileTypes: true });
+  } catch {
+    return { count: 0, bytes: 0 };
+  }
+  let count = 0;
+  let bytes = 0;
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith(prefix)) continue;
+    count += 1;
+    bytes += dirBytes(path.join(tmpDir, entry.name));
+  }
+  return { count, bytes };
+}
+
+// Free space on the root filesystem in 1K-blocks, or null when it cannot be read.
+export function readLocalFreeKb(dfCmd = "df") {
+  try {
+    const out = execFileSync(dfCmd, ["-Pk", "/"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const kb = Number(out.split("\n")[1]?.trim().split(/\s+/)[3]);
+    return Number.isFinite(kb) ? kb : null;
+  } catch {
+    return null;
+  }
+}
+
+// Whether an executable named `name` is on PATH (no child process).
+export function commandExists(name) {
+  for (const dir of (process.env.PATH || "").split(path.delimiter).filter(Boolean)) {
+    try {
+      fs.accessSync(path.join(dir, name), fs.constants.X_OK);
+      return true;
+    } catch {
+      // keep looking
+    }
+  }
+  return false;
+}
+
+// Pure: build the warning message from its parts, or null when the disk is not low. `families` is
+// an array of {label, bytes}; `docker` is whether docker is present.
+export function buildLowDiskWarning({ minFreeGb, freeKb, families, docker }) {
+  if (freeKb == null) return null;
+  const freeGb = freeKb / 1024 / 1024;
+  if (!(freeGb < minFreeGb)) return null;
+  const total = families.reduce((sum, f) => sum + f.bytes, 0);
+  const parts = families.map((f) => `${f.label} (${formatBytes(f.bytes)})`);
+  let message =
+    `low disk: / has ${freeGb.toFixed(1)} GB free, below SONDER_LOCAL_MIN_FREE_GB=${minFreeGb}. ` +
+    `Stale directory families: ${parts.join(", ")} [${formatBytes(total)} total].`;
+  if (docker) message += " If docker is installed, also try: docker builder prune";
+  return message;
+}
+
+// Detect a low local disk and, when low, print (and return) a non-fatal warning. Every input has a
+// production default; tests inject freeKb/tmpDir/docker to stay hermetic. Returns the message or null.
+export function warnLocalDisk({
+  minFreeGb = Number(process.env.SONDER_LOCAL_MIN_FREE_GB || 10),
+  freeKb = null,
+  readFreeKb = readLocalFreeKb,
+  tmpDir = os.tmpdir(),
+  families = null,
+  docker = null,
+  hasDocker = () => commandExists("docker"),
+  write = true,
+} = {}) {
+  const kb = freeKb ?? readFreeKb();
+  if (kb == null) return null;
+  const freeGb = kb / 1024 / 1024;
+  if (!(freeGb < minFreeGb)) return null;
+  const fams =
+    families ??
+    STALE_FAMILIES.map((prefix) => ({
+      label: `${tmpDir}/${prefix}*`,
+      bytes: staleFamilySize(tmpDir, prefix).bytes,
+    }));
+  const dockerPresent = docker ?? hasDocker();
+  const message = buildLowDiskWarning({ minFreeGb, freeKb: kb, families: fams, docker: dockerPresent });
+  if (message && write) process.stderr.write(`[check-local] ${message}\n`);
+  return message;
+}
+
 function printHelp() {
   console.log(`
 Usage: node scripts/check-local.mjs [options]
@@ -51,6 +179,14 @@ Options:
                          against the calling checkout. See docs/LOCAL_CHECKS.md.
   --silent               Suppress live stage streaming output to console
   -h, --help             Show this help message
+
+ Environment:
+  SONDER_LOCAL_MIN_FREE_GB
+                         Whole-GB threshold (default 10) below which a non-fatal
+                         warning is printed at startup naming the stale directory
+                         families (/tmp/sonder-browser-*, /tmp/sonder-local-check-*,
+                         /tmp/playwright_chromiumdev_profile-*) and their combined
+                         size. The warning never changes the exit code.
 `);
 }
 
@@ -379,6 +515,10 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       console.log(`[check-local] Allocated loopback port: ${port}`);
       console.log(`[check-local] Artifacts output directory: ${outputDir}`);
     }
+
+    // Non-fatal startup warning when the local disk is low; names the stale directory families.
+    // Never changes the exit code (issue #89).
+    warnLocalDisk();
 
     for (let i = 0; i < STAGE_DEFINITIONS.length; i++) {
       const stageDef = STAGE_DEFINITIONS[i];

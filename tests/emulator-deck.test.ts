@@ -9,11 +9,24 @@ const script = path.resolve("scripts/emulator-deck.sh");
 
 // `ssh` runs the remote command in a local shell, so the "Deck" is a temp directory.
 // STUB_SSH_MODE=down fails every call like an unreachable host.
+// The preflight is the one remote step that calls `df -Pk <path>` (it reads the free
+// disk and parses field 4 of line 2). Running it in a local shell would read THIS
+// machine's disk, so the suite would fail on a full host. When the preflight runs, the
+// stub overrides `df` with a function that prints a df -Pk-shaped table with a fixed
+// free figure: STUB_DF_FREE_GB (default 50), overridable per test. Every other remote
+// command runs exactly as before (the override is exported only for the preflight).
 const sshStub = `#!/usr/bin/env bash
 while [[ $# -gt 0 && $1 == -* ]]; do if [[ $1 == -o ]]; then shift 2; else shift; fi; done
 shift
 echo "$*" >>"$STUB_LOG.ssh"
 [[ \${STUB_SSH_MODE:-local} == down ]] && exit 255
+if [[ $* == *" -- preflight "* ]]; then
+  export STUB_DF_FREE_KB=\$(( \${STUB_DF_FREE_GB:-50} * 1024 * 1024 ))
+  df() {
+    printf 'Filesystem     1K-blocks     Used Available Use%% Mounted on\nstub                 1073741824     102400 %s        0%% /stub\n' "$STUB_DF_FREE_KB"
+  }
+  export -f df
+fi
 exec bash -c "$*"
 `;
 
@@ -325,6 +338,25 @@ test("free disk below the threshold stops the start", (t) => {
   t.after(f.stopUnits);
   const out = f.run(["start"], { SONDER_EMU_MIN_DISK_GB: "100000000" });
   assert.equal(out.status, 7, out.output);
+});
+
+test("the pass path reads the stubbed disk, not the host's (hermetic)", (t) => {
+  const f = fixture();
+  t.after(f.stopUnits);
+  const out = f.run(["start"]);
+  assert.equal(out.status, 0, out.output);
+  // The preflight prints its df reading to stderr. With the stub default it must be exactly
+  // 50 GB: if the stub read the host's disk this would be the host's free space (and the
+  // preflight would fail on a machine with under 10 GB free).
+  assert.match(out.output, /^free_disk_gb=50 min_disk_gb=10$/m);
+});
+
+test("STUB_DF_FREE_GB overrides the stubbed free disk for the pass path", (t) => {
+  const f = fixture();
+  t.after(f.stopUnits);
+  const out = f.run(["start"], { STUB_DF_FREE_GB: "12" });
+  assert.equal(out.status, 0, out.output);
+  assert.match(out.output, /^free_disk_gb=12 min_disk_gb=10$/m);
 });
 
 test("an unreachable Deck is an SSH failure", () => {
