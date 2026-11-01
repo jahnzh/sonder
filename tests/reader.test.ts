@@ -367,6 +367,15 @@ test("local alignment pairs chapters, preserves recording progress and invalidat
   assert.equal(stale.statusCode, 410);
   assert.equal(stale.json().code, "alignment_stale");
   assert.match(stale.json().error, /ebook or audio changed/);
+  const cancel = await app.inject({
+    method: "PATCH",
+    url: `/api/alignments/${job.id}`,
+    payload: { action: "cancel" },
+  });
+  assert.equal(cancel.statusCode, 200, cancel.body);
+  const cancelled = await app.inject(`/api/alignments/${job.id}/map`);
+  assert.equal(cancelled.statusCode, 410);
+  assert.equal(cancelled.json().code, "alignment_cancelled");
   db.update(s.editions)
     .set({ language: "English" })
     .where(eq(s.editions.id, "alice"))
@@ -684,11 +693,11 @@ test("r5: pausing or cancelling during the last narration sample is not replaced
     let map: any;
     for (let i = 0; i < 100; i++) {
       await new Promise((resolve) => setTimeout(resolve, 10));
-      map = (await local.inject(`/api/alignments/${job.id}/map`)).json();
+      map = (await local.inject(`/api/alignments?ebookId=${id}`)).json().jobs.find((value: any) => value.id === job.id);
       if (map.anchoring.samples.every((sample: any) => sample.done)) break;
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
-    map = (await local.inject(`/api/alignments/${job.id}/map`)).json();
+    map = (await local.inject(`/api/alignments?ebookId=${id}`)).json().jobs.find((value: any) => value.id === job.id);
     assert.ok(map.anchoring.samples.every((sample: any) => sample.done));
     assert.equal(map.status, action === "pause" ? "paused" : "cancelled", map.error);
   }

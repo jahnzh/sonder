@@ -60,7 +60,22 @@ async function fixture(page: Page, title: string, align: "all" | "first" | "none
   const manifest = await (
     await page.request.get(`/api/reader/${ebook}`)
   ).json();
-  if (align === "none") return { book, ebook, manifest };
+  if (align === "none") {
+    // Linking queued a backfill job; cancel it so this book has no narration map.
+    await expect
+      .poll(
+        async () =>
+          (await (await page.request.get(`/api/alignments?ebookId=${ebook}`)).json()).jobs.length,
+        { timeout: 20000 },
+      )
+      .toBeGreaterThan(0);
+    const jobs = (await (await page.request.get(`/api/alignments?ebookId=${ebook}`)).json()).jobs;
+    const cancelled = await page.request.patch(`/api/alignments/${jobs[0].id}`, {
+      data: { action: "cancel" },
+    });
+    expect(cancelled.ok()).toBe(true);
+    return { book, ebook, manifest };
+  }
   const sections = align === "first" ? manifest.sections.slice(0, 1) : manifest.sections;
   const created = await page.request.post("/api/alignments", {
     data: {

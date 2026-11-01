@@ -38,7 +38,7 @@ import { registerHardcoverRoutes } from "./hardcover-routes.ts";
 import { CSP_REPORT_PATH, cspMode, registerCsp } from "./csp.ts";
 import { registerAppearance } from "./appearance.ts";
 import { registerReader } from "./reader.ts";
-import { registerAlignment } from "./alignment.ts";
+import { registerAlignment, autoQueueAlignmentsForWork } from "./alignment.ts";
 import {registerMediaLibrary,faultsFor,chooseMedia,sourceChoice} from "./media-library.ts";
 import { audioFileMime } from "./media-response.ts";
 import { parseRange } from "./range.ts";
@@ -841,7 +841,10 @@ export async function createApp() {
       limits: { fileSize: 150 * 1024 * 1024, files: 1 },
     });
     if (!part) throw new Error("Choose an EPUB or PDF file.");
-    return importEbook(part.file, part.filename, workId);
+    const imported = await importEbook(part.file, part.filename, workId);
+    if (workId)
+      await autoQueueAlignmentsForWork(workId, { ebookId: imported.id }, req.log);
+    return imported;
   });
   app.get("/api/ebooks/:id/file", async (req, reply) => {
     const row = db
@@ -1022,6 +1025,7 @@ export async function createApp() {
           .run();
         claimHardcoverAudio(workId, id);
       })();
+      await autoQueueAlignmentsForWork(workId, { recordingId: `recording-${id}` }, req.log);
       return { id };
     } catch (error) {
       stored.forEach((f) => {

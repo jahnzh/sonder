@@ -4,20 +4,20 @@ import {readerFixture} from "../reader-fixture";
 // WebKit needs allow-scripts so the reader's own listeners run on the page (#37).
 // EPUB content itself must still never run script. These checks run in all three engines.
 const sandboxFor=(browserName:string)=>browserName==="webkit" ? "allow-same-origin allow-scripts" : "allow-same-origin";
-async function importBook(page:Page,title:string,script=false,variant?:"svg-root"|"iframe-root"|"nav-root"|"no-head"|"head-late"|"text-before-head"|"template-root"|"svg-asset"){
+async function importBook(page:Page,title:string,script=false,variant?:"svg-root"|"iframe-root"|"nav-root"|"no-head"|"head-late"|"text-before-head"|"template-root"|"svg-asset",link=true){
  const audio=await page.request.post("/api/import",{multipart:{title,author:"Frame QA",file:{name:"Narration.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
  expect(audio.ok()).toBe(true);
  const audioId=(await audio.json()).id;
  const book=(await(await page.request.get("/api/books")).json()).find((b:any)=>b.id===audioId);
- const upload=await page.request.post(`/api/ebooks/import?workId=${book.workId}`,{multipart:{file:{name:"Frame.epub",mimeType:"application/epub+zip",buffer:await readerFixture({script,variant})}}});
+ const upload=await page.request.post(`/api/ebooks/import${link ? `?workId=${book.workId}` : ""}`,{multipart:{file:{name:"Frame.epub",mimeType:"application/epub+zip",buffer:await readerFixture({script,variant})}}});
  expect(upload.ok()).toBe(true);
  const id=(await upload.json()).id;
  await page.goto(`/#reader/${id}`);
  await expect(page.getByRole("dialog",{name:"Reader"})).toBeVisible();
  return id;
 }
-async function openReader(page:Page,title:string,script=false){
- const id=await importBook(page,title,script);
+async function openReader(page:Page,title:string,script=false,link=true){
+ const id=await importBook(page,title,script,undefined,link);
  const room=page.locator(".reader-room:not(.inline-reader)");
  const frame=page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe");
  await expect(frame.getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
@@ -30,7 +30,7 @@ test("the reader frame only permits scripts when the engine needs them",async({p
  for(const sandbox of await frames.evaluateAll(els=>els.map(el=>el.getAttribute("sandbox"))))expect(sandbox).toBe(sandboxFor(browserName));
 });
 test("taps, page turns and long-press on the book page reach the reader",async({page,browserName})=>{
- const {id,room}=await openReader(page,"Frame gestures");
+ const {id,room}=await openReader(page,"Frame gestures",false,false);
  await expect(room.locator(".reader-viewport iframe").first()).toHaveAttribute("sandbox",sandboxFor(browserName));
  const topbar=room.locator(".reader-topbar"),box=(await room.locator(".reader-viewport").boundingBox())!;
  await expect(topbar).toBeHidden();

@@ -159,7 +159,7 @@ export function ReadingSync({
       } else if (stale) await localDB.preferences.delete(cacheKey);
       let map: AlignmentJob;
       try {
-        map = await api<AlignmentJob>(`/alignments/${job.id}/map`);
+        map = await api<AlignmentJob>(`/alignments/${job.id}/map`, { cache: "no-store" });
       } catch (error) {
         if (requestEpoch !== epoch.current) return;
         if (mapGone(error)) {

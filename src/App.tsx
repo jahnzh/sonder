@@ -52,6 +52,7 @@ import {
 import { PlayerProvider, usePlayer } from "./player";
 import { ReleasePicker } from "./components/ReleasePicker";
 import { ProwlarrSettings } from "./components/ProwlarrSettings";
+import { ReadingSyncSettings } from "./components/ReadingSyncSettings";
 import { AppearanceSettings } from "./components/Appearance";
 import { KeyboardHelpButton } from "./components/KeyboardHelp";
 import { PlaybackSettings } from "./components/PlaybackSettings";
@@ -2518,7 +2519,7 @@ function SettingsPage({
         configured={!!settings?.hardcoverConfigured}
         notify={notify}
       />
-      {user.role === "admin" && <><SourceSettings settings={settings} onSaved={onSaved} notify={notify} /><ProwlarrSettings settings={settings} onSaved={onSaved} notify={notify} /></>}
+      {user.role === "admin" && <><SourceSettings settings={settings} onSaved={onSaved} notify={notify} /><ProwlarrSettings settings={settings} onSaved={onSaved} notify={notify} /><ReadingSyncSettings notify={notify} /></>}
       <section className="install-card">
         <div className="install-brand">
           <Mark />
