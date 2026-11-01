@@ -22,7 +22,10 @@ const gitStub = `#!/usr/bin/env bash
 echo "$*" >>"$STUB_DIR/git.log"
 case "$1" in
   ls-remote)
-    if [[ -f $STUB_DIR/pushed ]]; then cat "$STUB_DIR/after.txt"; exit 0; fi
+    if [[ -f $STUB_DIR/pushed ]]; then
+      [[ -n \${STUB_LSREMOTE_FAIL_AFTER:-} ]] && { echo "fatal: unable to access remote" >&2; exit 128; }
+      cat "$STUB_DIR/after.txt"; exit 0
+    fi
     [[ -n \${STUB_LSREMOTE_FAIL_BEFORE:-} ]] && { echo "fatal: unable to access remote" >&2; exit 128; }
     cat "$STUB_DIR/before.txt"; exit 0 ;;
   push)
@@ -236,6 +239,17 @@ test("a failing snapshot still pushes, warns on stderr and dispatches nothing", 
   const bad = setup([[SHA_A, "main"]], [[SHA_B, "main"]]);
   const rb = run(bad, [], { STUB_LSREMOTE_FAIL_BEFORE: "1", STUB_PUSH_EXIT: "7" });
   assert.equal(rb.status, 7);
+});
+
+test("a failing post-push snapshot still pushes, warns on stderr and dispatches nothing", async () => {
+  const fx = setup([[SHA_A, "main"]], [[SHA_B, "main"]]);
+  const r = run(fx, [], { STUB_LSREMOTE_FAIL_AFTER: "1" });
+  assert.equal(r.status, 0);
+  assert.match(r.stderr, /cannot list remote 'origin' after the push/);
+  assert.ok(fs.existsSync(path.join(fx.dir, "pushed")));
+  assert.equal(r.stdout.trim(), "");
+  await new Promise((res) => setTimeout(res, 200));
+  assert.equal(invocations(fx).length, 0);
 });
 
 test("the check is detached: the wrapper returns while the runner keeps running and logging", async () => {
