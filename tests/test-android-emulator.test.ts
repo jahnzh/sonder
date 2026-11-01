@@ -10,7 +10,8 @@ const script = path.resolve("scripts/test-android-emulator.sh");
 
 // scripts/emulator-deck.sh is replaced by a stub that logs its calls. STUB_EMU_START is the exit
 // status of `start`; STUB_EMU_FIREFOX of `install-firefox`; STUB_EMU_LEFT=running makes `status`
-// report the container still there after the run.
+// report the container still there after the run. STUB_STATUS_DELAY makes a "running=yes" status
+// sleep that many seconds after its first line, simulating a slow writer (issue #125).
 const emulatorStub = `#!/usr/bin/env bash
 echo "$*" >>"$STUB_LOG.emu"
 case "$1" in
@@ -20,7 +21,7 @@ case "$1" in
     echo "boot_seconds=41"; echo "memory_anon_bytes=3400000000" ;;
   install-firefox) exit "\${STUB_EMU_FIREFOX:-0}" ;;
   status)
-    if [[ \${STUB_EMU_BEFORE:-} == running || ( \${STUB_EMU_LEFT:-} == running && -n $(grep -x start "$STUB_LOG.emu") ) ]]; then echo "running=yes"; echo "unit_active=active"; else echo "running=no"; echo "unit_active=inactive"; fi
+    if [[ \${STUB_EMU_BEFORE:-} == running || ( \${STUB_EMU_LEFT:-} == running && -n $(grep -x start "$STUB_LOG.emu") ) ]]; then echo "running=yes"; [[ -n \${STUB_STATUS_DELAY:-} ]] && sleep "\${STUB_STATUS_DELAY}"; echo "unit_active=active"; else echo "running=no"; echo "unit_active=inactive"; fi
     echo "memory_peak_bytes=4100000000" ;;
   stop) echo "stopped=sonder-emu-android34" ;;
   adb) exit "\${STUB_EMU_ADB:-0}" ;;
@@ -274,6 +275,20 @@ test("an emulator that is already running is refused and not stopped", async () 
   assert.equal(f.summary().result, "emulator_already_running");
   assert.equal(f.summary().exit, "8");
   assert.match(f.summaryText(), /^finished_at=/m);
+});
+
+test("the already-running guard detects a slow status writer (SIGPIPE-safe)", async () => {
+  const f = fixture();
+  // The status writer prints running=yes, then sleeps before the rest of its output. A `grep -q`
+  // on a pipe exits on the first match and lets the producer die of SIGPIPE, whose 141 under
+  // `set -o pipefail` turns the match into a miss and lets the run start the emulator it must
+  // refuse (issue #125). The guard must hold on every iteration, not most of them.
+  for (let i = 0; i < 15; i++) {
+    const out = await f.run([], { STUB_EMU_BEFORE: "running", STUB_STATUS_DELAY: "0.1" });
+    assert.equal(out.status, 8, `iteration ${i}: ${out.output}`);
+    assert.match(out.output, /already running/);
+  }
+  assert.equal(f.emuCalls().includes("start"), false, f.emuCalls().join(","));
 });
 
 test("tunnel directories use TMPDIR and leave nothing in the real /tmp", async () => {
