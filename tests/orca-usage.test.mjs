@@ -710,6 +710,8 @@ function assertNoHostileSecrets(haystack, where) {
 function hostileReading(name, clock, { usable }) {
   const f = HOSTILE;
   const observedAt = clock.now().toISOString();
+  // Every header map we push carries the full cookie (with Path/HttpOnly), not just the bare session id.
+  const hostileHeaders = { ...f.headerMap, cookie: f.cookies[0] };
   if (name === "opencode") {
     // The opencode reader retains no detail or error field; reason, source and bucket are its free text.
     return {
@@ -717,8 +719,8 @@ function hostileReading(name, clock, { usable }) {
       observedAt,
       status: usable ? "available" : "unavailable",
       reason: usable ? null : f.errorStrings.join("; "),
-      source: { kind: "opencode-gateway-probe", official: false, note: `probe at ${f.homePaths.windows} with ${f.authorization[0]}` },
-      scope: { host: "andi" },
+      source: { kind: "opencode-gateway-probe", official: false, note: `probe at ${f.homePaths.windows} via ${f.homePaths.wsl} with ${f.authorization[0]}` },
+      scope: { host: "andi", wslPath: f.homePaths.wsl },
       windows: [],
       unlimited: usable,
       capacityConfirmed: usable,
@@ -732,7 +734,7 @@ function hostileReading(name, clock, { usable }) {
     status: usable ? "available" : "unavailable",
     reason: usable ? null : "reader_error",
     detail: usable ? null : f.errorStrings.join("; "),
-    source: { kind: `${name}-hostile-probe`, official: true, note: `probe for ${f.emails[1]} signed in under ${f.homePaths.linux}` },
+    source: { kind: `${name}-hostile-probe`, official: true, note: `probe for ${f.emails[1]} signed in under ${f.homePaths.linux} via ${f.homePaths.wsl}` },
     scope: {
       host: "andi",
       account: f.emails[0],
@@ -742,8 +744,9 @@ function hostileReading(name, clock, { usable }) {
       teamId: f.numericUserIds[1],
       sessionId: f.uuids[1],
       home: f.homePaths.linux,
+      wslPath: f.homePaths.wsl,
       email: f.emails[1],
-      headers: f.headerMap,
+      headers: hostileHeaders,
       expectedAccount: f.emails[0],
     },
     windows: [
@@ -816,7 +819,7 @@ function hostileReading(name, clock, { usable }) {
     ];
     reading.reset = { primaryResetAt: HOSTILE_RESET };
     reading.cautions = [f.errorStrings[1]];
-    reading.error = { code: f.uuids[1], message: f.errorStrings[0], httpStatus: 401, connectCode: null, rateLimited: false, retryAfterMs: null, headers: f.headerMap };
+    reading.error = { code: f.uuids[1], message: f.errorStrings[0], httpStatus: 401, connectCode: null, rateLimited: false, retryAfterMs: null, headers: hostileHeaders };
     return reading;
   }
   if (name === "antigravity") {
@@ -842,6 +845,17 @@ test("the shared hostile fixture never reaches the state files, listReadings or 
     const clock = fakeClock();
     let usable = true;
     const hostileProviders = PROVIDERS.map((provider) => ({ ...provider, read: async () => hostileReading(provider.name, clock, { usable }) }));
+    // Every fixture value must actually be pushed through the pipeline, or the absence asserted below proves nothing.
+    // Walk the readings' own strings (not a JSON blob, which escapes the backslashes in the path fixtures).
+    const leaves = [];
+    const walkLeaves = (value) => {
+      if (typeof value === "string") leaves.push(value);
+      else if (typeof value === "number") leaves.push(String(value));
+      else if (value && typeof value === "object") Object.values(value).forEach(walkLeaves);
+    };
+    for (const provider of PROVIDERS) for (const usable of [false, true]) walkLeaves(hostileReading(provider.name, clock, { usable }));
+    const seeded = leaves.join("\n");
+    for (const secret of HOSTILE_SECRETS) assert.ok(seeded.includes(secret), `hostileReading never seeds ${secret}, so its absence would prove nothing`);
     const store = new UsageStore(dir);
     // A failed reading first, so the hostile detail also passes through the provider_state columns.
     usable = false;
@@ -1350,6 +1364,40 @@ test("UsageStore migrates legacy rows on open and never returns raw identifiers 
     store.close();
 
     assertNoHostileSecrets(readFileSync(dbPath).toString("utf8"), "the legacy migrate left a raw identifier on disk");
+  }));
+
+test("the legacy migration only rebuilds the file when a stored row actually changed", () =>
+  withState(async (dir) => {
+    const f = HOSTILE;
+    const legacy = {
+      provider: "codex",
+      observedAt: START,
+      status: "available",
+      reason: null,
+      detail: f.errorStrings[0],
+      source: SOURCE,
+      scope: { host: "andi", account: f.emails[0], codexHome: f.homePaths.linux, accountUuid: f.uuids[0] },
+      windows: [window("5h", 12, "2026-10-30T23:00:00.000Z")],
+      exhaustedWindows: [],
+    };
+    seedLegacyDatabase(dir, legacy);
+    let vacuums = 0;
+    const realExec = DatabaseSync.prototype.exec;
+    DatabaseSync.prototype.exec = function (sql, ...args) {
+      if (typeof sql === "string" && sql.trim() === "VACUUM") vacuums += 1;
+      return realExec.call(this, sql, ...args);
+    };
+    try {
+      const first = new UsageStore(dir);
+      first.close();
+      assert.equal(vacuums, 1, "migrating raw legacy rows must rebuild the file so the old bytes are gone");
+      const second = new UsageStore(dir);
+      assert.equal(second.countReadings().count, 1, "the migrated row must survive the second open");
+      second.close();
+      assert.equal(vacuums, 1, "a store with nothing to migrate must not pay for a rebuild");
+    } finally {
+      DatabaseSync.prototype.exec = realExec;
+    }
   }));
 
 test("hostile nested identifiers never reach sqlite, planner reports or evaluation samples", () =>
