@@ -54,6 +54,20 @@ Known host failures (issue #37) are listed in `tests/known-failures.wsl-host.jso
 - A full check takes about 4 to 5 minutes.
 - Keep live verification scripts (`scripts/verify-*.mjs`) on the production machine; never run them on the host.
 
+## Choosing a host: `scripts/ci-run.sh`
+
+`npm run ci:run [--dispatch <id>] <commit-sha>` (issue #119) is the single entry point for committed checks. It probes the Deck (`deck@steamdeck`) and the WSL host (`192.168.1.119`), starts the check on the **first idle** host by invoking `scripts/ci-deck.sh` or `scripts/ci-ssh.sh`, and **queues behind a busy host by waiting on the runner's process** — never on a log line. It forwards the downstream runner's exit status. The runners above still work standalone; `ci-run.sh` only decides which one to call.
+
+- **Host order**: `SONDER_CI_HOSTS` is the comma-separated list of enabled hosts in priority order (default `deck,wsl`); the rest are skipped with a `[ci-run]` note. An unknown token, an empty list, or a bad `--dispatch` id is a usage error (exit 2).
+- **Busy**: a live local runner process (`ci-deck.sh` / `ci-ssh.sh` in the command line, from any checkout) marks the host busy, as does a live `check.pid` in a run directory found by the remote probe (`runs/*` on the Deck, `sonder-ci-*` on WSL). A zombie pid is not busy: `kill -0` answers for it, so every liveness check also reads the state out of `/proc/<pid>/stat`.
+- **Queueing**: when no enabled host is idle and at least one is busy (including a host with a live local runner process but an unreachable ssh target), it waits behind the first busy host, polling every `SONDER_CI_POLL_INTERVAL` seconds (default 5) until that runner process exits, and starts the run then. It prints one `queued <host> <sha> log=<path>` line per queue-host change and exits 124 at `SONDER_CI_QUEUE_TIMEOUT` seconds (default 3600) without starting a run.
+- **Refusal**: a commit that already has a **finished** run with a failing check result on any host is refused with exit 1 and never rerun on the other host to obtain a pass. A failing check result means `result=failed` or `result=remote_check_failed` in the run's `ci-deck-result.txt` / `ci-ssh-result.txt`, or a `passed` result whose `report.json` / `check-report.json` says the check failed. Host failures (`host_*`, `timeout`, …) did not judge the commit and do not block; a report that does not parse is not evidence and does not block either.
+- **All hosts unreachable**: no enabled host is idle or busy, so it invokes the first enabled host's runner, which falls back to a local `npm run check` the way it always has.
+- **Output**: one line per started or queued run on stdout — `started <host> <sha> log=<path>`, `queued <host> <sha> log=<path>`, `finished <host> <sha> exit=<rc> log=<path>` — with `[ci-run]`-prefixed diagnostics on stderr. The runner's stdout and stderr append to the log file at `artifacts/ci/<sha>/ci-run-<UTC timestamp>-<pid>.log`.
+- **Dispatch**: `--dispatch <id>` (or `--dispatch=<id>`) sets `SONDER_CI_DISPATCH` for the downstream runner so the finished check is recorded on that worker history dispatch. The id is validated up front against the `scripts/lib/ci-history.sh` allowlist.
+- **Exit codes**: 0 the downstream check passed; 1 the ref is not a commit or the commit already failed on a finished run; 2 usage; 124 the queue wait cap was reached; otherwise the downstream runner's exit status (see `scripts/ci-deck.sh`'s list).
+- **Environment**: `SONDER_CI_HOSTS`, `SONDER_CI_DECK_HOST` (default `deck@steamdeck`), `SONDER_CI_WSL_HOST` (default `192.168.1.119`), `SONDER_CI_REMOTE_BASE` (as in the runners: WSL default `/tmp`, Deck default `$HOME/sonder-ci` on the Deck), `SONDER_CI_POLL_INTERVAL`, `SONDER_CI_QUEUE_TIMEOUT`, `SONDER_CI_DISPATCH`.
+
 ## Reader e2e timing (issue #115)
 
 When measuring whether reader waits are slow on a host or the specs are too strict, run the three instrumented specs with timing on.

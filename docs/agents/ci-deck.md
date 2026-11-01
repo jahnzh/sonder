@@ -36,6 +36,10 @@ podman run --rm --name sonder-ci-run-<id> --cpus 2 --memory 6g --pids-limit 2048
 
 **Never add `--cap-drop ALL`**: Firefox then crashes with `Target crashed` under rootless Podman on SteamOS.
 
+## Choosing a host
+
+`npm run ci:run [--dispatch <id>] <commit-sha>` probes both hosts in the order of `SONDER_CI_HOSTS` (default `deck,wsl`), starts the check on the first idle one, and queues behind a busy one by waiting on its runner process. A commit that already has a finished failed check on any host is refused with exit 1 and never rerun on the other host. If every enabled host is unreachable, the first enabled host's runner falls back to a local check. Full semantics, output lines and environment overrides: `docs/agents/ci-host.md`, "Choosing a host: `scripts/ci-run.sh`".
+
 ## Exit codes
 
 As in `ci-ssh.sh`: 0 passed; 1 the check failed (or its own exit status); 2 usage; 4 the run never started or died (including podman exit 125); 5 SSH lost after the run began; 124 wait cap reached. Preflight codes: 3 podman, git, systemd-run or lingering missing; 6 image missing and not pullable, or not matching the lockfile; 7 free disk below the threshold. An unreachable Deck at the start falls back to a local `npm run check`. A failure on the Deck is a failure: do not rerun elsewhere to get a pass.

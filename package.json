@@ -15,6 +15,7 @@
     "check": "node scripts/check-local.mjs",
     "ci:ssh": "bash scripts/ci-ssh.sh",
     "ci:deck": "bash scripts/ci-deck.sh",
+    "ci:run": "bash scripts/ci-run.sh",
     "backup": "node scripts/backup-db.mjs"
   },
   "dependencies": {
