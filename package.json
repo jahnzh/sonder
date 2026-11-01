@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "prepare": "bash scripts/install-hooks.sh",
+    "prepare": "test -f scripts/install-hooks.sh && bash scripts/install-hooks.sh || true",
     "dev": "concurrently -k -n server,web -c blue,green \"tsx watch server/index.ts\" \"vite --host 0.0.0.0\"",
     "build": "tsc --noEmit && vite build && node scripts/build-sw.mjs",
     "start": "tsx server/index.ts",

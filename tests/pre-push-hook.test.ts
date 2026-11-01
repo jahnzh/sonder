@@ -260,5 +260,28 @@ test("package.json defines a prepare script that installs the hooks", () => {
   const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as {
     scripts?: Record<string, string>;
   };
-  assert.equal(pkg.scripts?.prepare, "bash scripts/install-hooks.sh");
+  assert.equal(
+    pkg.scripts?.prepare,
+    "test -f scripts/install-hooks.sh && bash scripts/install-hooks.sh || true",
+  );
+});
+
+test("prepare command exits 0 when scripts/install-hooks.sh is missing", () => {
+  // The Dockerfile copies package.json before scripts/, so npm ci runs the
+  // prepare script in a directory without it and must not fail.
+  const root = mkdtempSync(join(tmpdir(), "sonder-prepare-"));
+  const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as {
+    scripts?: Record<string, string>;
+  };
+  const prepare = pkg.scripts?.prepare;
+  assert.ok(typeof prepare === "string", "prepare script must be defined");
+  try {
+    const result = spawnSync("bash", ["-c", prepare], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
