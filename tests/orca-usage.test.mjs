@@ -7,7 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { assessCodexUsage, readCodexUsage } from "../scripts/codex-usage.mjs";
-import { assessClaudeUsage } from "../scripts/claude-usage.mjs";
+import { assessClaudeUsage, CLAUDE_USAGE_URL } from "../scripts/claude-usage.mjs";
 import { assessAntigravityUsage } from "../scripts/antigravity-usage.mjs";
 import { assessCursorUsage } from "../scripts/cursor-usage.mjs";
 import { buildDispatchEvaluation, formatEvaluationMarkdown } from "../scripts/orca-dispatch-eval.mjs";
@@ -705,37 +705,193 @@ function assertNoHostileSecrets(haystack, where) {
   }
 }
 
-/** A reading in the provider's own shape with an identifier in every field it can carry.
+/** A hostile reading in the provider's own shape: every field is one its real reader can emit,
+ *  nested exactly as the reader nests it, with a fixture identifier wherever the field can carry one.
+ *  The failure variant uses the reader's real failure shape (null or empty windows), so it is unusable
+ *  and its hostile detail flows through the provider_state columns.
  *  `usable` mirrors what the readers report on success: windows, and `unlimited` for opencode. */
 function hostileReading(name, clock, { usable }) {
   const f = HOSTILE;
   const observedAt = clock.now().toISOString();
-  // Every header map we push carries the full cookie (with Path/HttpOnly), not just the bare session id.
-  const hostileHeaders = { ...f.headerMap, cookie: f.cookies[0] };
+  const observedAtMs = clock.now().getTime();
+  const resetMs = Date.parse(HOSTILE_RESET);
+  // Free text shared by the failure carriers: it seeds every fixture value the keyed fields of one
+  // provider's shape cannot carry, and the store's scrubber must destroy it on every line of it.
+  const hostileDetail =
+    `${f.errorStrings[0]}; ${f.errorStrings[1]}; cookie: ${f.cookies[0]}; teamId: ${f.numericUserIds[1]}; ` +
+    `session: ${f.opaqueBlobs[0]}; blob: ${f.opaqueBlobs[1]}; authorization: ${f.authorization[0]}; home: ${f.homePaths.macos}`;
+  // The note carried by every reader that has one; none of its fixture values may survive the scrub.
+  const hostileNote = `probe for ${f.emails[1]} signed in under ${f.homePaths.linux} via ${f.homePaths.wsl} from ${f.homePaths.windows} or ${f.homePaths.macos} with ${f.authorization[0]}`;
   if (name === "opencode") {
-    // The opencode reader retains no detail or error field; reason, source and bucket are its free text,
-    // so every fixture value its keyed scope cannot carry must ride in those strings.
+    // The opencode reader retains no detail, error, freshness or source note, and its scope is host-only
+    // (always null); reason and bucket.label are its only free text, so they must seed the rest of the fixture.
     return {
       provider: name,
       observedAt,
       status: usable ? "available" : "unavailable",
-      reason: usable ? null : `${f.errorStrings.join("; ")}; cookie: ${f.cookies[0]}; teamId: ${f.numericUserIds[1]}`,
-      source: { kind: "opencode-gateway-probe", official: false, note: `probe at ${f.homePaths.windows} via ${f.homePaths.wsl} from ${f.homePaths.macos} for ${f.emails[1]} (account ${f.uuids[1]}) with ${f.authorization[0]}` },
-      scope: { host: "andi", wslPath: f.homePaths.wsl },
+      reason: usable ? null : hostileDetail,
+      source: { kind: "opencode-gateway-probe", official: false },
+      scope: { host: null },
       windows: [],
       unlimited: usable,
       capacityConfirmed: usable,
-      bucket: { id: "opencode-nris", label: `NRIS gateway for ${f.emails[0]} (${f.opaqueBlobs[1]} / ${f.opaqueBlobs[0]})` },
+      bucket: { id: "opencode-nris", label: `NRIS gateway for ${f.emails[0]} (${f.uuids[1]}; ${f.emails[1]}) via ${f.homePaths.windows} / ${f.homePaths.wsl}` },
       expiresAt: "2026-11-07T00:00:00.000Z",
     };
   }
-  const reading = {
+  if (name === "claude") {
+    // Real shape: the note on the official:false endpoint, scope without the store's generic keys,
+    // windows with group/severity/active but no id or remainingPercent, and the reader's own freshness.
+    return {
+      provider: name,
+      source: { kind: "claude-oauth-usage-endpoint", endpoint: CLAUDE_USAGE_URL, official: false, note: hostileNote },
+      scope: { host: "andi", configDir: f.homePaths.macos, accountUuid: f.uuids[0], organizationUuid: f.uuids[1], plan: "plus", rateLimitTier: "premium", expectedAccount: f.emails[0] },
+      observedAt,
+      status: usable ? "available" : "unavailable",
+      reason: usable ? null : "auth_rejected",
+      detail: usable ? null : hostileDetail,
+      windows: usable
+        ? [
+          { kind: "session", group: "session", label: f.uuids[0], scope: null, appliesTo: "all", usedPercent: 12, resetsAt: HOSTILE_RESET, severity: null, active: true },
+          { kind: "weekly_all", group: "weekly", label: "Current week (all models)", scope: null, appliesTo: "all", usedPercent: 40, resetsAt: HOSTILE_RESET, severity: null, active: true },
+        ]
+        : null,
+      exhaustedWindows: [],
+      extraUsage: usable ? { enabled: false, spendLimitReached: false } : null,
+      freshness: { state: "fresh", reasons: [], staleAfter: "2026-10-30T12:30:00.000Z" },
+    };
+  }
+  if (name === "codex") {
+    return {
+      provider: name,
+      source: { kind: "codex-app-server-rate-limits", command: "codex app-server --disable plugins --disable apps --disable plugin_discovery_prefetch: account/read, account/rateLimits/read", official: true, note: hostileNote },
+      scope: { host: "andi", codexHome: f.homePaths.linux, account: f.emails[0], authMethod: "chatgpt", plan: "plus", expectedAccount: null },
+      observedAt,
+      status: usable ? "available" : "unavailable",
+      reason: usable ? null : "cli_error",
+      detail: usable ? null : hostileDetail,
+      windows: usable
+        ? [
+          { id: "codex-5h", limitId: "codex", kind: "five_hour", label: f.uuids[0], durationMinutes: 300, usedPercent: 12, remainingPercent: 88, resetsAt: HOSTILE_RESET, exhausted: false },
+          { id: "codex-weekly", limitId: "codex", kind: "weekly", label: "Weekly limit", durationMinutes: 10080, usedPercent: 40, remainingPercent: 60, resetsAt: HOSTILE_RESET, exhausted: false },
+        ]
+        : null,
+      exhaustedWindows: [],
+      ordinaryUsageAllowed: usable ? true : null,
+      limitReached: null,
+      credits: usable ? { hasCredits: false, unlimited: false } : null,
+      raw: usable
+        ? {
+          ordinaryUsageAllowed: true,
+          rateLimitsByLimitId: {
+            codex: {
+              limitId: "codex",
+              limitName: f.uuids[1],
+              normalModelSlug: null,
+              primary: { usedPercent: 12, windowDurationMins: 300, resetsAt: 1793365434 },
+              secondary: { usedPercent: 40, windowDurationMins: 10080, resetsAt: 1793790369 },
+              credits: { hasCredits: false, unlimited: false, balance: "0" },
+              spendControlReached: false,
+              planType: "plus",
+              rateLimitReachedType: null,
+            },
+          },
+        }
+        : null,
+      freshness: usable
+        ? { state: "fresh", reasons: [], staleAfter: "2026-10-30T12:30:00.000Z" }
+        : { state: "unavailable", reasons: ["cli_error"], staleAfter: null },
+    };
+  }
+  if (name === "cursor") {
+    // Real shape: no detail field, a host object, the full account summary, windows with `status`
+    // (not `state`), the full reset/freshness/evaluatedModel blocks, and error without headers.
+    return {
+      provider: name,
+      status: usable ? "ok" : "account_mismatch",
+      priorStatus: null,
+      usableForPlanning: usable,
+      reason: usable ? null : "account_mismatch",
+      source: { kind: "cursor-dashboard-rpc", transport: "local", endpoint: `https://${f.homePaths.windows}`, service: "aiserver.v1.DashboardService", methods: ["GetMe", "GetCurrentPeriodUsage", "GetPlanInfo", "GetHardLimit"], credentialSource: "file:auth.json", readOnly: true },
+      scope: {
+        host: { selector: "local", transport: "local", hostname: f.homePaths.wsl, platform: "linux" },
+        account: {
+          known: true,
+          verifiedMatch: usable,
+          userId: f.numericUserIds[0],
+          email: f.emails[0],
+          displayName: f.emails[1],
+          publicUserId: f.uuids[0],
+          teamId: f.numericUserIds[1],
+          teamName: f.homePaths.macos,
+          activeTeamId: f.numericUserIds[1],
+          organizationId: f.uuids[1],
+          isEnterpriseUser: false,
+          planName: "pro",
+          planPrice: f.opaqueBlobs[1],
+          includedUsagePeriod: "monthly",
+        },
+        expectedAccount: { email: f.emails[0] },
+        mismatch: usable ? null : { fields: ["email", "userId", "teamId"], message: "Active Cursor account mismatched expected email, userId, teamId" },
+      },
+      observedAt,
+      observedAtMs,
+      evaluatedAt: observedAt,
+      evaluatedAtMs: observedAtMs,
+      freshness: usable
+        ? { state: "fresh", isFresh: true, ageMs: 0, maxAgeMs: 1800000, resetPassed: false, staleReason: null }
+        : { state: "unknown", isFresh: false, ageMs: 0, maxAgeMs: 1800000, resetPassed: false, staleReason: null },
+      reset: usable
+        ? { billingCycleStartAt: null, billingCycleStartAtMs: null, billingCycleEndAt: null, billingCycleEndAtMs: null, includedUsageResetsAt: null, includedUsageResetsAtMs: null, primaryResetAt: HOSTILE_RESET, primaryResetAtMs: resetMs, remainingMs: resetMs - observedAtMs, resetDescription: f.opaqueBlobs[0] }
+        : { billingCycleStartAt: null, billingCycleStartAtMs: null, billingCycleEndAt: null, billingCycleEndAtMs: null, includedUsageResetsAt: null, includedUsageResetsAtMs: null, primaryResetAt: null, primaryResetAtMs: null, remainingMs: null, resetDescription: null },
+      windows: usable
+        ? [
+          { id: "included_total", label: f.uuids[0], kind: "percentage_allowance", appliesTo: "all", period: "monthly", usedPercent: 12, displayPercentUsed: 12, remainingPercent: 88, includedSpendCents: null, limitCents: null, bonusSpendCents: null, totalSpendCents: null, resetsAt: HOSTILE_RESET, resetsAtMs: resetMs, status: "ok" },
+          { id: "included_auto", label: "Auto", kind: "percentage_allowance", appliesTo: "unknown", modelScopeKnown: false, period: "monthly", usedPercent: 40, displayPercentUsed: 40, remainingPercent: 60, includedSpendCents: null, limitCents: null, bonusSpendCents: null, totalSpendCents: null, applicableModels: ["auto", "default"], resetsAt: HOSTILE_RESET, resetsAtMs: resetMs, status: "ok" },
+        ]
+        : [],
+      evaluatedModel: { modelId: null, bucket: "overall" },
+      exhaustedWindows: [],
+      cautions: usable ? [f.errorStrings[1]] : [],
+      error: usable ? null : { code: "account_mismatch", message: `${f.errorStrings[0]}; ${f.errorStrings[1]}; ${f.authorization[0]}; cookie: ${f.cookies[0]}`, httpStatus: null, connectCode: null, rateLimited: false, retryAfterMs: null },
+    };
+  }
+  if (name === "antigravity") {
+    return {
+      provider: name,
+      source: { kind: "antigravity-cli-usage-command", command: "agy -p /usage --output-format json", official: true, note: hostileNote },
+      scope: { host: "andi", home: f.homePaths.linux, account: f.emails[0], authMethod: "chatgpt", expectedAccount: null },
+      observedAt,
+      status: usable ? "available" : "unavailable",
+      reason: usable ? null : "cli_error",
+      detail: usable ? null : hostileDetail,
+      windows: usable
+        ? [
+          { id: "flash-5h", kind: "five_hour", group: "Gemini Flash", label: `${f.uuids[0]}: flash`, remainingFraction: 0.88, usedPercent: 12, resetsAt: HOSTILE_RESET, exhausted: false },
+          { id: "flash-weekly", kind: "weekly", group: "Gemini Flash", label: "Gemini Flash: weekly", remainingFraction: 0.6, usedPercent: 40, resetsAt: HOSTILE_RESET, exhausted: false },
+        ]
+        : null,
+      groups: usable
+        ? [
+          { name: "Gemini Flash", models: ["Gemini Flash"], modelIds: [f.uuids[1]], appliesTo: "group", windowIds: ["flash-5h", "flash-weekly"], exhausted: false },
+        ]
+        : null,
+      exhaustedWindows: [],
+      freshness: usable
+        ? { state: "fresh", reasons: [], staleAfter: "2026-10-30T12:30:00.000Z" }
+        : { state: "unavailable", reasons: ["cli_error"], staleAfter: null },
+    };
+  }
+  // A provider not modelled above: the wide generic store shape, still pushing the fixture through
+  // every key the store can see. It is not a claim about any real reader's output.
+  const hostileHeaders = { ...f.headerMap, cookie: f.cookies[0] };
+  return {
     provider: name,
     observedAt,
     status: usable ? "available" : "unavailable",
     reason: usable ? null : "reader_error",
     detail: usable ? null : `${f.errorStrings.join("; ")}; cookie: ${f.cookies[0]}; ${f.opaqueBlobs[1]}`,
-    source: { kind: `${name}-hostile-probe`, official: true, note: `probe for ${f.emails[1]} signed in under ${f.homePaths.linux} via ${f.homePaths.wsl} from ${f.homePaths.windows} or ${f.homePaths.macos} with ${f.authorization[0]}` },
+    source: { kind: `${name}-hostile-probe`, official: true, note: hostileNote },
     scope: {
       host: "andi",
       account: f.emails[0],
@@ -758,84 +914,6 @@ function hostileReading(name, clock, { usable }) {
     notes: f.nested,
     freshness: { state: usable ? "fresh" : "unavailable" },
   };
-  if (name === "claude") {
-    reading.scope = { ...reading.scope, configDir: f.homePaths.macos };
-    reading.windows = [
-      { kind: "session", label: f.uuids[0], appliesTo: "all", usedPercent: 12, remainingPercent: 88, resetsAt: HOSTILE_RESET },
-      { kind: "weekly_all", label: "weekly", appliesTo: "all", usedPercent: 40, remainingPercent: 60, resetsAt: HOSTILE_RESET },
-    ];
-    reading.extraUsage = { enabled: false, spendLimitReached: false };
-    return reading;
-  }
-  if (name === "codex") {
-    reading.scope = { ...reading.scope, codexHome: f.homePaths.linux };
-    reading.ordinaryUsageAllowed = true;
-    reading.limitReached = null;
-    reading.credits = { hasCredits: false, unlimited: false };
-    reading.raw = {
-      ordinaryUsageAllowed: true,
-      rateLimitsByLimitId: {
-        codex: {
-          limitId: "codex",
-          limitName: f.uuids[1],
-          normalModelSlug: null,
-          primary: { usedPercent: 12, windowDurationMins: 300, resetsAt: 1793365434 },
-          secondary: { usedPercent: 40, windowDurationMins: 10080, resetsAt: 1793790369 },
-          credits: { hasCredits: false, unlimited: false, balance: "0" },
-          spendControlReached: false,
-          planType: "plus",
-          rateLimitReachedType: null,
-        },
-      },
-    };
-    return reading;
-  }
-  if (name === "cursor") {
-    reading.status = usable ? "ok" : "unavailable";
-    reading.observedAtMs = clock.now().getTime();
-    reading.scope = {
-      host: { selector: "local", transport: "local", hostname: "andi", platform: "linux" },
-      account: {
-        known: true,
-        verifiedMatch: null,
-        userId: f.numericUserIds[0],
-        email: f.emails[0],
-        displayName: "Hostile Reader",
-        publicUserId: f.uuids[0],
-        teamId: f.numericUserIds[1],
-        teamName: "Hostile Team",
-        activeTeamId: f.numericUserIds[1],
-        organizationId: f.uuids[1],
-        isEnterpriseUser: false,
-        planName: "pro",
-        planPrice: 20,
-        includedUsagePeriod: "monthly",
-      },
-      expectedAccount: f.emails[0],
-      mismatch: null,
-    };
-    reading.windows = [
-      { id: "included_total", kind: "percentage_allowance", label: f.uuids[0], usedPercent: 12, state: "ok", resetsAt: HOSTILE_RESET },
-      { id: "included_auto", kind: "percentage_allowance", label: "auto", usedPercent: 40, state: "ok", resetsAt: HOSTILE_RESET },
-    ];
-    reading.reset = { primaryResetAt: HOSTILE_RESET };
-    reading.cautions = [f.errorStrings[1]];
-    reading.error = { code: f.uuids[1], message: f.errorStrings[0], httpStatus: 401, connectCode: null, rateLimited: false, retryAfterMs: null, headers: hostileHeaders };
-    return reading;
-  }
-  if (name === "antigravity") {
-    reading.scope = { host: "andi", home: f.homePaths.linux, account: f.emails[0], authMethod: "chatgpt", expectedAccount: f.emails[0] };
-    reading.windows = [
-      { id: "flash-5h", kind: "5h", group: "Gemini Flash", label: `${f.uuids[0]}: flash`, remainingFraction: 0.88, usedPercent: 12, resetsAt: HOSTILE_RESET, exhausted: false },
-      { id: "flash-weekly", kind: "weekly", group: "Gemini Flash", label: "flash weekly", remainingFraction: 0.6, usedPercent: 40, resetsAt: HOSTILE_RESET, exhausted: false },
-    ];
-    reading.groups = [
-      { name: "Gemini Flash", models: ["Gemini 3 Flash"], modelIds: [f.uuids[1]], appliesTo: "group", windowIds: ["flash-5h", "flash-weekly"], exhausted: false },
-    ];
-    return reading;
-  }
-  // A provider not modelled above: the generic shape still pushes the fixture through everything the store can see.
-  return reading;
 }
 
 test("the shared hostile fixture never reaches the state files, listReadings or planner reports, from any provider", () =>
