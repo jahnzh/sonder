@@ -1187,7 +1187,11 @@ export function registerAlignment(app: FastifyInstance) {
     if (action === "resume") void processAlignments();
     return job;
   });
-  app.get("/api/alignments/:id/map", async (req) => {
+  app.get("/api/alignments/:id/map", async (req, reply) => {
+    // A 410 is a cacheable status per RFC 9111: browsers store the response
+    // even without freshness headers, and a cached 410 then answers every
+    // later /map fetch — including after a rebuild — until the cache is gone.
+    reply.header("Cache-Control", "private, no-store");
     const { id } = req.params as { id: string };
     const job = alignmentJob(id),
       book = await extractBook(job.ebookId);

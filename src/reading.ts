@@ -570,6 +570,7 @@ export function warmPlaybackReading(
             try {
               map = await api<AlignmentJob>(
                 `/alignments/${encodeURIComponent(job.id)}/map`,
+                { cache: "no-store" },
               );
             } catch (error) {
               // The server refused the map (its sources changed): a cached
