@@ -38,7 +38,9 @@ Use Node 24 and install dependencies with `npm ci`.
 
 ## CI over SSH
 
-The runner is available as `npm run ci:ssh <sha>` (`scripts/ci-ssh.sh`). It runs CI on the WSL host at `192.168.1.119` and is still dispatched by hand; automatic dispatch on push is not built yet. Check host access with `ssh -o BatchMode=yes -o ConnectTimeout=5 192.168.1.119 true`.
+The runner is available as `npm run ci:ssh <sha>` (`scripts/ci-ssh.sh`). It runs CI on the WSL host at `192.168.1.119` and is dispatched by hand with `npm run ci:run <sha>` unless the push went through the wrapper below. Check host access with `ssh -o BatchMode=yes -o ConnectTimeout=5 192.168.1.119 true`.
+
+Pushes are dispatched automatically when they go through `scripts/ci-push.sh` (or `npm run ci:push`, same arguments as `git push`): for every branch that changed on the remote, the committed check starts in the background via `ci-run.sh` (first idle host, queued behind a busy one). Already-checked SHAs are skipped, and `SONDER_SKIP_PUSH_CI=1` falls back to a plain `git push`. A push that does not go through the wrapper is dispatched by hand with `npm run ci:run <sha>`.
 
 The Steam Deck is a second CI host that is on when the WSL host is off: `npm run ci:deck <sha>` (`scripts/ci-deck.sh`) runs the same check in a rootless Podman container and posts the `ci/deck` status. Read `docs/agents/ci-deck.md` first.
 
