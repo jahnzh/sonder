@@ -24,9 +24,10 @@
 # failure warns only and never changes the exit code).
 # SONDER_LOCAL_MIN_FREE_GB (default 10, whole GB): below this, a non-fatal
 # warning is printed at the start naming the stale local directory families and
-# their combined size. SONDER_LOCAL_DF replaces the df command that reads the
-# local free space (tests). SONDER_LOCAL_STALE_DIR (default $TMPDIR or /tmp) is
-# where the families are looked up. The warning never changes the exit code.
+# their combined size. A non-numeric value is ignored, so the warning is skipped.
+# SONDER_LOCAL_DF replaces the df command that reads the local free space (tests).
+# SONDER_LOCAL_STALE_DIR (default $TMPDIR or /tmp) is where the families are looked up.
+# The warning never changes the exit code.
 #
 # No `set -e`: every step handles its own failure so a failing step can never
 # skip the code that records the outcome.
@@ -186,8 +187,9 @@ image_matches_lockfile() {
 warn_local_disk() {
   local df_cmd=${SONDER_LOCAL_DF:-df}
   local min_gb=${SONDER_LOCAL_MIN_FREE_GB:-10}
+  [[ $min_gb =~ ^[0-9]+$ ]] || return 0
   local stale_dir=${SONDER_LOCAL_STALE_DIR:-${TMPDIR:-/tmp}}
-  local line free_kb free_gb fam dir kb total_kb parts msg
+  local line free_kb free_gb fam dir size kb total_kb parts msg
   line=$("$df_cmd" -Pk / 2>/dev/null | awk 'NR==2 {print $4}')
   [[ $line =~ ^[0-9]+$ ]] || return 0
   free_kb=$line
@@ -199,7 +201,9 @@ warn_local_disk() {
     kb=0
     for dir in "$stale_dir/$fam"*; do
       [[ -d $dir ]] || continue
-      kb=$(( kb + $(du -sk "$dir" 2>/dev/null | cut -f1) ))
+      size=$(du -sk "$dir" 2>/dev/null | cut -f1)
+      [[ $size =~ ^[0-9]+$ ]] || size=0
+      kb=$(( kb + size ))
     done
     total_kb=$(( total_kb + kb ))
     parts="${parts:+$parts, }${stale_dir}/${fam}* ($(format_kb "$kb"))"

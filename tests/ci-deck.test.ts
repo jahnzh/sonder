@@ -506,6 +506,20 @@ test("a healthy local disk prints no warning", () => {
   assert.doesNotMatch(out.output, /low disk: \/ has/);
 });
 
+test("a junk SONDER_LOCAL_MIN_FREE_GB is ignored and leaves the run unchanged", () => {
+  const f = fixture();
+  // A non-numeric threshold must not abort the script (an unbound-variable error in the
+  // [[ free_gb -lt min_gb ]] comparison used to exit 1 before any CI step ran).
+  const out = f.run(f.second, { STUB_SSH_MODE: "down", SONDER_LOCAL_MIN_FREE_GB: "abc" });
+  assert.equal(out.status, 0, out.output);
+  assert.doesNotMatch(out.output, /low disk: \/ has/);
+  assert.doesNotMatch(out.output, /unbound variable/);
+  // The run reached its normal end, not an early abort: the local fallback wrote its result file.
+  const record = f.result(f.second);
+  assert.equal(record.mode, "local_fallback");
+  assert.equal(record.result, "passed");
+});
+
 test("a stale container is reported and left alone", () => {
   const f = fixture();
   fs.writeFileSync(path.join(f.podmanState, "containers"), "sonder-ci-run-abc1234-GONEGONE\nunrelated-container\n");
