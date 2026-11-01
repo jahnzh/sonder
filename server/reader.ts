@@ -1,3 +1,4 @@
+import { autoQueueAlignmentsForWork } from "./alignment.ts";
 import { currentUserId } from "./users.ts";
 import type { FastifyInstance } from "fastify";
 import JSZip from "jszip";
@@ -173,7 +174,7 @@ export function readerCheckpoint(id: string, userId = 1): ReadingCheckpoint | nu
   return row ? JSON.parse(row.data) : null;
 }
 export function registerReader(app: FastifyInstance) {
-  app.post("/api/reader/:id/link", (req) => {
+  app.post("/api/reader/:id/link", async (req) => {
     const { id } = req.params as { id: string };
     const { workId } = z.object({ workId: z.string() }).parse(req.body);
     ebookRecord(id);
@@ -184,6 +185,7 @@ export function registerReader(app: FastifyInstance) {
       .where(eq(s.ebookEditions.id, id))
       .run();
     cache.delete(id);
+    await autoQueueAlignmentsForWork(workId, { ebookId: id }, req.log);
     return { ok: true };
   });
   app.get("/api/reader/:id", async (req) => {

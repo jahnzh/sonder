@@ -17,6 +17,7 @@ import { extractBook, ebookRecord } from "./reader.ts";
 import { ensureMediaStorage, mediaRoot } from "./storage.ts";
 import { hasServerMedia, requestServerDownload } from "./downloads.ts";
 import type { AlignmentJob, AlignmentInterval } from "../src/reading-types.ts";
+import { requireAdmin } from "./users.ts";
 import { matchSections } from "./alignment-pairings.ts";
 import {
   coreIntervals,
@@ -210,6 +211,7 @@ export async function createAlignment(
   recordingId: string,
   pairings?: AlignmentJob["pairings"],
   mode?: AlignmentJob["mode"],
+  origin?: AlignmentJob["origin"],
 ) {
   ensureMediaStorage();
   const book = await extractBook(ebookId),
@@ -280,6 +282,7 @@ export async function createAlignment(
     updatedAt: Date.now(),
     coverage: 0,
     pairings: anchored ? [] : chosen,
+    ...(origin === "backfill" ? { origin } : {}),
     ...(anchored
       ? {
           mode: "anchored" as const,
@@ -298,6 +301,161 @@ export async function createAlignment(
   store(job);
   void processAlignments();
   return job;
+}
+const slimJob = (job: AlignmentJob) => ({
+  ...job,
+  intervalCount: job.intervals.length,
+  unverifiedCount: job.intervals.filter((interval) => !interval.verified)
+    .length,
+  intervals: [],
+});
+const workerConfigured = () =>
+  !!process.env.ALIGNMENT_WORKER_URL && !!process.env.ALIGNMENT_WORKER_TOKEN;
+export type BackfillEligibility =
+  | { eligible: true }
+  | { eligible: false; reason: "linked" | "language" | "media" };
+/** Eligible only when linked, language-matching and every track is on the server. */
+export async function backfillEligibility(
+  ebookId: string,
+  recordingId: string,
+): Promise<BackfillEligibility> {
+  const ebook = db
+    .select()
+    .from(s.ebookEditions)
+    .where(eq(s.ebookEditions.id, ebookId))
+    .get();
+  const rec = db
+    .select()
+    .from(s.recordings)
+    .where(eq(s.recordings.id, recordingId))
+    .get();
+  if (!ebook || !rec) return { eligible: false, reason: "linked" };
+  const { edition, tracks } = recordingContext(recordingId);
+  if (ebook.workId !== edition.workId)
+    return { eligible: false, reason: "linked" };
+  if (edition.language) {
+    try {
+      const book = await extractBook(ebookId);
+      if (language(edition.language) !== language(book.language))
+        return { eligible: false, reason: "language" };
+    } catch {
+      return { eligible: false, reason: "language" };
+    }
+  }
+  if (!tracks.length || !tracks.every((track) => hasServerMedia(track)))
+    return { eligible: false, reason: "media" };
+  return { eligible: true };
+}
+type BackfillDecision =
+  | "queue"
+  | "ready"
+  | "inProgress"
+  | "paused"
+  | "notEligible";
+async function backfillDecision(
+  ebookId: string,
+  recordingId: string,
+): Promise<BackfillDecision> {
+  const existing = jobs().find(
+    (job) => job.ebookId === ebookId && job.recordingId === recordingId,
+  );
+  if (existing) {
+    if (activeStatuses.includes(existing.status)) return "inProgress";
+    if (existing.status === "paused") return "paused";
+    if (existing.status === "ready" || existing.status === "partial")
+      return "ready";
+  }
+  return (await backfillEligibility(ebookId, recordingId)).eligible
+    ? "queue"
+    : "notEligible";
+}
+/** Queues one job per eligible pair. Only enqueues; the queue runs them. */
+export async function runAlignmentBackfill() {
+  const result = {
+    queued: 0,
+    failed: 0,
+    skipped: { ready: 0, inProgress: 0, paused: 0, notEligible: 0 },
+  };
+  const pairs = db
+    .select({ ebookId: s.ebookEditions.id, recordingId: s.recordings.id })
+    .from(s.ebookEditions)
+    .innerJoin(s.editions, eq(s.editions.workId, s.ebookEditions.workId))
+    .innerJoin(s.recordings, eq(s.recordings.editionId, s.editions.id))
+    .all();
+  for (const { ebookId, recordingId } of pairs) {
+    const decision = await backfillDecision(ebookId, recordingId);
+    if (decision !== "queue") {
+      result.skipped[decision]++;
+      continue;
+    }
+    try {
+      await createAlignment(
+        ebookId,
+        recordingId,
+        undefined,
+        undefined,
+        "backfill",
+      );
+      result.queued++;
+    } catch {
+      result.failed++;
+    }
+  }
+  return result;
+}
+type AutoQueueLog = { warn: (...args: unknown[]) => void };
+/** Non-fatal: queues the pair when eligible and the worker is configured. */
+export async function autoQueueAlignmentForPair(
+  ebookId: string,
+  recordingId: string,
+  log: AutoQueueLog = console,
+) {
+  if (!workerConfigured()) return false;
+  try {
+    if ((await backfillDecision(ebookId, recordingId)) !== "queue")
+      return false;
+    await createAlignment(ebookId, recordingId, undefined, undefined, "backfill");
+    return true;
+  } catch (error) {
+    log.warn(
+      `Reading sync could not be queued automatically: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return false;
+  }
+}
+/** Auto-queues every pair of a work, optionally limited to one ebook or recording. */
+export async function autoQueueAlignmentsForWork(
+  workId: string,
+  filter: { ebookId?: string; recordingId?: string } = {},
+  log: AutoQueueLog = console,
+) {
+  if (!workerConfigured()) return;
+  try {
+    const ebooks = db
+      .select()
+      .from(s.ebookEditions)
+      .where(eq(s.ebookEditions.workId, workId))
+      .all()
+      .filter((row) => !filter.ebookId || row.id === filter.ebookId);
+    const recordings = db
+      .select({ id: s.recordings.id })
+      .from(s.recordings)
+      .innerJoin(s.editions, eq(s.editions.id, s.recordings.editionId))
+      .where(eq(s.editions.workId, workId))
+      .all()
+      .filter((row) => !filter.recordingId || row.id === filter.recordingId);
+    for (const ebook of ebooks)
+      for (const rec of recordings)
+        await autoQueueAlignmentForPair(ebook.id, rec.id, log);
+  } catch (error) {
+    log.warn(
+      `Reading sync could not be queued automatically: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 }
 const finished = (job: AlignmentJob) =>
   job.mode === "anchored"
@@ -908,6 +1066,28 @@ export function registerAlignment(app: FastifyInstance) {
       score: result.match!.score,
       approximate: true,
     };
+  });
+  app.get("/api/alignments/backfill", (req) => {
+    requireAdmin(req);
+    const all = jobs();
+    const count = (...statuses: string[]) =>
+      all.filter((job) => statuses.includes(job.status)).length;
+    const next = all.find((job) => activeStatuses.includes(job.status));
+    return {
+      available: workerConfigured(),
+      counts: {
+        queued: count("queued"),
+        running: count("copying", "processing"),
+        ready: count("ready"),
+        partial: count("partial"),
+        failed: count("error"),
+      },
+      next: next ? slimJob(next) : null,
+    };
+  });
+  app.post("/api/alignments/backfill", async (req) => {
+    requireAdmin(req);
+    return runAlignmentBackfill();
   });
   app.get("/api/alignments", (req) => {
     const { ebookId, summary } = z

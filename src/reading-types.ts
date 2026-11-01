@@ -125,6 +125,8 @@ export type AlignmentJob = {
   }[];
   mode?: "chapters" | "anchored";
   anchoring?: AlignmentAnchoring;
+  /** "backfill" for jobs queued automatically; absent or "manual" otherwise. */
+  origin?: "backfill" | "manual";
   /** Present on summary list responses; full intervals live on /map. */
   intervalCount?: number;
   unverifiedCount?: number;
