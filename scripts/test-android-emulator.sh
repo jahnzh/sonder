@@ -176,8 +176,11 @@ for browser in "${BROWSERS[@]}"; do
   # A fresh boot for each browser: memory one browser's run leaves in the emulator (its anon memory
   # grows from about 3.4 GB towards the container limit over a run) does not carry over to the next.
   # An emulator that is already up was not started by this run: it has been used, its boot time is not this
-  # run's, and this script must not stop it. Refuse instead of testing on it.
-  if bash "$EMU" status 2>/dev/null | grep -q '^running=yes'; then
+  # run's, and this script must not stop it. Refuse instead of testing on it. The output is captured first:
+  # a `grep -q` on a pipe can miss when the producer dies of SIGPIPE after the first match under
+  # `set -o pipefail` (issue #125).
+  status_out=$(bash "$EMU" status 2>/dev/null)
+  if grep -q '^running=yes' <<<"$status_out"; then
     log "An emulator is already running on ${HOST}; stop it with scripts/emulator-deck.sh stop first"
     echo "result=emulator_already_running" >>"$RUN_DIR/summary.txt"
     cleanup

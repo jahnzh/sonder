@@ -31,3 +31,9 @@ const stop = async () => {
 };
 process.on("SIGTERM", () => void stop());
 process.on("SIGINT", () => void stop());
+// An uncaught exception or any exit path other than stop() must not leak the temp dir. This
+// synchronous handler covers every normal exit and is idempotent with stop()'s removal.
+// SIGKILL cannot be caught, so a kill -9 of this process still leaks the directory.
+process.on("exit", () => {
+  rmSync(temp, { recursive: true, force: true });
+});

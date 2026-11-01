@@ -10,12 +10,25 @@ const script = path.resolve("scripts/ci-deck.sh");
 // `ssh` runs the remote command in a local shell, so the "Deck" is a temp directory.
 // STUB_SSH_MODE=down fails every call like an unreachable host; STUB_SSH_PROBE=fail
 // fails only the status polls.
+// The preflight is the one remote step that calls `df -Pk <path>` (it reads the free
+// disk and parses field 4 of line 2). Running it in a local shell would read THIS
+// machine's disk, so the suite would fail on a full host. When the preflight runs, the
+// stub overrides `df` with a function that prints a df -Pk-shaped table with a fixed
+// free figure: STUB_DF_FREE_GB (default 50), overridable per test. Every other remote
+// command runs exactly as before (the override is exported only for the preflight).
 const sshStub = `#!/usr/bin/env bash
 while [[ $# -gt 0 && $1 == -* ]]; do if [[ $1 == -o ]]; then shift 2; else shift; fi; done
 shift
 echo "$*" >>"$STUB_SSH_LOG"
 [[ \${STUB_SSH_MODE:-local} == down ]] && exit 255
 if [[ $* == *" -- probe "* && \${STUB_SSH_PROBE:-} == fail ]]; then cat >/dev/null; exit 255; fi
+if [[ $* == *" -- preflight "* ]]; then
+  export STUB_DF_FREE_KB=\$(( \${STUB_DF_FREE_GB:-50} * 1024 * 1024 ))
+  df() {
+    printf 'Filesystem     1K-blocks     Used Available Use%% Mounted on\nstub                 1073741824     102400 %s        0%% /stub\n' "$STUB_DF_FREE_KB"
+  }
+  export -f df
+fi
 exec bash -c "$*"
 `;
 
@@ -175,6 +188,17 @@ function fixture() {
     loginctl: loginctlStub,
   }))
     fs.writeFileSync(path.join(bin, name), body, { mode: 0o755 });
+  // The local free-disk warning (issue #89) must not depend on the host's disk. By default it
+  // reads a df shim that reports a healthy amount of free space and scans an empty stale dir.
+  // Tests override SONDER_LOCAL_DF / SONDER_LOCAL_STALE_DIR to exercise the warning path.
+  const dfHealthy = path.join(base, "df-healthy");
+  fs.writeFileSync(
+    dfHealthy,
+    "#!/usr/bin/env bash\nprintf 'Filesystem     1K-blocks     Used Available Use%% Mounted on\\nfake              100000000  10000000  90000000   10%% /\\n'\n",
+    { mode: 0o755 },
+  );
+  const localStale = path.join(base, "local-stale");
+  fs.mkdirSync(localStale);
   const logs = {
     ssh: path.join(base, "ssh.log"),
     npm: path.join(base, "npm.log"),
@@ -199,6 +223,8 @@ function fixture() {
         STUB_GH_LOG: logs.gh,
         STUB_PODMAN_LOG: logs.podman,
         STUB_PODMAN_STATE: podmanState,
+        SONDER_LOCAL_DF: dfHealthy,
+        SONDER_LOCAL_STALE_DIR: localStale,
         ...env,
       },
     });
@@ -420,6 +446,78 @@ test("free disk below the threshold stops the run", () => {
   assert.match(out.output, /less than 999999999 GB free/);
   assert.equal(f.result(f.second).result, "host_disk_low");
   assert.equal(f.runCalls().length, 0);
+});
+
+test("the pass path reads the stubbed disk, not the host's (hermetic)", () => {
+  const f = fixture();
+  const out = f.run(f.second);
+  assert.equal(out.status, 0, out.output);
+  // The preflight recorded its df reading in the run directory. With the stub default it
+  // must be exactly 50 GB: if the stub read the host's disk this would be the host's free
+  // space (and would flip to disk_check=fail on a machine with under 10 GB free).
+  const preflight = fs.readFileSync(path.join(f.runDir(f.second), "deck-preflight.txt"), "utf8");
+  assert.match(preflight, /^free_disk_gb=50 min_disk_gb=10$/m);
+  assert.doesNotMatch(preflight, /disk_check=fail/);
+});
+
+test("STUB_DF_FREE_GB overrides the stubbed free disk for the pass path", () => {
+  const f = fixture();
+  const out = f.run(f.second, { STUB_DF_FREE_GB: "12" });
+  assert.equal(out.status, 0, out.output);
+  const preflight = fs.readFileSync(path.join(f.runDir(f.second), "deck-preflight.txt"), "utf8");
+  assert.match(preflight, /^free_disk_gb=12 min_disk_gb=10$/m);
+});
+
+test("a low local disk prints a non-fatal warning naming the stale families and their size", () => {
+  const f = fixture();
+  // A df shim that reports 3 GB free (3145728 KB), so the local warning fires hermetically.
+  const dfLow = path.join(f.base, "df-low");
+  fs.writeFileSync(
+    dfLow,
+    "#!/usr/bin/env bash\nprintf 'Filesystem     1K-blocks     Used Available Use%% Mounted on\\nfake              100000000  96854272  3145728   97%% /\\n'\n",
+    { mode: 0o755 },
+  );
+  // A stale dir holding one directory per family, at small known sizes.
+  const stale = path.join(f.base, "stale");
+  fs.mkdirSync(path.join(stale, "sonder-browser-abc"), { recursive: true });
+  fs.writeFileSync(path.join(stale, "sonder-browser-abc", "db"), "x".repeat(2 * 1024 * 1024));
+  fs.mkdirSync(path.join(stale, "sonder-local-check-xyz"), { recursive: true });
+  fs.writeFileSync(path.join(stale, "sonder-local-check-xyz", "log"), "x".repeat(1024 * 1024));
+  fs.mkdirSync(path.join(stale, "playwright_chromiumdev_profile-qqq"), { recursive: true });
+  fs.writeFileSync(path.join(stale, "playwright_chromiumdev_profile-qqq", "state"), "x".repeat(512 * 1024));
+  const out = f.run(f.second, {
+    STUB_SSH_MODE: "down",
+    SONDER_LOCAL_DF: dfLow,
+    SONDER_LOCAL_STALE_DIR: stale,
+  });
+  // Non-fatal: the local fallback still passes with exit code 0.
+  assert.equal(out.status, 0, out.output);
+  assert.match(out.output, /low disk: \/ has 3\.0 GB free, below SONDER_LOCAL_MIN_FREE_GB=10/);
+  assert.match(out.output, /sonder-browser-\* \([\d.]+ (KB|MB|GB)\)/);
+  assert.match(out.output, /sonder-local-check-\* \([\d.]+ (KB|MB|GB)\)/);
+  assert.match(out.output, /playwright_chromiumdev_profile-\* \([\d.]+ (KB|MB|GB)\)/);
+  assert.match(out.output, /\[[\d.]+ (KB|MB|GB) total\]/);
+});
+
+test("a healthy local disk prints no warning", () => {
+  const f = fixture();
+  const out = f.run(f.second, { STUB_SSH_MODE: "down" });
+  assert.equal(out.status, 0, out.output);
+  assert.doesNotMatch(out.output, /low disk: \/ has/);
+});
+
+test("a junk SONDER_LOCAL_MIN_FREE_GB is ignored and leaves the run unchanged", () => {
+  const f = fixture();
+  // A non-numeric threshold must not abort the script (an unbound-variable error in the
+  // [[ free_gb -lt min_gb ]] comparison used to exit 1 before any CI step ran).
+  const out = f.run(f.second, { STUB_SSH_MODE: "down", SONDER_LOCAL_MIN_FREE_GB: "abc" });
+  assert.equal(out.status, 0, out.output);
+  assert.doesNotMatch(out.output, /low disk: \/ has/);
+  assert.doesNotMatch(out.output, /unbound variable/);
+  // The run reached its normal end, not an early abort: the local fallback wrote its result file.
+  const record = f.result(f.second);
+  assert.equal(record.mode, "local_fallback");
+  assert.equal(record.result, "passed");
 });
 
 test("a stale container is reported and left alone", () => {
