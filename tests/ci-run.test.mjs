@@ -494,10 +494,30 @@ test("a host failure result does not block the commit", () => {
   const f = fixture();
   try {
     // The check never judged the commit: the host lost connectivity.
-    writeResult(f.repo, f.second, "deck", "host_connectivity_lost", { exit_code: "5" });
+    const dir = writeResult(f.repo, f.second, "deck", "host_connectivity_lost", { exit_code: "5" });
+    // The runners retrieve the report on host-failure paths too: a SIGTERM'd
+    // check can leave a complete failing report beside the host-failure
+    // result. It must not be read as a failed check.
+    fs.writeFileSync(path.join(dir, "report.json"), JSON.stringify({ ok: false, result: "aborted" }));
     const out = f.run();
     assert.equal(out.status, 0, out.output);
     assert.equal(f.runnerInvocations("deck").length, 1);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("a host failure result with a failed report does not block the commit", () => {
+  const f = fixture();
+  try {
+    // Same interaction, other branch of the verdict predicate: result says
+    // failed. Only a result of passed may be overridden by its report.
+    const dir = writeResult(f.repo, f.second, "wsl", "timeout", { exit_code: "124" });
+    fs.writeFileSync(path.join(dir, "report.json"), JSON.stringify({ ok: true, result: "failed" }));
+    const out = f.run([], f.second, { STUB_RUNNER_EXIT: "7" });
+    assert.equal(out.status, 7, out.output);
+    assert.equal(f.runnerInvocations("deck").length, 1, "the downstream runner is invoked");
+    assert.equal(f.runnerInvocations("wsl").length, 0);
   } finally {
     f.cleanup();
   }

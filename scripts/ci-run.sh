@@ -251,9 +251,12 @@ classify_host() {
 
 # The commit's finished runs under artifacts/ci/<sha>/. Prints one line per
 # blocking run: <host> <result> <run_dir>. A check result of failed or
-# remote_check_failed means the check ran and the commit failed. A finished
-# run whose report says the check failed counts too (the runners' own final
-# override); a report that does not parse is not evidence and does not block.
+# remote_check_failed means the check ran and the commit failed. A passed run
+# whose report says the check failed counts too (the runners' own final
+# override); host-failure results did not judge the commit, and the runners
+# retrieve the report on those paths too, so a report left beside one is not
+# evidence and does not block. A report that does not parse is not evidence
+# either.
 blocking_runs() {
   local dir file host result rep verdict
   for dir in "$ARTIFACT_ROOT"/*/; do
@@ -272,17 +275,24 @@ blocking_runs() {
       printf '%s %s %s\n' "$host" "$result" "$dir"
       continue
     fi
-    for rep in "$dir/report.json" "$dir/check-report.json"; do
-      [[ -f $rep ]] || continue
-      verdict=$(node -e '
-        const r = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
-        process.stdout.write(r.ok === false || r.result === "failed" ? "failed" : "ok");
-      ' "$rep" 2>/dev/null) || continue
-      if [[ $verdict == failed ]]; then
-        printf '%s %s %s\n' "$host" "failed_report" "$dir"
-        break
-      fi
-    done
+    # Only a passed result can be overridden by its report: that is the
+    # runners' own final override (result file says passed, report says the
+    # check failed). The runners retrieve the report on host-failure paths
+    # (timeout, remote_run_died, ...) too, so a report beside a host-failure
+    # result is not evidence of a failed check.
+    if [[ $result == passed ]]; then
+      for rep in "$dir/report.json" "$dir/check-report.json"; do
+        [[ -f $rep ]] || continue
+        verdict=$(node -e '
+          const r = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+          process.stdout.write(r.ok === false || r.result === "failed" ? "failed" : "ok");
+        ' "$rep" 2>/dev/null) || continue
+        if [[ $verdict == failed ]]; then
+          printf '%s %s %s\n' "$host" "failed_report" "$dir"
+          break
+        fi
+      done
+    fi
   done
 }
 
