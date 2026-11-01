@@ -30,6 +30,7 @@ Completion: your report lists every bullet of the issue's Proposal, and next to 
 Verification steps run by the coordinator before landing:
 
 1. Merge `main`.
+   - After reverting a merge, revert the revert before re-merging the branch; a plain merge brings in only the commits made since.
 2. `tsc` and `npm test`.
 3. `npm run build`.
 4. Run the worker's specs with a distinct `PLAYWRIGHT_PORT`.

@@ -78,3 +78,5 @@ Direct API requests require separate auditing because Playwright browser routing
 Use local fixture servers when changing or testing the verification tooling. The live scripts retain their deployed-site defaults, so executing one without an explicit `SONDER_VERIFY_URL` targets production. The multi-user script deliberately creates a temporary account and exercises writes under that account; its separate cleanup contract still applies.
 
 When coordinating through Orca, assign each editing worker a separate checkout. Record the task, worktree, commit, check report and any remaining process handles in the handoff. Stop only processes owned by that run.
+
+When re-merging a branch after its earlier merge was reverted, revert the revert first (`git revert <revert-commit>`); a plain merge brings in only the commits made since. Before restarting the container, grep the build for a marker string of the change to confirm it is present.
