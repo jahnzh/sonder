@@ -167,6 +167,18 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await page
     .getByRole("button", { name: "Close reader options", exact: true })
     .click();
+  // Linking queued a backfill job; cancel it so the manual pairing flow starts from "Rebuild".
+  await expect
+    .poll(
+      async () =>
+        (await (await page.request.get(`/api/alignments?ebookId=${id}`)).json()).jobs.length,
+      { timeout: 20000 },
+    )
+    .toBeGreaterThan(0);
+  const autoJob = (await (await page.request.get(`/api/alignments?ebookId=${id}`)).json()).jobs[0];
+  expect(
+    (await page.request.patch(`/api/alignments/${autoJob.id}`, { data: { action: "cancel" } })).ok(),
+  ).toBe(true);
   await openMore(page);
   await more.getByRole("button", { name: "Reading sync", exact: true }).click();
   const sameRelease = page.getByRole("combobox", {
@@ -186,10 +198,10 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
     })
     .selectOption({ index: 1 });
   await expect(
-    page.getByRole("button", { name: "Prepare reading sync", exact: true }),
+    page.getByRole("button", { name: "Rebuild reading sync", exact: true }),
   ).toBeEnabled();
   await page
-    .getByRole("button", { name: "Prepare reading sync", exact: true })
+    .getByRole("button", { name: "Rebuild reading sync", exact: true })
     .click();
   await expect(page.locator(".reader-room:not(.inline-reader) .alignment-status")).toContainText(
     "Partial alignment",

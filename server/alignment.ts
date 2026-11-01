@@ -1191,6 +1191,11 @@ export function registerAlignment(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const job = alignmentJob(id),
       book = await extractBook(job.ebookId);
+    if (job.status === "cancelled")
+      throw Object.assign(
+        new Error("This alignment was cancelled. Rebuild it before using it."),
+        { statusCode: 410, code: "alignment_cancelled" },
+      );
     if (
       job.fingerprint !== book.fingerprint ||
       job.audioFingerprint !== audioFingerprint(job.recordingId)

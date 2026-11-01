@@ -1,7 +1,7 @@
 import {test,expect} from "@playwright/test";
 import {readFileSync} from "node:fs";
 import {readerFixture} from "../reader-fixture";
-test("a single audio file without chapter markers can prepare reading sync from narration samples",async({page})=>{
+test("a single audio file without chapter markers gets reading sync prepared automatically from narration samples",async({page})=>{
  const audio=await page.request.post("/api/import",{multipart:{title:"Chapterless narration",author:"Lewis Carroll",files:{name:"Complete book.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
  expect(audio.ok()).toBe(true);
  const bookId=(await audio.json()).id;
@@ -22,12 +22,14 @@ test("a single audio file without chapter markers can prepare reading sync from 
  await page.getByRole("combobox",{name:"Reading sync audiobook release"}).selectOption(book.recordingId);
  await expect(page.locator(".sync-release-info")).toContainText("No chapter markers");
  await expect(page.locator("#reading-sync-help")).toContainText("samples the narration");
- const prepare=page.getByRole("button",{name:"Prepare reading sync",exact:true});
- await expect(prepare).toBeEnabled();
- await prepare.click();
+ // Importing with a workId queues the backfill job; the alignment stub finishes it almost at once.
+ await expect.poll(async()=>{
+  const jobs=(await(await page.request.get(`/api/alignments?ebookId=${id}`)).json()).jobs;
+  return jobs.some((j:any)=>j.recordingId===book.recordingId&&j.origin==="backfill"&&j.mode==="anchored"&&j.anchoring?.anchors?.length>0);
+ },{timeout:20000}).toBe(true);
  await expect(page.locator(".alignment-status")).toContainText(/Ready · Estimated timings|Partial alignment/,{timeout:20000});
  await expect(page.locator(".alignment-status")).toContainText(/\d+ anchors · (\d+) of \1 passages aligned/);
- const job=(await(await page.request.get(`/api/alignments?ebookId=${id}`)).json()).jobs[0];
+ const job=(await(await page.request.get(`/api/alignments?ebookId=${id}`)).json()).jobs.find((j:any)=>j.origin==="backfill");
  expect(job.mode).toBe("anchored");
  expect(job.anchoring.anchors.length).toBeGreaterThanOrEqual(3);
  expect(job.coverage).toBeGreaterThan(.5);
