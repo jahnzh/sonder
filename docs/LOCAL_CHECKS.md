@@ -36,7 +36,7 @@ The list is `{"version":1,"entries":[...]}`. Each entry has `project`, `file` (r
 
 Remove an entry once its cause is fixed. A `listedPassed` entry that is `environment` is a candidate for removal; an `intermittent` one may simply have passed this time. `tests/known-failures.wsl-host.json` lists the failures seen on the WSL host (`192.168.1.119`).
 
-This command performs local validation. CI triggers, staging, image promotion and production deployment remain follow-up work on issue #23.
+This command performs local validation. CI triggers, staging and image promotion remain follow-up work on issue #23; production deployment is covered by `scripts/deploy.sh` (see [Production deployment](#production-deployment)).
 
 ## Mobile device projects
 
@@ -68,6 +68,31 @@ npm run backup -- data/sonder.db data/backups/before-change-$(date +%s).db
 The destination filesystem must support hard links so only the completed, verified backup becomes visible. Both source and destination are explicit. The source must exist and the destination must be new. The command uses SQLite's online backup API and verifies the resulting database with `PRAGMA integrity_check`; it reports failure if the backup cannot be completed or verified.
 
 Sonder uses WAL mode. A plain copy of `sonder.db` can omit committed transactions still held in its WAL. Use the backup command while the application is running. Keep the installation's encryption key separately with its existing secret-management process; this command copies only the database.
+
+## Production deployment
+
+```bash
+scripts/deploy.sh <commit> [--marker <string>]... [--skip-live-checks] [--dry-run]
+```
+
+Deploys a committed revision to the local production container (`sonder` in `compose.yaml`, image `sonder-audiobooks:local`, port 3001). Production runs on this machine and the compose build context is the working tree, so the checkout must be exactly at `<commit>` with no tracked changes before the build; the script verifies that first, then:
+
+1. backs up the running database with the online backup API (`data/backups/before-<short>-<epoch>.db`);
+2. builds `sonder-audiobooks:local` with `docker compose build sonder`;
+3. verifies every `--marker` string in the built image's `/app` (server code and built client);
+4. keeps the previous image tagged for rollback — it reuses an existing `sonder-audiobooks:*` tag of that image, or adds `sonder-audiobooks:before-<short>-<epoch>` when it has none;
+5. recreates the container, waits for the health check, then curls `/api/health`;
+6. runs the live verification scripts (reader and multi-user) unless `--skip-live-checks`; the reader check picks the most recent recording with a finished EPUB alignment map.
+
+Exit codes: 0 success, 1 a step failed, 2 bad usage. Environment overrides: `SONDER_DEPLOY_DOCKER`, `SONDER_DEPLOY_DB`, `SONDER_DEPLOY_BACKUP_DIR`, `SONDER_DEPLOY_HEALTH_TIMEOUT`, `SONDER_DEPLOY_PORT`, `SONDER_DEPLOY_LIVE_CHECKS`.
+
+Rollback is retagging the previous image and a no-build recreate:
+
+```bash
+docker tag sonder-audiobooks:<rollback-tag> sonder-audiobooks:local && docker compose up -d --no-build sonder
+```
+
+The script prints the exact rollback command on failure and at the end of a successful run. Record every deploy in `artifacts/orca/STATE.md` (commit, backup path, image tag, markers, live-check results).
 
 ## Live verification
 
