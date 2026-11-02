@@ -2,7 +2,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 const temp = mkdtempSync(join(tmpdir(), "sonder-browser-"));
-process.env.DATA_DIR = join(temp, "db");
+// A spec that must seed the database directly (for example an expired invite)
+// passes its own directory; the server's temp dir keeps the media root either way.
+process.env.DATA_DIR = process.env.PLAYWRIGHT_DATA_DIR || join(temp, "db");
 process.env.MEDIA_ROOT = join(temp, "media");
 process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";

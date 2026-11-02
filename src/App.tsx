@@ -85,6 +85,7 @@ import type {
 } from "./types";
 import { Dialog } from "./components/ui/dialog";
 import { SignIn, type Account, type AccountRequest } from "./components/SignIn";
+import { Join } from "./components/Join";
 import { PlayerDock } from "./components/Player";
 import { AppUpdate } from "./components/AppUpdate";
 import { DeviceReset } from "./components/DeviceReset";
@@ -155,6 +156,20 @@ function App() {
     return () =>
       window.removeEventListener("sonder:unauthorized", unauthorized);
   }, []);
+  // The invite activation page is its own route: a signed-out applicant lands
+  // here from the emailed link, so it renders before the auth state resolves.
+  if (location.pathname.replace(/\/+$/, "") === "/join")
+    return (
+      <Join
+        onActivated={(account) => {
+          setUser(account);
+          setAuth(true);
+          // Claiming leaves the invite URL behind: the app's home is "/", and
+          // the library hash makes the bookshelf the landing page.
+          history.replaceState(null, "", "/#library");
+        }}
+      />
+    );
   if (auth === null)
     return (
       <div className="app-loading">

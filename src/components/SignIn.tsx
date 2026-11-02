@@ -42,7 +42,7 @@ function useCompact() {
   return compact;
 }
 
-function SignInArt() {
+export function SignInArt() {
   const scene = scenes[useCompact() ? "compact" : "wide"];
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const [cur, setCur] = useState(scene.start);
