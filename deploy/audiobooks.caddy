@@ -1,6 +1,0 @@
-# Use this block in /etc/caddy/Caddyfile with the existing security_headers snippet.
-sonder.pecori.no {
-    import security_headers
-    encode zstd gzip
-    reverse_proxy 127.0.0.1:3001
-}

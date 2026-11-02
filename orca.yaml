@@ -1,5 +1,0 @@
-environmentRecipes:
-  - id: lisa
-    name: Lisa
-    create: ./scripts/orca-vm/lisa-create.sh
-    destroy: none

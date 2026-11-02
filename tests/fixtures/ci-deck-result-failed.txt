@@ -1,7 +1,0 @@
-mode=remote
-host=deck@steamdeck
-commit=f6fe50ff82ff2d125c186370c4e9e47ba5ffeefa
-container=sonder-ci-run-f6fe50f-cgZcKika
-exit_code=1
-result=failed
-recorded_at=2026-10-29T15:57:56Z

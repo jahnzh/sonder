@@ -1,5 +1,0 @@
-FROM sonder-alignment:local
-RUN pip install --no-cache-dir 'torch==2.8.0' --index-url https://download.pytorch.org/whl/cpu && pip install --no-cache-dir 'transformers==4.57.1' 'nltk==3.9.2' uroman Unidecode pybind11
-RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/* && pip install --no-cache-dir --no-deps git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git@64293cc6d711e57666c4a8b098e9fd93b381fd88
-COPY benchmark_ctc.py /worker/benchmark_ctc.py
-CMD ["python", "/worker/benchmark_ctc.py"]
