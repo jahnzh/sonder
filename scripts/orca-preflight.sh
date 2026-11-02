@@ -64,7 +64,7 @@ check_disk() {
     seen="$seen$fs $mount "
     if awk -v kb="$avail" -v min="$min" 'BEGIN { exit !(kb / 1048576 < min) }'; then
       awk -v kb="$avail" -v min="$min" -v mount="$mount" 'BEGIN {
-        printf "low disk: %s has %.1f GB free, below ORCA_MIN_FREE_GB=%s. Clean up the biggest candidates: /tmp/sonder-browser-*, /tmp/sonder-local-check-*, docker builder prune\n", mount, kb / 1048576, min }'
+        printf "low disk: %s has %.1f GB free, below ORCA_MIN_FREE_GB=%s. Clean up the biggest candidates: run scripts/clean-temp.sh for /tmp/sonder-browser-* and /tmp/sonder-local-check-*, or docker builder prune\n", mount, kb / 1048576, min }'
       failed=1
     fi
   done
