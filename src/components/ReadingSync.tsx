@@ -3,7 +3,8 @@ import { userStorageKey } from "../lib";
 import { useEffect, useRef, useState } from "react";
 import { BookOpen, Headphones, Loader2, Link2 } from "lucide-react";
 import { api, ApiError, localDB, clock } from "../lib";
-import { createReaderMapLifecycle, intervalCountOf } from "../reader-map-lifecycle";
+import { createAlignmentMapLifecycle, intervalCountOf } from "../alignment-map-lifecycle";
+import { alignmentMapDeps } from "../alignment-map-deps";
 import { usePlayer } from "../player";
 import type { Book } from "../types";
 import type {
@@ -87,27 +88,8 @@ export function ReadingSync({
   const player = usePlayer();
   const epoch = useRef(0);
   // One lifecycle for the mounted reader: its server-confirmation history spans recording changes.
-  const lifecycle = useRef<ReturnType<typeof createReaderMapLifecycle> | null>(null);
-  lifecycle.current ??= createReaderMapLifecycle({
-    fetchSummary: (ebookId) =>
-      api<{ jobs: AlignmentJob[]; available: boolean }>(
-        `/alignments?ebookId=${encodeURIComponent(ebookId)}&summary=1`,
-      ),
-    fetchMap: (jobId) =>
-      api<AlignmentJob>(`/alignments/${jobId}/map`, { cache: "no-store" }),
-    store: {
-      get: async (key) =>
-        (await localDB.preferences.get(key))?.value as AlignmentJob | undefined,
-      put: async (key, value) => {
-        await localDB.preferences.put({ key, value });
-      },
-      delete: async (key) => {
-        await localDB.preferences.delete(key);
-      },
-    },
-    statusOf: (error) => (error instanceof ApiError ? error.status : undefined),
-    isOnline: () => navigator.onLine,
-  });
+  const lifecycle = useRef<ReturnType<typeof createAlignmentMapLifecycle> | null>(null);
+  lifecycle.current ??= createAlignmentMapLifecycle(alignmentMapDeps());
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // While the sync panel is open, keep polling so changes made elsewhere (such
   // as another device pausing the job) show up; in the background only poll

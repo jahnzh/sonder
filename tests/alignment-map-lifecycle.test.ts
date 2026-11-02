@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  createReaderMapLifecycle,
+  createAlignmentMapLifecycle,
   mapCacheKey,
   type MapLifecycleDeps,
-} from "../src/reader-map-lifecycle.ts";
+} from "../src/alignment-map-lifecycle.ts";
 import type { AlignmentJob } from "../src/reading-types.ts";
 
 const EBOOK = { id: "ebook-1", fingerprint: "fp-ebook" };
@@ -71,7 +71,7 @@ function setup(opts: { online?: boolean } = {}) {
     statusOf: (error) => (error instanceof HttpError ? error.status : undefined),
     isOnline: () => opts.online ?? true,
   };
-  const lifecycle = createReaderMapLifecycle(deps);
+  const lifecycle = createAlignmentMapLifecycle(deps);
   const shown: (AlignmentJob | null)[] = [];
   const errors: string[] = [];
   let current = true;
@@ -307,4 +307,109 @@ test("a corrected map is stored under the recording's key; a storage failure rej
   assert.equal(t.data.get(KEY)?.updatedAt, 999);
   t.setPutError(new Error("quota exceeded"));
   await assert.rejects(t.lifecycle.saveCorrected(EBOOK.id, REC, corrected), /quota exceeded/);
+});
+
+// Playback warming: the same module, a separate instance, no session confirmation.
+function warmTarget(t: ReturnType<typeof setup>, over: Partial<Parameters<typeof t.lifecycle.warm>[0]> = {}) {
+  return { ebookId: EBOOK.id, recordingId: REC, fingerprint: async () => EBOOK.fingerprint, isCancelled: () => false, ...over };
+}
+
+test("warming fetches and caches a missing map, then skips the fetch while the cache matches", async () => {
+  const t = setup();
+  assert.equal((await t.lifecycle.warm(warmTarget(t)))?.id, "job-1");
+  assert.equal(t.log.maps, 1);
+  assert.deepEqual(t.log.puts, [KEY]);
+  await t.lifecycle.warm(warmTarget(t));
+  await t.lifecycle.warm(warmTarget(t));
+  assert.equal(t.log.maps, 1, "a matching cache is not fetched again, with no per-session confirmation");
+  assert.deepEqual(t.shown, [], "warming never changes the reader display");
+});
+
+test("warming never counts as the reader's server confirmation", async () => {
+  const t = setup();
+  await t.lifecycle.warm(warmTarget(t));
+  assert.equal(t.log.maps, 1);
+  await t.refresh();
+  assert.equal(t.log.maps, 2, "the reader still confirms the matching cache once");
+  await t.refresh();
+  assert.equal(t.log.maps, 2);
+});
+
+test("warming deletes a known-stale cache before refetching, keeps an older non-stale one", async () => {
+  const stale = setup();
+  stale.data.set(KEY, fullMap({ audioFingerprint: "audio-0" }));
+  await stale.lifecycle.warm(warmTarget(stale));
+  assert.ok(stale.log.deletes.includes(KEY));
+  assert.equal(stale.log.maps, 1);
+  const older = setup();
+  older.data.set(KEY, fullMap({ updatedAt: 50 }));
+  await older.lifecycle.warm(warmTarget(older));
+  assert.deepEqual(older.log.deletes, []);
+  assert.equal(older.log.maps, 1);
+});
+
+test("warming treats a missing ebook fingerprint as no match without judging the cache stale", async () => {
+  const t = setup();
+  t.data.set(KEY, fullMap());
+  await t.lifecycle.warm(warmTarget(t, { fingerprint: async () => undefined }));
+  assert.equal(t.log.maps, 1);
+  assert.deepEqual(t.log.deletes, []);
+});
+
+test("warming returns the job without touching the cache when there are no intervals, and null with no job", async () => {
+  const zero = setup();
+  zero.data.set(KEY, fullMap());
+  zero.setSummary(async () => ({ jobs: [job({ intervalCount: 0, intervals: [] })], available: true }));
+  assert.equal((await zero.lifecycle.warm(warmTarget(zero)))?.id, "job-1");
+  assert.equal(zero.log.maps, 0);
+  assert.equal(zero.data.has(KEY), true);
+  const none = setup();
+  none.setSummary(async () => ({ jobs: [], available: true }));
+  assert.equal(await none.lifecycle.warm(warmTarget(none)), null);
+});
+
+test("warming returns null on every failure; only a 404/410 map removes the cache", async () => {
+  for (const [status, removed] of [[404, true], [410, true], [403, false], [500, false]] as const) {
+    const t = setup();
+    t.data.set(KEY, fullMap({ updatedAt: 50 }));
+    t.setMap(async () => {
+      throw new HttpError("x", status);
+    });
+    assert.equal(await t.lifecycle.warm(warmTarget(t)), null, String(status));
+    assert.equal(t.data.has(KEY), !removed, String(status));
+  }
+  const t = setup();
+  t.setSummary(async () => {
+    throw new Error("offline");
+  });
+  assert.equal(await t.lifecycle.warm(warmTarget(t)), null);
+});
+
+test("warming stops at its cancellation checkpoints", async () => {
+  const before = setup();
+  assert.equal(await before.lifecycle.warm(warmTarget(before, { isCancelled: () => true })), null);
+  assert.equal(before.log.summaries, 0);
+  for (const cancelAfter of ["summary", "fingerprint", "map"] as const) {
+    const t = setup();
+    let cancelled = false;
+    t.setSummary(async () => {
+      if (cancelAfter === "summary") cancelled = true;
+      return { jobs: [job()], available: true };
+    });
+    t.setMap(async () => {
+      if (cancelAfter === "map") cancelled = true;
+      return fullMap();
+    });
+    const result = await t.lifecycle.warm(
+      warmTarget(t, {
+        isCancelled: () => cancelled,
+        fingerprint: async () => {
+          if (cancelAfter === "fingerprint") cancelled = true;
+          return EBOOK.fingerprint;
+        },
+      }),
+    );
+    assert.equal(result, null, cancelAfter);
+    assert.equal(t.data.has(KEY), false, `${cancelAfter}: nothing cached after cancellation`);
+  }
 });
