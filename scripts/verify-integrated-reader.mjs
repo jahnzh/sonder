@@ -112,8 +112,11 @@ try {
  const before=(await actual()).position;
  // Press in the middle of the visible page, clear of the top bar and the player.
  if(await room.locator('.reader-topbar').isVisible()){const box=await room.locator('.reader-viewport').boundingBox();await page.mouse.click(box.x+box.width/2,box.y+box.height/2);await expect(room.locator('.reader-topbar')).toBeHidden();}
- const pageBox=await room.locator('.reader-viewport').boundingBox();
- await page.mouse.move(pageBox.x+pageBox.width/2,pageBox.y+pageBox.height*0.45);await page.mouse.down();await page.waitForTimeout(800);await page.mouse.up();
+ // Press the sentence being narrated: it is mapped and on screen. A fixed point on the page can land on an image or an unmapped passage (#146).
+ const target=page.locator('.inline-reader .reader-viewport .sonder-follow').first();
+ await expect(target).toBeVisible();
+ const pressBox=await target.boundingBox();
+ await page.mouse.move(pressBox.x+Math.min(pressBox.width/2,80),pressBox.y+Math.min(pressBox.height/2,10));await page.mouse.down();await page.waitForTimeout(800);await page.mouse.up();
  const toast=room.getByRole('status').filter({hasText:'Listening from here'});
  await expect(toast).toBeVisible();
  await expect.poll(async()=>!(await actual()).paused,{timeout:20000}).toBe(true);
