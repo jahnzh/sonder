@@ -40,6 +40,14 @@
       "kind": "environment",
       "reason": "Fails on the WSL host's chromium on a clean main (482967b, run sonder-ci-20261102T163427Z-15096) and not locally, on the Deck, or on WSL firefox/webkit; cause not found",
       "issue": 145
+    },
+    {
+      "project": "webkit",
+      "file": "tests/e2e/now-playing-layout.spec.ts",
+      "title": "#122 reader Back to narration layout › firefox/webkit smoke: transport centred and ordered at 390px and 1280px",
+      "kind": "intermittent",
+      "reason": "WebKit on the Deck only. Failed at 482967b (\"Back to narration\" stayed disabled) and at 02dd226 (toBeFocused failed) on commits whose diffs touch no reader code; passed at 56dba21 and d01e051. Cause not found",
+      "issue": 138
     }
   ]
 }
