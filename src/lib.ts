@@ -9,6 +9,40 @@ export function cn(...inputs: ClassValue[]) {
 // Guard all script-initiated API requests, including downloads and ebook fetches.
 const nativeFetch = window.fetch.bind(window);
 let resolvingMismatch = false;
+
+export function mismatchShouldReload(
+  statusUser: { id?: number } | null | undefined,
+  currentUserId: number,
+): boolean {
+  return statusUser?.id !== currentUserId;
+}
+
+export function resetMismatchForTesting() {
+  resolvingMismatch = false;
+}
+
+export async function resolveUserMismatch(
+  fetchStatus: () => Promise<Pick<Response, "ok" | "json">> = () => nativeFetch("/api/auth/status", { cache: "no-store" }),
+  reload = () => location.reload(),
+  targetUserId = currentUserId,
+): Promise<boolean | undefined> {
+  if (resolvingMismatch) return undefined;
+  resolvingMismatch = true;
+  try {
+    const res = await fetchStatus();
+    if (!res.ok) throw new Error("Status check failed");
+    const data = await res.json();
+    if (mismatchShouldReload(data?.user, targetUserId)) {
+      reload();
+      return true;
+    }
+    return false;
+  } catch {
+    reload();
+    return true;
+  }
+}
+
 window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = new URL(input instanceof Request ? input.url : input.toString(), location.href);
   const guarded = url.origin === location.origin && url.pathname.startsWith("/api/") &&
@@ -18,10 +52,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   if (!headers.has("X-Sonder-User-Id")) headers.set("X-Sonder-User-Id", String(currentUserId));
   const response = await nativeFetch(input, { ...init, headers });
   if (response.status === 409 && (await response.clone().json().catch(() => null))?.code === "user_mismatch") {
-    if (!resolvingMismatch) {
-      resolvingMismatch = true;
-      void nativeFetch("/api/auth/status", { cache: "no-store" }).finally(() => location.reload());
-    }
+    void resolveUserMismatch();
     throw new Error("Account changed in another tab.");
   }
   return response;

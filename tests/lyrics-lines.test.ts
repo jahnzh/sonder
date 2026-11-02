@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { lyricsLines } from "../src/lyrics-lines.ts";
+import { lyricsLines, sentences } from "../src/lyrics-lines.ts";
 import type { ReaderBook } from "../src/reading-types.ts";
 
 const book = (paragraphs: { id: string; text: string; blockIndex: number }[]) => ({
@@ -35,4 +35,27 @@ test("sentence splitting keeps leading punctuation, decimals, abbreviations and 
     { id: "a", blockIndex: 0, text: "...Wait for me. So it was 3.5 miles! Mr. Smith met J. R. Tolkien. So did I. \"Run!\" Done" },
   ]));
   assert.deepEqual(lines.map(line => line.text), ["...Wait for me.", "So it was 3.5 miles!", "Mr. Smith met J. R. Tolkien.", "So did I.", "\"Run!\"", "Done"]);
+});
+
+test("sentence splitting preserves multi-period abbreviations without splitting mid-sentence", () => {
+  assert.deepEqual(
+    sentences("See p.m. notes. Then U.S. policy."),
+    ["See p.m. notes.", "Then U.S. policy."],
+  );
+  assert.deepEqual(
+    sentences("Meeting at 9 a.m. or 5 p.m. in the U.K. or U.S.A. works. Another sentence."),
+    ["Meeting at 9 a.m. or 5 p.m. in the U.K. or U.S.A. works.", "Another sentence."],
+  );
+  assert.deepEqual(
+    sentences("Founded in 500 B.C. or 100 A.D. by the U.N. or E.U. members."),
+    ["Founded in 500 B.C. or 100 A.D. by the U.N. or E.U. members."],
+  );
+  assert.deepEqual(
+    sentences("Use e.g. this tool or i.e. that one. Next sentence."),
+    ["Use e.g. this tool or i.e. that one.", "Next sentence."],
+  );
+  const lines = lyricsLines(book([
+    { id: "abbr", blockIndex: 0, text: "See p.m. notes. Then U.S. policy." },
+  ]));
+  assert.deepEqual(lines.map(line => line.text), ["See p.m. notes.", "Then U.S. policy."]);
 });

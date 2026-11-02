@@ -1,6 +1,6 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, unlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, unlinkSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 const temp = mkdtempSync(join(tmpdir(), "sonder-reader-"));
@@ -16,7 +16,7 @@ const { db, sqlite } = await import("../server/db.ts");
 const s = await import("../server/schema.ts");
 const { eq } = await import("drizzle-orm");
 const { readerFixture } = await import("./reader-fixture.ts");
-const { extractBook, paragraphsOf } = await import("../server/reader.ts");
+const { extractBook, paragraphsOf, invalidateParsedBook } = await import("../server/reader.ts");
 const { parse } = await import("node-html-parser");
 const { createAlignment, processAlignments, alignmentJob } =
   await import("../server/alignment.ts");
@@ -702,4 +702,35 @@ test("r5: pausing or cancelling during the last narration sample is not replaced
     assert.equal(map.status, action === "pause" ? "paused" : "cancelled", map.error);
   }
   globalThis.fetch = original;
+});
+test("relinking an ebook invalidates the parsed-book cache without modifying file mtime", async () => {
+  const local = await createApp();
+  after(() => local.close());
+  db.insert(s.works)
+    .values({
+      id: "work-relink-target",
+      title: "Target Book",
+      author: "Target Author",
+      description: "Description",
+      genre: "Fiction",
+      year: 2026,
+    })
+    .onConflictDoNothing()
+    .run();
+  const bookInitial = await extractBook(id);
+  assert.equal(bookInitial.workId, "work-alice");
+  const mtimeBefore = statSync(file).mtimeMs;
+  const res = await local.inject({
+    method: "POST",
+    url: `/api/reader/${id}/link`,
+    payload: { workId: "work-relink-target" },
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(statSync(file).mtimeMs, mtimeBefore);
+  const bookAfter = await extractBook(id);
+  assert.equal(bookAfter.workId, "work-relink-target");
+
+  // Restore original workId and invalidate
+  invalidateParsedBook(id);
+  db.update(s.ebookEditions).set({ workId: "work-alice" }).where(eq(s.ebookEditions.id, id)).run();
 });

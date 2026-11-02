@@ -68,7 +68,13 @@ test("accounts keep libraries and offline queues separate", async ({ page }) => 
   const loads = await page.evaluate(() => Number(sessionStorage.getItem("test-load-count")));
   await page.reload();
   await expect.poll(() => mismatches).toBeGreaterThan(0);
-  await expect.poll(() => page.evaluate(() => Number(sessionStorage.getItem("test-load-count"))).catch(() => 0)).toBeGreaterThanOrEqual(loads + 2);
+  // Post-#21 contract: the session user is still the current user (admin), so
+  // the mismatched request fails without a page reload. The old guard always
+  // reloaded once, which this test previously pinned (loads + 2); the only load
+  // in this flow is now the explicit page.reload() above. Give the absent
+  // reload a stability window, then pin the count.
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  expect(await page.evaluate(() => Number(sessionStorage.getItem("test-load-count")))).toBe(loads + 1);
   expect(queueOwner).toBe("1");
   await expect.poll(() => page.evaluate((id) => new Promise<boolean>(resolve => { const request = indexedDB.open("sonder"); request.onsuccess = () => { const get = request.result.transaction("progress").objectStore("progress").get(id); get.onsuccess = () => resolve(!!get.result?.pending); }; }), book.recordingId)).toBe(true);
   await page.unroute("**/api/progress");
