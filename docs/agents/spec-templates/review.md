@@ -39,6 +39,9 @@ Numbered list of what to look hardest at:
 2. <Focus area 2: edge cases, race conditions, or state invalidation>
 3. <Focus area 3: contract / API boundary changes>
 
+Standing item, checked in addition to the numbered focus items:
+- E2E contract: for each behaviour the diff changes, name the existing `tests/e2e` specs that pin the old behaviour and state whether each still holds. A diff that silently changes behaviour an e2e spec pins is a BLOCKING finding.
+
 ## Findings format
 
 Report all findings categorized by severity:
@@ -60,4 +63,4 @@ Findings: blocking=N high=N medium=N low=N
 
 ## Done when
 
-Send `worker_done` within 30 minutes even if incomplete. Your report lists findings categorized by severity (BLOCKING/HIGH/MEDIUM/LOW), includes the `Findings: blocking=N high=N medium=N low=N` line, and addresses each numbered focus item.
+Send `worker_done` within 30 minutes even if incomplete. Your report lists findings categorized by severity (BLOCKING/HIGH/MEDIUM/LOW), includes the `Findings: blocking=N high=N medium=N low=N` line, and addresses each numbered focus item and the standing E2E contract item.
