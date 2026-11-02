@@ -32,7 +32,7 @@ export type RefreshTarget = {
 export const mapCacheKey = (ebookId: string, recordingId: string) =>
   `reader-map:${ebookId}:${recordingId}`;
 
-const intervalCountOf = (job: AlignmentJob) =>
+export const intervalCountOf = (job: AlignmentJob) =>
   job.intervalCount ?? job.intervals.length;
 
 /** The server refused the map because its sources changed (or it is gone). */

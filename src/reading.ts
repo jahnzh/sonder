@@ -1,4 +1,5 @@
 import { userStorageKey } from "./lib";
+import { cachedMapMatches, cachedMapStale } from "./reader-map-lifecycle";
 import { api, ApiError, localDB, authDB, userId } from "./lib";
 import type {
   AlignmentJob,
@@ -421,9 +422,6 @@ export function hasKnownReader(workId: string | undefined): boolean {
 export function mapGone(error: unknown) {
   return error instanceof ApiError && [404, 410].includes(error.status);
 }
-export { cachedMapMatches, cachedMapStale } from "./reader-map-lifecycle";
-import { cachedMapMatches, cachedMapStale } from "./reader-map-lifecycle";
-
 let activeWarm: { cancel: () => void } | null = null;
 
 export function warmPlaybackReading(

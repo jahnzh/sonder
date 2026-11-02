@@ -3,7 +3,7 @@ import { userStorageKey } from "../lib";
 import { useEffect, useRef, useState } from "react";
 import { BookOpen, Headphones, Loader2, Link2 } from "lucide-react";
 import { api, ApiError, localDB, clock } from "../lib";
-import { createReaderMapLifecycle, mapCacheKey } from "../reader-map-lifecycle";
+import { createReaderMapLifecycle, intervalCountOf } from "../reader-map-lifecycle";
 import { usePlayer } from "../player";
 import type { Book } from "../types";
 import type {
@@ -26,8 +26,6 @@ const finished = (job: AlignmentJob) =>
     : job.sectionsDone.length === job.pairings.length;
 const processing = (status: AlignmentJob["status"]) =>
   ["queued", "copying", "processing"].includes(status);
-const intervalCountOf = (job: AlignmentJob) =>
-  job.intervalCount ?? job.intervals.length;
 const unverifiedCountOf = (job: AlignmentJob) =>
   job.unverifiedCount ??
   job.intervals.filter((interval) => !interval.verified).length;
