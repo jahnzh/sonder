@@ -167,5 +167,6 @@ When `orca orchestration worker-list` shows projection `stale_status` for more t
 - A completed dispatch's mailbox is closed, so send to `run:<run_id>` or start a new dispatch.
 - A worker's local branch can differ from its remote name, so use `orca-spawn.sh --base-worktree`.
 - Heartbeats are hidden by `orca-check.mjs` unless `--heartbeats`.
+- `orca orchestration worker-show` takes no `--run` flag; its valid flags are `--dispatch`, `--environment`, `--json` and `--pairing-code`.
 - `pkill -f` and `pgrep -f` match their own shell: kill by PID.
 - `gh pr edit` fails on this repo: see `docs/agents/issue-tracker.md`.

@@ -22,6 +22,8 @@ node scripts/cursor-usage.mjs --expect-user-id 1234567 --json
 node scripts/cursor-usage.mjs --evaluate-file /path/to/observation.json --json
 ```
 
+The default output (no `--json`) is `key=value` text for humans, not JSON — use `--json` whenever the output is parsed.
+
 Exit codes:
 - `0` — Observation obtained or evaluated (`status` is `ok`, `low`, `limited`, `exhausted`, `unknown`, or `stale`).
 - `1` — Account unknown (`unknown_account`), account mismatched (`account_mismatch`), or usage data unavailable (`unavailable`).
