@@ -2,11 +2,14 @@ import type { ReaderBook } from "./reading-types";
 
 export type LyricsLine = { text: string; paragraphId: string; fraction: number; paragraphStart: boolean };
 
-const abbreviations = new Set(["mr", "mrs", "ms", "dr", "st", "jr", "sr", "prof", "mt", "rev", "gen", "col", "capt", "lt", "sgt", "vs", "e.g", "i.e"]);
+const abbreviations = new Set([
+  "mr", "mrs", "ms", "dr", "st", "jr", "sr", "prof", "mt", "rev", "gen", "col", "capt", "lt", "sgt", "vs",
+  "e.g", "i.e", "p.m", "a.m", "u.s", "u.k", "u.n", "e.u", "u.s.a", "a.d", "b.c",
+]);
 
 /** Splits at sentence ends followed by a space. Keeps leading punctuation
  * ("...Wait") with its sentence and does not break decimals ("3.5"),
- * common abbreviations ("Mr.") or initials ("J. R."). */
+ * common single or multi-period abbreviations ("Mr.", "p.m.", "U.S.") or initials ("J. R."). */
 export function sentences(text: string): string[] {
   const result: string[] = [];
   let start = 0;
