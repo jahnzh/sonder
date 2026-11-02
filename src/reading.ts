@@ -421,40 +421,8 @@ export function hasKnownReader(workId: string | undefined): boolean {
 export function mapGone(error: unknown) {
   return error instanceof ApiError && [404, 410].includes(error.status);
 }
-/** A cached reading-sync map is only reused for the same job run, built from
- * the EPUB that is current now. The summary cannot tell whether the audio
- * changed in place; only the map endpoint checks that. */
-export function cachedMapMatches(
-  cached: AlignmentJob | undefined,
-  job: AlignmentJob,
-  ebookFingerprint: string | undefined,
-): cached is AlignmentJob {
-  return (
-    !!cached?.intervals?.length &&
-    cached.id === job.id &&
-    cached.updatedAt >= job.updatedAt &&
-    cached.fingerprint === job.fingerprint &&
-    cached.audioFingerprint === job.audioFingerprint &&
-    !!ebookFingerprint &&
-    cached.fingerprint === ebookFingerprint
-  );
-}
-
-/** The cached map was built from other sources than this job's, or from
- * another EPUB than the current one. */
-export function cachedMapStale(
-  cached: AlignmentJob | undefined,
-  job: AlignmentJob,
-  ebookFingerprint: string | undefined,
-) {
-  return (
-    !!cached &&
-    (cached.id !== job.id ||
-      cached.fingerprint !== job.fingerprint ||
-      cached.audioFingerprint !== job.audioFingerprint ||
-      (!!ebookFingerprint && cached.fingerprint !== ebookFingerprint))
-  );
-}
+export { cachedMapMatches, cachedMapStale } from "./reader-map-lifecycle";
+import { cachedMapMatches, cachedMapStale } from "./reader-map-lifecycle";
 
 let activeWarm: { cancel: () => void } | null = null;
 

@@ -3,7 +3,7 @@ import { userStorageKey } from "../lib";
 import { useEffect, useRef, useState } from "react";
 import { BookOpen, Headphones, Loader2, Link2 } from "lucide-react";
 import { api, ApiError, localDB, clock } from "../lib";
-import { cachedMapMatches, cachedMapStale, mapGone } from "../reading";
+import { createReaderMapLifecycle, mapCacheKey } from "../reader-map-lifecycle";
 import { usePlayer } from "../player";
 import type { Book } from "../types";
 import type {
@@ -26,8 +26,6 @@ const finished = (job: AlignmentJob) =>
     : job.sectionsDone.length === job.pairings.length;
 const processing = (status: AlignmentJob["status"]) =>
   ["queued", "copying", "processing"].includes(status);
-const mapCacheKey = (ebookId: string, recordingId: string) =>
-  `reader-map:${ebookId}:${recordingId}`;
 const intervalCountOf = (job: AlignmentJob) =>
   job.intervalCount ?? job.intervals.length;
 const unverifiedCountOf = (job: AlignmentJob) =>
@@ -90,8 +88,28 @@ export function ReadingSync({
 }) {
   const player = usePlayer();
   const epoch = useRef(0);
-  // Maps already confirmed by the server since this reader opened, by job run.
-  const validated = useRef(new Set<string>());
+  // One lifecycle for the mounted reader: its server-confirmation history spans recording changes.
+  const lifecycle = useRef<ReturnType<typeof createReaderMapLifecycle> | null>(null);
+  lifecycle.current ??= createReaderMapLifecycle({
+    fetchSummary: (ebookId) =>
+      api<{ jobs: AlignmentJob[]; available: boolean }>(
+        `/alignments?ebookId=${encodeURIComponent(ebookId)}&summary=1`,
+      ),
+    fetchMap: (jobId) =>
+      api<AlignmentJob>(`/alignments/${jobId}/map`, { cache: "no-store" }),
+    store: {
+      get: async (key) =>
+        (await localDB.preferences.get(key))?.value as AlignmentJob | undefined,
+      put: async (key, value) => {
+        await localDB.preferences.put({ key, value });
+      },
+      delete: async (key) => {
+        await localDB.preferences.delete(key);
+      },
+    },
+    statusOf: (error) => (error instanceof ApiError ? error.status : undefined),
+    isOnline: () => navigator.onLine,
+  });
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // While the sync panel is open, keep polling so changes made elsewhere (such
   // as another device pausing the job) show up; in the background only poll
@@ -131,69 +149,19 @@ export function ReadingSync({
     onMap(null);
     setError("");
   };
-  const refresh = async (): Promise<AlignmentJob | undefined> => {
+  const refresh = (): Promise<AlignmentJob | undefined> => {
     const requestEpoch = epoch.current;
-    const cacheKey = mapCacheKey(book.id, selected);
-    try {
-      const result = await api<{ jobs: AlignmentJob[]; available: boolean }>(
-        `/alignments?ebookId=${encodeURIComponent(book.id)}&summary=1`,
-      );
-      if (requestEpoch !== epoch.current) return;
-      setJobs(result.jobs);
-      setAvailable(result.available);
-      const job = result.jobs.find((job) => job.recordingId === selected);
-      if (!job || intervalCountOf(job) <= 0) {
-        onMap(null);
-        return job;
-      }
-      const cached = (await localDB.preferences.get(cacheKey))?.value as
-        | AlignmentJob
-        | undefined;
-      const run = `${job.id}:${job.updatedAt}:${book.fingerprint}`;
-      const stale = cachedMapStale(cached, job, book.fingerprint);
-      if (cachedMapMatches(cached, job, book.fingerprint)) {
-        onMap(cached);
-        // The audio may have changed in place without a new job run; let the
-        // server confirm the map once per reader session.
-        if (validated.current.has(run)) return job;
-      } else if (stale) await localDB.preferences.delete(cacheKey);
-      let map: AlignmentJob;
-      try {
-        map = await api<AlignmentJob>(`/alignments/${job.id}/map`, { cache: "no-store" });
-      } catch (error) {
-        if (requestEpoch !== epoch.current) return;
-        if (mapGone(error)) {
-          await localDB.preferences.delete(cacheKey);
-          onMap(null);
-        } else if (cached && !stale) {
-          // A temporary failure: keep the cached map and confirm it later.
-          onMap(cached);
-          return job;
-        }
-        throw error;
-      }
-      if (requestEpoch !== epoch.current) return;
-      validated.current.add(run);
-      await localDB.preferences.put({ key: cacheKey, value: map });
-      onMap(map);
-      return job;
-    } catch (error) {
-      if (requestEpoch !== epoch.current) return;
-      if (
-        !navigator.onLine ||
-        !(error instanceof ApiError) ||
-        error.status >= 500
-      ) {
-        const value = (await localDB.preferences.get(cacheKey))?.value as
-          | AlignmentJob
-          | undefined;
-        const usable = value?.fingerprint === book.fingerprint ? value : null;
-        onMap(usable);
-        return usable || undefined;
-      }
-      onMap(null);
-      setError((error as Error).message);
-    }
+    return lifecycle.current!.refresh({
+      ebook: { id: book.id, fingerprint: book.fingerprint },
+      recordingId: selected,
+      isCurrent: () => requestEpoch === epoch.current,
+      onJobs: (next, isAvailable) => {
+        setJobs(next);
+        setAvailable(isAvailable);
+      },
+      onMap,
+      onError: setError,
+    });
   };
   const ensurePoll = (job: AlignmentJob | undefined) => {
     stopPoll();
@@ -221,11 +189,12 @@ export function ReadingSync({
     stopPoll();
     void (async () => {
       if (selected) {
-        const cached = (
-          await localDB.preferences.get(mapCacheKey(book.id, selected))
-        )?.value as AlignmentJob | undefined;
+        const cached = await lifecycle.current!.restore(
+          { id: book.id, fingerprint: book.fingerprint },
+          selected,
+        );
         if (!live || requestEpoch !== epoch.current) return;
-        if (cached?.fingerprint === book.fingerprint) onMap(cached);
+        if (cached) onMap(cached);
       }
       const job = await refresh();
       if (!live || requestEpoch !== epoch.current) return;
@@ -684,10 +653,7 @@ export function ReadingSync({
                     }),
                   })
                     .then(async (value) => {
-                      await localDB.preferences.put({
-                        key: mapCacheKey(book.id, selected),
-                        value,
-                      });
+                      await lifecycle.current!.saveCorrected(book.id, selected, value);
                       onMap(value);
                       ensurePoll(await refresh());
                     })
