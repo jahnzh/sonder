@@ -217,11 +217,14 @@ export function streamStillStalled(before: StallReading, now: StallReading) {
   );
 }
 
-// What the watchdog does when it fires. `load` is the live stream load, or
-// null once it was replaced or switched. `recover` gets a check to call after
-// its probe: a stream that resumed meanwhile needs nothing. The watchdog is
-// armed again only while the same load is still stalled, so a stall that
-// cleared during the probe ends the checks instead of repeating them.
+// What the watchdog does when it fires. `load` is the live stream load that
+// may switch to a device copy, or null: a stream that was replaced or
+// switched, or one with no copy to switch to (an automatic stream would have
+// used a complete download, so it only ever streams). `recover` gets a check
+// to call after its probe: a stream that resumed meanwhile needs nothing. The
+// watchdog is armed again only while the same load is still stalled, so a
+// stall that cleared during the probe ends the checks instead of repeating
+// them; a `recover` that reports the stall handled (true) ends them too.
 export function stallHandler(deps: {
   load: () => object | null;
   read: () => StallReading;
@@ -230,7 +233,6 @@ export function stallHandler(deps: {
 }) {
   return () => {
     const load = deps.load();
-    if (!load) return;
     const before = deps.read();
     const stillStalled = () => streamStillStalled(before, deps.read());
     void deps.recover(stillStalled).then((recovered) => {
