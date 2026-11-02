@@ -12,7 +12,7 @@ Each worktree has its own index in `.codegraph/`, which git ignores, so a new wo
 
 ## Main flow
 
-Every change moves through `/grill-with-docs` → `/to-spec` → `/to-tickets` → `/implement` → `/code-review` → `/retro`. The stage skills are user-invoked slash commands. When a stage's artifact is missing, stop and name the command for the user to run.
+Every change moves through `/grill-with-docs` → `/to-spec` → `/to-tickets` → `/implement` → `/code-review` → `/retro`. The stage skills are user-invoked slash commands; a `/goal` that names a stage counts as that invocation. When a stage's artifact is missing, stop and name the command for the user to run.
 
 | Stage | Artifact in this repo | Next stage starts when |
 | --- | --- | --- |
