@@ -29,6 +29,7 @@ Completion: your report lists every bullet of the issue's Proposal, and next to 
 - Issue: #<n>
 - Branch: `<branch_name>`
 - Base branch: `<base_branch>`
+- Report: <absolute path in the main checkout, e.g. /home/jahn/audiobook_streamer/artifacts/orca/review-<n>-round1.md — the coordinator fills in the real path>
 
 ## Scope and focus
 
@@ -63,4 +64,4 @@ Findings: blocking=N high=N medium=N low=N
 
 ## Done when
 
-Send `worker_done` within 30 minutes even if incomplete. Your report lists findings categorized by severity (BLOCKING/HIGH/MEDIUM/LOW), includes the `Findings: blocking=N high=N medium=N low=N` line, and addresses each numbered focus item and the standing E2E contract item.
+Send `worker_done` within 30 minutes even if incomplete. Your report lists findings categorized by severity (BLOCKING/HIGH/MEDIUM/LOW), includes the `Findings: blocking=N high=N medium=N low=N` line, and addresses each numbered focus item and the standing E2E contract item. Write the full report to the Report path and name that path in `worker_done`.
