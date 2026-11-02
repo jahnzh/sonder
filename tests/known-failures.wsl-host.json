@@ -16,6 +16,30 @@
       "kind": "intermittent",
       "reason": "Since 2026-10-28 (#37): after a page-turn click in the reader iframe with a stale local baseRevision and no server checkpoint, the poll for checkpoint.revision === 1 does not land (or .reading-conflict stays visible). Frequency on the WSL host is only recorded as intermittent; not reproduced in this branch's local chromium runs.",
       "issue": 37
+    },
+    {
+      "project": "chromium",
+      "file": "tests/e2e/reader-follow-highlight.spec.ts",
+      "title": "lyrics mode shows the narrated sentence as the current line in the same chapters",
+      "kind": "environment",
+      "reason": "Fails on the WSL host's chromium on a clean main (482967b, run sonder-ci-20261102T163427Z-15096) and not locally, on the Deck, or on WSL firefox/webkit; cause not found",
+      "issue": 145
+    },
+    {
+      "project": "chromium",
+      "file": "tests/e2e/reader-frame.spec.ts",
+      "title": "taps, page turns and long-press on the book page reach the reader",
+      "kind": "environment",
+      "reason": "Fails on the WSL host's chromium on a clean main (482967b, run sonder-ci-20261102T163427Z-15096) and not locally, on the Deck, or on WSL firefox/webkit; cause not found",
+      "issue": 145
+    },
+    {
+      "project": "chromium",
+      "file": "tests/e2e/reader-frame.spec.ts",
+      "title": "a failed event probe enables scripts while the content defences still block them",
+      "kind": "environment",
+      "reason": "Fails on the WSL host's chromium on a clean main (482967b, run sonder-ci-20261102T163427Z-15096) and not locally, on the Deck, or on WSL firefox/webkit; cause not found",
+      "issue": 145
     }
   ]
 }
