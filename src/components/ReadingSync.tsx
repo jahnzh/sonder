@@ -2,7 +2,7 @@ import { isAdmin } from "../lib";
 import { userStorageKey } from "../lib";
 import { useEffect, useRef, useState } from "react";
 import { BookOpen, Headphones, Loader2, Link2 } from "lucide-react";
-import { api, ApiError, localDB, clock } from "../lib";
+import { api, clock } from "../lib";
 import { createAlignmentMapLifecycle, intervalCountOf } from "../alignment-map-lifecycle";
 import { alignmentMapDeps } from "../alignment-map-deps";
 import { usePlayer } from "../player";
