@@ -1,6 +1,7 @@
 import { userStorageKey } from "./lib";
-import { cachedMapMatches, cachedMapStale } from "./reader-map-lifecycle";
-import { api, ApiError, localDB, authDB, userId } from "./lib";
+import { createAlignmentMapLifecycle } from "./alignment-map-lifecycle";
+import { alignmentMapDeps } from "./alignment-map-deps";
+import { api, localDB, authDB, userId } from "./lib";
 import type {
   AlignmentJob,
   ReaderBook,
@@ -416,12 +417,6 @@ export function hasKnownReader(workId: string | undefined): boolean {
   return false;
 }
 
-/** The server no longer has this map (or refuses it because its sources
- * changed). Other failures, such as a restart or a missing media drive, are
- * temporary and keep the cached map. */
-export function mapGone(error: unknown) {
-  return error instanceof ApiError && [404, 410].includes(error.status);
-}
 let activeWarm: { cancel: () => void } | null = null;
 
 export function warmPlaybackReading(
@@ -510,49 +505,14 @@ export function warmPlaybackReading(
 
     if (!recordingId) return;
 
-    const mapCacheKey = `reader-map:${ebookId}:${recordingId}`;
-
-    const checkJobAndMap = async (): Promise<AlignmentJob | null> => {
-      if (cancelled) return null;
-      try {
-        const result = await api<{ jobs: AlignmentJob[]; available: boolean }>(
-          `/alignments?ebookId=${encodeURIComponent(ebookId)}&summary=1`,
-        );
-        if (cancelled) return null;
-        const job = result.jobs?.find((j) => j.recordingId === recordingId);
-        if (!job) return null;
-
-        const count = job.intervalCount ?? job.intervals?.length ?? 0;
-        if (count > 0) {
-          const cached = (await localDB.preferences.get(mapCacheKey))?.value as
-            | AlignmentJob
-            | undefined;
-          const fingerprint = (await readerBook)?.fingerprint;
-          if (cancelled) return null;
-          if (!cachedMapMatches(cached, job, fingerprint)) {
-            if (cachedMapStale(cached, job, fingerprint))
-              await localDB.preferences.delete(mapCacheKey);
-            let map: AlignmentJob;
-            try {
-              map = await api<AlignmentJob>(
-                `/alignments/${encodeURIComponent(job.id)}/map`,
-                { cache: "no-store" },
-              );
-            } catch (error) {
-              // The server refused the map (its sources changed): a cached
-              // copy must not be used offline either.
-              if (mapGone(error)) await localDB.preferences.delete(mapCacheKey);
-              throw error;
-            }
-            if (cancelled) return null;
-            await localDB.preferences.put({ key: mapCacheKey, value: map });
-          }
-        }
-        return job;
-      } catch {
-        return null;
-      }
-    };
+    const lifecycle = createAlignmentMapLifecycle(alignmentMapDeps());
+    const checkJobAndMap = () =>
+      lifecycle.warm({
+        ebookId,
+        recordingId,
+        fingerprint: async () => (await readerBook)?.fingerprint,
+        isCancelled: () => cancelled,
+      });
 
     const initialJob = await checkJobAndMap();
     if (cancelled || !initialJob) return;

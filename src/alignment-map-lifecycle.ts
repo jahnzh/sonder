@@ -1,8 +1,9 @@
 import type { AlignmentJob } from "./reading-types";
 
-/** Reader-side lifecycle of one reading-sync (alignment) map: which cached copy
- * may be shown, when the server must confirm it, and what a failure does to the
- * cache. The caller keeps selection, rendering and polling. */
+/** Lifecycle of reading-sync (alignment) maps: which cached copy may be shown,
+ * when the server must confirm it, and what a failure does to the cache. The
+ * reader and playback warming each use their own instance; callers keep
+ * selection, rendering and polling. */
 
 export type MapLifecycleDeps = {
   /** Job summaries for one ebook (no intervals). */
@@ -29,11 +30,19 @@ export type RefreshTarget = {
   onError(message: string): void;
 };
 
+export type WarmTarget = {
+  ebookId: string;
+  recordingId: string;
+  /** The current ebook's fingerprint, awaited only once a map may be needed. */
+  fingerprint(): Promise<string | undefined>;
+  isCancelled(): boolean;
+};
+
 export const mapCacheKey = (ebookId: string, recordingId: string) =>
   `reader-map:${ebookId}:${recordingId}`;
 
 export const intervalCountOf = (job: AlignmentJob) =>
-  job.intervalCount ?? job.intervals.length;
+  job.intervalCount ?? job.intervals?.length ?? 0;
 
 /** The server refused the map because its sources changed (or it is gone). */
 const gone = (status: number | undefined) => status === 404 || status === 410;
@@ -73,7 +82,7 @@ export function cachedMapStale(
   );
 }
 
-export function createReaderMapLifecycle(deps: MapLifecycleDeps) {
+export function createAlignmentMapLifecycle(deps: MapLifecycleDeps) {
   // Maps already confirmed by the server since this reader opened, by job run.
   const validated = new Set<string>();
 
@@ -87,6 +96,44 @@ export function createReaderMapLifecycle(deps: MapLifecycleDeps) {
     /** Persists a map returned by a manual timing correction. The caller then shows it and refreshes. */
     async saveCorrected(ebookId: string, recordingId: string, map: AlignmentJob) {
       await deps.store.put(mapCacheKey(ebookId, recordingId), map);
+    },
+
+    /** One playback-warming check: fetches and caches the map unless the cache already matches.
+     * Returns the job, or null when there is no job or anything failed (warming then stops polling).
+     * It keeps no confirmation history and never changes what the reader displays. */
+    async warm(target: WarmTarget): Promise<AlignmentJob | null> {
+      const { ebookId, recordingId, fingerprint, isCancelled } = target;
+      const cacheKey = mapCacheKey(ebookId, recordingId);
+      if (isCancelled()) return null;
+      try {
+        const result = await deps.fetchSummary(ebookId);
+        if (isCancelled()) return null;
+        const job = result.jobs?.find((j) => j.recordingId === recordingId);
+        if (!job) return null;
+        if (intervalCountOf(job) > 0) {
+          const cached = await deps.store.get(cacheKey);
+          const ebookFingerprint = await fingerprint();
+          if (isCancelled()) return null;
+          if (!cachedMapMatches(cached, job, ebookFingerprint)) {
+            if (cachedMapStale(cached, job, ebookFingerprint))
+              await deps.store.delete(cacheKey);
+            let map: AlignmentJob;
+            try {
+              map = await deps.fetchMap(job.id);
+            } catch (error) {
+              // The server refused the map (its sources changed): a cached
+              // copy must not be used offline either.
+              if (gone(deps.statusOf(error))) await deps.store.delete(cacheKey);
+              throw error;
+            }
+            if (isCancelled()) return null;
+            await deps.store.put(cacheKey, map);
+          }
+        }
+        return job;
+      } catch {
+        return null;
+      }
     },
 
     async refresh(target: RefreshTarget): Promise<AlignmentJob | undefined> {
