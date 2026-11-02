@@ -83,7 +83,7 @@ import type {
   DownloadPart,
 } from "./types";
 import { Dialog } from "./components/ui/dialog";
-import { SignIn, type Account } from "./components/SignIn";
+import { SignIn, type Account, type AccountRequest } from "./components/SignIn";
 import { PlayerDock } from "./components/Player";
 import { AppUpdate } from "./components/AppUpdate";
 import { DeviceReset } from "./components/DeviceReset";
@@ -161,7 +161,7 @@ function App() {
         <span>Loading…</span>
       </div>
     );
-  if (!auth) return <SignIn onLogin={(account) => { setUser(account); setAuth(true); }} />;
+  if (!auth) return <SignIn needsPassword={needsPassword} onLogin={(account) => { setUser(account); setAuth(true); }} />;
   return (
     <LibraryApp user={user || { id: 1, username: "admin", role: "admin" }} needsPassword={needsPassword} onLogout={() => setAuth(false)} />
   );
@@ -2173,8 +2173,19 @@ function Discover({
     </>
   );
 }
+function relativeTime(timestamp: number): string {
+  const minutes = Math.round((Date.now() - timestamp) / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days} day${days === 1 ? "" : "s"} ago`;
+  return new Date(timestamp).toLocaleDateString();
+}
 function AccountSettings({ user, needsPassword, onLogout, notify }: { user: Account; needsPassword: boolean; onLogout: () => void; notify: (s: string, error?: boolean) => void }) {
   const [users, setUsers] = useState<Account[]>([]);
+  const [requests, setRequests] = useState<AccountRequest[]>([]);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
@@ -2183,7 +2194,8 @@ function AccountSettings({ user, needsPassword, onLogout, notify }: { user: Acco
   const [resetPassword, setResetPassword] = useState("");
   const [removing, setRemoving] = useState<Account | null>(null);
   const refresh = () => api<Account[]>("/users").then(setUsers).catch((e) => notify(e.message, true));
-  useEffect(() => { if (user.role === "admin") void refresh(); }, [user.id]);
+  const refreshRequests = () => api<AccountRequest[]>("/account-requests").then(setRequests).catch((e) => notify(e.message, true));
+  useEffect(() => { if (user.role === "admin") { void refresh(); void refreshRequests(); } }, [user.id]);
   const action = async (fn: () => Promise<unknown>) => { try { await fn(); notify("Saved."); if (user.role === "admin") await refresh(); } catch (e) { notify((e as Error).message, true); } };
   const roleLabel = (account: Account) => account.role === "admin" ? "Admin" : "User";
   return <>
@@ -2219,6 +2231,13 @@ function AccountSettings({ user, needsPassword, onLogout, notify }: { user: Acco
           </div>}
         </li>)}
       </ul>
+      <h3 className="requests-heading">Pending account requests</h3>
+      {requests.length ? <ul className="user-list">
+        {requests.map(request => <li key={request.id} className="user-row request-row">
+          <div className="user-row-name"><strong>{request.username}</strong><span className="quiet-tag">{relativeTime(request.createdAt)}</span></div>
+          <div className="request-meta"><span>{request.email}</span>{request.note && <span className="request-note">{request.note}</span>}</div>
+        </li>)}
+      </ul> : <p className="requests-empty">No pending account requests.</p>}
       <form className="account-form user-add" onSubmit={e => { e.preventDefault(); void action(async () => { await api("/users", { method: "POST", body: JSON.stringify({ username, password, role: "user" }) }); setUsername(""); setPassword(""); }); }}>
         <h3>Add user</h3>
         <label>Username<input required value={username} onChange={e => setUsername(e.target.value)} /></label>

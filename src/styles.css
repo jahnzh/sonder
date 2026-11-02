@@ -2922,6 +2922,40 @@ input[type="range"]::-moz-range-thumb {
 .user-add {
   margin-top: 28px;
 }
+.requests-heading {
+  margin: 28px 0 0;
+  font-family: var(--font-heading);
+  font-size: calc(13px * var(--ui-scale, 1));
+  font-weight: 600;
+}
+.request-row {
+  align-items: flex-start;
+}
+.request-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  margin-left: auto;
+  text-align: right;
+}
+.request-meta > span {
+  max-width: 320px;
+  font-size: 13px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.request-meta > .request-note {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.requests-empty {
+  margin: 10px 0 0;
+  font-size: 14px;
+  color: var(--muted);
+}
 .account-dialog {
   max-width: 440px;
 }

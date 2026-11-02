@@ -1,9 +1,26 @@
 import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
-import { ArrowRight, CircleAlert, Eye, EyeOff, Loader2 } from "lucide-react";
+import { ArrowRight, CircleAlert, CircleCheck, Eye, EyeOff, Loader2 } from "lucide-react";
 import { api, authDB, selectUserStorage } from "../lib";
+import { Dialog } from "./ui/dialog";
 import "../signin.css";
 
 export type Account = { id: number; username: string; role: "admin" | "user" };
+export type AccountRequest = { id: number; email: string; username: string; note: string | null; createdAt: number };
+
+// The server enforces these rules (zod v4 practical email check in
+// server/account-requests.ts, and the POST /api/users username rule), so the
+// dialog rejects the same inputs before they reach it.
+const EMAIL_RULE = /^(?:[A-Za-z0-9_'+\-]+\.)*[A-Za-z0-9_'+\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\-]*\.)+[A-Za-z]{2,}$/;
+const USERNAME_RULE = /^[a-z0-9._-]+$/i;
+export function emailProblem(email: string): string | null {
+  return EMAIL_RULE.test(email) ? null : "Enter a valid email address.";
+}
+export function usernameProblem(username: string): string | null {
+  if (username.length < 2 || username.length > 40) return "Usernames are 2 to 40 characters.";
+  if (!USERNAME_RULE.test(username)) return "Use letters, numbers, dots, dashes or underscores.";
+  if (username.toLowerCase() === "admin") return "That username is reserved.";
+  return null;
+}
 
 // Narration scenes for the decorative art: words per sentence row and seconds per sentence.
 const scenes = {
@@ -111,7 +128,135 @@ function SignInArt() {
   );
 }
 
-export function SignIn({ onLogin }: { onLogin: (user: Account) => void }) {
+function RequestAccount({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
+  const [note, setNote] = useState("");
+  const [honeypot, setHoneypot] = useState("");
+  const [touched, setTouched] = useState({ email: false, username: false });
+  const [attempted, setAttempted] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [serverError, setServerError] = useState("");
+  const emailErr = emailProblem(email.trim());
+  const userErr = usernameProblem(username.trim());
+  const close = () => {
+    onOpenChange(false);
+    // A reopened dialog starts fresh, including after a successful submission.
+    setTimeout(() => {
+      setEmail(""); setUsername(""); setNote(""); setHoneypot("");
+      setTouched({ email: false, username: false });
+      setAttempted(false); setSent(false); setServerError("");
+    }, 0);
+  };
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setAttempted(true);
+    if (emailErr || userErr) return;
+    setBusy(true);
+    setServerError("");
+    try {
+      await api("/account-requests", {
+        method: "POST",
+        body: JSON.stringify({ email: email.trim(), username: username.trim(), ...(note.trim() ? { note: note.trim() } : {}), honeypot }),
+      });
+      setSent(true);
+    } catch (err) {
+      setServerError(err instanceof Error ? err.message : "Could not send your request. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) close(); }} title="Request an account" description="The administrator reviews requests and will be in touch." className="account-dialog">
+      {sent ? (
+        <div className="signin-request-done" role="status">
+          <CircleCheck size={28} aria-hidden="true" />
+          <p>Your request has been received. Thank you!</p>
+          <button type="button" className="signin-submit" onClick={close}>Done</button>
+        </div>
+      ) : (
+        <form className="signin-form" noValidate onSubmit={submit}>
+          <div className="signin-field">
+            <label htmlFor="request-email">Email</label>
+            <input
+              id="request-email"
+              type="email"
+              autoComplete="email"
+              spellCheck={false}
+              value={email}
+              aria-invalid={(attempted || touched.email) && !!emailErr}
+              aria-describedby={(attempted || touched.email) && emailErr ? "request-email-error" : undefined}
+              onChange={(e) => { setEmail(e.target.value); setServerError(""); }}
+              onBlur={() => setTouched((t) => ({ ...t, email: true }))}
+              autoFocus
+            />
+            {(attempted || touched.email) && emailErr && (
+              <p id="request-email-error" className="signin-error">
+                <CircleAlert size={16} aria-hidden="true" />
+                {emailErr}
+              </p>
+            )}
+          </div>
+          <div className="signin-field">
+            <label htmlFor="request-username">Username</label>
+            <input
+              id="request-username"
+              autoComplete="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              value={username}
+              aria-invalid={(attempted || touched.username) && !!userErr}
+              aria-describedby={(attempted || touched.username) && userErr ? "request-username-error" : undefined}
+              onChange={(e) => { setUsername(e.target.value); setServerError(""); }}
+              onBlur={() => setTouched((t) => ({ ...t, username: true }))}
+            />
+            {(attempted || touched.username) && userErr && (
+              <p id="request-username-error" className="signin-error">
+                <CircleAlert size={16} aria-hidden="true" />
+                {userErr}
+              </p>
+            )}
+          </div>
+          <div className="signin-field">
+            <label htmlFor="request-note">Note <span className="optional">optional</span></label>
+            <textarea id="request-note" rows={3} maxLength={1000} value={note} onChange={(e) => setNote(e.target.value)} />
+          </div>
+          {/* Hidden from people, visible to bots: a filled field marks an automated submission. */}
+          <div className="signin-honeypot" aria-hidden="true">
+            <label htmlFor="request-website">Website</label>
+            <input id="request-website" type="text" tabIndex={-1} autoComplete="off" value={honeypot} onChange={(e) => setHoneypot(e.target.value)} />
+          </div>
+          <div id="request-error" role="alert">
+            {serverError && (
+              <p className="signin-error">
+                <CircleAlert size={16} aria-hidden="true" />
+                {serverError}
+              </p>
+            )}
+          </div>
+          <button type="submit" className="signin-submit" aria-busy={busy}>
+            {busy ? (
+              <>
+                <Loader2 className="spin" size={20} aria-hidden="true" />
+                Sending request
+              </>
+            ) : (
+              <>
+                Send request
+                <ArrowRight size={18} aria-hidden="true" />
+              </>
+            )}
+          </button>
+        </form>
+      )}
+    </Dialog>
+  );
+}
+
+export function SignIn({ onLogin, needsPassword }: { onLogin: (user: Account) => void; needsPassword: boolean }) {
+  const [requestOpen, setRequestOpen] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
@@ -208,8 +353,14 @@ export function SignIn({ onLogin }: { onLogin: (user: Account) => void }) {
               )}
             </button>
           </form>
+          {needsPassword && (
+            <button type="button" className="signin-request" onClick={() => setRequestOpen(true)}>
+              Request an account
+            </button>
+          )}
         </div>
       </section>
+      <RequestAccount open={requestOpen} onOpenChange={setRequestOpen} />
     </main>
   );
 }
