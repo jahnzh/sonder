@@ -15,11 +15,14 @@ Runs $ORCA_CLI_COMMAND orchestration check --json (default command: orca), strip
 A delivery that holds only heartbeats is acknowledged and the wait continues; a delivery with any other message is
 printed without its heartbeats and left for the caller to ack. When only heartbeats arrived, the count line ends
 with heartbeats=<n>. --heartbeats prints every delivery as Orca returns it and acks nothing.
-Each worker_done whose payload names a dispatchId also runs orca-history capture for that dispatch; a capture
-failure is printed to stderr and does not change the check exit code.
+Each worker_done whose payload names a dispatchId also runs orca-history capture for that dispatch; the payload may
+be a JSON string, as the orca CLI sends structured payloads, or an object. A successful automatic capture prints a
+\`history: captured <id> (automatic)\` line on stderr; a capture failure is printed to stderr and does not change the
+check exit code.
 A worker_done body that includes a line \`Findings: blocking=N high=N medium=N low=N\` also records
-record-review on the dispatch named by that reviewer's review_of link (with --reviewer-dispatch);
-without the line or without a review_of link, nothing is recorded and one reminder is printed.`);
+record-review on the dispatch named by that reviewer's review_of link (with --reviewer-dispatch) and prints a
+\`history: recorded review on <id> (automatic)\` line on stderr; a reviewer's worker_done without the line or without
+a review_of link records nothing and prints one reminder (implementer worker_dones never remind).`);
 }
 
 /** Exact line reviewers emit in the worker_done body so orca-check can record-review automatically. */
@@ -173,6 +176,30 @@ function isHeartbeat(message) {
 }
 
 /**
+ * The orca CLI stringifies structured payloads when sending them, so a message payload may arrive as a JSON string
+ * or as an object. Returns the object form, or null when the payload is not (or does not parse into) an object.
+ * @param {unknown} payload
+ * @returns {Record<string, unknown> | null}
+ */
+export function payloadObject(payload) {
+  if (payload && typeof payload === "object") {
+    if (Array.isArray(payload)) return null;
+    return /** @type {Record<string, unknown>} */ (payload);
+  }
+  if (typeof payload === "string") {
+    try {
+      const parsed = JSON.parse(payload);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return /** @type {Record<string, unknown>} */ (parsed);
+      }
+    } catch {
+      // not JSON
+    }
+  }
+  return null;
+}
+
+/**
  * @param {unknown} message
  * @returns {string | null}
  */
@@ -180,9 +207,9 @@ export function dispatchIdOfWorkerDone(message) {
   if (!message || typeof message !== "object") return null;
   const msg = /** @type {Record<string, unknown>} */ (message);
   if (msg.type !== "worker_done") return null;
-  const payload = msg.payload;
-  if (!payload || typeof payload !== "object") return null;
-  const id = /** @type {Record<string, unknown>} */ (payload).dispatchId;
+  const payload = payloadObject(msg.payload);
+  if (!payload) return null;
+  const id = payload.dispatchId;
   return typeof id === "string" && id ? id : null;
 }
 
@@ -222,6 +249,7 @@ export function autoCaptureWorkerDone(messages, hooks = {}) {
     }
     try {
       capture(id);
+      console.error(`history: captured ${id} (automatic)`);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       console.error(`history: automatic capture failed for ${id}: ${detail}`);
@@ -268,6 +296,7 @@ export function resolveReviewedDispatch(reviewerDispatchId, env = process.env) {
  * @param {string} reviewerDispatchId
  * @param {{ blocking: number, high: number, medium: number, low: number }} findings
  * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string | null} the reviewed dispatch id when a review was recorded, else null
  */
 export function defaultRecordReview(reviewerDispatchId, findings, env = process.env) {
   const reviewedId = resolveReviewedDispatch(reviewerDispatchId, env);
@@ -275,7 +304,7 @@ export function defaultRecordReview(reviewerDispatchId, findings, env = process.
     console.error(
       `history: worker_done for ${reviewerDispatchId} has Findings but no review_of link; skipping automatic record-review`,
     );
-    return;
+    return null;
   }
   const script = fileURLToPath(new URL("./orca-history.mjs", import.meta.url));
   const run = spawnSync(
@@ -309,11 +338,13 @@ export function defaultRecordReview(reviewerDispatchId, findings, env = process.
   if (run.status !== 0) {
     throw new Error((run.stderr || run.stdout || `record-review exited ${run.status}`).trim().slice(0, 300));
   }
+  return reviewedId;
 }
 
 /**
  * After a worker_done message, record-review when the body has a Findings line and the
  * reviewing dispatch has a review_of link. Never throws; never changes the exit code.
+ * An implementer worker_done (no review_of link) never reminds about the missing Findings line.
  * @param {unknown[]} messages
  * @param {{
  *   recordReview?: (reviewedId: string, findings: { blocking: number, high: number, medium: number, low: number }, reviewerId: string) => void,
@@ -330,9 +361,12 @@ export function autoRecordReviewWorkerDone(messages, hooks = {}) {
     const findings = parseFindingsLine(body);
     const reviewerId = dispatchIdOfWorkerDone(message);
     if (!findings) {
-      console.error(
-        `history: worker_done${reviewerId ? ` for ${reviewerId}` : ""} has no Findings line; skipping automatic record-review`,
-      );
+      // Only a reviewer's worker_done (one with a review_of link) is expected to carry the Findings line.
+      if (reviewerId && resolve(reviewerId)) {
+        console.error(
+          `history: worker_done for ${reviewerId} has no Findings line; skipping automatic record-review`,
+        );
+      }
       continue;
     }
     if (!reviewerId) {
@@ -340,18 +374,20 @@ export function autoRecordReviewWorkerDone(messages, hooks = {}) {
       continue;
     }
     try {
+      let recordedId;
       if (hooks.recordReview) {
-        const reviewedId = resolve(reviewerId);
-        if (!reviewedId) {
+        recordedId = resolve(reviewerId);
+        if (!recordedId) {
           console.error(
             `history: worker_done for ${reviewerId} has Findings but no review_of link; skipping automatic record-review`,
           );
           continue;
         }
-        hooks.recordReview(reviewedId, findings, reviewerId);
+        hooks.recordReview(recordedId, findings, reviewerId);
       } else {
-        defaultRecordReview(reviewerId, findings);
+        recordedId = defaultRecordReview(reviewerId, findings);
       }
+      if (recordedId) console.error(`history: recorded review on ${recordedId} (automatic)`);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       const reviewedId = resolve(reviewerId);

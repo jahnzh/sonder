@@ -20,7 +20,7 @@ Rules:
 - Check every command flag, option and environment variable with `--help` or grep before you use it or write it into a file. Do not assume one exists.
 - When code must read another command's output (JSON, logs), run the command once and copy a real sample into your test. Do not guess the shape: the first spawn wrapper parsed a receipt field that did not exist.
 - Commit on your branch with a concise imperative subject. Claude workers end the message with `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`; cursor workers add no trailer.
-- If you hit a usage limit, commit the work so far with a message that says what is unfinished, and say so in your report.
+- If you hit a usage limit, stop working: commit the work so far with a message that says what is unfinished, and say so in your report. Do not keep retrying against an exhausted bucket.
 
 Completion: your report lists every bullet of the issue's Proposal, and next to each the test name or command that shows it works. Say plainly what you could not verify. A bullet with no evidence is not done.
 ```
@@ -108,7 +108,7 @@ Run `scripts/orca-spawn.sh --spec-file <file> --name <worktree> (--base <branch>
 
 ## Record the outcome
 
-Lifecycle capture is automatic: `scripts/orca-spawn.sh` captures after a successful launch, and `scripts/orca-check.mjs` captures again for each `worker_done` that names a `dispatchId` (before `worker-release`). Spawn `--fix-of` / `--review-of` link the new dispatch after capture. Reviewers must put `Findings: blocking=N high=N medium=N low=N` on its own line in the `worker_done` body so `orca-check` can `record-review` on the reviewed dispatch (via the spawn `--review-of` link); without that line or without a `review_of` link it records nothing and prints one reminder. CI scripts record a check when `SONDER_CI_DISPATCH` is set. Failures are warnings only and do not break the dispatch or the CI exit code. Still run a manual `node scripts/orca-history.mjs capture --dispatch <dispatch_id> --recommendation <recommend output>` to attach the recommendation. Unavailable information is stored as unknown. See `docs/agents/worker-history.md`.
+Lifecycle capture is automatic: `scripts/orca-spawn.sh` captures after a successful launch, and `scripts/orca-check.mjs` captures again for each `worker_done` that names a `dispatchId` (before `worker-release`; the payload may be a JSON string, as the orca CLI sends structured payloads). A successful automatic capture or record-review prints a `history:` line on stderr, so a silent skip cannot pass unnoticed. Spawn `--fix-of` / `--review-of` link the new dispatch after capture. Reviewers must put `Findings: blocking=N high=N medium=N low=N` on its own line in the `worker_done` body so `orca-check` can `record-review` on the reviewed dispatch (via the spawn `--review-of` link); a reviewer's `worker_done` without that line, or without a `review_of` link, records nothing and prints one reminder (implementer `worker_done`s never remind). CI scripts record a check when `SONDER_CI_DISPATCH` is set. Failures are warnings only and do not break the dispatch or the CI exit code. Still run a manual `node scripts/orca-history.mjs capture --dispatch <dispatch_id> --recommendation <recommend output>` to attach the recommendation. Unavailable information is stored as unknown. See `docs/agents/worker-history.md`.
 
 ## Read the inbox
 
@@ -125,6 +125,8 @@ A restart deletes the session scratchpad and stops background waits, so keep spe
 ## Usage limits
 
 A worker that hits a Claude usage limit reports `failed`, but may resume after the reset and finish. Judge it by its branch (`git log`, `git status`) and its transcript (`orca orchestration worker-read --dispatch <dispatch_id>`), not by the report.
+
+When a worker dies on a quota limit with a complete-but-uncommitted change set, recover it before the worktree is reused: inspect the branch (`git log`, `git status`, `git diff`), verify the work per the Coordinator verification checklist, and commit it on the worker's branch before any further dispatch on that worktree.
 
 ## Coordinator state
 
@@ -156,10 +158,15 @@ When `orca orchestration worker-list` shows projection `stale_status` for more t
 4. Inspect the worktree (uncommitted work is often good).
 5. Finish the work yourself or respawn on the same worktree.
 
+## Reap after a stop
+
+`orca orchestration worker-stop` on a settled dispatch reaps nothing (`processAction: "none"`): rcfile shells, agent CLIs and MCP servers linger in the worktree and fail the next spawn's preflight. Run `bash scripts/orca-reap.sh <worktree>` after every stop, before the next spawn. It reads the PIDs from `orca-preflight.sh --after-stop` (cwd-based, so it finds processes whose cmdline does not name the worktree), sends SIGTERM, escalates to SIGKILL after ~5 s for what survives, and exits 0 only when preflight reports the worktree clean.
+
 ## Gotchas
 
 - A completed dispatch's mailbox is closed, so send to `run:<run_id>` or start a new dispatch.
 - A worker's local branch can differ from its remote name, so use `orca-spawn.sh --base-worktree`.
 - Heartbeats are hidden by `orca-check.mjs` unless `--heartbeats`.
+- `orca orchestration worker-show` takes no `--run` flag; its valid flags are `--dispatch`, `--environment`, `--json` and `--pairing-code`.
 - `pkill -f` and `pgrep -f` match their own shell: kill by PID.
 - `gh pr edit` fails on this repo: see `docs/agents/issue-tracker.md`.

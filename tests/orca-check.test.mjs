@@ -15,6 +15,8 @@ import {
   autoRecordReviewWorkerDone,
   defaultRecordReview,
   resolveReviewedDispatch,
+  dispatchIdOfWorkerDone,
+  payloadObject,
 } from "../scripts/orca-check.mjs";
 import { openStore } from "../scripts/orca-history.mjs";
 
@@ -62,6 +64,17 @@ const workerDone = (id, dispatchId = "ctx_done1") => ({
   sender: "term_worker",
   body: "Done.",
   payload: { outcome: "succeeded", taskId: "task_1", dispatchId },
+});
+
+// The orca CLI stringifies structured payloads when sending them (verified against the CLI source and every
+// worker_done in run run_dc5c4e2cd60a, which all arrived with a JSON-string payload), so this is the real shape.
+const stringPayloadDone = (id, dispatchId = "ctx_str1") => ({
+  id,
+  type: "worker_done",
+  subject: "succeeded",
+  sender: "term_worker",
+  body: "Done.",
+  payload: JSON.stringify({ outcome: "succeeded", taskId: "task_1", dispatchId }),
 });
 
 // Runs runOrcaCheck with a scripted queue of orca replies; returns the printed text and the argv of every call.
@@ -542,7 +555,7 @@ test("an Orca error during the heartbeat loop is reported, real stale_delivery s
 
 test("worker_done triggers automatic history capture for each dispatchId", () => {
   const captured = [];
-  const { outcome, logs } = runScripted(
+  const { outcome, logs, errors } = runScripted(
     {},
     [deliveryEnvelope("del_done", [workerDone("m1", "ctx_auto1"), heartbeat("h1"), workerDone("m2", "ctx_auto2")])],
     { t: 0 },
@@ -551,6 +564,8 @@ test("worker_done triggers automatic history capture for each dispatchId", () =>
   assert.equal(outcome.exitCode, 0);
   assert.deepEqual(captured, ["ctx_auto1", "ctx_auto2"]);
   assert.match(logs[0], /m1 worker_done/);
+  assert.match(errors.join("\n"), /^history: captured ctx_auto1 \(automatic\)$/m);
+  assert.match(errors.join("\n"), /^history: captured ctx_auto2 \(automatic\)$/m);
 });
 
 test("a failed automatic capture does not fail the check", () => {
@@ -584,6 +599,85 @@ test("worker_done without a dispatchId skips capture and still prints", () => {
   assert.deepEqual(captured, []);
   assert.match(logs[0], /m1 worker_done/);
   assert.match(errors.join("\n"), /no dispatchId/);
+});
+
+test("payloadObject accepts objects and JSON strings, rejects everything else", () => {
+  assert.deepEqual(payloadObject({ dispatchId: "ctx_1" }), { dispatchId: "ctx_1" });
+  assert.deepEqual(payloadObject('{"dispatchId":"ctx_1"}'), { dispatchId: "ctx_1" });
+  assert.equal(payloadObject("not json"), null);
+  assert.equal(payloadObject('"a string"'), null);
+  assert.equal(payloadObject("42"), null);
+  assert.equal(payloadObject("null"), null);
+  assert.equal(payloadObject("[]"), null);
+  assert.equal(payloadObject([]), null);
+  assert.equal(payloadObject(null), null);
+  assert.equal(payloadObject(undefined), null);
+});
+
+test("dispatchIdOfWorkerDone reads a JSON-string payload, as the orca CLI sends it", () => {
+  const done = stringPayloadDone("m1", "ctx_str2");
+  assert.equal(dispatchIdOfWorkerDone(done), "ctx_str2");
+  const objectDone = workerDone("m2", "ctx_obj2");
+  assert.equal(dispatchIdOfWorkerDone(objectDone), "ctx_obj2");
+  const other = { ...done, type: "heartbeat" };
+  assert.equal(dispatchIdOfWorkerDone(other), null);
+});
+
+test("worker_done with a JSON-string payload triggers automatic capture and prints the success line", () => {
+  const captured = [];
+  const { outcome, errors } = runScripted(
+    {},
+    [deliveryEnvelope("del_done", [stringPayloadDone("m1", "ctx_str1")])],
+    { t: 0 },
+    { captureHistory: (id) => captured.push(id) },
+  );
+  assert.equal(outcome.exitCode, 0);
+  assert.deepEqual(captured, ["ctx_str1"]);
+  assert.match(errors.join("\n"), /^history: captured ctx_str1 \(automatic\)$/m);
+});
+
+test("worker_done with a non-JSON string payload skips automatic capture", () => {
+  const captured = [];
+  const done = stringPayloadDone("m1");
+  done.payload = "not a JSON payload";
+  const { outcome, errors } = runScripted(
+    {},
+    [deliveryEnvelope("del_done", [done])],
+    { t: 0 },
+    { captureHistory: (id) => captured.push(id) },
+  );
+  assert.equal(outcome.exitCode, 0);
+  assert.deepEqual(captured, []);
+  assert.match(errors.join("\n"), /no dispatchId/);
+});
+
+test("worker_done with a Findings line and a JSON-string payload records the review and prints the success line", () => {
+  const reviews = [];
+  const done = stringPayloadDone("m1", "ctx_review");
+  done.body = "Reviewed the branch.\nFindings: blocking=0 high=1 medium=0 low=2\nNothing left.";
+  const { outcome, errors } = runScripted(
+    {},
+    [deliveryEnvelope("del_done", [done])],
+    { t: 0 },
+    {
+      captureHistory: () => {},
+      resolveReviewedDispatch: (reviewerId) => {
+        assert.equal(reviewerId, "ctx_review");
+        return "ctx_impl";
+      },
+      recordReview: (reviewedId, findings, reviewerId) =>
+        reviews.push({ reviewedId, findings, reviewerId }),
+    },
+  );
+  assert.equal(outcome.exitCode, 0);
+  assert.deepEqual(reviews, [
+    {
+      reviewedId: "ctx_impl",
+      findings: { blocking: 0, high: 1, medium: 0, low: 2 },
+      reviewerId: "ctx_review",
+    },
+  ]);
+  assert.match(errors.join("\n"), /^history: recorded review on ctx_impl \(automatic\)$/m);
 });
 
 test("parseFindingsLine reads the documented Findings counts line", () => {
@@ -624,6 +718,7 @@ test("worker_done with a Findings line and a review_of link records the review o
   ]);
   assert.match(logs[0], /m1 worker_done/);
   assert.doesNotMatch(errors.join("\n"), /no Findings line|no review_of link/);
+  assert.match(errors.join("\n"), /^history: recorded review on ctx_impl \(automatic\)$/m);
 });
 
 test("worker_done with Findings but no review_of link records nothing and prints one reminder", () => {
@@ -648,7 +743,7 @@ test("worker_done with Findings but no review_of link records nothing and prints
   );
 });
 
-test("worker_done without a Findings line records nothing and prints one reminder", () => {
+test("an implementer worker_done without a Findings line records nothing and does not remind", () => {
   const reviews = [];
   const { outcome, errors } = runScripted(
     {},
@@ -656,12 +751,30 @@ test("worker_done without a Findings line records nothing and prints one reminde
     { t: 0 },
     {
       captureHistory: () => {},
+      resolveReviewedDispatch: () => null,
       recordReview: (id, findings) => reviews.push({ id, findings }),
     },
   );
   assert.equal(outcome.exitCode, 0);
   assert.deepEqual(reviews, []);
-  assert.match(errors.join("\n"), /history: worker_done for ctx_impl has no Findings line; skipping automatic record-review/);
+  assert.doesNotMatch(errors.join("\n"), /no Findings line/);
+});
+
+test("a reviewer worker_done with a review_of link but no Findings line reminds once", () => {
+  const reviews = [];
+  const { outcome, errors } = runScripted(
+    {},
+    [deliveryEnvelope("del_done", [workerDone("m1", "ctx_review")])],
+    { t: 0 },
+    {
+      captureHistory: () => {},
+      resolveReviewedDispatch: () => "ctx_impl",
+      recordReview: (id, findings) => reviews.push({ id, findings }),
+    },
+  );
+  assert.equal(outcome.exitCode, 0);
+  assert.deepEqual(reviews, []);
+  assert.match(errors.join("\n"), /history: worker_done for ctx_review has no Findings line; skipping automatic record-review/);
 });
 
 test("a failed automatic record-review does not fail the check", () => {
@@ -770,7 +883,8 @@ test("Findings with a review_of link record counts on the reviewed dispatch only
     });
     assert.equal(reviewed.signals.reviews[0].reviewerDispatch, "ctx_review");
     assert.equal(reviewer.signals.reviews.length, 0, "severity counts must not land on the reviewing dispatch");
-    assert.equal(errors.length, 0, errors.join("\n"));
+    assert.equal(errors.length, 1, errors.join("\n"));
+    assert.match(errors[0], /^history: recorded review on ctx_impl \(automatic\)$/);
   } finally {
     console.error = origErr;
     if (prev === undefined) delete process.env.ORCA_HISTORY_DIR;

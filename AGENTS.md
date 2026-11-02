@@ -57,7 +57,7 @@ Follow nearby TypeScript and React conventions: two-space indentation, `PascalCa
 
 ## Changes and Safety
 
-Use concise, imperative commit subjects; history also uses scopes such as `fix(ci):` and issue references. PR descriptions should explain the change, link the issue, list checks and include screenshots for visual changes. Keep `.env`, `data/` and `artifacts/` private. Database schema changes must remain additive and update both `server/db.ts` and `server/schema.ts`. Read `docs/LOCAL_CHECKS.md` before backups or live verification.
+Use concise, imperative commit subjects; history also uses scopes such as `fix(ci):` and issue references. PR descriptions should explain the change, link the issue, list checks and include screenshots for visual changes. Keep `.env`, `data/` and `artifacts/` private. Database schema changes must remain additive and update both `server/db.ts` and `server/schema.ts`. Read `docs/LOCAL_CHECKS.md` before backups or live verification. `git push` runs the pre-push hook (`npm run build` + `npm test`, ~2 min): give it a ≥600 s shell timeout and verify the push landed with `git status -sb`; `SONDER_SKIP_PREPUSH=1 git push` skips the hook once for an already-checked revision.
 
 ## Agent skills
 

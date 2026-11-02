@@ -13,7 +13,7 @@ Rules:
 - Check every command flag, option and environment variable with `--help` or grep before you use it or write it into a file. Do not assume one exists.
 - When code must read another command's output (JSON, logs), run the command once and copy a real sample into your test. Do not guess the shape: the first spawn wrapper parsed a receipt field that did not exist.
 - Commit on your branch with a concise imperative subject. Claude workers end the message with `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`; cursor workers add no trailer.
-- If you hit a usage limit, commit the work so far with a message that says what is unfinished, and say so in your report.
+- If you hit a usage limit, stop working: commit the work so far with a message that says what is unfinished, and say so in your report. Do not keep retrying against an exhausted bucket.
 
 Completion: your report lists every bullet of the issue's Proposal, and next to each the test name or command that shows it works. Say plainly what you could not verify. A bullet with no evidence is not done.
 
@@ -29,6 +29,7 @@ Completion: your report lists every bullet of the issue's Proposal, and next to 
 - Issue: #<n>
 - Branch: `<branch_name>`
 - Base branch: `<base_branch>`
+- Report: <absolute path in the main checkout, e.g. /home/jahn/audiobook_streamer/artifacts/orca/review-<n>-round1.md — the coordinator fills in the real path>
 
 ## Scope and focus
 
@@ -38,6 +39,9 @@ Numbered list of what to look hardest at:
 1. <Focus area 1: keyboard handling, persistence/progress, security, or shared schemas>
 2. <Focus area 2: edge cases, race conditions, or state invalidation>
 3. <Focus area 3: contract / API boundary changes>
+
+Standing item, checked in addition to the numbered focus items:
+- E2E contract: for each behaviour the diff changes, name the existing `tests/e2e` specs that pin the old behaviour and state whether each still holds. A diff that silently changes behaviour an e2e spec pins is a BLOCKING finding.
 
 ## Findings format
 
@@ -60,4 +64,4 @@ Findings: blocking=N high=N medium=N low=N
 
 ## Done when
 
-Send `worker_done` within 30 minutes even if incomplete. Your report lists findings categorized by severity (BLOCKING/HIGH/MEDIUM/LOW), includes the `Findings: blocking=N high=N medium=N low=N` line, and addresses each numbered focus item.
+Send `worker_done` within 30 minutes even if incomplete. Your report lists findings categorized by severity (BLOCKING/HIGH/MEDIUM/LOW), includes the `Findings: blocking=N high=N medium=N low=N` line, and addresses each numbered focus item and the standing E2E contract item. Write the full report to the Report path and name that path in `worker_done`.
