@@ -10,6 +10,7 @@
 # The launch receipt is read as JSON: {"ok": true, "result": {"dispatchId", "launch": {"effective": {"model"}}, "effects": [...]}}.
 # The worktree path comes from result.effects. codegraph init -y runs in the background, so a worker that
 # starts at once may call CodeGraph before the index exists; it builds its own if .codegraph is missing.
+# npm ci also runs in the background when the worktree has a package.json and no node_modules (log: .npm-ci.log).
 # After a successful launch it also runs `orca-history.mjs capture --dispatch <id>` (failures are warnings only).
 # Optional --fix-of / --review-of link the new dispatch to an earlier one after capture (kind fix_of or
 # review_of); a link failure warns only. Once worker-start has succeeded the script never exits non-zero,
@@ -176,6 +177,11 @@ fi
 if [ -d "$worktree" ]; then
   (cd "$worktree" && nohup codegraph init -y > .codegraph-init.log 2>&1 &)
   echo "codegraph init -y running in the background in $worktree (log: .codegraph-init.log)"
+  # A new worktree has no node_modules, so the worker's first tsc or test run would fail. Install beside the CodeGraph index.
+  if [ -f "$worktree/package.json" ] && [ ! -d "$worktree/node_modules" ]; then
+    (cd "$worktree" && nohup npm ci --no-audit --no-fund > .npm-ci.log 2>&1 &)
+    echo "npm ci running in the background in $worktree (log: .npm-ci.log)"
+  fi
   # Orca may name the local branch differently from the base (user/name); push and clean up with this one.
   if branch=$(git -C "$worktree" branch --show-current 2>/dev/null) && [ -n "$branch" ]; then
     echo "branch: $branch"

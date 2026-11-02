@@ -41,6 +41,7 @@ function setup(receipt = '{"ok":true,"dispatchId":"ctx_abc","model":"gpt-5.3-cod
   writeFileSync(join(dir, "receipt"), receipt);
   stub(bin, "orca", `echo "$@" >> "${dir}/orca.log"\necho 'keepalive'\ncat "${dir}/receipt"\nexit $(cat "${dir}/exitcode" 2>/dev/null || echo 0)`);
   stub(bin, "codegraph", `echo "$PWD: $@" >> "${dir}/codegraph.log"`);
+  stub(bin, "npm", `echo "$PWD: $@" >> "${dir}/npm.log"`);
   // The preflight checks free disk space; never ask the real one.
   stub(bin, "df", `echo "Filesystem 1024-blocks Used Available Capacity Mounted on"\necho "/dev/fake 102626232 1000 99999999 1% /"`);
   stub(bin, "agent", `printf 'Available models\\n\\nauto - Auto\\ngpt-5.3-codex - Codex 5.3\\n'`);
@@ -74,7 +75,7 @@ if (mode === "1" || (mode === "link" && args[0] === "link") || (mode === "captur
       },
     });
   const base = ["--spec-file", join(dir, "spec.md"), "--name", "wt", "--base", "HEAD", "--agent", "cursor"];
-  return { dir, run, base, repo, workspaces, orcaLog: join(dir, "orca.log"), cgLog: join(dir, "codegraph.log"), historyLog: join(dir, "history.log") };
+  return { dir, run, base, repo, workspaces, orcaLog: join(dir, "orca.log"), cgLog: join(dir, "codegraph.log"), npmLog: join(dir, "npm.log"), historyLog: join(dir, "history.log") };
 }
 
 test("refuses to run without --model", () => {
@@ -166,6 +167,30 @@ test("happy path prints the dispatch id and model, passes the flags, and runs co
     assert.match(readFileSync(t.cgLog, "utf8"), /\/ws\/wt: init -y/);
   } finally {
     rmSync(t.dir, { recursive: true, force: true });
+  }
+});
+
+test("a worktree with a package.json and no node_modules gets npm ci in the background; one with node_modules does not", async () => {
+  const t = setup();
+  try {
+    writeFileSync(join(t.workspaces, "wt", "package.json"), "{}\n");
+    const r = t.run([...t.base, "--model", "gpt-5.3-codex", "--effort", "high"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /npm ci running in the background/);
+    for (let i = 0; i < 50 && !existsSync(t.npmLog); i++) await new Promise((r) => setTimeout(r, 100));
+    assert.match(readFileSync(t.npmLog, "utf8"), /\/ws\/wt: ci --no-audit --no-fund/);
+  } finally {
+    rmSync(t.dir, { recursive: true, force: true });
+  }
+  const installed = setup();
+  try {
+    writeFileSync(join(installed.workspaces, "wt", "package.json"), "{}\n");
+    mkdirSync(join(installed.workspaces, "wt", "node_modules"));
+    const r = installed.run([...installed.base, "--model", "gpt-5.3-codex", "--effort", "high"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.doesNotMatch(r.stdout, /npm ci running/);
+  } finally {
+    rmSync(installed.dir, { recursive: true, force: true });
   }
 });
 
