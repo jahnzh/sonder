@@ -156,6 +156,10 @@ When `orca orchestration worker-list` shows projection `stale_status` for more t
 4. Inspect the worktree (uncommitted work is often good).
 5. Finish the work yourself or respawn on the same worktree.
 
+## Reap after a stop
+
+`orca orchestration worker-stop` on a settled dispatch reaps nothing (`processAction: "none"`): rcfile shells, agent CLIs and MCP servers linger in the worktree and fail the next spawn's preflight. Run `bash scripts/orca-reap.sh <worktree>` after every stop, before the next spawn. It reads the PIDs from `orca-preflight.sh --after-stop` (cwd-based, so it finds processes whose cmdline does not name the worktree), sends SIGTERM, escalates to SIGKILL after ~5 s for what survives, and exits 0 only when preflight reports the worktree clean.
+
 ## Gotchas
 
 - A completed dispatch's mailbox is closed, so send to `run:<run_id>` or start a new dispatch.
