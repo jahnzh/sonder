@@ -20,7 +20,7 @@ Rules:
 - Check every command flag, option and environment variable with `--help` or grep before you use it or write it into a file. Do not assume one exists.
 - When code must read another command's output (JSON, logs), run the command once and copy a real sample into your test. Do not guess the shape: the first spawn wrapper parsed a receipt field that did not exist.
 - Commit on your branch with a concise imperative subject. Claude workers end the message with `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`; cursor workers add no trailer.
-- If you hit a usage limit, commit the work so far with a message that says what is unfinished, and say so in your report.
+- If you hit a usage limit, stop working: commit the work so far with a message that says what is unfinished, and say so in your report. Do not keep retrying against an exhausted bucket.
 
 Completion: your report lists every bullet of the issue's Proposal, and next to each the test name or command that shows it works. Say plainly what you could not verify. A bullet with no evidence is not done.
 ```
@@ -125,6 +125,8 @@ A restart deletes the session scratchpad and stops background waits, so keep spe
 ## Usage limits
 
 A worker that hits a Claude usage limit reports `failed`, but may resume after the reset and finish. Judge it by its branch (`git log`, `git status`) and its transcript (`orca orchestration worker-read --dispatch <dispatch_id>`), not by the report.
+
+When a worker dies on a quota limit with a complete-but-uncommitted change set, recover it before the worktree is reused: inspect the branch (`git log`, `git status`, `git diff`), verify the work per the Coordinator verification checklist, and commit it on the worker's branch before any further dispatch on that worktree.
 
 ## Coordinator state
 
