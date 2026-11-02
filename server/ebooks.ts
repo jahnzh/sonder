@@ -20,8 +20,8 @@ import {
   readSync,
   closeSync,
   statSync,
-  utimesSync,
 } from "node:fs";
+import { invalidateParsedBook } from "./reader.ts";
 import { join, basename, extname } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -239,12 +239,7 @@ function linkEbook(id: string, workId: string | undefined) {
     .set({ workId })
     .where(eq(s.ebookEditions.id, id))
     .run();
-  // The reader caches parsed books by file size and mtime; a new mtime drops
-  // the cached work without changing the content fingerprint.
-  if (existsSync(row.source)) {
-    const now = new Date();
-    utimesSync(row.source, now, now);
-  }
+  invalidateParsedBook(id);
 }
 async function resolveDownload(source: EbookSource, md5: string) {
   const base = baseUrl(source);

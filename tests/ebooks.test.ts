@@ -1,6 +1,6 @@
 import { test, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, readdirSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, readdirSync, existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 const temp = mkdtempSync(join(tmpdir(), "sonder-ebooks-"));
@@ -13,6 +13,8 @@ const { createApp } = await import("../server/app.ts");
 const { db, sqlite } = await import("../server/db.ts");
 const { ebookEditions } = await import("../server/schema.ts");
 const { eq } = await import("drizzle-orm");
+const { extractBook } = await import("../server/reader.ts");
+const { readerFixture } = await import("./reader-fixture.ts");
 const app = await createApp();
 const original = globalThis.fetch;
 let sequence = 0;
@@ -179,6 +181,7 @@ test("r4#3: saving an already-saved ebook for an audiobook links it to that audi
   const standalone = await upload("Relink.pdf", pdf);
   const id = standalone.json().id;
   const before = db.select().from(ebookEditions).where(eq(ebookEditions.id, id)).get()!;
+  const mtimePdfBefore = statSync(before.source).mtimeMs;
   assert.notEqual(before.workId, "work-target");
   const again = await upload("Relink.pdf", pdf, "work-target");
   assert.equal(again.json().alreadySaved, true);
@@ -186,6 +189,25 @@ test("r4#3: saving an already-saved ebook for an audiobook links it to that audi
     db.select().from(ebookEditions).where(eq(ebookEditions.id, id)).get()!.workId,
     "work-target",
   );
+  assert.equal(statSync(before.source).mtimeMs, mtimePdfBefore);
+
+  const validEpub = await readerFixture();
+  const upEpub = await upload("Relink.epub", validEpub);
+  const epubId = upEpub.json().id;
+  const epubRow = db.select().from(ebookEditions).where(eq(ebookEditions.id, epubId)).get()!;
+  const parsedBefore = await extractBook(epubId);
+  assert.notEqual(parsedBefore.workId, "work-target");
+  const mtimeEpubBefore = statSync(epubRow.source).mtimeMs;
+
+  const upEpubAgain = await upload("Relink.epub", validEpub, "work-target");
+  assert.equal(upEpubAgain.json().alreadySaved, true);
+  assert.equal(
+    db.select().from(ebookEditions).where(eq(ebookEditions.id, epubId)).get()!.workId,
+    "work-target",
+  );
+  assert.equal(statSync(epubRow.source).mtimeMs, mtimeEpubBefore);
+  const parsedAfter = await extractBook(epubId);
+  assert.equal(parsedAfter.workId, "work-target");
 
   const epub = Buffer.from(`PK\x03\x04 libgen relink ${sequence++}`);
   mirror(epub, () => epub);

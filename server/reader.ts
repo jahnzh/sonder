@@ -160,6 +160,9 @@ export async function extractBook(id: string) {
   cache.set(id, { stamp, book });
   return book;
 }
+export function invalidateParsedBook(id: string) {
+  cache.delete(id);
+}
 export const locatorSchema = z.object({
   cfi: z.string().max(2500).optional(),
   section: z.number().int().min(0),
@@ -184,7 +187,7 @@ export function registerReader(app: FastifyInstance) {
       .set({ workId })
       .where(eq(s.ebookEditions.id, id))
       .run();
-    cache.delete(id);
+    invalidateParsedBook(id);
     await autoQueueAlignmentsForWork(workId, { ebookId: id }, req.log);
     return { ok: true };
   });
