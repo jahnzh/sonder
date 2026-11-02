@@ -46,14 +46,17 @@ test.afterAll(() => { server?.kill(); rmSync(join(dataDir, ".."), { recursive: t
 let inviteLink = "";
 test("an approved applicant activates through the invite link and lands signed in", async ({ browser }) => {
   mkdirSync("artifacts", { recursive: true });
+  // A unique applicant per run: --repeat-each re-runs the whole flow against
+  // one server, and a reused username would make the re-claim fail.
+  const applicant = `activist${randomBytes(2).toString("hex")}`;
   // The applicant requests an account from the sign-in page.
   const page = await (await browser.newContext()).newPage();
   await page.goto(base);
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await page.getByRole("button", { name: "Request an account" }).click();
   const dialog = page.getByRole("dialog", { name: "Request an account" });
-  await dialog.getByLabel("Email").fill("activist@example.com");
-  await dialog.getByLabel("Username").fill("activist");
+  await dialog.getByLabel("Email").fill(`${applicant}@example.com`);
+  await dialog.getByLabel("Username").fill(applicant);
   await dialog.getByRole("button", { name: "Send request" }).click();
   await expect(dialog.getByRole("status").getByText("Your request has been received. Thank you!")).toBeVisible();
   await dialog.getByRole("button", { name: "Done" }).click();
@@ -63,7 +66,7 @@ test("an approved applicant activates through the invite link and lands signed i
   await page.getByRole("button", { name: "Settings", exact: true }).last().click();
   const users = page.locator("section").filter({ has: page.getByRole("heading", { name: "Users" }) });
   await expect(users.getByRole("heading", { name: "Pending account requests" })).toBeVisible();
-  const row = users.getByRole("listitem").filter({ hasText: "activist@example.com" });
+  const row = users.getByRole("listitem").filter({ hasText: `${applicant}@example.com` });
   await row.getByRole("button", { name: "Approve" }).click();
   const approvalLink = users.locator(".request-approval-link");
   await expect(approvalLink).toBeVisible();
@@ -73,9 +76,9 @@ test("an approved applicant activates through the invite link and lands signed i
   const joinPage = await (await browser.newContext()).newPage();
   await joinPage.goto(inviteLink);
   await expect(joinPage.getByRole("heading", { name: "Create your account" })).toBeVisible();
-  await expect(joinPage.getByText("activist@example.com")).toBeVisible();
+  await expect(joinPage.getByText(`${applicant}@example.com`)).toBeVisible();
   const username = joinPage.getByLabel("Username");
-  await expect(username).toHaveValue("activist");
+  await expect(username).toHaveValue(applicant);
   await expect(username).not.toBeEditable();
   const password = joinPage.getByLabel("Password", { exact: true });
   await expect(password).toHaveAttribute("type", "password");
@@ -94,7 +97,7 @@ test("an approved applicant activates through the invite link and lands signed i
   await expect(joinPage).toHaveURL(/\/#library$/);
   const status = await (await joinPage.request.get(`${base}/api/auth/status`)).json();
   expect(status.authenticated).toBe(true);
-  expect(status.user.username).toBe("activist");
+  expect(status.user.username).toBe(applicant);
   await joinPage.screenshot({ path: "artifacts/join-landed-on-bookshelf.png" });
 });
 test("a used invite link shows the dedicated error card and the sign-in link", async ({ browser }) => {
