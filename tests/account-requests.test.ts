@@ -260,6 +260,11 @@ test("an already reviewed request cannot be reviewed again and approval is admin
   assert.equal(again.statusCode,409,again.body);
   const anon=await app.inject({method:"POST",url:`/api/account-requests/${id}/approve`,payload:{}});
   assert.equal(anon.statusCode,401,anon.body);
+  // A signed-in non-admin holds a valid session, so the onRequest hook lets them
+  // through; only the handler's requireAdmin refuses them.
+  const nonAdmin=(await app.inject({method:"POST",url:"/api/auth/login",headers:{"x-forwarded-for":"203.0.113.172"},payload:{username:"reviewer",password:"password1"}})).cookies[0].value;
+  const denied=await app.inject({method:"POST",url:`/api/account-requests/${id}/approve`,cookies:{sonder_session:nonAdmin},payload:{}});
+  assert.equal(denied.statusCode,403,denied.body);
   const missing=await asAdmin("/api/account-requests/999999/approve");
   assert.equal(missing.statusCode,404,missing.body);
   // The raw token never reaches the database; only its hash does.
