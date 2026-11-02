@@ -5,9 +5,10 @@
 # (HEAD matches and no tracked file is modified) before the build. Steps:
 #   1. verify the commit, the checkout and the running production container
 #   2. back up the running database (SQLite online backup API, verified; data/backups/before-<short>-<epoch>.db)
-#   3. docker compose build sonder (image sonder-audiobooks:local)
-#   4. verify every --marker string is present in the built image's /app (server, dist or src)
-#   5. tag the previous image for rollback (sonder-audiobooks:before-<short>-<epoch> when it has no other tag)
+#   3. tag the running image for rollback BEFORE the build (sonder-audiobooks:before-<short>-<epoch> when it has no
+#      other sonder-audiobooks tag; the build moves :local and would otherwise orphan it, #153)
+#   4. docker compose build sonder (image sonder-audiobooks:local)
+#   5. verify every --marker string is present in the built image's /app (server, dist or src)
 #   6. docker compose up -d sonder, wait for the health check, curl /api/health
 #   7. run the live verification scripts (reader + multi-user) unless --skip-live-checks;
 #      the reader check picks the most recent recording with a finished EPUB alignment map
@@ -104,11 +105,11 @@ if [ "$dry_run" -eq 1 ]; then
   echo "dry run: checkout at ${short} (tracked files clean), container sonder running (image ${old_id:0:19})"
   echo "plan:"
   echo "  1. back up $db to $backup_dir/before-${short}-<epoch>.db"
-  echo "  2. docker compose build sonder"
+  echo "  2. tag the running image for rollback (image ${old_id:0:19}) unless it has another sonder-audiobooks tag"
+  echo "  3. docker compose build sonder"
   for m in ${markers[@]+"${markers[@]}"}; do
-    echo "  3. verify marker in the image: $m"
+    echo "  4. verify marker in the image: $m"
   done
-  echo "  4. tag the previous image for rollback (image ${old_id:0:19})"
   echo "  5. docker compose up -d sonder; wait for healthy; curl 127.0.0.1:${port}/api/health"
   if [ "$skip_live" -eq 1 ]; then
     echo "  6. live checks: skipped (--skip-live-checks)"
@@ -129,6 +130,23 @@ if ! npm run backup -- "$db" "$backup_dest"; then
 fi
 [ -s "$backup_dest" ] || { echo "backup missing or empty: $backup_dest" >&2; exit 1; }
 
+# Rollback tag for the running image, taken BEFORE the build: the build moves sonder-audiobooks:local, and an
+# image whose only tag was :local is then untagged and garbage-collected, so it can no longer be tagged (#153).
+rollback_tag=""
+old_short=$(image_short "$old_id")
+existing=$($docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' \
+  | awk -v id="$old_short" '$2 == id && $1 ~ /^sonder-audiobooks:/ && $1 != "sonder-audiobooks:local" {print $1; exit}')
+case ${existing:-} in
+  sonder-audiobooks:*) rollback_tag=${existing#sonder-audiobooks:} ;;
+  *)
+    if ! $docker tag "$old_id" "sonder-audiobooks:before-${short}-${ts}"; then
+      echo "could not tag the running image for rollback; not building. The container is untouched." >&2
+      exit 1
+    fi
+    rollback_tag="before-${short}-${ts}"
+    ;;
+esac
+
 # 3. Build.
 echo "building sonder-audiobooks:local at ${short}"
 if ! $docker compose build sonder; then
@@ -146,21 +164,6 @@ for m in ${markers[@]+"${markers[@]}"}; do
   fi
   echo "marker ok: $m"
 done
-
-# 5. Rollback tag for the previous image.
-rollback_tag=""
-if [ "$(image_short "$new_id")" != "$(image_short "$old_id")" ]; then
-  old_short=$(image_short "$old_id")
-  existing=$(docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' \
-    | awk -v id="$old_short" '$2 == id && $1 ~ /^sonder-audiobooks:/ {print $1; exit}')
-  case ${existing:-} in
-    sonder-audiobooks:*) rollback_tag=${existing#sonder-audiobooks:} ;;
-    *)
-      $docker tag "$old_id" "sonder-audiobooks:before-${short}-${ts}" || { echo "could not tag the previous image" >&2; exit 1; }
-      rollback_tag="before-${short}-${ts}"
-      ;;
-  esac
-fi
 
 # 6. Recreate and wait for healthy.
 echo "recreating the sonder container"

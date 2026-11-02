@@ -78,11 +78,11 @@ scripts/deploy.sh <commit> [--marker <string>]... [--skip-live-checks] [--dry-ru
 Deploys a committed revision to the local production container (`sonder` in `compose.yaml`, image `sonder-audiobooks:local`, port 3001). Production runs on this machine and the compose build context is the working tree, so the checkout must be exactly at `<commit>` with no tracked changes before the build; the script verifies that first, then:
 
 1. backs up the running database with the online backup API (`data/backups/before-<short>-<epoch>.db`);
-2. builds `sonder-audiobooks:local` with `docker compose build sonder`;
-3. verifies every `--marker` string in the built image's `/app` (server code and built client);
-4. keeps the previous image tagged for rollback — it reuses an existing `sonder-audiobooks:*` tag of that image, or adds `sonder-audiobooks:before-<short>-<epoch>` when it has none;
+2. tags the running image for rollback before building — it reuses an existing `sonder-audiobooks:*` tag (other than `:local`) of that image, or adds `sonder-audiobooks:before-<short>-<epoch>` when it has none; if the tag cannot be made the script stops before building. The build moves `:local`, so tagging afterwards loses an image whose only tag was `:local` (#153);
+3. builds `sonder-audiobooks:local` with `docker compose build sonder`;
+4. verifies every `--marker` string in the built image's `/app` (server code and built client);
 5. recreates the container, waits for the health check, then curls `/api/health`;
-6. runs the live verification scripts (reader and multi-user) unless `--skip-live-checks`; the reader check picks the most recent recording with a finished EPUB alignment map.
+6. runs the live verification scripts (reader and multi-user) unless `--skip-live-checks`, every one of them even when an earlier one fails, then exits 1 listing the failures; the reader check picks the most recent recording with a finished EPUB alignment map.
 
 Exit codes: 0 success, 1 a step failed, 2 bad usage. Environment overrides: `SONDER_DEPLOY_DOCKER`, `SONDER_DEPLOY_DB`, `SONDER_DEPLOY_BACKUP_DIR`, `SONDER_DEPLOY_HEALTH_TIMEOUT`, `SONDER_DEPLOY_PORT`, `SONDER_DEPLOY_LIVE_CHECKS`.
 
