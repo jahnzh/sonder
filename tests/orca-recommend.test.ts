@@ -122,6 +122,10 @@ function recommend(box: ReturnType<typeof sandbox>, args: string[], jevUrl: stri
         TYPESAFE_API_KEY: API_KEY,
         ORCA_RECOMMEND_JEV_URL: jevUrl,
         ORCA_USAGE_STATE_DIR: join(box.dir, "usage-state"),
+        // Without these the command reads the real checkout's worker history, and learned adjustments
+        // (which draw on Math.random) make the pick differ from run to run on a machine with history.
+        ORCA_HISTORY_DIR: join(box.dir, "history"),
+        ORCA_LEARN_DIR: join(box.dir, "learning"),
         ...env,
       },
     });

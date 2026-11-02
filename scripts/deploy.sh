@@ -187,6 +187,7 @@ if ! curl -fsS "http://127.0.0.1:${port}/api/health" >/dev/null; then
 fi
 
 # 7. Live checks. The reader check needs a recording with a finished EPUB alignment map.
+failed_checks=()
 if [ "$skip_live" -eq 0 ]; then
   for script in $live_checks; do
     arg=""
@@ -196,7 +197,8 @@ if [ "$skip_live" -eq 0 ]; then
         arg=$(pick_reader_recording)
         if [ -z "$arg" ]; then
           echo "no recording with a finished EPUB alignment map; cannot run the reader live check" >&2
-          exit 1
+          failed_checks+=("$script")
+          continue
         fi
         ;;
     esac
@@ -208,10 +210,16 @@ if [ "$skip_live" -eq 0 ]; then
     fi
     if [ "${status:-0}" -ne 0 ]; then
       echo "live check failed: $script" >&2
-      echo "roll back with: docker tag sonder-audiobooks:${rollback_tag} sonder-audiobooks:local && docker compose up -d --no-build sonder" >&2
-      exit 1
+      failed_checks+=("$script")
     fi
   done
+fi
+
+if [ ${#failed_checks[@]} -gt 0 ]; then
+  echo "deployed ${short}, but ${#failed_checks[@]} live check(s) failed: ${failed_checks[*]}" >&2
+  echo "backup: $backup_dest" >&2
+  echo "roll back with: docker tag sonder-audiobooks:${rollback_tag} sonder-audiobooks:local && docker compose up -d --no-build sonder" >&2
+  exit 1
 fi
 
 echo "deployed ${short} (image ${new_id:0:19})"
