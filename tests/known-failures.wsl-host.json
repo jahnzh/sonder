@@ -4,7 +4,7 @@
     {
       "project": "chromium",
       "file": "tests/e2e/playback-workflow.spec.ts",
-      "title": "touch seeking › releasing a fine-seek gesture keeps the exact previewed destination",
+      "title": "touch seeking \u203a releasing a fine-seek gesture keeps the exact previewed destination",
       "kind": "environment",
       "reason": "Fails on every WSL host run and not locally; cause not found",
       "issue": 37
@@ -34,6 +34,14 @@
       "issue": 145
     },
     {
+      "project": "firefox",
+      "file": "tests/e2e/reader-frame.spec.ts",
+      "title": "taps, page turns and long-press on the book page reach the reader",
+      "kind": "environment",
+      "reason": "Failed on WSL firefox at 4040109 (sonder-ci-20261103T160040Z-4154320) with the same locator visibility error already listed for chromium (#145); passes locally on firefox in this worktree; #180 diff does not touch reader-frame",
+      "issue": 145
+    },
+    {
       "project": "chromium",
       "file": "tests/e2e/reader-frame.spec.ts",
       "title": "a failed event probe enables scripts while the content defences still block them",
@@ -44,7 +52,7 @@
     {
       "project": "webkit",
       "file": "tests/e2e/now-playing-layout.spec.ts",
-      "title": "#122 reader Back to narration layout › firefox/webkit smoke: transport centred and ordered at 390px and 1280px",
+      "title": "#122 reader Back to narration layout \u203a firefox/webkit smoke: transport centred and ordered at 390px and 1280px",
       "kind": "intermittent",
       "reason": "WebKit on the Deck only. Failed at 482967b (\"Back to narration\" stayed disabled) and at 02dd226 (toBeFocused failed) on commits whose diffs touch no reader code; passed at 56dba21 and d01e051. Cause not found",
       "issue": 138
