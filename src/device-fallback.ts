@@ -198,7 +198,12 @@ export function stallWatchdog(
   };
 }
 
+// The load's generation tags the reading, so a reading taken from a load
+// that started while a check was in flight can never count as "still
+// stalled" — a fresh load starts not-yet-buffered and low on the timeline,
+// exactly the state a stall looks like.
 export type StallReading = {
+  generation: number;
   currentTime: number;
   readyState: number;
   paused: boolean;
@@ -207,21 +212,28 @@ export type StallReading = {
 // HTMLMediaElement.HAVE_FUTURE_DATA: below it the element cannot keep playing.
 const HAVE_FUTURE_DATA = 3;
 
-// Whether the element is still stuck where `before` found it. Playback that
-// resumed while the connection was being checked has moved on or has data.
+// Whether the element is still stuck where `before` found it, in the same
+// load. Playback that resumed while the connection was being checked has
+// moved on or has data; a load that started meanwhile is a different stall.
 export function streamStillStalled(before: StallReading, now: StallReading) {
   return (
+    now.generation === before.generation &&
     !now.paused &&
     now.readyState < HAVE_FUTURE_DATA &&
     now.currentTime <= before.currentTime
   );
 }
 
-// What the watchdog does when it fires. `load` is the live stream load, or
-// null once it was replaced or switched. `recover` gets a check to call after
-// its probe: a stream that resumed meanwhile needs nothing. The watchdog is
-// armed again only while the same load is still stalled, so a stall that
-// cleared during the probe ends the checks instead of repeating them.
+// What the watchdog does when it fires. `load` is the live stream load that
+// may switch to a device copy, or null: a stream that was replaced or
+// switched, or one with no copy to switch to (an automatic stream would have
+// used a complete download, so it only ever streams). `recover` gets a check
+// to call after its probe: a stream that resumed meanwhile needs nothing. The
+// watchdog is armed again only while the same load is still stalled — the
+// same load object, and for null loads, where identity cannot tell loads
+// apart, the reading's generation unchanged — so a stall that cleared during
+// the probe ends the checks instead of repeating them; a `recover` that
+// reports the stall handled (true) ends them too.
 export function stallHandler(deps: {
   load: () => object | null;
   read: () => StallReading;
@@ -230,7 +242,6 @@ export function stallHandler(deps: {
 }) {
   return () => {
     const load = deps.load();
-    if (!load) return;
     const before = deps.read();
     const stillStalled = () => streamStillStalled(before, deps.read());
     void deps.recover(stillStalled).then((recovered) => {

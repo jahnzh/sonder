@@ -762,18 +762,26 @@ export function PlayerProvider({
   useEffect(() => {
     const el = audio.current;
     el.preload = "metadata";
+    const liveLoad = () => {
+      const load = streamLoad.current;
+      return load && load.generation === generation.current ? load : null;
+    };
     const watchdog = stallWatchdog(
       stallHandler({
-        load: () => {
-          const load = streamLoad.current;
-          return load && load.generation === generation.current ? load : null;
-        },
+        load: liveLoad,
         read: () => ({
+          generation: generation.current,
           currentTime: el.currentTime,
           readyState: el.readyState,
           paused: el.paused,
         }),
-        recover: recoverOnDevice,
+        recover: (stillNeeded) => {
+          // A live stream load with a device copy may switch to it; anything
+          // else has no copy to switch to, so a confirmed outage surfaces the
+          // stall as an error instead of leaving it silent.
+          const load = liveLoad();
+          return load?.deviceCopy ? recoverOnDevice(stillNeeded) : stalledStream(stillNeeded);
+        },
         rearm: () => stalling(),
       }),
     );
@@ -853,32 +861,53 @@ export function PlayerProvider({
     };
     const failed = () => {
       watchdog.cancel();
-      const fail = () => {
-        // The load is abandoned: its source switch must not apply to a later one.
-        sourceSwitch.current = null;
-        setLoading(false);
-        setPlaying(false);
-        if (el.src)
-          setError(
-            navigator.onLine
-              ? "The audio source is unavailable. Please try again."
-              : "This chapter isn’t downloaded on this device.",
-          );
-      };
       const load = streamLoad.current;
-      if (!el.src || load?.generation !== generation.current) return fail();
+      if (!el.src || load?.generation !== generation.current) return failLoad();
       void recoverOnDevice().then((recovered) => {
         if (!recovered && load.generation === generation.current) {
           watchdog.cancel();
-          fail();
+          failLoad();
         }
       });
     };
     // A stream that neither plays nor fails never raises `error`, so after a
     // while the same connection check as for a failed load decides.
     const stalling = () => {
-      if (streamLoad.current?.deviceCopy && el.src && !el.paused) watchdog.arm();
+      if (el.src && !el.paused) watchdog.arm();
     };
+    // What a surfaced failure does: the load is abandoned and the element is
+    // stuck where the seek or buffer underrun left it.
+    const failLoad = () => {
+      // The load is abandoned: its source switch must not apply to a later one.
+      sourceSwitch.current = null;
+      setLoading(false);
+      setPlaying(false);
+      if (el.src)
+        setError(
+          navigator.onLine
+            ? "The audio source is unavailable. Please try again."
+            : "This chapter isn’t downloaded on this device.",
+        );
+    };
+    // A stalled stream with no device copy to switch to (an automatic stream
+    // would have used a complete download at load time): a confirmed outage
+    // means its bytes will never arrive, so surface the stall instead of
+    // leaving the position stuck and silent. A reachable server only waits,
+    // probed again on the next stall.
+    const stalledStream = (stillNeeded: () => boolean) =>
+      isTransportFailure(el.src).then((unreachable) => {
+        // stillNeeded is generation-aware: a load that started while the
+        // probe was in flight is a different stall and keeps no result of
+        // this one.
+        if (!unreachable || !stillNeeded()) return false;
+        // Quiesce: a stalled, unpaused element keeps firing `waiting`, and
+        // each event would re-arm the watchdog into probing the dead server
+        // over and over while the error is shown.
+        watchdog.cancel();
+        el.pause();
+        failLoad();
+        return true;
+      });
     const waiting = () => {
       setLoading(true);
       stalling();
