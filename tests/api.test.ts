@@ -257,7 +257,7 @@ test("local audio imports persist files under MEDIA_ROOT and use real durations"
   assert.ok(stored.source.startsWith(join(temp, "media", "imports")));
   assert.ok(existsSync(stored.source));
 });
-test("routing selects TorBox only for an explicit cache hit and supports base32 magnets", async () => {
+test("routing prefers TorBox cache, then TorBox uncached, then local, and supports base32 magnets", async () => {
   const hash = "0123456789abcdef0123456789abcdef01234567";
   assert.equal(magnetHash(`magnet:?xt=urn:btih:${hash.toUpperCase()}`), hash);
   assert.equal(
@@ -268,14 +268,17 @@ test("routing selects TorBox only for an explicit cache hit and supports base32 
   assert.equal(isHashCached([{ hash: hash.toUpperCase() }], hash), true);
   assert.equal(
     await chooseBackend(hash, true, async () => [{ hash }]),
-    "torbox",
+    "torbox-cached",
   );
-  assert.equal(await chooseBackend(hash, true, async () => []), "local");
+  assert.equal(
+    await chooseBackend(hash, true, async () => []),
+    "torbox-uncached",
+  );
   assert.equal(
     await chooseBackend(hash, true, async () => {
       throw new Error("unavailable");
     }),
-    "local",
+    "torbox-uncached",
   );
   assert.equal(
     await chooseBackend(hash, false, async () => {
@@ -499,6 +502,147 @@ test("cached TorBox acquisitions set add_only_if_cached and never start a local 
   } finally {
     globalThis.fetch = original;
     db.delete(s.settings).where(eq(s.settings.key, "torbox")).run();
+  }
+});
+test("uncached TorBox acquisitions omit cache-only and stay on TorBox when take-job succeeds", async () => {
+  const original = globalThis.fetch;
+  const hash = "d".repeat(40);
+  let checked = false,
+    created = false,
+    localCalled = false;
+  db.insert(s.settings)
+    .values({ key: "torbox", value: encrypt("fake-key") })
+    .run();
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.includes("transmission") || url.includes("/rpc")) {
+      localCalled = true;
+      return original(input, init);
+    }
+    let data: unknown;
+    if (url.includes("checkcached")) {
+      checked = true;
+      data = [];
+    } else if (url.includes("createtorrent")) {
+      created = true;
+      assert.equal((init!.body as FormData).get("add_only_if_cached"), "false");
+      data = { torrent_id: 88 };
+    } else if (url.includes("mylist"))
+      data = {
+        download_present: true,
+        files: [{ id: 2, name: "Chapter 1.mp3" }],
+      };
+    else return original(input, init);
+    return new Response(JSON.stringify({ success: true, data }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  try {
+    const job = await acquire(`magnet:?xt=urn:btih:${hash}`, {
+      title: "An uncached TorBox story",
+    });
+    assert.equal(checked, true);
+    assert.equal(created, true);
+    assert.equal(localCalled, false);
+    assert.equal(job.backend, "torbox");
+    assert.equal(job.status, "ready");
+    assert.equal(job.error, null);
+  } finally {
+    globalThis.fetch = original;
+    db.delete(s.settings).where(eq(s.settings.key, "torbox")).run();
+  }
+});
+test("failed TorBox take-job falls through to healthy local Transmission", async () => {
+  const original = globalThis.fetch;
+  const hash = "e".repeat(40);
+  let created = false,
+    added = 0;
+  db.insert(s.settings)
+    .values({ key: "torbox", value: encrypt("fake-key") })
+    .run();
+  const server = createServer(async (req, res) => {
+    let raw = "";
+    for await (const chunk of req) raw += chunk;
+    if (req.headers["x-transmission-session-id"] !== "fallback-session") {
+      res
+        .writeHead(409, { "X-Transmission-Session-Id": "fallback-session" })
+        .end();
+      return;
+    }
+    const body = JSON.parse(raw);
+    let args: unknown = {};
+    if (body.method === "session-get")
+      args = {
+        version: "4.0.5",
+        "download-dir": "/downloads/complete",
+        "incomplete-dir": "/downloads/incomplete",
+        "incomplete-dir-enabled": true,
+      };
+    if (body.method === "port-test") args = { "port-is-open": true };
+    if (body.method === "torrent-add") {
+      added++;
+      args = {
+        "torrent-added": { id: 3, hashString: hash, name: "Fallback story" },
+      };
+    }
+    if (body.method === "torrent-get")
+      args = {
+        torrents: [
+          {
+            id: 3,
+            hashString: hash,
+            name: "Fallback story",
+            downloadDir: "/downloads/complete",
+            percentDone: 0.1,
+            status: 4,
+            error: 0,
+            errorString: "",
+            files: [],
+            fileStats: [],
+          },
+        ],
+      };
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({ result: "success", arguments: args }));
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const address = server.address() as { port: number };
+  process.env.TRANSMISSION_RPC_URL = `http://127.0.0.1:${address.port}/transmission/rpc`;
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.includes("api.torbox.app")) {
+      if (url.includes("checkcached"))
+        return new Response(JSON.stringify({ success: true, data: [] }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      if (url.includes("createtorrent")) {
+        created = true;
+        assert.equal((init!.body as FormData).get("add_only_if_cached"), "false");
+        return new Response(
+          JSON.stringify({
+            success: false,
+            detail: "TorBox could not accept this torrent.",
+          }),
+          { status: 503, headers: { "Content-Type": "application/json" } },
+        );
+      }
+    }
+    return original(input, init);
+  };
+  try {
+    const job = await acquire(`magnet:?xt=urn:btih:${hash}&dn=Fallback+story`, {
+      title: "Fallback story",
+    });
+    assert.equal(created, true);
+    assert.equal(added, 1);
+    assert.equal(job.backend, "local");
+    assert.equal(job.status, "downloading");
+    assert.equal(job.error, null);
+  } finally {
+    globalThis.fetch = original;
+    delete process.env.TRANSMISSION_RPC_URL;
+    db.delete(s.settings).where(eq(s.settings.key, "torbox")).run();
+    await new Promise<void>((r) => server.close(() => r()));
   }
 });
 test("permanent stream copies reject interrupted files and preserve recording identity on retry", async () => {

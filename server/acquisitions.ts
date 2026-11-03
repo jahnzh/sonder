@@ -52,16 +52,20 @@ export function isHashCached(data: unknown, hash: string) {
       String(item.hash).toLowerCase() === hash.toLowerCase(),
   );
 }
+export type AcquireRoute = "torbox-cached" | "torbox-uncached" | "local";
 export async function chooseBackend(
   hash: string,
   configured: boolean,
   check: (hash: string) => Promise<unknown>,
-): Promise<"torbox" | "local"> {
+): Promise<AcquireRoute> {
   if (!configured) return "local";
   try {
-    return isHashCached(await check(hash), hash) ? "torbox" : "local";
+    return isHashCached(await check(hash), hash)
+      ? "torbox-cached"
+      : "torbox-uncached";
   } catch {
-    return "local";
+    // Cache check failed; still try an uncached TorBox take-job before local.
+    return "torbox-uncached";
   }
 }
 type Acquisition = typeof s.acquisitions.$inferSelect;
@@ -129,21 +133,30 @@ export async function acquire(
     .run();
   db.insert(s.userAcquisitions).values({userId: metadata.userId ?? 1, acquisitionId: id}).onConflictDoNothing().run();
   try {
-    let backend = await chooseBackend(hash, !!getSecret("torbox"), (h) =>
+    const route = await chooseBackend(hash, !!getSecret("torbox"), (h) =>
       torbox(`torrents/checkcached?hash=${h}&format=list&list_files=false`),
     );
+    let backend: "torbox" | "local" = route === "local" ? "local" : "torbox";
     if (backend === "torbox") {
       try {
         const form = new FormData();
         form.set("magnet", magnet);
-        form.set("add_only_if_cached", "true");
+        // Cache hits stay cache-only; misses ask TorBox to download the torrent.
+        form.set(
+          "add_only_if_cached",
+          route === "torbox-cached" ? "true" : "false",
+        );
         form.set("allow_zip", "false");
         const data = (await torbox("torrents/createtorrent", {
           method: "POST",
           body: form,
         })) as { torrent_id?: number };
         if (data.torrent_id === undefined || data.torrent_id === null)
-          throw new Error("The cached torrent is not ready.");
+          throw new Error(
+            route === "torbox-cached"
+              ? "The cached torrent is not ready."
+              : "TorBox did not accept this torrent.",
+          );
         db.update(s.acquisitions)
           .set({
             backend: "torbox",
