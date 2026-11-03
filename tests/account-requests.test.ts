@@ -103,6 +103,15 @@ after(()=>{
   globalThis.fetch=realFetch;
   for(const [name,value] of Object.entries(emailEnv)) value===undefined?delete process.env[name]:(process.env[name]=value);
 });
+// The four email variables, set explicitly per test so tests never rely on
+// each other's leftovers.
+const setEmailEnv=(vars:Record<string,string|undefined>)=>{
+  for(const name of ["RESEND_API_KEY","EMAIL_FROM","ADMIN_EMAIL","APP_URL"]){
+    const value=vars[name];
+    if(value===undefined) delete process.env[name]; else process.env[name]=value;
+  }
+};
+const emailVars={RESEND_API_KEY:"re_test_key",EMAIL_FROM:"Sonder <noreply@sonder.pecori.no>"};
 const stubDispatch=(responder:(input:RequestInfo|URL,init?:RequestInit)=>Promise<Response>)=>{
   const calls:{url:string;init:RequestInit}[]=[];
   globalThis.fetch=(async(input:RequestInfo|URL,init?:RequestInit)=>{calls.push({url:String(input),init:init??{}});return responder(input,init);}) as typeof fetch;
@@ -113,9 +122,7 @@ const adminSession=async()=> (await app.inject({method:"POST",url:"/api/auth/log
 const admin=(await adminSession());
 const asAdmin=(url:string)=>app.inject({method:"POST",url,cookies:{sonder_session:admin},payload:{}});
 test("submitting an account request alerts the administrator with the requester details", async () => {
-  process.env.RESEND_API_KEY="re_test_key";
-  process.env.EMAIL_FROM="Sonder <noreply@sonder.pecori.no>";
-  process.env.ADMIN_EMAIL="admin@sonder.pecori.no";
+  setEmailEnv({...emailVars,ADMIN_EMAIL:"admin@sonder.pecori.no"});
   const calls=stubDispatch(async()=>okEmail());
   const res=await submit({email:"alerted@example.com",username:"alerted",note:"Please add me"});
   assert.equal(res.statusCode,200,res.body);
@@ -132,9 +139,7 @@ test("submitting an account request alerts the administrator with the requester 
   assert.ok(body.text.includes("Please add me"),body.text);
 });
 test("a failing email dispatch never blocks request storage", async () => {
-  process.env.RESEND_API_KEY="re_test_key";
-  process.env.EMAIL_FROM="Sonder <noreply@sonder.pecori.no>";
-  process.env.ADMIN_EMAIL="admin@sonder.pecori.no";
+  setEmailEnv({...emailVars,ADMIN_EMAIL:"admin@sonder.pecori.no"});
   globalThis.fetch=(async()=>{throw new Error("network unreachable");}) as typeof fetch;
   const res=await submit({email:"noemail@example.com",username:"noemail"});
   assert.equal(res.statusCode,200,res.body);
@@ -142,7 +147,7 @@ test("a failing email dispatch never blocks request storage", async () => {
   assert.equal(row.status,"pending");
 });
 test("without Resend configuration the request is stored and nothing is sent", async () => {
-  delete process.env.RESEND_API_KEY; delete process.env.EMAIL_FROM; delete process.env.ADMIN_EMAIL;
+  setEmailEnv({});
   const calls=stubDispatch(async()=>okEmail());
   const res=await submit({email:"plain@example.com",username:"plain"});
   assert.equal(res.statusCode,200,res.body);
@@ -150,7 +155,7 @@ test("without Resend configuration the request is stored and nothing is sent", a
   assert.equal(calls.length,0);
 });
 test("an administrator can decline a pending request without any outbound email", async () => {
-  delete process.env.RESEND_API_KEY; delete process.env.EMAIL_FROM; delete process.env.ADMIN_EMAIL;
+  setEmailEnv({});
   await submit({email:"declined@example.com",username:"declined"});
   const id=(sqlite.prepare("SELECT id FROM account_requests WHERE username='declined'").get() as {id:number}).id;
   const calls=stubDispatch(async()=>okEmail());
@@ -177,9 +182,7 @@ const pendingRequest=async(username:string)=>{
 };
 const extractToken=(link:string)=>new URL(link).searchParams.get("token");
 test("approving a request creates a 7-day hashed invite and emails the link to the applicant", async () => {
-  process.env.RESEND_API_KEY="re_test_key";
-  process.env.EMAIL_FROM="Sonder <noreply@sonder.pecori.no>";
-  delete process.env.APP_URL;
+  setEmailEnv(emailVars);
   const id=await pendingRequest("invitee");
   const calls=stubDispatch(async()=>okEmail());
   const before=Date.now();
@@ -209,9 +212,7 @@ test("approving a request creates a 7-day hashed invite and emails the link to t
   assert.ok(body.text.includes(result.inviteLink),body.text);
 });
 test("the invite link uses APP_URL when it is set", async () => {
-  process.env.RESEND_API_KEY="re_test_key";
-  process.env.EMAIL_FROM="Sonder <noreply@sonder.pecori.no>";
-  process.env.APP_URL="https://sonder.pecori.no/";
+  setEmailEnv({...emailVars,APP_URL:"https://sonder.pecori.no/"});
   const id=await pendingRequest("appurl");
   stubDispatch(async()=>okEmail());
   const res=await asAdmin(`/api/account-requests/${id}/approve`);
@@ -220,7 +221,7 @@ test("the invite link uses APP_URL when it is set", async () => {
   assert.match(link,/^https:\/\/sonder\.pecori\.no\/join\?token=[0-9a-f]{64}$/);
 });
 test("approval succeeds with emailDelivered false when Resend is unconfigured", async () => {
-  delete process.env.RESEND_API_KEY; delete process.env.EMAIL_FROM; delete process.env.APP_URL;
+  setEmailEnv({});
   const id=await pendingRequest("nokey");
   const calls=stubDispatch(async()=>okEmail());
   const res=await asAdmin(`/api/account-requests/${id}/approve`);
@@ -235,9 +236,7 @@ test("approval succeeds with emailDelivered false when Resend is unconfigured", 
   assert.ok(sqlite.prepare("SELECT id FROM account_invites WHERE account_request_id=?").get(id));
 });
 test("approval succeeds with emailDelivered false when the dispatch fails", async () => {
-  process.env.RESEND_API_KEY="re_test_key";
-  process.env.EMAIL_FROM="Sonder <noreply@sonder.pecori.no>";
-  delete process.env.APP_URL;
+  setEmailEnv(emailVars);
   const id=await pendingRequest("nofetch");
   globalThis.fetch=(async()=>{throw new Error("network unreachable");}) as typeof fetch;
   const res=await asAdmin(`/api/account-requests/${id}/approve`);
@@ -250,7 +249,7 @@ test("approval succeeds with emailDelivered false when the dispatch fails", asyn
   assert.equal(request.status,"approved");
 });
 test("an already reviewed request cannot be reviewed again and approval is admin only", async () => {
-  delete process.env.RESEND_API_KEY; delete process.env.EMAIL_FROM; delete process.env.APP_URL;
+  setEmailEnv({});
   const id=await pendingRequest("twice");
   stubDispatch(async()=>okEmail());
   const first=await asAdmin(`/api/account-requests/${id}/approve`);

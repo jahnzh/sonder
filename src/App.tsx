@@ -2266,7 +2266,7 @@ function AccountSettings({ user, needsPassword, onLogout, notify }: { user: Acco
         {requests.map(request => <li key={request.id} className="user-row request-row">
           <div className="user-row-name"><strong>{request.username}</strong><span className="quiet-tag">{relativeTime(request.createdAt)}</span></div>
           <div className="request-meta"><span>{request.email}</span>{request.note && <span className="request-note">{request.note}</span>}</div>
-          <div className="user-row-actions request-actions">
+          <div className="user-row-actions">
             <button type="button" className="button subtle" disabled={actingRequestId !== null} onClick={() => void reviewRequest(request, "decline")}>Decline</button>
             <button type="button" className="button primary" disabled={actingRequestId !== null} onClick={() => void reviewRequest(request, "approve")}><Check size={15} /> Approve</button>
           </div>

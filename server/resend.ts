@@ -23,8 +23,12 @@ export async function sendResendEmail(message: ResendMessage): Promise<ResendRes
       },
       body: JSON.stringify({ from, ...message }),
     });
+    if (!response.ok)
+      console.error(`Resend dispatch rejected (HTTP ${response.status}): ${response.statusText}`);
     return { delivered: response.ok };
-  } catch {
+  } catch (error) {
+    // Never throw (ADR 0001): the admin can copy the generated link instead.
+    console.error(`Resend dispatch failed: ${error instanceof Error ? error.message : String(error)}`);
     return { delivered: false };
   }
 }

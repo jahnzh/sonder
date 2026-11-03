@@ -53,7 +53,10 @@ export function registerAccountRequests(app: FastifyInstance): void {
       .prepare("SELECT id,email,username,note,created_at AS createdAt FROM account_requests WHERE status='pending' ORDER BY id")
       .all();
   });
-  const reviewedRequest = (id: string) => {
+  const loadPendingRequest = (id: string) => {
+    // A non-numeric id would make better-sqlite3 throw (a 500); answer 404.
+    if (!Number.isSafeInteger(Number(id)))
+      throw Object.assign(new Error("Account request not found."), { statusCode: 404 });
     const row = sqlite
       .prepare("SELECT id,email,username,status FROM account_requests WHERE id=?")
       .get(Number(id)) as { id: number; email: string; username: string; status: string } | undefined;
@@ -66,7 +69,7 @@ export function registerAccountRequests(app: FastifyInstance): void {
   app.post("/api/account-requests/:id/decline", (req) => {
     requireAdmin(req);
     const { id } = req.params as { id: string };
-    reviewedRequest(id);
+    loadPendingRequest(id);
     // No outbound email: a declined applicant hears nothing.
     sqlite
       .prepare("UPDATE account_requests SET status='declined', reviewed_at=? WHERE id=?")
@@ -76,20 +79,26 @@ export function registerAccountRequests(app: FastifyInstance): void {
   app.post("/api/account-requests/:id/approve", async (req) => {
     requireAdmin(req);
     const { id } = req.params as { id: string };
-    const row = reviewedRequest(id);
+    const row = loadPendingRequest(id);
     // 32 bytes of cryptographic randomness; only its hash is ever stored.
     const token = randomBytes(32).toString("hex");
     const now = Date.now();
     const expiresAt = now + 168 * 3600000; // 7 days
+    // The status guard in the UPDATE keeps the 409 airtight: if the request
+    // stops being pending before this runs, the invite rolls back with it.
     sqlite.transaction(() => {
       const invite = sqlite
         .prepare(
           "INSERT INTO account_invites(token,email,username,account_request_id,created_at,expires_at) VALUES(?,?,?,?,?,?)",
         )
         .run(hashToken(token), row.email, row.username, Number(id), now, expiresAt);
-      sqlite
-        .prepare("UPDATE account_requests SET status='approved', reviewed_at=?, invite_id=? WHERE id=?")
+      const updated = sqlite
+        .prepare(
+          "UPDATE account_requests SET status='approved', reviewed_at=?, invite_id=? WHERE id=? AND status='pending'",
+        )
         .run(now, Number(invite.lastInsertRowid), Number(id));
+      if (updated.changes === 0)
+        throw Object.assign(new Error("This request was already reviewed."), { statusCode: 409 });
     })();
     // APP_URL is the address the applicant can open. It falls back to the
     // default dev/prod origin; the admin still gets the link to copy, so a
