@@ -139,6 +139,7 @@ test("when the running image cannot be tagged nothing is built and the container
     const r = f.run([]);
     assert.equal(r.status, 1);
     assert.match(r.stderr, /could not tag the running image for rollback; not building/);
+    assert.match(r.stderr, /roll back by rebuilding the previous commit: git checkout <previous-commit> && docker compose build sonder && docker compose up -d sonder/);
     const calls = f.dockerCalls();
     assert.equal(calls.includes("compose build sonder"), false);
     assert.equal(calls.some((c) => c.startsWith("compose up")), false);
