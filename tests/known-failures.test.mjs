@@ -18,6 +18,19 @@ const SPEC = "tests/e2e/device-reset.spec.ts";
 const LAYOUT = "tests/e2e/now-playing-layout.spec.ts";
 const SEEK = "tests/e2e/playback-workflow.spec.ts";
 
+/** Every triple here must stay in tests/known-failures.wsl-host.json; the file may add more. */
+const WSL_HOST_REQUIRED_ENTRIES = [
+    {project: "chromium", file: "tests/e2e/playback-workflow.spec.ts", title: "touch seeking › releasing a fine-seek gesture keeps the exact previewed destination"},
+    {project: "chromium", file: "tests/e2e/reader-theme.spec.ts", title: "a 409 with no server checkpoint rebases to revision 0 and saves instead of looping"},
+    {project: "chromium", file: "tests/e2e/reader-follow-highlight.spec.ts", title: "lyrics mode shows the narrated sentence as the current line in the same chapters"},
+    {project: "chromium", file: "tests/e2e/reader-frame.spec.ts", title: "taps, page turns and long-press on the book page reach the reader"},
+    {project: "firefox", file: "tests/e2e/reader-frame.spec.ts", title: "taps, page turns and long-press on the book page reach the reader"},
+    {project: "chromium", file: "tests/e2e/reader-frame.spec.ts", title: "a failed event probe enables scripts while the content defences still block them"},
+    {project: "webkit", file: LAYOUT, title: "#122 reader Back to narration layout › firefox/webkit smoke: transport centred and ordered at 390px and 1280px"},
+];
+
+const knownFailureKey = ({project, file, title}) => `${project}\0${file}\0${title}`;
+
 const entries = validateKnownFailures(knownFailuresDocument([
     {project: "webkit", file: SPEC, title: "reset refreshes the app shell"},
     {project: "webkit", file: LAYOUT, title: "reader-first at 360px"},
@@ -168,7 +181,13 @@ test("the committed WSL host list is valid and names tests that exist in the spe
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
     const loaded = loadKnownFailures(path.join(root, "tests", "known-failures.wsl-host.json"));
     assert.equal(loaded.ok, true, loaded.error);
-    assert.ok(loaded.entries.length > 0);
+    const committedKeys = new Set(loaded.entries.map(knownFailureKey));
+    for (const required of WSL_HOST_REQUIRED_ENTRIES) {
+        assert.ok(
+            committedKeys.has(knownFailureKey(required)),
+            `known-failures.wsl-host.json is missing ${required.project} ${required.file}: ${required.title}`,
+        );
+    }
     for (const entry of loaded.entries) {
         const source = fs.readFileSync(path.join(root, entry.file), "utf8");
         const leaf = entry.title.split(" › ").pop().replace(/\d+px$/, "");
