@@ -52,11 +52,13 @@ function book(id: number, title: string, extra: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
+  process.env.SONDER_SKIP_SERIES_AUTO_ACQUIRE = "1";
   setUserSecret(1, "hardcover", "test-key-not-real");
   globalThis.fetch = realFetch;
 });
 
 after(() => {
+  delete process.env.SONDER_SKIP_SERIES_AUTO_ACQUIRE;
   globalThis.fetch = realFetch;
   rmSync(temp, { recursive: true, force: true });
 });
