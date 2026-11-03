@@ -18,6 +18,14 @@ export type SeriesVolumeCandidate = {
   };
 };
 
+/** Reject Hardcover translation rows while keeping Latin titles with smart punctuation. */
+const NON_LATIN_SCRIPT_TITLE =
+  /\p{Script=Cyrillic}|\p{Script=Han}|\p{Script=Hangul}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Arabic}|\p{Script=Hebrew}|\p{Script=Devanagari}|\p{Script=Thai}/u;
+
+export function isNonLatinScriptTranslationTitle(title: string) {
+  return NON_LATIN_SCRIPT_TITLE.test(title);
+}
+
 export function pickCanonicalBookPerPosition(
   entries: SeriesVolumeCandidate[],
 ): { position: number; bookId: number; title: string }[] {
@@ -25,7 +33,7 @@ export function pickCanonicalBookPerPosition(
   for (const entry of entries) {
     if (entry.position == null || !Number.isInteger(entry.position)) continue;
     const book = entry.book;
-    if (book.compilation || /[^\x00-\x7f]/.test(book.title)) continue;
+    if (book.compilation || isNonLatinScriptTranslationTitle(book.title)) continue;
     const current = byPos.get(entry.position);
     if (!current || book.id < current.id)
       byPos.set(entry.position, { id: book.id, title: book.title });

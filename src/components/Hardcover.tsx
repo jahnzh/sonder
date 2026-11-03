@@ -476,10 +476,9 @@ export function HardcoverBookTools({
       setBusy("");
     }
   };
-  const seriesName = book.hardcover?.series[0]?.name;
-  const addSeries = async () => {
+  const addSeries = async (seriesName: string) => {
     if (!seriesName) return;
-    setBusy("series");
+    setBusy(`series:${seriesName}`);
     setError("");
     try {
       await api("/hardcover/series", {
@@ -699,21 +698,21 @@ export function HardcoverBookTools({
                   <span key={s.name}>
                     {s.name}
                     {s.position !== null ? ` · #${s.position}` : ""}
+                    <button
+                      type="button"
+                      className="button subtle"
+                      disabled={!!busy}
+                      onClick={() => void addSeries(s.name)}
+                    >
+                      {busy === `series:${s.name}` ? (
+                        <Loader2 className="spin" size={14} />
+                      ) : (
+                        <BookOpen size={14} />
+                      )}{" "}
+                      Add series
+                    </button>
                   </span>
                 ))}
-                <button
-                  type="button"
-                  className="button subtle"
-                  disabled={!!busy}
-                  onClick={() => void addSeries()}
-                >
-                  {busy === "series" ? (
-                    <Loader2 className="spin" size={14} />
-                  ) : (
-                    <BookOpen size={14} />
-                  )}{" "}
-                  Add series
-                </button>
               </div>
             )}
             {book.mediaState && (

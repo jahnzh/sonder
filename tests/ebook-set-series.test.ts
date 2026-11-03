@@ -86,7 +86,34 @@ test("pickCanonicalBookPerPosition chooses one ASCII non-compilation book per in
   ]);
   assert.deepEqual(picked, [
     { position: 1, bookId: 40, title: "Vol 1 alt" },
-    { position: 2, bookId: 70, title: "Vol 2" },
+    { position: 2, bookId: 60, title: "Vol 2 — special" },
+  ]);
+});
+
+test("pickCanonicalBookPerPosition keeps curly-apostrophe Latin titles", () => {
+  const title = "The Magician\u2019s Nephew";
+  const picked = pickCanonicalBookPerPosition([
+    {
+      position: 1,
+      book: { id: 10, title, compilation: false },
+    },
+  ]);
+  assert.deepEqual(picked, [{ position: 1, bookId: 10, title }]);
+});
+
+test("pickCanonicalBookPerPosition skips non-Latin script translation titles", () => {
+  const picked = pickCanonicalBookPerPosition([
+    {
+      position: 1,
+      book: { id: 10, title: "\u0412\u043e\u0439\u043d\u0430 \u0438 \u043c\u0438\u0440", compilation: false },
+    },
+    {
+      position: 1,
+      book: { id: 20, title: "War and Peace", compilation: false },
+    },
+  ]);
+  assert.deepEqual(picked, [
+    { position: 1, bookId: 20, title: "War and Peace" },
   ]);
 });
 
