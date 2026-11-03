@@ -65,16 +65,53 @@ test("classifySeriesAudioKind marks compilations and episodic releases", () => {
     "episodic",
   );
   assert.equal(
+    classifySeriesAudioKind("Dungeon Crawler Carl - Immersion Edition"),
+    "episodic",
+  );
+  assert.equal(
+    classifySeriesAudioKind("Dungeon Crawler Carl - Immersion Tunnel"),
+    "episodic",
+  );
+  assert.equal(
     classifySeriesAudioKind("The Butchers Masquerade (Dungeon Crawler Carl 05)"),
     "plain",
   );
 });
 
+test("series-prefixed volume titles get distinct keys and classify book one releases as volume 1", () => {
+  const seriesName = "Test Series";
+  const volumes = seriesVolumeRefs(
+    [
+      { position: 1, title: "Test Series: Book One" },
+      { position: 2, title: "Test Series: Book Two" },
+    ],
+    seriesName,
+  );
+  assert.equal(volumes[0].key, "book one");
+  assert.equal(volumes[1].key, "book two");
+  assert.notEqual(volumes[0].key, volumes[1].key);
+  assert.equal(
+    classifyVolumeFromTitle("Test Series Book 1 Audiobook", volumes, seriesName),
+    1,
+  );
+  const queries = buildVolumeSearchQueries({
+    seriesName,
+    volumeTitle: "Test Series: Book One",
+    position: 1,
+    author: "Jane Author",
+  });
+  assert.ok(queries.some((query) => /book one/i.test(query)));
+  assert.ok(!queries.every((query) => query.trim().toLowerCase() === "test series"));
+});
+
 test("classifyVolumeFromTitle maps apostrophe-stripped Prowlarr titles to the volume", () => {
-  const volumes: SeriesVolumeRef[] = seriesVolumeRefs([
-    { position: 1, title: "Dungeon Crawler Carl" },
-    { position: 5, title: "The Butcher\u2019s Masquerade" },
-  ]);
+  const volumes: SeriesVolumeRef[] = seriesVolumeRefs(
+    [
+      { position: 1, title: "Dungeon Crawler Carl" },
+      { position: 5, title: "The Butcher\u2019s Masquerade" },
+    ],
+    "Dungeon Crawler Carl",
+  );
   assert.equal(
     classifyVolumeFromTitle(
       "The Butchers Masquerade (Dungeon Crawler Carl 05) by Matt Dinniman",

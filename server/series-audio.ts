@@ -38,7 +38,7 @@ export const COMPILATION_TITLE =
   /\bbooks?\s*\d+\s*[-–to]+\s*\d+|collection|complete|box ?set|omnibus|bundle|\ball \d/i;
 
 export const EPISODIC_TITLE =
-  /\bepisodes?\b|\bseason\s*\d|audio immersion|dramati[sz]ed|full[- ]cast|graphic audio/i;
+  /\bepisodes?\b|\bseason\s*\d|\bimmersion\b|dramati[sz]ed|full[- ]cast|graphic audio/i;
 
 export function stripApostrophes(text: string) {
   return text.replace(APOSTROPHE, "");
@@ -51,8 +51,23 @@ export function normalizeSeriesAudioTitle(text: string) {
     .trim();
 }
 
-export function bareVolumeTitle(title: string) {
-  return normalizeSeriesAudioTitle(title.split(":")[0] || title);
+/** Drop a leading `"Series Name: …"` prefix when it matches the catalog series name. */
+export function volumeTitleWithoutSeriesPrefix(title: string, seriesName?: string) {
+  const trimmed = title.trim();
+  if (!seriesName) return trimmed;
+  const colonIdx = trimmed.indexOf(":");
+  if (colonIdx < 0) return trimmed;
+  const prefix = normalizeSeriesAudioTitle(trimmed.slice(0, colonIdx));
+  const seriesKey = normalizeSeriesAudioTitle(seriesName);
+  if (prefix === seriesKey) {
+    const rest = trimmed.slice(colonIdx + 1).trim();
+    return rest || trimmed;
+  }
+  return trimmed;
+}
+
+export function bareVolumeTitle(title: string, seriesName?: string) {
+  return normalizeSeriesAudioTitle(volumeTitleWithoutSeriesPrefix(title, seriesName));
 }
 
 export function classifySeriesAudioKind(title: string): SeriesAudioKind {
@@ -67,11 +82,12 @@ export function isAutoAcquireKind(kind: SeriesAudioKind) {
 
 export function seriesVolumeRefs(
   volumes: { position: number; title: string }[],
+  seriesName?: string,
 ): SeriesVolumeRef[] {
   return volumes.map((volume) => ({
     position: volume.position,
     title: volume.title,
-    key: bareVolumeTitle(volume.title),
+    key: bareVolumeTitle(volume.title, seriesName),
   }));
 }
 
@@ -82,11 +98,17 @@ export function classifyVolumeFromTitle(
   seriesName: string,
 ): number | null {
   const normalized = normalizeSeriesAudioTitle(title);
+  const seriesKey = normalizeSeriesAudioTitle(seriesName);
   const hits = volumes
-    .filter((volume) => volume.position > 1 && normalized.includes(volume.key))
+    .filter(
+      (volume) =>
+        volume.position > 1 &&
+        volume.key !== seriesKey &&
+        volume.key.length > 0 &&
+        normalized.includes(volume.key),
+    )
     .sort((a, b) => b.key.length - a.key.length);
   if (hits.length) return hits[0].position;
-  const seriesKey = normalizeSeriesAudioTitle(seriesName);
   const numbered =
     /\b(?:book|vol|volume)\s*(\d{1,2})\b/.exec(normalized) ||
     /\b0?(\d)\b/.exec(normalized.replace(seriesKey, ""));
@@ -106,7 +128,10 @@ export function buildVolumeSearchQueries(input: {
   position: number;
   author?: string;
 }): string[] {
-  const short = input.volumeTitle.split(":")[0]?.trim() || input.volumeTitle;
+  const short = volumeTitleWithoutSeriesPrefix(
+    input.volumeTitle,
+    input.seriesName,
+  );
   const shortBare = stripApostrophes(short);
   const authorTail = input.author?.trim().split(/\s+/).pop();
   const base = [
@@ -367,13 +392,14 @@ async function resolveCandidateMagnet(
   if (candidate.source === "prowlarr" && candidate.hash) {
     try {
       return await deps.prowlarrMagnetLink(candidate.id);
-    } catch {
-      /* fall through */
+    } catch (error) {
+      deps.log?.(`prowlarr magnet: ${(error as Error).message}`);
     }
   }
   try {
     return await deps.abbMagnetLink(candidate.id);
-  } catch {
+  } catch (error) {
+    deps.log?.(`abb magnet: ${(error as Error).message}`);
     if (!candidate.hash) return null;
     return `magnet:?xt=urn:btih:${candidate.hash}&dn=${encodeURIComponent(candidate.title)}`;
   }
@@ -413,6 +439,7 @@ export async function autoAcquireSeriesVolumes(
       position: volume.position,
       title: volume.title,
     })),
+    input.seriesName,
   );
   const results = [];
   for (const volume of input.volumes) {
