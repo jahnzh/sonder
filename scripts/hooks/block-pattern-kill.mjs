@@ -5,12 +5,13 @@
 // Reads the hook JSON on stdin; exit 2 blocks the call and shows the message to the agent.
 import { readFileSync } from "node:fs";
 
-// The command word must start a command: at the beginning, after ; & | ( ` $( or a quote (bash -c "..."),
-// optionally behind sudo or env assignments. A mention in plain text (echo pkill -f) is not a call.
-const PATTERN = /(?:^|[;&|(`"'])\s*(?:sudo\s+|\w+=\S*\s+)*(?:pkill|pgrep)\s+(?:[^;&|]*\s)?(?:-[A-Za-z]*f[A-Za-z]*|--full)(?=\s|$)/;
+// The command word must start a command: at the beginning, after a newline, after ; & | ( ` $( or a quote (bash -c "..."),
+// or after control keywords (then, do, else, elif), optionally behind sudo or env assignments.
+// A mention in plain text (echo pkill -f) is not a call.
+const PATTERN_KILL_FULL = /(?:^|[;&|(`"'\r\n]|\b(?:then|do|else|elif)\b)\s*(?:sudo\s+|\w+=\S*\s+)*(?:pkill|pgrep)\s+(?:[^;&|\r\n]*\s)?(?:-[A-Za-z]*f[A-Za-z]*|--full)(?=\s|$)/;
 
 export function blocksPatternKill(command) {
-  return typeof command === "string" && PATTERN.test(command);
+  return typeof command === "string" && PATTERN_KILL_FULL.test(command);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
