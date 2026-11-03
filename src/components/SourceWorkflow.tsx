@@ -28,6 +28,7 @@ import {
   useTorrentHealth,
 } from "./TorrentHealth";
 import {openReader} from "../reading";
+import { ebookSetStatusLabel, type EbookSetMember } from "../ebook-set";
 import type {
   Acquisition,
   EbookResult,
@@ -266,6 +267,22 @@ export function EbookDiscovery({
   const [error, setError] = useState("");
   const [searched, setSearched] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [setMembers, setSetMembers] = useState<EbookSetMember[]>([]);
+  const refreshSet = useCallback(async () => {
+    if (!target?.workId) {
+      setSetMembers([]);
+      return;
+    }
+    try {
+      setSetMembers(
+        await api<EbookSetMember[]>(
+          `/works/${encodeURIComponent(target.workId)}/ebook-set`,
+        ),
+      );
+    } catch {
+      setSetMembers([]);
+    }
+  }, [target?.workId]);
   const refreshSaved = useCallback(async () => {
     try {
       const books = await api<SavedEbook[]>("/ebooks");
@@ -279,6 +296,9 @@ export function EbookDiscovery({
   useEffect(() => {
     void refreshSaved();
   }, [refreshSaved]);
+  useEffect(() => {
+    void refreshSet();
+  }, [refreshSet]);
   const base = settings?.libgenUrl || "https://libgen.li";
   const website = `${base}/index.php?req=${encodeURIComponent(query)}`;
   const search = async (e: FormEvent) => {
@@ -313,6 +333,7 @@ export function EbookDiscovery({
         { method: "POST", body },
       );
       await refreshSaved();
+      await refreshSet();
       notify(
         response.alreadySaved
           ? "This ebook is already on your server."
@@ -336,6 +357,7 @@ export function EbookDiscovery({
       });
       notify("Your ebook is saved on the 4 TB media drive.");
       await refreshSaved();
+      await refreshSet();
     } catch (e) {
       notify((e as Error).message, true);
     } finally {
@@ -356,6 +378,32 @@ export function EbookDiscovery({
           ? `Downloaded editions will be linked to “${target.title}”.`
           : "Save an edition to your server to read or download it."}
       </p>
+      {target && setMembers.length > 0 && (
+        <ul className="ebook-set-members" aria-label="Ebook set members">
+          {setMembers.map((member) => (
+            <li key={member.ebookId}>
+              <strong>{member.sourceTitle || member.ebookId}</strong>
+              <span>{ebookSetStatusLabel(member.status)}</span>
+              {member.language && <span>{member.language}</span>}
+              {member.byteSize != null && <span>{bytes(member.byteSize)}</span>}
+              <span>
+                Shared {member.evidence.sharedSentenceCount}, unique{" "}
+                {member.evidence.uniqueSentenceCount}
+              </span>
+              {member.evidence.audioSupportedCoverage != null && (
+                <span>
+                  Audio coverage{" "}
+                  {Math.round(member.evidence.audioSupportedCoverage * 100)}%
+                </span>
+              )}
+              {!member.evidence.outlier.passed &&
+                member.evidence.outlier.samples[0]?.passage && (
+                  <span>{member.evidence.outlier.samples[0].passage}</span>
+                )}
+            </li>
+          ))}
+        </ul>
+      )}
       <form className="ebooks-search-form" onSubmit={(e) => void search(e)}>
         <input
           className="ebook-search-query"

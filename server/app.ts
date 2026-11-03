@@ -35,6 +35,7 @@ import {
   hiddenHardcoverPlaceholders,
 } from "./hardcover.ts";
 import { registerHardcoverRoutes } from "./hardcover-routes.ts";
+import { registerEbookSetRoutes } from "./ebook-set-routes.ts";
 import { CSP_REPORT_PATH, cspMode, registerCsp } from "./csp.ts";
 import { registerAppearance } from "./appearance.ts";
 import { registerAccountRequests } from "./account-requests.ts";
@@ -58,6 +59,7 @@ import { acquire, refreshQueue } from "./acquisitions.ts";
 import { transmission, transmissionConfigured } from "./transmission.ts";
 import { getTorrentHealth } from "./torrent-health.ts";
 import { searchEbooks, saveEbook, listEbooks, importEbook } from "./ebooks.ts";
+import { registerUploadedEbookSetMember, reevaluateEbookSetForWork } from "./ebook-set.ts";
 import {
   hasServerMedia,
   requestServerDownload,
@@ -279,7 +281,7 @@ export async function createApp() {
   });
   app.addHook("preHandler", async (req) => {
     const path = req.routeOptions.url || "";
-    if (/^\/api\/(prowlarr|torbox)(?:\/|$)/.test(path) || /^\/api\/acquisitions(?:\/|$)/.test(path) || path === "/api/acquire" || path === "/api/torrents/health" || path === "/api/local/test" || /^\/api\/discover\/(abb|prowlarr)(?:\/|$)/.test(path) || path === "/api/discover/ebooks" || (req.method === "POST" && ["/api/ebooks", "/api/ebooks/import", "/api/import"].includes(path)) || (req.method === "POST" && /^\/api\/books\/[^/]+\/keep$/.test(path)) || (req.method === "POST" && /^\/api\/reader\/[^/]+\/link$/.test(path)) || (["PUT", "DELETE"].includes(req.method) && /^\/api\/recordings\/[^/]+\/(faults\/[^/]+|server-copy)$/.test(path)) || (["POST", "PATCH"].includes(req.method) && /^\/api\/alignments(?:\/|$)/.test(path))) requireAdmin(req);
+    if (/^\/api\/(prowlarr|torbox)(?:\/|$)/.test(path) || /^\/api\/acquisitions(?:\/|$)/.test(path) || path === "/api/acquire" || path === "/api/torrents/health" || path === "/api/local/test" || /^\/api\/discover\/(abb|prowlarr)(?:\/|$)/.test(path) || path === "/api/discover/ebooks" || (req.method === "POST" && ["/api/ebooks", "/api/import"].includes(path)) || (req.method === "POST" && /^\/api\/books\/[^/]+\/keep$/.test(path)) || (req.method === "POST" && /^\/api\/reader\/[^/]+\/link$/.test(path)) || (["PUT", "DELETE"].includes(req.method) && /^\/api\/recordings\/[^/]+\/(faults\/[^/]+|server-copy)$/.test(path)) || (["POST", "PATCH"].includes(req.method) && /^\/api\/alignments(?:\/|$)/.test(path)) || (req.method === "POST" && /^\/api\/works\/[^/]+\/ebook-set\/fetch$/.test(path))) requireAdmin(req);
   });
   registerCsp(app, { mode: cspMode() });
   app.get("/api/health", async () => ({ ok: true }));
@@ -332,6 +334,7 @@ export async function createApp() {
   registerAccountRequests(app);
   registerInvites(app);
   registerHardcoverRoutes(app);
+  registerEbookSetRoutes(app);
   registerAppearance(app);
   registerReader(app);
   registerAlignment(app);
@@ -848,8 +851,10 @@ export async function createApp() {
     });
     if (!part) throw new Error("Choose an EPUB or PDF file.");
     const imported = await importEbook(part.file, part.filename, workId);
-    if (workId)
+    if (workId) {
+      await registerUploadedEbookSetMember(workId, imported.id);
       await autoQueueAlignmentsForWork(workId, { ebookId: imported.id }, req.log);
+    }
     return imported;
   });
   app.get("/api/ebooks/:id/file", async (req, reply) => {
@@ -1032,6 +1037,7 @@ export async function createApp() {
         claimHardcoverAudio(workId, id);
       })();
       await autoQueueAlignmentsForWork(workId, { recordingId: `recording-${id}` }, req.log);
+      await reevaluateEbookSetForWork(workId);
       return { id };
     } catch (error) {
       stored.forEach((f) => {

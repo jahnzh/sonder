@@ -63,6 +63,26 @@ function localAudio(track: typeof s.tracks.$inferSelect) {
     ? copy.path
     : null;
 }
+export function trackLocalAudioPath(track: typeof s.tracks.$inferSelect) {
+  return localAudio(track);
+}
+export function recordingHasLocalAudio(recordingId: string) {
+  try {
+    const { tracks } = recordingContext(recordingId);
+    return tracks.some((track) => localAudio(track));
+  } catch {
+    return false;
+  }
+}
+export function firstRecordingWithLocalAudio(workId: string) {
+  const rows = db
+    .select({ id: s.recordings.id })
+    .from(s.recordings)
+    .innerJoin(s.editions, eq(s.recordings.editionId, s.editions.id))
+    .where(eq(s.editions.workId, workId))
+    .all();
+  return rows.find((row) => recordingHasLocalAudio(row.id))?.id ?? null;
+}
 function audioFingerprint(recordingId: string, stable = true) {
   const { tracks } = recordingContext(recordingId);
   const hash = createHash("sha256")
