@@ -47,7 +47,17 @@ function userIdHighWater(): number {
   return setUserIdHighWater(Math.max(1,...seen));
 }
 function setUserIdHighWater(id: number): number { sqlite.prepare("INSERT INTO settings(key,value) VALUES('user_id_high_water',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(String(id)); return id; }
-const passwordSchema=z.string().min(8).max(512);
+export const passwordSchema=z.string().min(8).max(512);
+// Ids are never reused and the high water mark moves up in the same statement
+// batch as the insert, so callers wrap this in their own transaction when it
+// must stand or fall with other writes (POST /api/users, invite claims).
+export function createUser(username: string, password: string): number {
+  const max=(sqlite.prepare("SELECT COALESCE(MAX(id), 1) AS id FROM users").get() as {id:number}).id;
+  const next=Math.max(max,userIdHighWater())+1;
+  sqlite.prepare("INSERT INTO users(id,username,password_hash,role,created_at) VALUES(?,?,?,?,?)").run(next,username,hashPassword(password),"user",Date.now());
+  setUserIdHighWater(next);
+  return next;
+}
 export function registerUsers(app: FastifyInstance): void {
   userIdHighWater();
   app.get("/api/users", req => { requireAdmin(req); return sqlite.prepare("SELECT id,username,role,created_at AS createdAt FROM users ORDER BY id").all(); });
@@ -55,13 +65,7 @@ export function registerUsers(app: FastifyInstance): void {
     requireAdmin(req);
     const input=z.object({username:z.string().min(2).max(40).regex(/^[a-z0-9._-]+$/i),password:passwordSchema,role:z.literal("user").default("user")}).parse(req.body);
     if(input.username.toLowerCase()==="admin") throw new Error("That username is reserved.");
-    const id=sqlite.transaction(() => {
-      const max=(sqlite.prepare("SELECT COALESCE(MAX(id), 1) AS id FROM users").get() as {id:number}).id;
-      const next=Math.max(max,userIdHighWater())+1;
-      sqlite.prepare("INSERT INTO users(id,username,password_hash,role,created_at) VALUES(?,?,?,?,?)").run(next,input.username,hashPassword(input.password),input.role,Date.now());
-      setUserIdHighWater(next);
-      return next;
-    })();
+    const id=sqlite.transaction(() => createUser(input.username,input.password))();
     return sqlite.prepare("SELECT id,username,role,created_at AS createdAt FROM users WHERE id=?").get(id);
   });
   app.patch("/api/users/:id", req => {

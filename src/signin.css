@@ -307,6 +307,51 @@
   outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
+/* /join activation card, on the sign-in design language. */
+.join-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0 4px;
+  font-size: 15px;
+  color: var(--muted);
+}
+.join-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0 4px;
+  text-align: center;
+}
+.join-error > svg {
+  color: var(--danger);
+}
+.join-error p {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+.join-error .signin-request {
+  margin-top: 0;
+}
+.join-intro {
+  margin: 0;
+  font-size: 15px;
+  color: var(--muted);
+}
+.join-intro strong {
+  color: var(--text);
+}
+.join-email {
+  display: block;
+  margin-top: 2px;
+  font-size: 14px;
+  color: var(--dim);
+}
+.join-username {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface) 60%, var(--background));
+}
 .signin-request-done {
   display: flex;
   flex-direction: column;
