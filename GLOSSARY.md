@@ -61,3 +61,13 @@ _Avoid_: Page bookmark, marker
 **Listen from here**:
 The action that moves the narration to a chosen sentence in the ebook.
 _Avoid_: Jump audio, seek to text
+
+## Accounts and access
+
+**Account request**:
+A prospective user's application for access to a Sonder space, awaiting administrator approval.
+_Avoid_: Invite request, registration request
+
+**Invite link**:
+A single-use, time-limited cryptographic URL sent by email allowing an approved applicant to set their password and activate their account.
+_Avoid_: Invite token, access link, activation code

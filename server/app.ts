@@ -37,6 +37,7 @@ import {
 import { registerHardcoverRoutes } from "./hardcover-routes.ts";
 import { CSP_REPORT_PATH, cspMode, registerCsp } from "./csp.ts";
 import { registerAppearance } from "./appearance.ts";
+import { registerAccountRequests } from "./account-requests.ts";
 import { registerReader } from "./reader.ts";
 import { registerAlignment, autoQueueAlignmentsForWork } from "./alignment.ts";
 import {registerMediaLibrary,faultsFor,chooseMedia,sourceChoice} from "./media-library.ts";
@@ -260,7 +261,7 @@ export async function createApp() {
           .send({ error: "This request came from an unrecognized origin." });
     }
     if (
-      ["/api/auth/status", "/api/auth/login", "/api/health"].includes(
+      ["/api/auth/status", "/api/auth/login", "/api/health", "/api/account-requests"].includes(
         req.url.split("?")[0],
       )
     )
@@ -325,6 +326,7 @@ export async function createApp() {
   });
   app.get("/api/books", async (req) => listBooks(currentUserId(req)));
   registerUsers(app);
+  registerAccountRequests(app);
   registerHardcoverRoutes(app);
   registerAppearance(app);
   registerReader(app);
