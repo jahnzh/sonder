@@ -38,9 +38,10 @@ test("verify reports the applicant's username and email for a valid unclaimed in
   assert.equal(res.statusCode,200,res.body);
   assert.deepEqual(res.json(),{ok:true,username:"verifyreader",email:"verifyreader@example.com"});
 });
-test("verify without a token is a bad request", async () => {
+test("verify without a token is a bad request with the missing-token message", async () => {
   const res=await app.inject({method:"GET",url:"/api/invites/verify"});
   assert.equal(res.statusCode,400,res.body);
+  assert.equal(res.json().error,"This invite link is missing its token.");
 });
 test("verify refuses a token that was never issued", async () => {
   const res=await verify(randomBytes(32).toString("hex"));

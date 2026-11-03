@@ -20,6 +20,7 @@ type Invite = {
 const notValid = () => Object.assign(new Error("This invite link is not valid."), { statusCode: 404 });
 const alreadyUsed = () => Object.assign(new Error("This invite link has already been used."), { statusCode: 404 });
 const expired = () => Object.assign(new Error("This invite link has expired."), { statusCode: 410 });
+const missingToken = () => Object.assign(new Error("This invite link is missing its token."), { statusCode: 400 });
 
 // Look up by hash only: the raw token exists in the URL and is never stored.
 function findInvite(token: string): Invite | undefined {
@@ -37,7 +38,10 @@ function usableInvite(token: string): Invite {
 
 export function registerInvites(app: FastifyInstance): void {
   app.get("/api/invites/verify", (req) => {
-    const { token } = z.object({ token: z.string().min(1) }).parse(req.query);
+    // The app's ZodError branch answers with a generic message, so a missing
+    // token is refused here, with the same wording the /join screen uses.
+    const token = (req.query as { token?: unknown }).token;
+    if (typeof token !== "string" || token.length < 1) throw missingToken();
     const invite = usableInvite(token);
     return { ok: true, username: invite.username, email: invite.email };
   });
