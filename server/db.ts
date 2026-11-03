@@ -104,6 +104,7 @@ CREATE TABLE IF NOT EXISTS user_hardcover_progress(user_id INTEGER NOT NULL REFE
 CREATE TABLE IF NOT EXISTS user_hardcover_lists(user_id INTEGER NOT NULL REFERENCES users(id),id INTEGER NOT NULL,account_id INTEGER NOT NULL,name TEXT NOT NULL,slug TEXT,members TEXT NOT NULL DEFAULT '[]',synced_at INTEGER NOT NULL,PRIMARY KEY(user_id,id));
 CREATE TABLE IF NOT EXISTS user_hardcover_reads(user_id INTEGER NOT NULL REFERENCES users(id),book_id INTEGER NOT NULL,account_id INTEGER NOT NULL,snapshot TEXT NOT NULL,fraction REAL,synced_at INTEGER NOT NULL,PRIMARY KEY(user_id,book_id));
 CREATE TABLE IF NOT EXISTS user_hardcover_recording_editions(user_id INTEGER NOT NULL REFERENCES users(id),recording_id TEXT NOT NULL REFERENCES recordings(id),edition_id INTEGER NOT NULL,PRIMARY KEY(user_id,recording_id));
+CREATE TABLE IF NOT EXISTS work_media_states(user_id INTEGER NOT NULL REFERENCES users(id),work_id TEXT NOT NULL REFERENCES works(id),state TEXT NOT NULL DEFAULT 'missing',hold_reason TEXT,acquisition_id TEXT,updated_at INTEGER NOT NULL,PRIMARY KEY(user_id,work_id));
 `);
 // One-time copy of the single-account Hardcover key, state and queues to the admin (#15). The old rows stay for rollback.
 export function migrateHardcoverToUsers(): void {

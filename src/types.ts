@@ -52,6 +52,11 @@ export type Book = {
   progress?: Progress;
   serverStored: boolean;
   sourceLabel: string;
+  mediaState?: {
+    state: "missing" | "queued" | "failed" | "available";
+    holdReason?: "unreleased" | "empty_search" | null;
+    acquisitionId?: string | null;
+  } | null;
 };
 export type MediaFault={reason:"wrong-language"|"wrong-book"|"bad-audio"|"incomplete"|"other";note:string;updatedAt:number};
 export type PlaybackSourceChoice="auto"|"device"|"server"|"original";

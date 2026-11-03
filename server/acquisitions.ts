@@ -9,6 +9,7 @@ import * as s from "./schema.ts";
 import { getSecret, torbox } from "./services.ts";
 import { addTorrent, getTorrent, transmission } from "./transmission.ts";
 import { getTorrentHealth } from "./torrent-health.ts";
+import { syncWorkMediaState, syncWorkMediaStateForAcquisition } from "./work-media-state.ts";
 import {
   ensureMediaStorage,
   resolveTorrentFile,
@@ -128,6 +129,7 @@ export async function acquire(
     .onConflictDoUpdate({ target: s.acquisitions.hash, set: entry })
     .run();
   db.insert(s.userAcquisitions).values({userId: metadata.userId ?? 1, acquisitionId: id}).onConflictDoNothing().run();
+  if (metadata.workId) syncWorkMediaState(metadata.userId ?? 1, metadata.workId);
   try {
     let backend = await chooseBackend(hash, !!getSecret("torbox"), (h) =>
       torbox(`torrents/checkcached?hash=${h}&format=list&list_files=false`),
@@ -192,6 +194,8 @@ export async function acquire(
         .run();
     }
     await refreshAcquisition(id);
+    if (metadata.workId)
+      syncWorkMediaState(metadata.userId ?? 1, metadata.workId);
     return db
       .select()
       .from(s.acquisitions)
@@ -206,6 +210,8 @@ export async function acquire(
       })
       .where(eq(s.acquisitions.id, id))
       .run();
+    if (metadata.workId)
+      syncWorkMediaState(metadata.userId ?? 1, metadata.workId);
     throw error;
   }
 }
@@ -279,6 +285,7 @@ function createBook(
       .where(eq(s.acquisitions.id, job.id))
       .run();
   })();
+  syncWorkMediaStateForAcquisition(job.id);
 }
 const processing = new Set<string>();
 // Completed files that fail validation won't change on the next refresh, so these end the job.
@@ -415,6 +422,7 @@ export async function refreshAcquisition(id: string) {
       .run();
   } finally {
     processing.delete(id);
+    syncWorkMediaStateForAcquisition(id);
   }
 }
 export async function refreshQueue() {

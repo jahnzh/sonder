@@ -11,6 +11,15 @@ import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
+import {
+  isUnreleasedHardcoverBook,
+  pickCanonicalBookPerPosition,
+} from "./series-membership.ts";
+import {
+  getWorkMediaState,
+  setWorkMediaHold,
+  syncWorkMediaState,
+} from "./work-media-state.ts";
 export type ShelfStatus = 1 | 2 | 3 | 4 | 5;
 export type SyncMode = "off" | "import" | "two-way";
 const shelfStatus = z.union([
@@ -902,6 +911,74 @@ export async function importHardcoverBook(
   if (!workId && current.mode === "two-way" && current.accountId !== null)
     queueStatus(userId, id, 1, "add");
   return added!;
+}
+export async function addHardcoverSeries(userId: number, seriesName: string) {
+  const result = await graphql(
+    userId,
+    `query SonderSeries($name:String!){series(where:{name:{_eq:$name}}){name book_series(order_by:{position:asc}){position book{id title compilation release_year release_date}}}}`,
+    { name: seriesName },
+    z.object({
+      series: z.array(
+        z.object({
+          name: z.string(),
+          book_series: z.array(
+            z.object({
+              position: z.number().nullable(),
+              book: z.object({
+                id: z.number(),
+                title: z.string(),
+                compilation: z.boolean().nullable().optional(),
+                release_year: z.number().nullable().optional(),
+                release_date: z.string().nullable().optional(),
+              }),
+            }),
+          ),
+        }),
+      ),
+    }),
+  );
+  const series = result.series[0];
+  if (!series) throw new Error("Hardcover could not find this series.");
+  const picked = pickCanonicalBookPerPosition(series.book_series);
+  const volumes = picked.map((volume) => {
+    const entry = series.book_series.find(
+      (row) =>
+        row.position === volume.position && row.book.id === volume.bookId,
+    )!;
+    return {
+      ...volume,
+      unreleased: isUnreleasedHardcoverBook(entry.book),
+    };
+  });
+  const added: {
+    position: number;
+    hardcoverBookId: number;
+    workId: string;
+    editionId: string;
+    unreleased: boolean;
+    mediaState: Awaited<ReturnType<typeof getWorkMediaState>>;
+  }[] = [];
+  for (const volume of volumes) {
+    const imported = await importHardcoverBook(userId, volume.bookId);
+    const edition = db
+      .select()
+      .from(s.editions)
+      .where(eq(s.editions.id, imported.bookId))
+      .get();
+    if (!edition) throw new Error("The series volume could not be added.");
+    const workId = edition.workId;
+    if (volume.unreleased) setWorkMediaHold(userId, workId, "unreleased");
+    else syncWorkMediaState(userId, workId);
+    added.push({
+      position: volume.position,
+      hardcoverBookId: volume.bookId,
+      workId,
+      editionId: imported.bookId,
+      unreleased: volume.unreleased,
+      mediaState: getWorkMediaState(userId, workId),
+    });
+  }
+  return { seriesName, volumes: added };
 }
 export function setHardcoverShelf(
   userId: number,
