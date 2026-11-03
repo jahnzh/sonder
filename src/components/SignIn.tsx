@@ -7,15 +7,17 @@ import "../signin.css";
 export type Account = { id: number; username: string; role: "admin" | "user" };
 export type AccountRequest = { id: number; email: string; username: string; note: string | null; createdAt: number };
 
-// The server enforces these rules (zod v4 practical email check in
-// server/account-requests.ts, and the POST /api/users username rule), so the
-// dialog rejects the same inputs before they reach it.
+// The server is authoritative (zod email check in server/account-requests.ts,
+// the POST /api/users username rule). These mirrors reject the same malformed
+// input early in the dialog; the email rule is slightly stricter (it demands
+// a dotted domain and a two-letter TLD), so a few server-valid addresses are
+// refused here rather than by the server.
 const EMAIL_RULE = /^(?:[A-Za-z0-9_'+\-]+\.)*[A-Za-z0-9_'+\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\-]*\.)+[A-Za-z]{2,}$/;
 const USERNAME_RULE = /^[a-z0-9._-]+$/i;
-export function emailProblem(email: string): string | null {
+function emailProblem(email: string): string | null {
   return EMAIL_RULE.test(email) ? null : "Enter a valid email address.";
 }
-export function usernameProblem(username: string): string | null {
+function usernameProblem(username: string): string | null {
   if (username.length < 2 || username.length > 40) return "Usernames are 2 to 40 characters.";
   if (!USERNAME_RULE.test(username)) return "Use letters, numbers, dots, dashes or underscores.";
   if (username.toLowerCase() === "admin") return "That username is reserved.";
