@@ -183,6 +183,17 @@ test("seeking past stored bytes with an unreachable server surfaces a source err
     await expect(restarted.locator(".player-error")).toContainText(
       "The audio source is unavailable",
     );
+
+    // The surfaced failure is quiesced: the element stops, so neither its own
+    // buffer retries nor a re-armed watchdog keeps probing the dead server
+    // while the error is shown.
+    let mediaAfterError = 0;
+    await restarted.route(/\/api\/media\/alice-0(\?.*)?$/, (route) => {
+      mediaAfterError++;
+      return route.continue();
+    });
+    await restarted.waitForTimeout(20_000);
+    expect(mediaAfterError).toBe(0);
     await context.close();
   } finally {
     await rm(profile, { recursive: true, force: true });

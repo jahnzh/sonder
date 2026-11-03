@@ -762,13 +762,15 @@ export function PlayerProvider({
   useEffect(() => {
     const el = audio.current;
     el.preload = "metadata";
+    const liveLoad = () => {
+      const load = streamLoad.current;
+      return load && load.generation === generation.current ? load : null;
+    };
     const watchdog = stallWatchdog(
       stallHandler({
-        load: () => {
-          const load = streamLoad.current;
-          return load && load.generation === generation.current ? load : null;
-        },
+        load: liveLoad,
         read: () => ({
+          generation: generation.current,
           currentTime: el.currentTime,
           readyState: el.readyState,
           paused: el.paused,
@@ -777,12 +779,8 @@ export function PlayerProvider({
           // A live stream load with a device copy may switch to it; anything
           // else has no copy to switch to, so a confirmed outage surfaces the
           // stall as an error instead of leaving it silent.
-          const load = streamLoad.current;
-          return load &&
-            load.generation === generation.current &&
-            load.deviceCopy
-            ? recoverOnDevice(stillNeeded)
-            : stalledStream(stillNeeded);
+          const load = liveLoad();
+          return load?.deviceCopy ? recoverOnDevice(stillNeeded) : stalledStream(stillNeeded);
         },
         rearm: () => stalling(),
       }),
@@ -898,7 +896,15 @@ export function PlayerProvider({
     // probed again on the next stall.
     const stalledStream = (stillNeeded: () => boolean) =>
       isTransportFailure(el.src).then((unreachable) => {
+        // stillNeeded is generation-aware: a load that started while the
+        // probe was in flight is a different stall and keeps no result of
+        // this one.
         if (!unreachable || !stillNeeded()) return false;
+        // Quiesce: a stalled, unpaused element keeps firing `waiting`, and
+        // each event would re-arm the watchdog into probing the dead server
+        // over and over while the error is shown.
+        watchdog.cancel();
+        el.pause();
         failLoad();
         return true;
       });

@@ -274,7 +274,7 @@ test("cancelling stops the stall, and the watchdog can be armed again", () => {
 // to the device copy; without one the probe surfaces a failure.
 function stallRig(opts: { probeMs: number; unreachable: boolean }) {
   const clock = fakeClock();
-  const el: StallReading = { currentTime: 30, readyState: 2, paused: false };
+  const el: StallReading = { generation: 1, currentTime: 30, readyState: 2, paused: false };
   const rig = {
     clock,
     el,
@@ -333,6 +333,14 @@ function stallRig(opts: { probeMs: number; unreachable: boolean }) {
     },
     drop() {
       rig.load = null;
+    },
+    // A different chapter starts while a probe is in flight: the element
+    // resets to a fresh, not-yet-buffered load — the state that most easily
+    // masquerades as "still stalled" without the generation check.
+    newLoad() {
+      el.generation += 1;
+      el.currentTime = 0;
+      el.readyState = 0;
     },
     async advance(ms: number) {
       for (let spent = 0; spent < ms; spent += 500) {
@@ -429,12 +437,32 @@ test("a paused stream is not failed by a later probe", async () => {
   assert.equal(rig.clock.pending(), 0);
 });
 
-test("a stream that is paused or moved on during the probe counts as no longer stalled", () => {
-  const before: StallReading = { currentTime: 5, readyState: 2, paused: false };
+test("a load that starts during the probe is a different stall, and so is one that resumes", () => {
+  const before: StallReading = { generation: 1, currentTime: 5, readyState: 2, paused: false };
   assert.equal(streamStillStalled(before, { ...before }), true);
   assert.equal(streamStillStalled(before, { ...before, paused: true }), false);
   assert.equal(streamStillStalled(before, { ...before, readyState: 4 }), false);
   assert.equal(streamStillStalled(before, { ...before, currentTime: 6 }), false);
+  // A fresh load starts not-yet-buffered and low on the timeline — without
+  // the generation check it would still read as stalled.
+  assert.equal(streamStillStalled(before, { ...before, generation: 2 }), false);
+  assert.equal(
+    streamStillStalled(before, { ...before, generation: 2, readyState: 0, currentTime: 0 }),
+    false,
+  );
+});
+
+test("a load started while the probe is in flight is not failed by the old probe's result", async () => {
+  const rig = stallRig({ probeMs: 8_000, unreachable: true });
+  rig.drop();
+  rig.waiting();
+  await rig.advance(STALL_SWITCH_MS + 500);
+  rig.newLoad();
+  await rig.advance(5 * 60_000);
+  assert.equal(rig.probes.length, 1);
+  assert.equal(rig.failures, 0);
+  assert.equal(rig.switches, 0);
+  assert.equal(rig.clock.pending(), 0);
 });
 
 test("a failure is remembered for 60 s and then forgotten", () => {
