@@ -143,6 +143,23 @@ function store(job: AlignmentJob) {
     );
   return job;
 }
+export function putAlignmentJob(job: AlignmentJob) {
+  return store(job);
+}
+export function removeProjectedMapsForWork(workId: string) {
+  const ebookIds = new Set(
+    db
+      .select({ id: s.ebookEditions.id })
+      .from(s.ebookEditions)
+      .where(eq(s.ebookEditions.workId, workId))
+      .all()
+      .map((row) => row.id),
+  );
+  for (const job of jobs()) {
+    if (job.origin === "projected" && ebookIds.has(job.ebookId))
+      sqlite.prepare("DELETE FROM alignment_jobs WHERE id=?").run(job.id);
+  }
+}
 const language = (value: string) => {
   const code = value.toLowerCase().split(/[-_]/)[0];
   return (
@@ -771,6 +788,12 @@ async function processAnchored(
   job.warning =
     "Timings are estimated from sampled narration. Preview a few passages, then mark the alignment reviewed. Passages without matching narration are left unsynced.";
   store(job);
+  if (job.ebookId.startsWith("set-consensus:")) {
+    const { onConsensusAlignmentFinished } = await import(
+      "./ebook-set-consensus.ts"
+    );
+    await onConsensusAlignmentFinished(job.ebookId.slice("set-consensus:".length), job);
+  }
 }
 let running = false,
   stopping = false,
