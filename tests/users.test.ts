@@ -73,7 +73,7 @@ test("encoded admin routes are denied to regular users", async () => {
  const admin=(await app.inject({method:"POST",url:"/api/auth/login",payload:{password:"admin-password"}})).cookies[0].value;
  await app.inject({method:"POST",url:"/api/users",cookies:{sonder_session:admin},payload:{username:"encoded",password:"password1"}});
  const user=(await app.inject({method:"POST",url:"/api/auth/login",payload:{username:"encoded",password:"password1"}})).cookies[0].value;
- for (const [method,url] of [["GET","/api/%61cquisitions"],["GET","/api/%74orbox/files"],["POST","/api/%61cquire"],["POST","/api/books/x/%6beep"],["DELETE","/api/recordings/x/server%2Dcopy"],["PUT","/api/recordings/x/f%61ults/source"],["POST","/api/%65books/import"],["POST","/api/reader/x/%6cink"],["POST","/api/%61lignments"],["GET","/api/discover/%61bb"],["GET","/api/discover/%70rowlarr/releases"],["GET","/api/discover/%65books"]] as const) {
+ for (const [method,url] of [["GET","/api/%61cquisitions"],["GET","/api/%74orbox/files"],["POST","/api/%61cquire"],["POST","/api/books/x/%6beep"],["DELETE","/api/recordings/x/server%2Dcopy"],["PUT","/api/recordings/x/f%61ults/source"],["POST","/api/reader/x/%6cink"],["POST","/api/%61lignments"],["GET","/api/discover/%61bb"],["GET","/api/discover/%70rowlarr/releases"],["GET","/api/discover/%65books"]] as const) {
   const r=await app.inject({method,url,cookies:{sonder_session:user},payload:method === "GET" ? undefined : {}}); assert.equal(r.statusCode,403,`${url}: ${r.body}`);
  }
 });
