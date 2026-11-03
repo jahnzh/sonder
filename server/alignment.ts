@@ -20,6 +20,16 @@ import type { AlignmentJob, AlignmentInterval } from "../src/reading-types.ts";
 import { requireAdmin } from "./users.ts";
 import { matchSections } from "./alignment-pairings.ts";
 import {
+  dispatchFullAlignmentJob,
+  getAlignmentPoolCoordinator,
+  poolAlignmentFolder,
+  poolAudioPath,
+  poolEnabled,
+  poolFailureMessage,
+  poolWorkerBase,
+  shouldDispatchToPool,
+} from "./alignment-pool.ts";
+import {
   coreIntervals,
   planSamples,
   planSegments,
@@ -511,10 +521,11 @@ async function workerRequest(
   failure = path === "/anchor"
     ? "Local speech recovery is unavailable. Check that the speech model is installed on the media drive."
     : "Local alignment could not process part of this narration. Retry, or choose a release with chapters.",
+  workerBase = process.env.ALIGNMENT_WORKER_URL!,
 ) {
   for (let attempt = 0; ; attempt++) {
     const response = await fetch(
-      `${process.env.ALIGNMENT_WORKER_URL!.replace(/\/$/, "")}${path}`,
+      `${workerBase.replace(/\/$/, "")}${path}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -554,6 +565,19 @@ async function processAnchored(
   tracks: ReturnType<typeof recordingContext>["tracks"],
   folder: string,
 ) {
+  const workerBase = poolWorkerBase(job);
+  const audioPath = (track: (typeof tracks)[number]) =>
+    poolAudioPath(job, track, localAudio);
+  const workFolder = poolAlignmentFolder(job, folder);
+  if (job.pool) mkdirSync(workFolder, { recursive: true, mode: 0o750 });
+  const usingLocalFull =
+    !job.pool && shouldDispatchToPool(job) === false && job.mode === "anchored";
+  if (usingLocalFull)
+    getAlignmentPoolCoordinator().localFullAlignmentStarting(
+      job.recordingId,
+      job.id,
+    );
+  try {
   const generation = job.generation;
   const live = () => {
     const current = alignmentJob(job.id);
@@ -606,20 +630,22 @@ async function processAnchored(
       if (sample.done) continue;
       if (!live()) return;
       const track = tracks.find((track) => track.id === sample.trackId);
-      const audio = track && localAudio(track);
+      const audio = track && audioPath(track);
       if (!audio) throw new Error("The required audio file is unavailable.");
       const result = anchorResult.parse(
         await workerRequest(
           "/anchor",
           {
             audio,
-            output: join(folder, "anchor.json"),
+            output: join(workFolder, "anchor.json"),
             fragments: blocks,
             language,
             start: sample.time,
             duration: sample.duration,
           },
           ANCHOR_TIMEOUT_MS,
+          undefined,
+          workerBase,
         ),
       );
       if (!current()) return;
@@ -683,7 +709,7 @@ async function processAnchored(
     if (segment.done) continue;
     if (!live()) return;
     const track = tracks.find((track) => track.id === segment.trackId);
-    const audio = track && localAudio(track);
+    const audio = track && audioPath(track);
     if (!audio) throw new Error("The required audio file is unavailable.");
     const cacheKey = createHash("sha256")
       .update(
@@ -697,7 +723,7 @@ async function processAnchored(
       )
       .digest("hex")
       .slice(0, 24);
-    const output = join(folder, `window-${i}-${cacheKey}.json`);
+    const output = join(workFolder, `window-${i}-${cacheKey}.json`);
     const raw = existsSync(output)
       ? JSON.parse(readFileSync(output, "utf8"))
       : await workerRequest(
@@ -713,6 +739,8 @@ async function processAnchored(
             duration: segment.duration,
           },
           SECTION_TIMEOUT_MS,
+          undefined,
+          workerBase,
         );
     if (!current()) return;
     const result = z
@@ -794,6 +822,19 @@ async function processAnchored(
     );
     await onConsensusAlignmentFinished(job.ebookId.slice("set-consensus:".length), job);
   }
+  } finally {
+    if (usingLocalFull)
+      getAlignmentPoolCoordinator().localFullAlignmentFinished(
+        job.recordingId,
+        job.id,
+      );
+    if (job.pool)
+      getAlignmentPoolCoordinator().release(
+        job.pool.hostId,
+        job.id,
+        job.recordingId,
+      );
+  }
 }
 let running = false,
   stopping = false,
@@ -855,6 +896,26 @@ export async function processAlignments() {
         const folder = join(mediaRoot, "alignment", job.id);
         mkdirSync(folder, { recursive: true, mode: 0o750 });
         if (job.mode === "anchored") {
+          if (shouldDispatchToPool(job) && !job.pool) {
+            try {
+              job.pool = await dispatchFullAlignmentJob(
+                job,
+                context.tracks,
+                localAudio,
+              );
+              store(job);
+            } catch (error) {
+              job.status = "error";
+              job.error = poolFailureMessage(error);
+              store(job);
+              continue;
+            }
+          } else if (
+            shouldDispatchToPool(job) &&
+            !getAlignmentPoolCoordinator().canUseLocalWorker(job.recordingId)
+          ) {
+            continue;
+          }
           await processAnchored(job, book, context.tracks, folder);
           continue;
         }
@@ -1225,6 +1286,7 @@ export function registerAlignment(app: FastifyInstance) {
             ? "cancelled"
             : "queued";
       job.error = null;
+      if (action === "resume") delete job.pool;
     }
     store(job);
     if (action === "resume") void processAlignments();

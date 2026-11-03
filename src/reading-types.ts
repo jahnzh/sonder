@@ -127,6 +127,15 @@ export type AlignmentJob = {
   anchoring?: AlignmentAnchoring;
   /** "backfill" for jobs queued automatically; "projected" for ebook-set maps. */
   origin?: "backfill" | "manual" | "projected";
+  /** Remote SSH pool dispatch for full anchored jobs. */
+  pool?: {
+    hostId: "wsl" | "steamdeck";
+    attempt: number;
+    jobMediaRoot: string;
+    workerUrl: string;
+    triedHosts: ("wsl" | "steamdeck")[];
+    stagedAudio: Record<string, string>;
+  };
   /** Present on summary list responses; full intervals live on /map. */
   intervalCount?: number;
   unverifiedCount?: number;
