@@ -15,6 +15,8 @@ import {
   isUnreleasedHardcoverBook,
   pickCanonicalBookPerPosition,
 } from "./series-membership.ts";
+import { autoAcquireSeriesVolumes, type SeriesAudioSearchDeps } from "./series-audio.ts";
+import { acquire as defaultAcquire } from "./acquisitions.ts";
 import {
   getWorkMediaState,
   setWorkMediaHold,
@@ -912,7 +914,14 @@ export async function importHardcoverBook(
     queueStatus(userId, id, 1, "add");
   return added!;
 }
-export async function addHardcoverSeries(userId: number, seriesName: string) {
+export async function addHardcoverSeries(
+  userId: number,
+  seriesName: string,
+  overrides?: {
+    acquire?: typeof defaultAcquire;
+    seriesAudioDeps?: SeriesAudioSearchDeps;
+  },
+) {
   const result = await graphql(
     userId,
     `query SonderSeries($name:String!){series(where:{name:{_eq:$name}}){name book_series(order_by:{position:asc}){position book{id title compilation release_year release_date}}}}`,
@@ -978,6 +987,37 @@ export async function addHardcoverSeries(userId: number, seriesName: string) {
       mediaState: getWorkMediaState(userId, workId),
     });
   }
+  const author =
+    db.select().from(s.works).where(eq(s.works.id, added[0]?.workId)).get()
+      ?.author || "Unknown author";
+  if (process.env.SONDER_SKIP_SERIES_AUTO_ACQUIRE !== "1") {
+    await autoAcquireSeriesVolumes(
+    userId,
+    {
+      seriesName,
+      author,
+      volumes: added.map((row) => {
+        const meta = volumes.find((entry) => entry.bookId === row.hardcoverBookId)!;
+        const edition = db
+          .select()
+          .from(s.editions)
+          .where(eq(s.editions.id, row.editionId))
+          .get();
+        return {
+          position: row.position,
+          title: meta.title,
+          workId: row.workId,
+          unreleased: row.unreleased,
+          cover: edition?.cover,
+        };
+      }),
+    },
+    overrides?.acquire ?? defaultAcquire,
+    overrides?.seriesAudioDeps,
+  );
+  }
+  for (const row of added)
+    row.mediaState = getWorkMediaState(userId, row.workId);
   return { seriesName, volumes: added };
 }
 export function setHardcoverShelf(
