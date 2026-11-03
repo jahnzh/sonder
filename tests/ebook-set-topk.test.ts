@@ -307,3 +307,46 @@ test("selectAnchors outlier gate uses score threshold about 0.5", () => {
   const anchors = selectAnchors(samples, words, tracks, OUTLIER_MIN_SCORE);
   assert.ok(anchors.length >= Math.ceil(samples.length / 2));
 });
+
+test("POST /api/ebooks/import registers set member when alignment worker is absent", async () => {
+  delete process.env.ALIGNMENT_WORKER_URL;
+  delete process.env.ALIGNMENT_WORKER_TOKEN;
+  const workId = seedWork("Import Book", "Eve Author");
+  const audio = join(temp, "media", "import-audio.mp3");
+  mkdirSync(join(temp, "media"), { recursive: true });
+  writeFileSync(audio, "audio");
+  seedRecording(workId, `rec-${randomUUID()}`, audio);
+  const boundary = "sonder-ebook-set-import";
+  const epub = await readerFixture({ script: true });
+  const res = await app.inject({
+    method: "POST",
+    url: `/api/ebooks/import?workId=${workId}`,
+    headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+    payload: Buffer.concat([
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="Import.epub"\r\nContent-Type: application/epub+zip\r\n\r\n`,
+      ),
+      epub,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]),
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  const members = listEbookSetMembers(workId);
+  assert.equal(members.length, 1);
+  assert.equal(members[0].status, "held");
+  assert.equal(members[0].holdReason, "awaiting_worker");
+});
+
+test("buildEvidence counts shared sentences once per member epub", async () => {
+  const workId = seedWork("Shared Book", "Fran Author");
+  const firstId = `ebook-${randomUUID()}`;
+  const secondId = `ebook-${randomUUID()}`;
+  await seedEpub(workId, firstId);
+  await seedEpub(workId, secondId);
+  await evaluateEbookSetMember(workId, firstId, { sourceTitle: "Shared Book" });
+  const result = await evaluateEbookSetMember(workId, secondId, {
+    sourceTitle: "Shared Book alt",
+  });
+  assert.ok(result.evidence.sharedSentenceCount > 0);
+  assert.equal(result.evidence.uniqueSentenceCount, 0);
+});

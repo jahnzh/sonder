@@ -839,7 +839,10 @@ export async function createApp() {
         workId: z.string().optional(),
       })
       .parse(req.body);
-    return saveEbook(libgenOnly(input));
+    const saved = await saveEbook(libgenOnly(input));
+    if (input.workId && input.extension === "epub")
+      await registerUploadedEbookSetMember(input.workId, saved.id);
+    return saved;
   });
   app.get("/api/ebooks", async () => listEbooks());
   app.post("/api/ebooks/import", async (req) => {

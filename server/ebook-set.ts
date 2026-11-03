@@ -139,17 +139,12 @@ async function buildEvidence(
     (m) => m.ebookId !== ebookId && m.status !== "rejected",
   );
   const mine = await sentenceSet(ebookId);
+  const otherSets = await Promise.all(
+    members.map((member) => sentenceSet(member.ebookId)),
+  );
   let shared = 0;
   for (const sentence of mine) {
-    let inOther = false;
-    for (const member of members) {
-      const other = await sentenceSet(member.ebookId);
-      if (other.has(sentence)) {
-        inOther = true;
-        break;
-      }
-    }
-    if (inOther) shared++;
+    if (otherSets.some((set) => set.has(sentence))) shared++;
   }
   const coverage =
     outlier.spokenSampleCount > 0
@@ -332,7 +327,54 @@ export async function evaluateEbookSetMember(
     });
     return { status: "held" as const, evidence };
   }
-  const outlier = await runOutlierCheckForEbook(workId, ebookId, recordingId);
+  const workerReady =
+    Boolean(process.env.ALIGNMENT_WORKER_URL) &&
+    Boolean(process.env.ALIGNMENT_WORKER_TOKEN);
+  const usesWorker = !deps.anchorSample;
+  const pendingOutlier: OutlierCheckResult = {
+    passed: false,
+    reason: "no_spoken_samples",
+    spokenSampleCount: 0,
+    matchedSampleCount: 0,
+    anchorCount: 0,
+    forwardOrder: true,
+    samples: [],
+  };
+  let outlier = pendingOutlier;
+  let workerUnavailable = usesWorker && !workerReady;
+  if (!workerUnavailable) {
+    try {
+      outlier = await runOutlierCheckForEbook(workId, ebookId, recordingId);
+    } catch {
+      if (usesWorker) {
+        outlier = pendingOutlier;
+        workerUnavailable = true;
+      } else {
+        throw new Error("The ebook set outlier check failed.");
+      }
+    }
+  }
+  if (workerUnavailable) {
+    const evidence = await buildEvidence(
+      workId,
+      ebookId,
+      outlier,
+      meta.language ?? null,
+      byteSize,
+    );
+    upsertMember({
+      workId,
+      ebookId,
+      status: "held",
+      holdReason: "awaiting_worker",
+      sourceTitle: meta.sourceTitle,
+      sourceAuthor: meta.sourceAuthor,
+      language: meta.language,
+      byteSize,
+      evidence,
+    });
+    return { status: "held" as const, evidence };
+  }
   const evidence = await buildEvidence(
     workId,
     ebookId,
@@ -400,8 +442,10 @@ export async function fetchTopKIntoEbookSet(
   const search = deps.search ?? searchEbooks;
   const save = deps.save ?? saveEbook;
   const { files } = await search(source, `${work.title} ${work.author}`);
-  const filtered = files.filter((f) =>
-    cheapTitleAuthorMatch(work, { title: f.title, authors: f.authors }),
+  const filtered = files.filter(
+    (f) =>
+      f.extension === "epub" &&
+      cheapTitleAuthorMatch(work, { title: f.title, authors: f.authors }),
   );
   const downloaded: { id: string; status: EbookSetMemberStatus }[] = [];
   for (const file of filtered) {
