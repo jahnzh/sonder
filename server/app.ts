@@ -86,6 +86,7 @@ import {
   releaseDisplayTitle,
 } from "./sources/prowlarr.ts";
 import type { Book } from "../src/types.ts";
+import { getWorkMediaState } from "./work-media-state.ts";
 const uploadDir = importedDir;
 export function listBooks(userId = 1): Book[] {
   const allTracks = db.select().from(s.tracks).all();
@@ -145,6 +146,7 @@ export function listBooks(userId = 1): Book[] {
         status: (saved?.status || "unread") as Book["status"],
         addedAt: saved?.addedAt || 0,
         progress: allProgress.find((p) => p.recordingId === recording.id),
+        mediaState: saved ? getWorkMediaState(userId, work.id) : null,
       };
     });
 }

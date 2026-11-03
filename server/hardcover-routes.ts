@@ -6,6 +6,7 @@ import {
   configureHardcover,
   syncHardcover,
   importHardcoverBook,
+  addHardcoverSeries,
   setHardcoverShelf,
   setHardcoverListMember,
   pullHardcoverPosition,
@@ -14,6 +15,8 @@ import {
   setHardcoverToken,
   hardcoverLinkedBook,
 } from "./hardcover.ts";
+import { acquire } from "./acquisitions.ts";
+import { retryWorkMediaAcquisition } from "./series-membership.ts";
 import { currentUserId, requireAdmin } from "./users.ts";
 // Every route acts for the signed-in user's own Hardcover account (#15).
 export function registerHardcoverRoutes(app: FastifyInstance) {
@@ -52,6 +55,22 @@ export function registerHardcoverRoutes(app: FastifyInstance) {
     // Anyone may re-import a work that already points at this book.
     if (workId && hardcoverLinkedBook(workId) !== id) requireAdmin(req);
     return importHardcoverBook(currentUserId(req), id, workId);
+  });
+  app.post("/api/hardcover/series", async (req) => {
+    const { name } = z
+      .object({ name: z.string().min(1).max(300) })
+      .parse(req.body);
+    return addHardcoverSeries(currentUserId(req), name);
+  });
+  app.post("/api/works/:workId/media/retry", async (req) => {
+    const { workId } = z
+      .object({ workId: z.string().min(1) })
+      .parse(req.params);
+    return retryWorkMediaAcquisition(
+      currentUserId(req),
+      workId,
+      (magnet, metadata) => acquire(magnet, metadata),
+    );
   });
   app.patch("/api/hardcover/shelf", async (req) => {
     const { workId, statusId } = z

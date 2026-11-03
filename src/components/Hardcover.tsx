@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { api, localDB, duration, isAdmin } from "../lib";
 import type { Book, HardcoverState, Progress } from "../types";
+import { workMediaStateLabel } from "../work-media-state";
 import { Dialog } from "./ui/dialog";
 import { usePlayer } from "../player";
 type Notify = (text: string, error?: boolean) => void;
@@ -475,6 +476,36 @@ export function HardcoverBookTools({
       setBusy("");
     }
   };
+  const addSeries = async (seriesName: string) => {
+    if (!seriesName) return;
+    setBusy(`series:${seriesName}`);
+    setError("");
+    try {
+      await api("/hardcover/series", {
+        method: "POST",
+        body: JSON.stringify({ name: seriesName }),
+      });
+      changed();
+      notify("The series is in your library.");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy("");
+    }
+  };
+  const retryMedia = async () => {
+    setBusy("retry-media");
+    setError("");
+    try {
+      await api(`/works/${book.workId}/media/retry`, { method: "POST" });
+      changed();
+      notify("Download retry started.");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy("");
+    }
+  };
   const setShelf = async (statusId: number) => {
     setBusy("shelf");
     try {
@@ -667,8 +698,41 @@ export function HardcoverBookTools({
                   <span key={s.name}>
                     {s.name}
                     {s.position !== null ? ` · #${s.position}` : ""}
+                    <button
+                      type="button"
+                      className="button subtle"
+                      disabled={!!busy}
+                      onClick={() => void addSeries(s.name)}
+                    >
+                      {busy === `series:${s.name}` ? (
+                        <Loader2 className="spin" size={14} />
+                      ) : (
+                        <BookOpen size={14} />
+                      )}{" "}
+                      Add series
+                    </button>
                   </span>
                 ))}
+              </div>
+            )}
+            {book.mediaState && (
+              <div className="hardcover-media-state">
+                <span>{workMediaStateLabel(book.mediaState)}</span>
+                {book.mediaState.state === "failed" && (
+                  <button
+                    type="button"
+                    className="button subtle"
+                    disabled={!!busy}
+                    onClick={() => void retryMedia()}
+                  >
+                    {busy === "retry-media" ? (
+                      <Loader2 className="spin" size={14} />
+                    ) : (
+                      <RefreshCw size={14} />
+                    )}{" "}
+                    Retry
+                  </button>
+                )}
               </div>
             )}
             {state.lists.length > 0 && (

@@ -203,6 +203,21 @@ export const accountInvites = sqliteTable("account_invites", { id: integer("id")
 
 export const userAcquisitions = sqliteTable("user_acquisitions", { userId: integer("user_id").notNull(), acquisitionId: text("acquisition_id").notNull() }, t => [primaryKey({ columns: [t.userId, t.acquisitionId] })]);
 
+export const workMediaStates = sqliteTable(
+  "work_media_states",
+  {
+    userId: integer("user_id").notNull(),
+    workId: text("work_id")
+      .notNull()
+      .references(() => works.id),
+    state: text("state").notNull().default("missing"),
+    holdReason: text("hold_reason"),
+    acquisitionId: text("acquisition_id"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.workId] })],
+);
+
 // Per-user Hardcover account state (#15). The work → Hardcover book match in hardcover_links stays shared.
 export const userHardcoverLinks = sqliteTable("user_hardcover_links", { userId: integer("user_id").notNull(), bookId: integer("book_id").notNull(), userBookId: integer("user_book_id"), statusId: integer("status_id"), remoteUpdatedAt: integer("remote_updated_at").notNull().default(0), syncedAt: integer("synced_at").notNull().default(0) }, t => [primaryKey({ columns: [t.userId, t.bookId] })]);
 export const userHardcoverOutbox = sqliteTable("user_hardcover_outbox", { userId: integer("user_id").notNull(), bookId: integer("book_id").notNull(), accountId: integer("account_id").notNull(), statusId: integer("status_id").notNull(), intent: text("intent").notNull().default("status"), updatedAt: integer("updated_at").notNull(), error: text("error") }, t => [primaryKey({ columns: [t.userId, t.bookId] })]);
