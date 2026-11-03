@@ -48,6 +48,7 @@ import {
   CircleUserRound,
   KeyRound,
   UsersRound,
+  Copy,
 } from "lucide-react";
 import { PlayerProvider, usePlayer } from "./player";
 import { ReleasePicker } from "./components/ReleasePicker";
@@ -2193,10 +2194,39 @@ function AccountSettings({ user, needsPassword, onLogout, notify }: { user: Acco
   const [resetting, setResetting] = useState<Account | null>(null);
   const [resetPassword, setResetPassword] = useState("");
   const [removing, setRemoving] = useState<Account | null>(null);
+  const [actingRequestId, setActingRequestId] = useState<number | null>(null);
+  const [approval, setApproval] = useState<{ username: string; link: string; delivered: boolean } | null>(null);
   const refresh = () => api<Account[]>("/users").then(setUsers).catch((e) => notify(e.message, true));
   const refreshRequests = () => api<AccountRequest[]>("/account-requests").then(setRequests).catch((e) => notify(e.message, true));
   useEffect(() => { if (user.role === "admin") { void refresh(); void refreshRequests(); } }, [user.id]);
   const action = async (fn: () => Promise<unknown>) => { try { await fn(); notify("Saved."); if (user.role === "admin") await refresh(); } catch (e) { notify((e as Error).message, true); } };
+  const reviewRequest = async (request: AccountRequest, decision: "approve" | "decline") => {
+    setActingRequestId(request.id);
+    try {
+      if (decision === "decline") {
+        await api(`/account-requests/${request.id}/decline`, { method: "POST" });
+        setApproval(null);
+        await refreshRequests();
+        return;
+      }
+      const result = await api<{ ok: boolean; inviteLink: string; emailDelivered: boolean }>(`/account-requests/${request.id}/approve`, { method: "POST" });
+      setApproval({ username: request.username, link: result.inviteLink, delivered: result.emailDelivered });
+      await refreshRequests();
+    } catch (e) {
+      notify((e as Error).message, true);
+    } finally {
+      setActingRequestId(null);
+    }
+  };
+  const copyApprovalLink = async () => {
+    if (!approval) return;
+    try {
+      await navigator.clipboard.writeText(approval.link);
+      notify("Invite link copied.");
+    } catch {
+      notify("Could not copy the link.", true);
+    }
+  };
   const roleLabel = (account: Account) => account.role === "admin" ? "Admin" : "User";
   return <>
     <section className="settings-section account-section">
@@ -2236,8 +2266,19 @@ function AccountSettings({ user, needsPassword, onLogout, notify }: { user: Acco
         {requests.map(request => <li key={request.id} className="user-row request-row">
           <div className="user-row-name"><strong>{request.username}</strong><span className="quiet-tag">{relativeTime(request.createdAt)}</span></div>
           <div className="request-meta"><span>{request.email}</span>{request.note && <span className="request-note">{request.note}</span>}</div>
+          <div className="user-row-actions">
+            <button type="button" className="button subtle" disabled={actingRequestId !== null} onClick={() => void reviewRequest(request, "decline")}>Decline</button>
+            <button type="button" className="button primary" disabled={actingRequestId !== null} onClick={() => void reviewRequest(request, "approve")}><Check size={15} /> Approve</button>
+          </div>
         </li>)}
       </ul> : <p className="requests-empty">No pending account requests.</p>}
+      {approval && <div className="request-approval" role="status">
+        <p>{approval.delivered
+          ? `Approved ${approval.username}. The invite email was sent.`
+          : `Approved ${approval.username}. The invite email was not sent. Copy the link and share it directly.`}</p>
+        <code className="request-approval-link">{approval.link}</code>
+        <button type="button" className="button subtle" onClick={() => void copyApprovalLink()}><Copy size={15} /> Copy link</button>
+      </div>}
       <form className="account-form user-add" onSubmit={e => { e.preventDefault(); void action(async () => { await api("/users", { method: "POST", body: JSON.stringify({ username, password, role: "user" }) }); setUsername(""); setPassword(""); }); }}>
         <h3>Add user</h3>
         <label>Username<input required value={username} onChange={e => setUsername(e.target.value)} /></label>
