@@ -6,10 +6,14 @@ import path from "node:path";
 import {
   AlignmentPoolCoordinator,
   POOL_FAILURE_MESSAGE,
+  clearPoolStaging,
   defaultPoolHosts,
   dispatchFullAlignmentJob,
   isolatedJobMediaRoot,
   isFullAlignmentJob,
+  poolAlignmentFolder,
+  poolJobNeedsStaging,
+  poolRemoteAlignmentFolder,
   resetAlignmentPoolCoordinator,
   setAlignmentPoolDepsForTests,
   stageTracksLocally,
@@ -172,4 +176,95 @@ test("default pool host caps match v1 WSL 3 and deck 1", () => {
   const configured = defaultPoolHosts();
   assert.equal(configured.find((h) => h.id === "wsl")?.maxConcurrent, 3);
   assert.equal(configured.find((h) => h.id === "steamdeck")?.maxConcurrent, 1);
+});
+
+test("default pool worker URLs target remote hosts, not loopback", () => {
+  const configured = defaultPoolHosts();
+  for (const host of configured) {
+    assert.doesNotMatch(host.workerUrl, /127\.0\.0\.1/);
+    assert.match(host.workerUrl, /^http:\/\//);
+  }
+});
+
+test("local full-alignment cap allows only one concurrent local job", () => {
+  const coord = new AlignmentPoolCoordinator(hosts);
+  assert.ok(coord.tryAcquireLocal("local-a"));
+  assert.equal(coord.tryAcquireLocal("local-b"), false);
+  coord.releaseLocal("local-a");
+  assert.ok(coord.tryAcquireLocal("local-b"));
+});
+
+test("poolAlignmentFolder keeps local cache paths for remote jobs", () => {
+  const local = "/data/alignment/job-1";
+  const job = {
+    id: "job-1",
+    pool: {
+      hostId: "wsl",
+      jobMediaRoot: "/pool/jobs/job-1/media",
+    },
+  } as AlignmentJob;
+  assert.equal(poolAlignmentFolder(job, local), local);
+  assert.equal(
+    poolRemoteAlignmentFolder(job),
+    "/pool/jobs/job-1/media/alignment/job-1",
+  );
+});
+
+test("resume clears staging but keeps triedHosts for failover", () => {
+  const prevPool = process.env.ALIGNMENT_POOL_ENABLED;
+  process.env.ALIGNMENT_POOL_ENABLED = "1";
+  try {
+    const job = {
+      id: "j1",
+      mode: "anchored",
+      origin: "backfill",
+      pool: {
+        hostId: "wsl",
+        attempt: 1,
+        jobMediaRoot: "/pool/jobs/j1/media",
+        workerUrl: "http://wsl-worker",
+        triedHosts: ["wsl"],
+        stagedAudio: { t1: "/pool/jobs/j1/media/tracks/t1.mp3" },
+      },
+    } as unknown as AlignmentJob;
+    clearPoolStaging(job, job.pool!.triedHosts);
+    assert.deepEqual(job.pool?.triedHosts, ["wsl"]);
+    assert.equal(job.pool?.jobMediaRoot, "");
+    assert.ok(poolJobNeedsStaging(job));
+  } finally {
+    if (prevPool === undefined) delete process.env.ALIGNMENT_POOL_ENABLED;
+    else process.env.ALIGNMENT_POOL_ENABLED = prevPool;
+  }
+});
+
+test("stageTracksOnHost links shared read-only models into job media root", async () => {
+  const commands: string[] = [];
+  const deps: PoolSshDeps = {
+    async probe() {
+      return true;
+    },
+    async exec(_target, command) {
+      commands.push(command);
+      return { code: 0, stdout: "", stderr: "" };
+    },
+    async uploadFile() {},
+  };
+  setAlignmentPoolDepsForTests(deps);
+  resetAlignmentPoolCoordinator(hosts);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pool-audio-"));
+  const audio = path.join(tmp, "track.mp3");
+  fs.writeFileSync(audio, "audio");
+  await dispatchFullAlignmentJob(
+    { id: "models-job", recordingId: "rec-m", mode: "anchored" } as AlignmentJob,
+    [{ id: "track-1" }] as any[],
+    () => audio,
+  );
+  assert.ok(
+    commands.some(
+      (command) =>
+        command.includes("ln -sfn '/pool/shared/alignment/models'") &&
+        command.includes("/alignment/models"),
+    ),
+  );
+  fs.rmSync(tmp, { recursive: true, force: true });
 });

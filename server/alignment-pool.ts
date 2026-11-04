@@ -58,28 +58,44 @@ export function shouldDispatchToPool(job: AlignmentJob) {
   return poolEnabled() && isFullAlignmentJob(job);
 }
 
+function hostNameFromSshTarget(sshTarget: string) {
+  const at = sshTarget.lastIndexOf("@");
+  return at >= 0 ? sshTarget.slice(at + 1) : sshTarget;
+}
+
 export function defaultPoolHosts(): PoolHost[] {
   const workRoot =
     process.env.ALIGNMENT_POOL_REMOTE_ROOT ??
     "~/sonder-replication/alignment-pool";
+  const wslHost = process.env.ALIGNMENT_POOL_WSL_HOST ?? "192.168.1.119";
+  const deckHost = process.env.ALIGNMENT_POOL_DECK_HOST ?? "deck@steamdeck";
   return [
     {
       id: "wsl",
-      sshTarget: process.env.ALIGNMENT_POOL_WSL_HOST ?? "192.168.1.119",
+      sshTarget: wslHost,
       maxConcurrent: 3,
       remoteWorkRoot: workRoot,
       workerUrl:
-        process.env.ALIGNMENT_POOL_WSL_WORKER_URL ?? "http://127.0.0.1:3012",
+        process.env.ALIGNMENT_POOL_WSL_WORKER_URL ??
+        `http://${hostNameFromSshTarget(wslHost)}:3012`,
     },
     {
       id: "steamdeck",
-      sshTarget: process.env.ALIGNMENT_POOL_DECK_HOST ?? "deck@steamdeck",
+      sshTarget: deckHost,
       maxConcurrent: 1,
       remoteWorkRoot: workRoot,
       workerUrl:
-        process.env.ALIGNMENT_POOL_DECK_WORKER_URL ?? "http://127.0.0.1:3012",
+        process.env.ALIGNMENT_POOL_DECK_WORKER_URL ??
+        `http://${hostNameFromSshTarget(deckHost)}:3012`,
     },
   ];
+}
+
+export function sharedAlignmentModelsRoot(host: PoolHost) {
+  return (
+    process.env.ALIGNMENT_POOL_REMOTE_MODELS_ROOT ??
+    `${host.remoteWorkRoot}/shared/alignment`
+  );
 }
 
 export function isolatedJobMediaRoot(host: PoolHost, jobId: string) {
@@ -143,11 +159,14 @@ type RecordingLease = { jobId: string; site: "local" | "remote" };
 export class AlignmentPoolCoordinator {
   private slots = new Map<PoolHostId, Set<string>>();
   private recordings = new Map<string, RecordingLease>();
+  private localJobs = new Set<string>();
+  private readonly maxLocalConcurrent = 1;
   constructor(private hosts: PoolHost[] = defaultPoolHosts()) {}
 
   reset() {
     this.slots.clear();
     this.recordings.clear();
+    this.localJobs.clear();
   }
 
   hostById(id: PoolHostId) {
@@ -161,6 +180,16 @@ export class AlignmentPoolCoordinator {
   canUseLocalWorker(recordingId: string) {
     const lease = this.recordings.get(recordingId);
     return !lease || lease.site === "local";
+  }
+
+  tryAcquireLocal(jobId: string) {
+    if (this.localJobs.size >= this.maxLocalConcurrent) return false;
+    this.localJobs.add(jobId);
+    return true;
+  }
+
+  releaseLocal(jobId: string) {
+    this.localJobs.delete(jobId);
   }
 
   localFullAlignmentStarting(recordingId: string, jobId: string) {
@@ -224,10 +253,12 @@ export function resetAlignmentPoolCoordinator(hosts?: PoolHost[]) {
 
 export async function stageTracksOnHost(input: StageTracksInput) {
   const mediaRoot = isolatedJobMediaRoot(input.host, input.jobId);
+  const modelsRoot = sharedAlignmentModelsRoot(input.host);
   const deps = poolDeps();
   await deps.exec(
     input.host.sshTarget,
-    `mkdir -p '${mediaRoot}/tracks' '${isolatedAlignmentFolder(input.host, input.jobId)}'`,
+    `mkdir -p '${mediaRoot}/tracks' '${mediaRoot}/alignment/${input.jobId}' && ` +
+      `if [ -e '${modelsRoot}/models' ]; then ln -sfn '${modelsRoot}/models' '${mediaRoot}/alignment/models'; fi`,
   );
   const stagedAudio: Record<string, string> = {};
   for (const track of input.tracks) {
@@ -321,9 +352,29 @@ export function poolAudioPath(
   return localAudio(track);
 }
 
-export function poolAlignmentFolder(job: AlignmentJob, localFolder: string) {
-  if (!job.pool) return localFolder;
+/** Local alignment cache directory (never a remote SSH path). */
+export function poolAlignmentFolder(_job: AlignmentJob, localFolder: string) {
+  return localFolder;
+}
+
+export function poolRemoteAlignmentFolder(job: AlignmentJob) {
+  if (!job.pool?.jobMediaRoot) return null;
   return `${job.pool.jobMediaRoot}/alignment/${job.id}`;
+}
+
+export function poolJobNeedsStaging(job: AlignmentJob) {
+  return shouldDispatchToPool(job) && !job.pool?.jobMediaRoot;
+}
+
+export function clearPoolStaging(job: AlignmentJob, triedHosts: PoolHostId[]) {
+  job.pool = {
+    hostId: "wsl",
+    attempt: triedHosts.length,
+    jobMediaRoot: "",
+    workerUrl: "",
+    triedHosts,
+    stagedAudio: {},
+  };
 }
 
 export { POOL_FAILURE_MESSAGE };
