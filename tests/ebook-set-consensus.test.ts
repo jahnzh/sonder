@@ -379,6 +379,7 @@ test("accepted members get projected maps and default EPUB via API", async () =>
   );
   assert.equal(jobs.length, 1);
   assert.ok(jobs[0].intervalCount > 0);
+  assert.deepEqual(jobs[0].sectionsDone, [0]);
 
   const override = await app.inject({
     method: "PATCH",
@@ -388,6 +389,84 @@ test("accepted members get projected maps and default EPUB via API", async () =>
   assert.equal(override.statusCode, 200, override.body);
   assert.equal(override.json().defaultEbookId, ebookB);
   assert.equal(override.json().defaultEbookOverride, ebookB);
+});
+
+test("explicit pairings supersede an in-flight backfill and stay ahead of projections", async () => {
+  const workId = seedWork("Prepare Wins", "Grace Author");
+  const ebookId = `ebook-prep-${randomUUID()}`;
+  await seedEpub(workId, ebookId);
+  const audio = join(temp, "media", "prepare-wins.mp3");
+  writeFileSync(audio, "audio");
+  const recordingId = `rec-prep-${randomUUID()}`;
+  seedRecording(workId, recordingId, audio);
+  const trackId = (
+    db.select().from(schema.tracks).all().find((row: { recordingId: string }) => row.recordingId === recordingId) as {
+      id: string;
+    }
+  ).id;
+
+  const backfill = await createAlignment(
+    ebookId,
+    recordingId,
+    undefined,
+    "anchored",
+    "backfill",
+  );
+  assert.equal(backfill.status, "queued");
+  assert.equal(backfill.mode, "anchored");
+  const backfillGeneration = backfill.generation;
+
+  const prepared = await createAlignment(ebookId, recordingId, [
+    { section: 0, trackId, start: 0, duration: 95 },
+  ]);
+  assert.equal(prepared.id, backfill.id);
+  assert.notEqual(prepared.generation, backfillGeneration);
+  assert.equal(prepared.pairings.length, 1);
+  assert.equal(prepared.mode, undefined);
+  assert.equal(prepared.origin, undefined);
+
+  // Projected publish must not replace a prepared map for the same pair.
+  await publishProjectedMaps(workId, {
+    id: "consensus-unused",
+    generation: "g",
+    ebookId: `set-consensus:${workId}`,
+    recordingId,
+    status: "ready",
+    progress: 1,
+    engine: "test",
+    error: null,
+    warning: null,
+    intervals: [
+      {
+        paragraphId: consensusParagraphId(0),
+        section: 0,
+        trackId,
+        start: 1,
+        end: 2,
+        confidence: 1,
+      },
+    ],
+    sectionsDone: [],
+    elapsedSeconds: 1,
+    fingerprint: "fp",
+    audioFingerprint: "audio",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    coverage: 1,
+    pairings: [],
+    mode: "anchored",
+  });
+
+  const listed = await app.inject(
+    `/api/alignments?ebookId=${encodeURIComponent(ebookId)}`,
+  );
+  assert.equal(listed.statusCode, 200, listed.body);
+  const jobs = listed.json().jobs.filter(
+    (job: { recordingId: string }) => job.recordingId === recordingId,
+  );
+  assert.equal(jobs.length, 1);
+  assert.notEqual(jobs[0].origin, "projected");
+  assert.equal(jobs[0].pairings.length, 1);
 });
 
 test("syncEbookSetConsensus skips audio realign when consensus text is unchanged", async () => {

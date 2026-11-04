@@ -10,6 +10,7 @@ import {
   firstRecordingWithLocalAudio,
   alignmentJob,
   createAlignment,
+  listAlignmentJobs,
   putAlignmentJob,
   removeProjectedMapsForWork,
 } from "./alignment.ts";
@@ -434,6 +435,16 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
   for (const member of members) {
     const projection = state.projections[member.ebookId];
     if (!projection?.length) continue;
+    // A prepared (non-projected) map for this release wins over the projection.
+    const prepared = listAlignmentJobs().find(
+      (job) =>
+        job.ebookId === member.ebookId &&
+        job.recordingId === consensusJob.recordingId &&
+        job.origin !== "projected" &&
+        job.status !== "cancelled" &&
+        job.status !== "error",
+    );
+    if (prepared) continue;
     const memberBook = await extractBook(member.ebookId);
     const intervals = projectIntervals(
       consensusJob.intervals,
@@ -441,7 +452,10 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
       memberBook,
     );
     if (!intervals.length) continue;
-    const existing = putAlignmentJob({
+    const sectionsDone = [
+      ...new Set(intervals.map((interval) => interval.section)),
+    ].sort((a, b) => a - b);
+    putAlignmentJob({
       id: projectedJobId(workId, member.ebookId, consensusJob.recordingId),
       generation: consensusJob.generation,
       ebookId: member.ebookId,
@@ -452,7 +466,7 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
       error: null,
       warning: consensusJob.warning,
       intervals,
-      sectionsDone: [],
+      sectionsDone,
       elapsedSeconds: consensusJob.elapsedSeconds,
       fingerprint: memberBook.fingerprint,
       audioFingerprint: consensusJob.audioFingerprint,
@@ -463,7 +477,6 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
       mode: "anchored",
       origin: "projected",
     });
-    void existing;
   }
 }
 
