@@ -273,7 +273,11 @@ export async function createAlignment(
   const anchored =
     mode === "anchored" ||
     (mode !== "chapters" && !chosen.length && options.anchored);
-  if (anchored && !options.anchored)
+  if (
+    anchored &&
+    !options.anchored &&
+    !ebookId.startsWith("set-consensus:")
+  )
     throw new Error(
       "This release has chapter markers or matched chapters. Match its chapters instead.",
     );
@@ -418,7 +422,8 @@ export async function runAlignmentBackfill() {
     .from(s.ebookEditions)
     .innerJoin(s.editions, eq(s.editions.workId, s.ebookEditions.workId))
     .innerJoin(s.recordings, eq(s.recordings.editionId, s.editions.id))
-    .all();
+    .all()
+    .filter(({ ebookId }) => !ebookId.startsWith("set-consensus:"));
   for (const { ebookId, recordingId } of pairs) {
     const decision = await backfillDecision(ebookId, recordingId);
     if (decision !== "queue") {
@@ -475,7 +480,11 @@ export async function autoQueueAlignmentsForWork(
       .from(s.ebookEditions)
       .where(eq(s.ebookEditions.workId, workId))
       .all()
-      .filter((row) => !filter.ebookId || row.id === filter.ebookId);
+      .filter(
+        (row) =>
+          !row.id.startsWith("set-consensus:") &&
+          (!filter.ebookId || row.id === filter.ebookId),
+      );
     const recordings = db
       .select({ id: s.recordings.id })
       .from(s.recordings)
