@@ -406,10 +406,12 @@ export async function hardcoverSeriesSearch(userId: number, query: string) {
     cover: item.book_series.find((entry) => entry.book?.cached_image?.url)?.book?.cached_image?.url ?? null,
   }));
 }
-export async function hardcoverSeriesPreview(userId: number, id: number) {
+export async function hardcoverSeriesPreview(userId: number, id: number, options?: { refresh?: boolean }) {
+  // SonderSeriesRefresh keeps the same shape so fixtures can add newly listed works only on revisit.
+  const queryName = options?.refresh ? "SonderSeriesRefresh" : "SonderSeriesPreview";
   const result = await graphql(
     userId,
-    `query SonderSeriesPreview($id:Int!){series_by_pk(id:$id){id name books_count author{name} book_series{position book{id title release_year release_date cached_image contributions{contribution author{name}}}}}}`,
+    `query ${queryName}($id:Int!){series_by_pk(id:$id){id name books_count author{name} book_series{position book{id title release_year release_date cached_image contributions{contribution author{name}}}}}}`,
     { id },
     z.object({ series_by_pk: z.object({
       id: z.number().int(), name: z.string(), books_count: z.number().nullable().optional(),
@@ -457,7 +459,11 @@ export async function hardcoverSeriesPreview(userId: number, id: number) {
     count: series.books_count ?? null, works };
 }
 export async function saveHardcoverSeries(userId: number, id: number, bookIds: number[]) {
-  const preview = await hardcoverSeriesPreview(userId, id);
+  // Re-save of an already-saved series must see the same refreshed catalogue the listener just reviewed.
+  const alreadySaved = !!sqlite.prepare(
+    "SELECT 1 AS ok FROM user_saved_series WHERE user_id=? AND series_id=?",
+  ).get(userId, id);
+  const preview = await hardcoverSeriesPreview(userId, id, { refresh: alreadySaved });
   const requested = new Set(bookIds);
   if ([...requested].some((bookId) => !preview.works.some((work) => work.id === bookId)))
     throw new Error("Choose works from this series.");
@@ -503,7 +509,39 @@ export function listSavedHardcoverSeries(userId: number) {
   return sqlite.prepare(`SELECT c.id,c.name,c.author,c.book_count AS count FROM series_catalogue c
     JOIN user_saved_series u ON u.series_id=c.id WHERE u.user_id=? ORDER BY c.name,c.id`).all(userId);
 }
-export function savedHardcoverSeries(userId: number, id: number) {
+/** Refresh the shared catalogue for a saved series by Hardcover ID without adding works. */
+export async function refreshSavedHardcoverSeries(userId: number, id: number) {
+  const known = sqlite.prepare("SELECT book_id AS id FROM series_catalogue_works WHERE series_id=?").all(id) as { id: number }[];
+  // Confirm membership first so a missing series does not hit Hardcover.
+  savedHardcoverSeries(userId, id);
+  const knownIds = new Set(known.map((row) => row.id));
+  try {
+    const preview = await hardcoverSeriesPreview(userId, id, { refresh: true });
+    const fresh = new Set<number>();
+    sqlite.transaction(() => {
+      sqlite.prepare(`INSERT INTO series_catalogue(id,name,author,book_count) VALUES(?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET name=excluded.name,author=excluded.author,book_count=excluded.book_count`)
+        .run(id, preview.name, preview.author, preview.count);
+      for (const work of preview.works) {
+        if (!knownIds.has(work.id)) fresh.add(work.id);
+        sqlite.prepare(`INSERT INTO series_catalogue_works(series_id,book_id,work_id,title,position,cover,unreleased) VALUES(?,?,?,?,?,?,?)
+          ON CONFLICT(series_id,book_id) DO UPDATE SET title=excluded.title,position=excluded.position,
+            cover=excluded.cover,unreleased=excluded.unreleased,work_id=COALESCE(excluded.work_id,series_catalogue_works.work_id)`)
+          .run(id, work.id, work.workId, work.title, work.position, work.cover, Number(work.unreleased));
+      }
+    })();
+    return savedHardcoverSeries(userId, id, { newBookIds: fresh });
+  } catch (error) {
+    // Keep the last catalogue and library membership when Hardcover is unavailable.
+    return savedHardcoverSeries(userId, id, {
+      refreshError: error instanceof Error ? error.message : "Hardcover could not refresh this series.",
+    });
+  }
+}
+export function savedHardcoverSeries(userId: number, id: number, options?: {
+  newBookIds?: Set<number>;
+  refreshError?: string;
+}) {
   const series = sqlite.prepare(`SELECT c.id,c.name,c.author,c.book_count AS count FROM series_catalogue c
     JOIN user_saved_series u ON u.series_id=c.id WHERE u.user_id=? AND c.id=?`).get(userId, id);
   if (!series) throw new Error("This saved series could not be found.");
@@ -517,13 +555,15 @@ export function savedHardcoverSeries(userId: number, id: number) {
     }[];
   const works = rows.map((work) => ({ ...work, unreleased: !!work.unreleased,
     added: !!work.added, introduced: !!work.introduced,
+    new: !!options?.newBookIds?.has(work.id) && !work.added,
     // Another user's catalogue link must not expose state for a work this user has neither added nor owns.
     ...seriesWorkState(userId, work.added || ownsWork(userId, work.workId) ? work.workId : null) }));
   const unique = works.filter((work, index) => works.findIndex((other) =>
     work.workId ? other.workId === work.workId : other.id === work.id) === index);
   // An unreleased work the user has not added cannot be finished, so it does not hold completion below 100%.
   const counted = unique.filter((work) => work.added || !work.unreleased);
-  return { ...series as object, works, completion: { finished: counted.filter((work) => work.finished).length,
+  return { ...series as object, works, ...(options?.refreshError ? { refreshError: options.refreshError } : {}),
+    completion: { finished: counted.filter((work) => work.finished).length,
     total: counted.length, nextBookId: counted.find((work) => !work.finished)?.id ?? null } };
 }
 function ownsWork(userId: number, workId: string | null) {

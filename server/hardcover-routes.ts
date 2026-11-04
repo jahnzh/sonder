@@ -18,7 +18,7 @@ import {
   hardcoverSeriesPreview,
   saveHardcoverSeries,
   listSavedHardcoverSeries,
-  savedHardcoverSeries,
+  refreshSavedHardcoverSeries,
   hardcoverBook,
 } from "./hardcover.ts";
 import { acquire } from "./acquisitions.ts";
@@ -42,7 +42,8 @@ export function registerHardcoverRoutes(app: FastifyInstance) {
   app.get("/api/series", async (req) => listSavedHardcoverSeries(currentUserId(req)));
   app.get("/api/series/:id", async (req) => {
     const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(req.params);
-    return savedHardcoverSeries(currentUserId(req), id);
+    // Revisiting a saved series refreshes the Hardcover catalogue by ID (#206).
+    return refreshSavedHardcoverSeries(currentUserId(req), id);
   });
   app.post("/api/series", async (req) => {
     const { id, bookIds } = z.object({ id: z.number().int().positive(), bookIds: z.array(z.number().int().positive()).max(1000) }).parse(req.body);

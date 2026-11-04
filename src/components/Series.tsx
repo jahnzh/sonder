@@ -9,10 +9,15 @@ type SeriesWork = {
   id: number; title: string; position: number | null; cover: string | null;
   workId: string | null; owned?: boolean; selected?: boolean; unreleased: boolean;
   needsAdmin?: boolean;
-  added?: boolean; finished?: boolean;
+  added?: boolean; finished?: boolean; new?: boolean;
   availability?: { audio: { server: boolean | null; recordings: { id: string; tracks: string[]; server: boolean; stream: boolean }[] }; ebook: { server: boolean | null; device: null } };
 };
-type Series = SeriesSummary & { works: SeriesWork[]; needsAdmin?: { id: number; title: string }[]; completion?: { finished: number; total: number; nextBookId: number | null } };
+type Series = SeriesSummary & {
+  works: SeriesWork[];
+  needsAdmin?: { id: number; title: string }[];
+  completion?: { finished: number; total: number; nextBookId: number | null };
+  refreshError?: string;
+};
 export type SeriesTarget = { id: number; mode: "preview" | "saved" };
 
 export function SeriesDiscovery({ configured, onConnect, onOpen }: { configured: boolean; onConnect: () => void; onOpen: (id: number) => void }) {
@@ -68,40 +73,52 @@ export function SeriesDialog({ target, onClose, onSaved, downloads }: { target: 
   useEffect(() => {
     if (!target) return;
     let active = true;
-    setSeries(null); setError(""); setMode(target.mode); setSavedNotice(false);
+    setSeries(null); setError(""); setMode(target.mode); setSavedNotice(false); setSelected([]);
     void api<Series>(target.mode === "saved" ? `/series/${target.id}` : `/hardcover/series/${target.id}`).then((value) => {
       if (!active) return;
-      setSeries(value); setSelected(value.works.filter((work) => work.selected).map((work) => work.id));
+      setSeries(value);
+      setSelected(target.mode === "preview"
+        ? value.works.filter((work) => work.selected).map((work) => work.id)
+        : []);
     }).catch((reason) => { if (active) setError(reason.message); });
     return () => { active = false; };
   }, [target]);
   const save = async () => {
-    if (!series) return;
+    if (!series || !selected.length) return;
     setBusy(true); setError("");
     try {
       const result = await api<Series>("/series", { method: "POST", body: JSON.stringify({ id: series.id, bookIds: selected }) });
-      setSeries(result); setMode("saved"); setSavedNotice(true); onSaved();
+      setSeries(result); setMode("saved"); setSelected([]); setSavedNotice(true); onSaved();
     } catch (reason) { setError((reason as Error).message); }
     finally { setBusy(false); }
   };
   const next = series?.works.find((work) => work.id === series.completion?.nextBookId);
   const numbered = series?.works.filter((work) => work.position !== null) || [];
   const unnumbered = series?.works.filter((work) => work.position === null) || [];
+  const canSelect = (work: SeriesWork) => mode === "preview" || (mode === "saved" && !work.added);
   const renderWorks = (works: SeriesWork[]) => works.map((work) => {
     const audio = work.availability?.audio;
     const device = audio?.recordings.some((recording) => recording.tracks.length > 0 && recording.tracks.every((id) => downloads.some((download) => download.trackId === id)));
-    return <li className="series-work" key={work.id}>
-      {mode === "preview" ? <label><input type="checkbox" disabled={work.needsAdmin} checked={selected.includes(work.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, work.id] : current.filter((id) => id !== work.id))} />
+    const selectable = canSelect(work);
+    return <li className={`series-work${work.new ? " series-work-new" : ""}`} key={work.id}>
+      {selectable ? <label><input type="checkbox" disabled={work.needsAdmin} checked={selected.includes(work.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, work.id] : current.filter((id) => id !== work.id))} />
         <span>{work.position !== null && <b>#{work.position} </b>}{work.title}</span></label> : <strong>{work.position !== null && `#${work.position} `}{work.title}</strong>}
-      <div className="series-work-meta">{work.owned && mode === "preview" && <span>Already in your library</span>}{work.needsAdmin && mode === "preview" && <span>Possible existing match: ask an administrator to confirm and link it.</span>}{work.unreleased && <span>Unreleased</span>}{mode === "saved" && <>
-        <span>{work.added ? "In your series selection" : "Not added"}{work.finished ? " · Finished" : ""}</span>
-        <span>Audio: {audio?.server == null ? "availability unknown" : audio.server ? "on server" : "not on server"}{work.workId ? (device ? " · on device" : " · not on device") : ""}{audio?.recordings.some((recording) => recording.stream) ? " · stream availability unknown" : ""}</span>
-        <span>Ebook: {work.availability?.ebook.server == null ? "availability unknown" : work.availability.ebook.server ? "on server" : "not on server"} · device availability unknown</span>
-      </>}</div>
+      <div className="series-work-meta">
+        {work.new && <span>New</span>}
+        {work.owned && mode === "preview" && <span>Already in your library</span>}
+        {work.needsAdmin && selectable && <span>Possible existing match: ask an administrator to confirm and link it.</span>}
+        {work.unreleased && <span>Unreleased</span>}
+        {mode === "saved" && <>
+          <span>{work.added ? "In your series selection" : "Not added"}{work.finished ? " · Finished" : ""}</span>
+          <span>Audio: {audio?.server == null ? "availability unknown" : audio.server ? "on server" : "not on server"}{work.workId ? (device ? " · on device" : " · not on device") : ""}{audio?.recordings.some((recording) => recording.stream) ? " · stream availability unknown" : ""}</span>
+          <span>Ebook: {work.availability?.ebook.server == null ? "availability unknown" : work.availability.ebook.server ? "on server" : "not on server"} · device availability unknown</span>
+        </>}
+      </div>
     </li>;
   });
   return <Dialog open={!!target} onOpenChange={(open) => { if (!open) onClose(); }} title={series?.name || "Series"} className="series-dialog">
     {error && <p className="inline-error" role="alert">{error}</p>}
+    {series?.refreshError && <p className="inline-error" role="alert">Could not refresh from Hardcover. Showing the last saved catalogue. {series.refreshError}</p>}
     {!series && !error && <p>Loading series…</p>}
     {series && <>
       {savedNotice && <p role="status">Series saved.</p>}
@@ -110,7 +127,10 @@ export function SeriesDialog({ target, onClose, onSaved, downloads }: { target: 
       {mode === "saved" && series.completion && <p>{series.completion.finished} of {series.completion.total} works finished · {next ? `Next unfinished: ${next.title}` : "Series complete"}</p>}
       {numbered.length > 0 && <><h3>Numbered works</h3><ol className="series-works">{renderWorks(numbered)}</ol></>}
       {unnumbered.length > 0 && <><h3>Related works</h3><ul className="series-works">{renderWorks(unnumbered)}</ul></>}
-      {mode === "preview" ? <button className="button primary" disabled={busy} onClick={() => void save()}>Add selected works</button> : <button className="button subtle" onClick={onClose}>Close series</button>}
+      {mode === "preview" || selected.length > 0
+        ? <button className="button primary" disabled={busy || !selected.length} onClick={() => void save()}>Add selected works</button>
+        : <button className="button subtle" onClick={onClose}>Close series</button>}
+      {mode === "saved" && selected.length > 0 && <button className="button subtle" onClick={onClose}>Close series</button>}
     </>}
   </Dialog>;
 }

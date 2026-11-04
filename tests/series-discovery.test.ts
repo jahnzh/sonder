@@ -29,6 +29,9 @@ const books = [
   book_series: book.id === 101 ? [{ position: 1, series: { id: 11, name: "The Crossing" } }] : [], editions: [] }));
 const existingBook = { ...books[0], id: 106, title: "Alice’s Adventures in Wonderland", contributions: [{ contribution: "author", author: { name: "Lewis Carroll" } }], book_series: [] };
 const pendingBook = { ...books[0], id: 107, title: "Frankenstein", contributions: [{ contribution: "author", author: { name: "Mary Shelley" } }], book_series: [] };
+const lateBook = { ...books[0], id: 105, title: "Third crossing", release_year: 2023, release_date: "2023-01-01",
+  book_series: [{ position: 4, series: { id: 11, name: "The Crossing" } }] };
+let seriesElevenExtras: typeof books = [];
 let externalRequests = 0;
 let hardcoverOutage = false;
 globalThis.fetch = async (input, init) => {
@@ -40,18 +43,20 @@ globalThis.fetch = async (input, init) => {
     assert.match(query, /search\(query:\$q,query_type:"Series"/);
     return Response.json({ data: { search: { ids: [11, 12] } } });
   }
-  if (query.includes("SonderSeriesPreview")) return Response.json({ data: { series_by_pk: {
+  if (query.includes("SonderSeriesPreview") || query.includes("SonderSeriesRefresh")) return Response.json({ data: { series_by_pk: {
     ...(variables.id === 13 ? { id: 13, name: "Alice series", author: { name: "Lewis Carroll" }, books_count: 1,
       book_series: [{ position: 1, book: existingBook }] } : variables.id === 14 ? {
       id: 14, name: "Mixed series", author: { name: "Mary Shelley" }, books_count: 2,
       book_series: [{ position: 1, book: pendingBook }, { position: 2, book: books[2] }],
     } : {
     ...series.find((item) => item.id === variables.id),
+    books_count: 3 + seriesElevenExtras.length,
     book_series: [{ position: null, book: books[2] }, { position: 2, book: books[1] },
-      { position: 3, book: books[3] }, { position: 1, book: books[0] }],
+      { position: 3, book: books[3] }, { position: 1, book: books[0] },
+      ...seriesElevenExtras.map((book, index) => ({ position: 4 + index, book }))],
     }),
   } } });
-  if (query.includes("SonderBook(")) return Response.json({ data: { books_by_pk: [...books, existingBook, pendingBook].find((book) => book.id === variables.id) ?? null } });
+  if (query.includes("SonderBook(")) return Response.json({ data: { books_by_pk: [...books, existingBook, pendingBook, lateBook, ...seriesElevenExtras].find((book) => book.id === variables.id) ?? null } });
   return Response.json({ errors: [{ message: "Unexpected Hardcover query" }] });
 };
 after(async () => {
@@ -116,7 +121,11 @@ test("saving selected works reuses owned titles and remembers their provenance",
   assert.equal(externalRequests, 0, "saving must not start audio or ebook searches");
   hardcoverOutage = true;
   try {
-    assert.equal((await app.inject("/api/series/11")).statusCode, 200, "saved catalogue survives an upstream outage");
+    const offline = await app.inject("/api/series/11");
+    assert.equal(offline.statusCode, 200, "saved catalogue survives an upstream outage");
+    assert.match(offline.json().refreshError, /Hardcover could not be reached|Hardcover unavailable/);
+    assert.deepEqual(offline.json().works.map((work: any) => work.id), [101, 102, 104, 103]);
+    assert.ok((await app.inject("/api/books")).json().some((book: any) => book.inLibrary && book.title === "Companion"));
   } finally { hardcoverOutage = false; }
 });
 
@@ -206,4 +215,39 @@ test("saved series and completion are personal while catalogue works are shared"
   } finally {
     delete process.env.APP_PASSWORD;
   }
+});
+
+test("revisiting refreshes by series ID, highlights new works, and adds only chosen ones", async () => {
+  seriesElevenExtras = [lateBook];
+  const before = (await app.inject("/api/books")).json().filter((book: any) => book.inLibrary);
+  const refreshed = await app.inject("/api/series/11");
+  assert.equal(refreshed.statusCode, 200, refreshed.body);
+  const view = refreshed.json();
+  assert.equal(view.id, 11);
+  const late = view.works.find((work: any) => work.id === 105);
+  assert.equal(late?.new, true);
+  assert.equal(late?.added, false);
+  assert.equal(view.works.find((work: any) => work.id === 101).added, true);
+  assert.equal(view.works.find((work: any) => work.id === 101).new, false);
+  assert.equal((await app.inject("/api/books")).json().filter((book: any) => book.inLibrary).length, before.length,
+    "refresh must not add catalogue works to the library");
+  const added = await app.inject({ method: "POST", url: "/api/series", payload: { id: 11, bookIds: [105] } });
+  assert.equal(added.statusCode, 200, added.body);
+  const after = added.json().works;
+  assert.equal(after.find((work: any) => work.id === 105).added, true);
+  assert.equal(after.find((work: any) => work.id === 105).new, false);
+  assert.equal(after.find((work: any) => work.id === 101).added, true);
+  assert.equal(after.find((work: any) => work.id === 103).added, true);
+  assert.equal(after.find((work: any) => work.id === 104).added, true);
+  assert.equal(after.find((work: any) => work.id === 102).added, false);
+  assert.equal((await app.inject("/api/books")).json().filter((book: any) => book.inLibrary && book.title === "Third crossing").length, 1);
+  const again = await app.inject({ method: "POST", url: "/api/series", payload: { id: 11, bookIds: [105] } });
+  assert.equal(again.statusCode, 200, again.body);
+  assert.equal((await app.inject("/api/books")).json().filter((book: any) => book.inLibrary && book.title === "Third crossing").length, 1,
+    "adding an already-selected work must not duplicate it");
+  seriesElevenExtras = [];
+  const stable = await app.inject("/api/series/11");
+  assert.equal(stable.statusCode, 200, stable.body);
+  assert.equal(stable.json().works.find((work: any) => work.id === 105)?.added, true);
+  assert.equal(stable.json().refreshError, undefined);
 });

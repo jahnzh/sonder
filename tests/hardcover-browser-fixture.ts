@@ -31,6 +31,7 @@ export function installHardcoverFixture() {
     books[0], book(503, "Crossing Two", "Ada North"), book(504, "Crossing Companion", "Ada North"),
     { ...book(505, "Future Crossing", "Ada North"), release_year: 2999, release_date: "2999-01-01" },
   ];
+  const lateSeriesBook = book(506, "Crossing Three", "Ada North");
   const series = [
     { id: 701, name: "The Crossing", books_count: 4, author: { name: "Ada North" },
       book_series: [{ position: 1, book: seriesBooks[0] }, { position: 2, book: seriesBooks[1] },
@@ -73,7 +74,16 @@ export function installHardcoverFixture() {
     let data: unknown;
     if (q.includes("SonderSeriesSearchDetails")) data = { series };
     else if (q.includes("SonderSeriesSearch")) data = { search: { ids: series.map((item) => item.id) } };
-    else if (q.includes("SonderSeriesPreview")) data = { series_by_pk: series.find((item) => item.id === v.id) ?? null };
+    else if (q.includes("SonderSeriesRefresh") || q.includes("SonderSeriesPreview")) {
+      const found = series.find((item) => item.id === v.id) ?? null;
+      // First refresh of series 701 permanently adds a newly listed work so later saves see it too (#206).
+      if (q.includes("SonderSeriesRefresh") && found?.id === 701
+        && !found.book_series.some((entry) => entry.book?.id === lateSeriesBook.id)) {
+        found.book_series.push({ position: 4, book: lateSeriesBook });
+        found.books_count = 5;
+      }
+      data = { series_by_pk: found };
+    }
     else if (q.includes("SonderAccount"))
       data = { me: [{ id: 99001, username: "browser-reader" }] };
     else if (q.includes("SonderLibrary"))
@@ -128,7 +138,7 @@ export function installHardcoverFixture() {
     else if (q.includes("SonderBookProgress"))
       data = { user_books: entries.filter((e) => e.book_id === v.bookId) };
     else if (q.includes("SonderBook("))
-      data = { books_by_pk: [...books, ...seriesBooks].find((b) => b.id === v.id) || null };
+      data = { books_by_pk: [...books, ...seriesBooks, lateSeriesBook].find((b) => b.id === v.id) || null };
     else if (q.includes("SonderShelfUpdate")) {
       const item = entries.find((e) => e.id === v.id)!;
       item.status_id = v.object.status_id;
