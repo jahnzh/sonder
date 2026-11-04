@@ -23,6 +23,7 @@ import {
 } from "./hardcover.ts";
 import { acquire } from "./acquisitions.ts";
 import { retryWorkMediaAcquisition } from "./series-membership.ts";
+import { retrySeriesWorkAcquisition, seriesAcquire } from "./series-acquisition.ts";
 import { currentUserId, requireAdmin } from "./users.ts";
 // Every route acts for the signed-in user's own Hardcover account (#15).
 export function registerHardcoverRoutes(app: FastifyInstance) {
@@ -45,8 +46,34 @@ export function registerHardcoverRoutes(app: FastifyInstance) {
     return savedHardcoverSeries(currentUserId(req), id);
   });
   app.post("/api/series", async (req) => {
-    const { id, bookIds } = z.object({ id: z.number().int().positive(), bookIds: z.array(z.number().int().positive()).max(1000) }).parse(req.body);
-    return saveHardcoverSeries(currentUserId(req), id, bookIds);
+    const body = z
+      .object({
+        id: z.number().int().positive(),
+        bookIds: z.array(z.number().int().positive()).max(1000),
+        searchAudio: z.boolean().optional(),
+        searchEbooks: z.boolean().optional(),
+      })
+      .parse(req.body ?? {});
+    return saveHardcoverSeries(currentUserId(req), body.id, body.bookIds, {
+      searchAudio: body.searchAudio,
+      searchEbooks: body.searchEbooks,
+    });
+  });
+  app.post("/api/series/:id/works/:bookId/acquisition/retry", async (req) => {
+    const { id, bookId } = z
+      .object({
+        id: z.coerce.number().int().positive(),
+        bookId: z.coerce.number().int().positive(),
+      })
+      .parse(req.params);
+    const { kind } = z.object({ kind: z.enum(["audio", "ebook"]) }).parse(req.body ?? {});
+    return retrySeriesWorkAcquisition(
+      currentUserId(req),
+      id,
+      bookId,
+      kind,
+      seriesAcquire,
+    );
   });
   app.get("/api/hardcover", async (req) => hardcoverState(currentUserId(req)));
   app.put("/api/hardcover/token", async (req) => {

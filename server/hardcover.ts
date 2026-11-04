@@ -24,6 +24,11 @@ import {
   setWorkMediaHold,
   syncWorkMediaState,
 } from "./work-media-state.ts";
+import {
+  enqueueSeriesAcquisition,
+  seriesWorkAcquisitions,
+} from "./series-acquisition.ts";
+import { listEbookSetMembers } from "./ebook-set.ts";
 export type ShelfStatus = 1 | 2 | 3 | 4 | 5;
 export type SyncMode = "off" | "import" | "two-way";
 const shelfStatus = z.union([
@@ -456,7 +461,12 @@ export async function hardcoverSeriesPreview(userId: number, id: number) {
   return { id: series.id, name: series.name, author: series.author?.name ?? null,
     count: series.books_count ?? null, works };
 }
-export async function saveHardcoverSeries(userId: number, id: number, bookIds: number[]) {
+export async function saveHardcoverSeries(
+  userId: number,
+  id: number,
+  bookIds: number[],
+  options?: { searchAudio?: boolean; searchEbooks?: boolean },
+) {
   const preview = await hardcoverSeriesPreview(userId, id);
   const requested = new Set(bookIds);
   if ([...requested].some((bookId) => !preview.works.some((work) => work.id === bookId)))
@@ -465,6 +475,7 @@ export async function saveHardcoverSeries(userId: number, id: number, bookIds: n
   const selected = new Set([...requested].filter((bookId) => !needsAdmin.some((work) => work.id === bookId)));
   // Fetch everything before writing: an upstream failure must not leave a partial selection.
   const books = await Promise.all([...selected].map((bookId) => hardcoverBook(userId, bookId)));
+  const acquisitionWorks: { bookId: number; workId: string; unreleased: boolean }[] = [];
   sqlite.transaction(() => {
     sqlite.prepare(`INSERT INTO series_catalogue(id,name,author,book_count) VALUES(?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET name=excluded.name,author=excluded.author,book_count=excluded.book_count`)
@@ -495,8 +506,11 @@ export async function saveHardcoverSeries(userId: number, id: number, bookIds: n
       sqlite.prepare("UPDATE series_catalogue_works SET work_id=? WHERE series_id=? AND book_id=?").run(workId, id, work.id);
       sqlite.prepare("INSERT OR IGNORE INTO user_saved_series_works(user_id,series_id,book_id,work_id,introduced) VALUES(?,?,?,?,?)")
         .run(userId, id, work.id, workId, Number(!previouslyOwned));
+      acquisitionWorks.push({ bookId: work.id, workId, unreleased: work.unreleased });
     }
   })();
+  if (options?.searchAudio || options?.searchEbooks)
+    enqueueSeriesAcquisition(userId, id, acquisitionWorks, options);
   return { ...savedHardcoverSeries(userId, id), needsAdmin };
 }
 export function listSavedHardcoverSeries(userId: number) {
@@ -515,10 +529,39 @@ export function savedHardcoverSeries(userId: number, id: number) {
       id: number; title: string; position: number | null; cover: string | null; unreleased: number;
       workId: string | null; added: number; introduced: number;
     }[];
-  const works = rows.map((work) => ({ ...work, unreleased: !!work.unreleased,
-    added: !!work.added, introduced: !!work.introduced,
-    // Another user's catalogue link must not expose state for a work this user has neither added nor owns.
-    ...seriesWorkState(userId, work.added || ownsWork(userId, work.workId) ? work.workId : null) }));
+  const works = rows.map((work) => {
+    const base = seriesWorkState(userId, work.added || ownsWork(userId, work.workId) ? work.workId : null);
+    const unreleased = !!work.unreleased;
+    const added = !!work.added;
+    const workId = work.workId;
+    const mediaState =
+      added && workId ? getWorkMediaState(userId, workId) : null;
+    const acquisition =
+      added && workId
+        ? seriesWorkAcquisitions(userId, id, work.id, workId, unreleased)
+        : null;
+    const members =
+      added && workId ? listEbookSetMembers(workId) : [];
+    const ebookSet = added
+      ? {
+          held: members.filter((member) => member.status === "held").length,
+          accepted: members.filter((member) => member.status === "accepted")
+            .length,
+          rejected: members.filter((member) => member.status === "rejected")
+            .length,
+        }
+      : null;
+    return {
+      ...work,
+      unreleased,
+      added,
+      introduced: !!work.introduced,
+      ...base,
+      mediaState,
+      acquisition,
+      ebookSet,
+    };
+  });
   const unique = works.filter((work, index) => works.findIndex((other) =>
     work.workId ? other.workId === work.workId : other.id === work.id) === index);
   // An unreleased work the user has not added cannot be finished, so it does not hold completion below 100%.
