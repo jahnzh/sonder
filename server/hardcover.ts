@@ -8,6 +8,7 @@ import {
   onUserDeleted,
 } from "./users.ts";
 import { z } from "zod";
+import { existsSync } from "node:fs";
 import { and, eq } from "drizzle-orm";
 import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
@@ -17,6 +18,7 @@ import {
 } from "./series-membership.ts";
 import { autoAcquireSeriesVolumes, type SeriesAudioSearchDeps } from "./series-audio.ts";
 import { acquire as defaultAcquire } from "./acquisitions.ts";
+import { hasServerMedia } from "./downloads.ts";
 import {
   getWorkMediaState,
   setWorkMediaHold,
@@ -91,7 +93,7 @@ const catalogBook = z.object({
     .array(
       z.object({
         position: z.number().nullable(),
-        series: z.object({ name: z.string() }).nullable(),
+        series: z.object({ id: z.number().int().optional(), name: z.string() }).nullable(),
       }),
     )
     .default([]),
@@ -107,7 +109,7 @@ const entry = z.object({
 });
 type Entry = z.infer<typeof entry>;
 const bookFields =
-  "pages default_audio_edition { id audio_seconds edition_format contributions { contribution author { name } } } editions(where:{reading_format_id:{_eq:2}},order_by:{users_count:desc},limit:40) { id audio_seconds edition_format contributions { contribution author { name } } } id title slug description release_year cached_image contributions { contribution author { name } } book_series { position series { name } }";
+  "pages default_audio_edition { id audio_seconds edition_format contributions { contribution author { name } } } editions(where:{reading_format_id:{_eq:2}},order_by:{users_count:desc},limit:40) { id audio_seconds edition_format contributions { contribution author { name } } } id title slug description release_year cached_image contributions { contribution author { name } } book_series { position series { id name } }";
 const entryFields = `id book_id status_id updated_at user_book_reads(order_by:{id:desc},limit:1){${readFields}} book { ${bookFields} }`;
 type State = {
   mode: SyncMode;
@@ -382,6 +384,178 @@ async function graphql<T>(
   requestTail = task.catch(() => {});
   return task;
 }
+export async function hardcoverSeriesSearch(userId: number, query: string) {
+  const found = await graphql(userId,
+    'query SonderSeriesSearch($q:String!){search(query:$q,query_type:"Series",per_page:30,page:1){ids}}',
+    { q: query }, z.object({ search: z.object({ ids: z.array(z.number().int()).nullable() }) }));
+  const ids = found.search.ids || [];
+  if (!ids.length) return [];
+  const result = await graphql(
+    userId,
+    `query SonderSeriesSearchDetails($ids:[Int!]!){series(where:{id:{_in:$ids}}){id name books_count author{name} book_series(order_by:{position:asc},limit:1){book{cached_image}}}}`,
+    { ids },
+    z.object({ series: z.array(z.object({
+      id: z.number().int(), name: z.string(), books_count: z.number().nullable().optional(),
+      author: z.object({ name: z.string() }).nullable().optional(),
+      book_series: z.array(z.object({ book: z.object({ cached_image: image }).nullable() })).default([]),
+    })) }),
+  );
+  return result.series.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id)).map((item) => ({
+    id: item.id, name: item.name, author: item.author?.name ?? null,
+    count: item.books_count ?? null,
+    cover: item.book_series.find((entry) => entry.book?.cached_image?.url)?.book?.cached_image?.url ?? null,
+  }));
+}
+export async function hardcoverSeriesPreview(userId: number, id: number) {
+  const result = await graphql(
+    userId,
+    `query SonderSeriesPreview($id:Int!){series_by_pk(id:$id){id name books_count author{name} book_series{position book{id title release_year release_date cached_image contributions{contribution author{name}}}}}}`,
+    { id },
+    z.object({ series_by_pk: z.object({
+      id: z.number().int(), name: z.string(), books_count: z.number().nullable().optional(),
+      author: z.object({ name: z.string() }).nullable().optional(),
+      book_series: z.array(z.object({ position: z.number().nullable(), book: z.object({
+        id: z.number().int(), title: z.string().nullable(), release_year: z.number().nullable().optional(),
+        release_date: z.string().nullable().optional(), cached_image: image,
+        contributions: z.array(z.object({ contribution: z.string().nullable().optional(), author: z.object({ name: z.string() }).nullable() })).default([]),
+      }).nullable() })),
+    }).nullable() }),
+  );
+  const series = result.series_by_pk;
+  if (!series) throw new Error("Hardcover could not find this series.");
+  const works = series.book_series.flatMap(({ position, book }) => {
+    if (!book) return [];
+    let link = sqlite.prepare(`SELECT l.work_id AS workId,
+      EXISTS(SELECT 1 FROM audio_editions e JOIN user_library u ON u.book_id=e.id
+        WHERE e.work_id=l.work_id AND u.user_id=?) AS owned
+      FROM hardcover_links l WHERE l.book_id=? ORDER BY owned DESC LIMIT 1`).get(userId, book.id) as { workId: string; owned: number } | undefined;
+    let needsAdmin = false;
+    if (!link?.owned) {
+      const author = book.contributions.filter((item) => !item.contribution || item.contribution.toLowerCase() === "author")
+        .flatMap((item) => item.author?.name || []).join(", ") || "Unknown author";
+      const matches = db.select().from(s.works).all().filter((candidate) =>
+        hardcoverLinkedBook(candidate.id) === undefined && sameBook(candidate, { title: book.title || "", author }));
+      const ownedMatches = matches.filter((candidate) => db.select().from(s.editions).where(eq(s.editions.workId, candidate.id)).all()
+        .some((edition) => !!libraryEntry(userId, edition.id)));
+      needsAdmin = isAdminUser(userId) ? matches.length > 1 : ownedMatches.length > 0;
+      if (!link && isAdminUser(userId) && matches.length === 1) {
+        const workId = matches[0].id;
+        const owned = ownedMatches.length > 0;
+        link = { workId, owned: Number(owned) };
+      }
+    }
+    const now = new Date();
+    const unreleased = book.release_date
+      ? book.release_date > now.toISOString().slice(0, 10)
+      : book.release_year != null && book.release_year > now.getUTCFullYear();
+    return [{ id: book.id, title: book.title || "Untitled book", position,
+      cover: book.cached_image?.url ?? null, workId: link?.workId ?? null,
+      owned: !!link?.owned, unreleased, needsAdmin, selected: position !== null && !unreleased && !needsAdmin }];
+  }).sort((a, b) => a.position === null ? (b.position === null ? a.id - b.id : 1)
+    : b.position === null ? -1 : a.position - b.position || a.id - b.id);
+  return { id: series.id, name: series.name, author: series.author?.name ?? null,
+    count: series.books_count ?? null, works };
+}
+export async function saveHardcoverSeries(userId: number, id: number, bookIds: number[]) {
+  const preview = await hardcoverSeriesPreview(userId, id);
+  const requested = new Set(bookIds);
+  if ([...requested].some((bookId) => !preview.works.some((work) => work.id === bookId)))
+    throw new Error("Choose works from this series.");
+  const needsAdmin = preview.works.filter((work) => work.needsAdmin && requested.has(work.id)).map(({ id, title }) => ({ id, title }));
+  const selected = new Set([...requested].filter((bookId) => !needsAdmin.some((work) => work.id === bookId)));
+  // Fetch everything before writing: an upstream failure must not leave a partial selection.
+  const books = await Promise.all([...selected].map((bookId) => hardcoverBook(userId, bookId)));
+  sqlite.transaction(() => {
+    sqlite.prepare(`INSERT INTO series_catalogue(id,name,author,book_count) VALUES(?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET name=excluded.name,author=excluded.author,book_count=excluded.book_count`)
+      .run(id, preview.name, preview.author, preview.count);
+    sqlite.prepare("INSERT OR IGNORE INTO user_saved_series(user_id,series_id,saved_at) VALUES(?,?,?)").run(userId, id, Date.now());
+    for (const work of preview.works) {
+      sqlite.prepare(`INSERT INTO series_catalogue_works(series_id,book_id,work_id,title,position,cover,unreleased) VALUES(?,?,?,?,?,?,?)
+        ON CONFLICT(series_id,book_id) DO UPDATE SET title=excluded.title,position=excluded.position,
+          cover=excluded.cover,unreleased=excluded.unreleased,work_id=COALESCE(excluded.work_id,series_catalogue_works.work_id)`)
+        .run(id, work.id, work.workId, work.title, work.position, work.cover, Number(work.unreleased));
+      if (!selected.has(work.id)) continue;
+      const existing = sqlite.prepare(`SELECT l.work_id AS workId FROM hardcover_links l
+        JOIN audio_editions e ON e.work_id=l.work_id JOIN user_library u ON u.book_id=e.id
+        WHERE l.book_id=? AND u.user_id=? LIMIT 1`).get(work.id, userId) as { workId: string } | undefined;
+      const previouslyOwned = !!existing || (!!work.workId && db.select().from(s.editions)
+        .where(eq(s.editions.workId, work.workId)).all().some((edition) => !!libraryEntry(userId, edition.id)));
+      let workId = existing?.workId;
+      if (!workId) {
+        const book = books.find((item) => item.id === work.id)!;
+        if (previouslyOwned && work.workId && isAdminUser(userId) && hardcoverLinkedBook(work.workId) === undefined) {
+          metadataLink(work.workId, book);
+          workId = work.workId;
+        } else {
+          const imported = importCatalogBook(userId, book, null, true);
+          workId = db.select().from(s.editions).where(eq(s.editions.id, imported.bookId)).get()!.workId;
+        }
+      }
+      sqlite.prepare("UPDATE series_catalogue_works SET work_id=? WHERE series_id=? AND book_id=?").run(workId, id, work.id);
+      sqlite.prepare("INSERT OR IGNORE INTO user_saved_series_works(user_id,series_id,book_id,work_id,introduced) VALUES(?,?,?,?,?)")
+        .run(userId, id, work.id, workId, Number(!previouslyOwned));
+    }
+  })();
+  return { ...savedHardcoverSeries(userId, id), needsAdmin };
+}
+export function listSavedHardcoverSeries(userId: number) {
+  return sqlite.prepare(`SELECT c.id,c.name,c.author,c.book_count AS count FROM series_catalogue c
+    JOIN user_saved_series u ON u.series_id=c.id WHERE u.user_id=? ORDER BY c.name,c.id`).all(userId);
+}
+export function savedHardcoverSeries(userId: number, id: number) {
+  const series = sqlite.prepare(`SELECT c.id,c.name,c.author,c.book_count AS count FROM series_catalogue c
+    JOIN user_saved_series u ON u.series_id=c.id WHERE u.user_id=? AND c.id=?`).get(userId, id);
+  if (!series) throw new Error("This saved series could not be found.");
+  const rows = sqlite.prepare(`SELECT c.book_id AS id,c.title,c.position,c.cover,c.unreleased,
+    COALESCE(u.work_id,c.work_id) AS workId,u.book_id IS NOT NULL AS added,COALESCE(u.introduced,0) AS introduced
+    FROM series_catalogue_works c LEFT JOIN user_saved_series_works u
+      ON u.series_id=c.series_id AND u.book_id=c.book_id AND u.user_id=?
+    WHERE c.series_id=? ORDER BY c.position IS NULL,c.position,c.book_id`).all(userId, id) as {
+      id: number; title: string; position: number | null; cover: string | null; unreleased: number;
+      workId: string | null; added: number; introduced: number;
+    }[];
+  const works = rows.map((work) => ({ ...work, unreleased: !!work.unreleased,
+    added: !!work.added, introduced: !!work.introduced, ...seriesWorkState(userId, work.workId) }));
+  const unique = works.filter((work, index) => works.findIndex((other) =>
+    work.workId ? other.workId === work.workId : other.id === work.id) === index);
+  return { ...series as object, works, completion: { finished: unique.filter((work) => work.finished).length,
+    total: unique.length, nextBookId: unique.find((work) => !work.finished)?.id ?? null } };
+}
+function seriesWorkState(userId: number, workId: string | null) {
+  const editions = workId ? db.select().from(s.editions).where(eq(s.editions.workId, workId)).all() : [];
+  const library = editions.flatMap((edition) => libraryEntry(userId, edition.id) ? [edition] : []);
+  const override = workId ? db.select().from(s.userWorkCompletion)
+    .where(and(eq(s.userWorkCompletion.userId, userId), eq(s.userWorkCompletion.workId, workId))).get()?.status : null;
+  let audioFinished = false;
+  const recordings = editions.flatMap((edition) => db.select().from(s.recordings).where(eq(s.recordings.editionId, edition.id)).all())
+    .map((recording) => {
+      const tracks = db.select().from(s.tracks).where(eq(s.tracks.recordingId, recording.id)).all().sort((a, b) => a.index - b.index);
+      const progress = localProgress(userId, recording.id);
+      const total = tracks.reduce((sum, track) => sum + track.duration, 0);
+      const index = tracks.findIndex((track) => track.id === progress?.trackId);
+      if (progress && index >= 0 && tracks.every((track) => track.duration > 0) && total > 0 &&
+        (tracks.slice(0, index).reduce((sum, track) => sum + track.duration, 0) + progress.position) / total >= 0.999)
+        audioFinished = true;
+      return { id: recording.id, tracks: tracks.map((track) => track.id),
+        server: tracks.length > 0 && tracks.every(hasServerMedia),
+        stream: tracks.length > 0 && tracks.every((track) => track.sourceType !== "local") };
+    });
+  const ebooks = workId ? db.select().from(s.ebookEditions).where(eq(s.ebookEditions.workId, workId)).all()
+    .filter((ebook) => !ebook.id.startsWith("set-consensus:")) : [];
+  const ebookFinished = ebooks.some((ebook) => {
+    const row = db.select().from(s.userReaderCheckpoints).where(and(eq(s.userReaderCheckpoints.userId, userId),
+      eq(s.userReaderCheckpoints.editionId, ebook.id))).get();
+    if (!row) return false;
+    try { const checkpoint = JSON.parse(row.data); return checkpoint.origin === "reading" && checkpoint.locator?.progression >= 0.999; }
+    catch { return false; }
+  });
+  const finished = override === "finished" ? true : override === "unread" ? false :
+    library.some((edition) => libraryEntry(userId, edition.id)?.status === "finished") || audioFinished || ebookFinished;
+  return { editionId: library[0]?.id ?? null, finished,
+    availability: { audio: { server: workId ? recordings.some((recording) => recording.server) : null, recordings },
+      ebook: { server: workId ? ebooks.some((ebook) => existsSync(ebook.source)) : null, device: null } } };
+}
 export async function hardcoverSearch(userId: number, query: string) {
   const data = await graphql(
     userId,
@@ -584,7 +758,7 @@ function metadataLink(workId: string, book: CatalogBook) {
     bookId: book.id,
     slug: book.slug || null,
     series: book.book_series.flatMap((item) =>
-      item.series ? [{ name: item.series.name, position: item.position }] : [],
+      item.series ? [{ id: item.series.id, name: item.series.name, position: item.position }] : [],
     ),
   };
   db.insert(s.hardcoverLinks)
@@ -678,7 +852,7 @@ function importCatalogBook(
       .from(s.works)
       .all()
       .filter((w) =>
-        sameBook(w, { title: book.title || "", author: authorOf(book) }),
+        hardcoverLinkedBook(w.id) === undefined && sameBook(w, { title: book.title || "", author: authorOf(book) }),
       );
     if (candidates.length === 1) {
       metadataLink(candidates[0].id, book);

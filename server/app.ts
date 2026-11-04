@@ -367,6 +367,11 @@ export async function createApp() {
       .from(s.editions)
       .where(eq(s.editions.id, id))
       .get();
+    if (edition && db.select().from(s.userLibrary).where(and(eq(s.userLibrary.userId, currentUserId(req)), eq(s.userLibrary.bookId, id))).get()) {
+      if (status === "listening") db.delete(s.userWorkCompletion).where(and(eq(s.userWorkCompletion.userId, currentUserId(req)), eq(s.userWorkCompletion.workId, edition.workId))).run();
+      else db.insert(s.userWorkCompletion).values({ userId: currentUserId(req), workId: edition.workId, status })
+        .onConflictDoUpdate({ target: [s.userWorkCompletion.userId, s.userWorkCompletion.workId], set: { status } }).run();
+    }
     if (edition) queueHardcoverStatus(currentUserId(req), edition.workId, status);
     return { ok: true };
   });
