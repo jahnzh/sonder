@@ -20,6 +20,18 @@ import type { AlignmentJob, AlignmentInterval } from "../src/reading-types.ts";
 import { requireAdmin } from "./users.ts";
 import { matchSections } from "./alignment-pairings.ts";
 import {
+  clearPoolStaging,
+  dispatchFullAlignmentJob,
+  getAlignmentPoolCoordinator,
+  poolAlignmentFolder,
+  poolAudioPath,
+  poolFailureMessage,
+  poolJobNeedsStaging,
+  poolRemoteAlignmentFolder,
+  poolWorkerBase,
+  shouldDispatchToPool,
+} from "./alignment-pool.ts";
+import {
   coreIntervals,
   planSamples,
   planSegments,
@@ -543,10 +555,11 @@ async function workerRequest(
   failure = path === "/anchor"
     ? "Local speech recovery is unavailable. Check that the speech model is installed on the media drive."
     : "Local alignment could not process part of this narration. Retry, or choose a release with chapters.",
+  workerBase = process.env.ALIGNMENT_WORKER_URL!,
 ) {
   for (let attempt = 0; ; attempt++) {
     const response = await fetch(
-      `${process.env.ALIGNMENT_WORKER_URL!.replace(/\/$/, "")}${path}`,
+      `${workerBase.replace(/\/$/, "")}${path}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -586,6 +599,21 @@ async function processAnchored(
   tracks: ReturnType<typeof recordingContext>["tracks"],
   folder: string,
 ) {
+  const workerBase = poolWorkerBase(job);
+  const audioPath = (track: (typeof tracks)[number]) =>
+    poolAudioPath(job, track, localAudio);
+  const workFolder = poolAlignmentFolder(job, folder);
+  const remoteWorkFolder = poolRemoteAlignmentFolder(job);
+  const workerOutputPath = (fileName: string) =>
+    remoteWorkFolder ? join(remoteWorkFolder, fileName) : join(workFolder, fileName);
+  const usingLocalFull =
+    !job.pool && shouldDispatchToPool(job) === false && job.mode === "anchored";
+  if (usingLocalFull)
+    getAlignmentPoolCoordinator().localFullAlignmentStarting(
+      job.recordingId,
+      job.id,
+    );
+  try {
   const generation = job.generation;
   const live = () => {
     const current = alignmentJob(job.id);
@@ -638,20 +666,22 @@ async function processAnchored(
       if (sample.done) continue;
       if (!live()) return;
       const track = tracks.find((track) => track.id === sample.trackId);
-      const audio = track && localAudio(track);
+      const audio = track && audioPath(track);
       if (!audio) throw new Error("The required audio file is unavailable.");
       const result = anchorResult.parse(
         await workerRequest(
           "/anchor",
           {
             audio,
-            output: join(folder, "anchor.json"),
+            output: workerOutputPath("anchor.json"),
             fragments: blocks,
             language,
             start: sample.time,
             duration: sample.duration,
           },
           ANCHOR_TIMEOUT_MS,
+          undefined,
+          workerBase,
         ),
       );
       if (!current()) return;
@@ -715,7 +745,7 @@ async function processAnchored(
     if (segment.done) continue;
     if (!live()) return;
     const track = tracks.find((track) => track.id === segment.trackId);
-    const audio = track && localAudio(track);
+    const audio = track && audioPath(track);
     if (!audio) throw new Error("The required audio file is unavailable.");
     const cacheKey = createHash("sha256")
       .update(
@@ -729,23 +759,30 @@ async function processAnchored(
       )
       .digest("hex")
       .slice(0, 24);
-    const output = join(folder, `window-${i}-${cacheKey}.json`);
-    const raw = existsSync(output)
-      ? JSON.parse(readFileSync(output, "utf8"))
-      : await workerRequest(
-          "/align",
-          {
-            audio,
-            output,
-            fragments: paragraphs
-              .slice(segment.first, segment.last + 1)
-              .map((paragraph) => paragraph.text),
-            language,
-            start: segment.start,
-            duration: segment.duration,
-          },
-          SECTION_TIMEOUT_MS,
-        );
+    const cacheFile = join(workFolder, `window-${i}-${cacheKey}.json`);
+    const raw = existsSync(cacheFile)
+      ? JSON.parse(readFileSync(cacheFile, "utf8"))
+      : await (async () => {
+          const response = await workerRequest(
+            "/align",
+            {
+              audio,
+              output: workerOutputPath(`window-${i}-${cacheKey}.json`),
+              fragments: paragraphs
+                .slice(segment.first, segment.last + 1)
+                .map((paragraph) => paragraph.text),
+              language,
+              start: segment.start,
+              duration: segment.duration,
+            },
+            SECTION_TIMEOUT_MS,
+            undefined,
+            workerBase,
+          );
+          if (remoteWorkFolder)
+            writeFileSync(cacheFile, JSON.stringify(response));
+          return response;
+        })();
     if (!current()) return;
     const result = z
       .object({
@@ -826,6 +863,19 @@ async function processAnchored(
     );
     await onConsensusAlignmentFinished(job.ebookId.slice("set-consensus:".length), job);
   }
+  } finally {
+    if (usingLocalFull)
+      getAlignmentPoolCoordinator().localFullAlignmentFinished(
+        job.recordingId,
+        job.id,
+      );
+    if (job.pool)
+      getAlignmentPoolCoordinator().release(
+        job.pool.hostId,
+        job.id,
+        job.recordingId,
+      );
+  }
 }
 let running = false,
   stopping = false,
@@ -887,7 +937,69 @@ export async function processAlignments() {
         const folder = join(mediaRoot, "alignment", job.id);
         mkdirSync(folder, { recursive: true, mode: 0o750 });
         if (job.mode === "anchored") {
-          await processAnchored(job, book, context.tracks, folder);
+          const coord = getAlignmentPoolCoordinator();
+          if (poolJobNeedsStaging(job)) {
+            try {
+              job.pool = await dispatchFullAlignmentJob(
+                job,
+                context.tracks,
+                localAudio,
+              );
+              store(job);
+            } catch (error) {
+              job.status = "error";
+              job.error = poolFailureMessage(error);
+              store(job);
+              continue;
+            }
+          } else if (
+            shouldDispatchToPool(job) &&
+            !coord.canUseLocalWorker(job.recordingId)
+          ) {
+            continue;
+          }
+          const usingLocalFull =
+            !job.pool && !shouldDispatchToPool(job) && job.mode === "anchored";
+          if (usingLocalFull) {
+            if (!coord.canUseLocalWorker(job.recordingId)) continue;
+            if (!coord.tryAcquireLocal(job.id)) continue;
+          }
+          try {
+            while (true) {
+              try {
+                await processAnchored(job, book, context.tracks, folder);
+                break;
+              } catch (error) {
+                job = alignmentJob(job.id);
+                if (
+                  !shouldDispatchToPool(job) ||
+                  !job.pool ||
+                  job.pool.triedHosts.length >= 2
+                )
+                  throw error;
+                const triedHosts = job.pool.triedHosts;
+                clearPoolStaging(job, triedHosts);
+                store(job);
+                try {
+                  job.pool = await dispatchFullAlignmentJob(
+                    job,
+                    context.tracks,
+                    localAudio,
+                    triedHosts,
+                  );
+                  store(job);
+                } catch (dispatchError) {
+                  job.status = "error";
+                  job.error = poolFailureMessage(dispatchError);
+                  store(job);
+                  break;
+                }
+                job = alignmentJob(job.id);
+              }
+            }
+          } finally {
+            if (usingLocalFull) coord.releaseLocal(job.id);
+          }
           continue;
         }
         for (const pair of job.pairings) {
@@ -1261,6 +1373,8 @@ export function registerAlignment(app: FastifyInstance) {
             ? "cancelled"
             : "queued";
       job.error = null;
+      if (action === "resume" && job.pool)
+        clearPoolStaging(job, job.pool.triedHosts);
     }
     store(job);
     if (action === "resume") void processAlignments();
