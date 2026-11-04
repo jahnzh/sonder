@@ -5,7 +5,8 @@
 # Usage: scripts/ci-deck.sh <commit>
 #
 # Exit status: 0 passed; 1 the check failed (or its own exit status); 2 usage;
-# 3 podman is missing on the Deck; 4 the remote run never started or died;
+# 3 podman is missing on the Deck; 4 the remote run never started or died, or the
+# Deck is busy (another sonder-ci-run-* or ci-deck.sh — use npm run ci:run);
 # 5 SSH connectivity was lost after the run began; 6 the pinned image is missing
 # and could not be pulled, or does not match the lockfile's Playwright; 7 free
 # disk on the Deck is below the threshold; 124 the wait cap was reached.
@@ -14,7 +15,8 @@
 #
 # Environment: SONDER_CI_HOST (default deck@steamdeck), SONDER_CI_REPO,
 # SONDER_CI_STATUS_CONTEXT (default ci/deck), SONDER_CI_POST_STATUS (0 skips the
-# GitHub status), SONDER_CI_MAX_WAIT (seconds, default 1800),
+# GitHub status), SONDER_CI_MAX_WAIT (seconds; default
+# SONDER_CI_DECK_FULL_SUITE_WAIT / 5400 — one serial browser suite on the Deck),
 # SONDER_CI_POLL_INTERVAL (seconds, default 15), SONDER_CI_REMOTE_BASE (default
 # $HOME/sonder-ci on the Deck; mounted at /pilot in the container),
 # SONDER_CI_IMAGE (default mcr.microsoft.com/playwright:v1.64.1-noble),
@@ -28,6 +30,9 @@
 # SONDER_LOCAL_DF replaces the df command that reads the local free space (tests).
 # SONDER_LOCAL_STALE_DIR (default $TMPDIR or /tmp) is where the families are looked up.
 # The warning never changes the exit code.
+# SONDER_CI_LOCAL_LOCK_DIR (default ${XDG_RUNTIME_DIR:-/tmp}/sonder-ci-deck): flock
+# serialises concurrent ci-deck.sh on this machine. SONDER_CI_REMOTE_LOCK_DIR (default
+# $REMOTE_BASE/.sonder-ci-deck-lock on the Deck) serialises starts from separate coordinators.
 #
 # No `set -e`: every step handles its own failure so a failing step can never
 # skip the code that records the outcome.
@@ -45,7 +50,11 @@ SONDER_CI_HOST=${SONDER_CI_HOST:-deck@steamdeck}
 SONDER_CI_REPO=${SONDER_CI_REPO:-jahnzh/sonder}
 SONDER_CI_STATUS_CONTEXT=${SONDER_CI_STATUS_CONTEXT:-ci/deck}
 SONDER_CI_POST_STATUS=${SONDER_CI_POST_STATUS:-1}
-MAX_WAIT=${SONDER_CI_MAX_WAIT:-1800}
+# Issue #197: a full check on the Deck (all three browsers) can exceed 30 minutes.
+SONDER_CI_DECK_FULL_SUITE_WAIT=5400
+MAX_WAIT=${SONDER_CI_MAX_WAIT:-$SONDER_CI_DECK_FULL_SUITE_WAIT}
+LOCAL_LOCK_DIR=${SONDER_CI_LOCAL_LOCK_DIR:-${XDG_RUNTIME_DIR:-/tmp}/sonder-ci-deck}
+REMOTE_LOCK_DIR=${SONDER_CI_REMOTE_LOCK_DIR:-}
 POLL_INTERVAL=${SONDER_CI_POLL_INTERVAL:-15}
 # Empty means $HOME/sonder-ci on the Deck, which only the Deck can expand.
 REMOTE_BASE=${SONDER_CI_REMOTE_BASE:-}
@@ -97,6 +106,27 @@ RESULT=""
 
 log() {
   echo "[ci-deck] $*"
+}
+
+LOCAL_LOCK_FD=""
+acquire_local_lock() {
+  local lock_file="$LOCAL_LOCK_DIR/ci-deck.lock"
+  mkdir -p "$LOCAL_LOCK_DIR" || return 1
+  exec {LOCAL_LOCK_FD}>"$lock_file"
+  flock -n "$LOCAL_LOCK_FD"
+}
+
+release_local_lock() {
+  [[ -n $LOCAL_LOCK_FD ]] && flock -u "$LOCAL_LOCK_FD" 2>/dev/null
+  LOCAL_LOCK_FD=""
+}
+
+refuse_host_busy() {
+  local detail=$1
+  log "Deck is busy (${detail}). Use npm run ci:run to queue, or wait for the active run."
+  record_result remote host_busy 4
+  log "Artifacts: ${LOCAL_REPORT_DIR}"
+  exit 4
 }
 
 post_commit_status() {
@@ -280,6 +310,16 @@ if [ -n "$emu$emu_units" ]; then
   echo "emulator_active=$emu$emu_units"
   exit 15
 fi
+busy=$(podman ps --filter name=sonder-ci-run- --format '{{.Names}}' 2>/dev/null | grep '^sonder-ci-run-' | head -1)
+if [ -n "$busy" ]; then
+  echo "busy_container=$busy"
+  exit 16
+fi
+busy_units=$(systemctl --user list-units --state=active --no-legend 'sonder-ci-run-*' 2>/dev/null | awk '{print $1}' | tr '\n' ' ')
+if [ -n "$busy_units" ]; then
+  echo "busy_unit=$busy_units"
+  exit 16
+fi
 now=$(date +%s)
 for name in $(podman ps -a --filter name=sonder-ci-run- --format '{{.Names}}' | grep '^sonder-ci-run-'); do
   dir="$base/runs/${name#sonder-ci-run-}"
@@ -327,6 +367,11 @@ REMOTE
       record_result remote host_emulator_active 3
       return 3
       ;;
+    16)
+      log "Deck is busy on ${SONDER_CI_HOST}; use npm run ci:run to queue, or wait for the active run. Record: ${record_file}"
+      record_result remote host_busy 4
+      return 4
+      ;;
     14)
       log "Host failure: could not create the CI directories on ${SONDER_CI_HOST}"
       record_result remote remote_setup_failed 4
@@ -345,9 +390,10 @@ REMOTE
 cleanup_remote() {
   [[ -n $REMOTE_RUN_DIR ]] || return 0
   local dir=$REMOTE_RUN_DIR name=$CONTAINER_NAME out rc
+  local lock_dir=$REMOTE_LOCK_DIR
   REMOTE_RUN_DIR=""
-  out=$(timeout "$CLEANUP_TIMEOUT" ssh "${SSH_OPTS[@]}" "$SONDER_CI_HOST" "$(remote_command cleanup "$dir" "$name")" 2>&1 <<'REMOTE'
-run_dir=$2 name=$3
+  out=$(timeout "$CLEANUP_TIMEOUT" ssh "${SSH_OPTS[@]}" "$SONDER_CI_HOST" "$(remote_command cleanup "$dir" "$name" "$lock_dir")" 2>&1 <<'REMOTE'
+run_dir=$2 name=$3 lock_dir=$4
 case "$run_dir" in
   *..*) echo "refusing to clean $run_dir"; exit 1 ;;
   */runs/*-*) ;;
@@ -357,6 +403,8 @@ case "$name" in
   sonder-ci-run-?*) ;;
   *) name="" ;;
 esac
+base=$(dirname "$(dirname "$run_dir")")
+[[ -z $lock_dir ]] && lock_dir="$base/.sonder-ci-deck-lock"
 # Only this run's container, by its exact name and without waiting for it to stop: the container's init
 # (bash) ignores SIGTERM, so a plain unit stop could outlast the ssh cap and leave the container behind.
 [ -n "$name" ] && podman rm -f -t 0 --ignore "$name" >/dev/null 2>&1
@@ -371,6 +419,9 @@ rm -rf "$run_dir" 2>/dev/null
 # Files written by a non-root user in the container belong to a sub-uid; remove them from inside the user namespace.
 [ -d "$run_dir" ] && podman unshare rm -rf "$run_dir" 2>/dev/null
 [ -d "$run_dir" ] && { echo "could not remove $run_dir"; exit 1; }
+if [ -n "$lock_dir" ] && [ "$(cat "$lock_dir/active/run_dir" 2>/dev/null)" = "$run_dir" ]; then
+  rm -rf "$lock_dir/active" 2>/dev/null
+fi
 exit 0
 REMOTE
   )
@@ -533,6 +584,50 @@ REMOTE
     return 4
   fi
 
+  remote_bash acquire_run_lock "$REMOTE_LOCK_DIR" "$REMOTE_BASE" "$REMOTE_RUN_DIR" <<'REMOTE'
+lock_dir=$2 base=$3 run_dir=$4
+[[ -z $lock_dir ]] && lock_dir="${base:-$HOME/sonder-ci}/.sonder-ci-deck-lock"
+mkdir -p "$lock_dir" 2>/dev/null || exit 14
+# Stage run_dir then rename into place so a racing reader never sees an empty active/.
+staging=$(mktemp -d "$lock_dir/prep.XXXXXX") || exit 14
+printf '%s\n' "$run_dir" >"$staging/run_dir"
+if ! mv -T "$staging" "$lock_dir/active" 2>/dev/null; then
+  rm -rf "$staging"
+  old=$(cat "$lock_dir/active/run_dir" 2>/dev/null)
+  if [ -n "$old" ] && [ -d "$old" ] && [ ! -s "$old/check.exit" ]; then
+    if [ -s "$old/check.pid" ]; then
+      pid=$(cat "$old/check.pid" 2>/dev/null)
+      case $pid in ''|*[!0-9]*) pid="" ;; esac
+      if [ -z "$pid" ] || kill -0 "$pid" 2>/dev/null; then
+        echo "deck_lock=busy run_dir=$old"
+        exit 16
+      fi
+    else
+      echo "deck_lock=busy run_dir=$old"
+      exit 16
+    fi
+  fi
+  rm -rf "$lock_dir/active"
+  staging=$(mktemp -d "$lock_dir/prep.XXXXXX") || exit 14
+  printf '%s\n' "$run_dir" >"$staging/run_dir"
+  mv -T "$staging" "$lock_dir/active" 2>/dev/null || { rm -rf "$staging"; echo "deck_lock=busy"; exit 16; }
+fi
+exit 0
+REMOTE
+  rc=$?
+  if [[ $rc -eq 16 ]]; then
+    log "Deck is busy; use npm run ci:run to queue, or wait for the active run."
+    cleanup_remote
+    record_result remote host_busy 4
+    return 4
+  fi
+  if [[ $rc -ne 0 ]]; then
+    log "Could not acquire the Deck run lock (ssh status ${rc})"
+    cleanup_remote
+    record_result remote host_connectivity_lost 5
+    return 5
+  fi
+
   log "Starting the check in ${CONTAINER_NAME} on ${SONDER_CI_HOST}"
   # The wrapper must not run under `set -e`: a failing check still has to write
   # check.exit, or the wait loop can only conclude that the run died. The base
@@ -577,6 +672,8 @@ REMOTE
     return 4
   fi
 
+  post_commit_status pending "CI running on ${SONDER_CI_HOST}"
+
   log "Waiting for the check (cap ${MAX_WAIT}s, poll every ${POLL_INTERVAL}s)"
   wait_for_remote
 
@@ -619,10 +716,13 @@ REMOTE
 trap 'on_signal 130' INT
 trap 'on_signal 143' TERM
 
-post_commit_status pending "CI running on ${SONDER_CI_HOST}"
-
 # Non-fatal local-disk warning at the start of the run, before the ssh preflight (issue #89).
 warn_local_disk
+
+if ! acquire_local_lock; then
+  refuse_host_busy "another ci-deck.sh holds the local lock"
+fi
+trap 'release_local_lock' EXIT
 
 FINAL_EXIT=0
 DESCRIPTION=""
@@ -631,17 +731,28 @@ if host_reachable; then
   image_matches_lockfile
   rc=$?
   if [[ $rc -ne 0 ]]; then
+    post_commit_status pending "CI running on ${SONDER_CI_HOST}"
     record_result remote host_image_mismatch 6
     FINAL_EXIT=6
     DESCRIPTION="CI host failure: image does not match the lockfile"
   else
     preflight_deck
     rc=$?
+    if [[ $rc -eq 4 && $RESULT == host_busy ]]; then
+      log "Artifacts: ${LOCAL_REPORT_DIR}"
+      exit 4
+    fi
     if [[ $rc -eq 0 ]]; then
       run_remote_check
       FINAL_EXIT=$?
       remove_bundle
+      # Refuse before any failure status: a busy Deck must not flip ci/deck to failure.
+      if [[ $FINAL_EXIT -eq 4 && $RESULT == host_busy ]]; then
+        log "Artifacts: ${LOCAL_REPORT_DIR}"
+        exit 4
+      fi
     else
+      post_commit_status pending "CI running on ${SONDER_CI_HOST}"
       FINAL_EXIT=$rc
     fi
     if [[ $FINAL_EXIT -ne 0 ]]; then
@@ -660,9 +771,15 @@ if host_reachable; then
   fi
 else
   log "SSH unreachable at ${SONDER_CI_HOST}; falling back to local check"
+  post_commit_status pending "CI running on ${SONDER_CI_HOST}"
   run_local_check
   FINAL_EXIT=$?
   DESCRIPTION="CI failed (local fallback)"
+fi
+
+if [[ $RESULT == host_busy ]]; then
+  log "Artifacts: ${LOCAL_REPORT_DIR}"
+  exit 4
 fi
 
 # The exit status is authoritative, but a report that says the check failed
