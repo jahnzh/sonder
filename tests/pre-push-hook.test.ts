@@ -17,6 +17,17 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
+function gitIn(cwd: string, ...args: string[]) {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
+  const result = spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    env: { ...env, HOME: cwd, XDG_CONFIG_HOME: cwd, GIT_CONFIG_NOSYSTEM: "1" },
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  return result.stdout.trim();
+}
+
 function makeTempRepo() {
   const root = mkdtempSync(join(tmpdir(), "sonder-git-hooks-"));
   mkdirSync(join(root, ".githooks"), { recursive: true });
@@ -24,7 +35,7 @@ function makeTempRepo() {
     cpSync(join(repoRoot, ".githooks", hook), join(root, ".githooks", hook));
     chmodSync(join(root, ".githooks", hook), 0o755);
   }
-  spawnSync("git", ["init", "-q"], { cwd: root, encoding: "utf8" });
+  gitIn(root, "init", "-q");
   return root;
 }
 
@@ -120,6 +131,73 @@ test("pre-push hook allows push when build and unit tests pass", () => {
     assert.equal(result.status, 0, result.stderr || result.stdout);
     // Both commands must have run, in this order.
     assert.deepEqual(readFileSync(logPath, "utf8").trim().split("\n"), ["run build", "test"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("pre-push isolates a git fixture from the pushing repository and every GIT_ variable", () => {
+  const root = makeTempRepo();
+  try {
+    const pushingRepo = join(root, "pushing-repo");
+    const fixtureRepo = join(root, "fixture-repo");
+    const binDir = join(root, "bin");
+    const envFile = join(root, "test-env.json");
+    for (const dir of [pushingRepo, fixtureRepo, binDir]) mkdirSync(dir);
+
+    gitIn(pushingRepo, "init");
+    gitIn(pushingRepo, "config", "user.name", "Original User");
+    gitIn(pushingRepo, "config", "user.email", "original@example.test");
+    writeFileSync(join(pushingRepo, "original.txt"), "original content\n");
+    gitIn(pushingRepo, "add", "original.txt");
+    gitIn(pushingRepo, "commit", "-m", "original");
+    const before = {
+      head: gitIn(pushingRepo, "rev-parse", "HEAD"),
+      status: gitIn(pushingRepo, "status", "--porcelain"),
+      config: readFileSync(join(pushingRepo, ".git", "config")),
+      index: readFileSync(join(pushingRepo, ".git", "index")),
+      content: readFileSync(join(pushingRepo, "original.txt"), "utf8"),
+    };
+
+    writeFileSync(join(binDir, "npm"), `#!/usr/bin/env bash
+set -eu
+if [[ "$1" == "run" && "$2" == "build" ]]; then exit 0; fi
+[[ "$1" == "test" ]]
+node -e 'require("fs").writeFileSync(process.env.TEST_ENV_FILE, JSON.stringify({ git: Object.keys(process.env).filter((key) => key.startsWith("GIT_")), keep: process.env.TEST_KEEP }))'
+cd "$TEST_FIXTURE_REPO"
+git init
+git config user.name Fixture
+git config user.email fixture@example.test
+printf 'fixture content\\n' > fixture.txt
+git add fixture.txt
+git commit -m fixture
+`, { mode: 0o755 });
+
+    const result = runHook(root, binDir, {
+      HOME: root,
+      XDG_CONFIG_HOME: root,
+      GIT_DIR: join(pushingRepo, ".git"),
+      GIT_WORK_TREE: pushingRepo,
+      GIT_INDEX_FILE: join(pushingRepo, ".git", "index"),
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "user.name",
+      GIT_CONFIG_VALUE_0: "Injected Name",
+      GIT_FUTURE_TEST_VARIABLE: "must disappear",
+      "GIT_FUTURE.TEST_VARIABLE": "must also disappear",
+      TEST_ENV_FILE: envFile,
+      TEST_FIXTURE_REPO: fixtureRepo,
+      TEST_KEEP: "preserved\nGIT_DECOY=part of a value",
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.deepEqual(JSON.parse(readFileSync(envFile, "utf8")), {
+      git: [], keep: "preserved\nGIT_DECOY=part of a value",
+    });
+    assert.equal(gitIn(fixtureRepo, "log", "-1", "--format=%s"), "fixture");
+    assert.equal(gitIn(pushingRepo, "rev-parse", "HEAD"), before.head);
+    assert.equal(gitIn(pushingRepo, "status", "--porcelain"), before.status);
+    assert.deepEqual(readFileSync(join(pushingRepo, ".git", "config")), before.config);
+    assert.deepEqual(readFileSync(join(pushingRepo, ".git", "index")), before.index);
+    assert.equal(readFileSync(join(pushingRepo, "original.txt"), "utf8"), before.content);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
