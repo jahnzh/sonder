@@ -406,12 +406,80 @@ export async function hardcoverSeriesSearch(userId: number, query: string) {
     cover: item.book_series.find((entry) => entry.book?.cached_image?.url)?.book?.cached_image?.url ?? null,
   }));
 }
-export async function hardcoverSeriesPreview(userId: number, id: number, options?: { refresh?: boolean }) {
-  // SonderSeriesRefresh keeps the same shape so fixtures can add newly listed works only on revisit.
-  const queryName = options?.refresh ? "SonderSeriesRefresh" : "SonderSeriesPreview";
+const SERIES_REFRESH_MAX_AGE_MS = 60_000;
+
+function seriesWorkAdminMatch(userId: number, title: string, author: string, bookId: number) {
+  let link = sqlite.prepare(`SELECT l.work_id AS workId,
+    EXISTS(SELECT 1 FROM audio_editions e JOIN user_library u ON u.book_id=e.id
+      WHERE e.work_id=l.work_id AND u.user_id=?) AS owned
+    FROM hardcover_links l WHERE l.book_id=? ORDER BY owned DESC LIMIT 1`).get(userId, bookId) as { workId: string; owned: number } | undefined;
+  let needsAdmin = false;
+  if (!link?.owned) {
+    const matches = db.select().from(s.works).all().filter((candidate) =>
+      hardcoverLinkedBook(candidate.id) === undefined && sameBook(candidate, { title, author }));
+    const ownedMatches = matches.filter((candidate) => db.select().from(s.editions).where(eq(s.editions.workId, candidate.id)).all()
+      .some((edition) => !!libraryEntry(userId, edition.id)));
+    needsAdmin = isAdminUser(userId) ? matches.length > 1 : ownedMatches.length > 0;
+    if (!link && isAdminUser(userId) && matches.length === 1) {
+      link = { workId: matches[0].id, owned: Number(ownedMatches.length > 0) };
+    }
+  }
+  return { link, needsAdmin };
+}
+
+function upsertSeriesCatalogue(
+  id: number,
+  series: { name: string; author: string | null; count: number | null },
+  works: { id: number; title: string; position: number | null; cover: string | null; workId: string | null; unreleased: boolean }[],
+) {
+  sqlite.prepare(`INSERT INTO series_catalogue(id,name,author,book_count) VALUES(?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET name=excluded.name,author=excluded.author,book_count=excluded.book_count`)
+    .run(id, series.name, series.author, series.count);
+  for (const work of works) {
+    sqlite.prepare(`INSERT INTO series_catalogue_works(series_id,book_id,work_id,title,position,cover,unreleased) VALUES(?,?,?,?,?,?,?)
+      ON CONFLICT(series_id,book_id) DO UPDATE SET title=excluded.title,position=excluded.position,
+        cover=excluded.cover,unreleased=excluded.unreleased,work_id=COALESCE(excluded.work_id,series_catalogue_works.work_id)`)
+      .run(id, work.id, work.workId, work.title, work.position, work.cover, Number(work.unreleased));
+  }
+}
+
+function markSeriesWorksSeen(userId: number, seriesId: number, bookIds: number[]) {
+  const now = Date.now();
+  const insert = sqlite.prepare(
+    "INSERT OR IGNORE INTO user_series_seen_works(user_id,series_id,book_id,acknowledged_at) VALUES(?,?,?,?)",
+  );
+  for (const bookId of bookIds) insert.run(userId, seriesId, bookId, now);
+}
+
+function ensureSeriesSeenBaseline(userId: number, seriesId: number) {
+  const hasSeen = sqlite.prepare(
+    "SELECT 1 AS ok FROM user_series_seen_works WHERE user_id=? AND series_id=? LIMIT 1",
+  ).get(userId, seriesId);
+  if (hasSeen) return;
+  const hasSaved = sqlite.prepare(
+    "SELECT 1 AS ok FROM user_saved_series_works WHERE user_id=? AND series_id=? LIMIT 1",
+  ).get(userId, seriesId);
+  if (!hasSaved) return;
+  // Existing saved series from before per-user seen tracking: treat the current catalogue as already reviewed.
+  const books = sqlite.prepare("SELECT book_id AS id FROM series_catalogue_works WHERE series_id=?").all(seriesId) as { id: number }[];
+  markSeriesWorksSeen(userId, seriesId, books.map((book) => book.id));
+}
+
+export function acknowledgeSeriesWorks(userId: number, seriesId: number, bookIds: number[]) {
+  savedHardcoverSeries(userId, seriesId);
+  const known = new Set(
+    (sqlite.prepare("SELECT book_id AS id FROM series_catalogue_works WHERE series_id=?").all(seriesId) as { id: number }[])
+      .map((row) => row.id),
+  );
+  if (bookIds.some((bookId) => !known.has(bookId))) throw new Error("Choose works from this series.");
+  markSeriesWorksSeen(userId, seriesId, bookIds);
+  return savedHardcoverSeries(userId, seriesId);
+}
+
+export async function hardcoverSeriesPreview(userId: number, id: number) {
   const result = await graphql(
     userId,
-    `query ${queryName}($id:Int!){series_by_pk(id:$id){id name books_count author{name} book_series{position book{id title release_year release_date cached_image contributions{contribution author{name}}}}}}`,
+    `query SonderSeriesPreview($id:Int!){series_by_pk(id:$id){id name books_count author{name} book_series{position book{id title release_year release_date cached_image contributions{contribution author{name}}}}}}`,
     { id },
     z.object({ series_by_pk: z.object({
       id: z.number().int(), name: z.string(), books_count: z.number().nullable().optional(),
@@ -427,25 +495,9 @@ export async function hardcoverSeriesPreview(userId: number, id: number, options
   if (!series) throw new Error("Hardcover could not find this series.");
   const works = series.book_series.flatMap(({ position, book }) => {
     if (!book) return [];
-    let link = sqlite.prepare(`SELECT l.work_id AS workId,
-      EXISTS(SELECT 1 FROM audio_editions e JOIN user_library u ON u.book_id=e.id
-        WHERE e.work_id=l.work_id AND u.user_id=?) AS owned
-      FROM hardcover_links l WHERE l.book_id=? ORDER BY owned DESC LIMIT 1`).get(userId, book.id) as { workId: string; owned: number } | undefined;
-    let needsAdmin = false;
-    if (!link?.owned) {
-      const author = book.contributions.filter((item) => !item.contribution || item.contribution.toLowerCase() === "author")
-        .flatMap((item) => item.author?.name || []).join(", ") || "Unknown author";
-      const matches = db.select().from(s.works).all().filter((candidate) =>
-        hardcoverLinkedBook(candidate.id) === undefined && sameBook(candidate, { title: book.title || "", author }));
-      const ownedMatches = matches.filter((candidate) => db.select().from(s.editions).where(eq(s.editions.workId, candidate.id)).all()
-        .some((edition) => !!libraryEntry(userId, edition.id)));
-      needsAdmin = isAdminUser(userId) ? matches.length > 1 : ownedMatches.length > 0;
-      if (!link && isAdminUser(userId) && matches.length === 1) {
-        const workId = matches[0].id;
-        const owned = ownedMatches.length > 0;
-        link = { workId, owned: Number(owned) };
-      }
-    }
+    const author = book.contributions.filter((item) => !item.contribution || item.contribution.toLowerCase() === "author")
+      .flatMap((item) => item.author?.name || []).join(", ") || "Unknown author";
+    const { link, needsAdmin } = seriesWorkAdminMatch(userId, book.title || "", author, book.id);
     const now = new Date();
     const unreleased = book.release_date
       ? book.release_date > now.toISOString().slice(0, 10)
@@ -459,11 +511,7 @@ export async function hardcoverSeriesPreview(userId: number, id: number, options
     count: series.books_count ?? null, works };
 }
 export async function saveHardcoverSeries(userId: number, id: number, bookIds: number[]) {
-  // Re-save of an already-saved series must see the same refreshed catalogue the listener just reviewed.
-  const alreadySaved = !!sqlite.prepare(
-    "SELECT 1 AS ok FROM user_saved_series WHERE user_id=? AND series_id=?",
-  ).get(userId, id);
-  const preview = await hardcoverSeriesPreview(userId, id, { refresh: alreadySaved });
+  const preview = await hardcoverSeriesPreview(userId, id);
   const requested = new Set(bookIds);
   if ([...requested].some((bookId) => !preview.works.some((work) => work.id === bookId)))
     throw new Error("Choose works from this series.");
@@ -472,15 +520,10 @@ export async function saveHardcoverSeries(userId: number, id: number, bookIds: n
   // Fetch everything before writing: an upstream failure must not leave a partial selection.
   const books = await Promise.all([...selected].map((bookId) => hardcoverBook(userId, bookId)));
   sqlite.transaction(() => {
-    sqlite.prepare(`INSERT INTO series_catalogue(id,name,author,book_count) VALUES(?,?,?,?)
-      ON CONFLICT(id) DO UPDATE SET name=excluded.name,author=excluded.author,book_count=excluded.book_count`)
-      .run(id, preview.name, preview.author, preview.count);
+    upsertSeriesCatalogue(id, preview, preview.works);
     sqlite.prepare("INSERT OR IGNORE INTO user_saved_series(user_id,series_id,saved_at) VALUES(?,?,?)").run(userId, id, Date.now());
+    markSeriesWorksSeen(userId, id, preview.works.map((work) => work.id));
     for (const work of preview.works) {
-      sqlite.prepare(`INSERT INTO series_catalogue_works(series_id,book_id,work_id,title,position,cover,unreleased) VALUES(?,?,?,?,?,?,?)
-        ON CONFLICT(series_id,book_id) DO UPDATE SET title=excluded.title,position=excluded.position,
-          cover=excluded.cover,unreleased=excluded.unreleased,work_id=COALESCE(excluded.work_id,series_catalogue_works.work_id)`)
-        .run(id, work.id, work.workId, work.title, work.position, work.cover, Number(work.unreleased));
       if (!selected.has(work.id)) continue;
       const existing = sqlite.prepare(`SELECT l.work_id AS workId FROM hardcover_links l
         JOIN audio_editions e ON e.work_id=l.work_id JOIN user_library u ON u.book_id=e.id
@@ -510,59 +553,90 @@ export function listSavedHardcoverSeries(userId: number) {
     JOIN user_saved_series u ON u.series_id=c.id WHERE u.user_id=? ORDER BY c.name,c.id`).all(userId);
 }
 /** Refresh the shared catalogue for a saved series by Hardcover ID without adding works. */
-export async function refreshSavedHardcoverSeries(userId: number, id: number) {
-  const known = sqlite.prepare("SELECT book_id AS id FROM series_catalogue_works WHERE series_id=?").all(id) as { id: number }[];
+export async function refreshSavedHardcoverSeries(userId: number, id: number, options?: { force?: boolean }) {
   // Confirm membership first so a missing series does not hit Hardcover.
-  savedHardcoverSeries(userId, id);
-  const knownIds = new Set(known.map((row) => row.id));
+  ensureSeriesSeenBaseline(userId, id);
+  const membership = sqlite.prepare(
+    "SELECT refreshed_at AS refreshedAt FROM user_saved_series WHERE user_id=? AND series_id=?",
+  ).get(userId, id) as { refreshedAt: number | null } | undefined;
+  if (!membership) throw new Error("This saved series could not be found.");
+  // Skip a recent successful refresh, but still attempt when the token is missing so the user sees why.
+  if (!options?.force && membership.refreshedAt && Date.now() - membership.refreshedAt < SERIES_REFRESH_MAX_AGE_MS
+    && !!hardcoverKey(userId)) {
+    return savedHardcoverSeries(userId, id);
+  }
+  let preview;
   try {
-    const preview = await hardcoverSeriesPreview(userId, id, { refresh: true });
-    const fresh = new Set<number>();
-    sqlite.transaction(() => {
-      sqlite.prepare(`INSERT INTO series_catalogue(id,name,author,book_count) VALUES(?,?,?,?)
-        ON CONFLICT(id) DO UPDATE SET name=excluded.name,author=excluded.author,book_count=excluded.book_count`)
-        .run(id, preview.name, preview.author, preview.count);
-      for (const work of preview.works) {
-        if (!knownIds.has(work.id)) fresh.add(work.id);
-        sqlite.prepare(`INSERT INTO series_catalogue_works(series_id,book_id,work_id,title,position,cover,unreleased) VALUES(?,?,?,?,?,?,?)
-          ON CONFLICT(series_id,book_id) DO UPDATE SET title=excluded.title,position=excluded.position,
-            cover=excluded.cover,unreleased=excluded.unreleased,work_id=COALESCE(excluded.work_id,series_catalogue_works.work_id)`)
-          .run(id, work.id, work.workId, work.title, work.position, work.cover, Number(work.unreleased));
-      }
-    })();
-    return savedHardcoverSeries(userId, id, { newBookIds: fresh });
+    preview = await hardcoverSeriesPreview(userId, id);
   } catch (error) {
     // Keep the last catalogue and library membership when Hardcover is unavailable.
-    return savedHardcoverSeries(userId, id, {
-      refreshError: error instanceof Error ? error.message : "Hardcover could not refresh this series.",
-    });
+    const message = error instanceof Error ? error.message : "Hardcover could not refresh this series.";
+    const refreshError = /API token in Settings/i.test(message)
+      ? "Add your Hardcover API token in Settings, then retry."
+      : /could not be reached/i.test(message)
+        ? "Hardcover could not be reached. Showing the last saved catalogue."
+        : message;
+    return savedHardcoverSeries(userId, id, { refreshError });
   }
+  sqlite.transaction(() => {
+    upsertSeriesCatalogue(id, preview, preview.works);
+    sqlite.prepare("UPDATE user_saved_series SET refreshed_at=? WHERE user_id=? AND series_id=?")
+      .run(Date.now(), userId, id);
+  })();
+  return savedHardcoverSeries(userId, id);
 }
 export function savedHardcoverSeries(userId: number, id: number, options?: {
-  newBookIds?: Set<number>;
   refreshError?: string;
 }) {
   const series = sqlite.prepare(`SELECT c.id,c.name,c.author,c.book_count AS count FROM series_catalogue c
-    JOIN user_saved_series u ON u.series_id=c.id WHERE u.user_id=? AND c.id=?`).get(userId, id);
+    JOIN user_saved_series u ON u.series_id=c.id WHERE u.user_id=? AND c.id=?`).get(userId, id) as
+    | { id: number; name: string; author: string | null; count: number | null }
+    | undefined;
   if (!series) throw new Error("This saved series could not be found.");
   const rows = sqlite.prepare(`SELECT c.book_id AS id,c.title,c.position,c.cover,c.unreleased,
-    COALESCE(u.work_id,c.work_id) AS workId,u.book_id IS NOT NULL AS added,COALESCE(u.introduced,0) AS introduced
+    COALESCE(u.work_id,c.work_id) AS workId,u.book_id IS NOT NULL AS added,COALESCE(u.introduced,0) AS introduced,
+    EXISTS(SELECT 1 FROM user_series_seen_works s WHERE s.user_id=? AND s.series_id=c.series_id AND s.book_id=c.book_id) AS seen
     FROM series_catalogue_works c LEFT JOIN user_saved_series_works u
       ON u.series_id=c.series_id AND u.book_id=c.book_id AND u.user_id=?
-    WHERE c.series_id=? ORDER BY c.position IS NULL,c.position,c.book_id`).all(userId, id) as {
+    WHERE c.series_id=? ORDER BY c.position IS NULL,c.position,c.book_id`).all(userId, userId, id) as {
       id: number; title: string; position: number | null; cover: string | null; unreleased: number;
-      workId: string | null; added: number; introduced: number;
+      workId: string | null; added: number; introduced: number; seen: number;
     }[];
-  const works = rows.map((work) => ({ ...work, unreleased: !!work.unreleased,
-    added: !!work.added, introduced: !!work.introduced,
-    new: !!options?.newBookIds?.has(work.id) && !work.added,
-    // Another user's catalogue link must not expose state for a work this user has neither added nor owns.
-    ...seriesWorkState(userId, work.added || ownsWork(userId, work.workId) ? work.workId : null) }));
-  const unique = works.filter((work, index) => works.findIndex((other) =>
-    work.workId ? other.workId === work.workId : other.id === work.id) === index);
+  const author = series.author || "Unknown author";
+  const mapped = rows.map((work) => {
+    const added = !!work.added;
+    const { needsAdmin } = added ? { needsAdmin: false } : seriesWorkAdminMatch(userId, work.title, author, work.id);
+    return {
+      ...work,
+      unreleased: !!work.unreleased,
+      added,
+      introduced: !!work.introduced,
+      needsAdmin,
+      // Another user's catalogue link must not expose state for a work this user has neither added nor owns.
+      ...seriesWorkState(userId, added || ownsWork(userId, work.workId) ? work.workId : null),
+      seen: !!work.seen,
+    };
+  });
+  // Prefer an added row when the same local work appears under more than one Hardcover book id.
+  const preferred = new Map<string, (typeof mapped)[number]>();
+  for (const work of mapped) {
+    const key = work.workId ? `w:${work.workId}` : `b:${work.id}`;
+    const current = preferred.get(key);
+    if (!current || (!current.added && work.added) || (current.added === work.added && work.id < current.id))
+      preferred.set(key, work);
+  }
+  const unique = [...preferred.values()]
+    .sort((a, b) => a.position === null ? (b.position === null ? a.id - b.id : 1)
+      : b.position === null ? -1 : a.position - b.position || a.id - b.id)
+    .map((work) => {
+      const { seen, ...rest } = work;
+      return { ...rest, new: !work.added && !seen };
+    });
+  const needsAdmin = unique.filter((work) => work.needsAdmin && !work.added).map(({ id, title }) => ({ id, title }));
   // An unreleased work the user has not added cannot be finished, so it does not hold completion below 100%.
   const counted = unique.filter((work) => work.added || !work.unreleased);
-  return { ...series as object, works, ...(options?.refreshError ? { refreshError: options.refreshError } : {}),
+  return { ...series, works: unique, needsAdmin,
+    ...(options?.refreshError ? { refreshError: options.refreshError } : {}),
     completion: { finished: counted.filter((work) => work.finished).length,
     total: counted.length, nextBookId: counted.find((work) => !work.finished)?.id ?? null } };
 }

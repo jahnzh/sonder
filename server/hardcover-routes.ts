@@ -19,6 +19,7 @@ import {
   saveHardcoverSeries,
   listSavedHardcoverSeries,
   refreshSavedHardcoverSeries,
+  acknowledgeSeriesWorks,
   hardcoverBook,
 } from "./hardcover.ts";
 import { acquire } from "./acquisitions.ts";
@@ -42,12 +43,19 @@ export function registerHardcoverRoutes(app: FastifyInstance) {
   app.get("/api/series", async (req) => listSavedHardcoverSeries(currentUserId(req)));
   app.get("/api/series/:id", async (req) => {
     const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(req.params);
+    const { refresh } = z.object({ refresh: z.coerce.boolean().optional() }).parse(req.query ?? {});
     // Revisiting a saved series refreshes the Hardcover catalogue by ID (#206).
-    return refreshSavedHardcoverSeries(currentUserId(req), id);
+    return refreshSavedHardcoverSeries(currentUserId(req), id, { force: !!refresh });
   });
   app.post("/api/series", async (req) => {
-    const { id, bookIds } = z.object({ id: z.number().int().positive(), bookIds: z.array(z.number().int().positive()).max(1000) }).parse(req.body);
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const { id, bookIds } = z.object({ id: z.number().int().positive(), bookIds: z.array(z.number().int().positive()).max(1000) }).parse(body);
     return saveHardcoverSeries(currentUserId(req), id, bookIds);
+  });
+  app.post("/api/series/:id/ack", async (req) => {
+    const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(req.params);
+    const { bookIds } = z.object({ bookIds: z.array(z.number().int().positive()).max(1000).default([]) }).parse(req.body ?? {});
+    return acknowledgeSeriesWorks(currentUserId(req), id, bookIds);
   });
   app.get("/api/hardcover", async (req) => hardcoverState(currentUserId(req)));
   app.put("/api/hardcover/token", async (req) => {

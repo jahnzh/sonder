@@ -33,9 +33,11 @@ const lateBook = { ...books[0], id: 105, title: "Third crossing", release_year: 
   book_series: [{ position: 4, series: { id: 11, name: "The Crossing" } }] };
 let seriesElevenExtras: typeof books = [];
 let externalRequests = 0;
+let hardcoverCalls = 0;
 let hardcoverOutage = false;
 globalThis.fetch = async (input, init) => {
   if (!String(input).startsWith("https://api.hardcover.app/")) { externalRequests++; throw new Error("Unexpected external request"); }
+  hardcoverCalls++;
   if (hardcoverOutage) throw new Error("Hardcover unavailable");
   const { query, variables } = JSON.parse(String(init?.body));
   if (query.includes("SonderSeriesSearchDetails")) return Response.json({ data: { series } });
@@ -43,7 +45,7 @@ globalThis.fetch = async (input, init) => {
     assert.match(query, /search\(query:\$q,query_type:"Series"/);
     return Response.json({ data: { search: { ids: [11, 12] } } });
   }
-  if (query.includes("SonderSeriesPreview") || query.includes("SonderSeriesRefresh")) return Response.json({ data: { series_by_pk: {
+  if (query.includes("SonderSeriesPreview")) return Response.json({ data: { series_by_pk: {
     ...(variables.id === 13 ? { id: 13, name: "Alice series", author: { name: "Lewis Carroll" }, books_count: 1,
       book_series: [{ position: 1, book: existingBook }] } : variables.id === 14 ? {
       id: 14, name: "Mixed series", author: { name: "Mary Shelley" }, books_count: 2,
@@ -121,9 +123,9 @@ test("saving selected works reuses owned titles and remembers their provenance",
   assert.equal(externalRequests, 0, "saving must not start audio or ebook searches");
   hardcoverOutage = true;
   try {
-    const offline = await app.inject("/api/series/11");
+    const offline = await app.inject("/api/series/11?refresh=1");
     assert.equal(offline.statusCode, 200, "saved catalogue survives an upstream outage");
-    assert.match(offline.json().refreshError, /Hardcover could not be reached|Hardcover unavailable/);
+    assert.match(String(offline.json().refreshError || ""), /could not be reached|unavailable|Showing the last saved catalogue|token in Settings/i);
     assert.deepEqual(offline.json().works.map((work: any) => work.id), [101, 102, 104, 103]);
     assert.ok((await app.inject("/api/books")).json().some((book: any) => book.inLibrary && book.title === "Companion"));
   } finally { hardcoverOutage = false; }
@@ -219,6 +221,8 @@ test("saved series and completion are personal while catalogue works are shared"
 
 test("revisiting refreshes by series ID, highlights new works, and adds only chosen ones", async () => {
   seriesElevenExtras = [lateBook];
+  // Age the last refresh so this revisit hits Hardcover.
+  sqlite.prepare("UPDATE user_saved_series SET refreshed_at=? WHERE series_id=11").run(Date.now() - 120_000);
   const before = (await app.inject("/api/books")).json().filter((book: any) => book.inLibrary);
   const refreshed = await app.inject("/api/series/11");
   assert.equal(refreshed.statusCode, 200, refreshed.body);
@@ -229,8 +233,12 @@ test("revisiting refreshes by series ID, highlights new works, and adds only cho
   assert.equal(late?.added, false);
   assert.equal(view.works.find((work: any) => work.id === 101).added, true);
   assert.equal(view.works.find((work: any) => work.id === 101).new, false);
+  assert.equal(view.works.find((work: any) => work.id === 102).new, false, "previously known unadded works are not new");
   assert.equal((await app.inject("/api/books")).json().filter((book: any) => book.inLibrary).length, before.length,
     "refresh must not add catalogue works to the library");
+  sqlite.prepare("UPDATE user_saved_series SET refreshed_at=? WHERE series_id=11").run(Date.now() - 120_000);
+  const secondVisit = await app.inject("/api/series/11");
+  assert.equal(secondVisit.json().works.find((work: any) => work.id === 105)?.new, true, "new persists across revisits");
   const added = await app.inject({ method: "POST", url: "/api/series", payload: { id: 11, bookIds: [105] } });
   assert.equal(added.statusCode, 200, added.body);
   const after = added.json().works;
@@ -246,8 +254,90 @@ test("revisiting refreshes by series ID, highlights new works, and adds only cho
   assert.equal((await app.inject("/api/books")).json().filter((book: any) => book.inLibrary && book.title === "Third crossing").length, 1,
     "adding an already-selected work must not duplicate it");
   seriesElevenExtras = [];
+  sqlite.prepare("UPDATE user_saved_series SET refreshed_at=? WHERE series_id=11").run(Date.now() - 120_000);
   const stable = await app.inject("/api/series/11");
   assert.equal(stable.statusCode, 200, stable.body);
   assert.equal(stable.json().works.find((work: any) => work.id === 105)?.added, true);
   assert.equal(stable.json().refreshError, undefined);
+});
+
+test("new works stay personal until acknowledged and a recent refresh is skipped", async () => {
+  seriesElevenExtras = [{ ...lateBook, id: 108, title: "Fourth crossing" }];
+  sqlite.prepare("DELETE FROM user_series_seen_works WHERE book_id=108").run();
+  sqlite.prepare("UPDATE user_saved_series SET refreshed_at=? WHERE series_id=11").run(Date.now() - 120_000);
+  const first = await app.inject("/api/series/11");
+  assert.equal(first.json().works.find((work: any) => work.id === 108)?.new, true);
+  hardcoverCalls = 0;
+  const cached = await app.inject("/api/series/11");
+  assert.equal(cached.statusCode, 200, cached.body);
+  assert.equal(hardcoverCalls, 0, "a refresh within 60s must not call Hardcover");
+  assert.equal(cached.json().works.find((work: any) => work.id === 108)?.new, true);
+  process.env.APP_PASSWORD = "admin-fixture-password";
+  try {
+    const adminLogin = await app.inject({ method: "POST", url: "/api/auth/login", payload: { password: "admin-fixture-password" } });
+    const adminHeaders = { cookie: `sonder_session=${adminLogin.cookies[0].value}` };
+    const created = await app.inject({ method: "POST", url: "/api/users", headers: adminHeaders, payload: { username: "viewer", password: "viewer-password" } });
+    assert.equal(created.statusCode, 200, created.body);
+    const login = await app.inject({ method: "POST", url: "/api/auth/login", payload: { username: "viewer", password: "viewer-password" } });
+    const headers = { cookie: `sonder_session=${login.cookies[0].value}` };
+    await app.inject({ method: "PUT", url: "/api/hardcover/token", headers, payload: { token: "viewer-token" } });
+    const saved = await app.inject({ method: "POST", url: "/api/series", headers, payload: { id: 11, bookIds: [101] } });
+    assert.equal(saved.statusCode, 200, saved.body);
+    // Save marks the current catalogue as seen for this user, including 108 already listed.
+    assert.equal(saved.json().works.find((work: any) => work.id === 108)?.new, false);
+    seriesElevenExtras = [{ ...lateBook, id: 109, title: "Fifth crossing" }];
+    sqlite.prepare("UPDATE user_saved_series SET refreshed_at=NULL WHERE user_id=? AND series_id=11")
+      .run(created.json().id);
+    const theirs = await app.inject({ url: "/api/series/11", headers });
+    assert.equal(theirs.json().works.find((work: any) => work.id === 109)?.new, true, "a second user sees their own new works");
+    const ack = await app.inject({ method: "POST", url: "/api/series/11/ack", headers, payload: { bookIds: [109] } });
+    assert.equal(ack.statusCode, 200, ack.body);
+    assert.equal(ack.json().works.find((work: any) => work.id === 109)?.new, false);
+    await app.inject({ method: "DELETE", url: `/api/users/${created.json().id}`, headers: adminHeaders });
+  } finally {
+    delete process.env.APP_PASSWORD;
+    seriesElevenExtras = [];
+  }
+  const adminAck = await app.inject({ method: "POST", url: "/api/series/11/ack", payload: { bookIds: [108] } });
+  assert.equal(adminAck.statusCode, 200, adminAck.body);
+  assert.equal(adminAck.json().works.find((work: any) => work.id === 108)?.new, false);
+});
+
+test("saved mode reports needsAdmin for non-admins and dedupes shared work ids", async () => {
+  process.env.APP_PASSWORD = "admin-fixture-password";
+  try {
+    const adminLogin = await app.inject({ method: "POST", url: "/api/auth/login", payload: { password: "admin-fixture-password" } });
+    const adminHeaders = { cookie: `sonder_session=${adminLogin.cookies[0].value}` };
+    const created = await app.inject({ method: "POST", url: "/api/users", headers: adminHeaders, payload: { username: "member", password: "member-password" } });
+    assert.equal(created.statusCode, 200, created.body);
+    const login = await app.inject({ method: "POST", url: "/api/auth/login", payload: { username: "member", password: "member-password" } });
+    const headers = { cookie: `sonder_session=${login.cookies[0].value}` };
+    await app.inject({ method: "PUT", url: "/api/hardcover/token", headers, payload: { token: "member-token" } });
+    await app.inject({ method: "POST", url: "/api/library", headers, payload: { bookId: "frankenstein" } });
+    const saved = await app.inject({ method: "POST", url: "/api/series", headers, payload: { id: 14, bookIds: [103] } });
+    assert.equal(saved.statusCode, 200, saved.body);
+    sqlite.prepare("UPDATE user_saved_series SET refreshed_at=? WHERE series_id=14").run(Date.now() - 120_000);
+    const view = await app.inject({ url: "/api/series/14", headers });
+    assert.equal(view.statusCode, 200, view.body);
+    const ambiguous = view.json().works.find((work: any) => work.id === 107);
+    assert.equal(ambiguous?.needsAdmin, true);
+    assert.equal(ambiguous?.added, false);
+    assert.ok(view.json().needsAdmin.some((item: any) => item.id === 107));
+    const blocked = await app.inject({ method: "POST", url: "/api/series", headers, payload: { id: 14, bookIds: [107] } });
+    assert.equal(blocked.statusCode, 200, blocked.body);
+    assert.deepEqual(blocked.json().needsAdmin.map((item: any) => item.id), [107]);
+    assert.equal(blocked.json().works.find((work: any) => work.id === 107)?.added, false);
+    // Two Hardcover book ids pointing at the same local work collapse to one row.
+    const workId = view.json().works.find((work: any) => work.id === 103).workId;
+    sqlite.prepare(`INSERT INTO series_catalogue_works(series_id,book_id,work_id,title,position,cover,unreleased)
+      VALUES(14,110,?,?,?,?,0)`).run(workId, "Companion reprint", 2, null);
+    sqlite.prepare("UPDATE user_saved_series SET refreshed_at=? WHERE series_id=14").run(Date.now() - 120_000);
+    hardcoverCalls = 0;
+    const deduped = await app.inject({ url: "/api/series/14?refresh=1", headers });
+    assert.equal(deduped.statusCode, 200, deduped.body);
+    assert.equal(deduped.json().works.filter((work: any) => work.workId === workId).length, 1);
+    await app.inject({ method: "DELETE", url: `/api/users/${created.json().id}`, headers: adminHeaders });
+  } finally {
+    delete process.env.APP_PASSWORD;
+  }
 });

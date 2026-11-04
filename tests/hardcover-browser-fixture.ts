@@ -32,12 +32,19 @@ export function installHardcoverFixture() {
     { ...book(505, "Future Crossing", "Ada North"), release_year: 2999, release_date: "2999-01-01" },
   ];
   const lateSeriesBook = book(506, "Crossing Three", "Ada North");
+  let series701Previews = 0;
   const series = [
     { id: 701, name: "The Crossing", books_count: 4, author: { name: "Ada North" },
       book_series: [{ position: 1, book: seriesBooks[0] }, { position: 2, book: seriesBooks[1] },
         { position: null, book: seriesBooks[2] }, { position: 3, book: seriesBooks[3] }] },
     { id: 702, name: "The Crossing", books_count: 1, author: { name: "Bea South" }, book_series: [] },
   ];
+  const resetSeries701 = () => {
+    series701Previews = 0;
+    const crossing = series.find((item) => item.id === 701)!;
+    crossing.books_count = 4;
+    crossing.book_series = crossing.book_series.filter((entry) => entry.book?.id !== lateSeriesBook.id);
+  };
   const read = {
     id: 6501,
     started_at: "2026-01-01",
@@ -73,14 +80,19 @@ export function installHardcoverFixture() {
     const { query: q, variables: v } = JSON.parse(String(init?.body));
     let data: unknown;
     if (q.includes("SonderSeriesSearchDetails")) data = { series };
-    else if (q.includes("SonderSeriesSearch")) data = { search: { ids: series.map((item) => item.id) } };
-    else if (q.includes("SonderSeriesRefresh") || q.includes("SonderSeriesPreview")) {
+    else if (q.includes("SonderSeriesSearch")) {
+      resetSeries701();
+      data = { search: { ids: series.map((item) => item.id) } };
+    }
+    else if (q.includes("SonderSeriesPreview")) {
       const found = series.find((item) => item.id === v.id) ?? null;
-      // First refresh of series 701 permanently adds a newly listed work so later saves see it too (#206).
-      if (q.includes("SonderSeriesRefresh") && found?.id === 701
-        && !found.book_series.some((entry) => entry.book?.id === lateSeriesBook.id)) {
-        found.book_series.push({ position: 4, book: lateSeriesBook });
-        found.books_count = 5;
+      if (found?.id === 701) {
+        series701Previews += 1;
+        // After discover + initial save previews, a later revisit surfaces a newly listed work (#206).
+        if (series701Previews >= 3 && !found.book_series.some((entry) => entry.book?.id === lateSeriesBook.id)) {
+          found.book_series.push({ position: 4, book: lateSeriesBook });
+          found.books_count = 5;
+        }
       }
       data = { series_by_pk: found };
     }

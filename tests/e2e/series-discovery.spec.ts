@@ -56,7 +56,8 @@ test("discover and save chosen works from the intended series, then reopen it", 
 
   await page.request.put("/api/hardcover/token", { data: { token: "" } });
   await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
-  await expect(page.getByRole("dialog").getByText(/Could not refresh from Hardcover/)).toBeVisible();
+  await expect(page.getByRole("dialog").getByText(/Add your Hardcover API token in Settings, then retry/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry refresh" })).toBeVisible();
   await expect(page.getByRole("dialog").getByText("Crossing Companion", { exact: true })).toBeVisible();
   await expect(page.getByRole("dialog").getByText(/Crossing Three/)).toBeVisible();
   const offlineLibrary = (await (await page.request.get("/api/books")).json()).filter((book: { inLibrary: boolean }) => book.inLibrary);

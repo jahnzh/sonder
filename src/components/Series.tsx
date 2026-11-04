@@ -70,18 +70,25 @@ export function SeriesDialog({ target, onClose, onSaved, downloads }: { target: 
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
-  useEffect(() => {
+  const load = async (forceRefresh = false) => {
     if (!target) return;
-    let active = true;
-    setSeries(null); setError(""); setMode(target.mode); setSavedNotice(false); setSelected([]);
-    void api<Series>(target.mode === "saved" ? `/series/${target.id}` : `/hardcover/series/${target.id}`).then((value) => {
-      if (!active) return;
+    setBusy(true); setError("");
+    try {
+      const path = target.mode === "saved"
+        ? `/series/${target.id}${forceRefresh ? "?refresh=1" : ""}`
+        : `/hardcover/series/${target.id}`;
+      const value = await api<Series>(path);
       setSeries(value);
       setSelected(target.mode === "preview"
         ? value.works.filter((work) => work.selected).map((work) => work.id)
         : []);
-    }).catch((reason) => { if (active) setError(reason.message); });
-    return () => { active = false; };
+    } catch (reason) { setSeries(null); setError((reason as Error).message); }
+    finally { setBusy(false); }
+  };
+  useEffect(() => {
+    if (!target) return;
+    setSeries(null); setError(""); setMode(target.mode); setSavedNotice(false); setSelected([]);
+    void load();
   }, [target]);
   const save = async () => {
     if (!series || !selected.length) return;
@@ -92,10 +99,22 @@ export function SeriesDialog({ target, onClose, onSaved, downloads }: { target: 
     } catch (reason) { setError((reason as Error).message); }
     finally { setBusy(false); }
   };
+  const dismissNew = async () => {
+    if (!series) return;
+    const bookIds = series.works.filter((work) => work.new).map((work) => work.id);
+    if (!bookIds.length) return;
+    setBusy(true); setError("");
+    try {
+      setSeries(await api<Series>(`/series/${series.id}/ack`, { method: "POST", body: JSON.stringify({ bookIds }) }));
+    } catch (reason) { setError((reason as Error).message); }
+    finally { setBusy(false); }
+  };
   const next = series?.works.find((work) => work.id === series.completion?.nextBookId);
   const numbered = series?.works.filter((work) => work.position !== null) || [];
   const unnumbered = series?.works.filter((work) => work.position === null) || [];
   const canSelect = (work: SeriesWork) => mode === "preview" || (mode === "saved" && !work.added);
+  const showAdd = mode === "preview" || selected.length > 0;
+  const newCount = series?.works.filter((work) => work.new).length || 0;
   const renderWorks = (works: SeriesWork[]) => works.map((work) => {
     const audio = work.availability?.audio;
     const device = audio?.recordings.some((recording) => recording.tracks.length > 0 && recording.tracks.every((id) => downloads.some((download) => download.trackId === id)));
@@ -118,7 +137,8 @@ export function SeriesDialog({ target, onClose, onSaved, downloads }: { target: 
   });
   return <Dialog open={!!target} onOpenChange={(open) => { if (!open) onClose(); }} title={series?.name || "Series"} className="series-dialog">
     {error && <p className="inline-error" role="alert">{error}</p>}
-    {series?.refreshError && <p className="inline-error" role="alert">Could not refresh from Hardcover. Showing the last saved catalogue. {series.refreshError}</p>}
+    {series?.refreshError && <p className="inline-error" role="alert">{series.refreshError}</p>}
+    {series?.refreshError && mode === "saved" && <button className="button subtle" disabled={busy} onClick={() => void load(true)}>Retry refresh</button>}
     {!series && !error && <p>Loading series…</p>}
     {series && <>
       {savedNotice && <p role="status">Series saved.</p>}
@@ -127,10 +147,10 @@ export function SeriesDialog({ target, onClose, onSaved, downloads }: { target: 
       {mode === "saved" && series.completion && <p>{series.completion.finished} of {series.completion.total} works finished · {next ? `Next unfinished: ${next.title}` : "Series complete"}</p>}
       {numbered.length > 0 && <><h3>Numbered works</h3><ol className="series-works">{renderWorks(numbered)}</ol></>}
       {unnumbered.length > 0 && <><h3>Related works</h3><ul className="series-works">{renderWorks(unnumbered)}</ul></>}
-      {mode === "preview" || selected.length > 0
+      {mode === "saved" && newCount > 0 && <button className="button subtle" disabled={busy} onClick={() => void dismissNew()}>Dismiss new works</button>}
+      {showAdd
         ? <button className="button primary" disabled={busy || !selected.length} onClick={() => void save()}>Add selected works</button>
         : <button className="button subtle" onClick={onClose}>Close series</button>}
-      {mode === "saved" && selected.length > 0 && <button className="button subtle" onClick={onClose}>Close series</button>}
     </>}
   </Dialog>;
 }
