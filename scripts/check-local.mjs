@@ -555,6 +555,14 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       const stageArgs = jsonReport ? [...stageDef.args, "--", "--reporter=list,json"] : stageDef.args;
       const stageEnv = {...childEnv, NODE_ENV: stageDef.name === "build" ? "production" : "test"};
       if (jsonReport) stageEnv.PLAYWRIGHT_JSON_OUTPUT_NAME = playwrightReportPath;
+      // Unit/browser must not inherit the caller's MEDIA_ROOT (sanitized away), and must
+      // not fall through to storage.ts's production default (/mnt/usb_4t_1/sonder) — that
+      // path is unwritable on the WSL host and breaks ebook-set tests that import server
+      // modules before setting their own MEDIA_ROOT (CI host known gap).
+      if (stageDef.name === "unit" || stageDef.name === "browser") {
+        stageEnv.MEDIA_ROOT = path.join(outputDir, "stage-media");
+        stageEnv.REQUIRE_MEDIA_MOUNT = "false";
+      }
 
       let stageRes;
       try {

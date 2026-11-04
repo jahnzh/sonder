@@ -53,6 +53,7 @@ if (logPath) {
       APP_PASSWORD: process.env.APP_PASSWORD,
       DATA_DIR: process.env.DATA_DIR,
       MEDIA_ROOT: process.env.MEDIA_ROOT,
+      REQUIRE_MEDIA_MOUNT: process.env.REQUIRE_MEDIA_MOUNT,
       MEDIA_VOLUME_ID: process.env.MEDIA_VOLUME_ID,
       TRANSMISSION_RPC_URL: process.env.TRANSMISSION_RPC_URL,
       TRANSMISSION_USERNAME: process.env.TRANSMISSION_USERNAME,
@@ -615,7 +616,6 @@ test("8. Secrets, application variables and database paths are never leaked into
         for (const log of logs) {
             assert.equal(log.env.APP_PASSWORD, undefined);
             assert.equal(log.env.DATA_DIR, undefined);
-            assert.equal(log.env.MEDIA_ROOT, undefined);
             assert.equal(log.env.MEDIA_VOLUME_ID, undefined);
             assert.equal(log.env.TRANSMISSION_RPC_URL, undefined);
             assert.equal(log.env.TRANSMISSION_USERNAME, undefined);
@@ -625,6 +625,18 @@ test("8. Secrets, application variables and database paths are never leaked into
             assert.equal(log.env.PORT, undefined);
             assert.equal(log.env.HOST, undefined);
             assert.equal(log.env.NODE_ENV, log.argv[1] === "build" ? "production" : "test");
+            // Caller's MEDIA_ROOT must never leak. Unit/browser get a writable stage path
+            // under the check output dir; install/build leave MEDIA_ROOT unset.
+            const isUnit = log.argv[0] === "test";
+            const isBrowser = log.argv.includes("test:browser");
+            if (isUnit || isBrowser) {
+                assert.match(log.env.MEDIA_ROOT || "", /stage-media$/, `stage media for ${JSON.stringify(log.argv)}`);
+                assert.notEqual(log.env.MEDIA_ROOT, "/caller/secret/media");
+                assert.equal(log.env.REQUIRE_MEDIA_MOUNT, "false");
+            } else {
+                assert.equal(log.env.MEDIA_ROOT, undefined);
+                assert.equal(log.env.REQUIRE_MEDIA_MOUNT, undefined);
+            }
         }
     }
     finally {
