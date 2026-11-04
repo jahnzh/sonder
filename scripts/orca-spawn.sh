@@ -17,6 +17,12 @@
 # so a caller cannot start a second worker.
 set -u
 
+background_in_worktree() {
+  local wt=$1 log=$2
+  shift 2
+  (cd "$wt" && nohup "$@" > "$log" 2>&1 &)
+}
+
 usage() {
   echo "usage: orca-spawn.sh --spec-file <file> --name <worktree> (--base <branch> | --base-worktree <name>) --agent <id> --model <id> [--effort <level>] [--doc <path>...] [--fix-of <dispatch>] [--review-of <dispatch>]" >&2
   exit 2
@@ -175,11 +181,11 @@ fi
 # and start a second worker. Prefer the path Orca reports; fall back to the guessed one.
 [ -z "$receipt_worktree" ] || worktree=$receipt_worktree
 if [ -d "$worktree" ]; then
-  (cd "$worktree" && nohup codegraph init -y > .codegraph-init.log 2>&1 &)
+  background_in_worktree "$worktree" .codegraph-init.log codegraph init -y
   echo "codegraph init -y running in the background in $worktree (log: .codegraph-init.log)"
   # A new worktree has no node_modules, so the worker's first tsc or test run would fail. Install beside the CodeGraph index.
   if [ -f "$worktree/package.json" ] && [ ! -d "$worktree/node_modules" ]; then
-    (cd "$worktree" && nohup npm ci --no-audit --no-fund > .npm-ci.log 2>&1 &)
+    background_in_worktree "$worktree" .npm-ci.log npm ci --no-audit --no-fund
     echo "npm ci running in the background in $worktree (log: .npm-ci.log)"
   fi
   # Orca may name the local branch differently from the base (user/name); push and clean up with this one.

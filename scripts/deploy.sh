@@ -141,6 +141,7 @@ case ${existing:-} in
   *)
     if ! $docker tag "$old_id" "sonder-audiobooks:before-${short}-${ts}"; then
       echo "could not tag the running image for rollback; not building. The container is untouched." >&2
+      echo "roll back by rebuilding the previous commit: git checkout <previous-commit> && docker compose build sonder && docker compose up -d sonder" >&2
       exit 1
     fi
     rollback_tag="before-${short}-${ts}"
