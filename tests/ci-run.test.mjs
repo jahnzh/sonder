@@ -633,11 +633,14 @@ test("a remote-only active run marks the host busy", () => {
 test("the queue waits behind a remote-only busy host until the process exits", () => {
   const f = fixture();
   try {
-    const sleeper = f.spawnSleeper(2);
+    // 10 s: a 2 s sleeper often exits before classify_host's remote probe on a
+    // loaded machine, so the host looks idle and the queue assertion never fires.
+    const sleeper = f.spawnSleeper(10);
     assert.ok(waitForProcessVisible(sleeper.pid));
     const runDir = path.join(f.remote, "runs", "fake-run-1");
     fs.mkdirSync(runDir, { recursive: true });
     fs.writeFileSync(path.join(runDir, "check.pid"), String(sleeper.pid));
+    assert.ok(waitForProcessVisible(sleeper.pid), "sleeper must still be alive when ci-run starts");
     const startedAt = Date.now();
     const out = f.run([], f.second, {
       SONDER_CI_HOSTS: "deck",
@@ -650,7 +653,7 @@ test("the queue waits behind a remote-only busy host until the process exits", (
     assert.match(out.stdout, /^started deck /m);
     assert.ok(out.stdout.indexOf("queued deck") < out.stdout.indexOf("started deck"));
     assert.equal(f.runnerInvocations("deck").length, 1);
-    // The sleeper lives 2 s; the run could not have started before it exited.
+    // The sleeper lives 10 s; the run could not have started before ~a couple seconds.
     assert.ok(elapsedMs >= 1_500, `waited for the remote process (${elapsedMs}ms)`);
   } finally {
     f.cleanup();
