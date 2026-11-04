@@ -5,17 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import {
-  planSamples,
-  prefixWords,
-  selectAnchors,
-} from "../server/alignment-anchors.ts";
-import { cheapTitleAuthorMatch } from "../server/ebook-set-filter.ts";
-import {
-  evaluateOutlierCheck,
-  OUTLIER_MIN_SCORE,
-} from "../server/ebook-set-outlier.ts";
 
+// Env before any server import: storage.ts / db.ts capture paths at load (#214).
 const temp = mkdtempSync(join(tmpdir(), "sonder-ebook-set-topk-"));
 process.env.DATA_DIR = join(temp, "db");
 process.env.MEDIA_ROOT = join(temp, "media");
@@ -23,6 +14,16 @@ process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
 delete process.env.APP_PASSWORD;
 
+const {
+  planSamples,
+  prefixWords,
+  selectAnchors,
+} = await import("../server/alignment-anchors.ts");
+const { cheapTitleAuthorMatch } = await import("../server/ebook-set-filter.ts");
+const {
+  evaluateOutlierCheck,
+  OUTLIER_MIN_SCORE,
+} = await import("../server/ebook-set-outlier.ts");
 const { createApp } = await import("../server/app.ts");
 const { db } = await import("../server/db.ts");
 const schema = await import("../server/schema.ts");
