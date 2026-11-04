@@ -642,11 +642,12 @@ test("simultaneous starts from separate coordinators admit only one container", 
   const common = { STUB_SCP_BARRIER: barrier };
   const first = f.start(f.second, { ...common, SONDER_CI_LOCAL_LOCK_DIR: path.join(f.base, "coordinator-a") });
   const second = f.start(f.second, { ...common, SONDER_CI_LOCAL_LOCK_DIR: path.join(f.base, "coordinator-b") });
-  const rejected = await Promise.race([first.done, second.done]);
-  assert.equal(rejected.status, 4, rejected.output);
-  assert.match(rejected.output, /npm run ci:run|wait/i);
+  // Do not assume the refused run finishes first: under load the admitted
+  // run can complete before the busy refusal returns.
   const results = await Promise.all([first.done, second.done]);
   assert.deepEqual(results.map((result) => result.status).sort(), [0, 4], JSON.stringify(results));
+  const rejected = results.find((result) => result.status === 4)!;
+  assert.match(rejected.output, /npm run ci:run|wait/i);
   assert.equal(f.runCalls().length, 1);
   assert.equal(f.checkCalls().length, 1);
   assert.equal(f.read(f.logs.ssh).split("\n").filter((line) => line.includes(" -- preflight ")).length, 2);
