@@ -10,6 +10,7 @@ Paste this block at the top of every worker spec:
 Repository: Sonder, in `/home/jahn/audiobook_streamer`. Your worktree is a checkout of the base branch named in your task. Read `AGENTS.md` in it first, and the `CLAUDE.md` for architecture. Read your issue with `gh issue view <n>`.
 
 Code navigation: run `codegraph init -y` once in your worktree first (about 30 seconds). Then use `codegraph explore "<symbols or a question>"` before grep or reading files. `.codegraph` is git-ignored; never add or commit it.
+Dependencies: `npm ci` runs in the background in a new worktree (log: `.npm-ci.log`). If `tsc` or a test fails immediately on missing modules, wait for the install to finish or check the log.
 
 Rules:
 - Do not push, merge or open a PR. Do not run `docker compose`, and do not touch `.env`, `data/` or production media.

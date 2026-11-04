@@ -8,6 +8,8 @@
 # (default 15). $ORCA_PREFLIGHT_DF replaces the df command (tests); it is called as `df -Pk <path>`.
 # Docs are looked up in $ORCA_PREFLIGHT_REPO, else in the worktree when it exists,
 # else in the repo of the current directory (a worktree that worker-start has not created yet).
+# When the worktree exists and has a package.json, reports if npm ci has not finished (no node_modules,
+# log present without completion, or install process still running).
 set -u
 
 usage() {
@@ -84,8 +86,45 @@ check_processes() {
   done
 }
 
+check_npm() {
+  [ -d "$worktree" ] || return 0
+  [ -f "$worktree/package.json" ] || return 0
+
+  local log="$worktree/.npm-ci.log"
+  local npm_pid="" entry p cwd cmd
+
+  for entry in /proc/[0-9]*; do
+    p=${entry#/proc/}
+    [ -z "${skip[$p]:-}" ] || continue
+    cwd=$(readlink "$entry/cwd" 2>/dev/null) || continue
+    if [ "$cwd" = "$worktree" ] || [ "${cwd#"$worktree"/}" != "$cwd" ]; then
+      cmd=$(tr '\0' ' ' < "$entry/cmdline" 2>/dev/null)
+      case "$cmd" in
+        *npm*) npm_pid=$p; break ;;
+      esac
+    fi
+  done
+
+  if [ -n "$npm_pid" ]; then
+    echo "npm ci has not finished: install process still running (pid $npm_pid)"
+    failed=1
+  else
+    if [ ! -d "$worktree/node_modules" ]; then
+      echo "npm ci has not finished: no node_modules in $worktree"
+      failed=1
+    fi
+    if [ -f "$log" ]; then
+      if grep -qE "npm (ERR!|error)" "$log" 2>/dev/null || ! grep -qE "(added [0-9]+ package|up to date)" "$log" 2>/dev/null; then
+        echo "npm ci has not finished: log present without completion in $worktree (failed or stale install)"
+        failed=1
+      fi
+    fi
+  fi
+}
+
 if [ "$after_stop" -eq 0 ]; then
   check_disk
+  check_npm
   repo=${ORCA_PREFLIGHT_REPO:-}
   if [ -z "$repo" ]; then
     if [ -d "$worktree" ]; then repo=$worktree; else repo=$PWD; fi
