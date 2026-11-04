@@ -394,11 +394,13 @@ export function HardcoverBookTools({
   book,
   onChanged,
   onSettings,
+  onOpenSeries,
   notify,
 }: {
   book: Book;
   onChanged: () => void;
   onSettings: () => void;
+  onOpenSeries: (id: number) => void;
   notify: Notify;
 }) {
   const { state, refresh } = useHardcover();
@@ -476,17 +478,16 @@ export function HardcoverBookTools({
       setBusy("");
     }
   };
-  const addSeries = async (seriesName: string) => {
+  const addSeries = async (seriesName: string, seriesId?: number) => {
     if (!seriesName) return;
+    if (seriesId) { onOpenSeries(seriesId); return; }
     setBusy(`series:${seriesName}`);
     setError("");
     try {
-      await api("/hardcover/series", {
-        method: "POST",
-        body: JSON.stringify({ name: seriesName }),
-      });
-      changed();
-      notify("The series is in your library.");
+      const memberships = await api<{ id: number; name: string }[]>(`/hardcover/books/${book.hardcover!.id}/series`);
+      const matches = memberships.filter((item) => item.name === seriesName);
+      if (matches.length !== 1) throw new Error("This series could not be identified uniquely. Search for it in Discover.");
+      onOpenSeries(matches[0].id);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -702,7 +703,7 @@ export function HardcoverBookTools({
                       type="button"
                       className="button subtle"
                       disabled={!!busy}
-                      onClick={() => void addSeries(s.name)}
+                      onClick={() => void addSeries(s.name, s.id)}
                     >
                       {busy === `series:${s.name}` ? (
                         <Loader2 className="spin" size={14} />

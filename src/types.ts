@@ -24,7 +24,7 @@ export type Book = {
   hardcover?: {
     id: number;
     slug: string | null;
-    series: { name: string; position: number | null }[];
+    series: { id?: number; name: string; position: number | null }[];
     statusId: number | null;
     pending: boolean;
     progressFraction: number | null;
