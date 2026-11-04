@@ -295,13 +295,16 @@ test("fetchTopKIntoEbookSet downloads at most five filtered candidates", async (
 
 test("fetchTopKIntoEbookSet keeps other candidates when one save fails", async () => {
   const workId = seedWork("Partial Fail Book", "Cara Author");
+  const md5Ok1 = randomUUID().replace(/-/g, "");
+  const md5Fail = randomUUID().replace(/-/g, "");
+  const md5Ok2 = randomUUID().replace(/-/g, "");
   let saveCalls = 0;
   setEbookSetDeps({
     search: async () => ({
       website: "https://example.test",
       files: [
         {
-          md5: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          md5: md5Ok1,
           source: "libgen" as const,
           title: "Partial Fail Book",
           authors: ["Cara Author"],
@@ -313,7 +316,7 @@ test("fetchTopKIntoEbookSet keeps other candidates when one save fails", async (
           url: "https://example.test/0",
         },
         {
-          md5: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          md5: md5Fail,
           source: "libgen" as const,
           title: "Partial Fail Book alt",
           authors: ["Cara Author"],
@@ -325,7 +328,7 @@ test("fetchTopKIntoEbookSet keeps other candidates when one save fails", async (
           url: "https://example.test/1",
         },
         {
-          md5: "cccccccccccccccccccccccccccccccc",
+          md5: md5Ok2,
           source: "libgen" as const,
           title: "Partial Fail Book vol 2",
           authors: ["Cara Author"],
@@ -340,14 +343,14 @@ test("fetchTopKIntoEbookSet keeps other candidates when one save fails", async (
     }),
     save: async (input) => {
       saveCalls++;
-      if (input.md5 === "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") {
+      if (input.md5 === md5Fail) {
         throw new Error("bad mirror");
       }
       const id = `${input.source}-${input.md5}`;
       const dir = join(temp, "media", "ebooks");
       mkdirSync(dir, { recursive: true });
       const path = join(dir, `${id}.epub`);
-      writeFileSync(path, await readerFixture());
+      writeFileSync(path, await readerFixture({ script: true }));
       db.insert(schema.ebookEditions)
         .values({ id, workId: input.workId!, format: "epub", source: path })
         .run();
