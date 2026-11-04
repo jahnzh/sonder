@@ -170,7 +170,7 @@ test("happy path prints the dispatch id and model, passes the flags, and runs co
   }
 });
 
-test("a worktree with a package.json and no node_modules gets npm ci in the background; one with node_modules does not", async () => {
+test("fresh worktree gets npm ci started", async () => {
   const t = setup();
   try {
     stub(
@@ -186,15 +186,18 @@ test("a worktree with a package.json and no node_modules gets npm ci in the back
   } finally {
     rmSync(t.dir, { recursive: true, force: true });
   }
-  const installed = setup();
+});
+
+test("worktree with node_modules does not", async () => {
+  const t = setup();
   try {
-    writeFileSync(join(installed.workspaces, "wt", "package.json"), "{}\n");
-    mkdirSync(join(installed.workspaces, "wt", "node_modules"));
-    const r = installed.run([...installed.base, "--model", "gpt-5.3-codex", "--effort", "high"]);
+    writeFileSync(join(t.workspaces, "wt", "package.json"), "{}\n");
+    mkdirSync(join(t.workspaces, "wt", "node_modules"));
+    const r = t.run([...t.base, "--model", "gpt-5.3-codex", "--effort", "high"]);
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.doesNotMatch(r.stdout, /npm ci running/);
   } finally {
-    rmSync(installed.dir, { recursive: true, force: true });
+    rmSync(t.dir, { recursive: true, force: true });
   }
 });
 
