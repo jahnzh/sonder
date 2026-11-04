@@ -528,6 +528,23 @@ export async function retrySeriesWorkAcquisition(
     .get(userId, seriesId, bookId) as { workId: string } | undefined;
   if (!saved) throw new Error("This series work could not be found.");
   const workId = saved.workId;
+  if (!canAcquireMedia(userId)) {
+    setJobState(userId, seriesId, bookId, workId, kind, "failed", "no_permission");
+    const acquisition = seriesWorkAcquisitions(
+      userId,
+      seriesId,
+      bookId,
+      workId,
+      false,
+    );
+    if (kind === "audio") {
+      return {
+        mediaState: getWorkMediaState(userId, workId),
+        acquisition,
+      };
+    }
+    return acquisition;
+  }
   if (kind === "audio") {
     const media = getWorkMediaState(userId, workId);
     if (media?.state === "failed" && media.acquisitionId) {

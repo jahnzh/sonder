@@ -344,6 +344,68 @@ test("stale searching jobs reset to pending before processing", async () => {
     db.select().from(schema.seriesAcquisitionJobs).get()?.status,
     "pending",
   );
+  await tickSeriesAcquisition();
+  assert.equal(
+    db.select().from(schema.seriesAcquisitionJobs).get()?.status,
+    "done",
+  );
+});
+
+test("non-admin cannot retry audio or ebook acquisition", async () => {
+  let acquireCalls = 0;
+  setSeriesAcquisitionDeps({
+    canAcquireMedia: () => false,
+    acquire: (async () => {
+      acquireCalls++;
+      throw new Error("should not acquire");
+    }) as SeriesAcquisitionDeps["acquire"],
+  });
+  await saveSeries([201], { searchEbooks: true });
+  const ebookRetry = await app.inject({
+    method: "POST",
+    url: "/api/series/31/works/201/acquisition/retry",
+    payload: { kind: "ebook" },
+  });
+  assert.equal(ebookRetry.statusCode, 200, ebookRetry.body);
+  assert.equal(ebookRetry.json().ebook?.skipReason, "no_permission");
+  assert.equal(acquireCalls, 0);
+
+  const workId = (await app.inject("/api/series/31")).json().works.find((w: { id: number }) => w.id === 201).workId;
+  const acquisitionId = randomUUID();
+  const magnet =
+    "magnet:?xt=urn:btih:ffffffffffffffffffffffffffffffffffffffff&dn=First";
+  db.insert(schema.acquisitions)
+    .values({
+      id: acquisitionId,
+      hash: magnetHash(magnet),
+      magnet,
+      backend: "local",
+      remoteId: null,
+      title: "First volume",
+      author: "Ada Author",
+      cover: "",
+      workId,
+      language: null,
+      narrator: null,
+      status: "error",
+      progress: 0,
+      error: "failed",
+      bookId: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+    .run();
+  db.insert(schema.userAcquisitions).values({ userId: 1, acquisitionId }).run();
+  const { syncWorkMediaState } = await import("../server/work-media-state.ts");
+  syncWorkMediaState(1, workId);
+  const audioRetry = await app.inject({
+    method: "POST",
+    url: "/api/series/31/works/201/acquisition/retry",
+    payload: { kind: "audio" },
+  });
+  assert.equal(audioRetry.statusCode, 200, audioRetry.body);
+  assert.equal(audioRetry.json().acquisition.audio.skipReason, "no_permission");
+  assert.equal(acquireCalls, 0);
 });
 
 test("partial ebook failures still complete the job when some candidates succeed", async () => {
@@ -364,8 +426,62 @@ test("partial ebook failures still complete the job when some candidates succeed
 
 test("the same work is not searched twice across two saved series", async () => {
   const { enqueueSeriesAcquisition } = await import("../server/series-acquisition.ts");
+  let acquireCalls = 0;
+  setSeriesAcquisitionDeps({
+    acquire: async (_magnet, metadata) => {
+      acquireCalls++;
+      const id = randomUUID();
+      const row = {
+        id,
+        hash: "dead",
+        magnet: "magnet:?xt=urn:btih:cccccccccccccccccccccccccccccccccccccccc",
+        backend: "local",
+        remoteId: null,
+        title: metadata?.title ?? "First volume",
+        author: metadata?.author ?? "Ada Author",
+        cover: metadata?.cover ?? "",
+        workId: metadata?.workId ?? null,
+        language: metadata?.language ?? null,
+        narrator: metadata?.narrator ?? null,
+        status: "checking" as const,
+        progress: 0,
+        error: null,
+        bookId: null,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      db.insert(schema.acquisitions).values(row).run();
+      db.insert(schema.userAcquisitions)
+        .values({ userId: metadata?.userId ?? 1, acquisitionId: id })
+        .onConflictDoNothing()
+        .run();
+      return row as Awaited<ReturnType<typeof import("../server/acquisitions.ts").acquire>>;
+    },
+    seriesAudioDeps: {
+      abbSearch: async () => ({
+        results: [
+          {
+            id: "abb-1",
+            title: "First volume M4B",
+            format: "M4B",
+            narrator: "Reader",
+          },
+        ],
+        page: 1,
+        nextPage: null,
+      }),
+      prowlarrSearch: async () => ({ results: [], page: 1, nextPage: null }),
+      abbMagnetLink: async () =>
+        "magnet:?xt=urn:btih:cccccccccccccccccccccccccccccccccccccccc&dn=First",
+      prowlarrMagnetLink: async () => "",
+      cachedHashes: async () => new Set<string>(),
+      log: () => {},
+    },
+    canAcquireMedia: () => true,
+  });
   await saveSeries([201], { searchAudio: true });
   await tickSeriesAcquisition();
+  assert.equal(acquireCalls, 1);
   const workId = (await app.inject("/api/series/31")).json().works.find((w: { id: number }) => w.id === 201).workId;
   sqlite.prepare(
     `INSERT INTO series_catalogue(id,name,author,book_count) VALUES(32,'Other','Author',1)`,
@@ -386,6 +502,7 @@ test("the same work is not searched twice across two saved series", async () => 
   });
   await tickSeriesAcquisition();
   assert.equal(db.select().from(schema.seriesAcquisitionJobs).all().length, 1);
+  assert.equal(acquireCalls, 1);
 });
 
 test("audio retry records failure on the job instead of throwing", async () => {

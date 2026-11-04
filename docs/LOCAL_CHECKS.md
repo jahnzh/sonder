@@ -10,6 +10,8 @@ npm run check -- --ref <commit> --output-dir /absolute/path/to/new-report-direct
 
 The runner snapshots a committed revision into a disposable directory and runs dependency installation, build/typecheck, unit tests, and browser tests in order. The build runs in production mode so service-worker behavior matches a release; test stages run in test mode. It stops on failure and preserves stage logs and a machine-readable result. The report identifies the source revision and whether the calling checkout has pending changes. Commit changes before using this command to validate them.
 
+Unit tests set `SONDER_SKIP_SERIES_ACQUISITION=1` (see `tests/series-acquisition.test.ts`) so the app background ticker does not run during `npm test`; call `tickSeriesAcquisition()` manually when exercising acquisition (`server/series-acquisition.ts`).
+
 Every invocation uses separate build output, a browser-test port, and a report directory. Treat a check result as evidence for the revision and run identified in that report. Keep the run's report with its task handoff so another Orca conversation can find the evidence.
 
 Port leases coordinate runners that use the current contender protocol. Do not overlap one with a check runner started from a revision before issue #59: a legacy runner can decide that an old lock is stale, pause, and then unlink the current runner's replacement because it does not revalidate the lock identity or observe contender records. Wait for every legacy check process to exit before starting a current runner; the current runner cannot close that mixed-version race unilaterally.
@@ -84,7 +86,7 @@ Deploys a committed revision to the local production container (`sonder` in `com
 5. recreates the container, waits for the health check, then curls `/api/health`;
 6. runs the live verification scripts (reader and multi-user) unless `--skip-live-checks`, every one of them even when an earlier one fails, then exits 1 listing the failures; the reader check picks the most recent recording with a finished EPUB alignment map.
 
-Exit codes: 0 success, 1 a step failed, 2 bad usage. Environment overrides: `SONDER_DEPLOY_DOCKER`, `SONDER_DEPLOY_DB`, `SONDER_DEPLOY_BACKUP_DIR`, `SONDER_DEPLOY_HEALTH_TIMEOUT`, `SONDER_DEPLOY_PORT`, `SONDER_DEPLOY_LIVE_CHECKS`. Set `SONDER_SKIP_SERIES_ACQUISITION=1` in unit tests to disable the background series-acquisition ticker while still calling `tickSeriesAcquisition()` manually (`server/series-acquisition.ts`).
+Exit codes: 0 success, 1 a step failed, 2 bad usage. Environment overrides: `SONDER_DEPLOY_DOCKER`, `SONDER_DEPLOY_DB`, `SONDER_DEPLOY_BACKUP_DIR`, `SONDER_DEPLOY_HEALTH_TIMEOUT`, `SONDER_DEPLOY_PORT`, `SONDER_DEPLOY_LIVE_CHECKS`.
 
 Rollback is retagging the previous image and a no-build recreate:
 

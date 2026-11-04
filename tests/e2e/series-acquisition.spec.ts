@@ -25,17 +25,11 @@ test("series save opt-ins, ebook failure, and retry show specific progress", asy
   await expect(page.getByRole("dialog").getByText("Series saved.")).toBeVisible();
   await expect.poll(async () => {
     const view = await (await page.request.get("/api/series/701")).json();
-    return view.works.some((work: { acquisition?: { audio?: { status?: string } | null } }) => {
-      const status = work.acquisition?.audio?.status;
-      return (
-        status === "pending" ||
-        status === "searching" ||
-        status === "done" ||
-        status === "skipped" ||
-        status === "failed"
-      );
-    });
-  }).toBe(true);
+    const alice = view.works.find(
+      (work: { title: string }) => work.title === "Alice’s Adventures in Wonderland",
+    );
+    return alice?.acquisition?.audio?.skipReason ?? null;
+  }).toBe("has_audio");
   await expect(page.getByRole("dialog").getByText(/^Audio: /).first()).toBeVisible();
 
   await page.getByRole("button", { name: "Close series" }).click();
