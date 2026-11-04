@@ -4,6 +4,12 @@ A self-hosted audiobook player with a built-in ebook reader that follows the nar
 
 ## Catalogue
 
+**Series**:
+An ordered group of related works.
+
+**Saved series**:
+A series a user has added to their library for ongoing reference, independently of the individual works they have added.
+
 **Work**:
 A book as an abstract title, independent of any edition, recording or file.
 _Avoid_: Title, book (when the abstract work is meant)
