@@ -861,10 +861,13 @@ export async function createApp() {
     return imported;
   });
   app.get("/api/ebooks/:id/file", async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    if (id.startsWith("set-consensus:"))
+      return reply.code(404).send({ error: "This ebook is no longer on the media drive." });
     const row = db
       .select()
       .from(s.ebookEditions)
-      .where(eq(s.ebookEditions.id, (req.params as { id: string }).id))
+      .where(eq(s.ebookEditions.id, id))
       .get();
     if (!row || !existsSync(row.source))
       return reply

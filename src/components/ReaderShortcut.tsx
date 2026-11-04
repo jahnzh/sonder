@@ -43,9 +43,21 @@ export function ReaderShortcut({
           ebook.format === "epub" &&
           ebook.available,
       );
+      let defaultEbookId: string | null = null;
+      try {
+        defaultEbookId = (
+          await api<{ defaultEbookId: string | null }>(
+            `/works/${encodeURIComponent(book.workId)}/ebook-set`,
+          )
+        ).defaultEbookId;
+      } catch {
+        /* offline */
+      }
       const preferred = ebooks.find(
         (ebook) =>
-          ebook.id === localStorage.getItem(userStorageKey(`reader-ebook:${book.workId}`)),
+          ebook.id ===
+          (defaultEbookId ||
+            localStorage.getItem(userStorageKey(`reader-ebook:${book.workId}`))),
       );
       if (preferred || ebooks.length === 1) read(preferred || ebooks[0]);
       else if (ebooks.length) setChoices(ebooks);

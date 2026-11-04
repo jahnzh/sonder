@@ -403,6 +403,7 @@ export function listEbooks() {
     .from(s.ebookEditions)
     .innerJoin(s.works, eq(s.works.id, s.ebookEditions.workId))
     .all()
+    .filter((b) => !b.id.startsWith("set-consensus:"))
     .map((b) => {
       const row = db
         .select()

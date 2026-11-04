@@ -325,6 +325,8 @@ export async function evaluateEbookSetMember(
       byteSize,
       evidence,
     });
+    const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
+    await syncEbookSetConsensus(workId);
     return { status: "held" as const, evidence };
   }
   const workerReady =
@@ -373,6 +375,8 @@ export async function evaluateEbookSetMember(
       byteSize,
       evidence,
     });
+    const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
+    await syncEbookSetConsensus(workId);
     return { status: "held" as const, evidence };
   }
   const evidence = await buildEvidence(
@@ -394,7 +398,10 @@ export async function evaluateEbookSetMember(
     byteSize,
     evidence,
   });
-  return { status, evidence };
+  const result = { status, evidence };
+  const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
+  await syncEbookSetConsensus(workId);
+  return result;
 }
 
 export async function registerUploadedEbookSetMember(

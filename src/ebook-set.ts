@@ -13,6 +13,18 @@ export type EbookSetMember = {
   };
 };
 
+export type EbookSetView = {
+  members: EbookSetMember[];
+  defaultEbookId: string | null;
+  defaultEbookOverride: string | null;
+  consensus: {
+    fingerprint: string | null;
+    sentenceCount: number;
+    jobId: string | null;
+    recordingId: string | null;
+  } | null;
+};
+
 export function ebookSetStatusLabel(status: EbookSetMember["status"]) {
   if (status === "accepted") return "Accepted";
   if (status === "rejected") return "Rejected";

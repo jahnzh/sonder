@@ -39,6 +39,21 @@ const cache = new Map<
   { stamp: string; book: Omit<ReaderBook, "checkpoint" | "bookmarks"> }
 >();
 export function ebookRecord(id: string) {
+  if (id.startsWith("set-consensus:")) {
+    const workId = id.slice("set-consensus:".length);
+    const row = db
+      .select()
+      .from(s.works)
+      .where(eq(s.works.id, workId))
+      .get();
+    if (!row) throw new Error("The selected book could not be found.");
+    return {
+      id,
+      workId,
+      format: "epub" as const,
+      source: id,
+    };
+  }
   const row = db
     .select()
     .from(s.ebookEditions)
@@ -57,6 +72,16 @@ export function ebookRecord(id: string) {
   return row;
 }
 export async function extractBook(id: string) {
+  if (id.startsWith("set-consensus:")) {
+    const workId = id.slice("set-consensus:".length);
+    const { readConsensusSentences, consensusReaderBook } = await import(
+      "./ebook-set-consensus.ts"
+    );
+    const sentences = readConsensusSentences(workId);
+    if (!sentences.length)
+      throw new Error("This work has no ebook-set consensus text yet.");
+    return consensusReaderBook(workId, sentences, "en");
+  }
   const row = ebookRecord(id),
     stat = statSync(row.source),
     stamp = `${stat.size}:${stat.mtimeMs}`;

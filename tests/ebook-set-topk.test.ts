@@ -190,7 +190,7 @@ test("GET /api/works/:workId/ebook-set holds members without server audio", asyn
   });
   const res = await app.inject(`/api/works/${workId}/ebook-set`);
   assert.equal(res.statusCode, 200, res.body);
-  const members = res.json();
+  const members = res.json().members;
   assert.equal(members.length, 1);
   assert.equal(members[0].status, "held");
   assert.equal(members[0].holdReason, "awaiting_audio");
@@ -247,7 +247,7 @@ test("evaluateEbookSetMember rejects wrong editions with sample passages", async
   assert.ok(result.evidence.outlier.samples.length > 0);
 
   const api = await app.inject(`/api/works/${workId}/ebook-set`);
-  const row = api.json()[0];
+  const row = api.json().members[0];
   assert.ok("sharedSentenceCount" in row.evidence);
   assert.ok("uniqueSentenceCount" in row.evidence);
   assert.ok("audioSupportedCoverage" in row.evidence);

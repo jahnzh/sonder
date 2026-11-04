@@ -28,7 +28,7 @@ import {
   useTorrentHealth,
 } from "./TorrentHealth";
 import {openReader} from "../reading";
-import { ebookSetStatusLabel, type EbookSetMember } from "../ebook-set";
+import { ebookSetStatusLabel, type EbookSetMember, type EbookSetView } from "../ebook-set";
 import type {
   Acquisition,
   EbookResult,
@@ -275,9 +275,9 @@ export function EbookDiscovery({
     }
     try {
       setSetMembers(
-        await api<EbookSetMember[]>(
+        (await api<EbookSetView>(
           `/works/${encodeURIComponent(target.workId)}/ebook-set`,
-        ),
+        )).members,
       );
     } catch {
       setSetMembers([]);

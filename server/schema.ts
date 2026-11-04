@@ -218,6 +218,20 @@ export const workMediaStates = sqliteTable(
   (t) => [primaryKey({ columns: [t.userId, t.workId] })],
 );
 
+export const workEbookSet = sqliteTable("work_ebook_set", {
+  workId: text("work_id")
+    .primaryKey()
+    .references(() => works.id),
+  consensusFingerprint: text("consensus_fingerprint"),
+  consensusSentences: text("consensus_sentences").notNull().default("[]"),
+  projections: text("projections").notNull().default("{}"),
+  recordingId: text("recording_id"),
+  consensusJobId: text("consensus_job_id"),
+  defaultEbookId: text("default_ebook_id"),
+  defaultEbookOverride: text("default_ebook_override"),
+  updatedAt: integer("updated_at").notNull(),
+});
+
 export const workEbookSetMembers = sqliteTable(
   "work_ebook_set_members",
   {
