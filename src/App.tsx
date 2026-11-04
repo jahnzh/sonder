@@ -52,6 +52,7 @@ import {
 } from "lucide-react";
 import { PlayerProvider, usePlayer } from "./player";
 import { ReleasePicker } from "./components/ReleasePicker";
+import { SeriesDiscovery, SeriesLibrary, SeriesDialog, type SeriesTarget } from "./components/Series";
 import { ProwlarrSettings } from "./components/ProwlarrSettings";
 import { ReadingSyncSettings } from "./components/ReadingSyncSettings";
 import { AppearanceSettings } from "./components/Appearance";
@@ -213,6 +214,8 @@ function LibraryApp({
   const [favorites, setFavorites] = useState<string[]>([]);
   const [showFavorites, setShowFavorites] = useState(false);
   const [detail, setDetail] = useState<Book | null>(null);
+  const [seriesTarget, setSeriesTarget] = useState<SeriesTarget | null>(null);
+  const [seriesRevision, setSeriesRevision] = useState(0);
   const [mediaTarget,setMediaTarget]=useState<Book|null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -692,6 +695,7 @@ function LibraryApp({
                     <Plus size={17} /> Add audiobook
                   </button>}
                 </div>
+                {!query && !showFavorites && <SeriesLibrary revision={seriesRevision} onOpen={(id) => setSeriesTarget({ id, mode: "saved" })} />}
                 {!query &&
                   !showFavorites &&
                   filter === "All books" &&
@@ -865,6 +869,7 @@ function LibraryApp({
                 notify={notify}
                 torboxConfigured={!!settings?.torboxConfigured}
                 onConnect={() => navigate("settings")}
+                onSeries={(id) => setSeriesTarget({ id, mode: "preview" })}
                 refresh={refresh}
               />
             )}
@@ -1142,6 +1147,7 @@ function LibraryApp({
           onManageSources={()=>{if(detail){setMediaTarget(detail);setDetail(null);}}}
           onFindAudio={() => detail && findAudio(detail)}
           onChanged={refresh}
+          onOpenSeries={(id) => { setDetail(null); setSeriesTarget({ id, mode: "preview" }); }}
           onSettings={() => {
             setDetail(null);
             navigate("settings");
@@ -1179,6 +1185,8 @@ function LibraryApp({
           onRemove={() => detail && void mutateLibrary(detail, "remove")}
           downloads={downloads}
         />
+        <SeriesDialog target={seriesTarget} onClose={() => setSeriesTarget(null)} downloads={downloads}
+          onSaved={() => { setSeriesRevision((value) => value + 1); void refresh(); notify("Series saved."); }} />
         <ImportDialog
           onQueued={() => {
             setImportOpen(false);
@@ -1489,6 +1497,7 @@ function BookDetail({
   onRelease,
   onFindAudio,
   onChanged,
+  onOpenSeries,
   onSettings,
   notify,
   onKeepServer,
@@ -1510,6 +1519,7 @@ function BookDetail({
   onRelease: (book: Book) => void;
   onFindAudio: () => void;
   onChanged: () => void;
+  onOpenSeries: (id: number) => void;
   onSettings: () => void;
   notify: (s: string, error?: boolean) => void;
   onKeepServer: () => void;
@@ -1639,6 +1649,7 @@ function BookDetail({
             book={b}
             onChanged={onChanged}
             onSettings={onSettings}
+            onOpenSeries={onOpenSeries}
             notify={notify}
           />
           {!b.tracks.length && (
@@ -1835,6 +1846,7 @@ function Discover({
   notify,
   torboxConfigured,
   onConnect,
+  onSeries,
   refresh,
 }: {
   admin: boolean;
@@ -1850,11 +1862,12 @@ function Discover({
   notify: (text: string, error?: boolean) => void;
   torboxConfigured: boolean;
   onConnect: () => void;
+  onSeries: (id: number) => void;
   refresh: () => Promise<void>;
 }) {
   const [genre, setGenre] = useState("All genres");
   const [source, setSource] = useState<
-    "curated" | "abb" | "hardcover" | "ebooks"
+    "curated" | "abb" | "hardcover" | "ebooks" | "series"
   >("curated");
   const [busy, setBusy] = useState(false);
   const [external, setExternal] = useState<
@@ -1988,6 +2001,7 @@ function Discover({
         >
           Hardcover <ArrowUpRight size={13} />
         </button>
+        <button className={source === "series" ? "selected" : ""} onClick={() => { setSource("series"); setError(""); }}>Series</button>
         {admin && (
         <button
           className={source === "ebooks" ? "selected" : ""}
@@ -2000,7 +2014,9 @@ function Discover({
         </button>
         )}
       </div>
-      {source === "ebooks" ? (
+      {source === "series" ? (
+        <SeriesDiscovery configured={!!settings?.hardcoverConfigured} onConnect={onConnect} onOpen={onSeries} />
+      ) : source === "ebooks" ? (
         <EbookDiscovery
           query={query}
           onQuery={onQuery}

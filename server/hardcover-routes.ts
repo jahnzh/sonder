@@ -14,12 +14,40 @@ import {
   setHardcoverRecordingEdition,
   setHardcoverToken,
   hardcoverLinkedBook,
+  hardcoverSeriesSearch,
+  hardcoverSeriesPreview,
+  saveHardcoverSeries,
+  listSavedHardcoverSeries,
+  savedHardcoverSeries,
+  hardcoverBook,
 } from "./hardcover.ts";
 import { acquire } from "./acquisitions.ts";
 import { retryWorkMediaAcquisition } from "./series-membership.ts";
 import { currentUserId, requireAdmin } from "./users.ts";
 // Every route acts for the signed-in user's own Hardcover account (#15).
 export function registerHardcoverRoutes(app: FastifyInstance) {
+  app.get("/api/discover/series", async (req) => {
+    const { q } = z.object({ q: z.string().trim().min(2).max(300) }).parse(req.query);
+    return hardcoverSeriesSearch(currentUserId(req), q);
+  });
+  app.get("/api/hardcover/series/:id", async (req) => {
+    const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(req.params);
+    return hardcoverSeriesPreview(currentUserId(req), id);
+  });
+  app.get("/api/hardcover/books/:id/series", async (req) => {
+    const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(req.params);
+    const book = await hardcoverBook(currentUserId(req), id);
+    return book.book_series.flatMap((entry) => entry.series?.id ? [{ id: entry.series.id, name: entry.series.name, position: entry.position }] : []);
+  });
+  app.get("/api/series", async (req) => listSavedHardcoverSeries(currentUserId(req)));
+  app.get("/api/series/:id", async (req) => {
+    const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(req.params);
+    return savedHardcoverSeries(currentUserId(req), id);
+  });
+  app.post("/api/series", async (req) => {
+    const { id, bookIds } = z.object({ id: z.number().int().positive(), bookIds: z.array(z.number().int().positive()).max(1000) }).parse(req.body);
+    return saveHardcoverSeries(currentUserId(req), id, bookIds);
+  });
   app.get("/api/hardcover", async (req) => hardcoverState(currentUserId(req)));
   app.put("/api/hardcover/token", async (req) => {
     const { token } = z
