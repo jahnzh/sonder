@@ -125,6 +125,9 @@ const jobs = () =>
       .prepare("SELECT data FROM alignment_jobs ORDER BY updated_at DESC")
       .all() as { data: string }[]
   ).map((row) => JSON.parse(row.data) as AlignmentJob);
+export function listAlignmentJobs() {
+  return jobs();
+}
 export function alignmentJob(id: string) {
   const row = sqlite
     .prepare("SELECT data FROM alignment_jobs WHERE id=?")
@@ -276,16 +279,40 @@ export async function createAlignment(
     throw new Error(
       "The ebook and audiobook languages differ. Choose a matching release.",
     );
+  // (ebook_id, recording_id) is unique, including projected ebook-set maps.
+  // Projected/ready rows are overwritten; an in-flight backfill must not swallow
+  // explicit pairings from a manual prepare.
   const existing = jobs().find(
     (job) => job.ebookId === ebookId && job.recordingId === recordingId,
   );
-  if (existing && activeStatuses.includes(existing.status)) return existing;
+  const explicitPrepare = Boolean(pairings?.length) || mode === "chapters";
+  if (
+    existing &&
+    existing.origin !== "projected" &&
+    activeStatuses.includes(existing.status) &&
+    !explicitPrepare
+  )
+    return existing;
+  if (
+    existing &&
+    existing.origin !== "projected" &&
+    activeStatuses.includes(existing.status) &&
+    explicitPrepare
+  ) {
+    existing.status = "cancelled";
+    existing.error = null;
+    store(existing);
+  }
   const options = await alignmentOptions(ebookId, recordingId);
   const chosen = pairings?.length ? pairings : options.pairings;
   const anchored =
     mode === "anchored" ||
     (mode !== "chapters" && !chosen.length && options.anchored);
-  if (anchored && !options.anchored)
+  if (
+    anchored &&
+    !options.anchored &&
+    !ebookId.startsWith("set-consensus:")
+  )
     throw new Error(
       "This release has chapter markers or matched chapters. Match its chapters instead.",
     );
@@ -430,7 +457,8 @@ export async function runAlignmentBackfill() {
     .from(s.ebookEditions)
     .innerJoin(s.editions, eq(s.editions.workId, s.ebookEditions.workId))
     .innerJoin(s.recordings, eq(s.recordings.editionId, s.editions.id))
-    .all();
+    .all()
+    .filter(({ ebookId }) => !ebookId.startsWith("set-consensus:"));
   for (const { ebookId, recordingId } of pairs) {
     const decision = await backfillDecision(ebookId, recordingId);
     if (decision !== "queue") {
@@ -487,7 +515,11 @@ export async function autoQueueAlignmentsForWork(
       .from(s.ebookEditions)
       .where(eq(s.ebookEditions.workId, workId))
       .all()
-      .filter((row) => !filter.ebookId || row.id === filter.ebookId);
+      .filter(
+        (row) =>
+          !row.id.startsWith("set-consensus:") &&
+          (!filter.ebookId || row.id === filter.ebookId),
+      );
     const recordings = db
       .select({ id: s.recordings.id })
       .from(s.recordings)
@@ -1254,7 +1286,11 @@ export function registerAlignment(app: FastifyInstance) {
       })
       .parse(req.query);
     const slim = summary === "1" || summary === "true";
-    const listed = jobs().filter((job) => !ebookId || job.ebookId === ebookId);
+    // Prefer real prepares over ebook-set projections so callers that take
+    // jobs[0] (reader e2e fixtures, older clients) see sectionsDone progress.
+    const listed = jobs()
+      .filter((job) => !ebookId || job.ebookId === ebookId)
+      .sort((a, b) => Number(a.origin === "projected") - Number(b.origin === "projected"));
     return {
       available:
         !!process.env.ALIGNMENT_WORKER_URL &&

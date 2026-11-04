@@ -4,8 +4,10 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import {
   buildConsensusRows,
+  consensusEbookId,
   consensusFingerprint,
   consensusIndexFromParagraphId,
   consensusParagraphId,
@@ -15,6 +17,8 @@ import {
   publishProjectedMaps,
   syncEbookSetConsensus,
 } from "../server/ebook-set-consensus.ts";
+import { createAlignment } from "../server/alignment.ts";
+import { listEbooks } from "../server/ebooks.ts";
 import type { AlignmentInterval, ReaderBook } from "../src/reading-types.ts";
 
 test("buildConsensusRows keeps short sentences and merges editions", () => {
@@ -31,6 +35,23 @@ test("buildConsensusRows keeps short sentences and merges editions", () => {
   ]);
   assert.equal(rows.length, 2);
   assert.equal(rows[0].norm, "i see.");
+  assert.equal(rows[0].memberParagraphIds.join(","), "0:0,0:0");
+});
+
+test("buildConsensusRows aligns long parallel lists without quadratic traceback cost", () => {
+  const sentence = (index: number) => ({
+    norm: `word ${index}.`,
+    text: `Word ${index}.`,
+    paragraphId: `0:${index}`,
+    section: 0,
+  });
+  const size = 6000;
+  const left = Array.from({ length: size }, (_, index) => sentence(index));
+  const right = Array.from({ length: size }, (_, index) => sentence(index));
+  const started = performance.now();
+  const rows = buildConsensusRows([left, right]);
+  assert.equal(rows.length, size);
+  assert.ok(performance.now() - started < 8000);
   assert.equal(rows[0].memberParagraphIds.join(","), "0:0,0:0");
 });
 
@@ -182,6 +203,103 @@ function seedRecording(workId: string, recordingId: string, audioPath: string) {
     .run();
 }
 
+function seedChapteredRecording(
+  workId: string,
+  recordingId: string,
+  audioPath: string,
+) {
+  const editionId = `edition-ch-${workId}`;
+  db.insert(schema.editions)
+    .values({
+      id: editionId,
+      workId,
+      cover: "/covers/meditations.svg",
+      narrator: "Narrator",
+      rating: 0,
+      sourceLabel: "Test",
+    })
+    .run();
+  db.insert(schema.recordings)
+    .values({ id: recordingId, editionId })
+    .run();
+  db.insert(schema.tracks)
+    .values({
+      id: randomUUID(),
+      recordingId,
+      title: "Full book",
+      index: 0,
+      duration: 7200,
+      chapters: [{ title: "Chapter 1", start: 0, end: 3600 }],
+      source: audioPath,
+      sourceType: "local",
+    })
+    .run();
+}
+
+test("createAlignment anchored mode accepts chaptered recordings for consensus ebook", async () => {
+  const workId = seedWork("Chaptered Audio", "Ada Author");
+  const ebookId = `ebook-${randomUUID()}`;
+  await seedEpub(workId, ebookId);
+  const audio = join(temp, "media", "chaptered-audio.mp3");
+  writeFileSync(audio, "audio");
+  const recordingId = `rec-ch-${randomUUID()}`;
+  seedChapteredRecording(workId, recordingId, audio);
+  let fragment = 0;
+  setEbookSetDeps({
+    anchorSample: async ({ start }) => {
+      const step = fragment;
+      fragment += 4;
+      return {
+        spokenWords: 40,
+        match: { fragment: step, score: 0.85, start: start + 1 },
+      };
+    },
+  });
+  await evaluateEbookSetMember(workId, ebookId);
+  await syncEbookSetConsensus(workId);
+  const job = await createAlignment(
+    consensusEbookId(workId),
+    recordingId,
+    undefined,
+    "anchored",
+    "backfill",
+  );
+  assert.equal(job.mode, "anchored");
+  assert.equal(job.ebookId, consensusEbookId(workId));
+});
+
+test("consensus ebook ids are omitted from library listing and file download", async () => {
+  const workId = seedWork("Hidden Consensus", "Bob Author");
+  const ebookId = `ebook-${randomUUID()}`;
+  await seedEpub(workId, ebookId);
+  const audio = join(temp, "media", "hidden-consensus-audio.mp3");
+  writeFileSync(audio, "audio");
+  seedRecording(workId, `rec-${randomUUID()}`, audio);
+  let fragment = 0;
+  setEbookSetDeps({
+    anchorSample: async ({ start }) => {
+      const step = fragment;
+      fragment += 4;
+      return {
+        spokenWords: 40,
+        match: { fragment: step, score: 0.85, start: start + 1 },
+      };
+    },
+  });
+  await evaluateEbookSetMember(workId, ebookId);
+  const consensusId = consensusEbookId(workId);
+  assert.ok(!listEbooks().some((row) => row.id === consensusId));
+  const row = db
+    .select()
+    .from(schema.ebookEditions)
+    .where(eq(schema.ebookEditions.id, consensusId))
+    .get();
+  assert.ok(row);
+  assert.equal(row.source, `consensus:${workId}`);
+  const file = await app.inject(`/api/ebooks/${encodeURIComponent(consensusId)}/file`);
+  assert.equal(file.statusCode, 404);
+});
+
 test("accepted members get projected maps and default EPUB via API", async () => {
   const workId = seedWork("Consensus Book", "Eve Author");
   const ebookA = `ebook-a-${randomUUID()}`;
@@ -261,6 +379,7 @@ test("accepted members get projected maps and default EPUB via API", async () =>
   );
   assert.equal(jobs.length, 1);
   assert.ok(jobs[0].intervalCount > 0);
+  assert.deepEqual(jobs[0].sectionsDone, [0]);
 
   const override = await app.inject({
     method: "PATCH",
@@ -270,6 +389,84 @@ test("accepted members get projected maps and default EPUB via API", async () =>
   assert.equal(override.statusCode, 200, override.body);
   assert.equal(override.json().defaultEbookId, ebookB);
   assert.equal(override.json().defaultEbookOverride, ebookB);
+});
+
+test("explicit pairings supersede an in-flight backfill and stay ahead of projections", async () => {
+  const workId = seedWork("Prepare Wins", "Grace Author");
+  const ebookId = `ebook-prep-${randomUUID()}`;
+  await seedEpub(workId, ebookId);
+  const audio = join(temp, "media", "prepare-wins.mp3");
+  writeFileSync(audio, "audio");
+  const recordingId = `rec-prep-${randomUUID()}`;
+  seedRecording(workId, recordingId, audio);
+  const trackId = (
+    db.select().from(schema.tracks).all().find((row: { recordingId: string }) => row.recordingId === recordingId) as {
+      id: string;
+    }
+  ).id;
+
+  const backfill = await createAlignment(
+    ebookId,
+    recordingId,
+    undefined,
+    "anchored",
+    "backfill",
+  );
+  assert.equal(backfill.status, "queued");
+  assert.equal(backfill.mode, "anchored");
+  const backfillGeneration = backfill.generation;
+
+  const prepared = await createAlignment(ebookId, recordingId, [
+    { section: 0, trackId, start: 0, duration: 95 },
+  ]);
+  assert.equal(prepared.id, backfill.id);
+  assert.notEqual(prepared.generation, backfillGeneration);
+  assert.equal(prepared.pairings.length, 1);
+  assert.equal(prepared.mode, undefined);
+  assert.equal(prepared.origin, undefined);
+
+  // Projected publish must not replace a prepared map for the same pair.
+  await publishProjectedMaps(workId, {
+    id: "consensus-unused",
+    generation: "g",
+    ebookId: `set-consensus:${workId}`,
+    recordingId,
+    status: "ready",
+    progress: 1,
+    engine: "test",
+    error: null,
+    warning: null,
+    intervals: [
+      {
+        paragraphId: consensusParagraphId(0),
+        section: 0,
+        trackId,
+        start: 1,
+        end: 2,
+        confidence: 1,
+      },
+    ],
+    sectionsDone: [],
+    elapsedSeconds: 1,
+    fingerprint: "fp",
+    audioFingerprint: "audio",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    coverage: 1,
+    pairings: [],
+    mode: "anchored",
+  });
+
+  const listed = await app.inject(
+    `/api/alignments?ebookId=${encodeURIComponent(ebookId)}`,
+  );
+  assert.equal(listed.statusCode, 200, listed.body);
+  const jobs = listed.json().jobs.filter(
+    (job: { recordingId: string }) => job.recordingId === recordingId,
+  );
+  assert.equal(jobs.length, 1);
+  assert.notEqual(jobs[0].origin, "projected");
+  assert.equal(jobs[0].pairings.length, 1);
 });
 
 test("syncEbookSetConsensus skips audio realign when consensus text is unchanged", async () => {

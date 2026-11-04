@@ -221,3 +221,73 @@ test("--after-stop does not look at the disk", () => {
     rmSync(fake.dir, { recursive: true, force: true });
   }
 });
+
+test("reports when a worktree with package.json has no node_modules", () => {
+  const repo = makeRepo();
+  try {
+    writeFileSync(join(repo, "package.json"), "{}\n");
+    const result = preflight(["main", repo, "AGENTS.md"]);
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /npm ci has not finished: no node_modules in /);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("reports when a worktree has a failed install log", () => {
+  const repo = makeRepo();
+  try {
+    writeFileSync(join(repo, "package.json"), "{}\n");
+    mkdirSync(join(repo, "node_modules"));
+    writeFileSync(join(repo, ".npm-ci.log"), "npm error code ENOTFOUND\nnpm error request failed\n");
+    const result = preflight(["main", repo, "AGENTS.md"]);
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /npm ci has not finished: log present without completion in /);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("reports when a worktree has a stale / truncated install log", () => {
+  const repo = makeRepo();
+  try {
+    writeFileSync(join(repo, "package.json"), "{}\n");
+    mkdirSync(join(repo, "node_modules"));
+    writeFileSync(join(repo, ".npm-ci.log"), "npm warn deprecated glob@11.1.0\n");
+    const result = preflight(["main", repo, "AGENTS.md"]);
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /npm ci has not finished: log present without completion in /);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("reports when an npm install process is still running in the worktree", async () => {
+  const repo = makeRepo();
+  writeFileSync(join(repo, "package.json"), "{}\n");
+  const child = spawn("bash", ["-c", "exec -a npm sleep 30"], { cwd: repo, stdio: "ignore" });
+  try {
+    await new Promise((done) => child.once("spawn", done));
+    await new Promise((r) => setTimeout(r, 200));
+    const result = preflight(["main", repo, "AGENTS.md"]);
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /npm ci has not finished: install process still running/);
+  } finally {
+    child.kill();
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("passes when npm ci completed successfully", () => {
+  const repo = makeRepo();
+  try {
+    writeFileSync(join(repo, "package.json"), "{}\n");
+    mkdirSync(join(repo, "node_modules"));
+    writeFileSync(join(repo, ".npm-ci.log"), "added 332 packages in 10s\n");
+    const result = preflight(["main", repo, "AGENTS.md"]);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(result.stdout, "");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
