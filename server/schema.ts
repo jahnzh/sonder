@@ -202,6 +202,17 @@ export const seriesCatalogue = sqliteTable("series_catalogue", { id: integer("id
 export const seriesCatalogueWorks = sqliteTable("series_catalogue_works", { seriesId: integer("series_id").notNull(), bookId: integer("book_id").notNull(), workId: text("work_id"), title: text("title").notNull(), position: real("position"), cover: text("cover"), unreleased: integer("unreleased").notNull().default(0) }, t => [primaryKey({ columns: [t.seriesId, t.bookId] })]);
 export const userSavedSeries = sqliteTable("user_saved_series", { userId: integer("user_id").notNull(), seriesId: integer("series_id").notNull(), savedAt: integer("saved_at").notNull() }, t => [primaryKey({ columns: [t.userId, t.seriesId] })]);
 export const userSavedSeriesWorks = sqliteTable("user_saved_series_works", { userId: integer("user_id").notNull(), seriesId: integer("series_id").notNull(), bookId: integer("book_id").notNull(), workId: text("work_id").notNull(), introduced: integer("introduced").notNull() }, t => [primaryKey({ columns: [t.userId, t.seriesId, t.bookId] })]);
+export const seriesAcquisitionJobs = sqliteTable("series_acquisition_jobs", {
+  id: text("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  seriesId: integer("series_id").notNull(),
+  bookId: integer("book_id").notNull(),
+  workId: text("work_id").notNull(),
+  kind: text("kind").notNull(),
+  status: text("status").notNull(),
+  error: text("error"),
+  updatedAt: integer("updated_at").notNull(),
+});
 export const userWorkCompletion = sqliteTable("user_work_completion", { userId: integer("user_id").notNull(), workId: text("work_id").notNull(), status: text("status").notNull() }, t => [primaryKey({ columns: [t.userId, t.workId] })]);
 export const accountRequests = sqliteTable("account_requests", { id: integer("id").primaryKey(), email: text("email").notNull(), username: text("username").notNull(), note: text("note"), status: text("status").notNull().default("pending"), createdAt: integer("created_at").notNull(), reviewedAt: integer("reviewed_at"), inviteId: integer("invite_id") });
 export const accountInvites = sqliteTable("account_invites", { id: integer("id").primaryKey(), token: text("token").notNull().unique(), email: text("email").notNull(), username: text("username").notNull(), accountRequestId: integer("account_request_id").notNull(), createdAt: integer("created_at").notNull(), expiresAt: integer("expires_at").notNull(), claimedAt: integer("claimed_at") });
