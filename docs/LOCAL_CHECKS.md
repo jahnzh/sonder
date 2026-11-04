@@ -84,7 +84,7 @@ Deploys a committed revision to the local production container (`sonder` in `com
 5. recreates the container, waits for the health check, then curls `/api/health`;
 6. runs the live verification scripts (reader and multi-user) unless `--skip-live-checks`, every one of them even when an earlier one fails, then exits 1 listing the failures; the reader check picks the most recent recording with a finished EPUB alignment map.
 
-Exit codes: 0 success, 1 a step failed, 2 bad usage. Environment overrides: `SONDER_DEPLOY_DOCKER`, `SONDER_DEPLOY_DB`, `SONDER_DEPLOY_BACKUP_DIR`, `SONDER_DEPLOY_HEALTH_TIMEOUT`, `SONDER_DEPLOY_PORT`, `SONDER_DEPLOY_LIVE_CHECKS`.
+Exit codes: 0 success, 1 a step failed, 2 bad usage. Environment overrides: `SONDER_DEPLOY_DOCKER`, `SONDER_DEPLOY_DB`, `SONDER_DEPLOY_BACKUP_DIR`, `SONDER_DEPLOY_HEALTH_TIMEOUT`, `SONDER_DEPLOY_PORT`, `SONDER_DEPLOY_LIVE_CHECKS`. Set `SONDER_SKIP_SERIES_ACQUISITION=1` in unit tests to disable the background series-acquisition ticker while still calling `tickSeriesAcquisition()` manually (`server/series-acquisition.ts`).
 
 Rollback is retagging the previous image and a no-build recreate:
 

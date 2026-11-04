@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS work_ebook_set(work_id TEXT PRIMARY KEY REFERENCES wo
 CREATE TABLE IF NOT EXISTS work_ebook_set_members(work_id TEXT NOT NULL REFERENCES works(id),ebook_id TEXT NOT NULL REFERENCES ebook_editions(id),status TEXT NOT NULL,hold_reason TEXT,source_title TEXT,source_author TEXT,language TEXT,byte_size INTEGER,evidence TEXT NOT NULL DEFAULT '{}',updated_at INTEGER NOT NULL,PRIMARY KEY(work_id,ebook_id));
 CREATE TABLE IF NOT EXISTS series_acquisition_jobs(id TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),series_id INTEGER NOT NULL REFERENCES series_catalogue(id),book_id INTEGER NOT NULL,work_id TEXT NOT NULL REFERENCES works(id),kind TEXT NOT NULL CHECK(kind IN ('audio','ebook')),status TEXT NOT NULL CHECK(status IN ('pending','searching','done','failed')),error TEXT,updated_at INTEGER NOT NULL);
 CREATE UNIQUE INDEX IF NOT EXISTS series_acquisition_jobs_user_series_book_kind ON series_acquisition_jobs(user_id,series_id,book_id,kind);
+CREATE UNIQUE INDEX IF NOT EXISTS series_acquisition_jobs_user_work_kind ON series_acquisition_jobs(user_id,work_id,kind);
 `);
 // One-time copy of the single-account Hardcover key, state and queues to the admin (#15). The old rows stay for rollback.
 export function migrateHardcoverToUsers(): void {

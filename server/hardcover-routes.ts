@@ -23,7 +23,7 @@ import {
 } from "./hardcover.ts";
 import { acquire } from "./acquisitions.ts";
 import { retryWorkMediaAcquisition } from "./series-membership.ts";
-import { retrySeriesWorkAcquisition, seriesAcquire } from "./series-acquisition.ts";
+import { retrySeriesWorkAcquisition } from "./series-acquisition.ts";
 import { currentUserId, requireAdmin } from "./users.ts";
 // Every route acts for the signed-in user's own Hardcover account (#15).
 export function registerHardcoverRoutes(app: FastifyInstance) {
@@ -72,7 +72,6 @@ export function registerHardcoverRoutes(app: FastifyInstance) {
       id,
       bookId,
       kind,
-      seriesAcquire,
     );
   });
   app.get("/api/hardcover", async (req) => hardcoverState(currentUserId(req)));

@@ -455,6 +455,7 @@ export async function fetchTopKIntoEbookSet(
       cheapTitleAuthorMatch(work, { title: f.title, authors: f.authors }),
   );
   const downloaded: { id: string; status: EbookSetMemberStatus }[] = [];
+  const failures: string[] = [];
   for (const file of filtered) {
     if (downloaded.length >= remaining) break;
     const already = db
@@ -464,15 +465,19 @@ export async function fetchTopKIntoEbookSet(
       .all()
       .some((m) => m.ebookId === `${file.source}-${file.md5}`);
     if (already) continue;
-    const saved = await save({ ...file, workId });
-    const result = await evaluateEbookSetMember(workId, saved.id, {
-      sourceTitle: file.title,
-      sourceAuthor: file.authors.join(", ") || null,
-      language: file.language,
-    });
-    downloaded.push({ id: saved.id, status: result.status });
+    try {
+      const saved = await save({ ...file, workId });
+      const result = await evaluateEbookSetMember(workId, saved.id, {
+        sourceTitle: file.title,
+        sourceAuthor: file.authors.join(", ") || null,
+        language: file.language,
+      });
+      downloaded.push({ id: saved.id, status: result.status });
+    } catch (error) {
+      failures.push((error as Error).message);
+    }
   }
-  return { downloaded, skipped: null };
+  return { downloaded, skipped: null, failures };
 }
 
 export function workHasRecording(workId: string) {

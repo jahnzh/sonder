@@ -1,12 +1,8 @@
 import { api } from "../lib";
+import type { Download, SeriesWorkAcquisition } from "../types";
 import { workMediaStateLabel } from "../work-media-state";
 
-type Acquisition = {
-  kind: "audio" | "ebook";
-  status: "pending" | "searching" | "done" | "failed" | "skipped";
-  error?: string | null;
-  skipReason?: "unreleased" | "has_audio" | "has_ebook" | "no_permission" | null;
-};
+const SERIES_SAVED_POLL_MS = 2500;
 
 type Props = {
   seriesId: number;
@@ -15,14 +11,19 @@ type Props = {
     state: "missing" | "queued" | "failed" | "available";
     holdReason?: "unreleased" | "empty_search" | null;
   } | null;
-  acquisition?: { audio: Acquisition | null; ebook: Acquisition | null } | null;
+  acquisition?: {
+    audio: SeriesWorkAcquisition | null;
+    ebook: SeriesWorkAcquisition | null;
+  } | null;
   ebookSet?: { held: number; accepted: number; rejected: number } | null;
+  recordings?: { id: string; tracks: string[] }[];
+  downloads: Download[];
   onRefresh: () => void;
 };
 
 function audioStatusLabel(
   mediaState: Props["mediaState"],
-  acquisition: Acquisition | null | undefined,
+  acquisition: SeriesWorkAcquisition | null | undefined,
 ) {
   if (acquisition?.status === "searching" || acquisition?.status === "pending")
     return "Searching";
@@ -37,7 +38,10 @@ function audioStatusLabel(
   return label || "Missing";
 }
 
-function ebookStatusLabel(acquisition: Acquisition | null | undefined, ebookSet: Props["ebookSet"]) {
+function ebookStatusLabel(
+  acquisition: SeriesWorkAcquisition | null | undefined,
+  ebookSet: Props["ebookSet"],
+) {
   if (acquisition?.status === "searching" || acquisition?.status === "pending")
     return "Searching";
   if (acquisition?.status === "failed")
@@ -54,7 +58,7 @@ function ebookStatusLabel(acquisition: Acquisition | null | undefined, ebookSet:
 
 function canRetryAudio(
   mediaState: Props["mediaState"],
-  acquisition: Acquisition | null | undefined,
+  acquisition: SeriesWorkAcquisition | null | undefined,
 ) {
   if (acquisition?.status === "failed") return true;
   if (mediaState?.state === "failed") return true;
@@ -62,7 +66,7 @@ function canRetryAudio(
   return false;
 }
 
-function canRetryEbook(acquisition: Acquisition | null | undefined) {
+function canRetryEbook(acquisition: SeriesWorkAcquisition | null | undefined) {
   return acquisition?.status === "failed" && acquisition.error !== "no_permission";
 }
 
@@ -72,8 +76,16 @@ export function SeriesWorkStatus({
   mediaState,
   acquisition,
   ebookSet,
+  recordings,
+  downloads,
   onRefresh,
 }: Props) {
+  const onDevice = recordings?.some((recording) =>
+    recording.tracks.length > 0 &&
+    recording.tracks.every((trackId) =>
+      downloads.some((download) => download.trackId === trackId),
+    ),
+  );
   const retry = async (kind: "audio" | "ebook") => {
     await api(`/series/${seriesId}/works/${bookId}/acquisition/retry`, {
       method: "POST",
@@ -85,6 +97,7 @@ export function SeriesWorkStatus({
     <>
       <span>
         Audio: {audioStatusLabel(mediaState, acquisition?.audio)}
+        {onDevice ? " · on device" : " · not on device"}
         {canRetryAudio(mediaState, acquisition?.audio) && (
           <>
             {" "}
@@ -108,3 +121,5 @@ export function SeriesWorkStatus({
     </>
   );
 }
+
+export { SERIES_SAVED_POLL_MS };

@@ -82,27 +82,37 @@ beforeEach(() => {
   sqlite.exec("DELETE FROM user_saved_series");
   sqlite.exec("DELETE FROM series_catalogue_works");
   sqlite.exec("DELETE FROM series_catalogue");
+  sqlite.exec("DELETE FROM work_media_states");
+  sqlite.exec("DELETE FROM user_acquisitions");
+  sqlite.exec("DELETE FROM acquisitions");
   setSeriesAcquisitionDeps({
-    acquire: async () => {
-      return db.insert(schema.acquisitions).values({
-        id: randomUUID(),
+    acquire: async (_magnet, metadata) => {
+      const id = randomUUID();
+      const row = {
+        id,
         hash: "dead",
         magnet: "magnet:?xt=urn:btih:cccccccccccccccccccccccccccccccccccccccc",
         backend: "local",
         remoteId: null,
-        title: "First volume",
-        author: "Ada Author",
-        cover: "",
-        workId: null,
-        language: null,
-        narrator: null,
-        status: "checking",
+        title: metadata?.title ?? "First volume",
+        author: metadata?.author ?? "Ada Author",
+        cover: metadata?.cover ?? "",
+        workId: metadata?.workId ?? null,
+        language: metadata?.language ?? null,
+        narrator: metadata?.narrator ?? null,
+        status: "checking" as const,
         progress: 0,
         error: null,
         bookId: null,
         createdAt: Date.now(),
         updatedAt: Date.now(),
-      }).returning().get()! as Awaited<ReturnType<typeof import("../server/acquisitions.ts").acquire>>;
+      };
+      db.insert(schema.acquisitions).values(row).run();
+      db.insert(schema.userAcquisitions)
+        .values({ userId: metadata?.userId ?? 1, acquisitionId: id })
+        .onConflictDoNothing()
+        .run();
+      return row as Awaited<ReturnType<typeof import("../server/acquisitions.ts").acquire>>;
     },
     seriesAudioDeps: {
       abbSearch: async () => ({
@@ -127,9 +137,13 @@ beforeEach(() => {
     fetchEbooks: async (workId) => {
       const work = db.select().from(schema.works).where(eq(schema.works.id, workId)).get();
       if (work?.title === "Second volume") throw new Error("ebook search failed");
-      return { downloaded: [{ id: "libgen-deadbeef", status: "held" as const }], skipped: null };
+      return {
+        downloaded: [{ id: "libgen-deadbeef", status: "held" as const }],
+        skipped: null,
+        failures: [] as string[],
+      };
     },
-    canFetchEbooks: () => true,
+    canAcquireMedia: () => true,
   });
 });
 
@@ -203,8 +217,8 @@ test("retry re-runs a failed ebook acquisition for one work", async () => {
 });
 
 test("existing playable audio is not replaced by automatic selection", async () => {
-  await saveSeries([201]);
-  const workId = (await app.inject("/api/series/31")).json().works.find((w: { id: number }) => w.id === 201).workId;
+  await saveSeries([202]);
+  const workId = (await app.inject("/api/series/31")).json().works.find((w: { id: number }) => w.id === 202).workId;
   const audioPath = join(temp, "existing.mp3");
   writeFileSync(audioPath, "audio");
   db.insert(schema.editions)
@@ -247,11 +261,11 @@ test("existing playable audio is not replaced by automatic selection", async () 
   await app.inject({
     method: "POST",
     url: "/api/series",
-    payload: { id: 31, bookIds: [201], searchAudio: true },
+    payload: { id: 31, bookIds: [202], searchAudio: true },
   });
   await tickSeriesAcquisition();
   assert.equal(acquireCalls, 0);
-  const work = (await app.inject("/api/series/31")).json().works.find((w: { id: number }) => w.id === 201);
+  const work = (await app.inject("/api/series/31")).json().works.find((w: { id: number }) => w.id === 202);
   assert.equal(work.acquisition.audio.skipReason, "has_audio");
 });
 
@@ -302,4 +316,131 @@ test("audio download failure is retryable independently", async () => {
   });
   assert.equal(retry.statusCode, 200, retry.body);
   assert.notEqual(getWorkMediaState(1, workId)?.state, "failed");
+});
+
+test("media acquisition permission skips audio and ebook opt-in", async () => {
+  setSeriesAcquisitionDeps({
+    canAcquireMedia: () => false,
+  });
+  await saveSeries([201], { searchAudio: true, searchEbooks: true });
+  const work = (await app.inject("/api/series/31")).json().works.find((w: { id: number }) => w.id === 201);
+  assert.equal(work.acquisition.audio.skipReason, "no_permission");
+  assert.equal(work.acquisition.ebook.skipReason, "no_permission");
+});
+
+test("stale searching jobs reset to pending before processing", async () => {
+  const { resetStaleSeriesAcquisitionJobs, SERIES_ACQUISITION_SEARCH_STALE_MS } = await import(
+    "../server/series-acquisition.ts",
+  );
+  await saveSeries([201], { searchAudio: true });
+  db.update(schema.seriesAcquisitionJobs)
+    .set({
+      status: "searching",
+      updatedAt: Date.now() - SERIES_ACQUISITION_SEARCH_STALE_MS - 1,
+    })
+    .run();
+  resetStaleSeriesAcquisitionJobs();
+  assert.equal(
+    db.select().from(schema.seriesAcquisitionJobs).get()?.status,
+    "pending",
+  );
+});
+
+test("partial ebook failures still complete the job when some candidates succeed", async () => {
+  setSeriesAcquisitionDeps({
+    fetchEbooks: async () => ({
+      downloaded: [{ id: "libgen-ok", status: "held" as const }],
+      skipped: null,
+      failures: ["bad mirror"],
+    }),
+    canAcquireMedia: () => true,
+  });
+  await saveSeries([201], { searchEbooks: true });
+  await tickSeriesAcquisition();
+  const row = db.select().from(schema.seriesAcquisitionJobs).get();
+  assert.equal(row?.status, "done");
+  assert.match(row?.error ?? "", /bad mirror/);
+});
+
+test("the same work is not searched twice across two saved series", async () => {
+  const { enqueueSeriesAcquisition } = await import("../server/series-acquisition.ts");
+  await saveSeries([201], { searchAudio: true });
+  await tickSeriesAcquisition();
+  const workId = (await app.inject("/api/series/31")).json().works.find((w: { id: number }) => w.id === 201).workId;
+  sqlite.prepare(
+    `INSERT INTO series_catalogue(id,name,author,book_count) VALUES(32,'Other','Author',1)`,
+  ).run();
+  sqlite.prepare(
+    `INSERT INTO series_catalogue_works(series_id,book_id,work_id,title,position,cover,unreleased)
+     VALUES(32,999,?, 'First volume', 1, NULL, 0)`,
+  ).run(workId);
+  sqlite.prepare(
+    `INSERT INTO user_saved_series(user_id,series_id,saved_at) VALUES(1,32,?)`,
+  ).run(Date.now());
+  sqlite.prepare(
+    `INSERT INTO user_saved_series_works(user_id,series_id,book_id,work_id,introduced)
+     VALUES(1,32,999,?,1)`,
+  ).run(workId);
+  enqueueSeriesAcquisition(1, 32, [{ bookId: 999, workId, unreleased: false }], {
+    searchAudio: true,
+  });
+  await tickSeriesAcquisition();
+  assert.equal(db.select().from(schema.seriesAcquisitionJobs).all().length, 1);
+});
+
+test("audio retry records failure on the job instead of throwing", async () => {
+  await saveSeries([201]);
+  const workId = (await app.inject("/api/series/31")).json().works.find((w: { id: number }) => w.id === 201).workId;
+  const acquisitionId = randomUUID();
+  const magnet =
+    "magnet:?xt=urn:btih:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee&dn=First";
+  db.insert(schema.acquisitions)
+    .values({
+      id: acquisitionId,
+      hash: magnetHash(magnet),
+      magnet,
+      backend: "local",
+      remoteId: null,
+      title: "First volume",
+      author: "Ada Author",
+      cover: "",
+      workId,
+      language: null,
+      narrator: null,
+      status: "error",
+      progress: 0,
+      error: "failed",
+      bookId: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+    .run();
+  db.insert(schema.userAcquisitions).values({ userId: 1, acquisitionId }).run();
+  const { syncWorkMediaState } = await import("../server/work-media-state.ts");
+  syncWorkMediaState(1, workId);
+  assert.equal(getWorkMediaState(1, workId)?.state, "failed");
+  assert.ok(getWorkMediaState(1, workId)?.acquisitionId);
+  setSeriesAcquisitionDeps({
+    acquire: (async () => {
+      throw new Error("retry failed");
+    }) as SeriesAcquisitionDeps["acquire"],
+  });
+  const retry = await app.inject({
+    method: "POST",
+    url: "/api/series/31/works/201/acquisition/retry",
+    payload: { kind: "audio" },
+  });
+  assert.equal(retry.statusCode, 200, retry.body);
+  const body = retry.json() as {
+    acquisition: { audio: { status: string; error: string | null } };
+  };
+  assert.equal(body.acquisition.audio.status, "failed");
+  assert.equal(body.acquisition.audio.error, "retry failed");
+  const job = db
+    .select()
+    .from(schema.seriesAcquisitionJobs)
+    .where(eq(schema.seriesAcquisitionJobs.workId, workId))
+    .get();
+  assert.equal(job?.status, "failed");
+  assert.equal(job?.error, "retry failed");
 });

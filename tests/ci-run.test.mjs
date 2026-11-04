@@ -633,7 +633,7 @@ test("a remote-only active run marks the host busy", () => {
 test("the queue waits behind a remote-only busy host until the process exits", () => {
   const f = fixture();
   try {
-    const sleeper = f.spawnSleeper(2);
+    const sleeper = f.spawnSleeper(15);
     assert.ok(waitForProcessVisible(sleeper.pid));
     const runDir = path.join(f.remote, "runs", "fake-run-1");
     fs.mkdirSync(runDir, { recursive: true });
@@ -650,7 +650,7 @@ test("the queue waits behind a remote-only busy host until the process exits", (
     assert.match(out.stdout, /^started deck /m);
     assert.ok(out.stdout.indexOf("queued deck") < out.stdout.indexOf("started deck"));
     assert.equal(f.runnerInvocations("deck").length, 1);
-    // The sleeper lives 2 s; the run could not have started before it exited.
+    // The sleeper lives 15 s; the run could not have started before it exited.
     assert.ok(elapsedMs >= 1_500, `waited for the remote process (${elapsedMs}ms)`);
   } finally {
     f.cleanup();

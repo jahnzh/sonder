@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api } from "../lib";
-import type { Download } from "../types";
+import type { Download, SeriesWorkAcquisition } from "../types";
 import { Dialog } from "./ui/dialog";
 import { SeriesSaveOptions } from "./SeriesSaveOptions";
-import { SeriesWorkStatus } from "./SeriesWorkStatus";
+import { SeriesWorkStatus, SERIES_SAVED_POLL_MS } from "./SeriesWorkStatus";
 import "../series.css";
 
 type SeriesSummary = { id: number; name: string; author: string | null; count: number | null; cover?: string | null };
@@ -17,8 +17,8 @@ type SeriesWork = {
     holdReason?: "unreleased" | "empty_search" | null;
   } | null;
   acquisition?: {
-    audio: { kind: "audio"; status: "pending" | "searching" | "done" | "failed" | "skipped"; error?: string | null; skipReason?: "unreleased" | "has_audio" | "has_ebook" | "no_permission" | null } | null;
-    ebook: { kind: "ebook"; status: "pending" | "searching" | "done" | "failed" | "skipped"; error?: string | null; skipReason?: "unreleased" | "has_audio" | "has_ebook" | "no_permission" | null } | null;
+    audio: SeriesWorkAcquisition | null;
+    ebook: SeriesWorkAcquisition | null;
   } | null;
   ebookSet?: { held: number; accepted: number; rejected: number } | null;
   availability?: { audio: { server: boolean | null; recordings: { id: string; tracks: string[]; server: boolean; stream: boolean }[] }; ebook: { server: boolean | null; device: null } };
@@ -69,7 +69,7 @@ export function SeriesLibrary({ onOpen, revision }: { onOpen: (id: number) => vo
   </section>;
 }
 
-export function SeriesDialog({ target, onClose, onSaved }: { target: SeriesTarget | null; onClose: () => void; onSaved: () => void; downloads?: Download[] }) {
+export function SeriesDialog({ target, onClose, onSaved, downloads }: { target: SeriesTarget | null; onClose: () => void; onSaved: () => void; downloads: Download[] }) {
   const [series, setSeries] = useState<Series | null>(null);
   const [selected, setSelected] = useState<number[]>([]);
   const [mode, setMode] = useState<"preview" | "saved">("preview");
@@ -101,7 +101,7 @@ export function SeriesDialog({ target, onClose, onSaved }: { target: SeriesTarge
     work.mediaState?.state === "queued");
   useEffect(() => {
     if (!target || mode !== "saved" || !acquisitionBusy) return;
-    const timer = setInterval(() => { void reloadSaved().catch(() => {}); }, 2500);
+    const timer = setInterval(() => { void reloadSaved().catch(() => {}); }, SERIES_SAVED_POLL_MS);
     return () => clearInterval(timer);
   }, [target, mode, acquisitionBusy, reloadSaved]);
   const save = async () => {
@@ -131,6 +131,8 @@ export function SeriesDialog({ target, onClose, onSaved }: { target: SeriesTarge
           mediaState={work.mediaState}
           acquisition={work.acquisition}
           ebookSet={work.ebookSet}
+          recordings={audio?.recordings}
+          downloads={downloads}
           onRefresh={() => void reloadSaved()}
         />
       </>}{mode === "saved" && !work.added && <>

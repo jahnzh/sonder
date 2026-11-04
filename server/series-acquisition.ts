@@ -18,7 +18,10 @@ import {
   syncWorkMediaState,
   workHasPlayableAudio,
 } from "./work-media-state.ts";
-import { ADMIN_USER_ID } from "./users.ts";
+import { userIsAdmin } from "./users.ts";
+
+export const SERIES_ACQUISITION_TICK_MS = 2000;
+export const SERIES_ACQUISITION_SEARCH_STALE_MS = 120_000;
 
 export type SeriesAcquisitionKind = "audio" | "ebook";
 export type SeriesAcquisitionJobStatus =
@@ -33,9 +36,13 @@ export type SeriesAcquisitionSkipReason =
   | "has_ebook"
   | "no_permission";
 
+export type AcquisitionStatus =
+  | SeriesAcquisitionJobStatus
+  | "skipped";
+
 export type SeriesWorkAcquisitionState = {
   kind: SeriesAcquisitionKind;
-  status: SeriesAcquisitionJobStatus | "skipped";
+  status: AcquisitionStatus;
   error: string | null;
   skipReason: SeriesAcquisitionSkipReason | null;
 };
@@ -44,7 +51,7 @@ export type SeriesAcquisitionDeps = {
   acquire?: typeof defaultAcquire;
   seriesAudioDeps?: SeriesAudioSearchDeps;
   fetchEbooks?: typeof fetchTopKIntoEbookSet;
-  canFetchEbooks?: (userId: number) => boolean;
+  canAcquireMedia?: (userId: number) => boolean;
 };
 
 let deps: SeriesAcquisitionDeps = {};
@@ -57,17 +64,12 @@ export function resetSeriesAcquisitionDeps() {
   deps = {};
 }
 
-export function seriesAcquire(
-  magnet: string,
-  metadata?: Parameters<typeof defaultAcquire>[1],
-) {
-  return (deps.acquire ?? defaultAcquire)(magnet, metadata);
+export function seriesAcquisitionTickerEnabled() {
+  return process.env.SONDER_SKIP_SERIES_ACQUISITION !== "1";
 }
 
-function isAdminUser(userId: number) {
-  if (userId === ADMIN_USER_ID) return true;
-  const row = db.select().from(s.users).where(eq(s.users.id, userId)).get();
-  return row?.role === "admin";
+function canAcquireMedia(userId: number) {
+  return (deps.canAcquireMedia ?? userIsAdmin)(userId);
 }
 
 export function workHasAppropriateEbook(workId: string) {
@@ -106,6 +108,24 @@ function jobRow(
     .get();
 }
 
+function jobRowForWork(
+  userId: number,
+  workId: string,
+  kind: SeriesAcquisitionKind,
+) {
+  return db
+    .select()
+    .from(s.seriesAcquisitionJobs)
+    .where(
+      and(
+        eq(s.seriesAcquisitionJobs.userId, userId),
+        eq(s.seriesAcquisitionJobs.workId, workId),
+        eq(s.seriesAcquisitionJobs.kind, kind),
+      ),
+    )
+    .get();
+}
+
 function upsertJob(input: {
   userId: number;
   seriesId: number;
@@ -116,15 +136,22 @@ function upsertJob(input: {
   error?: string | null;
 }) {
   const now = Date.now();
-  const existing = jobRow(
-    input.userId,
-    input.seriesId,
-    input.bookId,
-    input.kind,
-  );
+  const existing =
+    jobRowForWork(input.userId, input.workId, input.kind) ??
+    jobRow(input.userId, input.seriesId, input.bookId, input.kind);
+  if (
+    existing &&
+    input.status === "pending" &&
+    (existing.status === "pending" ||
+      existing.status === "searching" ||
+      existing.status === "done")
+  )
+    return existing.id;
   if (existing) {
     db.update(s.seriesAcquisitionJobs)
       .set({
+        seriesId: input.seriesId,
+        bookId: input.bookId,
         workId: input.workId,
         status: input.status,
         error: input.error ?? null,
@@ -149,6 +176,15 @@ function upsertJob(input: {
     })
     .run();
   return id;
+}
+
+export function resetStaleSeriesAcquisitionJobs(now = Date.now()) {
+  sqlite
+    .prepare(
+      `UPDATE series_acquisition_jobs SET status='pending', updated_at=?
+       WHERE status='searching' AND updated_at < ?`,
+    )
+    .run(now, now - SERIES_ACQUISITION_SEARCH_STALE_MS);
 }
 
 function catalogueVolumes(seriesId: number) {
@@ -183,10 +219,20 @@ export function enqueueSeriesAcquisition(
   const audio = !!options.searchAudio;
   const ebooks = !!options.searchEbooks;
   if (!audio && !ebooks) return;
-  const canEbook = (deps.canFetchEbooks ?? isAdminUser)(userId);
+  const allowed = canAcquireMedia(userId);
   for (const work of works) {
     if (audio) {
-      if (work.unreleased) {
+      if (!allowed) {
+        upsertJob({
+          userId,
+          seriesId,
+          bookId: work.bookId,
+          workId: work.workId,
+          kind: "audio",
+          status: "failed",
+          error: "no_permission",
+        });
+      } else if (work.unreleased) {
         setWorkMediaHold(userId, work.workId, "unreleased");
         upsertJob({
           userId,
@@ -220,7 +266,7 @@ export function enqueueSeriesAcquisition(
       }
     }
     if (ebooks) {
-      if (!canEbook) {
+      if (!allowed) {
         upsertJob({
           userId,
           seriesId,
@@ -309,33 +355,39 @@ export function seriesWorkAcquisitions(
   unreleased: boolean,
 ): { audio: SeriesWorkAcquisitionState | null; ebook: SeriesWorkAcquisitionState | null } {
   if (!workId) return { audio: null, ebook: null };
-  const audioRow = jobRow(userId, seriesId, bookId, "audio");
-  const ebookRow = jobRow(userId, seriesId, bookId, "ebook");
+  const audioRow =
+    jobRowForWork(userId, workId, "audio") ??
+    jobRow(userId, seriesId, bookId, "audio");
+  const ebookRow =
+    jobRowForWork(userId, workId, "ebook") ??
+    jobRow(userId, seriesId, bookId, "ebook");
   return {
     audio: presentationForJob("audio", audioRow, unreleased),
     ebook: presentationForJob("ebook", ebookRow, unreleased),
   };
 }
 
-let ticking = false;
+let tickQueue: Promise<void> = Promise.resolve();
 
 export async function tickSeriesAcquisition(
   acquire: typeof defaultAcquire = deps.acquire ?? defaultAcquire,
 ) {
-  if (ticking) return;
-  ticking = true;
-  try {
-    const pending = db
-      .select()
-      .from(s.seriesAcquisitionJobs)
-      .where(eq(s.seriesAcquisitionJobs.status, "pending"))
-      .all();
-    await Promise.all(
-      pending.map((job) => processJob(job, acquire).catch(() => {})),
-    );
-  } finally {
-    ticking = false;
-  }
+  const run = async () => {
+    resetStaleSeriesAcquisitionJobs();
+    for (;;) {
+      const pending = db
+        .select()
+        .from(s.seriesAcquisitionJobs)
+        .where(eq(s.seriesAcquisitionJobs.status, "pending"))
+        .all();
+      if (!pending.length) break;
+      await Promise.all(
+        pending.map((job) => processJob(job, acquire).catch(() => {})),
+      );
+    }
+  };
+  tickQueue = tickQueue.then(run, run).catch(() => {});
+  await tickQueue;
 }
 
 async function processJob(
@@ -349,11 +401,16 @@ async function processJob(
     )
     .run(Date.now(), job.id);
   if (!claimed.changes) return;
+  let partialError: string | null = null;
   try {
     if (job.kind === "audio") await runAudioJob(job, acquire);
-    else await runEbookJob(job);
+    else partialError = await runEbookJob(job);
     db.update(s.seriesAcquisitionJobs)
-      .set({ status: "done", error: null, updatedAt: Date.now() })
+      .set({
+        status: "done",
+        error: partialError,
+        updatedAt: Date.now(),
+      })
       .where(eq(s.seriesAcquisitionJobs.id, job.id))
       .run();
   } catch (error) {
@@ -372,6 +429,7 @@ async function runAudioJob(
   job: typeof s.seriesAcquisitionJobs.$inferSelect,
   acquire: typeof defaultAcquire,
 ) {
+  if (!canAcquireMedia(job.userId)) throw new Error("no_permission");
   const catalogue = catalogueVolumes(job.seriesId);
   const volume = catalogue.find((row) => row.bookId === job.bookId);
   if (!volume) throw new Error("This series work could not be found.");
@@ -423,18 +481,36 @@ async function runAudioJob(
   );
 }
 
-async function runEbookJob(job: typeof s.seriesAcquisitionJobs.$inferSelect) {
-  if (!(deps.canFetchEbooks ?? isAdminUser)(job.userId))
-    throw new Error("no_permission");
+async function runEbookJob(
+  job: typeof s.seriesAcquisitionJobs.$inferSelect,
+): Promise<string | null> {
+  if (!canAcquireMedia(job.userId)) throw new Error("no_permission");
   if (workHasAppropriateEbook(job.workId)) {
     db.update(s.seriesAcquisitionJobs)
       .set({ error: "has_ebook", updatedAt: Date.now() })
       .where(eq(s.seriesAcquisitionJobs.id, job.id))
       .run();
-    return;
+    return null;
   }
   const fetch = deps.fetchEbooks ?? fetchTopKIntoEbookSet;
-  await fetch(job.workId);
+  const result = await fetch(job.workId);
+  const failures = "failures" in result ? result.failures ?? [] : [];
+  if (!result.downloaded.length && failures.length)
+    throw new Error(failures[0]);
+  if (failures.length) return failures.join("; ");
+  return null;
+}
+
+function setJobState(
+  userId: number,
+  seriesId: number,
+  bookId: number,
+  workId: string,
+  kind: SeriesAcquisitionKind,
+  status: SeriesAcquisitionJobStatus,
+  error: string | null = null,
+) {
+  upsertJob({ userId, seriesId, bookId, workId, kind, status, error });
 }
 
 export async function retrySeriesWorkAcquisition(
@@ -455,37 +531,48 @@ export async function retrySeriesWorkAcquisition(
   if (kind === "audio") {
     const media = getWorkMediaState(userId, workId);
     if (media?.state === "failed" && media.acquisitionId) {
-      await retryWorkMediaAcquisition(userId, workId, acquire);
-      upsertJob({
+      setJobState(userId, seriesId, bookId, workId, "audio", "searching");
+      try {
+        await retryWorkMediaAcquisition(userId, workId, acquire);
+        syncWorkMediaState(userId, workId);
+        setJobState(userId, seriesId, bookId, workId, "audio", "done");
+      } catch (error) {
+        setJobState(
+          userId,
+          seriesId,
+          bookId,
+          workId,
+          "audio",
+          "failed",
+          (error as Error).message,
+        );
+      }
+      return {
+        mediaState: getWorkMediaState(userId, workId),
+        acquisition: seriesWorkAcquisitions(
+          userId,
+          seriesId,
+          bookId,
+          workId,
+          false,
+        ),
+      };
+    }
+    clearWorkMediaHold(userId, workId);
+    setJobState(userId, seriesId, bookId, workId, "audio", "pending");
+    await tickSeriesAcquisition(acquire);
+    return {
+      mediaState: getWorkMediaState(userId, workId),
+      acquisition: seriesWorkAcquisitions(
         userId,
         seriesId,
         bookId,
         workId,
-        kind: "audio",
-        status: "done",
-      });
-      return syncWorkMediaState(userId, workId);
-    }
-    clearWorkMediaHold(userId, workId);
-    upsertJob({
-      userId,
-      seriesId,
-      bookId,
-      workId,
-      kind: "audio",
-      status: "pending",
-    });
-    await tickSeriesAcquisition(acquire);
-    return getWorkMediaState(userId, workId);
+        false,
+      ),
+    };
   }
-  upsertJob({
-    userId,
-    seriesId,
-    bookId,
-    workId,
-    kind: "ebook",
-    status: "pending",
-  });
+  setJobState(userId, seriesId, bookId, workId, "ebook", "pending");
   await tickSeriesAcquisition(acquire);
   return seriesWorkAcquisitions(userId, seriesId, bookId, workId, false);
 }

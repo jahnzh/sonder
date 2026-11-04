@@ -530,27 +530,35 @@ export function savedHardcoverSeries(userId: number, id: number) {
       workId: string | null; added: number; introduced: number;
     }[];
   const works = rows.map((work) => {
-    const base = seriesWorkState(userId, work.added || ownsWork(userId, work.workId) ? work.workId : null);
-    const unreleased = !!work.unreleased;
     const added = !!work.added;
-    const workId = work.workId;
+    const unreleased = !!work.unreleased;
+    const stateWorkId =
+      added || ownsWork(userId, work.workId) ? work.workId : null;
+    const base = seriesWorkState(userId, stateWorkId);
     const mediaState =
-      added && workId ? getWorkMediaState(userId, workId) : null;
+      added && stateWorkId ? getWorkMediaState(userId, stateWorkId) : null;
     const acquisition =
-      added && workId
-        ? seriesWorkAcquisitions(userId, id, work.id, workId, unreleased)
+      added && stateWorkId
+        ? seriesWorkAcquisitions(
+            userId,
+            id,
+            work.id,
+            stateWorkId,
+            unreleased,
+          )
         : null;
     const members =
-      added && workId ? listEbookSetMembers(workId) : [];
-    const ebookSet = added
-      ? {
-          held: members.filter((member) => member.status === "held").length,
-          accepted: members.filter((member) => member.status === "accepted")
-            .length,
-          rejected: members.filter((member) => member.status === "rejected")
-            .length,
-        }
-      : null;
+      added && stateWorkId ? listEbookSetMembers(stateWorkId) : [];
+    const ebookSet =
+      added && stateWorkId
+        ? {
+            held: members.filter((member) => member.status === "held").length,
+            accepted: members.filter((member) => member.status === "accepted")
+              .length,
+            rejected: members.filter((member) => member.status === "rejected")
+              .length,
+          }
+        : null;
     return {
       ...work,
       unreleased,
