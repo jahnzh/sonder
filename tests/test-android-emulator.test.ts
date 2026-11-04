@@ -4,7 +4,7 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 
 const script = path.resolve("scripts/test-android-emulator.sh");
 
@@ -54,11 +54,51 @@ function cleanEnv() {
   return env;
 }
 
-// Below Linux's ephemeral port range (32768-60999): a port in it can be held by another process (a browser test
-// server, a reviewer), and the script then exits with "port in use" before it reaches the check under test.
-let nextPort = 20000 + Math.floor(Math.random() * 3000) * 3;
+const PORTS_PER_FIXTURE = 3;
+// Increase this when adding fixtures. The allocator refuses to use unprobed ports if it is too small.
+const MAX_FIXTURES = 15;
+
+// Use the same connection test as test-android-emulator.sh, including its 127.0.0.1 target.
+function portSpanIsFree(base: number, length: number) {
+  const result = spawnSync("bash", ["-c", `
+    for ((port = $1; port < $1 + $2; port++)); do
+      if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then exit 1; fi
+    done
+  `, "bash", String(base), String(length)], { encoding: "utf8" });
+  if (result.error) throw result.error;
+  if (result.status !== 0 && result.status !== 1) throw new Error(`Port probe failed: ${result.stderr}`);
+  return result.status === 0;
+}
+
+// Start randomly below Linux's ephemeral range, then try every base once rather than retrying forever.
+function* candidateBases() {
+  const count = 3000;
+  const start = Math.floor(Math.random() * count);
+  for (let i = 0; i < count; i++) yield 20000 + ((start + i) % count) * PORTS_PER_FIXTURE;
+}
+
+function portAllocator(maxFixtures: number, bases: Iterable<number> = candidateBases()) {
+  const length = maxFixtures * PORTS_PER_FIXTURE;
+  let base: number | undefined;
+  for (const candidate of bases) {
+    if (portSpanIsFree(candidate, length)) {
+      base = candidate;
+      break;
+    }
+  }
+  if (base === undefined) throw new Error(`Could not find a free span of ${length} fixture ports`);
+  let next = base;
+  const end = base + length;
+  return () => {
+    if (next + PORTS_PER_FIXTURE > end) throw new Error("Increase MAX_FIXTURES before adding another Android emulator fixture");
+    return { app: next++, adb: next++, bidi: next++ };
+  };
+}
+
+const allocatePorts = portAllocator(MAX_FIXTURES);
 
 function fixture({ built = true } = {}) {
+  const ports = allocatePorts();
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-test-android-"));
   const repo = path.join(base, "repo");
   const bin = path.join(base, "bin");
@@ -90,8 +130,6 @@ function fixture({ built = true } = {}) {
       return "";
     }
   };
-  const ports = { app: nextPort++, adb: nextPort++, bidi: nextPort++ };
-
   let current: ReturnType<typeof spawn> | undefined;
   // Like Ctrl-C in a terminal: the signal goes to the whole foreground process group.
   const interrupt = () => process.kill(-current!.pid!, "SIGINT");
@@ -135,6 +173,35 @@ function fixture({ built = true } = {}) {
   const emuCalls = () => read("emu").split("\n").filter(Boolean);
   return { base, repo, sha, ports, tmpdir, run, read, runDir, summary, summaryText, emuCalls, interrupt };
 }
+
+test("fixture port allocation skips listeners at the start, middle, and end of the full span", async () => {
+  // The OS chooses the port; binding all interfaces also models the listeners from issue #171.
+  const server = net.createServer().listen(0, "0.0.0.0");
+  await new Promise<void>((resolve, reject) => server.once("listening", resolve).once("error", reject));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const occupied = address.port;
+    const span = MAX_FIXTURES * PORTS_PER_FIXTURE;
+    for (const offset of [0, Math.floor(span / 2), span - 1]) {
+      const collision = occupied - offset;
+      const alternatives = Array.from({ length: 20 }, (_, i) => collision - span * (i + 1));
+      const allocate = portAllocator(MAX_FIXTURES, [collision, ...alternatives]);
+      const ports = Array.from({ length: MAX_FIXTURES }, () => allocate());
+      const allPorts = ports.flatMap(({ app, adb, bidi }) => [app, adb, bidi]);
+      assert.notEqual(allPorts[0], collision, `listener at offset ${offset}`);
+      assert.equal(allPorts.includes(occupied), false, `listener at offset ${offset}`);
+      assert.equal(allPorts.at(-1), allPorts[0] + span - 1);
+      assert.throws(() => allocate(), /Increase MAX_FIXTURES/);
+    }
+    assert.throws(
+      () => portAllocator(MAX_FIXTURES, [occupied - span + 1, occupied]),
+      /Could not find a free span/,
+    );
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
 
 test("a passing run boots the emulator for each browser, tunnels once and leaves it stopped", async () => {
   const f = fixture();
