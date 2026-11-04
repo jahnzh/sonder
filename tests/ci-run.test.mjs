@@ -406,8 +406,9 @@ test("a busy deck dispatches to an idle wsl instead of queueing", () => {
 test("both hosts busy queues behind the first busy host by waiting on the process", () => {
   const f = fixture();
   try {
-    const busyDeck = f.startBusy("deck", f.first, 3);
-    const busyWsl = f.startBusy("wsl", f.first, 10);
+    // 8/15 s: a 3 s deck busy stub often ends before classify_host on a loaded host.
+    const busyDeck = f.startBusy("deck", f.first, 8);
+    const busyWsl = f.startBusy("wsl", f.first, 15);
     assert.ok(waitForProcessVisible(busyDeck.pid) && waitForProcessVisible(busyWsl.pid));
     const startedAt = Date.now();
     const out = f.run();
@@ -423,7 +424,7 @@ test("both hosts busy queues behind the first busy host by waiting on the proces
     assert.ok(fs.existsSync(logPath), "the queued log path exists");
     const startedIdx = out.stdout.indexOf("started deck");
     assert.ok(out.stdout.indexOf("queued deck") < startedIdx, "queued before started");
-    // The busy deck sleep is 3 s: the run could not have started before it.
+    // The busy deck sleep is 8 s: the run could not have started immediately.
     assert.ok(elapsedMs >= 2_500, `waited on the process (${elapsedMs}ms)`);
     // The queued run's output lands in the announced log file.
     assert.match(fs.readFileSync(logPath, "utf8"), new RegExp(`stub-runner host=deck sha=${f.second}`));
