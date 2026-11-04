@@ -516,11 +516,19 @@ export function savedHardcoverSeries(userId: number, id: number) {
       workId: string | null; added: number; introduced: number;
     }[];
   const works = rows.map((work) => ({ ...work, unreleased: !!work.unreleased,
-    added: !!work.added, introduced: !!work.introduced, ...seriesWorkState(userId, work.workId) }));
+    added: !!work.added, introduced: !!work.introduced,
+    // Another user's catalogue link must not expose state for a work this user has neither added nor owns.
+    ...seriesWorkState(userId, work.added || ownsWork(userId, work.workId) ? work.workId : null) }));
   const unique = works.filter((work, index) => works.findIndex((other) =>
     work.workId ? other.workId === work.workId : other.id === work.id) === index);
-  return { ...series as object, works, completion: { finished: unique.filter((work) => work.finished).length,
-    total: unique.length, nextBookId: unique.find((work) => !work.finished)?.id ?? null } };
+  // An unreleased work the user has not added cannot be finished, so it does not hold completion below 100%.
+  const counted = unique.filter((work) => work.added || !work.unreleased);
+  return { ...series as object, works, completion: { finished: counted.filter((work) => work.finished).length,
+    total: counted.length, nextBookId: counted.find((work) => !work.finished)?.id ?? null } };
+}
+function ownsWork(userId: number, workId: string | null) {
+  return !!workId && db.select().from(s.editions).where(eq(s.editions.workId, workId)).all()
+    .some((edition) => !!libraryEntry(userId, edition.id));
 }
 function seriesWorkState(userId: number, workId: string | null) {
   const editions = workId ? db.select().from(s.editions).where(eq(s.editions.workId, workId)).all() : [];

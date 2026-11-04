@@ -186,7 +186,7 @@ test("saved series and completion are personal while catalogue works are shared"
     assert.equal(saved.statusCode, 200, saved.body);
     const own = (await app.inject({ url: "/api/series/11", headers })).json();
     assert.equal(own.works.find((work: any) => work.id === 101).workId, (await app.inject({ url: "/api/series/11", headers: adminHeaders })).json().works[0].workId);
-    assert.deepEqual(own.completion, { finished: 0, total: 4, nextBookId: 101 });
+    assert.deepEqual(own.completion, { finished: 0, total: 3, nextBookId: 101 });
     assert.equal(own.works.find((work: any) => work.id === 103).added, false);
     assert.deepEqual((await app.inject({ url: "/api/series/11", headers: adminHeaders })).json().completion, { finished: 1, total: 4, nextBookId: 101 });
     await app.inject({ method: "POST", url: "/api/library", headers, payload: { bookId: "frankenstein" } });
