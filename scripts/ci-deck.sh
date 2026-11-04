@@ -588,7 +588,11 @@ REMOTE
 lock_dir=$2 base=$3 run_dir=$4
 [[ -z $lock_dir ]] && lock_dir="${base:-$HOME/sonder-ci}/.sonder-ci-deck-lock"
 mkdir -p "$lock_dir" 2>/dev/null || exit 14
-if ! mkdir "$lock_dir/active" 2>/dev/null; then
+# Stage run_dir then rename into place so a racing reader never sees an empty active/.
+staging=$(mktemp -d "$lock_dir/prep.XXXXXX") || exit 14
+printf '%s\n' "$run_dir" >"$staging/run_dir"
+if ! mv -T "$staging" "$lock_dir/active" 2>/dev/null; then
+  rm -rf "$staging"
   old=$(cat "$lock_dir/active/run_dir" 2>/dev/null)
   if [ -n "$old" ] && [ -d "$old" ] && [ ! -s "$old/check.exit" ]; then
     if [ -s "$old/check.pid" ]; then
@@ -604,9 +608,10 @@ if ! mkdir "$lock_dir/active" 2>/dev/null; then
     fi
   fi
   rm -rf "$lock_dir/active"
-  mkdir "$lock_dir/active" 2>/dev/null || { echo "deck_lock=busy"; exit 16; }
+  staging=$(mktemp -d "$lock_dir/prep.XXXXXX") || exit 14
+  printf '%s\n' "$run_dir" >"$staging/run_dir"
+  mv -T "$staging" "$lock_dir/active" 2>/dev/null || { rm -rf "$staging"; echo "deck_lock=busy"; exit 16; }
 fi
-printf '%s\n' "$run_dir" >"$lock_dir/active/run_dir"
 exit 0
 REMOTE
   rc=$?
@@ -741,6 +746,11 @@ if host_reachable; then
       run_remote_check
       FINAL_EXIT=$?
       remove_bundle
+      # Refuse before any failure status: a busy Deck must not flip ci/deck to failure.
+      if [[ $FINAL_EXIT -eq 4 && $RESULT == host_busy ]]; then
+        log "Artifacts: ${LOCAL_REPORT_DIR}"
+        exit 4
+      fi
     else
       post_commit_status pending "CI running on ${SONDER_CI_HOST}"
       FINAL_EXIT=$rc

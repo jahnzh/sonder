@@ -653,6 +653,7 @@ test("simultaneous starts from separate coordinators admit only one container", 
   const gh = f.read(f.logs.gh);
   assert.equal(gh.split("state=pending").length - 1, 1, "only the admitted run may publish ci/deck status");
   assert.match(gh, /state=success/);
+  assert.doesNotMatch(gh, /state=failure/, "a refused concurrent start must not publish ci/deck failure");
   fs.rmSync(f.base, { recursive: true, force: true });
 });
 
