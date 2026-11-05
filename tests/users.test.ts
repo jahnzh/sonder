@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+// @ts-expect-error Plain JS module shared with the live verify script.
+import { FORBIDDEN } from "../scripts/multi-user-forbidden.mjs";
 const temp=mkdtempSync(join(tmpdir(),"sonder-users-"));
 process.env.DATA_DIR=join(temp,"db"); process.env.MEDIA_ROOT=join(temp,"media"); process.env.REQUIRE_MEDIA_MOUNT="false"; process.env.NODE_ENV="test"; process.env.APP_PASSWORD="admin-password";
 const { createApp }=await import("../server/app.ts");
@@ -49,6 +51,17 @@ test("users have isolated libraries and progress and cannot access administratio
  assert.equal((await request(second,"GET","/api/books")).json().find((x:any)=>x.id===book.id).progress,undefined);
  const matching=await app.inject({method:"POST",url:"/api/progress",cookies:{sonder_session:first},headers:{"x-sonder-user-id":String(firstId)},payload:{...position,position:78,updatedAt:Date.now()}});
  assert.equal(matching.statusCode,200,matching.body);
+});
+
+test("verify-multi-user forbidden routes return 403 for a regular user", async () => {
+ const admin=(await app.inject({method:"POST",url:"/api/auth/login",payload:{password:"admin-password"}})).cookies[0].value;
+ await app.inject({method:"POST",url:"/api/users",cookies:{sonder_session:admin},payload:{username:"forbidden",password:"password1"}});
+ const user=(await app.inject({method:"POST",url:"/api/auth/login",payload:{username:"forbidden",password:"password1"}})).cookies[0].value;
+ assert.ok(FORBIDDEN.length > 0);
+ for (const [method, url, data] of FORBIDDEN) {
+  const r=await app.inject({method,url,cookies:{sonder_session:user},payload:data});
+  assert.equal(r.statusCode,403,`${method} ${url}: ${r.body}`);
+ }
 });
 
 test("migration copies legacy rows once without changing them", async () => {

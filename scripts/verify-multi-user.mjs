@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import {randomBytes} from 'node:crypto';
 import {chromium,expect as baseExpect} from '@playwright/test';
+import {FORBIDDEN} from './multi-user-forbidden.mjs';
 const expect=baseExpect.configure({timeout:25000});
 process.loadEnvFile('.env');
 const baseURL=process.env.SONDER_VERIFY_URL || 'https://sonder.pecori.no';
@@ -45,9 +46,7 @@ try {
  expect(qaBooks.filter(b=>b.inLibrary).length).toBe(0);
  expect(qaBooks.filter(b=>b.progress).length).toBe(0);
  check('User sees every title with audio, none of the admin\'s Hardcover placeholders, an empty library and no progress',{userCatalogue:qaBooks.length,adminCatalogue:adminCatalogue.length,withAudio:withAudio.length});
- const forbidden=[['PATCH','/api/settings',{torbox:'x'}],['POST','/api/acquire',{}],['POST','/api/import',{}],['POST','/api/alignments',{}],['GET','/api/torrents/health'],['GET','/api/acquisitions'],['GET','/api/users'],['GET','/api/discover/ebooks?source=libgen&q=test'],
-  // Percent-encoded variants of admin routes must be refused too (review r2#1).
-  ['GET','/api/%61cquisitions'],['GET','/api/torrents/he%61lth'],['DELETE','/api/recordings/qa-none/server%2Dcopy'],['POST','/api/%65books/import',{}],['GET','/api/discover/%61bb?q=test']];
+ const forbidden=FORBIDDEN;
  for(const [method,url,data] of forbidden){const r=await qa.request.fetch(url,{method,data});if(r.status()!==403)throw Error(`${method} ${url} returned ${r.status()} for a regular user`);}
  const settings=await(await qa.request.get('/api/settings')).json();
  if(JSON.stringify(settings).match(/torbox|prowlarr|transmission/i))throw Error('Regular-user settings expose admin fields: '+Object.keys(settings).join(','));
