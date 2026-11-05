@@ -152,6 +152,8 @@ Findings: blocking=N high=N medium=N low=N
 
 ## Liveness playbook
 
+When `orca orchestration check --wait` returns two consecutive empty waits and the active workers' worktrees are unchanged (`git rev-parse HEAD` and `git status --porcelain`), read each worker terminal tail (`orca terminal read --terminal <handle>`). `node scripts/orca-check.mjs --run <run_id> --wait … --workers <worker-list.json> --liveness-state <file>` tracks that and prints `liveness: usage-limit …` on stderr when a tail matches a known limit prompt.
+
 When `orca orchestration worker-list` shows projection `stale_status` for more than 30 minutes:
 1. Send one status request.
 2. If no answer in 20 minutes: run `orca orchestration worker-stop --dispatch <id>`.

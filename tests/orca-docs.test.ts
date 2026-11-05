@@ -129,6 +129,8 @@ test("6. Liveness playbook in worker-spec.md and models.md pointer", () => {
   const models = readFileSync(join(repoRoot, "docs", "agents", "models.md"), "utf8");
 
   assert.match(workerSpec, /## Liveness playbook/, "worker-spec.md must have Liveness playbook section");
+  assert.match(workerSpec, /two consecutive empty waits/i);
+  assert.match(workerSpec, /orca terminal read --terminal/i);
   assert.match(workerSpec, /stale_status/);
   assert.match(workerSpec, /30 minutes/);
   assert.match(workerSpec, /20 minutes/);
