@@ -92,6 +92,23 @@ export function pauseServerDownload(recordingId: string) {
     .where(eq(s.serverDownloads.recordingId, recordingId))
     .run();
 }
+export function cancelServerDownload(recordingId: string) {
+  controllers.get(recordingId)?.abort();
+  db.delete(s.serverDownloads)
+    .where(eq(s.serverDownloads.recordingId, recordingId))
+    .run();
+}
+export async function waitUntilServerDownloadIdle(
+  recordingId: string,
+  timeoutMs = 5000,
+) {
+  const start = Date.now();
+  while (jobIsActive(recordingId)) {
+    if (Date.now() - start > timeoutMs)
+      throw new Error("A server download is still running.");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
 export async function processServerDownloads() {
   if (running) return;
   running = true;

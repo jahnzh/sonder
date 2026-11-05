@@ -189,7 +189,8 @@ export async function createApp() {
       if (
         !body.length &&
         ((request.method === "DELETE" &&
-          /^\/api\/library\/[^/?]+(?:\?.*)?$/.test(request.url)) ||
+          (/^\/api\/library\/[^/?]+(?:\?.*)?$/.test(request.url) ||
+            /^\/api\/series\/[^/?]+(?:\?.*)?$/.test(request.url))) ||
           (request.method === "POST" &&
             /^\/api\/books\/[^/?]+\/keep(?:\?.*)?$/.test(request.url)))
       )

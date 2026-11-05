@@ -80,7 +80,7 @@ export function registerHardcoverRoutes(app: FastifyInstance) {
       .parse(req.body ?? {});
     const bookIds = body.bookIds ?? [];
     if (bookIds.length) requireAdmin(req);
-    return removeSavedHardcoverSeries(currentUserId(req), id, bookIds);
+    return await removeSavedHardcoverSeries(currentUserId(req), id, bookIds);
   });
   app.post("/api/series/:id/works/:bookId/acquisition/retry", async (req) => {
     const { id, bookId } = z
