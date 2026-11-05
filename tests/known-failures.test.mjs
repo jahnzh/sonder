@@ -23,8 +23,6 @@ const WSL_HOST_REQUIRED_ENTRIES = [
     {project: "chromium", file: "tests/e2e/playback-workflow.spec.ts", title: "touch seeking › releasing a fine-seek gesture keeps the exact previewed destination"},
     {project: "chromium", file: "tests/e2e/reader-theme.spec.ts", title: "a 409 with no server checkpoint rebases to revision 0 and saves instead of looping"},
     {project: "chromium", file: "tests/e2e/reader-follow-highlight.spec.ts", title: "lyrics mode shows the narrated sentence as the current line in the same chapters"},
-    {project: "chromium", file: "tests/e2e/reader-frame.spec.ts", title: "taps, page turns and long-press on the book page reach the reader"},
-    {project: "firefox", file: "tests/e2e/reader-frame.spec.ts", title: "taps, page turns and long-press on the book page reach the reader"},
     {project: "chromium", file: "tests/e2e/reader-frame.spec.ts", title: "a failed event probe enables scripts while the content defences still block them"},
     {project: "webkit", file: LAYOUT, title: "#122 reader Back to narration layout › firefox/webkit smoke: transport centred and ordered at 390px and 1280px"},
 ];
@@ -177,7 +175,7 @@ test("malformed known-failures files are rejected with a reason", () => {
     }
 });
 
-test("the committed WSL host list is valid and names tests that exist in the specs", () => {
+test("the committed WSL host list is valid and does not mask reader gesture regressions", () => {
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
     const loaded = loadKnownFailures(path.join(root, "tests", "known-failures.wsl-host.json"));
     assert.equal(loaded.ok, true, loaded.error);
@@ -187,6 +185,12 @@ test("the committed WSL host list is valid and names tests that exist in the spe
             committedKeys.has(knownFailureKey(required)),
             `known-failures.wsl-host.json is missing ${required.project} ${required.file}: ${required.title}`,
         );
+    }
+    for (const project of ["chromium", "firefox"]) {
+        const gesture = t(project, "tests/e2e/reader-frame.spec.ts", "taps, page turns and long-press on the book page reach the reader", "unexpected");
+        const outcome = classifyBrowserRun({entries: loaded.entries, report: playwrightReport([gesture]), stageExitCode: 1});
+        assert.equal(outcome.result, "failed", `${project} reader gesture regression must fail the check`);
+        assert.equal(outcome.newFailures.length, 1);
     }
     for (const entry of loaded.entries) {
         const source = fs.readFileSync(path.join(root, entry.file), "utf8");

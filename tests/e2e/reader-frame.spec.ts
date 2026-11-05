@@ -4,12 +4,12 @@ import {readerFixture} from "../reader-fixture";
 // WebKit needs allow-scripts so the reader's own listeners run on the page (#37).
 // EPUB content itself must still never run script. These checks run in all three engines.
 const sandboxFor=(browserName:string)=>browserName==="webkit" ? "allow-same-origin allow-scripts" : "allow-same-origin";
-async function importBook(page:Page,title:string,script=false,variant?:"svg-root"|"iframe-root"|"nav-root"|"no-head"|"head-late"|"text-before-head"|"template-root"|"svg-asset",link=true){
+async function importBook(page:Page,title:string,script=false,variant?:"svg-root"|"iframe-root"|"nav-root"|"no-head"|"head-late"|"text-before-head"|"template-root"|"svg-asset",link=true,fixture?:Buffer){
  const audio=await page.request.post("/api/import",{multipart:{title,author:"Frame QA",file:{name:"Narration.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
  expect(audio.ok()).toBe(true);
  const audioId=(await audio.json()).id;
  const book=(await(await page.request.get("/api/books")).json()).find((b:any)=>b.id===audioId);
- const upload=await page.request.post(`/api/ebooks/import${link ? `?workId=${book.workId}` : ""}`,{multipart:{file:{name:"Frame.epub",mimeType:"application/epub+zip",buffer:await readerFixture({script,variant})}}});
+ const upload=await page.request.post(`/api/ebooks/import${link ? `?workId=${book.workId}` : ""}`,{multipart:{file:{name:`${title}.epub`,mimeType:"application/epub+zip",buffer:fixture||await readerFixture({script,variant,title})}}});
  expect(upload.ok()).toBe(true);
  const id=(await upload.json()).id;
  await page.goto(`/#reader/${id}`);
@@ -23,14 +23,58 @@ async function openReader(page:Page,title:string,script=false,link=true){
  await expect(frame.getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
  return {id,room,frame};
 }
+// Find a line of actual text in the visible part of the current EPUB page. The
+// iframe can move or repaginate after the viewport was measured for a tap.
+async function visibleSentencePoint(viewport:Locator){
+ return viewport.evaluate(host=>{
+  const bounds=host.getBoundingClientRect();
+  for(const frame of host.querySelectorAll("iframe")){
+   const doc=frame.contentDocument,frameBounds=frame.getBoundingClientRect();
+   if(!doc || doc.fonts.status!=="loaded")continue;
+   for(const paragraph of doc.querySelectorAll("p")){
+    const range=doc.createRange();range.selectNodeContents(paragraph);
+    for(const rect of range.getClientRects()){
+     const left=Math.max(bounds.left,frameBounds.left,frameBounds.left+rect.left,0);
+     const right=Math.min(bounds.right,frameBounds.right,frameBounds.left+rect.right,window.innerWidth);
+     const top=Math.max(bounds.top,frameBounds.top,frameBounds.top+rect.top,0);
+     const bottom=Math.min(bounds.bottom,frameBounds.bottom,frameBounds.top+rect.bottom,window.innerHeight);
+     if(right-left<4 || bottom-top<4)continue;
+     const x=(left+right)/2,y=(top+bottom)/2;
+     const element=doc.elementFromPoint(x-frameBounds.left,y-frameBounds.top);
+     if(document.elementFromPoint(x,y)===frame && element && paragraph.contains(element))return {x,y};
+    }
+   }
+  }
+  return null;
+ });
+}
+async function longPressSentence(page:Page,viewport:Locator){
+ const state:{previous:{x:number,y:number}|null;point:{x:number,y:number}|null}={previous:null,point:null};
+ // Wait until the current text line is stable, then press exactly once.
+ await expect.poll(async()=>{
+  const point=await visibleSentencePoint(viewport),previous=state.previous;
+  state.previous=point;
+  if(point && previous && Math.abs(point.x-previous.x)<0.5 && Math.abs(point.y-previous.y)<0.5){state.point=point;return true;}
+  return false;
+ }).toBe(true);
+ if(!state.point)throw new Error("No stable visible sentence in the reader");
+ await page.mouse.move(state.point.x,state.point.y);
+ await page.mouse.down(); await page.waitForTimeout(650); await page.mouse.up();
+}
+async function expectNoAlignment(page:Page,id:string){
+ const response=await page.request.get(`/api/alignments?ebookId=${id}`);
+ expect(response.ok()).toBe(true);
+ expect((await response.json()).jobs).toEqual([]);
+}
 test("the reader frame only permits scripts when the engine needs them",async({page,browserName})=>{
  const {room}=await openReader(page,"Frame sandbox");
  const frames=room.locator(".reader-viewport iframe");
  await expect(frames.first()).toHaveAttribute("sandbox",sandboxFor(browserName));
  for(const sandbox of await frames.evaluateAll(els=>els.map(el=>el.getAttribute("sandbox"))))expect(sandbox).toBe(sandboxFor(browserName));
 });
-test("taps, page turns and long-press on the book page reach the reader",async({page,browserName})=>{
- const {id,room}=await openReader(page,"Frame gestures",false,false);
+test("taps, page turns and long-press on the book page reach the reader",async({page,browserName},testInfo)=>{
+ const {id,room}=await openReader(page,`Frame gestures ${browserName} ${testInfo.repeatEachIndex}`,false,false);
+ await expectNoAlignment(page,id);
  await expect(room.locator(".reader-viewport iframe").first()).toHaveAttribute("sandbox",sandboxFor(browserName));
  const topbar=room.locator(".reader-topbar"),box=(await room.locator(".reader-viewport").boundingBox())!;
  await expect(topbar).toBeHidden();
@@ -39,11 +83,44 @@ test("taps, page turns and long-press on the book page reach the reader",async({
  await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
  await expect(topbar).toBeHidden();
  // A tap on the right edge turns the page, which saves a reading checkpoint.
+ const revision=(await(await page.request.get(`/api/reader/${id}`)).json()).checkpoint?.revision||0;
+ await page.mouse.click(box.x+box.width*0.9,box.y+box.height/2);
+ await expect.poll(async()=>(await(await page.request.get(`/api/reader/${id}`)).json()).checkpoint?.revision||0).toBeGreaterThan(revision);
+ // Long-press listens from that sentence; without a narration map it asks for one.
+ await longPressSentence(page,room.locator(".reader-viewport"));
+ await expect(page.getByText("Prepare a matching audiobook map for this passage first.")).toBeVisible();
+});
+test("long-press reaches a sentence after the reader is resized",async({page,browserName},testInfo)=>{
+ const {id,room}=await openReader(page,`Frame resize ${browserName} ${testInfo.repeatEachIndex}`,false,false);
+ await expectNoAlignment(page,id);
+ const viewport=room.locator(".reader-viewport"),box=(await viewport.boundingBox())!;
  await page.mouse.click(box.x+box.width*0.9,box.y+box.height/2);
  await expect.poll(async()=>(await(await page.request.get(`/api/reader/${id}`)).json()).checkpoint?.revision||0).toBeGreaterThan(0);
- // Long-press listens from that sentence; without a narration map it asks for one.
- await page.mouse.move(box.x+box.width/2,box.y+box.height/3);
- await page.mouse.down(); await page.waitForTimeout(650); await page.mouse.up();
+ await page.setViewportSize({width:390,height:300});
+ await expect.poll(async()=>(await viewport.boundingBox())?.height||0).toBeLessThan(box.height-100);
+ const resized=(await viewport.boundingBox())!;
+ // The old long-press point is now below the book page, over the player.
+ expect(box.y+box.height/3).toBeGreaterThan(resized.y+resized.height);
+ await longPressSentence(page,viewport);
+ await expect(page.getByText("Prepare a matching audiobook map for this passage first.")).toBeVisible();
+});
+test("a no-map long-press stays isolated from an already prepared ebook",async({page,browserName},testInfo)=>{
+ const suffix=`${browserName} ${testInfo.repeatEachIndex}`;
+ const seedTitle=`Frame prepared ${suffix}`,fixture=await readerFixture({title:seedTitle});
+ const seeded=await importBook(page,seedTitle,false,undefined,true,fixture);
+ const manifest=await(await page.request.get(`/api/reader/${seeded}`)).json();
+ const book=(await(await page.request.get("/api/books")).json()).find((value:any)=>value.workId===manifest.workId);
+ const created=await page.request.post("/api/alignments",{data:{ebookId:seeded,recordingId:book.recordingId,pairings:manifest.sections.map((section:any)=>({section:section.index,trackId:book.tracks[0].id,start:section.index*100,duration:95}))}});
+ expect(created.ok()).toBe(true);
+ await expect.poll(async()=>(await(await page.request.get(`/api/alignments?ebookId=${seeded}`)).json()).jobs[0]?.intervals.length||0,{timeout:15000}).toBeGreaterThan(0);
+ // The server really does reuse the saved EPUB and its map for identical bytes.
+ const duplicate=await page.request.post("/api/ebooks/import",{multipart:{file:{name:`${seedTitle}.epub`,mimeType:"application/epub+zip",buffer:fixture}}});
+ expect(duplicate.ok()).toBe(true);
+ expect(await duplicate.json()).toEqual({id:seeded,alreadySaved:true});
+ const {id,room}=await openReader(page,`Frame isolated ${suffix}`,false,false);
+ expect(id).not.toBe(seeded);
+ await expectNoAlignment(page,id);
+ await longPressSentence(page,room.locator(".reader-viewport"));
  await expect(page.getByText("Prepare a matching audiobook map for this passage first.")).toBeVisible();
 });
 // Every section document starts with the CSP and has no script left; scripts, inline handlers and a
