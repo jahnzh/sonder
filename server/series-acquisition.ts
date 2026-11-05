@@ -511,6 +511,14 @@ export async function tickSeriesAcquisition(
   await tickQueue;
 }
 
+function seriesJobStillActive(jobId: string) {
+  return !!db
+    .select()
+    .from(s.seriesAcquisitionJobs)
+    .where(eq(s.seriesAcquisitionJobs.id, jobId))
+    .get();
+}
+
 async function processJob(
   job: typeof s.seriesAcquisitionJobs.$inferSelect,
   acquire: typeof defaultAcquire,
@@ -526,6 +534,7 @@ async function processJob(
   try {
     if (job.kind === "audio") await runAudioJob(job, acquire);
     else partialError = await runEbookJob(job);
+    if (!seriesJobStillActive(job.id)) return;
     const latest = db
       .select()
       .from(s.seriesAcquisitionJobs)
@@ -538,9 +547,15 @@ async function processJob(
         error: partialError,
         updatedAt: Date.now(),
       })
-      .where(eq(s.seriesAcquisitionJobs.id, job.id))
+      .where(
+        and(
+          eq(s.seriesAcquisitionJobs.id, job.id),
+          eq(s.seriesAcquisitionJobs.status, "searching"),
+        ),
+      )
       .run();
   } catch (error) {
+    if (!seriesJobStillActive(job.id)) return;
     db.update(s.seriesAcquisitionJobs)
       .set({
         status: "failed",
@@ -561,6 +576,7 @@ async function runAudioJob(
   job: typeof s.seriesAcquisitionJobs.$inferSelect,
   acquire: typeof defaultAcquire,
 ) {
+  if (!seriesJobStillActive(job.id)) return;
   const active = db
     .select()
     .from(s.seriesAcquisitionJobs)
@@ -603,6 +619,7 @@ async function runAudioJob(
     .from(s.editions)
     .where(eq(s.editions.workId, job.workId))
     .all()[0];
+  if (!seriesJobStillActive(job.id)) return;
   await autoAcquireSeriesVolume(
     job.userId,
     {
@@ -624,6 +641,7 @@ async function runAudioJob(
 async function runEbookJob(
   job: typeof s.seriesAcquisitionJobs.$inferSelect,
 ): Promise<string | null> {
+  if (!seriesJobStillActive(job.id)) return null;
   if (!canAcquireMedia(job.userId)) throw new Error("no_permission");
   if (workHasAppropriateEbook(job.workId)) {
     db.update(s.seriesAcquisitionJobs)
