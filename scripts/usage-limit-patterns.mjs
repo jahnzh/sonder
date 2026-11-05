@@ -18,6 +18,13 @@ export const USAGE_LIMIT_TERMINAL_SAMPLES = [
     source: "tests/codex-fixture.mjs REAL_EXHAUSTED.rateLimitUpsell.description (codex app-server 0.166.0, 2026-10-30)",
   },
   {
+    agent: "codex",
+    id: "codex-usage-limit",
+    substring: "You've hit your usage limit",
+    source:
+      "dispatch ctx_6263d94a588e / #244 Codex worker terminal, 2026-11-05 ~14:25Z",
+  },
+  {
     agent: "claude",
     id: "claude-session-limit",
     substring: "You've hit your session limit",
