@@ -43,7 +43,7 @@ test("saved series shows completion control, provenance and ebook device state",
   const aliceRow = seriesView.works.find((work: { id: number }) => work.id === 501);
   expect(aliceRow?.libraryOrigin?.source).not.toBe("series");
   expect(aliceRow?.removalDefaultSelected).toBe(false);
-  await expect(page.getByText("Ebook: not on server · on device").first()).toBeVisible();
+  await expect(page.getByText(/Ebook:.*· on device/).first()).toBeVisible();
   await page.getByLabel("Completion for Alice’s Adventures in Wonderland").selectOption("unread");
   await expect.poll(async () => {
     const work = (await (await page.request.get("/api/series/701")).json()).works

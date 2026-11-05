@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 
 const script = path.resolve("scripts/ci-deck.sh");
 
@@ -17,17 +17,37 @@ const script = path.resolve("scripts/ci-deck.sh");
 // free figure: STUB_DF_FREE_GB (default 50), overridable per test. Every other remote
 // command runs exactly as before (the override is exported only for the preflight).
 const sshStub = `#!/usr/bin/env bash
+# An SSH connection cannot inherit local file descriptors on the remote host.
+exec 9>&-
 while [[ $# -gt 0 && $1 == -* ]]; do if [[ $1 == -o ]]; then shift 2; else shift; fi; done
 shift
 echo "$*" >>"$STUB_SSH_LOG"
 [[ \${STUB_SSH_MODE:-local} == down ]] && exit 255
 if [[ $* == *" -- probe "* && \${STUB_SSH_PROBE:-} == fail ]]; then cat >/dev/null; exit 255; fi
 if [[ $* == *" -- preflight "* ]]; then
+  if [[ -n \${STUB_PREFLIGHT_HOLD:-} ]]; then
+    touch "$STUB_PREFLIGHT_HOLD/entered"
+    until [[ -f $STUB_PREFLIGHT_HOLD/release ]]; do sleep 0.05; done
+  fi
   export STUB_DF_FREE_KB=\$(( \${STUB_DF_FREE_GB:-50} * 1024 * 1024 ))
   df() {
     printf 'Filesystem     1K-blocks     Used Available Use%% Mounted on\nstub                 1073741824     102400 %s        0%% /stub\n' "$STUB_DF_FREE_KB"
   }
   export -f df
+fi
+if [[ $* == *" -- start "* ]]; then export STUB_SSH_STEP=start; fi
+# Hold after a successful acquire_run_lock so a second coordinator can try the
+# remote lock while active/ is still held. An SCP-time sync is not enough:
+# setup between SCP and the lock varies, so a fast winner can finish and
+# release before the loser reaches mv -T (issue #219).
+if [[ $* == *" -- acquire_run_lock "* && -n \${STUB_LOCK_HOLD:-} ]]; then
+  bash -c "\$*"
+  rc=\$?
+  if [[ \$rc -eq 0 ]]; then
+    touch "\$STUB_LOCK_HOLD/entered"
+    until [[ -f \$STUB_LOCK_HOLD/release ]]; do sleep 0.05; done
+  fi
+  exit \$rc
 fi
 exec bash -c "$*"
 `;
@@ -80,7 +100,14 @@ state=$STUB_PODMAN_STATE
 case "$1" in
   image) [[ -f $state/image ]]; exit $? ;;
   pull) [[ \${STUB_PULL:-ok} == fail ]] && exit 125; touch "$state/image"; exit 0 ;;
-  ps) cat "$state/containers" 2>/dev/null; exit 0 ;;
+  ps)
+    if [[ \${STUB_SSH_STEP:-} == start && -n \${STUB_START_HOLD:-} ]]; then
+      touch "$STUB_START_HOLD/entered"
+      until [[ -f $STUB_START_HOLD/release ]]; do sleep 0.05; done
+    fi
+    if [[ " $* " == *" -a "* ]]; then cat "$state/containers" 2>/dev/null; fi
+    cat "$state/running" 2>/dev/null
+    exit 0 ;;
   rm) exit 0 ;;
   unshare) shift; exec "$@" ;;
   run)
@@ -99,6 +126,8 @@ case "$1" in
     cmd=$3
     host=\${vol%%:*}
     cmd=\${cmd//\\/pilot/$host}
+    echo "$name" >>"$state/running"
+    trap 'sed -i "\\|^$name\\$|d" "$state/running"' EXIT
     case "\${STUB_PODMAN_MODE:-run}" in
       start_fail) exit 125 ;;
       die) kill -KILL "$PPID"; sleep 5 ;;
@@ -123,7 +152,7 @@ while [[ $# -gt 0 ]]; do
     *) break ;;
   esac
 done
-cd "$wd" && "$@" >/dev/null 2>&1 </dev/null &
+cd "$wd" && "$@" 9>&- >/dev/null 2>&1 </dev/null &
 echo $! >"$STUB_PODMAN_STATE/unit-$unit.pid"
 `;
 
@@ -132,7 +161,27 @@ echo "$*" >>"$STUB_PODMAN_LOG.systemd"
 [[ $1 == --user ]] && shift
 case "$1" in
   show) cat "$STUB_PODMAN_STATE/unit-\${@: -1}.pid" 2>/dev/null ;;
-  stop) pid=$(cat "$STUB_PODMAN_STATE/unit-$2.pid" 2>/dev/null) && kill -TERM "$pid" 2>/dev/null; exit 0 ;;
+  stop)
+    file="$STUB_PODMAN_STATE/unit-\$2.pid"
+    pid=\$(cat "\$file" 2>/dev/null) && kill -TERM "\$pid" 2>/dev/null
+    rm -f "\$file"
+    exit 0
+    ;;
+  list-units)
+    if [[ $* == *sonder-ci-run-* ]]; then
+      cat "$STUB_PODMAN_STATE/ci-units" 2>/dev/null
+      for file in "$STUB_PODMAN_STATE"/unit-sonder-ci-run-*.pid; do
+        [[ -f \$file ]] || continue
+        pid=\$(cat "\$file")
+        # Drop stale pid files so a recycled PID cannot look like a busy unit.
+        if ! kill -0 "\$pid" 2>/dev/null; then
+          rm -f "\$file"
+          continue
+        fi
+        name=\${file##*/unit-}; name=\${name%.pid}
+        echo "\$name.service loaded active running"
+      done
+    fi ;;
 esac
 exit 0
 `;
@@ -155,6 +204,8 @@ function fixture() {
   const bin = path.join(base, "bin");
   const remote = path.join(base, "remote");
   const podmanState = path.join(base, "podman-state");
+  const localLock = path.join(base, "local-lock");
+  const remoteLock = path.join(base, "remote-lock");
   fs.mkdirSync(path.join(repo, "scripts", "lib"), { recursive: true });
   fs.mkdirSync(bin);
   fs.mkdirSync(remote);
@@ -208,15 +259,13 @@ function fixture() {
   for (const file of Object.values(logs)) fs.writeFileSync(file, "");
   const read = (file: string) => fs.readFileSync(file, "utf8");
 
-  function run(commit: string, env: Record<string, string> = {}) {
-    const result = spawnSync("bash", [path.join(repo, "scripts", "ci-deck.sh"), commit], {
-      cwd: repo,
-      encoding: "utf8",
-      timeout: 60_000,
-      env: {
+  function runnerEnv(env: Record<string, string> = {}) {
+    return {
         ...cleanEnv(),
         PATH: `${bin}:${process.env.PATH}`,
         SONDER_CI_REMOTE_BASE: remote,
+        SONDER_CI_LOCAL_LOCK_DIR: localLock,
+        SONDER_CI_REMOTE_LOCK_DIR: remoteLock,
         SONDER_CI_POLL_INTERVAL: "0.2",
         STUB_SSH_LOG: logs.ssh,
         STUB_NPM_LOG: logs.npm,
@@ -226,9 +275,31 @@ function fixture() {
         SONDER_LOCAL_DF: dfHealthy,
         SONDER_LOCAL_STALE_DIR: localStale,
         ...env,
-      },
+    };
+  }
+
+  function run(commit: string, env: Record<string, string> = {}) {
+    const result = spawnSync("bash", [path.join(repo, "scripts", "ci-deck.sh"), commit], {
+      cwd: repo,
+      encoding: "utf8",
+      timeout: 60_000,
+      env: runnerEnv(env),
     });
     return { status: result.status, output: result.stdout + result.stderr };
+  }
+
+  function start(commit: string, env: Record<string, string> = {}) {
+    const child = spawn("bash", [path.join(repo, "scripts", "ci-deck.sh"), commit], {
+      cwd: repo, env: runnerEnv(env), stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    child.stdout.on("data", (chunk) => { output += chunk; });
+    child.stderr.on("data", (chunk) => { output += chunk; });
+    const done = new Promise<{ status: number | null; output: string }>((resolve, reject) => {
+      child.on("error", reject);
+      child.on("close", (status) => resolve({ status, output }));
+    });
+    return { child, done };
   }
 
   function runDir(commit: string) {
@@ -260,8 +331,16 @@ function fixture() {
 
   return {
     base, repo, bin, remote, podmanState, first, second: git("rev-parse", "HEAD"), git,
-    run, result, runDir, read, logs, checkCalls, localCheckCalls, runCalls, runsLeft,
+    run, start, result, runDir, read, logs, checkCalls, localCheckCalls, runCalls, runsLeft,
   };
+}
+
+async function waitForFile(file: string) {
+  const deadline = Date.now() + 10_000;
+  while (!fs.existsSync(file)) {
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${file}`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
 }
 
 test("an unreachable Deck falls back to a local check of the same commit", () => {
@@ -282,6 +361,7 @@ test("a passing run starts the container with the fixed flags and posts ci/deck"
   // The commit is not HEAD, which also proves the bundle carries it.
   const out = f.run(f.first);
   assert.equal(out.status, 0, out.output);
+  assert.match(out.output, /Waiting for the check \(cap 5400s,/);
   const calls = f.runCalls();
   assert.equal(calls.length, 1);
   const call = calls[0];
@@ -520,6 +600,87 @@ test("a junk SONDER_LOCAL_MIN_FREE_GB is ignored and leaves the run unchanged", 
   assert.equal(record.result, "passed");
 });
 
+test("a running CI container refuses a second run before starting another container", (t) => {
+  const f = fixture();
+  t.after(() => fs.rmSync(f.base, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(f.podmanState, "running"), "sonder-ci-run-abc1234-ACTIVE00\n");
+  const out = f.run(f.second);
+  assert.equal(f.runCalls().length, 0, out.output);
+  assert.equal(out.status, 4, out.output);
+  assert.equal(f.result(f.second).result, "host_busy");
+  assert.match(out.output, /npm run ci:run|wait/i);
+  assert.doesNotMatch(f.read(f.logs.podman), /^rm .*ACTIVE00/m);
+  assert.equal(f.read(f.logs.gh), "", "refusal must not overwrite the active run's status");
+});
+
+test("a local runner in preflight refuses a concurrent runner and releases its lock afterward", { timeout: 20_000 }, async () => {
+  const f = fixture();
+  const hold = path.join(f.base, "preflight-hold");
+  fs.mkdirSync(hold);
+  const first = f.start(f.second, { STUB_PREFLIGHT_HOLD: hold });
+  try {
+    await waitForFile(path.join(hold, "entered"));
+    const second = await f.start(f.second).done;
+    assert.equal(second.status, 4, second.output);
+    assert.match(second.output, /npm run ci:run|wait/i);
+    assert.equal(f.runCalls().length, 0, second.output);
+    assert.equal(f.read(f.logs.gh), "", "refusal must not update the same commit's status");
+  } finally {
+    fs.writeFileSync(path.join(hold, "release"), "");
+  }
+  const completed = await first.done;
+  assert.equal(completed.status, 0, completed.output);
+  assert.equal(f.run(f.second).status, 0, "a later run can acquire the released lock");
+  fs.rmSync(f.base, { recursive: true, force: true });
+});
+
+test("an active CI unit blocks a new container before its own container is visible", (t) => {
+  const f = fixture();
+  t.after(() => fs.rmSync(f.base, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(f.podmanState, "ci-units"), "sonder-ci-run-abc1234-STARTING.service loaded active running\n");
+  const out = f.run(f.second);
+  assert.equal(out.status, 4, out.output);
+  assert.equal(f.runCalls().length, 0, out.output);
+  assert.equal(f.result(f.second).result, "host_busy");
+  assert.match(out.output, /npm run ci:run|wait/i);
+  assert.doesNotMatch(f.read(`${f.logs.podman}.systemd`), /stop sonder-ci-run-abc1234-STARTING/);
+  assert.equal(f.read(f.logs.gh), "");
+});
+
+test("simultaneous starts from separate coordinators admit only one container", { timeout: 25_000 }, async () => {
+  const f = fixture();
+  const hold = path.join(f.base, "lock-hold");
+  fs.mkdirSync(hold);
+  // First coordinator acquires the remote lock and holds it; the second then
+  // starts with a separate local lock so only the Deck lock serialises them.
+  const first = f.start(f.second, {
+    STUB_LOCK_HOLD: hold,
+    SONDER_CI_LOCAL_LOCK_DIR: path.join(f.base, "coordinator-a"),
+  });
+  try {
+    await waitForFile(path.join(hold, "entered"));
+    const second = await f.start(f.second, {
+      SONDER_CI_LOCAL_LOCK_DIR: path.join(f.base, "coordinator-b"),
+    }).done;
+    assert.equal(second.status, 4, second.output);
+    assert.match(second.output, /npm run ci:run|wait/i);
+    assert.equal(f.runCalls().length, 0, second.output);
+    assert.equal(f.read(f.logs.gh), "", "refusal must not publish ci/deck status while the lock holder is still starting");
+  } finally {
+    fs.writeFileSync(path.join(hold, "release"), "");
+  }
+  const completed = await first.done;
+  assert.equal(completed.status, 0, completed.output);
+  assert.equal(f.runCalls().length, 1);
+  assert.equal(f.checkCalls().length, 1);
+  assert.equal(f.read(f.logs.ssh).split("\n").filter((line) => line.includes(" -- preflight ")).length, 2);
+  const gh = f.read(f.logs.gh);
+  assert.equal(gh.split("state=pending").length - 1, 1, "only the admitted run may publish ci/deck status");
+  assert.match(gh, /state=success/);
+  assert.doesNotMatch(gh, /state=failure/, "a refused concurrent start must not publish ci/deck failure");
+  fs.rmSync(f.base, { recursive: true, force: true });
+});
+
 test("a stale container is reported and left alone", () => {
   const f = fixture();
   fs.writeFileSync(path.join(f.podmanState, "containers"), "sonder-ci-run-abc1234-GONEGONE\nunrelated-container\n");
@@ -602,7 +763,7 @@ test("a host or remote base that could be read as an option is refused", () => {
 
 test("a running Android emulator stops the run as a host failure before anything is sent", () => {
   const f = fixture();
-  fs.writeFileSync(path.join(f.podmanState, "containers"), "sonder-emu-android34\n");
+  fs.writeFileSync(path.join(f.podmanState, "running"), "sonder-emu-android34\n");
   const out = f.run(f.second);
   assert.equal(out.status, 3, out.output);
   assert.match(out.output, /emulator_active=sonder-emu-android34/);

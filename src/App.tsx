@@ -1200,6 +1200,7 @@ function LibraryApp({
           downloads={downloads}
         />
         <SeriesDialog target={seriesTarget} onClose={() => setSeriesTarget(null)} downloads={downloads} savedEbooks={savedEbooks}
+          canAcquire={user.role === "admin"}
           onSaved={() => { setSeriesRevision((value) => value + 1); void refresh(); notify("Series saved."); }} />
         <ImportDialog
           onQueued={() => {
