@@ -34,14 +34,6 @@
       "issue": 145
     },
     {
-      "project": "webkit",
-      "file": "tests/e2e/now-playing-layout.spec.ts",
-      "title": "#122 reader Back to narration layout \u203a firefox/webkit smoke: transport centred and ordered at 390px and 1280px",
-      "kind": "intermittent",
-      "reason": "WebKit on the Deck only. Failed at 482967b (\"Back to narration\" stayed disabled) and at 02dd226 (toBeFocused failed) on commits whose diffs touch no reader code; passed at 56dba21 and d01e051. Cause not found",
-      "issue": 138
-    },
-    {
       "project": "chromium",
       "file": "tests/e2e/word-reader.spec.ts",
       "title": "switching from Word to Page with the p key shows the sentence reached",
