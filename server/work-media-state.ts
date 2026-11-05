@@ -24,6 +24,10 @@ const activeAcquisition = new Set([
   "paused",
 ]);
 
+export function workHasActiveQueuedAcquisition(userId: number, workId: string) {
+  return getWorkMediaState(userId, workId)?.state === "queued";
+}
+
 export function workHasPlayableAudio(workId: string) {
   for (const edition of db
     .select()
