@@ -56,6 +56,38 @@
       "kind": "intermittent",
       "reason": "WebKit on the Deck only. Failed at 482967b (\"Back to narration\" stayed disabled) and at 02dd226 (toBeFocused failed) on commits whose diffs touch no reader code; passed at 56dba21 and d01e051. Cause not found",
       "issue": 138
+    },
+    {
+      "project": "chromium",
+      "file": "tests/e2e/word-reader.spec.ts",
+      "title": "switching from Word to Page with the p key shows the sentence reached",
+      "kind": "intermittent",
+      "reason": "WSL host only: times out ~46s under load while local runs finish in 10-12s; passes on other full WSL runs of the same code (#225)",
+      "issue": 225
+    },
+    {
+      "project": "chromium",
+      "file": "tests/e2e/word-reader.spec.ts",
+      "title": "switching from Word to Page with the player's mode button shows the sentence reached",
+      "kind": "intermittent",
+      "reason": "WSL host only: same Word→Page timeout class as the p-key case (#225)",
+      "issue": 225
+    },
+    {
+      "project": "chromium",
+      "file": "tests/e2e/word-reader.spec.ts",
+      "title": "switching from Word to Page in Settings shows the sentence reached",
+      "kind": "intermittent",
+      "reason": "WSL host only: same Word→Page timeout class; seen on #219 tip and listed by #225",
+      "issue": 225
+    },
+    {
+      "project": "chromium",
+      "file": "tests/e2e/word-reader.spec.ts",
+      "title": "a checkpoint written in Word mode restores the sentence in Page mode after a reload",
+      "kind": "intermittent",
+      "reason": "WSL host only: ~46s timeout under load per #225; passes locally and on other WSL runs",
+      "issue": 225
     }
   ]
 }
