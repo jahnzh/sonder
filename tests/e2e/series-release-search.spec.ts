@@ -69,7 +69,7 @@ test("series work release search shows partial failure in the UI", async ({
   await releaseDialog
     .getByRole("textbox", { name: "Search audiobook releases for this work" })
     .fill("Crossing Two broken");
-  await releaseDialog.getByRole("button", { name: "Search", exact: true }).click();
+  await releaseDialog.locator("form").getByRole("button", { name: "Search", exact: true }).click();
   await expect(
     releaseDialog.getByText("AudioBookBay unavailable: AudioBookBay unavailable in test"),
   ).toBeVisible();
@@ -94,7 +94,7 @@ test("series release selection uses real server search and replace flow", async 
     .filter({ hasText: "Crossing Two" });
   await workRow.getByRole("button", { name: "Search releases" }).click();
   const releaseDialog = page.getByRole("dialog", { name: /Search releases · Crossing Two/ });
-  await releaseDialog.getByRole("button", { name: "Search", exact: true }).click();
+  await releaseDialog.locator("form").getByRole("button", { name: "Search", exact: true }).click();
   await expect(
     releaseDialog.getByRole("heading", { name: "Crossing Two", exact: true }),
   ).toBeVisible();
@@ -155,7 +155,7 @@ test("series release selection confirms existing audio through the server", asyn
     .filter({ hasText: "Alice" });
   await aliceRow.getByRole("button", { name: "Search releases" }).click();
   const releaseDialog = page.getByRole("dialog", { name: /Search releases · Alice/ });
-  await releaseDialog.getByRole("button", { name: "Search", exact: true }).click();
+  await releaseDialog.locator("form").getByRole("button", { name: "Search", exact: true }).click();
   await releaseDialog
     .getByRole("article")
     .first()

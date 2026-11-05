@@ -94,6 +94,22 @@ export function cancelInflightSeriesAudioJobs(userId: number, workId: string) {
     .run(SERIES_ACQUISITION_CANCELLED_ERROR, Date.now(), userId, workId).changes;
 }
 
+export function claimInflightSeriesAudioJobsForManualSelect(
+  userId: number,
+  workId: string,
+) {
+  return cancelInflightSeriesAudioJobs(userId, workId);
+}
+
+export function seriesAudioJobStillSearching(jobId: string) {
+  const row = db
+    .select()
+    .from(s.seriesAcquisitionJobs)
+    .where(eq(s.seriesAcquisitionJobs.id, jobId))
+    .get();
+  return !!row && row.status === "searching";
+}
+
 export function workHasAppropriateEbook(workId: string) {
   if (
     listEbookSetMembers(workId).some((member) => member.status === "accepted")
@@ -512,7 +528,9 @@ async function runAudioJob(
     },
     acquire,
     deps.seriesAudioDeps,
+    () => seriesAudioJobStillSearching(job.id),
   );
+  if (!seriesAudioJobStillSearching(job.id)) return;
 }
 
 async function runEbookJob(

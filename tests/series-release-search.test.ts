@@ -24,7 +24,12 @@ const {
 type SeriesReleaseSearchDeps = import("../server/series-release-search.ts").SeriesReleaseSearchDeps;
 const { getWorkMediaState } = await import("../server/work-media-state.ts");
 const { magnetHash } = await import("../server/acquisitions.ts");
-const { resetSeriesAcquisitionDeps, setSeriesAcquisitionDeps, tickSeriesAcquisition } = await import("../server/series-acquisition.ts");
+const {
+  resetSeriesAcquisitionDeps,
+  setSeriesAcquisitionDeps,
+  tickSeriesAcquisition,
+  SERIES_ACQUISITION_CANCELLED_ERROR,
+} = await import("../server/series-acquisition.ts");
 type SeriesAcquisitionDeps = import("../server/series-acquisition.ts").SeriesAcquisitionDeps;
 const { encrypt } = await import("../server/security.ts");
 
@@ -115,6 +120,7 @@ beforeEach(() => {
     }) as SeriesReleaseSearchDeps["abbReleaseSearch"],
     prowlarrReleaseSearch: (async (q) => {
       if (q.includes("fail-all")) throw new Error("prowlarr down");
+      if (q.includes("fail-prowlarr")) throw new Error("prowlarr down");
       return {
         results: [
           {
@@ -468,6 +474,89 @@ test("failed release metadata leaves an active download unchanged", async () => 
   );
 });
 
+test("failed release lookup leaves inflight auto-acquire unchanged", async () => {
+  process.env.SONDER_SKIP_SERIES_ACQUISITION = "1";
+  await saveSeries([201], { searchAudio: true });
+  const jobBefore = db.select().from(schema.seriesAcquisitionJobs).get();
+  assert.ok(jobBefore?.status === "pending" || jobBefore?.status === "searching");
+  setSeriesReleaseSearchDeps({
+    abbRelease: async () => {
+      throw new Error("abb page gone");
+    },
+  });
+  await seedAbbSearch();
+  const failed = await app.inject({
+    method: "POST",
+    url: "/api/series/31/works/201/releases/select",
+    payload: { source: "abb", id: "abb-first" },
+  });
+  assert.notEqual(failed.statusCode, 200);
+  const jobAfter = db.select().from(schema.seriesAcquisitionJobs).get();
+  assert.equal(jobAfter?.status, jobBefore?.status);
+  assert.notEqual(jobAfter?.error, SERIES_ACQUISITION_CANCELLED_ERROR);
+});
+
+test("release search succeeds from AudioBookBay when Prowlarr fails", async () => {
+  await saveSeries([201]);
+  const body = (
+    await app.inject(
+      "/api/series/31/works/201/releases/search?q=fail-prowlarr%20First%20volume",
+    )
+  ).json();
+  assert.equal(body.results.length, 1);
+  assert.equal(body.results[0].source, "abb");
+  assert.equal(body.sourceErrors.length, 1);
+  assert.equal(body.sourceErrors[0].source, "prowlarr");
+});
+
+test("replacing a TorBox download returns a detach note", async () => {
+  await saveSeries([201]);
+  const workId = (await app.inject("/api/series/31")).json().works.find(
+    (w: { id: number }) => w.id === 201,
+  ).workId;
+  const torboxId = randomUUID();
+  const magnet =
+    "magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&dn=First";
+  db.insert(schema.acquisitions)
+    .values({
+      id: torboxId,
+      hash: magnetHash(magnet),
+      magnet,
+      backend: "torbox",
+      remoteId: "remote-1",
+      title: "First volume",
+      author: "Ada Author",
+      cover: "",
+      workId,
+      language: null,
+      narrator: null,
+      status: "downloading",
+      progress: 0.2,
+      error: null,
+      bookId: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+    .run();
+  db.insert(schema.userAcquisitions).values({ userId: 1, acquisitionId: torboxId }).run();
+  const { syncWorkMediaState } = await import("../server/work-media-state.ts");
+  syncWorkMediaState(1, workId);
+  setSeriesReleaseSearchDeps({
+    abbMagnet: async () =>
+      "magnet:?xt=urn:btih:cccccccccccccccccccccccccccccccccccccccc&dn=Other",
+  });
+  await seedAbbSearch();
+  const replaced = await app.inject({
+    method: "POST",
+    url: "/api/series/31/works/201/releases/select",
+    payload: { source: "abb", id: "abb-first", replaceActive: true },
+  });
+  assert.equal(replaced.statusCode, 200, replaced.body);
+  const body = replaced.json();
+  assert.equal(body.replaceResult?.action, "detached_torbox");
+  assert.match(body.replaceResult?.note ?? "", /TorBox/i);
+});
+
 test("replacing with the same hash does not stop the active download", async () => {
   await saveSeries([201]);
   const workId = (await app.inject("/api/series/31")).json().works.find(
@@ -597,10 +686,70 @@ test("manual select cancels inflight auto-acquire before the ticker runs", async
     payload: { source: "abb", id: "abb-first" },
   });
   assert.equal(selected.statusCode, 200, selected.body);
-  assert.equal(
-    db.select().from(schema.seriesAcquisitionJobs).get()?.status,
-    "done",
-  );
+  const job = db.select().from(schema.seriesAcquisitionJobs).get();
+  assert.equal(job?.status, "failed");
+  assert.equal(job?.error, SERIES_ACQUISITION_CANCELLED_ERROR);
   await tickSeriesAcquisition();
   assert.equal(autoAcquireCalls, 0);
+});
+
+test("manual select wins over searching auto-acquire mid-flight", async () => {
+  await saveSeries([201], { searchAudio: true });
+  let unblockSearch!: () => void;
+  const searchBlocked = new Promise<void>((resolve) => {
+    unblockSearch = resolve;
+  });
+  let autoAcquireAttempted = false;
+  setSeriesAcquisitionDeps({
+    acquire: (async () => {
+      autoAcquireAttempted = true;
+      throw new Error("auto acquire should not run");
+    }) as SeriesAcquisitionDeps["acquire"],
+    seriesAudioDeps: {
+      abbSearch: async () => {
+        await searchBlocked;
+        return {
+          results: [
+            {
+              id: "abb-auto",
+              title: "First volume M4B",
+              format: "M4B",
+              narrator: "Reader",
+            },
+          ],
+          page: 1,
+          nextPage: null,
+        };
+      },
+      prowlarrSearch: async () => ({ results: [], page: 1, nextPage: null }),
+      abbMagnetLink: async () =>
+        "magnet:?xt=urn:btih:cccccccccccccccccccccccccccccccccccccccc&dn=First",
+      prowlarrMagnetLink: async () => "",
+      cachedHashes: async () => new Set<string>(),
+      log: () => {},
+    },
+  });
+  const tickRunning = tickSeriesAcquisition();
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if (db.select().from(schema.seriesAcquisitionJobs).get()?.status === "searching") break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal(
+    db.select().from(schema.seriesAcquisitionJobs).get()?.status,
+    "searching",
+  );
+  await seedAbbSearch();
+  const selected = await app.inject({
+    method: "POST",
+    url: "/api/series/31/works/201/releases/select",
+    payload: { source: "abb", id: "abb-first" },
+  });
+  assert.equal(selected.statusCode, 200, selected.body);
+  unblockSearch();
+  await tickRunning;
+  assert.equal(autoAcquireAttempted, false);
+  assert.equal(
+    db.select().from(schema.seriesAcquisitionJobs).get()?.error,
+    SERIES_ACQUISITION_CANCELLED_ERROR,
+  );
 });

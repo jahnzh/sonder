@@ -47,6 +47,7 @@ export function SeriesWorkReleaseSearch({
   );
   const [confirmAudioTarget, setConfirmAudioTarget] =
     useState<AudiobookRelease | null>(null);
+  const [replaceNotice, setReplaceNotice] = useState("");
   const requestId = useRef(0);
   const busy = pending > 0;
 
@@ -98,8 +99,11 @@ export function SeriesWorkReleaseSearch({
   ) => {
     setQueuing(true);
     setSelectError("");
+    setReplaceNotice("");
     try {
-      await api(`/series/${seriesId}/works/${bookId}/releases/select`, {
+      const response = await api<{
+        replaceResult?: { action: string; note?: string };
+      }>(`/series/${seriesId}/works/${bookId}/releases/select`, {
         method: "POST",
         body: JSON.stringify({
           source: release.source,
@@ -107,10 +111,13 @@ export function SeriesWorkReleaseSearch({
           ...options,
         }),
       });
+      if (response.replaceResult?.note) {
+        setReplaceNotice(response.replaceResult.note);
+      }
       setSelected(null);
       setReplaceTarget(null);
       setConfirmAudioTarget(null);
-      setOpen(false);
+      if (!response.replaceResult?.note) setOpen(false);
       onRefresh();
     } catch (reason) {
       if (reason instanceof ApiError) {
@@ -195,6 +202,11 @@ export function SeriesWorkReleaseSearch({
             {entry.label} unavailable: {entry.error}
           </p>
         ))}
+        {replaceNotice && (
+          <p className="release-source-error" role="status">
+            {replaceNotice}
+          </p>
+        )}
         <div className="release-results">
           {visible.map((release) => (
             <article className="release-card" key={`${release.source}-${release.id}`}>

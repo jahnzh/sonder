@@ -19,9 +19,8 @@ import {
 } from "./work-media-state.ts";
 import {
   assertCanAcquireMedia,
-  cancelInflightSeriesAudioJobs,
+  claimInflightSeriesAudioJobsForManualSelect,
   seriesWorkAcquisitions,
-  setJobState,
 } from "./series-acquisition.ts";
 import { transmission } from "./transmission.ts";
 
@@ -286,8 +285,6 @@ export async function selectSeriesWorkRelease(
       { statusCode: 409, code: "existing_audio" },
     );
 
-  cancelInflightSeriesAudioJobs(userId, work.workId);
-
   let magnet: string;
   let metadata: {
     title?: string;
@@ -323,6 +320,8 @@ export async function selectSeriesWorkRelease(
     userId,
   });
 
+  claimInflightSeriesAudioJobsForManualSelect(userId, work.workId);
+
   let replaceResult: ReplacePreviousResult | null = null;
   if (previous && input.replaceActive)
     replaceResult = await replacePreviousAcquisition(
@@ -331,7 +330,6 @@ export async function selectSeriesWorkRelease(
       magnet,
     );
 
-  setJobState(userId, seriesId, bookId, work.workId, "audio", "done");
   syncWorkMediaState(userId, work.workId);
   return {
     acquisition: job,
