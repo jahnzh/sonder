@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { ArrowRight, CircleAlert, Eye, EyeOff, Loader2 } from "lucide-react";
-import { api, authDB, selectUserStorage } from "../lib";
-import { SignInArt, type Account } from "./SignIn";
+import { ArrowRight, CircleAlert, Loader2 } from "lucide-react";
+import { api } from "../lib";
+import { PasswordField, rememberAccount, SignInArt, type Account } from "./SignIn";
 import "../signin.css";
 
 type Verified = { username: string; email: string };
@@ -68,15 +68,8 @@ export function Join({ onActivated }: { onActivated: (user: Account) => void }) 
         method: "POST",
         body: JSON.stringify({ token, password }),
       });
-      // The same storage and auth-preference flow the sign-in page uses, so the
-      // app picks up the new account exactly as after a login.
       const status = await api<{ required: boolean; user: Account }>("/auth/status");
-      selectUserStorage(status.user.id, status.user.role);
-      await authDB.preferences.put({
-        key: "auth",
-        value: { required: status.required, authenticated: true, user: status.user },
-      });
-      window.dispatchEvent(new Event("sonder:authenticated"));
+      await rememberAccount(status.user, status.required);
       onActivated(status.user);
     } catch (err) {
       setServerError(err instanceof Error ? err.message : "Could not create the account. Please try again.");
@@ -123,71 +116,39 @@ export function Join({ onActivated }: { onActivated: (user: Account) => void }) 
                   readOnly
                 />
               </div>
-              <div className="signin-field">
-                <label htmlFor="join-password">Password</label>
-                <div className="signin-password">
-                  <input
-                    id="join-password"
-                    type={show ? "text" : "password"}
-                    autoComplete="new-password"
-                    required
-                    value={password}
-                    aria-invalid={attempted && !!passwordErr}
-                    aria-describedby="join-error"
-                    onChange={(e) => {
-                      setPassword(e.target.value);
-                      setServerError("");
-                    }}
-                    autoFocus
-                  />
-                  <button
-                    type="button"
-                    aria-label={show ? "Hide password" : "Show password"}
-                    aria-pressed={show}
-                    onClick={() => setShow(!show)}
-                  >
-                    {show ? <EyeOff size={20} aria-hidden="true" /> : <Eye size={20} aria-hidden="true" />}
-                  </button>
-                </div>
-                {attempted && passwordErr && (
-                  <p className="signin-error">
-                    <CircleAlert size={16} aria-hidden="true" />
-                    {passwordErr}
-                  </p>
-                )}
-              </div>
-              <div className="signin-field">
-                <label htmlFor="join-confirm">Confirm password</label>
-                <div className="signin-password">
-                  <input
-                    id="join-confirm"
-                    type={show ? "text" : "password"}
-                    autoComplete="new-password"
-                    required
-                    value={confirm}
-                    aria-invalid={attempted && !!confirmErr}
-                    aria-describedby="join-error"
-                    onChange={(e) => {
-                      setConfirm(e.target.value);
-                      setServerError("");
-                    }}
-                  />
-                  <button
-                    type="button"
-                    aria-label={show ? "Hide password" : "Show password"}
-                    aria-pressed={show}
-                    onClick={() => setShow(!show)}
-                  >
-                    {show ? <EyeOff size={20} aria-hidden="true" /> : <Eye size={20} aria-hidden="true" />}
-                  </button>
-                </div>
-                {attempted && confirmErr && (
-                  <p className="signin-error">
-                    <CircleAlert size={16} aria-hidden="true" />
-                    {confirmErr}
-                  </p>
-                )}
-              </div>
+              <PasswordField
+                id="join-password"
+                label="Password"
+                value={password}
+                show={show}
+                onShowChange={setShow}
+                onChange={(next) => {
+                  setPassword(next);
+                  setServerError("");
+                }}
+                autoComplete="new-password"
+                required
+                autoFocus
+                invalid={attempted && !!passwordErr}
+                describedBy="join-error"
+                error={attempted ? passwordErr : undefined}
+              />
+              <PasswordField
+                id="join-confirm"
+                label="Confirm password"
+                value={confirm}
+                show={show}
+                onShowChange={setShow}
+                onChange={(next) => {
+                  setConfirm(next);
+                  setServerError("");
+                }}
+                autoComplete="new-password"
+                required
+                invalid={attempted && !!confirmErr}
+                describedBy="join-error"
+                error={attempted ? confirmErr : undefined}
+              />
               <div id="join-error" role="alert">
                 {serverError && (
                   <p className="signin-error">

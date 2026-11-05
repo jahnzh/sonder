@@ -134,6 +134,15 @@ let currentRole: "admin" | "user" = "admin";
 export function userId() { return currentUserId; }
 export function isAdmin() { return currentRole === "admin"; }
 export function userStorageKey(key: string) { return currentUserId === 1 ? key : `sonder-user-${currentUserId}:${key}`; }
+
+/** Ebook edition ids with a reader-file entry in Dexie (device offline copy). */
+export async function listOfflineEbookEditionIds(): Promise<string[]> {
+  const rows = await localDB.preferences.toArray();
+  return rows
+    .filter((row) => row.key.startsWith("reader-file:"))
+    .map((row) => row.key.slice("reader-file:".length));
+}
+
 export const localDB = new Proxy(sharedDB, {
   get(target, prop) {
     const db = ["books", "progress", "positionHistory", "preferences"].includes(String(prop)) ? personalDB : target;

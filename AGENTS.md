@@ -43,7 +43,7 @@ The runner is available as `npm run ci:ssh <sha>` (`scripts/ci-ssh.sh`). It runs
 
 Pushes are dispatched automatically when they go through `scripts/ci-push.sh` (or `npm run ci:push`, same arguments as `git push`): for every branch that changed on the remote, the committed check starts in the background via `ci-run.sh` (first idle host, queued behind a busy one). Already-checked SHAs are skipped, and `SONDER_SKIP_PUSH_CI=1` falls back to a plain `git push`. A push that does not go through the wrapper is dispatched by hand with `npm run ci:run <sha>`.
 
-The Steam Deck is a second CI host that is on when the WSL host is off: `npm run ci:deck <sha>` (`scripts/ci-deck.sh`) runs the same check in a rootless Podman container and posts the `ci/deck` status. Read `docs/agents/ci-deck.md` first.
+The Steam Deck is a second CI host that is on when the WSL host is off. Dispatch committed checks with `npm run ci:run <sha>` (or the push wrapper); it queues on a busy Deck and picks the first idle host. Use `npm run ci:deck <sha>` only when debugging `scripts/ci-deck.sh` itself — it refuses a second concurrent run and posts `ci/deck`. Read `docs/agents/ci-deck.md` first.
 
 - Send a Git bundle of the committed revision to a unique temporary checkout on the host. Install dependencies and run `nice -n 10 npm run check -- --ref <commit>` there.
 - Keep browsers headless and muted. Check that the host's Playwright browsers match the lockfile before the first run.

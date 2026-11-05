@@ -1,10 +1,10 @@
-import { currentUser, currentUserId, getUserSecret, sessionUser, requireAdmin, registerUsers, verifyPassword } from "./users.ts";
+import { currentUser, currentUserId, getUserSecret, issueSession, sessionUser, requireAdmin, registerUsers, verifyPassword } from "./users.ts";
 import Fastify from "fastify";
 import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
 import staticFiles from "@fastify/static";
 import rateLimit from "@fastify/rate-limit";
-import { randomUUID, randomBytes, createHash } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import {
   createReadStream,
   existsSync,
@@ -12,8 +12,10 @@ import {
   statSync,
   renameSync,
   unlinkSync,
+  writeFileSync,
+  realpathSync,
 } from "node:fs";
-import { resolve, join, extname } from "node:path";
+import { resolve, join, extname, relative, isAbsolute } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { parseFile } from "music-metadata";
@@ -23,6 +25,7 @@ import { eq, and, gt } from "drizzle-orm";
 import { db, sqlite, dataDir } from "./db.ts";
 import * as s from "./schema.ts";
 import { seed } from "./seed.ts";
+import { removeUserLibraryRow, setLibraryOrigin } from "./library-origin.ts";
 import {
   hardcoverForWork,
   hardcoverSearch,
@@ -56,6 +59,7 @@ import {
   torrentDownloadDir,
 } from "./storage.ts";
 import { acquire, refreshQueue } from "./acquisitions.ts";
+import { tickSeriesAcquisition, SERIES_ACQUISITION_TICK_MS, resetStaleSeriesAcquisitionJobs, seriesAcquisitionTickerEnabled } from "./series-acquisition.ts";
 import { transmission, transmissionConfigured } from "./transmission.ts";
 import { getTorrentHealth } from "./torrent-health.ts";
 import { searchEbooks, saveEbook, listEbooks, importEbook } from "./ebooks.ts";
@@ -188,7 +192,8 @@ export async function createApp() {
       if (
         !body.length &&
         ((request.method === "DELETE" &&
-          /^\/api\/library\/[^/?]+(?:\?.*)?$/.test(request.url)) ||
+          (/^\/api\/library\/[^/?]+(?:\?.*)?$/.test(request.url) ||
+            /^\/api\/series\/[^/?]+(?:\?.*)?$/.test(request.url))) ||
           (request.method === "POST" &&
             /^\/api\/books\/[^/?]+\/keep(?:\?.*)?$/.test(request.url)))
       )
@@ -299,26 +304,7 @@ export async function createApp() {
         return reply
           .code(401)
           .send({ error: "That password doesn’t match. Try again." });
-      const token = randomBytes(32).toString("hex");
-      sqlite
-        .prepare("DELETE FROM sessions WHERE expires_at < ?")
-        .run(Date.now());
-      db.insert(s.sessions)
-        .values({
-          token: hashToken(token),
-          userId: user.id,
-          expiresAt: Date.now() + 30 * 86400000,
-        })
-        .run();
-      return reply
-        .setCookie("sonder_session", token, {
-          httpOnly: true,
-          sameSite: "strict",
-          path: "/",
-          secure: process.env.COOKIE_SECURE === "true",
-          maxAge: 30 * 86400,
-        })
-        .send({ ok: true });
+      return issueSession(reply, user.id).send({ ok: true });
     },
   );
   app.post("/api/auth/logout", async (req, reply) => {
@@ -344,15 +330,20 @@ export async function createApp() {
     if (!db.select().from(s.editions).where(eq(s.editions.id, bookId)).get())
       throw new Error("This book could not be found.");
     db.delete(s.userHiddenLibrary).where(and(eq(s.userHiddenLibrary.userId, currentUserId(req)), eq(s.userHiddenLibrary.bookId, bookId))).run();
-    db.insert(s.userLibrary)
-      .values({ userId: currentUserId(req), bookId, status: "unread", addedAt: Date.now() })
-      .onConflictDoNothing()
-      .run();
+    const addedAt = Date.now();
+    const inserted =
+      db
+        .insert(s.userLibrary)
+        .values({ userId: currentUserId(req), bookId, status: "unread", addedAt })
+        .onConflictDoNothing()
+        .run().changes > 0;
     const edition = db
       .select()
       .from(s.editions)
       .where(eq(s.editions.id, bookId))
       .get();
+    if (inserted && edition)
+      setLibraryOrigin(currentUserId(req), edition.workId, "manual", { addedAt });
     if (edition) queueHardcoverStatus(currentUserId(req), edition.workId, "unread", "add");
     return { ok: true };
   });
@@ -382,9 +373,7 @@ export async function createApp() {
         .values({ userId: currentUserId(req), bookId: id })
         .onConflictDoNothing()
         .run();
-    db.delete(s.userLibrary)
-      .where(and(eq(s.userLibrary.userId, currentUserId(req)), eq(s.userLibrary.bookId, (req.params as { id: string }).id)))
-      .run();
+    removeUserLibraryRow(currentUserId(req), id);
     return { ok: true };
   });
   app.post("/api/progress", async (req) => {
@@ -914,8 +903,20 @@ export async function createApp() {
   const queueTimer = setInterval(() => void poll().catch(() => {}), 10000);
   queueTimer.unref();
   void poll().catch(() => {});
+  resetStaleSeriesAcquisitionJobs();
+  const seriesAcquisitionTimer = setInterval(
+    () => {
+      if (!seriesAcquisitionTickerEnabled()) return;
+      void tickSeriesAcquisition(acquire).catch(() => {});
+    },
+    SERIES_ACQUISITION_TICK_MS,
+  );
+  seriesAcquisitionTimer.unref();
+  if (seriesAcquisitionTickerEnabled())
+    void tickSeriesAcquisition(acquire).catch(() => {});
   app.addHook("onClose", async () => {
     clearInterval(queueTimer);
+    clearInterval(seriesAcquisitionTimer);
     stopServerDownloads();
   });
   const hardcoverTimer = setInterval(
@@ -1258,6 +1259,79 @@ export async function createApp() {
         ? reply.code(404).send({ error: "Not found" })
         : reply.sendFile("index.html"),
     );
+  }
+  if (process.env.NODE_ENV === "test") {
+    const { mediaRoot } = await import("./storage.ts");
+    const testMediaPath = (rel: string) => {
+      const root = realpathSync(mediaRoot);
+      const target = resolve(mediaRoot, rel);
+      if (!existsSync(target)) return null;
+      const actual = realpathSync(target);
+      const relPath = relative(root, actual);
+      if (relPath.startsWith("..") || isAbsolute(relPath)) return null;
+      return actual;
+    };
+    app.get("/api/test/media-exists", (req) => {
+      const rel = (req.query as { path?: string }).path;
+      if (!rel) throw new Error("path is required.");
+      const actual = testMediaPath(rel);
+      return { exists: actual ? existsSync(actual) : false };
+    });
+    app.post("/api/test/seed-local-audio", (req) => {
+      const input = z
+        .object({
+          relPath: z.string().min(1),
+          editionId: z.string().min(1),
+          recordingId: z.string().min(1),
+          trackId: z.string().min(1),
+          workId: z.string().min(1),
+          releaseTitle: z.string().optional(),
+        })
+        .parse(req.body);
+      const full = resolve(mediaRoot, input.relPath);
+      mkdirSync(resolve(full, ".."), { recursive: true });
+      if (!existsSync(full)) writeFileSync(full, "audio");
+      db.insert(s.editions)
+        .values({
+          id: input.editionId,
+          workId: input.workId,
+          cover: "",
+          narrator: "N",
+          language: null,
+          releaseTitle: input.releaseTitle ?? "Test audio",
+          rating: 0,
+          sourceLabel: "Test",
+        })
+        .onConflictDoNothing()
+        .run();
+      db.insert(s.recordings)
+        .values({ id: input.recordingId, editionId: input.editionId })
+        .onConflictDoNothing()
+        .run();
+      db.insert(s.tracks)
+        .values({
+          id: input.trackId,
+          recordingId: input.recordingId,
+          title: "Ch 1",
+          index: 0,
+          duration: 10,
+          chapters: [],
+          source: full,
+          sourceType: "local",
+        })
+        .onConflictDoNothing()
+        .run();
+      db.insert(s.userLibrary)
+        .values({
+          userId: 1,
+          bookId: input.editionId,
+          status: "unread",
+          addedAt: Date.now(),
+        })
+        .onConflictDoNothing()
+        .run();
+      return { ok: true as const, relPath: input.relPath };
+    });
   }
   return app;
 }
