@@ -136,7 +136,7 @@ function fixture(t?: TestContext) {
       env: {
         ...cleanEnv(),
         PATH: `${bin}:${process.env.PATH}`,
-        SONDER_CI_REMOTE_BASE: remote,
+        ...(env.SONDER_CI_REMOTE_BASE === undefined ? { SONDER_CI_REMOTE_BASE: remote } : {}),
         SONDER_CI_POLL_INTERVAL: "0.2",
         SONDER_CI_LOOPBACK_PORT: "1",
         STUB_SSH_LOG: logs.ssh,
@@ -259,6 +259,31 @@ test("a passing remote check passes", (t) => {
   assert.equal(out.status, 0, out.output);
   assert.equal(f.result(f.second).result, "passed");
   assert.match(f.read(f.logs.gh), /state=success/);
+});
+
+test("when SONDER_CI_REMOTE_BASE is unset the remote run dir uses TMPDIR", (t) => {
+  const f = fixture(t);
+  const remoteTmp = path.join(f.base, "remote-tmpdir");
+  fs.mkdirSync(remoteTmp);
+  const out = f.run(f.second, { SONDER_CI_REMOTE_BASE: "", TMPDIR: remoteTmp });
+  assert.equal(out.status, 0, out.output);
+  assert.match(out.output, new RegExp(`Remote run directory: .*:${remoteTmp.replaceAll("/", "\\/")}\\/sonder-ci-`));
+  assert.deepEqual(fs.readdirSync(remoteTmp), [], "the finished run is cleaned up");
+});
+
+test("SONDER_CI_REMOTE_BASE overrides the remote TMPDIR", (t) => {
+  const f = fixture(t);
+  const override = path.join(f.base, "override-base");
+  fs.mkdirSync(override);
+  const remoteTmp = path.join(f.base, "remote-tmpdir");
+  fs.mkdirSync(remoteTmp);
+  const out = f.run(f.second, { SONDER_CI_REMOTE_BASE: override, TMPDIR: remoteTmp });
+  assert.equal(out.status, 0, out.output);
+  assert.match(out.output, new RegExp(`Remote run directory: .*:${override.replaceAll("/", "\\/")}\\/sonder-ci-`));
+  assert.doesNotMatch(
+    out.output,
+    new RegExp(`Remote run directory: .*:${remoteTmp.replaceAll("/", "\\/")}\\/sonder-ci-`),
+  );
 });
 
 test("a remote check passes the WSL known-failures file by default", (t) => {
