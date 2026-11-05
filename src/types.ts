@@ -166,6 +166,25 @@ export type SavedEbook = {
   available: boolean;
 };
 
+export type AcquisitionStatus =
+  | "pending"
+  | "searching"
+  | "done"
+  | "failed"
+  | "skipped";
+
+export type SeriesWorkAcquisition = {
+  kind: "audio" | "ebook";
+  status: AcquisitionStatus;
+  error?: string | null;
+  skipReason?:
+    | "unreleased"
+    | "has_audio"
+    | "has_ebook"
+    | "no_permission"
+    | null;
+};
+
 export type HardcoverState = {
   configured: boolean;
   mode: "off" | "import" | "two-way";

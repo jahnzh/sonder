@@ -29,6 +29,9 @@ function jobIsActive(recordingId: string) {
     .get();
   return job?.status === "queued" || job?.status === "downloading";
 }
+export function serverDownloadIsActive(recordingId: string) {
+  return jobIsActive(recordingId);
+}
 export function hasServerMedia(track: typeof s.tracks.$inferSelect) {
   if (track.sourceType === "local" && existsSync(track.source)) return true;
   const copy = db
@@ -91,6 +94,23 @@ export function pauseServerDownload(recordingId: string) {
     .set({ status: "paused", updatedAt: Date.now() })
     .where(eq(s.serverDownloads.recordingId, recordingId))
     .run();
+}
+export function cancelServerDownload(recordingId: string) {
+  controllers.get(recordingId)?.abort();
+  db.delete(s.serverDownloads)
+    .where(eq(s.serverDownloads.recordingId, recordingId))
+    .run();
+}
+export async function waitUntilServerDownloadIdle(
+  recordingId: string,
+  timeoutMs = Number(process.env.SONDER_DOWNLOAD_IDLE_MS || 5000),
+) {
+  const start = Date.now();
+  while (jobIsActive(recordingId)) {
+    if (Date.now() - start > timeoutMs)
+      throw new Error("A server download is still running.");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
 }
 export async function processServerDownloads() {
   if (running) return;
