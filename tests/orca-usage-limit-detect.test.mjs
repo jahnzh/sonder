@@ -17,6 +17,15 @@ test("detectUsageLimitInText matches codex upsell title from codex-fixture", () 
   assert.equal(hit.id, "codex-out-of-messages");
 });
 
+test("detectUsageLimitInText matches codex usage-limit terminal line", () => {
+  const line =
+    "You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at 2:58 PM.";
+  const hit = detectUsageLimitInText(line);
+  assert.ok(hit);
+  assert.equal(hit.agent, "codex");
+  assert.equal(hit.id, "codex-usage-limit");
+});
+
 test("detectUsageLimitInText matches claude session-limit sample", () => {
   const hit = detectUsageLimitInText("You've hit your session limit · resets 1:50am (UTC)");
   assert.equal(hit?.agent, "claude");

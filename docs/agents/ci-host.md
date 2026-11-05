@@ -58,6 +58,7 @@ Agents start checks with `npm run ci:ssh -- <sha>`. Killing the `npm` or `sh -c`
 ## Running a check on the host
 
 - Run `npm run ci:ssh -- <sha>`, which `exec`s into `scripts/ci-ssh.sh`.
+- Remote run directories (checkout, bundle, report) live under `${TMPDIR:-/tmp}` on the host unless you set `SONDER_CI_REMOTE_BASE` to an absolute path. The script logs `Remote run directory: <host>:<path>` once the directory is created.
 - `scripts/ci-ssh.sh` runs preflights for loopback refusal, Playwright browsers, and WebKit packages, and detects a dead run.
 - A full check takes about 4 to 5 minutes.
 - Keep live verification scripts (`scripts/verify-*.mjs`) on the production machine; never run them on the host.
@@ -74,7 +75,7 @@ Agents start checks with `npm run ci:ssh -- <sha>`. Killing the `npm` or `sh -c`
 - **Output**: one line per started or queued run on stdout — `started <host> <sha> log=<path>`, `queued <host> <sha> log=<path>`, `finished <host> <sha> exit=<rc> log=<path>` — with `[ci-run]`-prefixed diagnostics on stdout. The runner's stdout and stderr append to the log file at `artifacts/ci/<sha>/ci-run-<UTC timestamp>-<pid>.log`.
 - **Dispatch**: `--dispatch <id>` (or `--dispatch=<id>`) sets `SONDER_CI_DISPATCH` for the downstream runner so the finished check is recorded on that worker history dispatch. The id is validated up front against the `scripts/lib/ci-history.sh` allowlist.
 - **Exit codes**: 0 the downstream check passed; 1 the ref is not a commit or the commit already failed on a finished run; 2 usage; 124 the queue wait cap was reached; otherwise the downstream runner's exit status (see `scripts/ci-deck.sh`'s list).
-- **Environment**: `SONDER_CI_HOSTS`, `SONDER_CI_DECK_HOST` (default `deck@steamdeck`), `SONDER_CI_WSL_HOST` (default `192.168.1.119`), `SONDER_CI_REMOTE_BASE` (as in the runners: WSL default `/tmp`, Deck default `$HOME/sonder-ci` on the Deck), `SONDER_CI_POLL_INTERVAL`, `SONDER_CI_QUEUE_TIMEOUT`, `SONDER_CI_DISPATCH`.
+- **Environment**: `SONDER_CI_HOSTS`, `SONDER_CI_DECK_HOST` (default `deck@steamdeck`), `SONDER_CI_WSL_HOST` (default `192.168.1.119`), `SONDER_CI_REMOTE_BASE` (WSL: unset uses the host's `${TMPDIR:-/tmp}`; Deck: unset uses `$HOME/sonder-ci` on the Deck), `SONDER_CI_POLL_INTERVAL`, `SONDER_CI_QUEUE_TIMEOUT`, `SONDER_CI_DISPATCH`.
 
 ## Reader e2e timing (issue #115)
 
