@@ -12,6 +12,11 @@ test("1. Coordinator state file documentation in worker-spec.md", () => {
   assert.match(content, /artifacts\/orca\/STATE\.md/, "must mention artifacts/orca/STATE.md");
   assert.match(content, /Read artifacts\/orca\/STATE\.md and do its next action/, "must mention exact wakeup prompt");
   assert.match(content, /never paste the run state into the prompt/, "must caution against pasting run state into prompt");
+  assert.match(content, /Active deploy-or-land goals/, "must document active deploy-or-land goals rule");
+  assert.match(content, /never treat a status question as a stop/, "must forbid idling on status questions");
+  assert.match(content, /npm run ci:run/, "must prefer npm run ci:run over fire-and-forget parallel ci:deck");
+  assert.match(content, /SONDER_CI_LOOPBACK_PORT/, "must allow parallel ci:ssh with distinct SONDER_CI_LOOPBACK_PORT");
+  assert.match(content, /reads its orchestrator's terminal at least every 10 minutes/, "must require reading orchestrator terminals every 10 minutes");
 });
 
 test("2. Spec templates exist, contain verbatim rules block and specific requirements", () => {
@@ -129,6 +134,11 @@ test("6. Liveness playbook in worker-spec.md and models.md pointer", () => {
   const models = readFileSync(join(repoRoot, "docs", "agents", "models.md"), "utf8");
 
   assert.match(workerSpec, /## Liveness playbook/, "worker-spec.md must have Liveness playbook section");
+  assert.match(
+    workerSpec,
+    /While a deploy-or-land goal is active, follow Active deploy-or-land goals under Coordinator state/,
+    "Liveness playbook must point at Active deploy-or-land goals"
+  );
   assert.match(workerSpec, /two consecutive empty waits/i);
   assert.match(workerSpec, /orca terminal read --terminal/i);
   assert.match(workerSpec, /stale_status/);
