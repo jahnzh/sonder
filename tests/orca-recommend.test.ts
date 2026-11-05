@@ -632,12 +632,14 @@ test("exhausted Codex usage rejects the candidate and names the reset", async ()
   }
 });
 
-test("an override onto exhausted usage goes through with a warning", async () => {
+test("an override onto exhausted usage is refused and prints the usage reading", async () => {
   const r = await withCodex(farFuture({ primary: 100, allowed: false, reached: "rate_limit_reached" }), ["--override", "codex/gpt-6.1-terra/max", "--override-reason", "only codex knows this area"]);
   try {
-    assert.equal(r.json.status, "overridden");
+    assert.equal(r.status, 1);
+    assert.equal(r.json.status, "override-refused");
     assert.equal(r.json.usage.status, "exhausted");
-    assert.match(r.json.decision.warning, /codex\/gpt-6\.1-terra\/max usage is exhausted/);
+    assert.match(r.stderr, /override usage: exhausted/);
+    assert.match(r.stderr, /override refused: codex\/gpt-6\.1-terra\/max/);
   } finally {
     clean(r.box);
   }

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -915,4 +915,69 @@ test("defaultRecordReview without a review_of link records nothing and prints on
     else process.env.ORCA_HISTORY_DIR = prev;
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("runOrcaCheck prints liveness usage-limit flags after two empty waits with stable worktrees", () => {
+  const dir = mkdtempSync(join(tmpdir(), "orca-check-live-"));
+  const statePath = join(dir, "liveness.json");
+  const workersPath = join(dir, "workers.json");
+  writeFileSync(
+    workersPath,
+    JSON.stringify({
+      workers: [
+        {
+          dispatchId: "ctx_w1",
+          agentTerminalHandle: "term_w1",
+          projection: {
+            dispatchId: "ctx_w1",
+            provider: { id: "codex" },
+            workspace: { id: "x::/wt" },
+          },
+        },
+      ],
+    }),
+  );
+  writeFileSync(statePath, JSON.stringify({ runId: "run_live", emptyWaits: 1, snapshots: { ctx_w1: "fp\n" } }));
+
+  const logs = [];
+  const errors = [];
+  const origLog = console.log;
+  const origErr = console.error;
+  console.log = (line) => logs.push(line);
+  console.error = (line) => errors.push(String(line));
+  try {
+    runOrcaCheck(
+      {
+        run: "run_live",
+        waitSeconds: 1,
+        workers: workersPath,
+        livenessState: statePath,
+      },
+      {
+        runOrca: () => ({
+          status: 0,
+          stdout: JSON.stringify({
+            ok: true,
+            result: { runId: "run_live", count: 0, deliveryId: null, messages: [], timedOut: true },
+          }),
+          stderr: "",
+        }),
+        readTerminal: () => ({ ok: true, text: "You're out of Codex messages" }),
+        worktreeFingerprint: () => "fp\n",
+      },
+    );
+    assert.match(logs[0], /^count=0 delivery=null timedOut=true/);
+    assert.equal(errors.filter((line) => line.startsWith("liveness: usage-limit")).length, 1);
+    assert.match(errors[0], /dispatch=ctx_w1/);
+  } finally {
+    console.log = origLog;
+    console.error = origErr;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("parseCliArgs requires workers and liveness-state together", () => {
+  assert.equal(parseCliArgs(["--workers", "w.json"]).ok, false);
+  assert.equal(parseCliArgs(["--liveness-state", "s.json"]).ok, false);
+  assert.equal(parseCliArgs(["--workers", "w.json", "--liveness-state", "s.json"]).ok, true);
 });
