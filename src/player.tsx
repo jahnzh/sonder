@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { liveQuery } from "dexie";
+import { createProgressClock } from "./progress-clock";
 import { api, forgetPositionHistory, localDB, offlineUrl, peekPositionHistory, positionHistorySettled, prunePositionHistory, saveProgress, syncProgress, updatePositionHistory } from "./lib";
 import { HISTORY_LIFETIME, planUndo, recentPositions, restored, type JumpKind, type PositionEntry } from "./position-history";
 import {
@@ -125,6 +126,7 @@ export function PlayerProvider({
   const onProgressRef = useRef(onProgress);
   onProgressRef.current = onProgress;
   const lastSave = useRef(0);
+  const [progressClock] = useState(createProgressClock);
   const pendingSeek = useRef<number | null>(null);
   const persistAfterLoad = useRef(false);
   const sourceSwitch = useRef<{ recordingId: string; entry: PositionEntry } | null>(null);
@@ -190,12 +192,12 @@ export function PlayerProvider({
       trackId: track.id,
       position: el.currentTime,
       duration: Number.isFinite(el.duration) ? el.duration : track.duration,
-      updatedAt: Date.now(),
+      updatedAt: progressClock(book.recordingId, Date.now(), book.progress?.updatedAt),
     };
     lastSave.current = Date.now();
     onProgressRef.current(p);
     void saveProgress(p);
-  }, []);
+  }, [progressClock]);
   const rememberPosition = useCallback((recordingId: string, entry: PositionEntry, onRecord?: RecordedPosition) => {
     void updatePositionHistory(recordingId, entry).catch(() => {
       notifyRef.current?.("Could not save the previous playback position.");
