@@ -1,10 +1,10 @@
-import { currentUser, currentUserId, getUserSecret, sessionUser, requireAdmin, registerUsers, verifyPassword } from "./users.ts";
+import { currentUser, currentUserId, getUserSecret, issueSession, sessionUser, requireAdmin, registerUsers, verifyPassword } from "./users.ts";
 import Fastify from "fastify";
 import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
 import staticFiles from "@fastify/static";
 import rateLimit from "@fastify/rate-limit";
-import { randomUUID, randomBytes, createHash } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import {
   createReadStream,
   existsSync,
@@ -304,26 +304,7 @@ export async function createApp() {
         return reply
           .code(401)
           .send({ error: "That password doesn’t match. Try again." });
-      const token = randomBytes(32).toString("hex");
-      sqlite
-        .prepare("DELETE FROM sessions WHERE expires_at < ?")
-        .run(Date.now());
-      db.insert(s.sessions)
-        .values({
-          token: hashToken(token),
-          userId: user.id,
-          expiresAt: Date.now() + 30 * 86400000,
-        })
-        .run();
-      return reply
-        .setCookie("sonder_session", token, {
-          httpOnly: true,
-          sameSite: "strict",
-          path: "/",
-          secure: process.env.COOKIE_SECURE === "true",
-          maxAge: 30 * 86400,
-        })
-        .send({ ok: true });
+      return issueSession(reply, user.id).send({ ok: true });
     },
   );
   app.post("/api/auth/logout", async (req, reply) => {

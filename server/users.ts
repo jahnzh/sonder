@@ -1,7 +1,8 @@
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
-import { sqlite } from "./db.ts";
+import { db, sqlite } from "./db.ts";
+import * as s from "./schema.ts";
 import { decrypt, encrypt, hashToken } from "./security.ts";
 
 export const ADMIN_USER_ID = 1;
@@ -90,6 +91,22 @@ export function createUser(username: string, password: string): number {
   sqlite.prepare("INSERT INTO users(id,username,password_hash,role,created_at) VALUES(?,?,?,?,?)").run(next,username,hashPassword(password),"user",Date.now());
   setUserIdHighWater(next);
   return next;
+}
+/** 32-byte hex cookie, hashed row, 30-day expiry — shared by login and invite claim. */
+export function issueSession(reply: FastifyReply, userId: number) {
+  const token = randomBytes(32).toString("hex");
+  const now = Date.now();
+  sqlite.prepare("DELETE FROM sessions WHERE expires_at < ?").run(now);
+  db.insert(s.sessions)
+    .values({ token: hashToken(token), userId, expiresAt: now + 30 * 86400000 })
+    .run();
+  return reply.setCookie("sonder_session", token, {
+    httpOnly: true,
+    sameSite: "strict",
+    path: "/",
+    secure: process.env.COOKIE_SECURE === "true",
+    maxAge: 30 * 86400,
+  });
 }
 export function registerUsers(app: FastifyInstance): void {
   userIdHighWater();

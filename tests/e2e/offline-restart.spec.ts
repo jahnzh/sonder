@@ -1,12 +1,9 @@
-import { test, expect, chromium, type BrowserContext } from "@playwright/test";
-import { existsSync } from "node:fs";
+import { test, expect, type BrowserContext } from "@playwright/test";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { launchInstalledProfile, unreachableProxyArgs } from "./installed-profile";
 
-const installed =
-  "/home/jahn/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome";
-const baseURL = `http://127.0.0.1:${Number(process.env.PLAYWRIGHT_PORT || 4173)}`;
 function wave() {
   const n = 8000 * 10,
     b = Buffer.alloc(44 + n * 2);
@@ -28,16 +25,7 @@ function wave() {
 }
 // A phone restart ends the browser process: nothing survives but the profile
 // (IndexedDB, caches, the registered service worker).
-const launch = (profile: string, args: string[] = []) =>
-  chromium.launchPersistentContext(profile, {
-    args,
-    baseURL,
-    viewport: { width: 390, height: 844 },
-    headless: true,
-    executablePath:
-      process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ||
-      (existsSync(installed) ? installed : undefined),
-  });
+const launch = launchInstalledProfile;
 async function saveOnDevice(
   context: BrowserContext,
   title: string,
@@ -95,7 +83,7 @@ async function saveOnDevice(
 async function relaunchOffline(profile: string, mode: "offline" | "unreachable") {
   const context = await launch(
     profile,
-    mode === "unreachable" ? ["--proxy-server=http://127.0.0.1:9", "--proxy-bypass-list=<-loopback>"] : [],
+    mode === "unreachable" ? unreachableProxyArgs : [],
   );
   if (mode === "offline") await context.setOffline(true);
   const page = context.pages()[0] || (await context.newPage());
