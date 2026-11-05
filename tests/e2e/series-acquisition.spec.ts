@@ -61,6 +61,6 @@ test("series save opt-ins, ebook failure, and retry show specific progress", asy
       .getByRole("dialog")
       .locator(".series-work")
       .filter({ hasText: "Crossing Companion" })
-      .getByText("Ebook: Search complete", { exact: true }),
+      .getByText(/Ebook: Search complete · not on device/),
   ).toBeVisible();
 });

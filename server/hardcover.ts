@@ -29,6 +29,15 @@ import {
   seriesWorkAcquisitions,
 } from "./series-acquisition.ts";
 import { listEbookSetMembers } from "./ebook-set.ts";
+import {
+  libraryOriginFor,
+  libraryOriginLabel,
+  removeUserLibraryRow,
+  setLibraryOrigin,
+  removalDefaultSelected,
+  setWorkCompletionOverride,
+} from "./library-origin.ts";
+export { setWorkCompletionOverride };
 export type ShelfStatus = 1 | 2 | 3 | 4 | 5;
 export type SyncMode = "off" | "import" | "two-way";
 const shelfStatus = z.union([
@@ -308,6 +317,19 @@ export function configureHardcover(
   writeState(userId, { mode, syncLists, lastError: null });
   return hardcoverState(userId);
 }
+export type HardcoverUpstreamKind = "missing_token" | "unreachable" | "rate_limited" | "rejected" | "other";
+export class HardcoverUpstreamError extends Error {
+  readonly kind: HardcoverUpstreamKind;
+  constructor(kind: HardcoverUpstreamKind, message: string) {
+    super(message);
+    this.name = "HardcoverUpstreamError";
+    this.kind = kind;
+  }
+}
+function upstream(kind: HardcoverUpstreamKind, message: string): never {
+  throw new HardcoverUpstreamError(kind, message);
+}
+
 async function graphql<T>(
   userId: number,
   query: string,
@@ -318,12 +340,13 @@ async function graphql<T>(
   const expectedGeneration = live.generation;
   const run = async () => {
     if (live.generation !== expectedGeneration)
-      throw new Error("The Hardcover connection changed. Sync again.");
+      upstream("other", "The Hardcover connection changed. Sync again.");
     const key = hardcoverKey(userId);
     if (!key)
-      throw new Error("Add your Hardcover API token in Settings first.");
+      upstream("missing_token", "Add your Hardcover API token in Settings first.");
     if (live.retryAt > Date.now())
-      throw new Error(
+      upstream(
+        "rate_limited",
         "Hardcover is rate limiting requests. Your changes are saved and will retry shortly.",
       );
     const delay =
@@ -346,23 +369,27 @@ async function graphql<T>(
         signal: AbortSignal.timeout(20000),
       });
     } catch {
-      throw new Error(
+      upstream(
+        "unreachable",
         "Hardcover could not be reached. Your library and queued changes are kept on this server.",
       );
     }
     if (response.status === 429) {
       const seconds = Number(response.headers.get("Retry-After")) || 60;
       live.retryAt = Date.now() + Math.min(3600, seconds) * 1000;
-      throw new Error(
+      upstream(
+        "rate_limited",
         "Hardcover is rate limiting requests. Your changes are saved and will retry shortly.",
       );
     }
     if (response.status === 401 || response.status === 403)
-      throw new Error(
+      upstream(
+        "rejected",
         "Hardcover rejected this token or its permissions. Check the scopes in Settings.",
       );
     if (!response.ok)
-      throw new Error(
+      upstream(
+        "other",
         `Hardcover returned ${response.status}. Your queued changes are kept for retry.`,
       );
     const envelope = (await response.json()) as {
@@ -370,17 +397,19 @@ async function graphql<T>(
       errors?: { message: string }[];
     };
     if (envelope.errors?.length)
-      throw new Error(
+      upstream(
+        "other",
         `Hardcover: ${envelope.errors
           .map((e) => e.message)
           .join("; ")
           .slice(0, 450)}`,
       );
     if (live.generation !== expectedGeneration)
-      throw new Error("The Hardcover connection changed. Sync again.");
+      upstream("other", "The Hardcover connection changed. Sync again.");
     const parsed = schema.safeParse(envelope.data);
     if (!parsed.success)
-      throw new Error(
+      upstream(
+        "other",
         "Hardcover returned an unexpected response. The last successful library snapshot has been kept.",
       );
     return parsed.data;
@@ -411,44 +440,108 @@ export async function hardcoverSeriesSearch(userId: number, query: string) {
     cover: item.book_series.find((entry) => entry.book?.cached_image?.url)?.book?.cached_image?.url ?? null,
   }));
 }
-export async function hardcoverSeriesPreview(userId: number, id: number) {
+const SERIES_REFRESH_MAX_AGE_MS = 60_000;
+
+function seriesWorkAdminMatch(userId: number, title: string, author: string, bookId: number) {
+  let link = sqlite.prepare(`SELECT l.work_id AS workId,
+    EXISTS(SELECT 1 FROM audio_editions e JOIN user_library u ON u.book_id=e.id
+      WHERE e.work_id=l.work_id AND u.user_id=?) AS owned
+    FROM hardcover_links l WHERE l.book_id=? ORDER BY owned DESC LIMIT 1`).get(userId, bookId) as { workId: string; owned: number } | undefined;
+  let needsAdmin = false;
+  if (!link?.owned) {
+    const matches = db.select().from(s.works).all().filter((candidate) =>
+      hardcoverLinkedBook(candidate.id) === undefined && sameBook(candidate, { title, author }));
+    const ownedMatches = matches.filter((candidate) => db.select().from(s.editions).where(eq(s.editions.workId, candidate.id)).all()
+      .some((edition) => !!libraryEntry(userId, edition.id)));
+    needsAdmin = isAdminUser(userId) ? matches.length > 1 : ownedMatches.length > 0;
+    if (!link && isAdminUser(userId) && matches.length === 1) {
+      link = { workId: matches[0].id, owned: Number(ownedMatches.length > 0) };
+    }
+  }
+  return { link, needsAdmin };
+}
+
+function upsertSeriesCatalogue(
+  id: number,
+  series: { name: string; author: string | null; count: number | null },
+  works: { id: number; title: string; position: number | null; cover: string | null; workId: string | null; unreleased: boolean }[],
+) {
+  sqlite.prepare(`INSERT INTO series_catalogue(id,name,author,book_count) VALUES(?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET name=excluded.name,author=excluded.author,book_count=excluded.book_count`)
+    .run(id, series.name, series.author, series.count);
+  for (const work of works) {
+    sqlite.prepare(`INSERT INTO series_catalogue_works(series_id,book_id,work_id,title,position,cover,unreleased) VALUES(?,?,?,?,?,?,?)
+      ON CONFLICT(series_id,book_id) DO UPDATE SET title=excluded.title,position=excluded.position,
+        cover=excluded.cover,unreleased=excluded.unreleased,work_id=COALESCE(excluded.work_id,series_catalogue_works.work_id)`)
+      .run(id, work.id, work.workId, work.title, work.position, work.cover, Number(work.unreleased));
+  }
+}
+
+function markSeriesWorksSeen(userId: number, seriesId: number, bookIds: number[]) {
+  const now = Date.now();
+  const insert = sqlite.prepare(
+    "INSERT OR IGNORE INTO user_series_seen_works(user_id,series_id,book_id,acknowledged_at) VALUES(?,?,?,?)",
+  );
+  for (const bookId of bookIds) insert.run(userId, seriesId, bookId, now);
+}
+
+function ensureSeriesSeenBaseline(userId: number, seriesId: number) {
+  const hasSeen = sqlite.prepare(
+    "SELECT 1 AS ok FROM user_series_seen_works WHERE user_id=? AND series_id=? LIMIT 1",
+  ).get(userId, seriesId);
+  if (hasSeen) return;
+  const hasSaved = sqlite.prepare(
+    "SELECT 1 AS ok FROM user_saved_series_works WHERE user_id=? AND series_id=? LIMIT 1",
+  ).get(userId, seriesId);
+  if (!hasSaved) return;
+  // Existing saved series from before per-user seen tracking: treat the current catalogue as already reviewed.
+  const books = sqlite.prepare("SELECT book_id AS id FROM series_catalogue_works WHERE series_id=?").all(seriesId) as { id: number }[];
+  markSeriesWorksSeen(userId, seriesId, books.map((book) => book.id));
+}
+
+export function acknowledgeSeriesWorks(userId: number, seriesId: number, bookIds: number[]) {
+  savedHardcoverSeries(userId, seriesId);
+  const known = new Set(
+    (sqlite.prepare("SELECT book_id AS id FROM series_catalogue_works WHERE series_id=?").all(seriesId) as { id: number }[])
+      .map((row) => row.id),
+  );
+  if (bookIds.some((bookId) => !known.has(bookId))) throw new Error("Choose works from this series.");
+  markSeriesWorksSeen(userId, seriesId, bookIds);
+  return savedHardcoverSeries(userId, seriesId);
+}
+
+const seriesPreviewSchema = z.object({ series_by_pk: z.object({
+  id: z.number().int(), name: z.string(), books_count: z.number().nullable().optional(),
+  author: z.object({ name: z.string() }).nullable().optional(),
+  book_series: z.array(z.object({ position: z.number().nullable(), book: z.object({
+    id: z.number().int(), title: z.string().nullable(), release_year: z.number().nullable().optional(),
+    release_date: z.string().nullable().optional(), cached_image: image,
+    contributions: z.array(z.object({ contribution: z.string().nullable().optional(), author: z.object({ name: z.string() }).nullable() })).default([]),
+  }).nullable() })),
+}).nullable() });
+
+type SeriesPreviewPayload = Omit<z.infer<typeof seriesPreviewSchema>, "series_by_pk"> & {
+  series_by_pk: NonNullable<z.infer<typeof seriesPreviewSchema>["series_by_pk"]>;
+};
+
+async function fetchSeriesPreviewPayload(userId: number, id: number): Promise<SeriesPreviewPayload> {
   const result = await graphql(
     userId,
     `query SonderSeriesPreview($id:Int!){series_by_pk(id:$id){id name books_count author{name} book_series{position book{id title release_year release_date cached_image contributions{contribution author{name}}}}}}`,
     { id },
-    z.object({ series_by_pk: z.object({
-      id: z.number().int(), name: z.string(), books_count: z.number().nullable().optional(),
-      author: z.object({ name: z.string() }).nullable().optional(),
-      book_series: z.array(z.object({ position: z.number().nullable(), book: z.object({
-        id: z.number().int(), title: z.string().nullable(), release_year: z.number().nullable().optional(),
-        release_date: z.string().nullable().optional(), cached_image: image,
-        contributions: z.array(z.object({ contribution: z.string().nullable().optional(), author: z.object({ name: z.string() }).nullable() })).default([]),
-      }).nullable() })),
-    }).nullable() }),
+    seriesPreviewSchema,
   );
+  if (!result.series_by_pk) upstream("other", "Hardcover could not find this series.");
+  return result as SeriesPreviewPayload;
+}
+
+function buildSeriesPreviewFromPayload(userId: number, result: SeriesPreviewPayload) {
   const series = result.series_by_pk;
-  if (!series) throw new Error("Hardcover could not find this series.");
   const works = series.book_series.flatMap(({ position, book }) => {
     if (!book) return [];
-    let link = sqlite.prepare(`SELECT l.work_id AS workId,
-      EXISTS(SELECT 1 FROM audio_editions e JOIN user_library u ON u.book_id=e.id
-        WHERE e.work_id=l.work_id AND u.user_id=?) AS owned
-      FROM hardcover_links l WHERE l.book_id=? ORDER BY owned DESC LIMIT 1`).get(userId, book.id) as { workId: string; owned: number } | undefined;
-    let needsAdmin = false;
-    if (!link?.owned) {
-      const author = book.contributions.filter((item) => !item.contribution || item.contribution.toLowerCase() === "author")
-        .flatMap((item) => item.author?.name || []).join(", ") || "Unknown author";
-      const matches = db.select().from(s.works).all().filter((candidate) =>
-        hardcoverLinkedBook(candidate.id) === undefined && sameBook(candidate, { title: book.title || "", author }));
-      const ownedMatches = matches.filter((candidate) => db.select().from(s.editions).where(eq(s.editions.workId, candidate.id)).all()
-        .some((edition) => !!libraryEntry(userId, edition.id)));
-      needsAdmin = isAdminUser(userId) ? matches.length > 1 : ownedMatches.length > 0;
-      if (!link && isAdminUser(userId) && matches.length === 1) {
-        const workId = matches[0].id;
-        const owned = ownedMatches.length > 0;
-        link = { workId, owned: Number(owned) };
-      }
-    }
+    const author = book.contributions.filter((item) => !item.contribution || item.contribution.toLowerCase() === "author")
+      .flatMap((item) => item.author?.name || []).join(", ") || "Unknown author";
+    const { link, needsAdmin } = seriesWorkAdminMatch(userId, book.title || "", author, book.id);
     const now = new Date();
     const unreleased = book.release_date
       ? book.release_date > now.toISOString().slice(0, 10)
@@ -460,6 +553,15 @@ export async function hardcoverSeriesPreview(userId: number, id: number) {
     : b.position === null ? -1 : a.position - b.position || a.id - b.id);
   return { id: series.id, name: series.name, author: series.author?.name ?? null,
     count: series.books_count ?? null, works };
+}
+export async function hardcoverSeriesPreview(userId: number, id: number) {
+  return buildSeriesPreviewFromPayload(userId, await fetchSeriesPreviewPayload(userId, id));
+}
+
+function refreshErrorMessage(error: HardcoverUpstreamError) {
+  if (error.kind === "missing_token") return "Add your Hardcover API token in Settings, then retry.";
+  if (error.kind === "unreachable") return "Hardcover could not be reached. Showing the last saved catalogue.";
+  return error.message;
 }
 export async function saveHardcoverSeries(
   userId: number,
@@ -477,15 +579,10 @@ export async function saveHardcoverSeries(
   const books = await Promise.all([...selected].map((bookId) => hardcoverBook(userId, bookId)));
   const acquisitionWorks: { bookId: number; workId: string; unreleased: boolean }[] = [];
   sqlite.transaction(() => {
-    sqlite.prepare(`INSERT INTO series_catalogue(id,name,author,book_count) VALUES(?,?,?,?)
-      ON CONFLICT(id) DO UPDATE SET name=excluded.name,author=excluded.author,book_count=excluded.book_count`)
-      .run(id, preview.name, preview.author, preview.count);
+    upsertSeriesCatalogue(id, preview, preview.works);
     sqlite.prepare("INSERT OR IGNORE INTO user_saved_series(user_id,series_id,saved_at) VALUES(?,?,?)").run(userId, id, Date.now());
+    markSeriesWorksSeen(userId, id, preview.works.map((work) => work.id));
     for (const work of preview.works) {
-      sqlite.prepare(`INSERT INTO series_catalogue_works(series_id,book_id,work_id,title,position,cover,unreleased) VALUES(?,?,?,?,?,?,?)
-        ON CONFLICT(series_id,book_id) DO UPDATE SET title=excluded.title,position=excluded.position,
-          cover=excluded.cover,unreleased=excluded.unreleased,work_id=COALESCE(excluded.work_id,series_catalogue_works.work_id)`)
-        .run(id, work.id, work.workId, work.title, work.position, work.cover, Number(work.unreleased));
       if (!selected.has(work.id)) continue;
       const existing = sqlite.prepare(`SELECT l.work_id AS workId FROM hardcover_links l
         JOIN audio_editions e ON e.work_id=l.work_id JOIN user_library u ON u.book_id=e.id
@@ -499,7 +596,7 @@ export async function saveHardcoverSeries(
           metadataLink(work.workId, book);
           workId = work.workId;
         } else {
-          const imported = importCatalogBook(userId, book, null, true);
+          const imported = importCatalogBook(userId, book, null, true, { source: "series", seriesId: id });
           workId = db.select().from(s.editions).where(eq(s.editions.id, imported.bookId)).get()!.workId;
         }
       }
@@ -517,24 +614,63 @@ export function listSavedHardcoverSeries(userId: number) {
   return sqlite.prepare(`SELECT c.id,c.name,c.author,c.book_count AS count FROM series_catalogue c
     JOIN user_saved_series u ON u.series_id=c.id WHERE u.user_id=? ORDER BY c.name,c.id`).all(userId);
 }
-export function savedHardcoverSeries(userId: number, id: number) {
+/** Refresh the shared catalogue for a saved series by Hardcover ID without adding works. */
+export async function refreshSavedHardcoverSeries(userId: number, id: number, options?: { force?: boolean }) {
+  // Confirm membership first so a missing series does not hit Hardcover.
+  ensureSeriesSeenBaseline(userId, id);
+  const membership = sqlite.prepare(
+    "SELECT refreshed_at AS refreshedAt FROM user_saved_series WHERE user_id=? AND series_id=?",
+  ).get(userId, id) as { refreshedAt: number | null } | undefined;
+  if (!membership) throw new Error("This saved series could not be found.");
+  // Skip a recent successful refresh, but still attempt when the token is missing so the user sees why.
+  if (!options?.force && membership.refreshedAt && Date.now() - membership.refreshedAt < SERIES_REFRESH_MAX_AGE_MS
+    && !!hardcoverKey(userId)) {
+    return savedHardcoverSeries(userId, id);
+  }
+  // Only the Hardcover fetch is treated as an outage; local SQLite work must surface normally.
+  let payload: SeriesPreviewPayload;
+  try {
+    payload = await fetchSeriesPreviewPayload(userId, id);
+  } catch (error) {
+    if (!(error instanceof HardcoverUpstreamError)) throw error;
+    return savedHardcoverSeries(userId, id, { refreshError: refreshErrorMessage(error) });
+  }
+  const preview = buildSeriesPreviewFromPayload(userId, payload);
+  sqlite.transaction(() => {
+    upsertSeriesCatalogue(id, preview, preview.works);
+    sqlite.prepare("UPDATE user_saved_series SET refreshed_at=? WHERE user_id=? AND series_id=?")
+      .run(Date.now(), userId, id);
+  })();
+  return savedHardcoverSeries(userId, id);
+}
+export function savedHardcoverSeries(userId: number, id: number, options?: {
+  refreshError?: string;
+}) {
   const series = sqlite.prepare(`SELECT c.id,c.name,c.author,c.book_count AS count FROM series_catalogue c
-    JOIN user_saved_series u ON u.series_id=c.id WHERE u.user_id=? AND c.id=?`).get(userId, id);
+    JOIN user_saved_series u ON u.series_id=c.id WHERE u.user_id=? AND c.id=?`).get(userId, id) as
+    | { id: number; name: string; author: string | null; count: number | null }
+    | undefined;
   if (!series) throw new Error("This saved series could not be found.");
   const rows = sqlite.prepare(`SELECT c.book_id AS id,c.title,c.position,c.cover,c.unreleased,
-    COALESCE(u.work_id,c.work_id) AS workId,u.book_id IS NOT NULL AS added,COALESCE(u.introduced,0) AS introduced
+    COALESCE(u.work_id,c.work_id) AS workId,u.book_id IS NOT NULL AS added,COALESCE(u.introduced,0) AS introduced,
+    EXISTS(SELECT 1 FROM user_series_seen_works s WHERE s.user_id=? AND s.series_id=c.series_id AND s.book_id=c.book_id) AS seen
     FROM series_catalogue_works c LEFT JOIN user_saved_series_works u
       ON u.series_id=c.series_id AND u.book_id=c.book_id AND u.user_id=?
-    WHERE c.series_id=? ORDER BY c.position IS NULL,c.position,c.book_id`).all(userId, id) as {
+    WHERE c.series_id=? ORDER BY c.position IS NULL,c.position,c.book_id`).all(userId, userId, id) as {
       id: number; title: string; position: number | null; cover: string | null; unreleased: number;
-      workId: string | null; added: number; introduced: number;
+      workId: string | null; added: number; introduced: number; seen: number;
     }[];
-  const works = rows.map((work) => {
+  const author = series.author || "Unknown author";
+  const mapped = rows.map((work) => {
     const added = !!work.added;
     const unreleased = !!work.unreleased;
-    const stateWorkId =
-      added || ownsWork(userId, work.workId) ? work.workId : null;
-    const base = seriesWorkState(userId, stateWorkId);
+    const { needsAdmin } = added ? { needsAdmin: false } : seriesWorkAdminMatch(userId, work.title, author, work.id);
+    const stateWorkId = added || ownsWork(userId, work.workId) ? work.workId : null;
+    const base = seriesWorkState(userId, stateWorkId, {
+      seriesId: id,
+      added,
+      legacyIntroduced: !!work.introduced,
+    });
     const mediaState =
       added && stateWorkId ? getWorkMediaState(userId, stateWorkId) : null;
     const acquisition =
@@ -564,24 +700,46 @@ export function savedHardcoverSeries(userId: number, id: number) {
       unreleased,
       added,
       introduced: !!work.introduced,
+      needsAdmin,
       ...base,
       mediaState,
       acquisition,
       ebookSet,
+      seen: !!work.seen,
     };
   });
-  const unique = works.filter((work, index) => works.findIndex((other) =>
-    work.workId ? other.workId === work.workId : other.id === work.id) === index);
+  // Prefer an added row when the same local work appears under more than one Hardcover book id.
+  const preferred = new Map<string, (typeof mapped)[number]>();
+  for (const work of mapped) {
+    const key = work.workId ? `w:${work.workId}` : `b:${work.id}`;
+    const current = preferred.get(key);
+    if (!current || (!current.added && work.added) || (current.added === work.added && work.id < current.id))
+      preferred.set(key, work);
+  }
+  const unique = [...preferred.values()]
+    .sort((a, b) => a.position === null ? (b.position === null ? a.id - b.id : 1)
+      : b.position === null ? -1 : a.position - b.position || a.id - b.id)
+    .map((work) => {
+      const { seen, ...rest } = work;
+      return { ...rest, new: !work.added && !seen };
+    });
+  const needsAdmin = unique.filter((work) => work.needsAdmin && !work.added).map(({ id, title }) => ({ id, title }));
   // An unreleased work the user has not added cannot be finished, so it does not hold completion below 100%.
   const counted = unique.filter((work) => work.added || !work.unreleased);
-  return { ...series as object, works, completion: { finished: counted.filter((work) => work.finished).length,
+  return { ...series, works: unique, needsAdmin,
+    ...(options?.refreshError ? { refreshError: options.refreshError } : {}),
+    completion: { finished: counted.filter((work) => work.finished).length,
     total: counted.length, nextBookId: counted.find((work) => !work.finished)?.id ?? null } };
 }
 function ownsWork(userId: number, workId: string | null) {
   return !!workId && db.select().from(s.editions).where(eq(s.editions.workId, workId)).all()
     .some((edition) => !!libraryEntry(userId, edition.id));
 }
-function seriesWorkState(userId: number, workId: string | null) {
+function seriesWorkState(
+  userId: number,
+  workId: string | null,
+  series?: { seriesId: number; added: boolean; legacyIntroduced: boolean },
+) {
   const editions = workId ? db.select().from(s.editions).where(eq(s.editions.workId, workId)).all() : [];
   const library = editions.flatMap((edition) => libraryEntry(userId, edition.id) ? [edition] : []);
   const override = workId ? db.select().from(s.userWorkCompletion)
@@ -611,9 +769,26 @@ function seriesWorkState(userId: number, workId: string | null) {
   });
   const finished = override === "finished" ? true : override === "unread" ? false :
     library.some((edition) => libraryEntry(userId, edition.id)?.status === "finished") || audioFinished || ebookFinished;
-  return { editionId: library[0]?.id ?? null, finished,
+  const base = { editionId: library[0]?.id ?? null, finished, completionOverride: override ?? null,
     availability: { audio: { server: workId ? recordings.some((recording) => recording.server) : null, recordings },
-      ebook: { server: workId ? ebooks.some((ebook) => existsSync(ebook.source)) : null, device: null } } };
+      ebook: { server: workId ? ebooks.some((ebook) => existsSync(ebook.source)) : null,
+        editionIds: ebooks.map((ebook) => ebook.id), device: null } } };
+  if (!series || !workId) return base;
+  const originRow = libraryOriginFor(userId, workId);
+  const libraryOrigin = originRow
+    ? { source: originRow.source as "manual" | "hardcover_sync" | "series" | "unknown", seriesId: originRow.seriesId, addedAt: originRow.addedAt }
+    : { source: "unknown" as const, seriesId: null, addedAt: null };
+  return {
+    ...base,
+    libraryOrigin,
+    libraryOriginLabel: libraryOriginLabel(libraryOrigin, series.seriesId),
+    removalDefaultSelected: removalDefaultSelected(
+      userId,
+      series.seriesId,
+      { added: series.added, workId },
+      series.legacyIntroduced,
+    ),
+  };
 }
 export async function hardcoverSearch(userId: number, query: string) {
   const data = await graphql(
@@ -899,6 +1074,7 @@ function importCatalogBook(
   book: CatalogBook,
   status: ShelfStatus | null = null,
   forceLibrary = false,
+  libraryOrigin?: { source: "series"; seriesId: number },
 ) {
   let links = linkRepresentatives(book.id);
   let matched = false,
@@ -969,16 +1145,28 @@ function importCatalogBook(
     eq(s.userHiddenLibrary.bookId, representative.id),
   );
   if (forceLibrary) db.delete(s.userHiddenLibrary).where(hidden).run();
-  if (!db.select().from(s.userHiddenLibrary).where(hidden).get())
-    db.insert(s.userLibrary)
-      .values({
-        userId,
-        bookId: representative.id,
-        status: localStatus(status || 1),
-        addedAt: Date.now(),
-      })
-      .onConflictDoNothing()
-      .run();
+  if (!db.select().from(s.userHiddenLibrary).where(hidden).get()) {
+    const addedAt = Date.now();
+    const inserted =
+      db
+        .insert(s.userLibrary)
+        .values({
+          userId,
+          bookId: representative.id,
+          status: localStatus(status || 1),
+          addedAt,
+        })
+        .onConflictDoNothing()
+        .run().changes > 0;
+    if (inserted) {
+      if (libraryOrigin)
+        setLibraryOrigin(userId, links[0].workId, libraryOrigin.source, {
+          seriesId: libraryOrigin.seriesId,
+          addedAt,
+        });
+      else setLibraryOrigin(userId, links[0].workId, "hardcover_sync", { addedAt });
+    }
+  }
   // Metadata-only placeholders are replaced on the shelf when actual audio for that work is linked.
   if (audio.length) {
     for (const link of links)
@@ -988,14 +1176,7 @@ function importCatalogBook(
         .where(eq(s.editions.workId, link.workId))
         .all())
         if (e.id.startsWith("hc-") && !audio.some((a) => a.id === e.id))
-          db.delete(s.userLibrary)
-            .where(
-              and(
-                eq(s.userLibrary.userId, userId),
-                eq(s.userLibrary.bookId, e.id),
-              ),
-            )
-            .run();
+          removeUserLibraryRow(userId, e.id);
   }
   return { bookId: representative.id, matched, imported };
 }
@@ -1146,6 +1327,11 @@ export async function importHardcoverBook(
   if (!workId && current.mode === "two-way" && current.accountId !== null)
     queueStatus(userId, id, 1, "add");
   return added!;
+}
+export function applyHardcoverCatalogBook(userId: number, book: CatalogBook) {
+  sqlite.transaction(() => {
+    importCatalogBook(userId, book, null, false);
+  })();
 }
 export async function addHardcoverSeries(
   userId: number,
@@ -1695,12 +1881,7 @@ export function claimHardcoverAudio(workId: string, editionId: string) {
       recordingData(recording.id)?.completeDuration
     )
       applyFraction(userId, recording.id, remoteRead.fraction);
-    for (const e of placeholders)
-      db.delete(s.userLibrary)
-        .where(
-          and(eq(s.userLibrary.userId, userId), eq(s.userLibrary.bookId, e.id)),
-        )
-        .run();
+    for (const e of placeholders) removeUserLibraryRow(userId, e.id);
   }
 }
 function recordingData(recordingId: string) {
