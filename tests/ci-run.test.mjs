@@ -46,11 +46,9 @@ function cleanEnv() {
   return env;
 }
 
-// `npm test` runs the test files in parallel, and the other CI script tests
-// briefly run their own stub ci-deck.sh / ci-ssh.sh processes. A foreign
-// runner would read as a busy host here, so wait for the machine to be clean
-// before a test that expects idle hosts.
-function foreignRunnerPids(ignore = new Set()) {
+// Stub runners from this fixture's temp repo share a path prefix. Real ci-ssh /
+// ci-deck processes elsewhere on the machine must not stall idle-host tests.
+function foreignRunnerPids(scopeRoot, ignore = new Set()) {
   const pids = [];
   for (const entry of fs.readdirSync("/proc")) {
     if (!/^[0-9]+$/.test(entry)) continue;
@@ -64,17 +62,19 @@ function foreignRunnerPids(ignore = new Set()) {
     }
     cmd = cmd.split("\0").filter(Boolean).join(" ");
     if (cmd.includes("ci-run.sh")) continue;
-    if (cmd.includes("ci-deck.sh") || cmd.includes("ci-ssh.sh")) pids.push(entry);
+    if (!cmd.includes("ci-deck.sh") && !cmd.includes("ci-ssh.sh")) continue;
+    if (scopeRoot && !cmd.includes(scopeRoot)) continue;
+    pids.push(entry);
   }
   return pids;
 }
 
-function waitForNoForeignRunners(ignore = new Set(), timeoutMs = 60_000) {
+function waitForNoForeignRunners(scopeRoot, ignore = new Set(), timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
-  let pids = foreignRunnerPids(ignore);
+  let pids = foreignRunnerPids(scopeRoot, ignore);
   while (pids.length > 0 && Date.now() < deadline) {
     spawnSync("sleep", ["0.2"]);
-    pids = foreignRunnerPids(ignore);
+    pids = foreignRunnerPids(scopeRoot, ignore);
   }
   return pids;
 }
@@ -92,6 +92,15 @@ function waitForProcessVisible(pid, timeoutMs = 10_000) {
     spawnSync("sleep", ["0.1"]);
   }
   return false;
+}
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function fixture() {
@@ -168,6 +177,7 @@ function fixture() {
         ...cleanEnv(),
         PATH: `${bin}:${process.env.PATH}`,
         SONDER_CI_REMOTE_BASE: remote,
+        SONDER_CI_BUSY_RUNNER_ROOT: repo,
         STUB_SSH_LOG: logs.ssh,
         STUB_RUNNER_LOG: logs.runner,
         ...env,
@@ -192,8 +202,8 @@ function fixture() {
     fs.rmSync(base, { recursive: true, force: true });
   }
 
-  // Deterministic idle expectations: no foreign CI runner process on the machine.
-  waitForNoForeignRunners();
+  // No stale stub runner from an earlier attempt in this same temp repo.
+  waitForNoForeignRunners(repo);
 
   return { base, repo, remote, first, second, run, read, logs, runnerInvocations, startBusy, spawnSleeper, cleanup };
 }
@@ -336,6 +346,34 @@ test("an invalid commit ref exits 1 before any probe", () => {
     assert.match(out.output, /Invalid commit ref/);
     assert.equal(f.read(f.logs.ssh), "", "no ssh probe ran");
   } finally {
+    f.cleanup();
+  }
+});
+
+test("an unrelated ci-ssh.sh process outside the fixture repo does not stall idle-host dispatch", () => {
+  const f = fixture();
+  const foreignDir = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-ci-foreign-"));
+  const foreignScript = path.join(foreignDir, "ci-ssh.sh");
+  fs.writeFileSync(foreignScript, "#!/usr/bin/env bash\nsleep 120\n", { mode: 0o755 });
+  const foreign = spawn("bash", [foreignScript], { stdio: "ignore" });
+  try {
+    assert.ok(waitForProcessVisible(foreign.pid));
+    const startedAt = Date.now();
+    const out = f.run();
+    const elapsedMs = Date.now() - startedAt;
+    assert.equal(out.status, 0, out.output);
+    assert.equal(f.runnerInvocations("deck").length, 1);
+    // Baseline idle-host runs take several seconds (ssh probes); only assert we
+    // did not sit in waitForNoForeignRunners or queue behind the foreign runner.
+    assert.ok(elapsedMs < 30_000, `should not wait on a foreign runner (${elapsedMs}ms)`);
+    assert.ok(isProcessAlive(foreign.pid), "foreign runner should still be sleeping");
+  } finally {
+    try {
+      foreign.kill("SIGKILL");
+    } catch {
+      // already gone
+    }
+    fs.rmSync(foreignDir, { recursive: true, force: true });
     f.cleanup();
   }
 });

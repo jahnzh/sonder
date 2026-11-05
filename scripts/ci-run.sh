@@ -32,6 +32,9 @@
 #                          /tmp; Deck default $HOME/sonder-ci on the Deck)
 #   SONDER_CI_POLL_INTERVAL queue poll in seconds (default 5)
 #   SONDER_CI_QUEUE_TIMEOUT queue wait cap in seconds (default 3600)
+#   SONDER_CI_BUSY_RUNNER_ROOT when set, only local ci-deck.sh / ci-ssh.sh
+#                          processes whose cmdline contains this path count as
+#                          busy (used by ci-run tests; production leaves unset)
 #
 # No `set -e`: every step handles its own failure so a failing step can never
 # skip the code that records the outcome.
@@ -56,6 +59,8 @@ Environment:
   SONDER_CI_WSL_HOST       WSL ssh target (default 192.168.1.119)
   SONDER_CI_POLL_INTERVAL  queue poll in seconds (default 5)
   SONDER_CI_QUEUE_TIMEOUT  queue wait cap in seconds (default 3600)
+  SONDER_CI_BUSY_RUNNER_ROOT optional path prefix for the local busy scan
+                           (tests only; unset in production)
 EOF
 }
 
@@ -171,7 +176,7 @@ process_alive() {
 # footprint is between probes. Excludes this script, its parent, and other
 # ci-run.sh instances (they wait on their own runners).
 busy_pid_for() {
-  local runner=$1 self=$$ parent=$PPID d pid cmd
+  local runner=$1 self=$$ parent=$PPID d pid cmd scope=${SONDER_CI_BUSY_RUNNER_ROOT:-}
   for d in /proc/[0-9]*; do
     pid=${d#/proc/}
     [[ $pid == "$self" || $pid == "$parent" ]] && continue
@@ -183,6 +188,7 @@ busy_pid_for() {
       ci-deck.sh) [[ $cmd == *ci-deck.sh* ]] || continue ;;
       ci-ssh.sh)  [[ $cmd == *ci-ssh.sh* ]] || continue ;;
     esac
+    [[ -n $scope && $cmd != *"$scope"* ]] && continue
     process_alive "$pid" && { printf '%s\n' "$pid"; return 0; }
   done
   return 1
