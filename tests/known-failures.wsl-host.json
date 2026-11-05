@@ -28,22 +28,6 @@
     {
       "project": "chromium",
       "file": "tests/e2e/reader-frame.spec.ts",
-      "title": "taps, page turns and long-press on the book page reach the reader",
-      "kind": "environment",
-      "reason": "Fails on the WSL host's chromium on a clean main (482967b, run sonder-ci-20261102T163427Z-15096) and not locally, on the Deck, or on WSL firefox/webkit; cause not found",
-      "issue": 145
-    },
-    {
-      "project": "firefox",
-      "file": "tests/e2e/reader-frame.spec.ts",
-      "title": "taps, page turns and long-press on the book page reach the reader",
-      "kind": "environment",
-      "reason": "Failed on WSL firefox at 4040109 (sonder-ci-20261103T160040Z-4154320) with the same locator visibility error already listed for chromium (#145); passes locally on firefox in this worktree; #180 diff does not touch reader-frame",
-      "issue": 145
-    },
-    {
-      "project": "chromium",
-      "file": "tests/e2e/reader-frame.spec.ts",
       "title": "a failed event probe enables scripts while the content defences still block them",
       "kind": "environment",
       "reason": "Fails on the WSL host's chromium on a clean main (482967b, run sonder-ci-20261102T163427Z-15096) and not locally, on the Deck, or on WSL firefox/webkit; cause not found",
