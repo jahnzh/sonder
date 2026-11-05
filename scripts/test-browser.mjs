@@ -6,11 +6,12 @@
 // with it, and this cleanup is simply idempotent); for a direct `npm run test:browser` the cwd is
 // the repository root, and the profiles would otherwise accumulate there (issue #89).
 //
-// The wrapper records the profile directories that already exist, runs `npx playwright test` with
-// all forwarded arguments, and on every exit path removes only the profile directories that
-// appeared during the run (never pre-existing ones). The list/diff/cleanup logic is exported as
-// pure functions so tests can exercise it against a temp directory with a fake child (no real
-// browser launch).
+// The wrapper also creates exactly one `sonder-browser-*` directory for this run, passes its path
+// to the Playwright webServer (`tests/browser-server.ts`) via SONDER_BROWSER_TEMP, and removes
+// only that directory when the run ends — never other checks' live temps on a shared host (#236).
+//
+// The list/diff/cleanup logic is exported as pure functions so tests can exercise it against a
+// temp directory with a fake child (no real browser launch).
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -18,7 +19,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const PROFILE_PREFIX = "playwright_chromiumdev_profile-";
-const BROWSER_SERVER_PREFIX = "sonder-browser-";
+export const BROWSER_SERVER_PREFIX = "sonder-browser-";
+/** Env var naming the one browser-server temp dir this wrapper owns for the run. */
+export const BROWSER_TEMP_ENV = "SONDER_BROWSER_TEMP";
 
 // Named temp directories directly under `dir`, sorted and deduplicated.
 export function listNamedTempDirs(dir, prefix) {
@@ -67,29 +70,37 @@ export function removeProfileDirs(dir, names) {
   }
 }
 
+export function removeOwnedBrowserTemp(dir) {
+  if (!dir) return;
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // ignore
+  }
+}
+
 // Run `npx playwright test` in `cwd` with the given arguments, and on every exit path remove only
-// the profile directories that appeared during the run. `spawnCommand` is injectable so tests can
-// substitute a fake child. Resolves with the child's numeric exit code, or null when the child was
-// terminated by a signal (the caller decides the process exit status in that case).
+// the profile directories that appeared during the run and this run's owned browser temp.
+// `spawnCommand` is injectable so tests can substitute a fake child. Resolves with the child's
+// numeric exit code, or null when the child was terminated by a signal.
 export function runTestBrowser({
   cwd = process.cwd(),
   args = [],
   spawnCommand = (cmd, argv, opts) => spawn(cmd, argv, opts),
   tmpRoot = os.tmpdir(),
+  createBrowserTemp = () => fs.mkdtempSync(path.join(tmpRoot, BROWSER_SERVER_PREFIX)),
 } = {}) {
   const beforeProfiles = listProfileDirs(cwd);
-  const beforeBrowserTemps = listBrowserServerTemps(tmpRoot);
+  const browserTemp = createBrowserTemp();
   const child = spawnCommand("npx", ["playwright", "test", ...args], {
     cwd,
     stdio: "inherit",
+    env: { ...process.env, [BROWSER_TEMP_ENV]: browserTemp },
   });
   return new Promise((resolve) => {
     const settle = (result) => {
       removeProfileDirs(cwd, diffProfileDirs(beforeProfiles, listProfileDirs(cwd)));
-      removeProfileDirs(
-        tmpRoot,
-        diffProfileDirs(beforeBrowserTemps, listBrowserServerTemps(tmpRoot)),
-      );
+      removeOwnedBrowserTemp(browserTemp);
       resolve(result);
     };
     child.on("close", (code, signal) => settle(signal ? null : code));

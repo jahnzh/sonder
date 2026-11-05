@@ -1,7 +1,13 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-const temp = mkdtempSync(join(tmpdir(), "sonder-browser-"));
+// Prefer the one directory `scripts/test-browser.mjs` created for this run
+// (SONDER_BROWSER_TEMP). Creating our own would leave an untracked live path that a
+// parallel check's before/after cleanup could delete (#236). Fall back to mkdtemp when
+// Playwright is started without that wrapper (reuseExistingServer, ad-hoc runs).
+const owned = process.env.SONDER_BROWSER_TEMP;
+const temp =
+  owned && existsSync(owned) ? owned : mkdtempSync(join(tmpdir(), "sonder-browser-"));
 // A spec that must seed the database directly (for example an expired invite)
 // passes its own directory; the server's temp dir keeps the media root either way.
 process.env.DATA_DIR = process.env.PLAYWRIGHT_DATA_DIR || join(temp, "db");
