@@ -13,13 +13,15 @@
 // browser launch).
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const PROFILE_PREFIX = "playwright_chromiumdev_profile-";
+const BROWSER_SERVER_PREFIX = "sonder-browser-";
 
-// The playwright_chromiumdev_profile-* directories directly under `dir`, sorted and deduplicated.
-export function listProfileDirs(dir) {
+// Named temp directories directly under `dir`, sorted and deduplicated.
+export function listNamedTempDirs(dir, prefix) {
   let entries;
   try {
     entries = fs.readdirSync(dir);
@@ -27,7 +29,7 @@ export function listProfileDirs(dir) {
     return [];
   }
   return [...new Set(entries)]
-    .filter((name) => name.startsWith(PROFILE_PREFIX))
+    .filter((name) => name.startsWith(prefix))
     .filter((name) => {
       try {
         return fs.statSync(path.join(dir, name)).isDirectory();
@@ -36,6 +38,15 @@ export function listProfileDirs(dir) {
       }
     })
     .sort();
+}
+
+// The playwright_chromiumdev_profile-* directories directly under `dir`, sorted and deduplicated.
+export function listProfileDirs(dir) {
+  return listNamedTempDirs(dir, PROFILE_PREFIX);
+}
+
+export function listBrowserServerTemps(tmpRoot = os.tmpdir()) {
+  return listNamedTempDirs(tmpRoot, BROWSER_SERVER_PREFIX);
 }
 
 // The profile directories in `after` that were not already present in `before`.
@@ -64,16 +75,21 @@ export function runTestBrowser({
   cwd = process.cwd(),
   args = [],
   spawnCommand = (cmd, argv, opts) => spawn(cmd, argv, opts),
+  tmpRoot = os.tmpdir(),
 } = {}) {
-  const before = listProfileDirs(cwd);
+  const beforeProfiles = listProfileDirs(cwd);
+  const beforeBrowserTemps = listBrowserServerTemps(tmpRoot);
   const child = spawnCommand("npx", ["playwright", "test", ...args], {
     cwd,
     stdio: "inherit",
   });
   return new Promise((resolve) => {
     const settle = (result) => {
-      const after = listProfileDirs(cwd);
-      removeProfileDirs(cwd, diffProfileDirs(before, after));
+      removeProfileDirs(cwd, diffProfileDirs(beforeProfiles, listProfileDirs(cwd)));
+      removeProfileDirs(
+        tmpRoot,
+        diffProfileDirs(beforeBrowserTemps, listBrowserServerTemps(tmpRoot)),
+      );
       resolve(result);
     };
     child.on("close", (code, signal) => settle(signal ? null : code));

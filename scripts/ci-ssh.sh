@@ -282,6 +282,13 @@ if [ -s "$run_dir/check.pid" ]; then
   fi
 fi
 rm -rf "$run_dir"
+tmp=${TMPDIR:-/tmp}
+if ! pgrep -f playwright >/dev/null 2>&1 && ! pgrep -f browser-server >/dev/null 2>&1; then
+  shopt -s nullglob
+  for browser_dir in "$tmp"/sonder-browser-*; do
+    rm -rf "$browser_dir"
+  done
+fi
 exit 0
 REMOTE
   return 0

@@ -537,6 +537,15 @@ async function tryAcquireLockFile(lockPath, port) {
 /**
  * Release an acquired port lease.
  */
+function tryRemoveEmptyPortLeaseDir() {
+  const leaseDir = path.join(os.tmpdir(), "sonder-port-leases");
+  try {
+    if (fs.readdirSync(leaseDir).length === 0) fs.rmdirSync(leaseDir);
+  } catch {
+    // Directory missing, not empty, or a concurrent lease holder recreated it.
+  }
+}
+
 export function releasePortLease(lease) {
   if (!lease || lease.released) return;
   lease.released = true;
@@ -555,6 +564,7 @@ export function releasePortLease(lease) {
     }
   } catch (_) {}
   if (lease.claimPath) removeFile(lease.claimPath);
+  tryRemoveEmptyPortLeaseDir();
 }
 
 /**

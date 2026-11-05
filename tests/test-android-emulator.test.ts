@@ -1,10 +1,11 @@
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { registerTempDir } from "./register-temp-dir.ts";
 
 const script = path.resolve("scripts/test-android-emulator.sh");
 
@@ -97,9 +98,10 @@ function portAllocator(maxFixtures: number, bases: Iterable<number> = candidateB
 
 const allocatePorts = portAllocator(MAX_FIXTURES);
 
-function fixture({ built = true } = {}) {
+function fixture(t?: TestContext, { built = true }: { built?: boolean } = {}) {
   const ports = allocatePorts();
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-test-android-"));
+  if (t) registerTempDir(t, base);
   const repo = path.join(base, "repo");
   const bin = path.join(base, "bin");
   // Unique TMPDIR per fixture so tunnel dirs never land in the real /tmp.
@@ -174,7 +176,7 @@ function fixture({ built = true } = {}) {
   return { base, repo, sha, ports, tmpdir, run, read, runDir, summary, summaryText, emuCalls, interrupt };
 }
 
-test("fixture port allocation skips listeners at the start, middle, and end of the full span", async () => {
+test("fixture port allocation skips listeners at the start, middle, and end of the full span", async (t) => {
   // The OS chooses the port; binding all interfaces also models the listeners from issue #171.
   const server = net.createServer().listen(0, "0.0.0.0");
   await new Promise<void>((resolve, reject) => server.once("listening", resolve).once("error", reject));
@@ -203,8 +205,8 @@ test("fixture port allocation skips listeners at the start, middle, and end of t
   }
 });
 
-test("a passing run boots the emulator for each browser, tunnels once and leaves it stopped", async () => {
-  const f = fixture();
+test("a passing run boots the emulator for each browser, tunnels once and leaves it stopped", async (t) => {
+  const f = fixture(t);
   const out = await f.run();
   assert.equal(out.status, 0, out.output);
   const perBrowser = (...setup: string[]) => [
@@ -239,8 +241,8 @@ test("a passing run boots the emulator for each browser, tunnels once and leaves
   assert.match(emulator, /^after_tests_memory_peak_bytes=4100000000$/m);
 });
 
-test("a failing browser fails the run, and the other browser and the cleanup still run", async () => {
-  const f = fixture();
+test("a failing browser fails the run, and the other browser and the cleanup still run", async (t) => {
+  const f = fixture(t);
   const out = await f.run([], { STUB_NPX_FAIL: "chrome" });
   assert.equal(out.status, 1, out.output);
   assert.equal(f.summary().chrome, "failed exit=1 expected=2 unexpected=0 flaky=0 skipped=0");
@@ -248,8 +250,8 @@ test("a failing browser fails the run, and the other browser and the cleanup sti
   assert.ok(f.emuCalls().includes("stop"));
 });
 
-test("zero passed tests in report.json fail the run even when Playwright exits 0", async () => {
-  const f = fixture();
+test("zero passed tests in report.json fail the run even when Playwright exits 0", async (t) => {
+  const f = fixture(t);
   const out = await f.run(["chrome"], {
     STUB_NPX_STATS: '{"startTime":"2026-01-01T00:00:00.000Z","duration":1,"expected":0,"unexpected":0,"flaky":0,"skipped":0}',
   });
@@ -259,8 +261,8 @@ test("zero passed tests in report.json fail the run even when Playwright exits 0
   assert.match(f.summaryText(), /^finished_at=/m);
 });
 
-test("only the named browser runs, and Chrome alone needs no Firefox install", async () => {
-  const f = fixture();
+test("only the named browser runs, and Chrome alone needs no Firefox install", async (t) => {
+  const f = fixture(t);
   const out = await f.run(["chrome"]);
   assert.equal(out.status, 0, out.output);
   assert.equal(f.emuCalls().includes("install-firefox"), false);
@@ -268,8 +270,8 @@ test("only the named browser runs, and Chrome alone needs no Firefox install", a
   assert.equal(f.read("npx").split("\n").filter(Boolean).length, 1);
 });
 
-test("a refused emulator start (a CI run is active) is passed on and nothing else runs", async () => {
-  const f = fixture();
+test("a refused emulator start (a CI run is active) is passed on and nothing else runs", async (t) => {
+  const f = fixture(t);
   const out = await f.run([], { STUB_EMU_START: "8" });
   assert.equal(out.status, 8, out.output);
   assert.deepEqual(f.emuCalls(), ["status", "start", "status"]);
@@ -280,16 +282,16 @@ test("a refused emulator start (a CI run is active) is passed on and nothing els
   assert.match(f.summaryText(), /^finished_at=/m);
 });
 
-test("a tunnel that does not come up stops the emulator and fails setup", async () => {
-  const f = fixture();
+test("a tunnel that does not come up stops the emulator and fails setup", async (t) => {
+  const f = fixture(t);
   const out = await f.run([], { STUB_TUNNEL: "255" });
   assert.equal(out.status, 3, out.output);
   assert.ok(f.emuCalls().includes("stop"));
   assert.equal(f.read("npx"), "");
 });
 
-test("a Firefox install failure stops the emulator and keeps its status", async () => {
-  const f = fixture();
+test("a Firefox install failure stops the emulator and keeps its status", async (t) => {
+  const f = fixture(t);
   const out = await f.run([], { STUB_EMU_FIREFOX: "10" });
   assert.equal(out.status, 10, out.output);
   assert.equal(f.emuCalls().at(-2), "stop");
@@ -297,21 +299,21 @@ test("a Firefox install failure stops the emulator and keeps its status", async 
   assert.deepEqual(f.read("npx").split("\n").filter(Boolean).map((line) => line.split(" ")[0]), ["browser=chrome"]);
 });
 
-test("an emulator still running after the run is reported", async () => {
-  const f = fixture();
+test("an emulator still running after the run is reported", async (t) => {
+  const f = fixture(t);
   const out = await f.run(["chrome"], { STUB_EMU_LEFT: "running" });
   assert.equal(out.status, 4, out.output);
   assert.match(out.output, /Could not confirm that the emulator is gone/);
 });
 
-test("an unbuilt dist/ or a port in use stops before the emulator starts", async () => {
-  let f = fixture({ built: false });
+test("an unbuilt dist/ or a port in use stops before the emulator starts", async (t) => {
+  let f = fixture(t, { built: false });
   let out = await f.run();
   assert.equal(out.status, 3, out.output);
   assert.match(out.output, /npm run build/);
   assert.equal(f.read("emu"), "");
 
-  f = fixture();
+  f = fixture(t);
   const server = net.createServer().listen(f.ports.adb, "127.0.0.1");
   await new Promise((resolve) => server.on("listening", resolve));
   try {
@@ -324,8 +326,8 @@ test("an unbuilt dist/ or a port in use stops before the emulator starts", async
   assert.equal(f.read("emu"), "");
 });
 
-test("bad arguments and the Fetch-blocked port 4190 are usage errors", async () => {
-  const f = fixture();
+test("bad arguments and the Fetch-blocked port 4190 are usage errors", async (t) => {
+  const f = fixture(t);
   assert.equal((await f.run(["safari"])).status, 2);
   assert.equal((await f.run([], { SONDER_ANDROID_APP_PORT: "4190" })).status, 2);
   assert.equal((await f.run([], { SONDER_ANDROID_ADB_PORT: "80" })).status, 2);
@@ -333,8 +335,8 @@ test("bad arguments and the Fetch-blocked port 4190 are usage errors", async () 
   assert.equal(f.read("emu"), "");
 });
 
-test("an emulator that is already running is refused and not stopped", async () => {
-  const f = fixture();
+test("an emulator that is already running is refused and not stopped", async (t) => {
+  const f = fixture(t);
   const out = await f.run([], { STUB_EMU_BEFORE: "running" });
   assert.equal(out.status, 8, out.output);
   assert.equal(f.emuCalls().includes("start"), false);
@@ -344,8 +346,8 @@ test("an emulator that is already running is refused and not stopped", async () 
   assert.match(f.summaryText(), /^finished_at=/m);
 });
 
-test("the already-running guard detects a slow status writer (SIGPIPE-safe)", async () => {
-  const f = fixture();
+test("the already-running guard detects a slow status writer (SIGPIPE-safe)", async (t) => {
+  const f = fixture(t);
   // The status writer prints running=yes, then sleeps before the rest of its output. A `grep -q`
   // on a pipe exits on the first match and lets the producer die of SIGPIPE, whose 141 under
   // `set -o pipefail` turns the match into a miss and lets the run start the emulator it must
@@ -358,8 +360,8 @@ test("the already-running guard detects a slow status writer (SIGPIPE-safe)", as
   assert.equal(f.emuCalls().includes("start"), false, f.emuCalls().join(","));
 });
 
-test("tunnel directories use TMPDIR and leave nothing in the real /tmp", async () => {
-  const f = fixture();
+test("tunnel directories use TMPDIR and leave nothing in the real /tmp", async (t) => {
+  const f = fixture(t);
   const marker = "sonder-android-tunnel-";
   const before = new Set(fs.readdirSync("/tmp").filter((name) => name.startsWith(marker)));
   const out = await f.run(["chrome"]);
@@ -373,8 +375,8 @@ test("tunnel directories use TMPDIR and leave nothing in the real /tmp", async (
   assert.equal(fs.readdirSync(f.tmpdir).filter((name) => name.startsWith(marker)).length, 0);
 });
 
-test("an interrupt while the emulator is starting still stops it", async () => {
-  const f = fixture();
+test("an interrupt while the emulator is starting still stops it", async (t) => {
+  const f = fixture(t);
   const running = f.run([], { STUB_EMU_SLOW: "1" });
   await new Promise((resolve) => setTimeout(resolve, 800));
   f.interrupt();

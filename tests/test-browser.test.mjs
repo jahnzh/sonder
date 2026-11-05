@@ -6,6 +6,7 @@ import path from "node:path";
 import { EventEmitter } from "node:events";
 import {
   listProfileDirs,
+  listBrowserServerTemps,
   diffProfileDirs,
   removeProfileDirs,
   runTestBrowser,
@@ -64,6 +65,34 @@ test("removeProfileDirs removes only the named directories", () =>
     assert.equal(fs.existsSync(path.join(dir, keep)), true);
     // Idempotent: removing again (and removing a missing name) does not throw.
     removeProfileDirs(dir, [drop, "playwright_chromiumdev_profile-gone"]);
+  }));
+
+test("runTestBrowser removes sonder-browser-* dirs that appear under tmpRoot during the run", () =>
+  withTempDir(async (cwd) => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-test-browser-tmp-"));
+    try {
+      const created = "sonder-browser-fake";
+      const fakeSpawn = () => {
+        const child = new EventEmitter();
+        setImmediate(() => {
+          fs.mkdirSync(path.join(tmpRoot, created));
+          child.emit("close", 0, null);
+        });
+        return child;
+      };
+      const code = await runTestBrowser({ cwd, tmpRoot, args: [], spawnCommand: fakeSpawn });
+      assert.equal(code, 0);
+      assert.equal(fs.existsSync(path.join(tmpRoot, created)), false);
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  }));
+
+test("listBrowserServerTemps lists only sonder-browser directories", () =>
+  withTempDir((dir) => {
+    fs.mkdirSync(path.join(dir, "sonder-browser-abc"));
+    fs.mkdirSync(path.join(dir, "sonder-other-abc"));
+    assert.deepEqual(listBrowserServerTemps(dir), ["sonder-browser-abc"]);
   }));
 
 test("runTestBrowser forwards args and the exit code, and removes only new profile dirs", () =>
