@@ -14,7 +14,7 @@
 # Environment: SONDER_CI_HOST, SONDER_CI_REPO, SONDER_CI_STATUS_CONTEXT,
 # SONDER_CI_POST_STATUS (0 skips the GitHub status), SONDER_CI_MAX_WAIT (seconds,
 # default 1800), SONDER_CI_POLL_INTERVAL (seconds, default 15),
-# SONDER_CI_REMOTE_BASE (default /tmp), SONDER_CI_LOOPBACK_PORT (default 4399),
+# SONDER_CI_REMOTE_BASE (unset uses the host's ${TMPDIR:-/tmp}), SONDER_CI_LOOPBACK_PORT (default 4399),
 # SONDER_CI_KNOWN_FAILURES (repository path, default tests/known-failures.wsl-host.json),
 # SONDER_CI_DISPATCH (when set, records the finished check on that worker history
 # dispatch; a recording failure warns only and never changes the exit code).
@@ -37,7 +37,7 @@ SONDER_CI_STATUS_CONTEXT=${SONDER_CI_STATUS_CONTEXT:-ci/ssh}
 SONDER_CI_POST_STATUS=${SONDER_CI_POST_STATUS:-1}
 MAX_WAIT=${SONDER_CI_MAX_WAIT:-1800}
 POLL_INTERVAL=${SONDER_CI_POLL_INTERVAL:-15}
-REMOTE_BASE=${SONDER_CI_REMOTE_BASE:-/tmp}
+REMOTE_BASE=${SONDER_CI_REMOTE_BASE:-}
 LOOPBACK_PORT=${SONDER_CI_LOOPBACK_PORT:-4399}
 KNOWN_FAILURES=${SONDER_CI_KNOWN_FAILURES:-tests/known-failures.wsl-host.json}
 POLL_FAILURE_LIMIT=3
@@ -400,7 +400,8 @@ run_remote_check() {
   fi
 
   REMOTE_RUN_DIR=$(remote_bash make_run_dir "$REMOTE_BASE" <<'REMOTE'
-mktemp -d "$2/sonder-ci-XXXXXXXX"
+base=${2:-${TMPDIR:-/tmp}}
+mktemp -d "$base/sonder-ci-XXXXXXXX"
 REMOTE
   )
   rc=$?
