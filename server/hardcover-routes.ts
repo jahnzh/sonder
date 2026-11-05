@@ -20,6 +20,7 @@ import {
   listSavedHardcoverSeries,
   savedHardcoverSeries,
   hardcoverBook,
+  setWorkCompletionOverride,
 } from "./hardcover.ts";
 import { acquire } from "./acquisitions.ts";
 import { retryWorkMediaAcquisition } from "./series-membership.ts";
@@ -47,6 +48,14 @@ export function registerHardcoverRoutes(app: FastifyInstance) {
   app.post("/api/series", async (req) => {
     const { id, bookIds } = z.object({ id: z.number().int().positive(), bookIds: z.array(z.number().int().positive()).max(1000) }).parse(req.body);
     return saveHardcoverSeries(currentUserId(req), id, bookIds);
+  });
+  app.patch("/api/works/:workId/completion", async (req) => {
+    const { workId } = z.object({ workId: z.string().min(1) }).parse(req.params);
+    const { status } = z
+      .object({ status: z.enum(["finished", "unread", "derived"]) })
+      .parse(req.body ?? {});
+    setWorkCompletionOverride(currentUserId(req), workId, status);
+    return { ok: true };
   });
   app.get("/api/hardcover", async (req) => hardcoverState(currentUserId(req)));
   app.put("/api/hardcover/token", async (req) => {

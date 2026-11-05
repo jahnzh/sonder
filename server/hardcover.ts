@@ -24,6 +24,14 @@ import {
   setWorkMediaHold,
   syncWorkMediaState,
 } from "./work-media-state.ts";
+import {
+  libraryOriginFor,
+  libraryOriginLabel,
+  recordLibraryOrigin,
+  removalDefaultSelected,
+  setWorkCompletionOverride,
+} from "./library-origin.ts";
+export { setWorkCompletionOverride };
 export type ShelfStatus = 1 | 2 | 3 | 4 | 5;
 export type SyncMode = "off" | "import" | "two-way";
 const shelfStatus = z.union([
@@ -488,7 +496,7 @@ export async function saveHardcoverSeries(userId: number, id: number, bookIds: n
           metadataLink(work.workId, book);
           workId = work.workId;
         } else {
-          const imported = importCatalogBook(userId, book, null, true);
+          const imported = importCatalogBook(userId, book, null, true, { source: "series", seriesId: id });
           workId = db.select().from(s.editions).where(eq(s.editions.id, imported.bookId)).get()!.workId;
         }
       }
@@ -518,7 +526,7 @@ export function savedHardcoverSeries(userId: number, id: number) {
   const works = rows.map((work) => ({ ...work, unreleased: !!work.unreleased,
     added: !!work.added, introduced: !!work.introduced,
     // Another user's catalogue link must not expose state for a work this user has neither added nor owns.
-    ...seriesWorkState(userId, work.added || ownsWork(userId, work.workId) ? work.workId : null) }));
+    ...seriesWorkState(userId, work.added || ownsWork(userId, work.workId) ? work.workId : null, id, { added: !!work.added, workId: work.workId }) }));
   const unique = works.filter((work, index) => works.findIndex((other) =>
     work.workId ? other.workId === work.workId : other.id === work.id) === index);
   // An unreleased work the user has not added cannot be finished, so it does not hold completion below 100%.
@@ -530,7 +538,12 @@ function ownsWork(userId: number, workId: string | null) {
   return !!workId && db.select().from(s.editions).where(eq(s.editions.workId, workId)).all()
     .some((edition) => !!libraryEntry(userId, edition.id));
 }
-function seriesWorkState(userId: number, workId: string | null) {
+function seriesWorkState(
+  userId: number,
+  workId: string | null,
+  seriesId: number,
+  savedWork: { added: boolean; workId: string | null },
+) {
   const editions = workId ? db.select().from(s.editions).where(eq(s.editions.workId, workId)).all() : [];
   const library = editions.flatMap((edition) => libraryEntry(userId, edition.id) ? [edition] : []);
   const override = workId ? db.select().from(s.userWorkCompletion)
@@ -560,9 +573,16 @@ function seriesWorkState(userId: number, workId: string | null) {
   });
   const finished = override === "finished" ? true : override === "unread" ? false :
     library.some((edition) => libraryEntry(userId, edition.id)?.status === "finished") || audioFinished || ebookFinished;
-  return { editionId: library[0]?.id ?? null, finished,
+  const originRow = workId ? libraryOriginFor(userId, workId) : undefined;
+  const libraryOrigin = originRow
+    ? { source: originRow.source as "manual" | "hardcover_sync" | "series" | "unknown", seriesId: originRow.seriesId, addedAt: originRow.addedAt }
+    : { source: "unknown" as const, seriesId: null, addedAt: null };
+  return { editionId: library[0]?.id ?? null, finished, completionOverride: override ?? null,
+    libraryOrigin, libraryOriginLabel: libraryOriginLabel(libraryOrigin, seriesId),
+    removalDefaultSelected: removalDefaultSelected(userId, seriesId, savedWork),
     availability: { audio: { server: workId ? recordings.some((recording) => recording.server) : null, recordings },
-      ebook: { server: workId ? ebooks.some((ebook) => existsSync(ebook.source)) : null, device: null } } };
+      ebook: { server: workId ? ebooks.some((ebook) => existsSync(ebook.source)) : null,
+        editionIds: ebooks.map((ebook) => ebook.id), device: null } } };
 }
 export async function hardcoverSearch(userId: number, query: string) {
   const data = await graphql(
@@ -848,6 +868,7 @@ function importCatalogBook(
   book: CatalogBook,
   status: ShelfStatus | null = null,
   forceLibrary = false,
+  libraryOrigin?: { source: "series"; seriesId: number },
 ) {
   let links = linkRepresentatives(book.id);
   let matched = false,
@@ -918,16 +939,37 @@ function importCatalogBook(
     eq(s.userHiddenLibrary.bookId, representative.id),
   );
   if (forceLibrary) db.delete(s.userHiddenLibrary).where(hidden).run();
-  if (!db.select().from(s.userHiddenLibrary).where(hidden).get())
+  if (!db.select().from(s.userHiddenLibrary).where(hidden).get()) {
+    const addedAt = Date.now();
     db.insert(s.userLibrary)
       .values({
         userId,
         bookId: representative.id,
         status: localStatus(status || 1),
-        addedAt: Date.now(),
+        addedAt,
       })
       .onConflictDoNothing()
       .run();
+    if (
+      db
+        .select()
+        .from(s.userLibrary)
+        .where(
+          and(
+            eq(s.userLibrary.userId, userId),
+            eq(s.userLibrary.bookId, representative.id),
+          ),
+        )
+        .get()
+    ) {
+      if (libraryOrigin)
+        recordLibraryOrigin(userId, links[0].workId, libraryOrigin.source, {
+          seriesId: libraryOrigin.seriesId,
+          addedAt,
+        });
+      else recordLibraryOrigin(userId, links[0].workId, "hardcover_sync", { addedAt });
+    }
+  }
   // Metadata-only placeholders are replaced on the shelf when actual audio for that work is linked.
   if (audio.length) {
     for (const link of links)

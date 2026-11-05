@@ -1,16 +1,17 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api } from "../lib";
-import type { Download } from "../types";
+import type { Download, SavedEbook } from "../types";
 import { Dialog } from "./ui/dialog";
+import { SeriesWorkStatus, type SeriesWorkView } from "./SeriesWorkStatus";
 import "../series.css";
 
 type SeriesSummary = { id: number; name: string; author: string | null; count: number | null; cover?: string | null };
-type SeriesWork = {
-  id: number; title: string; position: number | null; cover: string | null;
-  workId: string | null; owned?: boolean; selected?: boolean; unreleased: boolean;
+type SeriesWork = SeriesWorkView & {
+  cover: string | null;
+  owned?: boolean; selected?: boolean; unreleased: boolean;
   needsAdmin?: boolean;
-  added?: boolean; finished?: boolean;
-  availability?: { audio: { server: boolean | null; recordings: { id: string; tracks: string[]; server: boolean; stream: boolean }[] }; ebook: { server: boolean | null; device: null } };
+  introduced?: boolean;
+  removalDefaultSelected?: boolean;
 };
 type Series = SeriesSummary & { works: SeriesWork[]; needsAdmin?: { id: number; title: string }[]; completion?: { finished: number; total: number; nextBookId: number | null } };
 export type SeriesTarget = { id: number; mode: "preview" | "saved" };
@@ -58,7 +59,7 @@ export function SeriesLibrary({ onOpen, revision }: { onOpen: (id: number) => vo
   </section>;
 }
 
-export function SeriesDialog({ target, onClose, onSaved, downloads }: { target: SeriesTarget | null; onClose: () => void; onSaved: () => void; downloads: Download[] }) {
+export function SeriesDialog({ target, onClose, onSaved, downloads, savedEbooks }: { target: SeriesTarget | null; onClose: () => void; onSaved: () => void; downloads: Download[]; savedEbooks: SavedEbook[] }) {
   const [series, setSeries] = useState<Series | null>(null);
   const [selected, setSelected] = useState<number[]>([]);
   const [mode, setMode] = useState<"preview" | "saved">("preview");
@@ -75,6 +76,10 @@ export function SeriesDialog({ target, onClose, onSaved, downloads }: { target: 
     }).catch((reason) => { if (active) setError(reason.message); });
     return () => { active = false; };
   }, [target]);
+  const refreshSeries = () => {
+    if (!target) return;
+    void api<Series>(`/series/${target.id}`).then(setSeries).catch((reason) => setError(reason.message));
+  };
   const save = async () => {
     if (!series) return;
     setBusy(true); setError("");
@@ -87,19 +92,15 @@ export function SeriesDialog({ target, onClose, onSaved, downloads }: { target: 
   const next = series?.works.find((work) => work.id === series.completion?.nextBookId);
   const numbered = series?.works.filter((work) => work.position !== null) || [];
   const unnumbered = series?.works.filter((work) => work.position === null) || [];
-  const renderWorks = (works: SeriesWork[]) => works.map((work) => {
-    const audio = work.availability?.audio;
-    const device = audio?.recordings.some((recording) => recording.tracks.length > 0 && recording.tracks.every((id) => downloads.some((download) => download.trackId === id)));
-    return <li className="series-work" key={work.id}>
+  const renderWorks = (works: SeriesWork[]) => works.map((work) => (
+    <li className="series-work" key={work.id}>
       {mode === "preview" ? <label><input type="checkbox" disabled={work.needsAdmin} checked={selected.includes(work.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, work.id] : current.filter((id) => id !== work.id))} />
         <span>{work.position !== null && <b>#{work.position} </b>}{work.title}</span></label> : <strong>{work.position !== null && `#${work.position} `}{work.title}</strong>}
-      <div className="series-work-meta">{work.owned && mode === "preview" && <span>Already in your library</span>}{work.needsAdmin && mode === "preview" && <span>Possible existing match: ask an administrator to confirm and link it.</span>}{work.unreleased && <span>Unreleased</span>}{mode === "saved" && <>
-        <span>{work.added ? "In your series selection" : "Not added"}{work.finished ? " · Finished" : ""}</span>
-        <span>Audio: {audio?.server == null ? "availability unknown" : audio.server ? "on server" : "not on server"}{work.workId ? (device ? " · on device" : " · not on device") : ""}{audio?.recordings.some((recording) => recording.stream) ? " · stream availability unknown" : ""}</span>
-        <span>Ebook: {work.availability?.ebook.server == null ? "availability unknown" : work.availability.ebook.server ? "on server" : "not on server"} · device availability unknown</span>
+      <div className="series-work-meta">{work.owned && mode === "preview" && <span>Already in your library</span>}{work.needsAdmin && mode === "preview" && <span>Possible existing match: ask an administrator to confirm and link it.</span>}{work.unreleased && <span>Unreleased</span>}{mode === "saved" && series && <>
+        <SeriesWorkStatus work={work} seriesId={series.id} downloads={downloads} savedEbooks={savedEbooks} onUpdated={refreshSeries} />
       </>}</div>
-    </li>;
-  });
+    </li>
+  ));
   return <Dialog open={!!target} onOpenChange={(open) => { if (!open) onClose(); }} title={series?.name || "Series"} className="series-dialog">
     {error && <p className="inline-error" role="alert">{error}</p>}
     {!series && !error && <p>Loading series…</p>}

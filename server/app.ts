@@ -23,6 +23,7 @@ import { eq, and, gt } from "drizzle-orm";
 import { db, sqlite, dataDir } from "./db.ts";
 import * as s from "./schema.ts";
 import { seed } from "./seed.ts";
+import { recordLibraryOrigin } from "./library-origin.ts";
 import {
   hardcoverForWork,
   hardcoverSearch,
@@ -353,6 +354,21 @@ export async function createApp() {
       .from(s.editions)
       .where(eq(s.editions.id, bookId))
       .get();
+    if (
+      edition &&
+      db
+        .select()
+        .from(s.userLibrary)
+        .where(
+          and(
+            eq(s.userLibrary.userId, currentUserId(req)),
+            eq(s.userLibrary.bookId, bookId),
+          ),
+        )
+        .get()
+    ) {
+      recordLibraryOrigin(currentUserId(req), edition.workId, "manual");
+    }
     if (edition) queueHardcoverStatus(currentUserId(req), edition.workId, "unread", "add");
     return { ok: true };
   });
