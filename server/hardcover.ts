@@ -160,7 +160,6 @@ function runtime(userId: number) {
   }
   return value;
 }
-let requestTail: Promise<unknown> = Promise.resolve();
 // A single-token bucket limits every caller to 24 requests per minute, with
 // no initial burst. The request queue serializes access to this budget.
 export function createHardcoverRequestBudget(options: {
@@ -174,14 +173,15 @@ export function createHardcoverRequestBudget(options: {
   let nextTokenAt = 0;
   let retryAt = 0;
   return {
-    async take() {
+    async wait() {
       for (;;) {
         const delay = Math.max(nextTokenAt, retryAt) - now();
         if (delay <= 0) break;
         await sleep(delay);
       }
-      nextTokenAt = now() + interval;
     },
+    take() { nextTokenAt = now() + interval; },
+    isDeferred() { return retryAt > now(); },
     deferUntil(time: number) {
       retryAt = Math.max(retryAt, time);
     },
@@ -192,6 +192,48 @@ let requestBudget = createHardcoverRequestBudget({
 });
 export function setHardcoverRequestBudgetForTests(budget: ReturnType<typeof createHardcoverRequestBudget>) {
   requestBudget = budget;
+}
+type HardcoverPriority = "interactive" | "background";
+type PendingHardcoverRequest = { run: () => Promise<void>; reject: (error: Error) => void };
+const hardcoverRequests: Record<HardcoverPriority, PendingHardcoverRequest[]> = {
+  interactive: [], background: [],
+};
+let processingHardcoverRequests = false;
+const rateLimited = () => new HardcoverUpstreamError(
+  "rate_limited",
+  "Hardcover is rate limiting requests. Your changes are saved and will retry shortly.",
+);
+async function drainHardcoverRequests() {
+  if (processingHardcoverRequests) return;
+  processingHardcoverRequests = true;
+  try {
+    while (hardcoverRequests.interactive.length || hardcoverRequests.background.length) {
+      if (requestBudget.isDeferred() && hardcoverRequests.interactive.length) {
+        for (const item of hardcoverRequests.interactive.splice(0)) item.reject(rateLimited());
+        continue;
+      }
+      // Choose the request after waiting so a newly arrived interactive request
+      // can overtake background work while the next token is replenishing.
+      await requestBudget.wait();
+      const item = hardcoverRequests.interactive.shift() ?? hardcoverRequests.background.shift();
+      if (!item) continue;
+      requestBudget.take();
+      await item.run();
+    }
+  } finally {
+    processingHardcoverRequests = false;
+  }
+}
+function scheduleHardcoverRequest<T>(priority: HardcoverPriority, run: () => Promise<T>): Promise<T> {
+  if (priority === "interactive" && requestBudget.isDeferred())
+    return Promise.reject(rateLimited());
+  return new Promise<T>((resolve, reject) => {
+    hardcoverRequests[priority].push({
+      run: async () => { try { resolve(await run()); } catch (error) { reject(error); } },
+      reject,
+    });
+    void drainHardcoverRequests();
+  });
 }
 const hardcoverKey = (userId: number) => getUserSecret(userId, "hardcover");
 const T = {
@@ -366,6 +408,7 @@ async function graphql<T>(
   query: string,
   variables: Record<string, unknown>,
   schema: z.ZodType<T>,
+  priority: HardcoverPriority = "interactive",
 ): Promise<T> {
   const live = runtime(userId);
   const expectedGeneration = live.generation;
@@ -375,9 +418,6 @@ async function graphql<T>(
     const key = hardcoverKey(userId);
     if (!key)
       upstream("missing_token", "Add your Hardcover API token in Settings first.");
-    await requestBudget.take();
-    if (live.generation !== expectedGeneration)
-      upstream("other", "The Hardcover connection changed. Sync again.");
     let response: Response;
     try {
       response = await fetch("https://api.hardcover.app/v1/graphql", {
@@ -438,9 +478,7 @@ async function graphql<T>(
       );
     return parsed.data;
   };
-  const task = requestTail.then(run, run);
-  requestTail = task.catch(() => {});
-  return task;
+  return scheduleHardcoverRequest(priority, run);
 }
 export async function hardcoverSeriesSearch(userId: number, query: string) {
   const found = await graphql(userId,
@@ -548,12 +586,13 @@ type SeriesPreviewPayload = Omit<z.infer<typeof seriesPreviewSchema>, "series_by
   series_by_pk: NonNullable<z.infer<typeof seriesPreviewSchema>["series_by_pk"]>;
 };
 
-async function fetchSeriesPreviewPayload(userId: number, id: number): Promise<SeriesPreviewPayload> {
+async function fetchSeriesPreviewPayload(userId: number, id: number, priority: HardcoverPriority = "interactive"): Promise<SeriesPreviewPayload> {
   const result = await graphql(
     userId,
     `query SonderSeriesPreview($id:Int!){series_by_pk(id:$id){id name books_count author{name} book_series{position book{id title release_year release_date cached_image contributions{contribution author{name}}}}}}`,
     { id },
     seriesPreviewSchema,
+    priority,
   );
   if (!result.series_by_pk) upstream("other", "Hardcover could not find this series.");
   return result as SeriesPreviewPayload;
@@ -654,7 +693,7 @@ export async function refreshSavedHardcoverSeries(userId: number, id: number, op
   // Only the Hardcover fetch is treated as an outage; local SQLite work must surface normally.
   let payload: SeriesPreviewPayload;
   try {
-    payload = await fetchSeriesPreviewPayload(userId, id);
+    payload = await fetchSeriesPreviewPayload(userId, id, "background");
   } catch (error) {
     if (!(error instanceof HardcoverUpstreamError)) throw error;
     return savedHardcoverSeries(userId, id, { refreshError: refreshErrorMessage(error) });

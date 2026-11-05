@@ -548,6 +548,15 @@ const SECTION_TIMEOUT_MS = 30 * 60 * 1000,
   ANCHOR_TIMEOUT_MS = 180000;
 export const WORKER_TIMEOUT_MESSAGE =
   "The alignment worker timed out on this section. Retry later, or choose a release with chapters.";
+export const WORKER_BUSY_WAIT_MS = 30 * 60 * 1000;
+const defaultWorkerRetryClock = {
+  now: () => Date.now(),
+  sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+};
+let workerRetryClock = defaultWorkerRetryClock;
+export function setWorkerRetryClockForTests(clock: typeof defaultWorkerRetryClock | null) {
+  workerRetryClock = clock ?? defaultWorkerRetryClock;
+}
 async function workerRequest(
   path: string,
   body: object,
@@ -558,6 +567,7 @@ async function workerRequest(
   workerBase = process.env.ALIGNMENT_WORKER_URL!,
   live: () => boolean = () => true,
 ) {
+  let busyDeadline: number | null = null;
   for (;;) {
     if (!live()) throw new Error("Alignment stopped.");
     const response = await fetch(
@@ -574,7 +584,10 @@ async function workerRequest(
     );
     // A speech-recovery request can briefly hold the single worker.
     if (response.status === 409) {
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+      busyDeadline ??= workerRetryClock.now() + WORKER_BUSY_WAIT_MS;
+      const remaining = busyDeadline - workerRetryClock.now();
+      if (remaining <= 0) throw new Error("The alignment worker is busy. Retry in a moment.");
+      await workerRetryClock.sleep(Math.min(3000, remaining));
       continue;
     }
     // The worker stopped this request at its time limit; running it again would hold the core for as long.

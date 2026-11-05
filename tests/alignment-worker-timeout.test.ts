@@ -187,3 +187,22 @@ test("a reading sync waits through more than five busy responses", async () => {
   assert.equal(done.status, "partial", done.error);
   assert.equal(conflicts, 6);
 });
+
+
+test("a permanently busy alignment worker fails after the busy wait cap", async () => {
+  const { setWorkerRetryClockForTests, WORKER_BUSY_WAIT_MS } = await import("../server/alignment.ts");
+  let now = 0;
+  let calls = 0;
+  setWorkerRetryClockForTests({ now: () => now, sleep: async (ms) => { now += ms; } });
+  globalThis.fetch = async () => { calls++; return new Response("{}", { status: 409 }); };
+  try {
+    const job = await createAlignment(ebook, "recording-alice");
+    const failed = await settled(job.id, (value) => value.status === "error");
+    assert.equal(failed.status, "error");
+    assert.equal(failed.error, "The alignment worker is busy. Retry in a moment.");
+    assert.equal(now, WORKER_BUSY_WAIT_MS);
+    assert.ok(calls > 5);
+  } finally {
+    setWorkerRetryClockForTests(null);
+  }
+});
