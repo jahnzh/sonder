@@ -843,6 +843,17 @@ export async function recommend(options, candidates, usageByAgent = {}, usageByC
     if (refused) return { ...result, status: "override-refused", refused: { ...sanitizedOptions.override, reason: refused } };
     const { capability } = candidates.find((c) => choiceName(c) === choiceName(sanitizedOptions.override));
     const usage = usageOf(sanitizedOptions.override);
+    if (usage.status === "exhausted") {
+      return {
+        ...result,
+        usage,
+        status: "override-refused",
+        refused: {
+          ...sanitizedOptions.override,
+          reason: usageWarning(sanitizedOptions.override.agent, usage, sanitizedOptions.override),
+        },
+      };
+    }
     if (sanitizedOptions.override.agent === "opencode" && usage.status === "unavailable") {
       return { ...result, status: "override-refused", refused: { ...sanitizedOptions.override, reason: `provider data unavailable (${usage.reason})` } };
     }
@@ -989,6 +1000,14 @@ export async function main(argv = process.argv.slice(2)) {
   }
   if (result.status === "override-refused") {
     console.log(JSON.stringify(result, null, 2));
+    if (result.usage) {
+      const u = result.usage;
+      const bucketBit =
+        Array.isArray(u.buckets) && u.buckets.length
+          ? formatBucketUsage(u)
+          : oneLine(u.reason ?? u.status);
+      console.error(`override usage: ${u.status} — ${bucketBit}`);
+    }
     console.error(`override refused: ${choiceName(result.refused)}: ${result.refused.reason}`);
     return 1;
   }
@@ -1004,6 +1023,14 @@ export async function main(argv = process.argv.slice(2)) {
       console.error(`cannot write spec file ${options.record}: ${redactSecret(error.message)}`);
       return 1;
     }
+  }
+  if (options.override && result.usage) {
+    const u = result.usage;
+    const bucketBit =
+      Array.isArray(u.buckets) && u.buckets.length
+        ? formatBucketUsage(u)
+        : oneLine(u.reason ?? u.status);
+    console.error(`override usage: ${u.status} — ${bucketBit}`);
   }
   console.log(JSON.stringify(result, null, 2));
   return 0;
