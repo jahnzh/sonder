@@ -50,7 +50,7 @@ const gone = (status: number | undefined) => status === 404 || status === 410;
 /** A cached map is only reused for the same job run, built from the EPUB that is
  * current now. The summary cannot tell whether the audio changed in place; only
  * the map endpoint checks that. */
-export function cachedMapMatches(
+function cachedMapMatches(
   cached: AlignmentJob | undefined,
   job: AlignmentJob,
   ebookFingerprint: string | undefined,
@@ -68,7 +68,7 @@ export function cachedMapMatches(
 
 /** The cached map was built from other sources than this job's, or from another
  * EPUB than the current one. */
-export function cachedMapStale(
+function cachedMapStale(
   cached: AlignmentJob | undefined,
   job: AlignmentJob,
   ebookFingerprint: string | undefined,
@@ -80,6 +80,47 @@ export function cachedMapStale(
       cached.audioFingerprint !== job.audioFingerprint ||
       (!!ebookFingerprint && cached.fingerprint !== ebookFingerprint))
   );
+}
+
+/** One playback-warming check: fetches and caches the map unless the cache already matches.
+ * Returns the job, or null when there is no job or anything failed (warming then stops polling).
+ * It keeps no confirmation history and never changes what the reader displays. */
+export async function warmMap(
+  deps: MapLifecycleDeps,
+  target: WarmTarget,
+): Promise<AlignmentJob | null> {
+  const { ebookId, recordingId, fingerprint, isCancelled } = target;
+  const cacheKey = mapCacheKey(ebookId, recordingId);
+  if (isCancelled()) return null;
+  try {
+    const result = await deps.fetchSummary(ebookId);
+    if (isCancelled()) return null;
+    const job = result.jobs?.find((j) => j.recordingId === recordingId);
+    if (!job) return null;
+    if (intervalCountOf(job) > 0) {
+      const cached = await deps.store.get(cacheKey);
+      const ebookFingerprint = await fingerprint();
+      if (isCancelled()) return null;
+      if (!cachedMapMatches(cached, job, ebookFingerprint)) {
+        if (cachedMapStale(cached, job, ebookFingerprint))
+          await deps.store.delete(cacheKey);
+        let map: AlignmentJob;
+        try {
+          map = await deps.fetchMap(job.id);
+        } catch (error) {
+          // The server refused the map (its sources changed): a cached
+          // copy must not be used offline either.
+          if (gone(deps.statusOf(error))) await deps.store.delete(cacheKey);
+          throw error;
+        }
+        if (isCancelled()) return null;
+        await deps.store.put(cacheKey, map);
+      }
+    }
+    return job;
+  } catch {
+    return null;
+  }
 }
 
 export function createAlignmentMapLifecycle(deps: MapLifecycleDeps) {
@@ -98,42 +139,9 @@ export function createAlignmentMapLifecycle(deps: MapLifecycleDeps) {
       await deps.store.put(mapCacheKey(ebookId, recordingId), map);
     },
 
-    /** One playback-warming check: fetches and caches the map unless the cache already matches.
-     * Returns the job, or null when there is no job or anything failed (warming then stops polling).
-     * It keeps no confirmation history and never changes what the reader displays. */
-    async warm(target: WarmTarget): Promise<AlignmentJob | null> {
-      const { ebookId, recordingId, fingerprint, isCancelled } = target;
-      const cacheKey = mapCacheKey(ebookId, recordingId);
-      if (isCancelled()) return null;
-      try {
-        const result = await deps.fetchSummary(ebookId);
-        if (isCancelled()) return null;
-        const job = result.jobs?.find((j) => j.recordingId === recordingId);
-        if (!job) return null;
-        if (intervalCountOf(job) > 0) {
-          const cached = await deps.store.get(cacheKey);
-          const ebookFingerprint = await fingerprint();
-          if (isCancelled()) return null;
-          if (!cachedMapMatches(cached, job, ebookFingerprint)) {
-            if (cachedMapStale(cached, job, ebookFingerprint))
-              await deps.store.delete(cacheKey);
-            let map: AlignmentJob;
-            try {
-              map = await deps.fetchMap(job.id);
-            } catch (error) {
-              // The server refused the map (its sources changed): a cached
-              // copy must not be used offline either.
-              if (gone(deps.statusOf(error))) await deps.store.delete(cacheKey);
-              throw error;
-            }
-            if (isCancelled()) return null;
-            await deps.store.put(cacheKey, map);
-          }
-        }
-        return job;
-      } catch {
-        return null;
-      }
+    /** Playback warming: same path as {@link warmMap}, kept on the instance for callers that already hold one. */
+    warm(target: WarmTarget): Promise<AlignmentJob | null> {
+      return warmMap(deps, target);
     },
 
     async refresh(target: RefreshTarget): Promise<AlignmentJob | undefined> {

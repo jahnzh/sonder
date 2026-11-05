@@ -1,8 +1,9 @@
 import JSZip from "jszip";
 export async function readerFixture(
-  options: { language?: string; script?: boolean; cover?: boolean; bodies?: [string, string]; variant?: "svg-root" | "iframe-root" | "nav-root" | "no-head" | "head-late" | "text-before-head" | "template-root" | "svg-asset" } = {},
+  options: { language?: string; title?: string; script?: boolean; cover?: boolean; bodies?: [string, string]; variant?: "svg-root" | "iframe-root" | "nav-root" | "no-head" | "head-late" | "text-before-head" | "template-root" | "svg-asset" } = {},
 ) {
   const zip = new JSZip();
+  const title = (options.title || "Alice Reader Test").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
   zip.file("mimetype", "application/epub+zip", { compression: "STORE" });
   zip.file(
     "META-INF/container.xml",
@@ -10,7 +11,7 @@ export async function readerFixture(
   );
   zip.file(
     "OEBPS/content.opf",
-    `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="bookid">sonder-reader-test</dc:identifier><dc:title>Alice Reader Test</dc:title><dc:creator>Lewis Carroll</dc:creator><dc:language>${options.language || "en"}</dc:language><meta property="dcterms:modified">2026-10-26T00:00:00Z</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="one" href="one.xhtml" media-type="application/xhtml+xml"/><item id="two" href="two.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="one"/><itemref idref="two"/></spine></package>`,
+    `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="bookid">sonder-reader-test</dc:identifier><dc:title>${title}</dc:title><dc:creator>Lewis Carroll</dc:creator><dc:language>${options.language || "en"}</dc:language><meta property="dcterms:modified">2026-10-26T00:00:00Z</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="one" href="one.xhtml" media-type="application/xhtml+xml"/><item id="two" href="two.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="one"/><itemref idref="two"/></spine></package>`,
   );
   if (options.variant === "svg-asset") {
     // A manifest SVG that carries script, reached from an image, a link and an image map in chapter one.
