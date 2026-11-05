@@ -971,7 +971,7 @@ test("concurrent manual selects for the same work are mutually exclusive", async
   assert.equal(manualAcquireCalls, 1);
 });
 
-test("ticker auto-acquire can overlap manual select before either records an acquisition", async () => {
+test("manual select is rejected while ticker auto-acquire is in flight for the same work", async () => {
   delete process.env.SONDER_SKIP_SERIES_ACQUISITION;
   let unblockAutoSearch!: () => void;
   const autoSearchBlocked = new Promise<void>((resolve) => {
@@ -980,10 +980,6 @@ test("ticker auto-acquire can overlap manual select before either records an acq
   let unblockAutoAcquire!: () => void;
   const autoAcquireBlocked = new Promise<void>((resolve) => {
     unblockAutoAcquire = resolve;
-  });
-  let unblockManualAcquire!: () => void;
-  const manualAcquireBlocked = new Promise<void>((resolve) => {
-    unblockManualAcquire = resolve;
   });
   let autoAcquireCalls = 0;
   let manualAcquireCalls = 0;
@@ -1020,7 +1016,6 @@ test("ticker auto-acquire can overlap manual select before either records an acq
   setSeriesReleaseSearchDeps({
     acquire: (async () => {
       manualAcquireCalls++;
-      await manualAcquireBlocked;
       throw new Error("manual acquire stub");
     }) as SeriesReleaseSearchDeps["acquire"],
   });
@@ -1038,18 +1033,42 @@ test("ticker auto-acquire can overlap manual select before either records an acq
     if (autoAcquireCalls > 0) break;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
-  assert.equal(autoAcquireCalls, 1, "auto acquire should be waiting before it records media");
+  assert.equal(autoAcquireCalls, 1);
   await seedAbbSearch();
-  const manualRunning = app.inject({
+  const manual = await app.inject({
     method: "POST",
     url: "/api/series/31/works/201/releases/select",
     payload: { source: "abb", id: "abb-first" },
   });
-  await new Promise((resolve) => setTimeout(resolve, 30));
-  assert.equal(manualAcquireCalls, 1, "manual select can start while auto acquire is in flight");
+  assert.equal(manual.statusCode, 409);
+  assert.equal(manual.json().code, "select_in_progress");
+  assert.equal(manualAcquireCalls, 0);
   unblockAutoAcquire();
-  unblockManualAcquire();
-  await Promise.allSettled([tickRunning, manualRunning]);
-  assert.equal(autoAcquireCalls, 1);
-  assert.equal(manualAcquireCalls, 1);
+  await tickRunning;
+});
+
+test("a failed magnet fetch does not block a later manual select", async () => {
+  await saveSeries([201]);
+  let magnetCalls = 0;
+  setSeriesReleaseSearchDeps({
+    abbMagnet: async () => {
+      magnetCalls++;
+      if (magnetCalls === 1) throw new Error("magnet down");
+      return "magnet:?xt=urn:btih:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&dn=First";
+    },
+  });
+  await seedAbbSearch();
+  const failed = await app.inject({
+    method: "POST",
+    url: "/api/series/31/works/201/releases/select",
+    payload: { source: "abb", id: "abb-first" },
+  });
+  assert.notEqual(failed.statusCode, 200);
+  await seedAbbSearch();
+  const retry = await app.inject({
+    method: "POST",
+    url: "/api/series/31/works/201/releases/select",
+    payload: { source: "abb", id: "abb-first" },
+  });
+  assert.equal(retry.statusCode, 200, retry.body);
 });

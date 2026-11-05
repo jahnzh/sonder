@@ -16,6 +16,7 @@ import {
   getWorkMediaState,
   setWorkMediaHold,
   syncWorkMediaState,
+  workHasActiveQueuedAcquisition,
   workHasPlayableAudio,
 } from "./work-media-state.ts";
 import { userIsAdmin } from "./users.ts";
@@ -62,6 +63,29 @@ export function setSeriesAcquisitionDeps(overrides: SeriesAcquisitionDeps) {
 
 export function resetSeriesAcquisitionDeps() {
   deps = {};
+  seriesWorkAcquireInFlight.clear();
+}
+
+const seriesWorkAcquireInFlight = new Set<string>();
+
+export function seriesWorkAcquireFlightKey(userId: number, workId: string) {
+  return `${userId}:${workId}`;
+}
+
+export function seriesWorkAcquireInFlightFor(userId: number, workId: string) {
+  return seriesWorkAcquireInFlight.has(seriesWorkAcquireFlightKey(userId, workId));
+}
+
+/** Returns false when another acquire or manual select already holds this work. */
+export function enterSeriesWorkAcquire(userId: number, workId: string) {
+  const key = seriesWorkAcquireFlightKey(userId, workId);
+  if (seriesWorkAcquireInFlight.has(key)) return false;
+  seriesWorkAcquireInFlight.add(key);
+  return true;
+}
+
+export function leaveSeriesWorkAcquire(userId: number, workId: string) {
+  seriesWorkAcquireInFlight.delete(seriesWorkAcquireFlightKey(userId, workId));
 }
 
 export function seriesAcquisitionTickerEnabled() {
@@ -299,22 +323,36 @@ export function resetStaleSeriesAcquisitionJobs(now = Date.now()) {
        WHERE status='searching' AND updated_at < ?`,
     )
     .run(now, staleBefore);
-  sqlite
+}
+
+function reviveStrandedCancelledClaims(now = Date.now()) {
+  const staleBefore = now - SERIES_ACQUISITION_SEARCH_STALE_MS;
+  const rows = sqlite
     .prepare(
-      `UPDATE series_acquisition_jobs SET status='pending', error=NULL, updated_at=?
-       WHERE status='failed' AND error=? AND updated_at < ?
-         AND NOT EXISTS (
-           SELECT 1 FROM work_media_states wms
-           WHERE wms.work_id = series_acquisition_jobs.work_id
-             AND wms.user_id = series_acquisition_jobs.user_id
-             AND wms.state IN ('ready', 'queued')
-         )`,
+      `SELECT id, user_id AS userId, work_id AS workId
+       FROM series_acquisition_jobs
+       WHERE status='failed' AND error=? AND updated_at < ?`,
     )
-    .run(
-      now,
-      SERIES_ACQUISITION_CANCELLED_ERROR,
-      staleBefore,
-    );
+    .all(SERIES_ACQUISITION_CANCELLED_ERROR, staleBefore) as {
+    id: string;
+    userId: number;
+    workId: string;
+  }[];
+  for (const row of rows) {
+    if (seriesWorkAcquireInFlightFor(row.userId, row.workId)) continue;
+    if (workHasPlayableAudio(row.workId)) continue;
+    if (workHasActiveQueuedAcquisition(row.userId, row.workId)) continue;
+    db.update(s.seriesAcquisitionJobs)
+      .set({ status: "pending", error: null, updatedAt: now })
+      .where(eq(s.seriesAcquisitionJobs.id, row.id))
+      .run();
+  }
+}
+
+/** Startup-only: reset stale searching rows and stranded manual-claim cancellations. */
+export function resetStrandedSeriesAcquisitionClaims(now = Date.now()) {
+  resetStaleSeriesAcquisitionJobs(now);
+  reviveStrandedCancelledClaims(now);
 }
 
 function catalogueVolumes(seriesId: number) {
@@ -600,6 +638,7 @@ async function runAudioJob(
     .where(eq(s.seriesAcquisitionJobs.id, job.id))
     .get();
   if (!active || active.status !== "searching") return;
+  if (seriesWorkAcquireInFlightFor(job.userId, job.workId)) return;
   if (!canAcquireMedia(job.userId)) throw new Error("no_permission");
   const catalogue = catalogueVolumes(job.seriesId);
   const volume = catalogue.find((row) => row.bookId === job.bookId);
@@ -637,6 +676,18 @@ async function runAudioJob(
     .where(eq(s.editions.workId, job.workId))
     .all()[0];
   if (!seriesJobStillActive(job.id)) return;
+  const wrappedAcquire = async (
+    magnet: string,
+    metadata: Parameters<typeof acquire>[1],
+  ) => {
+    if (!enterSeriesWorkAcquire(job.userId, job.workId))
+      throw new Error("cancelled");
+    try {
+      return await acquire(magnet, metadata);
+    } finally {
+      leaveSeriesWorkAcquire(job.userId, job.workId);
+    }
+  };
   await autoAcquireSeriesVolume(
     job.userId,
     {
@@ -648,7 +699,7 @@ async function runAudioJob(
       title: volume.title,
       cover: volume.cover ?? edition?.cover,
     },
-    acquire,
+    wrappedAcquire,
     deps.seriesAudioDeps,
     () => seriesAudioJobStillSearching(job.id),
   );

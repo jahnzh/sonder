@@ -20,7 +20,9 @@ import {
 import {
   assertCanAcquireMedia,
   beginManualSeriesReleaseClaim,
+  enterSeriesWorkAcquire,
   finalizeManualSeriesReleaseClaim,
+  leaveSeriesWorkAcquire,
   restoreManualSeriesReleaseClaim,
   seriesWorkAcquisitions,
 } from "./series-acquisition.ts";
@@ -42,12 +44,6 @@ export type SeriesReleaseSearchDeps = {
   acquire?: typeof defaultAcquire;
   replacePreviousAcquisition?: typeof replacePreviousAcquisition;
 };
-
-const manualSelectInFlight = new Set<string>();
-
-function manualSelectFlightKey(userId: number, workId: string) {
-  return `${userId}:${workId}`;
-}
 
 let deps: SeriesReleaseSearchDeps = {};
 
@@ -77,7 +73,6 @@ export function setSeriesReleaseSearchDeps(overrides: SeriesReleaseSearchDeps) {
 export function resetSeriesReleaseSearchDeps() {
   deps = {};
   abbSearchSlugs.clear();
-  manualSelectInFlight.clear();
 }
 
 export function savedSeriesWork(
@@ -295,20 +290,10 @@ export async function selectSeriesWorkRelease(
       { statusCode: 409, code: "existing_audio" },
     );
 
-  const flightKey = manualSelectFlightKey(userId, work.workId);
-  if (manualSelectInFlight.has(flightKey))
-    throw Object.assign(
-      new Error(
-        "A release selection is already in progress for this work. Wait for it to finish.",
-      ),
-      { statusCode: 409, code: "select_in_progress" },
-    );
-  manualSelectInFlight.add(flightKey);
-
-  const claim = beginManualSeriesReleaseClaim(userId, work.workId);
-
   let magnet: string;
   let acquireSucceeded = false;
+  let claim!: ReturnType<typeof beginManualSeriesReleaseClaim>;
+  let heldAcquire = false;
   let metadata: {
     title?: string;
     author?: string;
@@ -317,6 +302,15 @@ export async function selectSeriesWorkRelease(
     narrator?: string | null;
   };
   try {
+    if (!enterSeriesWorkAcquire(userId, work.workId))
+      throw Object.assign(
+        new Error(
+          "A release selection is already in progress for this work. Wait for it to finish.",
+        ),
+        { statusCode: 409, code: "select_in_progress" },
+      );
+    heldAcquire = true;
+    claim = beginManualSeriesReleaseClaim(userId, work.workId);
     if (input.source === "prowlarr") {
       const link = (deps.prowlarrRelease ?? prowlarrRelease)(input.id);
       magnet = await (deps.prowlarrMagnet ?? prowlarrMagnet)(input.id);
@@ -372,9 +366,9 @@ export async function selectSeriesWorkRelease(
       replaceResult,
     };
   } catch (error) {
-    if (claim.claimed && !acquireSucceeded)
+    if (claim?.claimed && !acquireSucceeded)
       restoreManualSeriesReleaseClaim(claim);
-    else if (claim.claimed && acquireSucceeded)
+    else if (claim?.claimed && acquireSucceeded)
       finalizeManualSeriesReleaseClaim(
         userId,
         seriesId,
@@ -383,6 +377,6 @@ export async function selectSeriesWorkRelease(
       );
     throw error;
   } finally {
-    manualSelectInFlight.delete(flightKey);
+    if (heldAcquire) leaveSeriesWorkAcquire(userId, work.workId);
   }
 }
