@@ -130,7 +130,7 @@ if ! npm run backup -- "$db" "$backup_dest"; then
 fi
 [ -s "$backup_dest" ] || { echo "backup missing or empty: $backup_dest" >&2; exit 1; }
 
-# Rollback tag for the running image, taken BEFORE the build: the build moves sonder-audiobooks:local, and an
+# 3. Rollback tag for the running image, taken BEFORE the build: the build moves sonder-audiobooks:local, and an
 # image whose only tag was :local is then untagged and garbage-collected, so it can no longer be tagged (#153).
 rollback_tag=""
 old_short=$(image_short "$old_id")
@@ -148,7 +148,7 @@ case ${existing:-} in
     ;;
 esac
 
-# 3. Build.
+# 4. Build.
 echo "building sonder-audiobooks:local at ${short}"
 if ! $docker compose build sonder; then
   echo "build failed; the previous image is untouched" >&2
@@ -156,7 +156,7 @@ if ! $docker compose build sonder; then
 fi
 new_id=$($docker inspect --format '{{.Id}}' sonder-audiobooks:local)
 
-# 4. Markers in the built image (server code and built client, not node_modules).
+# 5. Markers in the built image (server code and built client, not node_modules).
 for m in ${markers[@]+"${markers[@]}"}; do
   if ! $docker run --rm --entrypoint sh "sonder-audiobooks:local" -c "grep -rqsF -- '$m' /app/server /app/dist /app/src" ; then
     echo "marker not found in the built image: $m" >&2
@@ -169,7 +169,7 @@ done
 # 6. Recreate and wait for healthy.
 echo "recreating the sonder container"
 if ! $docker compose up -d sonder; then
-  echo "container recreation failed; the previous image is tagged sonder-audiobooks:${rollback_tag:-local}" >&2
+  echo "container recreation failed; the previous image is tagged sonder-audiobooks:${rollback_tag}" >&2
   exit 1
 fi
 deadline=$(( $(date +%s) + health_timeout ))
@@ -228,7 +228,5 @@ fi
 
 echo "deployed ${short} (image ${new_id:0:19})"
 echo "backup: $backup_dest"
-if [ -n "$rollback_tag" ]; then
-  echo "rollback: docker tag sonder-audiobooks:${rollback_tag} sonder-audiobooks:local && docker compose up -d --no-build sonder"
-fi
+echo "rollback: docker tag sonder-audiobooks:${rollback_tag} sonder-audiobooks:local && docker compose up -d --no-build sonder"
 echo "record the deploy in artifacts/orca/STATE.md (commit, backup, image tag, live-check results)"
