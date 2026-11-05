@@ -1,9 +1,10 @@
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { registerTempDir } from "./register-temp-dir.ts";
 
 const script = path.resolve("scripts/ci-deck.sh");
 
@@ -198,8 +199,9 @@ function cleanEnv() {
   return env;
 }
 
-function fixture() {
+function fixture(t?: TestContext) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-ci-deck-"));
+  if (t) registerTempDir(t, base);
   const repo = path.join(base, "repo");
   const bin = path.join(base, "bin");
   const remote = path.join(base, "remote");
@@ -343,8 +345,8 @@ async function waitForFile(file: string) {
   }
 }
 
-test("an unreachable Deck falls back to a local check of the same commit", () => {
-  const f = fixture();
+test("an unreachable Deck falls back to a local check of the same commit", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second, { STUB_SSH_MODE: "down" });
   assert.equal(out.status, 0, out.output);
   const local = f.localCheckCalls();
@@ -356,8 +358,8 @@ test("an unreachable Deck falls back to a local check of the same commit", () =>
   assert.equal(record.result, "passed");
 });
 
-test("a passing run starts the container with the fixed flags and posts ci/deck", () => {
-  const f = fixture();
+test("a passing run starts the container with the fixed flags and posts ci/deck", (t) => {
+  const f = fixture(t);
   // The commit is not HEAD, which also proves the bundle carries it.
   const out = f.run(f.first);
   assert.equal(out.status, 0, out.output);
@@ -390,8 +392,8 @@ test("a passing run starts the container with the fixed flags and posts ci/deck"
   assert.equal(f.result(f.first).result, "passed");
 });
 
-test("the check runs in a real clone of the bundle at the requested commit", () => {
-  const f = fixture();
+test("the check runs in a real clone of the bundle at the requested commit", (t) => {
+  const f = fixture(t);
   const out = f.run(f.first);
   assert.equal(out.status, 0, out.output);
   const calls = f.checkCalls();
@@ -402,8 +404,8 @@ test("the check runs in a real clone of the bundle at the requested commit", () 
   assert.match(f.read(f.logs.npm), /args=ci /);
 });
 
-test("the report and log are retrieved and only this run's container and directory are removed", () => {
-  const f = fixture();
+test("the report and log are retrieved and only this run's container and directory are removed", (t) => {
+  const f = fixture(t);
   fs.mkdirSync(path.join(f.remote, "runs", "othersha-OTHERRUN"), { recursive: true });
   const out = f.run(f.second);
   assert.equal(out.status, 0, out.output);
@@ -418,8 +420,8 @@ test("the report and log are retrieved and only this run's container and directo
   assert.deepEqual(removals, [`rm -f -t 0 --ignore ${name}`]);
 });
 
-test("a failing check is a failure on the Deck and is never rerun elsewhere", () => {
-  const f = fixture();
+test("a failing check is a failure on the Deck and is never rerun elsewhere", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second, { STUB_NPM_MODE: "fail", STUB_NPM_EXIT: "7" });
   assert.equal(out.status, 7, out.output);
   assert.equal(f.localCheckCalls().length, 0);
@@ -431,15 +433,15 @@ test("a failing check is a failure on the Deck and is never rerun elsewhere", ()
   assert.deepEqual(f.runsLeft(), [], "run directory is removed");
 });
 
-test("a report that says the check failed overrides an exit status of 0", () => {
-  const f = fixture();
+test("a report that says the check failed overrides an exit status of 0", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second, { STUB_NPM_REPORT_OK: "false" });
   assert.equal(out.status, 1, out.output);
   assert.match(f.read(f.logs.gh), /state=failure/);
 });
 
-test("podman failing to start the container is a run that never started", () => {
-  const f = fixture();
+test("podman failing to start the container is a run that never started", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second, { STUB_PODMAN_MODE: "start_fail" });
   assert.equal(out.status, 4, out.output);
   assert.equal(f.result(f.second).result, "container_start_failed");
@@ -447,8 +449,8 @@ test("podman failing to start the container is a run that never started", () => 
   assert.deepEqual(f.runsLeft(), []);
 });
 
-test("a dead remote run fails fast instead of waiting for the cap", () => {
-  const f = fixture();
+test("a dead remote run fails fast instead of waiting for the cap", (t) => {
+  const f = fixture(t);
   const started = Date.now();
   const out = f.run(f.second, { STUB_PODMAN_MODE: "die", SONDER_CI_MAX_WAIT: "300" });
   assert.equal(out.status, 4, out.output);
@@ -459,8 +461,8 @@ test("a dead remote run fails fast instead of waiting for the cap", () => {
   assert.deepEqual(f.runsLeft(), []);
 });
 
-test("three consecutive failed polls count as connectivity loss and stop the run", () => {
-  const f = fixture();
+test("three consecutive failed polls count as connectivity loss and stop the run", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second, { STUB_NPM_MODE: "hang", STUB_SSH_PROBE: "fail", SONDER_CI_MAX_WAIT: "300" });
   assert.equal(out.status, 5, out.output);
   const probes = f.read(f.logs.ssh).split("\n").filter((line) => line.includes(" -- probe "));
@@ -471,15 +473,15 @@ test("three consecutive failed polls count as connectivity loss and stop the run
   assert.match(f.read(f.logs.podman), /^rm -f -t 0 --ignore sonder-ci-run-/m);
 });
 
-test("the wait stops at the configured cap", () => {
-  const f = fixture();
+test("the wait stops at the configured cap", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second, { STUB_NPM_MODE: "hang", SONDER_CI_MAX_WAIT: "1" });
   assert.equal(out.status, 124, out.output);
   assert.deepEqual(f.runsLeft(), []);
 });
 
-test("a stalled bundle upload is cut at the transfer cap and counts as connectivity loss", () => {
-  const f = fixture();
+test("a stalled bundle upload is cut at the transfer cap and counts as connectivity loss", (t) => {
+  const f = fixture(t);
   const started = Date.now();
   const out = f.run(f.second, { STUB_SCP_MODE: "hang", SONDER_CI_TRANSFER_TIMEOUT: "1" });
   assert.equal(out.status, 5, out.output);
@@ -489,7 +491,7 @@ test("a stalled bundle upload is cut at the transfer cap and counts as connectiv
 });
 
 test("a missing podman stops the run before anything is sent", (t) => {
-  const f = fixture();
+  const f = fixture(t);
   fs.renameSync(path.join(f.bin, "podman"), path.join(f.bin, "podman.off"));
   const real = spawnSync("bash", ["-c", "command -v podman"], { env: { ...process.env, PATH: `${f.bin}:${process.env.PATH}` } });
   if (real.status === 0) return t.skip("a real podman on this machine's PATH cannot be hidden");
@@ -500,8 +502,8 @@ test("a missing podman stops the run before anything is sent", (t) => {
   assert.match(f.read(f.logs.gh), /state=failure/);
 });
 
-test("a missing image is pulled before the run", () => {
-  const f = fixture();
+test("a missing image is pulled before the run", (t) => {
+  const f = fixture(t);
   fs.rmSync(path.join(f.podmanState, "image"));
   const out = f.run(f.second);
   assert.equal(out.status, 0, out.output);
@@ -509,8 +511,8 @@ test("a missing image is pulled before the run", () => {
   assert.equal(f.checkCalls().length, 1);
 });
 
-test("an image that is missing and cannot be pulled stops the run", () => {
-  const f = fixture();
+test("an image that is missing and cannot be pulled stops the run", (t) => {
+  const f = fixture(t);
   fs.rmSync(path.join(f.podmanState, "image"));
   const out = f.run(f.second, { STUB_PULL: "fail" });
   assert.equal(out.status, 6, out.output);
@@ -519,8 +521,8 @@ test("an image that is missing and cannot be pulled stops the run", () => {
   assert.equal(f.checkCalls().length, 0);
 });
 
-test("free disk below the threshold stops the run", () => {
-  const f = fixture();
+test("free disk below the threshold stops the run", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second, { SONDER_CI_MIN_DISK_GB: "999999999" });
   assert.equal(out.status, 7, out.output);
   assert.match(out.output, /less than 999999999 GB free/);
@@ -528,8 +530,8 @@ test("free disk below the threshold stops the run", () => {
   assert.equal(f.runCalls().length, 0);
 });
 
-test("the pass path reads the stubbed disk, not the host's (hermetic)", () => {
-  const f = fixture();
+test("the pass path reads the stubbed disk, not the host's (hermetic)", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second);
   assert.equal(out.status, 0, out.output);
   // The preflight recorded its df reading in the run directory. With the stub default it
@@ -540,16 +542,16 @@ test("the pass path reads the stubbed disk, not the host's (hermetic)", () => {
   assert.doesNotMatch(preflight, /disk_check=fail/);
 });
 
-test("STUB_DF_FREE_GB overrides the stubbed free disk for the pass path", () => {
-  const f = fixture();
+test("STUB_DF_FREE_GB overrides the stubbed free disk for the pass path", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second, { STUB_DF_FREE_GB: "12" });
   assert.equal(out.status, 0, out.output);
   const preflight = fs.readFileSync(path.join(f.runDir(f.second), "deck-preflight.txt"), "utf8");
   assert.match(preflight, /^free_disk_gb=12 min_disk_gb=10$/m);
 });
 
-test("a low local disk prints a non-fatal warning naming the stale families and their size", () => {
-  const f = fixture();
+test("a low local disk prints a non-fatal warning naming the stale families and their size", (t) => {
+  const f = fixture(t);
   // A df shim that reports 3 GB free (3145728 KB), so the local warning fires hermetically.
   const dfLow = path.join(f.base, "df-low");
   fs.writeFileSync(
@@ -579,15 +581,15 @@ test("a low local disk prints a non-fatal warning naming the stale families and 
   assert.match(out.output, /\[[\d.]+ (KB|MB|GB) total\]/);
 });
 
-test("a healthy local disk prints no warning", () => {
-  const f = fixture();
+test("a healthy local disk prints no warning", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second, { STUB_SSH_MODE: "down" });
   assert.equal(out.status, 0, out.output);
   assert.doesNotMatch(out.output, /low disk: \/ has/);
 });
 
-test("a junk SONDER_LOCAL_MIN_FREE_GB is ignored and leaves the run unchanged", () => {
-  const f = fixture();
+test("a junk SONDER_LOCAL_MIN_FREE_GB is ignored and leaves the run unchanged", (t) => {
+  const f = fixture(t);
   // A non-numeric threshold must not abort the script (an unbound-variable error in the
   // [[ free_gb -lt min_gb ]] comparison used to exit 1 before any CI step ran).
   const out = f.run(f.second, { STUB_SSH_MODE: "down", SONDER_LOCAL_MIN_FREE_GB: "abc" });
@@ -601,8 +603,7 @@ test("a junk SONDER_LOCAL_MIN_FREE_GB is ignored and leaves the run unchanged", 
 });
 
 test("a running CI container refuses a second run before starting another container", (t) => {
-  const f = fixture();
-  t.after(() => fs.rmSync(f.base, { recursive: true, force: true }));
+  const f = fixture(t);
   fs.writeFileSync(path.join(f.podmanState, "running"), "sonder-ci-run-abc1234-ACTIVE00\n");
   const out = f.run(f.second);
   assert.equal(f.runCalls().length, 0, out.output);
@@ -613,8 +614,8 @@ test("a running CI container refuses a second run before starting another contai
   assert.equal(f.read(f.logs.gh), "", "refusal must not overwrite the active run's status");
 });
 
-test("a local runner in preflight refuses a concurrent runner and releases its lock afterward", { timeout: 20_000 }, async () => {
-  const f = fixture();
+test("a local runner in preflight refuses a concurrent runner and releases its lock afterward", { timeout: 20_000 }, async (t) => {
+  const f = fixture(t);
   const hold = path.join(f.base, "preflight-hold");
   fs.mkdirSync(hold);
   const first = f.start(f.second, { STUB_PREFLIGHT_HOLD: hold });
@@ -631,12 +632,10 @@ test("a local runner in preflight refuses a concurrent runner and releases its l
   const completed = await first.done;
   assert.equal(completed.status, 0, completed.output);
   assert.equal(f.run(f.second).status, 0, "a later run can acquire the released lock");
-  fs.rmSync(f.base, { recursive: true, force: true });
 });
 
 test("an active CI unit blocks a new container before its own container is visible", (t) => {
-  const f = fixture();
-  t.after(() => fs.rmSync(f.base, { recursive: true, force: true }));
+  const f = fixture(t);
   fs.writeFileSync(path.join(f.podmanState, "ci-units"), "sonder-ci-run-abc1234-STARTING.service loaded active running\n");
   const out = f.run(f.second);
   assert.equal(out.status, 4, out.output);
@@ -647,8 +646,8 @@ test("an active CI unit blocks a new container before its own container is visib
   assert.equal(f.read(f.logs.gh), "");
 });
 
-test("simultaneous starts from separate coordinators admit only one container", { timeout: 25_000 }, async () => {
-  const f = fixture();
+test("simultaneous starts from separate coordinators admit only one container", { timeout: 25_000 }, async (t) => {
+  const f = fixture(t);
   const hold = path.join(f.base, "lock-hold");
   fs.mkdirSync(hold);
   // First coordinator acquires the remote lock and holds it; the second then
@@ -678,11 +677,10 @@ test("simultaneous starts from separate coordinators admit only one container", 
   assert.equal(gh.split("state=pending").length - 1, 1, "only the admitted run may publish ci/deck status");
   assert.match(gh, /state=success/);
   assert.doesNotMatch(gh, /state=failure/, "a refused concurrent start must not publish ci/deck failure");
-  fs.rmSync(f.base, { recursive: true, force: true });
 });
 
-test("a stale container is reported and left alone", () => {
-  const f = fixture();
+test("a stale container is reported and left alone", (t) => {
+  const f = fixture(t);
   fs.writeFileSync(path.join(f.podmanState, "containers"), "sonder-ci-run-abc1234-GONEGONE\nunrelated-container\n");
   const out = f.run(f.second);
   assert.equal(out.status, 0, out.output);
@@ -692,8 +690,8 @@ test("a stale container is reported and left alone", () => {
   assert.doesNotMatch(f.read(f.logs.podman), /^(stop|kill) /m);
 });
 
-test("a container with a recent run directory is not stale", () => {
-  const f = fixture();
+test("a container with a recent run directory is not stale", (t) => {
+  const f = fixture(t);
   fs.mkdirSync(path.join(f.remote, "runs", "abc1234-LIVELIVE"), { recursive: true });
   fs.writeFileSync(path.join(f.podmanState, "containers"), "sonder-ci-run-abc1234-LIVELIVE\n");
   const out = f.run(f.second);
@@ -701,8 +699,8 @@ test("a container with a recent run directory is not stale", () => {
   assert.doesNotMatch(out.output, /stale_container=/);
 });
 
-test("an image that does not match the lockfile's Playwright stops the run", () => {
-  const f = fixture();
+test("an image that does not match the lockfile's Playwright stops the run", (t) => {
+  const f = fixture(t);
   fs.writeFileSync(
     path.join(f.repo, "package-lock.json"),
     JSON.stringify({ packages: { "node_modules/playwright-core": { version: "1.99.0" } } }),
@@ -715,8 +713,8 @@ test("an image that does not match the lockfile's Playwright stops the run", () 
   assert.equal(f.runCalls().length, 0);
 });
 
-test("an image that matches the lockfile's Playwright proceeds", () => {
-  const f = fixture();
+test("an image that matches the lockfile's Playwright proceeds", (t) => {
+  const f = fixture(t);
   fs.writeFileSync(
     path.join(f.repo, "package-lock.json"),
     JSON.stringify({ packages: { "node_modules/playwright-core": { version: "1.64.1" } } }),
@@ -728,16 +726,16 @@ test("an image that matches the lockfile's Playwright proceeds", () => {
   assert.equal(f.runCalls().length, 1);
 });
 
-test("a bad commit ref and a bad known-failures path are rejected", () => {
-  const f = fixture();
+test("a bad commit ref and a bad known-failures path are rejected", (t) => {
+  const f = fixture(t);
   assert.equal(f.run("no-such-ref").status, 1);
   const out = f.run(f.second, { SONDER_CI_KNOWN_FAILURES: "../../etc/passwd" });
   assert.equal(out.status, 2, out.output);
   assert.equal(f.runCalls().length, 0);
 });
 
-test("a Deck without user lingering stops the run before anything is sent", () => {
-  const f = fixture();
+test("a Deck without user lingering stops the run before anything is sent", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second, { STUB_LINGER: "no" });
   assert.equal(out.status, 3, out.output);
   assert.equal(f.result(f.second).result, "host_tool_missing");
@@ -745,15 +743,15 @@ test("a Deck without user lingering stops the run before anything is sent", () =
   assert.equal(f.checkCalls().length, 0);
 });
 
-test("a unit that exits at once keeps its log and is reported as a container start failure", () => {
-  const f = fixture();
+test("a unit that exits at once keeps its log and is reported as a container start failure", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second, { STUB_PODMAN_MODE: "start_fail" });
   assert.equal(out.status, 4, out.output);
   assert.equal(f.result(f.second).result, "container_start_failed");
 });
 
-test("a host or remote base that could be read as an option is refused", () => {
-  const f = fixture();
+test("a host or remote base that could be read as an option is refused", (t) => {
+  const f = fixture(t);
   const refused: Record<string, string>[] = [{ SONDER_CI_HOST: "-oProxyCommand=x" }, { SONDER_CI_IMAGE: "--privileged" }, { SONDER_CI_REMOTE_BASE: "relative/dir" }];
   for (const env of refused) {
     const out = f.run(f.second, env);
@@ -761,8 +759,8 @@ test("a host or remote base that could be read as an option is refused", () => {
   }
 });
 
-test("a running Android emulator stops the run as a host failure before anything is sent", () => {
-  const f = fixture();
+test("a running Android emulator stops the run as a host failure before anything is sent", (t) => {
+  const f = fixture(t);
   fs.writeFileSync(path.join(f.podmanState, "running"), "sonder-emu-android34\n");
   const out = f.run(f.second);
   assert.equal(out.status, 3, out.output);
@@ -772,8 +770,8 @@ test("a running Android emulator stops the run as a host failure before anything
   assert.match(f.read(f.logs.gh), /emulator running/);
 });
 
-test("without SONDER_CI_DISPATCH the finished check is not recorded in history", () => {
-  const f = fixture();
+test("without SONDER_CI_DISPATCH the finished check is not recorded in history", (t) => {
+  const f = fixture(t);
   const historyLog = path.join(f.base, "history.log");
   const historyStub = path.join(f.base, "history-stub.mjs");
   fs.writeFileSync(
@@ -785,8 +783,8 @@ test("without SONDER_CI_DISPATCH the finished check is not recorded in history",
   assert.equal(fs.existsSync(historyLog), false);
 });
 
-test("SONDER_CI_DISPATCH records ci:deck on the named dispatch", () => {
-  const f = fixture();
+test("SONDER_CI_DISPATCH records ci:deck on the named dispatch", (t) => {
+  const f = fixture(t);
   const historyLog = path.join(f.base, "history.log");
   const historyStub = path.join(f.base, "history-stub.mjs");
   fs.writeFileSync(
@@ -804,8 +802,8 @@ test("SONDER_CI_DISPATCH records ci:deck on the named dispatch", () => {
   assert.match(out.output, /history: recorded ci:deck on ctx_worker \(pass\)/);
 });
 
-test("a failed automatic history record-check does not change the ci-deck exit code", () => {
-  const f = fixture();
+test("a failed automatic history record-check does not change the ci-deck exit code", (t) => {
+  const f = fixture(t);
   const historyStub = path.join(f.base, "history-stub.mjs");
   fs.writeFileSync(
     historyStub,
@@ -820,8 +818,8 @@ test("a failed automatic history record-check does not change the ci-deck exit c
   assert.match(out.output, /warning: automatic history record-check failed/);
 });
 
-test("SONDER_CI_DISPATCH maps passed_with_known_failures from the check report", () => {
-  const f = fixture();
+test("SONDER_CI_DISPATCH maps passed_with_known_failures from the check report", (t) => {
+  const f = fixture(t);
   const historyLog = path.join(f.base, "history.log");
   const historyStub = path.join(f.base, "history-stub.mjs");
   fs.writeFileSync(

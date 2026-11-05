@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -141,7 +141,7 @@ function cleanEnv() {
 // The pinned SDK packages, read from the script so the markers match what it checks.
 const sdkPackages = [...fs.readFileSync(script, "utf8").matchAll(/^  "(\S+) \S+ https:\S+ ([0-9a-f]{40})"$/gm)].map((m) => ({ dir: m[1], sha: m[2] }));
 
-function fixture({ unpacked = true } = {}) {
+function fixture(t?: TestContext, { unpacked = true }: { unpacked?: boolean } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-emu-deck-"));
   const bin = path.join(base, "bin");
   const remote = path.join(base, "remote");
@@ -207,12 +207,16 @@ function fixture({ unpacked = true } = {}) {
     }
     fs.writeFileSync(path.join(state, "containers"), "");
   };
-  return { base, remote, state, kvm, run, read, containers, runCalls, stopUnits };
+  const cleanup = () => {
+    stopUnits();
+    fs.rmSync(base, { recursive: true, force: true });
+  };
+  if (t) t.after(cleanup);
+  return { base, remote, state, kvm, run, read, containers, runCalls, stopUnits, cleanup };
 }
 
 test("start boots sonder-emu-<name> as a user unit with KVM, headless, and reports the boot time", (t) => {
-  const f = fixture();
-  t.after(f.stopUnits);
+  const f = fixture(t);
   const out = f.run(["start"]);
   assert.equal(out.status, 0, out.output);
   assert.match(out.stdout, /^boot_seconds=\d+$/m);
@@ -238,8 +242,7 @@ test("start refuses while a CI container or a CI unit is active, before anything
     (state: string) => fs.writeFileSync(path.join(state, "containers"), "sonder-ci-run-abc1234-XYZ\n"),
     (state: string) => fs.writeFileSync(path.join(state, "ci-units"), "sonder-ci-run-abc1234-XYZ.service loaded active running\n"),
   ]) {
-    const f = fixture();
-    t.after(f.stopUnits);
+    const f = fixture(t);
     setup(f.state);
     const out = f.run(["start"]);
     assert.equal(out.status, 8, out.output);
@@ -250,8 +253,7 @@ test("start refuses while a CI container or a CI unit is active, before anything
 });
 
 test("start re-checks for a CI run at launch after preflight, and maps exit 18 to 8", (t) => {
-  const f = fixture();
-  t.after(f.stopUnits);
+  const f = fixture(t);
   const out = f.run(["start"], { STUB_CI_AFTER_PREFLIGHT: "1" });
   assert.equal(out.status, 8, out.output);
   assert.match(out.output, /a CI run is active/);
@@ -260,8 +262,7 @@ test("start re-checks for a CI run at launch after preflight, and maps exit 18 t
 });
 
 test("stop removes only this container and stops only this unit", (t) => {
-  const f = fixture();
-  t.after(f.stopUnits);
+  const f = fixture(t);
   assert.equal(f.run(["start"]).status, 0);
   fs.appendFileSync(path.join(f.state, "containers"), "sonder-ci-run-abc1234-XYZ\nsomeone-else\n");
   const out = f.run(["stop"]);
@@ -275,8 +276,7 @@ test("stop removes only this container and stops only this unit", (t) => {
 });
 
 test("SONDER_EMU_NAME names the container, the unit and the AVD", (t) => {
-  const f = fixture();
-  t.after(f.stopUnits);
+  const f = fixture(t);
   const out = f.run(["start"], { SONDER_EMU_NAME: "pixel" });
   assert.equal(out.status, 0, out.output);
   assert.match(f.runCalls()[0], /--name sonder-emu-pixel .* -avd pixel /);
@@ -284,16 +284,14 @@ test("SONDER_EMU_NAME names the container, the unit and the AVD", (t) => {
 });
 
 test("a unit that dies before boot fails the start and is cleaned up", (t) => {
-  const f = fixture();
-  t.after(f.stopUnits);
+  const f = fixture(t);
   const out = f.run(["start"], { STUB_RUN: "die" });
   assert.equal(out.status, 9, out.output);
   assert.match(out.output, /died before it booted/);
 });
 
 test("an emulator that never finishes booting is stopped at the cap", (t) => {
-  const f = fixture();
-  t.after(f.stopUnits);
+  const f = fixture(t);
   const out = f.run(["start"], { STUB_RUN: "noboot", SONDER_EMU_BOOT_TIMEOUT: "1" });
   assert.equal(out.status, 9, out.output);
   assert.match(out.output, /did not boot within 1s/);
@@ -301,8 +299,7 @@ test("an emulator that never finishes booting is stopped at the cap", (t) => {
 });
 
 test("lock files left by a removed container are cleared before the next boot", (t) => {
-  const f = fixture();
-  t.after(f.stopUnits);
+  const f = fixture(t);
   const avd = path.join(f.remote, "avd", "android34.avd");
   fs.mkdirSync(avd, { recursive: true });
   fs.writeFileSync(path.join(avd, "hardware-qemu.ini.lock"), "");
@@ -311,8 +308,7 @@ test("lock files left by a removed container are cleared before the next boot", 
 });
 
 test("a download that does not match its pinned checksum stops the start and is deleted", (t) => {
-  const f = fixture({ unpacked: false });
-  t.after(f.stopUnits);
+  const f = fixture(t, { unpacked: false });
   const out = f.run(["start"]);
   assert.equal(out.status, 10, out.output);
   assert.match(out.output, /checksum=fail emulator-linux_x64-16428233\.zip/);
@@ -321,8 +317,7 @@ test("a download that does not match its pinned checksum stops the start and is 
 });
 
 test("missing lingering or an unusable /dev/kvm stops the start", (t) => {
-  const f = fixture();
-  t.after(f.stopUnits);
+  const f = fixture(t);
   let out = f.run(["start"], { STUB_LINGER: "no" });
   assert.equal(out.status, 3, out.output);
   assert.match(out.output, /linger_check=fail/);
@@ -334,15 +329,13 @@ test("missing lingering or an unusable /dev/kvm stops the start", (t) => {
 });
 
 test("free disk below the threshold stops the start", (t) => {
-  const f = fixture();
-  t.after(f.stopUnits);
+  const f = fixture(t);
   const out = f.run(["start"], { SONDER_EMU_MIN_DISK_GB: "100000000" });
   assert.equal(out.status, 7, out.output);
 });
 
 test("the pass path reads the stubbed disk, not the host's (hermetic)", (t) => {
-  const f = fixture();
-  t.after(f.stopUnits);
+  const f = fixture(t);
   const out = f.run(["start"]);
   assert.equal(out.status, 0, out.output);
   // The preflight prints its df reading to stderr. With the stub default it must be exactly
@@ -352,21 +345,20 @@ test("the pass path reads the stubbed disk, not the host's (hermetic)", (t) => {
 });
 
 test("STUB_DF_FREE_GB overrides the stubbed free disk for the pass path", (t) => {
-  const f = fixture();
-  t.after(f.stopUnits);
+  const f = fixture(t);
   const out = f.run(["start"], { STUB_DF_FREE_GB: "12" });
   assert.equal(out.status, 0, out.output);
   assert.match(out.output, /^free_disk_gb=12 min_disk_gb=10$/m);
 });
 
-test("an unreachable Deck is an SSH failure", () => {
-  const f = fixture();
+test("an unreachable Deck is an SSH failure", (t) => {
+  const f = fixture(t);
   const out = f.run(["start"], { STUB_SSH_MODE: "down" });
   assert.equal(out.status, 5, out.output);
 });
 
-test("status reports a stopped emulator and the disk the base directory uses", () => {
-  const f = fixture();
+test("status reports a stopped emulator and the disk the base directory uses", (t) => {
+  const f = fixture(t);
   const out = f.run(["status"]);
   assert.equal(out.status, 0, out.output);
   assert.match(out.stdout, /^running=no$/m);
@@ -375,8 +367,7 @@ test("status reports a stopped emulator and the disk the base directory uses", (
 });
 
 test("install-firefox refuses an APK that does not match the pinned SHA-256", (t) => {
-  const f = fixture();
-  t.after(f.stopUnits);
+  const f = fixture(t);
   assert.equal(f.run(["start"]).status, 0);
   const out = f.run(["install-firefox"]);
   assert.equal(out.status, 10, out.output);
@@ -385,8 +376,7 @@ test("install-firefox refuses an APK that does not match the pinned SHA-256", (t
 });
 
 test("a failed Firefox download removes the .part file", (t) => {
-  const f = fixture();
-  t.after(f.stopUnits);
+  const f = fixture(t);
   assert.equal(f.run(["start"]).status, 0);
   const out = f.run(["install-firefox"], { STUB_CURL_FAIL: "1" });
   assert.equal(out.status, 10, out.output);
@@ -395,7 +385,7 @@ test("a failed Firefox download removes the .part file", (t) => {
   assert.equal(downloads.some((name) => name.endsWith(".part")), false, downloads.join(","));
 });
 
-test("preflight and install-firefox use SETUP_TIMEOUT rather than CALL_TIMEOUT", () => {
+test("preflight and install-firefox use SETUP_TIMEOUT rather than CALL_TIMEOUT", (t) => {
   const source = fs.readFileSync(script, "utf8");
   assert.match(source, /REMOTE_TIMEOUT=\$SETUP_TIMEOUT remote_step preflight/);
   assert.match(source, /REMOTE_TIMEOUT=\$SETUP_TIMEOUT remote_step install_firefox/);
@@ -403,8 +393,7 @@ test("preflight and install-firefox use SETUP_TIMEOUT rather than CALL_TIMEOUT",
 });
 
 test("install-firefox installs a verified APK once and skips a version already on the device", (t) => {
-  const f = fixture();
-  t.after(f.stopUnits);
+  const f = fixture(t);
   assert.equal(f.run(["start"]).status, 0);
   // Stands in for a download whose checksum matches; the real comparison is covered above.
   const shabin = path.join(f.base, "shabin");
@@ -422,8 +411,7 @@ test("install-firefox installs a verified APK once and skips a version already o
 });
 
 test("install-apk copies a local APK to the Deck and installs it with the emulator's adb", (t) => {
-  const f = fixture();
-  t.after(f.stopUnits);
+  const f = fixture(t);
   assert.equal(f.run(["start"]).status, 0);
   const apk = path.join(f.base, "app-debug.apk");
   fs.writeFileSync(apk, "apk");
@@ -435,16 +423,15 @@ test("install-apk copies a local APK to the Deck and installs it with the emulat
 });
 
 test("adb passes its arguments to the emulator's adb unchanged", (t) => {
-  const f = fixture();
-  t.after(f.stopUnits);
+  const f = fixture(t);
   assert.equal(f.run(["start"]).status, 0);
   const out = f.run(["adb", "reverse", "tcp:4174", "tcp:4174"]);
   assert.equal(out.status, 0, out.output);
   assert.match(f.read("adb"), /^reverse tcp:4174 tcp:4174$/m);
 });
 
-test("bad arguments and settings are usage errors", () => {
-  const f = fixture();
+test("bad arguments and settings are usage errors", (t) => {
+  const f = fixture(t);
   assert.equal(f.run([]).status, 2);
   assert.equal(f.run(["reboot"]).status, 2);
   assert.equal(f.run(["start", "extra"]).status, 2);
