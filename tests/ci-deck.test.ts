@@ -161,16 +161,25 @@ echo "$*" >>"$STUB_PODMAN_LOG.systemd"
 [[ $1 == --user ]] && shift
 case "$1" in
   show) cat "$STUB_PODMAN_STATE/unit-\${@: -1}.pid" 2>/dev/null ;;
-  stop) pid=$(cat "$STUB_PODMAN_STATE/unit-$2.pid" 2>/dev/null) && kill -TERM "$pid" 2>/dev/null; exit 0 ;;
+  stop)
+    file="$STUB_PODMAN_STATE/unit-\$2.pid"
+    pid=\$(cat "\$file" 2>/dev/null) && kill -TERM "\$pid" 2>/dev/null
+    rm -f "\$file"
+    exit 0
+    ;;
   list-units)
     if [[ $* == *sonder-ci-run-* ]]; then
       cat "$STUB_PODMAN_STATE/ci-units" 2>/dev/null
       for file in "$STUB_PODMAN_STATE"/unit-sonder-ci-run-*.pid; do
-        [[ -f $file ]] || continue
-        pid=$(cat "$file")
-        kill -0 "$pid" 2>/dev/null || continue
+        [[ -f \$file ]] || continue
+        pid=\$(cat "\$file")
+        # Drop stale pid files so a recycled PID cannot look like a busy unit.
+        if ! kill -0 "\$pid" 2>/dev/null; then
+          rm -f "\$file"
+          continue
+        fi
         name=\${file##*/unit-}; name=\${name%.pid}
-        echo "$name.service loaded active running"
+        echo "\$name.service loaded active running"
       done
     fi ;;
 esac
