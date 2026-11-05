@@ -51,8 +51,8 @@ Known host failures (issue #37) are listed in `tests/known-failures.wsl-host.jso
 
 Agents start checks with `npm run ci:ssh -- <sha>`. Killing the `npm` or `sh -c` wrapper does not stop `scripts/ci-ssh.sh`; the remote check keeps running until something sends TERM to the bash process.
 
-- Each run writes its PID and session id to `artifacts/ci/<sha>/<run-id>/ci-ssh.pid` and `ci-ssh.pgid` (the runner re-execs under `setsid` first).
-- Stop the run with `npm run ci:stop -- <sha>` (or `bash scripts/ci-stop.sh <path-to/ci-ssh.pid>`). That sends TERM to the recorded PID; when the recorded pgid matches that PID, it also signals that session so in-flight SSH calls can unwind, without touching the agent shell's process group.
+- Each run writes its PID to `artifacts/ci/<sha>/<run-id>/ci-ssh.pid` and prints a stop line at startup.
+- Stop the run with `npm run ci:stop -- <sha>` (or `bash scripts/ci-stop.sh <path-to/ci-ssh.pid>`). That sends TERM to the recorded PID and to its direct child processes (for example a blocking `ssh` poll), which lets the existing `on_signal` / `cleanup_remote` path run.
 - The `ci:ssh` npm script uses `exec`, so a signal delivered to the `sh -c` child also reaches `ci-ssh.sh` when that PID is what you kill.
 
 ## Running a check on the host

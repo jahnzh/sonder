@@ -19,19 +19,18 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 ARG=$1
 WAIT_CAP=${SONDER_CI_STOP_WAIT:-60}
 
+process_alive() {
+  local pid=$1 state
+  kill -0 "$pid" 2>/dev/null || return 1
+  state=$(awk '{ sub(/^.*\) /, ""); print substr($0, 1, 1) }' "/proc/$pid/stat" 2>/dev/null) || return 1
+  [[ -n $state && $state != Z ]]
+}
+
 stop_runner() {
-  local pid=$1 pid_file=$2 pgid_file pgid live_pgid
+  local pid=$1
   kill -TERM "$pid" 2>/dev/null || return 1
-  pgid_file=${pid_file%.pid}.pgid
-  [[ -f $pgid_file ]] || return 0
-  pgid=$(tr -d '[:space:]' <"$pgid_file")
-  [[ $pgid =~ ^[0-9]+$ ]] || return 0
-  live_pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')
-  [[ $live_pgid =~ ^[0-9]+$ ]] || return 0
-  # Only the session id ci-ssh recorded (and still runs in), never the launcher's group from ps(1).
-  if [[ $pgid != "$pid" || $pgid != "$live_pgid" ]]; then
-    echo "[ci-stop] Refusing to signal process group ${pgid} (not ci-ssh session leader ${pid})" >&2
-    return 0
+  if command -v pkill >/dev/null 2>&1; then
+    pkill -TERM -P "$pid" 2>/dev/null || true
   fi
   return 0
 }
@@ -85,18 +84,18 @@ if ! tr '\0' ' ' </proc/"$PID"/cmdline 2>/dev/null | grep -qF 'ci-ssh.sh'; then
   exit 1
 fi
 
-stop_runner "$PID" "$PID_FILE" || {
+stop_runner "$PID" || {
   echo "[ci-stop] Could not send TERM to ${PID}" >&2
   exit 1
 }
 
 deadline=$((SECONDS + WAIT_CAP))
-while kill -0 "$PID" 2>/dev/null; do
+while process_alive "$PID"; do
   if (( SECONDS >= deadline )); then
     echo "[ci-stop] Timed out waiting for ci-ssh (${PID}) to exit after ${WAIT_CAP}s" >&2
     exit 124
   fi
-  sleep 0.2
+  sleep 0.2 & wait $!
 done
 
 exit 0

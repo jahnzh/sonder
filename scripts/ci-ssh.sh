@@ -72,7 +72,6 @@ RUN_ID="sonder-ci-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 LOCAL_REPORT_DIR="$ARTIFACT_ROOT/${RUN_ID}"
 mkdir -p "$LOCAL_REPORT_DIR"
 echo $$ >"$LOCAL_REPORT_DIR/ci-ssh.pid"
-echo $(ps -o pgid= -p $$ | tr -d ' ') >"$LOCAL_REPORT_DIR/ci-ssh.pgid"
 
 REMOTE_RUN_DIR=""
 BUNDLE_PATH=""
@@ -297,8 +296,7 @@ remove_bundle() {
 }
 
 remove_pid_file() {
-  [[ -n ${LOCAL_REPORT_DIR:-} ]] || return 0
-  rm -f "$LOCAL_REPORT_DIR/ci-ssh.pid" "$LOCAL_REPORT_DIR/ci-ssh.pgid"
+  [[ -n ${LOCAL_REPORT_DIR:-} && -f $LOCAL_REPORT_DIR/ci-ssh.pid ]] && rm -f "$LOCAL_REPORT_DIR/ci-ssh.pid"
   return 0
 }
 
@@ -377,7 +375,7 @@ wait_for_remote() {
       WAIT_DETAIL="no result after ${MAX_WAIT}s"
       return
     fi
-    sleep "$POLL_INTERVAL"
+    sleep "$POLL_INTERVAL" & wait $!
   done
 }
 

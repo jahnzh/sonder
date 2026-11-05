@@ -18,6 +18,10 @@ shift
 echo "$*" >>"$STUB_SSH_LOG"
 [[ \${STUB_SSH_MODE:-local} == down ]] && exit 255
 if [[ $* == *" -- probe "* && \${STUB_SSH_PROBE:-} == fail ]]; then cat >/dev/null; exit 255; fi
+if [[ $* == *" -- probe "* && \${STUB_SSH_PROBE:-} == block ]]; then
+  trap 'exit 143' TERM
+  exec sleep 300
+fi
 if [[ $* == *" -- loopback_probe "* && \${STUB_LOOPBACK:-} == hang ]]; then
   cat >/dev/null
   echo "loopback_probe rc=124 elapsed_ms=4000"
@@ -195,8 +199,9 @@ function ciStopHangEnv(f: ReturnType<typeof fixture>) {
     STUB_DPKG_LOG: f.logs.dpkg,
     STUB_BROWSER_CACHE: f.browserCache,
     STUB_NPM_MODE: "hang",
+    STUB_SSH_PROBE: "block",
     SONDER_CI_MAX_WAIT: "300",
-    SONDER_CI_STOP_WAIT: "60",
+    SONDER_CI_STOP_WAIT: "15",
   };
 }
 
@@ -206,7 +211,7 @@ test("ci-stop stops a hung ci-ssh run and cleans up the remote run dir", async (
   const f = fixture(t);
   const env = ciStopHangEnv(f);
 
-  const child = spawn("bash", [path.join(f.repo, "scripts", "ci-ssh.sh"), f.second], {
+  const child = spawn("/bin/sh", ["-c", `exec bash scripts/ci-ssh.sh ${f.second}`], {
     cwd: f.repo,
     env,
     stdio: "ignore",
@@ -246,13 +251,15 @@ test("ci-stop stops a hung ci-ssh run and cleans up the remote run dir", async (
   const recordedPid = Number.parseInt(fs.readFileSync(pidFile, "utf8"), 10);
   assert.equal(recordedPid, child.pid, "ci-ssh.pid matches the wrapper bash process");
 
+  const stopStarted = Date.now();
   const stop = spawnSync("bash", [path.join(f.repo, "scripts", "ci-stop.sh"), f.second], {
     cwd: f.repo,
     encoding: "utf8",
-    timeout: 120_000,
+    timeout: 30_000,
     env,
   });
   assert.equal(stop.status, 0, stop.stdout + stop.stderr);
+  assert.ok(Date.now() - stopStarted < 10_000, "ci-stop finished within 10s");
 
   const waitDeadline = Date.now() + 15_000;
   while (child.exitCode === null && Date.now() < waitDeadline) {
@@ -273,7 +280,7 @@ test("ci-stop stops a hung ci-ssh run and cleans up the remote run dir", async (
 
 test("ci-stop does not kill a sibling in the launcher shell process group", async (t) => {
   const f = fixture(t);
-  const env = ciStopHangEnv(f);
+  const env = { ...ciStopHangEnv(f), STUB_SSH_PROBE: "" };
   const sleeperPidFile = path.join(f.base, "sleeper.pid");
   const launcher = spawn(
     "bash",
@@ -320,7 +327,7 @@ test("ci-stop does not kill a sibling in the launcher shell process group", asyn
   const stop = spawnSync("bash", [path.join(f.repo, "scripts", "ci-stop.sh"), f.second], {
     cwd: f.repo,
     encoding: "utf8",
-    timeout: 120_000,
+    timeout: 30_000,
     env,
   });
   assert.equal(stop.status, 0, stop.stdout + stop.stderr);
