@@ -607,6 +607,14 @@ export async function removeSavedHardcoverSeries(
         ),
       )
       .run();
+    db.delete(s.userSeriesSeenWorks)
+      .where(
+        and(
+          eq(s.userSeriesSeenWorks.userId, userId),
+          eq(s.userSeriesSeenWorks.seriesId, seriesId),
+        ),
+      )
+      .run();
     db.delete(s.userSavedSeries)
       .where(
         and(

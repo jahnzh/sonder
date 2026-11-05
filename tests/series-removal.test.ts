@@ -182,6 +182,23 @@ test("removing only the saved series leaves works, downloads and audio intact", 
     })
     .run();
   db.insert(schema.userAcquisitions).values({ userId: 1, acquisitionId }).run();
+  db.insert(schema.seriesAcquisitionJobs)
+    .values({
+      id: randomUUID(),
+      userId: 1,
+      seriesId: 41,
+      bookId: 302,
+      workId,
+      kind: "audio",
+      status: "pending",
+      error: null,
+      updatedAt: Date.now(),
+    })
+    .run();
+  assert.ok(
+    db.select().from(schema.userSeriesSeenWorks).all().length > 0,
+    "saved series should have seen-work rows before removal",
+  );
   const libraryBefore = sqlite
     .prepare("SELECT book_id FROM user_library WHERE user_id=1")
     .all() as { book_id: string }[];
@@ -193,6 +210,14 @@ test("removing only the saved series leaves works, downloads and audio intact", 
     payload: {},
   });
   assert.equal(removed.statusCode, 200, removed.body);
+  assert.equal(
+    db.select().from(schema.userSeriesSeenWorks).all().length,
+    0,
+  );
+  assert.equal(
+    db.select().from(schema.seriesAcquisitionJobs).all().length,
+    0,
+  );
   assert.deepEqual((await app.inject({ url: "/api/series", cookies: { sonder_session: cookie } })).json(), []);
   for (const row of libraryBefore) {
     assert.ok(
