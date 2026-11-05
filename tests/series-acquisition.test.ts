@@ -78,6 +78,7 @@ beforeEach(() => {
   process.env.SONDER_SKIP_SERIES_ACQUISITION = "1";
   resetSeriesAcquisitionDeps();
   sqlite.exec("DELETE FROM series_acquisition_jobs");
+  sqlite.exec("DELETE FROM user_series_seen_works");
   sqlite.exec("DELETE FROM user_saved_series_works");
   sqlite.exec("DELETE FROM user_saved_series");
   sqlite.exec("DELETE FROM series_catalogue_works");
