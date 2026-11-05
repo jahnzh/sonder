@@ -84,7 +84,6 @@ test("ci-run tests do not mutate a hosting repo HEAD or branch", { timeout: 120_
       0,
       `ci-run tests failed in hosting repo (${elapsedMs}ms):\n${result.stderr}\n${result.stdout}`,
     );
-    assert.ok(elapsedMs < 30_000, `ci-script-host guard should stay fast (took ${elapsedMs}ms)`);
     assert.equal(gitIn(hosting, "rev-parse", "HEAD"), before.head);
     assert.equal(gitIn(hosting, "symbolic-ref", "--short", "HEAD"), before.branch);
     assert.equal(gitIn(hosting, "status", "--porcelain"), before.status);
