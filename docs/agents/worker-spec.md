@@ -135,6 +135,8 @@ Keep one `artifacts/orca/STATE.md` (gitignored) listing for each in-flight item:
 
 Wakeups: the prompt is one line, `Read artifacts/orca/STATE.md and do its next action`, and the coordinator updates the file whenever it schedules one; never paste the run state into the prompt (stale wakeups re-fired after work was done about 12 times this session).
 
+Active deploy-or-land goals: either block on `node scripts/orca-check.mjs --wait` (or a background wait job) until the next actionable result, or post a progress line and continue immediately — never treat a status question as a stop. Prefer `npm run ci:run` (queues) over fire-and-forget parallel `ci:deck`; parallel `npm run ci:ssh` on the WSL host with distinct `SONDER_CI_LOOPBACK_PORT` is fine. An orchestrator that finishes a task starts the next one at once; a coordinator reads its orchestrator's terminal at least every 10 minutes (an idle agent sends no message).
+
 ## Review policy
 
 Any change touching keyboard handling, persistence/progress, security or shared schemas gets an independent read-only review before the Deck run, by a different model family than the implementer (reviews found a blocking or high bug in 4 of 5 features this session).
@@ -151,6 +153,8 @@ Findings: blocking=N high=N medium=N low=N
 - The Deck run runs on the final head only.
 
 ## Liveness playbook
+
+While a deploy-or-land goal is active, follow Active deploy-or-land goals under Coordinator state — do not idle on status dumps or background CI polls.
 
 When `orca orchestration check --wait` returns two consecutive empty waits and the active workers' worktrees are unchanged (`git rev-parse HEAD` and `git status --porcelain`), read each worker terminal tail (`orca terminal read --terminal <handle>`). `node scripts/orca-check.mjs --run <run_id> --wait … --workers <worker-list.json> --liveness-state <file>` tracks that and prints `liveness: usage-limit …` on stderr when a tail matches a known limit prompt.
 
