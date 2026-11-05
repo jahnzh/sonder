@@ -3,6 +3,7 @@ import { api } from "../lib";
 import type { Download, SeriesWorkAcquisition } from "../types";
 import { Dialog } from "./ui/dialog";
 import { SeriesSaveOptions } from "./SeriesSaveOptions";
+import { SeriesRemoveDialog } from "./SeriesRemoveDialog";
 import { SeriesWorkStatus, SERIES_SAVED_POLL_MS } from "./SeriesWorkStatus";
 import "../series.css";
 
@@ -78,6 +79,7 @@ export function SeriesDialog({ target, onClose, onSaved, downloads }: { target: 
   const [savedNotice, setSavedNotice] = useState(false);
   const [searchAudio, setSearchAudio] = useState(false);
   const [searchEbooks, setSearchEbooks] = useState(false);
+  const [removeOpen, setRemoveOpen] = useState(false);
   const reloadSaved = useCallback(async () => {
     if (!target || mode !== "saved") return;
     setSeries(await api<Series>(`/series/${target.id}`));
@@ -160,7 +162,16 @@ export function SeriesDialog({ target, onClose, onSaved, downloads }: { target: 
           onSearchEbooks={setSearchEbooks}
         />
         <button className="button primary" disabled={busy} onClick={() => void save()}>Add selected works</button>
-      </> : <button className="button subtle" onClick={onClose}>Close series</button>}
+      </> : <>
+        <button className="button subtle" type="button" onClick={() => setRemoveOpen(true)}>Remove series</button>
+        <button className="button subtle" onClick={onClose}>Close series</button>
+      </>}
     </>}
+    <SeriesRemoveDialog
+      seriesId={mode === "saved" && target ? target.id : null}
+      open={removeOpen}
+      onClose={() => setRemoveOpen(false)}
+      onRemoved={() => { onSaved(); onClose(); }}
+    />
   </Dialog>;
 }
