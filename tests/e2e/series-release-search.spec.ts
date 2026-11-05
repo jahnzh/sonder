@@ -95,7 +95,9 @@ test("series release selection uses real server search and replace flow", async 
   await workRow.getByRole("button", { name: "Search releases" }).click();
   const releaseDialog = page.getByRole("dialog", { name: /Search releases · Crossing Two/ });
   await releaseDialog.getByRole("button", { name: "Search", exact: true }).click();
-  await expect(releaseDialog.getByText("Crossing Two", { exact: false })).toBeVisible();
+  await expect(
+    releaseDialog.getByRole("heading", { name: "Crossing Two", exact: true }),
+  ).toBeVisible();
   await releaseDialog
     .getByRole("article")
     .filter({ hasText: "Crossing Two" })

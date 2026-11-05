@@ -77,6 +77,7 @@ beforeEach(() => {
   resetSeriesAcquisitionDeps();
   resetSeriesReleaseSearchDeps();
   sqlite.exec("DELETE FROM series_acquisition_jobs");
+  sqlite.exec("DELETE FROM user_series_seen_works");
   sqlite.exec("DELETE FROM user_saved_series_works");
   sqlite.exec("DELETE FROM user_saved_series");
   sqlite.exec("DELETE FROM series_catalogue_works");
