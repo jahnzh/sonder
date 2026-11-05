@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -75,7 +75,17 @@ exit ${stubExit}
 
   const stubLines = () => readFileSync(stubLog, "utf8").trim().split("\n").filter(Boolean);
 
-  return { dir, prodRoot, gitDir, sha1, sha2, run, stubLog, stubLines };
+  const headSha = () =>
+    spawnSync("git", ["--git-dir", gitDir, "--work-tree", prodRoot, "rev-parse", "HEAD"], {
+      encoding: "utf8",
+      env: cleanEnv(),
+    }).stdout.trim();
+
+  const checkoutProd = (ref) => {
+    git(dir, ["--git-dir", gitDir, "--work-tree", prodRoot, "checkout", "-q", "--detach", ref]);
+  };
+
+  return { dir, prodRoot, gitDir, sha1, sha2, run, stubLog, stubLines, headSha, checkoutProd };
 }
 
 test("checks out the commit, stub sees HEAD and GIT_* env, parent shell keeps no GIT_*", () => {
@@ -112,7 +122,7 @@ if [ -n "\${GIT_DIR:-}" ] || [ -n "\${GIT_WORK_TREE:-}" ]; then exit 99; fi`,
   }
 });
 
-test("passes deploy.sh exit code and forwards extra args such as --dry-run", () => {
+test("passes deploy.sh exit code and forwards extra args when HEAD already matches", () => {
   const f = prodFixture({ stubExit: 7 });
   try {
     writeFileSync(f.stubLog, "");
@@ -121,6 +131,45 @@ test("passes deploy.sh exit code and forwards extra args such as --dry-run", () 
     const argsLine = f.stubLines().find((l) => l.startsWith("ARGS="));
     assert.ok(argsLine?.includes("--dry-run"));
     assert.ok(argsLine?.includes("--skip-live-checks"));
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("dry-run with a different commit leaves HEAD unchanged and does not run deploy.sh", () => {
+  const f = prodFixture();
+  try {
+    f.checkoutProd(f.sha1);
+    writeFileSync(f.stubLog, "");
+    const before = f.headSha();
+    const r = f.run(f.sha2, ["--dry-run"]);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.equal(f.headSha(), before);
+    assert.equal(f.stubLines().length, 0);
+    assert.match(r.stderr, /would run: git checkout --detach/);
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("checkout refuses when an untracked file would be overwritten", () => {
+  const f = prodFixture();
+  const seed = join(f.dir, "seed");
+  try {
+    writeFileSync(join(seed, "collision.txt"), "tracked\n");
+    git(seed, ["add", "collision.txt"]);
+    git(seed, ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "add collision"]);
+    const sha3 = spawnSync("git", ["rev-parse", "HEAD"], { cwd: seed, encoding: "utf8", env: cleanEnv() }).stdout.trim();
+    git(seed, ["push", "-q", "bare", "main"]);
+
+    f.checkoutProd(f.sha1);
+    writeFileSync(join(f.prodRoot, "collision.txt"), "untracked local\n");
+    writeFileSync(f.stubLog, "");
+    const before = f.headSha();
+    const r = f.run(sha3);
+    assert.notEqual(r.status, 0);
+    assert.equal(f.headSha(), before);
+    assert.equal(f.stubLines().length, 0);
   } finally {
     rmSync(f.dir, { recursive: true, force: true });
   }

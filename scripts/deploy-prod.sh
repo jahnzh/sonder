@@ -37,10 +37,23 @@ if [ -n "$dirty" ]; then
   exit 1
 fi
 
+dry_run=0
+for arg in "$@"; do
+  [ "$arg" = "--dry-run" ] && dry_run=1
+done
+
+head=$(git rev-parse HEAD)
+if [ "$dry_run" -eq 1 ] && [ "$head" != "$full" ]; then
+  echo "dry-run: would run: git checkout --detach ${full} (work tree is at ${head:0:7}, not ${full:0:7})" >&2
+  exit 0
+fi
+
 (
   export GIT_DIR="$git_dir"
   export GIT_WORK_TREE="$work_tree"
   cd "$work_tree" || exit 1
-  git checkout -f "$full" || exit 1
+  if [ "$(git rev-parse HEAD)" != "$full" ]; then
+    git checkout --detach "$full" || exit 1
+  fi
   exec bash "$deploy_script" "$full" "$@"
 )
