@@ -37,7 +37,8 @@ export function installHardcoverFixture() {
     { id: 701, name: "The Crossing", books_count: 4, author: { name: "Ada North" },
       book_series: [{ position: 1, book: seriesBooks[0] }, { position: 2, book: seriesBooks[1] },
         { position: null, book: seriesBooks[2] }, { position: 3, book: seriesBooks[3] }] },
-    { id: 702, name: "The Crossing", books_count: 1, author: { name: "Bea South" }, book_series: [] },
+    { id: 702, name: "The Crossing", books_count: 1, author: { name: "Bea South" },
+      book_series: [{ position: 1, book: books[0] }] },
   ];
   const resetSeries701 = () => {
     series701Previews = 0;

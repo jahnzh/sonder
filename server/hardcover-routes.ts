@@ -25,6 +25,10 @@ import {
 import { acquire } from "./acquisitions.ts";
 import { retryWorkMediaAcquisition } from "./series-membership.ts";
 import { retrySeriesWorkAcquisition } from "./series-acquisition.ts";
+import {
+  previewSeriesRemoval,
+  removeSavedHardcoverSeries,
+} from "./series-removal.ts";
 import { currentUserId, requireAdmin } from "./users.ts";
 // Every route acts for the signed-in user's own Hardcover account (#15).
 export function registerHardcoverRoutes(app: FastifyInstance) {
@@ -42,6 +46,12 @@ export function registerHardcoverRoutes(app: FastifyInstance) {
     return book.book_series.flatMap((entry) => entry.series?.id ? [{ id: entry.series.id, name: entry.series.name, position: entry.position }] : []);
   });
   app.get("/api/series", async (req) => listSavedHardcoverSeries(currentUserId(req)));
+  app.get("/api/series/:id/removal", async (req) => {
+    const { id } = z
+      .object({ id: z.coerce.number().int().positive() })
+      .parse(req.params);
+    return previewSeriesRemoval(currentUserId(req), id);
+  });
   app.get("/api/series/:id", async (req) => {
     const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(req.params);
     const { refresh } = z.object({ refresh: z.coerce.boolean().optional() }).parse(req.query ?? {});
@@ -61,6 +71,19 @@ export function registerHardcoverRoutes(app: FastifyInstance) {
       searchAudio: body.searchAudio,
       searchEbooks: body.searchEbooks,
     });
+  });
+  app.delete("/api/series/:id", async (req) => {
+    const { id } = z
+      .object({ id: z.coerce.number().int().positive() })
+      .parse(req.params);
+    const body = z
+      .object({
+        bookIds: z.array(z.number().int().positive()).max(1000).optional(),
+      })
+      .parse(req.body ?? {});
+    const bookIds = body.bookIds ?? [];
+    if (bookIds.length) requireAdmin(req);
+    return await removeSavedHardcoverSeries(currentUserId(req), id, bookIds);
   });
   app.post("/api/series/:id/works/:bookId/acquisition/retry", async (req) => {
     const { id, bookId } = z
