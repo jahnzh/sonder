@@ -3,12 +3,18 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  isEmptyInboxResult,
+  loadWorkersFromJson,
+  probeWorkersAfterEmptyWaits,
+  resetLivenessState,
+} from "./orca-liveness.mjs";
 
 const DEFAULT_WAIT_SECONDS = 90;
 const MAX_WAIT_SECONDS = 100;
 
 function printUsage() {
-  console.error(`Usage: node scripts/orca-check.mjs [--terminal <handle>] [--run <run_id>] [--types <type,...>] [--wait [<seconds>]] [--ack <delivery_id>] [--heartbeats]
+  console.error(`Usage: node scripts/orca-check.mjs [--terminal <handle>] [--run <run_id>] [--types <type,...>] [--wait [<seconds>]] [--ack <delivery_id>] [--heartbeats] [--workers <worker-list.json>] [--liveness-state <file>]
 
 Runs $ORCA_CLI_COMMAND orchestration check --json (default command: orca), strips keepalive lines, and prints messages.
 --wait defaults to ${DEFAULT_WAIT_SECONDS}s and cannot exceed ${MAX_WAIT_SECONDS}s.
@@ -22,7 +28,9 @@ check exit code.
 A worker_done body that includes a line \`Findings: blocking=N high=N medium=N low=N\` also records
 record-review on the dispatch named by that reviewer's review_of link (with --reviewer-dispatch) and prints a
 \`history: recorded review on <id> (automatic)\` line on stderr; a reviewer's worker_done without the line or without
-a review_of link records nothing and prints one reminder (implementer worker_dones never remind).`);
+a review_of link records nothing and prints one reminder (implementer worker_dones never remind).
+With --workers and --liveness-state, consecutive empty waits with unchanged worker worktrees trigger \`orca terminal read\`
+and print \`liveness: usage-limit ...\` on stderr when a tail matches a known limit prompt.`);
 }
 
 /** Exact line reviewers emit in the worker_done body so orca-check can record-review automatically. */
@@ -409,6 +417,8 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
     waitSeconds: null,
     ack: null,
     heartbeats: false,
+    workers: null,
+    livenessState: null,
     help: false,
   };
 
@@ -471,6 +481,24 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
       const val = arg.slice("--ack=".length);
       if (!val) return { ok: false, error: "Missing value for --ack" };
       options.ack = val;
+    } else if (arg === "--workers") {
+      if (i + 1 >= argv.length || argv[i + 1].startsWith("--")) {
+        return { ok: false, error: "Missing value for --workers" };
+      }
+      options.workers = argv[++i];
+    } else if (arg.startsWith("--workers=")) {
+      const val = arg.slice("--workers=".length);
+      if (!val) return { ok: false, error: "Missing value for --workers" };
+      options.workers = val;
+    } else if (arg === "--liveness-state") {
+      if (i + 1 >= argv.length || argv[i + 1].startsWith("--")) {
+        return { ok: false, error: "Missing value for --liveness-state" };
+      }
+      options.livenessState = argv[++i];
+    } else if (arg.startsWith("--liveness-state=")) {
+      const val = arg.slice("--liveness-state=".length);
+      if (!val) return { ok: false, error: "Missing value for --liveness-state" };
+      options.livenessState = val;
     } else {
       return { ok: false, error: `Unknown argument "${arg}"` };
     }
@@ -490,12 +518,16 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
     }
   }
 
+  if ((options.workers === null) !== (options.livenessState === null)) {
+    return { ok: false, error: "--workers and --liveness-state must be passed together" };
+  }
+
   return { ok: true, options };
 }
 
 /**
  * @param {Record<string, unknown>} options
- * @param {{ runOrca?: (args: string[]) => { status: number | null, stdout: string, stderr: string }, now?: () => number, captureHistory?: (dispatchId: string) => void, recordReview?: (dispatchId: string, findings: { blocking: number, high: number, medium: number, low: number }) => void }} [hooks]
+ * @param {{ runOrca?: (args: string[]) => { status: number | null, stdout: string, stderr: string }, now?: () => number, captureHistory?: (dispatchId: string) => void, recordReview?: (dispatchId: string, findings: { blocking: number, high: number, medium: number, low: number }) => void, readTerminal?: (handle: string) => { ok: boolean, text?: string, error?: string }, worktreeFingerprint?: (path: string) => string | null, loadWorkersFile?: (path: string) => unknown[] }} [hooks]
  */
 export function runOrcaCheck(options, hooks = {}) {
   const orca = process.env.ORCA_CLI_COMMAND || "orca";
@@ -573,6 +605,27 @@ export function runOrcaCheck(options, hooks = {}) {
   const batch = Array.isArray(result.messages) ? result.messages : [];
   autoCaptureWorkerDone(batch, hooks);
   autoRecordReviewWorkerDone(batch, hooks);
+
+  const runId = typeof result.runId === "string" ? result.runId : options.run ? String(options.run) : null;
+  const livenessStatePath = options.livenessState ? String(options.livenessState) : null;
+  if (livenessStatePath && runId) {
+    const loadWorkers =
+      hooks.loadWorkersFile ||
+      ((file) => loadWorkersFromJson(JSON.parse(readFileSync(file, "utf8"))));
+    const workers = options.workers ? loadWorkers(String(options.workers)) : [];
+    if (!isEmptyInboxResult(result)) {
+      resetLivenessState(livenessStatePath, runId);
+    } else if (options.waitSeconds != null) {
+      const flags = probeWorkersAfterEmptyWaits({
+        runId,
+        workers,
+        statePath: livenessStatePath,
+        readTerminal: hooks.readTerminal,
+        worktreeFingerprint: hooks.worktreeFingerprint,
+      });
+      for (const line of flags) console.error(line);
+    }
+  }
 
   const lines = [];
   const formatOpts = { hidden };
