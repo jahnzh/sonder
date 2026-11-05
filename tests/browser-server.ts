@@ -1,13 +1,28 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-// Prefer the one directory `scripts/test-browser.mjs` created for this run
-// (SONDER_BROWSER_TEMP). Creating our own would leave an untracked live path that a
-// parallel check's before/after cleanup could delete (#236). Fall back to mkdtemp when
-// Playwright is started without that wrapper (reuseExistingServer, ad-hoc runs).
+// Use the one directory `scripts/test-browser.mjs` created for this run (SONDER_BROWSER_TEMP), so
+// the wrapper can remove exactly that path (#236). Only the first server may adopt it: specs such as
+// account-requests, join and users spawn extra servers with `{ ...process.env }`, which inherit the
+// variable. Adopting means atomically creating `<dir>/.claimed`; a server that loses that race, or runs
+// without the wrapper (reuseExistingServer, ad-hoc runs), makes its own mkdtemp dir as before.
 const owned = process.env.SONDER_BROWSER_TEMP;
-const temp =
-  owned && existsSync(owned) ? owned : mkdtempSync(join(tmpdir(), "sonder-browser-"));
+function claim(dir: string | undefined) {
+  if (!dir || !existsSync(dir)) return false;
+  try {
+    mkdirSync(join(dir, ".claimed"));
+    return true;
+  } catch {
+    return false;
+  }
+}
+const adopted = claim(owned);
+const temp = adopted ? owned! : mkdtempSync(join(tmpdir(), "sonder-browser-"));
+// Remove only a directory this server created; the wrapper removes the one it owns. Removing an
+// adopted directory from a secondary server deleted the main server's media mid-suite (#236).
+const removeTemp = () => {
+  if (!adopted) rmSync(temp, { recursive: true, force: true });
+};
 // A spec that must seed the database directly (for example an expired invite)
 // passes its own directory; the server's temp dir keeps the media root either way.
 process.env.DATA_DIR = process.env.PLAYWRIGHT_DATA_DIR || join(temp, "db");
@@ -42,7 +57,7 @@ const app = await createApp();
 await app.listen({ port: Number(process.env.PLAYWRIGHT_PORT || 4173), host: "127.0.0.1" });
 const stop = async () => {
   await app.close();
-  rmSync(temp, { recursive: true, force: true });
+  removeTemp();
   process.exit(0);
 };
 process.on("SIGTERM", () => void stop());
@@ -51,5 +66,5 @@ process.on("SIGINT", () => void stop());
 // synchronous handler covers every normal exit and is idempotent with stop()'s removal.
 // SIGKILL cannot be caught, so a kill -9 of this process still leaks the directory.
 process.on("exit", () => {
-  rmSync(temp, { recursive: true, force: true });
+  removeTemp();
 });
