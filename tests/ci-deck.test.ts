@@ -36,6 +36,19 @@ if [[ $* == *" -- preflight "* ]]; then
   export -f df
 fi
 if [[ $* == *" -- start "* ]]; then export STUB_SSH_STEP=start; fi
+# Hold after a successful acquire_run_lock so a second coordinator can try the
+# remote lock while active/ is still held. An SCP-time sync is not enough:
+# setup between SCP and the lock varies, so a fast winner can finish and
+# release before the loser reaches mv -T (issue #219).
+if [[ $* == *" -- acquire_run_lock "* && -n \${STUB_LOCK_HOLD:-} ]]; then
+  bash -c "\$*"
+  rc=\$?
+  if [[ \$rc -eq 0 ]]; then
+    touch "\$STUB_LOCK_HOLD/entered"
+    until [[ -f \$STUB_LOCK_HOLD/release ]]; do sleep 0.05; done
+  fi
+  exit \$rc
+fi
 exec bash -c "$*"
 `;
 
@@ -46,16 +59,6 @@ while [[ $# -gt 0 ]]; do
   case "$1" in -q|-r) shift ;; -o) shift 2 ;; *) args+=("$1"); shift ;; esac
 done
 strip() { if [[ $1 != /* && $1 == *:* ]]; then echo "\${1#*:}"; else echo "$1"; fi; }
-if [[ -n \${STUB_SCP_BARRIER:-} && \${args[0]} == *.bundle ]]; then
-  touch "$STUB_SCP_BARRIER/arrived-$$"
-  shopt -s nullglob
-  arrivals=("$STUB_SCP_BARRIER"/arrived-*)
-  while (( \${#arrivals[@]} < 2 )); do
-    (( SECONDS < 15 )) || exit 1
-    sleep 0.05
-    arrivals=("$STUB_SCP_BARRIER"/arrived-*)
-  done
-fi
 cp -r "$(strip "\${args[0]}")" "$(strip "\${args[1]}")"
 `;
 
@@ -158,16 +161,25 @@ echo "$*" >>"$STUB_PODMAN_LOG.systemd"
 [[ $1 == --user ]] && shift
 case "$1" in
   show) cat "$STUB_PODMAN_STATE/unit-\${@: -1}.pid" 2>/dev/null ;;
-  stop) pid=$(cat "$STUB_PODMAN_STATE/unit-$2.pid" 2>/dev/null) && kill -TERM "$pid" 2>/dev/null; exit 0 ;;
+  stop)
+    file="$STUB_PODMAN_STATE/unit-\$2.pid"
+    pid=\$(cat "\$file" 2>/dev/null) && kill -TERM "\$pid" 2>/dev/null
+    rm -f "\$file"
+    exit 0
+    ;;
   list-units)
     if [[ $* == *sonder-ci-run-* ]]; then
       cat "$STUB_PODMAN_STATE/ci-units" 2>/dev/null
       for file in "$STUB_PODMAN_STATE"/unit-sonder-ci-run-*.pid; do
-        [[ -f $file ]] || continue
-        pid=$(cat "$file")
-        kill -0 "$pid" 2>/dev/null || continue
+        [[ -f \$file ]] || continue
+        pid=\$(cat "\$file")
+        # Drop stale pid files so a recycled PID cannot look like a busy unit.
+        if ! kill -0 "\$pid" 2>/dev/null; then
+          rm -f "\$file"
+          continue
+        fi
         name=\${file##*/unit-}; name=\${name%.pid}
-        echo "$name.service loaded active running"
+        echo "\$name.service loaded active running"
       done
     fi ;;
 esac
@@ -637,17 +649,28 @@ test("an active CI unit blocks a new container before its own container is visib
 
 test("simultaneous starts from separate coordinators admit only one container", { timeout: 25_000 }, async () => {
   const f = fixture();
-  const barrier = path.join(f.base, "barrier");
-  fs.mkdirSync(barrier);
-  const common = { STUB_SCP_BARRIER: barrier };
-  const first = f.start(f.second, { ...common, SONDER_CI_LOCAL_LOCK_DIR: path.join(f.base, "coordinator-a") });
-  const second = f.start(f.second, { ...common, SONDER_CI_LOCAL_LOCK_DIR: path.join(f.base, "coordinator-b") });
-  // Do not assume the refused run finishes first: under load the admitted
-  // run can complete before the busy refusal returns.
-  const results = await Promise.all([first.done, second.done]);
-  assert.deepEqual(results.map((result) => result.status).sort(), [0, 4], JSON.stringify(results));
-  const rejected = results.find((result) => result.status === 4)!;
-  assert.match(rejected.output, /npm run ci:run|wait/i);
+  const hold = path.join(f.base, "lock-hold");
+  fs.mkdirSync(hold);
+  // First coordinator acquires the remote lock and holds it; the second then
+  // starts with a separate local lock so only the Deck lock serialises them.
+  const first = f.start(f.second, {
+    STUB_LOCK_HOLD: hold,
+    SONDER_CI_LOCAL_LOCK_DIR: path.join(f.base, "coordinator-a"),
+  });
+  try {
+    await waitForFile(path.join(hold, "entered"));
+    const second = await f.start(f.second, {
+      SONDER_CI_LOCAL_LOCK_DIR: path.join(f.base, "coordinator-b"),
+    }).done;
+    assert.equal(second.status, 4, second.output);
+    assert.match(second.output, /npm run ci:run|wait/i);
+    assert.equal(f.runCalls().length, 0, second.output);
+    assert.equal(f.read(f.logs.gh), "", "refusal must not publish ci/deck status while the lock holder is still starting");
+  } finally {
+    fs.writeFileSync(path.join(hold, "release"), "");
+  }
+  const completed = await first.done;
+  assert.equal(completed.status, 0, completed.output);
   assert.equal(f.runCalls().length, 1);
   assert.equal(f.checkCalls().length, 1);
   assert.equal(f.read(f.logs.ssh).split("\n").filter((line) => line.includes(" -- preflight ")).length, 2);

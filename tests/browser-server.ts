@@ -27,6 +27,10 @@ const { installSeriesAcquisitionFixture } = await import(
   "./series-acquisition-fixture.ts"
 );
 installSeriesAcquisitionFixture();
+const { installSeriesReleaseBrowserFixture } = await import(
+  "./series-release-browser-fixture.ts"
+);
+installSeriesReleaseBrowserFixture();
 const { createApp } = await import("../server/app.ts");
 const app = await createApp();
 await app.listen({ port: Number(process.env.PLAYWRIGHT_PORT || 4173), host: "127.0.0.1" });

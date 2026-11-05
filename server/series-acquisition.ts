@@ -57,7 +57,7 @@ export type SeriesAcquisitionDeps = {
 let deps: SeriesAcquisitionDeps = {};
 
 export function setSeriesAcquisitionDeps(overrides: SeriesAcquisitionDeps) {
-  deps = overrides;
+  deps = { ...deps, ...overrides };
 }
 
 export function resetSeriesAcquisitionDeps() {
@@ -70,6 +70,119 @@ export function seriesAcquisitionTickerEnabled() {
 
 function canAcquireMedia(userId: number) {
   return (deps.canAcquireMedia ?? userIsAdmin)(userId);
+}
+
+export function assertCanAcquireMedia(userId: number) {
+  if (!canAcquireMedia(userId))
+    throw Object.assign(
+      new Error("Only the administrator can do this."),
+      { statusCode: 403 },
+    );
+}
+
+export const SERIES_ACQUISITION_CANCELLED_ERROR = "cancelled";
+
+export type ManualSeriesReleaseClaim = {
+  claimed: boolean;
+  snapshots: {
+    id: string;
+    status: SeriesAcquisitionJobStatus;
+    error: string | null;
+  }[];
+};
+
+/** Reserve auto-acquire for this work before manual release lookup/acquire. */
+export function beginManualSeriesReleaseClaim(
+  userId: number,
+  workId: string,
+): ManualSeriesReleaseClaim {
+  const snapshots = db
+    .select({
+      id: s.seriesAcquisitionJobs.id,
+      status: s.seriesAcquisitionJobs.status,
+      error: s.seriesAcquisitionJobs.error,
+    })
+    .from(s.seriesAcquisitionJobs)
+    .where(
+      and(
+        eq(s.seriesAcquisitionJobs.userId, userId),
+        eq(s.seriesAcquisitionJobs.workId, workId),
+        eq(s.seriesAcquisitionJobs.kind, "audio"),
+      ),
+    )
+    .all()
+    .filter((row) => row.status === "pending" || row.status === "searching")
+    .map((row) => ({
+      id: row.id,
+      status: row.status as SeriesAcquisitionJobStatus,
+      error: row.error,
+    }));
+  if (!snapshots.length) return { claimed: false, snapshots: [] };
+  const claimed = sqlite
+    .prepare(
+      `UPDATE series_acquisition_jobs
+       SET status='failed', error=?, updated_at=?
+       WHERE user_id=? AND work_id=? AND kind='audio'
+         AND status IN ('pending','searching')`,
+    )
+    .run(
+      SERIES_ACQUISITION_CANCELLED_ERROR,
+      Date.now(),
+      userId,
+      workId,
+    ).changes;
+  return { claimed: claimed > 0, snapshots };
+}
+
+export function restoreManualSeriesReleaseClaim(claim: ManualSeriesReleaseClaim) {
+  for (const snap of claim.snapshots) {
+    db.update(s.seriesAcquisitionJobs)
+      .set({
+        status: snap.status,
+        error: snap.error,
+        updatedAt: Date.now(),
+      })
+      .where(eq(s.seriesAcquisitionJobs.id, snap.id))
+      .run();
+  }
+}
+
+export function finalizeManualSeriesReleaseClaim(
+  userId: number,
+  seriesId: number,
+  bookId: number,
+  workId: string,
+) {
+  setJobState(userId, seriesId, bookId, workId, "audio", "done", null);
+}
+
+/** Stop auto-acquire for this work so a manual release selection can proceed. */
+export function cancelInflightSeriesAudioJobs(userId: number, workId: string) {
+  return sqlite
+    .prepare(
+      `UPDATE series_acquisition_jobs
+       SET status='failed', error=?, updated_at=?
+       WHERE user_id=? AND work_id=? AND kind='audio'
+         AND status IN ('pending','searching')`,
+    )
+    .run(SERIES_ACQUISITION_CANCELLED_ERROR, Date.now(), userId, workId).changes;
+}
+
+/** @deprecated Use beginManualSeriesReleaseClaim before lookup/acquire. */
+export function claimInflightSeriesAudioJobsForManualSelect(
+  userId: number,
+  workId: string,
+) {
+  return beginManualSeriesReleaseClaim(userId, workId).claimed;
+}
+
+export function seriesAudioJobStillSearching(jobId: string) {
+  const row = db
+    .select()
+    .from(s.seriesAcquisitionJobs)
+    .where(eq(s.seriesAcquisitionJobs.id, jobId))
+    .get();
+  return !!row && row.status === "searching";
 }
 
 export function workHasAppropriateEbook(workId: string) {
@@ -315,6 +428,14 @@ function presentationForJob(
       skipReason: "no_permission",
     };
   }
+  if (row.status === "failed" && row.error === SERIES_ACQUISITION_CANCELLED_ERROR) {
+    return {
+      kind,
+      status: "done",
+      error: null,
+      skipReason: null,
+    };
+  }
   if (row.status === "done" && row.error === "has_audio") {
     return {
       kind,
@@ -390,6 +511,14 @@ export async function tickSeriesAcquisition(
   await tickQueue;
 }
 
+function seriesJobStillActive(jobId: string) {
+  return !!db
+    .select()
+    .from(s.seriesAcquisitionJobs)
+    .where(eq(s.seriesAcquisitionJobs.id, jobId))
+    .get();
+}
+
 async function processJob(
   job: typeof s.seriesAcquisitionJobs.$inferSelect,
   acquire: typeof defaultAcquire,
@@ -405,22 +534,40 @@ async function processJob(
   try {
     if (job.kind === "audio") await runAudioJob(job, acquire);
     else partialError = await runEbookJob(job);
+    if (!seriesJobStillActive(job.id)) return;
+    const latest = db
+      .select()
+      .from(s.seriesAcquisitionJobs)
+      .where(eq(s.seriesAcquisitionJobs.id, job.id))
+      .get();
+    if (!latest || latest.status !== "searching") return;
     db.update(s.seriesAcquisitionJobs)
       .set({
         status: "done",
         error: partialError,
         updatedAt: Date.now(),
       })
-      .where(eq(s.seriesAcquisitionJobs.id, job.id))
+      .where(
+        and(
+          eq(s.seriesAcquisitionJobs.id, job.id),
+          eq(s.seriesAcquisitionJobs.status, "searching"),
+        ),
+      )
       .run();
   } catch (error) {
+    if (!seriesJobStillActive(job.id)) return;
     db.update(s.seriesAcquisitionJobs)
       .set({
         status: "failed",
         error: (error as Error).message,
         updatedAt: Date.now(),
       })
-      .where(eq(s.seriesAcquisitionJobs.id, job.id))
+      .where(
+        and(
+          eq(s.seriesAcquisitionJobs.id, job.id),
+          eq(s.seriesAcquisitionJobs.status, "searching"),
+        ),
+      )
       .run();
   }
 }
@@ -429,6 +576,13 @@ async function runAudioJob(
   job: typeof s.seriesAcquisitionJobs.$inferSelect,
   acquire: typeof defaultAcquire,
 ) {
+  if (!seriesJobStillActive(job.id)) return;
+  const active = db
+    .select()
+    .from(s.seriesAcquisitionJobs)
+    .where(eq(s.seriesAcquisitionJobs.id, job.id))
+    .get();
+  if (!active || active.status !== "searching") return;
   if (!canAcquireMedia(job.userId)) throw new Error("no_permission");
   const catalogue = catalogueVolumes(job.seriesId);
   const volume = catalogue.find((row) => row.bookId === job.bookId);
@@ -465,6 +619,7 @@ async function runAudioJob(
     .from(s.editions)
     .where(eq(s.editions.workId, job.workId))
     .all()[0];
+  if (!seriesJobStillActive(job.id)) return;
   await autoAcquireSeriesVolume(
     job.userId,
     {
@@ -478,12 +633,15 @@ async function runAudioJob(
     },
     acquire,
     deps.seriesAudioDeps,
+    () => seriesAudioJobStillSearching(job.id),
   );
+  if (!seriesAudioJobStillSearching(job.id)) return;
 }
 
 async function runEbookJob(
   job: typeof s.seriesAcquisitionJobs.$inferSelect,
 ): Promise<string | null> {
+  if (!seriesJobStillActive(job.id)) return null;
   if (!canAcquireMedia(job.userId)) throw new Error("no_permission");
   if (workHasAppropriateEbook(job.workId)) {
     db.update(s.seriesAcquisitionJobs)
@@ -501,7 +659,7 @@ async function runEbookJob(
   return null;
 }
 
-function setJobState(
+export function setJobState(
   userId: number,
   seriesId: number,
   bookId: number,

@@ -1,12 +1,18 @@
 import { api } from "../lib";
-import type { Download, SeriesWorkAcquisition } from "../types";
+import type { Download, SavedEbook, SeriesWorkAcquisition } from "../types";
+import { formatEbookDeviceSuffix, workEbookOnDevice } from "../series-ebook-device";
 import { workMediaStateLabel } from "../work-media-state";
+import { SeriesWorkReleaseSearch } from "./SeriesWorkReleaseSearch";
 
 const SERIES_SAVED_POLL_MS = 2500;
 
 type Props = {
   seriesId: number;
   bookId: number;
+  workId: string | null;
+  workTitle: string;
+  seriesAuthor: string | null;
+  canAcquire: boolean;
   mediaState?: {
     state: "missing" | "queued" | "failed" | "available";
     holdReason?: "unreleased" | "empty_search" | null;
@@ -18,6 +24,8 @@ type Props = {
   ebookSet?: { held: number; accepted: number; rejected: number } | null;
   recordings?: { id: string; tracks: string[] }[];
   downloads: Download[];
+  savedEbooks?: SavedEbook[];
+  offlineEbookEditionIds: ReadonlySet<string>;
   onRefresh: () => void;
 };
 
@@ -73,11 +81,17 @@ function canRetryEbook(acquisition: SeriesWorkAcquisition | null | undefined) {
 export function SeriesWorkStatus({
   seriesId,
   bookId,
+  workId,
+  workTitle,
+  seriesAuthor,
+  canAcquire,
   mediaState,
   acquisition,
   ebookSet,
   recordings,
   downloads,
+  savedEbooks,
+  offlineEbookEditionIds,
   onRefresh,
 }: Props) {
   const onDevice = recordings?.some((recording) =>
@@ -86,6 +100,11 @@ export function SeriesWorkStatus({
       downloads.some((download) => download.trackId === trackId),
     ),
   );
+  const ebookEditionIds =
+    workId && savedEbooks
+      ? savedEbooks.filter((ebook) => ebook.workId === workId).map((ebook) => ebook.id)
+      : [];
+  const ebookOnDevice = workEbookOnDevice(ebookEditionIds, offlineEbookEditionIds);
   const retry = async (kind: "audio" | "ebook") => {
     await api(`/series/${seriesId}/works/${bookId}/acquisition/retry`, {
       method: "POST",
@@ -106,9 +125,24 @@ export function SeriesWorkStatus({
             </button>
           </>
         )}
+        {canAcquire && workId && (
+          <>
+            {" "}
+            <SeriesWorkReleaseSearch
+              seriesId={seriesId}
+              bookId={bookId}
+              workId={workId}
+              title={workTitle}
+              author={seriesAuthor}
+              hasPlayableAudio={mediaState?.state === "available"}
+              onRefresh={onRefresh}
+            />
+          </>
+        )}
       </span>
       <span>
         Ebook: {ebookStatusLabel(acquisition?.ebook, ebookSet)}
+        {workId ? formatEbookDeviceSuffix(ebookOnDevice) : ""}
         {canRetryEbook(acquisition?.ebook) && (
           <>
             {" "}

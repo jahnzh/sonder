@@ -85,12 +85,16 @@ CREATE TABLE IF NOT EXISTS series_catalogue(id INTEGER PRIMARY KEY,name TEXT NOT
 CREATE TABLE IF NOT EXISTS series_catalogue_works(series_id INTEGER NOT NULL REFERENCES series_catalogue(id),book_id INTEGER NOT NULL,work_id TEXT REFERENCES works(id),title TEXT NOT NULL,position REAL,cover TEXT,unreleased INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(series_id,book_id));
 CREATE TABLE IF NOT EXISTS user_saved_series(user_id INTEGER NOT NULL REFERENCES users(id),series_id INTEGER NOT NULL REFERENCES series_catalogue(id),saved_at INTEGER NOT NULL,PRIMARY KEY(user_id,series_id));
 CREATE TABLE IF NOT EXISTS user_saved_series_works(user_id INTEGER NOT NULL REFERENCES users(id),series_id INTEGER NOT NULL REFERENCES series_catalogue(id),book_id INTEGER NOT NULL,work_id TEXT NOT NULL REFERENCES works(id),introduced INTEGER NOT NULL,PRIMARY KEY(user_id,series_id,book_id));
+CREATE TABLE IF NOT EXISTS user_series_seen_works(user_id INTEGER NOT NULL REFERENCES users(id),series_id INTEGER NOT NULL REFERENCES series_catalogue(id),book_id INTEGER NOT NULL,acknowledged_at INTEGER NOT NULL,PRIMARY KEY(user_id,series_id,book_id));
 CREATE TABLE IF NOT EXISTS user_work_completion(user_id INTEGER NOT NULL REFERENCES users(id),work_id TEXT NOT NULL REFERENCES works(id),status TEXT NOT NULL CHECK(status IN ('finished','unread')),PRIMARY KEY(user_id,work_id));
+CREATE TABLE IF NOT EXISTS user_work_library_origin(user_id INTEGER NOT NULL REFERENCES users(id),work_id TEXT NOT NULL REFERENCES works(id),source TEXT NOT NULL CHECK(source IN ('unknown','manual','hardcover_sync','series')),series_id INTEGER,added_at INTEGER NOT NULL,PRIMARY KEY(user_id,work_id));
 CREATE TABLE IF NOT EXISTS account_requests(id INTEGER PRIMARY KEY,email TEXT NOT NULL,username TEXT NOT NULL,note TEXT,status TEXT NOT NULL DEFAULT 'pending',created_at INTEGER NOT NULL,reviewed_at INTEGER,invite_id INTEGER);
 CREATE TABLE IF NOT EXISTS account_invites(id INTEGER PRIMARY KEY,token TEXT NOT NULL UNIQUE,email TEXT NOT NULL,username TEXT NOT NULL,account_request_id INTEGER NOT NULL,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,claimed_at INTEGER);
 `);
 if (!(sqlite.prepare("PRAGMA table_info(sessions)").all() as {name:string}[]).some(c => c.name === "user_id"))
   sqlite.exec("ALTER TABLE sessions ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1");
+if (!(sqlite.prepare("PRAGMA table_info(user_saved_series)").all() as {name:string}[]).some(c => c.name === "refreshed_at"))
+  sqlite.exec("ALTER TABLE user_saved_series ADD COLUMN refreshed_at INTEGER");
 sqlite.transaction(() => {
   sqlite.prepare("INSERT OR IGNORE INTO users(id,username,password_hash,role,created_at) VALUES(1,'admin',NULL,'admin',?)").run(Date.now());
   if (!sqlite.prepare("SELECT 1 FROM settings WHERE key='migration:multi-user'").get()) {

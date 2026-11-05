@@ -26,8 +26,10 @@ export const USER_DATA_TABLES = [
   "user_hardcover_recording_editions",
   "user_saved_series_works",
   "user_saved_series",
+  "user_series_seen_works",
   "series_acquisition_jobs",
   "user_work_completion",
+  "user_work_library_origin",
 ] as const;
 export type User = { id: number; username: string; role: "admin" | "user" };
 declare module "fastify" { interface FastifyRequest { user: User | null } }
