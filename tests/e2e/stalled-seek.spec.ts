@@ -1,12 +1,10 @@
-import { test, expect, chromium, type BrowserContext, type Page } from "@playwright/test";
-import { existsSync, readFileSync } from "node:fs";
+import { test, expect, type BrowserContext, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { launchInstalledProfile, unreachableProxyArgs } from "./installed-profile";
 
-const installed =
-  "/home/jahn/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome";
-const baseURL = `http://127.0.0.1:${Number(process.env.PLAYWRIGHT_PORT || 4173)}`;
 const media = readFileSync("server/demo/alice-01.mp3");
 // The bytes the device has stored: everything past this point is only
 // answerable from the server.
@@ -15,17 +13,7 @@ const PARTIAL = 1 * 1024 * 1024;
 const SEEK_TARGET = 320;
 
 const launch = (profile: string, unreachable = false) =>
-  chromium.launchPersistentContext(profile, {
-    args: unreachable
-      ? ["--proxy-server=http://127.0.0.1:9", "--proxy-bypass-list=<-loopback>"]
-      : [],
-    baseURL,
-    viewport: { width: 390, height: 844 },
-    headless: true,
-    executablePath:
-      process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ||
-      (existsSync(installed) ? installed : undefined),
-  });
+  launchInstalledProfile(profile, unreachable ? unreachableProxyArgs : []);
 
 // Serves the chapter as if the stored bytes ended mid-file: the duration
 // metadata stays the real one, but any request past the boundary gets a 416,

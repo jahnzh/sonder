@@ -397,6 +397,9 @@ const toPage: [string, (page: Page) => Promise<void>][] = [
   ],
   ["the p key", (page) => page.keyboard.press("p")],
 ];
+// Expanded titles (also listed in tests/known-failures.wsl-host.json for #225):
+// switching from Word to Page with the player's mode button shows the sentence reached
+// switching from Word to Page with the p key shows the sentence reached
 for (const [name, switchToPage] of toPage) {
   test(`switching from Word to Page with ${name} shows the sentence reached`, async ({ page }) => {
     await fixture(page, `Word to page ${name}`, "none");
