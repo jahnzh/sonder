@@ -1,9 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { randomBytes } from "node:crypto";
-import { db, sqlite } from "./db.ts";
-import * as s from "./schema.ts";
-import { createUser, passwordSchema } from "./users.ts";
+import { sqlite } from "./db.ts";
+import { createUser, issueSession, passwordSchema } from "./users.ts";
 import { hashToken } from "./security.ts";
 
 type Invite = {
@@ -78,22 +76,7 @@ export function registerInvites(app: FastifyInstance): void {
       const user = sqlite
         .prepare("SELECT id,username,role,created_at AS createdAt FROM users WHERE id=?")
         .get(id) as { id: number; username: string; role: "admin" | "user"; createdAt: number };
-      // The session mirrors POST /api/auth/login: 32 random bytes, only the
-      // hash stored, 30 days, http-only.
-      const session = randomBytes(32).toString("hex");
-      sqlite.prepare("DELETE FROM sessions WHERE expires_at < ?").run(now);
-      db.insert(s.sessions)
-        .values({ token: hashToken(session), userId: id, expiresAt: now + 30 * 86400000 })
-        .run();
-      return reply
-        .setCookie("sonder_session", session, {
-          httpOnly: true,
-          sameSite: "strict",
-          path: "/",
-          secure: process.env.COOKIE_SECURE === "true",
-          maxAge: 30 * 86400,
-        })
-        .send({ ok: true, user });
+      return issueSession(reply, id).send({ ok: true, user });
     },
   );
 }
