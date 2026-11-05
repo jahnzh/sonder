@@ -161,7 +161,38 @@ function runtime(userId: number) {
   return value;
 }
 let requestTail: Promise<unknown> = Promise.resolve();
-let lastRequest = 0;
+// A single-token bucket limits every caller to 24 requests per minute, with
+// no initial burst. The request queue serializes access to this budget.
+export function createHardcoverRequestBudget(options: {
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+  intervalMs?: number;
+} = {}) {
+  const now = options.now ?? Date.now;
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const interval = options.intervalMs ?? 2500;
+  let nextTokenAt = 0;
+  let retryAt = 0;
+  return {
+    async take() {
+      for (;;) {
+        const delay = Math.max(nextTokenAt, retryAt) - now();
+        if (delay <= 0) break;
+        await sleep(delay);
+      }
+      nextTokenAt = now() + interval;
+    },
+    deferUntil(time: number) {
+      retryAt = Math.max(retryAt, time);
+    },
+  };
+}
+let requestBudget = createHardcoverRequestBudget({
+  intervalMs: process.env.NODE_ENV === "test" ? 0 : 2500,
+});
+export function setHardcoverRequestBudgetForTests(budget: ReturnType<typeof createHardcoverRequestBudget>) {
+  requestBudget = budget;
+}
 const hardcoverKey = (userId: number) => getUserSecret(userId, "hardcover");
 const T = {
   links: s.userHardcoverLinks,
@@ -344,17 +375,9 @@ async function graphql<T>(
     const key = hardcoverKey(userId);
     if (!key)
       upstream("missing_token", "Add your Hardcover API token in Settings first.");
-    if (live.retryAt > Date.now())
-      upstream(
-        "rate_limited",
-        "Hardcover is rate limiting requests. Your changes are saved and will retry shortly.",
-      );
-    const delay =
-      process.env.NODE_ENV === "test"
-        ? 0
-        : Math.max(0, 1100 - (Date.now() - lastRequest));
-    if (delay) await new Promise((r) => setTimeout(r, delay));
-    lastRequest = Date.now();
+    await requestBudget.take();
+    if (live.generation !== expectedGeneration)
+      upstream("other", "The Hardcover connection changed. Sync again.");
     let response: Response;
     try {
       response = await fetch("https://api.hardcover.app/v1/graphql", {
@@ -377,6 +400,7 @@ async function graphql<T>(
     if (response.status === 429) {
       const seconds = Number(response.headers.get("Retry-After")) || 60;
       live.retryAt = Date.now() + Math.min(3600, seconds) * 1000;
+      requestBudget.deferUntil(live.retryAt);
       upstream(
         "rate_limited",
         "Hardcover is rate limiting requests. Your changes are saved and will retry shortly.",

@@ -556,8 +556,10 @@ async function workerRequest(
     ? "Local speech recovery is unavailable. Check that the speech model is installed on the media drive."
     : "Local alignment could not process part of this narration. Retry, or choose a release with chapters.",
   workerBase = process.env.ALIGNMENT_WORKER_URL!,
+  live: () => boolean = () => true,
 ) {
-  for (let attempt = 0; ; attempt++) {
+  for (;;) {
+    if (!live()) throw new Error("Alignment stopped.");
     const response = await fetch(
       `${workerBase.replace(/\/$/, "")}${path}`,
       {
@@ -571,18 +573,14 @@ async function workerRequest(
       },
     );
     // A speech-recovery request can briefly hold the single worker.
-    if (response.status === 409 && attempt < 5) {
+    if (response.status === 409) {
       await new Promise((resolve) => setTimeout(resolve, 3000));
       continue;
     }
     // The worker stopped this request at its time limit; running it again would hold the core for as long.
     if (response.status === 504) throw new Error(WORKER_TIMEOUT_MESSAGE);
     if (!response.ok)
-      throw new Error(
-        response.status === 409
-          ? "The alignment worker is busy. Retry in a moment."
-          : failure,
-      );
+      throw new Error(failure);
     return response.json();
   }
 }
@@ -682,6 +680,7 @@ async function processAnchored(
           ANCHOR_TIMEOUT_MS,
           undefined,
           workerBase,
+          live,
         ),
       );
       if (!current()) return;
@@ -778,6 +777,7 @@ async function processAnchored(
             SECTION_TIMEOUT_MS,
             undefined,
             workerBase,
+            live,
           );
           if (remoteWorkFolder)
             writeFileSync(cacheFile, JSON.stringify(response));
@@ -1053,6 +1053,11 @@ export async function processAlignments() {
               },
               SECTION_TIMEOUT_MS,
               "Local alignment could not process this section. Check its chapter pairing and retry.",
+              undefined,
+              () => {
+                const current = alignmentJob(job.id);
+                return !stopping && activeStatuses.includes(current.status) && current.generation === generation;
+              },
             );
           }
           if (
@@ -1131,6 +1136,7 @@ export async function processAlignments() {
         const current = jobs().find((job) => job.id === pending.id);
         if (
           current &&
+          !stopping &&
           activeStatuses.includes(current.status) &&
           current.generation === pending.generation
         ) {
