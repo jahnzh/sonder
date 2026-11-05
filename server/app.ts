@@ -12,8 +12,10 @@ import {
   statSync,
   renameSync,
   unlinkSync,
+  writeFileSync,
+  realpathSync,
 } from "node:fs";
-import { resolve, join, extname } from "node:path";
+import { resolve, join, extname, relative, isAbsolute } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { parseFile } from "music-metadata";
@@ -1272,6 +1274,79 @@ export async function createApp() {
         ? reply.code(404).send({ error: "Not found" })
         : reply.sendFile("index.html"),
     );
+  }
+  if (process.env.NODE_ENV === "test") {
+    const { mediaRoot } = await import("./storage.ts");
+    const testMediaPath = (rel: string) => {
+      const root = realpathSync(mediaRoot);
+      const target = resolve(mediaRoot, rel);
+      if (!existsSync(target)) return null;
+      const actual = realpathSync(target);
+      const relPath = relative(root, actual);
+      if (relPath.startsWith("..") || isAbsolute(relPath)) return null;
+      return actual;
+    };
+    app.get("/api/test/media-exists", (req) => {
+      const rel = (req.query as { path?: string }).path;
+      if (!rel) throw new Error("path is required.");
+      const actual = testMediaPath(rel);
+      return { exists: actual ? existsSync(actual) : false };
+    });
+    app.post("/api/test/seed-local-audio", (req) => {
+      const input = z
+        .object({
+          relPath: z.string().min(1),
+          editionId: z.string().min(1),
+          recordingId: z.string().min(1),
+          trackId: z.string().min(1),
+          workId: z.string().min(1),
+          releaseTitle: z.string().optional(),
+        })
+        .parse(req.body);
+      const full = resolve(mediaRoot, input.relPath);
+      mkdirSync(resolve(full, ".."), { recursive: true });
+      if (!existsSync(full)) writeFileSync(full, "audio");
+      db.insert(s.editions)
+        .values({
+          id: input.editionId,
+          workId: input.workId,
+          cover: "",
+          narrator: "N",
+          language: null,
+          releaseTitle: input.releaseTitle ?? "Test audio",
+          rating: 0,
+          sourceLabel: "Test",
+        })
+        .onConflictDoNothing()
+        .run();
+      db.insert(s.recordings)
+        .values({ id: input.recordingId, editionId: input.editionId })
+        .onConflictDoNothing()
+        .run();
+      db.insert(s.tracks)
+        .values({
+          id: input.trackId,
+          recordingId: input.recordingId,
+          title: "Ch 1",
+          index: 0,
+          duration: 10,
+          chapters: [],
+          source: full,
+          sourceType: "local",
+        })
+        .onConflictDoNothing()
+        .run();
+      db.insert(s.userLibrary)
+        .values({
+          userId: 1,
+          bookId: input.editionId,
+          status: "unread",
+          addedAt: Date.now(),
+        })
+        .onConflictDoNothing()
+        .run();
+      return { ok: true as const, relPath: input.relPath };
+    });
   }
   return app;
 }

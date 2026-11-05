@@ -5,6 +5,7 @@ import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
 import {
   cancelServerDownload,
+  serverDownloadIsActive,
   waitUntilServerDownloadIdle,
 } from "./downloads.ts";
 import { mediaRoot } from "./storage.ts";
@@ -44,6 +45,14 @@ export type SeriesRemovalPreview = {
 };
 
 type TorrentCancel = { hash: string };
+
+type RecordingDeletePlan = { recordingId: string; paths: string[] };
+
+type EditionDeletePlan = {
+  editionId: string;
+  releaseTitle: string | null;
+  recordings: RecordingDeletePlan[];
+};
 
 function assertSavedSeries(userId: number, seriesId: number) {
   const row = sqlite
@@ -129,7 +138,16 @@ function blockReasonForEdition(editionId: string, exceptUserId: number) {
   )
     return "Another listener still has listening progress on this release.";
   if (
-    exceptUserId !== 1 &&
+    sqlite
+      .prepare(
+        `SELECT 1 FROM hardcover_progress hp
+         INNER JOIN recordings r ON r.id=hp.recording_id
+         WHERE r.edition_id=? LIMIT 1`,
+      )
+      .get(editionId)
+  )
+    return "Another listener still has listening progress on this release.";
+  if (
     sqlite
       .prepare(
         `SELECT 1 FROM progress p
@@ -139,6 +157,9 @@ function blockReasonForEdition(editionId: string, exceptUserId: number) {
       .get(editionId)
   )
     return "Another listener still has listening progress on this release.";
+  // Legacy hidden_library is global (admin / user 1 shelf); treat it like a foreign hold.
+  if (sqlite.prepare(`SELECT 1 FROM hidden_library WHERE book_id=? LIMIT 1`).get(editionId))
+    return "Another listener still keeps this release hidden in their library.";
   return null;
 }
 
@@ -231,13 +252,18 @@ function managedMediaPath(path: string) {
 }
 
 function pathReferencedElsewhere(path: string, exceptTrackIds: Set<string>) {
+  const canonical = managedMediaPath(path) ?? path;
   for (const track of db.select().from(s.tracks).all()) {
     if (exceptTrackIds.has(track.id)) continue;
-    if (track.sourceType === "local" && track.source === path) return true;
+    if (track.sourceType === "local") {
+      const source = managedMediaPath(track.source) ?? track.source;
+      if (source === canonical) return true;
+    }
   }
   for (const copy of db.select().from(s.mediaCopies).all()) {
     if (exceptTrackIds.has(copy.trackId)) continue;
-    if (copy.path === path) return true;
+    const copyPath = managedMediaPath(copy.path) ?? copy.path;
+    if (copyPath === canonical) return true;
   }
   return false;
 }
@@ -382,9 +408,8 @@ function deleteRecordingRows(recordingId: string) {
 function deleteEditionIfExclusive(
   userId: number,
   editionId: string,
-  pathsToUnlink: string[],
   skippedPaths: string[],
-  recordingsToCancel: string[],
+  editionDeletePlans: EditionDeletePlan[],
 ): SeriesRemovalAudioEdition {
   const retainReason = blockReasonForEdition(editionId, userId);
   if (retainReason) {
@@ -407,28 +432,89 @@ function deleteEditionIfExclusive(
     .from(s.recordings)
     .where(eq(s.recordings.editionId, editionId))
     .all();
-  for (const recording of recordings) {
-    recordingsToCancel.push(recording.id);
-    const tracks = db
-      .select()
-      .from(s.tracks)
-      .where(eq(s.tracks.recordingId, recording.id))
-      .all();
-    pathsToUnlink.push(...collectDeletablePaths(tracks, skippedPaths));
-    deleteRecordingRows(recording.id);
-  }
-  db.delete(s.userLibrary).where(eq(s.userLibrary.bookId, editionId)).run();
-  db.delete(s.userHiddenLibrary)
-    .where(eq(s.userHiddenLibrary.bookId, editionId))
-    .run();
-  db.delete(s.hiddenLibrary).where(eq(s.hiddenLibrary.bookId, editionId)).run();
-  db.delete(s.editions).where(eq(s.editions.id, editionId)).run();
+  editionDeletePlans.push({
+    editionId,
+    releaseTitle: edition?.releaseTitle ?? null,
+    recordings: recordings.map((recording) => {
+      const tracks = db
+        .select()
+        .from(s.tracks)
+        .where(eq(s.tracks.recordingId, recording.id))
+        .all();
+      return {
+        recordingId: recording.id,
+        paths: collectDeletablePaths(tracks, skippedPaths),
+      };
+    }),
+  });
   return {
     editionId,
     releaseTitle: edition?.releaseTitle ?? null,
     wouldDelete: true,
     retainReason: null,
   };
+}
+
+function hardcoverBookIdForWork(workId: string) {
+  return db
+    .select({ bookId: s.hardcoverLinks.bookId })
+    .from(s.hardcoverLinks)
+    .where(eq(s.hardcoverLinks.workId, workId))
+    .get()?.bookId;
+}
+
+function ensureHardcoverSyncSuppressed(userId: number, workId: string) {
+  const bookId = hardcoverBookIdForWork(workId);
+  const editions = db
+    .select()
+    .from(s.editions)
+    .where(eq(s.editions.workId, workId))
+    .all();
+  const audio = editions.filter((edition) => editionHasAudio(edition.id));
+  let representativeId =
+    audio[0]?.id ??
+    editions.find((edition) => edition.id.startsWith("hc-"))?.id ??
+    editions[0]?.id ??
+    null;
+  if (!representativeId && bookId != null) {
+    representativeId = `hc-${bookId}`;
+    db.insert(s.editions)
+      .values({
+        id: representativeId,
+        workId,
+        cover: "/covers/meditations.svg",
+        narrator: "Audio not added",
+        language: null,
+        releaseTitle: null,
+        rating: 0,
+        sourceLabel: "Hardcover library",
+      })
+      .onConflictDoNothing()
+      .run();
+    db.insert(s.recordings)
+      .values({
+        id: `recording-${representativeId}`,
+        editionId: representativeId,
+      })
+      .onConflictDoNothing()
+      .run();
+  }
+  if (representativeId) {
+    db.insert(s.userHiddenLibrary)
+      .values({ userId, bookId: representativeId })
+      .onConflictDoNothing()
+      .run();
+  }
+}
+
+function commitEditionDeletes(plan: EditionDeletePlan) {
+  for (const recording of plan.recordings) deleteRecordingRows(recording.recordingId);
+  db.delete(s.userLibrary).where(eq(s.userLibrary.bookId, plan.editionId)).run();
+  db.delete(s.userHiddenLibrary)
+    .where(eq(s.userHiddenLibrary.bookId, plan.editionId))
+    .run();
+  db.delete(s.hiddenLibrary).where(eq(s.hiddenLibrary.bookId, plan.editionId)).run();
+  db.delete(s.editions).where(eq(s.editions.id, plan.editionId)).run();
 }
 
 function removeUserWorkFromLibrary(userId: number, workId: string) {
@@ -497,9 +583,8 @@ function removeUserWorkFromLibrary(userId: number, workId: string) {
 function removeUserWorkAudio(
   userId: number,
   workId: string,
-  pathsToUnlink: string[],
   skippedPaths: string[],
-  recordingsToCancel: string[],
+  editionDeletePlans: EditionDeletePlan[],
 ) {
   const results: SeriesRemovalAudioEdition[] = [];
   for (const edition of db
@@ -512,23 +597,46 @@ function removeUserWorkAudio(
       deleteEditionIfExclusive(
         userId,
         edition.id,
-        pathsToUnlink,
         skippedPaths,
-        recordingsToCancel,
+        editionDeletePlans,
       ),
     );
   }
+  ensureHardcoverSyncSuppressed(userId, workId);
   return results;
 }
 
-async function runPostCommitSideEffects(
+async function finalizeEditionDeletes(
+  editionDeletePlans: EditionDeletePlan[],
   torrentCancels: TorrentCancel[],
-  recordingsToCancel: string[],
-  pathsToUnlink: string[],
+  skippedPaths: string[],
 ) {
-  for (const recordingId of [...new Set(recordingsToCancel)]) {
-    cancelServerDownload(recordingId);
-    await waitUntilServerDownloadIdle(recordingId).catch(() => {});
+  const fileErrors: string[] = [];
+  const pathsToUnlink: string[] = [];
+  for (const plan of editionDeletePlans) {
+    let blocked = false;
+    for (const recording of plan.recordings) {
+      try {
+        if (serverDownloadIsActive(recording.recordingId)) {
+          await waitUntilServerDownloadIdle(recording.recordingId);
+        }
+      } catch (error) {
+        fileErrors.push(
+          `${plan.editionId}: ${(error as Error).message}`,
+        );
+        for (const path of recording.paths) skippedPaths.push(path);
+        blocked = true;
+        break;
+      }
+      cancelServerDownload(recording.recordingId);
+    }
+    if (blocked) continue;
+    sqlite.transaction(() => commitEditionDeletes(plan))();
+    for (const recording of plan.recordings) {
+      for (const path of recording.paths) {
+        if (!pathsToUnlink.includes(path)) pathsToUnlink.push(path);
+      }
+    }
   }
   for (const { hash } of torrentCancels) {
     transmission("torrent-stop", { ids: [hash] }).catch(() => {});
@@ -537,8 +645,7 @@ async function runPostCommitSideEffects(
       "delete-local-data": true,
     }).catch(() => {});
   }
-  const fileErrors: string[] = [];
-  for (const path of [...new Set(pathsToUnlink)]) {
+  for (const path of pathsToUnlink) {
     try {
       if (existsSync(path)) unlinkSync(path);
     } catch (error) {
@@ -569,9 +676,8 @@ export async function removeSavedHardcoverSeries(
 
   const audioOutcomes: SeriesRemovalAudioEdition[] = [];
   const torrentCancels: TorrentCancel[] = [];
-  const pathsToUnlink: string[] = [];
   const skippedPaths: string[] = [];
-  const recordingsToCancel: string[] = [];
+  const editionDeletePlans: EditionDeletePlan[] = [];
 
   sqlite.transaction(() => {
     if (selected.length) {
@@ -583,9 +689,8 @@ export async function removeSavedHardcoverSeries(
           ...removeUserWorkAudio(
             userId,
             work.workId,
-            pathsToUnlink,
             skippedPaths,
-            recordingsToCancel,
+            editionDeletePlans,
           ),
         );
         syncWorkMediaState(userId, work.workId);
@@ -625,10 +730,10 @@ export async function removeSavedHardcoverSeries(
       .run();
   })();
 
-  const fileErrors = await runPostCommitSideEffects(
+  const fileErrors = await finalizeEditionDeletes(
+    editionDeletePlans,
     torrentCancels,
-    recordingsToCancel,
-    pathsToUnlink,
+    skippedPaths,
   );
 
   return {

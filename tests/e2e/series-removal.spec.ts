@@ -53,12 +53,62 @@ test("work-removal confirmation lists shared series and defaults", async ({ page
   await page.getByRole("checkbox", { name: /Also remove selected works/ }).check();
   const alice = page.getByRole("checkbox", { name: /Alice’s Adventures in Wonderland/ });
   await expect(alice).not.toBeChecked();
-  await expect(page.getByText(/Also in.*#702/)).toBeVisible();
-  await expect(page.getByRole("checkbox", { name: /Crossing Two/ })).toBeChecked();
+  await expect(page.getByText(/Also in The Crossing \(#702\)/)).toBeVisible();
+});
+
+test("work-removal confirmation names the other saved series from series 702", async ({
+  page,
+}) => {
+  await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
+  await page.request.post("/api/series", { data: { id: 701, bookIds: [501, 503] } });
+  await page.request.post("/api/series", { data: { id: 702, bookIds: [501] } });
+  await page.goto("/#library");
+  await page.getByRole("button", { name: "Open The Crossing by Bea South" }).click();
+  await page.getByRole("button", { name: "Remove series", exact: true }).click();
+  await page.getByRole("checkbox", { name: /Also remove selected works/ }).check();
+  await expect(page.getByText(/Also in The Crossing \(#701\)/)).toBeVisible();
+});
+
+test("work-removal confirmation lists audio to delete", async ({ page }) => {
+  await saveCrossingSeries(page);
+  const series = await (await page.request.get("/api/series/701")).json();
+  const companion = series.works.find((work: { title: string }) =>
+    work.title.includes("Companion"),
+  );
+  await page.request.post("/api/test/seed-local-audio", {
+    data: {
+      relPath: "e2e-companion-audio.mp3",
+      editionId: "browser-companion-audio",
+      recordingId: "rec-browser-companion",
+      trackId: "track-browser-companion",
+      workId: companion.workId,
+      releaseTitle: "Companion audiobook",
+    },
+  });
+  await page.goto("/#library");
+  await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
+  await page.getByRole("button", { name: "Remove series", exact: true }).click();
+  await page.getByRole("checkbox", { name: /Also remove selected works/ }).check();
+  await page.getByRole("checkbox", { name: /Crossing Companion/ }).check();
+  await expect(page.getByText("Audio to delete: Companion audiobook")).toBeVisible();
 });
 
 test("admin can remove a selected work from the confirmation dialog", async ({ page }) => {
   await saveCrossingSeries(page);
+  const series = await (await page.request.get("/api/series/701")).json();
+  const companion = series.works.find((work: { title: string }) =>
+    work.title.includes("Companion"),
+  );
+  await page.request.post("/api/test/seed-local-audio", {
+    data: {
+      relPath: "e2e-companion-delete.mp3",
+      editionId: "browser-companion-delete",
+      recordingId: "rec-browser-delete",
+      trackId: "track-browser-delete",
+      workId: companion.workId,
+      releaseTitle: "Companion audiobook",
+    },
+  });
   const before = (await (await page.request.get("/api/books")).json()).filter(
     (book: { inLibrary: boolean }) => book.inLibrary,
   );
@@ -76,4 +126,8 @@ test("admin can remove a selected work from the confirmation dialog", async ({ p
   expect(
     after.some((book: { title: string }) => book.title === "Crossing Companion"),
   ).toBe(false);
+  const media = await (
+    await page.request.get("/api/test/media-exists?path=e2e-companion-delete.mp3")
+  ).json();
+  expect(media.exists).toBe(false);
 });

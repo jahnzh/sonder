@@ -29,6 +29,9 @@ function jobIsActive(recordingId: string) {
     .get();
   return job?.status === "queued" || job?.status === "downloading";
 }
+export function serverDownloadIsActive(recordingId: string) {
+  return jobIsActive(recordingId);
+}
 export function hasServerMedia(track: typeof s.tracks.$inferSelect) {
   if (track.sourceType === "local" && existsSync(track.source)) return true;
   const copy = db
@@ -100,7 +103,7 @@ export function cancelServerDownload(recordingId: string) {
 }
 export async function waitUntilServerDownloadIdle(
   recordingId: string,
-  timeoutMs = 5000,
+  timeoutMs = Number(process.env.SONDER_DOWNLOAD_IDLE_MS || 5000),
 ) {
   const start = Date.now();
   while (jobIsActive(recordingId)) {

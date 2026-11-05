@@ -772,3 +772,254 @@ test("removed work does not resume series acquisition after ticker runs", async 
   resetSeriesAcquisitionDeps();
   process.env.SONDER_SKIP_SERIES_ACQUISITION = "1";
 });
+
+test("removed audio-only work stays hidden from Hardcover import", async () => {
+  const { importHardcoverBook } = await import("../server/hardcover.ts");
+  const cookie = await adminCookie();
+  await saveSeries(cookie, [302]);
+  const workId = (
+    await app.inject({ url: "/api/series/41", cookies: { sonder_session: cookie } })
+  ).json().works.find((w: { id: number }) => w.id === 302).workId;
+  const audioPath = join(temp, "media", "hc-hide-audio.mp3");
+  writeFileSync(audioPath, "audio");
+  const editionId = "local-audio-only";
+  db.insert(schema.editions)
+    .values({
+      id: editionId,
+      workId,
+      cover: "",
+      narrator: "N",
+      language: null,
+      releaseTitle: "Volume two",
+      rating: 0,
+      sourceLabel: "Test",
+    })
+    .run();
+  db.insert(schema.recordings).values({ id: "rec-audio-only", editionId }).run();
+  db.insert(schema.tracks)
+    .values({
+      id: "track-audio-only",
+      recordingId: "rec-audio-only",
+      title: "Ch 1",
+      index: 0,
+      duration: 10,
+      chapters: [],
+      source: audioPath,
+      sourceType: "local",
+    })
+    .run();
+  db.insert(schema.userLibrary)
+    .values({ userId: 1, bookId: editionId, status: "unread", addedAt: Date.now() })
+    .run();
+  await app.inject({
+    method: "DELETE",
+    url: "/api/series/41",
+    cookies: { sonder_session: cookie },
+    payload: { bookIds: [302] },
+  });
+  assert.ok(
+    sqlite
+      .prepare(
+        "SELECT 1 FROM user_hidden_library WHERE user_id=1 AND book_id LIKE 'hc-%'",
+      )
+      .get(),
+  );
+  await importHardcoverBook(1, 302);
+  assert.equal(
+    sqlite
+      .prepare("SELECT 1 FROM user_library WHERE user_id=1 AND book_id=?")
+      .get(editionId),
+    undefined,
+  );
+});
+
+test("removed work with hc placeholder keeps hidden marker after audio delete", async () => {
+  const { importHardcoverBook } = await import("../server/hardcover.ts");
+  const cookie = await adminCookie();
+  await saveSeries(cookie, [301]);
+  const workId = (
+    await app.inject({ url: "/api/series/41", cookies: { sonder_session: cookie } })
+  ).json().works.find((w: { id: number }) => w.id === 301).workId;
+  const placeholderId = "hc-301";
+  db.insert(schema.editions)
+    .values({
+      id: placeholderId,
+      workId,
+      cover: "",
+      narrator: "Audio not added",
+      language: null,
+      releaseTitle: null,
+      rating: 0,
+      sourceLabel: "Hardcover library",
+    })
+    .onConflictDoNothing()
+    .run();
+  db.insert(schema.recordings)
+    .values({ id: `recording-${placeholderId}`, editionId: placeholderId })
+    .onConflictDoNothing()
+    .run();
+  const audioPath = join(temp, "media", "with-placeholder.mp3");
+  writeFileSync(audioPath, "audio");
+  const editionId = "local-with-placeholder";
+  db.insert(schema.editions)
+    .values({
+      id: editionId,
+      workId,
+      cover: "",
+      narrator: "N",
+      language: null,
+      releaseTitle: "Volume one",
+      rating: 0,
+      sourceLabel: "Test",
+    })
+    .run();
+  db.insert(schema.recordings).values({ id: "rec-ph", editionId }).run();
+  db.insert(schema.tracks)
+    .values({
+      id: "track-ph",
+      recordingId: "rec-ph",
+      title: "Ch 1",
+      index: 0,
+      duration: 10,
+      chapters: [],
+      source: audioPath,
+      sourceType: "local",
+    })
+    .run();
+  db.insert(schema.userLibrary)
+    .values({ userId: 1, bookId: editionId, status: "unread", addedAt: Date.now() })
+    .run();
+  await app.inject({
+    method: "DELETE",
+    url: "/api/series/41",
+    cookies: { sonder_session: cookie },
+    payload: { bookIds: [301] },
+  });
+  assert.ok(
+    sqlite
+      .prepare(
+        "SELECT 1 FROM user_hidden_library WHERE user_id=1 AND book_id=?",
+      )
+      .get(placeholderId),
+  );
+  await importHardcoverBook(1, 301);
+  assert.equal(
+    sqlite
+      .prepare("SELECT 1 FROM user_library WHERE user_id=1 AND book_id=?")
+      .get(editionId),
+    undefined,
+  );
+});
+
+test("legacy progress blocks deleting an edition for any user", async () => {
+  const cookie = await adminCookie();
+  await saveSeries(cookie, [301]);
+  const workId = (
+    await app.inject({ url: "/api/series/41", cookies: { sonder_session: cookie } })
+  ).json().works.find((w: { id: number }) => w.id === 301).workId;
+  const editionId = "local-legacy-progress";
+  const audioPath = join(temp, "media", "legacy-progress.mp3");
+  writeFileSync(audioPath, "audio");
+  db.insert(schema.editions)
+    .values({
+      id: editionId,
+      workId,
+      cover: "",
+      narrator: "N",
+      language: null,
+      releaseTitle: "Volume one",
+      rating: 0,
+      sourceLabel: "Test",
+    })
+    .run();
+  db.insert(schema.recordings).values({ id: "rec-legacy", editionId }).run();
+  db.insert(schema.tracks)
+    .values({
+      id: "track-legacy",
+      recordingId: "rec-legacy",
+      title: "Ch 1",
+      index: 0,
+      duration: 10,
+      chapters: [],
+      source: audioPath,
+      sourceType: "local",
+    })
+    .run();
+  sqlite
+    .prepare(
+      "INSERT INTO progress(recording_id,track_id,position,duration,updated_at) VALUES(?,?,?,?,?)",
+    )
+    .run("rec-legacy", "track-legacy", 1, 10, Date.now());
+  const preview = (
+    await app.inject({ url: "/api/series/41/removal", cookies: { sonder_session: cookie } })
+  ).json();
+  const work = preview.works.find((w: { bookId: number }) => w.bookId === 301);
+  assert.equal(work.audioEditions[0].wouldDelete, false);
+  await app.inject({
+    method: "DELETE",
+    url: "/api/series/41",
+    cookies: { sonder_session: cookie },
+    payload: { bookIds: [301] },
+  });
+  assert.ok(existsSync(audioPath));
+  assert.ok(db.select().from(schema.editions).where(eq(schema.editions.id, editionId)).get());
+});
+
+test("active server download blocks file deletion until idle", async () => {
+  process.env.SONDER_DOWNLOAD_IDLE_MS = "50";
+  const cookie = await adminCookie();
+  await saveSeries(cookie, [301]);
+  const workId = (
+    await app.inject({ url: "/api/series/41", cookies: { sonder_session: cookie } })
+  ).json().works.find((w: { id: number }) => w.id === 301).workId;
+  const audioPath = join(temp, "media", "download-busy.mp3");
+  writeFileSync(audioPath, "audio");
+  const editionId = "local-download-busy";
+  db.insert(schema.editions)
+    .values({
+      id: editionId,
+      workId,
+      cover: "",
+      narrator: "N",
+      language: null,
+      releaseTitle: "Volume one",
+      rating: 0,
+      sourceLabel: "Test",
+    })
+    .run();
+  db.insert(schema.recordings).values({ id: "rec-busy", editionId }).run();
+  db.insert(schema.tracks)
+    .values({
+      id: "track-busy",
+      recordingId: "rec-busy",
+      title: "Ch 1",
+      index: 0,
+      duration: 10,
+      chapters: [],
+      source: audioPath,
+      sourceType: "local",
+    })
+    .run();
+  db.insert(schema.serverDownloads)
+    .values({
+      recordingId: "rec-busy",
+      bookId: editionId,
+      status: "downloading",
+      progress: 0.4,
+      error: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+    .run();
+  const removed = await app.inject({
+    method: "DELETE",
+    url: "/api/series/41",
+    cookies: { sonder_session: cookie },
+    payload: { bookIds: [301] },
+  });
+  assert.equal(removed.statusCode, 200, removed.body);
+  assert.ok(existsSync(audioPath));
+  assert.ok(db.select().from(schema.editions).where(eq(schema.editions.id, editionId)).get());
+  assert.ok(removed.json().fileErrors.length > 0);
+  delete process.env.SONDER_DOWNLOAD_IDLE_MS;
+});
