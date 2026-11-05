@@ -29,6 +29,15 @@ import {
   seriesWorkAcquisitions,
 } from "./series-acquisition.ts";
 import { listEbookSetMembers } from "./ebook-set.ts";
+import {
+  libraryOriginFor,
+  libraryOriginLabel,
+  removeUserLibraryRow,
+  setLibraryOrigin,
+  removalDefaultSelected,
+  setWorkCompletionOverride,
+} from "./library-origin.ts";
+export { setWorkCompletionOverride };
 export type ShelfStatus = 1 | 2 | 3 | 4 | 5;
 export type SyncMode = "off" | "import" | "two-way";
 const shelfStatus = z.union([
@@ -587,7 +596,7 @@ export async function saveHardcoverSeries(
           metadataLink(work.workId, book);
           workId = work.workId;
         } else {
-          const imported = importCatalogBook(userId, book, null, true);
+          const imported = importCatalogBook(userId, book, null, true, { source: "series", seriesId: id });
           workId = db.select().from(s.editions).where(eq(s.editions.id, imported.bookId)).get()!.workId;
         }
       }
@@ -657,7 +666,11 @@ export function savedHardcoverSeries(userId: number, id: number, options?: {
     const unreleased = !!work.unreleased;
     const { needsAdmin } = added ? { needsAdmin: false } : seriesWorkAdminMatch(userId, work.title, author, work.id);
     const stateWorkId = added || ownsWork(userId, work.workId) ? work.workId : null;
-    const base = seriesWorkState(userId, stateWorkId);
+    const base = seriesWorkState(userId, stateWorkId, {
+      seriesId: id,
+      added,
+      legacyIntroduced: !!work.introduced,
+    });
     const mediaState =
       added && stateWorkId ? getWorkMediaState(userId, stateWorkId) : null;
     const acquisition =
@@ -722,7 +735,11 @@ function ownsWork(userId: number, workId: string | null) {
   return !!workId && db.select().from(s.editions).where(eq(s.editions.workId, workId)).all()
     .some((edition) => !!libraryEntry(userId, edition.id));
 }
-function seriesWorkState(userId: number, workId: string | null) {
+function seriesWorkState(
+  userId: number,
+  workId: string | null,
+  series?: { seriesId: number; added: boolean; legacyIntroduced: boolean },
+) {
   const editions = workId ? db.select().from(s.editions).where(eq(s.editions.workId, workId)).all() : [];
   const library = editions.flatMap((edition) => libraryEntry(userId, edition.id) ? [edition] : []);
   const override = workId ? db.select().from(s.userWorkCompletion)
@@ -752,9 +769,26 @@ function seriesWorkState(userId: number, workId: string | null) {
   });
   const finished = override === "finished" ? true : override === "unread" ? false :
     library.some((edition) => libraryEntry(userId, edition.id)?.status === "finished") || audioFinished || ebookFinished;
-  return { editionId: library[0]?.id ?? null, finished,
+  const base = { editionId: library[0]?.id ?? null, finished, completionOverride: override ?? null,
     availability: { audio: { server: workId ? recordings.some((recording) => recording.server) : null, recordings },
-      ebook: { server: workId ? ebooks.some((ebook) => existsSync(ebook.source)) : null, device: null } } };
+      ebook: { server: workId ? ebooks.some((ebook) => existsSync(ebook.source)) : null,
+        editionIds: ebooks.map((ebook) => ebook.id), device: null } } };
+  if (!series || !workId) return base;
+  const originRow = libraryOriginFor(userId, workId);
+  const libraryOrigin = originRow
+    ? { source: originRow.source as "manual" | "hardcover_sync" | "series" | "unknown", seriesId: originRow.seriesId, addedAt: originRow.addedAt }
+    : { source: "unknown" as const, seriesId: null, addedAt: null };
+  return {
+    ...base,
+    libraryOrigin,
+    libraryOriginLabel: libraryOriginLabel(libraryOrigin, series.seriesId),
+    removalDefaultSelected: removalDefaultSelected(
+      userId,
+      series.seriesId,
+      { added: series.added, workId },
+      series.legacyIntroduced,
+    ),
+  };
 }
 export async function hardcoverSearch(userId: number, query: string) {
   const data = await graphql(
@@ -1040,6 +1074,7 @@ function importCatalogBook(
   book: CatalogBook,
   status: ShelfStatus | null = null,
   forceLibrary = false,
+  libraryOrigin?: { source: "series"; seriesId: number },
 ) {
   let links = linkRepresentatives(book.id);
   let matched = false,
@@ -1110,16 +1145,28 @@ function importCatalogBook(
     eq(s.userHiddenLibrary.bookId, representative.id),
   );
   if (forceLibrary) db.delete(s.userHiddenLibrary).where(hidden).run();
-  if (!db.select().from(s.userHiddenLibrary).where(hidden).get())
-    db.insert(s.userLibrary)
-      .values({
-        userId,
-        bookId: representative.id,
-        status: localStatus(status || 1),
-        addedAt: Date.now(),
-      })
-      .onConflictDoNothing()
-      .run();
+  if (!db.select().from(s.userHiddenLibrary).where(hidden).get()) {
+    const addedAt = Date.now();
+    const inserted =
+      db
+        .insert(s.userLibrary)
+        .values({
+          userId,
+          bookId: representative.id,
+          status: localStatus(status || 1),
+          addedAt,
+        })
+        .onConflictDoNothing()
+        .run().changes > 0;
+    if (inserted) {
+      if (libraryOrigin)
+        setLibraryOrigin(userId, links[0].workId, libraryOrigin.source, {
+          seriesId: libraryOrigin.seriesId,
+          addedAt,
+        });
+      else setLibraryOrigin(userId, links[0].workId, "hardcover_sync", { addedAt });
+    }
+  }
   // Metadata-only placeholders are replaced on the shelf when actual audio for that work is linked.
   if (audio.length) {
     for (const link of links)
@@ -1129,14 +1176,7 @@ function importCatalogBook(
         .where(eq(s.editions.workId, link.workId))
         .all())
         if (e.id.startsWith("hc-") && !audio.some((a) => a.id === e.id))
-          db.delete(s.userLibrary)
-            .where(
-              and(
-                eq(s.userLibrary.userId, userId),
-                eq(s.userLibrary.bookId, e.id),
-              ),
-            )
-            .run();
+          removeUserLibraryRow(userId, e.id);
   }
   return { bookId: representative.id, matched, imported };
 }
@@ -1841,12 +1881,7 @@ export function claimHardcoverAudio(workId: string, editionId: string) {
       recordingData(recording.id)?.completeDuration
     )
       applyFraction(userId, recording.id, remoteRead.fraction);
-    for (const e of placeholders)
-      db.delete(s.userLibrary)
-        .where(
-          and(eq(s.userLibrary.userId, userId), eq(s.userLibrary.bookId, e.id)),
-        )
-        .run();
+    for (const e of placeholders) removeUserLibraryRow(userId, e.id);
   }
 }
 function recordingData(recordingId: string) {

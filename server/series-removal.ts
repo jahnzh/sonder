@@ -12,6 +12,11 @@ import { mediaRoot } from "./storage.ts";
 import { transmission } from "./transmission.ts";
 import { syncWorkMediaState } from "./work-media-state.ts";
 import { userIsAdmin } from "./users.ts";
+import {
+  removeUserLibraryRow,
+  seriesRemovalWorkSelectedByDefault,
+  workIntroducedViaSeries,
+} from "./library-origin.ts";
 
 const activeAcquisition = new Set([
   "checking",
@@ -225,13 +230,25 @@ export function previewSeriesRemoval(
   const series = assertSavedSeries(userId, seriesId);
   const works = savedWorks(userId, seriesId).map((work) => {
     const otherSeries = otherSavedSeries(userId, work.workId, seriesId);
-    const introduced = !!work.introduced;
+    const introduced = workIntroducedViaSeries(
+      userId,
+      seriesId,
+      work.workId,
+      !!work.introduced,
+    );
+    const selectedByDefault = seriesRemovalWorkSelectedByDefault(
+      userId,
+      seriesId,
+      work.workId,
+      !!work.introduced,
+      otherSeries.length,
+    );
     return {
       bookId: work.bookId,
       title: work.title,
       workId: work.workId,
       introduced,
-      selectedByDefault: introduced && otherSeries.length === 0,
+      selectedByDefault,
       otherSeries,
       activeDownloads: userActiveDownloads(userId, work.workId),
       audioEditions: audioEditionsForRemoval(userId, work.workId),
@@ -527,14 +544,7 @@ function removeUserWorkFromLibrary(userId: number, workId: string) {
     .where(eq(s.editions.workId, workId))
     .all();
   for (const edition of editions) {
-    db.delete(s.userLibrary)
-      .where(
-        and(
-          eq(s.userLibrary.userId, userId),
-          eq(s.userLibrary.bookId, edition.id),
-        ),
-      )
-      .run();
+    removeUserLibraryRow(userId, edition.id);
     db.insert(s.userHiddenLibrary)
       .values({ userId, bookId: edition.id })
       .onConflictDoNothing()

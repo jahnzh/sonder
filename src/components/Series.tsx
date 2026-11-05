@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api } from "../lib";
-import type { Download, SeriesWorkAcquisition } from "../types";
+import type { Download, SavedEbook, SeriesWorkAcquisition } from "../types";
 import { Dialog } from "./ui/dialog";
 import { SeriesSaveOptions } from "./SeriesSaveOptions";
 import { SeriesRemoveDialog } from "./SeriesRemoveDialog";
+import { SeriesWorkSavedDetails } from "./SeriesWorkSavedDetails";
 import { SeriesWorkStatus, SERIES_SAVED_POLL_MS } from "./SeriesWorkStatus";
 import "../series.css";
 
@@ -22,6 +23,8 @@ type SeriesWork = {
     ebook: SeriesWorkAcquisition | null;
   } | null;
   ebookSet?: { held: number; accepted: number; rejected: number } | null;
+  completionOverride?: "finished" | "unread" | null;
+  libraryOriginLabel?: string | null;
   availability?: { audio: { server: boolean | null; recordings: { id: string; tracks: string[]; server: boolean; stream: boolean }[] }; ebook: { server: boolean | null; device: null } };
 };
 type Series = SeriesSummary & {
@@ -75,7 +78,7 @@ export function SeriesLibrary({ onOpen, revision }: { onOpen: (id: number) => vo
   </section>;
 }
 
-export function SeriesDialog({ target, onClose, onSaved, downloads, canAcquire }: { target: SeriesTarget | null; onClose: () => void; onSaved: () => void; downloads: Download[]; canAcquire: boolean }) {
+export function SeriesDialog({ target, onClose, onSaved, downloads, savedEbooks, offlineEbookEditionIds, canAcquire }: { target: SeriesTarget | null; onClose: () => void; onSaved: () => void; downloads: Download[]; savedEbooks: SavedEbook[]; offlineEbookEditionIds: ReadonlySet<string>; canAcquire: boolean }) {
   const [series, setSeries] = useState<Series | null>(null);
   const [selected, setSelected] = useState<number[]>([]);
   const [mode, setMode] = useState<"preview" | "saved">("preview");
@@ -173,7 +176,13 @@ export function SeriesDialog({ target, onClose, onSaved, downloads, canAcquire }
             ebookSet={work.ebookSet}
             recordings={audio?.recordings}
             downloads={downloads}
+            savedEbooks={savedEbooks}
+            offlineEbookEditionIds={offlineEbookEditionIds}
             onRefresh={() => void reloadSaved()}
+          />
+          <SeriesWorkSavedDetails
+            work={work}
+            onUpdated={() => void reloadSaved()}
           />
         </>}
         {mode === "saved" && !work.added && <>

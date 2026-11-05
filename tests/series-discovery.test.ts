@@ -360,3 +360,246 @@ test("saved mode reports needsAdmin for non-admins and dedupes shared work ids",
     delete process.env.APP_PASSWORD;
   }
 });
+
+test("saved series exposes library origin and removal defaults from provenance", async () => {
+  await app.inject({ method: "DELETE", url: "/api/library/alice" });
+  await app.inject({ method: "POST", url: "/api/library", payload: { bookId: "alice" } });
+  await app.inject({ method: "POST", url: "/api/series", payload: { id: 13, bookIds: [106] } });
+  const alice = (await app.inject("/api/series/13")).json().works[0];
+  assert.equal(alice.libraryOrigin.source, "manual");
+  assert.equal(alice.libraryOriginLabel, "Added manually");
+  assert.equal(alice.removalDefaultSelected, false);
+  const view = (await app.inject("/api/series/11")).json();
+  const owned = view.works.find((work: any) => work.id === 101);
+  const introduced = view.works.find((work: any) => work.id === 103);
+  assert.equal(owned.removalDefaultSelected, false);
+  assert.ok(owned.libraryOrigin.source === "hardcover_sync" || owned.libraryOrigin.source === "unknown");
+  assert.equal(introduced.removalDefaultSelected, true);
+  assert.equal(introduced.libraryOrigin.source, "series");
+  assert.equal(introduced.libraryOriginLabel, "Added through this series");
+});
+
+test("work completion override in saved series matches library semantics", async () => {
+  const view = (await app.inject("/api/series/11")).json();
+  const total = view.completion.total;
+  const first = view.works.find((work: any) => work.id === 101);
+  const unread = await app.inject({
+    method: "PATCH",
+    url: `/api/works/${first.workId}/completion`,
+    payload: { status: "unread" },
+  });
+  assert.equal(unread.statusCode, 200, unread.body);
+  let result = (await app.inject("/api/series/11")).json();
+  assert.equal(result.works.find((work: any) => work.id === 101).completionOverride, "unread");
+  assert.deepEqual(result.completion, { finished: 1, total, nextBookId: 101 });
+  const finish = await app.inject({
+    method: "PATCH",
+    url: `/api/works/${first.workId}/completion`,
+    payload: { status: "finished" },
+  });
+  assert.equal(finish.statusCode, 200, finish.body);
+  assert.deepEqual((await app.inject("/api/series/11")).json().completion, { finished: 2, total, nextBookId: 102 });
+  const derived = await app.inject({
+    method: "PATCH",
+    url: `/api/works/${first.workId}/completion`,
+    payload: { status: "derived" },
+  });
+  assert.equal(derived.statusCode, 200, derived.body);
+  result = (await app.inject("/api/series/11")).json();
+  assert.equal(result.works.find((work: any) => work.id === 101).completionOverride, null);
+  assert.deepEqual(result.completion, { finished: 2, total, nextBookId: 102 });
+});
+
+test("work completion override is personal to the signed-in user", async () => {
+  process.env.APP_PASSWORD = "admin-fixture-password";
+  try {
+    const adminLogin = await app.inject({ method: "POST", url: "/api/auth/login", payload: { password: "admin-fixture-password" } });
+    const adminHeaders = { cookie: `sonder_session=${adminLogin.cookies[0].value}` };
+    await app.inject({ method: "POST", url: "/api/users", headers: adminHeaders, payload: { username: "override-user", password: "override-password" } });
+    const login = await app.inject({ method: "POST", url: "/api/auth/login", payload: { username: "override-user", password: "override-password" } });
+    const headers = { cookie: `sonder_session=${login.cookies[0].value}` };
+    await app.inject({ method: "PUT", url: "/api/hardcover/token", headers, payload: { token: "override-token" } });
+    await app.inject({ method: "POST", url: "/api/series", headers, payload: { id: 11, bookIds: [101, 103] } });
+    const workId = (await app.inject({ url: "/api/series/11", headers })).json().works.find((work: any) => work.id === 101).workId;
+    const adminBefore = (await app.inject({ url: "/api/series/11", headers: adminHeaders })).json().completion;
+    const ownBefore = (await app.inject({ url: "/api/series/11", headers })).json().completion;
+    assert.equal((await app.inject({ method: "PATCH", url: `/api/works/${workId}/completion`, headers, payload: { status: "finished" } })).statusCode, 200);
+    const ownAfter = (await app.inject({ url: "/api/series/11", headers })).json().completion;
+    assert.equal(ownAfter.finished, ownBefore.finished + 1);
+    assert.deepEqual((await app.inject({ url: "/api/series/11", headers: adminHeaders })).json().completion, adminBefore);
+  } finally {
+    delete process.env.APP_PASSWORD;
+  }
+});
+
+test("work completion PATCH returns 404 when work is outside library and saved series", async () => {
+  const missing = await app.inject({
+    method: "PATCH",
+    url: "/api/works/work-not-in-library/completion",
+    payload: { status: "finished" },
+  });
+  assert.equal(missing.statusCode, 404, missing.body);
+});
+
+test("work completion PATCH returns 404 when the work exists but belongs to another user", async () => {
+  const workId = (await app.inject("/api/series/11")).json().works.find(
+    (work: { id: number }) => work.id === 101,
+  ).workId;
+  assert.ok(workId);
+  const { createUser, USER_DATA_TABLES } = await import("../server/users.ts");
+  const outsiderId = sqlite.transaction(() => createUser(`completion-outsider-${Date.now()}`, "outsider-password"))();
+  const outsiderName = (sqlite.prepare("SELECT username FROM users WHERE id=?").get(outsiderId) as { username: string }).username;
+  process.env.APP_PASSWORD = "admin-fixture-password";
+  try {
+    const outsider = await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { username: outsiderName, password: "outsider-password" },
+    });
+    assert.equal(outsider.statusCode, 200, outsider.body);
+    const outsiderHeaders = { cookie: `sonder_session=${outsider.cookies[0]!.value}` };
+    const denied = await app.inject({
+      method: "PATCH",
+      url: `/api/works/${workId}/completion`,
+      headers: outsiderHeaders,
+      payload: { status: "finished" },
+    });
+    assert.equal(denied.statusCode, 404, denied.body);
+  } finally {
+    sqlite.transaction(() => {
+      for (const table of USER_DATA_TABLES) sqlite.prepare(`DELETE FROM ${table} WHERE user_id=?`).run(outsiderId);
+      sqlite.prepare("DELETE FROM users WHERE id=?").run(outsiderId);
+    })();
+    delete process.env.APP_PASSWORD;
+  }
+});
+
+test("non-admin saving an already-owned linked work does not default it for removal", async () => {
+  const { createUser, USER_DATA_TABLES } = await import("../server/users.ts");
+  const memberId = sqlite.transaction(() => createUser(`series-removal-member-${Date.now()}`, "member-password"))();
+  const memberName = (sqlite.prepare("SELECT username FROM users WHERE id=?").get(memberId) as { username: string }).username;
+  process.env.APP_PASSWORD = "admin-fixture-password";
+  try {
+    const login = await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { username: memberName, password: "member-password" },
+    });
+    assert.equal(login.statusCode, 200, login.body);
+    const headers = { cookie: `sonder_session=${login.cookies[0]!.value}` };
+    await app.inject({
+      method: "PUT",
+      url: "/api/hardcover/token",
+      headers,
+      payload: { token: "member-series-token" },
+    });
+    await app.inject({ method: "POST", url: "/api/library", headers, payload: { bookId: "alice" } });
+    const saved = await app.inject({
+      method: "POST",
+      url: "/api/series",
+      headers,
+      payload: { id: 13, bookIds: [106] },
+    });
+    assert.equal(saved.statusCode, 200, saved.body);
+    const work = saved.json().works[0];
+    assert.equal(work.introduced, false);
+    assert.equal(work.removalDefaultSelected, false);
+    assert.notEqual(work.libraryOrigin?.source, "series");
+    const preview = await app.inject({ url: "/api/series/13/removal", headers });
+    assert.equal(preview.statusCode, 200, preview.body);
+    assert.equal(preview.json().works[0].selectedByDefault, false);
+  } finally {
+    sqlite.transaction(() => {
+      for (const table of USER_DATA_TABLES) sqlite.prepare(`DELETE FROM ${table} WHERE user_id=?`).run(memberId);
+      sqlite.prepare("DELETE FROM users WHERE id=?").run(memberId);
+    })();
+    delete process.env.APP_PASSWORD;
+  }
+});
+
+test("legacy unknown origin follows introduced flag for removal defaults", async () => {
+  const workId = (await app.inject("/api/series/11")).json().works.find(
+    (row: { id: number }) => row.id === 103,
+  ).workId;
+  sqlite.prepare(`DELETE FROM user_work_library_origin WHERE user_id=1 AND work_id=?`).run(workId);
+  sqlite
+    .prepare(
+      `UPDATE user_saved_series_works SET introduced=1 WHERE user_id=1 AND series_id=11 AND book_id=103`,
+    )
+    .run();
+  let work = (await app.inject("/api/series/11")).json().works.find(
+    (row: { id: number }) => row.id === 103,
+  );
+  assert.equal(work.libraryOrigin.source, "unknown");
+  assert.equal(work.removalDefaultSelected, true);
+  let preview = (await app.inject("/api/series/11/removal")).json();
+  assert.equal(
+    preview.works.find((row: { bookId: number }) => row.bookId === 103)?.selectedByDefault,
+    true,
+  );
+  sqlite
+    .prepare(
+      `UPDATE user_saved_series_works SET introduced=0 WHERE user_id=1 AND series_id=11 AND book_id=103`,
+    )
+    .run();
+  work = (await app.inject("/api/series/11")).json().works.find(
+    (row: { id: number }) => row.id === 103,
+  );
+  assert.equal(work.removalDefaultSelected, false);
+  preview = (await app.inject("/api/series/11/removal")).json();
+  assert.equal(
+    preview.works.find((row: { bookId: number }) => row.bookId === 103)?.selectedByDefault,
+    false,
+  );
+});
+
+test("removal default stays off when introduced is 0 even with series origin", async () => {
+  sqlite
+    .prepare(
+      `UPDATE user_saved_series_works SET introduced=0 WHERE user_id=1 AND series_id=11 AND book_id=103`,
+    )
+    .run();
+  const workId = (await app.inject("/api/series/11")).json().works.find(
+    (row: { id: number }) => row.id === 103,
+  ).workId;
+  sqlite
+    .prepare(
+      `INSERT INTO user_work_library_origin(user_id,work_id,source,series_id,added_at)
+       VALUES(1,?,?,?,?)
+       ON CONFLICT(user_id,work_id) DO UPDATE SET source=excluded.source, series_id=excluded.series_id`,
+    )
+    .run(workId, "series", 11, Date.now());
+  const work = (await app.inject("/api/series/11")).json().works.find(
+    (row: { id: number }) => row.id === 103,
+  );
+  assert.equal(work.libraryOrigin.source, "series");
+  assert.equal(work.removalDefaultSelected, false);
+  const preview = (await app.inject("/api/series/11/removal")).json();
+  const companion = preview.works.find((row: { bookId: number }) => row.bookId === 103);
+  assert.equal(companion.selectedByDefault, false);
+  assert.equal(companion.introduced, false);
+});
+
+test("removal default ignores stale series origin after library delete and manual re-add", async () => {
+  const future = (await app.inject("/api/series/11")).json().works.find(
+    (row: { id: number }) => row.id === 104,
+  );
+  assert.equal(future.removalDefaultSelected, true);
+  assert.equal(future.libraryOrigin.source, "series");
+  const editionId = (await app.inject("/api/books")).json().find(
+    (book: { workId: string; inLibrary: boolean }) =>
+      book.workId === future.workId && book.inLibrary,
+  ).id;
+  await app.inject({ method: "DELETE", url: `/api/library/${editionId}` });
+  const readded = await app.inject({
+    method: "POST",
+    url: "/api/library",
+    payload: { bookId: editionId },
+  });
+  assert.equal(readded.statusCode, 200, readded.body);
+  const work = (await app.inject("/api/series/11")).json().works.find(
+    (row: { id: number }) => row.id === 104,
+  );
+  assert.equal(work.libraryOrigin.source, "manual");
+  assert.equal(work.removalDefaultSelected, false);
+});

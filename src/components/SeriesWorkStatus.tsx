@@ -1,5 +1,6 @@
 import { api } from "../lib";
-import type { Download, SeriesWorkAcquisition } from "../types";
+import type { Download, SavedEbook, SeriesWorkAcquisition } from "../types";
+import { formatEbookDeviceSuffix, workEbookOnDevice } from "../series-ebook-device";
 import { workMediaStateLabel } from "../work-media-state";
 import { SeriesWorkReleaseSearch } from "./SeriesWorkReleaseSearch";
 
@@ -23,6 +24,8 @@ type Props = {
   ebookSet?: { held: number; accepted: number; rejected: number } | null;
   recordings?: { id: string; tracks: string[] }[];
   downloads: Download[];
+  savedEbooks?: SavedEbook[];
+  offlineEbookEditionIds: ReadonlySet<string>;
   onRefresh: () => void;
 };
 
@@ -87,6 +90,8 @@ export function SeriesWorkStatus({
   ebookSet,
   recordings,
   downloads,
+  savedEbooks,
+  offlineEbookEditionIds,
   onRefresh,
 }: Props) {
   const onDevice = recordings?.some((recording) =>
@@ -95,6 +100,11 @@ export function SeriesWorkStatus({
       downloads.some((download) => download.trackId === trackId),
     ),
   );
+  const ebookEditionIds =
+    workId && savedEbooks
+      ? savedEbooks.filter((ebook) => ebook.workId === workId).map((ebook) => ebook.id)
+      : [];
+  const ebookOnDevice = workEbookOnDevice(ebookEditionIds, offlineEbookEditionIds);
   const retry = async (kind: "audio" | "ebook") => {
     await api(`/series/${seriesId}/works/${bookId}/acquisition/retry`, {
       method: "POST",
@@ -132,6 +142,7 @@ export function SeriesWorkStatus({
       </span>
       <span>
         Ebook: {ebookStatusLabel(acquisition?.ebook, ebookSet)}
+        {workId ? formatEbookDeviceSuffix(ebookOnDevice) : ""}
         {canRetryEbook(acquisition?.ebook) && (
           <>
             {" "}

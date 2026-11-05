@@ -25,6 +25,7 @@ import { eq, and, gt } from "drizzle-orm";
 import { db, sqlite, dataDir } from "./db.ts";
 import * as s from "./schema.ts";
 import { seed } from "./seed.ts";
+import { removeUserLibraryRow, setLibraryOrigin } from "./library-origin.ts";
 import {
   hardcoverForWork,
   hardcoverSearch,
@@ -348,15 +349,20 @@ export async function createApp() {
     if (!db.select().from(s.editions).where(eq(s.editions.id, bookId)).get())
       throw new Error("This book could not be found.");
     db.delete(s.userHiddenLibrary).where(and(eq(s.userHiddenLibrary.userId, currentUserId(req)), eq(s.userHiddenLibrary.bookId, bookId))).run();
-    db.insert(s.userLibrary)
-      .values({ userId: currentUserId(req), bookId, status: "unread", addedAt: Date.now() })
-      .onConflictDoNothing()
-      .run();
+    const addedAt = Date.now();
+    const inserted =
+      db
+        .insert(s.userLibrary)
+        .values({ userId: currentUserId(req), bookId, status: "unread", addedAt })
+        .onConflictDoNothing()
+        .run().changes > 0;
     const edition = db
       .select()
       .from(s.editions)
       .where(eq(s.editions.id, bookId))
       .get();
+    if (inserted && edition)
+      setLibraryOrigin(currentUserId(req), edition.workId, "manual", { addedAt });
     if (edition) queueHardcoverStatus(currentUserId(req), edition.workId, "unread", "add");
     return { ok: true };
   });
@@ -386,9 +392,7 @@ export async function createApp() {
         .values({ userId: currentUserId(req), bookId: id })
         .onConflictDoNothing()
         .run();
-    db.delete(s.userLibrary)
-      .where(and(eq(s.userLibrary.userId, currentUserId(req)), eq(s.userLibrary.bookId, (req.params as { id: string }).id)))
-      .run();
+    removeUserLibraryRow(currentUserId(req), id);
     return { ok: true };
   });
   app.post("/api/progress", async (req) => {

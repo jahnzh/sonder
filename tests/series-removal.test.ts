@@ -236,9 +236,15 @@ test("removal preview defaults follow provenance and shared series membership", 
   const cookie = await adminCookie();
   await saveSeries(cookie, [301, 302, 303]);
   markIntroduced(1, 302, 0);
-  const workId = (
+  const seriesView = (
     await app.inject({ url: "/api/series/41", cookies: { sonder_session: cookie } })
-  ).json().works.find((w: { id: number }) => w.id === 301).workId;
+  ).json();
+  const workId = seriesView.works.find((w: { id: number }) => w.id === 301).workId;
+  const workIdTwo = seriesView.works.find((w: { id: number }) => w.id === 302).workId;
+  sqlite.prepare(`DELETE FROM user_work_library_origin WHERE user_id=? AND work_id=?`).run(1, workIdTwo);
+  sqlite.prepare(
+    `INSERT INTO user_work_library_origin(user_id,work_id,source,series_id,added_at) VALUES(?,?,?,?,?)`,
+  ).run(1, workIdTwo, "manual", null, Date.now());
   sqlite.prepare(
     `INSERT OR IGNORE INTO series_catalogue(id,name,author,book_count) VALUES(42,'Other Saga','Rem Author',1)`,
   ).run();
