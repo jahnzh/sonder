@@ -8,6 +8,9 @@ process.env.DATA_DIR = join(temp, "db");
 process.env.MEDIA_ROOT = join(temp, "media");
 process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
+// Busy-wait tests poll /api/alignments/:id/map many times; the default 600/min
+// limiter rejects those injects mid-suite (same pattern as tests/browser-server.ts).
+process.env.API_RATE_LIMIT = "6000";
 delete process.env.APP_PASSWORD;
 delete process.env.ALIGNMENT_WORKER_URL;
 delete process.env.ALIGNMENT_WORKER_TOKEN;
@@ -16,12 +19,18 @@ const { db, sqlite } = await import("../server/db.ts");
 const s = await import("../server/schema.ts");
 const { eq } = await import("drizzle-orm");
 const { readerFixture } = await import("./reader-fixture.ts");
-const { createAlignment, stopAlignments, WORKER_TIMEOUT_MESSAGE } =
-  await import("../server/alignment.ts");
+const {
+  createAlignment,
+  setWorkerRetryClockForTests,
+  stopAlignments,
+  WORKER_BUSY_WAIT_MS,
+  WORKER_TIMEOUT_MESSAGE,
+} = await import("../server/alignment.ts");
 const app = await createApp();
 const original = fetch;
 after(async () => {
   globalThis.fetch = original;
+  setWorkerRetryClockForTests(null);
   delete process.env.ALIGNMENT_WORKER_URL;
   delete process.env.ALIGNMENT_WORKER_TOKEN;
   stopAlignments();
@@ -68,8 +77,9 @@ const aligned = (data: { fragments: string[]; start: number }) =>
   });
 async function settled(id: string, done: (job: any) => boolean) {
   let job: any;
-  for (let i = 0; i < 1000; i++) {
-    await new Promise((resolve) => setTimeout(resolve, 10));
+  // Prefer fewer, slightly slower polls so a long busy-wait suite stays under the rate limit.
+  for (let i = 0; i < 200; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
     job = (await app.inject(`/api/alignments/${id}/map`)).json();
     if (done(job)) break;
   }
@@ -128,4 +138,98 @@ test("a busy worker (409) is still retried", async () => {
   );
   assert.equal(done.status, "partial", done.error);
   assert.equal(calls, 2, "the first section was asked again after the 409");
+});
+
+test("a queued reading sync takes the worker after a background sample and prevents another sample", async () => {
+  const { workerAnchorSample } = await import("../server/ebook-set.ts");
+  let releaseSample!: () => void;
+  let sampleStarted!: () => void;
+  const started = new Promise<void>((resolve) => { sampleStarted = resolve; });
+  const released = new Promise<void>((resolve) => { releaseSample = resolve; });
+  let sampleCalls = 0;
+  let busy = true;
+  let conflicts = 0;
+  globalThis.fetch = async (input, init) => {
+    if (String(input).endsWith("/anchor")) {
+      sampleCalls++;
+      if (sampleCalls === 1) {
+        sampleStarted();
+        await released;
+        busy = false;
+      }
+      return Response.json({ text: "sample", match: null });
+    }
+    if (busy) {
+      conflicts++;
+      return new Response("{}", { status: 409 });
+    }
+    return aligned(JSON.parse(String(init?.body)));
+  };
+  const input = { audioPath: file, fragmentTexts: ["sample"], language: "en", start: 0, duration: 30 };
+  const first = workerAnchorSample(input);
+  await started;
+  const job = await createAlignment(ebook, "recording-alice");
+  while (!conflicts) await new Promise((resolve) => setTimeout(resolve, 10));
+  const second = workerAnchorSample(input);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(sampleCalls, 1, "queued alignment blocks the next sample");
+  releaseSample();
+  await first;
+  const done = await settled(job.id, (value) => ["partial", "error"].includes(value.status));
+  assert.equal(done.status, "partial", done.error);
+  await second;
+  assert.equal(sampleCalls, 2);
+});
+
+test("a reading sync waits through more than five busy responses", async () => {
+  let now = 0;
+  setWorkerRetryClockForTests({
+    now: () => now,
+    sleep: async (ms) => {
+      now += ms;
+    },
+  });
+  let conflicts = 0;
+  globalThis.fetch = async (_input, init) => {
+    if (conflicts < 6) {
+      conflicts++;
+      return new Response("{}", { status: 409 });
+    }
+    return aligned(JSON.parse(String(init?.body)));
+  };
+  try {
+    const job = await createAlignment(ebook, "recording-alice");
+    const done = await settled(job.id, (value) =>
+      ["partial", "error"].includes(value.status),
+    );
+    assert.equal(done.status, "partial", done.error);
+    assert.equal(conflicts, 6);
+  } finally {
+    setWorkerRetryClockForTests(null);
+  }
+});
+
+test("a permanently busy alignment worker fails after the busy wait cap", async () => {
+  let now = 0;
+  let calls = 0;
+  setWorkerRetryClockForTests({
+    now: () => now,
+    sleep: async (ms) => {
+      now += ms;
+    },
+  });
+  globalThis.fetch = async () => {
+    calls++;
+    return new Response("{}", { status: 409 });
+  };
+  try {
+    const job = await createAlignment(ebook, "recording-alice");
+    const failed = await settled(job.id, (value) => value.status === "error");
+    assert.equal(failed.status, "error");
+    assert.equal(failed.error, "The alignment worker is busy. Retry in a moment.");
+    assert.equal(now, WORKER_BUSY_WAIT_MS);
+    assert.ok(calls > 5);
+  } finally {
+    setWorkerRetryClockForTests(null);
+  }
 });

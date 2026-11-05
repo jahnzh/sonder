@@ -9,6 +9,7 @@ import {
   type OutlierCheckResult,
 } from "./ebook-set-outlier.ts";
 import {
+  listAlignmentJobs,
   firstRecordingWithLocalAudio,
   recordingContext,
   trackLocalAudioPath,
@@ -27,7 +28,7 @@ import { mediaRoot } from "./storage.ts";
 const iso3 = (value: string) =>
   value.length === 3 ? value : value.slice(0, 2).toLowerCase() === "en" ? "eng" : value.slice(0, 3).toLowerCase();
 
-async function workerAnchorSample(input: {
+export async function workerAnchorSample(input: {
   audioPath: string;
   fragmentTexts: string[];
   language: string;
@@ -36,6 +37,11 @@ async function workerAnchorSample(input: {
 }): Promise<EbookSetAnchorSample> {
   if (!process.env.ALIGNMENT_WORKER_URL || !process.env.ALIGNMENT_WORKER_TOKEN)
     throw new Error("The local alignment worker is not configured.");
+  // An in-flight sample may finish, but no new background sample may start
+  // while a reading-sync job is queued or processing.
+  while (listAlignmentJobs().some((job) =>
+    job.status === "queued" || job.status === "processing"
+  )) await new Promise((resolve) => setTimeout(resolve, 1000));
   const response = await fetch(
     `${process.env.ALIGNMENT_WORKER_URL.replace(/\/$/, "")}/anchor`,
     {

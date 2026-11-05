@@ -21,7 +21,7 @@ import {
 } from "./work-media-state.ts";
 import { userIsAdmin } from "./users.ts";
 
-export const SERIES_ACQUISITION_TICK_MS = 2000;
+export const SERIES_ACQUISITION_TICK_MS = 30_000;
 export const SERIES_ACQUISITION_SEARCH_STALE_MS = 120_000;
 
 export type SeriesAcquisitionKind = "audio" | "ebook";
@@ -53,6 +53,9 @@ export type SeriesAcquisitionDeps = {
   seriesAudioDeps?: SeriesAudioSearchDeps;
   fetchEbooks?: typeof fetchTopKIntoEbookSet;
   canAcquireMedia?: (userId: number) => boolean;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+  intervalMs?: number;
 };
 
 let deps: SeriesAcquisitionDeps = {};
@@ -543,11 +546,13 @@ export function seriesWorkAcquisitions(
   };
 }
 
-let tickQueue: Promise<void> = Promise.resolve();
+let tickQueue: Promise<void> | null = null;
+let nextAcquisitionAt = 0;
 
 export async function tickSeriesAcquisition(
   acquire: typeof defaultAcquire = deps.acquire ?? defaultAcquire,
 ) {
+  if (tickQueue) return tickQueue;
   const run = async () => {
     resetStaleSeriesAcquisitionJobs();
     for (;;) {
@@ -555,14 +560,16 @@ export async function tickSeriesAcquisition(
         .select()
         .from(s.seriesAcquisitionJobs)
         .where(eq(s.seriesAcquisitionJobs.status, "pending"))
-        .all();
-      if (!pending.length) break;
-      await Promise.all(
-        pending.map((job) => processJob(job, acquire).catch(() => {})),
-      );
+        .get();
+      if (!pending) break;
+      const now = deps.now ?? Date.now;
+      const delay = Math.max(0, nextAcquisitionAt - now());
+      if (delay) await (deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))))(delay);
+      await processJob(pending, acquire).catch(() => {});
+      nextAcquisitionAt = now() + (deps.intervalMs ?? (process.env.NODE_ENV === "test" ? 0 : SERIES_ACQUISITION_TICK_MS));
     }
   };
-  tickQueue = tickQueue.then(run, run).catch(() => {});
+  tickQueue = run().finally(() => { tickQueue = null; });
   await tickQueue;
 }
 

@@ -692,3 +692,138 @@ test("audio retry records failure on the job instead of throwing", async () => {
   assert.equal(job?.status, "failed");
   assert.equal(job?.error, "retry failed");
 });
+
+test("background acquisition runs one job at a time with a pause between works", async () => {
+  let now = Date.now() + 100_000;
+  const starts: number[] = [];
+  const pauses: number[] = [];
+  let release!: () => void;
+  let started!: () => void;
+  const firstStarted = new Promise<void>((resolve) => { started = resolve; });
+  const firstReleased = new Promise<void>((resolve) => { release = resolve; });
+  setSeriesAcquisitionDeps({
+    now: () => now,
+    intervalMs: 30_000,
+    sleep: async (ms) => { pauses.push(ms); now += ms; },
+    fetchEbooks: async () => {
+      starts.push(now);
+      if (starts.length === 1) { started(); await firstReleased; }
+      return { downloaded: [], skipped: null, failures: [] };
+    },
+  });
+  await saveSeries([201, 202], { searchEbooks: true });
+  await firstStarted;
+  const running = tickSeriesAcquisition();
+  assert.equal(starts.length, 1);
+  release();
+  await running;
+  assert.equal(starts.length, 2);
+  assert.deepEqual(pauses, [30_000]);
+  assert.equal(starts[1] - starts[0], 30_000);
+});
+
+test("a burst of series refreshes shares the Hardcover request budget", async () => {
+  const { createHardcoverRequestBudget, setHardcoverRequestBudgetForTests, refreshSavedHardcoverSeries } = await import("../server/hardcover.ts");
+  await saveSeries([]);
+  let now = Date.now();
+  const starts: number[] = [];
+  const fetchBefore = globalThis.fetch;
+  setHardcoverRequestBudgetForTests(createHardcoverRequestBudget({
+    now: () => now,
+    sleep: async (ms) => { now += ms; },
+  }));
+  globalThis.fetch = async (input, init) => { starts.push(now); return fetchBefore(input, init); };
+  try {
+    await Promise.all(Array.from({ length: 26 }, () => refreshSavedHardcoverSeries(1, 31, { force: true })));
+    assert.equal(starts.length, 26);
+    assert.ok(starts.every((start, i) => !i || start - starts[i - 1] >= 2500));
+    assert.ok(starts[25] - starts[0] >= 60_000);
+  } finally {
+    globalThis.fetch = fetchBefore;
+    setHardcoverRequestBudgetForTests(createHardcoverRequestBudget({ intervalMs: 0 }));
+  }
+});
+
+test("interactive Hardcover calls fail fast during a shared 429 pause while background waits", async () => {
+  const { createHardcoverRequestBudget, setHardcoverRequestBudgetForTests, hardcoverSeriesSearch, refreshSavedHardcoverSeries } = await import("../server/hardcover.ts");
+  const { createUser, setUserSecret } = await import("../server/users.ts");
+  await saveSeries([]);
+  const other = createUser("rate-limit-other", "long-password");
+  setUserSecret(other, "hardcover", "other-token");
+  let now = Date.now();
+  const starts: number[] = [];
+  const fetchBefore = globalThis.fetch;
+  let release!: () => void;
+  let waiting!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const waitStarted = new Promise<void>((resolve) => { waiting = resolve; });
+  setHardcoverRequestBudgetForTests(createHardcoverRequestBudget({
+    now: () => now,
+    intervalMs: 0,
+    sleep: async (ms) => { waiting(); await held; now += ms; },
+  }));
+  globalThis.fetch = async (input, init) => {
+    starts.push(now);
+    if (starts.length === 1) return new Response("", { status: 429, headers: { "Retry-After": "2" } });
+    return fetchBefore(input, init);
+  };
+  try {
+    const failed = await refreshSavedHardcoverSeries(1, 31, { force: true });
+    assert.ok(failed.refreshError);
+    const background = refreshSavedHardcoverSeries(1, 31, { force: true });
+    await waitStarted;
+    await assert.rejects(hardcoverSeriesSearch(other, "second"), (error: any) => error.kind === "rate_limited");
+    assert.equal(starts.length, 1, "neither caller contacts Hardcover during Retry-After");
+    release();
+    await background;
+    assert.equal(starts.length, 2);
+    assert.ok(starts[1] - starts[0] >= 1900);
+  } finally {
+    release();
+    globalThis.fetch = fetchBefore;
+    setHardcoverRequestBudgetForTests(createHardcoverRequestBudget({ intervalMs: 0 }));
+  }
+});
+
+test("interactive Hardcover requests overtake queued background series refreshes", async () => {
+  const { createHardcoverRequestBudget, setHardcoverRequestBudgetForTests, hardcoverSeriesSearch, refreshSavedHardcoverSeries } = await import("../server/hardcover.ts");
+  await saveSeries([]);
+  let now = Date.now();
+  const calls: string[] = [];
+  const fetchBefore = globalThis.fetch;
+  let release!: () => void;
+  let waiting!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const waitStarted = new Promise<void>((resolve) => { waiting = resolve; });
+  let firstWait = true;
+  setHardcoverRequestBudgetForTests(createHardcoverRequestBudget({
+    now: () => now,
+    sleep: async (ms) => {
+      if (firstWait) { firstWait = false; waiting(); await held; }
+      now += ms;
+    },
+  }));
+  globalThis.fetch = async (input, init) => {
+    const { query } = JSON.parse(String(init?.body));
+    if (query.includes("SonderSeriesSearch")) {
+      calls.push("interactive");
+      return Response.json({ data: { search: { ids: [] } } });
+    }
+    calls.push("background");
+    return fetchBefore(input, init);
+  };
+  try {
+    const first = refreshSavedHardcoverSeries(1, 31, { force: true });
+    const second = refreshSavedHardcoverSeries(1, 31, { force: true });
+    const third = refreshSavedHardcoverSeries(1, 31, { force: true });
+    await waitStarted;
+    const interactive = hardcoverSeriesSearch(1, "search");
+    release();
+    await Promise.all([first, second, third, interactive]);
+    assert.deepEqual(calls, ["background", "interactive", "background", "background"]);
+  } finally {
+    release();
+    globalThis.fetch = fetchBefore;
+    setHardcoverRequestBudgetForTests(createHardcoverRequestBudget({ intervalMs: 0 }));
+  }
+});
