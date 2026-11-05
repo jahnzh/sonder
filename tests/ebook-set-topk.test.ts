@@ -5,17 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import {
-  planSamples,
-  prefixWords,
-  selectAnchors,
-} from "../server/alignment-anchors.ts";
-import { cheapTitleAuthorMatch } from "../server/ebook-set-filter.ts";
-import {
-  evaluateOutlierCheck,
-  OUTLIER_MIN_SCORE,
-} from "../server/ebook-set-outlier.ts";
 
+// Env before any server import: storage.ts / db.ts capture paths at load (#214).
 const temp = mkdtempSync(join(tmpdir(), "sonder-ebook-set-topk-"));
 process.env.DATA_DIR = join(temp, "db");
 process.env.MEDIA_ROOT = join(temp, "media");
@@ -23,6 +14,16 @@ process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
 delete process.env.APP_PASSWORD;
 
+const {
+  planSamples,
+  prefixWords,
+  selectAnchors,
+} = await import("../server/alignment-anchors.ts");
+const { cheapTitleAuthorMatch } = await import("../server/ebook-set-filter.ts");
+const {
+  evaluateOutlierCheck,
+  OUTLIER_MIN_SCORE,
+} = await import("../server/ebook-set-outlier.ts");
 const { createApp } = await import("../server/app.ts");
 const { db } = await import("../server/db.ts");
 const schema = await import("../server/schema.ts");
@@ -291,6 +292,79 @@ test("fetchTopKIntoEbookSet downloads at most five filtered candidates", async (
   assert.equal(saved, EBOOK_SET_TOP_K);
   assert.equal(result.downloaded.length, EBOOK_SET_TOP_K);
   assert.equal(listEbookSetMembers(workId).length, EBOOK_SET_TOP_K);
+});
+
+test("fetchTopKIntoEbookSet keeps other candidates when one save fails", async () => {
+  const workId = seedWork("Partial Fail Book", "Cara Author");
+  const md5Ok1 = randomUUID().replace(/-/g, "");
+  const md5Fail = randomUUID().replace(/-/g, "");
+  const md5Ok2 = randomUUID().replace(/-/g, "");
+  let saveCalls = 0;
+  setEbookSetDeps({
+    search: async () => ({
+      website: "https://example.test",
+      files: [
+        {
+          md5: md5Ok1,
+          source: "libgen" as const,
+          title: "Partial Fail Book",
+          authors: ["Cara Author"],
+          extension: "epub" as const,
+          language: "English",
+          size: "1 MB",
+          year: "2020",
+          coverUrl: null,
+          url: "https://example.test/0",
+        },
+        {
+          md5: md5Fail,
+          source: "libgen" as const,
+          title: "Partial Fail Book alt",
+          authors: ["Cara Author"],
+          extension: "epub" as const,
+          language: "English",
+          size: "1 MB",
+          year: "2020",
+          coverUrl: null,
+          url: "https://example.test/1",
+        },
+        {
+          md5: md5Ok2,
+          source: "libgen" as const,
+          title: "Partial Fail Book vol 2",
+          authors: ["Cara Author"],
+          extension: "epub" as const,
+          language: "English",
+          size: "1 MB",
+          year: "2020",
+          coverUrl: null,
+          url: "https://example.test/2",
+        },
+      ],
+    }),
+    save: async (input) => {
+      saveCalls++;
+      if (input.md5 === md5Fail) {
+        throw new Error("bad mirror");
+      }
+      const id = `${input.source}-${input.md5}`;
+      const dir = join(temp, "media", "ebooks");
+      mkdirSync(dir, { recursive: true });
+      const path = join(dir, `${id}.epub`);
+      writeFileSync(path, await readerFixture({ script: true }));
+      db.insert(schema.ebookEditions)
+        .values({ id, workId: input.workId!, format: "epub", source: path })
+        .run();
+      return { id, alreadySaved: false };
+    },
+    anchorSample: async () => ({ spokenWords: 0, match: null }),
+  });
+  const result = await fetchTopKIntoEbookSet(workId);
+  assert.equal(saveCalls, 3);
+  assert.equal(result.downloaded.length, 2);
+  assert.equal(result.failures?.length, 1);
+  assert.match(result.failures?.[0] ?? "", /bad mirror/);
+  assert.equal(listEbookSetMembers(workId).length, 2);
 });
 
 test("selectAnchors outlier gate uses score threshold about 0.5", () => {

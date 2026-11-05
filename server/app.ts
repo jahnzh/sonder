@@ -56,6 +56,7 @@ import {
   torrentDownloadDir,
 } from "./storage.ts";
 import { acquire, refreshQueue } from "./acquisitions.ts";
+import { tickSeriesAcquisition, SERIES_ACQUISITION_TICK_MS, resetStaleSeriesAcquisitionJobs, seriesAcquisitionTickerEnabled } from "./series-acquisition.ts";
 import { transmission, transmissionConfigured } from "./transmission.ts";
 import { getTorrentHealth } from "./torrent-health.ts";
 import { searchEbooks, saveEbook, listEbooks, importEbook } from "./ebooks.ts";
@@ -914,8 +915,20 @@ export async function createApp() {
   const queueTimer = setInterval(() => void poll().catch(() => {}), 10000);
   queueTimer.unref();
   void poll().catch(() => {});
+  resetStaleSeriesAcquisitionJobs();
+  const seriesAcquisitionTimer = setInterval(
+    () => {
+      if (!seriesAcquisitionTickerEnabled()) return;
+      void tickSeriesAcquisition(acquire).catch(() => {});
+    },
+    SERIES_ACQUISITION_TICK_MS,
+  );
+  seriesAcquisitionTimer.unref();
+  if (seriesAcquisitionTickerEnabled())
+    void tickSeriesAcquisition(acquire).catch(() => {});
   app.addHook("onClose", async () => {
     clearInterval(queueTimer);
+    clearInterval(seriesAcquisitionTimer);
     stopServerDownloads();
   });
   const hardcoverTimer = setInterval(
