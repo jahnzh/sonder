@@ -851,3 +851,224 @@ test("manual select claim blocks ticker while manual acquire is pending", async 
     1,
   );
 });
+
+test("replace failure after acquire finalizes claim and does not reopen auto-acquire", async () => {
+  delete process.env.SONDER_SKIP_SERIES_ACQUISITION;
+  await saveSeries([201], { searchAudio: true });
+  const workId = (await app.inject("/api/series/31")).json().works.find(
+    (w: { id: number }) => w.id === 201,
+  ).workId;
+  const hash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  const firstId = randomUUID();
+  const magnet = `magnet:?xt=urn:btih:${hash}&dn=First`;
+  db.insert(schema.acquisitions)
+    .values({
+      id: firstId,
+      hash,
+      magnet,
+      backend: "local",
+      remoteId: null,
+      title: "First volume",
+      author: "Ada Author",
+      cover: "",
+      workId,
+      language: null,
+      narrator: null,
+      status: "downloading",
+      progress: 0.2,
+      error: null,
+      bookId: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+    .run();
+  db.insert(schema.userAcquisitions).values({ userId: 1, acquisitionId: firstId }).run();
+  const { syncWorkMediaState } = await import("../server/work-media-state.ts");
+  syncWorkMediaState(1, workId);
+  setSeriesReleaseSearchDeps({
+    replacePreviousAcquisition: async () => {
+      throw new Error("replace blew up");
+    },
+  });
+  await seedAbbSearch();
+  const selected = await app.inject({
+    method: "POST",
+    url: "/api/series/31/works/201/releases/select",
+    payload: { source: "abb", id: "abb-first", replaceActive: true },
+  });
+  assert.notEqual(selected.statusCode, 200);
+  assert.equal(
+    db.select().from(schema.seriesAcquisitionJobs).get()?.status,
+    "done",
+  );
+  let autoAcquireCalls = 0;
+  setSeriesAcquisitionDeps({
+    acquire: (async () => {
+      autoAcquireCalls++;
+      throw new Error("auto should not run");
+    }) as SeriesAcquisitionDeps["acquire"],
+  });
+  await tickSeriesAcquisition();
+  assert.equal(autoAcquireCalls, 0);
+});
+
+test("concurrent manual selects for the same work are mutually exclusive", async () => {
+  await saveSeries([201]);
+  let unblockManualAcquire!: () => void;
+  const manualAcquireBlocked = new Promise<void>((resolve) => {
+    unblockManualAcquire = resolve;
+  });
+  let manualAcquireCalls = 0;
+  const defaultAcquire = (async (_magnet: string, metadata: { userId?: number; title?: string; author?: string; workId?: string }) => {
+    manualAcquireCalls++;
+    await manualAcquireBlocked;
+    const hash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const id = randomUUID();
+    db.insert(schema.acquisitions)
+      .values({
+        id,
+        hash,
+        magnet: "magnet:?xt=urn:btih:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        backend: "local",
+        remoteId: null,
+        title: metadata?.title ?? "First volume",
+        author: metadata?.author ?? "Ada Author",
+        cover: "",
+        workId: metadata?.workId ?? null,
+        language: null,
+        narrator: null,
+        status: "checking",
+        progress: 0,
+        error: null,
+        bookId: null,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      })
+      .run();
+    db.insert(schema.userAcquisitions)
+      .values({ userId: metadata?.userId ?? 1, acquisitionId: id })
+      .run();
+    return db.select().from(schema.acquisitions).where(eq(schema.acquisitions.id, id)).get()!;
+  }) as SeriesReleaseSearchDeps["acquire"];
+  setSeriesReleaseSearchDeps({ acquire: defaultAcquire });
+  await seedAbbSearch();
+  const first = app.inject({
+    method: "POST",
+    url: "/api/series/31/works/201/releases/select",
+    payload: { source: "abb", id: "abb-first" },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  const second = await app.inject({
+    method: "POST",
+    url: "/api/series/31/works/201/releases/select",
+    payload: { source: "abb", id: "abb-first" },
+  });
+  assert.equal(second.statusCode, 409);
+  assert.equal(second.json().code, "select_in_progress");
+  unblockManualAcquire();
+  const firstResult = await first;
+  assert.equal(firstResult.statusCode, 200, firstResult.body);
+  assert.equal(manualAcquireCalls, 1);
+});
+
+test("manual select is rejected while ticker auto-acquire is in flight for the same work", async () => {
+  delete process.env.SONDER_SKIP_SERIES_ACQUISITION;
+  let unblockAutoSearch!: () => void;
+  const autoSearchBlocked = new Promise<void>((resolve) => {
+    unblockAutoSearch = resolve;
+  });
+  let unblockAutoAcquire!: () => void;
+  const autoAcquireBlocked = new Promise<void>((resolve) => {
+    unblockAutoAcquire = resolve;
+  });
+  let autoAcquireCalls = 0;
+  let manualAcquireCalls = 0;
+  setSeriesAcquisitionDeps({
+    acquire: (async () => {
+      autoAcquireCalls++;
+      await autoAcquireBlocked;
+      throw new Error("auto acquire stub");
+    }) as SeriesAcquisitionDeps["acquire"],
+    seriesAudioDeps: {
+      abbSearch: async () => {
+        await autoSearchBlocked;
+        return {
+          results: [
+            {
+              id: "abb-auto",
+              title: "First volume M4B",
+              format: "M4B",
+              narrator: "Reader",
+            },
+          ],
+          page: 1,
+          nextPage: null,
+        };
+      },
+      prowlarrSearch: async () => ({ results: [], page: 1, nextPage: null }),
+      abbMagnetLink: async () =>
+        "magnet:?xt=urn:btih:dddddddddddddddddddddddddddddddddddddddd&dn=Auto",
+      prowlarrMagnetLink: async () => "",
+      cachedHashes: async () => new Set<string>(),
+      log: () => {},
+    },
+  });
+  setSeriesReleaseSearchDeps({
+    acquire: (async () => {
+      manualAcquireCalls++;
+      throw new Error("manual acquire stub");
+    }) as SeriesReleaseSearchDeps["acquire"],
+  });
+  await saveSeries([201], { searchAudio: true });
+  db.update(schema.seriesAcquisitionJobs)
+    .set({ status: "pending", error: null, updatedAt: Date.now() })
+    .run();
+  const tickRunning = tickSeriesAcquisition();
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if (db.select().from(schema.seriesAcquisitionJobs).get()?.status === "searching") break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  unblockAutoSearch();
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if (autoAcquireCalls > 0) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal(autoAcquireCalls, 1);
+  await seedAbbSearch();
+  const manual = await app.inject({
+    method: "POST",
+    url: "/api/series/31/works/201/releases/select",
+    payload: { source: "abb", id: "abb-first" },
+  });
+  assert.equal(manual.statusCode, 409);
+  assert.equal(manual.json().code, "select_in_progress");
+  assert.equal(manualAcquireCalls, 0);
+  unblockAutoAcquire();
+  await tickRunning;
+});
+
+test("a failed magnet fetch does not block a later manual select", async () => {
+  await saveSeries([201]);
+  let magnetCalls = 0;
+  setSeriesReleaseSearchDeps({
+    abbMagnet: async () => {
+      magnetCalls++;
+      if (magnetCalls === 1) throw new Error("magnet down");
+      return "magnet:?xt=urn:btih:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&dn=First";
+    },
+  });
+  await seedAbbSearch();
+  const failed = await app.inject({
+    method: "POST",
+    url: "/api/series/31/works/201/releases/select",
+    payload: { source: "abb", id: "abb-first" },
+  });
+  assert.notEqual(failed.statusCode, 200);
+  await seedAbbSearch();
+  const retry = await app.inject({
+    method: "POST",
+    url: "/api/series/31/works/201/releases/select",
+    payload: { source: "abb", id: "abb-first" },
+  });
+  assert.equal(retry.statusCode, 200, retry.body);
+});

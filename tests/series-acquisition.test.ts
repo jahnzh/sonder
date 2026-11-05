@@ -352,6 +352,136 @@ test("stale searching jobs reset to pending before processing", async () => {
   );
 });
 
+test("stale cancelled manual-claim jobs reset to pending on startup when no media is queued", async () => {
+  const {
+    resetStrandedSeriesAcquisitionClaims,
+    SERIES_ACQUISITION_SEARCH_STALE_MS,
+    SERIES_ACQUISITION_CANCELLED_ERROR,
+  } = await import("../server/series-acquisition.ts");
+  await saveSeries([201], { searchAudio: true });
+  sqlite.exec("DELETE FROM work_media_states");
+  sqlite.exec("DELETE FROM user_acquisitions");
+  sqlite.exec("DELETE FROM acquisitions");
+  db.update(schema.seriesAcquisitionJobs)
+    .set({
+      status: "failed",
+      error: SERIES_ACQUISITION_CANCELLED_ERROR,
+      updatedAt: Date.now() - SERIES_ACQUISITION_SEARCH_STALE_MS - 1,
+    })
+    .run();
+  const view = (await app.inject("/api/series/31")).json().works.find(
+    (w: { id: number }) => w.id === 201,
+  );
+  assert.equal(view.acquisition?.audio?.status, "done");
+  resetStrandedSeriesAcquisitionClaims();
+  assert.equal(
+    db.select().from(schema.seriesAcquisitionJobs).get()?.status,
+    "pending",
+  );
+  await tickSeriesAcquisition();
+  assert.equal(
+    db.select().from(schema.seriesAcquisitionJobs).get()?.status,
+    "done",
+  );
+});
+
+test("stale cancelled claim stays claimed while manual select is in flight through a ticker pass", async () => {
+  const {
+    enterSeriesWorkAcquire,
+    leaveSeriesWorkAcquire,
+    resetStaleSeriesAcquisitionJobs,
+    resetStrandedSeriesAcquisitionClaims,
+    SERIES_ACQUISITION_SEARCH_STALE_MS,
+    SERIES_ACQUISITION_CANCELLED_ERROR,
+  } = await import("../server/series-acquisition.ts");
+  await saveSeries([201], { searchAudio: true });
+  const workId = (await app.inject("/api/series/31")).json().works.find(
+    (w: { id: number }) => w.id === 201,
+  ).workId;
+  sqlite.exec("DELETE FROM work_media_states");
+  sqlite.exec("DELETE FROM user_acquisitions");
+  sqlite.exec("DELETE FROM acquisitions");
+  db.update(schema.seriesAcquisitionJobs)
+    .set({
+      status: "failed",
+      error: SERIES_ACQUISITION_CANCELLED_ERROR,
+      updatedAt: Date.now() - SERIES_ACQUISITION_SEARCH_STALE_MS - 1,
+    })
+    .run();
+  assert.ok(enterSeriesWorkAcquire(1, workId));
+  let autoAcquireCalls = 0;
+  setSeriesAcquisitionDeps({
+    acquire: (async () => {
+      autoAcquireCalls++;
+      throw new Error("auto should not run");
+    }) as SeriesAcquisitionDeps["acquire"],
+  });
+  resetStaleSeriesAcquisitionJobs();
+  await tickSeriesAcquisition();
+  assert.equal(autoAcquireCalls, 0);
+  assert.equal(
+    db.select().from(schema.seriesAcquisitionJobs).get()?.status,
+    "failed",
+  );
+  leaveSeriesWorkAcquire(1, workId);
+  resetStrandedSeriesAcquisitionClaims();
+  assert.equal(
+    db.select().from(schema.seriesAcquisitionJobs).get()?.status,
+    "pending",
+  );
+});
+
+test("resetStrandedSeriesAcquisitionClaims skips works with playable audio", async () => {
+  const {
+    resetStrandedSeriesAcquisitionClaims,
+    SERIES_ACQUISITION_SEARCH_STALE_MS,
+    SERIES_ACQUISITION_CANCELLED_ERROR,
+  } = await import("../server/series-acquisition.ts");
+  await saveSeries([202], { searchAudio: true });
+  const workId = (await app.inject("/api/series/31")).json().works.find(
+    (w: { id: number }) => w.id === 202,
+  ).workId;
+  const audioPath = join(temp, "existing-reset.mp3");
+  writeFileSync(audioPath, "audio");
+  db.insert(schema.editions)
+    .values({
+      id: "local-edition-reset",
+      workId,
+      cover: "",
+      narrator: "N",
+      rating: 0,
+      sourceLabel: "Local",
+    })
+    .run();
+  db.insert(schema.recordings)
+    .values({ id: "rec-local-reset", editionId: "local-edition-reset" })
+    .run();
+  db.insert(schema.tracks)
+    .values({
+      id: "track-local-reset",
+      recordingId: "rec-local-reset",
+      title: "Ch",
+      index: 0,
+      duration: 10,
+      chapters: [],
+      source: audioPath,
+      sourceType: "local",
+    })
+    .run();
+  db.update(schema.seriesAcquisitionJobs)
+    .set({
+      status: "failed",
+      error: SERIES_ACQUISITION_CANCELLED_ERROR,
+      updatedAt: Date.now() - SERIES_ACQUISITION_SEARCH_STALE_MS - 1,
+    })
+    .run();
+  resetStrandedSeriesAcquisitionClaims();
+  assert.equal(
+    db.select().from(schema.seriesAcquisitionJobs).get()?.status,
+    "failed",
+  );
+});
+
 test("non-admin cannot retry audio or ebook acquisition", async () => {
   let acquireCalls = 0;
   setSeriesAcquisitionDeps({

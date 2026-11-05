@@ -20,7 +20,9 @@ import {
 import {
   assertCanAcquireMedia,
   beginManualSeriesReleaseClaim,
+  enterSeriesWorkAcquire,
   finalizeManualSeriesReleaseClaim,
+  leaveSeriesWorkAcquire,
   restoreManualSeriesReleaseClaim,
   seriesWorkAcquisitions,
 } from "./series-acquisition.ts";
@@ -40,6 +42,7 @@ export type SeriesReleaseSearchDeps = {
   prowlarrRelease?: typeof prowlarrRelease;
   prowlarrMagnet?: typeof prowlarrMagnet;
   acquire?: typeof defaultAcquire;
+  replacePreviousAcquisition?: typeof replacePreviousAcquisition;
 };
 
 let deps: SeriesReleaseSearchDeps = {};
@@ -287,9 +290,10 @@ export async function selectSeriesWorkRelease(
       { statusCode: 409, code: "existing_audio" },
     );
 
-  const claim = beginManualSeriesReleaseClaim(userId, work.workId);
-
   let magnet: string;
+  let acquireSucceeded = false;
+  let claim!: ReturnType<typeof beginManualSeriesReleaseClaim>;
+  let heldAcquire = false;
   let metadata: {
     title?: string;
     author?: string;
@@ -298,6 +302,15 @@ export async function selectSeriesWorkRelease(
     narrator?: string | null;
   };
   try {
+    if (!enterSeriesWorkAcquire(userId, work.workId))
+      throw Object.assign(
+        new Error(
+          "A release selection is already in progress for this work. Wait for it to finish.",
+        ),
+        { statusCode: 409, code: "select_in_progress" },
+      );
+    heldAcquire = true;
+    claim = beginManualSeriesReleaseClaim(userId, work.workId);
     if (input.source === "prowlarr") {
       const link = (deps.prowlarrRelease ?? prowlarrRelease)(input.id);
       magnet = await (deps.prowlarrMagnet ?? prowlarrMagnet)(input.id);
@@ -324,14 +337,14 @@ export async function selectSeriesWorkRelease(
       workId: work.workId,
       userId,
     });
+    acquireSucceeded = true;
 
     let replaceResult: ReplacePreviousResult | null = null;
-    if (previous && input.replaceActive)
-      replaceResult = await replacePreviousAcquisition(
-        userId,
-        previous.id,
-        magnet,
-      );
+    if (previous && input.replaceActive) {
+      const replace =
+        deps.replacePreviousAcquisition ?? replacePreviousAcquisition;
+      replaceResult = await replace(userId, previous.id, magnet);
+    }
 
     finalizeManualSeriesReleaseClaim(
       userId,
@@ -353,7 +366,17 @@ export async function selectSeriesWorkRelease(
       replaceResult,
     };
   } catch (error) {
-    if (claim.claimed) restoreManualSeriesReleaseClaim(claim);
+    if (claim?.claimed && !acquireSucceeded)
+      restoreManualSeriesReleaseClaim(claim);
+    else if (claim?.claimed && acquireSucceeded)
+      finalizeManualSeriesReleaseClaim(
+        userId,
+        seriesId,
+        bookId,
+        work.workId,
+      );
     throw error;
+  } finally {
+    if (heldAcquire) leaveSeriesWorkAcquire(userId, work.workId);
   }
 }

@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -18,18 +19,26 @@ import { spawnSync } from "node:child_process";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const script = join(repoRoot, "scripts", "orca-land.sh");
 
-function git(cwd: string, args: string[], env: NodeJS.ProcessEnv = {}) {
+function isolatedGitEnv(home: string, inheritedEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env = Object.fromEntries(Object.entries(inheritedEnv).filter(([key]) => !key.startsWith("GIT_")));
+  return {
+    ...env,
+    HOME: home,
+    XDG_CONFIG_HOME: home,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_ALLOW_PROTOCOL: "file",
+    GIT_AUTHOR_NAME: "t",
+    GIT_AUTHOR_EMAIL: "t@example.com",
+    GIT_COMMITTER_NAME: "t",
+    GIT_COMMITTER_EMAIL: "t@example.com",
+  };
+}
+
+function git(cwd: string, args: string[], env: NodeJS.ProcessEnv) {
   const r = spawnSync("git", args, {
     cwd,
     encoding: "utf8",
-    env: {
-      ...process.env,
-      ...env,
-      GIT_AUTHOR_NAME: "t",
-      GIT_AUTHOR_EMAIL: "t@example.com",
-      GIT_COMMITTER_NAME: "t",
-      GIT_COMMITTER_EMAIL: "t@example.com",
-    },
+    env,
   });
   if (r.status !== 0) {
     throw new Error(`git ${args.join(" ")} failed: ${r.stderr || r.stdout}`);
@@ -47,37 +56,41 @@ function stub(bin: string, name: string, body: string) {
  * Temp main checkout linked to a bare origin, plus one worktree under workspaces/.
  * Fake `gh` on PATH returns OPEN/MERGEABLE by default (override via STUB_GH_*).
  */
-function setup() {
+function setup(inheritedEnv: NodeJS.ProcessEnv = process.env) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "sonder-land-")));
   const bin = join(dir, "bin");
   const workspaces = join(dir, "ws");
   const bare = join(dir, "origin.git");
   const main = join(dir, "main");
+  const home = join(dir, "home");
   mkdirSync(bin);
   mkdirSync(workspaces);
+  mkdirSync(home);
+  const gitEnv = isolatedGitEnv(home, inheritedEnv);
+  const fixtureGit = (cwd: string, args: string[]) => git(cwd, args, gitEnv);
 
-  spawnSync("git", ["init", "--bare", "-b", "main", bare], { encoding: "utf8" });
-  git(dir, ["clone", bare, main]);
+  fixtureGit(dir, ["init", "--bare", "-b", "main", bare]);
+  fixtureGit(dir, ["clone", bare, main]);
   writeFileSync(join(main, "README.md"), "main\n");
-  git(main, ["add", "README.md"]);
-  git(main, ["commit", "-m", "init"]);
-  git(main, ["push", "-u", "origin", "main"]);
+  fixtureGit(main, ["add", "README.md"]);
+  fixtureGit(main, ["commit", "-m", "init"]);
+  fixtureGit(main, ["push", bare, "main"]);
 
   // Feature branch + worktree.
-  git(main, ["checkout", "-b", "jahnzh/feat-99-land"]);
+  fixtureGit(main, ["checkout", "-b", "jahnzh/feat-99-land"]);
   writeFileSync(join(main, "feature.txt"), "feat\n");
-  git(main, ["add", "feature.txt"]);
-  git(main, ["commit", "-m", "feat"]);
-  git(main, ["push", "-u", "origin", "jahnzh/feat-99-land"]);
+  fixtureGit(main, ["add", "feature.txt"]);
+  fixtureGit(main, ["commit", "-m", "feat"]);
+  fixtureGit(main, ["push", bare, "jahnzh/feat-99-land"]);
   // Alias branch with the same tip (should be deleted on land).
-  git(main, ["branch", "jahnzh/issue-99-alias"]);
+  fixtureGit(main, ["branch", "jahnzh/issue-99-alias"]);
   // Leave main on main before adding the feature worktree (a branch can only be checked out once).
-  git(main, ["checkout", "main"]);
+  fixtureGit(main, ["checkout", "main"]);
   // Unrelated jahnzh branch with a different tip — must survive.
-  git(main, ["branch", "jahnzh/other-tip"]);
+  fixtureGit(main, ["branch", "jahnzh/other-tip"]);
 
   const wt = join(workspaces, "land-wt");
-  git(main, ["worktree", "add", wt, "jahnzh/feat-99-land"]);
+  fixtureGit(main, ["worktree", "add", wt, "jahnzh/feat-99-land"]);
 
   // Open a PR-like head on origin/main's parent so merge --ff-only can advance main
   // after gh merge fast-forwards origin/main in the stub.
@@ -116,8 +129,8 @@ esac
   );
 
   const env = {
-    ...process.env,
-    PATH: `${bin}:${process.env.PATH}`,
+    ...gitEnv,
+    PATH: `${bin}:${inheritedEnv.PATH}`,
     ORCA_SPAWN_WORKSPACES: workspaces,
     ORCA_LAND_MAIN: main,
     STUB_GH_LOG: join(dir, "gh.log"),
@@ -127,8 +140,58 @@ esac
   const run = (args: string[]) =>
     spawnSync("bash", [script, ...args], { encoding: "utf8", env, cwd: repoRoot });
 
-  return { dir, main, wt, bare, workspaces, run, ghLog: join(dir, "gh.log") };
+  return { dir, main, wt, bare, workspaces, run, env, ghLog: join(dir, "gh.log") };
 }
+
+test("push fixture ignores a hostile repository and can only push to its temporary bare remote", () => {
+  const outside = realpathSync(mkdtempSync(join(tmpdir(), "sonder-land-outside-")));
+  let fixture: ReturnType<typeof setup> | undefined;
+  try {
+    const outsideEnv = isolatedGitEnv(outside);
+    const victim = join(outside, "pushing-repo");
+    const otherRemote = join(outside, "other.git");
+    const hostileHome = join(outside, "home");
+    mkdirSync(victim);
+    mkdirSync(hostileHome);
+    git(outside, ["init", "--bare", "-b", "main", otherRemote], outsideEnv);
+    git(victim, ["init"], outsideEnv);
+    writeFileSync(join(victim, "original.txt"), "original\n");
+    git(victim, ["add", "original.txt"], outsideEnv);
+    git(victim, ["commit", "-m", "original"], outsideEnv);
+    git(victim, ["remote", "add", "origin", otherRemote], outsideEnv);
+    const before = {
+      head: git(victim, ["rev-parse", "HEAD"], outsideEnv).stdout,
+      config: readFileSync(join(victim, ".git", "config")),
+      index: readFileSync(join(victim, ".git", "index")),
+    };
+    writeFileSync(join(hostileHome, ".gitconfig"), `[remote "origin"]\n\tpushurl = ${otherRemote}\n`);
+
+    fixture = setup({
+      ...process.env,
+      HOME: hostileHome,
+      XDG_CONFIG_HOME: hostileHome,
+      GIT_DIR: join(victim, ".git"),
+      GIT_WORK_TREE: victim,
+      GIT_INDEX_FILE: join(victim, ".git", "index"),
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "remote.origin.pushurl",
+      GIT_CONFIG_VALUE_0: otherRemote,
+    });
+    const refs = git(fixture.bare, ["show-ref"], fixture.env).stdout;
+    assert.match(refs, /refs\/heads\/main/);
+    assert.match(refs, /refs\/heads\/jahnzh\/feat-99-land/);
+    const landed = fixture.run(["--pr", "99", "--worktree", "land-wt"]);
+    assert.equal(landed.status, 0, landed.stdout + landed.stderr);
+    assert.deepEqual(readdirSync(join(otherRemote, "refs", "heads")), []);
+    assert.equal(git(victim, ["rev-parse", "HEAD"], outsideEnv).stdout, before.head);
+    assert.deepEqual(readFileSync(join(victim, ".git", "config")), before.config);
+    assert.deepEqual(readFileSync(join(victim, ".git", "index")), before.index);
+    assert.equal(readFileSync(join(victim, "original.txt"), "utf8"), "original\n");
+  } finally {
+    if (fixture) rmSync(fixture.dir, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
 
 test("usage exit 2 without --pr or --worktree", () => {
   const t = setup();
@@ -147,12 +210,7 @@ test("refuses when the PR is not OPEN and MERGEABLE", () => {
       encoding: "utf8",
       cwd: repoRoot,
       env: {
-        ...process.env,
-        PATH: `${join(t.dir, "bin")}:${process.env.PATH}`,
-        ORCA_SPAWN_WORKSPACES: t.workspaces,
-        ORCA_LAND_MAIN: t.main,
-        STUB_GH_LOG: t.ghLog,
-        STUB_BARE: t.bare,
+        ...t.env,
         STUB_GH_STATE: "CLOSED",
         STUB_GH_MERGEABLE: "MERGEABLE",
       },
@@ -164,12 +222,7 @@ test("refuses when the PR is not OPEN and MERGEABLE", () => {
       encoding: "utf8",
       cwd: repoRoot,
       env: {
-        ...process.env,
-        PATH: `${join(t.dir, "bin")}:${process.env.PATH}`,
-        ORCA_SPAWN_WORKSPACES: t.workspaces,
-        ORCA_LAND_MAIN: t.main,
-        STUB_GH_LOG: t.ghLog,
-        STUB_BARE: t.bare,
+        ...t.env,
         STUB_GH_STATE: "OPEN",
         STUB_GH_MERGEABLE: "CONFLICTING",
       },
@@ -203,7 +256,7 @@ test("refuses a dirty worktree unless the only dirt is untracked REPORT.md", () 
 test("--dry-run prints every step without merging or removing the worktree", () => {
   const t = setup();
   try {
-    const before = spawnSync("git", ["worktree", "list"], { cwd: t.main, encoding: "utf8" });
+    const before = git(t.main, ["worktree", "list"], t.env);
     const r = t.run(["--pr", "99", "--worktree", "land-wt", "--dry-run"]);
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /check PR #99 is OPEN and MERGEABLE/);
@@ -214,7 +267,7 @@ test("--dry-run prints every step without merging or removing the worktree", () 
     assert.match(r.stdout, /dry-run: git branch -D jahnzh\/issue-99-alias/);
     assert.doesNotMatch(r.stdout, /jahnzh\/other-tip/);
     assert.ok(existsSync(t.wt));
-    const after = spawnSync("git", ["worktree", "list"], { cwd: t.main, encoding: "utf8" });
+    const after = git(t.main, ["worktree", "list"], t.env);
     assert.equal(after.stdout, before.stdout);
     const ghLog = existsSync(t.ghLog) ? readFileSync(t.ghLog, "utf8") : "";
     assert.match(ghLog, /pr view 99/);
@@ -227,22 +280,19 @@ test("--dry-run prints every step without merging or removing the worktree", () 
 test("lands: merges via gh, ff-only updates main, removes worktree and same-tip jahnzh branches", () => {
   const t = setup();
   try {
-    const tip = spawnSync("git", ["rev-parse", "jahnzh/feat-99-land"], {
-      cwd: t.main,
-      encoding: "utf8",
-    }).stdout.trim();
+    const tip = git(t.main, ["rev-parse", "jahnzh/feat-99-land"], t.env).stdout.trim();
 
     const r = t.run(["--pr", "99", "--worktree", "land-wt"]);
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(readFileSync(t.ghLog, "utf8"), /pr merge 99 --merge/);
     assert.equal(existsSync(t.wt), false);
 
-    const branches = spawnSync("git", ["branch", "--list"], { cwd: t.main, encoding: "utf8" }).stdout;
+    const branches = git(t.main, ["branch", "--list"], t.env).stdout;
     assert.doesNotMatch(branches, /feat-99-land/);
     assert.doesNotMatch(branches, /issue-99-alias/);
     assert.match(branches, /other-tip/, "different-tip jahnzh branch kept");
 
-    const mainTip = spawnSync("git", ["rev-parse", "HEAD"], { cwd: t.main, encoding: "utf8" }).stdout.trim();
+    const mainTip = git(t.main, ["rev-parse", "HEAD"], t.env).stdout.trim();
     assert.equal(mainTip, tip, "main fast-forwarded to the landed tip");
     assert.ok(existsSync(join(t.main, "feature.txt")));
   } finally {
