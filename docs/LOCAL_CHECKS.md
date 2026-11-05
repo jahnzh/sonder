@@ -73,6 +73,18 @@ Sonder uses WAL mode. A plain copy of `sonder.db` can omit committed transaction
 
 ## Production deployment
 
+Production source lives at `/home/jahn/audiobook_streamer`: a **bare** Git repository at `.git` (`core.bare=true`) with the running app checkout as the work tree (same directory). Orca worktrees attach under `.git/worktrees/`; deploy must not export `GIT_DIR` or `GIT_WORK_TREE` into an agent shell.
+
+From any checkout (including an Orca worktree), deploy a committed revision with:
+
+```bash
+scripts/deploy-prod.sh <commit> [--marker <string>]... [--skip-live-checks] [--dry-run]
+```
+
+`deploy-prod.sh` checks out `<commit>` into the production work tree and runs `scripts/deploy.sh` inside a subshell so `GIT_DIR`/`GIT_WORK_TREE` never escape to the caller. It refuses when tracked work-tree files are modified and passes through `deploy.sh` exit codes and flags (including `--dry-run`).
+
+`scripts/deploy.sh` alone is for use **inside** the production work tree when it is already at `<commit>` with a clean index:
+
 ```bash
 scripts/deploy.sh <commit> [--marker <string>]... [--skip-live-checks] [--dry-run]
 ```
