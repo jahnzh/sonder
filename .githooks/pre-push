@@ -28,7 +28,7 @@ done < <(env -0)
 
 test_timeout="${SONDER_PREPUSH_TEST_TIMEOUT_SEC:-600}"
 set +e
-env "${unset_git_env[@]}" timeout --foreground "$test_timeout" env "${unset_git_env[@]}" npm test
+env "${unset_git_env[@]}" timeout -k 10 "$test_timeout" npm test
 test_status=$?
 set -e
 

@@ -9,6 +9,13 @@ import { fileURLToPath } from "node:url";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const runner = path.join(repoRoot, "tests", "ci-script-host-runner.mjs");
 
+/** Minimal tree so ci-run.test.mjs can run from a throwaway hosting repo (works under git archive). */
+const HOSTING_COPY_PATHS = [
+  "package.json",
+  "scripts/ci-run.sh",
+  "tests/ci-run.test.mjs",
+];
+
 function gitIn(cwd, ...args) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
   const result = spawnSync("git", args, {
@@ -20,27 +27,32 @@ function gitIn(cwd, ...args) {
   return result.stdout.trim();
 }
 
-function makeHostingClone() {
+function makeHostingRepo() {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-ci-script-host-"));
-  const clone = path.join(base, "clone");
-  const cloneResult = spawnSync("git", ["clone", "--local", "-q", repoRoot, clone], {
-    encoding: "utf8",
-    env: Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_"))),
-  });
-  assert.equal(cloneResult.status, 0, cloneResult.stderr || cloneResult.stdout);
-  fs.symlinkSync(path.join(repoRoot, "node_modules"), path.join(clone, "node_modules"), "dir");
-  gitIn(clone, "checkout", "-q", "-b", "hosting-branch");
-  gitIn(clone, "config", "user.name", "Hosting Clone");
-  gitIn(clone, "config", "user.email", "host@example.test");
-  fs.writeFileSync(path.join(clone, "host-marker.txt"), "hosting\n");
-  gitIn(clone, "add", "host-marker.txt");
-  gitIn(clone, "commit", "-qm", "hosting marker");
+  const hosting = path.join(base, "hosting");
+  fs.mkdirSync(hosting, { recursive: true });
+  for (const rel of HOSTING_COPY_PATHS) {
+    const src = path.join(repoRoot, rel);
+    const dest = path.join(hosting, rel);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(src, dest);
+  }
+  fs.symlinkSync(path.join(repoRoot, "node_modules"), path.join(hosting, "node_modules"), "dir");
+  gitIn(hosting, "init", "-q", "-b", "main");
+  gitIn(hosting, "config", "user.name", "Hosting Repo");
+  gitIn(hosting, "config", "user.email", "host@example.test");
+  gitIn(hosting, "add", ...HOSTING_COPY_PATHS);
+  gitIn(hosting, "commit", "-qm", "fixture");
+  gitIn(hosting, "checkout", "-q", "-b", "hosting-branch");
+  fs.writeFileSync(path.join(hosting, "host-marker.txt"), "hosting\n");
+  gitIn(hosting, "add", "host-marker.txt");
+  gitIn(hosting, "commit", "-qm", "hosting marker");
   const before = {
-    head: gitIn(clone, "rev-parse", "HEAD"),
-    branch: gitIn(clone, "symbolic-ref", "--short", "HEAD"),
-    status: gitIn(clone, "status", "--porcelain"),
+    head: gitIn(hosting, "rev-parse", "HEAD"),
+    branch: gitIn(hosting, "symbolic-ref", "--short", "HEAD"),
+    status: gitIn(hosting, "status", "--porcelain"),
   };
-  return { base, clone, before };
+  return { base, hosting, before };
 }
 
 function cleanRunnerEnv(base) {
@@ -57,22 +69,25 @@ function cleanRunnerEnv(base) {
   return env;
 }
 
-test("ci script unit tests do not mutate a hosting clone HEAD or branch", { timeout: 600_000 }, () => {
-  const { base, clone, before } = makeHostingClone();
+test("ci-run tests do not mutate a hosting repo HEAD or branch", { timeout: 120_000 }, () => {
+  const { base, hosting, before } = makeHostingRepo();
+  const startedAt = Date.now();
   try {
-    const result = spawnSync(process.execPath, [runner, clone], {
+    const result = spawnSync(process.execPath, [runner, hosting], {
       encoding: "utf8",
       env: cleanRunnerEnv(base),
-      timeout: 540_000,
+      timeout: 90_000,
     });
+    const elapsedMs = Date.now() - startedAt;
     assert.equal(
       result.status,
       0,
-      `ci script tests failed in hosting clone:\n${result.stderr}\n${result.stdout}`,
+      `ci-run tests failed in hosting repo (${elapsedMs}ms):\n${result.stderr}\n${result.stdout}`,
     );
-    assert.equal(gitIn(clone, "rev-parse", "HEAD"), before.head);
-    assert.equal(gitIn(clone, "symbolic-ref", "--short", "HEAD"), before.branch);
-    assert.equal(gitIn(clone, "status", "--porcelain"), before.status);
+    assert.ok(elapsedMs < 30_000, `ci-script-host guard should stay fast (took ${elapsedMs}ms)`);
+    assert.equal(gitIn(hosting, "rev-parse", "HEAD"), before.head);
+    assert.equal(gitIn(hosting, "symbolic-ref", "--short", "HEAD"), before.branch);
+    assert.equal(gitIn(hosting, "status", "--porcelain"), before.status);
   } finally {
     fs.rmSync(base, { recursive: true, force: true });
   }

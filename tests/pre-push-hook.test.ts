@@ -53,7 +53,9 @@ if [[ "$1" == "run" && "$2" == "build" ]]; then
 fi
 if [[ "$1" == "test" ]]; then
   if [[ -n "\${SONDER_STUB_TEST_HANG:-}" ]]; then
-    exec sleep 86400
+    sleep 86400 &
+    echo $! > "\${SONDER_STUB_TEST_HANG_PID_FILE:?SONDER_STUB_TEST_HANG_PID_FILE must be set}"
+    wait
   fi
   exit "\${SONDER_STUB_TEST_EXIT:-0}"
 fi
@@ -63,6 +65,15 @@ exit 1
     { mode: 0o755 },
   );
   return { binDir, logPath };
+}
+
+function isProcessAlive(pid: number) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function runHook(
@@ -253,11 +264,13 @@ test("pre-push hook times out a hung npm test in bounded time and keeps HEAD on 
       head: gitIn(root, "rev-parse", "HEAD"),
       branch: gitIn(root, "symbolic-ref", "--short", "HEAD"),
     };
+    const hangPidFile = join(root, "hang.pid");
     const { binDir } = writeStubNpm(root);
     const startedAt = Date.now();
     const result = runHook(root, binDir, {
       SONDER_STUB_BUILD_EXIT: "0",
       SONDER_STUB_TEST_HANG: "1",
+      SONDER_STUB_TEST_HANG_PID_FILE: hangPidFile,
       SONDER_PREPUSH_TEST_TIMEOUT_SEC: "2",
     });
     const elapsedMs = Date.now() - startedAt;
@@ -268,6 +281,10 @@ test("pre-push hook times out a hung npm test in bounded time and keeps HEAD on 
     assert.ok(elapsedMs < 15_000, `hook should fail closed quickly (took ${elapsedMs}ms)`);
     assert.equal(gitIn(root, "rev-parse", "HEAD"), before.head);
     assert.equal(gitIn(root, "symbolic-ref", "--short", "HEAD"), before.branch);
+    assert.ok(existsSync(hangPidFile), "stub must record the hung child pid");
+    const hangPid = Number.parseInt(readFileSync(hangPidFile, "utf8").trim(), 10);
+    assert.ok(Number.isFinite(hangPid) && hangPid > 1, "stub must write a valid hung child pid");
+    assert.ok(!isProcessAlive(hangPid), "timeout must kill the hung npm test child process");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

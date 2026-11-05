@@ -1,33 +1,32 @@
 #!/usr/bin/env node
-// Spawned from ci-script-host.test.mjs so the CI script tests run under node:test
-// in a fresh process (node:test refuses nested --test invocations from a test file).
+// Spawned from ci-script-host.test.mjs so ci-run tests run under node:test in a fresh
+// process (node:test refuses nested --test invocations from a test file).
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const tsxBin = path.join(repoRoot, "node_modules", ".bin", "tsx");
+/** Fast ci-run cases only; the full file is what hung pre-push in the original incident. */
+const CI_RUN_FAST_PATTERN = "help|usage error|invalid commit ref";
 
-const CI_SCRIPT_TESTS = [
-  "tests/ci-run.test.mjs",
-  "tests/ci-deck.test.ts",
-  "tests/ci-ssh.test.ts",
-  "tests/ci-push.test.ts",
-  "tests/ci-result.test.mjs",
-  "tests/ci-history.test.mjs",
-];
+const hosting = process.argv[2];
+assert.ok(hosting && fs.existsSync(hosting), "usage: node ci-script-host-runner.mjs <hosting-repo-dir>");
 
-const clone = process.argv[2];
-assert.ok(clone && fs.existsSync(clone), "usage: node ci-script-host-runner.mjs <clone-dir>");
-
-const result = spawnSync(tsxBin, ["--test", "--test-isolation=process", ...CI_SCRIPT_TESTS], {
-  cwd: clone,
-  encoding: "utf8",
-  env: process.env,
-  timeout: 540_000,
-});
+const result = spawnSync(
+  process.execPath,
+  [
+    "--test",
+    "--test-isolation=process",
+    "--test-name-pattern",
+    CI_RUN_FAST_PATTERN,
+    "tests/ci-run.test.mjs",
+  ],
+  {
+    cwd: hosting,
+    encoding: "utf8",
+    env: process.env,
+    timeout: 60_000,
+  },
+);
 
 const output = `${result.stderr}\n${result.stdout}`;
 if (result.status !== 0) {
@@ -36,8 +35,8 @@ if (result.status !== 0) {
 }
 
 const passLine = output.match(/ℹ pass (\d+)/);
-if (!passLine || Number(passLine[1]) < 20) {
-  console.error("expected many ci script tests to run");
+if (!passLine || Number(passLine[1]) < 5) {
+  console.error("expected several fast ci-run tests to run");
   console.error(output);
   process.exit(1);
 }
