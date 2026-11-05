@@ -31,6 +31,7 @@ usage() {
 [[ $# -eq 1 ]] || usage
 
 REQUESTED_REF=$1
+
 SONDER_CI_HOST=${SONDER_CI_HOST:-192.168.1.119}
 SONDER_CI_REPO=${SONDER_CI_REPO:-jahnzh/sonder}
 SONDER_CI_STATUS_CONTEXT=${SONDER_CI_STATUS_CONTEXT:-ci/ssh}
@@ -69,7 +70,8 @@ fi
 ARTIFACT_ROOT="$ROOT/artifacts/ci/${FULL_SHA}"
 RUN_ID="sonder-ci-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 LOCAL_REPORT_DIR="$ARTIFACT_ROOT/${RUN_ID}"
-mkdir -p "$ARTIFACT_ROOT"
+mkdir -p "$LOCAL_REPORT_DIR"
+echo $$ >"$LOCAL_REPORT_DIR/ci-ssh.pid"
 
 REMOTE_RUN_DIR=""
 BUNDLE_PATH=""
@@ -293,10 +295,16 @@ remove_bundle() {
   return 0
 }
 
+remove_pid_file() {
+  [[ -n ${LOCAL_REPORT_DIR:-} && -f $LOCAL_REPORT_DIR/ci-ssh.pid ]] && rm -f "$LOCAL_REPORT_DIR/ci-ssh.pid"
+  return 0
+}
+
 on_signal() {
   log "Interrupted; cleaning up the remote run"
   cleanup_remote
   remove_bundle
+  remove_pid_file
   exit "$1"
 }
 
@@ -367,7 +375,7 @@ wait_for_remote() {
       WAIT_DETAIL="no result after ${MAX_WAIT}s"
       return
     fi
-    sleep "$POLL_INTERVAL"
+    sleep "$POLL_INTERVAL" & wait $!
   done
 }
 
@@ -501,6 +509,7 @@ REMOTE
 trap 'on_signal 130' INT
 trap 'on_signal 143' TERM
 
+log "Stop this run: npm run ci:stop -- ${FULL_SHA} (pid $$, ${LOCAL_REPORT_DIR}/ci-ssh.pid)"
 post_commit_status pending "CI running on ${SONDER_CI_HOST}"
 
 FINAL_EXIT=0
@@ -559,4 +568,5 @@ fi
 
 log "Artifacts: ${LOCAL_REPORT_DIR}"
 record_history_check ci:ssh
+remove_pid_file
 exit "$FINAL_EXIT"

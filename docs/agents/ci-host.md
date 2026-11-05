@@ -47,9 +47,17 @@ Known host failures (issue #37) are listed in `tests/known-failures.wsl-host.jso
 
 `scripts/ci-ssh.sh` passes that file to `npm run check -- --known-failures` by default, so a WSL run with only those failures is `passed_with_known_failures` and the report includes a `knownFailures` entry. Override the path with `SONDER_CI_KNOWN_FAILURES` (a relative repository path). For a hand-run `npm run check` on the host, pass `--known-failures tests/known-failures.wsl-host.json` yourself.
 
+## Stopping a run
+
+Agents start checks with `npm run ci:ssh -- <sha>`. Killing the `npm` or `sh -c` wrapper does not stop `scripts/ci-ssh.sh`; the remote check keeps running until something sends TERM to the bash process.
+
+- Each run writes its PID to `artifacts/ci/<sha>/<run-id>/ci-ssh.pid` and prints a stop line at startup.
+- Stop the run with `npm run ci:stop -- <sha>` (or `bash scripts/ci-stop.sh <path-to/ci-ssh.pid>`). That sends TERM to the recorded PID and to its direct child processes (for example a blocking `ssh` poll), which lets the existing `on_signal` / `cleanup_remote` path run.
+- The `ci:ssh` npm script uses `exec`, so a signal delivered to the `sh -c` child also reaches `ci-ssh.sh` when that PID is what you kill.
+
 ## Running a check on the host
 
-- Run `npm run ci:ssh <sha>`, which invokes `scripts/ci-ssh.sh`.
+- Run `npm run ci:ssh -- <sha>`, which `exec`s into `scripts/ci-ssh.sh`.
 - Remote run directories (checkout, bundle, report) live under `${TMPDIR:-/tmp}` on the host unless you set `SONDER_CI_REMOTE_BASE` to an absolute path. The script logs `Remote run directory: <host>:<path>` once the directory is created.
 - `scripts/ci-ssh.sh` runs preflights for loopback refusal, Playwright browsers, and WebKit packages, and detects a dead run.
 - A full check takes about 4 to 5 minutes.

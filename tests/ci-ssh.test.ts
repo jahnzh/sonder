@@ -1,12 +1,13 @@
-import { test, type TestContext } from "node:test";
+import { describe, test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { registerTempDir } from "./register-temp-dir.ts";
 
 const script = path.resolve("scripts/ci-ssh.sh");
+const stopScript = path.resolve("scripts/ci-stop.sh");
 
 // `ssh` runs the remote command in a local shell, so the "host" is a temp directory.
 // STUB_SSH_MODE=down fails every call like an unreachable host; STUB_SSH_PROBE=fail
@@ -17,6 +18,10 @@ shift
 echo "$*" >>"$STUB_SSH_LOG"
 [[ \${STUB_SSH_MODE:-local} == down ]] && exit 255
 if [[ $* == *" -- probe "* && \${STUB_SSH_PROBE:-} == fail ]]; then cat >/dev/null; exit 255; fi
+if [[ $* == *" -- probe "* && \${STUB_SSH_PROBE:-} == block ]]; then
+  trap 'exit 143' TERM
+  exec sleep 300
+fi
 if [[ $* == *" -- loopback_probe "* && \${STUB_LOOPBACK:-} == hang ]]; then
   cat >/dev/null
   echo "loopback_probe rc=124 elapsed_ms=4000"
@@ -87,11 +92,21 @@ function fixture(t?: TestContext) {
   fs.mkdirSync(bin);
   fs.mkdirSync(remote);
   fs.copyFileSync(script, path.join(repo, "scripts", "ci-ssh.sh"));
+  fs.copyFileSync(stopScript, path.join(repo, "scripts", "ci-stop.sh"));
   fs.copyFileSync(
     path.resolve("scripts/lib/ci-history.sh"),
     path.join(repo, "scripts", "lib", "ci-history.sh"),
   );
-  fs.writeFileSync(path.join(repo, "package.json"), '{"name":"fixture"}\n');
+  fs.writeFileSync(
+    path.join(repo, "package.json"),
+    JSON.stringify({
+      name: "fixture",
+      scripts: {
+        "ci:ssh": "exec bash scripts/ci-ssh.sh",
+        "ci:stop": "bash scripts/ci-stop.sh",
+      },
+    }) + "\n",
+  );
   const git = (...args: string[]) =>
     execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
   git("init", "-q");
@@ -170,6 +185,174 @@ function fixture(t?: TestContext) {
 
   return { base, repo, browserCache, first, second: git("rev-parse", "HEAD"), run, result, read, logs, remote, checkCalls, localCheckCalls };
 }
+
+function ciStopHangEnv(f: ReturnType<typeof fixture>) {
+  return {
+    ...cleanEnv(),
+    PATH: `${path.join(f.base, "bin")}:${process.env.PATH}`,
+    SONDER_CI_REMOTE_BASE: f.remote,
+    SONDER_CI_POLL_INTERVAL: "0.2",
+    SONDER_CI_LOOPBACK_PORT: "1",
+    STUB_SSH_LOG: f.logs.ssh,
+    STUB_NPM_LOG: f.logs.npm,
+    STUB_GH_LOG: f.logs.gh,
+    STUB_DPKG_LOG: f.logs.dpkg,
+    STUB_BROWSER_CACHE: f.browserCache,
+    STUB_NPM_MODE: "hang",
+    STUB_SSH_PROBE: "block",
+    SONDER_CI_MAX_WAIT: "300",
+    SONDER_CI_STOP_WAIT: "15",
+  };
+}
+
+describe("scripts/ci-ssh.sh", { concurrency: false }, () => {
+
+test("ci-stop stops a hung ci-ssh run and cleans up the remote run dir", async (t) => {
+  const f = fixture(t);
+  const env = ciStopHangEnv(f);
+
+  const child = spawn("/bin/sh", ["-c", `exec bash scripts/ci-ssh.sh ${f.second}`], {
+    cwd: f.repo,
+    env,
+    stdio: "ignore",
+  });
+
+  t.after(() => {
+    if (child.exitCode !== null) return;
+    try {
+      if (child.pid) process.kill(child.pid, "SIGKILL");
+    } catch {
+      /* already exited */
+    }
+  });
+
+  const artifactRoot = path.join(f.repo, "artifacts", "ci", f.second);
+  const deadline = Date.now() + 30_000;
+  let pidFile = "";
+  let remoteRunDir = "";
+  while (Date.now() < deadline) {
+    if (fs.existsSync(artifactRoot)) {
+      for (const name of fs.readdirSync(artifactRoot)) {
+        if (!name.startsWith("sonder-ci-")) continue;
+        const candidate = path.join(artifactRoot, name, "ci-ssh.pid");
+        if (fs.existsSync(candidate)) {
+          pidFile = candidate;
+          break;
+        }
+      }
+    }
+    const remoteDirs = fs.readdirSync(f.remote);
+    if (remoteDirs.length === 1) remoteRunDir = remoteDirs[0]!;
+    if (pidFile && remoteRunDir) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  assert.ok(pidFile, "ci-ssh.pid was written");
+  assert.ok(remoteRunDir, "remote run directory was created");
+  const recordedPid = Number.parseInt(fs.readFileSync(pidFile, "utf8"), 10);
+  assert.equal(recordedPid, child.pid, "ci-ssh.pid matches the wrapper bash process");
+
+  const stopStarted = Date.now();
+  const stop = spawnSync("bash", [path.join(f.repo, "scripts", "ci-stop.sh"), f.second], {
+    cwd: f.repo,
+    encoding: "utf8",
+    timeout: 30_000,
+    env,
+  });
+  assert.equal(stop.status, 0, stop.stdout + stop.stderr);
+  assert.ok(Date.now() - stopStarted < 10_000, "ci-stop finished within 10s");
+
+  const waitDeadline = Date.now() + 15_000;
+  while (child.exitCode === null && Date.now() < waitDeadline) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  assert.notEqual(child.exitCode, null, "ci-ssh exited after ci:stop");
+  assert.ok(child.exitCode === 130 || child.exitCode === 143, `exit ${child.exitCode}`);
+
+  const remoteRunPath = path.join(f.remote, remoteRunDir);
+  const sshLog = f.read(f.logs.ssh);
+  assert.match(
+    sshLog,
+    new RegExp(` -- cleanup .*${remoteRunPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+  );
+  assert.deepEqual(fs.readdirSync(f.remote), [], "remote run directory was removed");
+  assert.equal(fs.existsSync(pidFile), false, "ci-ssh.pid removed after exit");
+});
+
+test("ci-stop does not kill a sibling in the launcher shell process group", async (t) => {
+  const f = fixture(t);
+  const env = { ...ciStopHangEnv(f), STUB_SSH_PROBE: "" };
+  const sleeperPidFile = path.join(f.base, "sleeper.pid");
+  const launcher = spawn(
+    "bash",
+    [
+      "-c",
+      `sleep 600 & echo $! >"${sleeperPidFile}"; bash scripts/ci-ssh.sh ${f.second}; exit $?`,
+    ],
+    { cwd: f.repo, env, stdio: "ignore" },
+  );
+
+  t.after(() => {
+    if (launcher.pid) {
+      try {
+        process.kill(launcher.pid, "SIGKILL");
+      } catch {
+        /* exited */
+      }
+    }
+    try {
+      const sleeper = Number.parseInt(fs.readFileSync(sleeperPidFile, "utf8"), 10);
+      if (sleeper) process.kill(sleeper, "SIGKILL");
+    } catch {
+      /* no sleeper */
+    }
+  });
+
+  const artifactRoot = path.join(f.repo, "artifacts", "ci", f.second);
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(artifactRoot)) {
+      for (const name of fs.readdirSync(artifactRoot)) {
+        if (name.startsWith("sonder-ci-") && fs.existsSync(path.join(artifactRoot, name, "ci-ssh.pid"))) {
+          break;
+        }
+      }
+    }
+    if (fs.existsSync(sleeperPidFile) && fs.readdirSync(f.remote).length === 1) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  assert.ok(fs.existsSync(sleeperPidFile), "sleeper pid file");
+  const sleeperPid = Number.parseInt(fs.readFileSync(sleeperPidFile, "utf8"), 10);
+  assert.ok(Number.isFinite(sleeperPid) && sleeperPid > 0);
+
+  const stop = spawnSync("bash", [path.join(f.repo, "scripts", "ci-stop.sh"), f.second], {
+    cwd: f.repo,
+    encoding: "utf8",
+    timeout: 30_000,
+    env,
+  });
+  assert.equal(stop.status, 0, stop.stdout + stop.stderr);
+
+  const waitDeadline = Date.now() + 15_000;
+  while (launcher.exitCode === null && Date.now() < waitDeadline) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  assert.notEqual(launcher.exitCode, null, "launcher exited after ci-ssh stopped");
+  assert.ok(launcher.exitCode === 130 || launcher.exitCode === 143, `launcher exit ${launcher.exitCode}`);
+
+  let sleeperAlive = false;
+  try {
+    process.kill(sleeperPid, 0);
+    sleeperAlive = true;
+  } catch {
+    sleeperAlive = false;
+  }
+  assert.equal(sleeperAlive, true, "background sleep in the launcher shell was not signaled");
+  try {
+    process.kill(sleeperPid, "SIGKILL");
+  } catch {
+    /* already dead */
+  }
+});
 
 test("an unreachable host falls back to a local check of the same commit", (t) => {
   const f = fixture(t);
@@ -407,4 +590,6 @@ test("a failed automatic history record-check does not change the ci-ssh exit co
   });
   assert.equal(out.status, 0, out.output);
   assert.match(out.output, /warning: automatic history record-check failed/);
+});
+
 });
