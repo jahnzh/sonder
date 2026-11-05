@@ -7,6 +7,77 @@ import "../signin.css";
 export type Account = { id: number; username: string; role: "admin" | "user" };
 export type AccountRequest = { id: number; email: string; username: string; note: string | null; createdAt: number };
 
+/** Persist the signed-in account locally and notify the app shell. */
+export async function rememberAccount(user: Account, required: boolean) {
+  selectUserStorage(user.id, user.role);
+  await authDB.preferences.put({
+    key: "auth",
+    value: { required, authenticated: true, user },
+  });
+  window.dispatchEvent(new Event("sonder:authenticated"));
+}
+
+export function PasswordField({
+  id,
+  label,
+  value,
+  show,
+  onShowChange,
+  onChange,
+  autoComplete,
+  autoFocus,
+  required,
+  invalid,
+  describedBy,
+  error,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  show: boolean;
+  onShowChange: (show: boolean) => void;
+  onChange: (value: string) => void;
+  autoComplete: string;
+  autoFocus?: boolean;
+  required?: boolean;
+  invalid?: boolean;
+  describedBy?: string;
+  error?: string;
+}) {
+  return (
+    <div className="signin-field">
+      <label htmlFor={id}>{label}</label>
+      <div className="signin-password">
+        <input
+          id={id}
+          type={show ? "text" : "password"}
+          autoComplete={autoComplete}
+          required={required}
+          value={value}
+          aria-invalid={invalid}
+          aria-describedby={describedBy}
+          onChange={(e) => onChange(e.target.value)}
+          autoFocus={autoFocus}
+        />
+        <button
+          type="button"
+          aria-label={show ? "Hide password" : "Show password"}
+          aria-pressed={show}
+          onClick={() => onShowChange(!show)}
+        >
+          {show ? <EyeOff size={20} aria-hidden="true" /> : <Eye size={20} aria-hidden="true" />}
+        </button>
+      </div>
+      {error && (
+        <p className="signin-error">
+          <CircleAlert size={16} aria-hidden="true" />
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // The server is authoritative (zod email check in server/account-requests.ts,
 // the POST /api/users username rule). These mirrors reject the same malformed
 // input early in the dialog; the email rule is slightly stricter (it demands
@@ -274,10 +345,8 @@ export function SignIn({ onLogin, needsPassword }: { onLogin: (user: Account) =>
         method: "POST",
         body: JSON.stringify({ username: username.trim(), password }),
       });
-      const status = await api<{ user: Account }>("/auth/status");
-      selectUserStorage(status.user.id, status.user.role);
-      await authDB.preferences.put({ key: "auth", value: { required: true, authenticated: true, user: status.user } });
-      window.dispatchEvent(new Event("sonder:authenticated"));
+      const status = await api<{ required: boolean; user: Account }>("/auth/status");
+      await rememberAccount(status.user, status.required);
       onLogin(status.user);
     } catch {
       setError(true);
@@ -315,24 +384,18 @@ export function SignIn({ onLogin, needsPassword }: { onLogin: (user: Account) =>
                 autoFocus
               />
             </div>
-            <div className="signin-field">
-              <label htmlFor="signin-password">Password</label>
-              <div className="signin-password">
-                <input
-                  id="signin-password"
-                  type={show ? "text" : "password"}
-                  autoComplete="current-password"
-                  required
-                  value={password}
-                  aria-invalid={error}
-                  aria-describedby="signin-error"
-                  onChange={(e) => { setPassword(e.target.value); setError(false); }}
-                />
-                <button type="button" aria-label={show ? "Hide password" : "Show password"} aria-pressed={show} onClick={() => setShow(!show)}>
-                  {show ? <EyeOff size={20} aria-hidden="true" /> : <Eye size={20} aria-hidden="true" />}
-                </button>
-              </div>
-            </div>
+            <PasswordField
+              id="signin-password"
+              label="Password"
+              value={password}
+              show={show}
+              onShowChange={setShow}
+              onChange={(next) => { setPassword(next); setError(false); }}
+              autoComplete="current-password"
+              required
+              invalid={error}
+              describedBy="signin-error"
+            />
             <div id="signin-error" role="alert">
               {error && (
                 <p className="signin-error">
