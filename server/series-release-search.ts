@@ -1,7 +1,7 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
-import { acquire as defaultAcquire } from "./acquisitions.ts";
+import { acquire as defaultAcquire, magnetHash } from "./acquisitions.ts";
 import {
   abbMagnet,
   abbRelease,
@@ -17,8 +17,9 @@ import {
   workHasPlayableAudio,
   type WorkMediaState,
 } from "./work-media-state.ts";
-import { userIsAdmin } from "./users.ts";
 import {
+  assertCanAcquireMedia,
+  cancelInflightSeriesAudioJobs,
   seriesWorkAcquisitions,
   setJobState,
 } from "./series-acquisition.ts";
@@ -38,29 +39,36 @@ export type SeriesReleaseSearchDeps = {
   prowlarrRelease?: typeof prowlarrRelease;
   prowlarrMagnet?: typeof prowlarrMagnet;
   acquire?: typeof defaultAcquire;
-  canAcquireMedia?: (userId: number) => boolean;
 };
 
 let deps: SeriesReleaseSearchDeps = {};
 
+// Slugs must come from a recent server-side search (same pattern as prowlarrLinks).
+const ABB_SEARCH_CACHE_MS = 6 * 3600_000;
+const abbSearchSlugs = new Map<string, number>();
+
+function rememberAbbSlugs(results: { id: string }[]) {
+  const expires = Date.now() + ABB_SEARCH_CACHE_MS;
+  for (const release of results) abbSearchSlugs.set(release.id, expires);
+  for (const [slug, expiry] of abbSearchSlugs)
+    if (expiry <= Date.now() || abbSearchSlugs.size > 5000) abbSearchSlugs.delete(slug);
+}
+
+function requireAbbSlugFromSearch(slug: string) {
+  const expires = abbSearchSlugs.get(slug);
+  if (!expires || expires <= Date.now())
+    throw new Error(
+      "This search result has expired. Search again and choose the release.",
+    );
+}
+
 export function setSeriesReleaseSearchDeps(overrides: SeriesReleaseSearchDeps) {
-  deps = overrides;
+  deps = { ...deps, ...overrides };
 }
 
 export function resetSeriesReleaseSearchDeps() {
   deps = {};
-}
-
-function canAcquireMedia(userId: number) {
-  return (deps.canAcquireMedia ?? userIsAdmin)(userId);
-}
-
-function requireAcquirePermission(userId: number) {
-  if (!canAcquireMedia(userId))
-    throw Object.assign(
-      new Error("Only the administrator can do this."),
-      { statusCode: 403 },
-    );
+  abbSearchSlugs.clear();
 }
 
 export function savedSeriesWork(
@@ -98,7 +106,7 @@ const activeDownload = new Set([
   "paused",
 ]);
 
-function activeWorkAcquisitionId(userId: number, workId: string) {
+function activeWorkAcquisition(userId: number, workId: string) {
   const state = getWorkMediaState(userId, workId);
   if (state?.state !== "queued" || !state.acquisitionId) return null;
   const job = db
@@ -107,25 +115,80 @@ function activeWorkAcquisitionId(userId: number, workId: string) {
     .where(eq(s.acquisitions.id, state.acquisitionId))
     .get();
   if (!job || !activeDownload.has(job.status)) return null;
-  return job.id;
+  return job;
 }
 
-async function stopExclusiveAcquisition(userId: number, acquisitionId: string) {
+export type ReplacePreviousResult =
+  | { action: "skipped_same_hash" }
+  | { action: "stopped_local" }
+  | { action: "detached_shared" }
+  | { action: "detached_torbox"; note: string };
+
+/** Detach or stop the caller's previous acquisition after a new one has started. */
+export async function replacePreviousAcquisition(
+  userId: number,
+  previousAcquisitionId: string,
+  newMagnet: string,
+): Promise<ReplacePreviousResult> {
+  const previous = db
+    .select()
+    .from(s.acquisitions)
+    .where(eq(s.acquisitions.id, previousAcquisitionId))
+    .get();
+  if (!previous) return { action: "skipped_same_hash" };
+  const newHash = magnetHash(newMagnet);
+  if (previous.hash === newHash) return { action: "skipped_same_hash" };
+
   const users = db
     .select()
     .from(s.userAcquisitions)
-    .where(eq(s.userAcquisitions.acquisitionId, acquisitionId))
+    .where(eq(s.userAcquisitions.acquisitionId, previousAcquisitionId))
     .all();
-  if (users.length !== 1 || users[0].userId !== userId) return;
-  const job = db
-    .select()
-    .from(s.acquisitions)
-    .where(eq(s.acquisitions.id, acquisitionId))
-    .get();
-  if (!job) return;
-  if (job.backend === "local" && job.status !== "ready" && job.status !== "error") {
+  const shared =
+    users.length !== 1 ||
+    users[0].userId !== userId ||
+    users.some((row) => row.userId !== userId);
+
+  if (shared) {
+    db.delete(s.userAcquisitions)
+      .where(
+        and(
+          eq(s.userAcquisitions.userId, userId),
+          eq(s.userAcquisitions.acquisitionId, previousAcquisitionId),
+        ),
+      )
+      .run();
+    if (previous.workId) syncWorkMediaState(userId, previous.workId);
+    return { action: "detached_shared" };
+  }
+
+  if (previous.backend === "torbox") {
+    db.delete(s.userAcquisitions)
+      .where(
+        and(
+          eq(s.userAcquisitions.userId, userId),
+          eq(s.userAcquisitions.acquisitionId, previousAcquisitionId),
+        ),
+      )
+      .run();
+    return {
+      action: "detached_torbox",
+      note:
+        "The previous TorBox download was not cancelled upstream; this account no longer tracks it.",
+    };
+  }
+
+  db.delete(s.userAcquisitions)
+    .where(
+      and(
+        eq(s.userAcquisitions.userId, userId),
+        eq(s.userAcquisitions.acquisitionId, previousAcquisitionId),
+      ),
+    )
+    .run();
+  if (previous.status !== "ready" && previous.status !== "error") {
     try {
-      await transmission("torrent-stop", { ids: [job.hash] });
+      await transmission("torrent-stop", { ids: [previous.hash] });
     } catch {
       /* best effort */
     }
@@ -136,8 +199,9 @@ async function stopExclusiveAcquisition(userId: number, acquisitionId: string) {
       error: "Replaced by a new release selection.",
       updatedAt: Date.now(),
     })
-    .where(eq(s.acquisitions.id, acquisitionId))
+    .where(eq(s.acquisitions.id, previousAcquisitionId))
     .run();
+  return { action: "stopped_local" };
 }
 
 export async function searchSeriesWorkReleases(
@@ -147,7 +211,7 @@ export async function searchSeriesWorkReleases(
   query: string,
   page = 1,
 ) {
-  requireAcquirePermission(userId);
+  assertCanAcquireMedia(userId);
   savedSeriesWork(userId, seriesId, bookId);
   const q = query.trim();
   if (q.length < 2) throw new Error("Enter at least two characters to search.");
@@ -158,7 +222,11 @@ export async function searchSeriesWorkReleases(
   let nextPage: number | null = null;
   try {
     const abb = await abbSearch(q, page);
-    results = abb.results.map((release) => ({ ...release, source: "abb" as const }));
+    results = abb.results.map((release) => ({
+      ...release,
+      source: "abb" as const,
+    }));
+    rememberAbbSlugs(abb.results);
     nextPage = abb.nextPage;
   } catch (error) {
     sourceErrors.push({
@@ -200,10 +268,10 @@ export async function selectSeriesWorkRelease(
   },
   acquire: typeof defaultAcquire = deps.acquire ?? defaultAcquire,
 ) {
-  requireAcquirePermission(userId);
+  assertCanAcquireMedia(userId);
   const work = savedSeriesWork(userId, seriesId, bookId);
-  const activeId = activeWorkAcquisitionId(userId, work.workId);
-  if (activeId && !input.replaceActive)
+  const previous = activeWorkAcquisition(userId, work.workId);
+  if (previous && !input.replaceActive)
     throw Object.assign(
       new Error(
         "An active download is in progress for this work. Replace it or cancel your new selection.",
@@ -217,8 +285,9 @@ export async function selectSeriesWorkRelease(
       ),
       { statusCode: 409, code: "existing_audio" },
     );
-  if (activeId && input.replaceActive)
-    await stopExclusiveAcquisition(userId, activeId);
+
+  cancelInflightSeriesAudioJobs(userId, work.workId);
+
   let magnet: string;
   let metadata: {
     title?: string;
@@ -236,6 +305,7 @@ export async function selectSeriesWorkRelease(
     };
     if (!metadata.title) metadata.title = link.title;
   } else {
+    requireAbbSlugFromSearch(input.id);
     const release = await (deps.abbRelease ?? abbRelease)(input.id);
     magnet = await (deps.abbMagnet ?? abbMagnet)(input.id);
     metadata = {
@@ -246,11 +316,21 @@ export async function selectSeriesWorkRelease(
       narrator: release.narrator,
     };
   }
+
   const job = await acquire(magnet, {
     ...metadata,
     workId: work.workId,
     userId,
   });
+
+  let replaceResult: ReplacePreviousResult | null = null;
+  if (previous && input.replaceActive)
+    replaceResult = await replacePreviousAcquisition(
+      userId,
+      previous.id,
+      magnet,
+    );
+
   setJobState(userId, seriesId, bookId, work.workId, "audio", "done");
   syncWorkMediaState(userId, work.workId);
   return {
@@ -263,5 +343,6 @@ export async function selectSeriesWorkRelease(
       work.workId,
       false,
     ),
+    replaceResult,
   };
 }

@@ -57,7 +57,7 @@ export type SeriesAcquisitionDeps = {
 let deps: SeriesAcquisitionDeps = {};
 
 export function setSeriesAcquisitionDeps(overrides: SeriesAcquisitionDeps) {
-  deps = overrides;
+  deps = { ...deps, ...overrides };
 }
 
 export function resetSeriesAcquisitionDeps() {
@@ -70,6 +70,28 @@ export function seriesAcquisitionTickerEnabled() {
 
 function canAcquireMedia(userId: number) {
   return (deps.canAcquireMedia ?? userIsAdmin)(userId);
+}
+
+export function assertCanAcquireMedia(userId: number) {
+  if (!canAcquireMedia(userId))
+    throw Object.assign(
+      new Error("Only the administrator can do this."),
+      { statusCode: 403 },
+    );
+}
+
+export const SERIES_ACQUISITION_CANCELLED_ERROR = "cancelled";
+
+/** Stop auto-acquire for this work so a manual release selection can proceed. */
+export function cancelInflightSeriesAudioJobs(userId: number, workId: string) {
+  return sqlite
+    .prepare(
+      `UPDATE series_acquisition_jobs
+       SET status='failed', error=?, updated_at=?
+       WHERE user_id=? AND work_id=? AND kind='audio'
+         AND status IN ('pending','searching')`,
+    )
+    .run(SERIES_ACQUISITION_CANCELLED_ERROR, Date.now(), userId, workId).changes;
 }
 
 export function workHasAppropriateEbook(workId: string) {
@@ -405,6 +427,12 @@ async function processJob(
   try {
     if (job.kind === "audio") await runAudioJob(job, acquire);
     else partialError = await runEbookJob(job);
+    const latest = db
+      .select()
+      .from(s.seriesAcquisitionJobs)
+      .where(eq(s.seriesAcquisitionJobs.id, job.id))
+      .get();
+    if (!latest || latest.status !== "searching") return;
     db.update(s.seriesAcquisitionJobs)
       .set({
         status: "done",
@@ -429,6 +457,12 @@ async function runAudioJob(
   job: typeof s.seriesAcquisitionJobs.$inferSelect,
   acquire: typeof defaultAcquire,
 ) {
+  const active = db
+    .select()
+    .from(s.seriesAcquisitionJobs)
+    .where(eq(s.seriesAcquisitionJobs.id, job.id))
+    .get();
+  if (!active || active.status !== "searching") return;
   if (!canAcquireMedia(job.userId)) throw new Error("no_permission");
   const catalogue = catalogueVolumes(job.seriesId);
   const volume = catalogue.find((row) => row.bookId === job.bookId);
