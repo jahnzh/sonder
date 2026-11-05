@@ -1,6 +1,6 @@
 // Ebook set per work: top-k provider downloads, hold until audio, outlier gate, member evidence.
-import { eq } from "drizzle-orm";
-import { statSync } from "node:fs";
+import { and, eq } from "drizzle-orm";
+import { statSync, existsSync, unlinkSync } from "node:fs";
 import { db } from "./db.ts";
 import * as s from "./schema.ts";
 import { cheapTitleAuthorMatch } from "./ebook-set-filter.ts";
@@ -186,6 +186,36 @@ export function ebookSetMemberCount(workId: string) {
     .from(s.workEbookSetMembers)
     .where(eq(s.workEbookSetMembers.workId, workId))
     .all().length;
+}
+
+function dropOrphanEbookEdition(ebookId: string, workId: string) {
+  const row = db
+    .select()
+    .from(s.ebookEditions)
+    .where(eq(s.ebookEditions.id, ebookId))
+    .get();
+  if (!row || row.workId !== workId) return;
+  if (
+    db
+      .select()
+      .from(s.workEbookSetMembers)
+      .where(
+        and(
+          eq(s.workEbookSetMembers.workId, workId),
+          eq(s.workEbookSetMembers.ebookId, ebookId),
+        ),
+      )
+      .get()
+  )
+    return;
+  db.delete(s.ebookEditions).where(eq(s.ebookEditions.id, ebookId)).run();
+  if (row.source && existsSync(row.source)) {
+    try {
+      unlinkSync(row.source);
+    } catch {
+      /* already gone */
+    }
+  }
 }
 
 function upsertMember(input: {
@@ -455,6 +485,7 @@ export async function fetchTopKIntoEbookSet(
       cheapTitleAuthorMatch(work, { title: f.title, authors: f.authors }),
   );
   const downloaded: { id: string; status: EbookSetMemberStatus }[] = [];
+  const failures: string[] = [];
   for (const file of filtered) {
     if (downloaded.length >= remaining) break;
     const already = db
@@ -464,15 +495,40 @@ export async function fetchTopKIntoEbookSet(
       .all()
       .some((m) => m.ebookId === `${file.source}-${file.md5}`);
     if (already) continue;
-    const saved = await save({ ...file, workId });
-    const result = await evaluateEbookSetMember(workId, saved.id, {
-      sourceTitle: file.title,
-      sourceAuthor: file.authors.join(", ") || null,
-      language: file.language,
-    });
-    downloaded.push({ id: saved.id, status: result.status });
+    const ebookId = `${file.source}-${file.md5}`;
+    try {
+      let saved: { id: string };
+      try {
+        saved = await save({ ...file, workId });
+      } catch (saveError) {
+        const message = (saveError as Error).message;
+        const existing = db
+          .select()
+          .from(s.ebookEditions)
+          .where(eq(s.ebookEditions.id, ebookId))
+          .get();
+        if (!existing || existing.workId !== workId) {
+          failures.push(message);
+          continue;
+        }
+        saved = { id: ebookId };
+      }
+      try {
+        const result = await evaluateEbookSetMember(workId, saved.id, {
+          sourceTitle: file.title,
+          sourceAuthor: file.authors.join(", ") || null,
+          language: file.language,
+        });
+        downloaded.push({ id: saved.id, status: result.status });
+      } catch (evaluateError) {
+        failures.push((evaluateError as Error).message);
+        dropOrphanEbookEdition(saved.id, workId);
+      }
+    } catch (error) {
+      failures.push((error as Error).message);
+    }
   }
-  return { downloaded, skipped: null };
+  return { downloaded, skipped: null, failures };
 }
 
 export function workHasRecording(workId: string) {

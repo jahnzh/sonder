@@ -75,6 +75,7 @@ import {
   deleteDownloads,
   getDownloadedBlob,
   clock,
+  listOfflineEbookEditionIds,
 } from "./lib";
 import type {
   Book,
@@ -83,6 +84,7 @@ import type {
   Settings as SettingsData,
   Acquisition,
   DownloadPart,
+  SavedEbook,
 } from "./types";
 import { Dialog } from "./components/ui/dialog";
 import { SignIn, type Account, type AccountRequest } from "./components/SignIn";
@@ -220,6 +222,10 @@ function LibraryApp({
   const [importOpen, setImportOpen] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
+  const [savedEbooks, setSavedEbooks] = useState<SavedEbook[]>([]);
+  const [offlineEbookEditionIds, setOfflineEbookEditionIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const [downloadParts, setDownloadParts] = useState<DownloadPart[]>([]);
   const [downloadJobs, setDownloadJobs] = useState<
     Record<string, { progress: number; chapter: number; total: number }>
@@ -247,6 +253,19 @@ function LibraryApp({
     setDownloads(valid);
     setDownloadParts(await localDB.downloadParts.toArray());
   }, []);
+  const refreshOfflineEbooks = useCallback(async () => {
+    setOfflineEbookEditionIds(new Set(await listOfflineEbookEditionIds()));
+  }, []);
+  const refreshSavedEbooks = useCallback(async () => {
+    try {
+      const value = await api<SavedEbook[]>("/ebooks");
+      await localDB.preferences.put({ key: "ebooks", value });
+      setSavedEbooks(value);
+    } catch {
+      const cached = await localDB.preferences.get("ebooks");
+      setSavedEbooks((cached?.value as SavedEbook[] | undefined) ?? []);
+    }
+  }, []);
   const refresh = useCallback(async () => {
     try {
       setLoadError("");
@@ -267,6 +286,8 @@ function LibraryApp({
   useEffect(() => {
     void refresh();
     void refreshDownloads();
+    void refreshSavedEbooks();
+    void refreshOfflineEbooks();
     refreshSettings();
     void localDB.preferences.get("favorites").then((p) => {
       if (Array.isArray(p?.value)) setFavorites(p.value);
@@ -284,6 +305,7 @@ function LibraryApp({
       if (document.visibilityState === "visible") {
         void refresh();
         void refreshDownloads();
+        void refreshSavedEbooks();
       }
     };
     const hash = () => {
@@ -313,7 +335,7 @@ function LibraryApp({
       document.removeEventListener("visibilitychange", visible);
       window.removeEventListener("beforeinstallprompt", install);
     };
-  }, [refresh, refreshDownloads, refreshSettings]);
+  }, [refresh, refreshDownloads, refreshSavedEbooks, refreshSettings]);
   useEffect(() => {
     if (!notice) return;
     const timer = setTimeout(() => setNotice(null), 5000);
@@ -1185,7 +1207,9 @@ function LibraryApp({
           onRemove={() => detail && void mutateLibrary(detail, "remove")}
           downloads={downloads}
         />
-        <SeriesDialog target={seriesTarget} onClose={() => setSeriesTarget(null)} downloads={downloads}
+        <SeriesDialog target={seriesTarget} onClose={() => setSeriesTarget(null)} downloads={downloads} savedEbooks={savedEbooks}
+          offlineEbookEditionIds={offlineEbookEditionIds}
+          canAcquire={user.role === "admin"}
           onSaved={() => { setSeriesRevision((value) => value + 1); void refresh(); notify("Series saved."); }} />
         <ImportDialog
           onQueued={() => {
