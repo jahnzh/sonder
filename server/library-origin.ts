@@ -4,22 +4,36 @@ import * as s from "./schema.ts";
 
 export type LibraryOriginSource = "unknown" | "manual" | "hardcover_sync" | "series";
 
-export function recordLibraryOrigin(
+export function setLibraryOrigin(
   userId: number,
   workId: string,
   source: Exclude<LibraryOriginSource, "unknown">,
   options?: { seriesId?: number; addedAt?: number },
 ) {
+  const addedAt = options?.addedAt ?? Date.now();
   db.insert(s.userWorkLibraryOrigin)
     .values({
       userId,
       workId,
       source,
       seriesId: options?.seriesId ?? null,
-      addedAt: options?.addedAt ?? Date.now(),
+      addedAt,
     })
-    .onConflictDoNothing()
+    .onConflictDoUpdate({
+      target: [s.userWorkLibraryOrigin.userId, s.userWorkLibraryOrigin.workId],
+      set: { source, seriesId: options?.seriesId ?? null, addedAt },
+    })
     .run();
+}
+
+/** @deprecated use setLibraryOrigin on a newly inserted library row only */
+export function recordLibraryOrigin(
+  userId: number,
+  workId: string,
+  source: Exclude<LibraryOriginSource, "unknown">,
+  options?: { seriesId?: number; addedAt?: number },
+) {
+  setLibraryOrigin(userId, workId, source, options);
 }
 
 export function libraryOriginFor(userId: number, workId: string) {
@@ -51,20 +65,63 @@ export function countOtherSavedSeries(
   return row.count;
 }
 
-/** Whether this work was added to the library through this series save flow. */
+export function userStillHasWorkInLibrary(userId: number, workId: string) {
+  return db
+    .select()
+    .from(s.editions)
+    .where(eq(s.editions.workId, workId))
+    .all()
+    .some((edition) =>
+      db
+        .select()
+        .from(s.userLibrary)
+        .where(
+          and(
+            eq(s.userLibrary.userId, userId),
+            eq(s.userLibrary.bookId, edition.id),
+          ),
+        )
+        .get(),
+    );
+}
+
+export function removeUserLibraryRow(userId: number, bookId: string) {
+  const edition = db
+    .select()
+    .from(s.editions)
+    .where(eq(s.editions.id, bookId))
+    .get();
+  db.delete(s.userLibrary)
+    .where(
+      and(eq(s.userLibrary.userId, userId), eq(s.userLibrary.bookId, bookId)),
+    )
+    .run();
+  if (edition && !userStillHasWorkInLibrary(userId, edition.workId))
+    deleteLibraryOrigin(userId, edition.workId);
+}
+
+/** Whether this work counts as introduced through this series for removal defaults. */
 export function workIntroducedViaSeries(
   userId: number,
   seriesId: number,
   workId: string,
   legacyIntroduced: boolean,
 ) {
+  if (!legacyIntroduced) return false;
   const origin = libraryOriginFor(userId, workId);
-  if (origin) {
-    if (origin.source === "series" && origin.seriesId === seriesId) return true;
-    if (origin.source === "unknown") return legacyIntroduced;
-    return false;
-  }
-  return legacyIntroduced;
+  if (!origin || origin.source === "unknown") return true;
+  return origin.source === "series" && origin.seriesId === seriesId;
+}
+
+export function seriesRemovalWorkSelectedByDefault(
+  userId: number,
+  seriesId: number,
+  workId: string,
+  legacyIntroduced: boolean,
+  otherSeriesCount: number,
+) {
+  if (otherSeriesCount > 0) return false;
+  return workIntroducedViaSeries(userId, seriesId, workId, legacyIntroduced);
 }
 
 export function removalDefaultSelected(
@@ -74,10 +131,12 @@ export function removalDefaultSelected(
   legacyIntroduced: boolean,
 ) {
   if (!work.added || !work.workId) return false;
-  const otherSeries = countOtherSavedSeries(userId, work.workId, seriesId);
-  return (
-    workIntroducedViaSeries(userId, seriesId, work.workId, legacyIntroduced) &&
-    otherSeries === 0
+  return seriesRemovalWorkSelectedByDefault(
+    userId,
+    seriesId,
+    work.workId,
+    legacyIntroduced,
+    countOtherSavedSeries(userId, work.workId, seriesId),
   );
 }
 

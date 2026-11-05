@@ -32,7 +32,8 @@ import { listEbookSetMembers } from "./ebook-set.ts";
 import {
   libraryOriginFor,
   libraryOriginLabel,
-  recordLibraryOrigin,
+  removeUserLibraryRow,
+  setLibraryOrigin,
   removalDefaultSelected,
   setWorkCompletionOverride,
 } from "./library-origin.ts";
@@ -1146,33 +1147,24 @@ function importCatalogBook(
   if (forceLibrary) db.delete(s.userHiddenLibrary).where(hidden).run();
   if (!db.select().from(s.userHiddenLibrary).where(hidden).get()) {
     const addedAt = Date.now();
-    db.insert(s.userLibrary)
-      .values({
-        userId,
-        bookId: representative.id,
-        status: localStatus(status || 1),
-        addedAt,
-      })
-      .onConflictDoNothing()
-      .run();
-    if (
+    const inserted =
       db
-        .select()
-        .from(s.userLibrary)
-        .where(
-          and(
-            eq(s.userLibrary.userId, userId),
-            eq(s.userLibrary.bookId, representative.id),
-          ),
-        )
-        .get()
-    ) {
+        .insert(s.userLibrary)
+        .values({
+          userId,
+          bookId: representative.id,
+          status: localStatus(status || 1),
+          addedAt,
+        })
+        .onConflictDoNothing()
+        .run().changes > 0;
+    if (inserted) {
       if (libraryOrigin)
-        recordLibraryOrigin(userId, links[0].workId, libraryOrigin.source, {
+        setLibraryOrigin(userId, links[0].workId, libraryOrigin.source, {
           seriesId: libraryOrigin.seriesId,
           addedAt,
         });
-      else recordLibraryOrigin(userId, links[0].workId, "hardcover_sync", { addedAt });
+      else setLibraryOrigin(userId, links[0].workId, "hardcover_sync", { addedAt });
     }
   }
   // Metadata-only placeholders are replaced on the shelf when actual audio for that work is linked.
@@ -1184,14 +1176,7 @@ function importCatalogBook(
         .where(eq(s.editions.workId, link.workId))
         .all())
         if (e.id.startsWith("hc-") && !audio.some((a) => a.id === e.id))
-          db.delete(s.userLibrary)
-            .where(
-              and(
-                eq(s.userLibrary.userId, userId),
-                eq(s.userLibrary.bookId, e.id),
-              ),
-            )
-            .run();
+          removeUserLibraryRow(userId, e.id);
   }
   return { bookId: representative.id, matched, imported };
 }
@@ -1896,12 +1881,7 @@ export function claimHardcoverAudio(workId: string, editionId: string) {
       recordingData(recording.id)?.completeDuration
     )
       applyFraction(userId, recording.id, remoteRead.fraction);
-    for (const e of placeholders)
-      db.delete(s.userLibrary)
-        .where(
-          and(eq(s.userLibrary.userId, userId), eq(s.userLibrary.bookId, e.id)),
-        )
-        .run();
+    for (const e of placeholders) removeUserLibraryRow(userId, e.id);
   }
 }
 function recordingData(recordingId: string) {

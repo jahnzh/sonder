@@ -78,7 +78,7 @@ export function SeriesLibrary({ onOpen, revision }: { onOpen: (id: number) => vo
   </section>;
 }
 
-export function SeriesDialog({ target, onClose, onSaved, downloads, savedEbooks, canAcquire }: { target: SeriesTarget | null; onClose: () => void; onSaved: () => void; downloads: Download[]; savedEbooks: SavedEbook[]; canAcquire: boolean }) {
+export function SeriesDialog({ target, onClose, onSaved, downloads, savedEbooks, offlineEbookEditionIds, canAcquire }: { target: SeriesTarget | null; onClose: () => void; onSaved: () => void; downloads: Download[]; savedEbooks: SavedEbook[]; offlineEbookEditionIds: ReadonlySet<string>; canAcquire: boolean }) {
   const [series, setSeries] = useState<Series | null>(null);
   const [selected, setSelected] = useState<number[]>([]);
   const [mode, setMode] = useState<"preview" | "saved">("preview");
@@ -177,12 +177,11 @@ export function SeriesDialog({ target, onClose, onSaved, downloads, savedEbooks,
             recordings={audio?.recordings}
             downloads={downloads}
             savedEbooks={savedEbooks}
+            offlineEbookEditionIds={offlineEbookEditionIds}
             onRefresh={() => void reloadSaved()}
           />
           <SeriesWorkSavedDetails
             work={work}
-            downloads={downloads}
-            savedEbooks={savedEbooks}
             onUpdated={() => void reloadSaved()}
           />
         </>}

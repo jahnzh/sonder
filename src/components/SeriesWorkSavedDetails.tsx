@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { api } from "../lib";
-import type { Download, SavedEbook } from "../types";
 
 export type SeriesWorkSavedDetailsView = {
   id: number;
@@ -14,13 +13,9 @@ export type SeriesWorkSavedDetailsView = {
 
 export function SeriesWorkSavedDetails({
   work,
-  downloads,
-  savedEbooks,
   onUpdated,
 }: {
   work: SeriesWorkSavedDetailsView;
-  downloads: Download[];
-  savedEbooks: SavedEbook[];
   onUpdated: () => void;
 }) {
   const [busy, setBusy] = useState(false);

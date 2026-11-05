@@ -56,12 +56,11 @@ test("series save opt-ins, ebook failure, and retry show specific progress", asy
     const work = view.works.find((row: { title: string }) => row.title === "Crossing Companion");
     return work?.acquisition?.ebook?.status;
   }).toBe("done");
-  await expect.poll(async () =>
+  await expect(
     page
       .getByRole("dialog")
       .locator(".series-work")
       .filter({ hasText: "Crossing Companion" })
-      .getByText("Ebook: Search complete", { exact: true })
-      .isVisible(),
-  ).toBe(true);
+      .getByText(/Ebook: Search complete · not on device/),
+  ).toBeVisible();
 });

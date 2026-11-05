@@ -362,6 +362,7 @@ test("saved mode reports needsAdmin for non-admins and dedupes shared work ids",
 });
 
 test("saved series exposes library origin and removal defaults from provenance", async () => {
+  await app.inject({ method: "DELETE", url: "/api/library/alice" });
   await app.inject({ method: "POST", url: "/api/library", payload: { bookId: "alice" } });
   await app.inject({ method: "POST", url: "/api/series", payload: { id: 13, bookIds: [106] } });
   const alice = (await app.inject("/api/series/13")).json().works[0];
@@ -429,4 +430,64 @@ test("work completion override is personal to the signed-in user", async () => {
   } finally {
     delete process.env.APP_PASSWORD;
   }
+});
+
+test("work completion PATCH returns 404 when work is outside library and saved series", async () => {
+  const missing = await app.inject({
+    method: "PATCH",
+    url: "/api/works/work-not-in-library/completion",
+    payload: { status: "finished" },
+  });
+  assert.equal(missing.statusCode, 404, missing.body);
+});
+
+test("removal default stays off when introduced is 0 even with series origin", async () => {
+  sqlite
+    .prepare(
+      `UPDATE user_saved_series_works SET introduced=0 WHERE user_id=1 AND series_id=11 AND book_id=103`,
+    )
+    .run();
+  const workId = (await app.inject("/api/series/11")).json().works.find(
+    (row: { id: number }) => row.id === 103,
+  ).workId;
+  sqlite
+    .prepare(
+      `INSERT INTO user_work_library_origin(user_id,work_id,source,series_id,added_at)
+       VALUES(1,?,?,?,?)
+       ON CONFLICT(user_id,work_id) DO UPDATE SET source=excluded.source, series_id=excluded.series_id`,
+    )
+    .run(workId, "series", 11, Date.now());
+  const work = (await app.inject("/api/series/11")).json().works.find(
+    (row: { id: number }) => row.id === 103,
+  );
+  assert.equal(work.libraryOrigin.source, "series");
+  assert.equal(work.removalDefaultSelected, false);
+  const preview = (await app.inject("/api/series/11/removal")).json();
+  const companion = preview.works.find((row: { bookId: number }) => row.bookId === 103);
+  assert.equal(companion.selectedByDefault, false);
+  assert.equal(companion.introduced, false);
+});
+
+test("removal default ignores stale series origin after library delete and manual re-add", async () => {
+  const future = (await app.inject("/api/series/11")).json().works.find(
+    (row: { id: number }) => row.id === 104,
+  );
+  assert.equal(future.removalDefaultSelected, true);
+  assert.equal(future.libraryOrigin.source, "series");
+  const editionId = (await app.inject("/api/books")).json().find(
+    (book: { workId: string; inLibrary: boolean }) =>
+      book.workId === future.workId && book.inLibrary,
+  ).id;
+  await app.inject({ method: "DELETE", url: `/api/library/${editionId}` });
+  const readded = await app.inject({
+    method: "POST",
+    url: "/api/library",
+    payload: { bookId: editionId },
+  });
+  assert.equal(readded.statusCode, 200, readded.body);
+  const work = (await app.inject("/api/series/11")).json().works.find(
+    (row: { id: number }) => row.id === 104,
+  );
+  assert.equal(work.libraryOrigin.source, "manual");
+  assert.equal(work.removalDefaultSelected, false);
 });
