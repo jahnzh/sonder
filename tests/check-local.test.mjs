@@ -809,6 +809,11 @@ test("an empty lock file older than 60 s is reclaimed and a fresh one is left al
     if (previous === undefined) delete process.env.CHECK_LOCAL_PORT;
     else process.env.CHECK_LOCAL_PORT = previous;
     fs.rmSync(lockPath, { force: true });
+    try {
+      if (fs.readdirSync(leaseDir).length === 0) fs.rmdirSync(leaseDir);
+    } catch {
+      // Another test may hold a lease in the shared directory.
+    }
   }
 });
 

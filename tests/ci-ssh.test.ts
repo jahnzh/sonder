@@ -1,9 +1,10 @@
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
+import { registerTempDir } from "./register-temp-dir.ts";
 
 const script = path.resolve("scripts/ci-ssh.sh");
 
@@ -76,8 +77,9 @@ function cleanEnv() {
   return env;
 }
 
-function fixture() {
+function fixture(t?: TestContext) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-ci-ssh-"));
+  if (t) registerTempDir(t, base);
   const repo = path.join(base, "repo");
   const bin = path.join(base, "bin");
   const remote = path.join(base, "remote");
@@ -169,8 +171,8 @@ function fixture() {
   return { base, repo, browserCache, first, second: git("rev-parse", "HEAD"), run, result, read, logs, remote, checkCalls, localCheckCalls };
 }
 
-test("an unreachable host falls back to a local check of the same commit", () => {
-  const f = fixture();
+test("an unreachable host falls back to a local check of the same commit", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second, { STUB_SSH_MODE: "down" });
   assert.equal(out.status, 0, out.output);
   const local = f.localCheckCalls();
@@ -182,8 +184,8 @@ test("an unreachable host falls back to a local check of the same commit", () =>
   assert.equal(record.result, "passed");
 });
 
-test("a failing remote check is a failure and is never rerun locally", () => {
-  const f = fixture();
+test("a failing remote check is a failure and is never rerun locally", (t) => {
+  const f = fixture(t);
   // The commit is not HEAD, which also proves the bundle carries it.
   const out = f.run(f.first, { STUB_NPM_MODE: "fail", STUB_NPM_EXIT: "7" });
   assert.equal(out.status, 7, out.output);
@@ -192,8 +194,8 @@ test("a failing remote check is a failure and is never rerun locally", () => {
   assert.match(f.read(f.logs.gh), /state=failure/);
 });
 
-test("the remote wrapper writes the exit file when the check fails", () => {
-  const f = fixture();
+test("the remote wrapper writes the exit file when the check fails", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second, { STUB_NPM_MODE: "fail", STUB_NPM_EXIT: "7" });
   // Under `set -e` the wrapper stops before writing check.exit, the wait loop sees
   // a dead run and the status would be 4, not the check's own 7.
@@ -204,8 +206,8 @@ test("the remote wrapper writes the exit file when the check fails", () => {
   assert.deepEqual(fs.readdirSync(f.remote), [], "remote run directory is removed");
 });
 
-test("a dead remote run fails fast instead of waiting for the cap", () => {
-  const f = fixture();
+test("a dead remote run fails fast instead of waiting for the cap", (t) => {
+  const f = fixture(t);
   const started = Date.now();
   const out = f.run(f.second, { STUB_NPM_MODE: "die", SONDER_CI_MAX_WAIT: "300" });
   assert.equal(out.status, 4, out.output);
@@ -215,8 +217,8 @@ test("a dead remote run fails fast instead of waiting for the cap", () => {
   assert.match(f.read(f.logs.gh), /state=failure/);
 });
 
-test("a vanished remote run directory fails fast", () => {
-  const f = fixture();
+test("a vanished remote run directory fails fast", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second, { STUB_NPM_MODE: "vanish", SONDER_CI_MAX_WAIT: "300" });
   assert.equal(out.status, 4, out.output);
   // Which detail the probe sees first depends on timing (run dir, pid file or the pid itself), so
@@ -224,8 +226,8 @@ test("a vanished remote run directory fails fast", () => {
   assert.match(out.output, /gone (run-dir|pid-file)|dead|remote_run_died/);
 });
 
-test("three consecutive failed polls count as connectivity loss", () => {
-  const f = fixture();
+test("three consecutive failed polls count as connectivity loss", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second, { STUB_NPM_MODE: "hang", STUB_SSH_PROBE: "fail", SONDER_CI_MAX_WAIT: "300" });
   assert.equal(out.status, 5, out.output);
   const probes = f.read(f.logs.ssh).split("\n").filter((line) => line.includes(" -- probe "));
@@ -235,15 +237,15 @@ test("three consecutive failed polls count as connectivity loss", () => {
   assert.deepEqual(fs.readdirSync(f.remote), [], "the hung run was stopped and removed");
 });
 
-test("the wait stops at the configured cap", () => {
-  const f = fixture();
+test("the wait stops at the configured cap", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second, { STUB_NPM_MODE: "hang", SONDER_CI_MAX_WAIT: "1" });
   assert.equal(out.status, 124, out.output);
   assert.deepEqual(fs.readdirSync(f.remote), []);
 });
 
-test("a host whose closed port does not refuse fails fast without running tests", () => {
-  const f = fixture();
+test("a host whose closed port does not refuse fails fast without running tests", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second, { STUB_LOOPBACK: "hang" });
   assert.equal(out.status, 3, out.output);
   assert.match(out.output, /loopback .* is broken/);
@@ -251,16 +253,16 @@ test("a host whose closed port does not refuse fails fast without running tests"
   assert.equal(f.result(f.second).result, "host_loopback_broken");
 });
 
-test("a passing remote check passes", () => {
-  const f = fixture();
+test("a passing remote check passes", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second);
   assert.equal(out.status, 0, out.output);
   assert.equal(f.result(f.second).result, "passed");
   assert.match(f.read(f.logs.gh), /state=success/);
 });
 
-test("when SONDER_CI_REMOTE_BASE is unset the remote run dir uses TMPDIR", () => {
-  const f = fixture();
+test("when SONDER_CI_REMOTE_BASE is unset the remote run dir uses TMPDIR", (t) => {
+  const f = fixture(t);
   const remoteTmp = path.join(f.base, "remote-tmpdir");
   fs.mkdirSync(remoteTmp);
   const out = f.run(f.second, { SONDER_CI_REMOTE_BASE: "", TMPDIR: remoteTmp });
@@ -269,8 +271,8 @@ test("when SONDER_CI_REMOTE_BASE is unset the remote run dir uses TMPDIR", () =>
   assert.deepEqual(fs.readdirSync(remoteTmp), [], "the finished run is cleaned up");
 });
 
-test("SONDER_CI_REMOTE_BASE overrides the remote TMPDIR", () => {
-  const f = fixture();
+test("SONDER_CI_REMOTE_BASE overrides the remote TMPDIR", (t) => {
+  const f = fixture(t);
   const override = path.join(f.base, "override-base");
   fs.mkdirSync(override);
   const remoteTmp = path.join(f.base, "remote-tmpdir");
@@ -284,8 +286,8 @@ test("SONDER_CI_REMOTE_BASE overrides the remote TMPDIR", () => {
   );
 });
 
-test("a remote check passes the WSL known-failures file by default", () => {
-  const f = fixture();
+test("a remote check passes the WSL known-failures file by default", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second);
   assert.equal(out.status, 0, out.output);
   const calls = f.checkCalls();
@@ -296,24 +298,24 @@ test("a remote check passes the WSL known-failures file by default", () => {
   );
 });
 
-test("SONDER_CI_KNOWN_FAILURES overrides the known-failures path", () => {
-  const f = fixture();
+test("SONDER_CI_KNOWN_FAILURES overrides the known-failures path", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second, { SONDER_CI_KNOWN_FAILURES: "tests/custom-known.json" });
   assert.equal(out.status, 0, out.output);
   assert.match(f.checkCalls()[0], /--known-failures tests\/custom-known\.json /);
   assert.doesNotMatch(f.checkCalls()[0], /known-failures\.wsl-host\.json/);
 });
 
-test("a bad known-failures path is rejected before the check starts", () => {
-  const f = fixture();
+test("a bad known-failures path is rejected before the check starts", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second, { SONDER_CI_KNOWN_FAILURES: "../../etc/passwd" });
   assert.equal(out.status, 2, out.output);
   assert.match(out.output, /SONDER_CI_KNOWN_FAILURES must be a relative repository path/);
   assert.equal(f.checkCalls().length, 0);
 });
 
-test("a missing Playwright browser location stops the run before the check starts", () => {
-  const f = fixture();
+test("a missing Playwright browser location stops the run before the check starts", (t) => {
+  const f = fixture(t);
   const gone = path.join(f.browserCache, "chromium-9");
   const out = f.run(f.second, { STUB_BROWSER_DIRS: `${f.browserCache}/webkit-1 ${gone}` });
   assert.equal(out.status, 6, out.output);
@@ -324,15 +326,15 @@ test("a missing Playwright browser location stops the run before the check start
   assert.deepEqual(fs.readdirSync(f.remote), [], "remote run directory is removed");
 });
 
-test("an empty list of expected browsers does not pass the gate", () => {
-  const f = fixture();
+test("an empty list of expected browsers does not pass the gate", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second, { STUB_BROWSER_DIRS: " " });
   assert.equal(out.status, 6, out.output);
   assert.equal(f.checkCalls().length, 0);
 });
 
-test("missing WebKit system packages are listed with the install command and stop the run", () => {
-  const f = fixture();
+test("missing WebKit system packages are listed with the install command and stop the run", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second, { STUB_DPKG_MISSING: "gstreamer1.0-gl:amd64 shared-mime-info" });
   assert.equal(out.status, 7, out.output);
   assert.match(
@@ -344,8 +346,8 @@ test("missing WebKit system packages are listed with the install command and sto
   assert.doesNotMatch(f.read(f.logs.ssh), /install-dependencies/);
 });
 
-test("a host with browsers and WebKit packages present proceeds to the check", () => {
-  const f = fixture();
+test("a host with browsers and WebKit packages present proceeds to the check", (t) => {
+  const f = fixture(t);
   const out = f.run(f.second);
   assert.equal(out.status, 0, out.output);
   assert.match(out.output, /webkit_package_check=pass/);
@@ -353,8 +355,8 @@ test("a host with browsers and WebKit packages present proceeds to the check", (
   assert.match(f.read(f.logs.dpkg), /--show/);
 });
 
-test("a stalled bundle upload is cut at the transfer cap and counts as connectivity loss", () => {
-  const f = fixture();
+test("a stalled bundle upload is cut at the transfer cap and counts as connectivity loss", (t) => {
+  const f = fixture(t);
   const started = Date.now();
   const out = f.run(f.second, { STUB_SCP_MODE: "hang", SONDER_CI_TRANSFER_TIMEOUT: "1" });
   assert.equal(out.status, 5, out.output);
@@ -362,8 +364,8 @@ test("a stalled bundle upload is cut at the transfer cap and counts as connectiv
   assert.ok(Date.now() - started < 20_000, "the upload was cut near the cap, not after the stub's 30 s sleep");
 });
 
-test("without SONDER_CI_DISPATCH the finished check is not recorded in history", () => {
-  const f = fixture();
+test("without SONDER_CI_DISPATCH the finished check is not recorded in history", (t) => {
+  const f = fixture(t);
   const historyLog = path.join(f.base, "history.log");
   const historyStub = path.join(f.base, "history-stub.mjs");
   fs.writeFileSync(
@@ -375,8 +377,8 @@ test("without SONDER_CI_DISPATCH the finished check is not recorded in history",
   assert.equal(fs.existsSync(historyLog), false);
 });
 
-test("SONDER_CI_DISPATCH records ci:ssh on the named dispatch", () => {
-  const f = fixture();
+test("SONDER_CI_DISPATCH records ci:ssh on the named dispatch", (t) => {
+  const f = fixture(t);
   const historyLog = path.join(f.base, "history.log");
   const historyStub = path.join(f.base, "history-stub.mjs");
   fs.writeFileSync(
@@ -394,8 +396,8 @@ test("SONDER_CI_DISPATCH records ci:ssh on the named dispatch", () => {
   assert.match(out.output, /history: recorded ci:ssh on ctx_worker \(pass\)/);
 });
 
-test("a failed automatic history record-check does not change the ci-ssh exit code", () => {
-  const f = fixture();
+test("a failed automatic history record-check does not change the ci-ssh exit code", (t) => {
+  const f = fixture(t);
   const historyStub = path.join(f.base, "history-stub.mjs");
   fs.writeFileSync(historyStub, `console.error("stub record-check failed"); process.exit(1);\n`);
   const out = f.run(f.second, {

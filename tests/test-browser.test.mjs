@@ -5,9 +5,12 @@ import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import {
+  BROWSER_TEMP_ENV,
   listProfileDirs,
+  listBrowserServerTemps,
   diffProfileDirs,
   removeProfileDirs,
+  removeOwnedBrowserTemp,
   runTestBrowser,
 } from "../scripts/test-browser.mjs";
 
@@ -65,6 +68,89 @@ test("removeProfileDirs removes only the named directories", () =>
     // Idempotent: removing again (and removing a missing name) does not throw.
     removeProfileDirs(dir, [drop, "playwright_chromiumdev_profile-gone"]);
   }));
+
+test("runTestBrowser creates one owned sonder-browser temp, passes it in env, and removes only that path", () =>
+  withTempDir(async (cwd) => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-test-browser-tmp-"));
+    try {
+      const otherLive = fs.mkdtempSync(path.join(tmpRoot, "sonder-browser-"));
+      let seenEnv = null;
+      const fakeSpawn = (_cmd, _argv, opts) => {
+        seenEnv = opts.env?.[BROWSER_TEMP_ENV];
+        const child = new EventEmitter();
+        setImmediate(() => child.emit("close", 0, null));
+        return child;
+      };
+      const code = await runTestBrowser({ cwd, tmpRoot, args: [], spawnCommand: fakeSpawn });
+      assert.equal(code, 0);
+      assert.ok(seenEnv?.startsWith(path.join(tmpRoot, "sonder-browser-")));
+      assert.equal(fs.existsSync(seenEnv), false, "owned temp must be removed");
+      assert.equal(fs.existsSync(otherLive), true, "another check's live dir must stay");
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  }));
+
+test("two concurrent runTestBrowser finishes do not remove each other's owned temps", async () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-test-browser-conc-"));
+  try {
+    let firstOwned = null;
+    let secondOwned = null;
+    let firstChild = null;
+    let secondChild = null;
+    const first = runTestBrowser({
+      cwd: tmpRoot,
+      tmpRoot,
+      args: [],
+      spawnCommand: (_cmd, _argv, opts) => {
+        firstOwned = opts.env[BROWSER_TEMP_ENV];
+        firstChild = new EventEmitter();
+        return firstChild;
+      },
+    });
+    // Wait until the first spawn has created its owned dir.
+    while (!firstOwned) await new Promise((r) => setImmediate(r));
+    const second = runTestBrowser({
+      cwd: tmpRoot,
+      tmpRoot,
+      args: [],
+      spawnCommand: (_cmd, _argv, opts) => {
+        secondOwned = opts.env[BROWSER_TEMP_ENV];
+        secondChild = new EventEmitter();
+        return secondChild;
+      },
+    });
+    while (!secondOwned) await new Promise((r) => setImmediate(r));
+    assert.notEqual(firstOwned, secondOwned);
+    assert.equal(fs.existsSync(firstOwned), true);
+    assert.equal(fs.existsSync(secondOwned), true);
+    firstChild.emit("close", 0, null);
+    await first;
+    assert.equal(fs.existsSync(firstOwned), false, "finished run removes its own temp");
+    assert.equal(fs.existsSync(secondOwned), true, "still-running peer keeps its temp");
+    secondChild.emit("close", 0, null);
+    await second;
+    assert.equal(fs.existsSync(secondOwned), false);
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test("listBrowserServerTemps lists only sonder-browser directories", () =>
+  withTempDir((dir) => {
+    fs.mkdirSync(path.join(dir, "sonder-browser-abc"));
+    fs.mkdirSync(path.join(dir, "sonder-other-abc"));
+    assert.deepEqual(listBrowserServerTemps(dir), ["sonder-browser-abc"]);
+  }));
+
+test("removeOwnedBrowserTemp removes only the given path", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-browser-"));
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-browser-"));
+  removeOwnedBrowserTemp(dir);
+  assert.equal(fs.existsSync(dir), false);
+  assert.equal(fs.existsSync(other), true);
+  removeOwnedBrowserTemp(other);
+});
 
 test("runTestBrowser forwards args and the exit code, and removes only new profile dirs", () =>
   withTempDir(async (cwd) => {
