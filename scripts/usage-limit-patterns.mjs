@@ -1,5 +1,5 @@
 /**
- * Substrings from real agent usage-limit UI, for terminal-tail detection tests.
+ * Substrings from real agent usage-limit UI for terminal-tail detection.
  * Each entry names where the sample was taken from (repo path or documented capture).
  */
 

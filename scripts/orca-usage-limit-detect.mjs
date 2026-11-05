@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { USAGE_LIMIT_TERMINAL_SAMPLES } from "../tests/fixtures/usage-limit-terminal-samples.mjs";
+import { USAGE_LIMIT_TERMINAL_SAMPLES } from "./usage-limit-patterns.mjs";
 
 export { USAGE_LIMIT_TERMINAL_SAMPLES };
 

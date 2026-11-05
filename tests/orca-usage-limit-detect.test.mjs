@@ -6,8 +6,8 @@ import {
   terminalTextFromReadResult,
   USAGE_LIMIT_TERMINAL_SAMPLES,
 } from "../scripts/orca-usage-limit-detect.mjs";
+import { USAGE_LIMIT_SAMPLES_MISSING } from "../scripts/usage-limit-patterns.mjs";
 import { REAL_EXHAUSTED } from "./codex-fixture.mjs";
-import { USAGE_LIMIT_SAMPLES_MISSING } from "./fixtures/usage-limit-terminal-samples.mjs";
 
 test("detectUsageLimitInText matches codex upsell title from codex-fixture", () => {
   const tail = `Some spinner output\n${REAL_EXHAUSTED.rateLimitUpsell.title}\nPress enter`;
