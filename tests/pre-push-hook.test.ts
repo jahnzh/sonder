@@ -52,6 +52,9 @@ if [[ "$1" == "run" && "$2" == "build" ]]; then
   exit "\${SONDER_STUB_BUILD_EXIT:-0}"
 fi
 if [[ "$1" == "test" ]]; then
+  if [[ -n "\${SONDER_STUB_TEST_HANG:-}" ]]; then
+    exec sleep 86400
+  fi
   exit "\${SONDER_STUB_TEST_EXIT:-0}"
 fi
 echo "unexpected npm invocation: $*" >&2
@@ -232,6 +235,39 @@ test("pre-push hook blocks push when npm test fails", () => {
     const err = `${result.stderr}${result.stdout}`;
     assert.match(err, /npm test/i);
     assert.match(err, /Skip once with SONDER_SKIP_PREPUSH=1 git push/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("pre-push hook times out a hung npm test in bounded time and keeps HEAD on the pushing branch", () => {
+  const root = makeTempRepo();
+  try {
+    gitIn(root, "checkout", "-q", "-b", "feature/push");
+    gitIn(root, "config", "user.name", "Test");
+    gitIn(root, "config", "user.email", "test@example.test");
+    writeFileSync(join(root, "tracked.txt"), "content\n");
+    gitIn(root, "add", "tracked.txt");
+    gitIn(root, "commit", "-qm", "tracked");
+    const before = {
+      head: gitIn(root, "rev-parse", "HEAD"),
+      branch: gitIn(root, "symbolic-ref", "--short", "HEAD"),
+    };
+    const { binDir } = writeStubNpm(root);
+    const startedAt = Date.now();
+    const result = runHook(root, binDir, {
+      SONDER_STUB_BUILD_EXIT: "0",
+      SONDER_STUB_TEST_HANG: "1",
+      SONDER_PREPUSH_TEST_TIMEOUT_SEC: "2",
+    });
+    const elapsedMs = Date.now() - startedAt;
+    assert.notEqual(result.status, 0);
+    const err = `${result.stderr}${result.stdout}`;
+    assert.match(err, /npm test timed out after 2s/i);
+    assert.match(err, /Skip once with SONDER_SKIP_PREPUSH=1 git push/);
+    assert.ok(elapsedMs < 15_000, `hook should fail closed quickly (took ${elapsedMs}ms)`);
+    assert.equal(gitIn(root, "rev-parse", "HEAD"), before.head);
+    assert.equal(gitIn(root, "symbolic-ref", "--short", "HEAD"), before.branch);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

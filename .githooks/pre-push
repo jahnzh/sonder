@@ -19,15 +19,25 @@ fi
 
 # Git exports repository and index paths to hooks. Test fixtures create their own
 # repositories, so none of that context may reach the test process or its children.
-if ! (
-  unset_git_env=()
-  while IFS= read -r -d '' entry; do
-    case $entry in
-      GIT_*=*) unset_git_env+=(-u "${entry%%=*}") ;;
-    esac
-  done < <(env -0)
-  env "${unset_git_env[@]}" npm test
-); then
+unset_git_env=()
+while IFS= read -r -d '' entry; do
+  case $entry in
+    GIT_*=*) unset_git_env+=(-u "${entry%%=*}") ;;
+  esac
+done < <(env -0)
+
+test_timeout="${SONDER_PREPUSH_TEST_TIMEOUT_SEC:-600}"
+set +e
+env "${unset_git_env[@]}" timeout --foreground "$test_timeout" env "${unset_git_env[@]}" npm test
+test_status=$?
+set -e
+
+if [[ $test_status -eq 124 ]]; then
+  echo "Pre-push blocked: npm test timed out after ${test_timeout}s." >&2
+  echo "Skip once with SONDER_SKIP_PREPUSH=1 git push" >&2
+  exit 1
+fi
+if [[ $test_status -ne 0 ]]; then
   echo "Pre-push blocked: npm test failed." >&2
   echo "Skip once with SONDER_SKIP_PREPUSH=1 git push" >&2
   exit 1
