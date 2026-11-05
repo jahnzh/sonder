@@ -131,6 +131,25 @@ test("saving selected works reuses owned titles and remembers their provenance",
   } finally { hardcoverOutage = false; }
 });
 
+test("local SQLite errors during refresh are not reported as a Hardcover outage", async () => {
+  sqlite.prepare("UPDATE user_saved_series SET refreshed_at=? WHERE series_id=11").run(Date.now() - 120_000);
+  const realPrepare = sqlite.prepare.bind(sqlite);
+  // Fail only the admin-match query that runs while building the preview from a successful fetch.
+  (sqlite as { prepare: typeof sqlite.prepare }).prepare = ((sql: string) => {
+    if (String(sql).includes("FROM hardcover_links")) throw new Error("local sqlite boom");
+    return realPrepare(sql);
+  }) as typeof sqlite.prepare;
+  try {
+    const response = await app.inject("/api/series/11?refresh=1");
+    assert.notEqual(response.statusCode, 200, "local failures must not return a soft refreshError payload");
+    assert.equal(response.json().refreshError, undefined);
+    assert.match(String(response.json().error || ""), /local sqlite boom/);
+    assert.doesNotMatch(String(response.json().error || ""), /Hardcover|could not be reached|Showing the last saved catalogue/i);
+  } finally {
+    (sqlite as { prepare: typeof sqlite.prepare }).prepare = realPrepare as typeof sqlite.prepare;
+  }
+});
+
 test("preview recognizes a uniquely matching existing library work before linking", async () => {
   await app.inject({ method: "POST", url: "/api/library", payload: { bookId: "alice" } });
   const preview = await app.inject("/api/hardcover/series/13");

@@ -303,6 +303,19 @@ export function configureHardcover(
   writeState(userId, { mode, syncLists, lastError: null });
   return hardcoverState(userId);
 }
+export type HardcoverUpstreamKind = "missing_token" | "unreachable" | "rate_limited" | "rejected" | "other";
+export class HardcoverUpstreamError extends Error {
+  readonly kind: HardcoverUpstreamKind;
+  constructor(kind: HardcoverUpstreamKind, message: string) {
+    super(message);
+    this.name = "HardcoverUpstreamError";
+    this.kind = kind;
+  }
+}
+function upstream(kind: HardcoverUpstreamKind, message: string): never {
+  throw new HardcoverUpstreamError(kind, message);
+}
+
 async function graphql<T>(
   userId: number,
   query: string,
@@ -313,12 +326,13 @@ async function graphql<T>(
   const expectedGeneration = live.generation;
   const run = async () => {
     if (live.generation !== expectedGeneration)
-      throw new Error("The Hardcover connection changed. Sync again.");
+      upstream("other", "The Hardcover connection changed. Sync again.");
     const key = hardcoverKey(userId);
     if (!key)
-      throw new Error("Add your Hardcover API token in Settings first.");
+      upstream("missing_token", "Add your Hardcover API token in Settings first.");
     if (live.retryAt > Date.now())
-      throw new Error(
+      upstream(
+        "rate_limited",
         "Hardcover is rate limiting requests. Your changes are saved and will retry shortly.",
       );
     const delay =
@@ -341,23 +355,27 @@ async function graphql<T>(
         signal: AbortSignal.timeout(20000),
       });
     } catch {
-      throw new Error(
+      upstream(
+        "unreachable",
         "Hardcover could not be reached. Your library and queued changes are kept on this server.",
       );
     }
     if (response.status === 429) {
       const seconds = Number(response.headers.get("Retry-After")) || 60;
       live.retryAt = Date.now() + Math.min(3600, seconds) * 1000;
-      throw new Error(
+      upstream(
+        "rate_limited",
         "Hardcover is rate limiting requests. Your changes are saved and will retry shortly.",
       );
     }
     if (response.status === 401 || response.status === 403)
-      throw new Error(
+      upstream(
+        "rejected",
         "Hardcover rejected this token or its permissions. Check the scopes in Settings.",
       );
     if (!response.ok)
-      throw new Error(
+      upstream(
+        "other",
         `Hardcover returned ${response.status}. Your queued changes are kept for retry.`,
       );
     const envelope = (await response.json()) as {
@@ -365,17 +383,19 @@ async function graphql<T>(
       errors?: { message: string }[];
     };
     if (envelope.errors?.length)
-      throw new Error(
+      upstream(
+        "other",
         `Hardcover: ${envelope.errors
           .map((e) => e.message)
           .join("; ")
           .slice(0, 450)}`,
       );
     if (live.generation !== expectedGeneration)
-      throw new Error("The Hardcover connection changed. Sync again.");
+      upstream("other", "The Hardcover connection changed. Sync again.");
     const parsed = schema.safeParse(envelope.data);
     if (!parsed.success)
-      throw new Error(
+      upstream(
+        "other",
         "Hardcover returned an unexpected response. The last successful library snapshot has been kept.",
       );
     return parsed.data;
@@ -476,23 +496,33 @@ export function acknowledgeSeriesWorks(userId: number, seriesId: number, bookIds
   return savedHardcoverSeries(userId, seriesId);
 }
 
-export async function hardcoverSeriesPreview(userId: number, id: number) {
+const seriesPreviewSchema = z.object({ series_by_pk: z.object({
+  id: z.number().int(), name: z.string(), books_count: z.number().nullable().optional(),
+  author: z.object({ name: z.string() }).nullable().optional(),
+  book_series: z.array(z.object({ position: z.number().nullable(), book: z.object({
+    id: z.number().int(), title: z.string().nullable(), release_year: z.number().nullable().optional(),
+    release_date: z.string().nullable().optional(), cached_image: image,
+    contributions: z.array(z.object({ contribution: z.string().nullable().optional(), author: z.object({ name: z.string() }).nullable() })).default([]),
+  }).nullable() })),
+}).nullable() });
+
+type SeriesPreviewPayload = Omit<z.infer<typeof seriesPreviewSchema>, "series_by_pk"> & {
+  series_by_pk: NonNullable<z.infer<typeof seriesPreviewSchema>["series_by_pk"]>;
+};
+
+async function fetchSeriesPreviewPayload(userId: number, id: number): Promise<SeriesPreviewPayload> {
   const result = await graphql(
     userId,
     `query SonderSeriesPreview($id:Int!){series_by_pk(id:$id){id name books_count author{name} book_series{position book{id title release_year release_date cached_image contributions{contribution author{name}}}}}}`,
     { id },
-    z.object({ series_by_pk: z.object({
-      id: z.number().int(), name: z.string(), books_count: z.number().nullable().optional(),
-      author: z.object({ name: z.string() }).nullable().optional(),
-      book_series: z.array(z.object({ position: z.number().nullable(), book: z.object({
-        id: z.number().int(), title: z.string().nullable(), release_year: z.number().nullable().optional(),
-        release_date: z.string().nullable().optional(), cached_image: image,
-        contributions: z.array(z.object({ contribution: z.string().nullable().optional(), author: z.object({ name: z.string() }).nullable() })).default([]),
-      }).nullable() })),
-    }).nullable() }),
+    seriesPreviewSchema,
   );
+  if (!result.series_by_pk) upstream("other", "Hardcover could not find this series.");
+  return result as SeriesPreviewPayload;
+}
+
+function buildSeriesPreviewFromPayload(userId: number, result: SeriesPreviewPayload) {
   const series = result.series_by_pk;
-  if (!series) throw new Error("Hardcover could not find this series.");
   const works = series.book_series.flatMap(({ position, book }) => {
     if (!book) return [];
     const author = book.contributions.filter((item) => !item.contribution || item.contribution.toLowerCase() === "author")
@@ -509,6 +539,16 @@ export async function hardcoverSeriesPreview(userId: number, id: number) {
     : b.position === null ? -1 : a.position - b.position || a.id - b.id);
   return { id: series.id, name: series.name, author: series.author?.name ?? null,
     count: series.books_count ?? null, works };
+}
+
+export async function hardcoverSeriesPreview(userId: number, id: number) {
+  return buildSeriesPreviewFromPayload(userId, await fetchSeriesPreviewPayload(userId, id));
+}
+
+function refreshErrorMessage(error: HardcoverUpstreamError) {
+  if (error.kind === "missing_token") return "Add your Hardcover API token in Settings, then retry.";
+  if (error.kind === "unreachable") return "Hardcover could not be reached. Showing the last saved catalogue.";
+  return error.message;
 }
 export async function saveHardcoverSeries(userId: number, id: number, bookIds: number[]) {
   const preview = await hardcoverSeriesPreview(userId, id);
@@ -565,19 +605,15 @@ export async function refreshSavedHardcoverSeries(userId: number, id: number, op
     && !!hardcoverKey(userId)) {
     return savedHardcoverSeries(userId, id);
   }
-  let preview;
+  // Only the Hardcover fetch is treated as an outage; local SQLite work must surface normally.
+  let payload: SeriesPreviewPayload;
   try {
-    preview = await hardcoverSeriesPreview(userId, id);
+    payload = await fetchSeriesPreviewPayload(userId, id);
   } catch (error) {
-    // Keep the last catalogue and library membership when Hardcover is unavailable.
-    const message = error instanceof Error ? error.message : "Hardcover could not refresh this series.";
-    const refreshError = /API token in Settings/i.test(message)
-      ? "Add your Hardcover API token in Settings, then retry."
-      : /could not be reached/i.test(message)
-        ? "Hardcover could not be reached. Showing the last saved catalogue."
-        : message;
-    return savedHardcoverSeries(userId, id, { refreshError });
+    if (!(error instanceof HardcoverUpstreamError)) throw error;
+    return savedHardcoverSeries(userId, id, { refreshError: refreshErrorMessage(error) });
   }
+  const preview = buildSeriesPreviewFromPayload(userId, payload);
   sqlite.transaction(() => {
     upsertSeriesCatalogue(id, preview, preview.works);
     sqlite.prepare("UPDATE user_saved_series SET refreshed_at=? WHERE user_id=? AND series_id=?")
