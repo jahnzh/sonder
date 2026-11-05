@@ -1,7 +1,9 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api } from "../lib";
-import type { Download } from "../types";
+import type { Download, SeriesWorkAcquisition } from "../types";
 import { Dialog } from "./ui/dialog";
+import { SeriesSaveOptions } from "./SeriesSaveOptions";
+import { SeriesWorkStatus, SERIES_SAVED_POLL_MS } from "./SeriesWorkStatus";
 import "../series.css";
 
 type SeriesSummary = { id: number; name: string; author: string | null; count: number | null; cover?: string | null };
@@ -10,6 +12,15 @@ type SeriesWork = {
   workId: string | null; owned?: boolean; selected?: boolean; unreleased: boolean;
   needsAdmin?: boolean;
   added?: boolean; finished?: boolean; new?: boolean;
+  mediaState?: {
+    state: "missing" | "queued" | "failed" | "available";
+    holdReason?: "unreleased" | "empty_search" | null;
+  } | null;
+  acquisition?: {
+    audio: SeriesWorkAcquisition | null;
+    ebook: SeriesWorkAcquisition | null;
+  } | null;
+  ebookSet?: { held: number; accepted: number; rejected: number } | null;
   availability?: { audio: { server: boolean | null; recordings: { id: string; tracks: string[]; server: boolean; stream: boolean }[] }; ebook: { server: boolean | null; device: null } };
 };
 type Series = SeriesSummary & {
@@ -70,7 +81,9 @@ export function SeriesDialog({ target, onClose, onSaved, downloads }: { target: 
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
-  const load = async (forceRefresh = false) => {
+  const [searchAudio, setSearchAudio] = useState(false);
+  const [searchEbooks, setSearchEbooks] = useState(false);
+  const load = useCallback(async (forceRefresh = false) => {
     if (!target) return;
     setBusy(true); setError("");
     try {
@@ -84,17 +97,35 @@ export function SeriesDialog({ target, onClose, onSaved, downloads }: { target: 
         : []);
     } catch (reason) { setSeries(null); setError((reason as Error).message); }
     finally { setBusy(false); }
-  };
+  }, [target]);
+  const reloadSaved = useCallback(async () => {
+    if (!target || mode !== "saved") return;
+    setSeries(await api<Series>(`/series/${target.id}`));
+  }, [target, mode]);
   useEffect(() => {
     if (!target) return;
     setSeries(null); setError(""); setMode(target.mode); setSavedNotice(false); setSelected([]);
+    setSearchAudio(false); setSearchEbooks(false);
     void load();
-  }, [target]);
+  }, [target, load]);
+  const acquisitionBusy = series?.works.some((work) =>
+    work.acquisition?.audio?.status === "pending" ||
+    work.acquisition?.audio?.status === "searching" ||
+    work.acquisition?.ebook?.status === "pending" ||
+    work.acquisition?.ebook?.status === "searching" ||
+    work.mediaState?.state === "queued");
+  useEffect(() => {
+    if (!target || mode !== "saved" || !acquisitionBusy) return;
+    const timer = setInterval(() => { void reloadSaved().catch(() => {}); }, SERIES_SAVED_POLL_MS);
+    return () => clearInterval(timer);
+  }, [target, mode, acquisitionBusy, reloadSaved]);
   const save = async () => {
     if (!series || !selected.length) return;
     setBusy(true); setError("");
     try {
-      const result = await api<Series>("/series", { method: "POST", body: JSON.stringify({ id: series.id, bookIds: selected }) });
+      const result = await api<Series>("/series", { method: "POST", body: JSON.stringify({
+        id: series.id, bookIds: selected, searchAudio, searchEbooks,
+      }) });
       setSeries(result); setMode("saved"); setSelected([]); setSavedNotice(true); onSaved();
     } catch (reason) { setError((reason as Error).message); }
     finally { setBusy(false); }
@@ -117,7 +148,6 @@ export function SeriesDialog({ target, onClose, onSaved, downloads }: { target: 
   const newCount = series?.works.filter((work) => work.new).length || 0;
   const renderWorks = (works: SeriesWork[]) => works.map((work) => {
     const audio = work.availability?.audio;
-    const device = audio?.recordings.some((recording) => recording.tracks.length > 0 && recording.tracks.every((id) => downloads.some((download) => download.trackId === id)));
     const selectable = canSelect(work);
     return <li className={`series-work${work.new ? " series-work-new" : ""}`} key={work.id}>
       {selectable ? <label><input type="checkbox" disabled={work.needsAdmin} checked={selected.includes(work.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, work.id] : current.filter((id) => id !== work.id))} />
@@ -127,10 +157,23 @@ export function SeriesDialog({ target, onClose, onSaved, downloads }: { target: 
         {work.owned && mode === "preview" && <span>Already in your library</span>}
         {work.needsAdmin && selectable && <span>Possible existing match: ask an administrator to confirm and link it.</span>}
         {work.unreleased && <span>Unreleased</span>}
-        {mode === "saved" && <>
-          <span>{work.added ? "In your series selection" : "Not added"}{work.finished ? " · Finished" : ""}</span>
-          <span>Audio: {audio?.server == null ? "availability unknown" : audio.server ? "on server" : "not on server"}{work.workId ? (device ? " · on device" : " · not on device") : ""}{audio?.recordings.some((recording) => recording.stream) ? " · stream availability unknown" : ""}</span>
-          <span>Ebook: {work.availability?.ebook.server == null ? "availability unknown" : work.availability.ebook.server ? "on server" : "not on server"} · device availability unknown</span>
+        {mode === "saved" && work.added && <>
+          <span>In your series selection{work.finished ? " · Finished" : ""}</span>
+          <SeriesWorkStatus
+            seriesId={series!.id}
+            bookId={work.id}
+            mediaState={work.mediaState}
+            acquisition={work.acquisition}
+            ebookSet={work.ebookSet}
+            recordings={audio?.recordings}
+            downloads={downloads}
+            onRefresh={() => void reloadSaved()}
+          />
+        </>}
+        {mode === "saved" && !work.added && <>
+          <span>Not added{work.finished ? " · Finished" : ""}</span>
+          <span>Audio: {audio?.server == null ? "availability unknown" : audio.server ? "on server" : "not on server"}</span>
+          <span>Ebook: {work.availability?.ebook.server == null ? "availability unknown" : work.availability.ebook.server ? "on server" : "not on server"}</span>
         </>}
       </div>
     </li>;
@@ -148,9 +191,15 @@ export function SeriesDialog({ target, onClose, onSaved, downloads }: { target: 
       {numbered.length > 0 && <><h3>Numbered works</h3><ol className="series-works">{renderWorks(numbered)}</ol></>}
       {unnumbered.length > 0 && <><h3>Related works</h3><ul className="series-works">{renderWorks(unnumbered)}</ul></>}
       {mode === "saved" && newCount > 0 && <button className="button subtle" disabled={busy} onClick={() => void dismissNew()}>Dismiss new works</button>}
-      {showAdd
-        ? <button className="button primary" disabled={busy || !selected.length} onClick={() => void save()}>Add selected works</button>
-        : <button className="button subtle" onClick={onClose}>Close series</button>}
+      {showAdd ? <>
+        <SeriesSaveOptions
+          searchAudio={searchAudio}
+          searchEbooks={searchEbooks}
+          onSearchAudio={setSearchAudio}
+          onSearchEbooks={setSearchEbooks}
+        />
+        <button className="button primary" disabled={busy || !selected.length} onClick={() => void save()}>Add selected works</button>
+      </> : <button className="button subtle" onClick={onClose}>Close series</button>}
     </>}
   </Dialog>;
 }

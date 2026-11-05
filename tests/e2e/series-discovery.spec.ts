@@ -19,7 +19,13 @@ test("discover and save chosen works from the intended series, then reopen it", 
   await expect(page.getByText("Hardcover #701", { exact: true })).toBeVisible();
   await expect(page.getByText("Hardcover #702", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "View The Crossing by Ada North" }).click();
-  await expect(page.getByText("Already in your library", { exact: true })).toBeVisible();
+  await expect(
+    page
+      .getByRole("dialog")
+      .locator(".series-work")
+      .filter({ hasText: "Alice’s Adventures in Wonderland" })
+      .getByText("Already in your library", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByRole("checkbox", { name: /Alice’s Adventures in Wonderland/ })).toBeChecked();
   await expect(page.getByRole("checkbox", { name: /Crossing Two/ })).toBeChecked();
   await expect(page.getByRole("checkbox", { name: /Crossing Companion/ })).not.toBeChecked();

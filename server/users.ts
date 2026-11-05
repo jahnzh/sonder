@@ -5,6 +5,31 @@ import { sqlite } from "./db.ts";
 import { decrypt, encrypt, hashToken } from "./security.ts";
 
 export const ADMIN_USER_ID = 1;
+export const USER_DATA_TABLES = [
+  "sessions",
+  "user_acquisitions",
+  "user_settings",
+  "user_library",
+  "user_hidden_library",
+  "user_progress",
+  "user_ebook_progress",
+  "user_reader_checkpoints",
+  "user_reader_bookmarks",
+  "user_reader_events",
+  "work_media_states",
+  "user_hardcover_links",
+  "user_hardcover_outbox",
+  "user_hardcover_reading_outbox",
+  "user_hardcover_progress",
+  "user_hardcover_lists",
+  "user_hardcover_reads",
+  "user_hardcover_recording_editions",
+  "user_saved_series_works",
+  "user_saved_series",
+  "user_series_seen_works",
+  "series_acquisition_jobs",
+  "user_work_completion",
+] as const;
 export type User = { id: number; username: string; role: "admin" | "user" };
 declare module "fastify" { interface FastifyRequest { user: User | null } }
 const admin: User = { id: 1, username: "admin", role: "admin" };
@@ -18,6 +43,13 @@ export function currentUser(req: FastifyRequest): User { const user = req.user ?
 export function currentUserId(req: FastifyRequest): number { return currentUser(req).id; }
 export function requireAdmin(req: FastifyRequest): void {
   if (currentUser(req).role !== "admin") throw Object.assign(new Error("Only the administrator can do this."), { statusCode: 403 });
+}
+export function userIsAdmin(userId: number) {
+  if (userId === ADMIN_USER_ID) return true;
+  const row = sqlite
+    .prepare("SELECT role FROM users WHERE id=?")
+    .get(userId) as { role: User["role"] } | undefined;
+  return row?.role === "admin";
 }
 export function getUserSetting(userId: number, key: string): string { return (sqlite.prepare("SELECT value FROM user_settings WHERE user_id=? AND key=?").get(userId,key) as {value:string} | undefined)?.value || ""; }
 export function setUserSetting(userId: number, key: string, value: string): void {
@@ -74,6 +106,6 @@ export function registerUsers(app: FastifyInstance): void {
     if (!sqlite.prepare("SELECT id FROM users WHERE id=?").get(id)) throw new Error("User not found.");
     sqlite.transaction(() => { if(input.password) { sqlite.prepare("UPDATE users SET password_hash=? WHERE id=?").run(hashPassword(input.password),id); sqlite.prepare("DELETE FROM sessions WHERE user_id=?").run(id); } if(input.role) sqlite.prepare("UPDATE users SET role=? WHERE id=?").run(input.role,id); })(); return {ok:true};
   });
-  app.delete("/api/users/:id", req => { requireAdmin(req); const id=Number((req.params as {id:string}).id); if(id===1) throw new Error("The administrator account cannot be deleted."); sqlite.transaction(()=>{ const exists=sqlite.prepare("SELECT id FROM users WHERE id=?").get(id); if (!exists) return; setUserIdHighWater(Math.max(userIdHighWater(),id)); for(const table of ["sessions","user_acquisitions","user_settings","user_library","user_hidden_library","user_progress","user_ebook_progress","user_reader_checkpoints","user_reader_bookmarks","user_reader_events","work_media_states","user_hardcover_links","user_hardcover_outbox","user_hardcover_reading_outbox","user_hardcover_progress","user_hardcover_lists","user_hardcover_reads","user_hardcover_recording_editions","user_series_seen_works","user_saved_series_works","user_saved_series","user_work_completion"]) sqlite.prepare(`DELETE FROM ${table} WHERE user_id=?`).run(id); sqlite.prepare("DELETE FROM users WHERE id=?").run(id); for (const cb of deletionHooks) cb(id); })(); return {ok:true}; });
+  app.delete("/api/users/:id", req => { requireAdmin(req); const id=Number((req.params as {id:string}).id); if(id===1) throw new Error("The administrator account cannot be deleted."); sqlite.transaction(()=>{ const exists=sqlite.prepare("SELECT id FROM users WHERE id=?").get(id); if (!exists) return; setUserIdHighWater(Math.max(userIdHighWater(),id)); for(const table of USER_DATA_TABLES) sqlite.prepare(`DELETE FROM ${table} WHERE user_id=?`).run(id); sqlite.prepare("DELETE FROM users WHERE id=?").run(id); for (const cb of deletionHooks) cb(id); })(); return {ok:true}; });
   app.post("/api/auth/password", req => { const user=currentUser(req); if(user.id===1) throw new Error("The administrator password is configured with APP_PASSWORD."); const input=z.object({currentPassword:z.string().max(512),newPassword:passwordSchema}).parse(req.body); const row=sqlite.prepare("SELECT password_hash FROM users WHERE id=?").get(user.id) as {password_hash:string}; if(!verifyPassword(input.currentPassword,row.password_hash)) throw new Error("The current password does not match."); sqlite.transaction(() => { sqlite.prepare("UPDATE users SET password_hash=? WHERE id=?").run(hashPassword(input.newPassword),user.id); sqlite.prepare("DELETE FROM sessions WHERE user_id=? AND token<>?").run(user.id,hashToken(req.cookies.sonder_session || "")); })(); return {ok:true}; });
 }
