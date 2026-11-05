@@ -19,7 +19,9 @@ import {
 } from "./work-media-state.ts";
 import {
   assertCanAcquireMedia,
-  claimInflightSeriesAudioJobsForManualSelect,
+  beginManualSeriesReleaseClaim,
+  finalizeManualSeriesReleaseClaim,
+  restoreManualSeriesReleaseClaim,
   seriesWorkAcquisitions,
 } from "./series-acquisition.ts";
 import { transmission } from "./transmission.ts";
@@ -285,6 +287,8 @@ export async function selectSeriesWorkRelease(
       { statusCode: 409, code: "existing_audio" },
     );
 
+  const claim = beginManualSeriesReleaseClaim(userId, work.workId);
+
   let magnet: string;
   let metadata: {
     title?: string;
@@ -293,54 +297,63 @@ export async function selectSeriesWorkRelease(
     language?: string | null;
     narrator?: string | null;
   };
-  if (input.source === "prowlarr") {
-    const link = (deps.prowlarrRelease ?? prowlarrRelease)(input.id);
-    magnet = await (deps.prowlarrMagnet ?? prowlarrMagnet)(input.id);
-    metadata = {
-      title: work.title,
-      author: work.author ?? undefined,
-    };
-    if (!metadata.title) metadata.title = link.title;
-  } else {
-    requireAbbSlugFromSearch(input.id);
-    const release = await (deps.abbRelease ?? abbRelease)(input.id);
-    magnet = await (deps.abbMagnet ?? abbMagnet)(input.id);
-    metadata = {
-      title: release.title,
-      author: release.author ?? work.author ?? undefined,
-      cover: release.cover,
-      language: release.language,
-      narrator: release.narrator,
-    };
-  }
+  try {
+    if (input.source === "prowlarr") {
+      const link = (deps.prowlarrRelease ?? prowlarrRelease)(input.id);
+      magnet = await (deps.prowlarrMagnet ?? prowlarrMagnet)(input.id);
+      metadata = {
+        title: work.title,
+        author: work.author ?? undefined,
+      };
+      if (!metadata.title) metadata.title = link.title;
+    } else {
+      requireAbbSlugFromSearch(input.id);
+      const release = await (deps.abbRelease ?? abbRelease)(input.id);
+      magnet = await (deps.abbMagnet ?? abbMagnet)(input.id);
+      metadata = {
+        title: release.title,
+        author: release.author ?? work.author ?? undefined,
+        cover: release.cover,
+        language: release.language,
+        narrator: release.narrator,
+      };
+    }
 
-  const job = await acquire(magnet, {
-    ...metadata,
-    workId: work.workId,
-    userId,
-  });
-
-  claimInflightSeriesAudioJobsForManualSelect(userId, work.workId);
-
-  let replaceResult: ReplacePreviousResult | null = null;
-  if (previous && input.replaceActive)
-    replaceResult = await replacePreviousAcquisition(
+    const job = await acquire(magnet, {
+      ...metadata,
+      workId: work.workId,
       userId,
-      previous.id,
-      magnet,
-    );
+    });
 
-  syncWorkMediaState(userId, work.workId);
-  return {
-    acquisition: job,
-    mediaState: getWorkMediaState(userId, work.workId) as WorkMediaState,
-    seriesAcquisition: seriesWorkAcquisitions(
+    let replaceResult: ReplacePreviousResult | null = null;
+    if (previous && input.replaceActive)
+      replaceResult = await replacePreviousAcquisition(
+        userId,
+        previous.id,
+        magnet,
+      );
+
+    finalizeManualSeriesReleaseClaim(
       userId,
       seriesId,
       bookId,
       work.workId,
-      false,
-    ),
-    replaceResult,
-  };
+    );
+    syncWorkMediaState(userId, work.workId);
+    return {
+      acquisition: job,
+      mediaState: getWorkMediaState(userId, work.workId) as WorkMediaState,
+      seriesAcquisition: seriesWorkAcquisitions(
+        userId,
+        seriesId,
+        bookId,
+        work.workId,
+        false,
+      ),
+      replaceResult,
+    };
+  } catch (error) {
+    if (claim.claimed) restoreManualSeriesReleaseClaim(claim);
+    throw error;
+  }
 }

@@ -116,7 +116,7 @@ test("series release selection uses real server search and replace flow", async 
   const releaseDialogAgain = page.getByRole("dialog", {
     name: /Search releases · Crossing Two/,
   });
-  await releaseDialogAgain.getByRole("button", { name: "Search", exact: true }).click();
+  await releaseDialogAgain.locator("form").getByRole("button", { name: "Search", exact: true }).click();
   await releaseDialogAgain
     .getByRole("article")
     .filter({ hasText: "Crossing Two Alt" })
@@ -135,6 +135,14 @@ test("series release selection uses real server search and replace flow", async 
     const work = view.works.find((row: { id: number }) => row.id === 503);
     return work?.mediaState?.state;
   }).toBe("queued");
+  await expect(
+    releaseDialogAgain
+      .getByRole("status")
+      .filter({
+        hasText:
+          "The previous TorBox download was not cancelled upstream; this account no longer tracks it.",
+      }),
+  ).toBeVisible();
 });
 
 test("series release selection confirms existing audio through the server", async ({

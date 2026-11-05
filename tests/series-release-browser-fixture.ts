@@ -8,7 +8,7 @@ import { setSeriesReleaseSearchDeps } from "../server/series-release-search.ts";
 const crossingTwoListing = `<div class="post"><div class="postTitle"><h2><a href="/abss/crossing-two-fixture/">Crossing Two - Ada North</a></h2></div><div class="postInfo">Language: English</div><div class="postContent">Format: M4B / Bitrate: 64 Kbps<br>File Size: 400 MBs</div></div>`;
 const crossingTwoDetail = `<div class="post"><div class="postTitle"><h1>Crossing Two</h1></div><div class="postContent"><span class="narrator">Fixture Narrator</span><a href="magnet:?xt=urn:btih:${"d".repeat(40)}">Magnet</a></div></div>`;
 const crossingAltListing = `<div class="post"><div class="postTitle"><h2><a href="/abss/crossing-two-alt/">Crossing Two Alt</a></h2></div><div class="postContent">Format: MP3<br>File Size: 300 MBs</div></div>`;
-const crossingAltDetail = `<div class="post"><div class="postContent"><a href="magnet:?xt=urn:btih:${"e".repeat(40)}">Magnet</a></div></div>`;
+const crossingAltDetail = `<div class="post"><div class="postTitle"><h1>Crossing Two Alt</h1></div><div class="postContent"><a href="magnet:?xt=urn:btih:${"e".repeat(40)}">Magnet</a></div></div>`;
 
 export function installSeriesReleaseBrowserFixture() {
   setSeriesReleaseSearchDeps({
@@ -24,15 +24,15 @@ export function installSeriesReleaseBrowserFixture() {
         id,
         hash,
         magnet,
-        backend: "local" as const,
-        remoteId: null,
+        backend: "torbox" as const,
+        remoteId: "browser-fixture-remote",
         title: metadata?.title ?? "Crossing Two",
         author: metadata?.author ?? "Ada North",
         cover: metadata?.cover ?? "",
         workId: metadata?.workId ?? null,
         language: metadata?.language ?? null,
         narrator: metadata?.narrator ?? null,
-        status: "checking" as const,
+        status: "downloading" as const,
         progress: 0,
         error: null,
         bookId: null,

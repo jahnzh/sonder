@@ -122,10 +122,12 @@ export function SeriesWorkReleaseSearch({
     } catch (reason) {
       if (reason instanceof ApiError) {
         if (reason.code === "active_download") {
+          setSelected(null);
           setReplaceTarget(release);
           return;
         }
         if (reason.code === "existing_audio") {
+          setSelected(null);
           setConfirmAudioTarget(release);
           return;
         }

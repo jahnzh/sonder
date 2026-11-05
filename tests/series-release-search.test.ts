@@ -686,9 +686,11 @@ test("manual select cancels inflight auto-acquire before the ticker runs", async
     payload: { source: "abb", id: "abb-first" },
   });
   assert.equal(selected.statusCode, 200, selected.body);
-  const job = db.select().from(schema.seriesAcquisitionJobs).get();
-  assert.equal(job?.status, "failed");
-  assert.equal(job?.error, SERIES_ACQUISITION_CANCELLED_ERROR);
+  const view = (await app.inject("/api/series/31")).json().works.find(
+    (w: { id: number }) => w.id === 201,
+  );
+  assert.equal(view.acquisition?.audio?.status, "done");
+  assert.equal(view.acquisition?.audio?.error, null);
   await tickSeriesAcquisition();
   assert.equal(autoAcquireCalls, 0);
 });
@@ -748,8 +750,104 @@ test("manual select wins over searching auto-acquire mid-flight", async () => {
   unblockSearch();
   await tickRunning;
   assert.equal(autoAcquireAttempted, false);
+  assert.equal(db.select().from(schema.seriesAcquisitionJobs).get()?.status, "done");
+});
+
+test("manual select claim blocks ticker while manual acquire is pending", async () => {
+  await saveSeries([201], { searchAudio: true });
+  let unblockSearch!: () => void;
+  const searchBlocked = new Promise<void>((resolve) => {
+    unblockSearch = resolve;
+  });
+  let unblockManualAcquire!: () => void;
+  const manualAcquireBlocked = new Promise<void>((resolve) => {
+    unblockManualAcquire = resolve;
+  });
+  let autoAcquireCalls = 0;
+  let manualAcquireCalls = 0;
+  setSeriesAcquisitionDeps({
+    acquire: (async () => {
+      autoAcquireCalls++;
+      throw new Error("auto acquire should not run");
+    }) as SeriesAcquisitionDeps["acquire"],
+    seriesAudioDeps: {
+      abbSearch: async () => {
+        await searchBlocked;
+        return {
+          results: [
+            {
+              id: "abb-auto",
+              title: "First volume M4B",
+              format: "M4B",
+              narrator: "Reader",
+            },
+          ],
+          page: 1,
+          nextPage: null,
+        };
+      },
+      prowlarrSearch: async () => ({ results: [], page: 1, nextPage: null }),
+      abbMagnetLink: async () =>
+        "magnet:?xt=urn:btih:cccccccccccccccccccccccccccccccccccccccc&dn=First",
+      prowlarrMagnetLink: async () => "",
+      cachedHashes: async () => new Set<string>(),
+      log: () => {},
+    },
+  });
+  setSeriesReleaseSearchDeps({
+    acquire: (async (magnet, metadata) => {
+      manualAcquireCalls++;
+      await manualAcquireBlocked;
+      const hash = magnetHash(magnet);
+      const id = randomUUID();
+      db.insert(schema.acquisitions)
+        .values({
+          id,
+          hash,
+          magnet,
+          backend: "local",
+          remoteId: null,
+          title: metadata?.title ?? "First volume",
+          author: metadata?.author ?? "Ada Author",
+          cover: "",
+          workId: metadata?.workId ?? null,
+          language: null,
+          narrator: null,
+          status: "checking",
+          progress: 0,
+          error: null,
+          bookId: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        })
+        .run();
+      db.insert(schema.userAcquisitions)
+        .values({ userId: metadata?.userId ?? 1, acquisitionId: id })
+        .run();
+      return db.select().from(schema.acquisitions).where(eq(schema.acquisitions.id, id)).get()!;
+    }) as SeriesReleaseSearchDeps["acquire"],
+  });
+  const tickRunning = tickSeriesAcquisition();
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if (db.select().from(schema.seriesAcquisitionJobs).get()?.status === "searching") break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  await seedAbbSearch();
+  const selectRunning = app.inject({
+    method: "POST",
+    url: "/api/series/31/works/201/releases/select",
+    payload: { source: "abb", id: "abb-first" },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  unblockSearch();
+  unblockManualAcquire();
+  const selected = await selectRunning;
+  assert.equal(selected.statusCode, 200, selected.body);
+  await tickRunning;
+  assert.equal(autoAcquireCalls, 0);
+  assert.equal(manualAcquireCalls, 1);
   assert.equal(
-    db.select().from(schema.seriesAcquisitionJobs).get()?.error,
-    SERIES_ACQUISITION_CANCELLED_ERROR,
+    db.select().from(schema.acquisitions).all().length,
+    1,
   );
 });
