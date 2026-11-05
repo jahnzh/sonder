@@ -160,6 +160,8 @@ function blockReasonForEdition(editionId: string, exceptUserId: number) {
   // Legacy hidden_library is global (admin / user 1 shelf); treat it like a foreign hold.
   if (sqlite.prepare(`SELECT 1 FROM hidden_library WHERE book_id=? LIMIT 1`).get(editionId))
     return "Another listener still keeps this release hidden in their library.";
+  if (sqlite.prepare(`SELECT 1 FROM library WHERE book_id=? LIMIT 1`).get(editionId))
+    return "Another listener still has this release in their library.";
   return null;
 }
 
@@ -465,18 +467,8 @@ function hardcoverBookIdForWork(workId: string) {
 
 function ensureHardcoverSyncSuppressed(userId: number, workId: string) {
   const bookId = hardcoverBookIdForWork(workId);
-  const editions = db
-    .select()
-    .from(s.editions)
-    .where(eq(s.editions.workId, workId))
-    .all();
-  const audio = editions.filter((edition) => editionHasAudio(edition.id));
-  let representativeId =
-    audio[0]?.id ??
-    editions.find((edition) => edition.id.startsWith("hc-"))?.id ??
-    editions[0]?.id ??
-    null;
-  if (!representativeId && bookId != null) {
+  let representativeId: string | null = null;
+  if (bookId != null) {
     representativeId = `hc-${bookId}`;
     db.insert(s.editions)
       .values({
@@ -498,6 +490,16 @@ function ensureHardcoverSyncSuppressed(userId: number, workId: string) {
       })
       .onConflictDoNothing()
       .run();
+  } else {
+    const editions = db
+      .select()
+      .from(s.editions)
+      .where(eq(s.editions.workId, workId))
+      .all();
+    representativeId =
+      editions.find((edition) => edition.id.startsWith("hc-"))?.id ??
+      editions.find((edition) => !editionHasAudio(edition.id))?.id ??
+      null;
   }
   if (representativeId) {
     db.insert(s.userHiddenLibrary)
@@ -514,6 +516,7 @@ function commitEditionDeletes(plan: EditionDeletePlan) {
     .where(eq(s.userHiddenLibrary.bookId, plan.editionId))
     .run();
   db.delete(s.hiddenLibrary).where(eq(s.hiddenLibrary.bookId, plan.editionId)).run();
+  sqlite.prepare("DELETE FROM library WHERE book_id=?").run(plan.editionId);
   db.delete(s.editions).where(eq(s.editions.id, plan.editionId)).run();
 }
 
@@ -631,7 +634,15 @@ async function finalizeEditionDeletes(
       cancelServerDownload(recording.recordingId);
     }
     if (blocked) continue;
-    sqlite.transaction(() => commitEditionDeletes(plan))();
+    try {
+      sqlite.transaction(() => commitEditionDeletes(plan))();
+    } catch (error) {
+      fileErrors.push(`${plan.editionId}: ${(error as Error).message}`);
+      for (const recording of plan.recordings) {
+        for (const path of recording.paths) skippedPaths.push(path);
+      }
+      continue;
+    }
     for (const recording of plan.recordings) {
       for (const path of recording.paths) {
         if (!pathsToUnlink.includes(path)) pathsToUnlink.push(path);
@@ -653,6 +664,25 @@ async function finalizeEditionDeletes(
     }
   }
   return fileErrors;
+}
+
+/** Removes one audio edition and dependents; for unit tests simulating a pre-removal library shape. */
+export function purgeEditionForTests(editionId: string) {
+  const recordings = db
+    .select()
+    .from(s.recordings)
+    .where(eq(s.recordings.editionId, editionId))
+    .all();
+  sqlite.transaction(() =>
+    commitEditionDeletes({
+      editionId,
+      releaseTitle: null,
+      recordings: recordings.map((recording) => ({
+        recordingId: recording.id,
+        paths: [],
+      })),
+    }),
+  )();
 }
 
 export async function removeSavedHardcoverSeries(

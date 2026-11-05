@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 
 const temp = mkdtempSync(join(tmpdir(), "sonder-series-removal-"));
 process.env.DATA_DIR = join(temp, "db");
@@ -774,12 +774,29 @@ test("removed work does not resume series acquisition after ticker runs", async 
 });
 
 test("removed audio-only work stays hidden from Hardcover import", async () => {
-  const { importHardcoverBook } = await import("../server/hardcover.ts");
+  const { applyHardcoverCatalogBook, hardcoverBook } = await import("../server/hardcover.ts");
+  const { purgeEditionForTests } = await import("../server/series-removal.ts");
   const cookie = await adminCookie();
   await saveSeries(cookie, [302]);
   const workId = (
-    await app.inject({ url: "/api/series/41", cookies: { sonder_session: cookie } })
-  ).json().works.find((w: { id: number }) => w.id === 302).workId;
+    sqlite
+      .prepare(
+        "SELECT work_id AS workId FROM user_saved_series_works WHERE user_id=1 AND series_id=41 AND book_id=302",
+      )
+      .get() as { workId: string }
+  ).workId;
+  const placeholderId = "hc-302";
+  for (const edition of db
+    .select()
+    .from(schema.editions)
+    .where(eq(schema.editions.workId, workId))
+    .all()) {
+    purgeEditionForTests(edition.id);
+  }
+  assert.equal(
+    db.select().from(schema.editions).where(eq(schema.editions.workId, workId)).all().length,
+    0,
+  );
   const audioPath = join(temp, "media", "hc-hide-audio.mp3");
   writeFileSync(audioPath, "audio");
   const editionId = "local-audio-only";
@@ -811,26 +828,90 @@ test("removed audio-only work stays hidden from Hardcover import", async () => {
   db.insert(schema.userLibrary)
     .values({ userId: 1, bookId: editionId, status: "unread", addedAt: Date.now() })
     .run();
-  await app.inject({
+  const removed = await app.inject({
     method: "DELETE",
     url: "/api/series/41",
     cookies: { sonder_session: cookie },
     payload: { bookIds: [302] },
   });
+  assert.equal(removed.statusCode, 200, removed.body);
   assert.ok(
     sqlite
       .prepare(
-        "SELECT 1 FROM user_hidden_library WHERE user_id=1 AND book_id LIKE 'hc-%'",
+        "SELECT 1 FROM user_hidden_library WHERE user_id=1 AND book_id=?",
       )
-      .get(),
+      .get(placeholderId),
   );
-  await importHardcoverBook(1, 302);
+  assert.ok(
+    db.select().from(schema.editions).where(eq(schema.editions.id, placeholderId)).get(),
+  );
+  const book = await hardcoverBook(1, 302);
+  applyHardcoverCatalogBook(1, book);
   assert.equal(
     sqlite
       .prepare("SELECT 1 FROM user_library WHERE user_id=1 AND book_id=?")
       .get(editionId),
     undefined,
   );
+  assert.equal(
+    sqlite
+      .prepare("SELECT 1 FROM user_library WHERE user_id=1 AND book_id=?")
+      .get(placeholderId),
+    undefined,
+  );
+});
+
+test("legacy library row blocks edition deletion", async () => {
+  const cookie = await adminCookie();
+  await saveSeries(cookie, [301]);
+  const workId = (
+    await app.inject({ url: "/api/series/41", cookies: { sonder_session: cookie } })
+  ).json().works.find((w: { id: number }) => w.id === 301).workId;
+  const editionId = "local-legacy-library";
+  const audioPath = join(temp, "media", "legacy-library.mp3");
+  writeFileSync(audioPath, "audio");
+  db.insert(schema.editions)
+    .values({
+      id: editionId,
+      workId,
+      cover: "",
+      narrator: "N",
+      language: null,
+      releaseTitle: "Volume one",
+      rating: 0,
+      sourceLabel: "Test",
+    })
+    .run();
+  db.insert(schema.recordings).values({ id: "rec-legacy-lib", editionId }).run();
+  db.insert(schema.tracks)
+    .values({
+      id: "track-legacy-lib",
+      recordingId: "rec-legacy-lib",
+      title: "Ch 1",
+      index: 0,
+      duration: 10,
+      chapters: [],
+      source: audioPath,
+      sourceType: "local",
+    })
+    .run();
+  sqlite
+    .prepare("INSERT INTO library(book_id,status,added_at) VALUES(?,?,?)")
+    .run(editionId, "unread", Date.now());
+  const preview = (
+    await app.inject({ url: "/api/series/41/removal", cookies: { sonder_session: cookie } })
+  ).json();
+  const work = preview.works.find((w: { bookId: number }) => w.bookId === 301);
+  assert.equal(work.audioEditions[0].wouldDelete, false);
+  const removed = await app.inject({
+    method: "DELETE",
+    url: "/api/series/41",
+    cookies: { sonder_session: cookie },
+    payload: { bookIds: [301] },
+  });
+  assert.equal(removed.statusCode, 200, removed.body);
+  assert.ok(existsSync(audioPath));
+  assert.ok(db.select().from(schema.editions).where(eq(schema.editions.id, editionId)).get());
 });
 
 test("removed work with hc placeholder keeps hidden marker after audio delete", async () => {

@@ -1288,6 +1288,11 @@ export async function importHardcoverBook(
     queueStatus(userId, id, 1, "add");
   return added!;
 }
+export function applyHardcoverCatalogBook(userId: number, book: CatalogBook) {
+  sqlite.transaction(() => {
+    importCatalogBook(userId, book, null, false);
+  })();
+}
 export async function addHardcoverSeries(
   userId: number,
   seriesName: string,
