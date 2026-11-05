@@ -1,12 +1,17 @@
 import { api } from "../lib";
 import type { Download, SeriesWorkAcquisition } from "../types";
 import { workMediaStateLabel } from "../work-media-state";
+import { SeriesWorkReleaseSearch } from "./SeriesWorkReleaseSearch";
 
 const SERIES_SAVED_POLL_MS = 2500;
 
 type Props = {
   seriesId: number;
   bookId: number;
+  workId: string | null;
+  workTitle: string;
+  seriesAuthor: string | null;
+  canAcquire: boolean;
   mediaState?: {
     state: "missing" | "queued" | "failed" | "available";
     holdReason?: "unreleased" | "empty_search" | null;
@@ -73,6 +78,10 @@ function canRetryEbook(acquisition: SeriesWorkAcquisition | null | undefined) {
 export function SeriesWorkStatus({
   seriesId,
   bookId,
+  workId,
+  workTitle,
+  seriesAuthor,
+  canAcquire,
   mediaState,
   acquisition,
   ebookSet,
@@ -104,6 +113,20 @@ export function SeriesWorkStatus({
             <button type="button" className="button subtle" onClick={() => void retry("audio")}>
               Retry audio
             </button>
+          </>
+        )}
+        {canAcquire && workId && (
+          <>
+            {" "}
+            <SeriesWorkReleaseSearch
+              seriesId={seriesId}
+              bookId={bookId}
+              workId={workId}
+              title={workTitle}
+              author={seriesAuthor}
+              hasPlayableAudio={mediaState?.state === "available"}
+              onRefresh={onRefresh}
+            />
           </>
         )}
       </span>

@@ -69,7 +69,7 @@ export function SeriesLibrary({ onOpen, revision }: { onOpen: (id: number) => vo
   </section>;
 }
 
-export function SeriesDialog({ target, onClose, onSaved, downloads }: { target: SeriesTarget | null; onClose: () => void; onSaved: () => void; downloads: Download[] }) {
+export function SeriesDialog({ target, onClose, onSaved, downloads, canAcquire }: { target: SeriesTarget | null; onClose: () => void; onSaved: () => void; downloads: Download[]; canAcquire: boolean }) {
   const [series, setSeries] = useState<Series | null>(null);
   const [selected, setSelected] = useState<number[]>([]);
   const [mode, setMode] = useState<"preview" | "saved">("preview");
@@ -128,6 +128,10 @@ export function SeriesDialog({ target, onClose, onSaved, downloads }: { target: 
         <SeriesWorkStatus
           seriesId={series!.id}
           bookId={work.id}
+          workId={work.workId}
+          workTitle={work.title}
+          seriesAuthor={series!.author}
+          canAcquire={canAcquire}
           mediaState={work.mediaState}
           acquisition={work.acquisition}
           ebookSet={work.ebookSet}

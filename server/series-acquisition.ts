@@ -501,7 +501,7 @@ async function runEbookJob(
   return null;
 }
 
-function setJobState(
+export function setJobState(
   userId: number,
   seriesId: number,
   bookId: number,
