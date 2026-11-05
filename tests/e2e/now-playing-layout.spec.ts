@@ -23,7 +23,8 @@ async function importBook(request:APIRequestContext,title:string,withEbook:boole
  if(!withEbook)return;
  const id=(await response.json()).id;
  const book=(await(await request.get("/api/books")).json()).find((b:any)=>b.id===id);
- expect((await request.post(`/api/ebooks/import?workId=${book.workId}`,{multipart:{file:{name:"Companion.epub",mimeType:"application/epub+zip",buffer:await readerFixture({language:"en-NZ"})}}})).ok()).toBe(true);
+ // EPUB imports deduplicate by bytes across the whole browser run, not by work.
+ expect((await request.post(`/api/ebooks/import?workId=${book.workId}`,{multipart:{file:{name:"Companion.epub",mimeType:"application/epub+zip",buffer:await readerFixture({language:"en-NZ",title})}}})).ok()).toBe(true);
 }
 async function open(page:Page,browserName:string,title:string,[width,height]:readonly [number,number]){
  await page.setViewportSize({width,height});
@@ -187,16 +188,23 @@ async function installLayoutAlignment(request:APIRequestContext,title:string){
  const ebooks=await(await request.get("/api/ebooks")).json();
  const ebook=ebooks.find((entry:any)=>entry.workId===book.workId&&entry.format==="epub");
  expect(ebook).toBeTruthy();
- const existing=await(await request.get(`/api/alignments?ebookId=${ebook.id}`)).json();
- if(existing.jobs?.length)return {book,ebookId:ebook.id as string};
  const manifest=await(await request.get(`/api/reader/${ebook.id}`)).json();
- const created=await request.post("/api/alignments",{data:{ebookId:ebook.id,recordingId:book.recordingId,pairings:manifest.sections.map((section:any)=>({section:section.index,trackId:book.tracks[0].id,start:section.index*100,duration:95}))}});
- expect(created.ok()).toBe(true);
+ const pairings=manifest.sections.map((section:any)=>({section:section.index,trackId:book.tracks[0].id,start:section.index*100,duration:95}));
+ const matches=(job:any)=>job.recordingId===book.recordingId&&job.mode!=="anchored"&&job.pairings.length===pairings.length&&pairings.every((pair:any)=>job.pairings.some((actual:any)=>actual.section===pair.section&&actual.trackId===pair.trackId&&actual.start===pair.start&&actual.duration===pair.duration));
+ const existing=await(await request.get(`/api/alignments?ebookId=${ebook.id}`)).json();
+ let job=existing.jobs?.find(matches);
+ if(!job){
+  // Import can auto-queue a sparse anchored map; this layout test needs its own chapter map.
+  const created=await request.post("/api/alignments",{data:{ebookId:ebook.id,recordingId:book.recordingId,pairings}});
+  expect(created.ok()).toBe(true);
+  job=await created.json();
+ }
  await expect.poll(async()=>{
   const jobs=(await(await request.get(`/api/alignments?ebookId=${ebook.id}`)).json()).jobs;
-  return jobs[0]?.sectionsDone.length;
- },{timeout:15000}).toBe(manifest.sections.length);
- return {book,ebookId:ebook.id as string};
+  const current=jobs.find((entry:any)=>entry.id===job.id&&matches(entry));
+  return !!current&&["ready","partial"].includes(current.status)&&current.sectionsDone.length===manifest.sections.length&&current.intervals.some((entry:any)=>entry.section===1&&entry.trackId===book.tracks[0].id&&entry.start>104);
+ },{timeout:15000}).toBe(true);
+ return {book,ebookId:ebook.id as string,jobId:job.id as string};
 }
 async function assertReaderTransportCentred(dialog:Locator,player:Locator){
  const play=await centre(player.getByRole("button",{name:/^(Play|Pause) narration$/}));
@@ -354,16 +362,35 @@ async function setReadingMode(page:Page,dialog:Locator,mode:"Page"|"Lyrics"|"Wor
 }
 /** Seed narration progress and open the aligned Layout reader once for a #122 fixture. */
 async function openAlignedReader(page:Page,browserName:string,request:APIRequestContext,size:readonly [number,number]){
- const {book,ebookId}=await installLayoutAlignment(request,"Layout reader");
- const map=await(await request.get(`/api/alignments?ebookId=${ebookId}`)).json();
- const job=map.jobs[0];
- const detail=await(await request.get(`/api/alignments/${job.id}/map`)).json();
- const interval=detail.intervals.find((entry:any)=>entry.section===1&&entry.start>104)||detail.intervals[0];
+ const {book,jobId}=await installLayoutAlignment(request,"Layout reader");
+ const detail=await(await request.get(`/api/alignments/${jobId}/map`)).json();
+ expect(detail.recordingId).toBe(book.recordingId);
+ const interval=detail.intervals.find((entry:any)=>entry.section===1&&entry.trackId===book.tracks[0].id&&entry.start>104);
+ expect(interval).toBeTruthy();
  expect((await request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[0].id,position:interval.start+1,duration:book.tracks[0].duration,updatedAt:Date.now()}})).ok()).toBe(true);
+ // Wait for the initial play request to settle before pausing: WebKit can show
+ // Play while autoplay is still pending, then start during the layout checks.
+ await page.addInitScript(()=>{
+  const play=HTMLMediaElement.prototype.play;
+  let attempt=0;
+  (window as any).__layoutPlaySettled=false;
+  HTMLMediaElement.prototype.play=function(){
+   const current=++attempt;
+   (window as any).__layoutPlaySettled=false;
+   const result=play.call(this);
+   void result.then(()=>{if(current===attempt)(window as any).__layoutPlaySettled=true;},()=>{if(current===attempt)(window as any).__layoutPlaySettled=true;});
+   return result;
+  };
+ });
  const dialog=await open(page,browserName,"Layout reader",size);
+ await expect.poll(()=>page.evaluate(()=>(window as any).__layoutPlaySettled),{timeout:READER_WAIT_MS.followHighlight}).toBe(true);
  await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible({timeout:READER_WAIT_MS.checkpointRestore});
  const player=dialog.getByRole("region",{name:"Player",exact:true});
  await expect(player).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
+ const pause=player.getByRole("button",{name:"Pause narration",exact:true});
+ if(await pause.isVisible())await pause.click();
+ await expect(player.getByRole("button",{name:"Play narration",exact:true})).toBeVisible();
+ await expect(dialog.locator(".inline-reader")).toHaveAttribute("data-current-passage",/./,{timeout:READER_WAIT_MS.followHighlight});
  return {dialog,player,book};
 }
 async function pageAwayFromNarration(page:Page,dialog:Locator,back:Locator){
