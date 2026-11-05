@@ -413,3 +413,28 @@ test("warming stops at its cancellation checkpoints", async () => {
     assert.equal(t.data.has(KEY), false, `${cancelAfter}: nothing cached after cancellation`);
   }
 });
+
+test("overlapping warm calls: the superseded call's outcome does not land", async () => {
+  const t = setup();
+  let releaseFirst!: () => void;
+  let mapCalls = 0;
+  t.setMap(async () => {
+    mapCalls++;
+    if (mapCalls === 1) {
+      await new Promise<void>((resolve) => (releaseFirst = resolve));
+      return fullMap({ updatedAt: 100 });
+    }
+    return fullMap({ updatedAt: 200 });
+  });
+  let firstCancelled = false;
+  const first = t.lifecycle.warm(warmTarget(t, { isCancelled: () => firstCancelled }));
+  while (!releaseFirst) await new Promise((resolve) => setImmediate(resolve));
+  // A newer warm starts; the in-flight one is superseded (same as activeWarm.cancel).
+  firstCancelled = true;
+  const second = t.lifecycle.warm(warmTarget(t));
+  releaseFirst();
+  assert.equal(await first, null);
+  assert.equal((await second)?.id, "job-1");
+  assert.equal(t.data.get(KEY)?.updatedAt, 200, "only the current warm may cache");
+  assert.equal(t.log.puts.length, 1);
+});

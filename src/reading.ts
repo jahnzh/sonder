@@ -1,5 +1,5 @@
 import { userStorageKey } from "./lib";
-import { createAlignmentMapLifecycle } from "./alignment-map-lifecycle";
+import { warmMap } from "./alignment-map-lifecycle";
 import { alignmentMapDeps } from "./alignment-map-deps";
 import { api, localDB, authDB, userId } from "./lib";
 import type {
@@ -505,9 +505,9 @@ export function warmPlaybackReading(
 
     if (!recordingId) return;
 
-    const lifecycle = createAlignmentMapLifecycle(alignmentMapDeps());
+    const deps = alignmentMapDeps();
     const checkJobAndMap = () =>
-      lifecycle.warm({
+      warmMap(deps, {
         ebookId,
         recordingId,
         fingerprint: async () => (await readerBook)?.fingerprint,
