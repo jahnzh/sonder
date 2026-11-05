@@ -36,6 +36,19 @@ if [[ $* == *" -- preflight "* ]]; then
   export -f df
 fi
 if [[ $* == *" -- start "* ]]; then export STUB_SSH_STEP=start; fi
+# Barrier at acquire_run_lock (not SCP): setup between SCP and the lock is
+# variable, so an SCP sync still lets a fast winner finish and release before
+# the loser reaches mv -T. Waiting here makes both race the atomic rename.
+if [[ $* == *" -- acquire_run_lock "* && -n \${STUB_LOCK_BARRIER:-} ]]; then
+  touch "$STUB_LOCK_BARRIER/arrived-$$"
+  shopt -s nullglob
+  arrivals=("$STUB_LOCK_BARRIER"/arrived-*)
+  while (( \${#arrivals[@]} < 2 )); do
+    (( SECONDS < 15 )) || exit 1
+    sleep 0.05
+    arrivals=("$STUB_LOCK_BARRIER"/arrived-*)
+  done
+fi
 exec bash -c "$*"
 `;
 
@@ -46,16 +59,6 @@ while [[ $# -gt 0 ]]; do
   case "$1" in -q|-r) shift ;; -o) shift 2 ;; *) args+=("$1"); shift ;; esac
 done
 strip() { if [[ $1 != /* && $1 == *:* ]]; then echo "\${1#*:}"; else echo "$1"; fi; }
-if [[ -n \${STUB_SCP_BARRIER:-} && \${args[0]} == *.bundle ]]; then
-  touch "$STUB_SCP_BARRIER/arrived-$$"
-  shopt -s nullglob
-  arrivals=("$STUB_SCP_BARRIER"/arrived-*)
-  while (( \${#arrivals[@]} < 2 )); do
-    (( SECONDS < 15 )) || exit 1
-    sleep 0.05
-    arrivals=("$STUB_SCP_BARRIER"/arrived-*)
-  done
-fi
 cp -r "$(strip "\${args[0]}")" "$(strip "\${args[1]}")"
 `;
 
@@ -637,9 +640,9 @@ test("an active CI unit blocks a new container before its own container is visib
 
 test("simultaneous starts from separate coordinators admit only one container", { timeout: 25_000 }, async () => {
   const f = fixture();
-  const barrier = path.join(f.base, "barrier");
+  const barrier = path.join(f.base, "lock-barrier");
   fs.mkdirSync(barrier);
-  const common = { STUB_SCP_BARRIER: barrier };
+  const common = { STUB_LOCK_BARRIER: barrier };
   const first = f.start(f.second, { ...common, SONDER_CI_LOCAL_LOCK_DIR: path.join(f.base, "coordinator-a") });
   const second = f.start(f.second, { ...common, SONDER_CI_LOCAL_LOCK_DIR: path.join(f.base, "coordinator-b") });
   // Do not assume the refused run finishes first: under load the admitted
