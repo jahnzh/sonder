@@ -352,6 +352,39 @@ test("stale searching jobs reset to pending before processing", async () => {
   );
 });
 
+test("stale cancelled manual-claim jobs reset to pending when no media is queued", async () => {
+  const {
+    resetStaleSeriesAcquisitionJobs,
+    SERIES_ACQUISITION_SEARCH_STALE_MS,
+    SERIES_ACQUISITION_CANCELLED_ERROR,
+  } = await import("../server/series-acquisition.ts");
+  await saveSeries([201], { searchAudio: true });
+  sqlite.exec("DELETE FROM work_media_states");
+  sqlite.exec("DELETE FROM user_acquisitions");
+  sqlite.exec("DELETE FROM acquisitions");
+  db.update(schema.seriesAcquisitionJobs)
+    .set({
+      status: "failed",
+      error: SERIES_ACQUISITION_CANCELLED_ERROR,
+      updatedAt: Date.now() - SERIES_ACQUISITION_SEARCH_STALE_MS - 1,
+    })
+    .run();
+  const view = (await app.inject("/api/series/31")).json().works.find(
+    (w: { id: number }) => w.id === 201,
+  );
+  assert.equal(view.acquisition?.audio?.status, "done");
+  resetStaleSeriesAcquisitionJobs();
+  assert.equal(
+    db.select().from(schema.seriesAcquisitionJobs).get()?.status,
+    "pending",
+  );
+  await tickSeriesAcquisition();
+  assert.equal(
+    db.select().from(schema.seriesAcquisitionJobs).get()?.status,
+    "done",
+  );
+});
+
 test("non-admin cannot retry audio or ebook acquisition", async () => {
   let acquireCalls = 0;
   setSeriesAcquisitionDeps({

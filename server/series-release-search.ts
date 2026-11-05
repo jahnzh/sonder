@@ -40,7 +40,14 @@ export type SeriesReleaseSearchDeps = {
   prowlarrRelease?: typeof prowlarrRelease;
   prowlarrMagnet?: typeof prowlarrMagnet;
   acquire?: typeof defaultAcquire;
+  replacePreviousAcquisition?: typeof replacePreviousAcquisition;
 };
+
+const manualSelectInFlight = new Set<string>();
+
+function manualSelectFlightKey(userId: number, workId: string) {
+  return `${userId}:${workId}`;
+}
 
 let deps: SeriesReleaseSearchDeps = {};
 
@@ -70,6 +77,7 @@ export function setSeriesReleaseSearchDeps(overrides: SeriesReleaseSearchDeps) {
 export function resetSeriesReleaseSearchDeps() {
   deps = {};
   abbSearchSlugs.clear();
+  manualSelectInFlight.clear();
 }
 
 export function savedSeriesWork(
@@ -287,9 +295,20 @@ export async function selectSeriesWorkRelease(
       { statusCode: 409, code: "existing_audio" },
     );
 
+  const flightKey = manualSelectFlightKey(userId, work.workId);
+  if (manualSelectInFlight.has(flightKey))
+    throw Object.assign(
+      new Error(
+        "A release selection is already in progress for this work. Wait for it to finish.",
+      ),
+      { statusCode: 409, code: "select_in_progress" },
+    );
+  manualSelectInFlight.add(flightKey);
+
   const claim = beginManualSeriesReleaseClaim(userId, work.workId);
 
   let magnet: string;
+  let acquireSucceeded = false;
   let metadata: {
     title?: string;
     author?: string;
@@ -324,14 +343,14 @@ export async function selectSeriesWorkRelease(
       workId: work.workId,
       userId,
     });
+    acquireSucceeded = true;
 
     let replaceResult: ReplacePreviousResult | null = null;
-    if (previous && input.replaceActive)
-      replaceResult = await replacePreviousAcquisition(
-        userId,
-        previous.id,
-        magnet,
-      );
+    if (previous && input.replaceActive) {
+      const replace =
+        deps.replacePreviousAcquisition ?? replacePreviousAcquisition;
+      replaceResult = await replace(userId, previous.id, magnet);
+    }
 
     finalizeManualSeriesReleaseClaim(
       userId,
@@ -353,7 +372,17 @@ export async function selectSeriesWorkRelease(
       replaceResult,
     };
   } catch (error) {
-    if (claim.claimed) restoreManualSeriesReleaseClaim(claim);
+    if (claim.claimed && !acquireSucceeded)
+      restoreManualSeriesReleaseClaim(claim);
+    else if (claim.claimed && acquireSucceeded)
+      finalizeManualSeriesReleaseClaim(
+        userId,
+        seriesId,
+        bookId,
+        work.workId,
+      );
     throw error;
+  } finally {
+    manualSelectInFlight.delete(flightKey);
   }
 }

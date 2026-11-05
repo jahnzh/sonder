@@ -292,12 +292,29 @@ function upsertJob(input: {
 }
 
 export function resetStaleSeriesAcquisitionJobs(now = Date.now()) {
+  const staleBefore = now - SERIES_ACQUISITION_SEARCH_STALE_MS;
   sqlite
     .prepare(
-      `UPDATE series_acquisition_jobs SET status='pending', updated_at=?
+      `UPDATE series_acquisition_jobs SET status='pending', error=NULL, updated_at=?
        WHERE status='searching' AND updated_at < ?`,
     )
-    .run(now, now - SERIES_ACQUISITION_SEARCH_STALE_MS);
+    .run(now, staleBefore);
+  sqlite
+    .prepare(
+      `UPDATE series_acquisition_jobs SET status='pending', error=NULL, updated_at=?
+       WHERE status='failed' AND error=? AND updated_at < ?
+         AND NOT EXISTS (
+           SELECT 1 FROM work_media_states wms
+           WHERE wms.work_id = series_acquisition_jobs.work_id
+             AND wms.user_id = series_acquisition_jobs.user_id
+             AND wms.state IN ('ready', 'queued')
+         )`,
+    )
+    .run(
+      now,
+      SERIES_ACQUISITION_CANCELLED_ERROR,
+      staleBefore,
+    );
 }
 
 function catalogueVolumes(seriesId: number) {
