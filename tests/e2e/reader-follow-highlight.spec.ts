@@ -51,7 +51,13 @@ async function highlighted(page:Page){
 async function open(page:Page,book:any,interval:any){
  // Leave the previous page first: it saves its own position as it unloads.
  await page.goto("about:blank");
- expect((await page.request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[0].id,position:interval.start+.5,duration:book.tracks[0].duration,updatedAt:Date.now()}})).ok()).toBe(true);
+ const books=await(await page.request.get("/api/books")).json();
+ const previous=books.find((b:any)=>b.recordingId===book.recordingId)?.progress?.updatedAt||0;
+ const response=await page.request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[0].id,position:interval.start+.5,duration:book.tracks[0].duration,updatedAt:Math.max(Date.now(),previous+1)}});
+ expect(response.ok()).toBe(true);
+ const saved=await response.json();
+ expect(saved.conflict).toBe(false);
+ expect(saved.progress.position).toBe(interval.start+.5);
  await page.goto("/");
  await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
  await timedWait("follow-highlight",()=>expect(page.locator(".inline-reader")).toHaveAttribute("data-current-passage",interval.paragraphId,{timeout:READER_WAIT_MS.followHighlight}),{testName:test.info().title});
