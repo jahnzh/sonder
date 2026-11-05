@@ -4,8 +4,21 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import type {
+  SeriesAudioCandidate,
+  SeriesAudioSearchDeps,
+  SeriesVolumeRef,
+} from "../server/series-audio.ts";
 
-import {
+// Env before any server import: storage.ts / db.ts capture paths at load (#214).
+const integrationTemp = mkdtempSync(join(tmpdir(), "sonder-series-audio-integration-"));
+process.env.DATA_DIR = join(integrationTemp, "db");
+process.env.MEDIA_ROOT = join(integrationTemp, "media");
+process.env.REQUIRE_MEDIA_MOUNT = "false";
+process.env.NODE_ENV = "test";
+delete process.env.APP_PASSWORD;
+
+const {
   bareVolumeTitle,
   buildVolumeSearchQueries,
   classifySeriesAudioKind,
@@ -17,19 +30,8 @@ import {
   autoAcquireSeriesVolume,
   autoAcquireSeriesVolumes,
   withProviderRetry,
-  type SeriesAudioCandidate,
-  type SeriesAudioSearchDeps,
-  type SeriesVolumeRef,
-} from "../server/series-audio.ts";
-import { chooseBackend } from "../server/acquisitions.ts";
-
-const integrationTemp = mkdtempSync(join(tmpdir(), "sonder-series-audio-integration-"));
-process.env.DATA_DIR = join(integrationTemp, "db");
-process.env.MEDIA_ROOT = join(integrationTemp, "media");
-process.env.REQUIRE_MEDIA_MOUNT = "false";
-process.env.NODE_ENV = "test";
-delete process.env.APP_PASSWORD;
-
+} = await import("../server/series-audio.ts");
+const { chooseBackend } = await import("../server/acquisitions.ts");
 const { createApp } = await import("../server/app.ts");
 const integrationApp = await createApp();
 const { db: integrationDb } = await import("../server/db.ts");

@@ -5,7 +5,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import {
+import type { AlignmentInterval, ReaderBook } from "../src/reading-types.ts";
+
+// Env before any server import: storage.ts / db.ts capture MEDIA_ROOT and DATA_DIR at load (#214).
+const temp = mkdtempSync(join(tmpdir(), "sonder-ebook-set-consensus-"));
+process.env.DATA_DIR = join(temp, "db");
+process.env.MEDIA_ROOT = join(temp, "media");
+process.env.REQUIRE_MEDIA_MOUNT = "false";
+process.env.NODE_ENV = "test";
+delete process.env.APP_PASSWORD;
+
+const {
   buildConsensusRows,
   consensusEbookId,
   consensusFingerprint,
@@ -16,10 +26,23 @@ import {
   projectIntervals,
   publishProjectedMaps,
   syncEbookSetConsensus,
-} from "../server/ebook-set-consensus.ts";
-import { createAlignment } from "../server/alignment.ts";
-import { listEbooks } from "../server/ebooks.ts";
-import type { AlignmentInterval, ReaderBook } from "../src/reading-types.ts";
+} = await import("../server/ebook-set-consensus.ts");
+const { createAlignment } = await import("../server/alignment.ts");
+const { listEbooks } = await import("../server/ebooks.ts");
+const { createApp } = await import("../server/app.ts");
+const { db } = await import("../server/db.ts");
+const schema = await import("../server/schema.ts");
+const { evaluateEbookSetMember, setEbookSetDeps, resetEbookSetDeps } =
+  await import("../server/ebook-set.ts");
+const { putAlignmentJob } = await import("../server/alignment.ts");
+const { readerFixture } = await import("./reader-fixture.ts");
+
+const app = await createApp();
+
+after(() => {
+  resetEbookSetDeps();
+  rmSync(temp, { recursive: true, force: true });
+});
 
 test("buildConsensusRows keeps short sentences and merges editions", () => {
   assert.equal(MIN_CONSENSUS_SENTENCE_WORDS, 1);
@@ -125,29 +148,6 @@ test("projectIntervals maps consensus timings onto a member paragraph", () => {
     consensusFingerprint(["I see.", "Then we go."]),
   );
 });
-
-const temp = mkdtempSync(join(tmpdir(), "sonder-ebook-set-consensus-"));
-process.env.DATA_DIR = join(temp, "db");
-process.env.MEDIA_ROOT = join(temp, "media");
-process.env.REQUIRE_MEDIA_MOUNT = "false";
-process.env.NODE_ENV = "test";
-delete process.env.APP_PASSWORD;
-
-const { createApp } = await import("../server/app.ts");
-const { db } = await import("../server/db.ts");
-const schema = await import("../server/schema.ts");
-const { evaluateEbookSetMember, setEbookSetDeps, resetEbookSetDeps } =
-  await import("../server/ebook-set.ts");
-const { putAlignmentJob } = await import("../server/alignment.ts");
-const { readerFixture } = await import("./reader-fixture.ts");
-
-const app = await createApp();
-
-after(() => {
-  resetEbookSetDeps();
-  rmSync(temp, { recursive: true, force: true });
-});
-
 function seedWork(title: string, author: string) {
   const workId = `work-${randomUUID()}`;
   db.insert(schema.works)
