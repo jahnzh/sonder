@@ -350,6 +350,7 @@ export async function autoAcquireSeriesVolume(
     },
   ) => Promise<unknown>,
   deps: SeriesAudioSearchDeps = defaultDeps(),
+  mayAcquire?: () => boolean,
 ) {
   if (workHasPlayableAudio(input.workId)) return syncWorkMediaState(userId, input.workId);
   const candidates = await searchVolumeAudioCandidates(
@@ -368,6 +369,9 @@ export async function autoAcquireSeriesVolume(
   if (!magnet) {
     markWorkEmptySearch(userId, input.workId);
     return syncWorkMediaState(userId, input.workId);
+  }
+  if (mayAcquire && !mayAcquire()) {
+    throw new Error("cancelled");
   }
   try {
     await acquire(magnet, {

@@ -26,6 +26,10 @@ import { acquire } from "./acquisitions.ts";
 import { retryWorkMediaAcquisition } from "./series-membership.ts";
 import { retrySeriesWorkAcquisition } from "./series-acquisition.ts";
 import {
+  searchSeriesWorkReleases,
+  selectSeriesWorkRelease,
+} from "./series-release-search.ts";
+import {
   previewSeriesRemoval,
   removeSavedHardcoverSeries,
 } from "./series-removal.ts";
@@ -99,6 +103,40 @@ export function registerHardcoverRoutes(app: FastifyInstance) {
       bookId,
       kind,
     );
+  });
+  app.get("/api/series/:id/works/:bookId/releases/search", async (req) => {
+    requireAdmin(req);
+    const { id, bookId } = z
+      .object({
+        id: z.coerce.number().int().positive(),
+        bookId: z.coerce.number().int().positive(),
+      })
+      .parse(req.params);
+    const { q, page } = z
+      .object({
+        q: z.string().min(2).max(150),
+        page: z.coerce.number().int().min(1).max(100).default(1),
+      })
+      .parse(req.query);
+    return searchSeriesWorkReleases(currentUserId(req), id, bookId, q, page);
+  });
+  app.post("/api/series/:id/works/:bookId/releases/select", async (req) => {
+    requireAdmin(req);
+    const { id, bookId } = z
+      .object({
+        id: z.coerce.number().int().positive(),
+        bookId: z.coerce.number().int().positive(),
+      })
+      .parse(req.params);
+    const body = z
+      .object({
+        source: z.enum(["abb", "prowlarr"]),
+        id: z.string().min(1).max(300),
+        replaceActive: z.boolean().optional(),
+        confirmExistingAudio: z.boolean().optional(),
+      })
+      .parse(req.body ?? {});
+    return selectSeriesWorkRelease(currentUserId(req), id, bookId, body);
   });
   app.post("/api/series/:id/ack", async (req) => {
     const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(req.params);
