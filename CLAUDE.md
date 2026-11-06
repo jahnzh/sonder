@@ -61,7 +61,7 @@ For isolated checks of a committed revision, database backups, and live-verifica
 - Progress is saved locally first and reconciled with the server by timestamp.
 - Hardcover writes go through durable SQLite queues: one for listening and a separate one for reading. They are coalesced and retried, and a newer local position must never be overwritten by an older remote response.
 - Reader positions use CFIs plus sentence locators, not page numbers.
-- Alignment maps belong to one specific recording and EPUB. They are invalidated when either file changes, and their timings stay labelled "estimated" until reviewed.
+- Alignment maps belong to one specific recording and EPUB. They are invalidated when either file changes, and their timings are labelled "estimated".
 
 ## Conventions
 

@@ -2,11 +2,13 @@
 import os
 import secrets
 import sys
+import time
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from deadline import AlignmentTimeout, Gate, WorkerBusy
-from pipeline import align_section, locate_passage
+from pipeline import ENGINE, align_section, locate_passage
+from align_task import LANGUAGES
 
 app = FastAPI()
 gate = Gate()
@@ -29,23 +31,31 @@ def anchor(request: AnchorRequest):
     token = os.environ.get("ALIGNMENT_WORKER_TOKEN", "")
     if not token or not secrets.compare_digest(request.token, token):
         raise HTTPException(401, "Worker authentication required.")
+    started = time.monotonic()
     try:
         with gate.hold():
             expected = os.environ.get("MEDIA_VOLUME_ID")
             marker = root / ".media-volume"
             if expected and (not marker.is_file() or marker.read_text().strip() != expected):
                 raise HTTPException(503, "The media drive is unavailable.")
-            return locate_passage(audio=checked_path(request.audio, True), folder=root / "alignment", fragments=request.fragments,
+            audio = checked_path(request.audio, True)
+            if request.language not in LANGUAGES:
+                return {"engine": ENGINE, "outcome": "language_not_supported", "stageTimings": {"requestValidation": time.monotonic() - started}, "match": None}
+            return locate_passage(audio=audio, folder=root / "alignment", fragments=request.fragments,
                                   language=request.language, start=request.start, duration=request.duration)
     except WorkerBusy:
         raise HTTPException(409, "The local alignment worker is busy.")
     except AlignmentTimeout as error:
-        raise HTTPException(504, str(error))
+        raise HTTPException(504, error_detail(str(error), started))
     except HTTPException:
         raise
     except Exception as error:
         print(f"[anchor] failed: {error!r}", file=sys.stderr, flush=True)
-        raise HTTPException(422, "Local speech recovery is unavailable. Check that the tiny model is installed on the media drive.")
+        raise HTTPException(422, error_detail("Local speech recovery is unavailable. Check that the tiny model is installed on the media drive.", started))
+
+def error_detail(message, started):
+    return {"message": message, "engine": ENGINE, "outcome": "error",
+            "stageTimings": {"failedRequest": time.monotonic() - started}}
 
 def checked_path(value: str, must_exist=False):
     path = Path(value).resolve()
@@ -55,13 +65,14 @@ def checked_path(value: str, must_exist=False):
 
 @app.get("/health")
 def health():
-    return {"ready": True, "engine": "aeneas-1.7.3", "busy": gate.busy, "stuck": gate.stuck, "busySeconds": gate.busy_seconds(), "lastTimeout": gate.last_timeout}
+    return {"ready": True, "engine": ENGINE, "busy": gate.busy, "stuck": gate.stuck, "busySeconds": gate.busy_seconds(), "lastTimeout": gate.last_timeout}
 
 @app.post("/align")
 def align(request: AlignRequest):
     token = os.environ.get("ALIGNMENT_WORKER_TOKEN", "")
     if not token or not secrets.compare_digest(request.token, token):
         raise HTTPException(401, "Worker authentication required.")
+    started = time.monotonic()
     try:
         with gate.hold():
             marker = root / ".media-volume"
@@ -72,15 +83,17 @@ def align(request: AlignRequest):
             output = checked_path(request.output)
             if not output.is_relative_to(root / "alignment"):
                 raise HTTPException(400, "Alignment output must be in its cache directory.")
-            language = request.language if request.language in {"eng", "fra", "deu", "spa", "ita", "por", "nob", "dan", "swe", "nld"} else "eng"
-            return align_section(audio=audio, output=output, fragments=request.fragments, language=language,
+            if request.language not in LANGUAGES:
+                elapsed = time.monotonic() - started
+                return {"engine": ENGINE, "outcome": "language_not_supported", "stageTimings": {"requestValidation": elapsed}, "elapsedSeconds": elapsed, "intervals": []}
+            return align_section(audio=audio, output=output, fragments=request.fragments, language=request.language,
                                  start=request.start, duration=request.duration, media_folder=root / "alignment")
     except WorkerBusy:
         raise HTTPException(409, "The local alignment worker is busy.")
     except AlignmentTimeout as error:
-        raise HTTPException(504, str(error))
+        raise HTTPException(504, error_detail(str(error), started))
     except HTTPException:
         raise
     except Exception as error:
         print(f"[align] failed: {error!r}", file=sys.stderr, flush=True)
-        raise HTTPException(422, "Local alignment could not match this section. Check the edition and chapter pairing.")
+        raise HTTPException(422, error_detail("Local alignment could not match this section. Check the edition and chapter pairing.", started))

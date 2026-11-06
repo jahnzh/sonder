@@ -16,7 +16,7 @@ import * as s from "./schema.ts";
 import { extractBook, ebookRecord } from "./reader.ts";
 import { ensureMediaStorage, mediaRoot } from "./storage.ts";
 import { hasServerMedia, requestServerDownload } from "./downloads.ts";
-import type { AlignmentJob, AlignmentInterval } from "../src/reading-types.ts";
+import type { AlignmentJob, AlignmentInterval, AlignmentOutcome } from "../src/reading-types.ts";
 import { requireAdmin } from "./users.ts";
 import { matchSections } from "./alignment-pairings.ts";
 import {
@@ -119,21 +119,33 @@ export function audioFingerprint(recordingId: string, stable = true) {
     .digest("hex");
   return stable ? `audio-v2:${hash}` : hash;
 }
+type AlignmentRow = { data: string; engine: string; outcome: AlignmentOutcome | null; stage_timings: string | null };
+function readJob(row: AlignmentRow): AlignmentJob {
+  const job = JSON.parse(row.data) as AlignmentJob & { unverifiedCount?: number };
+  job.engine ||= row.engine;
+  if (!job.outcome && row.outcome) job.outcome = row.outcome;
+  if (!job.stageTimings && row.stage_timings) job.stageTimings = JSON.parse(row.stage_timings);
+  delete job.unverifiedCount;
+  job.intervals = job.intervals.map(({ verified: _verified, ...interval }: AlignmentInterval & { verified?: boolean }) => interval);
+  if (job.warning && /reviewed/i.test(job.warning))
+    job.warning = "Timings are estimated. Passages without matching narration remain unsynced.";
+  return job;
+}
 const jobs = () =>
   (
     sqlite
-      .prepare("SELECT data FROM alignment_jobs ORDER BY updated_at DESC")
-      .all() as { data: string }[]
-  ).map((row) => JSON.parse(row.data) as AlignmentJob);
+      .prepare("SELECT data,engine,outcome,stage_timings FROM alignment_jobs ORDER BY updated_at DESC")
+      .all() as AlignmentRow[]
+  ).map(readJob);
 export function listAlignmentJobs() {
   return jobs();
 }
 export function alignmentJob(id: string) {
   const row = sqlite
-    .prepare("SELECT data FROM alignment_jobs WHERE id=?")
-    .get(id) as { data: string } | undefined;
+    .prepare("SELECT data,engine,outcome,stage_timings FROM alignment_jobs WHERE id=?")
+    .get(id) as AlignmentRow | undefined;
   if (!row) throw new Error("This reading-sync job could not be found.");
-  return JSON.parse(row.data) as AlignmentJob;
+  return readJob(row);
 }
 function store(job: AlignmentJob) {
   job.updatedAt = Date.now();
@@ -147,7 +159,7 @@ function store(job: AlignmentJob) {
   }
   sqlite
     .prepare(
-      "INSERT INTO alignment_jobs(id,ebook_id,recording_id,data,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at",
+      "INSERT INTO alignment_jobs(id,ebook_id,recording_id,data,updated_at,engine,outcome,stage_timings) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at,engine=excluded.engine,outcome=excluded.outcome,stage_timings=excluded.stage_timings",
     )
     .run(
       job.id,
@@ -155,6 +167,9 @@ function store(job: AlignmentJob) {
       job.recordingId,
       JSON.stringify(job),
       job.updatedAt,
+      job.engine,
+      job.outcome ?? null,
+      job.stageTimings ? JSON.stringify(job.stageTimings) : null,
     );
   return job;
 }
@@ -207,7 +222,7 @@ const iso3 = (value: string) =>
     da: "dan",
     sv: "swe",
     nl: "nld",
-  })[language(value) as "en"] || "eng";
+  })[language(value) as "en"] || language(value) || "eng";
 const activeStatuses = ["queued", "copying", "processing"];
 export async function alignmentOptions(ebookId: string, recordingId: string) {
   const book = await extractBook(ebookId),
@@ -381,8 +396,6 @@ export async function createAlignment(
 const slimJob = (job: AlignmentJob) => ({
   ...job,
   intervalCount: job.intervals.length,
-  unverifiedCount: job.intervals.filter((interval) => !interval.verified)
-    .length,
   intervals: [],
 });
 const workerConfigured = () =>
@@ -538,10 +551,6 @@ export async function autoQueueAlignmentsForWork(
     );
   }
 }
-const finished = (job: AlignmentJob) =>
-  job.mode === "anchored"
-    ? job.anchoring?.stage === "done"
-    : job.sectionsDone.length === job.pairings.length;
 // The worker ends a request itself (HTTP 504) after at most 1700 s, so these client
 // waits must stay longer than that for its clear error to arrive first.
 const SECTION_TIMEOUT_MS = 30 * 60 * 1000,
@@ -556,6 +565,44 @@ const defaultWorkerRetryClock = {
 let workerRetryClock = defaultWorkerRetryClock;
 export function setWorkerRetryClockForTests(clock: typeof defaultWorkerRetryClock | null) {
   workerRetryClock = clock ?? defaultWorkerRetryClock;
+}
+const workerMetadata = z.object({
+  engine: z.string().min(1).optional(),
+  outcome: z.enum(["mapped", "partial", "unsynced", "language_not_supported", "error"]).optional(),
+  stageTimings: z.record(z.string(), z.number().nonnegative().finite()).optional(),
+});
+type WorkerMetadata = z.infer<typeof workerMetadata>;
+class WorkerRequestError extends Error {
+  constructor(message: string, readonly metadata?: WorkerMetadata) { super(message); }
+}
+function applyWorkerMetadata(job: AlignmentJob, metadata: WorkerMetadata) {
+  if (metadata.engine) job.engine = metadata.engine;
+  if (metadata.stageTimings) {
+    job.stageTimings ||= {};
+    for (const [stage, seconds] of Object.entries(metadata.stageTimings))
+      job.stageTimings[stage] = (job.stageTimings[stage] ?? 0) + seconds;
+  }
+  const next = metadata.outcome;
+  if (!next) return;
+  if (!job.outcome || job.outcome === next) job.outcome = next;
+  else if (job.outcome === "error" || next === "error") job.outcome = "error";
+  else job.outcome = "partial";
+}
+function stopForWorkerOutcome(job: AlignmentJob, metadata: WorkerMetadata) {
+  if (metadata.outcome !== "language_not_supported" && metadata.outcome !== "error") return false;
+  // Keep the specific worker outcome even when earlier requests succeeded.
+  job.outcome = metadata.outcome;
+  job.status = "error";
+  job.error = metadata.outcome === "language_not_supported"
+    ? "The alignment worker does not support this language."
+    : "The alignment worker could not process this passage.";
+  store(job);
+  return true;
+}
+function finishWorkerOutcome(job: AlignmentJob) {
+  if (!job.outcome || job.outcome === "error" || job.outcome === "language_not_supported") return;
+  if (!job.intervals.length) job.outcome = "unsynced";
+  else if (job.outcome !== "mapped" || job.coverage < 1) job.outcome = "partial";
 }
 async function workerRequest(
   path: string,
@@ -590,19 +637,34 @@ async function workerRequest(
       await workerRetryClock.sleep(Math.min(3000, remaining));
       continue;
     }
-    // The worker stopped this request at its time limit; running it again would hold the core for as long.
-    if (response.status === 504) throw new Error(WORKER_TIMEOUT_MESSAGE);
-    if (!response.ok)
-      throw new Error(failure);
+    if (!response.ok) {
+      // Old workers may return an ordinary error body or no JSON at all.
+      const body = await response.json().catch(() => null) as { detail?: unknown } | null;
+      const metadata = workerMetadata.safeParse(body?.detail ?? body);
+      throw new WorkerRequestError(
+        response.status === 504 ? WORKER_TIMEOUT_MESSAGE : failure,
+        metadata.success ? metadata.data : undefined,
+      );
+    }
     return response.json();
   }
 }
 const anchorResult = z.object({
+  ...workerMetadata.shape,
   match: z
     .object({ index: z.number().int().nonnegative(), score: z.number() })
     .nullable(),
   start: z.number().nonnegative().finite().optional(),
   text: z.string().optional(),
+});
+const sectionResult = z.object({
+  ...workerMetadata.shape,
+  intervals: z.array(z.object({
+    index: z.number().int().nonnegative(),
+    start: z.number().nonnegative().finite(),
+    end: z.number().nonnegative().finite(),
+  })).max(20000),
+  elapsedSeconds: z.number().nonnegative().finite(),
 });
 async function processAnchored(
   job: AlignmentJob,
@@ -698,6 +760,8 @@ async function processAnchored(
       );
       if (!current()) return;
       job = alignmentJob(job.id);
+      applyWorkerMetadata(job, result);
+      if (stopForWorkerOutcome(job, result)) return;
       job.anchoring!.samples[i] = {
         ...sample,
         done: true,
@@ -797,20 +861,7 @@ async function processAnchored(
           return response;
         })();
     if (!current()) return;
-    const result = z
-      .object({
-        intervals: z
-          .array(
-            z.object({
-              index: z.number().int().nonnegative(),
-              start: z.number().nonnegative().finite(),
-              end: z.number().nonnegative().finite(),
-            }),
-          )
-          .max(20000),
-        elapsedSeconds: z.number().nonnegative().finite(),
-      })
-      .parse(raw);
+    const result = sectionResult.parse(raw);
     const intervals: AlignmentInterval[] = coreIntervals(
       segment,
       result.intervals,
@@ -827,6 +878,8 @@ async function processAnchored(
       };
     });
     job = alignmentJob(job.id);
+    applyWorkerMetadata(job, result);
+    if (stopForWorkerOutcome(job, result)) return;
     const plan = job.anchoring!;
     if (!intervals.length)
       plan.flags.push({
@@ -867,8 +920,9 @@ async function processAnchored(
   plan.stage = "done";
   job.progress = 1;
   job.status = "partial";
+  finishWorkerOutcome(job);
   job.warning =
-    "Timings are estimated from sampled narration. Preview a few passages, then mark the alignment reviewed. Passages without matching narration are left unsynced.";
+    "Timings are estimated from sampled narration. Passages without matching narration are left unsynced.";
   store(job);
   if (job.ebookId.startsWith("set-consensus:")) {
     const { onConsensusAlignmentFinished } = await import(
@@ -1045,16 +1099,11 @@ export async function processAlignments() {
             .digest("hex")
             .slice(0, 24);
           const output = join(folder, `section-${pair.section}-${cacheKey}.json`);
-          let result: {
-            intervals: { index: number; start: number; end: number }[];
-            elapsedSeconds: number;
-            peakMemoryMB?: number;
-            engine: string;
-          };
+          let raw: unknown;
           if (existsSync(output))
-            result = JSON.parse(readFileSync(output, "utf8"));
+            raw = JSON.parse(readFileSync(output, "utf8"));
           else {
-            result = await workerRequest(
+            raw = await workerRequest(
               "/align",
               {
                 audio,
@@ -1078,21 +1127,7 @@ export async function processAlignments() {
             alignmentJob(job.id).generation !== generation
           )
             break;
-          result = z
-            .object({
-              intervals: z
-                .array(
-                  z.object({
-                    index: z.number().int().nonnegative(),
-                    start: z.number().nonnegative().finite(),
-                    end: z.number().nonnegative().finite(),
-                  }),
-                )
-                .max(20000),
-              elapsedSeconds: z.number().nonnegative().finite(),
-              engine: z.string(),
-            })
-            .parse(result);
+          const result = sectionResult.parse(raw);
           const intervals: AlignmentInterval[] = result.intervals
             .filter(
               (interval) =>
@@ -1116,6 +1151,8 @@ export async function processAlignments() {
               };
             });
           job = alignmentJob(job.id);
+          applyWorkerMetadata(job, result);
+          if (stopForWorkerOutcome(job, result)) break;
           if (!intervals.length)
             job.warning =
               "This section could not be matched reliably. Check its edition and chapter pairing; unmatched text remains unsynced.";
@@ -1138,8 +1175,9 @@ export async function processAlignments() {
           activeStatuses.includes(job.status)
         ) {
           job.status = "partial";
+          finishWorkerOutcome(job);
           job.warning ||=
-            "Timings are estimated from the supplied text. Preview a few passages, then mark the alignment reviewed. Sections without a matching narration are left unsynced.";
+            "Timings are estimated from the supplied text. Sections without matching narration are left unsynced.";
           store(job);
           const path = join(folder, "map.json");
           writeFileSync(path + ".part", JSON.stringify(job));
@@ -1154,6 +1192,9 @@ export async function processAlignments() {
           current.generation === pending.generation
         ) {
           current.status = "error";
+          if (error instanceof WorkerRequestError && error.metadata)
+            applyWorkerMetadata(current, error.metadata);
+          current.outcome = "error";
           current.error =
             error instanceof Error ? error.message : "Local alignment failed.";
           store(current);
@@ -1315,15 +1356,7 @@ export function registerAlignment(app: FastifyInstance) {
         !!process.env.ALIGNMENT_WORKER_URL &&
         !!process.env.ALIGNMENT_WORKER_TOKEN,
       localOnly: true,
-      jobs: slim
-        ? listed.map((job) => ({
-            ...job,
-            intervalCount: job.intervals.length,
-            unverifiedCount: job.intervals.filter((interval) => !interval.verified)
-              .length,
-            intervals: [],
-          }))
-        : listed,
+      jobs: slim ? listed.map(slimJob) : listed,
     };
   });
   app.get("/api/alignments/options", async (req) => {
@@ -1365,36 +1398,14 @@ export function registerAlignment(app: FastifyInstance) {
       .object({ action: z.enum(["pause", "resume", "cancel", "review"]) })
       .parse(req.body);
     const job = alignmentJob(id);
-    if (action === "review") {
-      const book = await extractBook(job.ebookId);
-      if (
-        !finished(job) ||
-        book.fingerprint !== job.fingerprint ||
-        audioFingerprint(job.recordingId) !== job.audioFingerprint
-      )
-        throw new Error(
-          "Finish or rebuild this alignment before marking it reviewed.",
-        );
-      job.intervals = job.intervals.map((interval) => ({
-        ...interval,
-        verified: true,
-      }));
-      job.status = job.coverage > 0.95 ? "ready" : "partial";
-      job.warning =
-        job.coverage > 0.95
-          ? null
-          : "Reviewed sections are ready. Text without matching narration remains unsynced.";
-    } else {
-      job.status =
-        action === "pause"
-          ? "paused"
-          : action === "cancel"
-            ? "cancelled"
-            : "queued";
-      job.error = null;
-      if (action === "resume" && job.pool)
-        clearPoolStaging(job, job.pool.triedHosts);
-    }
+    // Older client builds can still send review; maps remain estimated.
+    if (action === "review") return job;
+    job.status = action === "pause" ? "paused" : action === "cancel" ? "cancelled" : "queued";
+    job.error = null;
+    if (action === "resume" && (job.outcome === "error" || job.outcome === "language_not_supported"))
+      delete job.outcome;
+    if (action === "resume" && job.pool)
+      clearPoolStaging(job, job.pool.triedHosts);
     store(job);
     if (action === "resume") void processAlignments();
     return job;
@@ -1464,7 +1475,6 @@ export function registerAlignment(app: FastifyInstance) {
       ...input,
       section: section.index,
       confidence: 1,
-      verified: true,
     });
     return store(job);
   });

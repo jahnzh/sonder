@@ -41,8 +41,16 @@ The reader showing one sentence per line, scrolling with the narration.
 _Avoid_: Karaoke, line mode
 
 **Alignment map**:
-The sentence-to-time mapping between one recording and one ebook edition.
-_Avoid_: Sync map, timings
+The sentence-to-time mapping between one recording and one ebook edition. Always generated and always estimated; nobody reviews or corrects it.
+_Avoid_: Sync map, timings, reviewed map
+
+**Unsynced passage**:
+Part of an ebook edition that has no place in the alignment map, because the narration could not be matched or the language is not supported.
+_Avoid_: Gap, missing timings
+
+**Rebuild**:
+Automatically generating a fresh alignment map when the existing one was made by an older engine, replacing the old map entirely when it finishes.
+_Avoid_: Re-sync, repair, migrate
 
 **Narrated sentence**:
 The sentence the narration is currently speaking, located through the alignment map.

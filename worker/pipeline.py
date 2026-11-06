@@ -8,6 +8,7 @@ from pathlib import Path
 from deadline import AlignmentFailed, alignment_limit, anchor_limit, run_with_deadline
 
 CHILD = [sys.executable, str(Path(__file__).with_name("align_task.py"))]
+ENGINE = "aeneas-1.7.3"
 
 def _run_child(mode, spec, folder, deadline, limit, child):
     work = Path(tempfile.mkdtemp(prefix=".task-", dir=folder))
@@ -33,9 +34,15 @@ def align_section(*, audio, output, fragments, language, start, duration, media_
         code, error = run_with_deadline([ffmpeg, "-nostdin", "-v", "error", "-threads", "1", "-ss", str(start), "-i", str(audio), "-t", str(duration), "-ac", "1", "-ar", "16000", "-y", str(wave_path)], deadline, limit)
         if code != 0:
             raise AlignmentFailed(error or f"ffmpeg exited with {code}")
+        extracted = time.monotonic()
         step = _run_child("align", {"audio": str(audio), "wave": str(wave_path), "text": str(text_path), "map": str(map_path), "folder": str(media_folder),
                                     "fragments": fragments, "language": language, "start": start, "duration": duration}, output.parent, deadline, limit, child)
-        result = {"engine": "aeneas-1.7.3", "elapsedSeconds": time.monotonic() - started, "peakMemoryMB": step["peakMemoryMB"], "intervals": step["intervals"], "quality": step["quality"]}
+        finished = time.monotonic()
+        mapped = len({item["index"] for item in step["intervals"] if 0 <= item["index"] < len(fragments) and item["end"] > item["start"]})
+        outcome = "mapped" if mapped == len(fragments) else "partial" if mapped else "unsynced"
+        result = {"engine": ENGINE, "outcome": outcome,
+                  "stageTimings": {"audioExtraction": extracted - started, "alignment": finished - extracted},
+                  "elapsedSeconds": finished - started, "peakMemoryMB": step["peakMemoryMB"], "intervals": step["intervals"], "quality": step["quality"]}
         temporary = output.with_suffix(".part")
         temporary.write_text(json.dumps(result))
         temporary.replace(output)
@@ -47,9 +54,12 @@ def align_section(*, audio, output, fragments, language, start, duration, media_
 def locate_passage(*, audio, folder, fragments, language, start, duration, env=None, child=CHILD):
     """Transcribe a short excerpt and find it in the supplied text, under the /anchor limit."""
     limit = anchor_limit(duration, env)
+    started = time.monotonic()
     try:
-        return _run_child("anchor", {"audio": str(audio), "folder": str(folder), "fragments": fragments, "language": language, "start": start, "duration": duration},
-                          folder, time.monotonic() + limit, limit, child)
+        result = _run_child("anchor", {"audio": str(audio), "folder": str(folder), "fragments": fragments, "language": language, "start": start, "duration": duration},
+                            folder, started + limit, limit, child)
+        return {**result, "engine": ENGINE, "outcome": "mapped" if result.get("match") else "unsynced",
+                "stageTimings": {"speechRecovery": time.monotonic() - started}}
     finally:
         # The child writes its sample here and a SIGKILL skips its own cleanup. One job runs at a time, so any
         # sample left in the folder is dead.

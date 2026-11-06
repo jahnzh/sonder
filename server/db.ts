@@ -39,6 +39,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS alignment_pair ON alignment_jobs(ebook_id,reco
 CREATE TABLE IF NOT EXISTS hardcover_reading_outbox(book_id INTEGER PRIMARY KEY,account_id INTEGER NOT NULL,work_id TEXT NOT NULL REFERENCES works(id),fraction REAL NOT NULL,updated_at INTEGER NOT NULL,error TEXT);
 CREATE TABLE IF NOT EXISTS media_faults(recording_id TEXT NOT NULL REFERENCES recordings(id),scope TEXT NOT NULL,reason TEXT NOT NULL,note TEXT NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(recording_id,scope));
 `);
+// Existing alignment maps were all produced by the current aeneas worker.
+const alignmentColumns = new Set(
+  (sqlite.prepare("PRAGMA table_info(alignment_jobs)").all() as { name: string }[])
+    .map((column) => column.name),
+);
+for (const [column, definition] of [
+  ["engine", "TEXT NOT NULL DEFAULT 'aeneas-1.7.3'"],
+  ["outcome", "TEXT"],
+  ["stage_timings", "TEXT"],
+] as const)
+  if (!alignmentColumns.has(column))
+    sqlite.exec(`ALTER TABLE alignment_jobs ADD COLUMN ${column} ${definition}`);
 if (
   !(
     sqlite.prepare("PRAGMA table_info(acquisitions)").all() as {

@@ -220,12 +220,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await expect(page.locator(".reader-room:not(.inline-reader) .alignment-status")).toContainText(
     "Partial alignment",
   );
-  await page
-    .getByRole("button", {
-      name: "Mark alignment reviewed",
-      exact: true,
-    })
-    .click();
+  await expect(page.getByRole("button", { name: "Mark alignment reviewed", exact: true })).toHaveCount(0);
   await page
     .getByRole("button", { name: "Close reader options", exact: true })
     .click();

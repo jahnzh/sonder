@@ -331,6 +331,8 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
       status: consensusJob.status,
       progress: consensusJob.progress,
       engine: consensusJob.engine,
+      outcome: consensusJob.outcome,
+      stageTimings: consensusJob.stageTimings,
       error: null,
       warning: consensusJob.warning,
       intervals,
