@@ -100,9 +100,9 @@ test("chapter CTC publishes first and last sentences with worker metadata and re
   assert.ok(requested.length > 0 && requested.every((engine) => engine === undefined));
   delete process.env.ALIGNMENT_CHAPTER_ENGINE;
 
-  // The CTC default must not change a newly queued anchored job.
+  // Anchored jobs also default to CTC for their alignment windows.
   delete process.env.ALIGNMENT_WORKER_URL;
   const anchored = await createAlignment("ctc-ebook", "ctc-recording", undefined, "anchored");
   assert.equal(anchored.mode, "anchored");
-  assert.equal(anchored.engine, "aeneas-1.7.3");
+  assert.equal(anchored.engine, engine);
 });
