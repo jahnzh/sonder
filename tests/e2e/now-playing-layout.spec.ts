@@ -394,8 +394,12 @@ async function openAlignedReader(page:Page,browserName:string,request:APIRequest
  return {dialog,player,book};
 }
 async function pageAwayFromNarration(page:Page,dialog:Locator,back:Locator){
- const pageBox=await boxOf(dialog.locator(".inline-reader .reader-viewport"));
- await page.mouse.click(pageBox.x+pageBox.width*0.9,pageBox.y+pageBox.height/2);
+ const next=dialog.getByRole("button",{name:"Next page",exact:true});
+ if(await next.isVisible())await next.click();
+ else{
+  const pageBox=await boxOf(dialog.locator(".inline-reader .reader-viewport"));
+  await page.mouse.click(pageBox.x+pageBox.width*0.9,pageBox.y+pageBox.height/2);
+ }
  await expect(back).toBeEnabled({timeout:READER_WAIT_MS.followHighlight});
 }
 async function ensureFollowingNarration(back:Locator){
@@ -518,6 +522,40 @@ test.describe("#122 reader Back to narration layout",()=>{
    await assertPlayerControlDomOrder(player);
    await assertPlayerControlTabOrder(page,player,true);
   }
+ });
+ test("a controls tap does not turn a later relocation into a page turn",async({page,browserName,request})=>{
+  test.setTimeout(READER_SPEC_TIMEOUT_MS);
+  const {dialog,player}=await openAlignedReader(page,browserName,request,readerSmokeSizes[0]);
+  const room=dialog.locator(".inline-reader");
+  const back=player.getByRole("button",{name:"Back to narration",exact:true});
+  await showReaderTopbar(page,room);
+  await ensureFollowingNarration(back);
+
+  // A bookmark at the current location lets us wait until epub.js has reported
+  // the different location below, even when following correctly stays enabled.
+  const bookmark=room.locator(".reader-bookmark-toggle");
+  if(await bookmark.getAttribute("aria-pressed")!=="true")await bookmark.evaluate((button:HTMLButtonElement)=>button.click());
+  await expect(bookmark).toHaveAttribute("aria-pressed","true");
+  const viewport=await boxOf(room.locator(".reader-viewport"));
+  const x=viewport.x+viewport.width/2,y=viewport.y+viewport.height/2;
+  await page.mouse.click(x,y);
+  await expect(room).toHaveAttribute("data-controls-visible","false");
+  await page.mouse.click(x,y);
+  await expect(room).toHaveAttribute("data-controls-visible","true");
+
+  // A delayed epub.js selection reports a location without a new reader gesture.
+  await room.locator(".reader-viewport iframe").first().evaluate((frame:HTMLIFrameElement)=>{
+   const doc=frame.contentDocument!,text=doc.querySelector("#p11")?.firstChild;
+   if(!text)throw new Error("Expected the fixture's last paragraph");
+   const range=doc.createRange();range.setStart(text,0);range.setEnd(text,7);
+   const selection=frame.contentWindow!.getSelection()!;
+   selection.removeAllRanges();selection.addRange(range);
+   const event=doc.createEvent("Event");event.initEvent("selectionchange",true,false);doc.dispatchEvent(event);
+  });
+  await expect(bookmark).toHaveAttribute("aria-pressed","false",{timeout:READER_WAIT_MS.followHighlight});
+  await expect(back).toBeDisabled();
+  await expect(room).toHaveAttribute("data-current-passage",/./);
+  await pageAwayFromNarration(page,dialog,back);
  });
 });
 
