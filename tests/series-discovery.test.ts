@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { hardcoverSeriesLanguageSample } from "./hardcover-series-real-fixture.ts";
 
 const temp = mkdtempSync(join(tmpdir(), "sonder-series-discovery-"));
 process.env.DATA_DIR = join(temp, "db");
@@ -32,6 +33,7 @@ const pendingBook = { ...books[0], id: 107, title: "Frankenstein", contributions
 const lateBook = { ...books[0], id: 105, title: "Third crossing", release_year: 2023, release_date: "2023-01-01",
   book_series: [{ position: 4, series: { id: 11, name: "The Crossing" } }] };
 let seriesElevenExtras: typeof books = [];
+let showRefreshCandidates = false;
 let externalRequests = 0;
 let hardcoverCalls = 0;
 let hardcoverOutage = false;
@@ -45,8 +47,20 @@ globalThis.fetch = async (input, init) => {
     assert.match(query, /search\(query:\$q,query_type:"Series"/);
     return Response.json({ data: { search: { ids: [11, 12] } } });
   }
+  if (query.includes("SonderSeriesPreview") && variables.id === 15) {
+    assert.match(query, /users_count/);
+    assert.match(query, /default_physical_edition\s*\{\s*language\s*\{\s*language\s+code2/);
+    assert.match(query, /editions\s*\{\s*language\s*\{\s*language\s+code2/);
+  }
   if (query.includes("SonderSeriesPreview")) return Response.json({ data: { series_by_pk: {
-    ...(variables.id === 13 ? { id: 13, name: "Alice series", author: { name: "Lewis Carroll" }, books_count: 1,
+    ...(variables.id === 17 ? { id: 17, name: "Explicit choices", author: { name: "Ada North" }, books_count: 2,
+      book_series: [{ position: 1, book: books[0] }, { position: 1, book: books[1] },
+        ...(showRefreshCandidates ? hardcoverSeriesLanguageSample.map((entry) => ({ ...entry, position: 2 })) : [])] } : variables.id === 16 ? { id: 16, name: "Edition fallback", author: null, books_count: 2,
+      book_series: [
+        { position: 1, book: { ...hardcoverSeriesLanguageSample[0].book, default_physical_edition: null, default_audio_edition: null, users_count: 0 } },
+        { position: 1, book: { ...hardcoverSeriesLanguageSample[3].book, users_count: 50 } },
+      ] } : variables.id === 15 ? { id: 15, name: "Captured series", author: null, books_count: 4,
+      book_series: hardcoverSeriesLanguageSample.map((entry) => ({ ...entry, position: 1 })) } : variables.id === 13 ? { id: 13, name: "Alice series", author: { name: "Lewis Carroll" }, books_count: 1,
       book_series: [{ position: 1, book: existingBook }] } : variables.id === 14 ? {
       id: 14, name: "Mixed series", author: { name: "Mary Shelley" }, books_count: 2,
       book_series: [{ position: 1, book: pendingBook }, { position: 2, book: books[2] }],
@@ -81,6 +95,21 @@ test("preview orders works and identifies existing, unnumbered and unreleased ch
     [101, 1, true, false, true], [102, 2, false, false, true],
     [104, 3, false, true, false], [103, null, false, false, false],
   ]);
+});
+
+test("series preview picks one candidate using captured Hardcover language and popularity", async () => {
+  const english = await app.inject("/api/hardcover/series/15?language=en");
+  assert.equal(english.statusCode, 200, english.body);
+  assert.deepEqual(english.json().works.filter((work: any) => work.selected).map((work: any) => work.id), [341379]);
+  const norwegian = await app.inject("/api/hardcover/series/15?language=no");
+  assert.equal(norwegian.statusCode, 200, norwegian.body);
+  assert.deepEqual(norwegian.json().works.filter((work: any) => work.selected).map((work: any) => work.id), [2665487]);
+  const unmatched = await app.inject("/api/hardcover/series/15?language=fr");
+  assert.equal(unmatched.statusCode, 200, unmatched.body);
+  assert.deepEqual(unmatched.json().works.filter((work: any) => work.selected).map((work: any) => work.id), [341379]);
+  const fallbackEdition = await app.inject("/api/hardcover/series/16?language=cs");
+  assert.equal(fallbackEdition.statusCode, 200, fallbackEdition.body);
+  assert.deepEqual(fallbackEdition.json().works.filter((work: any) => work.selected).map((work: any) => work.id), [341379]);
 });
 
 test("series search distinguishes same-name Hardcover identities", async () => {
@@ -602,4 +631,27 @@ test("removal default ignores stale series origin after library delete and manua
   );
   assert.equal(work.libraryOrigin.source, "manual");
   assert.equal(work.removalDefaultSelected, false);
+});
+
+
+test("explicit series choices preserve multiple books at the same position", async () => {
+  const result = await app.inject({ method: "POST", url: "/api/series", payload: { id: 17, bookIds: [101, 102] } });
+  assert.equal(result.statusCode, 200, result.body);
+  assert.deepEqual(result.json().works.filter((work: any) => work.added).map((work: any) => work.id), [101, 102]);
+});
+
+
+test("refresh defaults to one newly discovered work per position without adding it", async () => {
+  showRefreshCandidates = true;
+  try {
+    const norwegian = await app.inject("/api/series/17?refresh=1&language=no");
+    assert.equal(norwegian.statusCode, 200, norwegian.body);
+    const newWorks = norwegian.json().works.filter((work: any) => work.new);
+    assert.equal(newWorks.length, 4);
+    assert.ok(newWorks.every((work: any) => !work.added));
+    assert.deepEqual(newWorks.filter((work: any) => work.selected).map((work: any) => work.id), [2665487]);
+    const english = await app.inject("/api/series/17?language=en");
+    assert.equal(english.statusCode, 200, english.body);
+    assert.deepEqual(english.json().works.filter((work: any) => work.new && work.selected).map((work: any) => work.id), [341379]);
+  } finally { showRefreshCandidates = false; }
 });
