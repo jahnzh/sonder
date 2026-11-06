@@ -51,6 +51,15 @@ cd "$repo_root"
 # `docker images` reports 12-char short ids — always compare in the short form.
 image_short() { s=${1#sha256:}; printf '%.12s' "$s"; }
 
+# After a failed marker or smoke check, :local points at a rejected build; retag the rollback image back to :local
+# so a later compose up or restart does not pick up that image.
+restore_local_from_rollback() {
+  echo "restoring sonder-audiobooks:local from sonder-audiobooks:${rollback_tag}" >&2
+  if ! $docker tag "sonder-audiobooks:${rollback_tag}" "sonder-audiobooks:local"; then
+    echo "failed to retag :local to the rollback image; fix manually: docker tag sonder-audiobooks:${rollback_tag} sonder-audiobooks:local" >&2
+  fi
+}
+
 # The reader live check needs a recording id: the most recent recording with a finished
 # EPUB alignment map (alignment_jobs -> recordings -> audio_editions -> ebook_editions).
 # The heredoc is quoted so bash leaves the SQL '$.progress' path expression untouched.
@@ -162,7 +171,8 @@ new_id=$($docker inspect --format '{{.Id}}' sonder-audiobooks:local)
 for m in ${markers[@]+"${markers[@]}"}; do
   if ! $docker run --rm --entrypoint sh "sonder-audiobooks:local" -c "grep -rqsF -- '$m' /app/server /app/dist /app/src" ; then
     echo "marker not found in the built image: $m" >&2
-    echo "the container is still running the previous image; rollback is not needed" >&2
+    echo "the container is still running the previous image; restoring :local to the rollback image" >&2
+    restore_local_from_rollback
     exit 1
   fi
   echo "marker ok: $m"
@@ -172,6 +182,8 @@ done
 echo "smoke-testing the built image"
 if ! $docker run --rm --entrypoint node sonder-audiobooks:local --import tsx scripts/image-smoke.mjs; then
   echo "image smoke failed; the container is still running the previous image" >&2
+  echo "restoring :local to the rollback image so the rejected build is not what compose starts next" >&2
+  restore_local_from_rollback
   exit 1
 fi
 
