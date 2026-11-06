@@ -234,7 +234,7 @@ test("bookmarks survive app reopening and deleting one does not change reading p
     await reopened.close();
   }
 });
-test("local alignment pairs chapters, preserves recording progress and invalidates changed sources", async () => {
+test("local alignment pairs chapters, preserves recording progress and invalidates changed sources", async (t) => {
   db.update(s.tracks)
     .set({
       chapters: [
@@ -264,7 +264,9 @@ test("local alignment pairs chapters, preserves recording progress and invalidat
   assert.equal(options.pairings[1].start, 300);
   process.env.ALIGNMENT_WORKER_URL = "http://alignment.test";
   process.env.ALIGNMENT_WORKER_TOKEN = "test-private-worker-token";
+  let workerCalls = 0;
   globalThis.fetch = async (input, init) => {
+    workerCalls++;
     const data = JSON.parse(String(init?.body));
     assert.equal(data.token, "test-private-worker-token");
     if (String(input) === "http://alignment.test/anchor") {
@@ -344,12 +346,26 @@ test("local alignment pairs chapters, preserves recording progress and invalidat
     200,
     "browser duration rounding must not invalidate an unchanged audio file",
   );
-  const reviewed = await app.inject({
-    method: "PATCH",
-    url: `/api/alignments/${job.id}`,
-    payload: { action: "review" },
+  await t.test("legacy review action returns the job without changing or reprocessing it", async () => {
+    const beforeJob = (await app.inject(`/api/alignments/${job.id}/map`)).json();
+    const beforeRow = sqlite.prepare("SELECT * FROM alignment_jobs WHERE id=?").get(job.id);
+    const mapFile = join(temp, "media", "alignment", job.id, "map.json");
+    const beforeFile = readFileSync(mapFile, "utf8");
+    const beforeMtime = statSync(mapFile).mtimeMs;
+    const beforeCalls = workerCalls;
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/api/alignments/${job.id}`,
+      payload: { action: "review" },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json(), beforeJob);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(sqlite.prepare("SELECT * FROM alignment_jobs WHERE id=?").get(job.id), beforeRow);
+    assert.equal(readFileSync(mapFile, "utf8"), beforeFile);
+    assert.equal(statSync(mapFile).mtimeMs, beforeMtime);
+    assert.equal(workerCalls, beforeCalls);
   });
-  assert.equal(reviewed.statusCode, 400, reviewed.body);
   const corrected = await app.inject({
     method: "POST",
     url: `/api/alignments/${job.id}/anchors`,

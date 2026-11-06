@@ -1395,9 +1395,11 @@ export function registerAlignment(app: FastifyInstance) {
   app.patch("/api/alignments/:id", async (req) => {
     const { id } = req.params as { id: string };
     const { action } = z
-      .object({ action: z.enum(["pause", "resume", "cancel"]) })
+      .object({ action: z.enum(["pause", "resume", "cancel", "review"]) })
       .parse(req.body);
     const job = alignmentJob(id);
+    // Older client builds can still send review; maps remain estimated.
+    if (action === "review") return job;
     job.status = action === "pause" ? "paused" : action === "cancel" ? "cancelled" : "queued";
     job.error = null;
     if (action === "resume" && (job.outcome === "error" || job.outcome === "language_not_supported"))
