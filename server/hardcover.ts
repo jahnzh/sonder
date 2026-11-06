@@ -8,6 +8,7 @@ import {
   onUserDeleted,
 } from "./users.ts";
 import { z } from "zod";
+import { selectSeriesDefaults } from "../src/series-selection.ts";
 import { existsSync } from "node:fs";
 import { and, eq } from "drizzle-orm";
 import { db, sqlite } from "./db.ts";
@@ -572,12 +573,18 @@ export function acknowledgeSeriesWorks(userId: number, seriesId: number, bookIds
   return savedHardcoverSeries(userId, seriesId);
 }
 
+const seriesEdition = z.object({
+  language: z.object({ language: z.string().nullable().optional(), code2: z.string().nullable().optional() }).nullable().optional(),
+}).nullable().optional();
 const seriesPreviewSchema = z.object({ series_by_pk: z.object({
   id: z.number().int(), name: z.string(), books_count: z.number().nullable().optional(),
   author: z.object({ name: z.string() }).nullable().optional(),
   book_series: z.array(z.object({ position: z.number().nullable(), book: z.object({
     id: z.number().int(), title: z.string().nullable(), release_year: z.number().nullable().optional(),
     release_date: z.string().nullable().optional(), cached_image: image,
+    users_count: z.number().nullable().optional(),
+    default_physical_edition: seriesEdition, default_audio_edition: seriesEdition,
+    editions: z.array(seriesEdition).default([]),
     contributions: z.array(z.object({ contribution: z.string().nullable().optional(), author: z.object({ name: z.string() }).nullable() })).default([]),
   }).nullable() })),
 }).nullable() });
@@ -589,7 +596,7 @@ type SeriesPreviewPayload = Omit<z.infer<typeof seriesPreviewSchema>, "series_by
 async function fetchSeriesPreviewPayload(userId: number, id: number, priority: HardcoverPriority = "interactive"): Promise<SeriesPreviewPayload> {
   const result = await graphql(
     userId,
-    `query SonderSeriesPreview($id:Int!){series_by_pk(id:$id){id name books_count author{name} book_series{position book{id title release_year release_date cached_image contributions{contribution author{name}}}}}}`,
+    `query SonderSeriesPreview($id:Int!){series_by_pk(id:$id){id name books_count author{name} book_series{position book{id title release_year release_date users_count default_physical_edition{language{language code2}} default_audio_edition{language{language code2}} editions{language{language code2}} cached_image contributions{contribution author{name}}}}}}`,
     { id },
     seriesPreviewSchema,
     priority,
@@ -598,7 +605,7 @@ async function fetchSeriesPreviewPayload(userId: number, id: number, priority: H
   return result as SeriesPreviewPayload;
 }
 
-function buildSeriesPreviewFromPayload(userId: number, result: SeriesPreviewPayload) {
+function buildSeriesPreviewFromPayload(userId: number, result: SeriesPreviewPayload, preferredLanguage = "en") {
   const series = result.series_by_pk;
   const works = series.book_series.flatMap(({ position, book }) => {
     if (!book) return [];
@@ -611,14 +618,19 @@ function buildSeriesPreviewFromPayload(userId: number, result: SeriesPreviewPayl
       : book.release_year != null && book.release_year > now.getUTCFullYear();
     return [{ id: book.id, title: book.title || "Untitled book", position,
       cover: book.cached_image?.url ?? null, workId: link?.workId ?? null,
-      owned: !!link?.owned, unreleased, needsAdmin, selected: position !== null && !unreleased && !needsAdmin }];
+      owned: !!link?.owned, unreleased, needsAdmin,
+      language: (book.default_physical_edition ?? book.default_audio_edition)?.language?.code2 ?? null,
+      editionLanguages: book.editions.flatMap((edition) => edition?.language?.code2 ? [edition.language.code2] : []),
+      popularity: book.users_count ?? null,
+      releaseDate: book.release_date ?? (book.release_year != null ? `${book.release_year}-01-01` : null) }];
   }).sort((a, b) => a.position === null ? (b.position === null ? a.id - b.id : 1)
     : b.position === null ? -1 : a.position - b.position || a.id - b.id);
+  const defaults = selectSeriesDefaults(works, preferredLanguage);
   return { id: series.id, name: series.name, author: series.author?.name ?? null,
-    count: series.books_count ?? null, works };
+    count: series.books_count ?? null, works: works.map((work) => ({ ...work, selected: defaults.has(work.id) })) };
 }
-export async function hardcoverSeriesPreview(userId: number, id: number) {
-  return buildSeriesPreviewFromPayload(userId, await fetchSeriesPreviewPayload(userId, id));
+export async function hardcoverSeriesPreview(userId: number, id: number, preferredLanguage = "en") {
+  return buildSeriesPreviewFromPayload(userId, await fetchSeriesPreviewPayload(userId, id), preferredLanguage);
 }
 
 function refreshErrorMessage(error: HardcoverUpstreamError) {
@@ -677,18 +689,31 @@ export function listSavedHardcoverSeries(userId: number) {
   return sqlite.prepare(`SELECT c.id,c.name,c.author,c.book_count AS count FROM series_catalogue c
     JOIN user_saved_series u ON u.series_id=c.id WHERE u.user_id=? ORDER BY c.name,c.id`).all(userId);
 }
+// The catalogue intentionally has no language columns. Keep the recent response in
+// memory so revisits can select defaults without another Hardcover request.
+const recentSeriesPayloads = new Map<string, SeriesPreviewPayload>();
+function refreshedSeriesWithDefaults(userId: number, id: number, payload: SeriesPreviewPayload, language: string) {
+  const saved = savedHardcoverSeries(userId, id);
+  const preview = buildSeriesPreviewFromPayload(userId, payload, language);
+  const addedPositions = new Set(saved.works.filter((work) => work.added && work.position !== null).map((work) => work.position));
+  const newIds = new Set(saved.works.filter((work) => work.new && !work.added && !addedPositions.has(work.position)).map((work) => work.id));
+  const defaults = selectSeriesDefaults(preview.works.filter((work) => newIds.has(work.id)), language);
+  return { ...saved, works: saved.works.map((work) => ({ ...work, selected: defaults.has(work.id) })) };
+}
 /** Refresh the shared catalogue for a saved series by Hardcover ID without adding works. */
-export async function refreshSavedHardcoverSeries(userId: number, id: number, options?: { force?: boolean }) {
+export async function refreshSavedHardcoverSeries(userId: number, id: number, options?: { force?: boolean; language?: string }) {
   // Confirm membership first so a missing series does not hit Hardcover.
   ensureSeriesSeenBaseline(userId, id);
   const membership = sqlite.prepare(
     "SELECT refreshed_at AS refreshedAt FROM user_saved_series WHERE user_id=? AND series_id=?",
   ).get(userId, id) as { refreshedAt: number | null } | undefined;
   if (!membership) throw new Error("This saved series could not be found.");
+  const cacheKey = `${userId}:${id}`;
+  const cachedPayload = recentSeriesPayloads.get(cacheKey);
   // Skip a recent successful refresh, but still attempt when the token is missing so the user sees why.
-  if (!options?.force && membership.refreshedAt && Date.now() - membership.refreshedAt < SERIES_REFRESH_MAX_AGE_MS
+  if (cachedPayload && !options?.force && membership.refreshedAt && Date.now() - membership.refreshedAt < SERIES_REFRESH_MAX_AGE_MS
     && !!hardcoverKey(userId)) {
-    return savedHardcoverSeries(userId, id);
+    return refreshedSeriesWithDefaults(userId, id, cachedPayload, options?.language || "en");
   }
   // Only the Hardcover fetch is treated as an outage; local SQLite work must surface normally.
   let payload: SeriesPreviewPayload;
@@ -704,7 +729,10 @@ export async function refreshSavedHardcoverSeries(userId: number, id: number, op
     sqlite.prepare("UPDATE user_saved_series SET refreshed_at=? WHERE user_id=? AND series_id=?")
       .run(Date.now(), userId, id);
   })();
-  return savedHardcoverSeries(userId, id);
+  recentSeriesPayloads.delete(cacheKey);
+  recentSeriesPayloads.set(cacheKey, payload);
+  if (recentSeriesPayloads.size > 100) recentSeriesPayloads.delete(recentSeriesPayloads.keys().next().value!);
+  return refreshedSeriesWithDefaults(userId, id, payload, options?.language || "en");
 }
 export function savedHardcoverSeries(userId: number, id: number, options?: {
   refreshError?: string;

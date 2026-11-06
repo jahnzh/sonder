@@ -43,7 +43,8 @@ export function registerHardcoverRoutes(app: FastifyInstance) {
   });
   app.get("/api/hardcover/series/:id", async (req) => {
     const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(req.params);
-    return hardcoverSeriesPreview(currentUserId(req), id);
+    const { language } = z.object({ language: z.string().trim().min(1).max(100).optional() }).parse(req.query ?? {});
+    return hardcoverSeriesPreview(currentUserId(req), id, language);
   });
   app.get("/api/hardcover/books/:id/series", async (req) => {
     const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(req.params);
@@ -59,9 +60,9 @@ export function registerHardcoverRoutes(app: FastifyInstance) {
   });
   app.get("/api/series/:id", async (req) => {
     const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(req.params);
-    const { refresh } = z.object({ refresh: z.coerce.boolean().optional() }).parse(req.query ?? {});
+    const { refresh, language } = z.object({ refresh: z.coerce.boolean().optional(), language: z.string().trim().min(1).max(100).optional() }).parse(req.query ?? {});
     // Revisiting a saved series refreshes the Hardcover catalogue by ID (#206).
-    return refreshSavedHardcoverSeries(currentUserId(req), id, { force: !!refresh });
+    return refreshSavedHardcoverSeries(currentUserId(req), id, { force: !!refresh, language });
   });
   app.post("/api/series", async (req) => {
     const body = z
