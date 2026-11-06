@@ -12,16 +12,29 @@ import {
   isWorkerScreenBusyLine,
 } from "../scripts/orca/coordinator-screen.ts";
 
-/** detached bash+stub subtree: kill the whole process group (negative signal). */
-function killWatcherTree(pid: number) {
+/**
+ * Kill a detached session leader and every process in its group (bash, stub node, etc.).
+ * Uses the process-group id returned by spawn(..., { detached: true }) — same as leader pid on Linux.
+ */
+function killWatcherProcessGroup(leaderPid: number) {
   try {
-    process.kill(-pid, "SIGKILL");
+    process.kill(-leaderPid, "SIGKILL");
   } catch {
     try {
-      process.kill(pid, "SIGKILL");
+      process.kill(leaderPid, "SIGKILL");
     } catch {
       /* already dead */
     }
+  }
+}
+
+/** No leftover watch-inbox.sh for this run id (avoids orphaned sleep 9999 stubs reparented to init). */
+function assertNoWatchInboxForRun(runId: string) {
+  // [/] so pgrep -f does not match its own argv.
+  const needle = `[/]scripts/orca/watch-inbox.sh ${runId}`;
+  const r = spawnSync("pgrep", ["-af", needle], { encoding: "utf8" });
+  if (r.status === 0 && r.stdout.trim()) {
+    throw new Error(`leaked watch-inbox for ${runId}:\n${r.stdout.trim()}`);
   }
 }
 
@@ -45,11 +58,12 @@ test("follow-ups box: count ignores blank ○", () => {
   assert.equal(countVisibleQueuedFollowUps(box), 2);
 });
 
-test("watch-inbox: lock contention, then consume and log", async () => {
+test("watch-inbox: lock contention, then consume and log", async (t) => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "sonder-watch-")));
   const bin = join(dir, "bin");
   mkdirSync(bin);
-  const run = "run_test_watch_inbox";
+  /** Unique per run so pgrep cannot collide with other tests or leaked PIDs. */
+  const run = `run_test_watch_inbox_${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
   const rt = join(dir, "runtime");
   mkdirSync(rt);
 
@@ -95,54 +109,97 @@ exit 0
     XDG_RUNTIME_DIR: rt,
   };
 
-  const first = spawn("bash", [watchScript, run], {
-    env,
-    detached: true,
-    stdio: "ignore",
-  }) as ChildProcess;
-  const firstPid = first.pid;
-  if (firstPid == null) throw new Error("watch-inbox spawn returned no pid");
+  let first: ChildProcess | null = null;
+  let groupLeader: number | null = null;
+  let cleaned = false;
 
-  const holderFile = join(rt, `sonder-watch-inbox-${run}.pid`);
-  let sawPid = false;
-  for (let i = 0; i < 80; i++) {
-    try {
-      const h = readFileSync(holderFile, "utf8").trim().split(/\r?\n/)[0];
-      if (h && h === String(firstPid)) {
-        sawPid = true;
-        break;
-      }
-    } catch {
-      /* not created yet */
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    if (groupLeader != null) {
+      killWatcherProcessGroup(groupLeader);
+      groupLeader = null;
     }
-    await new Promise((r) => setTimeout(r, 50));
+    if (first) {
+      first.removeAllListeners();
+      if (!first.killed) {
+        try {
+          first.kill("SIGKILL");
+        } catch {
+          /* gone */
+        }
+      }
+      first = null;
+    }
+    try {
+      assertNoWatchInboxForRun(run);
+    } finally {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        /* temp dir race */
+      }
+    }
+  };
+
+  t.after(cleanup);
+
+  try {
+    // Own process group (leader pid == pgid) so one kill reaches bash + stub node.
+    first = spawn("bash", [watchScript, run], {
+      env,
+      detached: true,
+      stdio: "ignore",
+    }) as ChildProcess;
+    const firstPid = first.pid;
+    if (firstPid == null) throw new Error("watch-inbox spawn returned no pid");
+    groupLeader = firstPid;
+
+    const holderFile = join(rt, `sonder-watch-inbox-${run}.pid`);
+    let sawPid = false;
+    for (let i = 0; i < 80; i++) {
+      try {
+        const h = readFileSync(holderFile, "utf8").trim().split(/\r?\n/)[0];
+        if (h && h === String(firstPid)) {
+          sawPid = true;
+          break;
+        }
+      } catch {
+        /* not created yet */
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    assert.ok(sawPid, "first watcher should write its PID beside the lock file");
+
+    const second = spawnSync("bash", [watchScript, run], {
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(second.status, 1, second.stdout + second.stderr);
+    const combined = `${second.stderr}${second.stdout}`;
+    assert.match(combined, /PID\s+\d+/);
+    assert.ok(combined.includes(String(firstPid)));
+
+    killWatcherProcessGroup(firstPid);
+    groupLeader = null;
+    await Promise.race([
+      once(first, "exit"),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("first watcher did not exit")), 5000)),
+    ]);
+
+    writeStubMessage();
+    const third = spawnSync("bash", [watchScript, run], {
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(third.status, 0, third.stdout + third.stderr);
+
+    const logPath = join(rt, `sonder-watch-inbox-${run}.log`);
+    const log = readFileSync(logPath, "utf8").trim();
+    assert.ok(log.includes("msg_abc222"));
+    assert.ok(log.includes("worker_done"));
+    assert.ok(log.includes("hello subject"));
+  } finally {
+    cleanup();
   }
-  assert.ok(sawPid, "first watcher should write its PID beside the lock file");
-
-  const second = spawnSync("bash", [watchScript, run], {
-    env,
-    encoding: "utf8",
-  });
-  assert.equal(second.status, 1, second.stdout + second.stderr);
-  const combined = `${second.stderr}${second.stdout}`;
-  assert.match(combined, /PID\s+\d+/);
-  assert.ok(combined.includes(String(firstPid)));
-
-  killWatcherTree(firstPid);
-  await once(first, "exit");
-
-  writeStubMessage();
-  const third = spawnSync("bash", [watchScript, run], {
-    env,
-    encoding: "utf8",
-  });
-  assert.equal(third.status, 0, third.stdout + third.stderr);
-
-  const logPath = join(rt, `sonder-watch-inbox-${run}.log`);
-  const log = readFileSync(logPath, "utf8").trim();
-  assert.ok(log.includes("msg_abc222"));
-  assert.ok(log.includes("worker_done"));
-  assert.ok(log.includes("hello subject"));
-
-  rmSync(dir, { recursive: true, force: true });
 });
