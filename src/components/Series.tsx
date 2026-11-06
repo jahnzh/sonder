@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api } from "../lib";
 import type { Download, SavedEbook, SeriesWorkAcquisition } from "../types";
+import { normalizeSeriesLanguage, selectSeriesDefaults, type SeriesCandidate } from "../series-selection";
 import { Dialog } from "./ui/dialog";
 import { SeriesSaveOptions } from "./SeriesSaveOptions";
 import { SeriesRemoveDialog } from "./SeriesRemoveDialog";
@@ -9,7 +10,7 @@ import { SeriesWorkStatus, SERIES_SAVED_POLL_MS } from "./SeriesWorkStatus";
 import "../series.css";
 
 type SeriesSummary = { id: number; name: string; author: string | null; count: number | null; cover?: string | null };
-type SeriesWork = {
+type SeriesWork = SeriesCandidate & {
   id: number; title: string; position: number | null; cover: string | null;
   workId: string | null; owned?: boolean; selected?: boolean; unreleased: boolean;
   needsAdmin?: boolean;
@@ -34,6 +35,18 @@ type Series = SeriesSummary & {
   refreshError?: string;
 };
 export type SeriesTarget = { id: number; mode: "preview" | "saved" };
+
+const SERIES_LANGUAGE_KEY = "sonder-series-language";
+function initialSeriesLanguage() {
+  try {
+    const saved = localStorage.getItem(SERIES_LANGUAGE_KEY);
+    return normalizeSeriesLanguage(saved || navigator.language || "en") || "en";
+  } catch { return normalizeSeriesLanguage(navigator.language || "en") || "en"; }
+}
+function languageLabel(language: string) {
+  try { return new Intl.DisplayNames([navigator.language || "en"], { type: "language" }).of(language) || language; }
+  catch { return language; }
+}
 
 export function SeriesDiscovery({ configured, onConnect, onOpen }: { configured: boolean; onConnect: () => void; onOpen: (id: number) => void }) {
   const [query, setQuery] = useState("");
@@ -81,6 +94,8 @@ export function SeriesLibrary({ onOpen, revision }: { onOpen: (id: number) => vo
 export function SeriesDialog({ target, onClose, onSaved, downloads, savedEbooks, offlineEbookEditionIds, canAcquire }: { target: SeriesTarget | null; onClose: () => void; onSaved: () => void; downloads: Download[]; savedEbooks: SavedEbook[]; offlineEbookEditionIds: ReadonlySet<string>; canAcquire: boolean }) {
   const [series, setSeries] = useState<Series | null>(null);
   const [selected, setSelected] = useState<number[]>([]);
+  const [preferredLanguage, setPreferredLanguage] = useState(initialSeriesLanguage);
+  const [manualSelection, setManualSelection] = useState<Record<number, boolean>>({});
   const [mode, setMode] = useState<"preview" | "saved">("preview");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -93,13 +108,11 @@ export function SeriesDialog({ target, onClose, onSaved, downloads, savedEbooks,
     setBusy(true); setError("");
     try {
       const path = target.mode === "saved"
-        ? `/series/${target.id}${forceRefresh ? "?refresh=1" : ""}`
-        : `/hardcover/series/${target.id}`;
+        ? `/series/${target.id}?language=${encodeURIComponent(initialSeriesLanguage())}${forceRefresh ? "&refresh=1" : ""}`
+        : `/hardcover/series/${target.id}?language=${encodeURIComponent(initialSeriesLanguage())}`;
       const value = await api<Series>(path);
       setSeries(value);
-      setSelected(target.mode === "preview"
-        ? value.works.filter((work) => work.selected).map((work) => work.id)
-        : []);
+      setSelected(target.mode === "saved" ? value.works.filter((work) => work.selected).map((work) => work.id) : []);
     } catch (reason) { setSeries(null); setError((reason as Error).message); }
     finally { setBusy(false); }
   }, [target]);
@@ -110,7 +123,7 @@ export function SeriesDialog({ target, onClose, onSaved, downloads, savedEbooks,
   useEffect(() => {
     if (!target) return;
     setSeries(null); setError(""); setMode(target.mode); setSavedNotice(false); setSelected([]);
-    setSearchAudio(false); setSearchEbooks(false);
+    setSearchAudio(false); setSearchEbooks(false); setManualSelection({});
     void load();
   }, [target, load]);
   const acquisitionBusy = series?.works.some((work) =>
@@ -124,12 +137,18 @@ export function SeriesDialog({ target, onClose, onSaved, downloads, savedEbooks,
     const timer = setInterval(() => { void reloadSaved().catch(() => {}); }, SERIES_SAVED_POLL_MS);
     return () => clearInterval(timer);
   }, [target, mode, acquisitionBusy, reloadSaved]);
+  const defaults = series && mode === "preview" ? selectSeriesDefaults(series.works, preferredLanguage) : new Set<number>();
+  const chosen = mode === "preview" && series
+    ? series.works.filter((work) => manualSelection[work.id] ?? defaults.has(work.id)).map((work) => work.id)
+    : selected;
+  const languages = [...new Set(["en", preferredLanguage, ...(series?.works.flatMap((work) =>
+    [work.language, ...(work.editionLanguages || [])].filter((language): language is string => !!language).map(normalizeSeriesLanguage)) || [])])].sort();
   const save = async () => {
-    if (!series || !selected.length) return;
+    if (!series || !chosen.length) return;
     setBusy(true); setError("");
     try {
       const result = await api<Series>("/series", { method: "POST", body: JSON.stringify({
-        id: series.id, bookIds: selected, searchAudio, searchEbooks,
+        id: series.id, bookIds: chosen, searchAudio, searchEbooks,
       }) });
       setSeries(result); setMode("saved"); setSelected([]); setSavedNotice(true); onSaved();
     } catch (reason) { setError((reason as Error).message); }
@@ -155,7 +174,7 @@ export function SeriesDialog({ target, onClose, onSaved, downloads, savedEbooks,
     const audio = work.availability?.audio;
     const selectable = canSelect(work);
     return <li className={`series-work${work.new ? " series-work-new" : ""}`} key={work.id}>
-      {selectable ? <label><input type="checkbox" disabled={work.needsAdmin} checked={selected.includes(work.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, work.id] : current.filter((id) => id !== work.id))} />
+      {selectable ? <label><input type="checkbox" disabled={work.needsAdmin} checked={chosen.includes(work.id)} onChange={(event) => { const checked = event.target.checked; if (mode === "preview") setManualSelection((current) => ({ ...current, [work.id]: checked })); else setSelected((current) => checked ? [...current, work.id] : current.filter((id) => id !== work.id)); }} />
         <span>{work.position !== null && <b>#{work.position} </b>}{work.title}</span></label> : <strong>{work.position !== null && `#${work.position} `}{work.title}</strong>}
       <div className="series-work-meta">
         {work.new && <span>New</span>}
@@ -203,6 +222,11 @@ export function SeriesDialog({ target, onClose, onSaved, downloads, savedEbooks,
       {!!series.needsAdmin?.length && <p>These works need an administrator to confirm and link an existing match: {series.needsAdmin.map((work) => work.title).join(", ")}.</p>}
       <p>{series.author || "Author unknown"} · <span>Hardcover #{series.id}</span></p>
       {mode === "saved" && series.completion && <p>{series.completion.finished} of {series.completion.total} works finished · {next ? `Next unfinished: ${next.title}` : "Series complete"}</p>}
+      {mode === "preview" && <label>Preferred language <select value={preferredLanguage} onChange={(event) => {
+        const language = event.target.value;
+        setPreferredLanguage(language);
+        try { localStorage.setItem(SERIES_LANGUAGE_KEY, language); } catch {}
+      }}>{languages.map((language) => <option key={language} value={language}>{languageLabel(language)}</option>)}</select></label>}
       {numbered.length > 0 && <><h3>Numbered works</h3><ol className="series-works">{renderWorks(numbered)}</ol></>}
       {unnumbered.length > 0 && <><h3>Related works</h3><ul className="series-works">{renderWorks(unnumbered)}</ul></>}
       {mode === "saved" && newCount > 0 && <button className="button subtle" disabled={busy} onClick={() => void dismissNew()}>Dismiss new works</button>}
@@ -213,7 +237,7 @@ export function SeriesDialog({ target, onClose, onSaved, downloads, savedEbooks,
           onSearchAudio={setSearchAudio}
           onSearchEbooks={setSearchEbooks}
         />
-        <button className="button primary" disabled={busy || !selected.length} onClick={() => void save()}>Add selected works</button>
+        <button className="button primary" disabled={busy || !chosen.length} onClick={() => void save()}>Add selected works</button>
       </> : <>
         <button className="button subtle" type="button" onClick={() => setRemoveOpen(true)}>Remove series</button>
         <button className="button subtle" onClick={onClose}>Close series</button>

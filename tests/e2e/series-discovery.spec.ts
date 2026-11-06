@@ -44,7 +44,7 @@ test("discover and save chosen works from the intended series, then reopen it", 
   await expect(page.getByText(/Ebook:/).first()).toBeVisible();
   await expect(page.getByRole("dialog").getByText("Crossing Companion", { exact: true })).toBeVisible();
   // Numbered new works render as "#N Crossing Three", so match by role rather than exact title text.
-  await expect(page.getByRole("dialog").getByRole("checkbox", { name: /Crossing Three/ })).toBeVisible();
+  await expect(page.getByRole("dialog").getByRole("checkbox", { name: /Crossing Three/ })).toBeChecked();
   await expect(page.getByRole("dialog").getByText("New", { exact: true })).toBeVisible();
   const library = (await (await page.request.get("/api/books")).json()).filter((book: { inLibrary: boolean }) => book.inLibrary);
   expect(library.filter((book: { title: string }) => book.title === "Alice’s Adventures in Wonderland")).toHaveLength(1);
@@ -75,4 +75,43 @@ test("discover and save chosen works from the intended series, then reopen it", 
   await page.getByRole("button", { name: "Add series", exact: true }).click();
   await expect(page.getByRole("heading", { name: "The Crossing" })).toBeVisible();
   await expect(page.getByRole("dialog").getByText("Hardcover #701", { exact: true })).toBeVisible();
+});
+
+test("preferred series language changes defaults and preserves manual choices", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("sonder-series-language", "en"));
+  await page.route(/\/api\/hardcover\/series\/701(?:\?.*)?$/, async (route) => {
+    await route.fulfill({ json: {
+      id: 701, name: "The Crossing", author: "Ada North", count: 4,
+      works: [
+        { id: 1, title: "English first", position: 1, language: "en", popularity: 10, unreleased: false, workId: null },
+        { id: 2, title: "French first", position: 1, language: "fr", popularity: 10, unreleased: false, workId: null },
+        { id: 3, title: "English second", position: 2, language: "en", popularity: 10, unreleased: false, workId: null },
+        { id: 4, title: "French second", position: 2, language: "fr", popularity: 10, unreleased: false, workId: null },
+      ],
+    } });
+  });
+  await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
+  await page.goto("/#discover");
+  await page.getByRole("button", { name: "Series", exact: true }).click();
+  await page.getByRole("textbox", { name: "Search series" }).fill("Crossing");
+  await page.getByRole("button", { name: "Search series", exact: true }).click();
+  await page.getByRole("button", { name: "View The Crossing by Ada North" }).click();
+  const englishFirst = page.getByRole("checkbox", { name: /English first/ });
+  const frenchFirst = page.getByRole("checkbox", { name: /French first/ });
+  const englishSecond = page.getByRole("checkbox", { name: /English second/ });
+  const frenchSecond = page.getByRole("checkbox", { name: /French second/ });
+  await expect(englishFirst).toBeChecked();
+  await expect(frenchFirst).not.toBeChecked();
+  await englishFirst.uncheck();
+  await frenchFirst.check();
+  await page.getByLabel("Preferred language").selectOption("fr");
+  await expect(englishFirst).not.toBeChecked();
+  await expect(frenchFirst).toBeChecked();
+  await expect(englishSecond).not.toBeChecked();
+  await expect(frenchSecond).toBeChecked();
+  await page.getByLabel("Preferred language").selectOption("en");
+  await expect(englishFirst).not.toBeChecked();
+  await expect(frenchFirst).toBeChecked();
+  await expect(englishSecond).toBeChecked();
+  await expect(frenchSecond).not.toBeChecked();
 });
