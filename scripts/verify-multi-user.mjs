@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import {randomBytes} from 'node:crypto';
 import {chromium,expect as baseExpect} from '@playwright/test';
 import {FORBIDDEN} from './multi-user-forbidden.mjs';
+import {adminMultiUserVerifySnapshot,assertAdminMultiUserVerifyUnchanged} from './verify-multi-user-snapshot.mjs';
 const expect=baseExpect.configure({timeout:25000});
 process.loadEnvFile('.env');
 const baseURL=process.env.SONDER_VERIFY_URL || 'https://sonder.pecori.no';
@@ -21,7 +22,7 @@ try {
  check('Password-only sign-in is the admin');
  const adminBooks=async()=>(await(await admin.request.get('/api/books')).json()).map(b=>({id:b.id,inLibrary:b.inLibrary,status:b.status,progress:b.progress&&{position:b.progress.position,updatedAt:b.progress.updatedAt}}));
  const adminCatalogue=(await(await admin.request.get('/api/books')).json());
- const before=await adminBooks();
+ const beforeBooks=await adminBooks();
  const adminAppearance=await(await admin.request.get('/api/appearance')).json();
  const adminHardcover=(await(await admin.request.get('/api/settings')).json()).hardcoverConfigured;
  const username=`qa-${Date.now().toString(36)}`,password=randomBytes(12).toString('base64url');
@@ -67,8 +68,9 @@ try {
  const added=await qa.request.post('/api/library',{data:{bookId:playable.id}});if(!added.ok())throw Error('User library add failed');
  const mismatch=await qa.request.post('/api/progress',{data:{recordingId:playable.recordingId,trackId:track.id,position:9,duration:track.duration||60,updatedAt:Date.now()},headers:{'x-sonder-user-id':'1'}});
  if(mismatch.status()!==409)throw Error('A write tagged for another user was not refused: '+mismatch.status());
- const after=await adminBooks();
- if(JSON.stringify(after)!==JSON.stringify(before))throw Error('Admin library or progress changed during the check');
+ const beforeSnap=adminMultiUserVerifySnapshot(beforeBooks,playable.id);
+ const afterBooks=await adminBooks();
+ assertAdminMultiUserVerifyUnchanged(beforeSnap,adminMultiUserVerifySnapshot(afterBooks,playable.id));
  if(JSON.stringify(await(await admin.request.get('/api/appearance')).json())!==JSON.stringify(adminAppearance))throw Error('Admin appearance changed');
  if((await(await admin.request.get('/api/settings')).json()).hardcoverConfigured!==adminHardcover)throw Error('Admin Hardcover state changed');
  check('User writes stay with the user; mismatched user id is refused; admin data unchanged');
