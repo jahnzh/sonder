@@ -3,7 +3,7 @@ import { userStorageKey } from "../lib";
 import { useEffect, useRef, useState } from "react";
 import { BookOpen, Headphones, Loader2, Link2 } from "lucide-react";
 import { api, clock } from "../lib";
-import { createAlignmentMapLifecycle, intervalCountOf } from "../alignment-map-lifecycle";
+import { createAlignmentMapLifecycle } from "../alignment-map-lifecycle";
 import { alignmentMapDeps } from "../alignment-map-deps";
 import { usePlayer } from "../player";
 import type { Book } from "../types";
@@ -21,15 +21,8 @@ type Options = {
   languageMatch: boolean;
   anchored?: boolean;
 };
-const finished = (job: AlignmentJob) =>
-  job.mode === "anchored"
-    ? job.anchoring?.stage === "done"
-    : job.sectionsDone.length === job.pairings.length;
 const processing = (status: AlignmentJob["status"]) =>
   ["queued", "copying", "processing"].includes(status);
-const unverifiedCountOf = (job: AlignmentJob) =>
-  job.unverifiedCount ??
-  job.intervals.filter((interval) => !interval.verified).length;
 function flagText(flag: AlignmentFlag) {
   const range =
     flag.start !== undefined && flag.end !== undefined
@@ -466,7 +459,7 @@ export function ReadingSync({
                 processing: "Preparing reading sync",
                 paused: "Paused after current section",
                 cancelled: "Cancelled",
-                ready: "Ready",
+                ready: "Ready · Estimated timings",
                 partial:
                   job.progress === 1 && job.coverage > 0.95
                     ? "Ready · Estimated timings"
@@ -483,6 +476,16 @@ export function ReadingSync({
               ? ` · ${clock(job.elapsedSeconds)} processing`
               : ""}
           </p>
+          <p>
+            Engine: {job.engine}{job.outcome ? ` · Outcome: ${job.outcome.replaceAll("_", " ")}` : ""}
+          </p>
+          {job.stageTimings && Object.keys(job.stageTimings).length > 0 && (
+            <p>
+              {Object.entries(job.stageTimings).map(([stage, seconds]) =>
+                `${stage.replace(/([A-Z])/g, " $1").toLowerCase()}: ${seconds.toFixed(1)} s`
+              ).join(" · ")}
+            </p>
+          )}
           {job.warning && <p>{job.warning}</p>}
           {!!job.anchoring?.flags.length && (
             <ul className="alignment-flags">
@@ -546,18 +549,6 @@ export function ReadingSync({
             {job ? "Rebuild reading sync" : "Prepare reading sync"}
           </button>
         )}
-        {job &&
-          intervalCountOf(job) > 0 &&
-          finished(job) &&
-          unverifiedCountOf(job) > 0 && (
-            <button
-              className="button subtle"
-              disabled={busy}
-              onClick={() => void action("review")}
-            >
-              Mark alignment reviewed
-            </button>
-          )}
       </div>
       <p id="reading-sync-help" className="sync-preparation-help" role="status">
         {blockedReason ||
@@ -648,7 +639,7 @@ export function ReadingSync({
         )}
       <p className="reading-local-note">
         Processed locally on your server. Audio and sync files stay on the 4 TB
-        HDD. Estimated timings remain labelled until reviewed.
+        HDD. Timings are estimated.
       </p>
     </section>
   );

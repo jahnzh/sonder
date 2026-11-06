@@ -25,6 +25,16 @@ export const recordings = sqliteTable("recordings", {
     .notNull()
     .references(() => editions.id),
 });
+export const alignmentJobs = sqliteTable("alignment_jobs", {
+  id: text("id").primaryKey(),
+  ebookId: text("ebook_id").notNull().references(() => ebookEditions.id),
+  recordingId: text("recording_id").notNull().references(() => recordings.id),
+  data: text("data").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  engine: text("engine").notNull().default("aeneas-1.7.3"),
+  outcome: text("outcome"),
+  stageTimings: text("stage_timings", { mode: "json" }).$type<Record<string, number>>(),
+});
 export const tracks = sqliteTable("tracks", {
   chapters: text("chapters", { mode: "json" })
     .$type<{ title: string; start: number; end?: number }[]>()

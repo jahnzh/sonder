@@ -1285,7 +1285,7 @@ export function ReaderView({
     followScrub();
   };
   const controls = controlsVisible || desktop;
-  const timing = currentInterval ? (currentInterval.verified ? "" : " · estimated timings") : "";
+  const timing = currentInterval ? " · estimated timings" : "";
   const overlayDisplay = preferences.display === "segment" || preferences.display === "word";
   const showContents = desktop && preferences.display === "book" && !contentsHidden;
   // The sentence locator alone: the pages do not move in Word mode, so the CFI
@@ -1421,7 +1421,7 @@ export function ReaderView({
         {offline ? "Ebook saved offline" : "Save ebook offline"}
       </button>
       <p className="reader-sync-state" role="status">
-        {recoveryStatus || (!follow ? "Audio follow paused" : currentInterval ? `${currentInterval.verified ? "Following narration" : "Estimated sentence timings"}` : map ? "No timing for this position" : "Prepare reading sync to highlight narration")}
+        {recoveryStatus || (!follow ? "Audio follow paused" : currentInterval ? "Estimated sentence timings" : map ? "No timing for this position" : "Prepare reading sync to highlight narration")}
       </p>
     </div>
   );
@@ -1550,8 +1550,8 @@ export function ReaderView({
             <button className="reader-edge reader-edge-previous" aria-label="Previous page" onClick={()=>turn(-1)}><ArrowLeft size={22}/></button>
             <button className="reader-edge reader-edge-next" aria-label="Next page" onClick={()=>turn(1)}><ArrowRight size={22}/></button>
           </>}
-          {desktop && book && preferences.display === "segment" && <aside className="reader-lyrics-info" aria-label="Lyrics information"><strong>{book.title}</strong><span>{book.author}</span><span>{currentInterval ? currentInterval.verified ? "Following narration" : "Estimated sentence timings" : "Reading sync"}</span><p>Keyboard shortcuts</p><span>Space · play or pause</span><span>← / → · skip 30 seconds</span><span>↑ / ↓ · previous or next line</span><span>F · back to narration</span><span>P · page mode</span></aside>}
-          {desktop && book && preferences.display === "word" && <aside className="reader-lyrics-info" aria-label="Word information"><strong>{book.title}</strong><span>{book.author}</span><span>{currentInterval ? currentInterval.verified ? "Following narration" : "Estimated word timings" : "Words per minute"}</span><p>Keyboard shortcuts</p><span>Space · play or pause</span><span>← / → · previous or next word</span><span>Shift+← / → · previous or next sentence</span><span>F · back to narration</span><span>P · page mode</span></aside>}
+          {desktop && book && preferences.display === "segment" && <aside className="reader-lyrics-info" aria-label="Lyrics information"><strong>{book.title}</strong><span>{book.author}</span><span>{currentInterval ? "Estimated sentence timings" : "Reading sync"}</span><p>Keyboard shortcuts</p><span>Space · play or pause</span><span>← / → · skip 30 seconds</span><span>↑ / ↓ · previous or next line</span><span>F · back to narration</span><span>P · page mode</span></aside>}
+          {desktop && book && preferences.display === "word" && <aside className="reader-lyrics-info" aria-label="Word information"><strong>{book.title}</strong><span>{book.author}</span><span>{currentInterval ? "Estimated word timings" : "Words per minute"}</span><p>Keyboard shortcuts</p><span>Space · play or pause</span><span>← / → · previous or next word</span><span>Shift+← / → · previous or next sentence</span><span>F · back to narration</span><span>P · page mode</span></aside>}
           <div className="reader-floating">
             {toast && (
               <div className="reader-toast" role="status">

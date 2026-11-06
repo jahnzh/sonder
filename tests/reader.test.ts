@@ -1,6 +1,6 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, unlinkSync, statSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, unlinkSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 const temp = mkdtempSync(join(tmpdir(), "sonder-reader-"));
@@ -275,7 +275,8 @@ test("local alignment pairs chapters, preserves recording progress and invalidat
     }
     assert.equal(String(input), "http://alignment.test/align");
     return Response.json({
-      engine: "aeneas-1.7.3",
+      // The second section emulates an older worker response without metadata.
+      ...(data.start === 0 ? { engine: "fake-aligner-2", outcome: "mapped", stageTimings: { audioExtraction: 2, alignment: 3 } } : {}),
       elapsedSeconds: 1,
       intervals: data.fragments.map((_: string, i: number) => ({
         index: i,
@@ -293,6 +294,23 @@ test("local alignment pairs chapters, preserves recording progress and invalidat
   }
   const map = (await app.inject(`/api/alignments/${job.id}/map`)).json();
   assert.equal(map.status, "partial");
+  assert.equal(map.engine, "fake-aligner-2");
+  assert.equal(map.outcome, map.coverage < 1 ? "partial" : "mapped");
+  assert.deepEqual(map.stageTimings, { audioExtraction: 2, alignment: 3 });
+  assert.deepEqual(JSON.parse(readFileSync(join(temp, "media", "alignment", job.id, "map.json"), "utf8")).stageTimings, map.stageTimings);
+  const stored = sqlite.prepare("SELECT engine,outcome,stage_timings FROM alignment_jobs WHERE id=?").get(job.id) as { engine: string; outcome: string; stage_timings: string };
+  assert.equal(stored.engine, map.engine);
+  assert.equal(stored.outcome, map.outcome);
+  assert.deepEqual(JSON.parse(stored.stage_timings), map.stageTimings);
+  const legacy = JSON.parse((sqlite.prepare("SELECT data FROM alignment_jobs WHERE id=?").get(job.id) as { data: string }).data);
+  legacy.intervals[0].verified = true;
+  legacy.unverifiedCount = 0;
+  legacy.warning = "Reviewed sections are ready.";
+  sqlite.prepare("UPDATE alignment_jobs SET data=? WHERE id=?").run(JSON.stringify(legacy), job.id);
+  const legacyMap = (await app.inject(`/api/alignments/${job.id}/map`)).json();
+  assert.equal(legacyMap.intervals[0].verified, undefined);
+  assert.equal(legacyMap.unverifiedCount, undefined);
+  assert.doesNotMatch(legacyMap.warning, /reviewed/i);
   assert.ok(map.intervals.length > 20);
   assert.equal(map.intervals[0].verified, undefined);
   const fullList = (await app.inject(`/api/alignments?ebookId=${id}`)).json()
@@ -303,11 +321,9 @@ test("local alignment pairs chapters, preserves recording progress and invalidat
   assert.ok(fullList.intervals.length > 20, "default list keeps intervals");
   assert.deepEqual(summaryList.intervals, []);
   assert.equal(summaryList.intervalCount, fullList.intervals.length);
-  assert.equal(
-    summaryList.unverifiedCount,
-    fullList.intervals.filter((interval: { verified?: boolean }) => !interval.verified)
-      .length,
-  );
+  assert.equal(summaryList.unverifiedCount, undefined);
+  assert.equal(summaryList.engine, map.engine);
+  assert.deepEqual(summaryList.stageTimings, map.stageTimings);
   assert.ok(
     (await app.inject(`/api/alignments/${job.id}/map`)).json().intervals.length >
       20,
@@ -333,16 +349,14 @@ test("local alignment pairs chapters, preserves recording progress and invalidat
     url: `/api/alignments/${job.id}`,
     payload: { action: "review" },
   });
-  assert.equal(reviewed.statusCode, 200, reviewed.body);
-  assert.ok(
-    reviewed.json().intervals.every((interval: any) => interval.verified),
-  );
+  assert.equal(reviewed.statusCode, 400, reviewed.body);
   const corrected = await app.inject({
     method: "POST",
     url: `/api/alignments/${job.id}/anchors`,
     payload: { paragraphId: "0:0", trackId: "alice-0", start: 22, end: 40 },
   });
   assert.equal(corrected.statusCode, 200, corrected.body);
+  assert.ok(corrected.json().intervals.every((interval: any) => interval.verified === undefined));
   assert.equal(
     corrected.json().intervals.find((value: any) => value.paragraphId === "0:0")
       .start,
@@ -521,8 +535,9 @@ test("a single file without chapter markers is located by narration samples and 
       }
       const index = Math.max(0, Math.ceil((data.start - 30) / 5));
       if (index >= fragments.length || spoken(index) > data.start + data.duration - 3)
-        return Response.json({ match: null, start: data.start, text: "" });
+        return Response.json({ engine: "fake-anchor", outcome: "unsynced", stageTimings: { speechRecovery: 0.25 }, match: null, start: data.start, text: "" });
       return Response.json({
+        engine: "fake-anchor", outcome: "mapped", stageTimings: { speechRecovery: 0.25 },
         match: { index, score: 0.9, text: "" },
         start: spoken(index),
         text: "word ".repeat(40),
@@ -531,7 +546,7 @@ test("a single file without chapter markers is located by narration samples and 
     windows++;
     const step = data.duration / data.fragments.length;
     return Response.json({
-      engine: "aeneas-1.7.3",
+      engine: "fake-aligner-2", outcome: "mapped", stageTimings: { alignment: 0.5 },
       elapsedSeconds: 1,
       intervals: data.fragments.map((_: string, index: number) => ({
         index,
@@ -585,6 +600,10 @@ test("a single file without chapter markers is located by narration samples and 
     "completed samples are not repeated after resuming",
   );
   assert.equal(windows, map.anchoring.segments.length);
+  assert.equal(map.engine, "fake-aligner-2");
+  assert.equal(map.stageTimings.speechRecovery, anchors * 0.25);
+  assert.equal(map.stageTimings.alignment, windows * 0.5);
+  assert.ok(["mapped", "partial"].includes(map.outcome));
   assert.ok(map.anchoring.anchors.length >= 3);
   assert.ok(map.coverage > 0.9, `coverage ${map.coverage}`);
   assert.equal(map.progress, 1);
@@ -600,16 +619,10 @@ test("a single file without chapter markers is located by narration samples and 
     if (i) assert.ok(interval.start >= map.intervals[i - 1].end - 1e-6);
   }
   assert.deepEqual(db.select().from(s.progress).all(), before);
-  const reviewed = await local.inject({
-    method: "PATCH",
-    url: `/api/alignments/${job.id}`,
-    payload: { action: "review" },
-  });
-  assert.equal(reviewed.statusCode, 200, reviewed.body);
   // Unrelated narration: no sample is found in this EPUB.
   globalThis.fetch = async (input, init) => {
     const data = JSON.parse(String(init?.body));
-    return Response.json({ match: null, start: data.start, text: "word ".repeat(40) });
+    return Response.json({ engine: "fake-anchor", outcome: "unsynced", stageTimings: { speechRecovery: 0.25 }, match: null, start: data.start, text: "word ".repeat(40) });
   };
   const rebuilt = await createAlignment(id, "recording-single", undefined, "anchored");
   for (let i = 0; i < 200; i++) {
@@ -619,6 +632,35 @@ test("a single file without chapter markers is located by narration samples and 
   const refused = (await local.inject(`/api/alignments/${rebuilt.id}/map`)).json();
   assert.equal(refused.status, "error");
   assert.match(refused.error, /Only 0 of \d+ narration samples were found/);
+  assert.equal(refused.outcome, "unsynced");
+  assert.equal(refused.engine, "fake-anchor");
+  assert.equal(refused.stageTimings.speechRecovery, refused.anchoring.samples.length * 0.25);
+  globalThis.fetch = async () => Response.json({
+    engine: "fake-language-engine", outcome: "language_not_supported", stageTimings: { languageCheck: 0.1 }, match: null,
+  });
+  const unsupportedJob = await createAlignment(id, "recording-single", undefined, "anchored");
+  let unsupported: any;
+  for (let i = 0; i < 200; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    unsupported = (await local.inject(`/api/alignments/${unsupportedJob.id}/map`)).json();
+    if (unsupported.status === "error") break;
+  }
+  assert.equal(unsupported.outcome, "language_not_supported");
+  assert.equal(unsupported.engine, "fake-language-engine");
+  assert.deepEqual(unsupported.stageTimings, { languageCheck: 0.1 });
+  globalThis.fetch = async () => Response.json({ detail: {
+    engine: "fake-failing-engine", outcome: "error", stageTimings: { failedRequest: 0.4 }, message: "failure",
+  } }, { status: 422 });
+  const errorJob = await createAlignment(id, "recording-single", undefined, "anchored");
+  let failed: any;
+  for (let i = 0; i < 200; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    failed = (await local.inject(`/api/alignments/${errorJob.id}/map`)).json();
+    if (failed.status === "error") break;
+  }
+  assert.equal(failed.outcome, "error");
+  assert.equal(failed.engine, "fake-failing-engine");
+  assert.deepEqual(failed.stageTimings, { failedRequest: 0.4 });
   db.update(s.tracks)
     .set({ chapters: [{ title: "Down the Rabbit-Hole", start: 0, end: 300 }] })
     .where(eq(s.tracks.id, "alice-0"))
