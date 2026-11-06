@@ -4,10 +4,13 @@ import secrets
 import sys
 import time
 from pathlib import Path
+from typing import Literal
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from deadline import AlignmentTimeout, Gate, WorkerBusy
 from pipeline import ENGINE, align_section, locate_passage
+from ctc_acoustic import ENGINE as CTC_ENGINE
+from ctc_pipeline import align_ctc_section
 from align_task import LANGUAGES
 
 app = FastAPI()
@@ -22,6 +25,7 @@ class AlignRequest(BaseModel):
     language: str = "eng"
     start: float = Field(default=0, ge=0)
     duration: float = Field(gt=0, le=7200)
+    engine: Literal["aeneas", "ctc"] = "aeneas"
 
 class AnchorRequest(AlignRequest):
     duration: float = Field(gt=0, le=60)
@@ -53,8 +57,8 @@ def anchor(request: AnchorRequest):
         print(f"[anchor] failed: {error!r}", file=sys.stderr, flush=True)
         raise HTTPException(422, error_detail("Local speech recovery is unavailable. Check that the tiny model is installed on the media drive.", started))
 
-def error_detail(message, started):
-    return {"message": message, "engine": ENGINE, "outcome": "error",
+def error_detail(message, started, engine=ENGINE):
+    return {"message": message, "engine": engine, "outcome": "error",
             "stageTimings": {"failedRequest": time.monotonic() - started}}
 
 def checked_path(value: str, must_exist=False):
@@ -73,6 +77,7 @@ def align(request: AlignRequest):
     if not token or not secrets.compare_digest(request.token, token):
         raise HTTPException(401, "Worker authentication required.")
     started = time.monotonic()
+    engine = CTC_ENGINE if request.engine == "ctc" else ENGINE
     try:
         with gate.hold():
             marker = root / ".media-volume"
@@ -83,17 +88,18 @@ def align(request: AlignRequest):
             output = checked_path(request.output)
             if not output.is_relative_to(root / "alignment"):
                 raise HTTPException(400, "Alignment output must be in its cache directory.")
-            if request.language not in LANGUAGES:
+            if request.language not in ({"eng"} if request.engine == "ctc" else LANGUAGES):
                 elapsed = time.monotonic() - started
-                return {"engine": ENGINE, "outcome": "language_not_supported", "stageTimings": {"requestValidation": elapsed}, "elapsedSeconds": elapsed, "intervals": []}
-            return align_section(audio=audio, output=output, fragments=request.fragments, language=request.language,
-                                 start=request.start, duration=request.duration, media_folder=root / "alignment")
+                return {"engine": engine, "outcome": "language_not_supported", "stageTimings": {"requestValidation": elapsed}, "elapsedSeconds": elapsed, "intervals": []}
+            operation = align_ctc_section if request.engine == "ctc" else align_section
+            return operation(audio=audio, output=output, fragments=request.fragments, language=request.language,
+                             start=request.start, duration=request.duration, media_folder=root / "alignment")
     except WorkerBusy:
         raise HTTPException(409, "The local alignment worker is busy.")
     except AlignmentTimeout as error:
-        raise HTTPException(504, error_detail(str(error), started))
+        raise HTTPException(504, error_detail(str(error), started, engine))
     except HTTPException:
         raise
     except Exception as error:
         print(f"[align] failed: {error!r}", file=sys.stderr, flush=True)
-        raise HTTPException(422, error_detail("Local alignment could not match this section. Check the edition and chapter pairing.", started))
+        raise HTTPException(422, error_detail("Local alignment could not match this section. Check the edition and chapter pairing.", started, engine))
