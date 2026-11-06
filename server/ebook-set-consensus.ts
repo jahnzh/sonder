@@ -1,5 +1,6 @@
 // Ebook-set consensus text (sentence MSA), one recording alignment, projected member maps.
 import { createHash } from "node:crypto";
+import { cancelPendingConsensus, ConsensusSupersededError, runConsensusBuild } from "./ebook-set-consensus-runner.ts";
 import { eq } from "drizzle-orm";
 import { db } from "./db.ts";
 import * as s from "./schema.ts";
@@ -8,6 +9,7 @@ import { normalizeReaderText } from "../src/reading-types.ts";
 import type { AlignmentInterval, AlignmentJob, ReaderBook } from "../src/reading-types.ts";
 import {
   firstRecordingWithLocalAudio,
+  audioFingerprint,
   alignmentJob,
   createAlignment,
   listAlignmentJobs,
@@ -359,7 +361,13 @@ export async function onConsensusAlignmentFinished(workId: string, job: Alignmen
   await publishProjectedMaps(workId, job);
 }
 
+const consensusGenerations = new Map<string, symbol>();
+
 export async function syncEbookSetConsensus(workId: string) {
+  const generation = Symbol(workId);
+  consensusGenerations.set(workId, generation);
+  cancelPendingConsensus(workId);
+  try {
   const members = listEbookSetMembers(workId);
   const accepted = members.filter((member) => member.status === "accepted");
   if (!accepted.length) {
@@ -367,10 +375,24 @@ export async function syncEbookSetConsensus(workId: string) {
     return getEbookSetPresentation(workId);
   }
   const recordingId = firstRecordingWithLocalAudio(workId);
-  const memberLists = await Promise.all(
-    accepted.map(async (member) => sentencesForMember(await extractBook(member.ebookId))),
-  );
-  const rows = buildConsensusRows(memberLists);
+  const recordingFingerprint = recordingId ? audioFingerprint(recordingId) : null;
+  const books = await Promise.all(accepted.map(member => extractBook(member.ebookId)));
+  if (consensusGenerations.get(workId) !== generation) return getEbookSetPresentation(workId);
+  const memberLists = books.map(sentencesForMember);
+  let rows;
+  try { rows = await runConsensusBuild(workId, memberLists); }
+  catch (error) {
+    if (error instanceof ConsensusSupersededError) return getEbookSetPresentation(workId);
+    throw error;
+  }
+  const stillCurrent = () => consensusGenerations.get(workId) === generation &&
+    JSON.stringify(listEbookSetMembers(workId)) === JSON.stringify(members) &&
+    firstRecordingWithLocalAudio(workId) === recordingId &&
+    (!recordingId || audioFingerprint(recordingId) === recordingFingerprint);
+  if (!stillCurrent()) return getEbookSetPresentation(workId);
+  const currentBooks = await Promise.all(accepted.map(member => extractBook(member.ebookId)));
+  if (!stillCurrent() || currentBooks.some((book, index) => book.fingerprint !== books[index].fingerprint))
+    return getEbookSetPresentation(workId);
   const sentences = rows.map((row) => row.text);
   const fingerprint = consensusFingerprint(sentences);
   const projections: Record<string, (string | null)[]> = {};
@@ -408,6 +430,7 @@ export async function syncEbookSetConsensus(workId: string) {
       "anchored",
       "backfill",
     );
+    if (!stillCurrent()) return getEbookSetPresentation(workId);
     consensusJobId = job.id;
     writeState({
       workId,
@@ -429,4 +452,7 @@ export async function syncEbookSetConsensus(workId: string) {
     }
   }
   return getEbookSetPresentation(workId);
+  } finally {
+    if (consensusGenerations.get(workId) === generation) consensusGenerations.delete(workId);
+  }
 }

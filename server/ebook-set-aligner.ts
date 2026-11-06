@@ -20,6 +20,18 @@ function consensusAlignBand(n: number, m: number) {
   return Math.min(m, Math.max(slack, 64, Math.min(CONSENSUS_ALIGN_BAND, scaled)));
 }
 
+/** Number of visited band cells, without allocating row offsets. */
+export function consensusCellCount(n: number, m: number) {
+  if (!n || !m) return 0;
+  const band = Math.min(m, Math.max(Math.abs(n - m), 64, Math.min(CONSENSUS_ALIGN_BAND, Math.ceil(Math.max(n, m) * .03))));
+  const end = Math.min(n, m + band);
+  const triangle = (x: number) => x * (x + 1) / 2;
+  const upperExcess = Math.max(0, end - (m - band));
+  const lowerExcess = Math.max(0, end - band);
+  return (end + 1) * (band + 1) + triangle(end) - triangle(upperExcess) - triangle(lowerExcess);
+}
+
+
 function alignTwoMemberLists(left: ConsensusRow[], right: MemberSentence[]): ConsensusRow[] {
   const n = left.length, m = right.length;
   if (!n) return right.map(sentence => ({ text: sentence.text, norm: sentence.norm, memberParagraphIds: [sentence.paragraphId] }));
@@ -96,15 +108,18 @@ function alignTwoMemberLists(left: ConsensusRow[], right: MemberSentence[]): Con
   return out;
 }
 
-export function buildConsensusRows(memberLists: MemberSentence[][]) {
+export function buildConsensusRows(memberLists: MemberSentence[][], maxCells = Infinity) {
   if (!memberLists.length) return [] as ConsensusRow[];
   let rows: ConsensusRow[] = memberLists[0].map((sentence) => ({
     text: sentence.text,
     norm: sentence.norm,
     memberParagraphIds: [sentence.paragraphId],
   }));
-  for (let index = 1; index < memberLists.length; index++)
+  for (let index = 1; index < memberLists.length; index++) {
+    if (consensusCellCount(rows.length, memberLists[index].length) > maxCells)
+      throw new Error("These editions are too long to compare automatically. Try fewer or shorter editions.");
     rows = alignTwoMemberLists(rows, memberLists[index]);
+  }
   return rows;
 }
 
