@@ -10,7 +10,7 @@ process.env.DATA_DIR = join(temp, "db");
 process.env.MEDIA_ROOT = join(temp, "media");
 process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
-process.env.ALIGNMENT_CHAPTER_ENGINE = "ctc";
+delete process.env.ALIGNMENT_CHAPTER_ENGINE; // CTC is the default chapter engine
 process.env.ALIGNMENT_WORKER_URL = "http://ctc-worker.test";
 process.env.ALIGNMENT_WORKER_TOKEN = "test-token";
 mkdirSync(process.env.MEDIA_ROOT, { recursive: true });
@@ -84,7 +84,23 @@ test("chapter CTC publishes first and last sentences with worker metadata and re
   assert.match(failed.error ?? "", /did not use the requested CTC engine/);
   assert.equal(failed.intervals.length, 0);
 
-  // Opting chapters into CTC must not change a newly queued anchored job.
+  // The rollback switch sends new chapter jobs back to aeneas, and the worker is then asked for aeneas.
+  process.env.ALIGNMENT_CHAPTER_ENGINE = "aeneas";
+  const requested: string[] = [];
+  globalThis.fetch = async (_input, init) => {
+    const request = JSON.parse(String(init?.body));
+    requested.push(request.engine);
+    return Response.json({ engine: "aeneas-1.7.3", elapsedSeconds: 1,
+      intervals: request.fragments.map((_: string, i: number) => ({ index: i, start: request.start + i, end: request.start + i + 0.8 })) });
+  };
+  const rolledBack = await createAlignment("ctc-ebook", "ctc-recording", pairings, "chapters");
+  assert.equal(rolledBack.engine, "aeneas-1.7.3");
+  const rolledBackJob = await settled(rolledBack.id);
+  assert.equal(rolledBackJob.status, "partial", rolledBackJob.error ?? undefined);
+  assert.ok(requested.length > 0 && requested.every((engine) => engine === undefined));
+  delete process.env.ALIGNMENT_CHAPTER_ENGINE;
+
+  // The CTC default must not change a newly queued anchored job.
   delete process.env.ALIGNMENT_WORKER_URL;
   const anchored = await createAlignment("ctc-ebook", "ctc-recording", undefined, "anchored");
   assert.equal(anchored.mode, "anchored");

@@ -8,6 +8,8 @@ process.env.DATA_DIR = join(temp, "db");
 process.env.MEDIA_ROOT = join(temp, "media");
 process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
+// These tests exercise worker transport and metadata storage with fake engines, independent of the default chapter engine.
+process.env.ALIGNMENT_CHAPTER_ENGINE = "aeneas";
 // Busy-wait tests poll /api/alignments/:id/map many times; the default 600/min
 // limiter rejects those injects mid-suite (same pattern as tests/browser-server.ts).
 process.env.API_RATE_LIMIT = "6000";

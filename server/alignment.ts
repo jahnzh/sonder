@@ -362,7 +362,8 @@ export async function createAlignment(
     recordingId,
     status: copying ? "copying" : "queued",
     progress: 0,
-    engine: !anchored && process.env.ALIGNMENT_CHAPTER_ENGINE === "ctc"
+    // Chapter jobs use CTC unless ALIGNMENT_CHAPTER_ENGINE=aeneas; anchored jobs have no CTC route yet.
+    engine: !anchored && process.env.ALIGNMENT_CHAPTER_ENGINE !== "aeneas"
       ? CTC_ENGINE
       : "aeneas-1.7.3",
     error: null,
