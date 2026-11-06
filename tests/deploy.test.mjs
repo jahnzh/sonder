@@ -23,7 +23,7 @@ function stub(dir, name, body) {
 
 // A throwaway repository holding a copy of deploy.sh, a stubbed docker and curl, and live-check scripts that
 // append their name to a log, so a test can see which checks ran.
-function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", tagFails = false } = {}) {
+function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", tagFails = false, smokeFails = false } = {}) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "sonder-deploy-")));
   const repo = join(dir, "repo");
   const bin = join(dir, "bin");
@@ -31,6 +31,7 @@ function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", t
   mkdirSync(join(repo, "data"));
   mkdirSync(bin);
   copyFileSync(join(repoRoot, "scripts", "deploy.sh"), join(repo, "scripts", "deploy.sh"));
+  copyFileSync(join(repoRoot, "scripts", "deploy-prod.sh"), join(repo, "scripts", "deploy-prod.sh"));
   writeFileSync(join(repo, "package.json"), JSON.stringify({ scripts: { backup: "cp" } }));
   writeFileSync(join(repo, "data", "sonder.db"), "db");
   const log = join(dir, "ran.log");
@@ -50,6 +51,7 @@ function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", t
     '  *Health*) echo healthy ;;',
     `  "images "*) printf '%b\\n' ${JSON.stringify(images)} ;;`,
     `  "compose build sonder") touch ${JSON.stringify(built)} ;;`,
+    `  "run --rm --entrypoint node sonder-audiobooks:local --import tsx scripts/image-smoke.mjs") ${smokeFails ? "exit 1" : "exit 0"} ;;`,
     `  "tag "*) if [ -e ${JSON.stringify(built)} ] || ${tagFails}; then echo "Error response from daemon: No such image" >&2; exit 1; fi ;;`,
     '  *) exit 0 ;;',
     "esac",
@@ -60,14 +62,45 @@ function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", t
     encoding: "utf8",
     env: cleanEnv({ PATH: `${bin}:${process.env.PATH}`, SONDER_DEPLOY_DOCKER: join(bin, "docker"), SONDER_DEPLOY_LIVE_CHECKS: Object.keys(checks).map((n) => `scripts/${n}`).join(" "), ...extra }),
   });
+  const runProd = (args) => spawnSync("bash", ["scripts/deploy-prod.sh", "HEAD", ...args], {
+    cwd: repo,
+    encoding: "utf8",
+    env: cleanEnv({ PATH: `${bin}:${process.env.PATH}`, SONDER_PROD_ROOT: repo, SONDER_DEPLOY_DOCKER: join(bin, "docker") }),
+  });
   for (const args of [["init", "-q", "-b", "main"], ["add", "."], ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "init"]]) {
     const r = spawnSync("git", args, { cwd: repo, encoding: "utf8", env: cleanEnv() });
     assert.equal(r.status, 0, r.stderr);
   }
   const ran = () => { try { return readFileSync(log, "utf8").split("\n").filter(Boolean); } catch { return []; } };
   const dockerCalls = () => { try { return readFileSync(calls, "utf8").split("\n").filter(Boolean); } catch { return []; } };
-  return { dir, run, ran, dockerCalls };
+  return { dir, run, runProd, ran, dockerCalls };
 }
+
+test("production dry run lists the image smoke before the swap", () => {
+  const f = fixture({});
+  try {
+    const r = f.runProd(["--dry-run"]);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.match(r.stdout, /smoke-test the built image: docker run --rm --entrypoint node sonder-audiobooks:local --import tsx scripts\/image-smoke\.mjs/);
+    assert.ok(r.stdout.indexOf("smoke-test the built image") < r.stdout.indexOf("docker compose up -d sonder"));
+    assert.equal(f.dockerCalls().some((c) => c.startsWith("run ") || c.startsWith("compose ")), false);
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test("a failing image smoke aborts after build and before the container swap", () => {
+  const f = fixture({ "verify-a.mjs": 0 }, { smokeFails: true });
+  try {
+    const r = f.run([]);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /image smoke failed; the container is still running the previous image/);
+    const calls = f.dockerCalls();
+    const build = calls.indexOf("compose build sonder");
+    const smoke = calls.indexOf("run --rm --entrypoint node sonder-audiobooks:local --import tsx scripts/image-smoke.mjs");
+    assert.ok(build >= 0 && smoke > build, calls.join("\n"));
+    assert.equal(calls.some((c) => c.startsWith("compose up")), false);
+    assert.deepEqual(f.ran(), []);
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
 
 test("every live check runs and a clean run exits 0", () => {
   const f = fixture({ "verify-a.mjs": 0, "verify-b.mjs": 0 });

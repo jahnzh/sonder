@@ -11,6 +11,7 @@ ENV NODE_ENV=production HOST=127.0.0.1 PORT=3001 DATA_DIR=/app/data
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/server ./server
+COPY --from=build --chown=node:node /app/scripts/image-smoke.mjs ./scripts/image-smoke.mjs
 COPY --from=build --chown=node:node /app/src/types.ts ./src/types.ts
 COPY --from=build --chown=node:node /app/src/series-selection.ts ./src/series-selection.ts
 COPY --from=build --chown=node:node /app/src/appearance.ts ./src/appearance.ts

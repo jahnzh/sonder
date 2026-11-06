@@ -9,8 +9,9 @@
 #      other sonder-audiobooks tag; the build moves :local and would otherwise orphan it, #153)
 #   4. docker compose build sonder (image sonder-audiobooks:local)
 #   5. verify every --marker string is present in the built image's /app (server, dist or src)
-#   6. docker compose up -d sonder, wait for the health check, curl /api/health
-#   7. run the live verification scripts (reader + multi-user) unless --skip-live-checks;
+#   6. smoke-test server imports and the consensus worker inside the built image
+#   7. docker compose up -d sonder, wait for the health check, curl /api/health
+#   8. run the live verification scripts (reader + multi-user) unless --skip-live-checks;
 #      the reader check picks the most recent recording with a finished EPUB alignment map
 # Prints the rollback command (retag the old image as :local, then up -d --no-build) and reminds to
 # record the deploy in artifacts/orca/STATE.md.
@@ -110,11 +111,12 @@ if [ "$dry_run" -eq 1 ]; then
   for m in ${markers[@]+"${markers[@]}"}; do
     echo "  4. verify marker in the image: $m"
   done
-  echo "  5. docker compose up -d sonder; wait for healthy; curl 127.0.0.1:${port}/api/health"
+  echo "  5. smoke-test the built image: docker run --rm --entrypoint node sonder-audiobooks:local --import tsx scripts/image-smoke.mjs"
+  echo "  6. docker compose up -d sonder; wait for healthy; curl 127.0.0.1:${port}/api/health"
   if [ "$skip_live" -eq 1 ]; then
-    echo "  6. live checks: skipped (--skip-live-checks)"
+    echo "  7. live checks: skipped (--skip-live-checks)"
   else
-    echo "  6. live checks: ${live_checks}"
+    echo "  7. live checks: ${live_checks}"
   fi
   exit 0
 fi
@@ -166,7 +168,14 @@ for m in ${markers[@]+"${markers[@]}"}; do
   echo "marker ok: $m"
 done
 
-# 6. Recreate and wait for healthy.
+# 6. Run the smoke before touching the existing container.
+echo "smoke-testing the built image"
+if ! $docker run --rm --entrypoint node sonder-audiobooks:local --import tsx scripts/image-smoke.mjs; then
+  echo "image smoke failed; the container is still running the previous image" >&2
+  exit 1
+fi
+
+# 7. Recreate and wait for healthy.
 echo "recreating the sonder container"
 if ! $docker compose up -d sonder; then
   echo "container recreation failed; the previous image is tagged sonder-audiobooks:${rollback_tag}" >&2
@@ -190,7 +199,7 @@ if ! curl -fsS "http://127.0.0.1:${port}/api/health" >/dev/null; then
   exit 1
 fi
 
-# 7. Live checks. The reader check needs a recording with a finished EPUB alignment map.
+# 8. Live checks. The reader check needs a recording with a finished EPUB alignment map.
 failed_checks=()
 if [ "$skip_live" -eq 0 ]; then
   for script in $live_checks; do
