@@ -172,5 +172,13 @@ class QualityGate(unittest.TestCase):
             gate_ctc.score(predictions + [predictions[-1]], truth)
 
 
+
+class PathCellLimitTests(unittest.TestCase):
+    def test_default_and_override_are_bounded(self):
+        self.assertEqual(ctc_path._max_path_cells({}), 500_000_000)
+        self.assertEqual(ctc_path._max_path_cells({"ALIGNMENT_CTC_MAX_PATH_CELLS": "2000000000"}), 2_000_000_000)
+        for bad in ("", "abc", "0", "-5", "999999", "99999999999999"):
+            self.assertEqual(ctc_path._max_path_cells({"ALIGNMENT_CTC_MAX_PATH_CELLS": bad}), 500_000_000, bad)
+
 if __name__ == "__main__":
     unittest.main()
