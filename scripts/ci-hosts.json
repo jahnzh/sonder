@@ -1,0 +1,23 @@
+{
+  "lisa": {
+    "host": "lisa",
+    "remoteBase": "/home/jahn/sonder-ci-tmp",
+    "tmpdir": "/home/jahn/sonder-ci-tmp",
+    "maxWait": 3600,
+    "maxParallel": 1
+  },
+  "192.168.1.119": {
+    "host": "192.168.1.119",
+    "remoteBase": "",
+    "tmpdir": "",
+    "maxWait": 1800,
+    "maxParallel": 1
+  },
+  "wsl": {
+    "host": "192.168.1.119",
+    "remoteBase": "",
+    "tmpdir": "",
+    "maxWait": 1800,
+    "maxParallel": 1
+  }
+}

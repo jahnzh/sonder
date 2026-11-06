@@ -13,8 +13,12 @@
 #
 # Environment: SONDER_CI_HOST, SONDER_CI_REPO, SONDER_CI_STATUS_CONTEXT,
 # SONDER_CI_POST_STATUS (0 skips the GitHub status), SONDER_CI_MAX_WAIT (seconds,
-# default 1800), SONDER_CI_POLL_INTERVAL (seconds, default 15),
-# SONDER_CI_REMOTE_BASE (unset uses the host's ${TMPDIR:-/tmp}), SONDER_CI_LOOPBACK_PORT (default 4399),
+# default 1800 or configured host maxWait), SONDER_CI_POLL_INTERVAL (seconds, default 15),
+# SONDER_CI_REMOTE_BASE (unset uses configured host remoteBase or host's ${TMPDIR:-/tmp}),
+# SONDER_CI_TMPDIR (unset uses configured host tmpdir),
+# SONDER_CI_MAX_PARALLEL (unset uses configured host maxParallel),
+# SONDER_CI_HOST_CONFIG (default scripts/ci-hosts.json),
+# SONDER_CI_LOOPBACK_PORT (default 4399),
 # SONDER_CI_KNOWN_FAILURES (repository path, default tests/known-failures.wsl-host.json),
 # SONDER_CI_DISPATCH (when set, records the finished check on that worker history
 # dispatch; a recording failure warns only and never changes the exit code).
@@ -32,13 +36,16 @@ usage() {
 
 REQUESTED_REF=$1
 
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+cd "$ROOT" || exit 1
+# shellcheck source=lib/ci-history.sh
+source "$ROOT/scripts/lib/ci-history.sh"
+
 SONDER_CI_HOST=${SONDER_CI_HOST:-192.168.1.119}
 SONDER_CI_REPO=${SONDER_CI_REPO:-jahnzh/sonder}
 SONDER_CI_STATUS_CONTEXT=${SONDER_CI_STATUS_CONTEXT:-ci/ssh}
 SONDER_CI_POST_STATUS=${SONDER_CI_POST_STATUS:-1}
-MAX_WAIT=${SONDER_CI_MAX_WAIT:-1800}
 POLL_INTERVAL=${SONDER_CI_POLL_INTERVAL:-15}
-REMOTE_BASE=${SONDER_CI_REMOTE_BASE:-}
 LOOPBACK_PORT=${SONDER_CI_LOOPBACK_PORT:-4399}
 KNOWN_FAILURES=${SONDER_CI_KNOWN_FAILURES:-tests/known-failures.wsl-host.json}
 POLL_FAILURE_LIMIT=3
@@ -50,17 +57,105 @@ TRANSFER_TIMEOUT=${SONDER_CI_TRANSFER_TIMEOUT:-600}
 # goes idle is dropped after about 15 s by ServerAliveInterval and ServerAliveCountMax below.
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=3)
 
+resolve_host_config() {
+  local config_file=$1 query_host=$2
+  [[ -f "$config_file" ]] || return 0
+  node - "$config_file" "$query_host" <<'NODE_EOF'
+const fs = require("node:fs");
+const configFile = process.argv[2];
+const hostQuery = process.argv[3];
+
+let config;
+try {
+  config = JSON.parse(fs.readFileSync(configFile, "utf8"));
+} catch (e) {
+  process.exit(0);
+}
+
+let entry = null;
+if (Array.isArray(config)) {
+  entry = config.find(h => h && (h.host === hostQuery || h.name === hostQuery || (Array.isArray(h.aliases) && h.aliases.includes(hostQuery))));
+} else if (config && typeof config === "object") {
+  if (config[hostQuery]) {
+    entry = config[hostQuery];
+  } else {
+    for (const [key, val] of Object.entries(config)) {
+      if (val && typeof val === "object") {
+        if (val.host === hostQuery || (Array.isArray(val.aliases) && val.aliases.includes(hostQuery))) {
+          entry = val;
+          break;
+        }
+      }
+    }
+  }
+}
+
+if (!entry || typeof entry !== "object") process.exit(0);
+
+const esc = (val) => "'" + String(val).replace(/'/g, "'\\''") + "'";
+
+if (entry.host) console.log(`CONFIG_HOST=${esc(entry.host)}`);
+const remoteBase = entry.remoteBase ?? entry.remote_base;
+if (remoteBase !== undefined) console.log(`CONFIG_REMOTE_BASE=${esc(remoteBase)}`);
+const tmpdir = entry.tmpdir ?? entry.TMPDIR;
+if (tmpdir !== undefined) console.log(`CONFIG_TMPDIR=${esc(tmpdir)}`);
+const maxWait = entry.maxWait ?? entry.max_wait;
+if (maxWait !== undefined) console.log(`CONFIG_MAX_WAIT=${esc(maxWait)}`);
+const maxParallel = entry.maxParallel ?? entry.max_parallel;
+if (maxParallel !== undefined) console.log(`CONFIG_MAX_PARALLEL=${esc(maxParallel)}`);
+NODE_EOF
+}
+
+HOST_CONFIG_FILE=${SONDER_CI_HOST_CONFIG:-$ROOT/scripts/ci-hosts.json}
+CONFIG_HOST=""
+CONFIG_REMOTE_BASE=""
+CONFIG_TMPDIR=""
+CONFIG_MAX_WAIT=""
+CONFIG_MAX_PARALLEL=""
+
+if [[ -f "$HOST_CONFIG_FILE" ]]; then
+  eval "$(resolve_host_config "$HOST_CONFIG_FILE" "$SONDER_CI_HOST")"
+fi
+
+if [[ -n "$CONFIG_HOST" ]]; then
+  SONDER_CI_HOST=$CONFIG_HOST
+fi
+
+if [[ -v SONDER_CI_REMOTE_BASE ]]; then
+  REMOTE_BASE=$SONDER_CI_REMOTE_BASE
+else
+  REMOTE_BASE=${CONFIG_REMOTE_BASE:-}
+fi
+
+if [[ -v SONDER_CI_TMPDIR ]]; then
+  REMOTE_TMPDIR=$SONDER_CI_TMPDIR
+else
+  REMOTE_TMPDIR=${CONFIG_TMPDIR:-}
+fi
+
+if [[ -v SONDER_CI_MAX_WAIT ]]; then
+  MAX_WAIT=$SONDER_CI_MAX_WAIT
+elif [[ -n "${CONFIG_MAX_WAIT:-}" ]]; then
+  MAX_WAIT=$CONFIG_MAX_WAIT
+else
+  MAX_WAIT=1800
+fi
+
+if [[ -v SONDER_CI_MAX_PARALLEL ]]; then
+  MAX_PARALLEL=$SONDER_CI_MAX_PARALLEL
+elif [[ -n "${CONFIG_MAX_PARALLEL:-}" ]]; then
+  MAX_PARALLEL=$CONFIG_MAX_PARALLEL
+else
+  MAX_PARALLEL=1
+fi
+
 [[ $MAX_WAIT =~ ^[0-9]+$ ]] || { echo "[ci-ssh] SONDER_CI_MAX_WAIT must be whole seconds" >&2; exit 2; }
 [[ $POLL_INTERVAL =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "[ci-ssh] SONDER_CI_POLL_INTERVAL must be a number of seconds" >&2; exit 2; }
 [[ $LOOPBACK_PORT =~ ^[0-9]+$ ]] || { echo "[ci-ssh] SONDER_CI_LOOPBACK_PORT must be a port number" >&2; exit 2; }
+[[ $MAX_PARALLEL =~ ^[0-9]+$ ]] || { echo "[ci-ssh] SONDER_CI_MAX_PARALLEL must be a whole number" >&2; exit 2; }
 # The list path goes into the remote command line, so keep it to a plain relative path.
 [[ $KNOWN_FAILURES =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ && $KNOWN_FAILURES != *..* ]] \
   || { echo "[ci-ssh] SONDER_CI_KNOWN_FAILURES must be a relative repository path" >&2; exit 2; }
-
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
-cd "$ROOT" || exit 1
-# shellcheck source=lib/ci-history.sh
-source "$ROOT/scripts/lib/ci-history.sh"
 
 if ! FULL_SHA=$(git rev-parse --verify "${REQUESTED_REF}^{commit}" 2>/dev/null); then
   echo "[ci-ssh] Invalid commit ref: ${REQUESTED_REF}" >&2
@@ -175,19 +270,24 @@ check_playwright_browsers_on_host() {
   local out rc packages
   log "Checking Playwright browsers on ${SONDER_CI_HOST} against the lockfile"
   mkdir -p "$LOCAL_REPORT_DIR"
-  out=$(remote_bash browser_check "$REMOTE_RUN_DIR" <<'REMOTE' 2>&1
-cd "$2/checkout" || exit 1
+  out=$(remote_bash browser_check "$REMOTE_RUN_DIR" "${REMOTE_TMPDIR:-}" <<'REMOTE' 2>&1
+run_dir=$2
+remote_tmpdir=${3:-}
+if [ -n "$remote_tmpdir" ]; then
+  export TMPDIR="$remote_tmpdir"
+fi
+cd "$run_dir/checkout" || exit 1
 echo "checked_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-if ! timeout 600 npm ci --silent >"$2/browser-check-npm.log" 2>&1; then
-  tail -n 20 "$2/browser-check-npm.log"
+if ! timeout 600 npm ci --silent >"$run_dir/browser-check-npm.log" 2>&1; then
+  tail -n 20 "$run_dir/browser-check-npm.log"
   echo "playwright_browser_check=error (npm ci failed)"
   exit 10
 fi
-timeout 120 npx playwright install --dry-run >"$2/dry-run.txt" 2>&1
+timeout 120 npx playwright install --dry-run >"$run_dir/dry-run.txt" 2>&1
 missing=0
 total=0
 webkit_dirs=""
-for path in $(sed -n 's/.*Install location:[[:space:]]*\([^[:space:]]*\).*/\1/p' "$2/dry-run.txt" | sort -u); do
+for path in $(sed -n 's/.*Install location:[[:space:]]*\([^[:space:]]*\).*/\1/p' "$run_dir/dry-run.txt" | sort -u); do
   total=$((total + 1))
   if [ -d "$path" ]; then
     echo "present $path"
@@ -395,9 +495,66 @@ REMOTE
     || log "Could not retrieve the remote log"
 }
 
+cleanup_stale_remote_dirs() {
+  log "Cleaning stale temporary directories on ${SONDER_CI_HOST}"
+  remote_bash_capped cleanup_stale "$REMOTE_BASE" "${REMOTE_TMPDIR:-}" "${SONDER_CI_REMOTE_TMP:-/tmp}" "${SONDER_CI_CLEANUP_MIN_AGE_MINUTES:-1440}" <<'REMOTE'
+base=$2
+tmpdir=$3
+remote_tmp=${4:-/tmp}
+min_age_minutes=${5:-1440}
+user_id=$(id -u)
+
+bases=()
+[[ -n "$base" && -d "$base" ]] && bases+=("$base")
+[[ -n "$tmpdir" && -d "$tmpdir" ]] && bases+=("$tmpdir")
+[[ -n "$remote_tmp" && -d "$remote_tmp" ]] && bases+=("$remote_tmp")
+
+seen=()
+for b in "${bases[@]}"; do
+  real_b=$(readlink -f "$b" 2>/dev/null || echo "$b")
+  skip=0
+  for s in "${seen[@]}"; do
+    if [[ "$s" == "$real_b" ]]; then skip=1; break; fi
+  done
+  [[ $skip -eq 1 ]] && continue
+  seen+=("$real_b")
+
+  while IFS= read -r -d '' d; do
+    [[ -n "$d" && -d "$d" ]] || continue
+    [[ "$d" == "$real_b" ]] && continue
+
+    if [ -s "$d/check.pid" ]; then
+      pid=$(cat "$d/check.pid" 2>/dev/null) || pid=""
+      if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+        state=""
+        if [ -f "/proc/$pid/stat" ]; then
+          state=$(awk '{ sub(/^.*\) /, ""); print substr($0, 1, 1) }' "/proc/$pid/stat" 2>/dev/null) || state=""
+        fi
+        if [[ -z "$state" || "$state" != "Z" ]]; then
+          continue
+        fi
+      fi
+    fi
+
+    if command -v pgrep >/dev/null 2>&1; then
+      if pgrep -f "$d" >/dev/null 2>&1; then
+        continue
+      fi
+    fi
+
+    rm -rf "$d" 2>/dev/null || true
+  done < <(find "$real_b" -mindepth 1 -maxdepth 1 -user "$user_id" -type d -name "sonder-*" -mmin "+${min_age_minutes}" -print0 2>/dev/null)
+done
+exit 0
+REMOTE
+  return 0
+}
+
 # Runs the whole remote flow and returns the final exit status.
 run_remote_check() {
   local rc bundle_name=repo.bundle result exit_code
+
+  cleanup_stale_remote_dirs
 
   BUNDLE_PATH="$ARTIFACT_ROOT/${RUN_ID}.bundle"
   log "Creating git bundle for ${FULL_SHA}"
@@ -407,8 +564,12 @@ run_remote_check() {
     return 1
   fi
 
-  REMOTE_RUN_DIR=$(remote_bash make_run_dir "$REMOTE_BASE" <<'REMOTE'
-base=${2:-${TMPDIR:-/tmp}}
+  REMOTE_RUN_DIR=$(remote_bash make_run_dir "$REMOTE_BASE" "${REMOTE_TMPDIR:-}" <<'REMOTE'
+base=$2
+remote_tmpdir=${3:-}
+if [ -z "$base" ]; then
+  base=${remote_tmpdir:-${TMPDIR:-/tmp}}
+fi
 mktemp -d "$base/sonder-ci-XXXXXXXX"
 REMOTE
   )
@@ -453,15 +614,16 @@ REMOTE
   log "Starting the check on ${SONDER_CI_HOST}"
   # The wrapper must not run under `set -e`: a failing check still has to write
   # check.exit, or the wait loop can only conclude that the run died.
-  remote_bash start "$REMOTE_RUN_DIR" "$FULL_SHA" "$KNOWN_FAILURES" <<'REMOTE'
-run_dir=$2 sha=$3 known_failures=$4
+  remote_bash start "$REMOTE_RUN_DIR" "$FULL_SHA" "$KNOWN_FAILURES" "${REMOTE_TMPDIR:-}" <<'REMOTE'
+run_dir=$2 sha=$3 known_failures=$4 remote_tmpdir=${5:-}
 cd "$run_dir/checkout" || exit 1
 rm -f "$run_dir/check.exit" "$run_dir/check.pid"
 setsid nohup bash -c '
+  if [ -n "$5" ]; then export TMPDIR="$5"; fi
   nice -n 10 npm run check -- --ref "$1" --known-failures "$4" --output-dir "$2"
   rc=$?
   echo "$rc" >"$3.tmp" && mv "$3.tmp" "$3"
-' _ "$sha" "$run_dir/report" "$run_dir/check.exit" "$known_failures" >"$run_dir/check.log" 2>&1 </dev/null &
+' _ "$sha" "$run_dir/report" "$run_dir/check.exit" "$known_failures" "$remote_tmpdir" >"$run_dir/check.log" 2>&1 </dev/null &
 echo $! >"$run_dir/check.pid"
 REMOTE
   rc=$?

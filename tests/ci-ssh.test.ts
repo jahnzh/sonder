@@ -97,6 +97,12 @@ function fixture(t?: TestContext) {
     path.resolve("scripts/lib/ci-history.sh"),
     path.join(repo, "scripts", "lib", "ci-history.sh"),
   );
+  if (fs.existsSync(path.resolve("scripts/ci-hosts.json"))) {
+    fs.copyFileSync(
+      path.resolve("scripts/ci-hosts.json"),
+      path.join(repo, "scripts", "ci-hosts.json"),
+    );
+  }
   fs.writeFileSync(
     path.join(repo, "package.json"),
     JSON.stringify({
@@ -151,7 +157,7 @@ function fixture(t?: TestContext) {
       env: {
         ...cleanEnv(),
         PATH: `${bin}:${process.env.PATH}`,
-        ...(env.SONDER_CI_REMOTE_BASE === undefined ? { SONDER_CI_REMOTE_BASE: remote } : {}),
+        ...(env.SONDER_CI_REMOTE_BASE === undefined && !env.SONDER_CI_HOST ? { SONDER_CI_REMOTE_BASE: remote } : {}),
         SONDER_CI_POLL_INTERVAL: "0.2",
         SONDER_CI_LOOPBACK_PORT: "1",
         STUB_SSH_LOG: logs.ssh,
@@ -590,6 +596,166 @@ test("a failed automatic history record-check does not change the ci-ssh exit co
   });
   assert.equal(out.status, 0, out.output);
   assert.match(out.output, /warning: automatic history record-check failed/);
+});
+
+test("tracked scripts/ci-hosts.json contains lisa and WSL entries", () => {
+  const configPath = path.resolve("scripts/ci-hosts.json");
+  assert.ok(fs.existsSync(configPath), "scripts/ci-hosts.json exists");
+  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  assert.equal(config.lisa.host, "lisa");
+  assert.equal(config.lisa.remoteBase, "/home/jahn/sonder-ci-tmp");
+  assert.equal(config.lisa.tmpdir, "/home/jahn/sonder-ci-tmp");
+  assert.equal(config.lisa.maxWait, 3600);
+  assert.equal(config.lisa.maxParallel, 1);
+  assert.equal(config["192.168.1.119"].host, "192.168.1.119");
+  assert.equal(config["192.168.1.119"].remoteBase, "");
+  assert.equal(config["192.168.1.119"].tmpdir, "");
+  assert.equal(config["192.168.1.119"].maxWait, 1800);
+  assert.equal(config["192.168.1.119"].maxParallel, 1);
+});
+
+test("config resolution: SONDER_CI_HOST=lisa uses SSD base without other env", (t) => {
+  const f = fixture(t);
+  const ssdBase = path.join(f.base, "lisa-ssd-base");
+  fs.mkdirSync(ssdBase);
+  fs.writeFileSync(
+    path.join(f.repo, "scripts", "ci-hosts.json"),
+    JSON.stringify({
+      lisa: {
+        host: "lisa",
+        remoteBase: ssdBase,
+        tmpdir: ssdBase,
+        maxWait: 3600,
+        maxParallel: 1,
+      },
+    }) + "\n",
+  );
+  const out = f.run(f.second, { SONDER_CI_HOST: "lisa" });
+  assert.equal(out.status, 0, out.output);
+  assert.match(
+    out.output,
+    new RegExp(`Remote run directory: lisa:${ssdBase.replaceAll("/", "\\/")}\\/sonder-ci-`),
+  );
+  assert.match(out.output, /Waiting for the check \(cap 3600s/);
+  const sshLog = f.read(f.logs.ssh);
+  assert.match(
+    sshLog,
+    new RegExp(` -- start [^ ]+ [^ ]+ [^ ]+ ${ssdBase.replaceAll("/", "\\/")}`),
+  );
+  assert.match(
+    sshLog,
+    new RegExp(` -- browser_check [^ ]+ ${ssdBase.replaceAll("/", "\\/")}`),
+  );
+});
+
+test("config resolution: custom host config resolves remote base, tmpdir, max wait and parallel cap", (t) => {
+  const f = fixture(t);
+  const customBase = path.join(f.base, "custom-base");
+  const customTmp = path.join(f.base, "custom-tmp");
+  fs.mkdirSync(customBase);
+  fs.mkdirSync(customTmp);
+  fs.writeFileSync(
+    path.join(f.repo, "scripts", "ci-hosts.json"),
+    JSON.stringify({
+      myhost: {
+        host: "myhost",
+        remote_base: customBase,
+        TMPDIR: customTmp,
+        max_wait: 2400,
+        max_parallel: 2,
+      },
+    }) + "\n",
+  );
+  const out = f.run(f.second, { SONDER_CI_HOST: "myhost" });
+  assert.equal(out.status, 0, out.output);
+  assert.match(
+    out.output,
+    new RegExp(`Remote run directory: myhost:${customBase.replaceAll("/", "\\/")}\\/sonder-ci-`),
+  );
+  assert.match(out.output, /Waiting for the check \(cap 2400s/);
+  const sshLog = f.read(f.logs.ssh);
+  assert.match(
+    sshLog,
+    new RegExp(` -- start [^ ]+ [^ ]+ [^ ]+ ${customTmp.replaceAll("/", "\\/")}`),
+  );
+});
+
+test("env override: SONDER_CI_* environment variables override host config settings", (t) => {
+  const f = fixture(t);
+  const configBase = path.join(f.base, "config-base");
+  const overrideBase = path.join(f.base, "override-base");
+  const configTmp = path.join(f.base, "config-tmp");
+  const overrideTmp = path.join(f.base, "override-tmp");
+  fs.mkdirSync(configBase);
+  fs.mkdirSync(overrideBase);
+  fs.mkdirSync(configTmp);
+  fs.mkdirSync(overrideTmp);
+  fs.writeFileSync(
+    path.join(f.repo, "scripts", "ci-hosts.json"),
+    JSON.stringify({
+      lisa: {
+        host: "lisa",
+        remoteBase: configBase,
+        tmpdir: configTmp,
+        maxWait: 3600,
+        maxParallel: 1,
+      },
+    }) + "\n",
+  );
+  const out = f.run(f.second, {
+    SONDER_CI_HOST: "lisa",
+    SONDER_CI_REMOTE_BASE: overrideBase,
+    SONDER_CI_TMPDIR: overrideTmp,
+    SONDER_CI_MAX_WAIT: "1200",
+    SONDER_CI_MAX_PARALLEL: "3",
+  });
+  assert.equal(out.status, 0, out.output);
+  assert.match(
+    out.output,
+    new RegExp(`Remote run directory: lisa:${overrideBase.replaceAll("/", "\\/")}\\/sonder-ci-`),
+  );
+  assert.match(out.output, /Waiting for the check \(cap 1200s/);
+  const sshLog = f.read(f.logs.ssh);
+  assert.match(
+    sshLog,
+    new RegExp(` -- start [^ ]+ [^ ]+ [^ ]+ ${overrideTmp.replaceAll("/", "\\/")}`),
+  );
+});
+
+test("cleanup age filter: cleans sonder-* older than 24h, preserving newer dirs, non-sonder dirs, and running checks", (t) => {
+  const f = fixture(t);
+  const remoteTmp = path.join(f.base, "remote-tmp");
+  fs.mkdirSync(remoteTmp);
+
+  const staleDir = path.join(f.remote, "sonder-ci-stale");
+  const recentDir = path.join(f.remote, "sonder-ci-recent");
+  const nonSonderDir = path.join(f.remote, "other-ci-stale");
+  const runningDir = path.join(f.remote, "sonder-ci-running");
+  const tmpStaleDir = path.join(remoteTmp, "sonder-tmp-stale");
+
+  fs.mkdirSync(staleDir);
+  fs.mkdirSync(recentDir);
+  fs.mkdirSync(nonSonderDir);
+  fs.mkdirSync(runningDir);
+  fs.mkdirSync(tmpStaleDir);
+
+  const tOld = (Date.now() - 25 * 3600 * 1000) / 1000;
+  fs.utimesSync(staleDir, tOld, tOld);
+  fs.utimesSync(nonSonderDir, tOld, tOld);
+  fs.utimesSync(runningDir, tOld, tOld);
+  fs.utimesSync(tmpStaleDir, tOld, tOld);
+
+  fs.writeFileSync(path.join(runningDir, "check.pid"), `${process.pid}\n`);
+
+  const out = f.run(f.second, { SONDER_CI_REMOTE_TMP: remoteTmp });
+  assert.equal(out.status, 0, out.output);
+
+  assert.equal(fs.existsSync(staleDir), false, "sonder-ci-stale (>24h) removed");
+  assert.equal(fs.existsSync(tmpStaleDir), false, "sonder-tmp-stale (>24h in remote tmp) removed");
+  assert.equal(fs.existsSync(recentDir), true, "sonder-ci-recent (<24h) preserved");
+  assert.equal(fs.existsSync(nonSonderDir), true, "other-ci-stale preserved");
+  assert.equal(fs.existsSync(runningDir), true, "sonder-ci-running with active check.pid preserved");
+  assert.equal(fs.existsSync(f.remote), true, "remote base directory preserved");
 });
 
 });
