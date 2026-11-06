@@ -45,8 +45,8 @@ export type AlignmentInterval = {
   start: number;
   end: number;
   confidence: number;
-  verified?: boolean;
 };
+export type AlignmentOutcome = "mapped" | "partial" | "unsynced" | "language_not_supported" | "error";
 export type AlignmentFlag = {
   kind:
     | "intro"
@@ -107,6 +107,9 @@ export type AlignmentJob = {
     | "error";
   progress: number;
   engine: string;
+  outcome?: AlignmentOutcome;
+  /** Total seconds spent in each worker stage across completed requests. */
+  stageTimings?: Record<string, number>;
   error: string | null;
   warning: string | null;
   intervals: AlignmentInterval[];
@@ -138,7 +141,6 @@ export type AlignmentJob = {
   };
   /** Present on summary list responses; full intervals live on /map. */
   intervalCount?: number;
-  unverifiedCount?: number;
 };
 // A sentence locator's blockIndex counts the "blocks" of a section. The server
 // (node-html-parser) and the reader (the browser DOM) count them with this one

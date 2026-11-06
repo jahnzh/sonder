@@ -344,6 +344,8 @@ test("accepted members get projected maps and default EPUB via API", async () =>
     status: "partial" as const,
     progress: 1,
     engine: "test",
+    outcome: "partial" as const,
+    stageTimings: { alignment: 2.5 },
     error: null,
     warning: null,
     intervals: [
@@ -379,6 +381,9 @@ test("accepted members get projected maps and default EPUB via API", async () =>
   );
   assert.equal(jobs.length, 1);
   assert.ok(jobs[0].intervalCount > 0);
+  assert.equal(jobs[0].engine, "test");
+  assert.equal(jobs[0].outcome, "partial");
+  assert.deepEqual(jobs[0].stageTimings, { alignment: 2.5 });
   assert.deepEqual(jobs[0].sectionsDone, [0]);
 
   const override = await app.inject({

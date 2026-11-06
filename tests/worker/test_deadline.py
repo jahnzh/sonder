@@ -29,7 +29,9 @@ FAKE_CHILD = textwrap.dedent("""
     elif mode == "crash":
         sys.exit(3)
     else:
-        json.dump({"intervals": [{"index": 0, "start": 1.0, "end": 2.0}], "quality": None, "peakMemoryMB": 12.5}, open(result, "w"))
+        intervals = [] if mode == "empty" else [{"index": 0, "start": 1.0, "end": 2.0}]
+        if mode == "full": intervals.append({"index": 1, "start": 2.0, "end": 3.0})
+        json.dump({"intervals": intervals, "quality": None, "peakMemoryMB": 12.5}, open(result, "w"))
 """)
 # Writes an empty file at its last argument, like ffmpeg writing the wave.
 FAKE_FFMPEG = "#!/bin/sh\nfor last; do :; done\n: > \"$last\"\n"
@@ -126,8 +128,24 @@ class Deadline(Worker):
     def test_success_writes_the_cache_file_and_removes_working_files(self):
         result = self.run_align("ok")
         self.assertEqual(result["peakMemoryMB"], 12.5)
+        self.assertEqual(result["engine"], "aeneas-1.7.3")
+        self.assertEqual(result["outcome"], "partial")
+        self.assertEqual(set(result["stageTimings"]), {"audioExtraction", "alignment"})
+        self.assertTrue(all(value >= 0 for value in result["stageTimings"].values()))
         self.assertEqual(json.loads((self.folder / "section-1" / "out.json").read_text()), result)
         self.assertEqual(self.leftovers(), ["section-1/out.json"])
+
+    def test_anchor_reports_engine_outcome_and_timing(self):
+        for match, outcome in [(None, "unsynced"), ({"index": 0, "score": 1}, "mapped")]:
+            with self.subTest(outcome=outcome), mock.patch.object(pipeline, "_run_child", return_value={"match": match}):
+                result = pipeline.locate_passage(audio=self.dir / "a.m4b", folder=self.folder, fragments=["x"], language="eng", start=0, duration=30, env=self.env)
+                self.assertEqual(result["engine"], "aeneas-1.7.3")
+                self.assertEqual(result["outcome"], outcome)
+                self.assertGreaterEqual(result["stageTimings"]["speechRecovery"], 0)
+
+    def test_align_distinguishes_fully_mapped_and_unsynced(self):
+        self.assertEqual(self.run_align("full")["outcome"], "mapped")
+        self.assertEqual(self.run_align("empty")["outcome"], "unsynced")
 
     def test_a_crashing_child_is_a_failure_not_a_timeout(self):
         with self.assertRaises(AlignmentFailed):
@@ -217,6 +235,16 @@ class Http(unittest.TestCase):
                 self.assertEqual(status, 504)
                 self.assertIn("timed out", detail)
 
+    def test_worker_failure_responses_include_metadata(self):
+        for call, request, target in [(self.align.align, self.align_request(), "align_section"), (self.align.anchor, self.anchor_request(), "locate_passage")]:
+            with self.subTest(target=target), mock.patch.object(self.align, target, side_effect=AlignmentTimeout(5)):
+                with self.assertRaises(self.align.HTTPException) as caught:
+                    call(request)
+                detail = caught.exception.detail
+                self.assertEqual(detail["engine"], "aeneas-1.7.3")
+                self.assertEqual(detail["outcome"], "error")
+                self.assertGreaterEqual(detail["stageTimings"]["failedRequest"], 0)
+
     def test_a_busy_worker_is_409_and_other_failures_are_422_with_a_log_line(self):
         with self.align.gate.hold():
             status, _, _ = self.status_of(self.align.align, self.align_request(), "align_section", AlignmentTimeout(5))
@@ -227,6 +255,14 @@ class Http(unittest.TestCase):
 
     def test_health_reports_a_stuck_job(self):
         self.assertEqual(set(self.align.health()) >= {"busy", "stuck", "busySeconds", "lastTimeout"}, True)
+
+    def test_unsupported_language_is_explicit_for_both_endpoints(self):
+        for call, request in [(self.align.align, self.align_request()), (self.align.anchor, self.anchor_request())]:
+            request.language = "jpn"
+            result = call(request)
+            self.assertEqual(result["engine"], "aeneas-1.7.3")
+            self.assertEqual(result["outcome"], "language_not_supported")
+            self.assertGreaterEqual(result["stageTimings"]["requestValidation"], 0)
 
 class GateState(unittest.TestCase):
     def test_a_second_holder_is_refused_and_the_age_is_reported(self):
