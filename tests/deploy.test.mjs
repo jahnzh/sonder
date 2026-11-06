@@ -23,7 +23,7 @@ function stub(dir, name, body) {
 
 // A throwaway repository holding a copy of deploy.sh, a stubbed docker and curl, and live-check scripts that
 // append their name to a log, so a test can see which checks ran.
-function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", tagFails = false, smokeFails = false } = {}) {
+function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", tagFails = false, smokeFails = false, markerFails = false } = {}) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "sonder-deploy-")));
   const repo = join(dir, "repo");
   const bin = join(dir, "bin");
@@ -52,7 +52,14 @@ function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", t
     `  "images "*) printf '%b\\n' ${JSON.stringify(images)} ;;`,
     `  "compose build sonder") touch ${JSON.stringify(built)} ;;`,
     `  "run --rm --entrypoint node sonder-audiobooks:local --import tsx scripts/image-smoke.mjs") ${smokeFails ? "exit 1" : "exit 0"} ;;`,
-    `  "tag "*) if [ -e ${JSON.stringify(built)} ] || ${tagFails}; then echo "Error response from daemon: No such image" >&2; exit 1; fi ;;`,
+    // Do not put "-c*" at the end of a case pattern: the first ")" closes the branch (bash parse error on --rm).
+    `  *run*--entrypoint*sh*sonder-audiobooks:local*grep*) ${markerFails ? "exit 1" : "exit 0"} ;;`,
+    `  "tag "*)
+    if ${tagFails}; then echo "Error response from daemon: No such image" >&2; exit 1; fi
+    case "$*" in
+      *sha256:*)
+        if [ -e ${JSON.stringify(built)} ]; then echo "Error response from daemon: No such image" >&2; exit 1; fi ;;
+    esac ;;`,
     '  *) exit 0 ;;',
     "esac",
   ].join("\n"));
@@ -87,19 +94,37 @@ test("production dry run lists the image smoke before the swap", () => {
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
 });
 
-test("a failing image smoke aborts after build and before the container swap", () => {
+test("a failing image smoke aborts after build and before the container swap, restores :local, and does not compose up", () => {
   const f = fixture({ "verify-a.mjs": 0 }, { smokeFails: true });
   try {
     const r = f.run([]);
     assert.equal(r.status, 1);
     assert.match(r.stderr, /image smoke failed; the container is still running the previous image/);
+    assert.match(r.stderr, /restoring :local to the rollback image/);
     const calls = f.dockerCalls();
     const build = calls.indexOf("compose build sonder");
     const smoke = calls.indexOf("run --rm --entrypoint node sonder-audiobooks:local --import tsx scripts/image-smoke.mjs");
     assert.ok(build >= 0 && smoke > build, calls.join("\n"));
+    assert.ok(calls.some((c) => c === "tag sonder-audiobooks:rollback sonder-audiobooks:local"), calls.join("\n"));
     assert.equal(calls.some((c) => c.startsWith("compose up")), false);
     assert.deepEqual(f.ran(), []);
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test("a failing marker restores :local from the rollback tag and does not compose up", () => {
+  const f = fixture({ "verify-a.mjs": 0 }, { markerFails: true });
+  try {
+    const r = f.run(["--marker", "needle"]);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /marker not found in the built image: needle/);
+    assert.match(r.stderr, /restoring :local to the rollback image/);
+    const calls = f.dockerCalls();
+    assert.ok(calls.some((c) => c === "tag sonder-audiobooks:rollback sonder-audiobooks:local"), calls.join("\n"));
+    assert.equal(calls.some((c) => c.startsWith("compose up")), false);
+    assert.deepEqual(f.ran(), []);
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
 });
 
 test("every live check runs and a clean run exits 0", () => {
