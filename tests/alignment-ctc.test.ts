@@ -106,3 +106,68 @@ test("chapter CTC publishes first and last sentences with worker metadata and re
   assert.equal(anchored.mode, "anchored");
   assert.equal(anchored.engine, engine);
 });
+
+test("an anchored job aligns its windows with CTC and keeps its CTC identity through speech recovery", async () => {
+  process.env.ALIGNMENT_WORKER_URL = "http://ctc-worker.test";
+  const file = join(process.env.MEDIA_ROOT!, "alice.epub");
+  writeFileSync(file, await readerFixture());
+  db.insert(schema.ebookEditions).values({ id: "ctc-alice-ebook", workId: "ctc-work", format: "epub", source: file }).run();
+  const alice = await extractBook("ctc-alice-ebook");
+  const paragraphs = alice.sections.flatMap((section) => section.paragraphs);
+  // 30 s of credits, five seconds per sentence, 20 s of closing credits.
+  const spoken = (index: number) => 30 + index * 5;
+  db.insert(schema.editions).values({ id: "ctc-alice-edition", workId: "ctc-work", cover: "", narrator: "", rating: 0, sourceLabel: "", language: "en" }).run();
+  db.insert(schema.recordings).values({ id: "ctc-alice-recording", editionId: "ctc-alice-edition" }).run();
+  db.insert(schema.tracks).values({ id: "ctc-alice-track", recordingId: "ctc-alice-recording", title: "Alice.m4b", index: 0,
+    duration: spoken(paragraphs.length) + 20, chapters: [], source: audio, sourceType: "local" }).run();
+  const windowEngines: unknown[] = [];
+  globalThis.fetch = async (input, init) => {
+    const request = JSON.parse(String(init?.body));
+    if (String(input).endsWith("/anchor")) {
+      const index = Math.max(0, Math.ceil((request.start - 30) / 5));
+      if (index >= paragraphs.length || spoken(index) > request.start + request.duration - 3)
+        return Response.json({ engine: "aeneas-1.7.3", outcome: "unsynced", stageTimings: { speechRecovery: 0.25 }, match: null, start: request.start, text: "" });
+      return Response.json({ engine: "aeneas-1.7.3", outcome: "mapped", stageTimings: { speechRecovery: 0.25 },
+        match: { index, score: 0.9, text: "" }, start: spoken(index), text: "word ".repeat(40) });
+    }
+    windowEngines.push(request.engine);
+    const step = request.duration / request.fragments.length;
+    return Response.json({ engine, outcome: "mapped", stageTimings: { ctcPath: 0.5 }, elapsedSeconds: 1,
+      intervals: request.fragments.map((_: string, i: number) => ({ index: i, start: request.start + i * step, end: request.start + (i + 1) * step })) });
+  };
+  const created = await createAlignment("ctc-alice-ebook", "ctc-alice-recording", undefined, "anchored");
+  assert.equal(created.mode, "anchored");
+  assert.equal(created.engine, engine);
+  let job = alignmentJob(created.id);
+  for (let i = 0; i < 300 && !(job.anchoring?.stage === "done" || job.status === "error"); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    job = alignmentJob(created.id);
+  }
+  assert.equal(job.status, "partial", job.error ?? undefined);
+  assert.equal(job.engine, engine, "speech-recovery replies must not rename a CTC job");
+  assert.ok(windowEngines.length > 0 && windowEngines.every((value) => value === "ctc"));
+  assert.equal(windowEngines.length, job.anchoring!.segments.length);
+  assert.ok(job.stageTimings!.speechRecovery > 0 && job.stageTimings!.ctcPath > 0);
+  assert.ok(["mapped", "partial"].includes(job.outcome!));
+  assert.ok(job.intervals.length > 0);
+
+  // A worker that answers a CTC window with another engine is refused, not published.
+  globalThis.fetch = async (input, init) => {
+    const request = JSON.parse(String(init?.body));
+    if (String(input).endsWith("/anchor")) {
+      const index = Math.max(0, Math.ceil((request.start - 30) / 5));
+      if (index >= paragraphs.length || spoken(index) > request.start + request.duration - 3)
+        return Response.json({ match: null, start: request.start, text: "" });
+      return Response.json({ match: { index, score: 0.9, text: "" }, start: spoken(index), text: "word ".repeat(40) });
+    }
+    return Response.json({ engine: "aeneas-1.7.3", elapsedSeconds: 1, intervals: [{ index: 0, start: request.start, end: request.start + 1 }] });
+  };
+  const wrong = await createAlignment("ctc-alice-ebook", "ctc-alice-recording", undefined, "anchored");
+  let refused = alignmentJob(wrong.id);
+  for (let i = 0; i < 300 && refused.status !== "error"; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    refused = alignmentJob(wrong.id);
+  }
+  assert.equal(refused.status, "error");
+  assert.match(refused.error ?? "", /did not use the requested CTC engine/);
+});
