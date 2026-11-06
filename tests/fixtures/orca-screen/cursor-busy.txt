@@ -1,0 +1,5 @@
+prompt$ some command
+
+⠋ Running 1.2k tokens
+
+  ... output ...

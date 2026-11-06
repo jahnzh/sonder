@@ -91,6 +91,10 @@ Agent skills setup follows the main flow from https://www.aihero.dev/skills-setu
 - Before reading or writing a multi-provider dispatch evaluation (`docs/agents/dispatch-evaluation.md`, `scripts/orca-dispatch-eval.mjs`), read that doc first. It never starts workers or sends history to Jev.
 - Install the pre-push hook once per clone with `scripts/install-hooks.sh`.
 
+## Coordinator shell helpers (Orca)
+
+Tracked under `scripts/orca/` (commit `send-agent.sh`, `check-workers.sh`, `watch-inbox.sh`, `tick.sh`); thin wrappers at `artifacts/orca/*.sh` exec those paths so existing coordinator commands keep working. `watch-inbox.sh` uses `${XDG_RUNTIME_DIR:-/tmp}/sonder-watch-inbox-<run>.lock` (exclusive `flock`), `.pid` (holder PID for a rejected second instance), and `.log` (append-only record of consumed messages).
+
 ## Spawning subagents
 
 Before spawning any subagent, decide the intelligence level the task needs and choose the agent and model to match. Do not default every worker to the same model.

@@ -1,0 +1,7 @@
+unrelated mention of follow-ups in prose
+
+┌─ follow-ups
+│ ○ replace me later
+│ › second thing with text
+│ ○
+└─────────────────
