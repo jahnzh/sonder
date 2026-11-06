@@ -1,0 +1,1 @@
+export const CONSENSUS_MAX_CELLS = 600_000_000;

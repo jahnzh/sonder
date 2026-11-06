@@ -95,7 +95,7 @@ export function firstRecordingWithLocalAudio(workId: string) {
     .all();
   return rows.find((row) => recordingHasLocalAudio(row.id))?.id ?? null;
 }
-function audioFingerprint(recordingId: string, stable = true) {
+export function audioFingerprint(recordingId: string, stable = true) {
   const { tracks } = recordingContext(recordingId);
   const hash = createHash("sha256")
     .update(

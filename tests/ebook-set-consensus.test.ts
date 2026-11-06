@@ -425,6 +425,9 @@ test("explicit pairings supersede an in-flight backfill and stay ahead of projec
   assert.equal(prepared.mode, undefined);
   assert.equal(prepared.origin, undefined);
 
+  // Install a real consensus projection so the prepared-map guard is exercised.
+  db.insert(schema.workEbookSetMembers).values({workId, ebookId, status: "accepted", updatedAt: Date.now()}).run();
+  db.insert(schema.workEbookSet).values({workId, consensusFingerprint: "fp", consensusSentences: '["first"]', projections: JSON.stringify({[ebookId]: ["0:0"]}), recordingId, consensusJobId: "consensus-unused", updatedAt: Date.now()}).run();
   // Projected publish must not replace a prepared map for the same pair.
   await publishProjectedMaps(workId, {
     id: "consensus-unused",
@@ -487,4 +490,49 @@ test("syncEbookSetConsensus skips audio realign when consensus text is unchanged
   const second = await syncEbookSetConsensus(workId);
   assert.equal(first.consensus?.fingerprint, second.consensus?.fingerprint);
   assert.equal(first.consensus?.jobId, second.consensus?.jobId);
+});
+
+test("server handles another request during a build and rejects changed members", async () => {
+  const { monitorEventLoopDelay } = await import("node:perf_hooks");
+  const { extractBook } = await import("../server/reader.ts");
+  const workId = seedWork("Concurrent build", "Test Author");
+  const bodies: [string, string] = [Array.from({length: 6000}, (_, i) => `<p>Sentence ${i} ends here.</p>`).join(""), "<p>Last sentence.</p>"];
+  const content = await readerFixture({ bodies });
+  const ids = [randomUUID(), randomUUID()];
+  const dir = join(temp, "media", "ebooks");
+  mkdirSync(dir, {recursive: true});
+  for (const id of ids) {
+    const path = join(dir, `${id}.epub`);
+    writeFileSync(path, content);
+    db.insert(schema.ebookEditions).values({id, workId, format: "epub", source: path}).run();
+    db.insert(schema.workEbookSetMembers).values({workId, ebookId: id, status: "accepted", evidence: JSON.stringify({sharedSentenceCount: 1, audioSupportedCoverage: null}), updatedAt: Date.now()}).run();
+    await extractBook(id);
+  }
+  const audio = join(temp, "media", `${workId}.mp3`);
+  writeFileSync(audio, "audio");
+  seedRecording(workId, `rec-${workId}`, audio);
+  db.insert(schema.workEbookSet).values({workId, consensusFingerprint: "old", consensusSentences: '["old"]', projections: '{}', updatedAt: Date.now()}).run();
+  const delay = monitorEventLoopDelay({resolution: 10});
+  delay.enable();
+  let finished = false;
+  const started = performance.now();
+  const building = syncEbookSetConsensus(workId).finally(() => { finished = true; });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  const requestStarted = performance.now();
+  const response = await app.inject(`/api/works/${workId}/ebook-set`);
+  const latency = performance.now() - requestStarted;
+  assert.equal(response.statusCode, 200);
+  assert.equal(finished, false, "request should finish before the worker build");
+  db.update(schema.workEbookSetMembers).set({status: "rejected"}).where(eq(schema.workEbookSetMembers.ebookId, ids[1])).run();
+  await building;
+  delay.disable();
+  const state = db.select().from(schema.workEbookSet).where(eq(schema.workEbookSet.workId, workId)).get();
+  assert.equal(state?.consensusFingerprint, "old");
+  db.update(schema.workEbookSetMembers).set({status: "accepted"}).where(eq(schema.workEbookSetMembers.ebookId, ids[1])).run();
+  const audioBuild = syncEbookSetConsensus(workId);
+  await new Promise<void>(resolve => setImmediate(resolve));
+  writeFileSync(audio, "changed audio");
+  await audioBuild;
+  assert.equal(db.select().from(schema.workEbookSet).where(eq(schema.workEbookSet.workId, workId)).get()?.consensusFingerprint, "old");
+  console.log(`consensus server probe: total=${(performance.now()-started).toFixed(1)}ms request=${latency.toFixed(1)}ms event-loop-max=${(delay.max/1e6).toFixed(1)}ms`);
 });
