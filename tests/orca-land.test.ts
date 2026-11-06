@@ -56,7 +56,10 @@ function stub(bin: string, name: string, body: string) {
  * Temp main checkout linked to a bare origin, plus one worktree under workspaces/.
  * Fake `gh` on PATH returns OPEN/MERGEABLE by default (override via STUB_GH_*).
  */
-function setup(inheritedEnv: NodeJS.ProcessEnv = process.env) {
+function setup(
+  inheritedEnv: NodeJS.ProcessEnv = process.env,
+  options: { bareMain?: boolean } = {},
+) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "sonder-land-")));
   const bin = join(dir, "bin");
   const workspaces = join(dir, "ws");
@@ -75,6 +78,7 @@ function setup(inheritedEnv: NodeJS.ProcessEnv = process.env) {
   fixtureGit(main, ["add", "README.md"]);
   fixtureGit(main, ["commit", "-m", "init"]);
   fixtureGit(main, ["push", bare, "main"]);
+  fixtureGit(main, ["fetch", "origin"]);
 
   // Feature branch + worktree.
   fixtureGit(main, ["checkout", "-b", "jahnzh/feat-99-land"]);
@@ -91,6 +95,22 @@ function setup(inheritedEnv: NodeJS.ProcessEnv = process.env) {
 
   const wt = join(workspaces, "land-wt");
   fixtureGit(main, ["worktree", "add", wt, "jahnzh/feat-99-land"]);
+
+  if (options.bareMain) {
+    fixtureGit(main, ["config", "core.bare", "true"]);
+    git(
+      main,
+      [
+        "--git-dir=" + join(main, ".git"),
+        "--work-tree=" + main,
+        "checkout",
+        "-q",
+        "--detach",
+        "origin/main",
+      ],
+      gitEnv,
+    );
+  }
 
   // Open a PR-like head on origin/main's parent so merge --ff-only can advance main
   // after gh merge fast-forwards origin/main in the stub.
@@ -320,6 +340,75 @@ test("never invokes gh pr edit", () => {
     t.run(["--pr", "99", "--worktree", "land-wt"]);
     const log = readFileSync(t.ghLog, "utf8");
     assert.doesNotMatch(log, /pr edit/);
+  } finally {
+    rmSync(t.dir, { recursive: true, force: true });
+  }
+});
+
+test("lands on a bare main checkout end to end (dry-run and real)", () => {
+  const t = setup(process.env, { bareMain: true });
+  try {
+    const tip = git(
+      t.main,
+      ["--git-dir=" + join(t.main, ".git"), "--work-tree=" + t.main, "rev-parse", "jahnzh/feat-99-land"],
+      t.env,
+    ).stdout.trim();
+
+    // 1. Dry run
+    const dryRun = t.run(["--pr", "99", "--worktree", "land-wt", "--dry-run"]);
+    assert.equal(dryRun.status, 0, dryRun.stdout + dryRun.stderr);
+    assert.match(dryRun.stdout, /check PR #99 is OPEN and MERGEABLE/);
+    assert.match(dryRun.stdout, /dry-run: gh pr merge 99 --merge/);
+    assert.match(
+      dryRun.stdout,
+      /dry-run: \(stash -u if dirty\); git fetch; git checkout -q --detach origin\/main; git branch -f main origin\/main/,
+    );
+    assert.match(dryRun.stdout, /dry-run: git worktree remove --force/);
+    assert.match(dryRun.stdout, /dry-run: git branch -D jahnzh\/feat-99-land/);
+    assert.match(dryRun.stdout, /dry-run: git branch -D jahnzh\/issue-99-alias/);
+    assert.doesNotMatch(dryRun.stdout, /jahnzh\/other-tip/);
+    assert.ok(existsSync(t.wt), "dry-run must keep worktree");
+    const ghLogDry = existsSync(t.ghLog) ? readFileSync(t.ghLog, "utf8") : "";
+    assert.doesNotMatch(ghLogDry, /pr merge/, "dry-run must not merge");
+
+    // 2. Real land
+    const r = t.run(["--pr", "99", "--worktree", "land-wt"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(readFileSync(t.ghLog, "utf8"), /pr merge 99 --merge/);
+    assert.equal(existsSync(t.wt), false, "worktree removed");
+
+    const branches = git(
+      t.main,
+      ["--git-dir=" + join(t.main, ".git"), "--work-tree=" + t.main, "branch", "--list"],
+      t.env,
+    ).stdout;
+    assert.doesNotMatch(branches, /feat-99-land/, "feature branch removed");
+    assert.doesNotMatch(branches, /issue-99-alias/, "alias branch removed");
+    assert.match(branches, /other-tip/, "different-tip jahnzh branch kept");
+
+    // HEAD must be detached at origin/main
+    const currentBranch = git(
+      t.main,
+      ["--git-dir=" + join(t.main, ".git"), "--work-tree=" + t.main, "branch", "--show-current"],
+      t.env,
+    ).stdout.trim();
+    assert.equal(currentBranch, "", "HEAD must be detached");
+
+    const headTip = git(
+      t.main,
+      ["--git-dir=" + join(t.main, ".git"), "--work-tree=" + t.main, "rev-parse", "HEAD"],
+      t.env,
+    ).stdout.trim();
+    assert.equal(headTip, tip, "HEAD detached at origin/main tip");
+
+    const mainTip = git(
+      t.main,
+      ["--git-dir=" + join(t.main, ".git"), "--work-tree=" + t.main, "rev-parse", "refs/heads/main"],
+      t.env,
+    ).stdout.trim();
+    assert.equal(mainTip, tip, "main branch updated to landed tip");
+
+    assert.ok(existsSync(join(t.main, "feature.txt")), "work tree updated with landed files");
   } finally {
     rmSync(t.dir, { recursive: true, force: true });
   }

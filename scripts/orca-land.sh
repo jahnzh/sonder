@@ -10,7 +10,8 @@
 #      uncommitted changes other than an untracked REPORT.md.
 #   3. `gh pr merge <n> --merge` (skipped with --dry-run).
 #   4. In the main checkout: `git stash -u` only if dirty, `git fetch`,
-#      `git merge --ff-only origin/main`, then `git stash pop` when stashed.
+#      `git merge --ff-only origin/main` (or if bare, detach at `origin/main`
+#      and update local `main`), then `git stash pop` when stashed.
 #   5. For each worktree: record its branch, `git worktree remove --force`,
 #      `git branch -D` that branch and any local `jahnzh/`-prefixed branch
 #      whose tip equals the removed branch's tip.
@@ -117,6 +118,19 @@ done
 
 echo "-> main checkout: $MAIN_CHECKOUT"
 
+is_bare=0
+if [[ $(git -C "$MAIN_CHECKOUT" config --bool core.bare 2>/dev/null) == "true" || $(git --git-dir="$MAIN_CHECKOUT/.git" config --bool core.bare 2>/dev/null) == "true" ]]; then
+  is_bare=1
+fi
+
+main_git() {
+  if [[ $is_bare -eq 1 ]]; then
+    git --git-dir="$MAIN_CHECKOUT/.git" --work-tree="$MAIN_CHECKOUT" "$@"
+  else
+    (cd "$MAIN_CHECKOUT" && git "$@")
+  fi
+}
+
 # --- 3. merge ---
 if [[ $DRY_RUN -eq 1 ]]; then
   echo "-> merge PR #$PR"
@@ -133,18 +147,27 @@ fi
 echo "-> update main checkout"
 did_stash=0
 if [[ $DRY_RUN -eq 1 ]]; then
-  echo "   dry-run: (stash -u if dirty); git fetch; git merge --ff-only origin/main; (stash pop)"
+  if [[ $is_bare -eq 1 ]]; then
+    echo "   dry-run: (stash -u if dirty); git fetch; git checkout -q --detach origin/main; git branch -f main origin/main; (stash pop)"
+  else
+    echo "   dry-run: (stash -u if dirty); git fetch; git merge --ff-only origin/main; (stash pop)"
+  fi
 else
-  if [[ -n $(cd "$MAIN_CHECKOUT" && git status --porcelain) ]]; then
+  if [[ -n $(main_git status --porcelain) ]]; then
     echo "   stashing dirty main"
-    (cd "$MAIN_CHECKOUT" && git stash push -u -m "orca-land before merge of PR $PR") || exit 1
+    main_git stash push -u -m "orca-land before merge of PR $PR" || exit 1
     did_stash=1
   fi
-  (cd "$MAIN_CHECKOUT" && git fetch) || exit 1
-  (cd "$MAIN_CHECKOUT" && git merge --ff-only origin/main) || exit 1
+  main_git fetch || exit 1
+  if [[ $is_bare -eq 1 ]]; then
+    main_git checkout -q --detach origin/main || exit 1
+    main_git branch -f main origin/main || exit 1
+  else
+    main_git merge --ff-only origin/main || exit 1
+  fi
   if [[ $did_stash -eq 1 ]]; then
     echo "   restoring stash"
-    (cd "$MAIN_CHECKOUT" && git stash pop) || exit 1
+    main_git stash pop || exit 1
   fi
 fi
 
@@ -158,8 +181,8 @@ for i in "${!WT_PATHS[@]}"; do
     echo "   dry-run: git worktree remove --force $wt"
     echo "   dry-run: git branch -D $branch"
   else
-    (cd "$MAIN_CHECKOUT" && git worktree remove --force "$wt") || exit 1
-    (cd "$MAIN_CHECKOUT" && git branch -D "$branch") || exit 1
+    main_git worktree remove --force "$wt" || exit 1
+    main_git branch -D "$branch" || exit 1
   fi
 
   # Same-tip local branches with a jahnzh/ prefix (aliases for the same issue tip).
@@ -168,15 +191,15 @@ for i in "${!WT_PATHS[@]}"; do
     [[ -n $other ]] || continue
     [[ $other == "$branch" ]] && continue
     [[ $other == jahnzh/* ]] || continue
-    other_tip=$(cd "$MAIN_CHECKOUT" && git rev-parse "refs/heads/$other" 2>/dev/null) || continue
+    other_tip=$(main_git rev-parse "refs/heads/$other" 2>/dev/null) || continue
     [[ $other_tip == "$tip" ]] || continue
     if [[ $DRY_RUN -eq 1 ]]; then
       echo "   dry-run: git branch -D $other"
     else
       echo "   deleting $other"
-      (cd "$MAIN_CHECKOUT" && git branch -D "$other") || exit 1
+      main_git branch -D "$other" || exit 1
     fi
-  done < <(cd "$MAIN_CHECKOUT" && git for-each-ref --format='%(refname:short)' refs/heads/)
+  done < <(main_git for-each-ref --format='%(refname:short)' refs/heads/)
 done
 
 echo "done"
