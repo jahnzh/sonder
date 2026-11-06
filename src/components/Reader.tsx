@@ -311,10 +311,10 @@ export function ReaderView({
     // Layout work of our own still in flight (displays, resizes, re-theming).
     // Relocations while any is pending are not reader navigation.
     layoutPending = useRef(0),
-    // Last pointer, wheel or key input on the pages. Only a relocation shortly
+    // Last navigation-like input on the pages. Only a relocation shortly
     // after one counts as the reader navigating; epub.js also re-positions on
     // its own (e.g. after loading neighbouring sections) seconds later.
-    lastGesture = useRef(0),
+    lastGesture = useRef(Number.NEGATIVE_INFINITY),
     // Reader navigation (Contents, page turns) in flight, and until when its
     // relocation still counts as the reader's own choice.
     navigating = useRef(0),
@@ -673,15 +673,21 @@ export function ReaderView({
           let hold: ReturnType<typeof setTimeout> | null = null;
           let held = false;
           const gesture = () => { lastGesture.current = performance.now(); };
-          for (const type of ["pointerdown", "wheel", "keydown", "touchmove"])
+          for (const type of ["wheel", "keydown", "touchmove"])
             content.document.addEventListener(type, gesture, { passive: true });
           content.document.addEventListener("pointerdown", (event: PointerEvent) => {
-            if (event.button !== 0 || (event.target as Element)?.closest("a")) return;
+            if (event.button !== 0) return;
+            // Links may navigate without a page turn; a tap on the page itself
+            // is only a potential gesture until it moves or turns the page.
+            if ((event.target as Element)?.closest("a")) { gesture(); return; }
             start = { x: event.clientX, y: event.clientY, time: Date.now() }; held = false;
             hold = setTimeout(() => { held = true; pageAction.current("sentence", content, event); }, 550);
           });
           content.document.addEventListener("pointermove", (event: PointerEvent) => {
-            if (start && (Math.abs(event.clientX-start.x)>12 || Math.abs(event.clientY-start.y)>12) && hold) { clearTimeout(hold); hold=null; }
+            if (start && (Math.abs(event.clientX-start.x)>12 || Math.abs(event.clientY-start.y)>12)) {
+              gesture();
+              if (hold) { clearTimeout(hold); hold=null; }
+            }
           });
           content.document.addEventListener("pointercancel", () => { if (hold) clearTimeout(hold); start=null; });
           content.document.addEventListener("pointerup", (event: PointerEvent) => {
