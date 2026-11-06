@@ -21,3 +21,7 @@ The remote pool is smaller in scope than first decided: it is for new recordings
 ## Prototype note: parallel isolation (Dungeon Crawler Carl series)
 
 Running up to three full windowed alignments at once on WSL (16 cores, `nice -n 10`) worked for eight volumes under the staging rule above. Sharing one `alignment/` temp directory across jobs corrupted WAV samples; symlinked audio outside `MEDIA_ROOT` was rejected by the worker.
+
+## Amendment: probing uses CTC emissions (ADR 0006)
+
+Step 1 no longer transcribes samples with Whisper. Candidates are scored against the recording's cached CTC emissions from ADR 0006, so probing and alignment share one acoustic pass. The outlier rule in ADR 0004 (enough samples found, moving forward through the book) is unchanged; only how a sample is matched changes. Full alignments run on the WSL GPU, with lisa on CPU as the only fallback; the N150 worker no longer runs full alignments.

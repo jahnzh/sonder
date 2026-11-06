@@ -82,7 +82,7 @@ export function ReadingSyncSettings({
           <h2>Reading sync</h2>
           <p>
             Queues every linked, language-matching title whose audio is already
-            on the server. Automatic results stay estimated until reviewed.
+            on the server. Timings are estimated.
           </p>
         </div>
       </div>

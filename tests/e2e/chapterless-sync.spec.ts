@@ -34,7 +34,7 @@ test("a single audio file without chapter markers gets reading sync prepared aut
  expect(job.anchoring.anchors.length).toBeGreaterThanOrEqual(3);
  expect(job.coverage).toBeGreaterThan(.5);
  if(job.anchoring.flags.length)await expect(page.locator(".alignment-flags li")).toHaveCount(job.anchoring.flags.length);
- await page.getByRole("button",{name:"Mark alignment reviewed",exact:true}).click();
- await expect.poll(async()=>(await(await page.request.get(`/api/alignments/${job.id}/map`)).json()).intervals.every((i:any)=>i.verified)).toBe(true);
+ await expect(page.getByRole("button",{name:"Mark alignment reviewed",exact:true})).toHaveCount(0);
+ await expect.poll(async()=>(await(await page.request.get(`/api/alignments/${job.id}/map`)).json()).intervals.every((i:any)=>i.verified===undefined)).toBe(true);
  await page.screenshot({path:"artifacts/chapterless-sync.png"});
 });
