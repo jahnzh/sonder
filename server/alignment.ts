@@ -19,6 +19,7 @@ import { hasServerMedia, requestServerDownload } from "./downloads.ts";
 import type { AlignmentJob, AlignmentInterval, AlignmentOutcome } from "../src/reading-types.ts";
 import { requireAdmin } from "./users.ts";
 import { matchSections } from "./alignment-pairings.ts";
+import { unsyncedPassages } from "./alignment-passages.ts";
 import {
   clearPoolStaging,
   dispatchFullAlignmentJob,
@@ -598,6 +599,12 @@ function stopForWorkerOutcome(job: AlignmentJob, metadata: WorkerMetadata) {
   // Keep the specific worker outcome even when earlier requests succeeded.
   job.outcome = metadata.outcome;
   job.status = "error";
+  if (metadata.outcome === "language_not_supported") {
+    job.intervals = [];
+    job.sectionsDone = [];
+    job.coverage = 0;
+    delete job.unsyncedPassages;
+  }
   job.error = metadata.outcome === "language_not_supported"
     ? "The alignment worker does not support this language."
     : "The alignment worker could not process this passage.";
@@ -791,6 +798,18 @@ async function processAnchored(
       (sample) => (sample.spokenWords ?? 0) >= 10,
     ).length;
     if (anchors.length < 3 || anchors.length < spoken * 0.3) {
+      if (job.engine === CTC_ENGINE) {
+        plan.anchors = anchors;
+        plan.stage = "done";
+        job.status = "partial";
+        job.outcome = "unsynced";
+        job.progress = 1;
+        job.coverage = 0;
+        job.unsyncedPassages = unsyncedPassages(book, []);
+        job.warning = "The narration could not be matched reliably. The text remains unsynced.";
+        store(job);
+        return;
+      }
       job.status = "error";
       job.error = `Only ${anchors.length} of ${spoken} narration samples were found in this EPUB. Choose the matching ebook edition or a release with chapters.`;
       plan.anchors = anchors;
@@ -914,6 +933,7 @@ async function processAnchored(
   const plan = job.anchoring!;
   job.intervals = stitch(job.intervals, order, timeline);
   job.coverage = job.intervals.length / paragraphs.length;
+  job.unsyncedPassages = unsyncedPassages(book, job.intervals);
   // Sections with real text and no narration at all, such as front matter.
   const mapped = new Set(job.intervals.map((interval) => interval.section));
   for (const section of book.sections)
@@ -1011,6 +1031,10 @@ export async function processAlignments() {
         job.audioFingerprint = currentAudioFingerprint;
         job.status = "processing";
         store(job);
+        if (job.engine === CTC_ENGINE && iso3(book.language) !== "eng") {
+          stopForWorkerOutcome(job, { outcome: "language_not_supported" });
+          continue;
+        }
         const generation = job.generation;
         const folder = join(mediaRoot, "alignment", job.id);
         mkdirSync(folder, { recursive: true, mode: 0o750 });
@@ -1193,6 +1217,7 @@ export async function processAlignments() {
         ) {
           job.status = "partial";
           finishWorkerOutcome(job);
+          job.unsyncedPassages = unsyncedPassages(book, job.intervals);
           job.warning ||=
             "Timings are estimated from the supplied text. Sections without matching narration are left unsynced.";
           store(job);
@@ -1440,6 +1465,11 @@ export function registerAlignment(app: FastifyInstance) {
         new Error("This alignment was cancelled. Rebuild it before using it."),
         { statusCode: 410, code: "alignment_cancelled" },
       );
+    if (job.outcome === "language_not_supported")
+      throw Object.assign(
+        new Error("This language is not supported by the alignment worker."),
+        { statusCode: 410, code: "alignment_language_not_supported" },
+      );
     if (
       job.fingerprint !== book.fingerprint ||
       job.audioFingerprint !== audioFingerprint(job.recordingId)
@@ -1464,6 +1494,8 @@ export function registerAlignment(app: FastifyInstance) {
       .parse(req.body);
     const job = alignmentJob(id),
       book = await extractBook(job.ebookId);
+    if (job.outcome === "language_not_supported")
+      throw new Error("This language is not supported by the alignment worker.");
     if (
       activeStatuses.includes(job.status) ||
       job.fingerprint !== book.fingerprint ||
@@ -1493,6 +1525,7 @@ export function registerAlignment(app: FastifyInstance) {
       section: section.index,
       confidence: 1,
     });
+    job.unsyncedPassages = unsyncedPassages(book, job.intervals);
     return store(job);
   });
   const timer = setInterval(() => void processAlignments(), 5000);

@@ -22,7 +22,7 @@ writeFileSync(ebook, await readerFixture({ bodies: ["<p>First sentence. Another 
 const { db, sqlite } = await import("../server/db.ts");
 const schema = await import("../server/schema.ts");
 const { extractBook } = await import("../server/reader.ts");
-const { createAlignment, alignmentJob, stopAlignments } = await import("../server/alignment.ts");
+const { createAlignment, alignmentJob, stopAlignments, registerAlignment } = await import("../server/alignment.ts");
 const originalFetch = globalThis.fetch;
 const engine = "ctc-wav2vec2-base-960h-torchaudio-2.8-v1";
 db.insert(schema.works).values({ id: "ctc-work", title: "Book", author: "Author", description: "", genre: "", year: 2026 }).run();
@@ -209,4 +209,74 @@ test("two ebook editions send the same recording identity and publish cache timi
   assert.equal(firstJob.stageTimings!.acousticEncoding, 2);
   assert.equal(secondJob.stageTimings!.acousticEncoding, 0);
   assert.ok(secondJob.stageTimings!.acousticCacheRead > 0);
+});
+
+test("unsynced passages and unsupported-language outcomes survive storage and API responses", async () => {
+  const { default: Fastify } = await import("fastify");
+  const app = Fastify();
+  registerAlignment(app);
+  try {
+    const book = await extractBook("ctc-ebook");
+    const pairings = book.sections.map((section, i) => ({ section: section.index, trackId: "ctc-track", start: 10 + i * 100, duration: 80 }));
+    let calls = 0;
+    globalThis.fetch = async (_input, init) => {
+      const request = JSON.parse(String(init?.body));
+      calls++;
+      return Response.json({ engine, outcome: calls === 1 ? "mapped" : "unsynced", elapsedSeconds: 1,
+        intervals: calls === 1 ? [{ index: 0, start: request.start, end: request.start + 1 }] : [] });
+    };
+    const created = await createAlignment("ctc-ebook", "ctc-recording", pairings, "chapters");
+    const job = await settled(created.id);
+    assert.equal(job.outcome, "partial");
+    assert.ok(job.unsyncedPassages?.length);
+    const mapped = new Set(job.intervals.map((item) => item.paragraphId));
+    assert.ok(job.unsyncedPassages.every((passage) => !mapped.has(passage.firstParagraphId)));
+    const stored = JSON.parse((sqlite.prepare("SELECT data FROM alignment_jobs WHERE id=?").get(job.id) as { data: string }).data);
+    assert.deepEqual(stored.unsyncedPassages, job.unsyncedPassages);
+    const summary = await app.inject({ method: "GET", url: "/api/alignments?ebookId=ctc-ebook&summary=1" });
+    assert.equal(summary.statusCode, 200, summary.body);
+    assert.deepEqual(summary.json().jobs[0].unsyncedPassages, job.unsyncedPassages);
+
+    calls = 0;
+    globalThis.fetch = async (_input, init) => {
+      const request = JSON.parse(String(init?.body));
+      calls++;
+      return Response.json({ engine, outcome: calls === 1 ? "mapped" : "language_not_supported", elapsedSeconds: 1,
+        intervals: calls === 1 ? [{ index: 0, start: request.start, end: request.start + 1 }] : [] });
+    };
+    const retried = await createAlignment("ctc-ebook", "ctc-recording", pairings, "chapters");
+    const unsupported = await settled(retried.id);
+    assert.equal(unsupported.outcome, "language_not_supported");
+    assert.deepEqual(unsupported.intervals, []);
+    assert.equal(unsupported.coverage, 0);
+    const response = await app.inject({ method: "GET", url: "/api/alignments?ebookId=ctc-ebook&summary=1" });
+    assert.equal(response.json().jobs[0].outcome, "language_not_supported");
+    const map = await app.inject({ method: "GET", url: `/api/alignments/${retried.id}/map` });
+    assert.equal(map.statusCode, 410, map.body);
+
+    const french = join(process.env.MEDIA_ROOT!, "french.epub");
+    writeFileSync(french, await readerFixture({ language: "fr" }));
+    db.insert(schema.editions).values({ id: "fr-edition", workId: "ctc-work", cover: "", narrator: "", rating: 0, sourceLabel: "", language: "fr" }).run();
+    db.insert(schema.recordings).values({ id: "fr-recording", editionId: "fr-edition" }).run();
+    db.insert(schema.tracks).values({ id: "fr-track", recordingId: "fr-recording", title: "French", index: 0, duration: 400, chapters: [], source: audio, sourceType: "local" }).run();
+    db.insert(schema.ebookEditions).values({ id: "fr-ebook", workId: "ctc-work", format: "epub", source: french }).run();
+    calls = 0;
+    globalThis.fetch = async () => { calls++; throw new Error("unsupported languages must not reach the worker"); };
+    const fr = await createAlignment("fr-ebook", "fr-recording", undefined, "anchored");
+    const frJob = await settled(fr.id);
+    assert.equal(frJob.outcome, "language_not_supported");
+    assert.equal(calls, 0);
+    assert.deepEqual(frJob.intervals, []);
+    assert.equal((await app.inject({ method: "GET", url: `/api/alignments/${fr.id}/map` })).statusCode, 410);
+
+    globalThis.fetch = async () => Response.json({ engine, outcome: "unsynced", match: null, text: "unrelated narration ".repeat(10) });
+    const mismatch = await createAlignment("ctc-alice-ebook", "ctc-alice-recording", undefined, "anchored");
+    const unsynced = await settled(mismatch.id);
+    assert.equal(unsynced.outcome, "unsynced");
+    assert.equal(unsynced.coverage, 0);
+    assert.deepEqual(unsynced.intervals, []);
+    assert.ok(unsynced.unsyncedPassages?.length);
+  } finally {
+    await app.close();
+  }
 });

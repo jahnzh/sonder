@@ -47,6 +47,14 @@ export type AlignmentInterval = {
   confidence: number;
 };
 export type AlignmentOutcome = "mapped" | "partial" | "unsynced" | "language_not_supported" | "error";
+export type UnsyncedPassage = {
+  section: number;
+  title: string;
+  firstParagraphId: string;
+  lastParagraphId: string;
+  sentenceCount: number;
+  excerpt: string;
+};
 export type AlignmentFlag = {
   kind:
     | "intro"
@@ -113,6 +121,8 @@ export type AlignmentJob = {
   error: string | null;
   warning: string | null;
   intervals: AlignmentInterval[];
+  /** Consecutive ebook sentences without a matching narration interval. */
+  unsyncedPassages?: UnsyncedPassage[];
   sectionsDone: number[];
   elapsedSeconds: number;
   fingerprint: string;
