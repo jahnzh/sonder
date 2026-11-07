@@ -61,7 +61,5 @@ def locate_passage(*, audio, folder, fragments, language, start, duration, env=N
         return {**result, "engine": ENGINE, "outcome": "mapped" if result.get("match") else "unsynced",
                 "stageTimings": {"speechRecovery": time.monotonic() - started}}
     finally:
-        # The child writes its sample here and a SIGKILL skips its own cleanup. One job runs at a time, so any
-        # sample left in the folder is dead.
-        for sample in folder.glob("anchor-sample*.wav"):
-            sample.unlink(missing_ok=True)
+        # Clean up any fixed legacy sample without removing in-flight per-request samples from other workers.
+        (folder / "anchor-sample.wav").unlink(missing_ok=True)
