@@ -264,6 +264,30 @@ class Http(unittest.TestCase):
             self.assertEqual(result["outcome"], "language_not_supported")
             self.assertGreaterEqual(result["stageTimings"]["requestValidation"], 0)
 
+    def test_ctc_is_explicit_and_legacy_requests_keep_aeneas(self):
+        request = self.align_request()
+        self.assertEqual(request.engine, "aeneas")
+        with mock.patch.object(self.align, "align_section", return_value={"engine": "aeneas-1.7.3"}) as legacy:
+            self.assertEqual(self.align.align(request)["engine"], "aeneas-1.7.3")
+            legacy.assert_called_once()
+        request.engine = "ctc"
+        fake = {"engine": self.align.CTC_ENGINE, "outcome": "mapped", "intervals": []}
+        with mock.patch.object(self.align, "align_ctc_section", return_value=fake) as ctc:
+            self.assertEqual(self.align.align(request), fake)
+            ctc.assert_called_once()
+        request.language = "fra"
+        self.assertEqual(self.align.align(request)["outcome"], "language_not_supported")
+        self.assertEqual(self.align.align(request)["engine"], self.align.CTC_ENGINE)
+
+    def test_ctc_failures_report_the_ctc_engine(self):
+        request = self.align_request()
+        request.engine = "ctc"
+        with mock.patch.object(self.align, "align_ctc_section", side_effect=AlignmentTimeout(5)):
+            with self.assertRaises(self.align.HTTPException) as caught:
+                self.align.align(request)
+        self.assertEqual(caught.exception.status_code, 504)
+        self.assertEqual(caught.exception.detail["engine"], self.align.CTC_ENGINE)
+
 class GateState(unittest.TestCase):
     def test_a_second_holder_is_refused_and_the_age_is_reported(self):
         gate = Gate()

@@ -1,0 +1,106 @@
+"""Resident, offline Wav2Vec2 Base encoder and its sample-accurate frame grid."""
+import hashlib
+import math
+import os
+import threading
+from pathlib import Path
+
+SAMPLE_RATE = 16000
+STRIDE = 320
+RECEPTIVE_FIELD = 400
+CORE = 20 * SAMPLE_RATE
+CONTEXT = 5 * SAMPLE_RATE
+CHECKPOINT = "wav2vec2_fairseq_base_ls960_asr_ls960.pth"
+CHECKPOINT_SHA256 = "488fd4f16de84438ffc945334278c1b9fb9b7159a806c1080b16111a958c945d"
+ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-v1"
+
+
+def checkpoint_path(folder):
+    return Path(folder) / "models" / "ctc" / CHECKPOINT
+
+
+def verify_checkpoint(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    if digest.hexdigest() != CHECKPOINT_SHA256:
+        raise ValueError("The CTC checkpoint does not match the pinned model.")
+
+
+def chunks(samples):
+    """Return (core start/end, context start/end), all on the original sample grid."""
+    for start in range(0, samples, CORE):
+        end = min(samples, start + CORE)
+        yield start, end, max(0, start - CONTEXT), min(samples, end + CONTEXT)
+
+
+def core_frames(core_start, core_end, context_start, valid_length):
+    """Select valid encoder frames by their convolution receptive-field centres."""
+    centre = RECEPTIVE_FIELD / 2
+    first = max(0, math.ceil((core_start - context_start - centre) / STRIDE))
+    last = min(valid_length, max(0, math.ceil((core_end - context_start - centre) / STRIDE)))
+    return min(first, last), last
+
+
+def frame_boundary(context_start, frame):
+    # Frame centres are (400 / 2) samples from the convolution input start.
+    # Boundaries lie half a stride before each centre, rather than scaling by
+    # the total duration / number of emitted frames.
+    return context_start + frame * STRIDE + (RECEPTIVE_FIELD - STRIDE) // 2
+
+
+class AcousticModel:
+    def __init__(self, folder):
+        import torch
+        import torchaudio
+
+        path = checkpoint_path(folder)
+        verify_checkpoint(path)
+        bundle = torchaudio.pipelines.WAV2VEC2_ASR_BASE_960H
+        # Construct from the pinned bundle and load local bytes directly. In
+        # contrast to bundle.get_model(), this cannot download on a cache miss.
+        model = torchaudio.models.wav2vec2_model(**bundle._params)
+        state = torch.load(path, map_location="cpu", weights_only=True)
+        for key in ("aux.weight", "aux.bias"):
+            state[key] = torch.stack([row for index, row in enumerate(state[key]) if index not in bundle._remove_aux_axis])
+        model.load_state_dict(state)
+        self.torch = torch
+        self.device = torch.device(os.environ.get("ALIGNMENT_CTC_DEVICE", "cpu"))
+        self.dtype = torch.float16 if self.device.type == "cuda" else torch.float32
+        self.model = model.eval().to(device=self.device, dtype=self.dtype)
+        self.labels = bundle.get_labels()
+
+    def encode(self, audio):
+        torch = self.torch
+        outputs, boundaries = [], []
+        with torch.inference_mode():
+            for start, end, lo, hi in chunks(len(audio)):
+                wave = torch.from_numpy(audio[lo:hi]).unsqueeze(0).to(device=self.device, dtype=self.dtype)
+                lengths = torch.tensor([hi - lo], device=self.device, dtype=torch.int64)
+                logits, valid = self.model(wave, lengths)
+                first, last = core_frames(start, end, lo, int(valid[0]))
+                if first < last:
+                    outputs.append(logits[:, first:last].float().log_softmax(-1))
+                    boundaries.extend(frame_boundary(lo, i) for i in range(first, last))
+        if not outputs:
+            raise ValueError("Audio is too short for the CTC encoder.")
+        return torch.cat(outputs, dim=1).contiguous(), boundaries
+
+
+_model = None
+_model_folder = None
+_lock = threading.Lock()
+
+
+def resident_model(folder):
+    """One model per worker process; never silently switch checkpoint roots."""
+    global _model, _model_folder
+    folder = Path(folder).resolve()
+    with _lock:
+        if _model is None:
+            _model = AcousticModel(folder)
+            _model_folder = folder
+        elif folder != _model_folder:
+            raise ValueError("The resident CTC model belongs to another media root.")
+        return _model

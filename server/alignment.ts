@@ -224,6 +224,7 @@ const iso3 = (value: string) =>
     nl: "nld",
   })[language(value) as "en"] || language(value) || "eng";
 const activeStatuses = ["queued", "copying", "processing"];
+const CTC_ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-v1";
 export async function alignmentOptions(ebookId: string, recordingId: string) {
   const book = await extractBook(ebookId),
     { edition, tracks } = recordingContext(recordingId);
@@ -361,7 +362,10 @@ export async function createAlignment(
     recordingId,
     status: copying ? "copying" : "queued",
     progress: 0,
-    engine: "aeneas-1.7.3",
+    // Chapter jobs use CTC unless ALIGNMENT_CHAPTER_ENGINE=aeneas; anchored jobs have no CTC route yet.
+    engine: !anchored && process.env.ALIGNMENT_CHAPTER_ENGINE !== "aeneas"
+      ? CTC_ENGINE
+      : "aeneas-1.7.3",
     error: null,
     warning: null,
     intervals: [],
@@ -1112,6 +1116,7 @@ export async function processAlignments() {
                 language: iso3(book.language),
                 start: pair.start,
                 duration: pair.duration,
+                ...(job.engine === CTC_ENGINE ? { engine: "ctc" } : {}),
               },
               SECTION_TIMEOUT_MS,
               "Local alignment could not process this section. Check its chapter pairing and retry.",
@@ -1128,6 +1133,8 @@ export async function processAlignments() {
           )
             break;
           const result = sectionResult.parse(raw);
+          if (job.engine === CTC_ENGINE && result.engine !== CTC_ENGINE)
+            throw new Error("The alignment worker did not use the requested CTC engine.");
           const intervals: AlignmentInterval[] = result.intervals
             .filter(
               (interval) =>

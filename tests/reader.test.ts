@@ -8,6 +8,8 @@ process.env.DATA_DIR = join(temp, "db");
 process.env.MEDIA_ROOT = join(temp, "media");
 process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
+// These tests exercise worker transport and metadata storage with fake engines, independent of the default chapter engine.
+process.env.ALIGNMENT_CHAPTER_ENGINE = "aeneas";
 delete process.env.APP_PASSWORD;
 delete process.env.ALIGNMENT_WORKER_URL;
 delete process.env.ALIGNMENT_WORKER_TOKEN;
