@@ -191,3 +191,27 @@ test("8. Referenced file paths exist or match allowed list", () => {
   }
 });
 
+test("9. Gotchas documented for issue #295", () => {
+  const codexUsage = readFileSync(join(repoRoot, "docs", "agents", "codex-usage.md"), "utf8");
+  const issueTracker = readFileSync(join(repoRoot, "docs", "agents", "issue-tracker.md"), "utf8");
+  const ciHost = readFileSync(join(repoRoot, "docs", "agents", "ci-host.md"), "utf8");
+
+  // 1. Codex limit dialog gotcha
+  assert.match(codexUsage, /Switch to gpt-6-luna\?/i, "codex-usage.md must document Switch to gpt-6-luna? dialog");
+  assert.match(codexUsage, /defaults to option 1/i, "codex-usage.md must document menu defaults to option 1");
+  assert.match(codexUsage, /sending `2` plus Enter switched a worker to Luna/i, "codex-usage.md must document sending 2 plus Enter switched worker to Luna");
+  assert.match(codexUsage, /single digits without Enter/i, "codex-usage.md must document sending single digits without Enter");
+  assert.match(codexUsage, /\/model/i, "codex-usage.md must document restoring with /model");
+  assert.match(codexUsage, /More reasoning.*Max/i, "codex-usage.md must document More reasoning and Max");
+
+  // 2. gh pr edit failure gotcha
+  assert.match(issueTracker, /gh pr edit.*fails on this repo.*Projects \(classic\) GraphQL/i, "issue-tracker.md must document gh pr edit Projects (classic) GraphQL error");
+  assert.match(issueTracker, /gh api -X PATCH repos\/jahnzh\/sonder\/pulls\/<n> -F body=@file/, "issue-tracker.md must document gh api PATCH workaround");
+
+  // 3. Parallel alignment workers gotcha
+  assert.match(ciHost, /parallel alignment workers need one `MEDIA_ROOT` each/i, "ci-host.md must document parallel alignment workers need one MEDIA_ROOT each");
+  assert.match(ciHost, /hard-link the inputs/i, "ci-host.md must document hard-linking inputs");
+  assert.match(ciHost, /#291/, "ci-host.md must reference issue #291");
+});
+
+
