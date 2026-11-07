@@ -182,6 +182,9 @@ function store(job: AlignmentJob) {
 export function putAlignmentJob(job: AlignmentJob) {
   return store(job);
 }
+export function deleteAlignmentJob(id: string) {
+  sqlite.prepare("DELETE FROM alignment_jobs WHERE id=?").run(id);
+}
 export function removeProjectedMapsForWork(workId: string) {
   const ebookIds = new Set(
     db
