@@ -724,11 +724,7 @@ export function PlayerProvider({
   const undoJump = useCallback(() => restoreJump(), [restoreJump]);
   const toggle = useCallback(() => {
     const el = audio.current;
-    if (!el.src) {
-      if (fallbackRef.current?.tracks.length)
-        void playRef.current(fallbackRef.current);
-      return;
-    }
+    if (!el.src) return;
     if (el.paused) {
       setError(null);
       const { book, track } = state.current;
@@ -929,7 +925,7 @@ export function PlayerProvider({
         altKey: event.altKey,
         defaultPrevented: event.defaultPrevented,
         ...keyEventContext(event),
-        canPlay: !!(state.current.book || fallbackRef.current?.tracks.length),
+        canPlay: !!(state.current.book && state.current.track),
         canSeek: !!(state.current.book && state.current.track),
         wordReaderKeys: wordReaderOwnsKeys(),
       });

@@ -205,6 +205,9 @@ test("Space toggles playback across views and arrows skip 30 seconds while ignor
   await expect(
     page.getByRole("heading", { name: "Your library." }),
   ).toBeVisible();
+  // Space with no audio loaded does nothing and shows no error.
+  await page.keyboard.press(" ");
+  expect(await paused()).toBe(true);
   await page
     .getByRole("button", {
       name: "Play Alice’s Adventures in Wonderland",
