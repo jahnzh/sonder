@@ -334,6 +334,22 @@ else
   done
 fi
 
+# --- verify PR headRefOid matches pushed tip ---
+local_head=$(git -C "$WT" rev-parse HEAD)
+if [[ $DRY_RUN -eq 1 ]]; then
+  echo "   dry-run: verify PR #$pr_num headRefOid matches $local_head"
+else
+  pr_head_json=$(cd "$WT" && gh pr view "$pr_num" --json headRefOid) || {
+    echo "gh pr view failed" >&2
+    exit 1
+  }
+  pr_head=$(printf '%s' "$pr_head_json" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);process.stdout.write(String(j.headRefOid||''))}catch(e){}})")
+  if [[ "$pr_head" != "$local_head" ]]; then
+    echo "PR head $pr_head is not the pushed tip $local_head" >&2
+    exit 1
+  fi
+fi
+
 # --- 7. land via orca-land.sh ---
 echo "-> 7. land via orca-land.sh"
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

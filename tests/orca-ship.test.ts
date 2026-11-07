@@ -118,7 +118,8 @@ case "$cmd" in
         state=\${STUB_GH_STATE:-OPEN}
         mergeable=\${STUB_GH_MERGEABLE:-MERGEABLE}
         num=\${STUB_GH_PR_NUM:-99}
-        echo "{\\"state\\":\\"$state\\",\\"mergeable\\":\\"$mergeable\\",\\"number\\":$num,\\"baseRefName\\":\\"main\\",\\"headRefName\\":\\"jahnzh/feat-99-ship\\",\\"url\\":\\"https://example/pr/$num\\"}"
+        head_oid=\${STUB_GH_HEAD_OID:-\$STUB_CHECKED_SHA}
+        echo "{\\"state\\":\\"$state\\",\\"mergeable\\":\\"$mergeable\\",\\"number\\":$num,\\"baseRefName\\":\\"main\\",\\"headRefName\\":\\"jahnzh/feat-99-ship\\",\\"headRefOid\\":\\"$head_oid\\",\\"url\\":\\"https://example/pr/$num\\"}"
         ;;
       create)
         if [[ "\${STUB_GH_PR_CREATE_FAIL:-0}" == "1" ]]; then
@@ -196,12 +197,17 @@ esac
     STUB_BODY_COPY: bodyCopy,
     STUB_API_BODY_COPY: apiBodyCopy,
     STUB_BARE: bare,
+    STUB_CHECKED_SHA: checkedSha,
     ORCA_SHIP_POLL_INTERVAL: "0.01",
     ORCA_SHIP_MAX_ATTEMPTS: "5",
   };
 
-  const run = (args: string[]) =>
-    spawnSync("bash", [script, ...args], { encoding: "utf8", env, cwd: repoRoot });
+  const run = (args: string[], extraEnv: NodeJS.ProcessEnv = {}) =>
+    spawnSync("bash", [script, ...args], {
+      encoding: "utf8",
+      env: { ...env, ...extraEnv },
+      cwd: repoRoot,
+    });
 
   return {
     dir,
@@ -505,6 +511,32 @@ test("times out when PR stays UNKNOWN", () => {
     );
     assert.equal(r.status, 1);
     assert.match(r.stderr, /timed out waiting for PR #99 to become MERGEABLE/);
+  } finally {
+    rmSync(t.dir, { recursive: true, force: true });
+  }
+});
+
+test("refuses when PR headRefOid does not match the pushed tip, does not call orca-land.sh", () => {
+  const t = setup();
+  try {
+    const r = t.run(
+      [
+        "--worktree", "ship-wt",
+        "--title", "Ship feature",
+        "--body-file", t.bodyFile,
+        "--checked", t.checkedSha,
+      ],
+      {
+        STUB_GH_HEAD_OID: "0000000000000000000000000000000000000000",
+      },
+    );
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /PR head 0000000000000000000000000000000000000000 is not the pushed tip/);
+    assert.doesNotMatch(r.stdout, /-> 7\. land via orca-land\.sh/);
+    assert.ok(existsSync(t.wt), "worktree must still exist when refused");
+
+    const ghLog = existsSync(t.ghLog) ? readFileSync(t.ghLog, "utf8") : "";
+    assert.doesNotMatch(ghLog, /pr merge/);
   } finally {
     rmSync(t.dir, { recursive: true, force: true });
   }
