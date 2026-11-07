@@ -194,8 +194,11 @@ export function removeProjectedMapsForWork(workId: string) {
       sqlite.prepare("DELETE FROM alignment_jobs WHERE id=?").run(job.id);
   }
 }
+// ISO 639 codes that mean "no usable language": treated like a missing one.
+const unknownLanguages = new Set(["und", "mis", "mul", "zxx", "unknown"]);
 const language = (value: string) => {
   const code = value.toLowerCase().split(/[-_]/)[0];
+  if (unknownLanguages.has(code)) return "";
   return (
     {
       english: "en",
@@ -227,6 +230,11 @@ const iso3 = (value: string) =>
     sv: "swe",
     nl: "nld",
   })[language(value) as "en"] || language(value) || "eng";
+/** Two languages conflict only when both are known and differ. */
+const languagesConflict = (a?: string | null, b?: string | null) => {
+  const x = a ? language(a) : "", y = b ? language(b) : "";
+  return !!x && !!y && x !== y;
+};
 const activeStatuses = ["queued", "copying", "processing"];
 export async function alignmentOptions(ebookId: string, recordingId: string) {
   const book = await extractBook(ebookId),
@@ -272,9 +280,7 @@ export async function alignmentOptions(ebookId: string, recordingId: string) {
     clips,
     pairings,
     sameWork: book.workId === edition.workId,
-    languageMatch:
-      !edition.language ||
-      language(edition.language) === language(book.language),
+    languageMatch: !languagesConflict(edition.language, book.language),
   };
 }
 export async function createAlignment(
@@ -291,10 +297,7 @@ export async function createAlignment(
     throw new Error(
       "Link this ebook to the selected audiobook before preparing reading sync.",
     );
-  if (
-    edition.language &&
-    language(edition.language) !== language(book.language)
-  )
+  if (languagesConflict(edition.language, book.language))
     throw new Error(
       "The ebook and audiobook languages differ. Choose a matching release.",
     );
@@ -433,7 +436,7 @@ export async function backfillEligibility(
   if (edition.language) {
     try {
       const book = await extractBook(ebookId);
-      if (language(edition.language) !== language(book.language))
+      if (languagesConflict(edition.language, book.language))
         return { eligible: false, reason: "language" };
     } catch {
       return { eligible: false, reason: "language" };
@@ -1447,8 +1450,7 @@ export function registerAlignment(app: FastifyInstance) {
       { edition, tracks } = recordingContext(input.recordingId);
     if (
       book.workId !== edition.workId ||
-      (edition.language &&
-        language(edition.language) !== language(book.language))
+      languagesConflict(edition.language, book.language)
     )
       throw new Error(
         "Choose a matching ebook and narration in the same language.",
