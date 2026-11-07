@@ -4,7 +4,8 @@
 # Refuses to run while a Playwright process is live (a fresh temp dir may be in use): the default probe
 # is `pgrep -f playwright` or `pgrep -f ms-playwright`; $ORCA_CLEAN_TEMP_PLAYWRIGHT replaces the probe
 # with an arbitrary command (exit 0 = live). Never touches other $ORCA_CLEAN_TEMP_ROOT content.
-# Prints what was removed and the freed space.
+# Prints what was removed and the size of those directories (du), not a free-space
+# delta — concurrent writers on a shared filesystem can make df differences negative (#285).
 # Exit codes: 0 removed (or nothing to remove), 1 bad root or refused, 2 bad usage or bad age.
 set -u
 
@@ -41,20 +42,21 @@ if [ -z "$found" ]; then
   exit 0
 fi
 
-before=$(df -Pk "$root" 2>/dev/null | awk 'NR == 2 { print $4 }')
 removed=0
+freed_kb=0
+found_count=0
 while IFS= read -r entry; do
+  [ -n "$entry" ] || continue
+  found_count=$((found_count + 1))
+  size_kb=$(du -sk -- "$entry" 2>/dev/null | awk '{ print $1 }')
+  case $size_kb in '' | *[!0-9]*) size_kb=0 ;; esac
   if rm -rf -- "$entry"; then
     removed=$((removed + 1))
+    freed_kb=$((freed_kb + size_kb))
     echo "removed: $entry"
   else
     echo "could not remove: $entry" >&2
   fi
 done <<< "$found"
-after=$(df -Pk "$root" 2>/dev/null | awk 'NR == 2 { print $4 }')
-if [ -n "$before" ] && [ -n "$after" ]; then
-  echo "freed $(( (after - before) / 1024 )) MB ($removed of $(echo "$found" | wc -l) dirs)"
-else
-  echo "removed $removed dirs"
-fi
+echo "freed $(( freed_kb / 1024 )) MB ($removed of $found_count dirs)"
 exit 0

@@ -28,10 +28,14 @@ process_alive() {
 
 stop_runner() {
   local pid=$1
-  kill -TERM "$pid" 2>/dev/null || return 1
+  # Kill hung children first so a deferred TERM trap can run: bash holds traps
+  # while waiting on a foreground command (the blocked remote probe). Do this
+  # before signalling the wrapper so a later pkill cannot kill the trap's own
+  # cleanup ssh (#282).
   if command -v pkill >/dev/null 2>&1; then
     pkill -TERM -P "$pid" 2>/dev/null || true
   fi
+  kill -TERM "$pid" 2>/dev/null || return 1
   return 0
 }
 
