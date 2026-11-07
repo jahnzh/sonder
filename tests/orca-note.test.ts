@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -293,4 +293,149 @@ test("10. Coordinator documentation in docs/agents/worker-spec.md points at note
   assert.match(doc, /note\.sh decision/, "worker-spec.md must describe note.sh decision");
   assert.match(doc, /state-archive\/YYYY-MM-DD\.md/, "worker-spec.md must mention state-archive/YYYY-MM-DD.md");
   assert.match(doc, /idempotent/, "worker-spec.md must mention idempotent rotation");
+});
+
+test("11. Concurrent stress: 30 parallel note.sh state calls with rotate preserves all lines without loss or duplication", async () => {
+  const ws = createTempWorkspace();
+  try {
+    const initialOldLines = [
+      "## 2026-11-05",
+      "- 2026-11-05T08:00:00Z Historical note 1",
+      "- 2026-11-05T09:00:00Z Historical note 2",
+    ];
+    fs.writeFileSync(ws.stateFile, initialOldLines.join("\n") + "\n", "utf8");
+
+    const noteCount = 30;
+    const nowEnv = {
+      ...ws.env,
+      SONDER_NOW: "2026-11-07T14:00:00Z",
+    };
+
+    // Spawn 30 parallel note.sh state calls
+    const promises: Promise<{ status: number | null }>[] = [];
+    for (let i = 0; i < noteCount; i++) {
+      const p = new Promise<{ status: number | null }>((resolve, reject) => {
+        const child = spawn(
+          "bash",
+          [noteScript, "state", `Concurrent note ${i}`],
+          { env: nowEnv, stdio: "ignore" }
+        );
+        child.on("close", (status) => resolve({ status }));
+        child.on("error", reject);
+      });
+      promises.push(p);
+    }
+
+    // Also run an explicit rotate concurrently
+    const rotatePromise = new Promise<{ status: number | null }>((resolve, reject) => {
+      const child = spawn("bash", [noteScript, "rotate"], {
+        env: nowEnv,
+        stdio: "ignore",
+      });
+      child.on("close", (status) => resolve({ status }));
+      child.on("error", reject);
+    });
+    promises.push(rotatePromise);
+
+    const results = await Promise.all(promises);
+    for (const r of results) {
+      assert.equal(r.status, 0, "All concurrent operations must succeed");
+    }
+
+    // Read STATE.md and archives
+    const stateContent = fs.readFileSync(ws.stateFile, "utf8");
+    let allArchiveContent = "";
+    if (fs.existsSync(ws.archiveDir)) {
+      const files = fs.readdirSync(ws.archiveDir).filter((f) => f.endsWith(".md"));
+      for (const f of files) {
+        allArchiveContent += "\n" + fs.readFileSync(path.join(ws.archiveDir, f), "utf8");
+      }
+    }
+
+    const combined = stateContent + "\n" + allArchiveContent;
+
+    // Check old lines were preserved
+    for (const line of initialOldLines) {
+      assert.ok(combined.includes(line), `Old line preserved: ${line}`);
+    }
+
+    // Check every concurrent note exists exactly once
+    for (let i = 0; i < noteCount; i++) {
+      const re = new RegExp(`Concurrent note ${i}$`);
+      const matches = combined.split("\n").filter((l) => re.test(l.trim()));
+      assert.equal(
+        matches.length,
+        1,
+        `Expected exactly 1 occurrence of "Concurrent note ${i}", found ${matches.length}`
+      );
+    }
+  } finally {
+    ws.cleanup();
+  }
+});
+
+test("12. Atomic rotation: SIGKILL after archive write leaves STATE.md as complete old file", () => {
+  const ws = createTempWorkspace();
+  try {
+    const initialContent = `# Current
+- Pinned info
+
+## 2026-11-05
+- 2026-11-05T08:00:00Z old entry
+`;
+    fs.writeFileSync(ws.stateFile, initialContent, "utf8");
+
+    // Spawn rotate with TEST_HOOK_KILL_AFTER_ARCHIVE=1
+    const r = spawnSync(
+      "node",
+      [
+        path.join(repoRoot, "scripts/orca/rotate-state.mjs"),
+        "--state-file",
+        ws.stateFile,
+        "--archive-dir",
+        ws.archiveDir,
+        "--now",
+        "2026-11-07T12:00:00Z",
+      ],
+      {
+        env: {
+          ...ws.env,
+          TEST_HOOK_KILL_AFTER_ARCHIVE: "1",
+        },
+        encoding: "utf8",
+      }
+    );
+
+    // Process was killed by SIGKILL
+    assert.equal(r.signal, "SIGKILL");
+
+    // Archive was written
+    const archiveFile = path.join(ws.archiveDir, "2026-11-05.md");
+    assert.ok(fs.existsSync(archiveFile), "Archive file was written before SIGKILL");
+
+    // STATE.md is still the complete old file!
+    const currentState = fs.readFileSync(ws.stateFile, "utf8");
+    assert.equal(currentState, initialContent, "STATE.md remains the complete old file");
+
+    // Normal subsequent rotation cleanly rotates to complete new file
+    const normalRun = spawnSync(
+      "node",
+      [
+        path.join(repoRoot, "scripts/orca/rotate-state.mjs"),
+        "--state-file",
+        ws.stateFile,
+        "--archive-dir",
+        ws.archiveDir,
+        "--now",
+        "2026-11-07T12:00:00Z",
+      ],
+      { env: ws.env, encoding: "utf8" }
+    );
+    assert.equal(normalRun.status, 0);
+    const rotatedState = fs.readFileSync(ws.stateFile, "utf8");
+    assert.doesNotMatch(rotatedState, /old entry/);
+    assert.match(rotatedState, /# Current/);
+  } finally {
+    ws.cleanup();
+  }
 });

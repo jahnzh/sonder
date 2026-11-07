@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 
 /**
  * Returns the current reference time, respecting SONDER_NOW and DATE_CMD.
@@ -204,110 +204,149 @@ export function rotateState({ stateFile, archiveDir, now } = {}) {
     process.env.STATE_ARCHIVE_DIR ||
     path.join(repoRoot, "artifacts/orca/state-archive");
 
-  if (!fs.existsSync(resolvedStateFile)) {
-    return { rotated: false, archivedFiles: [] };
+  const stateDir = path.dirname(resolvedStateFile);
+  fs.mkdirSync(stateDir, { recursive: true });
+
+  const lockFile = `${resolvedStateFile}.lock`;
+  const lockFd = fs.openSync(lockFile, "w");
+  const flockRes = spawnSync("flock", ["-x", "3"], {
+    stdio: [0, 1, 2, lockFd],
+  });
+  if (flockRes.status !== 0) {
+    fs.closeSync(lockFd);
+    throw new Error(`Failed to acquire lock on ${lockFile}: exit ${flockRes.status}`);
   }
 
-  const rawContent = fs.readFileSync(resolvedStateFile, "utf8");
-  if (!rawContent.trim()) {
-    return { rotated: false, archivedFiles: [] };
-  }
-
-  const hasTrailingNewline = rawContent.endsWith("\n");
-  const allLines = rawContent.split("\n");
-  if (hasTrailingNewline && allLines[allLines.length - 1] === "") {
-    allLines.pop();
-  }
-
-  const { pinned, rest } = splitPinnedSection(allLines);
-  const nowDate = getNow(now);
-  const cutoffMs = nowDate.getTime() - 24 * 60 * 60 * 1000;
-  const cutoffDateStr = new Date(cutoffMs).toISOString().slice(0, 10);
-
-  const sections = parseSections(rest);
-  const olderLinesByDate = {};
-  const recentLines = [];
-
-  for (const section of sections) {
-    const olderItems = [];
-    const recentItems = [];
-
-    for (const item of section.items) {
-      let isOlder = false;
-      if (item.timestamp) {
-        isOlder = item.timestamp.getTime() < cutoffMs;
-      } else if (item.date) {
-        isOlder = item.date < cutoffDateStr;
-      }
-
-      if (isOlder && item.date) {
-        olderItems.push(item);
-      } else {
-        recentItems.push(item);
-      }
+  try {
+    if (!fs.existsSync(resolvedStateFile)) {
+      return { rotated: false, archivedFiles: [] };
     }
 
-    if (recentItems.length === 0 && section.headerLine !== null) {
-      // Entire section is older
-      const targetDate = section.date || olderItems[0]?.date || cutoffDateStr;
-      if (!olderLinesByDate[targetDate]) olderLinesByDate[targetDate] = [];
-      olderLinesByDate[targetDate].push(section.headerLine);
-      for (const item of olderItems) {
-        olderLinesByDate[targetDate].push(...item.lines);
+    const rawContent = fs.readFileSync(resolvedStateFile, "utf8");
+    if (!rawContent.trim()) {
+      return { rotated: false, archivedFiles: [] };
+    }
+
+    const hasTrailingNewline = rawContent.endsWith("\n");
+    const allLines = rawContent.split("\n");
+    if (hasTrailingNewline && allLines[allLines.length - 1] === "") {
+      allLines.pop();
+    }
+
+    const { pinned, rest } = splitPinnedSection(allLines);
+    const nowDate = getNow(now);
+    const cutoffMs = nowDate.getTime() - 24 * 60 * 60 * 1000;
+    const cutoffDateStr = new Date(cutoffMs).toISOString().slice(0, 10);
+
+    const sections = parseSections(rest);
+    const olderLinesByDate = {};
+    const recentLines = [];
+
+    for (const section of sections) {
+      const olderItems = [];
+      const recentItems = [];
+
+      for (const item of section.items) {
+        let isOlder = false;
+        if (item.timestamp) {
+          isOlder = item.timestamp.getTime() < cutoffMs;
+        } else if (item.date) {
+          isOlder = item.date < cutoffDateStr;
+        }
+
+        if (isOlder && item.date) {
+          olderItems.push(item);
+        } else {
+          recentItems.push(item);
+        }
       }
-    } else {
-      // Section has recent items, or header has no items
-      if (section.headerLine !== null) {
-        recentLines.push(section.headerLine);
-      }
-      for (const item of recentItems) {
-        recentLines.push(...item.lines);
-      }
-      for (const item of olderItems) {
-        const targetDate = item.date || section.date || cutoffDateStr;
+
+      if (recentItems.length === 0 && section.headerLine !== null) {
+        // Entire section is older
+        const targetDate = section.date || olderItems[0]?.date || cutoffDateStr;
         if (!olderLinesByDate[targetDate]) olderLinesByDate[targetDate] = [];
-        olderLinesByDate[targetDate].push(...item.lines);
+        olderLinesByDate[targetDate].push(section.headerLine);
+        for (const item of olderItems) {
+          olderLinesByDate[targetDate].push(...item.lines);
+        }
+      } else {
+        // Section has recent items, or header has no items
+        if (section.headerLine !== null) {
+          recentLines.push(section.headerLine);
+        }
+        for (const item of recentItems) {
+          recentLines.push(...item.lines);
+        }
+        for (const item of olderItems) {
+          const targetDate = item.date || section.date || cutoffDateStr;
+          if (!olderLinesByDate[targetDate]) olderLinesByDate[targetDate] = [];
+          olderLinesByDate[targetDate].push(...item.lines);
+        }
       }
     }
-  }
 
-  const dateKeys = Object.keys(olderLinesByDate).filter(
-    (k) => olderLinesByDate[k] && olderLinesByDate[k].length > 0
-  );
+    const dateKeys = Object.keys(olderLinesByDate).filter(
+      (k) => olderLinesByDate[k] && olderLinesByDate[k].length > 0
+    );
 
-  if (dateKeys.length === 0) {
-    return { rotated: false, archivedFiles: [] };
-  }
-
-  fs.mkdirSync(resolvedArchiveDir, { recursive: true });
-  const archivedFiles = [];
-
-  // Sort dates so archiving is deterministic
-  dateKeys.sort();
-  for (const date of dateKeys) {
-    const linesToArchive = olderLinesByDate[date];
-    const archivePath = path.join(resolvedArchiveDir, `${date}.md`);
-    const contentToAppend = linesToArchive.join("\n") + "\n";
-
-    if (fs.existsSync(archivePath)) {
-      const existing = fs.readFileSync(archivePath, "utf8");
-      const sep = existing.endsWith("\n") ? "" : "\n";
-      fs.appendFileSync(archivePath, sep + contentToAppend, "utf8");
-    } else {
-      fs.writeFileSync(archivePath, contentToAppend, "utf8");
+    if (dateKeys.length === 0) {
+      return { rotated: false, archivedFiles: [] };
     }
-    archivedFiles.push(archivePath);
-  }
 
-  // Rewrite state file with pinned section + recent lines
-  const finalLines = [...pinned, ...recentLines];
-  let finalText = finalLines.join("\n");
-  if (hasTrailingNewline || finalText.length > 0) {
-    finalText += "\n";
-  }
-  fs.writeFileSync(resolvedStateFile, finalText, "utf8");
+    fs.mkdirSync(resolvedArchiveDir, { recursive: true });
+    const archivedFiles = [];
 
-  return { rotated: true, archivedFiles };
+    // Sort dates so archiving is deterministic
+    dateKeys.sort();
+    for (const date of dateKeys) {
+      const linesToArchive = olderLinesByDate[date];
+      const archivePath = path.join(resolvedArchiveDir, `${date}.md`);
+      const contentToAppend = linesToArchive.join("\n") + "\n";
+
+      if (fs.existsSync(archivePath)) {
+        const existing = fs.readFileSync(archivePath, "utf8");
+        const sep = existing.endsWith("\n") ? "" : "\n";
+        const fd = fs.openSync(archivePath, "a");
+        fs.writeFileSync(fd, sep + contentToAppend, "utf8");
+        fs.fsyncSync(fd);
+        fs.closeSync(fd);
+      } else {
+        const tmpArchive = path.join(resolvedArchiveDir, `${date}.tmp.${process.pid}`);
+        const tmpFd = fs.openSync(tmpArchive, "w");
+        fs.writeFileSync(tmpFd, contentToAppend, "utf8");
+        fs.fsyncSync(tmpFd);
+        fs.closeSync(tmpFd);
+        fs.renameSync(tmpArchive, archivePath);
+      }
+      archivedFiles.push(archivePath);
+    }
+
+    if (process.env.TEST_HOOK_KILL_AFTER_ARCHIVE === "1") {
+      process.kill(process.pid, "SIGKILL");
+    }
+
+    // Rewrite state file with pinned section + recent lines via temp+fsync+rename
+    const finalLines = [...pinned, ...recentLines];
+    let finalText = finalLines.join("\n");
+    if (hasTrailingNewline || finalText.length > 0) {
+      finalText += "\n";
+    }
+
+    const tmpStateFile = `${resolvedStateFile}.tmp.${process.pid}`;
+    const tmpFd = fs.openSync(tmpStateFile, "w");
+    fs.writeFileSync(tmpFd, finalText, "utf8");
+    fs.fsyncSync(tmpFd);
+    fs.closeSync(tmpFd);
+    fs.renameSync(tmpStateFile, resolvedStateFile);
+
+    return { rotated: true, archivedFiles };
+  } finally {
+    try {
+      fs.closeSync(lockFd);
+    } catch {
+      // ignore
+    }
+  }
 }
 
 // CLI entry point

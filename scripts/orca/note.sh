@@ -30,12 +30,12 @@ get_utc_timestamp() {
 
   if [ -n "${DATE_CMD:-}" ]; then
     local out
-    out=$(eval "$DATE_CMD" 2>/dev/null || $DATE_CMD)
+    out=$(bash -c "$DATE_CMD" 2>/dev/null || true)
     local iso
-    if iso=$(date -u -d "$out" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null); then
+    if [ -n "$out" ] && iso=$(date -u -d "$out" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null); then
       printf '%s\n' "$iso"
       return
-    else
+    elif [ -n "$out" ]; then
       printf '%s\n' "$out"
       return
     fi
@@ -73,11 +73,14 @@ append_note() {
 
   mkdir -p "$(dirname "$target_file")"
 
-  if [ -s "$target_file" ] && [ "$(tail -c 1 "$target_file" 2>/dev/null)" != "" ]; then
-    printf '\n' >> "$target_file"
-  fi
-
-  printf -- '- %s %s\n' "$timestamp" "$text" >> "$target_file"
+  local lock_file="${target_file}.lock"
+  (
+    flock -x 200
+    if [ -s "$target_file" ] && [ "$(tail -c 1 "$target_file" 2>/dev/null)" != "" ]; then
+      printf '\n' >> "$target_file"
+    fi
+    printf -- '- %s %s\n' "$timestamp" "$text" >> "$target_file"
+  ) 200>"$lock_file"
 }
 
 cmd="${1:-}"
