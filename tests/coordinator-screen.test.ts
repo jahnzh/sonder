@@ -52,18 +52,27 @@ test("busy line: Codex • Working (", () => {
   assert.equal(isWorkerScreenBusyLine(line), true);
 });
 
-test("busy line: Antigravity spinner glyph, Running command, Thought for, ManageTask", () => {
-  assert.equal(isWorkerScreenBusyLine("⣟  Running command..."), true);
-  assert.equal(isWorkerScreenBusyLine("▸ Thought for 10s, 841 tokens"), true);
-  assert.equal(isWorkerScreenBusyLine("● ManageTask(status task-3707)"), true);
-});
-
 test("screen classification: busy and idle Antigravity fixtures", () => {
   const busyScreen = readFileSync(join(fixtures, "antigravity-busy.txt"), "utf8");
   assert.equal(isWorkerScreenBusy(busyScreen), true);
 
   const idleScreen = readFileSync(join(fixtures, "antigravity-idle.txt"), "utf8");
   assert.equal(isWorkerScreenBusy(idleScreen), false);
+
+  const idleWithHistory = readFileSync(join(fixtures, "antigravity-idle-with-history.txt"), "utf8");
+  assert.equal(isWorkerScreenBusy(idleWithHistory), false);
+});
+
+test("screen classification: Antigravity secondary braille spinner signal in last 6 lines", () => {
+  const screen = [
+    "● Done",
+    "⣟  Running command...",
+    "────────────────────────────────────────────────────────────────────────────────",
+    ">",
+    "────────────────────────────────────────────────────────────────────────────────",
+    "                                                  accept-edits · Gemini 3.8 Flash · high",
+  ].join("\n");
+  assert.equal(isWorkerScreenBusy(screen), true);
 });
 
 test("follow-ups box: count ignores blank ○", () => {

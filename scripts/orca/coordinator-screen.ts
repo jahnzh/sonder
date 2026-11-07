@@ -14,27 +14,37 @@ export const CURSOR_BUSY_LINE_RE =
 export const CODEX_WORKING_LINE_RE = /Working \(\d|^• Working \(/;
 
 /**
- * Antigravity (Gemini) busy lines: spinner glyph lines, Running command, Thought for, ManageTask.
- * Mirrors: grep -qP '...|^\s*[\x{2800}-\x{28FF}]|Running command|Thought for|ManageTask'
+ * Antigravity (Gemini) busy lines:
+ * Primary: footer 'esc to cancel' in the last 3 lines while a turn runs.
+ * Secondary: braille spinner glyph line in the last 6 lines.
  */
-export const ANTIGRAVITY_BUSY_LINE_RE =
-  /^\s*[\u2800-\u28FF]|Running command|Thought for|ManageTask/u;
+export const ANTIGRAVITY_CANCEL_FOOTER_RE = /esc to cancel/;
+export const BRAILLE_SPINNER_RE = /[\u2800-\u28FF]/u;
 
-/** Combined: one line is "busy" if any pattern matches (multiline=false per line). */
+/** Cursor or Codex busy line (checked anywhere across the screen). */
 export function isWorkerScreenBusyLine(line: string): boolean {
   const s = String(line);
   return (
     CURSOR_BUSY_LINE_RE.test(s) ||
-    CODEX_WORKING_LINE_RE.test(s) ||
-    ANTIGRAVITY_BUSY_LINE_RE.test(s)
+    CODEX_WORKING_LINE_RE.test(s)
   );
 }
 
 /** Check if an entire screen dump has any line matching busy patterns. */
 export function isWorkerScreenBusy(screen: string): boolean {
-  return String(screen)
-    .split(/\r?\n/)
-    .some((line) => isWorkerScreenBusyLine(line));
+  const lines = String(screen).split(/\r?\n/);
+  if (lines.some((line) => isWorkerScreenBusyLine(line))) {
+    return true;
+  }
+  const last3 = lines.slice(-3);
+  if (last3.some((line) => ANTIGRAVITY_CANCEL_FOOTER_RE.test(line))) {
+    return true;
+  }
+  const last6 = lines.slice(-6);
+  if (last6.some((line) => BRAILLE_SPINNER_RE.test(line))) {
+    return true;
+  }
+  return false;
 }
 
 /**
