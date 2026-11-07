@@ -22,6 +22,28 @@ under that root. Pool URLs must address the remote hosts; loopback URLs and the
 configured local worker URL are refused for CTC. Protect the worker HTTP ports
 on the trusted network.
 
+## Server SSH access
+
+The server runs `ssh` and `scp` to stage audio, so the production container
+needs an SSH client (installed in the image) and a key. `compose.yaml` mounts
+`./data/pool-ssh` read-only as `/home/node/.ssh`. Create it once on the
+production host (the directory is under the gitignored `data/`):
+
+```sh
+mkdir -p data/pool-ssh && chmod 700 data/pool-ssh
+ssh-keygen -t ed25519 -N '' -C sonder-container-pool -f data/pool-ssh/id_ed25519
+ssh-keyscan 192.168.1.119 > data/pool-ssh/known_hosts
+ssh-keyscan -p <lisa-ssh-port> <lisa-hostname> >> data/pool-ssh/known_hosts
+chmod 600 data/pool-ssh/*
+```
+
+Add a `Host` stanza per pool target to `data/pool-ssh/config` (`User`,
+`IdentityFile ~/.ssh/id_ed25519`, `IdentitiesOnly yes`,
+`UserKnownHostsFile ~/.ssh/known_hosts`, `StrictHostKeyChecking yes`; a `Port`
+and `Hostname` when the SSH alias needs them), and append
+`data/pool-ssh/id_ed25519.pub` to `~/.ssh/authorized_keys` on each worker host.
+A host that is not in `known_hosts` fails closed.
+
 ## Lisa CPU environment
 
 On 2026-11-07 lisa had Python 3.14 as its system Python and an existing
