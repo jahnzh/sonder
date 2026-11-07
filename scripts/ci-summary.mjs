@@ -218,32 +218,36 @@ export function summarizeRun(artifactDir) {
   // Stages
   let stages = [];
   if (report && Array.isArray(report.stages) && report.stages.length > 0) {
-    stages = report.stages.map((s) => ({ name: s.name, status: s.status }));
+    stages = report.stages.map((s) => ({
+      name: s.name,
+      status: s.status,
+      durationMs: typeof s.durationMs === "number" ? s.durationMs : null,
+    }));
   } else if (report?.setup?.status === "failed") {
-    stages = [{ name: "setup", status: "failed" }];
+    stages = [{ name: "setup", status: "failed", durationMs: report.setup?.durationMs ?? null }];
   } else if (report?.failedStage) {
     const standard = ["install", "build", "unit", "browser"];
     let failedSeen = false;
     stages = standard.map((name) => {
       if (name === report.failedStage) {
         failedSeen = true;
-        return { name, status: "failed" };
+        return { name, status: "failed", durationMs: null };
       }
-      return { name, status: failedSeen ? "skipped" : "passed" };
+      return { name, status: failedSeen ? "skipped" : "passed", durationMs: null };
     });
   } else if (report?.knownFailures?.new?.length > 0 || report?.knownFailures?.result === "failed") {
     stages = [
-      { name: "install", status: "passed" },
-      { name: "build", status: "passed" },
-      { name: "unit", status: "passed" },
-      { name: "browser", status: "failed" },
+      { name: "install", status: "passed", durationMs: null },
+      { name: "build", status: "passed", durationMs: null },
+      { name: "unit", status: "passed", durationMs: null },
+      { name: "browser", status: "failed", durationMs: null },
     ];
   } else if (report?.ok === true || result === "passed" || result === "passed_with_known_failures") {
     stages = [
-      { name: "install", status: "passed" },
-      { name: "build", status: "passed" },
-      { name: "unit", status: "passed" },
-      { name: "browser", status: "passed" },
+      { name: "install", status: "passed", durationMs: null },
+      { name: "build", status: "passed", durationMs: null },
+      { name: "unit", status: "passed", durationMs: null },
+      { name: "browser", status: "passed", durationMs: null },
     ];
   }
 
@@ -276,6 +280,12 @@ export function summarizeRun(artifactDir) {
     unitFailures = parseUnitFailures(unitOutput);
   }
 
+  // Slowest browser tests
+  let browserSlowestTests = [];
+  if (report && Array.isArray(report.browserSlowestTests)) {
+    browserSlowestTests = report.browserSlowestTests;
+  }
+
   return {
     commit,
     host,
@@ -285,6 +295,7 @@ export function summarizeRun(artifactDir) {
     knownBrowserFailures,
     unitFailures,
     unitFailed,
+    browserSlowestTests,
   };
 }
 
@@ -297,7 +308,11 @@ export function formatSummary(data) {
   lines.push("stages:");
   if (data.stages.length > 0) {
     for (const stage of data.stages) {
-      lines.push(`  ${stage.name}: ${stage.status}`);
+      const dur =
+        typeof stage.durationMs === "number"
+          ? ` (${(stage.durationMs / 1000).toFixed(1)}s)`
+          : "";
+      lines.push(`  ${stage.name}: ${stage.status}${dur}`);
     }
   } else {
     lines.push("  unknown");
@@ -340,6 +355,22 @@ export function formatSummary(data) {
       for (const u of data.unitFailures) {
         lines.push(`  ${u.name}: ${u.error}`);
       }
+    }
+  }
+
+  // Slowest browser tests
+  if (data.browserSlowestTests && data.browserSlowestTests.length > 0) {
+    const top = data.browserSlowestTests.slice(0, 5);
+    lines.push(`slowest browser tests (${top.length}):`);
+    for (const entry of top) {
+      const sec =
+        typeof entry.durationMs === "number"
+          ? `${(entry.durationMs / 1000).toFixed(1)}s `
+          : "";
+      const proj = entry.project ? `${entry.project} ` : "";
+      const file = entry.file || "";
+      const title = entry.title ? ` › ${entry.title}` : "";
+      lines.push(`  ${sec}${proj}${file}${title}`.trimEnd());
     }
   }
 

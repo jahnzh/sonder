@@ -254,3 +254,72 @@ test("enforces under 30 lines guarantee even with many failures", () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test("prints stage durations and slowest browser tests when present", () => {
+  const tmp = makeTempDir();
+  try {
+    const report = {
+      sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      ok: true,
+      result: "passed",
+      stages: [
+        { name: "install", status: "passed", durationMs: 4200 },
+        { name: "build", status: "passed", durationMs: 12500 },
+        { name: "unit", status: "passed", durationMs: 35100 },
+        { name: "browser", status: "passed", durationMs: 120400 },
+      ],
+      browserSlowestTests: [
+        {
+          project: "chromium",
+          file: "tests/e2e/stalled-seek.spec.ts",
+          title: "seeking past stored bytes with an unreachable server surfaces a source error",
+          durationMs: 39200,
+          status: "expected",
+        },
+        {
+          project: "chromium",
+          file: "tests/e2e/offline-restart.spec.ts",
+          title: "a stall that clears while connection check hangs",
+          durationMs: 28100,
+          status: "expected",
+        },
+      ],
+      knownFailures: {
+        summary: "passed",
+        known: [],
+        new: [],
+      },
+    };
+
+    fs.writeFileSync(path.join(tmp, "check-report.json"), JSON.stringify(report, null, 2));
+    fs.writeFileSync(
+      path.join(tmp, "ci-ssh-result.txt"),
+      "mode=remote\nhost=192.168.1.119\ncommit=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\nexit_code=0\nresult=passed\n",
+    );
+
+    const res = run([tmp]);
+    assert.equal(res.status, 0, res.stdout + res.stderr);
+
+    const lines = res.stdout.trim().split("\n");
+    assert.ok(lines.length < 30, `expected under 30 lines, got ${lines.length}`);
+
+    // Stage durations
+    assert.match(res.stdout, /install:\s+passed\s+\(4\.2s\)/);
+    assert.match(res.stdout, /build:\s+passed\s+\(12\.5s\)/);
+    assert.match(res.stdout, /unit:\s+passed\s+\(35\.1s\)/);
+    assert.match(res.stdout, /browser:\s+passed\s+\(120\.4s\)/);
+
+    // Slowest browser tests
+    assert.match(res.stdout, /slowest browser tests \(2\):/);
+    assert.match(
+      res.stdout,
+      /39\.2s chromium tests\/e2e\/stalled-seek\.spec\.ts › seeking past stored bytes with an unreachable server surfaces a source error/,
+    );
+    assert.match(
+      res.stdout,
+      /28\.1s chromium tests\/e2e\/offline-restart\.spec\.ts › a stall that clears while connection check hangs/,
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
