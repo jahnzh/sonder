@@ -22,6 +22,8 @@ services:
       CSP_MODE: ${CSP_MODE:-report-only}
     volumes:
       - ./data:/app/data
+      # ssh key, config and known_hosts for the remote alignment pool (see docs/CTC_WORKER_POOL.md).
+      - ./data/pool-ssh:/home/node/.ssh:ro
       - ${MEDIA_ROOT:-/mnt/usb_4t_1/sonder}:${MEDIA_ROOT:-/mnt/usb_4t_1/sonder}
     read_only: true
     tmpfs:
