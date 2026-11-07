@@ -1,5 +1,7 @@
 """Short, local speech excerpts for locating supplied ebook text, never whole-book ASR."""
+import os
 import re
+import tempfile
 import unicodedata
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -31,12 +33,15 @@ def match_excerpt(text, fragments):
 
 def transcribe_excerpt(audio, folder, start, duration, language):
     import subprocess
-    from faster_whisper import WhisperModel
     global _model
     if _model is None:
+        from faster_whisper import WhisperModel
         _model = WhisperModel("tiny", device="cpu", compute_type="int8", cpu_threads=2,
                               download_root=str(folder / "models" / "whisper"), local_files_only=True, revision=MODEL_REVISION)
-    sample = folder / "anchor-sample.wav"
+    folder = Path(folder)
+    fd, sample_path = tempfile.mkstemp(prefix="anchor-sample-", suffix=".wav", dir=folder)
+    os.close(fd)
+    sample = Path(sample_path)
     try:
         subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-ss", str(start), "-i", str(audio),
                         "-t", str(duration), "-ac", "1", "-ar", "16000", "-y", str(sample)],

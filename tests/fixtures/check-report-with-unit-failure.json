@@ -1,0 +1,37 @@
+{
+  "sha": "cb9be24ee8384a55180916b46c6921195250a16e",
+  "ok": false,
+  "result": "failed",
+  "finalResult": "failed",
+  "failedStage": "unit",
+  "knownFailures": {
+    "summary": "skipped",
+    "known": [],
+    "new": []
+  },
+  "stages": [
+    {
+      "name": "install",
+      "status": "passed",
+      "exitCode": 0
+    },
+    {
+      "name": "build",
+      "status": "passed",
+      "exitCode": 0
+    },
+    {
+      "name": "unit",
+      "status": "failed",
+      "exitCode": 1,
+      "logFile": "stage-3-unit.log",
+      "stdout": "✖ failing tests:\n\ntest at tests/test-android-emulator.test.ts:139:1\n✖ a passing run boots the emulator for each browser, tunnels once and leaves it stopped (77.789361ms)\n  AssertionError [ERR_ASSERTION]: [test-android] Port 25565 is already in use on this machine. Set SONDER_ANDROID_APP_PORT, SONDER_ANDROID_ADB_PORT or SONDER_ANDROID_BIDI_PORT.\n  \n  \n  3 !== 0\n  \n      at TestContext.<anonymous> (/tmp/sonder-local-check-zOxYRp/tests/test-android-emulator.test.ts:142:10)\n      at async Test.run (node:internal/test_runner/test:1409:7)\n      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {\n    generatedMessage: false,\n    code: 'ERR_ASSERTION',\n    actual: 3,\n    expected: 0,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n",
+      "stderr": ""
+    },
+    {
+      "name": "browser",
+      "status": "skipped",
+      "exitCode": null
+    }
+  ]
+}
