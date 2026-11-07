@@ -1,5 +1,5 @@
 import { currentUser, currentUserId, getUserSecret, issueSession, sessionUser, requireAdmin, registerUsers, verifyPassword } from "./users.ts";
-import Fastify from "fastify";
+import Fastify, { type FastifyServerOptions } from "fastify";
 import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
 import staticFiles from "@fastify/static";
@@ -166,7 +166,13 @@ const mime = (path: string) =>
     ".flac": "audio/flac",
     ".wav": "audio/wav",
   })[extname(path).toLowerCase()] || "application/octet-stream";
-export async function createApp() {
+const LOG_LEVELS = new Set(["fatal", "error", "warn", "info", "debug", "trace", "silent"]);
+/** `LOG_LEVEL` from the environment; unset or unrecognised values fall back to `info`. */
+export function logLevel(value = process.env.LOG_LEVEL) {
+  const level = value?.trim().toLowerCase();
+  return level && LOG_LEVELS.has(level) ? level : "info";
+}
+export async function createApp(options?: { logger?: FastifyServerOptions["logger"] }) {
   ensureMediaStorage();
   seed();
   sqlite
@@ -177,7 +183,7 @@ export async function createApp() {
       "/audio/alice-01.mp3",
     );
   const app = Fastify({
-    logger: process.env.NODE_ENV !== "test",
+    logger: options?.logger ?? (process.env.NODE_ENV !== "test" ? { level: logLevel() } : false),
     bodyLimit: 1024 * 1024,
     disableRequestLogging: true,
     trustProxy: "loopback",
@@ -286,7 +292,7 @@ export async function createApp() {
   });
   app.addHook("preHandler", async (req) => {
     const path = req.routeOptions.url || "";
-    if (/^\/api\/(prowlarr|torbox)(?:\/|$)/.test(path) || /^\/api\/acquisitions(?:\/|$)/.test(path) || path === "/api/acquire" || path === "/api/torrents/health" || path === "/api/local/test" || /^\/api\/discover\/(abb|prowlarr)(?:\/|$)/.test(path) || path === "/api/discover/ebooks" || (req.method === "POST" && ["/api/ebooks", "/api/ebooks/import", "/api/import"].includes(path)) || (req.method === "POST" && /^\/api\/books\/[^/]+\/keep$/.test(path)) || (req.method === "POST" && /^\/api\/reader\/[^/]+\/link$/.test(path)) || (["PUT", "DELETE"].includes(req.method) && /^\/api\/recordings\/[^/]+\/(faults\/[^/]+|server-copy)$/.test(path)) || (["POST", "PATCH"].includes(req.method) && /^\/api\/alignments(?:\/|$)/.test(path)) || (req.method === "POST" && /^\/api\/works\/[^/]+\/ebook-set\/fetch$/.test(path))) requireAdmin(req);
+    if (/^\/api\/(prowlarr|torbox)(?:\/|$)/.test(path) || /^\/api\/acquisitions(?:\/|$)/.test(path) || path === "/api/acquire" || path === "/api/torrents/health" || path === "/api/alignments/pool" || path === "/api/local/test" || /^\/api\/discover\/(abb|prowlarr)(?:\/|$)/.test(path) || path === "/api/discover/ebooks" || (req.method === "POST" && ["/api/ebooks", "/api/ebooks/import", "/api/import"].includes(path)) || (req.method === "POST" && /^\/api\/books\/[^/]+\/keep$/.test(path)) || (req.method === "POST" && /^\/api\/reader\/[^/]+\/link$/.test(path)) || (["PUT", "DELETE"].includes(req.method) && /^\/api\/recordings\/[^/]+\/(faults\/[^/]+|server-copy)$/.test(path)) || (["POST", "PATCH"].includes(req.method) && /^\/api\/alignments(?:\/|$)/.test(path)) || (req.method === "POST" && /^\/api\/works\/[^/]+\/ebook-set\/fetch$/.test(path))) requireAdmin(req);
   });
   registerCsp(app, { mode: cspMode() });
   app.get("/api/health", async () => ({ ok: true }));

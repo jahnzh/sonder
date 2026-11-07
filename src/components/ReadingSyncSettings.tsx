@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { BookOpenText, Loader2 } from "lucide-react";
 import { api } from "../lib";
-import type { AlignmentJob } from "../reading-types";
+import type { AlignmentJob, AlignmentPoolStatus } from "../reading-types";
+import { AlignmentPoolStatusView } from "./AlignmentPoolStatusView";
 
 type Backfill = {
   available: boolean;
@@ -32,13 +33,26 @@ export function ReadingSyncSettings({
   notify: (text: string, error?: boolean) => void;
 }) {
   const [state, setState] = useState<Backfill | null>(null);
+  const [pool, setPool] = useState<AlignmentPoolStatus | null>(null);
   const [busy, setBusy] = useState(false);
+  const [refreshingPool, setRefreshingPool] = useState(false);
   const [titles, setTitles] = useState<Record<string, string>>({});
   const refresh = useCallback(async () => {
-    try {
-      setState(await api<Backfill>("/alignments/backfill"));
-    } catch {}
+    await Promise.all([
+      api<Backfill>("/alignments/backfill").then(setState).catch(() => {}),
+      api<AlignmentPoolStatus>("/alignments/pool").then(setPool).catch(() => {}),
+    ]);
   }, []);
+  const refreshPool = async () => {
+    setRefreshingPool(true);
+    try {
+      setPool(await api<AlignmentPoolStatus>("/alignments/pool?fresh=1"));
+    } catch (error) {
+      notify((error as Error).message, true);
+    } finally {
+      setRefreshingPool(false);
+    }
+  };
   useEffect(() => {
     void refresh();
     const timer = setInterval(() => void refresh(), 5000);
@@ -122,6 +136,11 @@ export function ReadingSyncSettings({
           )}
         </>
       )}
+      <AlignmentPoolStatusView
+        pool={pool}
+        refreshing={refreshingPool}
+        onRefresh={() => void refreshPool()}
+      />
     </section>
   );
 }

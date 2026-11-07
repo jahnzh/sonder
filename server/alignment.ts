@@ -26,6 +26,7 @@ import {
   clearPoolStaging,
   dispatchFullAlignmentJob,
   getAlignmentPoolCoordinator,
+  getAlignmentPoolStatus,
   poolAlignmentFolder,
   poolAudioPath,
   poolFailureMessage,
@@ -34,6 +35,7 @@ import {
   poolRemoteAlignmentFolder,
   poolWorkerBase,
   shouldDispatchToPool,
+  type PoolHostId,
 } from "./alignment-pool.ts";
 import {
   coreIntervals,
@@ -1423,9 +1425,49 @@ export async function processAlignments() {
 export function stopAlignments() {
   stopping = true;
 }
+type AlignmentWriteMeta = {
+  action?: "pause" | "resume" | "cancel" | "review";
+  jobId?: string;
+  jobStatus?: AlignmentJob["status"];
+};
+function persistedPoolErrors(): Partial<Record<PoolHostId, string>> {
+  const errors: Partial<Record<PoolHostId, string>> = {};
+  const settled = new Set<string>();
+  for (const job of jobs()) {
+    for (const [hostId, reason] of Object.entries(job.poolErrors ?? {})) {
+      if (!settled.has(hostId) && reason) {
+        errors[hostId as PoolHostId] = reason;
+        settled.add(hostId);
+      }
+    }
+    if (job.pool?.hostId && job.pool.jobMediaRoot && !settled.has(job.pool.hostId))
+      settled.add(job.pool.hostId);
+  }
+  return errors;
+}
 export function registerAlignment(app: FastifyInstance) {
   activeApps++;
   stopping = false;
+  const writeMeta = new WeakMap<object, AlignmentWriteMeta>();
+  app.addHook("onResponse", async (req, reply) => {
+    if (req.method === "GET" || req.method === "HEAD") return;
+    const rawPath = req.url.split(/[?#]/, 1)[0] ?? "";
+    if (rawPath !== "/api/alignments" && !rawPath.startsWith("/api/alignments/")) return;
+    const path = rawPath.replace(/[^\x20-\x7e]/g, "?").slice(0, 160);
+    const meta = writeMeta.get(req);
+    const status = reply.statusCode;
+    const durationMs = Math.round(reply.elapsedTime * 100) / 100;
+    req.log.debug(
+      {
+        method: req.method,
+        path,
+        ...(meta ?? {}),
+        status,
+        durationMs,
+      },
+      `alignment write: ${req.method} ${path}${meta?.action ? ` action=${meta.action}` : ""} status=${status} durationMs=${durationMs}`,
+    );
+  });
   for (const job of jobs()) {
     if (job.audioFingerprint.startsWith("audio-v2:")) continue;
     try {
@@ -1550,6 +1592,20 @@ export function registerAlignment(app: FastifyInstance) {
     requireAdmin(req);
     return runAlignmentBackfill();
   });
+  app.get("/api/alignments/pool", async (req) => {
+    requireAdmin(req);
+    const { fresh } = z
+      .object({
+        fresh: z
+          .union([z.literal("1"), z.literal("true"), z.literal("0"), z.literal("false")])
+          .optional(),
+      })
+      .parse(req.query);
+    return getAlignmentPoolStatus({
+      fresh: fresh === "1" || fresh === "true",
+      persistedErrors: persistedPoolErrors(),
+    });
+  });
   app.get("/api/alignments", (req) => {
     const { ebookId, summary } = z
       .object({
@@ -1599,21 +1655,27 @@ export function registerAlignment(app: FastifyInstance) {
         mode: z.enum(["chapters", "anchored"]).optional(),
       })
       .parse(req.body);
-    return createAlignment(
+    const job = await createAlignment(
       input.ebookId,
       input.recordingId,
       input.pairings,
       input.mode,
     );
+    writeMeta.set(req, { jobId: job.id, jobStatus: job.status });
+    return job;
   });
   app.patch("/api/alignments/:id", async (req) => {
     const { id } = req.params as { id: string };
     const { action } = z
       .object({ action: z.enum(["pause", "resume", "cancel", "review"]) })
       .parse(req.body);
+    writeMeta.set(req, { action });
     const job = alignmentJob(id);
     // Older client builds can still send review; maps remain estimated.
-    if (action === "review") return job;
+    if (action === "review") {
+      writeMeta.set(req, { action, jobId: job.id, jobStatus: job.status });
+      return job;
+    }
     job.status = action === "pause" ? "paused" : action === "cancel" ? "cancelled" : "queued";
     job.error = null;
     if (action === "resume") delete job.poolErrors;
@@ -1622,6 +1684,7 @@ export function registerAlignment(app: FastifyInstance) {
     if (action === "resume" && job.pool)
       clearPoolStaging(job, job.engine === CTC_ENGINE ? [] : job.pool.triedHosts);
     store(job);
+    writeMeta.set(req, { action, jobId: job.id, jobStatus: job.status });
     if (action === "resume") void processAlignments();
     return job;
   });
@@ -1699,7 +1762,9 @@ export function registerAlignment(app: FastifyInstance) {
       confidence: 1,
     });
     job.unsyncedPassages = unsyncedPassages(book, job.intervals);
-    return store(job);
+    const saved = store(job);
+    writeMeta.set(req, { jobId: saved.id, jobStatus: saved.status });
+    return saved;
   });
   const timer = setInterval(() => void processAlignments(), 5000);
   timer.unref();
