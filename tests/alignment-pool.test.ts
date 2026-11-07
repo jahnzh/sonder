@@ -120,7 +120,101 @@ test("dispatch retries on another host then surfaces POOL_FAILURE_MESSAGE", asyn
   );
   assert.ok(log.some((line) => line.includes("probe:deck-host")));
   assert.ok(log.some((line) => line.includes("upload:deck-host")));
+  assert.deepEqual(job.poolErrors, { wsl: "ssh: probe failed", steamdeck: "staging: stage failed" });
   fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test("full alignment preserves SSH diagnostics and tries the next host", async () => {
+  resetAlignmentPoolCoordinator(hosts);
+  setAlignmentPoolDepsForTests({
+    async probe(target) {
+      if (target === "wsl-host")
+        // Captured from an SSH probe against a closed local port.
+        throw Object.assign(new Error("Command failed"), { stderr: "ssh: connect to host 127.0.0.1 port 1: Connection refused\r\n" });
+      return true;
+    },
+    async exec() { return { code: 0, stdout: "", stderr: "" }; },
+    async uploadFile() {},
+  });
+  const job = { id: "full", recordingId: "rec", mode: "anchored" } as AlignmentJob;
+  const pool = await dispatchFullAlignmentJob(job, [], () => null);
+  assert.equal(pool.hostId, "steamdeck");
+  assert.deepEqual(job.poolErrors, { wsl: "ssh: connect to host 127.0.0.1 port 1: Connection refused" });
+});
+
+test("pool failure reasons are single-line and bounded", async () => {
+  resetAlignmentPoolCoordinator(hosts);
+  setAlignmentPoolDepsForTests({
+    async probe() { throw new Error(`first line\n${"x".repeat(300)}`); },
+    async exec() { throw new Error("staging must not run"); },
+    async uploadFile() { throw new Error("staging must not run"); },
+  });
+  const job = { id: "bounded", recordingId: "rec", mode: "anchored" } as AlignmentJob;
+  await assert.rejects(() => dispatchFullAlignmentJob(job, [], () => null), /Remote alignment failed/);
+  assert.equal(job.poolErrors?.wsl?.length, 205);
+  assert.match(job.poolErrors!.wsl!, /^ssh: first line x+$/);
+  assert.equal(job.poolErrors?.steamdeck, job.poolErrors?.wsl);
+});
+
+test("CTC dispatch records HTTP health and SSH failures by host", async () => {
+  const originalFetch = globalThis.fetch;
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "ctc-health-failure-"));
+  resetAlignmentPoolCoordinator([
+    hosts[0],
+    { ...hosts[1], id: "lisa", sshTarget: "lisa-host", workerUrl: "http://lisa-worker" },
+  ]);
+  setAlignmentPoolDepsForTests({
+    async probe() { throw new Error("Connection refused"); },
+    async exec() { throw new Error("staging must not run"); },
+    async uploadFile() { throw new Error("staging must not run"); },
+  });
+  globalThis.fetch = async (input) => String(input).includes("wsl-worker")
+    ? new Response(null, { status: 503 })
+    : Response.json({ ready: true, busy: false, stuck: false, mediaRoot: temp,
+      ctc: { engine: CTC_ENGINE, ready: true, device: "cpu", precision: "float32", passageReady: true } });
+  const job = { id: "ctc", recordingId: "rec", engine: CTC_ENGINE } as AlignmentJob;
+  try {
+    await assert.rejects(() => dispatchFullAlignmentJob(job, [], () => null), /Remote alignment failed/);
+    assert.deepEqual(job.poolErrors, {
+      wsl: "health: worker returned HTTP 503",
+      lisa: "ssh: Connection refused",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("CTC dispatch records SSH and staging exceptions without leaking leases", async () => {
+  const originalFetch = globalThis.fetch;
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "ctc-dispatch-failure-"));
+  const audio = path.join(temp, "audio.wav");
+  fs.writeFileSync(audio, "audio");
+  resetAlignmentPoolCoordinator([
+    hosts[0],
+    { ...hosts[1], id: "lisa", sshTarget: "lisa-host", workerUrl: "http://lisa-worker" },
+  ]);
+  setAlignmentPoolDepsForTests({
+    async probe(target) { if (target === "wsl-host") throw new Error("ssh unavailable"); return true; },
+    async exec() { return { code: 0, stdout: "", stderr: "" }; },
+    async uploadFile() { throw new Error("disk full\nmore details"); },
+  });
+  globalThis.fetch = async (input) => {
+    const lisa = String(input).includes("lisa-worker");
+    return Response.json({ ready: true, busy: false, stuck: false, mediaRoot: temp,
+      ctc: { engine: CTC_ENGINE, ready: true, device: lisa ? "cpu" : "cuda",
+        precision: lisa ? "float32" : "float16", passageReady: true } });
+  };
+  const job = { id: "ctc", recordingId: "rec", engine: CTC_ENGINE } as AlignmentJob;
+  try {
+    await assert.rejects(() => dispatchFullAlignmentJob(job, [{ id: "track" }] as any[], () => audio), /Remote alignment failed/);
+    assert.deepEqual(job.poolErrors, { wsl: "ssh: ssh unavailable", lisa: "staging: disk full more details" });
+    const coord = (await import("../server/alignment-pool.ts")).getAlignmentPoolCoordinator();
+    assert.equal(coord.activeOnHost("lisa"), 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
 });
 
 test("a pool URL that aliases the production worker is never probed for CTC", async () => {
@@ -182,10 +276,12 @@ test("a staging failure is remembered while the other CTC worker is busy", async
       assert.deepEqual(error.triedHosts, ["wsl"]);
       return true;
     });
+    assert.deepEqual(job.poolErrors, { wsl: "staging: staging failed", lisa: "health: worker is busy" });
     lisaBusy = false;
     const pool = await dispatchFullAlignmentJob(job, tracks, () => audio, ["wsl"]);
     assert.equal(pool.hostId, "lisa");
     assert.deepEqual(pool.triedHosts, ["wsl", "lisa"]);
+    assert.deepEqual(job.poolErrors, { wsl: "staging: staging failed" });
     assert.deepEqual(staged, ["wsl-host", "lisa-host"]);
   } finally {
     globalThis.fetch = originalFetch;

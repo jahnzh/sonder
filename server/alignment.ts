@@ -1032,6 +1032,7 @@ function acceptCtcDispatch(job: AlignmentJob, pool: Awaited<ReturnType<typeof di
   current.pool = pool;
   current.ctcDevice = job.ctcDevice;
   current.ctcPrecision = job.ctcPrecision;
+  current.poolErrors = job.poolErrors;
   return store(current);
 }
 
@@ -1615,6 +1616,7 @@ export function registerAlignment(app: FastifyInstance) {
     if (action === "review") return job;
     job.status = action === "pause" ? "paused" : action === "cancel" ? "cancelled" : "queued";
     job.error = null;
+    if (action === "resume") delete job.poolErrors;
     if (action === "resume" && (job.outcome === "error" || job.outcome === "language_not_supported"))
       delete job.outcome;
     if (action === "resume" && job.pool)

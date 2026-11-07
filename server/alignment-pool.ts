@@ -151,12 +151,8 @@ function defaultPoolSshDeps(): PoolSshDeps {
       );
     },
     async probe(sshTarget) {
-      try {
-        await exec(sshTarget, "true");
-        return true;
-      } catch {
-        return false;
-      }
+      await exec(sshTarget, "true");
+      return true;
     },
   };
 }
@@ -164,6 +160,39 @@ function defaultPoolSshDeps(): PoolSshDeps {
 function poolDeps(): PoolSshDeps {
   if (depsOverride) return depsOverride;
   return defaultPoolSshDeps();
+}
+
+function failureDetail(error: unknown) {
+  const stderr = error && typeof error === "object" && "stderr" in error ? error.stderr : undefined;
+  let message = typeof stderr === "string" || Buffer.isBuffer(stderr) ? String(stderr) : "";
+  if (!message.trim()) {
+    message = error instanceof Error ? error.message : typeof error === "string" ? error : "Unknown failure";
+    if (error instanceof Error && error.cause instanceof Error && error.cause.message)
+      message += `: ${error.cause.message}`;
+  }
+  return message.replace(/\s+/g, " ").trim().slice(0, 200) || "Unknown failure";
+}
+
+function recordPoolError(job: AlignmentJob, hostId: PoolHostId, step: string, error: unknown) {
+  job.poolErrors ??= {};
+  const detail = failureDetail(error);
+  job.poolErrors[hostId] = detail.toLowerCase().startsWith(`${step}:`) ? detail : `${step}: ${detail}`;
+}
+
+function clearHostError(job: AlignmentJob, hostId: PoolHostId) {
+  if (!job.poolErrors) return;
+  delete job.poolErrors[hostId];
+  if (!Object.keys(job.poolErrors).length) delete job.poolErrors;
+}
+
+async function probeHost(job: AlignmentJob, host: PoolHost) {
+  try {
+    if (await poolDeps().probe(host.sshTarget)) return true;
+    recordPoolError(job, host.id, "ssh", "probe failed");
+  } catch (error) {
+    recordPoolError(job, host.id, "ssh", error);
+  }
+  return false;
 }
 
 type RecordingLease = { jobId: string; site: "local" | "remote" };
@@ -341,28 +370,27 @@ function workerOrigin(value: string) {
   return `${url.protocol}//${hostname}:${url.port || (url.protocol === "https:" ? "443" : "80")}`;
 }
 
-async function ctcHealth(host: PoolHost): Promise<CtcHealth | null> {
-  try {
-    // A pool URL accidentally pointed at the local worker must never send it
-    // CTC, even if that worker happens to advertise a compatible CPU runtime.
-    const hostname = new URL(host.workerUrl).hostname;
-    if (["localhost", "127.0.0.1", "[::1]"].includes(hostname)) return null;
-    const localWorker = process.env.ALIGNMENT_WORKER_URL;
-    if (localWorker && workerOrigin(host.workerUrl) === workerOrigin(localWorker)) return null;
-    const response = await fetch(`${host.workerUrl.replace(/\/$/, "")}/health`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!response.ok) return null;
-    const health = await response.json() as CtcHealth;
-    if (!health || health.ready !== true || typeof health.mediaRoot !== "string" || !isAbsolute(health.mediaRoot) ||
-        typeof health.busy !== "boolean" || typeof health.stuck !== "boolean" ||
-        !health.ctc || health.ctc.engine !== CTC_ENGINE || health.ctc.ready !== true ||
-        health.ctc.device !== (host.id === "wsl" ? "cuda" : "cpu") ||
-        health.ctc.precision !== (host.id === "wsl" ? "float16" : "float32")) return null;
-    return health;
-  } catch {
-    return null;
-  }
+async function ctcHealth(host: PoolHost): Promise<CtcHealth> {
+  // A pool URL accidentally pointed at the local worker must never send it
+  // CTC, even if that worker happens to advertise a compatible CPU runtime.
+  const hostname = new URL(host.workerUrl).hostname;
+  if (["localhost", "127.0.0.1", "[::1]"].includes(hostname))
+    throw new Error("worker URL points to the local host");
+  const localWorker = process.env.ALIGNMENT_WORKER_URL;
+  if (localWorker && workerOrigin(host.workerUrl) === workerOrigin(localWorker))
+    throw new Error("worker URL points to the local worker");
+  const response = await fetch(`${host.workerUrl.replace(/\/$/, "")}/health`, {
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!response.ok) throw new Error(`worker returned HTTP ${response.status}`);
+  const health = await response.json() as CtcHealth;
+  if (!health || health.ready !== true || typeof health.mediaRoot !== "string" || !isAbsolute(health.mediaRoot) ||
+      typeof health.busy !== "boolean" || typeof health.stuck !== "boolean" ||
+      !health.ctc || health.ctc.engine !== CTC_ENGINE || health.ctc.ready !== true ||
+      health.ctc.device !== (host.id === "wsl" ? "cuda" : "cpu") ||
+      health.ctc.precision !== (host.id === "wsl" ? "float16" : "float32"))
+    throw new Error("worker is not ready or has incompatible CTC settings");
+  return health;
 }
 
 const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
@@ -400,15 +428,29 @@ async function dispatchCtcJob(
   for (const id of ["wsl", "lisa"] as const) {
     if (attempted.includes(id)) continue;
     const host = coord.hostById(id);
-    if (!host) continue;
-    const health = await ctcHealth(host);
-    if (!health || (job.mode === "anchored" && health.ctc.passageReady !== true)) continue;
+    if (!host) {
+      recordPoolError(job, id, "configuration", "host is not configured");
+      continue;
+    }
+    let health: CtcHealth;
+    try {
+      health = await ctcHealth(host);
+    } catch (error) {
+      recordPoolError(job, id, "health", error);
+      continue;
+    }
+    if (job.mode === "anchored" && health.ctc.passageReady !== true) {
+      recordPoolError(job, id, "health", "passage discovery is not ready");
+      continue;
+    }
     if (health.busy || health.stuck || coord.activeOnHost(id) > 0) {
+      recordPoolError(job, id, "health", health.stuck ? "worker is stuck" : "worker is busy");
       busy = true;
       continue;
     }
-    if (!(await poolDeps().probe(host.sshTarget))) continue;
+    if (!(await probeHost(job, host))) continue;
     if (!coord.tryAcquireCtc(id, job.id, job.recordingId)) {
+      recordPoolError(job, id, "capacity", "worker or recording is busy");
       busy = true;
       continue;
     }
@@ -416,9 +458,11 @@ async function dispatchCtcJob(
       const staged = await stageCtcTracks({ jobId: job.id, host, tracks, localAudio }, health.mediaRoot);
       job.ctcDevice = health.ctc.device;
       job.ctcPrecision = health.ctc.precision;
+      clearHostError(job, id);
       return { hostId: id, attempt: attempted.length + 1, ...staged,
         workerUrl: host.workerUrl, triedHosts: [...attempted, id] };
-    } catch {
+    } catch (error) {
+      recordPoolError(job, id, "staging", error);
       coord.release(id, job.id, job.recordingId);
       attempted.push(id);
     }
@@ -439,12 +483,19 @@ export async function dispatchFullAlignmentJob(
   const exclude = [...triedHosts];
   for (let attempts = 0; attempts < 2; attempts++) {
     const host = coord.selectHost(exclude);
-    if (!host) break;
-    if (!(await poolDeps().probe(host.sshTarget))) {
+    if (!host) {
+      for (const id of ["wsl", "steamdeck"] as const) {
+        if (!exclude.includes(id) && coord.hostById(id))
+          recordPoolError(job, id, "capacity", "no free worker slots");
+      }
+      break;
+    }
+    if (!(await probeHost(job, host))) {
       exclude.push(host.id);
       continue;
     }
     if (!coord.tryAcquire(host.id, job.id, job.recordingId)) {
+      recordPoolError(job, host.id, "capacity", "worker or recording is busy");
       exclude.push(host.id);
       continue;
     }
@@ -455,6 +506,7 @@ export async function dispatchFullAlignmentJob(
         tracks,
         localAudio,
       });
+      clearHostError(job, host.id);
       return {
         hostId: host.id,
         attempt: triedHosts.length + 1,
@@ -463,7 +515,8 @@ export async function dispatchFullAlignmentJob(
         triedHosts: [...triedHosts, host.id],
         stagedAudio: staged.stagedAudio,
       };
-    } catch {
+    } catch (error) {
+      recordPoolError(job, host.id, "staging", error);
       coord.release(host.id, job.id, job.recordingId);
       exclude.push(host.id);
     }

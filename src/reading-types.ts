@@ -146,6 +146,8 @@ export type AlignmentJob = {
   anchoring?: AlignmentAnchoring;
   /** "backfill" for jobs queued automatically; "projected" for ebook-set maps. */
   origin?: "backfill" | "manual" | "projected";
+  /** Most recent dispatch failure per remote host, if any. */
+  poolErrors?: Partial<Record<"wsl" | "steamdeck" | "lisa", string>>;
   /** Remote SSH pool dispatch for CTC or full anchored jobs. */
   pool?: {
     hostId: "wsl" | "steamdeck" | "lisa";

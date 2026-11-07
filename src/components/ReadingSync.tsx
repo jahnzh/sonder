@@ -6,6 +6,7 @@ import { api, clock } from "../lib";
 import { createAlignmentMapLifecycle } from "../alignment-map-lifecycle";
 import { alignmentMapDeps } from "../alignment-map-deps";
 import { usePlayer } from "../player";
+import { PoolFailureReasons } from "./PoolFailureReasons";
 import type { Book } from "../types";
 import type {
   AlignmentFlag,
@@ -507,6 +508,7 @@ export function ReadingSync({
             </ul>
           )}
           {job.error && <p className="inline-error">{job.error}</p>}
+          <PoolFailureReasons job={job} />
         </div>
       )}
       {error && (

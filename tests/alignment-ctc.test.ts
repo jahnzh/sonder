@@ -587,3 +587,42 @@ test("unsynced passages and unsupported-language outcomes survive storage and AP
     await app.close();
   }
 });
+
+test("pool failure reasons survive storage and summary responses, and resume starts fresh", async () => {
+  const { default: Fastify } = await import("fastify");
+  const app = Fastify();
+  registerAlignment(app);
+  try {
+    const book = await extractBook("ctc-ebook");
+    const previous = sqlite.prepare("SELECT id FROM alignment_jobs WHERE ebook_id=? AND recording_id=?")
+      .get("ctc-ebook", "ctc-recording") as { id: string } | undefined;
+    if (previous) rmSync(join(temp, "media", "alignment", previous.id), { recursive: true, force: true });
+    mockWorker(async () => { throw new Error("worker request must not run"); }, { down: ["wsl", "lisa"] });
+    const created = await createAlignment("ctc-ebook", "ctc-recording", [{
+      section: book.sections[0].index, trackId: "ctc-track", start: 0, duration: 40,
+    }], "chapters");
+    const failed = await settled(created.id);
+    assert.equal(failed.status, "error");
+    assert.deepEqual(failed.poolErrors, { wsl: "health: wsl is unreachable", lisa: "health: lisa is unreachable" });
+    const stored = JSON.parse((sqlite.prepare("SELECT data FROM alignment_jobs WHERE id=?").get(created.id) as { data: string }).data);
+    assert.deepEqual(stored.poolErrors, failed.poolErrors);
+    const summary = await app.inject({ method: "GET", url: "/api/alignments?ebookId=ctc-ebook&summary=1" });
+    assert.equal(summary.statusCode, 200);
+    assert.deepEqual(summary.json().jobs.find((job: { id: string }) => job.id === created.id).poolErrors, failed.poolErrors);
+
+    mockWorker(async (_input, init) => {
+      const request = JSON.parse(String(init?.body));
+      return Response.json({ engine, outcome: "mapped", elapsedSeconds: 1,
+        intervals: request.fragments.map((_: string, i: number) => ({ index: i, start: request.start + i, end: request.start + i + 0.8 })) });
+    }, { down: ["wsl"] });
+    const response = await app.inject({ method: "PATCH", url: `/api/alignments/${created.id}`, payload: { action: "resume" } });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().poolErrors, undefined);
+    const retried = await settled(created.id);
+    assert.equal(retried.status, "partial", retried.error ?? undefined);
+    assert.equal(retried.pool?.hostId, "lisa");
+    assert.deepEqual(retried.poolErrors, { wsl: "health: wsl is unreachable" });
+  } finally {
+    await app.close();
+  }
+});
