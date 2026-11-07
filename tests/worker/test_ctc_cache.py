@@ -3,6 +3,7 @@ import os
 import struct
 import sys
 import tempfile
+import time
 import unittest
 import wave
 from pathlib import Path
@@ -96,7 +97,13 @@ class CacheStorage(unittest.TestCase):
                 second, again = ctc_cache.audio_digest(audio)
                 self.assertEqual((first, version), (second, again))
                 self.assertEqual(hashed.call_count, 1)
-                audio.write_bytes(b"b" * 4096)
+                # A replacement must change the file version; a write within the same
+                # filesystem timestamp tick can keep it, so wait until it differs.
+                for _ in range(100):
+                    audio.write_bytes(b"b" * 4096)
+                    if ctc_cache.file_version(audio) != version:
+                        break
+                    time.sleep(0.01)
                 third, _ = ctc_cache.audio_digest(audio)
                 self.assertNotEqual(first, third)
                 self.assertEqual(hashed.call_count, 2)
