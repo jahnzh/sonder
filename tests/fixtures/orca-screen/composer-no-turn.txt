@@ -1,0 +1,5 @@
+Some previous completed turn output.
+
+> Fix issue 292 send-agent confirmation
+────────────────────────────────────────────────────────────────────────────────
+                                                  accept-edits · Gemini 3.8 Flash · high

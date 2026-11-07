@@ -1,0 +1,3 @@
+› Fix issue 292 send-agent confirmation
+
+• Working (planning the next step)
