@@ -1,13 +1,16 @@
 """Tests for speech excerpt transcription and anchor location concurrency."""
+import os
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "worker"))
 import anchors
+import pipeline
 
 
 class FakeWord:
@@ -191,6 +194,53 @@ class AnchorsTest(unittest.TestCase):
         self.assertFalse((self.folder / "anchor-sample.wav").exists())
         leftovers = [p.name for p in self.folder.iterdir() if p != self.audio]
         self.assertEqual(leftovers, [])
+
+    def test_cleanup_stale_anchor_samples_removes_old_and_preserves_fresh(self):
+        old_sample = self.folder / "anchor-sample-old123.wav"
+        fresh_sample = self.folder / "anchor-sample-fresh456.wav"
+        legacy_sample = self.folder / "anchor-sample.wav"
+        other_file = self.folder / "other-file.txt"
+
+        old_sample.write_bytes(b"old sample")
+        fresh_sample.write_bytes(b"fresh sample")
+        legacy_sample.write_bytes(b"legacy sample")
+        other_file.write_bytes(b"other content")
+
+        now = time.time()
+        two_hours_ago = now - 7200
+        os.utime(old_sample, (two_hours_ago, two_hours_ago))
+
+        pipeline.cleanup_stale_anchor_samples(self.folder, max_age_seconds=3600)
+
+        self.assertFalse(old_sample.exists(), "stale anchor-sample-*.wav older than 1h should be removed")
+        self.assertFalse(legacy_sample.exists(), "legacy anchor-sample.wav should always be removed")
+        self.assertTrue(fresh_sample.exists(), "fresh in-flight anchor-sample-*.wav should be preserved")
+        self.assertTrue(other_file.exists(), "unrelated files should not be touched")
+
+    def test_locate_passage_finally_cleans_stale_anchor_samples(self):
+        old_sample = self.folder / "anchor-sample-stale999.wav"
+        fresh_sample = self.folder / "anchor-sample-active888.wav"
+        legacy_sample = self.folder / "anchor-sample.wav"
+
+        old_sample.write_bytes(b"stale")
+        fresh_sample.write_bytes(b"active")
+        legacy_sample.write_bytes(b"legacy")
+
+        now = time.time()
+        two_hours_ago = now - 7200
+        os.utime(old_sample, (two_hours_ago, two_hours_ago))
+
+        # Simulate locate_passage child execution failing (e.g. deadline killed)
+        with mock.patch("pipeline._run_child", side_effect=pipeline.AlignmentFailed("deadline exceeded")):
+            with self.assertRaises(pipeline.AlignmentFailed):
+                pipeline.locate_passage(
+                    audio=self.audio, folder=self.folder, fragments=self.fragments,
+                    language="eng", start=0, duration=30
+                )
+
+        self.assertFalse(old_sample.exists(), "stale sample cleaned in locate_passage finally")
+        self.assertFalse(legacy_sample.exists(), "legacy sample cleaned in locate_passage finally")
+        self.assertTrue(fresh_sample.exists(), "fresh sample preserved in locate_passage finally")
 
 
 if __name__ == "__main__":

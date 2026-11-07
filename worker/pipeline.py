@@ -51,6 +51,18 @@ def align_section(*, audio, output, fragments, language, start, duration, media_
         for path in (wave_path, text_path, map_path, output.with_suffix(".part")):
             path.unlink(missing_ok=True)
 
+def cleanup_stale_anchor_samples(folder, max_age_seconds=3600):
+    """Remove anchor samples older than max_age_seconds (and legacy fixed-name samples), leaving fresh in-flight samples."""
+    folder = Path(folder)
+    now = time.time()
+    (folder / "anchor-sample.wav").unlink(missing_ok=True)
+    for sample in folder.glob("anchor-sample-*.wav"):
+        try:
+            if now - sample.stat().st_mtime > max_age_seconds:
+                sample.unlink(missing_ok=True)
+        except OSError:
+            pass
+
 def locate_passage(*, audio, folder, fragments, language, start, duration, env=None, child=CHILD):
     """Transcribe a short excerpt and find it in the supplied text, under the /anchor limit."""
     limit = anchor_limit(duration, env)
@@ -61,5 +73,4 @@ def locate_passage(*, audio, folder, fragments, language, start, duration, env=N
         return {**result, "engine": ENGINE, "outcome": "mapped" if result.get("match") else "unsynced",
                 "stageTimings": {"speechRecovery": time.monotonic() - started}}
     finally:
-        # Clean up any fixed legacy sample without removing in-flight per-request samples from other workers.
-        (folder / "anchor-sample.wav").unlink(missing_ok=True)
+        cleanup_stale_anchor_samples(folder)
