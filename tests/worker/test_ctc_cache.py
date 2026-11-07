@@ -83,6 +83,35 @@ class CacheStorage(unittest.TestCase):
             after, _ = ctc_cache.audio_digest(audio)
             self.assertNotEqual(before, after)
 
+    def test_digest_is_computed_once_per_file_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            audio = Path(directory) / "audio.bin"
+            audio.write_bytes(b"a" * 4096)
+            ctc_cache._DIGESTS.clear()
+            real = ctc_cache.hashlib.sha256
+            later = ctc_cache.file_version(audio)[4] + 10_000_000_000
+            with mock.patch.object(ctc_cache.hashlib, "sha256", side_effect=real) as hashed, \
+                    mock.patch.object(ctc_cache.time, "time_ns", return_value=later):
+                first, version = ctc_cache.audio_digest(audio)
+                second, again = ctc_cache.audio_digest(audio)
+                self.assertEqual((first, version), (second, again))
+                self.assertEqual(hashed.call_count, 1)
+                audio.write_bytes(b"b" * 4096)
+                third, _ = ctc_cache.audio_digest(audio)
+                self.assertNotEqual(first, third)
+                self.assertEqual(hashed.call_count, 2)
+
+    def test_a_file_written_moments_ago_is_always_hashed_again(self):
+        with tempfile.TemporaryDirectory() as directory:
+            audio = Path(directory) / "audio.bin"
+            audio.write_bytes(b"a" * 4096)
+            ctc_cache._DIGESTS.clear()
+            real = ctc_cache.hashlib.sha256
+            with mock.patch.object(ctc_cache.hashlib, "sha256", side_effect=real) as hashed:
+                ctc_cache.audio_digest(audio)
+                ctc_cache.audio_digest(audio)
+                self.assertEqual(hashed.call_count, 2)
+
     def test_budget_configuration_is_bounded(self):
         self.assertEqual(ctc_cache.budget_bytes({}), 5 * 1024 ** 3)
         self.assertEqual(ctc_cache.budget_bytes({"ALIGNMENT_CTC_CACHE_BYTES": "0"}), 0)

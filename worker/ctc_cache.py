@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import struct
+import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -27,17 +28,34 @@ def file_version(path):
     return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
 
 
+# One whole-file hash per file version: the version holds the inode, size, mtime and ctime, and ctime
+# cannot be restored by resetting mtime. Like git's racy-timestamp rule, only a file whose ctime is clearly
+# older than the hash is remembered: a file written within the timestamp tick of an earlier version can
+# share its version, so it is always hashed again.
+_DIGESTS = {}
+_DIGEST_LIMIT = 64
+_QUIET_NS = 2_000_000_000
+
+
 def audio_digest(path):
     """Hash the audio bytes, including replacements that preserve file timestamps."""
     path = Path(path)
     before = file_version(path)
+    remembered = _DIGESTS.get((str(path), before))
+    if remembered:
+        return remembered, before
     hasher = hashlib.sha256()
     with path.open("rb") as handle:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             hasher.update(block)
     if file_version(path) != before:
         raise ValueError("Audio changed while computing its cache identity.")
-    return hasher.hexdigest(), before
+    digest = hasher.hexdigest()
+    if time.time_ns() - before[4] > _QUIET_NS:
+        if len(_DIGESTS) >= _DIGEST_LIMIT:
+            _DIGESTS.pop(next(iter(_DIGESTS)))
+        _DIGESTS[(str(path), before)] = digest
+    return digest, before
 
 
 def _key(value):
