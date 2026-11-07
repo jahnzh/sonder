@@ -172,7 +172,7 @@ test("a staging failure is remembered while the other CTC worker is busy", async
     const lisa = String(input).includes("lisa-worker");
     return Response.json({ ready: true, busy: lisa && lisaBusy, stuck: false, mediaRoot: temp,
       ctc: { engine: CTC_ENGINE, ready: true, device: lisa ? "cpu" : "cuda",
-        precision: lisa ? "float32" : "float16", anchorReady: true } });
+        precision: lisa ? "float32" : "float16", anchorReady: true, passageReady: true } });
   };
   const job = { id: "ctc", recordingId: "rec", engine: CTC_ENGINE } as AlignmentJob;
   const tracks = [{ id: "track" }] as any[];
@@ -189,6 +189,39 @@ test("a staging failure is remembered while the other CTC worker is busy", async
     assert.deepEqual(staged, ["wsl-host", "lisa-host"]);
   } finally {
     globalThis.fetch = originalFetch;
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("anchored CTC requires passage discovery but does not require Whisper", async () => {
+  const originalFetch = globalThis.fetch;
+  const previousUrl = process.env.ALIGNMENT_WORKER_URL;
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "ctc-passage-"));
+  const audio = path.join(temp, "audio.wav");
+  fs.writeFileSync(audio, "audio");
+  process.env.ALIGNMENT_WORKER_URL = "http://production-worker";
+  resetAlignmentPoolCoordinator([hosts[0], { ...hosts[1], id: "lisa", workerUrl: "http://lisa-worker" }]);
+  setAlignmentPoolDepsForTests({
+    async probe() { return true; },
+    async exec() { return { code: 0, stdout: "", stderr: "" }; },
+    async uploadFile() {},
+  });
+  globalThis.fetch = async (input) => {
+    const lisa = String(input).includes("lisa-worker");
+    return Response.json({ ready: true, busy: false, stuck: false, mediaRoot: temp,
+      ctc: { engine: CTC_ENGINE, ready: true, device: lisa ? "cpu" : "cuda",
+        precision: lisa ? "float32" : "float16", anchorReady: false, passageReady: lisa } });
+  };
+  try {
+    const pool = await dispatchFullAlignmentJob(
+      { id: "ctc-passage", recordingId: "rec", engine: CTC_ENGINE, mode: "anchored" } as AlignmentJob,
+      [{ id: "track" }] as any[], () => audio,
+    );
+    assert.equal(pool.hostId, "lisa");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousUrl === undefined) delete process.env.ALIGNMENT_WORKER_URL;
+    else process.env.ALIGNMENT_WORKER_URL = previousUrl;
     fs.rmSync(temp, { recursive: true, force: true });
   }
 });

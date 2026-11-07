@@ -255,6 +255,7 @@ class Http(unittest.TestCase):
 
     def test_health_reports_a_stuck_job(self):
         self.assertEqual(set(self.align.health()) >= {"busy", "stuck", "busySeconds", "lastTimeout"}, True)
+        self.assertTrue(self.align.health()["ctc"]["passageReady"])
 
     def test_unsupported_language_is_explicit_for_both_endpoints(self):
         for call, request in [(self.align.align, self.align_request()), (self.align.anchor, self.anchor_request())]:
@@ -292,6 +293,26 @@ class Http(unittest.TestCase):
                 self.align.align(request)
         self.assertEqual(caught.exception.status_code, 504)
         self.assertEqual(caught.exception.detail["engine"], self.align.CTC_ENGINE)
+
+    def test_ctc_anchor_reuses_recording_identity_and_rejects_other_languages(self):
+        request = self.anchor_request()
+        request.engine = "ctc"
+        request.recordingId = "recording"
+        request.audioFingerprint = "audio-version"
+        request.trackId = "track"
+        fake = {"engine": self.align.CTC_ENGINE, "outcome": "mapped", "match": {"index": 0}}
+        with mock.patch.object(self.align, "align_ctc_section", return_value=fake) as ctc, \
+                mock.patch.object(self.align, "locate_passage") as whisper:
+            self.assertEqual(self.align.anchor(request), fake)
+            self.assertTrue(ctc.call_args.kwargs["locate"])
+            self.assertEqual({key: ctc.call_args.kwargs[key] for key in ("recording_id", "recording_fingerprint", "track_id")},
+                             {"recording_id": "recording", "recording_fingerprint": "audio-version", "track_id": "track"})
+            whisper.assert_not_called()
+            request.language = "fra"
+            result = self.align.anchor(request)
+            self.assertEqual(result["outcome"], "language_not_supported")
+            self.assertEqual(result["engine"], self.align.CTC_ENGINE)
+            ctc.assert_called_once()
 
 class GateState(unittest.TestCase):
     def test_a_second_holder_is_refused_and_the_age_is_reported(self):

@@ -77,6 +77,13 @@ test("samples cover both ends densely and never overlap", () => {
     { trackId: "short", time: 0, duration: 20 },
   ]);
   assert.deepEqual(planSamples([{ id: "unknown", duration: 0 }]), []);
+  const edges = planSamples(tracks, undefined, undefined, true);
+  assert.equal(edges[0].time, 0);
+  assert.equal(edges[edges.length - 1].time + edges[edges.length - 1].duration, duration);
+  assert.deepEqual(planSamples([{ id: "short", duration: 45 }], undefined, undefined, true), [
+    { trackId: "short", time: 0, duration: 30 },
+    { trackId: "short", time: 15, duration: 30 },
+  ]);
 });
 test("a repeated phrase matched elsewhere and a backward match are rejected as outliers", () => {
   const samples = planSamples(tracks).map(hear);
@@ -107,6 +114,30 @@ test("a repeated phrase matched elsewhere and a backward match are rejected as o
     sample.match ? { ...sample, match: { ...sample.match, score: 0.4 } } : sample,
   );
   assert.equal(selectAnchors(weak, words, tracks).length, 0);
+});
+test("the monotonic chain keeps alternatives without using one sample twice", () => {
+  const alternatives: Sample[] = [
+    { trackId: "single", time: 0, duration: 30, matches: [
+      { fragment: 0, score: 0.9, start: 0 },
+      { fragment: 900, score: 0.95, start: 1 },
+    ] },
+    { trackId: "single", time: 100, duration: 30, matches: [
+      { fragment: 30, score: 0.9, start: 100 },
+      { fragment: 31, score: 0.9, start: 101 },
+    ] },
+    { trackId: "single", time: 200, duration: 30, matches: [{ fragment: 60, score: 0.9, start: 200 }] },
+  ];
+  const chain = selectAnchors(alternatives, words, tracks);
+  assert.equal(chain.length, 3);
+  assert.equal(chain[0].fragment, 0);
+  assert.equal(chain[2].fragment, 60);
+});
+test("the last window includes the full passage heard at the recording end", () => {
+  const fragments = Array.from({ length: 25 }, (_, index) => ({ words: 10, section: index < 18 ? 0 : 1 }));
+  const anchors = [{ trackId: "track", time: 970, fragment: 10, lastFragment: 20, score: 0.9 }];
+  const planned = planSegments(anchors, fragments, [{ id: "track", duration: 1000 }], 2.5);
+  assert.equal(planned.segments[0].coreLast, 20);
+  assert.equal(planned.segments[0].start + planned.segments[0].duration, 1000);
 });
 test("refinement samples halve windows whose spacing disagrees with the text", () => {
   let samples = planSamples(tracks).map(hear);

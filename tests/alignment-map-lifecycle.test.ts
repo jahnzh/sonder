@@ -368,6 +368,21 @@ test("warming returns the job without touching the cache when there are no inter
   assert.equal(await none.lifecycle.warm(warmTarget(none)), null);
 });
 
+test("a settled unsynced or unsupported job removes an old offline map", async () => {
+  for (const outcome of ["unsynced", "language_not_supported"] as const) {
+    for (const action of ["refresh", "warm"] as const) {
+      const t = setup();
+      t.data.set(KEY, fullMap());
+      t.setSummary(async () => ({ jobs: [job({ intervalCount: 0, intervals: [], outcome })], available: true }));
+      if (action === "refresh") await t.refresh();
+      else await t.lifecycle.warm(warmTarget(t));
+      assert.equal(t.data.has(KEY), false, `${outcome}: ${action}`);
+      assert.equal(await t.lifecycle.restore(EBOOK, REC), undefined);
+      if (action === "refresh") assert.equal(t.shown.at(-1), null);
+    }
+  }
+});
+
 test("warming returns null on every failure; only a 404/410 map removes the cache", async () => {
   for (const [status, removed] of [[404, true], [410, true], [403, false], [500, false]] as const) {
     const t = setup();

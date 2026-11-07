@@ -487,6 +487,18 @@ export function ReadingSync({
             </p>
           )}
           {job.warning && <p>{job.warning}</p>}
+          {!!job.unsyncedPassages?.length && (
+            <details>
+              <summary>Unsynced passages ({job.unsyncedPassages.length})</summary>
+              <ul className="alignment-flags">
+                {job.unsyncedPassages.map((passage) => (
+                  <li key={passage.firstParagraphId}>
+                    {passage.title}: {passage.excerpt} ({passage.sentenceCount} {passage.sentenceCount === 1 ? "sentence" : "sentences"})
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
           {!!job.anchoring?.flags.length && (
             <ul className="alignment-flags">
               {job.anchoring.flags.map((flag, index) => (

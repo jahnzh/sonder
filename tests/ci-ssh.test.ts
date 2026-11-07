@@ -250,11 +250,14 @@ test("ci-stop stops a hung ci-ssh run and cleans up the remote run dir", async (
     }
     const remoteDirs = fs.readdirSync(f.remote);
     if (remoteDirs.length === 1) remoteRunDir = remoteDirs[0]!;
-    if (pidFile && remoteRunDir) break;
+    // A directory alone does not mean the runner is hung yet: stopping while
+    // it is still starting can race with its next foreground SSH command.
+    if (pidFile && remoteRunDir && f.read(f.logs.ssh).includes(" -- probe ")) break;
     await new Promise((r) => setTimeout(r, 100));
   }
   assert.ok(pidFile, "ci-ssh.pid was written");
   assert.ok(remoteRunDir, "remote run directory was created");
+  assert.match(f.read(f.logs.ssh), / -- probe /, "the probe is running before it is stopped");
   const recordedPid = Number.parseInt(fs.readFileSync(pidFile, "utf8"), 10);
   assert.equal(recordedPid, child.pid, "ci-ssh.pid matches the wrapper bash process");
 
