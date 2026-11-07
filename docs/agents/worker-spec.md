@@ -195,3 +195,4 @@ When `orca orchestration worker-list` shows projection `stale_status` for more t
 - `orca orchestration worker-show` takes no `--run` flag; its valid flags are `--dispatch`, `--environment`, `--json` and `--pairing-code`.
 - `pkill -f` and `pgrep -f` match their own shell: kill by PID.
 - `gh pr edit` fails on this repo: see `docs/agents/issue-tracker.md`.
+- Dated plan files record context for that run, not durable policy; a rule lifts when the owner asks for the thing it forbids.

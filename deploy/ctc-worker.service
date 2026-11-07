@@ -1,0 +1,13 @@
+[Unit]
+Description=Sonder CTC alignment worker
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/sonder-ctc-worker/worker
+EnvironmentFile=%h/sonder-ctc-worker/worker.env
+ExecStart=/usr/bin/nice -n 10 %h/sonder-ctc-worker/env/bin/python -m uvicorn align:app --host 0.0.0.0 --port 3012
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
