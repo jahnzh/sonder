@@ -51,7 +51,7 @@ function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", t
     '  *Health*) echo healthy ;;',
     `  "images "*) printf '%b\\n' ${JSON.stringify(images)} ;;`,
     `  "compose build sonder") touch ${JSON.stringify(built)} ;;`,
-    `  "run --rm --entrypoint node sonder-audiobooks:local --import tsx scripts/image-smoke.mjs") ${smokeFails ? "exit 1" : "exit 0"} ;;`,
+    `  "compose run --rm --no-deps --entrypoint node sonder --import tsx scripts/image-smoke.mjs") ${smokeFails ? 'echo "alignment pool host wsl (worker@wsl.example): ssh true failed" >&2; exit 1' : "exit 0"} ;;`,
     // Do not put "-c*" at the end of a case pattern: the first ")" closes the branch (bash parse error on --rm).
     `  *run*--entrypoint*sh*sonder-audiobooks:local*grep*) ${markerFails ? "exit 1" : "exit 0"} ;;`,
     `  "tag "*)
@@ -88,7 +88,7 @@ test("production dry run lists the image smoke before the swap", () => {
   try {
     const r = f.runProd(["--dry-run"]);
     assert.equal(r.status, 0, r.stderr + r.stdout);
-    assert.match(r.stdout, /smoke-test the built image: docker run --rm --entrypoint node sonder-audiobooks:local --import tsx scripts\/image-smoke\.mjs/);
+    assert.match(r.stdout, /smoke-test the built image: docker compose run --rm --no-deps --entrypoint node sonder --import tsx scripts\/image-smoke\.mjs/);
     assert.ok(r.stdout.indexOf("smoke-test the built image") < r.stdout.indexOf("docker compose up -d sonder"));
     assert.equal(f.dockerCalls().some((c) => c.startsWith("run ") || c.startsWith("compose ")), false);
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
@@ -99,11 +99,12 @@ test("a failing image smoke aborts after build and before the container swap, re
   try {
     const r = f.run([]);
     assert.equal(r.status, 1);
+    assert.match(r.stderr, /alignment pool host wsl \(worker@wsl\.example\): ssh true failed/);
     assert.match(r.stderr, /image smoke failed; the container is still running the previous image/);
     assert.match(r.stderr, /restoring :local to the rollback image/);
     const calls = f.dockerCalls();
     const build = calls.indexOf("compose build sonder");
-    const smoke = calls.indexOf("run --rm --entrypoint node sonder-audiobooks:local --import tsx scripts/image-smoke.mjs");
+    const smoke = calls.indexOf("compose run --rm --no-deps --entrypoint node sonder --import tsx scripts/image-smoke.mjs");
     assert.ok(build >= 0 && smoke > build, calls.join("\n"));
     assert.ok(calls.some((c) => c === "tag sonder-audiobooks:rollback sonder-audiobooks:local"), calls.join("\n"));
     assert.equal(calls.some((c) => c.startsWith("compose up")), false);
