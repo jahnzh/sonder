@@ -24,9 +24,11 @@ function isOnPath(command) {
   });
 }
 
+const CTC_HOST_IDS = new Set(["wsl", "lisa"]);
+
 async function checkAlignmentPool() {
   const { defaultPoolHosts } = await import(serverModule("alignment-pool.ts"));
-  const hosts = defaultPoolHosts();
+  const hosts = defaultPoolHosts().filter((host) => CTC_HOST_IDS.has(host.id));
   const names = hosts.map((host) => `${host.id} (${host.sshTarget})`).join(", ");
   for (const command of ["ssh", "scp"]) {
     if (!isOnPath(command)) {

@@ -9,8 +9,10 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tsxLoader = import.meta.resolve("tsx");
-const hosts = ["wsl", "steamdeck", "lisa"];
 const targets = ["worker@wsl.example", "worker@deck.example", "worker@lisa.example"];
+const ctcHosts = ["wsl", "lisa"];
+const ctcTargets = [targets[0], targets[2]];
+const deckTarget = targets[1];
 
 function shellQuote(value) {
   return `'${value.replace(/'/g, "'\\''")}'`;
@@ -112,15 +114,15 @@ test("image smoke skips all pool checks when the pool is absent or off", async (
   }
 });
 
-test("image smoke checks health and ssh true for every configured pool host", async () => {
+test("image smoke checks health and ssh true for every configured CTC pool host", async () => {
   const f = fixture();
   const health = await healthServer();
   try {
     const result = await f.run(health.env);
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /alignment pool health and SSH/);
-    assert.deepEqual(health.requests, hosts.map((host) => `/${host}/health`));
-    assert.deepEqual(f.sshCalls(), targets.map((target) => `-o BatchMode=yes -o ConnectTimeout=5 ${target} true`));
+    assert.deepEqual(health.requests, ctcHosts.map((host) => `/${host}/health`));
+    assert.deepEqual(f.sshCalls(), ctcTargets.map((target) => `-o BatchMode=yes -o ConnectTimeout=5 ${target} true`));
   } finally { await health.close(); f.cleanup(); }
 });
 
@@ -131,7 +133,8 @@ for (const missing of ["ssh", "scp"]) {
       const result = await f.run({ ALIGNMENT_POOL_ENABLED: "1" });
       assert.notEqual(result.status, 0);
       assert.match(result.stderr, new RegExp(`${missing} is missing or not executable on PATH`));
-      for (const target of targets) assert.ok(result.stderr.includes(target), result.stderr);
+      for (const target of ctcTargets) assert.ok(result.stderr.includes(target), result.stderr);
+      assert.ok(!result.stderr.includes(deckTarget), result.stderr);
       assert.deepEqual(f.sshCalls(), []);
     } finally { f.cleanup(); }
   });
@@ -140,27 +143,39 @@ for (const missing of ["ssh", "scp"]) {
 for (const failure of ["http", "disconnect"]) {
   test(`image smoke names the host when its health check fails (${failure})`, async () => {
     const f = fixture();
-    const health = await healthServer(failure === "http" ? { failPath: "/steamdeck/health" } : { disconnectPath: "/steamdeck/health" });
+    const health = await healthServer(failure === "http" ? { failPath: "/lisa/health" } : { disconnectPath: "/lisa/health" });
     try {
       const result = await f.run(health.env);
       assert.notEqual(result.status, 0);
-      assert.match(result.stderr, /alignment pool host steamdeck \(worker@deck\.example\): health check/);
-      assert.match(result.stderr, /\/steamdeck\/health failed/);
+      assert.match(result.stderr, /alignment pool host lisa \(worker@lisa\.example\): health check/);
+      assert.match(result.stderr, /\/lisa\/health failed/);
       if (failure === "http") assert.match(result.stderr, /HTTP 503/);
-      assert.deepEqual(health.requests, ["/wsl/health", "/steamdeck/health"]);
+      assert.deepEqual(health.requests, ["/wsl/health", "/lisa/health"]);
       assert.equal(f.sshCalls().length, 1);
     } finally { await health.close(); f.cleanup(); }
   });
 }
 
 test("image smoke names the host when ssh true fails", async () => {
-  const f = fixture({ failSsh: targets[2] });
+  const f = fixture({ failSsh: ctcTargets[1] });
   const health = await healthServer();
   try {
     const result = await f.run(health.env);
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /alignment pool host lisa \(worker@lisa\.example\): ssh true failed/);
-    assert.deepEqual(health.requests, hosts.map((host) => `/${host}/health`));
-    assert.deepEqual(f.sshCalls(), targets.map((target) => `-o BatchMode=yes -o ConnectTimeout=5 ${target} true`));
+    assert.deepEqual(health.requests, ctcHosts.map((host) => `/${host}/health`));
+    assert.deepEqual(f.sshCalls(), ctcTargets.map((target) => `-o BatchMode=yes -o ConnectTimeout=5 ${target} true`));
+  } finally { await health.close(); f.cleanup(); }
+});
+
+test("image smoke ignores an unreachable steamdeck host when CTC hosts are healthy", async () => {
+  const f = fixture({ failSsh: deckTarget });
+  const health = await healthServer({ failPath: "/steamdeck/health" });
+  try {
+    const result = await f.run(health.env);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /alignment pool health and SSH/);
+    assert.deepEqual(health.requests, ctcHosts.map((host) => `/${host}/health`));
+    assert.deepEqual(f.sshCalls(), ctcTargets.map((target) => `-o BatchMode=yes -o ConnectTimeout=5 ${target} true`));
   } finally { await health.close(); f.cleanup(); }
 });
