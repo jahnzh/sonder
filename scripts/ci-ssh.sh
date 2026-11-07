@@ -558,7 +558,7 @@ run_remote_check() {
 
   BUNDLE_PATH="$ARTIFACT_ROOT/${RUN_ID}.bundle"
   log "Creating git bundle for ${FULL_SHA}"
-  if ! git bundle create "$BUNDLE_PATH" "$FULL_SHA" HEAD >/dev/null 2>&1; then
+  if ! git bundle create "$BUNDLE_PATH" "$FULL_SHA" HEAD refs/remotes/origin/main >/dev/null 2>&1; then
     log "Could not create the git bundle"
     record_result remote host_bundle_failed 1
     return 1
@@ -593,6 +593,7 @@ REMOTE
 set -euo pipefail
 run_dir=$2 sha=$3 bundle=$4
 git clone -q "$run_dir/$bundle" "$run_dir/checkout"
+git -C "$run_dir/checkout" fetch -q "$run_dir/$bundle" refs/remotes/origin/main:refs/remotes/origin/main
 git -C "$run_dir/checkout" -c advice.detachedHead=false checkout -q "$sha"
 REMOTE
   rc=$?

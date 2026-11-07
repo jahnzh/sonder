@@ -9,6 +9,7 @@ import {
   generateRunId,
   getGitRoot,
   resolveGitRevision,
+  findChangedE2eSpecs,
   checkCallerDirty,
   extractSnapshot,
   acquirePortLease,
@@ -30,6 +31,19 @@ const STAGE_DEFINITIONS = [
 ];
 
 const PLAYWRIGHT_REPORT_NAME = "playwright-results.json";
+
+// Playwright treats positional file filters as regular expressions, not literal paths.
+function changedBrowserStages(files) {
+  if (files.length === 0) return [];
+  const filters = files.map((file) => `${file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
+  return [
+    { name: "browser-changed-repeat", options: ["--workers=1", "--repeat-each=2", "--output=test-results-changed-repeat"] },
+    { name: "browser-changed-ordered", options: ["--workers=1", "--output=test-results-changed-ordered"] },
+  ].map(({ name, options }) => {
+    const args = ["run", "test:browser", "--", ...options, ...filters];
+    return { name, command: "npm", args, fullCommand: `npm ${args.map((arg) => JSON.stringify(arg)).join(" ")}` };
+  });
+}
 
 // --- Local free-disk warning (issue #89) ---------------------------------------------------
 // When the LOCAL disk is below a threshold at startup, print a non-fatal warning to stderr that
@@ -163,7 +177,8 @@ function printHelp() {
 Usage: node scripts/check-local.mjs [options]
 
 Run isolated local checks (npm ci, npm run build, npm test, npm run test:browser)
-in a disposable git-archive snapshot of the selected committed revision.
+in a disposable git-archive snapshot of the selected committed revision. Changed
+browser specs are also repeated twice and run in order against origin/main.
 
 Options:
   --ref <git-ref>        Git commit, branch or tag to check (default: HEAD)
@@ -444,8 +459,12 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
   // Run everything inside try/finally to guarantee resource cleanup
   try {
     // 4. Extract git snapshot
+    let changedBrowserSpecs;
+    let setupAction = "git archive extraction";
     try {
       await extractSnapshot(callerDir, resolvedSha, disposableDir);
+      setupAction = "changed browser spec discovery";
+      changedBrowserSpecs = findChangedE2eSpecs(callerDir, resolvedSha);
     } catch (err) {
       unbindSignals();
       cleanup();
@@ -455,7 +474,7 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       const completedAt = new Date().toISOString();
       const durationMs = Date.now() - startTime;
 
-      const setupLog = `Setup failure: git archive extraction failed.\n${err.message}\n`;
+      const setupLog = `Setup failure: ${setupAction} failed.\n${err.message}\n`;
       fs.writeFileSync(path.join(outputDir, "setup.log"), setupLog, "utf8");
 
       const report = {
@@ -498,7 +517,10 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     // 5. Execute stages sequentially
     const playwrightReportPath = path.join(outputDir, PLAYWRIGHT_REPORT_NAME);
     const stageResults = [];
+    const stageDefinitions = [...STAGE_DEFINITIONS, ...changedBrowserStages(changedBrowserSpecs.files)];
     let firstFailedStage = null;
+    let toleratedStage = null;
+    let gate = null;
 
     const baseEnv = {
       ...process.env,
@@ -520,8 +542,8 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     // Never changes the exit code (issue #89).
     warnLocalDisk();
 
-    for (let i = 0; i < STAGE_DEFINITIONS.length; i++) {
-      const stageDef = STAGE_DEFINITIONS[i];
+    for (let i = 0; i < stageDefinitions.length; i++) {
+      const stageDef = stageDefinitions[i];
       const stageIndex = i + 1;
 
       if (firstFailedStage || interruptedSignal) {
@@ -543,7 +565,7 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       }
 
       if (!options.silent) {
-        console.log(`\n=== [Stage ${stageIndex}/${STAGE_DEFINITIONS.length}] ${stageDef.fullCommand} ===`);
+        console.log(`\n=== [Stage ${stageIndex}/${stageDefinitions.length}] ${stageDef.fullCommand} ===`);
       }
 
       const logFileName = `stage-${stageIndex}-${stageDef.name}.log`;
@@ -602,7 +624,19 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
 
       stageResults.push(stageRecord);
 
-      if (!stagePassed) {
+      // A tolerated failure in the full suite must not prevent changed-spec checks.
+      if (jsonReport && knownFailures && !interruptedSignal) {
+        gate = evaluateBrowserRun({
+          entries: knownFailures.entries,
+          reportPath: playwrightReportPath,
+          stageExitCode: stageRes.signal ? null : stageRes.exitCode,
+          stageSignal: stageRes.signal ?? null,
+        });
+      }
+      if (!stagePassed && gate?.result === "passed_with_known_failures" && jsonReport) {
+        toleratedStage = stageRecord;
+        stageRecord.toleratedBy = "known-failures";
+      } else if (!stagePassed) {
         firstFailedStage = stageRecord;
         if (!options.silent) {
           console.error(
@@ -621,21 +655,9 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     try { preservedArtifacts = preserveArtifacts(disposableDir, outputDir); }
     catch (error) { artifactError = error.message; }
 
-    // 6b. With a known-failures list, a browser stage whose failures are all listed does not fail the run.
-    let gate = null;
+    // 6b. Only the full browser suite can be tolerated by the known-failures list.
     const browserStage = stageResults.find((stage) => stage.name === "browser");
-    if (knownFailures && !interruptedSignal && browserStage && browserStage.status !== "skipped") {
-      gate = evaluateBrowserRun({
-        entries: knownFailures.entries,
-        reportPath: playwrightReportPath,
-        stageExitCode: browserStage.signal ? null : browserStage.exitCode,
-        stageSignal: browserStage.signal ?? null,
-      });
-    }
-    const toleratedStage = firstFailedStage && firstFailedStage === browserStage
-      && gate?.result === "passed_with_known_failures" ? firstFailedStage : null;
-    if (toleratedStage) toleratedStage.toleratedBy = "known-failures";
-    const blockingStage = toleratedStage ? null : firstFailedStage;
+    const blockingStage = firstFailedStage;
 
     // 6c. Slowest browser tests from the Playwright JSON report (empty when the report is missing).
     let browserSlowestTests = [];
@@ -677,6 +699,7 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       signal: interruptedSignal,
       artifactError,
       failedStage: blockingStage ? blockingStage.name : null,
+      changedBrowserSpecs: { baseRef: "origin/main", baseSha: changedBrowserSpecs.base, files: changedBrowserSpecs.files },
       browserSlowestTests,
       ...(browserSlowestError ? {browserSlowestError} : {}),
       ...(knownFailures ? {knownFailures: {
