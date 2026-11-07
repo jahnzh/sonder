@@ -98,7 +98,7 @@ test("freed MB is the removed directory size, not a free-space delta", () => {
   const writer = spawn(
     "bash",
     ["-c", `while true; do dd if=/dev/zero of="${pressure}" bs=1M count=8 status=none 2>/dev/null; done`],
-    { stdio: "ignore" },
+    { stdio: "ignore", detached: true },
   );
   try {
     const result = cleanTemp({ ORCA_CLEAN_TEMP_ROOT: root, ORCA_CLEAN_TEMP_PLAYWRIGHT: "false" });
@@ -106,8 +106,10 @@ test("freed MB is the removed directory size, not a free-space delta", () => {
     assert.match(result.stdout, /freed 2 MB \(1 of 1 dirs\)/);
     assert.ok(!existsSync(stale));
   } finally {
-    writer.kill("SIGKILL");
-    rmSync(root, { recursive: true, force: true });
+    try {
+      if (writer.pid) process.kill(-writer.pid, "SIGKILL");
+    } catch {}
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
 

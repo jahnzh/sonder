@@ -26,13 +26,25 @@ process_alive() {
   [[ -n $state && $state != Z ]]
 }
 
+kill_descendants() {
+  local target=$1 sig=${2:-TERM}
+  local children child
+  children=$(pgrep -P "$target" 2>/dev/null || true)
+  for child in $children; do
+    kill_descendants "$child" "$sig"
+    kill -"$sig" "$child" 2>/dev/null || true
+  done
+}
+
 stop_runner() {
   local pid=$1
-  # Kill hung children first so a deferred TERM trap can run: bash holds traps
-  # while waiting on a foreground command (the blocked remote probe). Do this
-  # before signalling the wrapper so a later pkill cannot kill the trap's own
-  # cleanup ssh (#282).
-  if command -v pkill >/dev/null 2>&1; then
+  # Kill hung descendant processes first (e.g. timeout, ssh, sleep) so a deferred
+  # TERM trap can run: bash holds traps while waiting on a foreground command.
+  # Do this before signalling the wrapper so a later pkill cannot kill the trap's
+  # own cleanup ssh (#282).
+  if command -v pgrep >/dev/null 2>&1; then
+    kill_descendants "$pid" TERM
+  elif command -v pkill >/dev/null 2>&1; then
     pkill -TERM -P "$pid" 2>/dev/null || true
   fi
   kill -TERM "$pid" 2>/dev/null || return 1
