@@ -5,7 +5,7 @@ RUN pip install --no-cache-dir 'faster-whisper==1.2.1'
 COPY requirements-ctc.txt /worker/requirements-ctc.txt
 RUN pip install --no-cache-dir -r /worker/requirements-ctc.txt
 WORKDIR /worker
-COPY align.py align_task.py anchors.py ctc_acoustic.py ctc_path.py ctc_pipeline.py deadline.py download_model.py pipeline.py /worker/
+COPY align.py align_task.py anchors.py ctc_acoustic.py ctc_cache.py ctc_path.py ctc_pipeline.py deadline.py download_model.py pipeline.py /worker/
 ENV PYTHONUNBUFFERED=1 OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2
 EXPOSE 3012
 CMD ["uvicorn", "align:app", "--host", "0.0.0.0", "--port", "3012", "--no-access-log"]

@@ -103,10 +103,11 @@ class Pipeline(unittest.TestCase):
     def test_result_metadata_and_atomic_cache_from_fake_inference(self):
         with tempfile.TemporaryDirectory() as folder:
             output = Path(folder) / "alignment" / "section.json"
+            (Path(folder) / "book").write_bytes(b"audio")
             def extract(command, *_):
                 Path(command[-1]).write_bytes(b"fake wave")
                 return 0, ""
-            def infer(wave, root, fragments, start):
+            def infer(wave, root, fragments, start, *_):
                 wave.unlink()
                 self.assertEqual((fragments, start), (["First", "Last"], 8.5))
                 return ([{"index": 0, "start": 8.6, "end": 9}, {"index": 1, "start": 9, "end": 10}],
@@ -123,6 +124,7 @@ class Pipeline(unittest.TestCase):
     def test_timed_out_resident_work_blocks_next_job_and_never_publishes_late(self):
         with tempfile.TemporaryDirectory() as folder:
             output = Path(folder) / "result.json"
+            (Path(folder) / "book").write_bytes(b"audio")
             release = threading.Event()
             gate = Gate()
             def extract(command, *_):

@@ -26,6 +26,9 @@ class AlignRequest(BaseModel):
     start: float = Field(default=0, ge=0)
     duration: float = Field(gt=0, le=7200)
     engine: Literal["aeneas", "ctc"] = "aeneas"
+    recordingId: str | None = Field(default=None, max_length=512)
+    audioFingerprint: str | None = Field(default=None, max_length=512)
+    trackId: str | None = Field(default=None, max_length=512)
 
 class AnchorRequest(AlignRequest):
     duration: float = Field(gt=0, le=60)
@@ -92,8 +95,10 @@ def align(request: AlignRequest):
                 elapsed = time.monotonic() - started
                 return {"engine": engine, "outcome": "language_not_supported", "stageTimings": {"requestValidation": elapsed}, "elapsedSeconds": elapsed, "intervals": []}
             operation = align_ctc_section if request.engine == "ctc" else align_section
+            identity = ({"recording_id": request.recordingId, "recording_fingerprint": request.audioFingerprint,
+                         "track_id": request.trackId} if request.engine == "ctc" else {})
             return operation(audio=audio, output=output, fragments=request.fragments, language=request.language,
-                             start=request.start, duration=request.duration, media_folder=root / "alignment")
+                             start=request.start, duration=request.duration, media_folder=root / "alignment", **identity)
     except WorkerBusy:
         raise HTTPException(409, "The local alignment worker is busy.")
     except AlignmentTimeout as error:

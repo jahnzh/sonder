@@ -71,21 +71,29 @@ class AcousticModel:
         self.model = model.eval().to(device=self.device, dtype=self.dtype)
         self.labels = bundle.get_labels()
 
-    def encode(self, audio):
+    def encode_chunk(self, audio, core_start, core_end, context_start):
+        """Encode one core using the supplied context on the track sample grid."""
         torch = self.torch
-        outputs, boundaries = [], []
         with torch.inference_mode():
-            for start, end, lo, hi in chunks(len(audio)):
-                wave = torch.from_numpy(audio[lo:hi]).unsqueeze(0).to(device=self.device, dtype=self.dtype)
-                lengths = torch.tensor([hi - lo], device=self.device, dtype=torch.int64)
-                logits, valid = self.model(wave, lengths)
-                first, last = core_frames(start, end, lo, int(valid[0]))
-                if first < last:
-                    outputs.append(logits[:, first:last].float().log_softmax(-1))
-                    boundaries.extend(frame_boundary(lo, i) for i in range(first, last))
+            wave = torch.from_numpy(audio).unsqueeze(0).to(device=self.device, dtype=self.dtype)
+            lengths = torch.tensor([len(audio)], device=self.device, dtype=torch.int64)
+            logits, valid = self.model(wave, lengths)
+            first, last = core_frames(core_start, core_end, context_start, int(valid[0]))
+            if first < last:
+                return (logits[:, first:last].float().log_softmax(-1).contiguous(),
+                        [frame_boundary(context_start, i) for i in range(first, last)])
+        return None, []
+
+    def encode(self, audio):
+        outputs, boundaries = [], []
+        for start, end, lo, hi in chunks(len(audio)):
+            emission, chunk_boundaries = self.encode_chunk(audio[lo:hi], start, end, lo)
+            if emission is not None:
+                outputs.append(emission)
+                boundaries.extend(chunk_boundaries)
         if not outputs:
             raise ValueError("Audio is too short for the CTC encoder.")
-        return torch.cat(outputs, dim=1).contiguous(), boundaries
+        return self.torch.cat(outputs, dim=1).contiguous(), boundaries
 
 
 _model = None

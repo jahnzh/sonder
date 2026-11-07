@@ -855,7 +855,10 @@ async function processAnchored(
               language,
               start: segment.start,
               duration: segment.duration,
-              ...(job.engine === CTC_ENGINE ? { engine: "ctc" } : {}),
+              ...(job.engine === CTC_ENGINE ? {
+                engine: "ctc", recordingId: job.recordingId,
+                audioFingerprint: job.audioFingerprint, trackId: track.id,
+              } : {}),
             },
             SECTION_TIMEOUT_MS,
             undefined,
@@ -1120,7 +1123,10 @@ export async function processAlignments() {
                 language: iso3(book.language),
                 start: pair.start,
                 duration: pair.duration,
-                ...(job.engine === CTC_ENGINE ? { engine: "ctc" } : {}),
+                ...(job.engine === CTC_ENGINE ? {
+                  engine: "ctc", recordingId: job.recordingId,
+                  audioFingerprint: job.audioFingerprint, trackId: track.id,
+                } : {}),
               },
               SECTION_TIMEOUT_MS,
               "Local alignment could not process this section. Check its chapter pairing and retry.",
