@@ -173,6 +173,16 @@ class QualityGate(unittest.TestCase):
         with self.assertRaises(ValueError):
             gate_ctc.score(predictions + [predictions[-1]], truth)
 
+    def test_gate_requires_unrelated_rejection_and_both_discovered_edges(self):
+        truth = [{"index": i, "start": i * 2, "end": i * 2 + 1} for i in range(128)]
+        result = {"intervals": [dict(row) for row in truth]}
+        first, last = {"match": {"index": 0}}, {"match": {"lastIndex": 127}}
+        unrelated = {"outcome": "unsynced", "intervals": []}
+        self.assertTrue(gate_ctc.checks(result, first, last, unrelated, truth)["passed"])
+        self.assertFalse(gate_ctc.checks(result, {"match": None}, last, unrelated, truth)["passed"])
+        self.assertFalse(gate_ctc.checks(result, first, {"match": {"lastIndex": 126}}, unrelated, truth)["passed"])
+        self.assertFalse(gate_ctc.checks(result, first, last, {"outcome": "mapped", "intervals": [{}]}, truth)["passed"])
+
 
 
 class PathCellLimitTests(unittest.TestCase):
@@ -181,6 +191,19 @@ class PathCellLimitTests(unittest.TestCase):
         self.assertEqual(ctc_path._max_path_cells({"ALIGNMENT_CTC_MAX_PATH_CELLS": "2000000000"}), 2_000_000_000)
         for bad in ("", "abc", "0", "-5", "999999", "99999999999999"):
             self.assertEqual(ctc_path._max_path_cells({"ALIGNMENT_CTC_MAX_PATH_CELLS": bad}), 500_000_000, bad)
+
+    def test_large_scope_splits_before_any_path_allocation(self):
+        labels = ("-", "|") + tuple("ABCDEFGHIJKLMNOPQRSTUVWXYZ'")
+        fragments = ["A LONGER SENTENCE ABOUT A CURIOUS RABBIT"] * 50
+        scopes = ctc_path.bounded_scopes(50000, fragments, labels, 1_000_000)
+        self.assertGreater(len(scopes), 1)
+        self.assertEqual(scopes[0][0], 0)
+        self.assertEqual(scopes[-1][1], len(fragments))
+        for first, last, lo, hi in scopes:
+            ids, _ = ctc_path.tokenize(fragments[first:last], labels)
+            self.assertLessEqual((hi - lo) * len(ids), 1_000_000)
+        self.assertTrue(all(a[1] == b[0] and a[3] > b[2] for a, b in zip(scopes, scopes[1:])))
+        self.assertEqual(ctc_path.bounded_scopes(50000, ["A" * 1000], labels, 1000), [])
 
 if __name__ == "__main__":
     unittest.main()

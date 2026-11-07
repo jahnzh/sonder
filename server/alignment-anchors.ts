@@ -29,6 +29,7 @@ export function planSamples(
   tracks: AnchorTrack[],
   interval = 600,
   excerpt = EXCERPT_SECONDS,
+  coverEdges = false,
 ): Sample[] {
   const samples: Sample[] = [];
   for (const track of tracks) {
@@ -38,16 +39,16 @@ export function planSamples(
       samples.push({ trackId: track.id, time: 0, duration });
       continue;
     }
-    const last = duration - excerpt - 1,
+    const last = duration - excerpt - (coverEdges ? 0 : 1),
       spacing = Math.min(interval, Math.max(60, duration / 12));
-    const times = [...HEAD, ...HEAD.map((value) => last - value + 10)];
+    const times = [...(coverEdges ? [0] : []), ...HEAD, ...HEAD.map((value) => last - value + 10)];
     for (let time = HEAD[HEAD.length - 1] + spacing; time < last; time += spacing)
       times.push(time);
     let previous = -Infinity;
     for (const time of times
       .map((value) => Math.min(last, Math.max(0, value)))
       .sort((a, b) => a - b)) {
-      if (time - previous < excerpt + 10) continue;
+      if (time - previous < excerpt + 10 && !(coverEdges && time === last && time > previous)) continue;
       samples.push({ trackId: track.id, time, duration: excerpt });
       previous = time;
     }
@@ -115,21 +116,22 @@ export function selectAnchors(
   minScore = MIN_ANCHOR_SCORE,
 ) {
   const offsets = trackOffsets(tracks);
-  const candidates: (Anchor & { at: number })[] = samples
-    .filter(
-      (sample) =>
-        sample.match &&
-        sample.match.score >= minScore &&
-        offsets[sample.trackId] !== undefined,
-    )
-    .map((sample) => ({
-      trackId: sample.trackId,
-      time: sample.match!.start,
-      fragment: sample.match!.fragment,
-      score: sample.match!.score,
-      at: offsets[sample.trackId] + sample.match!.start,
-    }))
-    .sort((a, b) => a.at - b.at);
+  const candidates: (Anchor & { at: number; sampleOrder: number })[] = samples
+    .filter((sample) => offsets[sample.trackId] !== undefined)
+    .sort((a, b) => offsets[a.trackId] + a.time - offsets[b.trackId] - b.time)
+    .flatMap((sample, sampleOrder) =>
+      (sample.matches ?? (sample.match ? [sample.match] : []))
+        .filter((match) => match.score >= minScore)
+        .map((match) => ({
+          trackId: sample.trackId,
+          time: match.start,
+          fragment: match.fragment,
+          ...(match.lastFragment === undefined ? {} : { lastFragment: match.lastFragment }),
+          score: match.score,
+          at: offsets[sample.trackId] + match.start,
+          sampleOrder,
+        })),
+    );
   const best = candidates.map((candidate) => candidate.score),
     previous = candidates.map(() => -1);
   for (let i = 0; i < candidates.length; i++)
@@ -137,6 +139,7 @@ export function selectAnchors(
       if (
         candidates[j].fragment < candidates[i].fragment &&
         candidates[j].at < candidates[i].at &&
+        candidates[j].sampleOrder < candidates[i].sampleOrder &&
         best[j] + candidates[i].score > best[i]
       ) {
         best[i] = best[j] + candidates[i].score;
@@ -145,7 +148,7 @@ export function selectAnchors(
   let end = best.indexOf(Math.max(...best));
   const chain: Anchor[] = [];
   while (end >= 0) {
-    const { at: _at, ...anchor } = candidates[end];
+    const { at: _at, sampleOrder: _sampleOrder, ...anchor } = candidates[end];
     chain.unshift(anchor);
     end = previous[end];
   }
@@ -283,6 +286,13 @@ export function planSegments(
       words[tailEnd + 2] - words[last.fragment] <= budget;
     )
       tailEnd++;
+    // A successful CTC sample may have heard farther than a rate estimate
+    // predicts, especially at the end of a recording. Preserve that evidence.
+    tailEnd = Math.max(tailEnd, Math.min(
+      last.lastFragment ?? last.fragment,
+      fragments.length - 1,
+      (next?.fragment ?? fragments.length) - 1,
+    ));
     lower = tailEnd + 1;
     const narrationStart = Math.max(
         0,

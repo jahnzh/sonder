@@ -23,7 +23,7 @@ writeFileSync(ebook, await readerFixture({ bodies: ["<p>First sentence. Another 
 const { db, sqlite } = await import("../server/db.ts");
 const schema = await import("../server/schema.ts");
 const { extractBook } = await import("../server/reader.ts");
-const { createAlignment, alignmentJob, stopAlignments } = await import("../server/alignment.ts");
+const { createAlignment, alignmentJob, putAlignmentJob, processAlignments, stopAlignments, registerAlignment } = await import("../server/alignment.ts");
 const { resetAlignmentPoolCoordinator, setAlignmentPoolDepsForTests } = await import("../server/alignment-pool.ts");
 const originalFetch = globalThis.fetch;
 const engine = "ctc-wav2vec2-base-960h-torchaudio-2.8-v1";
@@ -41,7 +41,7 @@ const testPoolDeps = {
 };
 setAlignmentPoolDepsForTests(testPoolDeps);
 function mockWorker(handler: typeof fetch, options: {
-  down?: string[]; busy?: string[]; wrongDevice?: string[]; onHealth?: (host: string) => void;
+  down?: string[]; busy?: string[]; wrongDevice?: string[]; anchorReady?: boolean; onHealth?: (host: string) => void;
 } = {}) {
   globalThis.fetch = async (input, init) => {
     if (String(input).endsWith("/health")) {
@@ -52,7 +52,7 @@ function mockWorker(handler: typeof fetch, options: {
       return Response.json({ ready: true, busy: options.busy?.includes(host) ?? false, stuck: false,
         mediaRoot: join(temp, lisa ? "lisa" : "wsl"),
         ctc: { engine, ready: true, device: lisa || options.wrongDevice?.includes(host) ? "cpu" : "cuda",
-          precision: lisa ? "float32" : "float16", anchorReady: true } });
+          precision: lisa ? "float32" : "float16", anchorReady: options.anchorReady ?? true, passageReady: true } });
     }
     return handler(input, init);
   };
@@ -142,7 +142,7 @@ test("chapter CTC publishes first and last sentences with worker metadata and re
   assert.equal(anchored.engine, engine);
 });
 
-test("an anchored job aligns its windows with CTC and keeps its CTC identity through speech recovery", async () => {
+test("an anchored job uses CTC for discovery and alignment with recording cache identity", async () => {
   process.env.ALIGNMENT_WORKER_URL = "http://production-worker.test";
   process.env.ALIGNMENT_WORKER_TOKEN = "test-token";
   const file = join(process.env.MEDIA_ROOT!, "alice.epub");
@@ -160,17 +160,24 @@ test("an anchored job aligns its windows with CTC and keeps its CTC identity thr
   mockWorker(async (input, init) => {
     const request = JSON.parse(String(init?.body));
     if (String(input).endsWith("/anchor")) {
+      assert.equal(String(input), "http://ctc-worker.test/anchor");
+      assert.equal(request.engine, "ctc");
+      assert.equal(request.recordingId, "ctc-alice-recording");
+      assert.equal(request.trackId, "ctc-alice-track");
+      assert.ok(request.audioFingerprint.startsWith("audio-v2:"));
+      assert.ok(request.audio.startsWith(join(temp, "wsl", "alignment", "pool-jobs")));
+      assert.ok(request.output.startsWith(join(temp, "wsl", "alignment", "pool-jobs")));
       const index = Math.max(0, Math.ceil((request.start - 30) / 5));
       if (index >= paragraphs.length || spoken(index) > request.start + request.duration - 3)
-        return Response.json({ engine: "aeneas-1.7.3", outcome: "unsynced", stageTimings: { speechRecovery: 0.25 }, match: null, start: request.start, text: "" });
-      return Response.json({ engine: "aeneas-1.7.3", outcome: "mapped", stageTimings: { speechRecovery: 0.25 },
+        return Response.json({ engine, outcome: "unsynced", stageTimings: { acousticEncoding: 0.25 }, match: null, start: request.start, text: "" });
+      return Response.json({ engine, outcome: "mapped", stageTimings: { acousticEncoding: 0.25 },
         match: { index, score: 0.9, text: "" }, start: spoken(index), text: "word ".repeat(40) });
     }
     windowEngines.push(request.engine);
     const step = request.duration / request.fragments.length;
     return Response.json({ engine, outcome: "mapped", stageTimings: { ctcPath: 0.5 }, elapsedSeconds: 1,
       intervals: request.fragments.map((_: string, i: number) => ({ index: i, start: request.start + i * step, end: request.start + (i + 1) * step })) });
-  });
+  }, { anchorReady: false });
   const created = await createAlignment("ctc-alice-ebook", "ctc-alice-recording", undefined, "anchored");
   assert.equal(created.mode, "anchored");
   assert.equal(created.engine, engine);
@@ -180,10 +187,10 @@ test("an anchored job aligns its windows with CTC and keeps its CTC identity thr
     job = alignmentJob(created.id);
   }
   assert.equal(job.status, "partial", job.error ?? undefined);
-  assert.equal(job.engine, engine, "speech-recovery replies must not rename a CTC job");
+  assert.equal(job.engine, engine);
   assert.ok(windowEngines.length > 0 && windowEngines.every((value) => value === "ctc"));
   assert.equal(windowEngines.length, job.anchoring!.segments.length);
-  assert.ok(job.stageTimings!.speechRecovery > 0 && job.stageTimings!.ctcPath > 0);
+  assert.ok(job.stageTimings!.acousticEncoding > 0 && job.stageTimings!.ctcPath > 0);
   assert.ok(["mapped", "partial"].includes(job.outcome!));
   assert.ok(job.intervals.length > 0);
 
@@ -195,8 +202,8 @@ test("an anchored job aligns its windows with CTC and keeps its CTC identity thr
     if (String(input).endsWith("/anchor")) {
       const index = Math.max(0, Math.ceil((request.start - 30) / 5));
       if (index >= paragraphs.length || spoken(index) > request.start + request.duration - 3)
-        return Response.json({ match: null, start: request.start, text: "" });
-      return Response.json({ match: { index, score: 0.9 }, start: spoken(index), text: "word ".repeat(40) });
+        return Response.json({ engine, match: null, start: request.start, text: "" });
+      return Response.json({ engine, match: { index, score: 0.9 }, start: spoken(index), text: "word ".repeat(40) });
     }
     windowHosts.push(String(input));
     if (String(input).includes("ctc-worker"))
@@ -220,8 +227,8 @@ test("an anchored job aligns its windows with CTC and keeps its CTC identity thr
     if (String(input).endsWith("/anchor")) {
       const index = Math.max(0, Math.ceil((request.start - 30) / 5));
       if (index >= paragraphs.length || spoken(index) > request.start + request.duration - 3)
-        return Response.json({ match: null, start: request.start, text: "" });
-      return Response.json({ match: { index, score: 0.9, text: "" }, start: spoken(index), text: "word ".repeat(40) });
+        return Response.json({ engine, match: null, start: request.start, text: "" });
+      return Response.json({ engine, match: { index, score: 0.9, text: "" }, start: spoken(index), text: "word ".repeat(40) });
     }
     return Response.json({ engine: "aeneas-1.7.3", elapsedSeconds: 1, intervals: [{ index: 0, start: request.start, end: request.start + 1 }] });
   });
@@ -233,6 +240,30 @@ test("an anchored job aligns its windows with CTC and keeps its CTC identity thr
   }
   assert.equal(refused.status, "error");
   assert.match(refused.error ?? "", /did not use the requested CTC engine/);
+});
+
+test("a short unmarked recording can align from one CTC sample", async () => {
+  process.env.ALIGNMENT_WORKER_URL = "http://production-worker.test";
+  db.insert(schema.recordings).values({ id: "ctc-short-recording", editionId: "ctc-edition" }).run();
+  db.insert(schema.tracks).values({ id: "ctc-short-track", recordingId: "ctc-short-recording", title: "Short", index: 0,
+    duration: 20, chapters: [], source: audio, sourceType: "local" }).run();
+  const book = await extractBook("ctc-ebook");
+  const paragraphs = book.sections.flatMap((section) => section.paragraphs);
+  mockWorker(async (input, init) => {
+    const request = JSON.parse(String(init?.body));
+    if (String(input).endsWith("/anchor")) {
+      const match = { index: 0, lastIndex: request.fragments.length - 1, score: 0.9, start: 0 };
+      return Response.json({ engine, outcome: "mapped", text: "word ".repeat(20), match, matches: [match], start: 0 });
+    }
+    const step = request.duration / request.fragments.length;
+    return Response.json({ engine, outcome: "mapped", elapsedSeconds: 1,
+      intervals: request.fragments.map((_: string, i: number) => ({ index: i, start: request.start + i * step, end: request.start + (i + 1) * step })) });
+  });
+  const created = await createAlignment("ctc-ebook", "ctc-short-recording", undefined, "anchored");
+  const job = await settled(created.id);
+  assert.equal(job.anchoring?.anchors.length, 1);
+  assert.ok(job.intervals.some((interval) => interval.paragraphId === paragraphs[0].id));
+  assert.ok(job.intervals.some((interval) => interval.paragraphId === paragraphs.at(-1)!.id));
 });
 
 test("two ebook editions send the same recording identity and publish cache timings", async () => {
@@ -453,4 +484,96 @@ test("CTC retries the other host once, remains failed after both fail, and resum
   assert.equal(retried.ctcPrecision, "float16");
   assert.equal(calls.at(-1), "http://ctc-worker.test/align");
   await app.close();
+});
+test("unsynced passages and unsupported-language outcomes survive storage and API responses", async () => {
+  const { default: Fastify } = await import("fastify");
+  const app = Fastify();
+  registerAlignment(app);
+  try {
+    const book = await extractBook("ctc-ebook");
+    const pairings = book.sections.map((section, i) => ({ section: section.index, trackId: "ctc-track", start: 10 + i * 100, duration: 80 }));
+    const previous = sqlite.prepare("SELECT id FROM alignment_jobs WHERE ebook_id=? AND recording_id=?").get("ctc-ebook", "ctc-recording") as { id: string } | undefined;
+    if (previous) rmSync(join(temp, "media", "alignment", previous.id), { recursive: true, force: true });
+    let calls = 0;
+    mockWorker(async (_input, init) => {
+      const request = JSON.parse(String(init?.body));
+      calls++;
+      return Response.json({ engine, outcome: calls === 1 ? "mapped" : "unsynced", elapsedSeconds: 1,
+        intervals: calls === 1 ? [{ index: 0, start: request.start, end: request.start + 1 }] : [] });
+    });
+    const created = await createAlignment("ctc-ebook", "ctc-recording", pairings, "chapters");
+    const job = await settled(created.id);
+    assert.equal(job.outcome, "partial");
+    assert.ok(job.unsyncedPassages?.length);
+    const mapped = new Set(job.intervals.map((item) => item.paragraphId));
+    assert.ok(job.unsyncedPassages.every((passage) => !mapped.has(passage.firstParagraphId)));
+    const stored = JSON.parse((sqlite.prepare("SELECT data FROM alignment_jobs WHERE id=?").get(job.id) as { data: string }).data);
+    assert.deepEqual(stored.unsyncedPassages, job.unsyncedPassages);
+    const summary = await app.inject({ method: "GET", url: "/api/alignments?ebookId=ctc-ebook&summary=1" });
+    assert.equal(summary.statusCode, 200, summary.body);
+    assert.deepEqual(summary.json().jobs.find((entry: { id: string }) => entry.id === job.id).unsyncedPassages, job.unsyncedPassages);
+
+    rmSync(join(temp, "media", "alignment", job.id), { recursive: true, force: true });
+    calls = 0;
+    mockWorker(async (_input, init) => {
+      const request = JSON.parse(String(init?.body));
+      calls++;
+      return Response.json({ engine, outcome: calls === 1 ? "mapped" : "language_not_supported", elapsedSeconds: 1,
+        intervals: calls === 1 ? [{ index: 0, start: request.start, end: request.start + 1 }] : [] });
+    });
+    const retried = await createAlignment("ctc-ebook", "ctc-recording", pairings, "chapters");
+    const unsupported = await settled(retried.id);
+    assert.equal(unsupported.outcome, "language_not_supported");
+    assert.deepEqual(unsupported.intervals, []);
+    assert.equal(unsupported.coverage, 0);
+    const response = await app.inject({ method: "GET", url: "/api/alignments?ebookId=ctc-ebook&summary=1" });
+    assert.equal(response.json().jobs.find((entry: { id: string }) => entry.id === retried.id).outcome, "language_not_supported");
+    const map = await app.inject({ method: "GET", url: `/api/alignments/${retried.id}/map` });
+    assert.equal(map.statusCode, 410, map.body);
+
+    const french = join(process.env.MEDIA_ROOT!, "french.epub");
+    writeFileSync(french, await readerFixture({ language: "fr" }));
+    db.insert(schema.editions).values({ id: "fr-edition", workId: "ctc-work", cover: "", narrator: "", rating: 0, sourceLabel: "", language: "fr" }).run();
+    db.insert(schema.recordings).values({ id: "fr-recording", editionId: "fr-edition" }).run();
+    db.insert(schema.tracks).values({ id: "fr-track", recordingId: "fr-recording", title: "French", index: 0, duration: 400, chapters: [], source: audio, sourceType: "local" }).run();
+    db.insert(schema.ebookEditions).values({ id: "fr-ebook", workId: "ctc-work", format: "epub", source: french }).run();
+    calls = 0;
+    globalThis.fetch = async () => { calls++; throw new Error("unsupported languages must not reach the worker"); };
+    const fr = await createAlignment("fr-ebook", "fr-recording", undefined, "anchored");
+    const frJob = await settled(fr.id);
+    assert.equal(frJob.outcome, "language_not_supported");
+    assert.equal(calls, 0);
+    assert.deepEqual(frJob.intervals, []);
+    assert.equal((await app.inject({ method: "GET", url: `/api/alignments/${fr.id}/map` })).statusCode, 410);
+
+    mockWorker(async () => Response.json({ engine, outcome: "unsynced", match: null, text: "unrelated narration ".repeat(10) }));
+    const mismatch = await createAlignment("ctc-alice-ebook", "ctc-alice-recording", undefined, "anchored");
+    const unsynced = await settled(mismatch.id);
+    assert.equal(unsynced.outcome, "unsynced");
+    assert.equal(unsynced.coverage, 0);
+    assert.deepEqual(unsynced.intervals, []);
+    assert.ok(unsynced.unsyncedPassages?.length);
+
+    delete process.env.ALIGNMENT_WORKER_TOKEN;
+    const old = await createAlignment("ctc-ebook", "ctc-recording", pairings, "chapters");
+    putAlignmentJob({ ...old, ctcValidationVersion: undefined, status: "queued",
+      intervals: [{ paragraphId: book.sections[0].paragraphs[0].id, section: book.sections[0].index,
+        trackId: "ctc-track", start: 10, end: 11, confidence: 0.65 }],
+      sectionsDone: pairings.map((pair) => pair.section), coverage: 1 });
+    calls = 0;
+    process.env.ALIGNMENT_WORKER_TOKEN = "test-token";
+    rmSync(join(temp, "media", "alignment", old.id), { recursive: true, force: true });
+    mockWorker(async () => {
+      calls++;
+      return Response.json({ engine, outcome: "unsynced", elapsedSeconds: 1, intervals: [] });
+    });
+    await processAlignments();
+    const rebuilt = alignmentJob(old.id);
+    assert.equal(calls, pairings.length);
+    assert.equal(rebuilt.ctcValidationVersion, 1);
+    assert.deepEqual(rebuilt.intervals, []);
+    assert.equal(rebuilt.outcome, "unsynced");
+  } finally {
+    await app.close();
+  }
 });
