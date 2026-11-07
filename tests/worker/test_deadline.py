@@ -255,6 +255,7 @@ class Http(unittest.TestCase):
 
     def test_health_reports_a_stuck_job(self):
         self.assertEqual(set(self.align.health()) >= {"busy", "stuck", "busySeconds", "lastTimeout"}, True)
+        self.assertTrue(self.align.health()["ctc"]["passageReady"])
 
     def test_unsupported_language_is_explicit_for_both_endpoints(self):
         for call, request in [(self.align.align, self.align_request()), (self.align.anchor, self.anchor_request())]:
