@@ -13,10 +13,28 @@ export const CURSOR_BUSY_LINE_RE =
  */
 export const CODEX_WORKING_LINE_RE = /Working \(\d|^• Working \(/;
 
-/** Combined: one line is "busy" if either pattern matches (multiline=false per line). */
+/**
+ * Antigravity (Gemini) busy lines: spinner glyph lines, Running command, Thought for, ManageTask.
+ * Mirrors: grep -qP '...|^\s*[\x{2800}-\x{28FF}]|Running command|Thought for|ManageTask'
+ */
+export const ANTIGRAVITY_BUSY_LINE_RE =
+  /^\s*[\u2800-\u28FF]|Running command|Thought for|ManageTask/u;
+
+/** Combined: one line is "busy" if any pattern matches (multiline=false per line). */
 export function isWorkerScreenBusyLine(line: string): boolean {
   const s = String(line);
-  return CURSOR_BUSY_LINE_RE.test(s) || CODEX_WORKING_LINE_RE.test(s);
+  return (
+    CURSOR_BUSY_LINE_RE.test(s) ||
+    CODEX_WORKING_LINE_RE.test(s) ||
+    ANTIGRAVITY_BUSY_LINE_RE.test(s)
+  );
+}
+
+/** Check if an entire screen dump has any line matching busy patterns. */
+export function isWorkerScreenBusy(screen: string): boolean {
+  return String(screen)
+    .split(/\r?\n/)
+    .some((line) => isWorkerScreenBusyLine(line));
 }
 
 /**

@@ -14,7 +14,7 @@ while read -r dispatch; do
   [ -n "$term" ] || { echo "$dispatch: no terminal"; attention=1; continue; }
   screen=$(orca terminal read --terminal "$term" --screen 2>/dev/null)
   if [ -z "$screen" ]; then state=exited
-  elif printf '%s\n' "$screen" | grep -qP '^\s*[\x{2800}-\x{28FF}]+\s+[A-Z][a-z]+ing(\s|$)|Working \(\d|^• Working \('; then state=busy
+  elif printf '%s\n' "$screen" | grep -qP '^\s*[\x{2800}-\x{28FF}]+\s+[A-Z][a-z]+ing(\s|$)|Working \(\d|^• Working \(|^\s*[\x{2800}-\x{28FF}]|Running command|Thought for|ManageTask'; then state=busy
   else state=idle; fi
   alert=$(printf '%s\n' "$screen" | tail -25 | grep -v 'Coordinator' | grep -iE "high load|error:|hit your usage limit|usage limit|out of codex|rate limit|quota" | tail -1 | tr -s ' ' | cut -c1-140)
   line="$dispatch $term state=$state"

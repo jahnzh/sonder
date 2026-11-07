@@ -1,0 +1,8 @@
+● ManageTask(status task-3707)
+▸ Thought for 4s, 357 tokens
+  Antigravity agents are unexpectedly reporting an idle state...
+⣟  Running command...
+────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────
+esc to cancel                                     accept-edits · Gemini 3.8 Flash · high
