@@ -23,6 +23,10 @@ test("Space toggles playback and arrow keys seek 30 seconds when playback is ava
   assert.equal(playbackKeyAction({ key: "f" }), null);
   assert.equal(playbackKeyAction({ key: "p" }), null);
 });
+test("Space does nothing and shows no error when no audio is loaded", () => {
+  assert.equal(playbackKeyAction({ key: " ", canPlay: false }), null);
+  assert.equal(playbackKeyAction({ key: " ", canPlay: false, canSeek: false }), null);
+});
 test("playback keys are ignored in text fields, selects, buttons, open dialogs and modified shortcuts", () => {
   for (const targetTag of [
     "INPUT",
