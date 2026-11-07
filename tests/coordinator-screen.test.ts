@@ -175,9 +175,9 @@ exit 0
       env,
       encoding: "utf8",
     });
-    assert.equal(second.status, 1, second.stdout + second.stderr);
+    assert.equal(second.status, 0, second.stdout + second.stderr);
     const combined = `${second.stderr}${second.stdout}`;
-    assert.match(combined, /PID\s+\d+/);
+    assert.match(combined, /already running \(pid \d+\)/i);
     assert.ok(combined.includes(String(firstPid)));
 
     killWatcherProcessGroup(firstPid);
@@ -201,5 +201,53 @@ exit 0
     assert.ok(log.includes("hello subject"));
   } finally {
     cleanup();
+  }
+});
+
+test("watch-inbox: exits 1 when lock is held but holder pid is not live", async (t) => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "sonder-watch-dead-")));
+  const run = `run_test_watch_inbox_${process.pid}_${Date.now()}`;
+  const rt = join(dir, "runtime");
+  mkdirSync(rt);
+
+  const watchScript = join(repoRoot, "scripts/orca/watch-inbox.sh");
+  const env = {
+    ...process.env,
+    XDG_RUNTIME_DIR: rt,
+  };
+
+  t.after(() => {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* temp dir race */
+    }
+  });
+
+  const lockFile = join(rt, `sonder-watch-inbox-${run}.lock`);
+  const holderFile = join(rt, `sonder-watch-inbox-${run}.pid`);
+  writeFileSync(holderFile, "999999\n");
+
+  const lockHolder = spawn("bash", ["-c", `exec 9>>"${lockFile}"; flock 9; sleep 30`], {
+    detached: true,
+    stdio: "ignore",
+  });
+
+  try {
+    await new Promise((r) => setTimeout(r, 100));
+    const result = spawnSync("bash", [watchScript, run], {
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stderr, /another watcher holds the lock/);
+  } finally {
+    if (lockHolder.pid) {
+      try {
+        process.kill(-lockHolder.pid, "SIGKILL");
+      } catch {
+        /* gone */
+      }
+    }
   }
 });

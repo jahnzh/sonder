@@ -18,6 +18,10 @@ touch "$LOCK"
 exec 9>>"$LOCK"
 if ! flock -n 9; then
   read -r holder <"$HOLDER" 2>/dev/null || holder="unknown"
+  if [[ "$holder" =~ ^[0-9]+$ ]] && kill -0 "$holder" 2>/dev/null; then
+    echo "watch-inbox: already running (pid $holder)"
+    exit 0
+  fi
   echo "watch-inbox: another watcher holds the lock for run $run (PID $holder)" >&2
   exit 1
 fi
