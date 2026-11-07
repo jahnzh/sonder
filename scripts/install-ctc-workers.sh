@@ -5,6 +5,7 @@ set -euo pipefail
 
 UNIT="sonder-ctc-worker.service"
 DEFAULT_PORT=3012
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
   cat <<'EOF'
@@ -15,18 +16,20 @@ Python virtual environment with pinned dependencies, fetches pinned model
 weights, and configures/restarts the systemd user service.
 
 Options:
-  --device <cpu|cuda>   Worker device target (default: auto-detected, fallback: cpu)
-  --dir <path>          Installation target directory (default: $HOME/sonder-ctc-worker)
-  --port <port>         Worker HTTP port (default: 3012)
-  --token <token>       Alignment worker auth token (default: reuses worker.env or generates random hex)
-  --python <path>       Python interpreter for venv (default: python3)
-  --skip-models         Skip downloading model weights
-  --skip-service        Skip installing or starting the systemd user service
-  --service-only        Only install and configure the systemd user service
-  --print-service       Print the rendered systemd user unit to stdout and exit
-  --print-caddy         Print the Caddy reverse-proxy snippet to stdout and exit
-  --dry-run             Show actions without modifying files or system services
-  -h, --help            Show this help text and exit 0
+  --device <cpu|cuda>       Worker device target (default: auto-detected, fallback: cpu)
+  --dir <path>              Installation target directory (default: $HOME/sonder-ctc-worker)
+  --port <port>             Worker HTTP port (default: 3012)
+  --token <token>           Alignment worker auth token (prefer passing ALIGNMENT_WORKER_TOKEN in env)
+  --python <path>           Python interpreter for venv (default: python3)
+  --caddy-domain <domain>   Domain for Caddy snippet (required with --print-caddy)
+  --prod-ip <ip>            Production server IP for Caddy snippet (required with --print-caddy)
+  --skip-models             Skip downloading model weights
+  --skip-service            Skip installing or starting the systemd user service
+  --service-only            Only install and configure the systemd user service
+  --print-service           Print the rendered systemd user unit to stdout and exit
+  --print-caddy             Print the Caddy reverse-proxy snippet to stdout and exit
+  --dry-run                 Show actions without modifying files or system services
+  -h, --help                Show this help text and exit 0
 
 Examples:
   # Install on a GPU host (e.g. WSL2 with CUDA):
@@ -37,7 +40,7 @@ Examples:
 
   # Inspect generated service or Caddy block:
   scripts/install-ctc-workers.sh --print-service
-  scripts/install-ctc-workers.sh --print-caddy
+  scripts/install-ctc-workers.sh --print-caddy --caddy-domain audiobooks.amatox.in --prod-ip 88.91.220.114
 EOF
 }
 
@@ -66,43 +69,27 @@ render_service() {
   if [[ -n "${HOME:-}" && "$unit_dir_path" == "$HOME"* ]]; then
     unit_dir_path="%h${unit_dir_path#$HOME}"
   fi
-  cat <<EOF
-[Unit]
-Description=Sonder CTC alignment worker
-After=network-online.target
-
-[Service]
-WorkingDirectory=${unit_dir_path}/worker
-EnvironmentFile=${unit_dir_path}/worker.env
-ExecStart=/usr/bin/nice -n 10 ${unit_dir_path}/env/bin/python -m uvicorn align:app --host 0.0.0.0 --port ${port}
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=default.target
-EOF
+  local tmpl="${repo_dir}/deploy/ctc-worker.service.tmpl"
+  if [[ ! -f "$tmpl" ]]; then
+    echo "error: service template not found at $tmpl" >&2
+    exit 1
+  fi
+  sed -e "s|{{TARGET_DIR}}|${unit_dir_path}|g" \
+      -e "s|{{PORT}}|${port}|g" \
+      "$tmpl"
 }
 
 render_caddy() {
-  cat <<'EOF'
-# Caddy reverse-proxy configuration for Sonder CTC worker on Lisa.
-# Placed inside the audiobooks.amatox.in site block in /etc/caddy/Caddyfile.
-# Strips /sonder-ctc prefix and forwards to local CTC worker on port 3012.
-# Restricted to the production server IP allowlist.
-
-audiobooks.amatox.in {
-	handle_path /sonder-ctc/* {
-		@prod remote_ip 88.91.220.114
-		handle @prod {
-			reverse_proxy 127.0.0.1:3012
-		}
-		handle {
-			respond 403
-		}
-	}
-	# Other site configuration...
-}
-EOF
+  local domain="$1"
+  local ip="$2"
+  local tmpl="${repo_dir}/deploy/ctc-worker.caddy.tmpl"
+  if [[ ! -f "$tmpl" ]]; then
+    echo "error: caddy template not found at $tmpl" >&2
+    exit 1
+  fi
+  sed -e "s|<worker-domain>|${domain}|g" \
+      -e "s|<prod-ip>|${ip}|g" \
+      "$tmpl"
 }
 
 # Defaults
@@ -111,6 +98,8 @@ target_dir="${HOME}/sonder-ctc-worker"
 port="$DEFAULT_PORT"
 token=""
 python_bin="python3"
+caddy_domain=""
+prod_ip=""
 skip_models=false
 skip_service=false
 service_only=false
@@ -146,10 +135,28 @@ while [[ $# -gt 0 ]]; do
       ;;
     --token)
       token="$2"
+      echo "warning: --token on the command line is visible in process listings; prefer passing ALIGNMENT_WORKER_TOKEN in the environment" >&2
       shift 2
       ;;
     --token=*)
       token="${1#*=}"
+      echo "warning: --token on the command line is visible in process listings; prefer passing ALIGNMENT_WORKER_TOKEN in the environment" >&2
+      shift
+      ;;
+    --caddy-domain)
+      caddy_domain="$2"
+      shift 2
+      ;;
+    --caddy-domain=*)
+      caddy_domain="${1#*=}"
+      shift
+      ;;
+    --prod-ip)
+      prod_ip="$2"
+      shift 2
+      ;;
+    --prod-ip=*)
+      prod_ip="${1#*=}"
       shift
       ;;
     --python)
@@ -202,7 +209,11 @@ if [[ "$print_service" == true ]]; then
 fi
 
 if [[ "$print_caddy" == true ]]; then
-  render_caddy
+  if [[ -z "$caddy_domain" || -z "$prod_ip" ]]; then
+    echo "error: --print-caddy requires both --caddy-domain and --prod-ip" >&2
+    exit 2
+  fi
+  render_caddy "$caddy_domain" "$prod_ip"
   exit 0
 fi
 
@@ -214,8 +225,6 @@ if [[ "$device" != "cpu" && "$device" != "cuda" ]]; then
   echo "error: --device must be 'cpu' or 'cuda' (got '$device')" >&2
   exit 2
 fi
-
-repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Verify worker source files
 worker_src="${repo_dir}/worker"
@@ -238,16 +247,23 @@ if [[ "$dry_run" == true ]]; then
 fi
 
 # Determine token
+token_source=""
+if [[ -n "$token" ]]; then
+  token_source="cli"
+elif [[ -n "${ALIGNMENT_WORKER_TOKEN:-}" ]]; then
+  token="${ALIGNMENT_WORKER_TOKEN}"
+  token_source="env"
+elif [[ -f "${target_dir}/worker.env" ]]; then
+  existing_token="$(grep -E '^ALIGNMENT_WORKER_TOKEN=' "${target_dir}/worker.env" | cut -d= -f2- || true)"
+  if [[ -n "$existing_token" ]]; then
+    token="$existing_token"
+    token_source="existing_file"
+  fi
+fi
+
 if [[ -z "$token" ]]; then
-  if [[ -f "${target_dir}/worker.env" ]]; then
-    existing_token="$(grep -E '^ALIGNMENT_WORKER_TOKEN=' "${target_dir}/worker.env" | cut -d= -f2- || true)"
-    if [[ -n "$existing_token" ]]; then
-      token="$existing_token"
-    fi
-  fi
-  if [[ -z "$token" ]]; then
-    token="$(generate_token)"
-  fi
+  token="$(generate_token)"
+  token_source="generated"
 fi
 
 mkdir -p "$target_dir"
@@ -284,12 +300,15 @@ if [[ "$service_only" == false ]]; then
   fi
 fi
 
-# Write environment file
-cat > "${target_dir}/worker.env" <<EOF
+# Write environment file with restrictive permissions from creation
+(
+  umask 077
+  cat > "${target_dir}/worker.env" <<EOF
 ALIGNMENT_WORKER_TOKEN=${token}
 MEDIA_ROOT=${target_dir}/media
 ALIGNMENT_CTC_DEVICE=${device}
 EOF
+)
 chmod 600 "${target_dir}/worker.env"
 echo "Configured ${target_dir}/worker.env"
 
@@ -317,3 +336,14 @@ if [[ "$skip_service" == false ]]; then
 fi
 
 echo "Sonder CTC worker installation complete."
+if [[ "$token_source" == "generated" ]]; then
+  echo "Generated new alignment worker token: ${token}"
+  echo "Set the SAME value as ALIGNMENT_WORKER_TOKEN in production .env (${repo_dir}/.env or server deployment .env)."
+elif [[ "$token_source" == "existing_file" ]]; then
+  echo "Reused existing alignment worker token from ${target_dir}/worker.env."
+  echo "Ensure the matching token is configured as ALIGNMENT_WORKER_TOKEN in production .env (${repo_dir}/.env or server deployment .env)."
+else
+  echo "Configured alignment worker token in ${target_dir}/worker.env."
+  echo "Ensure the matching token is configured as ALIGNMENT_WORKER_TOKEN in production .env (${repo_dir}/.env or server deployment .env)."
+fi
+

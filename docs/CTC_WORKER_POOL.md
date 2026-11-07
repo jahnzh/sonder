@@ -175,13 +175,13 @@ Lisa runs worker on `127.0.0.1:3012` and exposes it via HTTPS using Caddy.
 1. SSH port and alias:
    SSH runs on custom port `2269` (user `jahn`, hostname `audiobooks.amatox.in`). The alias `lisa` is configured in `data/pool-ssh/config` or `~/.ssh/config`.
 
-2. Caddy reverse-proxy block (see `deploy/ctc-worker.caddy` / `scripts/ctc-worker.caddy`):
-   Insert this snippet into `/etc/caddy/Caddyfile` on Lisa inside the `audiobooks.amatox.in` block:
+2. Caddy reverse-proxy block (see `deploy/ctc-worker.caddy.tmpl` or generate via `scripts/install-ctc-workers.sh --print-caddy --caddy-domain <worker-domain> --prod-ip <prod-ip>`):
+   Insert this snippet into `/etc/caddy/Caddyfile` on Lisa inside the site block:
 
    ```caddy
-   audiobooks.amatox.in {
+   <worker-domain> {
    	handle_path /sonder-ctc/* {
-   		@prod remote_ip 88.91.220.114
+   		@prod remote_ip <prod-ip>
    		handle @prod {
    			reverse_proxy 127.0.0.1:3012
    		}
@@ -193,7 +193,7 @@ Lisa runs worker on `127.0.0.1:3012` and exposes it via HTTPS using Caddy.
    }
    ```
 
-   `handle_path` strips the `/sonder-ctc` prefix before forwarding to the local worker on port 3012. Replace `88.91.220.114` with the production server's public IP address.
+   `handle_path` strips the `/sonder-ctc` prefix before forwarding to the local worker on port 3012. Replace `<worker-domain>` with the worker's domain (e.g. `audiobooks.amatox.in`) and `<prod-ip>` with the production server's public IP address (e.g. `88.91.220.114`).
 
    Reload Caddy after saving:
    ```sh
@@ -287,7 +287,7 @@ Gate: PASS; engine: `ctc-wav2vec2-base-960h-torchaudio-2.8-v1`; outcome: `mapped
 | Retry a failure once on the other host, retain a retryable failure, and keep CPU and GPU in the same engine generation with device and precision for diagnostics. | `tests/alignment-ctc.test.ts`: cross-host retry and manual Resume, anchored-window failover, and the CPU and GPU metadata assertions. |
 | Install the lisa environment with the pinned CPU wheels and the anchored planner dependency; document the commands. | The commands above completed on lisa; its environment imported Torch and TorchAudio `2.8.0+cpu`, FastAPI `0.121.3`, Uvicorn `0.38.0`, and faster-whisper. |
 | Run both real-model gates and report their outcomes. | The two tables above show identical passing results. |
-| Reproducible install script (`scripts/install-ctc-workers.sh`), systemd user service unit (`scripts/ctc-worker.service`), Caddy reverse-proxy snippet (`deploy/ctc-worker.caddy`), and documentation runbook. | `tests/install-ctc-workers.test.mjs` verifying installer CLI, help flag, syntax, service template, and Caddy configuration. |
+| Reproducible install script (`scripts/install-ctc-workers.sh`), systemd user service unit template (`deploy/ctc-worker.service.tmpl`), Caddy reverse-proxy snippet template (`deploy/ctc-worker.caddy.tmpl`), and documentation runbook. | `tests/install-ctc-workers.test.mjs` verifying installer CLI, help flag, syntax, service template, and Caddy configuration. |
 
 The pool remains off by default. No schema migration is needed. The worker
 ran `npx tsc --noEmit`, the focused alignment tests, `npm test`, and the Python
