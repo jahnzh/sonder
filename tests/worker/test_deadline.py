@@ -271,10 +271,15 @@ class Http(unittest.TestCase):
             self.assertEqual(self.align.align(request)["engine"], "aeneas-1.7.3")
             legacy.assert_called_once()
         request.engine = "ctc"
+        request.recordingId = "recording"
+        request.audioFingerprint = "audio-version"
+        request.trackId = "track"
         fake = {"engine": self.align.CTC_ENGINE, "outcome": "mapped", "intervals": []}
         with mock.patch.object(self.align, "align_ctc_section", return_value=fake) as ctc:
             self.assertEqual(self.align.align(request), fake)
             ctc.assert_called_once()
+            self.assertEqual({key: ctc.call_args.kwargs[key] for key in ("recording_id", "recording_fingerprint", "track_id")},
+                             {"recording_id": "recording", "recording_fingerprint": "audio-version", "track_id": "track"})
         request.language = "fra"
         self.assertEqual(self.align.align(request)["outcome"], "language_not_supported")
         self.assertEqual(self.align.align(request)["engine"], self.align.CTC_ENGINE)

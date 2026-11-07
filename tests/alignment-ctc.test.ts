@@ -171,3 +171,42 @@ test("an anchored job aligns its windows with CTC and keeps its CTC identity thr
   assert.equal(refused.status, "error");
   assert.match(refused.error ?? "", /did not use the requested CTC engine/);
 });
+
+test("two ebook editions send the same recording identity and publish cache timings", async () => {
+  process.env.ALIGNMENT_WORKER_URL = "http://ctc-worker.test";
+  const otherEbook = join(process.env.MEDIA_ROOT!, "second-edition.epub");
+  writeFileSync(otherEbook, await readerFixture({ bodies: ["<p>A different edition.</p>", "<p>Another ending.</p>"] }));
+  db.insert(schema.ebookEditions).values({ id: "ctc-second-ebook", workId: "ctc-work", format: "epub", source: otherEbook }).run();
+  const requests: { recordingId: string; trackId: string; audioFingerprint: string }[] = [];
+  const seen = new Set<string>();
+  globalThis.fetch = async (_input, init) => {
+    const request = JSON.parse(String(init?.body));
+    const identity = { recordingId: request.recordingId, trackId: request.trackId, audioFingerprint: request.audioFingerprint };
+    requests.push(identity);
+    const key = JSON.stringify(identity);
+    const hit = seen.has(key);
+    seen.add(key);
+    return Response.json({ engine, outcome: "mapped", elapsedSeconds: 1,
+      stageTimings: { acousticEncoding: hit ? 0 : 2, acousticCacheRead: 0.01 },
+      intervals: request.fragments.map((_: string, i: number) => ({ index: i, start: request.start + i, end: request.start + i + 0.8 })) });
+  };
+  const firstBook = await extractBook("ctc-ebook");
+  const secondBook = await extractBook("ctc-second-ebook");
+  const first = await createAlignment("ctc-ebook", "ctc-recording", firstBook.sections.map((section) => ({
+    section: section.index, trackId: "ctc-track", start: 10, duration: 40,
+  })), "chapters");
+  const firstJob = await settled(first.id);
+  assert.equal(firstJob.status, "partial", firstJob.error ?? undefined);
+  const second = await createAlignment("ctc-second-ebook", "ctc-recording", secondBook.sections.map((section) => ({
+    section: section.index, trackId: "ctc-track", start: 11, duration: 39,
+  })), "chapters");
+  const secondJob = await settled(second.id);
+  assert.equal(secondJob.status, "partial", secondJob.error ?? undefined);
+  assert.ok(requests.length >= 2);
+  assert.ok(requests.every((request) => request.recordingId === "ctc-recording" && request.trackId === "ctc-track"));
+  assert.ok(requests[0].audioFingerprint.startsWith("audio-v2:"));
+  assert.ok(requests.every((request) => request.audioFingerprint === requests[0].audioFingerprint));
+  assert.equal(firstJob.stageTimings!.acousticEncoding, 2);
+  assert.equal(secondJob.stageTimings!.acousticEncoding, 0);
+  assert.ok(secondJob.stageTimings!.acousticCacheRead > 0);
+});
