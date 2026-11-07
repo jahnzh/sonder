@@ -6,9 +6,10 @@
 npm run check
 npm run check -- --ref <commit>
 npm run check -- --ref <commit> --output-dir /absolute/path/to/new-report-directory
+npm run check -- --bail
 ```
 
-The runner snapshots a committed revision into a disposable directory and runs dependency installation, build/typecheck, unit tests, and browser tests in order. The build runs in production mode so service-worker behavior matches a release; test stages run in test mode. It stops on failure and preserves stage logs and a machine-readable result. The report identifies the source revision and whether the calling checkout has pending changes. Commit changes before using this command to validate them.
+The runner snapshots a committed revision into a disposable directory and runs dependency installation, build/typecheck, unit tests, and browser tests in order. The build runs in production mode so service-worker behavior matches a release; test stages run in test mode. Install or build failures stop the run, but a unit failure still runs the browser stage so the report captures both results. The overall result remains failed and retains the unit exit code even if the browser stage also fails. Use `--bail` to stop after the first failed stage. The runner preserves stage logs and a machine-readable result. The report identifies the source revision and whether the calling checkout has pending changes. Commit changes before using this command to validate them.
 
 Unit tests set `SONDER_SKIP_SERIES_ACQUISITION=1` (see `tests/series-acquisition.test.ts`) so the app background ticker does not run during `npm test`; call `tickSeriesAcquisition()` manually when exercising acquisition (`server/series-acquisition.ts`).
 
@@ -31,10 +32,10 @@ The list is `{"version":1,"entries":[...]}`. Each entry has `project`, `file` (r
 | Result | When | Exit |
 | --- | --- | --- |
 | `passed` | Every stage passed. | 0 |
-| `passed_with_known_failures` | The browser stage failed and every failing test is listed. | 0 |
+| `passed_with_known_failures` | Earlier stages passed, the browser stage failed and every failing test is listed. | 0 |
 | `failed` | Any other failure: an unlisted test, a failure in an earlier stage, or a browser failure the report cannot account for (no report, run-level errors, no failing test, mismatched counts). | 1 for a browser stage under this flag; an earlier stage keeps its own exit code |
 
-`report.json` records the final result and a `knownFailures` object: `known` (listed failures that occurred), `new` (unlisted failures), `listedPassed` and `listedNotRun` (listed tests that passed, or did not run in this environment), and a one-line `summary`, which is also printed unless `--silent`. The stage record stays `failed` and gains `toleratedBy: "known-failures"`.
+`report.json` records the final result and a `knownFailures` object: `known` (listed failures that occurred), `new` (unlisted failures), `listedPassed` and `listedNotRun` (listed tests that passed, or did not run in this environment), and a one-line `summary`, which is also printed unless `--silent`. When the browser failure is tolerated as the overall result, the stage record stays `failed` and gains `toleratedBy: "known-failures"`. After a unit failure, the browser report is still classified, but known browser failures do not make the overall run pass.
 
 Remove an entry once its cause is fixed. A `listedPassed` entry that is `environment` is a candidate for removal; an `intermittent` one may simply have passed this time. `tests/known-failures.wsl-host.json` lists the failures seen on the WSL host (`192.168.1.119`).
 
