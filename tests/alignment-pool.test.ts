@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import {
   AlignmentPoolCoordinator,
   CTC_ENGINE,
@@ -11,6 +13,8 @@ import {
   clearPoolStaging,
   defaultPoolHosts,
   dispatchFullAlignmentJob,
+  getAlignmentPoolCoordinator,
+  getAlignmentPoolStatus,
   isolatedJobMediaRoot,
   isFullAlignmentJob,
   poolAlignmentFolder,
@@ -22,6 +26,7 @@ import {
   type PoolHost,
   type PoolSshDeps,
 } from "../server/alignment-pool.ts";
+import { AlignmentPoolStatusView } from "../src/components/AlignmentPoolStatusView.tsx";
 import type { AlignmentJob } from "../src/reading-types.ts";
 
 const hosts: PoolHost[] = [
@@ -468,4 +473,206 @@ test("stageTracksOnHost links shared read-only models into job media root", asyn
     ),
   );
   fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test("getAlignmentPoolStatus makes no HTTP or SSH requests when pool is disabled", async () => {
+  const prevPool = process.env.ALIGNMENT_POOL_ENABLED;
+  const originalFetch = globalThis.fetch;
+  delete process.env.ALIGNMENT_POOL_ENABLED;
+  globalThis.fetch = async () => {
+    throw new Error("unexpected fetch while pool is disabled");
+  };
+  setAlignmentPoolDepsForTests({
+    async probe() {
+      throw new Error("unexpected ssh probe while pool is disabled");
+    },
+    async exec() {
+      throw new Error("unexpected ssh exec");
+    },
+    async uploadFile() {
+      throw new Error("unexpected scp upload");
+    },
+  });
+  resetAlignmentPoolCoordinator([
+    hosts[0],
+    { ...hosts[1], id: "lisa", sshTarget: "lisa-host", workerUrl: "http://user:secret@lisa-worker:3012" },
+  ]);
+  try {
+    const status = await getAlignmentPoolStatus({ fresh: true });
+    assert.equal(status.enabled, false);
+    assert.equal(status.engine, "ctc");
+    assert.deepEqual(
+      status.hosts.map((host) => ({ id: host.id, reachable: host.reachable, device: host.device, workerUrl: host.workerUrl })),
+      [
+        { id: "wsl", reachable: false, device: null, workerUrl: "http://wsl-worker" },
+        { id: "lisa", reachable: false, device: null, workerUrl: "http://lisa-worker:3012" },
+      ],
+    );
+    const markup = renderToStaticMarkup(createElement(AlignmentPoolStatusView, { pool: status }));
+    assert.match(markup, /Remote alignment pool is disabled\./);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (prevPool === undefined) delete process.env.ALIGNMENT_POOL_ENABLED;
+    else process.env.ALIGNMENT_POOL_ENABLED = prevPool;
+  }
+});
+
+test("getAlignmentPoolStatus and AlignmentPoolStatusView show why a host was skipped and clear after recovery", async () => {
+  const prevPool = process.env.ALIGNMENT_POOL_ENABLED;
+  const originalFetch = globalThis.fetch;
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "pool-admin-status-"));
+  const audio = path.join(temp, "audio.wav");
+  fs.writeFileSync(audio, "audio");
+  process.env.ALIGNMENT_POOL_ENABLED = "1";
+  let failWslStaging = true;
+  resetAlignmentPoolCoordinator([
+    hosts[0],
+    { ...hosts[1], id: "lisa", sshTarget: "lisa-host", workerUrl: "http://lisa-worker:3012" },
+  ]);
+  setAlignmentPoolDepsForTests({
+    async probe() {
+      return true;
+    },
+    async exec() {
+      return { code: 0, stdout: "", stderr: "" };
+    },
+    async uploadFile(_local, _remote, target) {
+      if (target === "wsl-host" && failWslStaging) throw new Error("No space left on device");
+    },
+  });
+  globalThis.fetch = async (input) => {
+    const isLisa = String(input).includes("lisa-worker");
+    return Response.json({
+      ready: true,
+      engine: "aeneas-1.7.3",
+      busy: false,
+      stuck: false,
+      busySeconds: null,
+      lastTimeout: null,
+      mediaRoot: temp,
+      ctc: {
+        engine: CTC_ENGINE,
+        ready: true,
+        device: isLisa ? "cpu" : "cuda",
+        precision: isLisa ? "float32" : "float16",
+        anchorReady: true,
+        passageReady: true,
+      },
+    });
+  };
+  try {
+    const firstJob = { id: "job-skip-wsl", recordingId: "rec-1", engine: CTC_ENGINE } as AlignmentJob;
+    const pool = await dispatchFullAlignmentJob(firstJob, [{ id: "t1" }] as any[], () => audio);
+    assert.equal(pool.hostId, "lisa");
+
+    const status = await getAlignmentPoolStatus({ fresh: true });
+    assert.equal(status.enabled, true);
+    const wsl = status.hosts.find((host) => host.id === "wsl")!;
+    const lisa = status.hosts.find((host) => host.id === "lisa")!;
+    assert.equal(wsl.reachable, true);
+    assert.equal(wsl.device, "cuda");
+    assert.equal(wsl.precision, "float16");
+    assert.equal(wsl.busy, false);
+    assert.equal(wsl.lastError, "staging: No space left on device");
+    assert.equal(lisa.reachable, true);
+    assert.equal(lisa.device, "cpu");
+    assert.equal(lisa.busy, true);
+    assert.equal(lisa.activeJobs, 1);
+    assert.equal(lisa.lastError, null);
+
+    const markup = renderToStaticMarkup(createElement(AlignmentPoolStatusView, { pool: status }));
+    assert.match(markup, /wsl/);
+    assert.match(markup, /Reachable/);
+    assert.match(markup, /cuda · float16/);
+    assert.match(markup, /Last error: staging: No space left on device/);
+    assert.match(markup, /lisa/);
+    assert.match(markup, /cpu · float32/);
+    assert.match(markup, /Busy/);
+
+    getAlignmentPoolCoordinator().release("lisa", firstJob.id, firstJob.recordingId);
+    failWslStaging = false;
+    const recoveredJob = { id: "job-recover-wsl", recordingId: "rec-2", engine: CTC_ENGINE } as AlignmentJob;
+    const recovered = await dispatchFullAlignmentJob(recoveredJob, [{ id: "t1" }] as any[], () => audio);
+    assert.equal(recovered.hostId, "wsl");
+    const afterRecovery = await getAlignmentPoolStatus();
+    const wslRecovered = afterRecovery.hosts.find((host) => host.id === "wsl")!;
+    assert.equal(wslRecovered.lastError, null);
+    assert.equal(wslRecovered.busy, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (prevPool === undefined) delete process.env.ALIGNMENT_POOL_ENABLED;
+    else process.env.ALIGNMENT_POOL_ENABLED = prevPool;
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("getAlignmentPoolStatus surfaces incompatible device and SSH probe errors and caches probes until fresh", async () => {
+  const prevPool = process.env.ALIGNMENT_POOL_ENABLED;
+  const originalFetch = globalThis.fetch;
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "pool-probe-cache-"));
+  process.env.ALIGNMENT_POOL_ENABLED = "1";
+  let httpCalls = 0;
+  let sshCalls = 0;
+  resetAlignmentPoolCoordinator([
+    hosts[0],
+    { ...hosts[1], id: "lisa", sshTarget: "lisa-host", workerUrl: "http://lisa-worker:3012" },
+  ]);
+  setAlignmentPoolDepsForTests({
+    async probe(target) {
+      sshCalls++;
+      if (target === "lisa-host") throw new Error("Permission denied (publickey)");
+      return true;
+    },
+    async exec() {
+      return { code: 0, stdout: "", stderr: "" };
+    },
+    async uploadFile() {},
+  });
+  globalThis.fetch = async (input) => {
+    httpCalls++;
+    const isLisa = String(input).includes("lisa-worker");
+    // WSL mistakenly running on CPU instead of CUDA; Lisa healthy on CPU.
+    return Response.json({
+      ready: true,
+      engine: "aeneas-1.7.3",
+      busy: false,
+      stuck: false,
+      mediaRoot: temp,
+      ctc: {
+        engine: CTC_ENGINE,
+        ready: true,
+        device: "cpu",
+        precision: "float32",
+        passageReady: true,
+      },
+      host: isLisa ? "lisa" : "wsl",
+    });
+  };
+  try {
+    const first = await getAlignmentPoolStatus({ fresh: true });
+    assert.equal(httpCalls, 2);
+    assert.equal(sshCalls, 2);
+    const wsl = first.hosts.find((host) => host.id === "wsl")!;
+    const lisa = first.hosts.find((host) => host.id === "lisa")!;
+    assert.equal(wsl.reachable, false);
+    assert.equal(wsl.device, "cpu");
+    assert.equal(wsl.lastError, "health: worker is not ready or has incompatible CTC settings");
+    assert.equal(lisa.reachable, false);
+    assert.equal(lisa.device, "cpu");
+    assert.equal(lisa.lastError, "ssh: Permission denied (publickey)");
+
+    const cached = await getAlignmentPoolStatus();
+    assert.equal(httpCalls, 2);
+    assert.equal(sshCalls, 2);
+    assert.equal(cached.checkedAt, first.checkedAt);
+
+    await getAlignmentPoolStatus({ fresh: true });
+    assert.equal(httpCalls, 4);
+    assert.equal(sshCalls, 4);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (prevPool === undefined) delete process.env.ALIGNMENT_POOL_ENABLED;
+    else process.env.ALIGNMENT_POOL_ENABLED = prevPool;
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
 });

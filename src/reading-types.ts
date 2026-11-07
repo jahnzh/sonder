@@ -147,18 +147,38 @@ export type AlignmentJob = {
   /** "backfill" for jobs queued automatically; "projected" for ebook-set maps. */
   origin?: "backfill" | "manual" | "projected";
   /** Most recent dispatch failure per remote host, if any. */
-  poolErrors?: Partial<Record<"wsl" | "steamdeck" | "lisa", string>>;
+  poolErrors?: Partial<Record<AlignmentPoolHostId, string>>;
   /** Remote SSH pool dispatch for CTC or full anchored jobs. */
   pool?: {
-    hostId: "wsl" | "steamdeck" | "lisa";
+    hostId: AlignmentPoolHostId;
     attempt: number;
     jobMediaRoot: string;
     workerUrl: string;
-    triedHosts: ("wsl" | "steamdeck" | "lisa")[];
+    triedHosts: AlignmentPoolHostId[];
     stagedAudio: Record<string, string>;
   };
   /** Present on summary list responses; full intervals live on /map. */
   intervalCount?: number;
+};
+export type AlignmentPoolHostId = "wsl" | "steamdeck" | "lisa";
+export type AlignmentPoolHostStatus = {
+  id: AlignmentPoolHostId;
+  sshTarget: string;
+  workerUrl: string;
+  reachable: boolean;
+  device: string | null;
+  precision: string | null;
+  busy: boolean;
+  stuck: boolean;
+  activeJobs: number;
+  maxConcurrent: number;
+  lastError: string | null;
+};
+export type AlignmentPoolStatus = {
+  enabled: boolean;
+  engine: "ctc" | "aeneas";
+  checkedAt: number;
+  hosts: AlignmentPoolHostStatus[];
 };
 // A sentence locator's blockIndex counts the "blocks" of a section. The server
 // (node-html-parser) and the reader (the browser DOM) count them with this one

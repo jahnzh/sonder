@@ -3,12 +3,17 @@ import { execFile } from "node:child_process";
 import { cpSync, mkdirSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
-import type { AlignmentJob } from "../src/reading-types.ts";
+import type {
+  AlignmentJob,
+  AlignmentPoolHostId,
+  AlignmentPoolHostStatus,
+  AlignmentPoolStatus,
+} from "../src/reading-types.ts";
 import type * as schema from "./schema.ts";
 
 const execFileAsync = promisify(execFile);
 
-export type PoolHostId = "wsl" | "steamdeck" | "lisa";
+export type PoolHostId = AlignmentPoolHostId;
 export const CTC_ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-v1";
 
 export type AlignmentJobPoolState = {
@@ -122,6 +127,7 @@ let depsOverride: PoolSshDeps | null = null;
 
 export function setAlignmentPoolDepsForTests(deps: PoolSshDeps | null) {
   depsOverride = deps;
+  resetAlignmentPoolStatusCache();
 }
 
 function defaultPoolSshDeps(): PoolSshDeps {
@@ -173,13 +179,20 @@ function failureDetail(error: unknown) {
   return message.replace(/\s+/g, " ").trim().slice(0, 200) || "Unknown failure";
 }
 
+function formatPoolError(step: string, error: unknown) {
+  const detail = failureDetail(error);
+  return detail.toLowerCase().startsWith(`${step}:`) ? detail : `${step}: ${detail}`;
+}
+
 function recordPoolError(job: AlignmentJob, hostId: PoolHostId, step: string, error: unknown) {
   job.poolErrors ??= {};
-  const detail = failureDetail(error);
-  job.poolErrors[hostId] = detail.toLowerCase().startsWith(`${step}:`) ? detail : `${step}: ${detail}`;
+  const formatted = formatPoolError(step, error);
+  job.poolErrors[hostId] = formatted;
+  getAlignmentPoolCoordinator().recordHostError(hostId, formatted);
 }
 
 function clearHostError(job: AlignmentJob, hostId: PoolHostId) {
+  getAlignmentPoolCoordinator().clearHostError(hostId);
   if (!job.poolErrors) return;
   delete job.poolErrors[hostId];
   if (!Object.keys(job.poolErrors).length) delete job.poolErrors;
@@ -201,6 +214,7 @@ export class AlignmentPoolCoordinator {
   private slots = new Map<PoolHostId, Set<string>>();
   private recordings = new Map<string, RecordingLease>();
   private localJobs = new Set<string>();
+  private hostErrors = new Map<PoolHostId, string | null>();
   private readonly maxLocalConcurrent = 1;
   constructor(private hosts: PoolHost[] = defaultPoolHosts()) {}
 
@@ -208,10 +222,31 @@ export class AlignmentPoolCoordinator {
     this.slots.clear();
     this.recordings.clear();
     this.localJobs.clear();
+    this.hostErrors.clear();
+  }
+
+  listHosts() {
+    return [...this.hosts];
   }
 
   hostById(id: PoolHostId) {
     return this.hosts.find((host) => host.id === id);
+  }
+
+  recordHostError(hostId: PoolHostId, reason: string) {
+    this.hostErrors.set(hostId, reason);
+  }
+
+  clearHostError(hostId: PoolHostId) {
+    this.hostErrors.set(hostId, null);
+  }
+
+  hasHostErrorState(hostId: PoolHostId) {
+    return this.hostErrors.has(hostId);
+  }
+
+  lastError(hostId: PoolHostId) {
+    return this.hostErrors.get(hostId) ?? null;
   }
 
   activeOnHost(hostId: PoolHostId) {
@@ -306,6 +341,7 @@ export function getAlignmentPoolCoordinator() {
 
 export function resetAlignmentPoolCoordinator(hosts?: PoolHost[]) {
   coordinator = new AlignmentPoolCoordinator(hosts);
+  resetAlignmentPoolStatusCache();
 }
 
 export async function stageTracksOnHost(input: StageTracksInput) {
@@ -370,25 +406,44 @@ function workerOrigin(value: string) {
   return `${url.protocol}//${hostname}:${url.port || (url.protocol === "https:" ? "443" : "80")}`;
 }
 
-async function ctcHealth(host: PoolHost): Promise<CtcHealth> {
+function ctcUrlGuardError(host: PoolHost): string | null {
+  if (!URL.canParse(host.workerUrl)) return "invalid worker URL";
   // A pool URL accidentally pointed at the local worker must never send it
   // CTC, even if that worker happens to advertise a compatible CPU runtime.
   const hostname = new URL(host.workerUrl).hostname;
   if (["localhost", "127.0.0.1", "[::1]"].includes(hostname))
-    throw new Error("worker URL points to the local host");
+    return "worker URL points to the local host";
   const localWorker = process.env.ALIGNMENT_WORKER_URL;
-  if (localWorker && workerOrigin(host.workerUrl) === workerOrigin(localWorker))
-    throw new Error("worker URL points to the local worker");
+  if (localWorker && URL.canParse(localWorker) && workerOrigin(host.workerUrl) === workerOrigin(localWorker))
+    return "worker URL points to the local worker";
+  return null;
+}
+
+function validCtcHealth(host: PoolHost, health: Partial<CtcHealth> | null | undefined): health is CtcHealth {
+  return Boolean(
+    health &&
+      health.ready === true &&
+      typeof health.mediaRoot === "string" &&
+      isAbsolute(health.mediaRoot) &&
+      typeof health.busy === "boolean" &&
+      typeof health.stuck === "boolean" &&
+      health.ctc &&
+      health.ctc.engine === CTC_ENGINE &&
+      health.ctc.ready === true &&
+      health.ctc.device === (host.id === "wsl" ? "cuda" : "cpu") &&
+      health.ctc.precision === (host.id === "wsl" ? "float16" : "float32"),
+  );
+}
+
+async function ctcHealth(host: PoolHost): Promise<CtcHealth> {
+  const guardError = ctcUrlGuardError(host);
+  if (guardError) throw new Error(guardError);
   const response = await fetch(`${host.workerUrl.replace(/\/$/, "")}/health`, {
     signal: AbortSignal.timeout(5000),
   });
   if (!response.ok) throw new Error(`worker returned HTTP ${response.status}`);
   const health = await response.json() as CtcHealth;
-  if (!health || health.ready !== true || typeof health.mediaRoot !== "string" || !isAbsolute(health.mediaRoot) ||
-      typeof health.busy !== "boolean" || typeof health.stuck !== "boolean" ||
-      !health.ctc || health.ctc.engine !== CTC_ENGINE || health.ctc.ready !== true ||
-      health.ctc.device !== (host.id === "wsl" ? "cuda" : "cpu") ||
-      health.ctc.precision !== (host.id === "wsl" ? "float16" : "float32"))
+  if (!validCtcHealth(host, health))
     throw new Error("worker is not ready or has incompatible CTC settings");
   return health;
 }
@@ -568,6 +623,258 @@ export function clearPoolStaging(job: AlignmentJob, triedHosts: PoolHostId[]) {
     triedHosts,
     stagedAudio: {},
   };
+}
+
+export function currentPoolEngine(): "ctc" | "aeneas" {
+  return process.env.ALIGNMENT_CHAPTER_ENGINE === "aeneas" ? "aeneas" : "ctc";
+}
+
+export function activePoolHosts(
+  hosts: PoolHost[] = getAlignmentPoolCoordinator().listHosts(),
+  engine: "ctc" | "aeneas" = currentPoolEngine(),
+) {
+  return engine === "aeneas"
+    ? hosts.filter((host) => host.id !== "lisa")
+    : hosts.filter((host) => host.id === "wsl" || host.id === "lisa");
+}
+
+function safeWorkerUrl(raw: string) {
+  if (!URL.canParse(raw)) return raw.replace(/\/\/[^/@]*@/, "//");
+  const url = new URL(raw);
+  url.username = "";
+  url.password = "";
+  url.search = "";
+  url.hash = "";
+  return url.toString().replace(/\/$/, "");
+}
+
+type ProbedHostSnapshot = {
+  id: PoolHostId;
+  sshTarget: string;
+  workerUrl: string;
+  maxConcurrent: number;
+  reachable: boolean;
+  device: string | null;
+  precision: string | null;
+  workerBusy: boolean;
+  stuck: boolean;
+  probeError: string | null;
+};
+
+type CachedPoolProbe = {
+  key: string;
+  enabled: boolean;
+  engine: "ctc" | "aeneas";
+  checkedAt: number;
+  hosts: ProbedHostSnapshot[];
+};
+
+const poolStatusTtlMs = 30_000;
+let cachedPoolProbe: CachedPoolProbe | null = null;
+let pendingPoolProbe: { key: string; promise: Promise<CachedPoolProbe> } | null = null;
+
+export function resetAlignmentPoolStatusCache() {
+  cachedPoolProbe = null;
+  pendingPoolProbe = null;
+}
+
+function poolProbeCacheKey() {
+  const engine = currentPoolEngine();
+  const hosts = activePoolHosts(getAlignmentPoolCoordinator().listHosts(), engine)
+    .map((host) => `${host.id}:${host.sshTarget}:${host.workerUrl}:${host.maxConcurrent}`)
+    .join("|");
+  return `${poolEnabled() ? "1" : "0"}\n${engine}\n${process.env.ALIGNMENT_WORKER_URL ?? ""}\n${hosts}`;
+}
+
+async function probeSinglePoolHost(host: PoolHost, engine: "ctc" | "aeneas"): Promise<ProbedHostSnapshot> {
+  const maxConcurrent = engine === "ctc" ? 1 : host.maxConcurrent;
+  const workerUrl = safeWorkerUrl(host.workerUrl);
+  if (engine === "ctc") {
+    const guardError = ctcUrlGuardError(host);
+    if (guardError) {
+      return {
+        id: host.id,
+        sshTarget: host.sshTarget,
+        workerUrl,
+        maxConcurrent,
+        reachable: false,
+        device: null,
+        precision: null,
+        workerBusy: false,
+        stuck: false,
+        probeError: formatPoolError("health", guardError),
+      };
+    }
+  } else if (!URL.canParse(host.workerUrl)) {
+    return {
+      id: host.id,
+      sshTarget: host.sshTarget,
+      workerUrl,
+      maxConcurrent,
+      reachable: false,
+      device: null,
+      precision: null,
+      workerBusy: false,
+      stuck: false,
+      probeError: "health: invalid worker URL",
+    };
+  }
+  let device: string | null = null;
+  let precision: string | null = null;
+  let workerBusy = false;
+  let stuck = false;
+  let healthError: string | null = null;
+  let sshError: string | null = null;
+  await Promise.all([
+    (async () => {
+      try {
+        const response = await fetch(`${host.workerUrl.replace(/\/$/, "")}/health`, {
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!response.ok) {
+          healthError = `health: worker returned HTTP ${response.status}`;
+          return;
+        }
+        const raw = await response.json() as Partial<CtcHealth> | null;
+        if (raw && typeof raw === "object") {
+          workerBusy = raw.busy === true;
+          stuck = raw.stuck === true;
+          if (typeof raw.ctc?.device === "string") device = raw.ctc.device;
+          else if (engine === "aeneas" && raw.ready === true) device = "cpu";
+          if (typeof raw.ctc?.precision === "string") precision = raw.ctc.precision;
+        }
+        if (engine === "ctc") {
+          if (!validCtcHealth(host, raw))
+            healthError = "health: worker is not ready or has incompatible CTC settings";
+        } else if (!raw || raw.ready !== true) {
+          healthError = "health: worker is not ready";
+        }
+      } catch (error) {
+        healthError = formatPoolError("health", error);
+      }
+    })(),
+    (async () => {
+      try {
+        if (!(await poolDeps().probe(host.sshTarget))) sshError = "ssh: probe failed";
+      } catch (error) {
+        sshError = formatPoolError("ssh", error);
+      }
+    })(),
+  ]);
+  const probeError = healthError ?? sshError;
+  return {
+    id: host.id,
+    sshTarget: host.sshTarget,
+    workerUrl,
+    maxConcurrent,
+    reachable: probeError === null,
+    device,
+    precision,
+    workerBusy,
+    stuck,
+    probeError,
+  };
+}
+
+async function runPoolProbe(): Promise<CachedPoolProbe> {
+  const enabled = poolEnabled();
+  const engine = currentPoolEngine();
+  const hosts = activePoolHosts(getAlignmentPoolCoordinator().listHosts(), engine);
+  const checkedAt = Date.now();
+  const key = poolProbeCacheKey();
+  if (!enabled) {
+    return {
+      key,
+      enabled: false,
+      engine,
+      checkedAt,
+      hosts: hosts.map((host) => ({
+        id: host.id,
+        sshTarget: host.sshTarget,
+        workerUrl: safeWorkerUrl(host.workerUrl),
+        maxConcurrent: engine === "ctc" ? 1 : host.maxConcurrent,
+        reachable: false,
+        device: null,
+        precision: null,
+        workerBusy: false,
+        stuck: false,
+        probeError: null,
+      })),
+    };
+  }
+  const probed = await Promise.all(hosts.map((host) => probeSinglePoolHost(host, engine)));
+  return {
+    key,
+    enabled: true,
+    engine,
+    checkedAt: Date.now(),
+    hosts: probed,
+  };
+}
+
+function materializePoolStatus(
+  snapshot: CachedPoolProbe,
+  persistedErrors?: Partial<Record<PoolHostId, string>>,
+): AlignmentPoolStatus {
+  const coord = getAlignmentPoolCoordinator();
+  return {
+    enabled: snapshot.enabled,
+    engine: snapshot.engine,
+    checkedAt: snapshot.checkedAt,
+    hosts: snapshot.hosts.map((host): AlignmentPoolHostStatus => {
+      const activeJobs = coord.activeOnHost(host.id);
+      const busy = host.workerBusy || host.stuck || activeJobs > 0;
+      const lastError =
+        host.probeError ??
+        (host.stuck ? coord.lastError(host.id) ?? "health: worker is stuck" : null) ??
+        (coord.hasHostErrorState(host.id) ? coord.lastError(host.id) : persistedErrors?.[host.id] ?? null);
+      return {
+        id: host.id,
+        sshTarget: host.sshTarget,
+        workerUrl: host.workerUrl,
+        reachable: host.reachable,
+        device: host.device,
+        precision: host.precision,
+        busy,
+        stuck: host.stuck,
+        activeJobs,
+        maxConcurrent: host.maxConcurrent,
+        lastError,
+      };
+    }),
+  };
+}
+
+export async function probeAlignmentPool(
+  persistedErrors?: Partial<Record<PoolHostId, string>>,
+): Promise<AlignmentPoolStatus> {
+  const snapshot = await runPoolProbe();
+  if (poolProbeCacheKey() === snapshot.key) cachedPoolProbe = snapshot;
+  return materializePoolStatus(snapshot, persistedErrors);
+}
+
+export async function getAlignmentPoolStatus(options?: {
+  fresh?: boolean;
+  persistedErrors?: Partial<Record<PoolHostId, string>>;
+}): Promise<AlignmentPoolStatus> {
+  if (options?.fresh || !poolEnabled()) return probeAlignmentPool(options?.persistedErrors);
+  const key = poolProbeCacheKey();
+  if (cachedPoolProbe?.key === key && Date.now() - cachedPoolProbe.checkedAt < poolStatusTtlMs) {
+    return materializePoolStatus(cachedPoolProbe, options?.persistedErrors);
+  }
+  if (pendingPoolProbe?.key === key) {
+    return materializePoolStatus(await pendingPoolProbe.promise, options?.persistedErrors);
+  }
+  const promise = runPoolProbe()
+    .then((snapshot) => {
+      if (poolProbeCacheKey() === snapshot.key) cachedPoolProbe = snapshot;
+      return snapshot;
+    })
+    .finally(() => {
+      if (pendingPoolProbe?.promise === promise) pendingPoolProbe = null;
+    });
+  pendingPoolProbe = { key, promise };
+  return materializePoolStatus(await promise, options?.persistedErrors);
 }
 
 export { POOL_FAILURE_MESSAGE };
