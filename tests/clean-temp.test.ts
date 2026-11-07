@@ -96,8 +96,8 @@ test("freed MB is the removed directory size, not a free-space delta", () => {
   // Concurrent writer on the same filesystem: a df-based delta can go negative (#285).
   const pressure = join(root, "pressure.bin");
   const writer = spawn(
-    "bash",
-    ["-c", `while true; do dd if=/dev/zero of="${pressure}" bs=1M count=8 status=none 2>/dev/null; done`],
+    "timeout",
+    ["60", "bash", "-c", `while true; do dd if=/dev/zero of="${pressure}" bs=1M count=8 status=none 2>/dev/null; done`],
     { stdio: "ignore", detached: true },
   );
   try {
