@@ -107,6 +107,9 @@ export type AlignmentJob = {
     | "error";
   progress: number;
   engine: string;
+  /** Runtime details for CTC diagnostics; neither changes the map generation. */
+  ctcDevice?: string;
+  ctcPrecision?: string;
   outcome?: AlignmentOutcome;
   /** Total seconds spent in each worker stage across completed requests. */
   stageTimings?: Record<string, number>;
@@ -130,13 +133,13 @@ export type AlignmentJob = {
   anchoring?: AlignmentAnchoring;
   /** "backfill" for jobs queued automatically; "projected" for ebook-set maps. */
   origin?: "backfill" | "manual" | "projected";
-  /** Remote SSH pool dispatch for full anchored jobs. */
+  /** Remote SSH pool dispatch for CTC or full anchored jobs. */
   pool?: {
-    hostId: "wsl" | "steamdeck";
+    hostId: "wsl" | "steamdeck" | "lisa";
     attempt: number;
     jobMediaRoot: string;
     workerUrl: string;
-    triedHosts: ("wsl" | "steamdeck")[];
+    triedHosts: ("wsl" | "steamdeck" | "lisa")[];
     stagedAudio: Record<string, string>;
   };
   /** Present on summary list responses; full intervals live on /map. */
