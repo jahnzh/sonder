@@ -80,3 +80,63 @@ export function countVisibleQueuedFollowUps(queueText: string): number {
   const m = String(queueText).match(re);
   return m ? m.length : 0;
 }
+
+/**
+ * Extract probe prefix and suffix (first 30 and last 30 characters of normalized whitespace)
+ * to search for a message on a terminal screen or queue without prefix collisions.
+ */
+export function messageProbes(message: string): { prefix: string; suffix: string } {
+  const normalized = String(message).trim().replace(/\s+/g, " ");
+  if (!normalized) return { prefix: "", suffix: "" };
+  const prefix = normalized.slice(0, 30);
+  const suffix = normalized.length > 30 ? normalized.slice(-30) : prefix;
+  return { prefix, suffix };
+}
+
+/** Check if text contains both the prefix (first 30 chars) and suffix (last 30 chars) of message. */
+export function matchesMessageProbe(text: string, message: string): boolean {
+  const { prefix, suffix } = messageProbes(message);
+  if (!prefix) return false;
+  const normalizedText = String(text).replace(/\s+/g, " ");
+  return normalizedText.includes(prefix) && normalizedText.includes(suffix);
+}
+
+/** Legacy 40-character single probe (for backwards compatibility). */
+export function messageProbe(message: string): string {
+  return String(message).trim().replace(/\s+/g, " ").slice(0, 40);
+}
+
+export type DeliveryStatus =
+  | "delivered"
+  | "queued"
+  | "typed_no_turn"
+  | "not found";
+
+/**
+ * Classify delivery status of a message on a worker screen dump:
+ * - "queued": probe appears inside the follow-ups queue box.
+ * - "delivered": probe appears on screen outside queue AND worker is busy (evidence of turn start).
+ * - "typed_no_turn": probe appears on screen outside queue but worker is not busy (swallowed Enter).
+ * - "not found": probe does not appear on screen.
+ */
+export function classifyDeliveryStatus(
+  screen: string,
+  message: string,
+): DeliveryStatus {
+  const { prefix } = messageProbes(message);
+  if (!prefix) return "not found";
+
+  const box = extractFollowUpsBox(screen);
+  if (matchesMessageProbe(box, message)) {
+    return "queued";
+  }
+
+  if (matchesMessageProbe(screen, message)) {
+    if (isWorkerScreenBusy(screen)) {
+      return "delivered";
+    }
+    return "typed_no_turn";
+  }
+
+  return "not found";
+}

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import {
+  classifyDeliveryStatus,
   countVisibleQueuedFollowUps,
   extractFollowUpsBox,
   isWorkerScreenBusy,
@@ -50,6 +51,32 @@ test("busy line: Cursor spinner + Titlecase+ing", () => {
 test("busy line: Codex • Working (", () => {
   const line = readFileSync(join(fixtures, "codex-bullet-working.txt"), "utf8").split(/\r?\n/)[0];
   assert.equal(isWorkerScreenBusyLine(line), true);
+});
+
+test("delivery confirmation: idle agent, mid-turn agent, Codex agent, and not-found", () => {
+  const idleScreen = readFileSync(join(fixtures, "idle-agent-turn-start.txt"), "utf8");
+  assert.equal(classifyDeliveryStatus(idleScreen, "Please run unit tests"), "delivered");
+
+  const midTurnScreen = readFileSync(join(fixtures, "mid-turn-follow-up.txt"), "utf8");
+  assert.equal(classifyDeliveryStatus(midTurnScreen, "Fix issue 292 send-agent confirmation"), "queued");
+
+  const codexScreen = readFileSync(join(fixtures, "codex-prompt-turn.txt"), "utf8");
+  assert.equal(classifyDeliveryStatus(codexScreen, "Fix issue 292 send-agent confirmation"), "delivered");
+
+  assert.equal(classifyDeliveryStatus(idleScreen, "nonexistent prompt message"), "not found");
+});
+
+test("delivery confirmation: message in composer without a turn start is not delivered", () => {
+  const composerScreen = readFileSync(join(fixtures, "composer-no-turn.txt"), "utf8");
+  const msg = "Fix issue 292 send-agent confirmation";
+  assert.equal(classifyDeliveryStatus(composerScreen, msg), "typed_no_turn");
+  assert.notEqual(classifyDeliveryStatus(composerScreen, msg), "delivered");
+});
+
+test("delivery confirmation: older message with same first 40 chars but different ending is not found", () => {
+  const olderScreen = readFileSync(join(fixtures, "prefix-collision-older.txt"), "utf8");
+  const newMessage = "Fix issue 292 send-agent confirmation check: new run to execute now";
+  assert.equal(classifyDeliveryStatus(olderScreen, newMessage), "not found");
 });
 
 test("screen classification: busy and idle Antigravity fixtures", () => {
