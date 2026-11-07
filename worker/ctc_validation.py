@@ -64,7 +64,10 @@ def accepted_intervals(path, boundaries, intervals, fragments, labels, sample_of
             reference = tokens[item["index"]]
             if not reference or item["end"] <= item["start"]:
                 continue
-            local = observed(item["start"], item["end"])
+            local_first = bisect_left(spoken_times, item["start"] - 0.25)
+            local_last = bisect_right(spoken_times, item["end"] + 0.25)
+            local_spoken = spoken[local_first:local_last]
+            local = [word for word, _ in local_spoken]
             if not local:
                 continue
             matcher = SequenceMatcher(None, reference, local, autojunk=False)
@@ -77,6 +80,22 @@ def accepted_intervals(path, boundaries, intervals, fragments, labels, sample_of
             expected_letters, heard_letters = "".join(reference), "".join(local)
             letter_support = (len(expected_letters) >= 8 and
                               SequenceMatcher(None, expected_letters, heard_letters, autojunk=False).ratio() >= 0.75)
-            if lexical_support or letter_support:
+            if not (lexical_support or letter_support):
+                continue
+            if lexical_support:
+                last_supported = max(block.b + block.size - 1 for block in blocks)
+            else:
+                letter_blocks = SequenceMatcher(None, expected_letters, heard_letters, autojunk=False).get_matching_blocks()
+                last_letter = max(block.b + block.size - 1 for block in letter_blocks if block.size)
+                last_supported, count = 0, 0
+                for index, word in enumerate(local):
+                    count += len(word)
+                    if last_letter < count:
+                        last_supported = index
+                        break
+            # A forced CTC path can follow unrelated chapter credits long after
+            # the matching sentence has ended. Require local acoustic support
+            # near the forced end rather than publishing that extended span.
+            if item["end"] - local_spoken[last_supported][1] <= 3:
                 accepted.append(item)
     return accepted

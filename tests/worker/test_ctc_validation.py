@@ -49,10 +49,28 @@ class CTCValidation(unittest.TestCase):
         intervals[0]["end"] = 100
         self.assertEqual(accepted_intervals(path, boundaries, intervals, fragments, LABELS, 0), [])
 
+    def test_forced_end_extending_through_unrelated_credits_is_unsynced(self):
+        fragments = ["THE CURIOUS RABBIT CROSSED THE GARDEN"]
+        sentence, _, _ = speech(fragments)
+        credits, _, _ = speech(["CHAPTER SIX ENDS"])
+        path = sentence + [0] * 500 + credits
+        boundaries = [i * 320 for i in range(len(path))]
+        interval = {"index": 0, "start": 0, "end": len(path) * 0.02}
+        self.assertEqual(accepted_intervals(path, boundaries, [interval], fragments, LABELS, 0), [])
+
     def test_merged_word_boundary_and_spelling_error_keep_letter_evidence(self):
         reference = ["THE COURIER WILL FETCH A RED PACKAGE"]
         path, boundaries, intervals = speech(["THE COURIER WILL FETCH ARED PACKIGE"])
         self.assertEqual(accepted_intervals(path, boundaries, intervals, reference, LABELS, 0), intervals)
+
+    def test_letter_evidence_also_needs_support_near_the_forced_end(self):
+        fragments = ["THE CURIOUS RABBIT CROSSED THE GARDEN", "A BRAVE HUNTER HUNTED LIONS"]
+        path, boundaries, intervals = speech([fragments[0], "ABRAVEHUNTER HUNTEDLIONS"])
+        self.assertEqual(accepted_intervals(path, boundaries, intervals, fragments, LABELS, 0), intervals)
+        path += [0] * 500
+        boundaries = [i * 320 for i in range(len(path))]
+        intervals[1]["end"] = len(path) * 0.02
+        self.assertEqual([item["index"] for item in accepted_intervals(path, boundaries, intervals, fragments, LABELS, 0)], [0])
 
 
 if __name__ == "__main__":
