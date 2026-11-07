@@ -1,8 +1,8 @@
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { readerFixture } from "./reader-fixture.ts";
 
 const temp = mkdtempSync(join(tmpdir(), "sonder-ctc-"));
@@ -11,8 +11,9 @@ process.env.MEDIA_ROOT = join(temp, "media");
 process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
 delete process.env.ALIGNMENT_CHAPTER_ENGINE; // CTC is the default chapter engine
-process.env.ALIGNMENT_WORKER_URL = "http://ctc-worker.test";
+process.env.ALIGNMENT_WORKER_URL = "http://production-worker.test";
 process.env.ALIGNMENT_WORKER_TOKEN = "test-token";
+process.env.ALIGNMENT_POOL_ENABLED = "1";
 mkdirSync(process.env.MEDIA_ROOT, { recursive: true });
 const audio = join(process.env.MEDIA_ROOT, "audio.wav");
 const ebook = join(process.env.MEDIA_ROOT, "book.epub");
@@ -23,8 +24,39 @@ const { db, sqlite } = await import("../server/db.ts");
 const schema = await import("../server/schema.ts");
 const { extractBook } = await import("../server/reader.ts");
 const { createAlignment, alignmentJob, stopAlignments } = await import("../server/alignment.ts");
+const { resetAlignmentPoolCoordinator, setAlignmentPoolDepsForTests } = await import("../server/alignment-pool.ts");
 const originalFetch = globalThis.fetch;
 const engine = "ctc-wav2vec2-base-960h-torchaudio-2.8-v1";
+resetAlignmentPoolCoordinator([
+  { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test" },
+  { id: "lisa", sshTarget: "lisa", maxConcurrent: 1, remoteWorkRoot: temp, workerUrl: "http://lisa-worker.test" },
+]);
+const testPoolDeps = {
+  async probe() { return true; },
+  async exec() { return { code: 0, stdout: "", stderr: "" }; },
+  async uploadFile(local: string, remote: string) {
+    mkdirSync(dirname(remote), { recursive: true });
+    copyFileSync(local, remote);
+  },
+};
+setAlignmentPoolDepsForTests(testPoolDeps);
+function mockWorker(handler: typeof fetch, options: {
+  down?: string[]; busy?: string[]; wrongDevice?: string[]; onHealth?: (host: string) => void;
+} = {}) {
+  globalThis.fetch = async (input, init) => {
+    if (String(input).endsWith("/health")) {
+      const lisa = String(input).includes("lisa-worker");
+      const host = lisa ? "lisa" : "wsl";
+      options.onHealth?.(host);
+      if (options.down?.includes(host)) throw new Error(`${host} is unreachable`);
+      return Response.json({ ready: true, busy: options.busy?.includes(host) ?? false, stuck: false,
+        mediaRoot: join(temp, lisa ? "lisa" : "wsl"),
+        ctc: { engine, ready: true, device: lisa || options.wrongDevice?.includes(host) ? "cpu" : "cuda",
+          precision: lisa ? "float32" : "float16", anchorReady: true } });
+    }
+    return handler(input, init);
+  };
+}
 db.insert(schema.works).values({ id: "ctc-work", title: "Book", author: "Author", description: "", genre: "", year: 2026 }).run();
 db.insert(schema.editions).values({ id: "ctc-edition", workId: "ctc-work", cover: "", narrator: "", rating: 0, sourceLabel: "", language: "en" }).run();
 db.insert(schema.recordings).values({ id: "ctc-recording", editionId: "ctc-edition" }).run();
@@ -33,6 +65,8 @@ db.insert(schema.ebookEditions).values({ id: "ctc-ebook", workId: "ctc-work", fo
 
 after(() => {
   globalThis.fetch = originalFetch;
+  setAlignmentPoolDepsForTests(null);
+  resetAlignmentPoolCoordinator();
   stopAlignments();
   sqlite.close();
   rmSync(temp, { recursive: true, force: true });
@@ -51,14 +85,14 @@ test("chapter CTC publishes first and last sentences with worker metadata and re
   const book = await extractBook("ctc-ebook");
   const pairings = book.sections.map((section, i) => ({ section: section.index, trackId: "ctc-track", start: 10 + i * 100, duration: 80 }));
   const starts: number[] = [];
-  globalThis.fetch = async (input, init) => {
+  mockWorker(async (input, init) => {
     assert.equal(String(input), "http://ctc-worker.test/align");
     const request = JSON.parse(String(init?.body));
     assert.equal(request.engine, "ctc");
     starts.push(request.start);
     return Response.json({ engine, outcome: "mapped", stageTimings: { acousticEncoding: 0.5, ctcPath: 0.25 }, elapsedSeconds: 1,
       intervals: request.fragments.map((_: string, i: number) => ({ index: i, start: request.start + i, end: request.start + i + 0.8 })) });
-  };
+  });
   const created = await createAlignment("ctc-ebook", "ctc-recording", pairings, "chapters");
   const job = await settled(created.id);
   assert.equal(job.status, "partial", job.error ?? undefined);
@@ -76,8 +110,9 @@ test("chapter CTC publishes first and last sentences with worker metadata and re
 
   // A pre-CTC worker ignores the new request field. Do not publish its aeneas
   // output under the CTC generation or accept its cached result as CTC.
-  globalThis.fetch = async () => Response.json({ engine: "aeneas-1.7.3", elapsedSeconds: 1,
-    intervals: [{ index: 0, start: 10, end: 11 }] });
+  rmSync(join(temp, "media", "alignment", job.id), { recursive: true, force: true });
+  mockWorker(async () => Response.json({ engine: "aeneas-1.7.3", elapsedSeconds: 1,
+    intervals: [{ index: 0, start: 10, end: 11 }] }));
   const retried = await createAlignment("ctc-ebook", "ctc-recording", pairings, "chapters");
   const failed = await settled(retried.id);
   assert.equal(failed.status, "error");
@@ -87,12 +122,12 @@ test("chapter CTC publishes first and last sentences with worker metadata and re
   // The rollback switch sends new chapter jobs back to aeneas, and the worker is then asked for aeneas.
   process.env.ALIGNMENT_CHAPTER_ENGINE = "aeneas";
   const requested: string[] = [];
-  globalThis.fetch = async (_input, init) => {
+  mockWorker(async (_input, init) => {
     const request = JSON.parse(String(init?.body));
     requested.push(request.engine);
     return Response.json({ engine: "aeneas-1.7.3", elapsedSeconds: 1,
       intervals: request.fragments.map((_: string, i: number) => ({ index: i, start: request.start + i, end: request.start + i + 0.8 })) });
-  };
+  });
   const rolledBack = await createAlignment("ctc-ebook", "ctc-recording", pairings, "chapters");
   assert.equal(rolledBack.engine, "aeneas-1.7.3");
   const rolledBackJob = await settled(rolledBack.id);
@@ -101,14 +136,15 @@ test("chapter CTC publishes first and last sentences with worker metadata and re
   delete process.env.ALIGNMENT_CHAPTER_ENGINE;
 
   // Anchored jobs also default to CTC for their alignment windows.
-  delete process.env.ALIGNMENT_WORKER_URL;
+  delete process.env.ALIGNMENT_WORKER_TOKEN;
   const anchored = await createAlignment("ctc-ebook", "ctc-recording", undefined, "anchored");
   assert.equal(anchored.mode, "anchored");
   assert.equal(anchored.engine, engine);
 });
 
 test("an anchored job aligns its windows with CTC and keeps its CTC identity through speech recovery", async () => {
-  process.env.ALIGNMENT_WORKER_URL = "http://ctc-worker.test";
+  process.env.ALIGNMENT_WORKER_URL = "http://production-worker.test";
+  process.env.ALIGNMENT_WORKER_TOKEN = "test-token";
   const file = join(process.env.MEDIA_ROOT!, "alice.epub");
   writeFileSync(file, await readerFixture());
   db.insert(schema.ebookEditions).values({ id: "ctc-alice-ebook", workId: "ctc-work", format: "epub", source: file }).run();
@@ -121,7 +157,7 @@ test("an anchored job aligns its windows with CTC and keeps its CTC identity thr
   db.insert(schema.tracks).values({ id: "ctc-alice-track", recordingId: "ctc-alice-recording", title: "Alice.m4b", index: 0,
     duration: spoken(paragraphs.length) + 20, chapters: [], source: audio, sourceType: "local" }).run();
   const windowEngines: unknown[] = [];
-  globalThis.fetch = async (input, init) => {
+  mockWorker(async (input, init) => {
     const request = JSON.parse(String(init?.body));
     if (String(input).endsWith("/anchor")) {
       const index = Math.max(0, Math.ceil((request.start - 30) / 5));
@@ -134,7 +170,7 @@ test("an anchored job aligns its windows with CTC and keeps its CTC identity thr
     const step = request.duration / request.fragments.length;
     return Response.json({ engine, outcome: "mapped", stageTimings: { ctcPath: 0.5 }, elapsedSeconds: 1,
       intervals: request.fragments.map((_: string, i: number) => ({ index: i, start: request.start + i * step, end: request.start + (i + 1) * step })) });
-  };
+  });
   const created = await createAlignment("ctc-alice-ebook", "ctc-alice-recording", undefined, "anchored");
   assert.equal(created.mode, "anchored");
   assert.equal(created.engine, engine);
@@ -151,8 +187,35 @@ test("an anchored job aligns its windows with CTC and keeps its CTC identity thr
   assert.ok(["mapped", "partial"].includes(job.outcome!));
   assert.ok(job.intervals.length > 0);
 
+  // A failed window must not be cached before the CPU fallback retries it.
+  rmSync(join(temp, "media", "alignment", job.id), { recursive: true, force: true });
+  const windowHosts: string[] = [];
+  mockWorker(async (input, init) => {
+    const request = JSON.parse(String(init?.body));
+    if (String(input).endsWith("/anchor")) {
+      const index = Math.max(0, Math.ceil((request.start - 30) / 5));
+      if (index >= paragraphs.length || spoken(index) > request.start + request.duration - 3)
+        return Response.json({ match: null, start: request.start, text: "" });
+      return Response.json({ match: { index, score: 0.9 }, start: spoken(index), text: "word ".repeat(40) });
+    }
+    windowHosts.push(String(input));
+    if (String(input).includes("ctc-worker"))
+      return Response.json({ engine, outcome: "error", elapsedSeconds: 1, intervals: [] });
+    const step = request.duration / request.fragments.length;
+    return Response.json({ engine, outcome: "mapped", elapsedSeconds: 1,
+      intervals: request.fragments.map((_: string, i: number) => ({ index: i, start: request.start + i * step, end: request.start + (i + 1) * step })) });
+  });
+  const failedOver = await createAlignment("ctc-alice-ebook", "ctc-alice-recording", undefined, "anchored");
+  const cpuJob = await settled(failedOver.id);
+  assert.equal(cpuJob.status, "partial", cpuJob.error ?? undefined);
+  assert.equal(cpuJob.engine, engine);
+  assert.equal(cpuJob.ctcDevice, "cpu");
+  assert.equal(windowHosts[0], "http://ctc-worker.test/align");
+  assert.ok(windowHosts.slice(1).every((url) => url === "http://lisa-worker.test/align"));
+
   // A worker that answers a CTC window with another engine is refused, not published.
-  globalThis.fetch = async (input, init) => {
+  rmSync(join(temp, "media", "alignment", job.id), { recursive: true, force: true });
+  mockWorker(async (input, init) => {
     const request = JSON.parse(String(init?.body));
     if (String(input).endsWith("/anchor")) {
       const index = Math.max(0, Math.ceil((request.start - 30) / 5));
@@ -161,7 +224,7 @@ test("an anchored job aligns its windows with CTC and keeps its CTC identity thr
       return Response.json({ match: { index, score: 0.9, text: "" }, start: spoken(index), text: "word ".repeat(40) });
     }
     return Response.json({ engine: "aeneas-1.7.3", elapsedSeconds: 1, intervals: [{ index: 0, start: request.start, end: request.start + 1 }] });
-  };
+  });
   const wrong = await createAlignment("ctc-alice-ebook", "ctc-alice-recording", undefined, "anchored");
   let refused = alignmentJob(wrong.id);
   for (let i = 0; i < 300 && refused.status !== "error"; i++) {
@@ -173,13 +236,13 @@ test("an anchored job aligns its windows with CTC and keeps its CTC identity thr
 });
 
 test("two ebook editions send the same recording identity and publish cache timings", async () => {
-  process.env.ALIGNMENT_WORKER_URL = "http://ctc-worker.test";
+  process.env.ALIGNMENT_WORKER_URL = "http://production-worker.test";
   const otherEbook = join(process.env.MEDIA_ROOT!, "second-edition.epub");
   writeFileSync(otherEbook, await readerFixture({ bodies: ["<p>A different edition.</p>", "<p>Another ending.</p>"] }));
   db.insert(schema.ebookEditions).values({ id: "ctc-second-ebook", workId: "ctc-work", format: "epub", source: otherEbook }).run();
   const requests: { recordingId: string; trackId: string; audioFingerprint: string }[] = [];
   const seen = new Set<string>();
-  globalThis.fetch = async (_input, init) => {
+  mockWorker(async (_input, init) => {
     const request = JSON.parse(String(init?.body));
     const identity = { recordingId: request.recordingId, trackId: request.trackId, audioFingerprint: request.audioFingerprint };
     requests.push(identity);
@@ -189,7 +252,7 @@ test("two ebook editions send the same recording identity and publish cache timi
     return Response.json({ engine, outcome: "mapped", elapsedSeconds: 1,
       stageTimings: { acousticEncoding: hit ? 0 : 2, acousticCacheRead: 0.01 },
       intervals: request.fragments.map((_: string, i: number) => ({ index: i, start: request.start + i, end: request.start + i + 0.8 })) });
-  };
+  });
   const firstBook = await extractBook("ctc-ebook");
   const secondBook = await extractBook("ctc-second-ebook");
   const first = await createAlignment("ctc-ebook", "ctc-recording", firstBook.sections.map((section) => ({
@@ -209,4 +272,185 @@ test("two ebook editions send the same recording identity and publish cache timi
   assert.equal(firstJob.stageTimings!.acousticEncoding, 2);
   assert.equal(secondJob.stageTimings!.acousticEncoding, 0);
   assert.ok(secondJob.stageTimings!.acousticCacheRead > 0);
+});
+
+test("CTC never reaches the production worker when the pool is disabled", async () => {
+  delete process.env.ALIGNMENT_POOL_ENABLED;
+  const calls: string[] = [];
+  mockWorker(async (input) => { calls.push(String(input)); throw new Error("unexpected request"); });
+  const book = await extractBook("ctc-ebook");
+  const created = await createAlignment("ctc-ebook", "ctc-recording", [{
+    section: book.sections[0].index, trackId: "ctc-track", start: 190, duration: 40,
+  }], "chapters");
+  const job = await settled(created.id);
+  assert.equal(job.status, "error");
+  assert.match(job.error ?? "", /requires the remote alignment pool/);
+  assert.deepEqual(calls, []);
+  process.env.ALIGNMENT_POOL_ENABLED = "1";
+});
+
+test("unreachable, busy or incompatible WSL routes chapter CTC to lisa without using the production worker", async () => {
+  const book = await extractBook("ctc-ebook");
+  delete process.env.ALIGNMENT_WORKER_URL;
+  for (const [i, options] of [{ down: ["wsl"] }, { busy: ["wsl"] }, { wrongDevice: ["wsl"] }].entries()) {
+    const calls: string[] = [];
+    mockWorker(async (input, init) => {
+      calls.push(String(input));
+      const request = JSON.parse(String(init?.body));
+      assert.equal(request.engine, "ctc");
+      assert.ok(request.audio.startsWith(join(temp, "lisa", "alignment", "pool-jobs")));
+      assert.equal(readFileSync(request.audio, "utf8"), "test audio");
+      assert.ok(request.output.startsWith(join(temp, "lisa", "alignment", "pool-jobs")));
+      return Response.json({ engine, outcome: "mapped", elapsedSeconds: 1,
+        intervals: request.fragments.map((_: string, index: number) => ({ index, start: request.start + index, end: request.start + index + 0.8 })) });
+    }, options);
+    const created = await createAlignment("ctc-ebook", "ctc-recording", [{
+      section: book.sections[0].index, trackId: "ctc-track", start: 210 + i * 45, duration: 40,
+    }], "chapters");
+    const job = await settled(created.id);
+    assert.equal(job.status, "partial", job.error ?? undefined);
+    assert.equal(job.engine, engine);
+    assert.equal(job.ctcDevice, "cpu");
+    assert.equal(job.ctcPrecision, "float32");
+    assert.deepEqual(calls, ["http://lisa-worker.test/align"]);
+  }
+  process.env.ALIGNMENT_WORKER_URL = "http://production-worker.test";
+});
+
+test("CTC waits while both workers are busy and starts when a worker is free", async () => {
+  const book = await extractBook("ctc-ebook");
+  const busy = ["wsl", "lisa"];
+  const checked: string[] = [];
+  const calls: string[] = [];
+  mockWorker(async (input, init) => {
+    calls.push(String(input));
+    const request = JSON.parse(String(init?.body));
+    return Response.json({ engine, outcome: "mapped", elapsedSeconds: 1,
+      intervals: request.fragments.map((_: string, index: number) => ({ index, start: request.start + index, end: request.start + index + 0.8 })) });
+  }, { busy, onHealth: (host) => checked.push(host) });
+  const created = await createAlignment("ctc-ebook", "ctc-recording", [{
+    section: book.sections[0].index, trackId: "ctc-track", start: 350, duration: 40,
+  }], "chapters");
+  for (let i = 0; i < 100 && checked.length < 2; i++)
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(checked, ["wsl", "lisa"]);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(alignmentJob(created.id).status, "queued");
+  assert.deepEqual(calls, []);
+  busy.length = 0;
+  const { processAlignments } = await import("../server/alignment.ts");
+  await processAlignments();
+  const finished = await settled(created.id);
+  assert.equal(finished.status, "partial", finished.error ?? undefined);
+  assert.deepEqual(calls, ["http://ctc-worker.test/align"]);
+});
+
+test("a persisted legacy pool assignment is re-probed instead of sending CTC to the old worker", async () => {
+  const book = await extractBook("ctc-ebook");
+  delete process.env.ALIGNMENT_WORKER_TOKEN;
+  const created = await createAlignment("ctc-ebook", "ctc-recording", [{
+    section: book.sections[0].index, trackId: "ctc-track", start: 160, duration: 40,
+  }], "chapters");
+  const { putAlignmentJob, processAlignments } = await import("../server/alignment.ts");
+  const legacy = alignmentJob(created.id);
+  legacy.pool = { hostId: "steamdeck", attempt: 1, jobMediaRoot: "/old/media",
+    workerUrl: "http://production-worker.test", triedHosts: ["steamdeck"], stagedAudio: {} };
+  putAlignmentJob(legacy);
+  process.env.ALIGNMENT_WORKER_TOKEN = "test-token";
+  const calls: string[] = [];
+  mockWorker(async (input, init) => {
+    calls.push(String(input));
+    const request = JSON.parse(String(init?.body));
+    return Response.json({ engine, outcome: "mapped", elapsedSeconds: 1,
+      intervals: request.fragments.map((_: string, index: number) => ({ index, start: request.start + index, end: request.start + index + 0.8 })) });
+  });
+  await processAlignments();
+  const finished = await settled(created.id);
+  assert.equal(finished.status, "partial", finished.error ?? undefined);
+  assert.deepEqual(calls, ["http://ctc-worker.test/align"]);
+});
+
+test("pausing during remote staging preserves the pause and releases the worker", async () => {
+  const book = await extractBook("ctc-ebook");
+  let markStarted!: () => void;
+  let unblock!: () => void;
+  const started = new Promise<void>((resolve) => { markStarted = resolve; });
+  const blocked = new Promise<void>((resolve) => { unblock = resolve; });
+  setAlignmentPoolDepsForTests({ ...testPoolDeps, async uploadFile(local, remote) {
+    markStarted();
+    await blocked;
+    await testPoolDeps.uploadFile(local, remote);
+  } });
+  const calls: string[] = [];
+  mockWorker(async (input) => { calls.push(String(input)); throw new Error("unexpected request"); });
+  try {
+    const created = await createAlignment("ctc-ebook", "ctc-recording", [{
+      section: book.sections[0].index, trackId: "ctc-track", start: 120, duration: 40,
+    }], "chapters");
+    await started;
+    const { putAlignmentJob } = await import("../server/alignment.ts");
+    const { getAlignmentPoolCoordinator } = await import("../server/alignment-pool.ts");
+    const paused = alignmentJob(created.id);
+    paused.status = "paused";
+    putAlignmentJob(paused);
+    unblock();
+    for (let i = 0; i < 100 && getAlignmentPoolCoordinator().activeOnHost("wsl"); i++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(getAlignmentPoolCoordinator().activeOnHost("wsl"), 0);
+    assert.equal(alignmentJob(created.id).status, "paused");
+    assert.deepEqual(calls, []);
+  } finally {
+    unblock();
+    setAlignmentPoolDepsForTests(testPoolDeps);
+  }
+});
+
+test("speech-recovery failures do not replace the CTC engine identity", async () => {
+  const calls: string[] = [];
+  mockWorker(async (input) => {
+    calls.push(String(input));
+    return Response.json({ detail: { engine: "aeneas-1.7.3", outcome: "error",
+      stageTimings: { failedRequest: 0.1 } } }, { status: 500 });
+  });
+  const created = await createAlignment("ctc-alice-ebook", "ctc-alice-recording", undefined, "anchored");
+  const failed = await settled(created.id);
+  assert.equal(failed.status, "error");
+  assert.equal(failed.engine, engine);
+  assert.deepEqual(calls, ["http://ctc-worker.test/anchor", "http://lisa-worker.test/anchor"]);
+});
+
+test("CTC retries the other host once, remains failed after both fail, and resume starts a new attempt", async () => {
+  const book = await extractBook("ctc-ebook");
+  const calls: string[] = [];
+  mockWorker(async (input) => {
+    calls.push(String(input));
+    return new Response("worker failed", { status: 500 });
+  });
+  const created = await createAlignment("ctc-ebook", "ctc-recording", [{
+    section: book.sections[0].index, trackId: "ctc-track", start: 320, duration: 40,
+  }], "chapters");
+  const failed = await settled(created.id);
+  assert.equal(failed.status, "error");
+  assert.deepEqual(calls, ["http://ctc-worker.test/align", "http://lisa-worker.test/align"]);
+  assert.deepEqual(failed.pool?.triedHosts, ["wsl", "lisa"]);
+
+  mockWorker(async (input, init) => {
+    calls.push(String(input));
+    const request = JSON.parse(String(init?.body));
+    return Response.json({ engine, outcome: "mapped", elapsedSeconds: 1,
+      intervals: request.fragments.map((_: string, index: number) => ({ index, start: request.start + index, end: request.start + index + 0.8 })) });
+  });
+  const Fastify = (await import("fastify")).default;
+  const { registerAlignment } = await import("../server/alignment.ts");
+  const app = Fastify();
+  registerAlignment(app);
+  const response = await app.inject({ method: "PATCH", url: `/api/alignments/${created.id}`, payload: { action: "resume" } });
+  assert.equal(response.statusCode, 200);
+  const retried = await settled(created.id);
+  assert.equal(retried.status, "partial", retried.error ?? undefined);
+  assert.equal(retried.engine, engine);
+  assert.equal(retried.ctcDevice, "cuda");
+  assert.equal(retried.ctcPrecision, "float16");
+  assert.equal(calls.at(-1), "http://ctc-worker.test/align");
+  await app.close();
 });
