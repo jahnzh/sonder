@@ -22,56 +22,222 @@ under that root. Pool URLs must address the remote hosts; loopback URLs and the
 configured local worker URL are refused for CTC. Protect the worker HTTP ports
 on the trusted network.
 
-## Server SSH access
+## Host roles and capabilities
+
+| Host | Device | Precision | Default URL | SSH Target & Port | Concurrency | Role |
+| --- | --- | --- | --- | --- | ---: | --- |
+| **WSL** (`192.168.1.119`) | `cuda` | `float16` | `http://192.168.1.119:3012` | `jahn@192.168.1.119:22` | 3 | Primary CTC worker (NVIDIA GPU) |
+| **Lisa** (`audiobooks.amatox.in`) | `cpu` | `float32` | `https://audiobooks.amatox.in/sonder-ctc` | `jahn@audiobooks.amatox.in:2269` (alias `lisa`) | 1 | Fallback CTC worker (CPU) |
+
+- **WSL (Primary)**: Equipped with an NVIDIA GPU running PyTorch with CUDA `2.8.0+cu128`. Port 3012 is forwarded from the Windows host to the WSL2 virtual machine via Windows portproxy and firewall rules.
+- **Lisa (Fallback)**: CPU-only worker running PyTorch `2.8.0+cpu`. Worker listens locally on `127.0.0.1:3012` and is reverse-proxied by Caddy under `https://audiobooks.amatox.in/sonder-ctc` with an IP allowlist restricted to the production server.
+
+## Server SSH access and key layout
 
 The server runs `ssh` and `scp` to stage audio, so the production container
 needs an SSH client (installed in the image) and a key. `compose.yaml` mounts
-`./data/pool-ssh` read-only as `/home/node/.ssh`. Create it once on the
-production host (the directory is under the gitignored `data/`):
+`./data/pool-ssh` read-only as `/home/node/.ssh`.
+
+### `data/pool-ssh` directory layout and permissions
+
+Directory and file layout under `./data/pool-ssh` on the production host:
+
+```text
+data/pool-ssh/
+├── id_ed25519       # Private Ed25519 SSH key (mode 0600)
+├── id_ed25519.pub   # Public key authorized on pool workers (mode 0600 or 0644)
+├── known_hosts      # Scanned host public keys for WSL and Lisa (mode 0600 or 0644)
+└── config           # SSH client configuration mapping pool hosts (mode 0600 or 0644)
+```
+
+Directory permissions must be `0700` (`chmod 700 data/pool-ssh`), and file permissions `0600` (`chmod 600 data/pool-ssh/*`).
+
+### Initial SSH key generation and configuration
+
+Create the directory and keys once on the production host:
 
 ```sh
 mkdir -p data/pool-ssh && chmod 700 data/pool-ssh
 ssh-keygen -t ed25519 -N '' -C sonder-container-pool -f data/pool-ssh/id_ed25519
 ssh-keyscan 192.168.1.119 > data/pool-ssh/known_hosts
-ssh-keyscan -p <lisa-ssh-port> <lisa-hostname> >> data/pool-ssh/known_hosts
+ssh-keyscan -p 2269 audiobooks.amatox.in >> data/pool-ssh/known_hosts
 chmod 600 data/pool-ssh/*
 ```
 
-Add a `Host` stanza per pool target to `data/pool-ssh/config` (`User`,
-`IdentityFile ~/.ssh/id_ed25519`, `IdentitiesOnly yes`,
-`UserKnownHostsFile ~/.ssh/known_hosts`, `StrictHostKeyChecking yes`; a `Port`
-and `Hostname` when the SSH alias needs them), and append
-`data/pool-ssh/id_ed25519.pub` to `~/.ssh/authorized_keys` on each worker host.
+Create `data/pool-ssh/config` with stanzas for both targets:
+
+```ssh-config
+Host 192.168.1.119
+  User jahn
+  IdentityFile ~/.ssh/id_ed25519
+  IdentitiesOnly yes
+  UserKnownHostsFile ~/.ssh/known_hosts
+  StrictHostKeyChecking yes
+
+Host lisa
+  Hostname audiobooks.amatox.in
+  Port 2269
+  User jahn
+  IdentityFile ~/.ssh/id_ed25519
+  IdentitiesOnly yes
+  UserKnownHostsFile ~/.ssh/known_hosts
+  StrictHostKeyChecking yes
+```
+
+Append `data/pool-ssh/id_ed25519.pub` to `~/.ssh/authorized_keys` on each worker host:
+
+```sh
+ssh 192.168.1.119 'cat >> ~/.ssh/authorized_keys' < data/pool-ssh/id_ed25519.pub
+ssh -p 2269 jahn@audiobooks.amatox.in 'cat >> ~/.ssh/authorized_keys' < data/pool-ssh/id_ed25519.pub
+```
+
 A host that is not in `known_hosts` fails closed.
 
-## Lisa CPU environment
+## Fresh host installation runbook
 
-On 2026-11-07 lisa had Python 3.14 as its system Python and an existing
-Python 3.11.13 at the path below. These are the commands used to install the
-persistent environment; run the `scp` command from the repository checkout:
+Follow these steps to set up a new CTC worker host from scratch.
 
+### 1. Prerequisites
+
+- Linux (or WSL2 on Windows) with Python 3.10–3.12 and `python3-venv` installed.
+- Systemd with user session support.
+- Network access to PyTorch package index and Hugging Face model repository.
+
+### 2. Run the installer script
+
+From a checkout of the repository, execute `scripts/install-ctc-workers.sh`:
+
+For a GPU host (CUDA, e.g. WSL):
 ```sh
-ssh lisa 'mkdir -p ~/sonder-replication/issue-275-setup'
-scp worker/requirements-ctc.txt lisa:~/sonder-replication/issue-275-setup/requirements-ctc.txt
-ssh lisa '~/.local/share/uv/python/cpython-3.11.13-linux-x86_64-gnu/bin/python3 -m venv ~/sonder-replication/ctc-worker-env'
-ssh lisa '~/sonder-replication/ctc-worker-env/bin/python -m pip install --no-cache-dir -r ~/sonder-replication/issue-275-setup/requirements-ctc.txt'
-ssh lisa '~/sonder-replication/ctc-worker-env/bin/python -m pip install --no-cache-dir numpy==1.26.4 fastapi==0.121.3 uvicorn==0.38.0 faster-whisper==1.2.1'
+./scripts/install-ctc-workers.sh --device cuda
 ```
 
-The requirements file pins the CPU builds of Torch and TorchAudio 2.8. CTC
-discovery uses the CTC checkpoint; Whisper is only needed for the aeneas
-fallback. Before starting a persistent worker, copy the repository's `worker/`
-directory to lisa and choose a `MEDIA_ROOT`. From the directory containing the
-copied `worker/`, fetch the pinned models into that root:
-
+For a CPU host (e.g. Lisa):
 ```sh
-MEDIA_ROOT="$CTC_MEDIA_ROOT" ~/sonder-replication/ctc-worker-env/bin/python worker/download_model.py
+./scripts/install-ctc-workers.sh --device cpu
 ```
 
-Start `uvicorn align:app` from the copied `worker/`
-directory with `MEDIA_ROOT`, `ALIGNMENT_CTC_DEVICE=cpu` and the private token
-set. A GPU worker uses `ALIGNMENT_CTC_DEVICE=cuda`. The installation and gates
-do not install or start a persistent worker service.
+The script performs the following actions:
+1. Creates the target directory `$HOME/sonder-ctc-worker` with subdirectories `worker/`, `media/`, and `env/`.
+2. Copies worker source files from `worker/`.
+3. Creates a Python virtual environment at `$HOME/sonder-ctc-worker/env`.
+4. Installs pinned dependencies (`torch==2.8.0`, `torchaudio==2.8.0`, `numpy==1.26.4`, `fastapi==0.121.3`, `uvicorn==0.38.0`, `faster-whisper==1.2.1`).
+5. Downloads Whisper tiny and the pinned Wav2Vec2 Base CTC checkpoint (`wav2vec2_fairseq_base_ls960_asr_ls960.pth`) into `$MEDIA_ROOT/alignment/models`.
+6. Configures `$HOME/sonder-ctc-worker/worker.env` (`ALIGNMENT_WORKER_TOKEN`, `MEDIA_ROOT`, `ALIGNMENT_CTC_DEVICE`).
+7. Installs, enables, and starts the systemd user service `sonder-ctc-worker.service`.
+
+### 3. Enable user lingering
+
+Enable lingering so the systemd user service runs at system boot without requiring an interactive login:
+
+```sh
+sudo loginctl enable-linger "$USER"
+```
+
+Verify lingering state:
+
+```sh
+loginctl show-user "$USER" --property=Linger
+# Output: Linger=yes
+```
+
+### 4. Host-specific network configuration
+
+#### WSL2: Windows portproxy and firewall rule
+
+In WSL2, the Linux VM is assigned an internal IP behind a virtual NAT switch. To allow the Sonder server to reach the worker on port 3012:
+
+1. Retrieve the current WSL2 internal IP inside WSL:
+   ```sh
+   wsl_ip=$(hostname -I | awk '{print $1}')
+   echo "WSL IP is $wsl_ip"
+   ```
+
+2. Open PowerShell or Command Prompt as Administrator on Windows and configure the port forward:
+   ```cmd
+   netsh interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=3012 connectaddress=<WSL_IP> connectport=3012
+   ```
+
+3. Add an inbound Windows Defender Firewall rule for port 3012:
+   ```cmd
+   netsh advfirewall firewall add rule name="Sonder CTC Worker" dir=in action=allow protocol=TCP localport=3012
+   ```
+
+4. Verify the active port forwarding rule:
+   ```cmd
+   netsh interface portproxy show v4tov4
+   ```
+
+#### Lisa: SSH configuration and Caddy reverse proxy
+
+Lisa runs worker on `127.0.0.1:3012` and exposes it via HTTPS using Caddy.
+
+1. SSH port and alias:
+   SSH runs on custom port `2269` (user `jahn`, hostname `audiobooks.amatox.in`). The alias `lisa` is configured in `data/pool-ssh/config` or `~/.ssh/config`.
+
+2. Caddy reverse-proxy block (see `deploy/ctc-worker.caddy.tmpl` or generate via `scripts/install-ctc-workers.sh --print-caddy --caddy-domain <worker-domain> --prod-ip <prod-ip>`):
+   Insert this snippet into `/etc/caddy/Caddyfile` on Lisa inside the site block:
+
+   ```caddy
+   <worker-domain> {
+   	handle_path /sonder-ctc/* {
+   		@prod remote_ip <prod-ip>
+   		handle @prod {
+   			reverse_proxy 127.0.0.1:3012
+   		}
+   		handle {
+   			respond 403
+   		}
+   	}
+   	# Other existing handlers...
+   }
+   ```
+
+   `handle_path` strips the `/sonder-ctc` prefix before forwarding to the local worker on port 3012. Replace `<worker-domain>` with the worker's domain (e.g. `audiobooks.amatox.in`) and `<prod-ip>` with the production server's public IP address (e.g. `88.91.220.114`).
+
+   Reload Caddy after saving:
+   ```sh
+   sudo systemctl reload caddy
+   ```
+
+### 5. Service management and verification
+
+Check user service status:
+```sh
+systemctl --user status sonder-ctc-worker.service
+```
+
+Inspect service logs:
+```sh
+journalctl --user -u sonder-ctc-worker.service -f
+```
+
+Verify the `/health` endpoint:
+```sh
+curl -s http://127.0.0.1:3012/health | jq .
+```
+
+Expected JSON response structure:
+```json
+{
+  "ready": true,
+  "engine": "aeneas-1.7.3",
+  "busy": false,
+  "stuck": false,
+  "busySeconds": null,
+  "lastTimeout": null,
+  "mediaRoot": "/home/jahn/sonder-ctc-worker/media",
+  "ctc": {
+    "engine": "ctc-wav2vec2-base-960h-torchaudio-2.8-v1",
+    "ready": true,
+    "device": "cuda",
+    "precision": "float16",
+    "anchorReady": true,
+    "passageReady": true
+  }
+}
+```
+For Lisa (CPU), `device` will be `"cpu"` and `precision` will be `"float32"`.
 
 ## Qualification, 2026-11-07
 
@@ -121,6 +287,7 @@ Gate: PASS; engine: `ctc-wav2vec2-base-960h-torchaudio-2.8-v1`; outcome: `mapped
 | Retry a failure once on the other host, retain a retryable failure, and keep CPU and GPU in the same engine generation with device and precision for diagnostics. | `tests/alignment-ctc.test.ts`: cross-host retry and manual Resume, anchored-window failover, and the CPU and GPU metadata assertions. |
 | Install the lisa environment with the pinned CPU wheels and the anchored planner dependency; document the commands. | The commands above completed on lisa; its environment imported Torch and TorchAudio `2.8.0+cpu`, FastAPI `0.121.3`, Uvicorn `0.38.0`, and faster-whisper. |
 | Run both real-model gates and report their outcomes. | The two tables above show identical passing results. |
+| Reproducible install script (`scripts/install-ctc-workers.sh`), systemd user service unit template (`deploy/ctc-worker.service.tmpl`), Caddy reverse-proxy snippet template (`deploy/ctc-worker.caddy.tmpl`), and documentation runbook. | `tests/install-ctc-workers.test.mjs` verifying installer CLI, help flag, syntax, service template, and Caddy configuration. |
 
 The pool remains off by default. No schema migration is needed. The worker
 ran `npx tsc --noEmit`, the focused alignment tests, `npm test`, and the Python
