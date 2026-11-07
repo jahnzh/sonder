@@ -22,16 +22,31 @@ usage() { sed -n '2,19p' "$0" >&2; exit 2; }
 [ -n "$term" ] && [ -n "$mode" ] || usage
 
 screen() { orca terminal read --terminal "$term" --screen 2>/dev/null; }
-# A busy cursor agent shows a spinner line: braille spinner glyphs, then a capitalised "-ing" word
-# (Running, Waiting, Thinking, Working, Composing, ...), sometimes followed by a token count.
-busy() { screen | grep -qP '^\s*[\x{2800}-\x{28FF}]+\s+[A-Z][a-z]+ing(\s|$)'; }
+# A busy worker shows:
+# - Cursor: braille spinner line with a capitalised "-ing" word (Running, Waiting, Thinking, ...)
+# - Codex: Working (N or • Working (
+# - Antigravity: footer 'esc to cancel' in last 3 lines, or braille spinner in last 6 lines
+busy() {
+  local scr
+  scr=$(screen)
+  [ -n "$scr" ] || return 1
+  printf '%s\n' "$scr" | grep -qP '^\s*[\x{2800}-\x{28FF}]+\s+[A-Z][a-z]+ing(\s|$)|Working \(\d|^• Working \(' && return 0
+  printf '%s\n' "$scr" | tail -3 | grep -q 'esc to cancel' && return 0
+  printf '%s\n' "$scr" | tail -6 | grep -qP '[\x{2800}-\x{28FF}]' && return 0
+  return 1
+}
 # Only the live follow-ups box: the last "┌─ follow-ups" frame on screen, up to its closing "└".
 # (Earlier screen text can mention "follow-ups" too, e.g. commands that call this script.)
 queue_text() { screen | awk '/┌─ follow-ups/ {buf=""; on=1} on {buf=buf $0 "\n"} on && /└/ {on=0; last=buf} END {printf "%s", last}'; }
 # Blanked items ('○' with no text) are harmless, so they are not counted.
 queue_count() { queue_text | grep -cE '^[[:space:]]*│[[:space:]]*[○›][[:space:]]*[^[:space:]│]'; }
-probe() { printf '%s' "$1" | tr -s '[:space:]' ' ' | cut -c1-40; }
-in_queue() { queue_text | tr -s '[:space:]' ' ' | grep -qF "$(probe "$1")"; }
+matches_probe() {
+  local target="$1"
+  local norm_target
+  norm_target=$(printf '%s' "$target" | tr -s '[:space:]' ' ')
+  printf '%s' "$norm_target" | grep -qF "$p_prefix" && printf '%s' "$norm_target" | grep -qF "$p_suffix"
+}
+in_queue() { matches_probe "$(queue_text)"; }
 key() { orca terminal send --terminal "$term" --text "$1" >/dev/null 2>&1; }
 show() {
   if busy; then echo "state: busy (mid-turn)"; else echo "state: idle"; fi
@@ -51,6 +66,42 @@ edit_last() { # $1 = replacement text ("" to blank)
   key $'\r'                                     # "enter done"
   sleep 2
 }
+confirm_delivery() {
+  local norm_msg len p_prefix p_suffix seen_typed=0 scr
+  norm_msg=$(printf '%s' "$1" | tr -s '[:space:]' ' ' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+  len=${#norm_msg}
+  if [ "$len" -le 30 ]; then
+    p_prefix="$norm_msg"
+    p_suffix="$norm_msg"
+  else
+    p_prefix="${norm_msg:0:30}"
+    p_suffix="${norm_msg: -30}"
+  fi
+
+  for _ in $(seq 1 10); do
+    sleep 1
+    if in_queue "$1"; then
+      echo "result: queued"
+      return 0
+    fi
+    scr=$(screen)
+    if matches_probe "$scr"; then
+      if busy; then
+        echo "result: delivered"
+        return 0
+      fi
+      seen_typed=1
+    fi
+  done
+
+  if [ "$seen_typed" -eq 1 ]; then
+    echo "result: typed, no turn started (Enter may have been swallowed)" >&2
+    return 1
+  fi
+
+  echo "result: not found" >&2
+  return 1
+}
 
 case $mode in
   --inspect) show; exit 0 ;;
@@ -58,10 +109,9 @@ case $mode in
     [ -n "$msg" ] || usage
     show
     if ! busy; then echo "agent is idle: sending as a prompt now"; fi
-    orca terminal send --terminal "$term" --text "$msg" --enter >/dev/null 2>&1; sleep 5
-    if in_queue "$msg"; then echo "result: queued (delivered when the current turn ends)"; exit 0; fi
-    if busy; then echo "result: delivered as the active prompt"; exit 0; fi
-    echo "result: could not find the message in the queue or a running turn" >&2; exit 1 ;;
+    orca terminal send --terminal "$term" --text "$msg" --enter >/dev/null 2>&1
+    confirm_delivery "$msg"
+    exit $? ;;
   --interrupt)
     [ -n "$msg" ] || usage
     show
@@ -70,10 +120,9 @@ case $mode in
       exit 1
     fi
     if busy; then key_int=1; orca terminal send --terminal "$term" --interrupt >/dev/null 2>&1; for _ in $(seq 1 10); do busy || break; sleep 1; done; fi
-    orca terminal send --terminal "$term" --text "$msg" --enter >/dev/null 2>&1; sleep 6
-    if in_queue "$msg"; then echo "result: landed in the queue, not delivered; read the terminal" >&2; exit 1; fi
-    if busy; then echo "result: delivered as a new prompt${key_int:+ (after interrupting the turn)}"; exit 0; fi
-    echo "result: agent not running after the send; read the terminal" >&2; exit 1 ;;
+    orca terminal send --terminal "$term" --text "$msg" --enter >/dev/null 2>&1
+    confirm_delivery "$msg"
+    exit $? ;;
   --replace-last)
     [ -n "$msg" ] || usage
     show; edit_last "$msg"
