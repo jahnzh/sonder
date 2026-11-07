@@ -546,6 +546,16 @@ test("unsynced passages and unsupported-language outcomes survive storage and AP
     assert.deepEqual(frJob.intervals, []);
     assert.equal((await app.inject({ method: "GET", url: `/api/alignments/${fr.id}/map` })).statusCode, 410);
 
+    // An EPUB that declares no usable language (dc:language "und") is tried as English.
+    const und = join(process.env.MEDIA_ROOT!, "und.epub");
+    writeFileSync(und, await readerFixture({ language: "und" }));
+    db.insert(schema.ebookEditions).values({ id: "und-ebook", workId: "ctc-work", format: "epub", source: und }).run();
+    let undCalls = 0;
+    mockWorker(async () => { undCalls++; return Response.json({ engine, outcome: "unsynced", match: null, text: "unrelated narration ".repeat(10) }); });
+    const undJob = await settled((await createAlignment("und-ebook", "ctc-alice-recording", undefined, "anchored")).id);
+    assert.notEqual(undJob.outcome, "language_not_supported");
+    assert.ok(undCalls > 0, "an undetermined language must reach the CTC worker");
+
     mockWorker(async () => Response.json({ engine, outcome: "unsynced", match: null, text: "unrelated narration ".repeat(10) }));
     const mismatch = await createAlignment("ctc-alice-ebook", "ctc-alice-recording", undefined, "anchored");
     const unsynced = await settled(mismatch.id);
