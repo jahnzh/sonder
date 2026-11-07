@@ -83,9 +83,10 @@ export type AlignmentAnchoring = {
     duration: number;
     done?: boolean;
     spokenWords?: number;
-    match?: { fragment: number; score: number; start: number } | null;
+    match?: { fragment: number; lastFragment?: number; score: number; start: number } | null;
+    matches?: { fragment: number; lastFragment?: number; score: number; start: number }[];
   }[];
-  anchors: { trackId: string; time: number; fragment: number; score: number }[];
+  anchors: { trackId: string; time: number; fragment: number; lastFragment?: number; score: number }[];
   segments: {
     trackId: string;
     start: number;
@@ -115,6 +116,8 @@ export type AlignmentJob = {
     | "error";
   progress: number;
   engine: string;
+  /** Identifies jobs prepared with CTC passage validation. */
+  ctcValidationVersion?: 1;
   outcome?: AlignmentOutcome;
   /** Total seconds spent in each worker stage across completed requests. */
   stageTimings?: Record<string, number>;

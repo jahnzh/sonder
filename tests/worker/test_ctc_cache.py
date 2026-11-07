@@ -183,6 +183,17 @@ class CachedPipeline(unittest.TestCase):
                 self.assertGreater(first["stageTimings"]["acousticEncoding"], 0)
                 self.assertEqual(second["stageTimings"]["acousticEncoding"], 0)
                 self.assertGreater(second["stageTimings"]["acousticCacheRead"], 0)
+                # Discovery and alignment use exactly the same recording chunks.
+                located = {"text": "A B", "match": {"index": 0, "score": 0.9}, "matches": []}
+                with mock.patch.object(ctc_pipeline.ctc_candidates, "locate", return_value=located):
+                    anchor = ctc_pipeline.align_ctc_section(
+                        audio=source, output=root / "alignment" / "anchor.json", fragments=["other edition"],
+                        language="eng", start=9.25, duration=40, media_folder=root / "alignment",
+                        recording_id="recording", recording_fingerprint="same-recording", track_id="track", locate=True)
+                self.assertEqual(model.calls, [0, 320000, 640000])
+                self.assertEqual(anchor["outcome"], "mapped")
+                self.assertEqual(anchor["stageTimings"]["acousticEncoding"], 0)
+                self.assertGreater(anchor["stageTimings"]["acousticCacheRead"], 0)
                 self.assertTrue(torch.equal(paths[1][0][0, :, 0], torch.tensor([b + paths[1][3] for b in paths[1][1]], dtype=torch.float32)))
                 old = source.stat()
                 with source.open("r+b") as audio:

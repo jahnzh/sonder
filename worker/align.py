@@ -39,6 +39,7 @@ def anchor(request: AnchorRequest):
     if not token or not secrets.compare_digest(request.token, token):
         raise HTTPException(401, "Worker authentication required.")
     started = time.monotonic()
+    engine = CTC_ENGINE if request.engine == "ctc" else ENGINE
     try:
         with gate.hold():
             expected = os.environ.get("MEDIA_VOLUME_ID")
@@ -46,19 +47,27 @@ def anchor(request: AnchorRequest):
             if expected and (not marker.is_file() or marker.read_text().strip() != expected):
                 raise HTTPException(503, "The media drive is unavailable.")
             audio = checked_path(request.audio, True)
-            if request.language not in LANGUAGES:
-                return {"engine": ENGINE, "outcome": "language_not_supported", "stageTimings": {"requestValidation": time.monotonic() - started}, "match": None}
+            if request.language not in ({"eng"} if request.engine == "ctc" else LANGUAGES):
+                return {"engine": engine, "outcome": "language_not_supported", "stageTimings": {"requestValidation": time.monotonic() - started}, "match": None}
+            if request.engine == "ctc":
+                output = checked_path(request.output)
+                if not output.is_relative_to(root / "alignment"):
+                    raise HTTPException(400, "Alignment output must be in its cache directory.")
+                return align_ctc_section(audio=audio, output=output, fragments=request.fragments,
+                                         language=request.language, start=request.start, duration=request.duration,
+                                         media_folder=root / "alignment", recording_id=request.recordingId,
+                                         recording_fingerprint=request.audioFingerprint, track_id=request.trackId, locate=True)
             return locate_passage(audio=audio, folder=root / "alignment", fragments=request.fragments,
                                   language=request.language, start=request.start, duration=request.duration)
     except WorkerBusy:
         raise HTTPException(409, "The local alignment worker is busy.")
     except AlignmentTimeout as error:
-        raise HTTPException(504, error_detail(str(error), started))
+        raise HTTPException(504, error_detail(str(error), started, engine))
     except HTTPException:
         raise
     except Exception as error:
         print(f"[anchor] failed: {error!r}", file=sys.stderr, flush=True)
-        raise HTTPException(422, error_detail("Local speech recovery is unavailable. Check that the tiny model is installed on the media drive.", started))
+        raise HTTPException(422, error_detail("Local speech recovery is unavailable. Check that the required model is installed on the media drive.", started, engine))
 
 def error_detail(message, started, engine=ENGINE):
     return {"message": message, "engine": engine, "outcome": "error",

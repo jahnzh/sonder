@@ -367,6 +367,7 @@ export async function createAlignment(
     engine: process.env.ALIGNMENT_CHAPTER_ENGINE !== "aeneas"
       ? CTC_ENGINE
       : "aeneas-1.7.3",
+    ...(process.env.ALIGNMENT_CHAPTER_ENGINE !== "aeneas" ? { ctcValidationVersion: 1 as const } : {}),
     error: null,
     warning: null,
     intervals: [],
@@ -385,7 +386,7 @@ export async function createAlignment(
           anchoring: {
             stage: "sampling" as const,
             refinements: 0,
-            samples: planSamples(tracks),
+            samples: planSamples(tracks, undefined, undefined, process.env.ALIGNMENT_CHAPTER_ENGINE !== "aeneas"),
             anchors: [],
             segments: [],
             rate: 0,
@@ -664,9 +665,15 @@ async function workerRequest(
 const anchorResult = z.object({
   ...workerMetadata.shape,
   match: z
-    .object({ index: z.number().int().nonnegative(), score: z.number() })
+    .object({ index: z.number().int().nonnegative(), lastIndex: z.number().int().nonnegative().optional(), score: z.number().min(0).max(1).finite() })
     .nullable(),
   start: z.number().nonnegative().finite().optional(),
+  matches: z.array(z.object({
+    index: z.number().int().nonnegative(),
+    lastIndex: z.number().int().nonnegative().optional(),
+    score: z.number().min(0).max(1).finite(),
+    start: z.number().nonnegative().finite(),
+  })).max(8).optional(),
   text: z.string().optional(),
 });
 const sectionResult = z.object({
@@ -763,6 +770,10 @@ async function processAnchored(
             language,
             start: sample.time,
             duration: sample.duration,
+            ...(job.engine === CTC_ENGINE ? {
+              engine: "ctc", recordingId: job.recordingId,
+              audioFingerprint: job.audioFingerprint, trackId: track.id,
+            } : {}),
           },
           ANCHOR_TIMEOUT_MS,
           undefined,
@@ -772,19 +783,36 @@ async function processAnchored(
       );
       if (!current()) return;
       job = alignmentJob(job.id);
+      if (job.engine === CTC_ENGINE && result.engine !== CTC_ENGINE)
+        throw new Error("The alignment worker did not use the requested CTC engine.");
       applyWorkerMetadata(job, result, { engine: job.engine !== CTC_ENGINE });
       if (stopForWorkerOutcome(job, result)) return;
+      const inSample = (index: number, start: number) =>
+        index < blocks.length && start >= sample.time && start <= sample.time + sample.duration;
+      const start = result.start ?? sample.time;
+      const match = result.match && inSample(result.match.index, start) ? result.match : null;
+      const lastFragment = (index: number, lastIndex: number | undefined) =>
+        job.engine === CTC_ENGINE && lastIndex !== undefined && lastIndex >= index && lastIndex < blocks.length
+          ? Math.min(paragraphs.length - 1, (lastIndex + 1) * group - 1)
+          : undefined;
       job.anchoring!.samples[i] = {
         ...sample,
         done: true,
         spokenWords: result.text ? wordCount(result.text) : 0,
-        match: result.match
+        match: match
           ? {
-              fragment: result.match.index * group,
-              score: result.match.score,
-              start: result.start ?? sample.time,
+              fragment: match.index * group,
+              lastFragment: lastFragment(match.index, match.lastIndex),
+              score: match.score,
+              start,
             }
           : null,
+        ...(result.matches ? { matches: result.matches.filter((match) => inSample(match.index, match.start)).map((match) => ({
+          fragment: match.index * group,
+          lastFragment: lastFragment(match.index, match.lastIndex),
+          score: match.score,
+          start: match.start,
+        })) } : {}),
       };
       progress(job);
       store(job);
@@ -797,13 +825,15 @@ async function processAnchored(
     const spoken = plan.samples.filter(
       (sample) => (sample.spokenWords ?? 0) >= 10,
     ).length;
-    if (anchors.length < 3 || anchors.length < spoken * 0.3) {
+    const minimumAnchors = job.engine === CTC_ENGINE && timeline.length === 1 && timeline[0].duration <= 60 ? 1 : 3;
+    if (anchors.length < minimumAnchors || anchors.length < spoken * 0.3) {
       if (job.engine === CTC_ENGINE) {
         plan.anchors = anchors;
         plan.stage = "done";
         job.status = "partial";
         job.outcome = "unsynced";
         job.progress = 1;
+        job.intervals = [];
         job.coverage = 0;
         job.unsyncedPassages = unsyncedPassages(book, []);
         job.warning = "The narration could not be matched reliably. The text remains unsynced.";
@@ -851,7 +881,7 @@ async function processAnchored(
       .update(
         JSON.stringify([
           job.engine,
-          "anchored-v1",
+          job.engine === CTC_ENGINE ? "anchored-v2-ctc-evidence" : "anchored-v1",
           job.fingerprint,
           job.audioFingerprint,
           segment,
@@ -1029,6 +1059,24 @@ export async function processAlignments() {
           continue;
         }
         job.audioFingerprint = currentAudioFingerprint;
+        // Older in-flight CTC jobs used Whisper anchors and unchecked forced
+        // paths. Restart their generated work instead of mixing algorithms.
+        if (job.engine === CTC_ENGINE && job.ctcValidationVersion !== 1) {
+          job.ctcValidationVersion = 1;
+          job.intervals = [];
+          job.sectionsDone = [];
+          job.elapsedSeconds = 0;
+          job.coverage = 0;
+          job.progress = 0;
+          job.error = null;
+          job.warning = null;
+          delete job.outcome;
+          delete job.stageTimings;
+          delete job.unsyncedPassages;
+          if (job.mode === "anchored")
+            job.anchoring = { stage: "sampling", refinements: 0, samples: planSamples(context.tracks, undefined, undefined, true),
+              anchors: [], segments: [], rate: 0, flags: [] };
+        }
         job.status = "processing";
         store(job);
         if (job.engine === CTC_ENGINE && iso3(book.language) !== "eng") {
@@ -1125,7 +1173,7 @@ export async function processAlignments() {
             .update(
               JSON.stringify([
                 job.engine,
-                "sentence-normalization-v1-speech-check-v1",
+                job.engine === CTC_ENGINE ? "sentence-normalization-v1-ctc-evidence-v1" : "sentence-normalization-v1-speech-check-v1",
                 job.fingerprint,
                 job.audioFingerprint,
                 pair,
