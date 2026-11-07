@@ -304,14 +304,17 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
   for (const member of members) {
     const projection = state.projections[member.ebookId];
     if (!projection?.length) continue;
-    // A prepared (non-projected) map for this release wins over the projection.
+    // A prepared (non-projected) map for this release wins over the projection,
+    // while it runs and once it maps something. A finished map with no mapped
+    // text (for example from a wrong chapter pairing) must not shadow it.
     const prepared = listAlignmentJobs().find(
       (job) =>
         job.ebookId === member.ebookId &&
         job.recordingId === consensusJob.recordingId &&
         job.origin !== "projected" &&
         job.status !== "cancelled" &&
-        job.status !== "error",
+        job.status !== "error" &&
+        (["queued", "copying", "processing", "paused"].includes(job.status) || job.coverage > 0),
     );
     if (prepared) continue;
     const memberBook = await extractBook(member.ebookId);

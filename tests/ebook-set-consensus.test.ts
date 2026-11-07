@@ -459,6 +459,69 @@ test("a projected map replaces a cancelled prepare of the same ebook instead of 
   assert.ok(jobs[0].intervalCount > 0);
 });
 
+test("a finished prepared map that mapped nothing does not shadow the projection", async () => {
+  const workId = seedWork("Empty Prepare", "Ida Author");
+  const ebookA = `ebook-a-${randomUUID()}`;
+  const ebookB = `ebook-b-${randomUUID()}`;
+  await seedEpub(workId, ebookA);
+  await seedEpub(workId, ebookB);
+  const audio = join(temp, "media", "empty-prepare-audio.mp3");
+  mkdirSync(join(temp, "media"), { recursive: true });
+  writeFileSync(audio, "audio");
+  const recordingId = `rec-${randomUUID()}`;
+  seedRecording(workId, recordingId, audio);
+  let fragment = 0;
+  setEbookSetDeps({
+    anchorSample: async ({ start }) => {
+      const step = fragment;
+      fragment += 4;
+      return { spokenWords: 40, match: { fragment: step, score: 0.85, start: start + 1 } };
+    },
+  });
+  await evaluateEbookSetMember(workId, ebookA, { sourceTitle: "Edition A" });
+  await evaluateEbookSetMember(workId, ebookB, { sourceTitle: "Edition B" });
+  const payload = (await app.inject(`/api/works/${workId}/ebook-set`)).json();
+  const trackId = (db.select().from(schema.tracks).all()[0] as { id: string }).id;
+  const base = {
+    generation: "gen-test",
+    recordingId,
+    progress: 1,
+    engine: "test",
+    error: null,
+    warning: null,
+    sectionsDone: [] as number[],
+    elapsedSeconds: 1,
+    fingerprint: "fp",
+    audioFingerprint: "audio-test",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    pairings: [],
+  };
+  // A chapter-paired prepare finished with 0% mapped (wrong chapter pairing).
+  putAlignmentJob({ ...base, id: `empty-${randomUUID()}`, ebookId: ebookA, status: "partial" as const, outcome: "unsynced" as const, coverage: 0, intervals: [] });
+  const consensusJob = {
+    ...base,
+    id: payload.consensus.jobId as string,
+    ebookId: `set-consensus:${workId}`,
+    status: "partial" as const,
+    outcome: "partial" as const,
+    coverage: 0.5,
+    mode: "anchored" as const,
+    fingerprint: payload.consensus.fingerprint,
+    intervals: [
+      { paragraphId: consensusParagraphId(0), section: 0, trackId, start: 1, end: 4, confidence: 0.7 },
+    ],
+  };
+  putAlignmentJob(consensusJob);
+  await publishProjectedMaps(workId, consensusJob);
+
+  const maps = await app.inject(`/api/alignments?ebookId=${encodeURIComponent(ebookA)}&summary=1`);
+  const jobs = maps.json().jobs.filter((job: { recordingId: string }) => job.recordingId === recordingId);
+  assert.equal(jobs.length, 1, JSON.stringify(jobs.map((job: { status: string; origin?: string }) => [job.status, job.origin])));
+  assert.equal(jobs[0].origin, "projected");
+  assert.ok(jobs[0].intervalCount > 0);
+});
+
 test("explicit pairings supersede an in-flight backfill and stay ahead of projections", async () => {
   const workId = seedWork("Prepare Wins", "Grace Author");
   const ebookId = `ebook-prep-${randomUUID()}`;
