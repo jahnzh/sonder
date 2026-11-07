@@ -1,5 +1,6 @@
 """Local known-text alignment. This service never downloads or uploads audio."""
 import os
+import importlib.util
 import secrets
 import sys
 import time
@@ -9,7 +10,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from deadline import AlignmentTimeout, Gate, WorkerBusy
 from pipeline import ENGINE, align_section, locate_passage
-from ctc_acoustic import ENGINE as CTC_ENGINE
+from ctc_acoustic import ENGINE as CTC_ENGINE, checkpoint_path
 from ctc_pipeline import align_ctc_section
 from align_task import LANGUAGES
 
@@ -72,7 +73,31 @@ def checked_path(value: str, must_exist=False):
 
 @app.get("/health")
 def health():
-    return {"ready": True, "engine": ENGINE, "busy": gate.busy, "stuck": gate.stuck, "busySeconds": gate.busy_seconds(), "lastTimeout": gate.last_timeout}
+    # The CTC worker must have both its pinned runtime and checkpoint available.
+    # CUDA is checked against the actual runtime rather than the host name.
+    requested = os.environ.get("ALIGNMENT_CTC_DEVICE", "cpu")
+    device = requested.split(":", 1)[0]
+    ctc_ready = False
+    try:
+        import torch
+        import torchaudio
+        selected = torch.device(requested)
+        ctc_ready = (selected.type in {"cpu", "cuda"} and
+                     torch.__version__.split("+")[0] == "2.8.0" and
+                     torchaudio.__version__.split("+")[0] == "2.8.0" and
+                     checkpoint_path(root / "alignment").is_file() and
+                     (selected.type != "cuda" or
+                      (torch.cuda.is_available() and
+                       (selected.index is None or selected.index < torch.cuda.device_count()))))
+    except (ImportError, OSError, RuntimeError, ValueError):
+        pass
+    anchor_ready = (importlib.util.find_spec("faster_whisper") is not None and
+                    (root / "alignment" / "models" / "whisper").is_dir())
+    return {"ready": True, "engine": ENGINE, "busy": gate.busy, "stuck": gate.stuck,
+            "busySeconds": gate.busy_seconds(), "lastTimeout": gate.last_timeout,
+            "mediaRoot": str(root), "ctc": {"engine": CTC_ENGINE, "ready": ctc_ready,
+            "device": device, "precision": "float16" if device == "cuda" else "float32",
+            "anchorReady": anchor_ready}}
 
 @app.post("/align")
 def align(request: AlignRequest):
