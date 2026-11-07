@@ -63,6 +63,10 @@ Agents start checks with `npm run ci:ssh -- <sha>`. Killing the `npm` or `sh -c`
 - A full check takes about 4 to 5 minutes.
 - Keep live verification scripts (`scripts/verify-*.mjs`) on the production machine; never run them on the host.
 
+## Summarising a check: `scripts/ci-summary.sh`
+
+`scripts/ci-summary.sh <ci-log | artifact dir>` (issue #289) prints a check summary in under 30 lines: commit, host, stages with status, the new and known browser failures (project, file, title, issue), and for a failed unit stage the failing test names with the first lines of each error. It works from the `[ci-ssh] Artifacts:` line of a log and from a report directory.
+
 ## Choosing a host: `scripts/ci-run.sh`
 
 `npm run ci:run [--dispatch <id>] <commit-sha>` (issue #119) is the single entry point for committed checks. It probes the Deck (`deck@steamdeck`) and the WSL host (`192.168.1.119`), starts the check on the **first idle** host by invoking `scripts/ci-deck.sh` or `scripts/ci-ssh.sh`, and **queues behind a busy host by waiting on the runner's process** — never on a log line. It forwards the downstream runner's exit status. The runners above still work standalone; `ci-run.sh` only decides which one to call.
