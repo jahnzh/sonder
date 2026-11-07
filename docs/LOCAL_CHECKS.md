@@ -98,8 +98,9 @@ Deploys a committed revision to the local production container (`sonder` in `com
 2. tags the running image for rollback before building — it reuses an existing `sonder-audiobooks:*` tag (other than `:local`) of that image, or adds `sonder-audiobooks:before-<short>-<epoch>` when it has none; if the tag cannot be made the script stops before building and says how to roll back by rebuilding the previous commit. The build moves `:local`, so tagging afterwards loses an image whose only tag was `:local` (#153);
 3. builds `sonder-audiobooks:local` with `docker compose build sonder`;
 4. verifies every `--marker` string in the built image's `/app` (server code and built client);
-5. recreates the container, waits for the health check, then curls `/api/health`;
-6. runs the live verification scripts (reader and multi-user) unless `--skip-live-checks`, every one of them even when an earlier one fails, then exits 1 listing the failures; the reader check picks the most recent recording with a finished EPUB alignment map.
+5. runs the image smoke using the `sonder` service's environment, network and mounts, without starting its dependencies; the smoke checks server imports and the consensus worker, and, when `ALIGNMENT_POOL_ENABLED=1`, checks that `ssh` and `scp` are present and that every configured pool host answers `/health` and `ssh true` using the container's SSH credentials. A failure restores the rollback image's `:local` tag and leaves the existing container running;
+6. recreates the container, waits for the health check, then curls `/api/health`;
+7. runs the live verification scripts (reader and multi-user) unless `--skip-live-checks`, every one of them even when an earlier one fails, then exits 1 listing the failures; the reader check picks the most recent recording with a finished EPUB alignment map.
 
 Exit codes: 0 success, 1 a step failed, 2 bad usage. Environment overrides: `SONDER_DEPLOY_DOCKER`, `SONDER_DEPLOY_DB`, `SONDER_DEPLOY_BACKUP_DIR`, `SONDER_DEPLOY_HEALTH_TIMEOUT`, `SONDER_DEPLOY_PORT`, `SONDER_DEPLOY_LIVE_CHECKS`.
 

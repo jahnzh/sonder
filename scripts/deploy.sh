@@ -9,7 +9,7 @@
 #      other sonder-audiobooks tag; the build moves :local and would otherwise orphan it, #153)
 #   4. docker compose build sonder (image sonder-audiobooks:local)
 #   5. verify every --marker string is present in the built image's /app (server, dist or src)
-#   6. smoke-test server imports and the consensus worker inside the built image
+#   6. smoke-test the built image with the service's environment, network and mounts
 #   7. docker compose up -d sonder, wait for the health check, curl /api/health
 #   8. run the live verification scripts (reader + multi-user) unless --skip-live-checks;
 #      the reader check picks the most recent recording with a finished EPUB alignment map
@@ -120,7 +120,7 @@ if [ "$dry_run" -eq 1 ]; then
   for m in ${markers[@]+"${markers[@]}"}; do
     echo "  4. verify marker in the image: $m"
   done
-  echo "  5. smoke-test the built image: docker run --rm --entrypoint node sonder-audiobooks:local --import tsx scripts/image-smoke.mjs"
+  echo "  5. smoke-test the built image: docker compose run --rm --no-deps --entrypoint node sonder --import tsx scripts/image-smoke.mjs"
   echo "  6. docker compose up -d sonder; wait for healthy; curl 127.0.0.1:${port}/api/health"
   if [ "$skip_live" -eq 1 ]; then
     echo "  7. live checks: skipped (--skip-live-checks)"
@@ -180,7 +180,7 @@ done
 
 # 6. Run the smoke before touching the existing container.
 echo "smoke-testing the built image"
-if ! $docker run --rm --entrypoint node sonder-audiobooks:local --import tsx scripts/image-smoke.mjs; then
+if ! $docker compose run --rm --no-deps --entrypoint node sonder --import tsx scripts/image-smoke.mjs; then
   echo "image smoke failed; the container is still running the previous image" >&2
   echo "restoring :local to the rollback image so the rejected build is not what compose starts next" >&2
   restore_local_from_rollback
