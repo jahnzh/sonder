@@ -97,3 +97,8 @@ The 5h window's reset moved with each read because that window was unused: an un
 The collector polled through the reset on isolated state. Its first poll after 13:03:54Z, at 13:04:37Z, read `available`. The 78 polls from then until 14:21Z all read 0% and 64% used, which shows reads spend no quota, at least with no worker running.
 
 Failure shapes were captured from the real binary rather than assumed: `CODEX_HOME` pointing at an empty directory (no login), at an `apikey` `auth.json` (`not_chatgpt_account`), and at a throwaway login with `-c chatgpt_base_url=…` pointing at a local stub that answered 429, 500, 401 and invalid JSON, or at a closed port. Those replies are the fixtures in `tests/codex-fixture.mjs`.
+
+## Gotchas
+
+- **Codex limit dialog:** the "Switch to gpt-6-luna?" menu defaults to option 1; sending `2` plus Enter switched a worker to Luna. Send single digits without Enter, read the screen after each key, and restore with `/model` (3, then More reasoning, then Max).
+
