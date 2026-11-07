@@ -10,6 +10,7 @@ import {
   classifyDeliveryStatus,
   countVisibleQueuedFollowUps,
   extractFollowUpsBox,
+  isWorkerScreenBusy,
   isWorkerScreenBusyLine,
 } from "../scripts/orca/coordinator-screen.ts";
 
@@ -63,6 +64,29 @@ test("delivery confirmation: idle agent, mid-turn agent, Codex agent, and not-fo
   assert.equal(classifyDeliveryStatus(codexScreen, "Fix issue 292 send-agent confirmation"), "delivered");
 
   assert.equal(classifyDeliveryStatus(idleScreen, "nonexistent prompt message"), "not found");
+});
+
+test("screen classification: busy and idle Antigravity fixtures", () => {
+  const busyScreen = readFileSync(join(fixtures, "antigravity-busy.txt"), "utf8");
+  assert.equal(isWorkerScreenBusy(busyScreen), true);
+
+  const idleScreen = readFileSync(join(fixtures, "antigravity-idle.txt"), "utf8");
+  assert.equal(isWorkerScreenBusy(idleScreen), false);
+
+  const idleWithHistory = readFileSync(join(fixtures, "antigravity-idle-with-history.txt"), "utf8");
+  assert.equal(isWorkerScreenBusy(idleWithHistory), false);
+});
+
+test("screen classification: Antigravity secondary braille spinner signal in last 6 lines", () => {
+  const screen = [
+    "● Done",
+    "⣟  Running command...",
+    "────────────────────────────────────────────────────────────────────────────────",
+    ">",
+    "────────────────────────────────────────────────────────────────────────────────",
+    "                                                  accept-edits · Gemini 3.8 Flash · high",
+  ].join("\n");
+  assert.equal(isWorkerScreenBusy(screen), true);
 });
 
 test("follow-ups box: count ignores blank ○", () => {

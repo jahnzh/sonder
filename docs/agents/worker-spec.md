@@ -144,6 +144,13 @@ Active deploy-or-land goals: either block on `node scripts/orca-check.mjs --wait
 - `result: queued`: the prompt was detected in the follow-ups queue.
 - `result: not found`: neither was detected within 10 seconds.
 
+## Worker screen monitoring
+
+`scripts/orca/check-workers.sh` inspects worker terminal screens to classify their state as `busy`, `idle`, or `exited`. Busy markers recognised across agent engines:
+- **Cursor**: Braille spinner glyphs (`[\u2800-\u28FF]`) followed by a capitalized `-ing` word (`Running`, `Waiting`, `Thinking`, etc.).
+- **Codex**: `Working (\d` or `• Working (` lines.
+- **Antigravity**: Braille spinner glyph lines (`[\u2800-\u28FF]`), `Running command`, `Thought for`, `ManageTask`.
+
 
 ## Review policy
 
