@@ -372,6 +372,22 @@ test("ci-stop does not kill a sibling in the launcher shell process group", asyn
   }
 });
 
+test("a checkout whose scripts differ from the commit refuses with a clear message", (t) => {
+  const f = fixture(t);
+  fs.appendFileSync(path.join(f.repo, "scripts", "ci-ssh.sh"), "\n# stale local edit\n");
+  const out = f.run(f.second, { STUB_SSH_MODE: "down" });
+  assert.equal(out.status, 2, out.output);
+  assert.match(out.output, /Refusing to run: scripts\/ci-ssh\.sh or scripts\/lib .* differ from commit/);
+  assert.equal(f.localCheckCalls().length, 0);
+});
+
+test("SONDER_CI_ALLOW_STALE_SCRIPTS=1 overrides the stale-scripts refusal", (t) => {
+  const f = fixture(t);
+  fs.appendFileSync(path.join(f.repo, "scripts", "ci-ssh.sh"), "\n# stale local edit\n");
+  const out = f.run(f.second, { STUB_SSH_MODE: "down", SONDER_CI_ALLOW_STALE_SCRIPTS: "1" });
+  assert.equal(out.status, 0, out.output);
+});
+
 test("an unreachable host falls back to a local check of the same commit", (t) => {
   const f = fixture(t);
   const out = f.run(f.second, { STUB_SSH_MODE: "down" });
