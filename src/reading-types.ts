@@ -47,6 +47,14 @@ export type AlignmentInterval = {
   confidence: number;
 };
 export type AlignmentOutcome = "mapped" | "partial" | "unsynced" | "language_not_supported" | "error";
+export type UnsyncedPassage = {
+  section: number;
+  title: string;
+  firstParagraphId: string;
+  lastParagraphId: string;
+  sentenceCount: number;
+  excerpt: string;
+};
 export type AlignmentFlag = {
   kind:
     | "intro"
@@ -75,9 +83,10 @@ export type AlignmentAnchoring = {
     duration: number;
     done?: boolean;
     spokenWords?: number;
-    match?: { fragment: number; score: number; start: number } | null;
+    match?: { fragment: number; lastFragment?: number; score: number; start: number } | null;
+    matches?: { fragment: number; lastFragment?: number; score: number; start: number }[];
   }[];
-  anchors: { trackId: string; time: number; fragment: number; score: number }[];
+  anchors: { trackId: string; time: number; fragment: number; lastFragment?: number; score: number }[];
   segments: {
     trackId: string;
     start: number;
@@ -107,6 +116,8 @@ export type AlignmentJob = {
     | "error";
   progress: number;
   engine: string;
+  /** Identifies jobs prepared with CTC passage validation. */
+  ctcValidationVersion?: 1;
   /** Runtime details for CTC diagnostics; neither changes the map generation. */
   ctcDevice?: string;
   ctcPrecision?: string;
@@ -116,6 +127,8 @@ export type AlignmentJob = {
   error: string | null;
   warning: string | null;
   intervals: AlignmentInterval[];
+  /** Consecutive ebook sentences without a matching narration interval. */
+  unsyncedPassages?: UnsyncedPassage[];
   sectionsDone: number[];
   elapsedSeconds: number;
   fingerprint: string;

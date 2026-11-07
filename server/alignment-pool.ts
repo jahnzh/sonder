@@ -331,7 +331,7 @@ type CtcHealth = {
   mediaRoot: string;
   busy: boolean;
   stuck: boolean;
-  ctc: { engine: string; ready: boolean; device: string; precision: string; anchorReady: boolean };
+  ctc: { engine: string; ready: boolean; device: string; precision: string; passageReady?: boolean };
 };
 
 function workerOrigin(value: string) {
@@ -402,7 +402,7 @@ async function dispatchCtcJob(
     const host = coord.hostById(id);
     if (!host) continue;
     const health = await ctcHealth(host);
-    if (!health || (job.mode === "anchored" && health.ctc.anchorReady !== true)) continue;
+    if (!health || (job.mode === "anchored" && health.ctc.passageReady !== true)) continue;
     if (health.busy || health.stuck || coord.activeOnHost(id) > 0) {
       busy = true;
       continue;

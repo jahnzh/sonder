@@ -36,12 +36,11 @@ ssh lisa '~/sonder-replication/ctc-worker-env/bin/python -m pip install --no-cac
 ssh lisa '~/sonder-replication/ctc-worker-env/bin/python -m pip install --no-cache-dir numpy==1.26.4 fastapi==0.121.3 uvicorn==0.38.0 faster-whisper==1.2.1'
 ```
 
-The requirements file pins the CPU builds of Torch and TorchAudio 2.8.
-`faster-whisper` is needed for the anchored planner's speech samples. Before
-starting a persistent worker, copy the repository's `worker/` directory to
-lisa and choose a `MEDIA_ROOT`. From the directory containing the copied
-`worker/`, fetch both the pinned CTC checkpoint and Whisper model into that
-root:
+The requirements file pins the CPU builds of Torch and TorchAudio 2.8. CTC
+discovery uses the CTC checkpoint; Whisper is only needed for the aeneas
+fallback. Before starting a persistent worker, copy the repository's `worker/`
+directory to lisa and choose a `MEDIA_ROOT`. From the directory containing the
+copied `worker/`, fetch the pinned models into that root:
 
 ```sh
 MEDIA_ROOT="$CTC_MEDIA_ROOT" ~/sonder-replication/ctc-worker-env/bin/python worker/download_model.py
