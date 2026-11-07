@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Deploy a committed revision of this repository to the local production container.
-#   deploy.sh <commit> [--marker <string>]... [--skip-live-checks] [--dry-run]
+#   deploy.sh <commit> [--marker <string>]... [--marker-file <path>]... [--no-marker] [--skip-live-checks] [--dry-run]
 # The compose build context is the working tree, so the checkout must be exactly at <commit>
 # (HEAD matches and no tracked file is modified) before the build. Steps:
 #   1. verify the commit, the checkout and the running production container
@@ -8,34 +8,49 @@
 #   3. tag the running image for rollback BEFORE the build (sonder-audiobooks:before-<short>-<epoch> when it has no
 #      other sonder-audiobooks tag; the build moves :local and would otherwise orphan it, #153)
 #   4. docker compose build sonder (image sonder-audiobooks:local)
-#   5. verify every --marker string is present in the built image's /app (server, dist or src)
+#   5. verify every --marker string is present in the built image's /app (server, dist or src) and every
+#      --marker-file path exists in the image (docker run --rm --entrypoint test <image> -f <path>)
 #   6. smoke-test the built image with the service's environment, network and mounts
 #   7. docker compose up -d sonder, wait for the health check, curl /api/health
 #   8. run the live verification scripts (reader + multi-user) unless --skip-live-checks;
 #      the reader check picks the most recent recording with a finished EPUB alignment map
 # Prints the rollback command (retag the old image as :local, then up -d --no-build) and reminds to
 # record the deploy in artifacts/orca/STATE.md.
+# At least one --marker or --marker-file is required; --no-marker explicitly skips image verification (non-app changes)
+# and cannot be combined with either.
 # Exit codes: 0 deploy succeeded, 1 a step failed, 2 bad usage.
 set -u
 
 usage() {
-  echo "usage: deploy.sh <commit> [--marker <string>]... [--skip-live-checks] [--dry-run]" >&2
+  echo "usage: deploy.sh <commit> [--marker <string>]... [--marker-file <path>]... [--no-marker] [--skip-live-checks] [--dry-run]" >&2
   exit 2
 }
 
 commit=""
 markers=()
+marker_files=()
+no_marker=0
 skip_live=0
 dry_run=0
 while [ $# -gt 0 ]; do
   case $1 in
     --marker) [ $# -ge 2 ] || usage; markers+=("$2"); shift 2 ;;
+    --marker-file) [ $# -ge 2 ] || usage; marker_files+=("$2"); shift 2 ;;
+    --no-marker) no_marker=1; shift ;;
     --skip-live-checks) skip_live=1; shift ;;
     --dry-run) dry_run=1; shift ;;
     *) if [ -z "$commit" ]; then commit=$1; shift; else usage; fi ;;
   esac
 done
 [ -n "$commit" ] || usage
+if [ "$no_marker" -eq 1 ] && { [ ${#markers[@]} -gt 0 ] || [ ${#marker_files[@]} -gt 0 ]; }; then
+  echo "--no-marker cannot be combined with --marker or --marker-file" >&2
+  exit 2
+fi
+if [ "$no_marker" -eq 0 ] && [ ${#markers[@]} -eq 0 ] && [ ${#marker_files[@]} -eq 0 ]; then
+  echo "refusing to deploy with no verification: pass --marker <string>, --marker-file <path>, or --no-marker for a non-app change" >&2
+  exit 2
+fi
 
 docker=${SONDER_DEPLOY_DOCKER:-docker}
 repo_root=$(cd "$(dirname "$0")/.." && pwd)
@@ -120,6 +135,10 @@ if [ "$dry_run" -eq 1 ]; then
   for m in ${markers[@]+"${markers[@]}"}; do
     echo "  4. verify marker in the image: $m"
   done
+  for f in ${marker_files[@]+"${marker_files[@]}"}; do
+    echo "  4. verify marker file in the image: $f"
+  done
+  [ "$no_marker" -eq 1 ] && echo "  4. image marker check: skipped (--no-marker)"
   echo "  5. smoke-test the built image: docker compose run --rm --no-deps --entrypoint node sonder --import tsx scripts/image-smoke.mjs"
   echo "  6. docker compose up -d sonder; wait for healthy; curl 127.0.0.1:${port}/api/health"
   if [ "$skip_live" -eq 1 ]; then
@@ -177,6 +196,17 @@ for m in ${markers[@]+"${markers[@]}"}; do
   fi
   echo "marker ok: $m"
 done
+
+for f in ${marker_files[@]+"${marker_files[@]}"}; do
+  if ! $docker run --rm --entrypoint test "sonder-audiobooks:local" -f "$f"; then
+    echo "marker file not found in the built image: $f" >&2
+    echo "the container is still running the previous image; restoring :local to the rollback image" >&2
+    restore_local_from_rollback
+    exit 1
+  fi
+  echo "marker file ok: $f"
+done
+[ "$no_marker" -eq 1 ] && echo "image marker check skipped (--no-marker)"
 
 # 6. Run the smoke before touching the existing container.
 echo "smoke-testing the built image"

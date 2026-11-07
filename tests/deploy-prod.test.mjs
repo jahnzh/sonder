@@ -60,7 +60,9 @@ exit ${stubExit}
 
   git(dir, ["--git-dir", gitDir, "--work-tree", prodRoot, "checkout", "-q", "-f", "main"]);
 
-  const run = (sha, extraArgs = [], extraEnv = {}) => {
+  // Unless the caller passes its own marker flag (or bare), --no-marker is added: deploy requires one.
+  const run = (sha, extraArgs = [], extraEnv = {}, { bare = false } = {}) => {
+    if (!bare && !extraArgs.some((a) => ["--marker", "--marker-file", "--no-marker"].includes(a))) extraArgs = ["--no-marker", ...extraArgs];
     const env = cleanEnv({
       SONDER_PROD_ROOT: prodRoot,
       SONDER_PROD_DEPLOY_SCRIPT: join(prodRoot, "scripts", "deploy.sh"),
@@ -187,4 +189,24 @@ test("refuses when tracked work-tree files are modified", () => {
   } finally {
     rmSync(f.dir, { recursive: true, force: true });
   }
+});
+
+test("rejects a deploy with no marker flag before touching the work tree", () => {
+  const f = prodFixture();
+  try {
+    const head = f.headSha();
+    const r = f.run(f.sha2, [], {}, { bare: true });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /refusing to deploy with no verification/);
+    assert.equal(f.headSha(), head);
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test("forwards --marker-file to deploy.sh", () => {
+  const f = prodFixture();
+  try {
+    const r = f.run(f.sha2, ["--marker-file", "/app/dist/index.html", "--dry-run"]);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.ok(f.stubLines().find((l) => l.startsWith("ARGS="))?.includes("--marker-file /app/dist/index.html"));
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
 });

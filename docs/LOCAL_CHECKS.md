@@ -81,7 +81,7 @@ Production source lives at `/home/jahn/audiobook_streamer`: a **bare** Git repos
 From any checkout (including an Orca worktree), deploy a committed revision with:
 
 ```bash
-scripts/deploy-prod.sh <commit> [--marker <string>]... [--skip-live-checks] [--dry-run]
+scripts/deploy-prod.sh <commit> [--marker <string>]... [--marker-file <path>]... [--no-marker] [--skip-live-checks] [--dry-run]
 ```
 
 `deploy-prod.sh` checks out `<commit>` into the production work tree and runs `scripts/deploy.sh` inside a subshell so `GIT_DIR`/`GIT_WORK_TREE` never escape to the caller. It refuses when tracked work-tree files are modified and passes through `deploy.sh` exit codes and flags (including `--dry-run`).
@@ -89,7 +89,7 @@ scripts/deploy-prod.sh <commit> [--marker <string>]... [--skip-live-checks] [--d
 `scripts/deploy.sh` alone is for use **inside** the production work tree when it is already at `<commit>` with a clean index:
 
 ```bash
-scripts/deploy.sh <commit> [--marker <string>]... [--skip-live-checks] [--dry-run]
+scripts/deploy.sh <commit> [--marker <string>]... [--marker-file <path>]... [--no-marker] [--skip-live-checks] [--dry-run]
 ```
 
 Deploys a committed revision to the local production container (`sonder` in `compose.yaml`, image `sonder-audiobooks:local`, port 3001). Production runs on this machine and the compose build context is the working tree, so the checkout must be exactly at `<commit>` with no tracked changes before the build; the script verifies that first, then:
@@ -97,7 +97,7 @@ Deploys a committed revision to the local production container (`sonder` in `com
 1. backs up the running database with the online backup API (`data/backups/before-<short>-<epoch>.db`);
 2. tags the running image for rollback before building — it reuses an existing `sonder-audiobooks:*` tag (other than `:local`) of that image, or adds `sonder-audiobooks:before-<short>-<epoch>` when it has none; if the tag cannot be made the script stops before building and says how to roll back by rebuilding the previous commit. The build moves `:local`, so tagging afterwards loses an image whose only tag was `:local` (#153);
 3. builds `sonder-audiobooks:local` with `docker compose build sonder`;
-4. verifies every `--marker` string in the built image's `/app` (server code and built client);
+4. verifies every `--marker` string in the built image's `/app` (server code and built client) and every `--marker-file <path>` exists in the image (`docker run --rm --entrypoint test <image> -f <path>`); a failure restores the rollback `:local` tag and leaves the container running. At least one `--marker` or `--marker-file` is required: the script exits 2 ("refusing to deploy with no verification") unless `--no-marker` is given, which explicitly skips the image check for non-app changes (docs, scripts) and cannot be combined with the other two. `deploy-prod.sh` applies the same rule before touching the work tree;
 5. runs the image smoke using the `sonder` service's environment, network and mounts, without starting its dependencies; the smoke checks server imports and the consensus worker, and, when `ALIGNMENT_POOL_ENABLED=1`, checks that `ssh` and `scp` are present and that every configured pool host answers `/health` and `ssh true` using the container's SSH credentials. A failure restores the rollback image's `:local` tag and leaves the existing container running;
 6. recreates the container, waits for the health check, then curls `/api/health`;
 7. runs the live verification scripts (reader and multi-user) unless `--skip-live-checks`, every one of them even when an earlier one fails, then exits 1 listing the failures; the reader check picks the most recent recording with a finished EPUB alignment map.
