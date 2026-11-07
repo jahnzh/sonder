@@ -23,7 +23,7 @@ The app container binds to loopback. Put an HTTPS reverse proxy in front of it f
 
 ## Local checks and backups
 
-`npm run check` checks the committed `HEAD` in a disposable directory: dependency installation, build/typecheck, unit tests, then browser tests. Uncommitted changes are recorded in the report and are excluded from the snapshot. Use `npm run check -- --ref <commit>` to check another revision. Each invocation has its own logs and reports under `artifacts/ci/`.
+`npm run check` checks the committed `HEAD` in a disposable directory: dependency installation, build/typecheck, unit tests, then browser tests, including extra runs of specs changed against `origin/main`. Uncommitted changes are recorded in the report and are excluded from the snapshot. Use `npm run check -- --ref <commit>` to check another revision. Each invocation has its own logs and reports under `artifacts/ci/`.
 
 Before deploying an existing installation, create a consistent SQLite snapshot with `npm run backup -- data/sonder.db data/backups/before-<change>-$(date +%s).db`. The destination must be new; the command verifies the backup before reporting success. See [local checks and verification](docs/LOCAL_CHECKS.md) for details.
 

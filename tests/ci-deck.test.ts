@@ -67,7 +67,7 @@ cp -r "$(strip "\${args[0]}")" "$(strip "\${args[1]}")"
 // report to --output-dir the way the real runner does. STUB_NPM_REPORT_OK=false writes a
 // failing report.
 const npmStub = `#!/usr/bin/env bash
-echo "cwd=$PWD args=$* head=$(git rev-parse HEAD 2>/dev/null)" >>"$STUB_NPM_LOG"
+echo "cwd=$PWD args=$* base=$(git rev-parse --verify refs/remotes/origin/main 2>/dev/null) head=$(git rev-parse HEAD 2>/dev/null)" >>"$STUB_NPM_LOG"
 if [[ $1 == run && $2 == check ]]; then
   out=""
   while [[ $# -gt 0 ]]; do [[ $1 == --output-dir ]] && out=$2; shift; done
@@ -227,6 +227,7 @@ function fixture(t?: TestContext) {
   git("add", ".");
   git("commit", "-qm", "first");
   const first = git("rev-parse", "HEAD");
+  git("update-ref", "refs/remotes/origin/main", first);
   fs.writeFileSync(path.join(repo, "later.txt"), "later\n");
   git("add", ".");
   git("commit", "-qm", "second");
@@ -401,7 +402,15 @@ test("the check runs in a real clone of the bundle at the requested commit", (t)
   // cwd is <remote>/runs/<sha7>-<random>/checkout, and a clone has its own .git whose HEAD is the commit.
   assert.match(calls[0], new RegExp(`^cwd=${f.remote}/runs/${f.first.slice(0, 7)}-[A-Za-z0-9]{8}/checkout `));
   assert.ok(calls[0].endsWith(`head=${f.first}`), calls[0]);
+  assert.ok(calls[0].includes(`base=${f.first}`), "the remote checkout has the original origin/main");
   assert.match(f.read(f.logs.npm), /args=ci /);
+});
+
+test("the bundle preserves origin/main independently of the target commit", (t) => {
+  const f = fixture(t);
+  const out = f.run(f.second);
+  assert.equal(out.status, 0, out.output);
+  assert.ok(f.checkCalls()[0]!.includes(`base=${f.first} head=${f.second}`));
 });
 
 test("the report and log are retrieved and only this run's container and directory are removed", (t) => {
