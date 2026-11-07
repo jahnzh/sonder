@@ -43,8 +43,8 @@ const { spawnSync } = require('node:child_process');
 
 const argv = process.argv.slice(2);
 const logPath = process.env.STUB_NPM_LOG;
-const failStage = process.env.STUB_NPM_FAIL_STAGE;
-const failCode = parseInt(process.env.STUB_NPM_FAIL_CODE || '42', 10);
+const failStages = (process.env.STUB_NPM_FAIL_STAGE || '').split(',');
+const failCodes = (process.env.STUB_NPM_FAIL_CODE || '42').split(',');
 const createTraces = process.env.STUB_NPM_CREATE_TRACES === '1';
 const sleepMs = parseInt(process.env.STUB_NPM_SLEEP_MS || '0', 10);
 
@@ -118,7 +118,9 @@ if (sleepMs > 0 && currentStage === 'ci') {
   while (Date.now() < end) {}
 }
 
-if (failStage && currentStage === failStage) {
+const failIndex = failStages.indexOf(currentStage);
+if (failIndex !== -1) {
+  const failCode = parseInt(failCodes[failIndex] || failCodes[0], 10);
   process.stderr.write(\`Stub npm: failing stage \${currentStage} with code \${failCode}\\n\`);
   process.exit(failCode);
 }
@@ -571,7 +573,7 @@ test("2b. Failed build preserves nonzero exit code and skips unit/browser tests"
         fixture.cleanup();
     }
 });
-test("2c. Failed unit tests preserve nonzero exit code and skip browser tests", async () => {
+test("2c. Failed unit tests still run browser tests and preserve the unit exit code", async () => {
     const fixture = setupGitFixture();
     try {
         const customEnv = {
@@ -587,15 +589,42 @@ test("2c. Failed unit tests preserve nonzero exit code and skip browser tests", 
         assert.equal(result.ok, false);
         assert.equal(result.exitCode, 3);
         const logs = readNpmLogs(fixture.npmLogPath);
-        assert.equal(logs.length, 3);
+        assert.equal(logs.length, 4);
         assert.deepEqual(logs[0].argv, ["ci"]);
         assert.deepEqual(logs[1].argv, ["run", "build"]);
         assert.deepEqual(logs[2].argv, ["test"]);
+        assert.deepEqual(logs[3].argv, ["run", "test:browser", "--", "--reporter=list,json"]);
         const report = result.report;
+        assert.equal(report.result, "failed");
         assert.equal(report.failedStage, "unit");
         assert.equal(report.stages[2].status, "failed");
         assert.equal(report.stages[2].exitCode, 3);
-        assert.equal(report.stages[3].status, "skipped");
+        assert.equal(report.stages[3].status, "passed");
+        const savedReport = JSON.parse(fs.readFileSync(path.join(result.outputDir, "report.json"), "utf8"));
+        assert.equal(savedReport.stages[2].status, "failed");
+        assert.equal(savedReport.stages[3].status, "passed");
+    }
+    finally {
+        fixture.cleanup();
+    }
+});
+test("2c-bail. --bail skips browser tests after a unit failure", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const result = await runCheckLocal(["--silent", "--bail"], {
+            cwd: fixture.repoDir,
+            env: {
+                PATH: `${fixture.binDir}:${process.env.PATH}`,
+                STUB_NPM_LOG: fixture.npmLogPath,
+                STUB_NPM_FAIL_STAGE: "test",
+                STUB_NPM_FAIL_CODE: "3",
+            },
+        });
+        assert.equal(result.exitCode, 3);
+        assert.equal(result.report.result, "failed");
+        assert.equal(result.report.failedStage, "unit");
+        assert.equal(result.report.stages[3].status, "skipped");
+        assert.equal(readNpmLogs(fixture.npmLogPath).length, 3);
     }
     finally {
         fixture.cleanup();
@@ -622,6 +651,33 @@ test("2d. Failed browser test preserves nonzero exit code", async () => {
         assert.equal(report.failedStage, "browser");
         assert.equal(report.stages[3].status, "failed");
         assert.equal(report.stages[3].exitCode, 5);
+    }
+    finally {
+        fixture.cleanup();
+    }
+});
+test("2e. Unit and browser failures are both reported and retain the first exit code", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const result = await runCheckLocal(["--silent"], {
+            cwd: fixture.repoDir,
+            env: {
+                PATH: `${fixture.binDir}:${process.env.PATH}`,
+                STUB_NPM_LOG: fixture.npmLogPath,
+                STUB_NPM_FAIL_STAGE: "test,browser",
+                STUB_NPM_FAIL_CODE: "3,5",
+            },
+        });
+        assert.equal(result.ok, false);
+        assert.equal(result.exitCode, 3);
+        assert.equal(result.report.result, "failed");
+        assert.equal(result.report.failedStage, "unit");
+        assert.equal(readNpmLogs(fixture.npmLogPath).length, 4);
+        const savedReport = JSON.parse(fs.readFileSync(path.join(result.outputDir, "report.json"), "utf8"));
+        assert.deepEqual(savedReport.stages.map(({ status }) => status), ["passed", "passed", "failed", "failed"]);
+        assert.deepEqual(savedReport.stages.slice(2).map(({ exitCode }) => exitCode), [3, 5]);
+        assert.match(fs.readFileSync(path.join(result.outputDir, savedReport.stages[2].logFile), "utf8"), /failing stage test/);
+        assert.match(fs.readFileSync(path.join(result.outputDir, savedReport.stages[3].logFile), "utf8"), /failing stage browser/);
     }
     finally {
         fixture.cleanup();
@@ -1275,17 +1331,61 @@ test("known failures: browser stage fails without a usable report -> failed, exi
     }
 });
 
-test("known failures: failures in an earlier stage are never tolerated and keep their exit code", async () => {
+test("known failures: --bail skips the browser after an earlier failure", async () => {
     const fixture = setupGitFixture();
     try {
         const {listFile, reportFile} = writeKnownFailuresFixture(fixture, [status("webkit", SPEC, "reset refreshes the app shell", "unexpected")]);
         const env = {...knownFailuresEnv(fixture, reportFile, "3"), STUB_NPM_FAIL_STAGE: "test"};
-        const result = await runCheckLocal(["--silent", "--known-failures", listFile], {cwd: fixture.repoDir, env});
+        const result = await runCheckLocal(["--silent", "--bail", "--known-failures", listFile], {cwd: fixture.repoDir, env});
         assert.equal(result.exitCode, 3);
         assert.equal(result.report.result, "failed");
         assert.equal(result.report.failedStage, "unit");
         assert.equal(result.report.knownFailures.evaluated, false);
         assert.equal(readNpmLogs(fixture.npmLogPath).length, 3, "browser stage is skipped");
+    }
+    finally {
+        fixture.cleanup();
+    }
+});
+
+test("known failures: listed browser failures cannot hide a failed unit stage", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const {listFile, reportFile} = writeKnownFailuresFixture(fixture, [status("webkit", SPEC, "reset refreshes the app shell", "unexpected")]);
+        const env = {
+            ...knownFailuresEnv(fixture, reportFile, "3,5"),
+            STUB_NPM_FAIL_STAGE: "test,browser",
+        };
+        const result = await runCheckLocal(["--silent", "--known-failures", listFile], {cwd: fixture.repoDir, env});
+        assert.equal(result.exitCode, 3);
+        assert.equal(result.report.result, "failed");
+        assert.equal(result.report.failedStage, "unit");
+        assert.deepEqual(result.report.stages.slice(2).map(({ status }) => status), ["failed", "failed"]);
+        assert.equal(result.report.knownFailures.evaluated, true);
+        assert.equal(result.report.knownFailures.result, "passed_with_known_failures");
+        assert.equal(result.report.knownFailures.known.length, 1);
+        assert.deepEqual(result.report.knownFailures.new, []);
+        assert.equal(readNpmLogs(fixture.npmLogPath).length, 4);
+    }
+    finally {
+        fixture.cleanup();
+    }
+});
+
+test("known failures: an unlisted browser failure is recorded after a unit failure", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const {listFile, reportFile} = writeKnownFailuresFixture(fixture, [status("chromium", SPEC, "new browser failure", "unexpected")]);
+        const env = {
+            ...knownFailuresEnv(fixture, reportFile, "3,5"),
+            STUB_NPM_FAIL_STAGE: "test,browser",
+        };
+        const result = await runCheckLocal(["--silent", "--known-failures", listFile], {cwd: fixture.repoDir, env});
+        assert.equal(result.exitCode, 3);
+        assert.equal(result.report.result, "failed");
+        assert.equal(result.report.failedStage, "unit");
+        assert.equal(result.report.knownFailures.result, "failed");
+        assert.deepEqual(result.report.knownFailures.new.map(({ title }) => title), ["new browser failure"]);
     }
     finally {
         fixture.cleanup();

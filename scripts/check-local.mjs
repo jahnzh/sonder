@@ -188,10 +188,12 @@ Options:
                          JSON list of known browser failures (project, spec file,
                          title). The browser stage always writes a Playwright JSON
                          report (also used to list the slowest 10 tests); with this
-                         flag, if every failing test is listed the result is
-                         passed_with_known_failures and the exit code is 0. Any
-                         other failure still fails. Relative paths resolve
-                         against the calling checkout. See docs/LOCAL_CHECKS.md.
+                         flag, if earlier stages pass and every failing browser
+                         test is listed the result is passed_with_known_failures
+                         and the exit code is 0. Any other failure still fails.
+                         Relative paths resolve against the calling checkout.
+                         See docs/LOCAL_CHECKS.md.
+  --bail                 Stop after the first failed stage
   --silent               Suppress live stage streaming output to console
   -h, --help             Show this help message
 
@@ -546,7 +548,8 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       const stageDef = stageDefinitions[i];
       const stageIndex = i + 1;
 
-      if (firstFailedStage || interruptedSignal) {
+      const continueAfterUnitFailure = !options.bail && firstFailedStage?.name === "unit" && stageDef.name === "browser";
+      if (interruptedSignal || (firstFailedStage && !continueAfterUnitFailure)) {
         stageResults.push({
           index: stageIndex,
           name: stageDef.name,
@@ -637,7 +640,7 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
         toleratedStage = stageRecord;
         stageRecord.toleratedBy = "known-failures";
       } else if (!stagePassed) {
-        firstFailedStage = stageRecord;
+        firstFailedStage ??= stageRecord;
         if (!options.silent) {
           console.error(
             `\n[check-local] Stage "${stageDef.fullCommand}" failed with exit code ${stageRes.exitCode}${

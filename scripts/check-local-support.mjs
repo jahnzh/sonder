@@ -16,6 +16,7 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
     knownFailures: null,
     help: false,
     silent: false,
+    bail: false,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -24,6 +25,8 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
       options.help = true;
     } else if (arg === "--silent") {
       options.silent = true;
+    } else if (arg === "--bail") {
+      options.bail = true;
     } else if (arg === "--ref") {
       if (i + 1 >= argv.length || argv[i + 1].startsWith("--")) {
         return { ok: false, error: "Missing required value for --ref option" };
