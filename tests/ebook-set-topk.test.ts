@@ -107,6 +107,36 @@ test("evaluateOutlierCheck rejects weak matches and accepts forward anchors", ()
   assert.equal(fail.reason, "insufficient_matches");
 });
 
+test("evaluateOutlierCheck accepts forward anchors that span several tracks (#326)", () => {
+  const fragments = Array.from({ length: 400 }, (_, i) => ({
+    words: 12,
+    section: Math.floor(i / 20),
+  }));
+  const tracks = Array.from({ length: 4 }, (_, i) => ({ id: `t${i}`, duration: 900 }));
+  const offsets = Object.fromEntries(tracks.map((t, i) => [t.id, i * 900]));
+  const samples = planSamples(tracks).map((sample) => ({
+    ...sample,
+    done: true,
+    spokenWords: 40,
+    // Fragment grows with the position in the whole recording; the match
+    // start stays relative to its own track, as the worker reports it.
+    match: {
+      fragment: Math.floor(((offsets[sample.trackId] + sample.time) / 3600) * 380),
+      score: 0.85,
+      start: sample.time,
+    },
+  }));
+  const result = evaluateOutlierCheck(
+    samples,
+    fragments,
+    tracks,
+    fragments.map(() => "Sample passage text."),
+  );
+  assert.equal(result.reason, "ok");
+  assert.equal(result.passed, true);
+  assert.ok(result.forwardOrder);
+});
+
 test("evaluateOutlierCheck requires half of spoken samples at the outlier score", () => {
   const fragments = Array.from({ length: 40 }, () => ({ words: 8, section: 1 }));
   const tracks = [{ id: "t1", duration: 900 }];

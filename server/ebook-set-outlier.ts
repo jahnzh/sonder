@@ -4,6 +4,7 @@ import {
   type AnchorTrack,
   prefixWords,
   selectAnchors,
+  trackOffsets,
 } from "./alignment-anchors.ts";
 
 export const OUTLIER_MIN_SCORE = 0.5;
@@ -29,11 +30,19 @@ export type OutlierCheckResult = {
   samples: OutlierSampleEvidence[];
 };
 
-function forwardAnchors(anchors: { fragment: number; time: number }[]) {
+// Anchor times are relative to their own track, so order is judged on the
+// position in the whole recording: a later track restarts its clock at zero.
+function forwardAnchors(
+  anchors: { trackId: string; fragment: number; time: number }[],
+  tracks: AnchorTrack[],
+) {
+  const offsets = trackOffsets(tracks);
+  const at = (anchor: { trackId: string; time: number }) =>
+    (offsets[anchor.trackId] ?? 0) + anchor.time;
   for (let i = 1; i < anchors.length; i++)
     if (
       anchors[i].fragment <= anchors[i - 1].fragment ||
-      anchors[i].time <= anchors[i - 1].time
+      at(anchors[i]) <= at(anchors[i - 1])
     )
       return false;
   return true;
@@ -86,7 +95,7 @@ export function evaluateOutlierCheck(
       samples: evidence,
     };
   const anchors = selectAnchors(samples, words, tracks, minScore);
-  const forwardOrder = forwardAnchors(anchors);
+  const forwardOrder = forwardAnchors(anchors, tracks);
   const passed =
     forwardOrder && anchors.length >= Math.ceil(spoken.length / 2);
   return {
