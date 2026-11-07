@@ -2,19 +2,30 @@
 # Check out <commit> in the production work tree (bare repo + GIT_WORK_TREE) and run
 # scripts/deploy.sh inside a subshell so GIT_DIR/GIT_WORK_TREE never escape to the caller.
 #   deploy-prod.sh <commit> [deploy.sh args...]
+# deploy.sh requires --marker, --marker-file or --no-marker; deploy-prod.sh rejects a call with none of them (exit 2)
+# before touching the work tree.
 # Refuses when tracked work-tree files are modified (same rule as deploy.sh). Passes through
 # deploy.sh's exit code. Production paths default to /home/jahn/audiobook_streamer; override with
 # SONDER_PROD_ROOT, SONDER_PROD_GIT_DIR, SONDER_PROD_WORK_TREE, or SONDER_PROD_DEPLOY_SCRIPT (tests).
 set -u
 
 usage() {
-  echo "usage: deploy-prod.sh <commit> [deploy.sh args...]" >&2
+  echo "usage: deploy-prod.sh <commit> (--marker <string>|--marker-file <path>|--no-marker)... [deploy.sh args...]" >&2
   exit 2
 }
 
 [ $# -ge 1 ] || usage
 commit=$1
 shift
+
+has_marker=0
+for arg in "$@"; do
+  case $arg in --marker|--marker-file|--no-marker) has_marker=1 ;; esac
+done
+if [ "$has_marker" -eq 0 ]; then
+  echo "refusing to deploy with no verification: pass --marker <string>, --marker-file <path>, or --no-marker for a non-app change" >&2
+  exit 2
+fi
 
 prod_root=${SONDER_PROD_ROOT:-/home/jahn/audiobook_streamer}
 git_dir=${SONDER_PROD_GIT_DIR:-$prod_root/.git}

@@ -23,7 +23,7 @@ function stub(dir, name, body) {
 
 // A throwaway repository holding a copy of deploy.sh, a stubbed docker and curl, and live-check scripts that
 // append their name to a log, so a test can see which checks ran.
-function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", tagFails = false, smokeFails = false, markerFails = false } = {}) {
+function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", tagFails = false, smokeFails = false, markerFails = false, markerFileFails = false } = {}) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "sonder-deploy-")));
   const repo = join(dir, "repo");
   const bin = join(dir, "bin");
@@ -54,6 +54,7 @@ function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", t
     `  "compose run --rm --no-deps --entrypoint node sonder --import tsx scripts/image-smoke.mjs") ${smokeFails ? 'echo "alignment pool host wsl (worker@wsl.example): ssh true failed" >&2; exit 1' : "exit 0"} ;;`,
     // Do not put "-c*" at the end of a case pattern: the first ")" closes the branch (bash parse error on --rm).
     `  *run*--entrypoint*sh*sonder-audiobooks:local*grep*) ${markerFails ? "exit 1" : "exit 0"} ;;`,
+    `  *run*--entrypoint*test*sonder-audiobooks:local*) ${markerFileFails ? "exit 1" : "exit 0"} ;;`,
     `  "tag "*)
     if ${tagFails}; then echo "Error response from daemon: No such image" >&2; exit 1; fi
     case "$*" in
@@ -86,7 +87,7 @@ function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", t
 test("production dry run lists the image smoke before the swap", () => {
   const f = fixture({});
   try {
-    const r = f.runProd(["--dry-run"]);
+    const r = f.runProd(["--no-marker", "--dry-run"]);
     assert.equal(r.status, 0, r.stderr + r.stdout);
     assert.match(r.stdout, /smoke-test the built image: docker compose run --rm --no-deps --entrypoint node sonder --import tsx scripts\/image-smoke\.mjs/);
     assert.ok(r.stdout.indexOf("smoke-test the built image") < r.stdout.indexOf("docker compose up -d sonder"));
@@ -97,7 +98,7 @@ test("production dry run lists the image smoke before the swap", () => {
 test("a failing image smoke aborts after build and before the container swap, restores :local, and does not compose up", () => {
   const f = fixture({ "verify-a.mjs": 0 }, { smokeFails: true });
   try {
-    const r = f.run([]);
+    const r = f.run(["--no-marker"]);
     assert.equal(r.status, 1);
     assert.match(r.stderr, /alignment pool host wsl \(worker@wsl\.example\): ssh true failed/);
     assert.match(r.stderr, /image smoke failed; the container is still running the previous image/);
@@ -131,7 +132,7 @@ test("a failing marker restores :local from the rollback tag and does not compos
 test("every live check runs and a clean run exits 0", () => {
   const f = fixture({ "verify-a.mjs": 0, "verify-b.mjs": 0 });
   try {
-    const r = f.run([]);
+    const r = f.run(["--no-marker"]);
     assert.equal(r.status, 0, r.stderr + r.stdout);
     assert.deepEqual(f.ran(), ["verify-a.mjs", "verify-b.mjs"]);
   } finally {
@@ -142,7 +143,7 @@ test("every live check runs and a clean run exits 0", () => {
 test("a failing live check does not stop the next one, and the deploy still exits 1 with a rollback line", () => {
   const f = fixture({ "verify-a.mjs": 1, "verify-b.mjs": 0 });
   try {
-    const r = f.run([]);
+    const r = f.run(["--no-marker"]);
     assert.equal(r.status, 1);
     assert.deepEqual(f.ran(), ["verify-a.mjs", "verify-b.mjs"]);
     assert.match(r.stderr, /live check failed: scripts\/verify-a\.mjs/);
@@ -156,7 +157,7 @@ test("a failing live check does not stop the next one, and the deploy still exit
 test("a reader check with no recording to use is a failed check, and the others still run", () => {
   const f = fixture({ "verify-integrated-reader.mjs": 0, "verify-b.mjs": 0 });
   try {
-    const r = f.run([]);
+    const r = f.run(["--no-marker"]);
     assert.equal(r.status, 1);
     assert.match(r.stderr, /cannot run the reader live check/);
     assert.deepEqual(f.ran(), ["verify-b.mjs"]);
@@ -168,7 +169,7 @@ test("a reader check with no recording to use is a failed check, and the others 
 test("the running image is tagged before the build when :local is its only tag", () => {
   const f = fixture({ "verify-a.mjs": 0 }, { images: "sonder-audiobooks:local aaaaaaaaaaaa" });
   try {
-    const r = f.run([]);
+    const r = f.run(["--no-marker"]);
     assert.equal(r.status, 0, r.stderr + r.stdout);
     const calls = f.dockerCalls();
     const tagged = calls.findIndex((c) => /^tag sha256:aaaaaaaaaaaa sonder-audiobooks:before-/.test(c));
@@ -183,7 +184,7 @@ test("the running image is tagged before the build when :local is its only tag",
 test("an image that already has another sonder-audiobooks tag is not tagged again", () => {
   const f = fixture({ "verify-a.mjs": 0 }, { images: "sonder-audiobooks:local aaaaaaaaaaaa\nsonder-audiobooks:abc1234 aaaaaaaaaaaa" });
   try {
-    const r = f.run([]);
+    const r = f.run(["--no-marker"]);
     assert.equal(r.status, 0, r.stderr + r.stdout);
     assert.equal(f.dockerCalls().some((c) => c.startsWith("tag ")), false);
     assert.match(r.stdout, /rollback: docker tag sonder-audiobooks:abc1234 sonder-audiobooks:local/);
@@ -195,7 +196,7 @@ test("an image that already has another sonder-audiobooks tag is not tagged agai
 test("when the running image cannot be tagged nothing is built and the container is left alone", () => {
   const f = fixture({ "verify-a.mjs": 0 }, { images: "sonder-audiobooks:local aaaaaaaaaaaa", tagFails: true });
   try {
-    const r = f.run([]);
+    const r = f.run(["--no-marker"]);
     assert.equal(r.status, 1);
     assert.match(r.stderr, /could not tag the running image for rollback; not building/);
     assert.match(r.stderr, /roll back by rebuilding the previous commit: git checkout <previous-commit> && docker compose build sonder && docker compose up -d sonder/);
@@ -206,4 +207,82 @@ test("when the running image cannot be tagged nothing is built and the container
   } finally {
     rmSync(f.dir, { recursive: true, force: true });
   }
+});
+
+test("--marker-file passes when the file exists in the image", () => {
+  const f = fixture({ "verify-a.mjs": 0 });
+  try {
+    const r = f.run(["--marker-file", "/app/dist/index.html"]);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.match(r.stdout, /marker file ok: \/app\/dist\/index.html/);
+    assert.ok(f.dockerCalls().includes("run --rm --entrypoint test sonder-audiobooks:local -f /app/dist/index.html"), f.dockerCalls().join("\n"));
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test("--marker-file absent from the image restores :local and does not compose up", () => {
+  const f = fixture({ "verify-a.mjs": 0 }, { markerFileFails: true });
+  try {
+    const r = f.run(["--marker-file", "/app/nope"]);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /marker file not found in the built image: \/app\/nope/);
+    const calls = f.dockerCalls();
+    assert.ok(calls.some((c) => c === "tag sonder-audiobooks:rollback sonder-audiobooks:local"), calls.join("\n"));
+    assert.equal(calls.some((c) => c.startsWith("compose up")), false);
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test("--no-marker deploys without any image marker check", () => {
+  const f = fixture({ "verify-a.mjs": 0 });
+  try {
+    const r = f.run(["--no-marker"]);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.match(r.stdout, /image marker check skipped/);
+    assert.equal(f.dockerCalls().some((c) => c.startsWith("run --rm --entrypoint")), false);
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test("a deploy with no marker flag is refused with exit 2 and runs nothing", () => {
+  const f = fixture({ "verify-a.mjs": 0 });
+  try {
+    for (const args of [[], ["--dry-run"]]) {
+      const r = f.run(args);
+      assert.equal(r.status, 2);
+      assert.match(r.stderr, /refusing to deploy with no verification/);
+    }
+    assert.deepEqual(f.dockerCalls(), []);
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test("--no-marker cannot be combined with --marker or --marker-file; missing values are usage errors", () => {
+  const f = fixture({});
+  try {
+    for (const args of [["--no-marker", "--marker", "x"], ["--no-marker", "--marker-file", "/x"]]) {
+      const r = f.run(args);
+      assert.equal(r.status, 2);
+      assert.match(r.stderr, /--no-marker cannot be combined/);
+    }
+    const r = f.run(["--marker-file"]);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /usage: deploy.sh .*--marker-file <path>.*--no-marker/);
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test("dry run plans marker file and --no-marker steps", () => {
+  const f = fixture({});
+  try {
+    let r = f.run(["--marker-file", "/app/x", "--dry-run"]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /verify marker file in the image: \/app\/x/);
+    r = f.run(["--no-marker", "--dry-run"]);
+    assert.match(r.stdout, /skipped \(--no-marker\)/);
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test("deploy-prod.sh refuses with no marker flag", () => {
+  const f = fixture({});
+  try {
+    const r = f.runProd([]);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /refusing to deploy with no verification/);
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
 });
