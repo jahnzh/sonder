@@ -7,13 +7,15 @@ test-results/
 playwright-report/
 .env.*
 !.env.example
-artifacts/
+!artifacts/
+artifacts/*
 !artifacts/orca/
 artifacts/orca/*
 !artifacts/orca/send-agent.sh
 !artifacts/orca/check-workers.sh
 !artifacts/orca/watch-inbox.sh
 !artifacts/orca/tick.sh
+!artifacts/orca/note.sh
 .codex-attachments/
 .codegraph
 __pycache__/
