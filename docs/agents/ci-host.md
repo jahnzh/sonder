@@ -106,3 +106,8 @@ node scripts/summarize-e2e-timing.mjs --label wsl test-results/e2e-timing-wsl.js
 ```
 
 Each step prints count, median, p90 and max in ms; steps whose max is above 10 s (`SLOW_STEP_MS`) are flagged `SLOW`. Steps recorded: `sentence-change`, `checkpoint-restore`, `follow-highlight`, `history-restore`.
+
+## Parallel alignment workers
+
+Parallel alignment workers need one `MEDIA_ROOT` each (hard-link the inputs); see the speech-sample issue (#291). When multiple workers share a single `MEDIA_ROOT`, intermediate alignment files collide or get deleted across processes. Hard-linking the input media into separate `MEDIA_ROOT` directories allows parallel execution without duplicating audio storage.
+
