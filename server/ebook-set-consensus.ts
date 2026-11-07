@@ -12,6 +12,7 @@ import {
   audioFingerprint,
   alignmentJob,
   createAlignment,
+  deleteAlignmentJob,
   listAlignmentJobs,
   putAlignmentJob,
   removeProjectedMapsForWork,
@@ -320,11 +321,21 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
       memberBook,
     );
     if (!intervals.length) continue;
+    // (ebook, recording) is unique: a cancelled or failed prepare of this
+    // ebook still holds that slot, and the projection takes its place.
+    const projectedId = projectedJobId(workId, member.ebookId, consensusJob.recordingId);
+    for (const stale of listAlignmentJobs())
+      if (
+        stale.ebookId === member.ebookId &&
+        stale.recordingId === consensusJob.recordingId &&
+        stale.id !== projectedId
+      )
+        deleteAlignmentJob(stale.id);
     const sectionsDone = [
       ...new Set(intervals.map((interval) => interval.section)),
     ].sort((a, b) => a - b);
     putAlignmentJob({
-      id: projectedJobId(workId, member.ebookId, consensusJob.recordingId),
+      id: projectedId,
       generation: consensusJob.generation,
       ebookId: member.ebookId,
       recordingId: consensusJob.recordingId,
