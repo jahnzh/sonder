@@ -66,6 +66,19 @@ test("delivery confirmation: idle agent, mid-turn agent, Codex agent, and not-fo
   assert.equal(classifyDeliveryStatus(idleScreen, "nonexistent prompt message"), "not found");
 });
 
+test("delivery confirmation: message in composer without a turn start is not delivered", () => {
+  const composerScreen = readFileSync(join(fixtures, "composer-no-turn.txt"), "utf8");
+  const msg = "Fix issue 292 send-agent confirmation";
+  assert.equal(classifyDeliveryStatus(composerScreen, msg), "typed_no_turn");
+  assert.notEqual(classifyDeliveryStatus(composerScreen, msg), "delivered");
+});
+
+test("delivery confirmation: older message with same first 40 chars but different ending is not found", () => {
+  const olderScreen = readFileSync(join(fixtures, "prefix-collision-older.txt"), "utf8");
+  const newMessage = "Fix issue 292 send-agent confirmation check: new run to execute now";
+  assert.equal(classifyDeliveryStatus(olderScreen, newMessage), "not found");
+});
+
 test("screen classification: busy and idle Antigravity fixtures", () => {
   const busyScreen = readFileSync(join(fixtures, "antigravity-busy.txt"), "utf8");
   assert.equal(isWorkerScreenBusy(busyScreen), true);

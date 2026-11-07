@@ -140,8 +140,9 @@ Active deploy-or-land goals: either block on `node scripts/orca-check.mjs --wait
 ## Worker prompt delivery (send-agent)
 
 `scripts/orca/send-agent.sh <terminal> --queue "<message>"` (or `--interrupt`) delivers a prompt to a worker and confirms delivery by re-reading the screen for up to 10 seconds:
-- `result: delivered`: the prompt was detected at the turn start or active composer.
+- `result: delivered`: the prompt was detected and the worker is busy (turn started).
 - `result: queued`: the prompt was detected in the follow-ups queue.
+- `result: typed, no turn started (Enter may have been swallowed)`: the prompt was detected on screen but no turn started within 10 seconds.
 - `result: not found`: neither was detected within 10 seconds.
 
 ## Worker screen monitoring
