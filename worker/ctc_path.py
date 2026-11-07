@@ -1,4 +1,5 @@
 """The sole TorchAudio forced-alignment adapter, isolated from model lifetime."""
+import os
 import re
 import unicodedata
 
@@ -6,7 +7,16 @@ from ctc_acoustic import SAMPLE_RATE, STRIDE
 
 # Bound the native path matrix before allocating it. Larger scopes need the
 # bounded passage planner from a later slice, not an unbounded GPU allocation.
-MAX_PATH_CELLS = 500_000_000
+# A host with more GPU memory can raise the bound with ALIGNMENT_CTC_MAX_PATH_CELLS.
+def _max_path_cells(env=os.environ):
+    try:
+        value = int(env.get("ALIGNMENT_CTC_MAX_PATH_CELLS", ""))
+    except ValueError:
+        return 500_000_000
+    return value if 1_000_000 <= value <= 20_000_000_000 else 500_000_000
+
+
+MAX_PATH_CELLS = _max_path_cells()
 
 
 def tokenize(fragments, labels):
