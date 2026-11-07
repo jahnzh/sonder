@@ -208,7 +208,7 @@ function ciStopHangEnv(f: ReturnType<typeof fixture>) {
     STUB_NPM_MODE: "hang",
     STUB_SSH_PROBE: "block",
     SONDER_CI_MAX_WAIT: "300",
-    SONDER_CI_STOP_WAIT: "15",
+    SONDER_CI_STOP_WAIT: "45",
   };
 }
 
@@ -262,13 +262,14 @@ test("ci-stop stops a hung ci-ssh run and cleans up the remote run dir", async (
   const stop = spawnSync("bash", [path.join(f.repo, "scripts", "ci-stop.sh"), f.second], {
     cwd: f.repo,
     encoding: "utf8",
-    timeout: 30_000,
+    timeout: 60_000,
     env,
   });
   assert.equal(stop.status, 0, stop.stdout + stop.stderr);
-  assert.ok(Date.now() - stopStarted < 10_000, "ci-stop finished within 10s");
+  // Generous on purpose: a loaded 4-core host can need tens of seconds to deliver TERM and reap the fake runner (#282).
+  assert.ok(Date.now() - stopStarted < 40_000, "ci-stop finished within 40s");
 
-  const waitDeadline = Date.now() + 15_000;
+  const waitDeadline = Date.now() + 45_000;
   while (child.exitCode === null && Date.now() < waitDeadline) {
     await new Promise((r) => setTimeout(r, 100));
   }
@@ -341,12 +342,12 @@ test("ci-stop does not kill a sibling in the launcher shell process group", asyn
   const stop = spawnSync("bash", [path.join(f.repo, "scripts", "ci-stop.sh"), f.second], {
     cwd: f.repo,
     encoding: "utf8",
-    timeout: 30_000,
+    timeout: 60_000,
     env,
   });
   assert.equal(stop.status, 0, stop.stdout + stop.stderr);
 
-  const waitDeadline = Date.now() + 15_000;
+  const waitDeadline = Date.now() + 45_000;
   while (launcher.exitCode === null && Date.now() < waitDeadline) {
     await new Promise((r) => setTimeout(r, 100));
   }

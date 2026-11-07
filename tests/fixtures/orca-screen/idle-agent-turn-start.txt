@@ -1,0 +1,4 @@
+User: Please run unit tests
+
+⠋ Running 1.2k tokens
+  Thinking about tests...
