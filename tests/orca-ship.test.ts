@@ -281,7 +281,8 @@ test("refuses a detached HEAD", () => {
 test("refuses shipping main branch", () => {
   const t = setup();
   try {
-    // Check out main in the worktree
+    // Free main in clone and check out main in the worktree
+    git(t.main, ["checkout", "--detach"], t.gitEnv);
     git(t.wt, ["checkout", "-B", "main"], t.gitEnv);
     const r = t.run([
       "--worktree", "ship-wt",
