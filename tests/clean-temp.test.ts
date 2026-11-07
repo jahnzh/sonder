@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -83,6 +83,33 @@ test("removes stale sonder temp dirs, keeps fresh ones and untouched names", () 
     assert.ok(existsSync(other), "non-sonder dirs must be untouched");
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("freed MB is the removed directory size, not a free-space delta", () => {
+  const root = makeRoot();
+  const stale = join(root, "sonder-browser-sized");
+  mkdirSync(stale);
+  // 2 MiB payload so du -sk reports at least 2048 KB → 2 MB after integer division.
+  writeFileSync(join(stale, "blob"), Buffer.alloc(2 * 1024 * 1024));
+  ageMinutesAgo(stale, 130);
+  // Concurrent writer on the same filesystem: a df-based delta can go negative (#285).
+  const pressure = join(root, "pressure.bin");
+  const writer = spawn(
+    "timeout",
+    ["60", "bash", "-c", `while true; do dd if=/dev/zero of="${pressure}" bs=1M count=8 status=none 2>/dev/null; done`],
+    { stdio: "ignore", detached: true },
+  );
+  try {
+    const result = cleanTemp({ ORCA_CLEAN_TEMP_ROOT: root, ORCA_CLEAN_TEMP_PLAYWRIGHT: "false" });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /freed 2 MB \(1 of 1 dirs\)/);
+    assert.ok(!existsSync(stale));
+  } finally {
+    try {
+      if (writer.pid) process.kill(-writer.pid, "SIGKILL");
+    } catch {}
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
 
