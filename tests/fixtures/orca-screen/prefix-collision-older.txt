@@ -1,0 +1,7 @@
+User: Fix issue 292 send-agent confirmation check: old run was previously completed
+
+✓ Previous turn succeeded
+────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────
+                                                  accept-edits · Gemini 3.8 Flash · high
