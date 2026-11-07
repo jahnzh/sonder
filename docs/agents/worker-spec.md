@@ -133,6 +133,8 @@ When a worker dies on a quota limit with a complete-but-uncommitted change set, 
 
 Keep one `artifacts/orca/STATE.md` (gitignored) listing for each in-flight item: issue, worktree, local branch, head sha, Deck status, next action.
 
+Record state and decision notes using `scripts/orca/note.sh state "<text>"` and `scripts/orca/note.sh decision "<text>"` (or the wrapper `artifacts/orca/note.sh`). Notes are stamped with the real UTC time (`date -u`). The script rotates `artifacts/orca/STATE.md`: keeps the last 24 h plus a pinned "current" section (<= 60 lines), moving older text to `artifacts/orca/state-archive/YYYY-MM-DD.md`. Rotation is idempotent and never drops text. Clock overrides for testing are supported via `SONDER_NOW` or `DATE_CMD`.
+
 Wakeups: the prompt is one line, `Read artifacts/orca/STATE.md and do its next action`, and the coordinator updates the file whenever it schedules one; never paste the run state into the prompt (stale wakeups re-fired after work was done about 12 times this session).
 
 Active deploy-or-land goals: either block on `node scripts/orca-check.mjs --wait` (or a background wait job) until the next actionable result, or post a progress line and continue immediately — never treat a status question as a stop. Prefer `npm run ci:run` (queues) over fire-and-forget parallel `ci:deck`; parallel `npm run ci:ssh` on the WSL host with distinct `SONDER_CI_LOOPBACK_PORT` is fine. An orchestrator that finishes a task starts the next one at once; a coordinator reads its orchestrator's terminal at least every 10 minutes (an idle agent sends no message).
