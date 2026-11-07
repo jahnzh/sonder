@@ -1,0 +1,7 @@
+unrelated mention of follow-ups in prose
+
+┌─ follow-ups
+│ ○ Fix issue 292 send-agent confirmation
+│ › second thing with text
+│ ○
+└─────────────────
