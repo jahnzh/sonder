@@ -7,6 +7,7 @@ import time
 import wave
 
 import ctc_path
+import ctc_candidates
 from ctc_acoustic import CONTEXT, CORE, ENGINE, SAMPLE_RATE, STRIDE, resident_model
 from ctc_cache import AcousticCache, audio_digest, budget_bytes, file_version
 from deadline import AlignmentFailed, AlignmentTimeout, alignment_limit, run_with_deadline
@@ -35,7 +36,7 @@ class ResidentTask:
 
 
 def _infer(wave_path, folder, fragments, start, duration, wave_start, source, source_version,
-           recording_id, recording_fingerprint, track_id, env):
+           recording_id, recording_fingerprint, track_id, env, locate=False):
     try:
         import numpy as np
         with wave.open(str(wave_path), "rb") as audio_file:
@@ -96,11 +97,12 @@ def _infer(wave_path, folder, fragments, start, duration, wave_start, source, so
             raise ValueError("Audio is too short for the CTC encoder.")
         emissions = model.torch.cat(outputs, dim=1).contiguous()
         encoded = time.monotonic()
-        intervals = ctc_path.align(emissions, boundaries, fragments, model.labels, end_sample - first_sample,
-                                   first_sample, model.torch)
+        result = (ctc_candidates.locate(emissions, boundaries, fragments, model.labels, first_sample)
+                  if locate else ctc_path.align(emissions, boundaries, fragments, model.labels, end_sample - first_sample,
+                                                first_sample, model.torch))
         if model.device.type == "cuda":
             model.torch.cuda.synchronize()
-        return intervals, {"acousticCacheKey": model_started - identity_started,
+        return result, {"acousticCacheKey": model_started - identity_started,
                            "modelReady": loaded - model_started, "acousticEncoding": encoding_seconds,
                            "acousticCacheRead": cache_seconds, "acousticCacheWrite": cache_write_seconds,
                            "ctcPath": time.monotonic() - encoded}
@@ -109,7 +111,7 @@ def _infer(wave_path, folder, fragments, start, duration, wave_start, source, so
 
 
 def align_ctc_section(*, audio, output, fragments, language, start, duration, media_folder, env=None, ffmpeg="ffmpeg",
-                      recording_id=None, recording_fingerprint=None, track_id=None):
+                      recording_id=None, recording_fingerprint=None, track_id=None, locate=False):
     limit = alignment_limit(duration, env)
     started = time.monotonic()
     deadline = started + limit
@@ -130,21 +132,30 @@ def align_ctc_section(*, audio, output, fragments, language, start, duration, me
         wave_path.unlink(missing_ok=True)
         raise
     extracted = time.monotonic()
-    task = ResidentTask(lambda: _infer(wave_path, media_folder, fragments, start, duration, wave_start, audio,
-                                      source_version, recording_id, recording_fingerprint, track_id,
-                                      os.environ if env is None else env))
+    def infer():
+        arguments = (wave_path, media_folder, fragments, start, duration, wave_start, audio,
+                     source_version, recording_id, recording_fingerprint, track_id,
+                     os.environ if env is None else env)
+        return _infer(*arguments, locate=True) if locate else _infer(*arguments)
+    task = ResidentTask(infer)
     if not task.done.wait(max(0, deadline - time.monotonic())):
         raise AlignmentTimeout(limit, stuck=task)
     if task.error:
         raise task.error
-    intervals, timings = task.value
+    value, timings = task.value
     finished = time.monotonic()
-    mapped = len({item["index"] for item in intervals})
-    outcome = "mapped" if mapped == len(fragments) else "partial" if mapped else "unsynced"
+    if locate:
+        outcome = "mapped" if value["match"] else "unsynced"
+    else:
+        mapped = len({item["index"] for item in value})
+        outcome = "mapped" if mapped == len(fragments) else "partial" if mapped else "unsynced"
     result = {"engine": ENGINE, "outcome": outcome,
               "stageTimings": {"audioExtraction": extracted - started, **timings},
-              "elapsedSeconds": finished - started, "peakMemoryMB": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024,
-              "intervals": intervals, "quality": None}
+              "elapsedSeconds": finished - started, "peakMemoryMB": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024}
+    if locate:
+        result.update(value)
+    else:
+        result.update({"intervals": value, "quality": None})
     temporary = output.with_suffix(".part")
     try:
         temporary.write_text(json.dumps(result))

@@ -97,6 +97,8 @@ export async function warmMap(
     if (isCancelled()) return null;
     const job = result.jobs?.find((j) => j.recordingId === recordingId);
     if (!job) return null;
+    if (intervalCountOf(job) <= 0 && (job.outcome === "unsynced" || job.outcome === "language_not_supported"))
+      await deps.store.delete(cacheKey);
     if (intervalCountOf(job) > 0) {
       const cached = await deps.store.get(cacheKey);
       const ebookFingerprint = await fingerprint();
@@ -153,6 +155,9 @@ export function createAlignmentMapLifecycle(deps: MapLifecycleDeps) {
         onJobs(result.jobs, result.available);
         const job = result.jobs.find((job) => job.recordingId === recordingId);
         if (!job || intervalCountOf(job) <= 0) {
+          if (job && (job.outcome === "unsynced" || job.outcome === "language_not_supported"))
+            await deps.store.delete(cacheKey);
+          if (!isCurrent()) return;
           onMap(null);
           return job;
         }
