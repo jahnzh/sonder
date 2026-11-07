@@ -52,3 +52,40 @@ export function countVisibleQueuedFollowUps(queueText: string): number {
   const m = String(queueText).match(re);
   return m ? m.length : 0;
 }
+
+/**
+ * Extract probe text (normalized whitespace, first words up to 40 characters)
+ * to search for a message on a terminal screen or queue.
+ */
+export function messageProbe(message: string): string {
+  return String(message).trim().replace(/\s+/g, " ").slice(0, 40);
+}
+
+export type DeliveryStatus = "delivered" | "queued" | "not found";
+
+/**
+ * Classify delivery status of a message on a worker screen dump:
+ * - "queued": probe appears inside the follow-ups queue box.
+ * - "delivered": probe appears elsewhere on screen (turn start, composer, etc.).
+ * - "not found": probe does not appear on screen.
+ */
+export function classifyDeliveryStatus(
+  screen: string,
+  message: string,
+): DeliveryStatus {
+  const probe = messageProbe(message);
+  if (!probe) return "not found";
+
+  const box = extractFollowUpsBox(screen);
+  const normalizedBox = box.replace(/\s+/g, " ");
+  if (normalizedBox.includes(probe)) {
+    return "queued";
+  }
+
+  const normalizedScreen = String(screen).replace(/\s+/g, " ");
+  if (normalizedScreen.includes(probe)) {
+    return "delivered";
+  }
+
+  return "not found";
+}

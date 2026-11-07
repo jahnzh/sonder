@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import {
+  classifyDeliveryStatus,
   countVisibleQueuedFollowUps,
   extractFollowUpsBox,
   isWorkerScreenBusyLine,
@@ -49,6 +50,19 @@ test("busy line: Cursor spinner + Titlecase+ing", () => {
 test("busy line: Codex • Working (", () => {
   const line = readFileSync(join(fixtures, "codex-bullet-working.txt"), "utf8").split(/\r?\n/)[0];
   assert.equal(isWorkerScreenBusyLine(line), true);
+});
+
+test("delivery confirmation: idle agent, mid-turn agent, Codex agent, and not-found", () => {
+  const idleScreen = readFileSync(join(fixtures, "idle-agent-turn-start.txt"), "utf8");
+  assert.equal(classifyDeliveryStatus(idleScreen, "Please run unit tests"), "delivered");
+
+  const midTurnScreen = readFileSync(join(fixtures, "mid-turn-follow-up.txt"), "utf8");
+  assert.equal(classifyDeliveryStatus(midTurnScreen, "Fix issue 292 send-agent confirmation"), "queued");
+
+  const codexScreen = readFileSync(join(fixtures, "codex-prompt-turn.txt"), "utf8");
+  assert.equal(classifyDeliveryStatus(codexScreen, "Fix issue 292 send-agent confirmation"), "delivered");
+
+  assert.equal(classifyDeliveryStatus(idleScreen, "nonexistent prompt message"), "not found");
 });
 
 test("follow-ups box: count ignores blank ○", () => {

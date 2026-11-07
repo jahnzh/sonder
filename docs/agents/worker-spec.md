@@ -137,6 +137,14 @@ Wakeups: the prompt is one line, `Read artifacts/orca/STATE.md and do its next a
 
 Active deploy-or-land goals: either block on `node scripts/orca-check.mjs --wait` (or a background wait job) until the next actionable result, or post a progress line and continue immediately — never treat a status question as a stop. Prefer `npm run ci:run` (queues) over fire-and-forget parallel `ci:deck`; parallel `npm run ci:ssh` on the WSL host with distinct `SONDER_CI_LOOPBACK_PORT` is fine. An orchestrator that finishes a task starts the next one at once; a coordinator reads its orchestrator's terminal at least every 10 minutes (an idle agent sends no message).
 
+## Worker prompt delivery (send-agent)
+
+`scripts/orca/send-agent.sh <terminal> --queue "<message>"` (or `--interrupt`) delivers a prompt to a worker and confirms delivery by re-reading the screen for up to 10 seconds:
+- `result: delivered`: the prompt was detected at the turn start or active composer.
+- `result: queued`: the prompt was detected in the follow-ups queue.
+- `result: not found`: neither was detected within 10 seconds.
+
+
 ## Review policy
 
 Any change touching keyboard handling, persistence/progress, security or shared schemas gets an independent read-only review before the Deck run, by a different model family than the implementer (reviews found a blocking or high bug in 4 of 5 features this session).
