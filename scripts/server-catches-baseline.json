@@ -1,0 +1,170 @@
+[
+  {
+    "file": "acquisitions.ts",
+    "line": 67,
+    "context": "chooseBackend",
+    "hash": "500c6a2a3cc47e0f753aca6b619de0c7feeeb0f9f3271ca86d5441490aabb0a9"
+  },
+  {
+    "file": "acquisitions.ts",
+    "line": 171,
+    "context": "acquire",
+    "hash": "54312ece625c225494b6e79b071301d94c4dcad6898dd5a4922f0e0ef927d21a"
+  },
+  {
+    "file": "acquisitions.ts",
+    "line": 380,
+    "context": "refreshAcquisition",
+    "hash": "0f0c0d736b8f01ddedbaf4d375f7cfdcc6a3873c3490269069a1070a049e7685"
+  },
+  {
+    "file": "acquisitions.ts",
+    "line": 473,
+    "context": "refreshQueue",
+    "hash": "88f06af12ec9d3e9efe352086ea2f309f20c1320b48288dca64071aabd404a51"
+  },
+  {
+    "file": "alignment.ts",
+    "line": 89,
+    "context": "recordingHasLocalAudio",
+    "hash": "bcb997d3283718911a20904c0e8505f3fefa53c79d8ff946ecdb9edebdd11371"
+  },
+  {
+    "file": "alignment.ts",
+    "line": 441,
+    "context": "backfillEligibility",
+    "hash": "38d803e310e3f6345eadfd99b72c745e9819a8a5e69523fbe5a9e34eebe1fcb3"
+  },
+  {
+    "file": "alignment.ts",
+    "line": 501,
+    "context": "runAlignmentBackfill",
+    "hash": "12cec0954757640758985fc44fb5d743213d6249e50bcc446121121bbe3b2961"
+  },
+  {
+    "file": "alignment.ts",
+    "line": 1438,
+    "context": "registerAlignment",
+    "hash": "88f06af12ec9d3e9efe352086ea2f309f20c1320b48288dca64071aabd404a51"
+  },
+  {
+    "file": "appearance.ts",
+    "line": 14,
+    "context": "storedAppearance",
+    "hash": "811e580dbec4d4bc0dfd91d2b2dc74cf7b93418f85d5543677604608a2f9f36e"
+  },
+  {
+    "file": "csp.ts",
+    "line": 68,
+    "context": "shortUri",
+    "hash": "85323dce73a368d0c4f8323b05bf1b5034e0aeac7cbeae187041613080b270a5"
+  },
+  {
+    "file": "csp.ts",
+    "line": 144,
+    "context": "registerCsp",
+    "hash": "59c458da8e107cb9cc8c0d874ce70f5b8c92275b669313b4065b55db295b73fc"
+  },
+  {
+    "file": "ebook-set-consensus.ts",
+    "line": 452,
+    "context": "syncEbookSetConsensus",
+    "hash": "aa711ce999e6e54905ad0aceeb11858fbae602c17c1610b4b9b44d7a12b202ac"
+  },
+  {
+    "file": "ebook-set.ts",
+    "line": 221,
+    "context": "dropOrphanEbookEdition",
+    "hash": "21e2acceb912686a837fa25fd52cb5d8c9624652f95d91348c4eb21f41bebbe4"
+  },
+  {
+    "file": "ebook-set.ts",
+    "line": 332,
+    "context": "evaluateEbookSetMember",
+    "hash": "da299568f2fedc1a82027e47d862eeedf82786869963ca796ee3b4ddf739922b"
+  },
+  {
+    "file": "ebook-set.ts",
+    "line": 386,
+    "context": "evaluateEbookSetMember",
+    "hash": "f69832406f49d7aeaf9446f1f8705ed1b86d1a1fa0297740456f72e41b900b53"
+  },
+  {
+    "file": "ebooks.ts",
+    "line": 58,
+    "context": "page",
+    "hash": "1f5fb6e80e75d337ec645b3d9a5dc43f380a77ae0c6da94b8fb0fa20bd59027a"
+  },
+  {
+    "file": "hardcover.ts",
+    "line": 326,
+    "context": "state",
+    "hash": "e1b31f2c63711a51f07a7d833258a2128e73d80ece61af94dfac3935e07e68e7"
+  },
+  {
+    "file": "hardcover.ts",
+    "line": 435,
+    "context": "graphql.run",
+    "hash": "c3d8c7097c99f6c5044040bcd5df4b69c9a9aa31d1b39931d08e74d375dc81f2"
+  },
+  {
+    "file": "hardcover.ts",
+    "line": 859,
+    "context": "seriesWorkState.ebookFinished",
+    "hash": "b81f367d235d2aaaf5bc5183f06dd791372ccfadee3e70e72143728e09991b67"
+  },
+  {
+    "file": "index.ts",
+    "line": 4,
+    "context": "<top-level>",
+    "hash": "88f06af12ec9d3e9efe352086ea2f309f20c1320b48288dca64071aabd404a51"
+  },
+  {
+    "file": "series-audio.ts",
+    "line": 386,
+    "context": "autoAcquireSeriesVolume",
+    "hash": "52172e2520b8011229736e81f0e46da03ee8cb1c1317ef10e55e964052006ec3"
+  },
+  {
+    "file": "series-release-search.ts",
+    "line": 196,
+    "context": "replacePreviousAcquisition",
+    "hash": "7a2fdd4929e179fde16ab7b14900a47803381d713cc3bcb3a3654c411a2c0e77"
+  },
+  {
+    "file": "series-removal.ts",
+    "line": 268,
+    "context": "managedMediaPath",
+    "hash": "71ed5ff4a475d3c66cc0df758b3c23be7aa4dcff2d1ad03ebf458b303603513d"
+  },
+  {
+    "file": "services.ts",
+    "line": 42,
+    "context": "torbox",
+    "hash": "f91c807533a3a1a82166906f33f816f74b35280fd9e83809d76ad0a8f9c7bf9b"
+  },
+  {
+    "file": "services.ts",
+    "line": 135,
+    "context": "parseAbbListings",
+    "hash": "3307e3d2a8c1a8fb73c92e287492ff7a663d87aa57e398d503e014eee50c7dc2"
+  },
+  {
+    "file": "sources/prowlarr.ts",
+    "line": 229,
+    "context": "fetchProwlarrDownload",
+    "hash": "2c3f241b8c971887039da9ebecb1dfeb636ae7732e5c2c8f505e5fb35a1d6fde"
+  },
+  {
+    "file": "transmission.ts",
+    "line": 69,
+    "context": "transmission",
+    "hash": "f8fbcab0f7ad2d95b5361bf81113dc23acd9cf63308f71b44e0cbaf5002ca3a5"
+  },
+  {
+    "file": "users.ts",
+    "line": 67,
+    "context": "verifyPassword",
+    "hash": "b81f367d235d2aaaf5bc5183f06dd791372ccfadee3e70e72143728e09991b67"
+  }
+]
