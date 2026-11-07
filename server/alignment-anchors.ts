@@ -55,7 +55,7 @@ export function planSamples(
   }
   return samples;
 }
-function trackOffsets(tracks: AnchorTrack[]) {
+export function trackOffsets(tracks: AnchorTrack[]) {
   const offsets: Record<string, number> = {};
   let total = 0;
   for (const track of tracks) {
