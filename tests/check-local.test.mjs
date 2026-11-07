@@ -4,11 +4,13 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import net from "node:net";
+import { createRequire } from "node:module";
 import { spawn, execFileSync } from "node:child_process";
 import { runCheckLocal } from "../scripts/check-local.mjs";
 import {
   acquirePortLease,
   contenderPrecedes,
+  findChangedE2eSpecs,
   releasePortLease,
 } from "../scripts/check-local-support.mjs";
 import { playwrightReport, knownFailuresDocument } from "./playwright-report-fixture.mjs";
@@ -32,10 +34,12 @@ function setupGitFixture() {
         cwd: repoDir,
         encoding: "utf8",
     }).trim();
+    execFileSync("git", ["update-ref", "refs/remotes/origin/main", initialSha], { cwd: repoDir });
     // 3. Create stub npm executable
     const stubNpmScript = `#!/usr/bin/env node
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const argv = process.argv.slice(2);
 const logPath = process.env.STUB_NPM_LOG;
@@ -78,12 +82,26 @@ let currentStage = '';
 if (argv[0] === 'ci') currentStage = 'ci';
 else if (argv[0] === 'run' && argv[1] === 'build') currentStage = 'build';
 else if (argv[0] === 'test') currentStage = 'test';
-else if (argv[0] === 'run' && argv[1] === 'test:browser') currentStage = 'browser';
+else if (argv[0] === 'run' && argv[1] === 'test:browser') {
+  currentStage = argv.includes('--reporter=list,json') ? 'browser'
+    : argv.includes('--repeat-each=2') ? 'browser-changed-repeat' : 'browser-changed-ordered';
+}
+
+// Exercise Playwright's scheduler with a filesystem-only fixture, without a browser or web server.
+if (currentStage.startsWith('browser') && process.env.STUB_NPM_PLAYWRIGHT_CLI) {
+  fs.rmSync(process.env.STUB_NPM_STATE_FILE, { force: true });
+  const child = spawnSync(process.execPath, [process.env.STUB_NPM_PLAYWRIGHT_CLI, 'test', ...argv.slice(3)], {
+    cwd: process.cwd(), env: process.env, stdio: 'inherit',
+  });
+  process.exit(child.status ?? 1);
+}
 
 // Simulate trace and screenshot generation
-if (currentStage === 'browser' && createTraces) {
-  fs.mkdirSync(path.join(process.cwd(), 'test-results'), { recursive: true });
-  fs.writeFileSync(path.join(process.cwd(), 'test-results', 'trace.zip'), 'dummy-trace-data');
+if (currentStage.startsWith('browser') && createTraces) {
+  const outputArg = argv.find((arg) => arg.startsWith('--output='));
+  const outputDir = outputArg ? outputArg.slice('--output='.length) : 'test-results';
+  fs.mkdirSync(path.join(process.cwd(), outputDir), { recursive: true });
+  fs.writeFileSync(path.join(process.cwd(), outputDir, 'trace.zip'), currentStage);
   fs.mkdirSync(path.join(process.cwd(), 'playwright-report'), { recursive: true });
   fs.writeFileSync(path.join(process.cwd(), 'playwright-report', 'index.html'), '<html>report</html>');
   fs.mkdirSync(path.join(process.cwd(), 'artifacts'), { recursive: true });
@@ -129,6 +147,18 @@ function readNpmLogs(logPath) {
         .map((line) => line.trim())
         .filter((line) => line.length > 0)
         .map((line) => JSON.parse(line));
+}
+
+function writeFixtureFile(fixture, name, content) {
+    const file = path.join(fixture.repoDir, name);
+    fs.mkdirSync(path.dirname(file), {recursive: true});
+    fs.writeFileSync(file, content);
+}
+
+function commitFixture(fixture, message) {
+    execFileSync("git", ["add", "."], {cwd: fixture.repoDir});
+    execFileSync("git", ["commit", "-m", message], {cwd: fixture.repoDir, stdio: "ignore"});
+    return execFileSync("git", ["rev-parse", "HEAD"], {cwd: fixture.repoDir, encoding: "utf8"}).trim();
 }
 
 const leaseSupportUrl = new URL("../scripts/check-local-support.mjs", import.meta.url).href;
@@ -298,6 +328,152 @@ async function assertSingleReclaimer(lockContents, { unreadable = false } = {}) 
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 }
+test("changed spec discovery uses the selected commit and ignores deleted and non-spec files", () => {
+    const fixture = setupGitFixture();
+    try {
+        writeFixtureFile(fixture, "tests/e2e/modify.spec.ts", "before\n");
+        writeFixtureFile(fixture, "tests/e2e/delete.spec.ts", "delete\n");
+        writeFixtureFile(fixture, "tests/e2e/rename.spec.ts", "rename\n");
+        writeFixtureFile(fixture, "tests/e2e/unchanged.spec.ts", "unchanged\n");
+        const baseline = commitFixture(fixture, "baseline specs");
+        execFileSync("git", ["update-ref", "refs/remotes/origin/main", baseline], {cwd: fixture.repoDir});
+        writeFixtureFile(fixture, "tests/e2e/modify.spec.ts", "after\n");
+        fs.unlinkSync(path.join(fixture.repoDir, "tests/e2e/delete.spec.ts"));
+        fs.renameSync(path.join(fixture.repoDir, "tests/e2e/rename.spec.ts"), path.join(fixture.repoDir, "tests/e2e/renamed.spec.ts"));
+        writeFixtureFile(fixture, "tests/e2e/nested/new [x].spec.ts", "new\n");
+        writeFixtureFile(fixture, "tests/e2e/helper.ts", "helper\n");
+        writeFixtureFile(fixture, "elsewhere.spec.ts", "outside\n");
+        const target = commitFixture(fixture, "change specs");
+        writeFixtureFile(fixture, "tests/e2e/later.spec.ts", "later\n");
+        commitFixture(fixture, "later change");
+        writeFixtureFile(fixture, "tests/e2e/uncommitted.spec.ts", "uncommitted\n");
+
+        assert.deepEqual(findChangedE2eSpecs(fixture.repoDir, target), {
+            base: baseline,
+            files: ["tests/e2e/modify.spec.ts", "tests/e2e/nested/new [x].spec.ts", "tests/e2e/renamed.spec.ts"],
+        });
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+test("changed specs run repeated then in order and appear as separate report stages", async () => {
+    const fixture = setupGitFixture();
+    try {
+        writeFixtureFile(fixture, "tests/e2e/new [x].spec.ts", "fixture\n");
+        commitFixture(fixture, "add spec");
+        const result = await runCheckLocal(["--silent"], {
+            cwd: fixture.repoDir,
+            env: {PATH: `${fixture.binDir}:${process.env.PATH}`, STUB_NPM_LOG: fixture.npmLogPath, STUB_NPM_CREATE_TRACES: "1"},
+        });
+        assert.equal(result.ok, true);
+        const runs = readNpmLogs(fixture.npmLogPath);
+        assert.equal(runs.length, 6);
+        const filter = "tests/e2e/new \\[x\\]\\.spec\\.ts$";
+        assert.deepEqual(runs[4].argv, ["run", "test:browser", "--", "--workers=1", "--repeat-each=2", "--output=test-results-changed-repeat", filter]);
+        assert.deepEqual(runs[5].argv, ["run", "test:browser", "--", "--workers=1", "--output=test-results-changed-ordered", filter]);
+        assert.equal(runs[4].env.PLAYWRIGHT_JSON_OUTPUT_NAME, undefined);
+        const written = JSON.parse(fs.readFileSync(path.join(result.outputDir, "report.json"), "utf8"));
+        assert.deepEqual(written.changedBrowserSpecs, {
+            baseRef: "origin/main", baseSha: fixture.initialSha, files: ["tests/e2e/new [x].spec.ts"],
+        });
+        assert.deepEqual(written.stages.slice(4).map(({name, status}) => [name, status]), [
+            ["browser-changed-repeat", "passed"], ["browser-changed-ordered", "passed"],
+        ]);
+        for (const [dir, name] of [
+            ["test-results", "browser"], ["test-results-changed-repeat", "browser-changed-repeat"],
+            ["test-results-changed-ordered", "browser-changed-ordered"],
+        ]) {
+            assert.equal(fs.readFileSync(path.join(result.outputDir, dir, "trace.zip"), "utf8"), name);
+            assert.ok(written.artifacts.includes(dir));
+        }
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+test("a state-leaking fixture passes once but fails the repeated changed-spec stage", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const require = createRequire(import.meta.url);
+        const playwright = require.resolve("@playwright/test");
+        const cli = require.resolve("@playwright/test/cli");
+        writeFixtureFile(fixture, "playwright.config.cjs", "module.exports = { testDir: './tests/e2e', workers: 1 };\n");
+        writeFixtureFile(fixture, "tests/e2e/leaky.spec.js", `
+const { test, expect } = require(${JSON.stringify(playwright)});
+const fs = require('node:fs');
+test('leaves state behind', () => {
+  expect(fs.existsSync(process.env.STUB_NPM_STATE_FILE)).toBe(false);
+  fs.writeFileSync(process.env.STUB_NPM_STATE_FILE, 'left behind');
+});
+`);
+        commitFixture(fixture, "add state-leaking spec");
+        const result = await runCheckLocal(["--silent"], {
+            cwd: fixture.repoDir,
+            env: {
+                PATH: `${fixture.binDir}:${process.env.PATH}`,
+                STUB_NPM_LOG: fixture.npmLogPath,
+                STUB_NPM_PLAYWRIGHT_CLI: cli,
+                STUB_NPM_STATE_FILE: path.join(fixture.tempBase, "leaked-state"),
+            },
+        });
+        assert.equal(result.ok, false);
+        assert.equal(result.report.failedStage, "browser-changed-repeat");
+        assert.equal(result.report.stages[3].status, "passed");
+        assert.equal(result.report.stages[4].status, "failed");
+        assert.equal(result.report.stages[5].status, "skipped");
+        assert.match(result.report.stages[4].stdout + result.report.stages[4].stderr, /leaves state behind/);
+        assert.equal(readNpmLogs(fixture.npmLogPath).length, 5);
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+test("the ordered changed-spec stage runs every test in file order", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const require = createRequire(import.meta.url);
+        writeFixtureFile(fixture, "playwright.config.cjs", "module.exports = { testDir: './tests/e2e', workers: 1 };\n");
+        writeFixtureFile(fixture, "tests/e2e/ordered.spec.js", `
+const { test } = require(${JSON.stringify(require.resolve("@playwright/test"))});
+const fs = require('node:fs');
+test('first', () => fs.appendFileSync(process.env.STUB_NPM_STATE_FILE, 'first\\n'));
+test('second', () => fs.appendFileSync(process.env.STUB_NPM_STATE_FILE, 'second\\n'));
+`);
+        commitFixture(fixture, "add ordered spec");
+        const stateFile = path.join(fixture.tempBase, "test-order");
+        const result = await runCheckLocal(["--silent"], {
+            cwd: fixture.repoDir,
+            env: {
+                PATH: `${fixture.binDir}:${process.env.PATH}`,
+                STUB_NPM_LOG: fixture.npmLogPath,
+                STUB_NPM_PLAYWRIGHT_CLI: require.resolve("@playwright/test/cli"),
+                STUB_NPM_STATE_FILE: stateFile,
+            },
+        });
+        assert.equal(result.ok, true, result.report.stages.map((stage) => stage.stderr).join("\n"));
+        assert.equal(result.report.stages[5].name, "browser-changed-ordered");
+        assert.equal(result.report.stages[5].status, "passed");
+        assert.equal(fs.readFileSync(stateFile, "utf8"), "first\nsecond\n");
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+test("missing origin/main fails setup instead of silently skipping changed specs", async () => {
+    const fixture = setupGitFixture();
+    try {
+        execFileSync("git", ["update-ref", "-d", "refs/remotes/origin/main"], {cwd: fixture.repoDir});
+        const result = await runCheckLocal(["--silent"], {cwd: fixture.repoDir});
+        assert.equal(result.ok, false);
+        assert.equal(result.report.result, "setup_failed");
+        assert.match(result.report.setup.error, /origin\/main/);
+        assert.deepEqual(result.report.stages, []);
+    } finally {
+        fixture.cleanup();
+    }
+});
+
 test("1. Stage order: executes npm ci -> npm run build -> npm test -> npm run test:browser sequentially", async () => {
     const fixture = setupGitFixture();
     try {
@@ -324,6 +500,7 @@ test("1. Stage order: executes npm ci -> npm run build -> npm test -> npm run te
         assert.equal(report.ok, true);
         assert.equal(report.result, "passed");
         assert.equal(report.stages.length, 4);
+        assert.deepEqual(report.changedBrowserSpecs.files, []);
         assert.equal(report.stages[0].status, "passed");
         assert.equal(report.stages[1].status, "passed");
         assert.equal(report.stages[2].status, "passed");
@@ -1050,6 +1227,45 @@ test("known failures: all browser failures listed -> passed_with_known_failures,
         assert.equal(JSON.parse(fs.readFileSync(path.join(result.outputDir, "report.json"), "utf8")).result, "passed_with_known_failures");
     }
     finally {
+        fixture.cleanup();
+    }
+});
+
+test("known failures in the full suite do not skip changed-spec stages", async () => {
+    const fixture = setupGitFixture();
+    try {
+        writeFixtureFile(fixture, "tests/e2e/changed.spec.ts", "fixture\n");
+        commitFixture(fixture, "add changed spec");
+        const {listFile, reportFile} = writeKnownFailuresFixture(fixture, [
+            status("webkit", SPEC, "reset refreshes the app shell", "unexpected"),
+        ]);
+        const result = await runCheckLocal(["--silent", "--known-failures", listFile], {
+            cwd: fixture.repoDir, env: knownFailuresEnv(fixture, reportFile),
+        });
+        assert.equal(result.report.result, "passed_with_known_failures");
+        assert.equal(result.report.stages[3].toleratedBy, "known-failures");
+        assert.deepEqual(result.report.stages.slice(4).map((stage) => stage.status), ["passed", "passed"]);
+        assert.equal(readNpmLogs(fixture.npmLogPath).length, 6);
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+test("known-failures list never tolerates a failed repeated changed-spec stage", async () => {
+    const fixture = setupGitFixture();
+    try {
+        writeFixtureFile(fixture, "tests/e2e/changed.spec.ts", "fixture\n");
+        commitFixture(fixture, "add changed spec");
+        const {listFile, reportFile} = writeKnownFailuresFixture(fixture, [
+            status("webkit", SPEC, "reset refreshes the app shell", "expected"),
+        ]);
+        const env = {...knownFailuresEnv(fixture, reportFile), STUB_NPM_FAIL_STAGE: "browser-changed-repeat"};
+        const result = await runCheckLocal(["--silent", "--known-failures", listFile], {cwd: fixture.repoDir, env});
+        assert.equal(result.ok, false);
+        assert.equal(result.report.failedStage, "browser-changed-repeat");
+        assert.equal(result.report.stages[4].status, "failed");
+        assert.equal(result.report.stages[5].status, "skipped");
+    } finally {
         fixture.cleanup();
     }
 });

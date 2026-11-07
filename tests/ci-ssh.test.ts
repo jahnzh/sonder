@@ -41,7 +41,7 @@ cp -r "$(strip "\${args[0]}")" "$(strip "\${args[1]}")"
 `;
 
 const npmStub = `#!/usr/bin/env bash
-echo "cwd=$PWD args=$*" >>"$STUB_NPM_LOG"
+echo "cwd=$PWD args=$* base=$(git rev-parse --verify refs/remotes/origin/main 2>/dev/null)" >>"$STUB_NPM_LOG"
 if [[ $1 == run && $2 == check ]]; then
   case "\${STUB_NPM_MODE:-pass}" in
     fail) exit "\${STUB_NPM_EXIT:-7}" ;;
@@ -121,6 +121,7 @@ function fixture(t?: TestContext) {
   git("add", ".");
   git("commit", "-qm", "first");
   const first = git("rev-parse", "HEAD");
+  git("update-ref", "refs/remotes/origin/main", first);
   fs.writeFileSync(path.join(repo, "later.txt"), "later\n");
   git("add", ".");
   git("commit", "-qm", "second");
@@ -454,6 +455,7 @@ test("a passing remote check passes", (t) => {
   const out = f.run(f.second);
   assert.equal(out.status, 0, out.output);
   assert.equal(f.result(f.second).result, "passed");
+  assert.ok(f.checkCalls()[0]!.includes(`base=${f.first}`), "the remote checkout has the original origin/main");
   assert.match(f.read(f.logs.gh), /state=success/);
 });
 

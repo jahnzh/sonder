@@ -103,6 +103,28 @@ export function resolveGitRevision(cwd, ref) {
   }
 }
 
+/** Find runnable spec files changed on the selected commit's branch since origin/main. */
+export function findChangedE2eSpecs(cwd, sha) {
+  const baseline = resolveGitRevision(cwd, "refs/remotes/origin/main");
+  if (!baseline.ok) {
+    throw new Error(`Cannot resolve origin/main for changed browser specs: ${baseline.error}`);
+  }
+
+  try {
+    const output = execFileSync("git", [
+      "diff", "--name-only", "-z", "--no-renames", "--diff-filter=ACMT",
+      `${baseline.sha}...${sha}`, "--", "tests/e2e",
+    ], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    return {
+      base: baseline.sha,
+      files: output.split("\0").filter((file) => /\.spec\.[cm]?[jt]sx?$/.test(file)),
+    };
+  } catch (error) {
+    const detail = error.stderr?.toString().trim() || error.message;
+    throw new Error(`Cannot find changed browser specs against origin/main: ${detail}`);
+  }
+}
+
 /**
  * Check if the caller working tree is dirty. `state` is "unknown" (and `dirty` null)
  * when git status itself fails.
@@ -779,7 +801,10 @@ export function runStageProcess({
  */
 export function preserveArtifacts(disposableDir, outputDir) {
   const preserved = [];
-  const candidateDirs = ["test-results", "playwright-report", "blob-report", "artifacts"];
+  const candidateDirs = [
+    "test-results", "test-results-changed-repeat", "test-results-changed-ordered",
+    "playwright-report", "blob-report", "artifacts",
+  ];
 
   fs.mkdirSync(outputDir, { recursive: true });
 
