@@ -20,6 +20,7 @@
 # SONDER_CI_HOST_CONFIG (default scripts/ci-hosts.json),
 # SONDER_CI_LOOPBACK_PORT (default 4399),
 # SONDER_CI_KNOWN_FAILURES (repository path, default tests/known-failures.wsl-host.json),
+# SONDER_CI_ALLOW_STALE_SCRIPTS (1 skips the check that scripts/ci-ssh.sh and scripts/lib match the commit),
 # SONDER_CI_DISPATCH (when set, records the finished check on that worker history
 # dispatch; a recording failure warns only and never changes the exit code).
 #
@@ -160,6 +161,16 @@ fi
 if ! FULL_SHA=$(git rev-parse --verify "${REQUESTED_REF}^{commit}" 2>/dev/null); then
   echo "[ci-ssh] Invalid commit ref: ${REQUESTED_REF}" >&2
   exit 1
+fi
+
+# This runner executes the checkout's own scripts, not the target commit's. When
+# they differ (a worktree behind or ahead of the commit) the run could fail in
+# seconds or test the wrong thing, so refuse with a clear message instead.
+if [[ ${SONDER_CI_ALLOW_STALE_SCRIPTS:-0} != 1 ]] \
+  && ! git diff --quiet "$FULL_SHA" -- scripts/ci-ssh.sh scripts/lib 2>/dev/null; then
+  echo "[ci-ssh] Refusing to run: scripts/ci-ssh.sh or scripts/lib in this checkout differ from commit ${FULL_SHA:0:7}." >&2
+  echo "[ci-ssh] Run it from a checkout of that commit (or rebase onto it), or set SONDER_CI_ALLOW_STALE_SCRIPTS=1 to override." >&2
+  exit 2
 fi
 
 ARTIFACT_ROOT="$ROOT/artifacts/ci/${FULL_SHA}"
