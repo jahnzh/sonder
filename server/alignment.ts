@@ -362,8 +362,8 @@ export async function createAlignment(
     recordingId,
     status: copying ? "copying" : "queued",
     progress: 0,
-    // Chapter jobs use CTC unless ALIGNMENT_CHAPTER_ENGINE=aeneas; anchored jobs have no CTC route yet.
-    engine: !anchored && process.env.ALIGNMENT_CHAPTER_ENGINE !== "aeneas"
+    // Chapter and anchored jobs use CTC unless ALIGNMENT_CHAPTER_ENGINE=aeneas.
+    engine: process.env.ALIGNMENT_CHAPTER_ENGINE !== "aeneas"
       ? CTC_ENGINE
       : "aeneas-1.7.3",
     error: null,
@@ -579,8 +579,9 @@ type WorkerMetadata = z.infer<typeof workerMetadata>;
 class WorkerRequestError extends Error {
   constructor(message: string, readonly metadata?: WorkerMetadata) { super(message); }
 }
-function applyWorkerMetadata(job: AlignmentJob, metadata: WorkerMetadata) {
-  if (metadata.engine) job.engine = metadata.engine;
+// Speech-recovery (/anchor) replies name their own engine; a CTC job keeps its alignment engine.
+function applyWorkerMetadata(job: AlignmentJob, metadata: WorkerMetadata, { engine = true } = {}) {
+  if (engine && metadata.engine) job.engine = metadata.engine;
   if (metadata.stageTimings) {
     job.stageTimings ||= {};
     for (const [stage, seconds] of Object.entries(metadata.stageTimings))
@@ -764,7 +765,7 @@ async function processAnchored(
       );
       if (!current()) return;
       job = alignmentJob(job.id);
-      applyWorkerMetadata(job, result);
+      applyWorkerMetadata(job, result, { engine: job.engine !== CTC_ENGINE });
       if (stopForWorkerOutcome(job, result)) return;
       job.anchoring!.samples[i] = {
         ...sample,
@@ -854,6 +855,7 @@ async function processAnchored(
               language,
               start: segment.start,
               duration: segment.duration,
+              ...(job.engine === CTC_ENGINE ? { engine: "ctc" } : {}),
             },
             SECTION_TIMEOUT_MS,
             undefined,
@@ -866,6 +868,8 @@ async function processAnchored(
         })();
     if (!current()) return;
     const result = sectionResult.parse(raw);
+    if (job.engine === CTC_ENGINE && result.engine !== CTC_ENGINE)
+      throw new Error("The alignment worker did not use the requested CTC engine.");
     const intervals: AlignmentInterval[] = coreIntervals(
       segment,
       result.intervals,
