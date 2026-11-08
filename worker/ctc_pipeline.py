@@ -50,16 +50,82 @@ def locate_pool_workers(env=None):
     """CPU workers for parallel candidate search; 0 disables the process pool."""
     env = os.environ if env is None else env
     cpus = os.cpu_count() or 1
+    default = min(8, max(1, cpus - 2))
     try:
-        value = int(env.get("ALIGNMENT_CTC_LOCATE_WORKERS", str(min(16, cpus))))
+        value = int(env.get("ALIGNMENT_CTC_LOCATE_WORKERS", str(default)))
     except (TypeError, ValueError):
-        value = min(16, cpus)
-    return value if 0 <= value <= 64 else min(16, cpus)
+        value = default
+    return value if 0 <= value <= 64 else default
+
+
+def locate_pool_idle_seconds(env=None):
+    """Seconds to keep the locate pool after the last batch; 0 shuts it down immediately."""
+    env = os.environ if env is None else env
+    try:
+        value = float(env.get("ALIGNMENT_CTC_LOCATE_IDLE_SECONDS", "120"))
+    except (TypeError, ValueError):
+        value = 120.0
+    return value if value >= 0 else 120.0
 
 
 _LOCATE_POOL = None
 _LOCATE_POOL_TOKENS = None
 _LOCATE_POOL_LOCK = threading.Lock()
+_LOCATE_POOL_IDLE_TIMER = None
+_LOCATE_POOL_GENERATION = 0
+
+
+def locate_pool_is_open():
+    """True while a shared locate process pool is retained."""
+    return _LOCATE_POOL is not None
+
+
+def _cancel_idle_timer_locked():
+    global _LOCATE_POOL_IDLE_TIMER
+    if _LOCATE_POOL_IDLE_TIMER is not None:
+        _LOCATE_POOL_IDLE_TIMER.cancel()
+        _LOCATE_POOL_IDLE_TIMER = None
+
+
+def _shutdown_locate_pool_locked():
+    global _LOCATE_POOL, _LOCATE_POOL_TOKENS, _LOCATE_POOL_GENERATION
+    _cancel_idle_timer_locked()
+    if _LOCATE_POOL is not None:
+        _LOCATE_POOL.shutdown(wait=True, cancel_futures=False)
+        _LOCATE_POOL = None
+        _LOCATE_POOL_TOKENS = None
+        _LOCATE_POOL_GENERATION += 1
+
+
+def shutdown_locate_pool():
+    """Tear down the shared locate pool (worker stop, idle timeout, or idle=0)."""
+    with _LOCATE_POOL_LOCK:
+        _shutdown_locate_pool_locked()
+
+
+def _idle_shutdown(generation):
+    with _LOCATE_POOL_LOCK:
+        if generation != _LOCATE_POOL_GENERATION or _LOCATE_POOL is None:
+            return
+        _shutdown_locate_pool_locked()
+
+
+def release_locate_pool(env=None):
+    """After a batch request: shut down now (idle=0) or schedule an idle timeout."""
+    global _LOCATE_POOL_IDLE_TIMER
+    idle = locate_pool_idle_seconds(env)
+    with _LOCATE_POOL_LOCK:
+        if _LOCATE_POOL is None:
+            return
+        _cancel_idle_timer_locked()
+        if idle <= 0:
+            _shutdown_locate_pool_locked()
+            return
+        generation = _LOCATE_POOL_GENERATION
+        timer = threading.Timer(idle, _idle_shutdown, args=(generation,))
+        timer.daemon = True
+        _LOCATE_POOL_IDLE_TIMER = timer
+        timer.start()
 
 
 def open_locate_pool(fragment_tokens, workers=None, env=None):
@@ -68,18 +134,21 @@ def open_locate_pool(fragment_tokens, workers=None, env=None):
     Call from the request/script thread — never from inside ResidentTask — so spawn
     does not race CUDA work and scripts can use ``if __name__ == '__main__'``.
     Reuses the pool across requests that share the same token list (same book).
+    Call ``release_locate_pool`` when the batch request finishes.
     """
-    global _LOCATE_POOL, _LOCATE_POOL_TOKENS
+    global _LOCATE_POOL, _LOCATE_POOL_TOKENS, _LOCATE_POOL_GENERATION
     workers = locate_pool_workers(env) if workers is None else workers
     if workers <= 0:
         return None
     with _LOCATE_POOL_LOCK:
+        _cancel_idle_timer_locked()
         if _LOCATE_POOL is not None and _LOCATE_POOL_TOKENS == fragment_tokens:
             return _LOCATE_POOL
         if _LOCATE_POOL is not None:
             _LOCATE_POOL.shutdown(wait=False, cancel_futures=True)
             _LOCATE_POOL = None
             _LOCATE_POOL_TOKENS = None
+            _LOCATE_POOL_GENERATION += 1
         _LOCATE_POOL_TOKENS = fragment_tokens
         _LOCATE_POOL = ProcessPoolExecutor(
             max_workers=workers,
@@ -88,15 +157,6 @@ def open_locate_pool(fragment_tokens, workers=None, env=None):
             initargs=(fragment_tokens,),
         )
         return _LOCATE_POOL
-
-
-def shutdown_locate_pool():
-    global _LOCATE_POOL, _LOCATE_POOL_TOKENS
-    with _LOCATE_POOL_LOCK:
-        if _LOCATE_POOL is not None:
-            _LOCATE_POOL.shutdown(wait=True, cancel_futures=False)
-            _LOCATE_POOL = None
-            _LOCATE_POOL_TOKENS = None
 
 
 def _audio_slice(pcm, lo, hi):
@@ -448,12 +508,17 @@ def align_ctc_batch_locate(*, audio, output, fragments, language, windows, media
         }
         return results, timings
 
-    task = ResidentTask(work)
-    if not task.done.wait(max(0, deadline - time.monotonic())):
-        raise AlignmentTimeout(limit, stuck=task)
-    if task.error:
-        raise task.error
-    results, timings = task.value
+    try:
+        task = ResidentTask(work)
+        if not task.done.wait(max(0, deadline - time.monotonic())):
+            raise AlignmentTimeout(limit, stuck=task)
+        if task.error:
+            raise task.error
+        results, timings = task.value
+    finally:
+        # Idle=0 tears the pool down per request; otherwise an idle timer frees Xenocide-sized indexes.
+        if pool is not None:
+            release_locate_pool(env)
 
     finished = time.monotonic()
     payload = {

@@ -179,7 +179,49 @@ class BatchLocateOnce(unittest.TestCase):
             self.assertIn("fragmentIndex", result["stageTimings"])
 
 
+class LocatePoolLifecycle(unittest.TestCase):
+    def tearDown(self):
+        ctc_pipeline.shutdown_locate_pool()
+
+    def test_default_worker_cap_leaves_headroom(self):
+        with mock.patch.object(ctc_pipeline.os, "cpu_count", return_value=16):
+            self.assertEqual(ctc_pipeline.locate_pool_workers({}), 8)
+        with mock.patch.object(ctc_pipeline.os, "cpu_count", return_value=4):
+            self.assertEqual(ctc_pipeline.locate_pool_workers({}), 2)
+        with mock.patch.object(ctc_pipeline.os, "cpu_count", return_value=1):
+            self.assertEqual(ctc_pipeline.locate_pool_workers({}), 1)
+        self.assertEqual(ctc_pipeline.locate_pool_workers({"ALIGNMENT_CTC_LOCATE_WORKERS": "0"}), 0)
+
+    def test_pool_gone_after_idle_period(self):
+        """Idle timer must drop the shared pool so book indexes do not stick around."""
+        tokens = [(0, ["THE", "CURIOUS", "RABBIT", "RAN", "ACROSS", "THE", "GARDEN"])]
+        env = {"ALIGNMENT_CTC_LOCATE_WORKERS": "2", "ALIGNMENT_CTC_LOCATE_IDLE_SECONDS": "0.15"}
+        pool = ctc_pipeline.open_locate_pool(tokens, env=env)
+        self.assertIsNotNone(pool)
+        # Force worker processes to start so the pool is observably live.
+        futures = [pool.submit(ctc_candidates._pool_locate, ([], [], ("-",), 0)) for _ in range(2)]
+        for future in futures:
+            future.result()
+        self.assertTrue(ctc_pipeline.locate_pool_is_open())
+        ctc_pipeline.release_locate_pool(env)
+        self.assertTrue(ctc_pipeline.locate_pool_is_open())
+        deadline = time.monotonic() + 2.0
+        while ctc_pipeline.locate_pool_is_open() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(ctc_pipeline.locate_pool_is_open())
+
+    def test_idle_zero_shuts_pool_down_at_end_of_batch(self):
+        tokens = [(0, ["THE", "CURIOUS", "RABBIT", "RAN", "ACROSS", "THE", "GARDEN"])]
+        env = {"ALIGNMENT_CTC_LOCATE_WORKERS": "2", "ALIGNMENT_CTC_LOCATE_IDLE_SECONDS": "0"}
+        pool = ctc_pipeline.open_locate_pool(tokens, env=env)
+        self.assertIsNotNone(pool)
+        pool.submit(ctc_candidates._pool_locate, ([], [], ("-",), 0)).result()
+        ctc_pipeline.release_locate_pool(env)
+        self.assertFalse(ctc_pipeline.locate_pool_is_open())
+
+
 class BatchMatchesSingle(unittest.TestCase):
+
     def test_batch_locate_matches_single_window_results(self):
         if torch is None or np is None:
             self.skipTest("torch and numpy are optional outside the worker environment")

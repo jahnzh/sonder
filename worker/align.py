@@ -4,6 +4,7 @@ import importlib.util
 import secrets
 import sys
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 from fastapi import FastAPI, HTTPException
@@ -11,11 +12,21 @@ from pydantic import BaseModel, Field
 from deadline import AlignmentTimeout, Gate, WorkerBusy
 from pipeline import ENGINE, align_section, locate_passage
 from ctc_acoustic import ENGINE as CTC_ENGINE, checkpoint_path
-from ctc_pipeline import align_ctc_batch_locate, align_ctc_section
+from ctc_pipeline import align_ctc_batch_locate, align_ctc_section, shutdown_locate_pool
 from ctc_gpu import GpuMonitor
 from align_task import LANGUAGES
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    try:
+        yield
+    finally:
+        # Persistent WSL/lisa workers must not retain book-sized locate indexes after stop.
+        shutdown_locate_pool()
+
+
+app = FastAPI(lifespan=lifespan)
 gate = Gate()
 root = Path(os.environ.get("MEDIA_ROOT", "/mnt/usb_4t_1/sonder")).resolve()
 
