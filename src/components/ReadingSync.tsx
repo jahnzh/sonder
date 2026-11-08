@@ -223,7 +223,7 @@ export function ReadingSync({
       setBusy(false);
     }
   };
-  const prepare = () => {
+  const prepare = (forceAnchored = false) => {
     setBusy(true);
     setError("");
     void api("/alignments", {
@@ -231,7 +231,7 @@ export function ReadingSync({
       body: JSON.stringify({
         ebookId: book.id,
         recordingId: selected,
-        ...(anchoredMode ? { mode: "anchored" } : { pairings }),
+        ...(anchoredMode || forceAnchored === true ? { mode: "anchored" } : { pairings }),
       }),
     })
       .then(async () => ensurePoll(await refresh()))
@@ -547,7 +547,7 @@ export function ReadingSync({
               className="button primary"
               disabled={prepareDisabled}
               aria-describedby="reading-sync-help"
-              onClick={prepare}
+              onClick={() => prepare()}
             >
               Rebuild reading sync
             </button>
@@ -557,10 +557,19 @@ export function ReadingSync({
             className="button primary"
             disabled={prepareDisabled}
             aria-describedby="reading-sync-help"
-            onClick={prepare}
+            onClick={() => prepare()}
           >
             {busy && <Loader2 size={15} className="spin" />}{" "}
             {job ? "Rebuild reading sync" : "Prepare reading sync"}
+          </button>
+        )}
+        {job && !anchoredMode && !job.anchoring && ["partial", "error"].includes(job.status) && job.coverage < 0.05 && (
+          <button
+            className="button subtle"
+            disabled={prepareDisabled}
+            onClick={() => prepare(true)}
+          >
+            Rebuild without chapter matching
           </button>
         )}
       </div>

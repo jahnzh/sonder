@@ -335,14 +335,8 @@ export async function createAlignment(
   const anchored =
     mode === "anchored" ||
     (mode !== "chapters" && !chosen.length && options.anchored);
-  if (
-    anchored &&
-    !options.anchored &&
-    !ebookId.startsWith("set-consensus:")
-  )
-    throw new Error(
-      "This release has chapter markers or matched chapters. Match its chapters instead.",
-    );
+  // An explicit anchored request is allowed on a chaptered release: the chapter
+  // pairing can be wrong (for example shifted by one) and then maps nothing.
   if (!anchored && !chosen.length)
     throw new Error(
       "Match ebook sections to audio chapters before preparing sync.",
