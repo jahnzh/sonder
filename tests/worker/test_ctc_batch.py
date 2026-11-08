@@ -14,6 +14,7 @@ import ctc_decode
 import ctc_gpu
 import ctc_pipeline
 from ctc_acoustic import SAMPLE_RATE
+from ctc_cache import file_version
 
 try:
     import numpy as np
@@ -282,7 +283,9 @@ class BatchMatchesSingle(unittest.TestCase):
                 handle.setsampwidth(2)
                 handle.setframerate(SAMPLE_RATE)
                 handle.writeframes(b"\x00\x00" * frames)
-            version = (1, 2, frames * 2, 3, 4)
+            # Must match the real file_version(audio) that align_ctc_section passes as source_version,
+            # otherwise the patched audio_digest version fails the "Audio changed" check.
+            version = file_version(audio)
             pcm = ctc_decode.DecodedTrack(audio, version)
             fragments = [
                 "The curious rabbit ran across the garden and disappeared beneath the trees.",
@@ -316,6 +319,8 @@ class BatchMatchesSingle(unittest.TestCase):
 
             class FakeCache:
                 budget = 0
+                def __init__(self, *_args, **_kwargs):
+                    pass
                 def read(self, *_args, **_kwargs):
                     return None
                 def write(self, *_args, **_kwargs):

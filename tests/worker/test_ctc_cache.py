@@ -158,6 +158,10 @@ class CachedPipeline(unittest.TestCase):
                     boundaries = [ctc_acoustic.frame_boundary(context, i) for i in range(first, last)]
                     values = torch.tensor([[float(b), 1.0, 2.0] for b in boundaries], dtype=torch.float32).unsqueeze(0)
                     return values, boundaries
+                def encode_chunks(self, items):
+                    # Pipeline encodes in batches; keep the per-chunk call accounting above.
+                    return [self.encode_chunk(audio, start, end, context)
+                            for audio, start, end, context in items]
             model = Model()
             paths = []
             def extract(command, *_):
@@ -215,8 +219,10 @@ class CachedPipeline(unittest.TestCase):
                     run("interrupted", 8.5, 42, "interrupted-recording")
                 self.assertEqual(model.calls, [0, 320000])
                 model.fail_on = None
+                # encode_chunks is all-or-nothing for the pending batch: a mid-batch raise
+                # publishes no acoustic cache entries, so resume re-encodes every core.
                 run("resumed", 8.5, 42, "interrupted-recording")
-                self.assertEqual(model.calls, [0, 320000, 320000, 640000])
+                self.assertEqual(model.calls, [0, 320000, 0, 320000, 640000])
 
 
 if __name__ == "__main__":
