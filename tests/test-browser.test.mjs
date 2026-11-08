@@ -85,7 +85,7 @@ test("runTestBrowser creates one owned sonder-browser temp, passes it in env, an
         setImmediate(() => child.emit("close", 0, null));
         return child;
       };
-      const code = await runTestBrowser({ cwd, tmpRoot, args: [], spawnCommand: fakeSpawn });
+      const code = await runTestBrowser({ shards: 1, cwd, tmpRoot, args: [], spawnCommand: fakeSpawn });
       assert.equal(code, 0);
       assert.ok(seenEnv?.startsWith(path.join(tmpRoot, "sonder-browser-")));
       assert.equal(fs.existsSync(seenEnv), false, "owned temp must be removed");
@@ -102,7 +102,7 @@ test("two concurrent runTestBrowser finishes do not remove each other's owned te
     let secondOwned = null;
     let firstChild = null;
     let secondChild = null;
-    const first = runTestBrowser({
+    const first = runTestBrowser({ shards: 1,
       cwd: tmpRoot,
       tmpRoot,
       args: [],
@@ -114,7 +114,7 @@ test("two concurrent runTestBrowser finishes do not remove each other's owned te
     });
     // Wait until the first spawn has created its owned dir.
     while (!firstOwned) await new Promise((r) => setImmediate(r));
-    const second = runTestBrowser({
+    const second = runTestBrowser({ shards: 1,
       cwd: tmpRoot,
       tmpRoot,
       args: [],
@@ -168,7 +168,7 @@ test("runTestBrowser forwards args and the exit code, and removes only new profi
       return makeFakeChild({ cwd, createProfiles: [created], code: 0 });
     };
 
-    const code = await runTestBrowser({ cwd, args: ["--list"], spawnCommand: fakeSpawn });
+    const code = await runTestBrowser({ shards: 1, cwd, args: ["--list"], spawnCommand: fakeSpawn });
     assert.equal(code, 0);
     assert.equal(seen.cmd, "npx");
     assert.deepEqual(seen.argv, ["playwright", "test", "--list"]);
@@ -182,7 +182,7 @@ test("runTestBrowser propagates a non-zero exit code and still cleans up", () =>
   withTempDir(async (cwd) => {
     const created = "playwright_chromiumdev_profile-created";
     const fakeSpawn = () => makeFakeChild({ cwd, createProfiles: [created], code: 3 });
-    const code = await runTestBrowser({ cwd, args: [], spawnCommand: fakeSpawn });
+    const code = await runTestBrowser({ shards: 1, cwd, args: [], spawnCommand: fakeSpawn });
     assert.equal(code, 3);
     assert.equal(fs.existsSync(path.join(cwd, created)), false);
   }));
@@ -191,7 +191,7 @@ test("runTestBrowser resolves null when the child is signalled and still cleans 
   withTempDir(async (cwd) => {
     const created = "playwright_chromiumdev_profile-created";
     const fakeSpawn = () => makeFakeChild({ cwd, createProfiles: [created], code: null, signal: "SIGTERM" });
-    const code = await runTestBrowser({ cwd, args: [], spawnCommand: fakeSpawn });
+    const code = await runTestBrowser({ shards: 1, cwd, args: [], spawnCommand: fakeSpawn });
     assert.equal(code, null);
     assert.equal(fs.existsSync(path.join(cwd, created)), false);
   }));
@@ -199,7 +199,7 @@ test("runTestBrowser resolves null when the child is signalled and still cleans 
 test("runTestBrowser resolves 1 when the child fails to spawn and still cleans up", () =>
   withTempDir(async (cwd) => {
     const fakeSpawn = () => makeFakeChild({ cwd, shouldError: true });
-    const code = await runTestBrowser({ cwd, args: [], spawnCommand: fakeSpawn });
+    const code = await runTestBrowser({ shards: 1, cwd, args: [], spawnCommand: fakeSpawn });
     assert.equal(code, 1);
   }));
 
