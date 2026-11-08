@@ -10,6 +10,8 @@ import {
   getGitRoot,
   resolveGitRevision,
   findChangedE2eSpecs,
+  findChangedFiles,
+  selectBrowserScope,
   checkCallerDirty,
   extractSnapshot,
   acquirePortLease,
@@ -194,6 +196,8 @@ Options:
                          Relative paths resolve against the calling checkout.
                          See docs/LOCAL_CHECKS.md.
   --bail                 Stop after the first failed stage
+  --full                 Always run the whole browser suite (default: the scope follows the
+                         changed files; SONDER_CHECK_FULL=1 does the same). See docs/LOCAL_CHECKS.md.
   --silent               Suppress live stage streaming output to console
   -h, --help             Show this help message
 
@@ -462,11 +466,13 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
   try {
     // 4. Extract git snapshot
     let changedBrowserSpecs;
+    let changedFiles;
     let setupAction = "git archive extraction";
     try {
       await extractSnapshot(callerDir, resolvedSha, disposableDir);
       setupAction = "changed browser spec discovery";
       changedBrowserSpecs = findChangedE2eSpecs(callerDir, resolvedSha);
+      changedFiles = findChangedFiles(callerDir, resolvedSha);
     } catch (err) {
       unbindSignals();
       cleanup();
@@ -520,6 +526,11 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     const playwrightReportPath = path.join(outputDir, PLAYWRIGHT_REPORT_NAME);
     const stageResults = [];
     const stageDefinitions = [...STAGE_DEFINITIONS, ...changedBrowserStages(changedBrowserSpecs.files)];
+    // The browser stage scope follows the changed files (#34); --full or SONDER_CHECK_FULL=1 runs everything.
+    const selection = selectBrowserScope(changedFiles.files, {
+      full: options.full || process.env.SONDER_CHECK_FULL === "1",
+    });
+    if (!options.silent) console.log(`[check-local] Browser stage scope: ${selection.scope} (${selection.reason})`);
     let firstFailedStage = null;
     let toleratedStage = null;
     let gate = null;
@@ -547,6 +558,26 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     for (let i = 0; i < stageDefinitions.length; i++) {
       const stageDef = stageDefinitions[i];
       const stageIndex = i + 1;
+
+      if (stageDef.name === "browser" && selection.scope === "skip") {
+        stageResults.push({
+          index: stageIndex,
+          name: stageDef.name,
+          command: stageDef.fullCommand,
+          status: "skipped",
+          reason: `selection: ${selection.reason}`,
+          exitCode: null,
+          signal: null,
+          startedAt: null,
+          completedAt: null,
+          durationMs: 0,
+          stdout: "",
+          stderr: "",
+          logFile: null,
+        });
+        if (!options.silent) console.log(`\n=== [Stage ${stageIndex}/${stageDefinitions.length}] ${stageDef.fullCommand}: skipped (${selection.reason}) ===`);
+        continue;
+      }
 
       const continueAfterUnitFailure = !options.bail && firstFailedStage?.name === "unit" && stageDef.name === "browser";
       if (interruptedSignal || (firstFailedStage && !continueAfterUnitFailure)) {
@@ -577,7 +608,9 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       // The browser stage always writes a JSON report so the check can list the slowest tests;
       // with a known-failures list that same report is also used to classify failures.
       const jsonReport = stageDef.name === "browser";
-      const stageArgs = jsonReport ? [...stageDef.args, "--", "--reporter=list,json"] : stageDef.args;
+      const stageArgs = jsonReport
+        ? [...stageDef.args, "--", "--reporter=list,json", ...(selection.scope === "chromium" ? ["--project=chromium"] : [])]
+        : stageDef.args;
       const stageEnv = {...childEnv, NODE_ENV: stageDef.name === "build" ? "production" : "test"};
       if (jsonReport) stageEnv.PLAYWRIGHT_JSON_OUTPUT_NAME = playwrightReportPath;
 
@@ -703,6 +736,7 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       artifactError,
       failedStage: blockingStage ? blockingStage.name : null,
       changedBrowserSpecs: { baseRef: "origin/main", baseSha: changedBrowserSpecs.base, files: changedBrowserSpecs.files },
+      selection: { browser: selection.scope, reason: selection.reason, baseSha: changedFiles.base, changedFileCount: changedFiles.files.length },
       browserSlowestTests,
       ...(browserSlowestError ? {browserSlowestError} : {}),
       ...(knownFailures ? {knownFailures: {

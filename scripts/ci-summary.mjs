@@ -222,6 +222,7 @@ export function summarizeRun(artifactDir) {
       name: s.name,
       status: s.status,
       durationMs: typeof s.durationMs === "number" ? s.durationMs : null,
+      ...(s.reason ? { reason: s.reason } : {}),
     }));
   } else if (report?.setup?.status === "failed") {
     stages = [{ name: "setup", status: "failed", durationMs: report.setup?.durationMs ?? null }];
@@ -296,6 +297,7 @@ export function summarizeRun(artifactDir) {
     unitFailures,
     unitFailed,
     browserSlowestTests,
+    selection: report?.selection ?? null,
   };
 }
 
@@ -312,7 +314,7 @@ export function formatSummary(data) {
         typeof stage.durationMs === "number"
           ? ` (${(stage.durationMs / 1000).toFixed(1)}s)`
           : "";
-      lines.push(`  ${stage.name}: ${stage.status}${dur}`);
+      lines.push(`  ${stage.name}: ${stage.status}${dur}${stage.reason ? ` (${stage.reason})` : ""}`);
     }
   } else {
     lines.push("  unknown");
@@ -356,6 +358,11 @@ export function formatSummary(data) {
         lines.push(`  ${u.name}: ${u.error}`);
       }
     }
+  }
+
+  // A smaller browser scope than the whole suite is shown so a partial run is never mistaken for a full one.
+  if (data.selection && data.selection.browser && data.selection.browser !== "full") {
+    lines.push(`browser scope: ${data.selection.browser} (${data.selection.reason})`);
   }
 
   // Slowest browser tests
