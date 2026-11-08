@@ -23,7 +23,7 @@ writeFileSync(ebook, await readerFixture({ bodies: ["<p>First sentence. Another 
 const { db, sqlite } = await import("../server/db.ts");
 const schema = await import("../server/schema.ts");
 const { extractBook } = await import("../server/reader.ts");
-const { createAlignment, alignmentJob, putAlignmentJob, processAlignments, stopAlignments, registerAlignment } = await import("../server/alignment.ts");
+const { createAlignment, alignmentJob, putAlignmentJob, processAlignments, stopAlignments, registerAlignment, resetAnchorBatchSupportForTests, resetAlignmentRunnerForTests } = await import("../server/alignment.ts");
 const { resetAlignmentPoolCoordinator, setAlignmentPoolDepsForTests } = await import("../server/alignment-pool.ts");
 const originalFetch = globalThis.fetch;
 const engine = "ctc-wav2vec2-base-960h-torchaudio-2.8-v1";
@@ -41,7 +41,7 @@ const testPoolDeps = {
 };
 setAlignmentPoolDepsForTests(testPoolDeps);
 function mockWorker(handler: typeof fetch, options: {
-  down?: string[]; busy?: string[]; wrongDevice?: string[]; anchorReady?: boolean; onHealth?: (host: string) => void;
+  down?: string[]; busy?: string[]; wrongDevice?: string[]; anchorReady?: boolean; anchorBatch?: boolean; onHealth?: (host: string) => void;
 } = {}) {
   globalThis.fetch = async (input, init) => {
     if (String(input).endsWith("/health")) {
@@ -52,7 +52,8 @@ function mockWorker(handler: typeof fetch, options: {
       return Response.json({ ready: true, busy: options.busy?.includes(host) ?? false, stuck: false,
         mediaRoot: join(temp, lisa ? "lisa" : "wsl"),
         ctc: { engine, ready: true, device: lisa || options.wrongDevice?.includes(host) ? "cpu" : "cuda",
-          precision: lisa ? "float32" : "float16", anchorReady: options.anchorReady ?? true, passageReady: true } });
+          precision: lisa ? "float32" : "float16", anchorReady: options.anchorReady ?? true, passageReady: true,
+          ...(options.anchorBatch ? { anchorBatch: true } : {}) } });
     }
     return handler(input, init);
   };
@@ -625,4 +626,127 @@ test("pool failure reasons survive storage and summary responses, and resume sta
   } finally {
     await app.close();
   }
+});
+
+test("anchored CTC sampling uses /anchor-batch when the worker advertises it and records GPU util", async () => {
+  resetAnchorBatchSupportForTests();
+  resetAlignmentPoolCoordinator([
+    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test" },
+    { id: "lisa", sshTarget: "lisa", maxConcurrent: 1, remoteWorkRoot: temp, workerUrl: "http://lisa-worker.test" },
+  ]);
+  setAlignmentPoolDepsForTests(testPoolDeps);
+  resetAlignmentRunnerForTests();
+  process.env.ALIGNMENT_WORKER_URL = "http://production-worker.test";
+  process.env.ALIGNMENT_WORKER_TOKEN = "test-token";
+  process.env.ALIGNMENT_POOL_ENABLED = "1";
+  const file = join(process.env.MEDIA_ROOT!, "batch-alice.epub");
+  writeFileSync(file, await readerFixture());
+  db.insert(schema.ebookEditions).values({ id: "ctc-batch-ebook", workId: "ctc-work", format: "epub", source: file }).run();
+  const alice = await extractBook("ctc-batch-ebook");
+  const paragraphs = alice.sections.flatMap((section) => section.paragraphs);
+  const spoken = (index: number) => 30 + index * 5;
+  db.insert(schema.editions).values({ id: "ctc-batch-edition", workId: "ctc-work", cover: "", narrator: "", rating: 0, sourceLabel: "", language: "en" }).run();
+  db.insert(schema.recordings).values({ id: "ctc-batch-recording", editionId: "ctc-batch-edition" }).run();
+  db.insert(schema.tracks).values({ id: "ctc-batch-track", recordingId: "ctc-batch-recording", title: "Alice.m4b", index: 0,
+    duration: spoken(paragraphs.length) + 20, chapters: [], source: audio, sourceType: "local" }).run();
+  const batchCalls: unknown[] = [];
+  const singleCalls: string[] = [];
+  mockWorker(async (input, init) => {
+    const url = String(input);
+    const request = JSON.parse(String(init?.body));
+    if (url.endsWith("/anchor-batch")) {
+      batchCalls.push(request);
+      assert.equal(request.engine, "ctc");
+      assert.ok(Array.isArray(request.windows) && request.windows.length > 1);
+      assert.equal(request.trackId, "ctc-batch-track");
+      return Response.json({
+        engine,
+        outcome: "mapped",
+        gpuUtilization: 55,
+        stageTimings: { audioExtraction: 0.5, acousticEncoding: 0.4, fragmentIndex: 0.1 },
+        results: request.windows.map((window: { start: number; duration: number }) => {
+          const index = Math.max(0, Math.ceil((window.start - 30) / 5));
+          if (index >= paragraphs.length || spoken(index) > window.start + window.duration - 3)
+            return { engine, outcome: "unsynced", match: null, start: window.start, text: "" };
+          return { engine, outcome: "mapped", match: { index, score: 0.9 }, start: spoken(index), text: "word ".repeat(40) };
+        }),
+      });
+    }
+    if (url.endsWith("/anchor")) {
+      singleCalls.push(url);
+      throw new Error("single-window /anchor must not run when batch is available");
+    }
+    const step = request.duration / request.fragments.length;
+    return Response.json({ engine, outcome: "mapped", stageTimings: { ctcPath: 0.5 }, elapsedSeconds: 1, gpuUtilization: 10,
+      intervals: request.fragments.map((_: string, i: number) => ({ index: i, start: request.start + i * step, end: request.start + (i + 1) * step })) });
+  }, { anchorReady: false, anchorBatch: true });
+  const created = await createAlignment("ctc-batch-ebook", "ctc-batch-recording", undefined, "anchored");
+  let job = alignmentJob(created.id);
+  for (let i = 0; i < 600 && !(job.anchoring?.stage === "done" || ["partial", "ready", "error"].includes(job.status)); i++) {
+    if (job.status === "queued") void processAlignments();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    job = alignmentJob(created.id);
+  }
+  assert.equal(job.status, "partial", job.error ?? undefined);
+  assert.ok(batchCalls.length >= 1, "expected at least one /anchor-batch call");
+  assert.equal(singleCalls.length, 0);
+  assert.equal(job.gpuUtilization, 55);
+  assert.ok(job.stageTimings!.fragmentIndex! > 0);
+  resetAnchorBatchSupportForTests();
+});
+
+test("anchored CTC sampling falls back to /anchor when the worker lacks batch support", async () => {
+  resetAnchorBatchSupportForTests();
+  resetAlignmentPoolCoordinator([
+    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test" },
+    { id: "lisa", sshTarget: "lisa", maxConcurrent: 1, remoteWorkRoot: temp, workerUrl: "http://lisa-worker.test" },
+  ]);
+  setAlignmentPoolDepsForTests(testPoolDeps);
+  resetAlignmentRunnerForTests();
+  process.env.ALIGNMENT_WORKER_URL = "http://production-worker.test";
+  process.env.ALIGNMENT_WORKER_TOKEN = "test-token";
+  process.env.ALIGNMENT_POOL_ENABLED = "1";
+  const file = join(process.env.MEDIA_ROOT!, "fallback-alice.epub");
+  writeFileSync(file, await readerFixture());
+  db.insert(schema.ebookEditions).values({ id: "ctc-fallback-ebook", workId: "ctc-work", format: "epub", source: file }).run();
+  const alice = await extractBook("ctc-fallback-ebook");
+  const paragraphs = alice.sections.flatMap((section) => section.paragraphs);
+  const spoken = (index: number) => 30 + index * 5;
+  db.insert(schema.editions).values({ id: "ctc-fallback-edition", workId: "ctc-work", cover: "", narrator: "", rating: 0, sourceLabel: "", language: "en" }).run();
+  db.insert(schema.recordings).values({ id: "ctc-fallback-recording", editionId: "ctc-fallback-edition" }).run();
+  db.insert(schema.tracks).values({ id: "ctc-fallback-track", recordingId: "ctc-fallback-recording", title: "Alice.m4b", index: 0,
+    duration: spoken(paragraphs.length) + 20, chapters: [], source: audio, sourceType: "local" }).run();
+  let batchHits = 0;
+  let anchorHits = 0;
+  mockWorker(async (input, init) => {
+    const url = String(input);
+    const request = JSON.parse(String(init?.body));
+    if (url.endsWith("/anchor-batch")) {
+      batchHits++;
+      return new Response("missing", { status: 404 });
+    }
+    if (url.endsWith("/anchor")) {
+      anchorHits++;
+      const index = Math.max(0, Math.ceil((request.start - 30) / 5));
+      if (index >= paragraphs.length || spoken(index) > request.start + request.duration - 3)
+        return Response.json({ engine, outcome: "unsynced", stageTimings: { acousticEncoding: 0.1 }, match: null, start: request.start, text: "", gpuUtilization: null });
+      return Response.json({ engine, outcome: "mapped", stageTimings: { acousticEncoding: 0.1 },
+        match: { index, score: 0.9 }, start: spoken(index), text: "word ".repeat(40), gpuUtilization: null });
+    }
+    const step = request.duration / request.fragments.length;
+    return Response.json({ engine, outcome: "mapped", stageTimings: { ctcPath: 0.5 }, elapsedSeconds: 1,
+      intervals: request.fragments.map((_: string, i: number) => ({ index: i, start: request.start + i * step, end: request.start + (i + 1) * step })) });
+  }, { anchorReady: false, anchorBatch: true });
+  const created = await createAlignment("ctc-fallback-ebook", "ctc-fallback-recording", undefined, "anchored");
+  let job = alignmentJob(created.id);
+  for (let i = 0; i < 600 && !["partial", "ready", "error"].includes(job.status); i++) {
+    if (job.status === "queued") void processAlignments();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    job = alignmentJob(created.id);
+  }
+  assert.equal(job.status, "partial", job.error ?? undefined);
+  assert.equal(batchHits, 1);
+  assert.ok(anchorHits > 1);
+  assert.equal(job.gpuUtilization, null);
+  resetAnchorBatchSupportForTests();
 });

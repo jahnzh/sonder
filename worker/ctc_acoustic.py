@@ -73,21 +73,42 @@ class AcousticModel:
 
     def encode_chunk(self, audio, core_start, core_end, context_start):
         """Encode one core using the supplied context on the track sample grid."""
+        results = self.encode_chunks([(audio, core_start, core_end, context_start)])
+        return results[0]
+
+    def encode_chunks(self, items):
+        """Encode many cores in one forward pass; each item is (audio, core_start, core_end, context_start).
+
+        Windows are right-padded to the longest item so the GPU sees one dense batch. Empty batches
+        return an empty list. Per-item None means the core produced no valid frames.
+        """
+        if not items:
+            return []
         torch = self.torch
+        import numpy as np
+        lengths = [len(audio) for audio, *_ in items]
+        widest = max(lengths)
+        batch = np.zeros((len(items), widest), dtype=np.float32)
+        for row, (audio, *_rest) in enumerate(items):
+            batch[row, :len(audio)] = audio
         with torch.inference_mode():
-            wave = torch.from_numpy(audio).unsqueeze(0).to(device=self.device, dtype=self.dtype)
-            lengths = torch.tensor([len(audio)], device=self.device, dtype=torch.int64)
-            logits, valid = self.model(wave, lengths)
-            first, last = core_frames(core_start, core_end, context_start, int(valid[0]))
-            if first < last:
-                return (logits[:, first:last].float().log_softmax(-1).contiguous(),
-                        [frame_boundary(context_start, i) for i in range(first, last)])
-        return None, []
+            wave = torch.from_numpy(batch).to(device=self.device, dtype=self.dtype)
+            length_tensor = torch.tensor(lengths, device=self.device, dtype=torch.int64)
+            logits, valid = self.model(wave, length_tensor)
+            results = []
+            for row, (_audio, core_start, core_end, context_start) in enumerate(items):
+                first, last = core_frames(core_start, core_end, context_start, int(valid[row]))
+                if first < last:
+                    results.append((logits[row:row + 1, first:last].float().log_softmax(-1).contiguous(),
+                                    [frame_boundary(context_start, i) for i in range(first, last)]))
+                else:
+                    results.append((None, []))
+            return results
 
     def encode(self, audio):
         outputs, boundaries = [], []
-        for start, end, lo, hi in chunks(len(audio)):
-            emission, chunk_boundaries = self.encode_chunk(audio[lo:hi], start, end, lo)
+        items = [(audio[lo:hi], start, end, lo) for start, end, lo, hi in chunks(len(audio))]
+        for emission, chunk_boundaries in self.encode_chunks(items):
             if emission is not None:
                 outputs.append(emission)
                 boundaries.extend(chunk_boundaries)

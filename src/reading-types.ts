@@ -121,6 +121,13 @@ export type AlignmentJob = {
   /** Runtime details for CTC diagnostics; neither changes the map generation. */
   ctcDevice?: string;
   ctcPrecision?: string;
+  /**
+   * Mean GPU utilization percent (0-100) sampled at 1 Hz on the worker while it
+   * was busy for this job. Null when the host has no GPU or never reported one.
+   */
+  gpuUtilization?: number | null;
+  /** Request weights contributing to gpuUtilization (batch size or 1). */
+  gpuUtilizationSamples?: number;
   outcome?: AlignmentOutcome;
   /** Total seconds spent in each worker stage across completed requests. */
   stageTimings?: Record<string, number>;

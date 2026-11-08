@@ -21,7 +21,7 @@ function makeDb() {
   db.prepare("INSERT INTO ebook_editions VALUES('e1','w1','epub','x'),('e2','w1','epub','y')").run();
   const data = {
     status: "processing", progress: 0.4, error: null, warning: null, coverage: 0.75,
-    ctcDevice: "cuda", ctcPrecision: "float16",
+    ctcDevice: "cuda", ctcPrecision: "float16", gpuUtilization: 47.2,
     pool: { hostId: "wsl", attempt: 1, workerUrl: "http://h:3012", triedHosts: ["wsl"] },
     poolErrors: { steamdeck: "ssh down" },
     anchoring: { stage: "aligning", anchors: [{}, {}, {}] },
@@ -57,6 +57,7 @@ test("reports status, pool host, device, anchors, coverage and unsynced count", 
   assert.equal(j.status, "processing");
   assert.equal(j.poolHost, "wsl");
   assert.equal(j.device, "cuda");
+  assert.equal(j.gpuUtilization, 47.2);
   assert.equal(j.anchors, 3);
   assert.equal(j.coverage, 0.75);
   assert.equal(j.unsyncedSentences, 5);
@@ -71,6 +72,7 @@ test("lists ebook-set members and the text output includes everything", async ()
   assert.deepEqual(r.ebookSet.members.map((m) => m.ebook_id), ["e1", "e2"]);
   const text = formatReport(r);
   assert.match(text, /host=wsl device=cuda/);
+  assert.match(text, /gpuUtilization=47%/);
   assert.match(text, /anchors=3/);
   assert.match(text, /coverage=75%/);
   assert.match(text, /e2 {2}held \(mismatch\)/);

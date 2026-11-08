@@ -42,12 +42,8 @@ def greedy_words(path, labels, boundaries, sample_offset):
     return result
 
 
-def candidate_passages(spoken, fragments, limit=8):
-    """Return distinct, high-scoring text locations, including repeated passages.
-
-    Trigram votes limit the number of local comparisons; neither a book-wide
-    dynamic-programming matrix nor a path over a whole recording is allocated.
-    """
+def _search_passages(spoken, fragment_tokens, limit=8):
+    """Search a pre-tokenised fragment list; identical results to building it each call."""
     query = [word for word, _ in spoken]
     if not 6 <= len(query) <= 256:
         return []
@@ -87,8 +83,8 @@ def candidate_passages(spoken, fragments, limit=8):
 
     # Carry enough text across each boundary for a whole query and its seed.
     overlap = len(query) + 4
-    for owner, fragment in enumerate(fragments):
-        for token in words(fragment):
+    for owner, tokens in fragment_tokens:
+        for token in tokens:
             corpus.append(token)
             owners.append(owner)
             if len(corpus) == 8192:
@@ -100,10 +96,29 @@ def candidate_passages(spoken, fragments, limit=8):
     return sorted(candidates.values(), key=lambda candidate: (-candidate["score"], candidate["index"]))[:limit]
 
 
-def locate(emissions, boundaries, fragments, labels, sample_offset):
+class FragmentIndex:
+    """Tokenise fragments once and reuse them for many locate calls in one request."""
+
+    def __init__(self, fragments):
+        self.fragment_tokens = [(owner, words(fragment)) for owner, fragment in enumerate(fragments)]
+
+    def candidate_passages(self, spoken, limit=8):
+        return _search_passages(spoken, self.fragment_tokens, limit)
+
+
+def candidate_passages(spoken, fragments, limit=8):
+    """Return distinct, high-scoring text locations, including repeated passages.
+
+    Trigram votes limit the number of local comparisons; neither a book-wide
+    dynamic-programming matrix nor a path over a whole recording is allocated.
+    """
+    return FragmentIndex(fragments).candidate_passages(spoken, limit)
+
+
+def locate(emissions, boundaries, fragments, labels, sample_offset, index=None):
     path = emissions.argmax(dim=-1)[0].detach().cpu().tolist()
     spoken = greedy_words(path, labels, boundaries, sample_offset)
-    matches = candidate_passages(spoken, fragments)
+    matches = (index or FragmentIndex(fragments)).candidate_passages(spoken)
     return {"text": " ".join(word for word, _ in spoken), "matches": matches,
             "match": matches[0] if matches else None,
             "start": matches[0]["start"] if matches else sample_offset / SAMPLE_RATE}
