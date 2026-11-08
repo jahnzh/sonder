@@ -45,6 +45,10 @@ This command performs local validation. CI triggers, staging and image promotion
 
 ## Mobile device projects
 
+### Sharded browser stage (#34)
+
+`npm run test:browser` splits an unfiltered full run into parallel `--shard=i/N` runs. Each shard has its own server port (`PLAYWRIGHT_PORT` + i), browser temp directory, output directory and JSON report; the reports are merged into the one file the check reads, and the shard outputs are merged into `test-results/`. `SONDER_BROWSER_SHARDS=N` (1 to 16) sets N; without it N follows the CPU count (1 below 8 CPUs, so the 4-core production host stays serial; 5 on the 16-CPU WSL host, 6 on lisa). Set `SONDER_BROWSER_SHARDS=1` to force a serial run. Filtered runs and runs with `--workers`, `--repeat-each`, `--output`, `--shard` or `--grep` (including the changed-spec stages of `check-local`) stay a single serial run. Measured on lisa (222 passed, 12 skipped): serial 1534 s, six shards 285 s.
+
 `playwright.config.ts` defines two phone-profile projects, off by default so `npm run test:browser` and `npm run check` are unchanged:
 
 - `mobile-chrome`: Chromium with the `Pixel 7` descriptor (touch, mobile user agent, device pixel ratio, `isMobile`).
