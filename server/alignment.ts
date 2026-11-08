@@ -635,8 +635,10 @@ async function workerSupportsAnchorBatch(workerBase: string, live: () => boolean
     const supported = health.ctc?.anchorBatch === true;
     rememberAnchorBatchSupport(base, supported);
     return supported;
-  } catch {
+  } catch (error) {
     // An unreachable health probe must not permanently disable batching; retry next time.
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn(`anchor-batch health probe failed for ${base}: ${reason}`);
     return false;
   }
 }
