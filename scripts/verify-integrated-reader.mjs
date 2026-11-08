@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import {protectBrowserMutations, closeProtectedBrowser} from './verification-safety.mjs';
 import {chromium,expect as baseExpect} from '@playwright/test';
+import {pickMappedIntervals,intervalMiddle} from './live-reader-samples.mjs';
 const expect=baseExpect.configure({timeout:25000});
 process.loadEnvFile('.env');
 const recordingId=process.argv[2];
@@ -83,9 +84,8 @@ try {
  const src=await page.evaluate(()=>window.__audio.find(a=>a.src).src);
  const loaded=book.tracks.find(t=>src.includes(encodeURIComponent(t.id))||src.includes(t.id));
  if(!loaded)throw Error('Could not tell which audio file is loaded');
- const onTrack=map.intervals.filter(i=>i.trackId===loaded.id&&i.end-i.start>4);
  const samples=[];
- for(const interval of [onTrack[0],onTrack[Math.floor(onTrack.length/2)],onTrack.at(-1)].filter(Boolean)){
+ for(const interval of pickMappedIntervals(map.intervals,loaded.id)){
   const position=Math.floor(interval.end)-1;
   await seek(position);
   await expect(room).toHaveAttribute('data-current-passage',interval.paragraphId);
@@ -93,7 +93,7 @@ try {
   await expect.poll(async()=>(await actual()).position).toBeCloseTo(position,0);
   if(!(await actual()).paused)throw Error('Seeking must preserve pause');
   await expect(page.locator('.toast')).toHaveCount(0);
-  samples.push({section:interval.section,paragraphId:interval.paragraphId,position});
+  samples.push({section:interval.section,paragraphId:interval.paragraphId,position,middle:intervalMiddle(interval)});
  }
  if(!samples.length)throw Error('No mapped passage on the loaded audio file');
  report.checks.push({name:'Paused audio seeks move the highlighted passage',samples});
@@ -108,13 +108,17 @@ try {
  await expect.poll(()=>room.getAttribute('data-current-passage'),{timeout:20000}).not.toBe(initial);
  await pause.click();
  report.checks.push({name:'Real audio advances the highlighted passage automatically'});
+ // Pausing can stop inside an unsynced gap, where no sentence is highlighted by design (partially mapped books, #349).
+ // Return to the middle of a sentence already proven mapped above before pressing the narrated sentence.
+ await seek(middle.middle);
+ await expect(room).toHaveAttribute('data-current-passage',middle.paragraphId);
  // Long-press plays the narration from that sentence; Undo returns to where it was.
  const before=(await actual()).position;
  // Press in the middle of the visible page, clear of the top bar and the player.
  if(await room.locator('.reader-topbar').isVisible()){const box=await room.locator('.reader-viewport').boundingBox();await page.mouse.click(box.x+box.width/2,box.y+box.height/2);await expect(room.locator('.reader-topbar')).toBeHidden();}
  // Press the sentence being narrated: it is mapped and on screen. A fixed point on the page can land on an image or an unmapped passage (#146).
  const target=page.locator('.inline-reader .reader-viewport .sonder-follow').first();
- await expect(target).toBeVisible();
+ await expect(target,`no narrated-sentence highlight at ${(await actual()).position.toFixed(1)} s on the loaded file (mapped sample ${middle.paragraphId} at ${middle.middle.toFixed(1)} s)`).toBeVisible();
  const pressBox=await target.boundingBox();
  await page.mouse.move(pressBox.x+Math.min(pressBox.width/2,80),pressBox.y+Math.min(pressBox.height/2,10));await page.mouse.down();await page.waitForTimeout(800);await page.mouse.up();
  const toast=room.getByRole('status').filter({hasText:'Listening from here'});
@@ -147,6 +151,8 @@ try {
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(320);
  expect((await play.boundingBox()).y+44).toBeLessThanOrEqual(740);
  await page.setViewportSize({width:1440,height:1000});
+ // Playback after the line tap may have paused inside an unsynced gap (partially mapped books, #349); return to a proven-mapped position.
+ await seek(middle.middle);
  await expect(page.locator('.inline-reader .lyrics-line.current')).toBeInViewport();
  await page.screenshot({path:'artifacts/live-integrated-reader-lyrics-desktop.png'});
  await more();
