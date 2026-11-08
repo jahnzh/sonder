@@ -57,6 +57,48 @@ def locate_pool_workers(env=None):
     return value if 0 <= value <= 64 else min(16, cpus)
 
 
+_LOCATE_POOL = None
+_LOCATE_POOL_TOKENS = None
+_LOCATE_POOL_LOCK = threading.Lock()
+
+
+def open_locate_pool(fragment_tokens, workers=None, env=None):
+    """Process pool with FragmentIndex tokens built once per worker (initializer).
+
+    Call from the request/script thread — never from inside ResidentTask — so spawn
+    does not race CUDA work and scripts can use ``if __name__ == '__main__'``.
+    Reuses the pool across requests that share the same token list (same book).
+    """
+    global _LOCATE_POOL, _LOCATE_POOL_TOKENS
+    workers = locate_pool_workers(env) if workers is None else workers
+    if workers <= 0:
+        return None
+    with _LOCATE_POOL_LOCK:
+        if _LOCATE_POOL is not None and _LOCATE_POOL_TOKENS == fragment_tokens:
+            return _LOCATE_POOL
+        if _LOCATE_POOL is not None:
+            _LOCATE_POOL.shutdown(wait=False, cancel_futures=True)
+            _LOCATE_POOL = None
+            _LOCATE_POOL_TOKENS = None
+        _LOCATE_POOL_TOKENS = fragment_tokens
+        _LOCATE_POOL = ProcessPoolExecutor(
+            max_workers=workers,
+            mp_context=mp.get_context("spawn"),
+            initializer=ctc_candidates._pool_init,
+            initargs=(fragment_tokens,),
+        )
+        return _LOCATE_POOL
+
+
+def shutdown_locate_pool():
+    global _LOCATE_POOL, _LOCATE_POOL_TOKENS
+    with _LOCATE_POOL_LOCK:
+        if _LOCATE_POOL is not None:
+            _LOCATE_POOL.shutdown(wait=True, cancel_futures=False)
+            _LOCATE_POOL = None
+            _LOCATE_POOL_TOKENS = None
+
+
 def _audio_slice(pcm, lo, hi):
     """Read [lo, hi) from a numpy buffer or an on-disk DecodedTrack."""
     if hasattr(pcm, "slice"):
@@ -252,6 +294,14 @@ def align_ctc_batch_locate(*, audio, output, fragments, language, windows, media
     deadline = started + limit
     output.parent.mkdir(parents=True, exist_ok=True)
 
+    # Index + process pool on the calling thread (not ResidentTask): workers build the token
+    # list once in the initializer; locate jobs stay ordered via plan_i futures.
+    index_started = time.monotonic()
+    index = ctc_candidates.FragmentIndex(fragments)
+    index_seconds = time.monotonic() - index_started
+    workers = locate_pool_workers(env)
+    pool = open_locate_pool(index.fragment_tokens, workers=workers, env=env) if workers > 0 and len(windows) > 1 else None
+
     def work():
         pcm, source_version, extraction, hit = ensure_decoded(audio, media_folder, deadline, limit, ffmpeg=ffmpeg)
         digest_started = time.monotonic()
@@ -262,9 +312,6 @@ def align_ctc_batch_locate(*, audio, output, fragments, language, windows, media
         model_started = time.monotonic()
         model = resident_model(media_folder)
         model_seconds = time.monotonic() - model_started
-        index_started = time.monotonic()
-        index = ctc_candidates.FragmentIndex(fragments)
-        index_seconds = time.monotonic() - index_started
         cache = AcousticCache(media_folder, recording_id or str(audio), ENGINE,
                               recording_fingerprint or "direct", [track_id or str(audio), digest],
                               budget_bytes(env))
@@ -287,7 +334,6 @@ def align_ctc_batch_locate(*, audio, output, fragments, language, windows, media
             plans.append({"start": start, "duration": duration, "first_sample": first_sample,
                           "end_sample": end_sample, "cores": cores})
         batch = encode_batch_size(env)
-        workers = locate_pool_workers(env)
         encoding_seconds = cache_read = cache_write = 0.0
         # Store CPU paths per core so locate can run off-GPU without holding tensors.
         paths_by_core = {}
@@ -306,6 +352,7 @@ def align_ctc_batch_locate(*, audio, output, fragments, language, windows, media
                                            [first + i * STRIDE for i in range(frames)])
 
         labels = tuple(model.labels)
+        fragment_tokens = index.fragment_tokens
 
         def window_job(plan):
             path, boundaries = [], []
@@ -323,7 +370,7 @@ def align_ctc_batch_locate(*, audio, output, fragments, language, windows, media
                 return None
             return (path, boundaries, labels, plan["first_sample"])
 
-        def finish_ready(pending_plans, futures, pool):
+        def finish_ready(pending_plans, futures):
             """Submit locate for windows whose cores are all present; overlap with next encode."""
             still = []
             for plan_i, plan in pending_plans:
@@ -335,7 +382,7 @@ def align_ctc_batch_locate(*, audio, output, fragments, language, windows, media
                     futures[plan_i] = None
                 elif pool is None:
                     futures[plan_i] = ctc_candidates.locate_from_path(
-                        job[0], job[1], job[2], job[3], fragment_tokens=index.fragment_tokens)
+                        job[0], job[1], job[2], job[3], fragment_tokens=fragment_tokens)
                 else:
                     futures[plan_i] = pool.submit(ctc_candidates._pool_locate, job)
             return still
@@ -343,58 +390,45 @@ def align_ctc_batch_locate(*, audio, output, fragments, language, windows, media
         pipeline_started = time.monotonic()
         pending_plans = list(enumerate(plans))
         futures = {}
-        pool = None
         locate_wait = 0.0
-        try:
-            if workers > 0 and len(plans) > 1:
-                # spawn avoids inheriting the parent's CUDA context into locate workers.
-                pool = ProcessPoolExecutor(
-                    max_workers=workers,
-                    mp_context=mp.get_context("spawn"),
-                    initializer=ctc_candidates._pool_init,
-                    initargs=(index.fragment_tokens,),
+        # Seed locate for windows already satisfied by the acoustic cache.
+        pending_plans = finish_ready(pending_plans, futures)
+        for offset in range(0, len(missing), batch):
+            group = missing[offset:offset + batch]
+            encode_started = time.monotonic()
+            encoded = model.encode_chunks([(spec["audio"], spec["core_start"], spec["core_end"], spec["context_start"])
+                                           for _index_id, spec in group])
+            if model.device.type == "cuda":
+                model.torch.cuda.synchronize()
+            encoding_seconds += time.monotonic() - encode_started
+            for (index_id, _spec), (emission, chunk_boundaries) in zip(group, encoded):
+                if emission is None:
+                    continue
+                if cache.budget:
+                    cache_started = time.monotonic()
+                    data = emission.detach().to(device="cpu", dtype=model.torch.float32).contiguous().numpy().astype("<f4", copy=False).tobytes()
+                    cache.write(index_id, chunk_boundaries[0], len(chunk_boundaries), len(model.labels), data)
+                    cache_write += time.monotonic() - cache_started
+                paths_by_core[index_id] = (
+                    emission.argmax(dim=-1)[0].detach().cpu().tolist(),
+                    chunk_boundaries,
                 )
-            # Seed locate for windows already satisfied by the acoustic cache.
-            pending_plans = finish_ready(pending_plans, futures, pool)
-            for offset in range(0, len(missing), batch):
-                group = missing[offset:offset + batch]
-                encode_started = time.monotonic()
-                encoded = model.encode_chunks([(spec["audio"], spec["core_start"], spec["core_end"], spec["context_start"])
-                                               for _index_id, spec in group])
-                if model.device.type == "cuda":
-                    model.torch.cuda.synchronize()
-                encoding_seconds += time.monotonic() - encode_started
-                for (index_id, _spec), (emission, chunk_boundaries) in zip(group, encoded):
-                    if emission is None:
-                        continue
-                    if cache.budget:
-                        cache_started = time.monotonic()
-                        data = emission.detach().to(device="cpu", dtype=model.torch.float32).contiguous().numpy().astype("<f4", copy=False).tobytes()
-                        cache.write(index_id, chunk_boundaries[0], len(chunk_boundaries), len(model.labels), data)
-                        cache_write += time.monotonic() - cache_started
-                    paths_by_core[index_id] = (
-                        emission.argmax(dim=-1)[0].detach().cpu().tolist(),
-                        chunk_boundaries,
-                    )
-                # Candidate search for newly completed windows overlaps the next encode batch.
-                pending_plans = finish_ready(pending_plans, futures, pool)
-            pending_plans = finish_ready(pending_plans, futures, pool)
-            results = [None] * len(plans)
-            for plan_i, plan in enumerate(plans):
-                located = futures.get(plan_i)
-                if hasattr(located, "result"):
-                    waited = time.monotonic()
-                    located = located.result()
-                    locate_wait += time.monotonic() - waited
-                if located is None:
-                    results[plan_i] = {"engine": ENGINE, "outcome": "unsynced", "match": None,
-                                       "matches": [], "text": "", "start": plan["start"]}
-                else:
-                    outcome = "mapped" if located["match"] else "unsynced"
-                    results[plan_i] = {"engine": ENGINE, "outcome": outcome, **located}
-        finally:
-            if pool is not None:
-                pool.shutdown(wait=True, cancel_futures=False)
+            # Candidate search for newly completed windows overlaps the next encode batch.
+            pending_plans = finish_ready(pending_plans, futures)
+        pending_plans = finish_ready(pending_plans, futures)
+        results = [None] * len(plans)
+        for plan_i, plan in enumerate(plans):
+            located = futures.get(plan_i)
+            if hasattr(located, "result"):
+                waited = time.monotonic()
+                located = located.result()
+                locate_wait += time.monotonic() - waited
+            if located is None:
+                results[plan_i] = {"engine": ENGINE, "outcome": "unsynced", "match": None,
+                                   "matches": [], "text": "", "start": plan["start"]}
+            else:
+                outcome = "mapped" if located["match"] else "unsynced"
+                results[plan_i] = {"engine": ENGINE, "outcome": outcome, **located}
         if model.device.type == "cuda":
             model.torch.cuda.synchronize()
         pipeline_seconds = time.monotonic() - pipeline_started
@@ -410,7 +444,7 @@ def align_ctc_batch_locate(*, audio, output, fragments, language, windows, media
             "ctcPath": max(0.0, pipeline_seconds - encoding_seconds) if pool is not None else locate_wait or (pipeline_seconds - encoding_seconds),
             "locateWait": locate_wait,
             "decodedTrackHit": 1.0 if hit else 0.0,
-            "locateWorkers": float(workers),
+            "locateWorkers": float(workers if pool is not None else 0),
         }
         return results, timings
 
@@ -420,6 +454,7 @@ def align_ctc_batch_locate(*, audio, output, fragments, language, windows, media
     if task.error:
         raise task.error
     results, timings = task.value
+
     finished = time.monotonic()
     payload = {
         "engine": ENGINE,
