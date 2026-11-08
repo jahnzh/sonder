@@ -683,10 +683,10 @@ test("a single file without chapter markers is located by narration samples and 
     .set({ chapters: [{ title: "Down the Rabbit-Hole", start: 0, end: 300 }] })
     .where(eq(s.tracks.id, "alice-0"))
     .run();
-  await assert.rejects(
-    createAlignment(id, "recording-alice", undefined, "anchored"),
-    /chapter markers/,
-  );
+  // An explicit anchored request is accepted on a chaptered release: the chapter
+  // pairing can be wrong, and anchored mode is then the way out.
+  const chaptered = await createAlignment(id, "recording-alice", undefined, "anchored");
+  assert.equal(chaptered.mode, "anchored");
   globalThis.fetch = original;
 });
 test("r5: a queued job whose EPUB is gone fails on its own and later jobs still run", async () => {
