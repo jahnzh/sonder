@@ -623,8 +623,8 @@ function applyWorkerMetadata(job: AlignmentJob, metadata: WorkerMetadata, { engi
   if (metadata.stageTimings) {
     job.stageTimings ||= {};
     for (const [stage, seconds] of Object.entries(metadata.stageTimings)) {
-      // decodedTrackHit is a 0/1 flag per request; keep the latest rather than a sum.
-      if (stage === "decodedTrackHit") job.stageTimings[stage] = seconds;
+      // Flags / gauges stay as the latest value; durations still accumulate.
+      if (stage === "decodedTrackHit" || stage === "locateWorkers") job.stageTimings[stage] = seconds;
       else job.stageTimings[stage] = (job.stageTimings[stage] ?? 0) + seconds;
     }
   }

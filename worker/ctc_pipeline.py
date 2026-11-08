@@ -1,9 +1,11 @@
 """Chapter CTC alignment with deadline-aware publication and resident inference."""
 import json
+import multiprocessing as mp
 import os
 import resource
 import threading
 import time
+from concurrent.futures import ProcessPoolExecutor
 
 import ctc_path
 import ctc_candidates
@@ -42,6 +44,17 @@ def encode_batch_size(env=None):
     except (TypeError, ValueError):
         return 8
     return value if 1 <= value <= 64 else 8
+
+
+def locate_pool_workers(env=None):
+    """CPU workers for parallel candidate search; 0 disables the process pool."""
+    env = os.environ if env is None else env
+    cpus = os.cpu_count() or 1
+    try:
+        value = int(env.get("ALIGNMENT_CTC_LOCATE_WORKERS", str(min(16, cpus))))
+    except (TypeError, ValueError):
+        value = min(16, cpus)
+    return value if 0 <= value <= 64 else min(16, cpus)
 
 
 def _audio_slice(pcm, lo, hi):
@@ -274,8 +287,10 @@ def align_ctc_batch_locate(*, audio, output, fragments, language, windows, media
             plans.append({"start": start, "duration": duration, "first_sample": first_sample,
                           "end_sample": end_sample, "cores": cores})
         batch = encode_batch_size(env)
+        workers = locate_pool_workers(env)
         encoding_seconds = cache_read = cache_write = 0.0
-        emissions_by_core = {}
+        # Store CPU paths per core so locate can run off-GPU without holding tensors.
+        paths_by_core = {}
         missing = []
         for index_id, spec in needed.items():
             cache_started = time.monotonic()
@@ -284,53 +299,105 @@ def align_ctc_batch_locate(*, audio, output, fragments, language, windows, media
             if chunk is None:
                 missing.append((index_id, spec))
             else:
-                first, frames, data = chunk
                 import numpy as np
-                chunk_boundaries = [first + i * STRIDE for i in range(frames)]
-                emission = model.torch.from_numpy(np.frombuffer(data, dtype="<f4").copy().reshape(1, frames, len(model.labels))).to(model.device)
-                emissions_by_core[index_id] = (emission, chunk_boundaries)
-        for offset in range(0, len(missing), batch):
-            group = missing[offset:offset + batch]
-            encode_started = time.monotonic()
-            encoded = model.encode_chunks([(spec["audio"], spec["core_start"], spec["core_end"], spec["context_start"])
-                                           for _index_id, spec in group])
-            if model.device.type == "cuda":
-                model.torch.cuda.synchronize()
-            encoding_seconds += time.monotonic() - encode_started
-            for (index_id, _spec), (emission, chunk_boundaries) in zip(group, encoded):
-                if emission is None:
-                    continue
-                if cache.budget:
-                    cache_started = time.monotonic()
-                    data = emission.detach().to(device="cpu", dtype=model.torch.float32).contiguous().numpy().astype("<f4", copy=False).tobytes()
-                    cache.write(index_id, chunk_boundaries[0], len(chunk_boundaries), len(model.labels), data)
-                    cache_write += time.monotonic() - cache_started
-                emissions_by_core[index_id] = (emission, chunk_boundaries)
-        locate_started = time.monotonic()
-        results = []
-        for plan in plans:
-            outputs, boundaries = [], []
+                first, frames, data = chunk
+                logits = np.frombuffer(data, dtype="<f4").copy().reshape(frames, len(model.labels))
+                paths_by_core[index_id] = (logits.argmax(axis=-1).tolist(),
+                                           [first + i * STRIDE for i in range(frames)])
+
+        labels = tuple(model.labels)
+
+        def window_job(plan):
+            path, boundaries = [], []
             for index_id in plan["cores"]:
-                piece = emissions_by_core.get(index_id)
+                piece = paths_by_core.get(index_id)
                 if not piece:
                     continue
-                emission, chunk_boundaries = piece
+                core_path, chunk_boundaries = piece
                 selected = [i for i, boundary in enumerate(chunk_boundaries)
                             if plan["first_sample"] <= boundary + STRIDE // 2 < plan["end_sample"]]
                 if selected:
-                    outputs.append(emission[:, selected[0]:selected[-1] + 1])
+                    path.extend(core_path[i] for i in selected)
                     boundaries.extend(chunk_boundaries[i] - plan["first_sample"] for i in selected)
-            if not outputs:
-                results.append({"engine": ENGINE, "outcome": "unsynced", "match": None, "matches": [],
-                                "text": "", "start": plan["start"]})
-                continue
-            emissions = model.torch.cat(outputs, dim=1).contiguous()
-            located = ctc_candidates.locate(emissions, boundaries, fragments, model.labels,
-                                            plan["first_sample"], index=index)
-            outcome = "mapped" if located["match"] else "unsynced"
-            results.append({"engine": ENGINE, "outcome": outcome, **located})
+            if not path:
+                return None
+            return (path, boundaries, labels, plan["first_sample"])
+
+        def finish_ready(pending_plans, futures, pool):
+            """Submit locate for windows whose cores are all present; overlap with next encode."""
+            still = []
+            for plan_i, plan in pending_plans:
+                if any(core not in paths_by_core for core in plan["cores"]):
+                    still.append((plan_i, plan))
+                    continue
+                job = window_job(plan)
+                if job is None:
+                    futures[plan_i] = None
+                elif pool is None:
+                    futures[plan_i] = ctc_candidates.locate_from_path(
+                        job[0], job[1], job[2], job[3], fragment_tokens=index.fragment_tokens)
+                else:
+                    futures[plan_i] = pool.submit(ctc_candidates._pool_locate, job)
+            return still
+
+        pipeline_started = time.monotonic()
+        pending_plans = list(enumerate(plans))
+        futures = {}
+        pool = None
+        locate_wait = 0.0
+        try:
+            if workers > 0 and len(plans) > 1:
+                # spawn avoids inheriting the parent's CUDA context into locate workers.
+                pool = ProcessPoolExecutor(
+                    max_workers=workers,
+                    mp_context=mp.get_context("spawn"),
+                    initializer=ctc_candidates._pool_init,
+                    initargs=(index.fragment_tokens,),
+                )
+            # Seed locate for windows already satisfied by the acoustic cache.
+            pending_plans = finish_ready(pending_plans, futures, pool)
+            for offset in range(0, len(missing), batch):
+                group = missing[offset:offset + batch]
+                encode_started = time.monotonic()
+                encoded = model.encode_chunks([(spec["audio"], spec["core_start"], spec["core_end"], spec["context_start"])
+                                               for _index_id, spec in group])
+                if model.device.type == "cuda":
+                    model.torch.cuda.synchronize()
+                encoding_seconds += time.monotonic() - encode_started
+                for (index_id, _spec), (emission, chunk_boundaries) in zip(group, encoded):
+                    if emission is None:
+                        continue
+                    if cache.budget:
+                        cache_started = time.monotonic()
+                        data = emission.detach().to(device="cpu", dtype=model.torch.float32).contiguous().numpy().astype("<f4", copy=False).tobytes()
+                        cache.write(index_id, chunk_boundaries[0], len(chunk_boundaries), len(model.labels), data)
+                        cache_write += time.monotonic() - cache_started
+                    paths_by_core[index_id] = (
+                        emission.argmax(dim=-1)[0].detach().cpu().tolist(),
+                        chunk_boundaries,
+                    )
+                # Candidate search for newly completed windows overlaps the next encode batch.
+                pending_plans = finish_ready(pending_plans, futures, pool)
+            pending_plans = finish_ready(pending_plans, futures, pool)
+            results = [None] * len(plans)
+            for plan_i, plan in enumerate(plans):
+                located = futures.get(plan_i)
+                if hasattr(located, "result"):
+                    waited = time.monotonic()
+                    located = located.result()
+                    locate_wait += time.monotonic() - waited
+                if located is None:
+                    results[plan_i] = {"engine": ENGINE, "outcome": "unsynced", "match": None,
+                                       "matches": [], "text": "", "start": plan["start"]}
+                else:
+                    outcome = "mapped" if located["match"] else "unsynced"
+                    results[plan_i] = {"engine": ENGINE, "outcome": outcome, **located}
+        finally:
+            if pool is not None:
+                pool.shutdown(wait=True, cancel_futures=False)
         if model.device.type == "cuda":
             model.torch.cuda.synchronize()
+        pipeline_seconds = time.monotonic() - pipeline_started
         timings = {
             "audioExtraction": extraction,
             "acousticCacheKey": digest_seconds,
@@ -339,8 +406,11 @@ def align_ctc_batch_locate(*, audio, output, fragments, language, windows, media
             "acousticEncoding": encoding_seconds,
             "acousticCacheRead": cache_read,
             "acousticCacheWrite": cache_write,
-            "ctcPath": time.monotonic() - locate_started,
+            # Wall of the pipelined encode+locate section minus pure encode: locate and overlap slack.
+            "ctcPath": max(0.0, pipeline_seconds - encoding_seconds) if pool is not None else locate_wait or (pipeline_seconds - encoding_seconds),
+            "locateWait": locate_wait,
             "decodedTrackHit": 1.0 if hit else 0.0,
+            "locateWorkers": float(workers),
         }
         return results, timings
 

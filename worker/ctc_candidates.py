@@ -115,10 +115,34 @@ def candidate_passages(spoken, fragments, limit=8):
     return FragmentIndex(fragments).candidate_passages(spoken, limit)
 
 
-def locate(emissions, boundaries, fragments, labels, sample_offset, index=None):
-    path = emissions.argmax(dim=-1)[0].detach().cpu().tolist()
+def locate_from_path(path, boundaries, labels, sample_offset, fragment_tokens=None, fragments=None, limit=8):
+    """CPU-only locate from a collapsed CTC path (picklable for a process pool)."""
     spoken = greedy_words(path, labels, boundaries, sample_offset)
-    matches = (index or FragmentIndex(fragments)).candidate_passages(spoken)
+    if fragment_tokens is not None:
+        matches = _search_passages(spoken, fragment_tokens, limit)
+    else:
+        matches = FragmentIndex(fragments).candidate_passages(spoken, limit)
     return {"text": " ".join(word for word, _ in spoken), "matches": matches,
             "match": matches[0] if matches else None,
             "start": matches[0]["start"] if matches else sample_offset / SAMPLE_RATE}
+
+
+def locate(emissions, boundaries, fragments, labels, sample_offset, index=None):
+    path = emissions.argmax(dim=-1)[0].detach().cpu().tolist()
+    fragment_tokens = index.fragment_tokens if index is not None else None
+    return locate_from_path(path, boundaries, labels, sample_offset,
+                            fragment_tokens=fragment_tokens, fragments=fragments)
+
+
+# Per-process FragmentIndex for ProcessPoolExecutor workers (built once in the initializer).
+_POOL_TOKENS = None
+
+
+def _pool_init(fragment_tokens):
+    global _POOL_TOKENS
+    _POOL_TOKENS = fragment_tokens
+
+
+def _pool_locate(job):
+    path, boundaries, labels, sample_offset = job
+    return locate_from_path(path, boundaries, labels, sample_offset, fragment_tokens=_POOL_TOKENS)

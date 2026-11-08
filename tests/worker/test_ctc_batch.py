@@ -36,6 +36,34 @@ class FragmentIndexReuse(unittest.TestCase):
         index = ctc_candidates.FragmentIndex(fragments)
         self.assertEqual(index.candidate_passages(spoken), ctc_candidates.candidate_passages(spoken, fragments))
 
+    def test_locate_from_path_matches_search_over_shared_tokens(self):
+        fragments = [
+            "The curious rabbit ran across the garden and disappeared beneath the trees.",
+            "Unrelated ocean text for rejection.",
+        ]
+        labels = ("-", "|") + tuple("ABCDEFGHIJKLMNOPQRSTUVWXYZ'")
+        spoken_words = "THE CURIOUS RABBIT RAN ACROSS THE GARDEN AND DISAPPEARED BENEATH THE TREES".split()
+        path, boundaries = [], []
+        cursor = 0
+        for word in spoken_words:
+            for letter in word:
+                path.append(labels.index(letter))
+                boundaries.append(cursor)
+                cursor += 320
+            path.append(labels.index("|"))
+            boundaries.append(cursor)
+            cursor += 320
+        index = ctc_candidates.FragmentIndex(fragments)
+        from_path = ctc_candidates.locate_from_path(
+            path, boundaries, labels, 0, fragment_tokens=index.fragment_tokens)
+        # Re-run candidate search on the spoken words greedy_words produced.
+        from ctc_candidates import greedy_words
+        spoken = greedy_words(path, labels, boundaries, 0)
+        direct = index.candidate_passages(spoken)
+        self.assertEqual(from_path["matches"], direct)
+        self.assertEqual(from_path["match"]["index"], 0)
+        self.assertGreaterEqual(from_path["match"]["score"], 0.5)
+
 
 class DecodeCache(unittest.TestCase):
     def test_second_window_reuses_decoded_wave_without_ffmpeg(self):
