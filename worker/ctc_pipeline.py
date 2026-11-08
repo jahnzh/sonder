@@ -44,6 +44,13 @@ def encode_batch_size(env=None):
     return value if 1 <= value <= 64 else 8
 
 
+def _audio_slice(pcm, lo, hi):
+    """Read [lo, hi) from a numpy buffer or an on-disk DecodedTrack."""
+    if hasattr(pcm, "slice"):
+        return pcm.slice(lo, hi)
+    return pcm[lo:hi]
+
+
 def _window_cores(first_sample, end_sample, total_samples):
     """Yield (core_start, core_end, context_start, context_end) for cores covering a window."""
     for index in range(first_sample // CORE, (end_sample + CORE - 1) // CORE):
@@ -104,13 +111,13 @@ def _infer_from_pcm(pcm, folder, fragments, start, duration, source, source_vers
             outs.append(emission[:, selected[0]:selected[-1] + 1])
             bounds.extend(chunk_boundaries[i] - first for i in selected)
 
-    for index, core_start, core_end, context_start, context_end in _window_cores(first_sample, end_sample, len(pcm)):
+    for core_index, core_start, core_end, context_start, context_end in _window_cores(first_sample, end_sample, len(pcm)):
         cache_started = time.monotonic()
-        chunk = cache.read(index, len(model.labels))
+        chunk = cache.read(core_index, len(model.labels))
         cache_seconds += time.monotonic() - cache_started
         if chunk is None:
             pending.append({
-                "index": index, "audio": pcm[context_start:context_end],
+                "index": core_index, "audio": _audio_slice(pcm, context_start, context_end),
                 "core_start": core_start, "core_end": core_end, "context_start": context_start,
                 "first_sample": first_sample, "end_sample": end_sample,
             })
@@ -261,7 +268,7 @@ def align_ctc_batch_locate(*, audio, output, fragments, language, windows, media
                 cores.append(index_id)
                 if index_id not in needed:
                     needed[index_id] = {
-                        "audio": pcm[context_start:context_end],
+                        "audio": _audio_slice(pcm, context_start, context_end),
                         "core_start": core_start, "core_end": core_end, "context_start": context_start,
                     }
             plans.append({"start": start, "duration": duration, "first_sample": first_sample,

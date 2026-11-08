@@ -65,11 +65,12 @@ class DecodeCache(unittest.TestCase):
                 self.assertFalse(hit)
                 self.assertEqual(len(calls), 1)
                 self.assertEqual(len(first), SAMPLE_RATE)
+                self.assertEqual(len(first.slice(0, 100)), 100)
                 second, version2, seconds2, hit2 = ctc_decode.ensure_decoded(
                     audio, media, deadline=1e9, limit=60)
                 self.assertTrue(hit2)
                 self.assertEqual(len(calls), 1)
-                self.assertIs(first, second)
+                self.assertEqual(first.path, second.path)
                 self.assertEqual(version, version2)
                 self.assertEqual(seconds2, 0.0)
 
@@ -103,6 +104,7 @@ class BatchLocateOnce(unittest.TestCase):
             audio.write_bytes(b"x")
             pcm = mock.Mock()
             pcm.__len__ = mock.Mock(return_value=0)
+            pcm.slice = mock.Mock(side_effect=lambda lo, hi: [])
             version = (1, 2, 3, 4, 5)
             digests = []
             indexes = []
@@ -164,8 +166,8 @@ class BatchMatchesSingle(unittest.TestCase):
                 handle.setsampwidth(2)
                 handle.setframerate(SAMPLE_RATE)
                 handle.writeframes(b"\x00\x00" * frames)
-            pcm = ctc_decode._load_pcm(audio)
             version = (1, 2, frames * 2, 3, 4)
+            pcm = ctc_decode.DecodedTrack(audio, version)
             fragments = [
                 "The curious rabbit ran across the garden and disappeared beneath the trees.",
                 "Unrelated text that should not match the acoustic hypothesis.",
