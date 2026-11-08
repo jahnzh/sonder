@@ -26,6 +26,8 @@ Every change moves through `/grill-with-docs` → `/to-spec` → `/to-tickets` �
 - A change small enough to build at once goes straight to `/implement`. It still has an issue, still passes the check, and still gets `/code-review`.
 - Merge a branch and open its PR only after `/code-review` has no open finding. The standards axis reads the "Style and Testing" section below.
 - An effort too large for one session starts with `/wayfinder`.
+- A PR closes its issue only when it does every bullet of the issue's Proposal. Otherwise write `Refs #N`, keep the issue open and say what remains.
+- Look at every running CI check yourself: a hung check never reports its own end. See `docs/agents/coordinator-checks.md`.
 
 ## Development and Checks
 
@@ -89,6 +91,7 @@ Agent skills setup follows the main flow from https://www.aihero.dev/skills-setu
 - Before reading or interpreting Codex usage (`node scripts/codex-usage.mjs`), read `docs/agents/codex-usage.md`.
 - Before installing, checking or recovering the usage collector (`scripts/orca-usage.mjs`), or judging `usage` in a recommendation, read `docs/agents/usage-collector.md`.
 - Before reading or writing a multi-provider dispatch evaluation (`docs/agents/dispatch-evaluation.md`, `scripts/orca-dispatch-eval.mjs`), read that doc first. It never starts workers or sends history to Jev.
+- Before waiting on a CI check or a deploy, leaving a run unattended, or closing an issue, read `docs/agents/coordinator-checks.md`.
 - Install the pre-push hook once per clone with `scripts/install-hooks.sh`.
 
 ## Coordinator shell helpers (Orca)
