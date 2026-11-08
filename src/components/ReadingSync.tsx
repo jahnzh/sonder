@@ -479,10 +479,11 @@ export function ReadingSync({
           </p>
           <p>
             Engine: {job.engine}{job.outcome ? ` · Outcome: ${job.outcome.replaceAll("_", " ")}` : ""}
+            {job.gpuUtilization != null ? ` · GPU: ${Math.round(job.gpuUtilization)}%` : job.gpuUtilization === null ? " · GPU: n/a" : ""}
           </p>
           {job.stageTimings && Object.keys(job.stageTimings).length > 0 && (
             <p>
-              {Object.entries(job.stageTimings).map(([stage, seconds]) =>
+              {Object.entries(job.stageTimings).filter(([stage]) => stage !== "decodedTrackHit").map(([stage, seconds]) =>
                 `${stage.replace(/([A-Z])/g, " $1").toLowerCase()}: ${seconds.toFixed(1)} s`
               ).join(" · ")}
             </p>

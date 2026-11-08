@@ -580,18 +580,89 @@ const workerMetadata = z.object({
   engine: z.string().min(1).optional(),
   outcome: z.enum(["mapped", "partial", "unsynced", "language_not_supported", "error"]).optional(),
   stageTimings: z.record(z.string(), z.number().nonnegative().finite()).optional(),
+  /** Mean GPU utilization percent for the request; null on CPU-only hosts. */
+  gpuUtilization: z.number().min(0).max(100).finite().nullable().optional(),
 });
 type WorkerMetadata = z.infer<typeof workerMetadata>;
 class WorkerRequestError extends Error {
-  constructor(message: string, readonly metadata?: WorkerMetadata) { super(message); }
+  constructor(message: string, readonly metadata?: WorkerMetadata, readonly status?: number) { super(message); }
+}
+/** Positive probes stay cached; a negative result expires so upgraded workers are rediscovered. */
+const ANCHOR_BATCH_NEGATIVE_TTL_MS = 10 * 60 * 1000;
+/** Worker accepts up to 256 windows; send smaller chunks so long single-file books stay under the limit. */
+export const ANCHOR_BATCH_CHUNK = 128;
+type AnchorBatchSupportEntry =
+  | { supported: true }
+  | { supported: false; until: number };
+const anchorBatchSupport = new Map<string, AnchorBatchSupportEntry>();
+let anchorBatchClock = () => Date.now();
+export function setAnchorBatchClockForTests(clock: (() => number) | null) {
+  anchorBatchClock = clock ?? (() => Date.now());
+}
+function rememberAnchorBatchSupport(base: string, supported: boolean) {
+  if (supported) anchorBatchSupport.set(base, { supported: true });
+  else anchorBatchSupport.set(base, { supported: false, until: anchorBatchClock() + ANCHOR_BATCH_NEGATIVE_TTL_MS });
+}
+function anchorBatchDisabled(base: string) {
+  const remembered = anchorBatchSupport.get(base);
+  if (!remembered || remembered.supported) return false;
+  if (remembered.until > anchorBatchClock()) return true;
+  anchorBatchSupport.delete(base);
+  return false;
+}
+async function workerSupportsAnchorBatch(workerBase: string, live: () => boolean = () => true) {
+  const base = workerBase.replace(/\/$/, "");
+  const remembered = anchorBatchSupport.get(base);
+  if (remembered?.supported === true) return true;
+  if (remembered && !remembered.supported) {
+    if (remembered.until > anchorBatchClock()) return false;
+    anchorBatchSupport.delete(base);
+  }
+  if (!live()) return false;
+  try {
+    const response = await fetch(`${base}/health`, { signal: AbortSignal.timeout(5000) });
+    if (!response.ok) {
+      rememberAnchorBatchSupport(base, false);
+      return false;
+    }
+    const health = await response.json() as { ctc?: { anchorBatch?: unknown } };
+    const supported = health.ctc?.anchorBatch === true;
+    rememberAnchorBatchSupport(base, supported);
+    return supported;
+  } catch (error) {
+    // An unreachable health probe must not permanently disable batching; retry next time.
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn(`anchor-batch health probe failed for ${base}: ${reason}`);
+    return false;
+  }
+}
+export function resetAnchorBatchSupportForTests() {
+  anchorBatchSupport.clear();
+  anchorBatchClock = () => Date.now();
 }
 // Speech-recovery (/anchor) replies name their own engine; a CTC job keeps its alignment engine.
-function applyWorkerMetadata(job: AlignmentJob, metadata: WorkerMetadata, { engine = true } = {}) {
+function applyWorkerMetadata(job: AlignmentJob, metadata: WorkerMetadata, { engine = true, weight = 1 } = {}) {
   if (engine && metadata.engine) job.engine = metadata.engine;
   if (metadata.stageTimings) {
     job.stageTimings ||= {};
-    for (const [stage, seconds] of Object.entries(metadata.stageTimings))
-      job.stageTimings[stage] = (job.stageTimings[stage] ?? 0) + seconds;
+    for (const [stage, seconds] of Object.entries(metadata.stageTimings)) {
+      // Flags / gauges stay as the latest value; durations still accumulate.
+      if (stage === "decodedTrackHit" || stage === "locateWorkers") job.stageTimings[stage] = seconds;
+      else job.stageTimings[stage] = (job.stageTimings[stage] ?? 0) + seconds;
+    }
+  }
+  if (metadata.gpuUtilization !== undefined) {
+    if (metadata.gpuUtilization === null) {
+      if (job.gpuUtilization === undefined) job.gpuUtilization = null;
+    } else {
+      const prior = job.gpuUtilization;
+      const priorWeight = job.gpuUtilizationSamples ?? 0;
+      const w = Math.max(1, weight);
+      job.gpuUtilization = prior == null || priorWeight <= 0
+        ? metadata.gpuUtilization
+        : (prior * priorWeight + metadata.gpuUtilization * w) / (priorWeight + w);
+      job.gpuUtilizationSamples = priorWeight + w;
+    }
   }
   const next = metadata.outcome;
   if (!next) return;
@@ -661,6 +732,7 @@ async function workerRequest(
       throw new WorkerRequestError(
         response.status === 504 ? WORKER_TIMEOUT_MESSAGE : failure,
         metadata.success ? metadata.data : undefined,
+        response.status,
       );
     }
     return response.json();
@@ -757,9 +829,120 @@ async function processAnchored(
     current.progress =
       plan.stage === "sampling" ? sampled * 0.25 : 0.25 + aligned * 0.75;
   };
+  type AnchorSample = NonNullable<AlignmentJob["anchoring"]>["samples"][number];
+  const applyAnchorSample = (
+    currentJob: AlignmentJob,
+    sampleIndex: number,
+    sample: AnchorSample,
+    result: z.infer<typeof anchorResult>,
+  ) => {
+    if (currentJob.engine === CTC_ENGINE && result.engine !== CTC_ENGINE)
+      throw new Error("The alignment worker did not use the requested CTC engine.");
+    if (currentJob.engine === CTC_ENGINE && result.outcome === "error")
+      throw new Error("The speech recovery worker failed.");
+    const inSample = (index: number, start: number) =>
+      index < blocks.length && start >= sample.time && start <= sample.time + sample.duration;
+    const start = result.start ?? sample.time;
+    const match = result.match && inSample(result.match.index, start) ? result.match : null;
+    const lastFragment = (index: number, lastIndex: number | undefined) =>
+      currentJob.engine === CTC_ENGINE && lastIndex !== undefined && lastIndex >= index && lastIndex < blocks.length
+        ? Math.min(paragraphs.length - 1, (lastIndex + 1) * group - 1)
+        : undefined;
+    currentJob.anchoring!.samples[sampleIndex] = {
+      ...sample,
+      done: true,
+      spokenWords: result.text ? wordCount(result.text) : 0,
+      match: match
+        ? {
+            fragment: match.index * group,
+            lastFragment: lastFragment(match.index, match.lastIndex),
+            score: match.score,
+            start,
+          }
+        : null,
+      ...(result.matches ? { matches: result.matches.filter((match) => inSample(match.index, match.start)).map((match) => ({
+        fragment: match.index * group,
+        lastFragment: lastFragment(match.index, match.lastIndex),
+        score: match.score,
+        start: match.start,
+      })) } : {}),
+    };
+  };
+  const anchorBatchResult = z.object({
+    ...workerMetadata.shape,
+    results: z.array(anchorResult).max(ANCHOR_BATCH_CHUNK),
+  });
   while (job.anchoring!.stage === "sampling") {
-    for (const [i, sample] of job.anchoring!.samples.entries()) {
-      if (sample.done) continue;
+    const pending = job.anchoring!.samples
+      .map((sample, index) => ({ sample, index }))
+      .filter(({ sample }) => !sample.done);
+    if (!pending.length) break;
+    const useBatch = job.engine === CTC_ENGINE && await workerSupportsAnchorBatch(workerBase, live);
+    if (useBatch) {
+      const byTrack = new Map<string, typeof pending>();
+      for (const item of pending) {
+        const list = byTrack.get(item.sample.trackId) ?? [];
+        list.push(item);
+        byTrack.set(item.sample.trackId, list);
+      }
+      let fellBack = false;
+      for (const [trackId, groupItems] of byTrack) {
+        for (let chunkStart = 0; chunkStart < groupItems.length; chunkStart += ANCHOR_BATCH_CHUNK) {
+          if (!live()) return;
+          const chunk = groupItems.slice(chunkStart, chunkStart + ANCHOR_BATCH_CHUNK);
+          const track = tracks.find((candidate) => candidate.id === trackId);
+          const audio = track && audioPath(track);
+          if (!audio) throw new Error("The required audio file is unavailable.");
+          let batchPayload: unknown;
+          try {
+            batchPayload = await workerRequest(
+              "/anchor-batch",
+              {
+                audio,
+                output: workerOutputPath(`anchor-batch-${trackId}-${chunkStart}.json`),
+                fragments: blocks,
+                language,
+                windows: chunk.map(({ sample }) => ({ start: sample.time, duration: sample.duration })),
+                engine: "ctc",
+                recordingId: job.recordingId,
+                audioFingerprint: job.audioFingerprint,
+                trackId,
+              },
+              // One batch covers many windows; give the worker proportional headroom.
+              Math.min(ANCHOR_TIMEOUT_MS * Math.max(1, chunk.length), 30 * 60 * 1000),
+              undefined,
+              workerBase,
+              live,
+            );
+          } catch (error) {
+            // Older workers (or a stale health probe) may lack /anchor-batch; disable and
+            // finish this job's remaining samples on /anchor. Other failures still abort.
+            if (error instanceof WorkerRequestError && error.status === 404) {
+              rememberAnchorBatchSupport(workerBase.replace(/\/$/, ""), false);
+              fellBack = true;
+              break;
+            }
+            throw error;
+          }
+          if (!current()) return;
+          job = alignmentJob(job.id);
+          const batch = anchorBatchResult.parse(batchPayload);
+          if (batch.results.length !== chunk.length)
+            throw new Error("The alignment worker returned the wrong number of sample windows.");
+          applyWorkerMetadata(job, batch, { engine: false, weight: chunk.length });
+          if (stopForWorkerOutcome(job, batch)) return;
+          for (const [offset, item] of chunk.entries())
+            applyAnchorSample(job, item.index, item.sample, batch.results[offset]);
+          progress(job);
+          store(job);
+        }
+        if (fellBack) break;
+      }
+      if (!fellBack && !anchorBatchDisabled(workerBase.replace(/\/$/, ""))) continue;
+    }
+    for (const { sample, index: i } of job.anchoring!.samples
+      .map((sample, index) => ({ sample, index }))
+      .filter(({ sample }) => !sample.done)) {
       if (!live()) return;
       const track = tracks.find((track) => track.id === sample.trackId);
       const audio = track && audioPath(track);
@@ -787,39 +970,9 @@ async function processAnchored(
       );
       if (!current()) return;
       job = alignmentJob(job.id);
-      if (job.engine === CTC_ENGINE && result.engine !== CTC_ENGINE)
-        throw new Error("The alignment worker did not use the requested CTC engine.");
-      if (job.engine === CTC_ENGINE && result.outcome === "error")
-        throw new Error("The speech recovery worker failed.");
       applyWorkerMetadata(job, result, { engine: job.engine !== CTC_ENGINE });
       if (stopForWorkerOutcome(job, result)) return;
-      const inSample = (index: number, start: number) =>
-        index < blocks.length && start >= sample.time && start <= sample.time + sample.duration;
-      const start = result.start ?? sample.time;
-      const match = result.match && inSample(result.match.index, start) ? result.match : null;
-      const lastFragment = (index: number, lastIndex: number | undefined) =>
-        job.engine === CTC_ENGINE && lastIndex !== undefined && lastIndex >= index && lastIndex < blocks.length
-          ? Math.min(paragraphs.length - 1, (lastIndex + 1) * group - 1)
-          : undefined;
-      job.anchoring!.samples[i] = {
-        ...sample,
-        done: true,
-        spokenWords: result.text ? wordCount(result.text) : 0,
-        match: match
-          ? {
-              fragment: match.index * group,
-              lastFragment: lastFragment(match.index, match.lastIndex),
-              score: match.score,
-              start,
-            }
-          : null,
-        ...(result.matches ? { matches: result.matches.filter((match) => inSample(match.index, match.start)).map((match) => ({
-          fragment: match.index * group,
-          lastFragment: lastFragment(match.index, match.lastIndex),
-          score: match.score,
-          start: match.start,
-        })) } : {}),
-      };
+      applyAnchorSample(job, i, sample, result);
       progress(job);
       store(job);
     }
@@ -1421,6 +1574,10 @@ export async function processAlignments() {
 }
 export function stopAlignments() {
   stopping = true;
+}
+export function resetAlignmentRunnerForTests() {
+  running = false;
+  stopping = false;
 }
 type AlignmentWriteMeta = {
   action?: "pause" | "resume" | "cancel" | "review";

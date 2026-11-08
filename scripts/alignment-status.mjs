@@ -54,6 +54,7 @@ export function summarizeJob(row) {
     poolErrors: d.poolErrors ?? {},
     device: d.ctcDevice ?? null,
     precision: d.ctcPrecision ?? null,
+    gpuUtilization: typeof d.gpuUtilization === "number" ? d.gpuUtilization : null,
     anchors: Array.isArray(anchors) ? anchors.length : null,
     anchorStage: d.anchoring?.stage ?? null,
     coverage: typeof d.coverage === "number" ? d.coverage : null,
@@ -165,6 +166,7 @@ export function formatReport(report) {
       `Job ${j.id}  status=${j.status} outcome=${val(j.outcome)} progress=${val(j.progress)}`,
       `  ebook=${j.ebookId} recording=${j.recordingId} engine=${val(j.engine)} origin=${val(j.origin)} mode=${val(j.mode)}`,
       `  pool host=${val(j.poolHost)} device=${val(j.device)} precision=${val(j.precision)} attempt=${val(j.poolAttempt)} tried=${j.triedHosts.join(",") || "-"}`,
+      `  gpuUtilization=${j.gpuUtilization == null ? "n/a" : `${Math.round(j.gpuUtilization)}%`}`,
       `  anchors=${val(j.anchors)} (stage ${val(j.anchorStage)}) coverage=${pct(j.coverage)} intervals=${val(j.intervals)} unsynced=${val(j.unsyncedSentences)} sentences in ${val(j.unsyncedPassages)} passages`,
       `  updated=${j.updatedAt ? new Date(j.updatedAt).toISOString() : "-"}`,
     );
