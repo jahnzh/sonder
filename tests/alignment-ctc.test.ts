@@ -267,6 +267,28 @@ test("a short unmarked recording can align from one CTC sample", async () => {
   assert.ok(job.intervals.some((interval) => interval.paragraphId === paragraphs.at(-1)!.id));
 });
 
+test("an explicit anchored request is accepted on a chaptered release whose chapter pairing is wrong", async () => {
+  process.env.ALIGNMENT_WORKER_URL = "http://production-worker.test";
+  db.insert(schema.recordings).values({ id: "ctc-chaptered-recording", editionId: "ctc-edition" }).run();
+  db.insert(schema.tracks).values({ id: "ctc-chaptered-track", recordingId: "ctc-chaptered-recording", title: "Chaptered", index: 0,
+    duration: 20, chapters: [{ title: "Chapter 1", start: 0 }, { title: "Chapter 2", start: 10 }] as never, source: audio, sourceType: "local" }).run();
+  mockWorker(async (input, init) => {
+    const request = JSON.parse(String(init?.body));
+    if (String(input).endsWith("/anchor")) {
+      const match = { index: 0, lastIndex: request.fragments.length - 1, score: 0.9, start: 0 };
+      return Response.json({ engine, outcome: "mapped", text: "word ".repeat(20), match, matches: [match], start: 0 });
+    }
+    const step = request.duration / request.fragments.length;
+    return Response.json({ engine, outcome: "mapped", elapsedSeconds: 1,
+      intervals: request.fragments.map((_: string, i: number) => ({ index: i, start: request.start + i * step, end: request.start + (i + 1) * step })) });
+  });
+  const created = await createAlignment("ctc-ebook", "ctc-chaptered-recording", undefined, "anchored");
+  assert.equal(created.mode, "anchored");
+  const job = await settled(created.id);
+  assert.ok(job.anchoring, "the job must run in anchored mode, not chapter pairing");
+  assert.ok(job.intervals.length > 0);
+});
+
 test("two ebook editions send the same recording identity and publish cache timings", async () => {
   process.env.ALIGNMENT_WORKER_URL = "http://production-worker.test";
   const otherEbook = join(process.env.MEDIA_ROOT!, "second-edition.epub");

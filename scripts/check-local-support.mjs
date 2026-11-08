@@ -17,6 +17,7 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
     help: false,
     silent: false,
     bail: false,
+    full: false,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -27,6 +28,8 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
       options.silent = true;
     } else if (arg === "--bail") {
       options.bail = true;
+    } else if (arg === "--full") {
+      options.full = true;
     } else if (arg === "--ref") {
       if (i + 1 >= argv.length || argv[i + 1].startsWith("--")) {
         return { ok: false, error: "Missing required value for --ref option" };
@@ -123,6 +126,57 @@ export function findChangedE2eSpecs(cwd, sha) {
     const detail = error.stderr?.toString().trim() || error.message;
     throw new Error(`Cannot find changed browser specs against origin/main: ${detail}`);
   }
+}
+
+/** Every file changed between origin/main and `sha` (added, copied, modified, deleted, type changes). */
+export function findChangedFiles(cwd, sha) {
+  const baseline = resolveGitRevision(cwd, "refs/remotes/origin/main");
+  if (!baseline.ok) {
+    throw new Error(`Cannot resolve origin/main for the changed files: ${baseline.error}`);
+  }
+  try {
+    const output = execFileSync("git", [
+      "diff", "--name-only", "-z", "--no-renames", "--diff-filter=ACDMT", `${baseline.sha}...${sha}`,
+    ], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    return { base: baseline.sha, files: output.split("\0").filter(Boolean) };
+  } catch (error) {
+    const detail = error.stderr?.toString().trim() || error.message;
+    throw new Error(`Cannot list the changed files against origin/main: ${detail}`);
+  }
+}
+
+// Browser-stage scope from what changed (#34). The default is the whole suite; a smaller scope is chosen
+// only when EVERY changed file is covered by a rule below, so an unlisted file always runs everything.
+//  - skip: files the browser tests cannot see (docs, the Python worker, deploy files, scripts that are not
+//    part of the build, the check, or the test runner, and unit-test files).
+//  - chromium: server code. Firefox and WebKit run only layout specs, which a server change cannot move.
+// Anything else (src/, public/, tests/e2e/, browser-test support, package and build config, the check
+// tooling itself) runs the full suite.
+const NO_BROWSER_IMPACT = [
+  /^docs\//,
+  /\.md$/,
+  /^worker\//,
+  /^tests\/worker\//,
+  /^deploy\//,
+  /^\.github\//,
+  /^\.claude\//,
+  /^artifacts\//,
+  /^(Dockerfile|compose\.yaml|\.dockerignore|\.gitignore)$/,
+  /^scripts\/(orca|hooks)\//,
+  /^tests\/[^/]+\.test\.[cm]?[jt]s$/,
+  /^scripts\/(?!build-sw\.mjs$|test-browser\.mjs$|check-local|ci-|lib\/|install-hooks|image-smoke)[^/]+$/,
+];
+const CHROMIUM_ENOUGH = [/^server\//];
+
+export function selectBrowserScope(files, { full = false } = {}) {
+  if (full) return { scope: "full", reason: "full run requested" };
+  if (!Array.isArray(files) || files.length === 0) return { scope: "full", reason: "no changed files to judge" };
+  const matches = (rules, file) => rules.some((rule) => rule.test(file));
+  if (files.every((file) => matches(NO_BROWSER_IMPACT, file)))
+    return { scope: "skip", reason: `only files the browser tests cannot see changed (${files.length})` };
+  if (files.every((file) => matches(NO_BROWSER_IMPACT, file) || matches(CHROMIUM_ENOUGH, file)))
+    return { scope: "chromium", reason: "no client or layout change: Firefox and WebKit layout specs skipped" };
+  return { scope: "full", reason: "a client, test, config or unlisted file changed" };
 }
 
 /**
