@@ -13,12 +13,20 @@ from deadline import AlignmentTimeout, Gate, WorkerBusy
 from pipeline import ENGINE, align_section, locate_passage
 from ctc_acoustic import ENGINE as CTC_ENGINE, checkpoint_path
 from ctc_pipeline import align_ctc_batch_locate, align_ctc_section, shutdown_locate_pool
+from ctc_decode import evict_decoded
 from ctc_gpu import GpuMonitor
 from align_task import LANGUAGES
+
+root = Path(os.environ.get("MEDIA_ROOT", "/mnt/usb_4t_1/sonder")).resolve()
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    # Cap decoded WAVs left by prior runs before accepting work.
+    try:
+        evict_decoded(root / "alignment")
+    except OSError:
+        pass
     try:
         yield
     finally:
@@ -28,7 +36,6 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 gate = Gate()
-root = Path(os.environ.get("MEDIA_ROOT", "/mnt/usb_4t_1/sonder")).resolve()
 
 class AlignRequest(BaseModel):
     token: str

@@ -1,4 +1,5 @@
 """Decode each track once to 16 kHz mono PCM and slice sample windows from it."""
+import os
 import threading
 import wave
 from pathlib import Path
@@ -11,6 +12,7 @@ from deadline import AlignmentFailed, run_with_deadline
 _LOCK = threading.Lock()
 _CACHE = {}
 _CACHE_LIMIT = 8
+DEFAULT_DECODED_BUDGET = 6 * 1024 ** 3
 
 
 class DecodedTrack:
@@ -50,9 +52,95 @@ def decoded_path(media_folder, version):
     return decoded_dir(media_folder) / f"{key}.wav"
 
 
-def ensure_decoded(audio, media_folder, deadline, limit, ffmpeg="ffmpeg"):
+def decoded_budget_bytes(env=None):
+    env = os.environ if env is None else env
+    try:
+        value = int(env.get("ALIGNMENT_CTC_DECODED_MAX_BYTES", str(DEFAULT_DECODED_BUDGET)))
+    except (TypeError, ValueError):
+        return DEFAULT_DECODED_BUDGET
+    return value if 0 <= value <= 1024 ** 4 else DEFAULT_DECODED_BUDGET
+
+
+def _in_use_paths():
+    return {Path(track.path).resolve() for track in _CACHE.values()}
+
+
+def _touch(path):
+    try:
+        os.utime(path, None)
+    except OSError:
+        pass
+
+
+def evict_decoded(media_folder, env=None, protect=None):
+    """Drop least-recently-used decoded WAVs until the directory is under the byte cap.
+
+    Files currently referenced by the in-memory cache (and any explicit ``protect``
+    paths) are never removed. Safe to call at worker start and after each decode.
+    """
+    budget = decoded_budget_bytes(env)
+    folder = decoded_dir(media_folder)
+    protected = {Path(path).resolve() for path in (protect or ())}
+    protected |= _in_use_paths()
+    with _LOCK:
+        files = [path for path in folder.glob("*.wav") if path.is_file()]
+        sizes = {}
+        order = []
+        for path in files:
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            sizes[path] = stat.st_size
+            order.append((stat.st_mtime_ns, path.name, path))
+        total = sum(sizes.values())
+        if total <= budget:
+            return total
+        for _mtime, _name, path in sorted(order):
+            if total <= budget:
+                break
+            if path.resolve() in protected:
+                continue
+            try:
+                path.unlink()
+            except OSError:
+                continue
+            total -= sizes.pop(path, 0)
+            for key, track in list(_CACHE.items()):
+                if Path(track.path).resolve() == path.resolve():
+                    _CACHE.pop(key, None)
+        return total
+
+
+def forget_decoded(track, media_folder=None, env=None):
+    """Delete one decoded WAV after the job that needed PCM is finished.
+
+    Acoustic cores already live in the acoustic cache; pooled jobs stage a fresh
+    audio copy next time, so keeping the multi-GB PCM forever only wastes disk.
+    """
+    raw = getattr(track, "path", None)
+    if raw is None:
+        return
+    try:
+        path = Path(raw)
+    except TypeError:
+        return
+    with _LOCK:
+        for key, remembered in list(_CACHE.items()):
+            try:
+                if Path(remembered.path).resolve() == path.resolve():
+                    _CACHE.pop(key, None)
+            except (TypeError, OSError):
+                continue
+        path.unlink(missing_ok=True)
+    if media_folder is not None:
+        evict_decoded(media_folder, env=env)
+
+
+def ensure_decoded(audio, media_folder, deadline, limit, ffmpeg="ffmpeg", env=None):
     """Return (DecodedTrack, source_version, extraction_seconds, cache_hit)."""
     import time
+    env = os.environ if env is None else env
     audio = Path(audio)
     version = file_version(audio)
     cache_key = (str(audio.resolve()), version)
@@ -60,9 +148,11 @@ def ensure_decoded(audio, media_folder, deadline, limit, ffmpeg="ffmpeg"):
     with _LOCK:
         remembered = _CACHE.get(cache_key)
         if remembered is not None and remembered.path.is_file():
+            _touch(remembered.path)
             return remembered, version, 0.0, True
         wave_path = decoded_path(media_folder, version)
         if wave_path.is_file() and file_version(wave_path)[2] > 44:
+            _touch(wave_path)
             track = DecodedTrack(wave_path, version)
             _remember(cache_key, track)
             return track, version, time.monotonic() - started, True
@@ -83,6 +173,7 @@ def ensure_decoded(audio, media_folder, deadline, limit, ffmpeg="ffmpeg"):
     track = DecodedTrack(wave_path, version)
     with _LOCK:
         _remember(cache_key, track)
+    evict_decoded(media_folder, env=env, protect={wave_path.resolve()})
     return track, version, time.monotonic() - started, False
 
 

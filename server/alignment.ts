@@ -593,21 +593,47 @@ type WorkerMetadata = z.infer<typeof workerMetadata>;
 class WorkerRequestError extends Error {
   constructor(message: string, readonly metadata?: WorkerMetadata, readonly status?: number) { super(message); }
 }
-const anchorBatchSupport = new Map<string, boolean>();
+/** Positive probes stay cached; a negative result expires so upgraded workers are rediscovered. */
+const ANCHOR_BATCH_NEGATIVE_TTL_MS = 10 * 60 * 1000;
+/** Worker accepts up to 256 windows; send smaller chunks so long single-file books stay under the limit. */
+export const ANCHOR_BATCH_CHUNK = 128;
+type AnchorBatchSupportEntry =
+  | { supported: true }
+  | { supported: false; until: number };
+const anchorBatchSupport = new Map<string, AnchorBatchSupportEntry>();
+let anchorBatchClock = () => Date.now();
+export function setAnchorBatchClockForTests(clock: (() => number) | null) {
+  anchorBatchClock = clock ?? (() => Date.now());
+}
+function rememberAnchorBatchSupport(base: string, supported: boolean) {
+  if (supported) anchorBatchSupport.set(base, { supported: true });
+  else anchorBatchSupport.set(base, { supported: false, until: anchorBatchClock() + ANCHOR_BATCH_NEGATIVE_TTL_MS });
+}
+function anchorBatchDisabled(base: string) {
+  const remembered = anchorBatchSupport.get(base);
+  if (!remembered || remembered.supported) return false;
+  if (remembered.until > anchorBatchClock()) return true;
+  anchorBatchSupport.delete(base);
+  return false;
+}
 async function workerSupportsAnchorBatch(workerBase: string, live: () => boolean = () => true) {
   const base = workerBase.replace(/\/$/, "");
   const remembered = anchorBatchSupport.get(base);
-  if (remembered !== undefined) return remembered;
+  if (remembered?.supported === true) return true;
+  if (remembered && !remembered.supported) {
+    if (remembered.until > anchorBatchClock()) return false;
+    anchorBatchSupport.delete(base);
+  }
   if (!live()) return false;
   try {
     const response = await fetch(`${base}/health`, { signal: AbortSignal.timeout(5000) });
     if (!response.ok) {
-      anchorBatchSupport.set(base, false);
+      rememberAnchorBatchSupport(base, false);
       return false;
     }
     const health = await response.json() as { ctc?: { anchorBatch?: unknown } };
     const supported = health.ctc?.anchorBatch === true;
-    anchorBatchSupport.set(base, supported);
+    rememberAnchorBatchSupport(base, supported);
     return supported;
   } catch {
     // An unreachable health probe must not permanently disable batching; retry next time.
@@ -616,6 +642,7 @@ async function workerSupportsAnchorBatch(workerBase: string, live: () => boolean
 }
 export function resetAnchorBatchSupportForTests() {
   anchorBatchSupport.clear();
+  anchorBatchClock = () => Date.now();
 }
 // Speech-recovery (/anchor) replies name their own engine; a CTC job keeps its alignment engine.
 function applyWorkerMetadata(job: AlignmentJob, metadata: WorkerMetadata, { engine = true, weight = 1 } = {}) {
@@ -847,7 +874,7 @@ async function processAnchored(
   };
   const anchorBatchResult = z.object({
     ...workerMetadata.shape,
-    results: z.array(anchorResult).max(256),
+    results: z.array(anchorResult).max(ANCHOR_BATCH_CHUNK),
   });
   while (job.anchoring!.stage === "sampling") {
     const pending = job.anchoring!.samples
@@ -862,54 +889,60 @@ async function processAnchored(
         list.push(item);
         byTrack.set(item.sample.trackId, list);
       }
+      let fellBack = false;
       for (const [trackId, groupItems] of byTrack) {
-        if (!live()) return;
-        const track = tracks.find((candidate) => candidate.id === trackId);
-        const audio = track && audioPath(track);
-        if (!audio) throw new Error("The required audio file is unavailable.");
-        let batchPayload: unknown;
-        try {
-          batchPayload = await workerRequest(
-            "/anchor-batch",
-            {
-              audio,
-              output: workerOutputPath(`anchor-batch-${trackId}.json`),
-              fragments: blocks,
-              language,
-              windows: groupItems.map(({ sample }) => ({ start: sample.time, duration: sample.duration })),
-              engine: "ctc",
-              recordingId: job.recordingId,
-              audioFingerprint: job.audioFingerprint,
-              trackId,
-            },
-            // One batch covers many windows; give the worker proportional headroom.
-            Math.min(ANCHOR_TIMEOUT_MS * Math.max(1, groupItems.length), 30 * 60 * 1000),
-            undefined,
-            workerBase,
-            live,
-          );
-        } catch (error) {
-          // Older workers (or a stale health probe) may lack /anchor-batch; disable and
-          // finish this job's remaining samples on /anchor. Other failures still abort.
-          if (error instanceof WorkerRequestError && error.status === 404) {
-            anchorBatchSupport.set(workerBase.replace(/\/$/, ""), false);
-            break;
+        for (let chunkStart = 0; chunkStart < groupItems.length; chunkStart += ANCHOR_BATCH_CHUNK) {
+          if (!live()) return;
+          const chunk = groupItems.slice(chunkStart, chunkStart + ANCHOR_BATCH_CHUNK);
+          const track = tracks.find((candidate) => candidate.id === trackId);
+          const audio = track && audioPath(track);
+          if (!audio) throw new Error("The required audio file is unavailable.");
+          let batchPayload: unknown;
+          try {
+            batchPayload = await workerRequest(
+              "/anchor-batch",
+              {
+                audio,
+                output: workerOutputPath(`anchor-batch-${trackId}-${chunkStart}.json`),
+                fragments: blocks,
+                language,
+                windows: chunk.map(({ sample }) => ({ start: sample.time, duration: sample.duration })),
+                engine: "ctc",
+                recordingId: job.recordingId,
+                audioFingerprint: job.audioFingerprint,
+                trackId,
+              },
+              // One batch covers many windows; give the worker proportional headroom.
+              Math.min(ANCHOR_TIMEOUT_MS * Math.max(1, chunk.length), 30 * 60 * 1000),
+              undefined,
+              workerBase,
+              live,
+            );
+          } catch (error) {
+            // Older workers (or a stale health probe) may lack /anchor-batch; disable and
+            // finish this job's remaining samples on /anchor. Other failures still abort.
+            if (error instanceof WorkerRequestError && error.status === 404) {
+              rememberAnchorBatchSupport(workerBase.replace(/\/$/, ""), false);
+              fellBack = true;
+              break;
+            }
+            throw error;
           }
-          throw error;
+          if (!current()) return;
+          job = alignmentJob(job.id);
+          const batch = anchorBatchResult.parse(batchPayload);
+          if (batch.results.length !== chunk.length)
+            throw new Error("The alignment worker returned the wrong number of sample windows.");
+          applyWorkerMetadata(job, batch, { engine: false, weight: chunk.length });
+          if (stopForWorkerOutcome(job, batch)) return;
+          for (const [offset, item] of chunk.entries())
+            applyAnchorSample(job, item.index, item.sample, batch.results[offset]);
+          progress(job);
+          store(job);
         }
-        if (!current()) return;
-        job = alignmentJob(job.id);
-        const batch = anchorBatchResult.parse(batchPayload);
-        if (batch.results.length !== groupItems.length)
-          throw new Error("The alignment worker returned the wrong number of sample windows.");
-        applyWorkerMetadata(job, batch, { engine: false, weight: groupItems.length });
-        if (stopForWorkerOutcome(job, batch)) return;
-        for (const [offset, item] of groupItems.entries())
-          applyAnchorSample(job, item.index, item.sample, batch.results[offset]);
-        progress(job);
-        store(job);
+        if (fellBack) break;
       }
-      if (anchorBatchSupport.get(workerBase.replace(/\/$/, "")) !== false) continue;
+      if (!fellBack && !anchorBatchDisabled(workerBase.replace(/\/$/, ""))) continue;
     }
     for (const { sample, index: i } of job.anchoring!.samples
       .map((sample, index) => ({ sample, index }))

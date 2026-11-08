@@ -23,7 +23,7 @@ writeFileSync(ebook, await readerFixture({ bodies: ["<p>First sentence. Another 
 const { db, sqlite } = await import("../server/db.ts");
 const schema = await import("../server/schema.ts");
 const { extractBook } = await import("../server/reader.ts");
-const { createAlignment, alignmentJob, putAlignmentJob, processAlignments, stopAlignments, registerAlignment, resetAnchorBatchSupportForTests, resetAlignmentRunnerForTests } = await import("../server/alignment.ts");
+const { createAlignment, alignmentJob, putAlignmentJob, processAlignments, stopAlignments, registerAlignment, resetAnchorBatchSupportForTests, resetAlignmentRunnerForTests, setAnchorBatchClockForTests, ANCHOR_BATCH_CHUNK } = await import("../server/alignment.ts");
 const { resetAlignmentPoolCoordinator, setAlignmentPoolDepsForTests } = await import("../server/alignment-pool.ts");
 const originalFetch = globalThis.fetch;
 const engine = "ctc-wav2vec2-base-960h-torchaudio-2.8-v1";
@@ -748,5 +748,139 @@ test("anchored CTC sampling falls back to /anchor when the worker lacks batch su
   assert.equal(batchHits, 1);
   assert.ok(anchorHits > 1);
   assert.equal(job.gpuUtilization, null);
+  resetAnchorBatchSupportForTests();
+});
+
+test("anchored CTC sampling chunks /anchor-batch to at most 128 windows per request", async () => {
+  resetAnchorBatchSupportForTests();
+  resetAlignmentPoolCoordinator([
+    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test" },
+    { id: "lisa", sshTarget: "lisa", maxConcurrent: 1, remoteWorkRoot: temp, workerUrl: "http://lisa-worker.test" },
+  ]);
+  setAlignmentPoolDepsForTests(testPoolDeps);
+  resetAlignmentRunnerForTests();
+  process.env.ALIGNMENT_WORKER_URL = "http://production-worker.test";
+  process.env.ALIGNMENT_WORKER_TOKEN = "test-token";
+  process.env.ALIGNMENT_POOL_ENABLED = "1";
+  const file = join(process.env.MEDIA_ROOT!, "chunk-alice.epub");
+  writeFileSync(file, await readerFixture());
+  db.insert(schema.ebookEditions).values({ id: "ctc-chunk-ebook", workId: "ctc-work", format: "epub", source: file }).run();
+  db.insert(schema.editions).values({ id: "ctc-chunk-edition", workId: "ctc-work", cover: "", narrator: "", rating: 0, sourceLabel: "", language: "en" }).run();
+  db.insert(schema.recordings).values({ id: "ctc-chunk-recording", editionId: "ctc-chunk-edition" }).run();
+  db.insert(schema.tracks).values({ id: "ctc-chunk-track", recordingId: "ctc-chunk-recording", title: "Long.m4b", index: 0,
+    duration: 200_000, chapters: [], source: audio, sourceType: "local" }).run();
+  const windowCounts: number[] = [];
+  let midJob404 = false;
+  mockWorker(async (input, init) => {
+    const url = String(input);
+    const request = JSON.parse(String(init?.body));
+    if (url.endsWith("/anchor-batch")) {
+      windowCounts.push(request.windows.length);
+      assert.ok(request.windows.length <= ANCHOR_BATCH_CHUNK, `chunk too large: ${request.windows.length}`);
+      // Mid-job 404 after the first chunk must still fall back to /anchor for the rest.
+      if (windowCounts.length === 2) {
+        midJob404 = true;
+        return new Response("missing", { status: 404 });
+      }
+      return Response.json({
+        engine,
+        outcome: "mapped",
+        gpuUtilization: 40,
+        stageTimings: { acousticEncoding: 0.1 },
+        results: request.windows.map((window: { start: number }) => ({
+          engine, outcome: "unsynced", match: null, start: window.start, text: "",
+        })),
+      });
+    }
+    if (url.endsWith("/anchor")) {
+      return Response.json({ engine, outcome: "unsynced", match: null, start: request.start, text: "",
+        stageTimings: { acousticEncoding: 0.05 }, gpuUtilization: null });
+    }
+    const step = request.duration / request.fragments.length;
+    return Response.json({ engine, outcome: "mapped", stageTimings: { ctcPath: 0.5 }, elapsedSeconds: 1,
+      intervals: request.fragments.map((_: string, i: number) => ({ index: i, start: request.start + i * step, end: request.start + (i + 1) * step })) });
+  }, { anchorReady: false, anchorBatch: true });
+  const created = await createAlignment("ctc-chunk-ebook", "ctc-chunk-recording", undefined, "anchored");
+  let job = alignmentJob(created.id);
+  // Force 300 pending windows on one track so chunking is required.
+  job.anchoring!.samples = Array.from({ length: 300 }, (_, i) => ({
+    trackId: "ctc-chunk-track", time: i * 40, duration: 30,
+  }));
+  putAlignmentJob(job);
+  for (let i = 0; i < 800 && !["partial", "ready", "error"].includes(job.status); i++) {
+    if (job.status === "queued") void processAlignments();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    job = alignmentJob(created.id);
+  }
+  assert.equal(job.status, "partial", job.error ?? undefined);
+  assert.ok(windowCounts.length >= 2, `expected multiple chunks, got ${windowCounts.join(",")}`);
+  assert.equal(windowCounts[0], ANCHOR_BATCH_CHUNK);
+  assert.ok(midJob404, "expected a mid-job 404 to exercise fallback");
+  assert.ok(job.anchoring!.samples.every((sample) => sample.done), "all samples must finish via batch or /anchor");
+  resetAnchorBatchSupportForTests();
+});
+
+test("anchorBatchSupport negative cache expires after TTL while true stays sticky", async () => {
+  resetAnchorBatchSupportForTests();
+  let now = 1_000_000;
+  setAnchorBatchClockForTests(() => now);
+  resetAlignmentPoolCoordinator([
+    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test" },
+    { id: "lisa", sshTarget: "lisa", maxConcurrent: 1, remoteWorkRoot: temp, workerUrl: "http://lisa-worker.test" },
+  ]);
+  setAlignmentPoolDepsForTests(testPoolDeps);
+  resetAlignmentRunnerForTests();
+  const file = join(process.env.MEDIA_ROOT!, "ttl-alice.epub");
+  writeFileSync(file, await readerFixture());
+  db.insert(schema.ebookEditions).values({ id: "ctc-ttl-ebook", workId: "ctc-work", format: "epub", source: file }).run();
+  db.insert(schema.editions).values({ id: "ctc-ttl-edition", workId: "ctc-work", cover: "", narrator: "", rating: 0, sourceLabel: "", language: "en" }).run();
+  db.insert(schema.recordings).values({ id: "ctc-ttl-recording", editionId: "ctc-ttl-edition" }).run();
+  db.insert(schema.tracks).values({ id: "ctc-ttl-track", recordingId: "ctc-ttl-recording", title: "T.m4b", index: 0,
+    duration: 120, chapters: [], source: audio, sourceType: "local" }).run();
+  let batchHits = 0;
+  let refuseBatch = true;
+  mockWorker(async (input, init) => {
+    const url = String(input);
+    const request = JSON.parse(String(init?.body ?? "{}"));
+    if (url.endsWith("/anchor-batch")) {
+      batchHits++;
+      if (refuseBatch) return new Response("missing", { status: 404 });
+      return Response.json({ engine, outcome: "mapped", results: request.windows.map((window: { start: number }) => ({
+        engine, outcome: "unsynced", match: null, start: window.start, text: "",
+      })), stageTimings: {}, gpuUtilization: null });
+    }
+    if (url.endsWith("/anchor")) {
+      return Response.json({ engine, outcome: "unsynced", match: null, start: request.start, text: "",
+        stageTimings: {}, gpuUtilization: null });
+    }
+    const step = request.duration / request.fragments.length;
+    return Response.json({ engine, outcome: "mapped", stageTimings: { ctcPath: 0.5 }, elapsedSeconds: 1,
+      intervals: request.fragments.map((_: string, i: number) => ({ index: i, start: request.start + i * step, end: request.start + (i + 1) * step })) });
+  }, { anchorReady: false, anchorBatch: true });
+
+  async function runOne() {
+    const created = await createAlignment("ctc-ttl-ebook", "ctc-ttl-recording", undefined, "anchored");
+    let job = alignmentJob(created.id);
+    for (let i = 0; i < 400 && !["partial", "ready", "error"].includes(job.status); i++) {
+      if (job.status === "queued") void processAlignments();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      job = alignmentJob(created.id);
+    }
+    assert.equal(job.status, "partial", job.error ?? undefined);
+    return job;
+  }
+
+  await runOne();
+  assert.equal(batchHits, 1, "first job probes /anchor-batch once then falls back");
+  await runOne();
+  assert.equal(batchHits, 1, "negative cache must suppress /anchor-batch within TTL");
+  now += 10 * 60 * 1000 + 1;
+  refuseBatch = false;
+  await runOne();
+  assert.ok(batchHits >= 2, "after TTL the server must try /anchor-batch again");
+  const afterTrue = batchHits;
+  await runOne();
+  assert.ok(batchHits > afterTrue, "cached true must keep using /anchor-batch");
+  setAnchorBatchClockForTests(null);
   resetAnchorBatchSupportForTests();
 });

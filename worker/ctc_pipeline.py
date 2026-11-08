@@ -11,7 +11,7 @@ import ctc_path
 import ctc_candidates
 from ctc_acoustic import CONTEXT, CORE, ENGINE, SAMPLE_RATE, STRIDE, resident_model
 from ctc_cache import AcousticCache, audio_digest, budget_bytes, file_version
-from ctc_decode import ensure_decoded
+from ctc_decode import ensure_decoded, forget_decoded
 from deadline import AlignmentFailed, AlignmentTimeout, alignment_limit, run_with_deadline
 
 
@@ -362,8 +362,13 @@ def align_ctc_batch_locate(*, audio, output, fragments, language, windows, media
     workers = locate_pool_workers(env)
     pool = open_locate_pool(index.fragment_tokens, workers=workers, env=env) if workers > 0 and len(windows) > 1 else None
 
+    decoded_track = None
+
     def work():
-        pcm, source_version, extraction, hit = ensure_decoded(audio, media_folder, deadline, limit, ffmpeg=ffmpeg)
+        nonlocal decoded_track
+        pcm, source_version, extraction, hit = ensure_decoded(
+            audio, media_folder, deadline, limit, ffmpeg=ffmpeg, env=env)
+        decoded_track = pcm
         digest_started = time.monotonic()
         digest, version = audio_digest(audio)
         if version != source_version:
@@ -519,6 +524,9 @@ def align_ctc_batch_locate(*, audio, output, fragments, language, windows, media
         # Idle=0 tears the pool down per request; otherwise an idle timer frees Xenocide-sized indexes.
         if pool is not None:
             release_locate_pool(env)
+        # PCM is no longer needed once acoustic cores are written; drop the multi-GB WAV.
+        if decoded_track is not None:
+            forget_decoded(decoded_track, media_folder=media_folder, env=env)
 
     finished = time.monotonic()
     payload = {

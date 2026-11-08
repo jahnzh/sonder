@@ -1,4 +1,5 @@
 """Phase-1 batch locate, decode-once and GPU monitor contracts (no real GPU required)."""
+import os
 import sys
 import tempfile
 import time
@@ -179,7 +180,52 @@ class BatchLocateOnce(unittest.TestCase):
             self.assertIn("fragmentIndex", result["stageTimings"])
 
 
+class DecodedEviction(unittest.TestCase):
+    def tearDown(self):
+        ctc_decode.clear_decoded_cache()
+
+    def _write_wav(self, path, frames=SAMPLE_RATE // 10):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with wave.open(str(path), "wb") as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(SAMPLE_RATE)
+            handle.writeframes(b"\x00\x00" * frames)
+        return path
+
+    def test_evicts_lru_decoded_files_under_byte_cap_and_spares_in_use(self):
+        with tempfile.TemporaryDirectory() as folder:
+            media = Path(folder) / "alignment"
+            decoded = media / "decoded"
+            oldest = self._write_wav(decoded / "1-1-1-1.wav", frames=SAMPLE_RATE)
+            middle = self._write_wav(decoded / "2-2-2-2.wav", frames=SAMPLE_RATE)
+            newest = self._write_wav(decoded / "3-3-3-3.wav", frames=SAMPLE_RATE)
+            # Distinct mtimes so LRU order is deterministic.
+            os.utime(oldest, (1, 1))
+            os.utime(middle, (2, 2))
+            os.utime(newest, (3, 3))
+            size = oldest.stat().st_size
+            # Keep the in-use newest file in the memory cache.
+            ctc_decode._CACHE[("in-use", newest)] = ctc_decode.DecodedTrack(newest, (3, 3, 3, 3, 3))
+            env = {"ALIGNMENT_CTC_DECODED_MAX_BYTES": str(size + 10)}
+            ctc_decode.evict_decoded(media, env=env)
+            self.assertFalse(oldest.exists())
+            self.assertFalse(middle.exists())
+            self.assertTrue(newest.exists(), "in-use decoded WAV must not be evicted")
+
+    def test_forget_decoded_deletes_the_wav(self):
+        with tempfile.TemporaryDirectory() as folder:
+            media = Path(folder) / "alignment"
+            path = self._write_wav(media / "decoded" / "9-9-9-9.wav")
+            track = ctc_decode.DecodedTrack(path, (9, 9, 9, 9, 9))
+            ctc_decode._CACHE[("k", path)] = track
+            ctc_decode.forget_decoded(track, media_folder=media, env={"ALIGNMENT_CTC_DECODED_MAX_BYTES": "0"})
+            self.assertFalse(path.exists())
+            self.assertEqual(ctc_decode._CACHE, {})
+
+
 class LocatePoolLifecycle(unittest.TestCase):
+
     def tearDown(self):
         ctc_pipeline.shutdown_locate_pool()
 
