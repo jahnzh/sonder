@@ -76,6 +76,24 @@ _Avoid_: Page bookmark, marker
 The action that moves the narration to a chosen sentence in the ebook.
 _Avoid_: Jump audio, seek to text
 
+## Background work
+
+**Activity**:
+One unit of background work the administrator can see and act on, such as a copy to the server, an alignment job, a queue of changes waiting for Hardcover, or a worker host's current job.
+_Avoid_: Job, task, download (when the general unit is meant)
+
+**Background process**:
+A recurring loop or standing service that produces activities, such as the queue refresh, the Hardcover sync, the alignment processor or an alignment worker.
+_Avoid_: Ticker, daemon, service (when the owner-facing unit is meant)
+
+**Pause**:
+Stopping a background process from starting new work while the activities already running finish.
+_Avoid_: Stop, disable
+
+**Stuck**:
+A running activity whose progress and last update have not changed for longer than is normal for its kind.
+_Avoid_: Hung, frozen
+
 ## Accounts and access
 
 **Account request**:
