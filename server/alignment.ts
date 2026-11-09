@@ -1593,7 +1593,7 @@ type AlignmentWriteMeta = {
   jobId?: string;
   jobStatus?: AlignmentJob["status"];
 };
-function persistedPoolErrors(): Partial<Record<PoolHostId, string>> {
+export function persistedPoolErrors(): Partial<Record<PoolHostId, string>> {
   const errors: Partial<Record<PoolHostId, string>> = {};
   const settled = new Set<string>();
   for (const job of jobs()) {
