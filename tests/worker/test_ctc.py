@@ -119,7 +119,26 @@ class Pipeline(unittest.TestCase):
             self.assertEqual(result["outcome"], "mapped")
             self.assertEqual(json.loads(output.read_text()), result)
             self.assertEqual([row["index"] for row in result["intervals"]], [0, 1])
-            self.assertEqual(set(result["stageTimings"]), {"audioExtraction", "modelReady", "acousticEncoding", "ctcPath"})
+            self.assertEqual(set(result["stageTimings"]), {"audioExtraction", "extractionPrefetched", "modelReady", "acousticEncoding", "ctcPath"})
+            self.assertEqual(result["stageTimings"]["extractionPrefetched"], 0.0)
+
+    def test_prefetched_window_replaces_inline_extraction(self):
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder) / "alignment" / "section.json"
+            (Path(folder) / "book").write_bytes(b"audio")
+            def take(audio, start, duration, destination, deadline):
+                Path(destination).write_bytes(b"prefetched wave")
+                return True
+            def infer(wave, *_):
+                self.assertEqual(wave.read_bytes(), b"prefetched wave")
+                wave.unlink()
+                return ([{"index": 0, "start": 8.6, "end": 9}], {"modelReady": 0.0, "acousticEncoding": 0.0, "ctcPath": 0.0})
+            with mock.patch.object(ctc_pipeline.ctc_prefetch, "take", side_effect=take), \
+                 mock.patch.object(ctc_pipeline, "run_with_deadline", side_effect=AssertionError("no inline ffmpeg")), \
+                 mock.patch.object(ctc_pipeline, "_infer", side_effect=infer):
+                result = ctc_pipeline.align_ctc_section(audio=Path(folder) / "book", output=output, fragments=["First"],
+                                                        language="eng", start=8.5, duration=20, media_folder=Path(folder))
+            self.assertEqual(result["stageTimings"]["extractionPrefetched"], 1.0)
 
     def test_timed_out_resident_work_blocks_next_job_and_never_publishes_late(self):
         with tempfile.TemporaryDirectory() as folder:

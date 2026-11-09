@@ -9,6 +9,7 @@ from concurrent.futures import ProcessPoolExecutor
 
 import ctc_path
 import ctc_candidates
+import ctc_prefetch
 from ctc_acoustic import CONTEXT, CORE, ENGINE, SAMPLE_RATE, STRIDE, resident_model
 from ctc_cache import AcousticCache, audio_digest, budget_bytes, file_version
 from ctc_decode import ensure_decoded, forget_decoded
@@ -291,17 +292,16 @@ def align_ctc_section(*, audio, output, fragments, language, start, duration, me
     # Single-window /anchor keeps a section extract so it stays inside the server's
     # 180 s speech-recovery wait. Full-track decode lives on /anchor-batch instead.
     wave_path = output.with_suffix(".ctc.wav")
-    first_sample = round(start * SAMPLE_RATE)
-    last_sample = round((start + duration) * SAMPLE_RATE)
-    wave_start = max(0, (first_sample // CORE) * CORE - CONTEXT)
-    wave_end = ((last_sample + CORE - 1) // CORE) * CORE + CONTEXT
+    wave_start, wave_end = ctc_prefetch.section_window(start, duration)
     source_version = file_version(audio)
+    # A window the server named in an earlier request is usually decoded already (worker/ctc_prefetch.py).
+    prefetched = ctc_prefetch.take(audio, start, duration, wave_path, deadline)
     try:
-        code, error = run_with_deadline([ffmpeg, "-nostdin", "-v", "error", "-threads", "1", "-ss", str(wave_start / SAMPLE_RATE),
-                                         "-i", str(audio), "-t", str((wave_end - wave_start) / SAMPLE_RATE), "-ac", "1", "-ar", str(SAMPLE_RATE),
-                                         "-y", str(wave_path)], deadline, limit)
-        if code:
-            raise AlignmentFailed(error or f"ffmpeg exited with {code}")
+        if not prefetched:
+            code, error = run_with_deadline(ctc_prefetch.ffmpeg_command(ffmpeg, audio, wave_start, wave_end, wave_path),
+                                            deadline, limit)
+            if code:
+                raise AlignmentFailed(error or f"ffmpeg exited with {code}")
     except BaseException:
         wave_path.unlink(missing_ok=True)
         raise
@@ -325,7 +325,7 @@ def align_ctc_section(*, audio, output, fragments, language, start, duration, me
         mapped = len({item["index"] for item in value})
         outcome = "mapped" if mapped == len(fragments) else "partial" if mapped else "unsynced"
     result = {"engine": ENGINE, "outcome": outcome,
-              "stageTimings": {"audioExtraction": extracted - started, **timings},
+              "stageTimings": {"audioExtraction": extracted - started, "extractionPrefetched": 1.0 if prefetched else 0.0, **timings},
               "elapsedSeconds": finished - started, "peakMemoryMB": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024}
     if locate:
         result.update(value)

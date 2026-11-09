@@ -37,6 +37,7 @@ import {
   shouldDispatchToPool,
   type PoolHostId,
 } from "./alignment-pool.ts";
+import { prefetchSectionCount, upcomingPrefetchWindows } from "./alignment-prefetch.ts";
 import {
   coreIntervals,
   planSamples,
@@ -1391,7 +1392,7 @@ export async function processAlignments() {
         try {
           while (true) {
             try {
-              for (const pair of job.pairings) {
+              for (const [pairIndex, pair] of job.pairings.entries()) {
                 const current = alignmentJob(job.id);
                 if (
                   stopping ||
@@ -1439,6 +1440,14 @@ export async function processAlignments() {
                       ...(job.engine === CTC_ENGINE ? {
                         engine: "ctc", recordingId: job.recordingId,
                         audioFingerprint: job.audioFingerprint, trackId: track.id,
+                        prefetch: upcomingPrefetchWindows(
+                          job.pairings, pairIndex, prefetchSectionCount(),
+                          (next) => job.sectionsDone.includes(next.section),
+                          (next) => {
+                            const nextTrack = context.tracks.find((candidate) => candidate.id === next.trackId);
+                            return nextTrack ? poolAudioPath(job, nextTrack, localAudio) : null;
+                          },
+                        ),
                       } : {}),
                     },
                     SECTION_TIMEOUT_MS,
