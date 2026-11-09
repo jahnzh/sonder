@@ -15,6 +15,7 @@ from ctc_acoustic import ENGINE as CTC_ENGINE, checkpoint_path
 from ctc_pipeline import align_ctc_batch_locate, align_ctc_section, shutdown_locate_pool
 from ctc_decode import evict_decoded
 from ctc_gpu import GpuMonitor
+import ctc_prefetch
 from align_task import LANGUAGES
 
 root = Path(os.environ.get("MEDIA_ROOT", "/mnt/usb_4t_1/sonder")).resolve()
@@ -32,10 +33,17 @@ async def lifespan(_app: FastAPI):
     finally:
         # Persistent WSL/lisa workers must not retain book-sized locate indexes after stop.
         shutdown_locate_pool()
+        ctc_prefetch.shutdown()
 
 
 app = FastAPI(lifespan=lifespan)
 gate = Gate()
+
+class PrefetchWindow(BaseModel):
+    audio: str
+    start: float = Field(default=0, ge=0)
+    duration: float = Field(gt=0, le=7200)
+
 
 class AlignRequest(BaseModel):
     token: str
@@ -46,6 +54,8 @@ class AlignRequest(BaseModel):
     start: float = Field(default=0, ge=0)
     duration: float = Field(gt=0, le=7200)
     engine: Literal["aeneas", "ctc"] = "aeneas"
+    # Upcoming sections of this job: their audio is extracted in parallel while this one runs (CTC only).
+    prefetch: list[PrefetchWindow] = Field(default_factory=list, max_length=16)
     recordingId: str | None = Field(default=None, max_length=512)
     audioFingerprint: str | None = Field(default=None, max_length=512)
     trackId: str | None = Field(default=None, max_length=512)
@@ -207,6 +217,12 @@ def align(request: AlignRequest):
                 if request.language not in ({"eng"} if request.engine == "ctc" else LANGUAGES):
                     elapsed = time.monotonic() - started
                     return {"engine": engine, "outcome": "language_not_supported", "stageTimings": {"requestValidation": elapsed}, "elapsedSeconds": elapsed, "intervals": [], "gpuUtilization": None}
+                if request.engine == "ctc":
+                    for window in request.prefetch:
+                        try:
+                            ctc_prefetch.prefetch(checked_path(window.audio, True), window.start, window.duration, root / "alignment")
+                        except HTTPException:
+                            pass
                 operation = align_ctc_section if request.engine == "ctc" else align_section
                 identity = ({"recording_id": request.recordingId, "recording_fingerprint": request.audioFingerprint,
                              "track_id": request.trackId} if request.engine == "ctc" else {})
