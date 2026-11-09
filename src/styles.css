@@ -8453,3 +8453,16 @@ input[type="range"]::-moz-range-thumb {
   left: calc(50% + 8px);
   margin: 0;
 }
+
+/* Activity rows hold long reasons and errors: wrap instead of widening the page. */
+.activity-row .user-row-name {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+.activity-row .quiet-tag {
+  white-space: normal;
+  padding: 4px 8px;
+}
+.activity-row small {
+  overflow-wrap: anywhere;
+}

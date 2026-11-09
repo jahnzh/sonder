@@ -46,12 +46,12 @@ export function useActivityAttention(enabled: boolean) {
 function ProcessRow({ process }: { process: ActivityProcess }) {
   const { counts } = process;
   const detail = [
-    process.reason ?? "",
+    process.notTracked ? "" : process.reason ?? "",
     process.notTracked ? "" : counts.running ? `${counts.running} running` : "",
     process.notTracked ? "" : counts.queued ? `${counts.queued} waiting` : "",
   ].filter(Boolean).join(" · ");
   return (
-    <li className="user-row" data-testid={`activity-process-${process.id}`} data-health={process.health}>
+    <li className="user-row activity-row" data-testid={`activity-process-${process.id}`} data-health={process.health}>
       <div className="user-row-name">
         <strong>{process.label}</strong>
         <span className="quiet-tag">{process.type === "service" ? "Service" : "Background loop"}</span>
@@ -70,13 +70,12 @@ function ProcessRow({ process }: { process: ActivityProcess }) {
 function ItemRow({ item, labels }: { item: ActivityItem; labels: Map<string, string> }) {
   const attention = item.state === "failed" || !!item.stuck;
   return (
-    <li className="user-row" data-testid={`activity-item-${item.id}`} data-state={item.state} data-attention={attention || undefined}>
+    <li className="user-row activity-row" data-testid={`activity-item-${item.id}`} data-state={item.state} data-attention={attention || undefined}>
       <div className="user-row-name">
         <strong>{item.title}</strong>
         <span className="quiet-tag">{stateLabel[item.state]}</span>
         {item.progress !== null && item.state !== "done" && <span className="quiet-tag">{Math.round(item.progress * 100)}%</span>}
         {item.stuck && <span className="quiet-tag" data-testid="activity-stuck">{item.stuck.reason}</span>}
-        {item.permanent && <span className="quiet-tag">Cannot succeed on retry</span>}
       </div>
       <small>
         {[

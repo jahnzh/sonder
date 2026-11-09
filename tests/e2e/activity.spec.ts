@@ -47,10 +47,18 @@ test("Settings shows an attention indicator and opens the Activity page with the
 
   const attention = page.getByRole("list", { name: "Needs attention" });
   await expect(attention.getByTestId("activity-stuck").filter({ hasText: "Blocked by Torrent client" })).toHaveCount(2);
-  await expect(attention.getByTestId("activity-item-hardcover:listening:admin")).toContainText("Cannot succeed on retry");
+  await expect(attention.getByTestId("activity-item-hardcover:listening:admin")).toContainText("This change cannot succeed");
   await expect(attention.getByTestId("activity-item-hardcover:listening:admin")).toContainText("for admin");
   await expect(page.getByRole("list", { name: "Finished in the last 24 hours" })).toContainText("Speaker for the Dead");
 
+  const overflow = await page.evaluate(() => {
+    const width = window.innerWidth;
+    return [...document.querySelectorAll("main *")]
+      .filter((element) => element.getBoundingClientRect().right > width + 1)
+      .slice(0, 6)
+      .map((element) => `${element.tagName.toLowerCase()}.${String(element.className).slice(0, 40)} right=${Math.round(element.getBoundingClientRect().right)}`);
+  });
+  expect(overflow, "elements wider than the viewport").toEqual([]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
