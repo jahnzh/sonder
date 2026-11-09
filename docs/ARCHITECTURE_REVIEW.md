@@ -92,3 +92,60 @@ Candidates that would need the user's agreement before touching `GLOSSARY.md` or
 ## Not verified in this review
 
 Bodies of `server/alignment.ts`, `server/acquisitions.ts`, `server/downloads.ts`, `src/player.tsx`, `src/reading.ts` and `src/components/Reader.tsx` were not read, so no claims are made about them beyond file size. They are the next places to apply the same deletion test, particularly `alignment.ts` (1,266 lines with `processAnchored` and `processAlignments` as long functions) and `Reader.tsx` (1,868 lines).
+
+---
+
+# Update 2026-11-09: status of candidates and new findings
+
+Method: same vocabulary (`codebase-design`), CodeGraph plus targeted greps. Nothing was changed in code. 399 commits landed since the first review, mostly alignment, series and ebook-set work.
+
+## Status of the 2026-11-02 candidates
+
+All seven candidates are still open (**Verified** by grep: no `saveProgress`, no user-table registry, and the admin regex is still at `server/app.ts:295`; it has grown, now covering `/api/works/:id/ebook-set/fetch` and `/api/alignments/*` as well).
+
+- Candidate 1 got worse: the regex list gained entries since the first review, which is the failure mode the review predicted. It should be the first thing done.
+- Candidate 4 is larger: `server/hardcover.ts` is 2,610 lines (was 1,988) and now imports series, acquisition, download and ebook-set modules, so it is also a hub for series work, not just the Hardcover transport.
+- Candidate 5/6: `server/app.ts` is 1,343 lines and `src/App.tsx` 3,053 lines. Both grew.
+
+## New candidates
+
+### 8. `server/alignment.ts` (1,939 lines) is five modules in one file
+
+**Verified from the function list, bodies partly read.** One file holds: the job store (`readJob`, `store`, `putAlignmentJob`), eligibility and backfill (`alignmentOptions`, `backfillEligibility`, `runAlignmentBackfill`, `autoQueue*`), worker transport and capability probing (`workerRequest`, `workerSupportsAnchorBatch`, retry clocks), the runner (`processAnchored` ~410 lines, `processAlignments` ~390 lines), and HTTP routes (`registerAlignment`). Six server files import it (`app.ts`, `reader.ts`, `ebook-set*.ts`).
+
+- **Deletion test:** deleting it spreads job persistence, worker calls and queueing across all those importers, so it earns its place. The weakness is that the interface is the whole export list (28 exports), including test-only hooks (`setWorkerRetryClockForTests`, `setAnchorBatchClockForTests`, `resetAnchorBatchSupportForTests`, `resetAlignmentRunnerForTests`). Test-only exports are a sign that tests have to reach past the interface.
+- **Seam worth making real:** the alignment worker transport (`workerRequest` and the anchor-batch capability memo). It is true-external (the Python worker) and already has two adapters in practice: the real worker and the fixtures in `tests/*-fixture.ts`. A `WorkerClient` module taking its clock as a dependency removes the four test-only hooks.
+- **Suggested split by locality:** `alignment-jobs` (store), `alignment-queue` (eligibility, backfill, auto-queue, which is what `reader.ts` and `ebook-set` actually need), `alignment-worker` (transport), `alignment-runner` (the two `process*` loops), with `registerAlignment` last. Re-export from `alignment.ts` first so importers do not change in one step.
+- **Risk:** medium. Alignment maps are expensive to regenerate and CTC jobs run for a long time. Move code without editing the `process*` bodies; the existing `tests/alignment-ctc.test.ts` is the guard.
+
+### 9. Import cycles among `alignment`, `reader` and `hardcover`
+
+**Verified.** `alignment.ts` imports `extractBook` from `reader.ts` (line 16), and `reader.ts` imports `autoQueueAlignmentsForWork` from `alignment.ts` (line 1). `reader.ts` also imports `queueHardcoverReadingProgress` from `hardcover.ts`, and `hardcover.ts` imports `listEbookSetMembers` from `ebook-set.ts`, which imports `alignment.ts`. The cycles work only because the imports are used inside functions, not at module load.
+
+- **Problem:** the load order is an unwritten part of each interface. A top-level use of an imported value would fail depending on which file loads first. It also blocks candidate 8, since the split must not harden a cycle.
+- **Deepened shape:** `reader.ts` should not call the queue directly. Two options: the reader module exposes `extractBook` from a lower-level `ebook-text` module (no alignment import), or `autoQueueAlignmentsForWork` is passed to reader code as a hook registered at startup. The first is simpler and has no new seam.
+- **Tests:** add a check (for example `madge --circular server` or a small import-graph test) so new cycles fail the build. The repo has no linter today, so this would be the first structural check.
+- **Risk:** low.
+
+### 10. Four background tickers are started by hand in two places
+
+**Verified.** `server/app.ts:909-930` creates three `setInterval` timers (queue poll, series acquisition, Hardcover) and `server/alignment.ts:1932` creates a fourth for `processAlignments`. Shutdown handling lives with each. This is the `startBackgroundWork` idea from candidate 5, now with a concrete reason: one place should own start, stop and the "tests disable tickers" switch.
+
+- **Risk:** low. Do it together with candidate 5.
+
+## Revised suggested order
+
+1. Candidate 1 (route access policy). The regex keeps growing, and a missed entry exposes an admin route.
+2. Candidate 2 (user deletion registry and test), with candidate 7's drift test.
+3. Candidate 9 (import cycles) then candidate 8 (split `alignment.ts`).
+4. Candidate 3 (`saveProgress`), then candidate 4 (Hardcover split).
+5. Candidates 5, 10 and 6 as code motion.
+
+## Still not verified
+
+Bodies of `server/series-*.ts`, `server/ebook-set-consensus*.ts`, `server/acquisitions.ts`, `server/downloads.ts`, `src/player.tsx` and `src/components/Reader.tsx` were not read. Each is large and recent; apply the deletion test to them next.
+
+## Glossary and ADR additions proposed (not written)
+
+- Glossary: "Alignment job", "Worker client" (candidate 8), plus the three terms listed above.
+- ADR: no import cycles between server modules (candidate 9).
