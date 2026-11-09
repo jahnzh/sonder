@@ -115,6 +115,15 @@ CTC uses the same request limit. If resident inference outlives it, the worker a
 
 In Hardcover two-way mode, deliberate EPUB reading publishes overall page progress (or an audio fraction if no pages are available), including books without local audio. This has its own durable retry queue. Precise CFIs and timings remain in Sonder, and reader updates do not overwrite a recording’s listening checkpoint. Incoming coarse Hardcover progress does not replace a precise EPUB checkpoint.
 
+## Activity (administrator)
+
+Settings -> Open Activity (`#activity`) lists every background process and the work it is doing: the download queue, copies to the server, series acquisition, Hardcover sync (one row per user and queue), alignment jobs including ebook-set checks, the torrent client and each alignment worker host. Imports and database backups are listed as "not tracked yet". `GET /api/activity` (administrator only) builds the rows from the existing tables; nothing is stored for it.
+
+- A running item is **stuck** when nothing about it changed for longer than normal for its kind (copy 5 min, series acquisition 10, download 15, alignment 20); a Hardcover change is stuck when it has a permanent error or has waited 30 min. The settings key `activityStuckMultiplier` (0.25 to 10) scales all of them. Downloads rewrite their row on every poll, so the server remembers when their progress last changed; it starts counting when the server starts.
+- An item that cannot move because its process is down (a local download with the torrent client down, an alignment on a worker host that is unreachable) says "Blocked by <process>".
+- Finished items stay for 24 hours. Failed items stay listed; one older than 7 days no longer lights the indicator on Settings.
+- The page is read-only for now: pause switches, Hardcover retry and discard, and worker restart follow (#357, ADR 0002).
+
 ## Storage and security
 
 - `data/sonder.db`: canonical library, recordings, tracks, download jobs, encrypted integration settings, and independent ebook editions.

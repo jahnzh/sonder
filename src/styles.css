@@ -8436,3 +8436,33 @@ input[type="range"]::-moz-range-thumb {
 .keyboard-shortcuts dd { margin: 0; text-align: right; }
 .keyboard-shortcuts dd small { display: block; }
 .keyboard-shortcuts kbd { min-width: 28px; padding: 3px 8px; border: 1px solid var(--line, currentColor); border-radius: 6px; font: inherit; text-align: center; }
+
+.attention-dot {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.mobile-nav > button { position: relative; }
+.mobile-nav > button > .attention-dot {
+  position: absolute;
+  top: 8px;
+  left: calc(50% + 8px);
+  margin: 0;
+}
+
+/* Activity rows hold long reasons and errors: wrap instead of widening the page. */
+.activity-row .user-row-name {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+.activity-row .quiet-tag {
+  white-space: normal;
+  padding: 4px 8px;
+}
+.activity-row small {
+  overflow-wrap: anywhere;
+}

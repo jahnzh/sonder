@@ -210,3 +210,49 @@ export type TorrentHealth = {
   message: string;
   checkedAt: number;
 };
+
+// Activity page (#357): one row per unit of background work, grouped under the background process that produces it.
+export type ActivityKind = "acquisition" | "server-copy" | "series-acquisition" | "alignment" | "hardcover";
+export type ActivityState = "running" | "queued" | "paused" | "failed" | "done";
+export type ActivityItem = {
+  id: string;
+  kind: ActivityKind;
+  processId: string;
+  title: string;
+  detail: string | null;
+  /** Whose item it is when the page is read by the administrator (one row per user for Hardcover). */
+  user: string | null;
+  state: ActivityState;
+  /** 0 to 1, or null when the kind has no measurable progress. */
+  progress: number | null;
+  host: string | null;
+  startedAt: number | null;
+  updatedAt: number;
+  error: string | null;
+  /** A failed item that cannot succeed on retry (offered Discard in a later change, not Retry). */
+  permanent: boolean;
+  stuck: { reason: string } | null;
+  /** The background process this item cannot move without, while that process is down. */
+  blockedBy: string | null;
+};
+export type ActivityHealth = "ok" | "degraded" | "down" | "unknown";
+export type ActivityProcess = {
+  id: string;
+  label: string;
+  type: "loop" | "service";
+  health: ActivityHealth;
+  reason: string | null;
+  /** When the current health began, if known. */
+  since: number | null;
+  /** True for a process the app does not track yet (imports, backups). */
+  notTracked: boolean;
+  counts: { running: number; queued: number; failed: number; stuck: number };
+};
+export type ActivityResponse = {
+  checkedAt: number;
+  stuckMultiplier: number;
+  processes: ActivityProcess[];
+  items: ActivityItem[];
+  /** Number of failed, stuck or blocked items plus down processes: drives the indicator on Settings. */
+  attention: number;
+};

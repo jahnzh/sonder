@@ -55,6 +55,7 @@ import { ReleasePicker } from "./components/ReleasePicker";
 import { SeriesDiscovery, SeriesLibrary, SeriesDialog, type SeriesTarget } from "./components/Series";
 import { ProwlarrSettings } from "./components/ProwlarrSettings";
 import { ReadingSyncSettings } from "./components/ReadingSyncSettings";
+import { ActivityPage, useActivityAttention } from "./components/Activity";
 import { AppearanceSettings } from "./components/Appearance";
 import { KeyboardHelpButton } from "./components/KeyboardHelp";
 import { PlaybackSettings } from "./components/PlaybackSettings";
@@ -106,7 +107,7 @@ import {
   EbookDiscovery,
   SourceSettings,
 } from "./components/SourceWorkflow";
-type Page = "library" | "discover" | "downloads" | "settings";
+type Page = "library" | "discover" | "downloads" | "settings" | "activity";
 type Notice = { text: string; error?: boolean };
 const nav = [
   { id: "library", label: "My library", icon: Library },
@@ -198,12 +199,13 @@ function LibraryApp({
   const [ebookTarget, setEbookTarget] = useState<Book | null>(null);
   const [page, setPage] = useState<Page>(() => {
     const hash = location.hash.slice(1);
-    return ["library", "discover", "downloads", "settings"].includes(hash)
+    return ["library", "discover", "downloads", "settings"].includes(hash) || (hash === "activity" && user.role === "admin")
       ? (hash as Page)
       : "library";
   });
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const activityAttention = useActivityAttention(user.role === "admin");
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("All books");
   const [hardcoverFilter, setHardcoverFilter] = useState<HardcoverFilter>({
@@ -310,7 +312,7 @@ function LibraryApp({
     };
     const hash = () => {
       const p = location.hash.slice(1);
-      if (["library", "discover", "downloads", "settings"].includes(p))
+      if (["library", "discover", "downloads", "settings"].includes(p) || (p === "activity" && user.role === "admin"))
         setPage(p as Page);
     };
     const install = (e: Event) => {
@@ -617,11 +619,12 @@ function LibraryApp({
           </button>}
           <div className="sidebar-bottom">
             <button
-              className={`settings-nav ${page === "settings" ? "selected" : ""}`}
+              className={`settings-nav ${page === "settings" || page === "activity" ? "selected" : ""}`}
               onClick={() => navigate("settings")}
             >
               <Settings size={19} />
               <span>Settings</span>
+              {activityAttention > 0 && <span className="attention-dot" role="img" aria-label="Background work needs attention" data-testid="activity-indicator" />}
             </button>
             <div className="sidebar-footer">
               <span className={`status-dot ${online ? "" : "offline"}`} />
@@ -1081,6 +1084,7 @@ function LibraryApp({
                 </div>
               </>
             )}
+            {page === "activity" && user.role === "admin" && <ActivityPage />}
             {page === "settings" && (
               <SettingsPage
                 user={user}
@@ -1113,6 +1117,7 @@ function LibraryApp({
               >
                 <n.icon size={20} />
                 <span>{n.label}</span>
+                {n.id === "settings" && activityAttention > 0 && <span className="attention-dot" role="img" aria-label="Background work needs attention" />}
               </button>
             ),
           )}
@@ -2634,7 +2639,7 @@ function SettingsPage({
         configured={!!settings?.hardcoverConfigured}
         notify={notify}
       />
-      {user.role === "admin" && <><SourceSettings settings={settings} onSaved={onSaved} notify={notify} /><ProwlarrSettings settings={settings} onSaved={onSaved} notify={notify} /><ReadingSyncSettings notify={notify} /></>}
+      {user.role === "admin" && <><h3 className="requests-heading">Background work</h3><div className="settings-inline-actions"><button type="button" className="button subtle" data-testid="open-activity" onClick={() => { location.hash = "activity"; }}>Open Activity</button></div><SourceSettings settings={settings} onSaved={onSaved} notify={notify} /><ProwlarrSettings settings={settings} onSaved={onSaved} notify={notify} /><ReadingSyncSettings notify={notify} /></>}
       <section className="install-card">
         <div className="install-brand">
           <Mark />

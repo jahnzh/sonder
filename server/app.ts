@@ -44,7 +44,9 @@ import { registerAppearance } from "./appearance.ts";
 import { registerAccountRequests } from "./account-requests.ts";
 import { registerInvites } from "./invites.ts";
 import { registerReader } from "./reader.ts";
-import { registerAlignment, autoQueueAlignmentsForWork } from "./alignment.ts";
+import { registerAlignment, autoQueueAlignmentsForWork, persistedPoolErrors } from "./alignment.ts";
+import { getAlignmentPoolStatus } from "./alignment-pool.ts";
+import { registerActivity } from "./activity.ts";
 import {registerMediaLibrary,faultsFor,chooseMedia,sourceChoice} from "./media-library.ts";
 import { audioFileMime } from "./media-response.ts";
 import { parseRange } from "./range.ts";
@@ -330,6 +332,13 @@ export async function createApp(options?: { logger?: FastifyServerOptions["logge
   registerAppearance(app);
   registerReader(app);
   registerAlignment(app);
+  registerActivity(app, {
+    sqlite,
+    getSetting,
+    torrentHealth: () => getTorrentHealth(),
+    poolStatus: () => getAlignmentPoolStatus({ persistedErrors: persistedPoolErrors() }),
+    requireAdmin,
+  });
   registerMediaLibrary(app);
   app.post("/api/library", async (req) => {
     const { bookId } = z.object({ bookId: z.string() }).parse(req.body);
