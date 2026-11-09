@@ -170,6 +170,26 @@ test("a torrent client with a closed port is degraded, and a missing client is u
   assert.equal(unconfigured.processes.find((process) => process.id === "torrent-client")!.health, "unknown");
 });
 
+test("an unreadable alignment record is listed as failed with the reason and does not break the list", () => {
+  const result = buildActivity(base({
+    alignments: [{ id: "bad", ebook_id: "e", recording_id: "r", title: "Broken", data: "{not json", updated_at: NOW - MIN }],
+    acquisitions: [acquisition("ok")],
+  }));
+  const bad = result.items.find((item) => item.id === "alignment:bad")!;
+  assert.equal(bad.state, "failed");
+  assert.match(bad.error ?? "", /^The job record could not be read: /);
+  assert.equal(result.items.length, 2);
+});
+
+test("a probe that failed shows why instead of silently reading as healthy", () => {
+  const result = buildActivity(base({ torrentFailure: "ECONNREFUSED", poolFailure: "ssh timed out" }));
+  const client = result.processes.find((process) => process.id === "torrent-client")!;
+  assert.equal(client.health, "unknown");
+  assert.equal(client.reason, "The check failed: ECONNREFUSED");
+  const workers = result.processes.find((process) => process.id === "alignment-pool")!;
+  assert.equal(workers.reason, "The check failed: ssh timed out");
+});
+
 test("the tracker forgets items that are gone, and ages read naturally", () => {
   const tracker = new ChangeTracker();
   buildActivity(base({ acquisitions: [acquisition("a")], tracker }));

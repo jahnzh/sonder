@@ -122,6 +122,9 @@ export type ActivityInput = {
   hardcoverQueues: HardcoverQueueRow[];
   torrent: TorrentHealth | null;
   pool: AlignmentPoolStatus | null;
+  /** Why a probe returned nothing (it threw or timed out), shown as the process reason. */
+  torrentFailure?: string | null;
+  poolFailure?: string | null;
   tracker: ChangeTracker;
 };
 
@@ -181,8 +184,11 @@ function parseAlignment(data: string): ParsedAlignment {
       hostId: typeof job.pool?.hostId === "string" ? job.pool.hostId : null,
       outcome: typeof job.outcome === "string" ? job.outcome : null,
     };
-  } catch {
-    return { status: "error", progress: null, error: "The job record could not be read.", createdAt: null, hostId: null, outcome: null };
+  } catch (error) {
+    return {
+      status: "error", progress: null, createdAt: null, hostId: null, outcome: null,
+      error: `The job record could not be read: ${error instanceof Error ? error.message : String(error)}`,
+    };
   }
 }
 
@@ -240,8 +246,8 @@ export function draftsFrom(input: ActivityInput): Draft[] {
   return drafts;
 }
 
-export function torrentProcessHealth(health: TorrentHealth | null): { health: ActivityHealth; reason: string | null } {
-  if (!health) return { health: "unknown", reason: "Not checked yet." };
+export function torrentProcessHealth(health: TorrentHealth | null, failure?: string | null): { health: ActivityHealth; reason: string | null } {
+  if (!health) return { health: "unknown", reason: failure ? `The check failed: ${failure}` : "Not checked yet." };
   if (health.status === "unconfigured") return { health: "unknown", reason: "No torrent client is configured." };
   if (health.status === "ok") {
     if (health.network === "ok" || health.network === "unknown") return { health: "ok", reason: null };
@@ -264,7 +270,7 @@ const usesLocalTorrentClient = (backend: string | null) => backend !== "torbox";
 
 export function buildActivity(input: ActivityInput): ActivityResponse {
   const { now, multiplier } = input;
-  const torrent = torrentProcessHealth(input.torrent);
+  const torrent = torrentProcessHealth(input.torrent, input.torrentFailure);
   const hosts = hostProcesses(input.pool);
   const downProcess = new Map<string, string>();
   if (torrent.health === "down") downProcess.set("torrent-client", "Torrent client");
@@ -308,11 +314,13 @@ export function buildActivity(input: ActivityInput): ActivityResponse {
     { id: "alignment", label: "Alignment processor", type: "loop", notTracked: false },
     { id: "torrent-client", label: "Torrent client", type: "service", notTracked: false },
     ...hosts.map((host) => ({ id: host.id, label: host.label, type: "service" as const, notTracked: false })),
+    ...(input.poolFailure ? [{ id: "alignment-pool", label: "Alignment workers", type: "service" as const, notTracked: false }] : []),
     { id: "imports", label: "Imports", type: "loop", notTracked: true },
     { id: "backups", label: "Database backups", type: "loop", notTracked: true },
   ];
   const probes = new Map<string, { health: ActivityHealth; reason: string | null }>([["torrent-client", torrent]]);
   for (const host of hosts) probes.set(host.id, { health: host.health, reason: host.reason });
+  if (input.poolFailure) probes.set("alignment-pool", { health: "unknown", reason: `The check failed: ${input.poolFailure}` });
 
   const processes: ActivityProcess[] = base.map((process) => {
     const mine = items.filter((item) => item.processId === process.id);
@@ -377,14 +385,19 @@ function loadRows(sqlite: import("better-sqlite3").Database) {
   };
 }
 
-/** A probe that is slow or fails must not hold the page: the process then shows as not checked. */
-async function within<T>(probe: () => Promise<T>, ms: number): Promise<T | null> {
+/** A probe that is slow or fails must not hold the page: the process then shows why it was not checked. */
+async function within<T>(probe: () => Promise<T>, ms: number): Promise<{ value: T | null; failure: string | null }> {
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
       // A probe that throws before it returns a promise must not break the page either.
-      Promise.resolve().then(probe).catch(() => null),
-      new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), ms); }),
+      Promise.resolve().then(probe).then(
+        (value) => ({ value, failure: null }),
+        (error: unknown) => ({ value: null, failure: error instanceof Error ? error.message : String(error) }),
+      ),
+      new Promise<{ value: null; failure: string }>((resolve) => {
+        timer = setTimeout(() => resolve({ value: null, failure: "it took too long" }), ms);
+      }),
     ]);
   } finally {
     clearTimeout(timer);
@@ -402,13 +415,14 @@ export type ActivityDeps = {
 
 export async function collectActivity(deps: ActivityDeps, options: { probes: boolean } = { probes: true }) {
   const rows = loadRows(deps.sqlite);
+  const none = { value: null, failure: null };
   const [torrent, pool] = options.probes
     ? await Promise.all([within(deps.torrentHealth, 4000), within(deps.poolStatus, 4000)])
-    : [null, null];
+    : [none, none];
   return buildActivity({
     now: (deps.now ?? Date.now)(),
     multiplier: stuckMultiplier(deps.getSetting("activityStuckMultiplier")),
-    ...rows, torrent, pool, tracker,
+    ...rows, torrent: torrent.value, torrentFailure: torrent.failure, pool: pool.value, poolFailure: pool.failure, tracker,
   });
 }
 
@@ -418,7 +432,10 @@ export function registerActivity(app: FastifyInstance, deps: ActivityDeps) {
     return collectActivity(deps);
   });
   // Keep the change tracker current while nobody has the page open, so "no change for 20 min" is true on first view.
-  const sampler = setInterval(() => void collectActivity(deps, { probes: false }).catch(() => {}), MINUTE);
+  const sampler = setInterval(
+    () => void collectActivity(deps, { probes: false }).catch((error) => app.log.warn({ error }, "Activity sample failed")),
+    MINUTE,
+  );
   sampler.unref();
   app.addHook("onClose", async () => clearInterval(sampler));
 }
