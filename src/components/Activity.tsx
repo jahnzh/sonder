@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 import { api } from "../lib";
 import type { ActivityItem, ActivityProcess, ActivityResponse } from "../types";
@@ -43,7 +43,27 @@ export function useActivityAttention(enabled: boolean) {
   return attention;
 }
 
-function ProcessRow({ process }: { process: ActivityProcess }) {
+/** One button press: runs the request, shows its failure on the row, and reloads the page data. */
+function useRowAction(onChanged: () => void) {
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState("");
+  const run = async (path: string, body: unknown) => {
+    setBusy(true);
+    setFailure("");
+    try {
+      await api(path, { method: "POST", body: JSON.stringify(body) });
+      onChanged();
+    } catch (error) {
+      setFailure(error instanceof Error ? error.message : "That did not work.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return { busy, failure, run };
+}
+
+function ProcessRow({ process, onChanged }: { process: ActivityProcess; onChanged: () => void }) {
+  const action = useRowAction(onChanged);
   const { counts } = process;
   const detail = [
     process.notTracked ? "" : process.reason ?? "",
@@ -55,20 +75,67 @@ function ProcessRow({ process }: { process: ActivityProcess }) {
       <div className="user-row-name">
         <strong>{process.label}</strong>
         <span className="quiet-tag">{process.type === "service" ? "Service" : "Background loop"}</span>
-        <span className="quiet-tag" data-testid="activity-process-health">
-          {process.notTracked ? "Not tracked yet" : healthLabel[process.health]}
-        </span>
+        {/* A loop that is held back is not "Running": the Paused or Disabled tag says what it is. */}
+        {!(process.health === "ok" && (process.paused || process.lockedBy)) && (
+          <span className="quiet-tag" data-testid="activity-process-health">
+            {process.notTracked ? "Not tracked yet" : healthLabel[process.health]}
+          </span>
+        )}
         {process.since !== null && process.health !== "ok" && (
           <span className="quiet-tag">since {ago(process.since)}</span>
         )}
+        {process.paused && <span className="quiet-tag" data-testid="activity-process-paused">Paused by you</span>}
+        {process.lockedBy === "environment" && <span className="quiet-tag" data-testid="activity-process-locked">Disabled by environment</span>}
       </div>
       {detail && <small>{detail}</small>}
+      {process.pausable && process.pauseEffect && <small>{process.pauseEffect}</small>}
+      {process.pausable && process.lockedBy === null && (
+        <div className="settings-inline-actions">
+          <button
+            type="button"
+            className="button subtle"
+            disabled={action.busy}
+            data-testid={`activity-pause-${process.id}`}
+            aria-label={`${process.paused ? "Resume" : "Pause"} ${process.label}`}
+            onClick={() => void action.run(`/activity/processes/${process.id}/pause`, { paused: !process.paused })}
+          >
+            {action.busy && <Loader2 className="spin" size={14} />} {process.paused ? "Resume" : "Pause"}
+          </button>
+        </div>
+      )}
+      {action.failure && <small className="form-error" role="alert">{action.failure}</small>}
     </li>
   );
 }
 
-function ItemRow({ item, labels }: { item: ActivityItem; labels: Map<string, string> }) {
+function ItemRow({ item, labels, onChanged }: { item: ActivityItem; labels: Map<string, string>; onChanged: () => void }) {
   const attention = item.state === "failed" || !!item.stuck;
+  const action = useRowAction(onChanged);
+  const [confirming, setConfirming] = useState(false);
+  const buttons: ReactNode[] = [];
+  if (item.actions.includes("retry"))
+    buttons.push(
+      <button key="retry" type="button" className="button subtle" disabled={action.busy} data-testid="activity-retry"
+        onClick={() => void action.run("/activity/items/retry", { id: item.id })}>
+        {action.busy && <Loader2 className="spin" size={14} />} Retry now
+      </button>,
+    );
+  if (item.actions.includes("discard"))
+    buttons.push(
+      confirming ? (
+        <span key="discard" className="settings-inline-actions" role="group" aria-label="Confirm discard">
+          <button type="button" className="button subtle" disabled={action.busy} data-testid="activity-discard-confirm"
+            onClick={() => void action.run("/activity/items/discard", { id: item.id }).then(() => setConfirming(false))}>
+            Discard for good
+          </button>
+          <button type="button" className="button subtle" disabled={action.busy} onClick={() => setConfirming(false)}>Keep it</button>
+        </span>
+      ) : (
+        <button key="discard" type="button" className="button subtle" data-testid="activity-discard" onClick={() => setConfirming(true)}>
+          Discard
+        </button>
+      ),
+    );
   return (
     <li className="user-row activity-row" data-testid={`activity-item-${item.id}`} data-state={item.state} data-attention={attention || undefined}>
       <div className="user-row-name">
@@ -87,6 +154,8 @@ function ItemRow({ item, labels }: { item: ActivityItem; labels: Map<string, str
         ].filter(Boolean).join(" · ")}
       </small>
       {item.error && <small className="form-error">{item.error}</small>}
+      {buttons.length > 0 && <div className="settings-inline-actions">{buttons}</div>}
+      {action.failure && <small className="form-error" role="alert">{action.failure}</small>}
     </li>
   );
 }
@@ -138,14 +207,14 @@ export function ActivityPage() {
         <div data-testid="activity-page" data-attention={activity.attention}>
           <h3 className="requests-heading">Background processes</h3>
           <ul className="user-list" aria-label="Background processes">
-            {activity.processes.map((process) => <ProcessRow key={process.id} process={process} />)}
+            {activity.processes.map((process) => <ProcessRow key={process.id} process={process} onChanged={() => void load()} />)}
           </ul>
           {groups.map(([title, items]) =>
             items.length ? (
               <section key={title}>
                 <h3 className="requests-heading">{title}</h3>
                 <ul className="user-list" aria-label={title}>
-                  {items.map((item) => <ItemRow key={item.id} item={item} labels={labels} />)}
+                  {items.map((item) => <ItemRow key={item.id} item={item} labels={labels} onChanged={() => void load()} />)}
                 </ul>
               </section>
             ) : null,

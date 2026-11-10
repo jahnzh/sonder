@@ -13,6 +13,7 @@ import type {
   TorrentHealth,
 } from "../src/types.ts";
 import type { AlignmentPoolStatus } from "../src/reading-types.ts";
+import { PAUSE_EFFECT, isPausable, type PausableProcess } from "./activity-pause-model.ts";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -103,9 +104,16 @@ export type AlignmentRow = {
   data: string;
   updated_at: number;
 };
+export type HardcoverQueueName = "status" | "listening" | "reading";
+export const HARDCOVER_QUEUE_TITLES: Record<HardcoverQueueName, string> = {
+  status: "Hardcover shelf changes",
+  listening: "Hardcover listening progress",
+  reading: "Hardcover reading progress",
+};
 export type HardcoverQueueRow = {
+  userId: number;
   user: string;
-  queue: "listening" | "reading";
+  queue: HardcoverQueueName;
   count: number;
   oldest: number;
   newest: number;
@@ -122,13 +130,15 @@ export type ActivityInput = {
   hardcoverQueues: HardcoverQueueRow[];
   torrent: TorrentHealth | null;
   pool: AlignmentPoolStatus | null;
+  /** The pause switch of each loop and whether an environment flag locks it. */
+  pause?: Record<string, { paused: boolean; locked: boolean }>;
   /** Why a probe returned nothing (it threw or timed out), shown as the process reason. */
   torrentFailure?: string | null;
   poolFailure?: string | null;
   tracker: ChangeTracker;
 };
 
-type Draft = Omit<ActivityItem, "stuck" | "blockedBy" | "permanent"> & { permanent?: boolean; changedAt: number };
+type Draft = Omit<ActivityItem, "stuck" | "blockedBy" | "permanent" | "actions"> & { permanent?: boolean; changedAt: number };
 
 const clamp01 = (value: number | null | undefined) =>
   typeof value === "number" && Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : null;
@@ -237,8 +247,8 @@ export function draftsFrom(input: ActivityInput): Draft[] {
   for (const row of input.hardcoverQueues) {
     const permanent = isPermanentHardcoverError(row.error);
     drafts.push({
-      id: `hardcover:${row.queue}:${row.user}`, kind: "hardcover", processId: "hardcover-sync",
-      title: `Hardcover ${row.queue} changes`, detail: `${row.count} waiting to be sent`, user: row.user,
+      id: `hardcover:${row.queue}:${row.userId}`, kind: "hardcover", processId: "hardcover-sync",
+      title: HARDCOVER_QUEUE_TITLES[row.queue], detail: `${row.count} waiting to be sent`, user: row.user,
       state: row.error ? "failed" : "queued", progress: null, host: null, startedAt: row.oldest, updatedAt: row.newest,
       error: row.error, permanent, changedAt: row.newest,
     });
@@ -299,7 +309,10 @@ export function buildActivity(input: ActivityInput): ActivityResponse {
     } else if (item.state === "running" && now - changedAt > threshold) {
       stuck = { reason: `No change for ${formatAge(now - changedAt)}` };
     }
-    items.push({ ...item, permanent: !!permanent, stuck, blockedBy });
+    // Hardcover changes are the only kind with actions so far: Discard for one that cannot succeed, Retry for the rest.
+    const actions: ActivityItem["actions"] =
+      item.kind === "hardcover" && item.state !== "done" ? (permanent ? ["discard"] : ["retry"]) : [];
+    items.push({ ...item, permanent: !!permanent, actions, stuck, blockedBy });
   }
 
   const rank = (item: ActivityItem) =>
@@ -330,7 +343,15 @@ export function buildActivity(input: ActivityInput): ActivityResponse {
       failed: mine.filter((item) => item.state === "failed").length,
       stuck: mine.filter((item) => item.stuck).length,
     };
-    if (process.notTracked) return { ...process, health: "unknown", reason: "Not tracked yet.", since: null, counts };
+    const pausable = isPausable(process.id);
+    const control = pausable ? input.pause?.[process.id] : undefined;
+    const pauseFields = {
+      pausable,
+      paused: !!control?.paused,
+      lockedBy: control?.locked ? ("environment" as const) : null,
+      pauseEffect: pausable ? PAUSE_EFFECT[process.id as keyof typeof PAUSE_EFFECT] : null,
+    };
+    if (process.notTracked) return { ...process, ...pauseFields, health: "unknown", reason: "Not tracked yet.", since: null, counts };
     const probe = probes.get(process.id);
     let health: ActivityHealth = probe?.health ?? "ok";
     let reason = probe?.reason ?? null;
@@ -340,7 +361,7 @@ export function buildActivity(input: ActivityInput): ActivityResponse {
     }
     const since = health === "ok" ? null : mine.filter((item) => item.stuck || item.state === "failed").reduce<number | null>(
       (oldest, item) => (oldest === null ? item.updatedAt : Math.min(oldest, item.updatedAt)), null);
-    return { ...process, health, reason, since, counts };
+    return { ...process, ...pauseFields, health, reason, since, counts };
   });
 
   const attentionItems = items.filter(
@@ -354,9 +375,9 @@ const tracker = new ChangeTracker();
 
 function loadRows(sqlite: import("better-sqlite3").Database) {
   const all = <T>(sql: string) => sqlite.prepare(sql).all() as T[];
-  const queue = (table: string, name: "listening" | "reading") =>
+  const queue = (table: string, name: HardcoverQueueName) =>
     all<HardcoverQueueRow>(
-      `SELECT COALESCE(u.username, 'user ' || o.user_id) AS user, '${name}' AS queue, COUNT(*) AS count,
+      `SELECT o.user_id AS userId, COALESCE(u.username, 'user ' || o.user_id) AS user, '${name}' AS queue, COUNT(*) AS count,
               MIN(o.updated_at) AS oldest, MAX(o.updated_at) AS newest,
               (SELECT e.error FROM ${table} e WHERE e.user_id = o.user_id AND e.error IS NOT NULL ORDER BY e.updated_at DESC LIMIT 1) AS error
          FROM ${table} o LEFT JOIN users u ON u.id = o.user_id GROUP BY o.user_id`,
@@ -379,7 +400,8 @@ function loadRows(sqlite: import("better-sqlite3").Database) {
          LEFT JOIN audio_editions e ON e.id = r.edition_id LEFT JOIN works w ON w.id = e.work_id`,
     ),
     hardcoverQueues: [
-      ...queue("user_hardcover_outbox", "listening"),
+      ...queue("user_hardcover_outbox", "status"),
+      ...queue("user_hardcover_progress", "listening"),
       ...queue("user_hardcover_reading_outbox", "reading"),
     ],
   };
@@ -410,6 +432,11 @@ export type ActivityDeps = {
   torrentHealth: () => Promise<TorrentHealth>;
   poolStatus: () => Promise<AlignmentPoolStatus>;
   requireAdmin: (req: any) => unknown;
+  /** Run a Hardcover sync for one user now (the "Retry" action on a queued change). */
+  syncHardcover: (userId: number) => Promise<unknown>;
+  /** Pause state per loop: the settings table plus the environment lock. */
+  pauseState: () => Record<string, { paused: boolean; locked: boolean }>;
+  setPaused: (id: PausableProcess, paused: boolean) => void;
   now?: () => number;
 };
 
@@ -422,14 +449,58 @@ export async function collectActivity(deps: ActivityDeps, options: { probes: boo
   return buildActivity({
     now: (deps.now ?? Date.now)(),
     multiplier: stuckMultiplier(deps.getSetting("activityStuckMultiplier")),
+    pause: deps.pauseState(),
     ...rows, torrent: torrent.value, torrentFailure: torrent.failure, pool: pool.value, poolFailure: pool.failure, tracker,
   });
+}
+
+const HARDCOVER_QUEUE_TABLES: Record<HardcoverQueueName, string> = {
+  status: "user_hardcover_outbox",
+  listening: "user_hardcover_progress",
+  reading: "user_hardcover_reading_outbox",
+};
+const failure = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
+function parseHardcoverItem(id: string) {
+  const match = /^hardcover:(status|listening|reading):(\d+)$/.exec(id);
+  if (!match) throw failure(400, "This item has no retry or discard yet.");
+  return { queue: match[1] as HardcoverQueueName, userId: Number(match[2]) };
 }
 
 export function registerActivity(app: FastifyInstance, deps: ActivityDeps) {
   app.get("/api/activity", async (req) => {
     deps.requireAdmin(req);
     return collectActivity(deps);
+  });
+  app.post("/api/activity/processes/:id/pause", async (req) => {
+    deps.requireAdmin(req);
+    const { id } = req.params as { id: string };
+    const { paused } = (req.body ?? {}) as { paused?: unknown };
+    if (!isPausable(id)) throw failure(404, "This process cannot be paused.");
+    if (typeof paused !== "boolean") throw failure(400, "Say whether to pause or resume.");
+    if (deps.pauseState()[id]?.locked) throw failure(409, "An environment setting disables this process, so it cannot be changed here.");
+    deps.setPaused(id, paused);
+    app.log.info({ action: "activity.pause", process: id, paused }, "Background process pause changed");
+    return { ok: true, id, paused };
+  });
+  app.post("/api/activity/items/retry", async (req) => {
+    deps.requireAdmin(req);
+    const { id } = (req.body ?? {}) as { id?: string };
+    const { queue, userId } = parseHardcoverItem(String(id ?? ""));
+    app.log.info({ action: "activity.retry", queue, userId }, "Hardcover changes sent again");
+    return { ok: true, result: await deps.syncHardcover(userId) };
+  });
+  app.post("/api/activity/items/discard", async (req) => {
+    deps.requireAdmin(req);
+    const { id } = (req.body ?? {}) as { id?: string };
+    const { queue, userId } = parseHardcoverItem(String(id ?? ""));
+    const table = HARDCOVER_QUEUE_TABLES[queue];
+    const failed = deps.sqlite.prepare(`SELECT error FROM ${table} WHERE user_id = ? AND error IS NOT NULL`).all(userId) as Array<{ error: string }>;
+    if (!failed.length) throw failure(404, "There is nothing to discard here.");
+    if (failed.some((row) => !isPermanentHardcoverError(row.error)))
+      throw failure(409, "This change might still go through. Use Retry instead.");
+    const removed = deps.sqlite.prepare(`DELETE FROM ${table} WHERE user_id = ? AND error IS NOT NULL`).run(userId).changes;
+    app.log.info({ action: "activity.discard", queue, userId, removed }, "Hardcover changes discarded");
+    return { ok: true, discarded: removed };
   });
   // Keep the change tracker current while nobody has the page open, so "no change for 20 min" is true on first view.
   const sampler = setInterval(

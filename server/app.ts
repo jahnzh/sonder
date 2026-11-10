@@ -36,6 +36,7 @@ import {
   hardcoverWorkForMedia,
   claimHardcoverAudio,
   hiddenHardcoverPlaceholders,
+  syncHardcover,
 } from "./hardcover.ts";
 import { registerHardcoverRoutes } from "./hardcover-routes.ts";
 import { registerEbookSetRoutes } from "./ebook-set-routes.ts";
@@ -47,6 +48,7 @@ import { registerReader } from "./reader.ts";
 import { registerAlignment, autoQueueAlignmentsForWork, persistedPoolErrors } from "./alignment.ts";
 import { getAlignmentPoolStatus } from "./alignment-pool.ts";
 import { registerActivity } from "./activity.ts";
+import { pauseState, setPaused } from "./activity-pause.ts";
 import {registerMediaLibrary,faultsFor,chooseMedia,sourceChoice} from "./media-library.ts";
 import { audioFileMime } from "./media-response.ts";
 import { parseRange } from "./range.ts";
@@ -338,6 +340,9 @@ export async function createApp(options?: { logger?: FastifyServerOptions["logge
     torrentHealth: () => getTorrentHealth(),
     poolStatus: () => getAlignmentPoolStatus({ persistedErrors: persistedPoolErrors() }),
     requireAdmin,
+    syncHardcover,
+    pauseState,
+    setPaused,
   });
   registerMediaLibrary(app);
   app.post("/api/library", async (req) => {

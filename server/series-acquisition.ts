@@ -1,3 +1,4 @@
+import { isHeld } from "./activity-pause.ts";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { and, eq } from "drizzle-orm";
@@ -92,7 +93,8 @@ export function leaveSeriesWorkAcquire(userId: number, workId: string) {
 }
 
 export function seriesAcquisitionTickerEnabled() {
-  return process.env.SONDER_SKIP_SERIES_ACQUISITION !== "1";
+  // The environment flag and the Activity page switch both hold the loop (isHeld reads both).
+  return !isHeld("series-acquisition");
 }
 
 function canAcquireMedia(userId: number) {

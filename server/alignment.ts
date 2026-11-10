@@ -1,3 +1,4 @@
+import { isPaused } from "./activity-pause.ts";
 import type { FastifyInstance } from "fastify";
 import { eq } from "drizzle-orm";
 import { randomUUID, createHash } from "node:crypto";
@@ -1202,6 +1203,8 @@ export async function processAlignments() {
       activeStatuses.includes(job.status),
     )) {
       // Each job fails on its own, so one broken job can't stall the rest of the queue.
+      // Paused: start no new job. A job already running finishes; the next one waits.
+      if (isPaused("alignment")) break;
       try {
         let job = alignmentJob(pending.id);
         if (job.engine !== CTC_ENGINE && !process.env.ALIGNMENT_WORKER_URL)

@@ -1,3 +1,4 @@
+import { isPaused } from "./activity-pause.ts";
 import {
   ADMIN_USER_ID,
   getUserSecret,
@@ -1826,6 +1827,8 @@ async function tickUser(userId: number) {
   await syncHardcover(userId);
 }
 export async function tickHardcover() {
+  // Paused: queued changes wait. "Sync now" is an explicit request and still works.
+  if (isPaused("hardcover-sync")) return;
   // One user's failing account must not hold back the others.
   for (const userId of listUserIds()) await tickUser(userId).catch(() => {});
 }

@@ -125,18 +125,18 @@ test("alignment states map and finished jobs drop off after 24 hours", () => {
 test("Hardcover queues: permanent errors and long waits are flagged, one row per user and queue", () => {
   const result = buildActivity(base({
     hardcoverQueues: [
-      { user: "admin", queue: "listening", count: 1, oldest: NOW - 5 * 24 * 60 * MIN, newest: NOW - 5 * 24 * 60 * MIN, error: "We weren't able to find that book. Was it deleted?" },
-      { user: "sam", queue: "reading", count: 3, oldest: NOW - 31 * MIN, newest: NOW - MIN, error: null },
-      { user: "sam", queue: "listening", count: 2, oldest: NOW - 5 * MIN, newest: NOW - MIN, error: "network" },
+      { userId: 1, user: "admin", queue: "status", count: 1, oldest: NOW - 5 * 24 * 60 * MIN, newest: NOW - 5 * 24 * 60 * MIN, error: "We weren't able to find that book. Was it deleted?" },
+      { userId: 2, user: "sam", queue: "reading", count: 3, oldest: NOW - 31 * MIN, newest: NOW - MIN, error: null },
+      { userId: 2, user: "sam", queue: "listening", count: 2, oldest: NOW - 5 * MIN, newest: NOW - MIN, error: "network" },
     ],
   }));
   const byId = Object.fromEntries(result.items.map((item) => [item.id, item]));
-  assert.equal(byId["hardcover:listening:admin"].permanent, true);
-  assert.equal(byId["hardcover:listening:admin"].stuck?.reason, "This change cannot succeed");
-  assert.equal(byId["hardcover:reading:sam"].stuck?.reason, "Unsent for 31 min");
-  assert.equal(byId["hardcover:listening:sam"].permanent, false);
-  assert.equal(byId["hardcover:listening:sam"].stuck, null);
-  assert.equal(byId["hardcover:listening:sam"].state, "failed");
+  assert.equal(byId["hardcover:status:1"].permanent, true);
+  assert.equal(byId["hardcover:status:1"].stuck?.reason, "This change cannot succeed");
+  assert.equal(byId["hardcover:reading:2"].stuck?.reason, "Unsent for 31 min");
+  assert.equal(byId["hardcover:listening:2"].permanent, false);
+  assert.equal(byId["hardcover:listening:2"].stuck, null);
+  assert.equal(byId["hardcover:listening:2"].state, "failed");
   assert.equal(result.items.filter((item) => item.kind === "hardcover").length, 3);
   assert.equal(isPermanentHardcoverError("We weren't able to find that book. Was it deleted?"), true);
   assert.equal(isPermanentHardcoverError("socket hang up"), false);
@@ -179,6 +179,51 @@ test("an unreadable alignment record is listed as failed with the reason and doe
   assert.equal(bad.state, "failed");
   assert.match(bad.error ?? "", /^The job record could not be read: /);
   assert.equal(result.items.length, 2);
+});
+
+test("only the loops can be paused, and each shows its switch state, lock and what pausing does", () => {
+  const result = buildActivity(base({
+    pause: {
+      alignment: { paused: true, locked: false },
+      "series-acquisition": { paused: false, locked: true },
+      "hardcover-sync": { paused: false, locked: false },
+    },
+  }));
+  const byId = Object.fromEntries(result.processes.map((process) => [process.id, process]));
+  assert.equal(byId.alignment.pausable, true);
+  assert.equal(byId.alignment.paused, true);
+  assert.equal(byId.alignment.lockedBy, null);
+  assert.match(byId.alignment.pauseEffect ?? "", /No new alignment job starts/);
+  assert.equal(byId["series-acquisition"].lockedBy, "environment");
+  assert.equal(byId["series-acquisition"].paused, false);
+  assert.match(byId["hardcover-sync"].pauseEffect ?? "", /Sync now still works/);
+  assert.match(byId.acquisitions.pauseEffect ?? "", /keep downloading in the torrent client/);
+  for (const id of ["torrent-client", "imports", "backups"]) {
+    assert.equal(byId[id].pausable, false, id);
+    assert.equal(byId[id].pauseEffect, null, id);
+    assert.equal(byId[id].paused, false, id);
+  }
+  assert.equal(result.attention, 0, "a paused loop is not a problem by itself");
+});
+
+test("Hardcover items offer Discard for a permanent error and Retry otherwise; nothing else has actions", () => {
+  const result = buildActivity(base({
+    acquisitions: [acquisition("a")],
+    hardcoverQueues: [
+      { userId: 1, user: "admin", queue: "status", count: 1, oldest: NOW - 5 * 24 * 60 * MIN, newest: NOW - 5 * 24 * 60 * MIN, error: "We weren't able to find that book. Was it deleted?" },
+      { userId: 1, user: "admin", queue: "listening", count: 2, oldest: NOW - MIN, newest: NOW - MIN, error: "socket hang up" },
+      { userId: 1, user: "admin", queue: "reading", count: 1, oldest: NOW - MIN, newest: NOW - MIN, error: null },
+    ],
+  }));
+  const actions = Object.fromEntries(result.items.map((item) => [item.id, item.actions]));
+  assert.deepEqual(actions["hardcover:status:1"], ["discard"]);
+  assert.deepEqual(actions["hardcover:listening:1"], ["retry"]);
+  assert.deepEqual(actions["hardcover:reading:1"], ["retry"]);
+  assert.deepEqual(actions["acquisition:a"], []);
+  const titles = Object.fromEntries(result.items.filter((item) => item.kind === "hardcover").map((item) => [item.id, item.title]));
+  assert.equal(titles["hardcover:status:1"], "Hardcover shelf changes");
+  assert.equal(titles["hardcover:listening:1"], "Hardcover listening progress");
+  assert.equal(titles["hardcover:reading:1"], "Hardcover reading progress");
 });
 
 test("a probe that failed shows why instead of silently reading as healthy", () => {
