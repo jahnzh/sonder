@@ -229,8 +229,10 @@ export type ActivityItem = {
   startedAt: number | null;
   updatedAt: number;
   error: string | null;
-  /** A failed item that cannot succeed on retry (offered Discard in a later change, not Retry). */
+  /** A failed item that cannot succeed on retry: it is offered Discard, not Retry. */
   permanent: boolean;
+  /** What the administrator can do with this item now. */
+  actions: Array<"retry" | "discard">;
   stuck: { reason: string } | null;
   /** The background process this item cannot move without, while that process is down. */
   blockedBy: string | null;
@@ -246,6 +248,13 @@ export type ActivityProcess = {
   since: number | null;
   /** True for a process the app does not track yet (imports, backups). */
   notTracked: boolean;
+  /** The loop can be paused from the page (the services and untracked processes cannot). */
+  pausable: boolean;
+  paused: boolean;
+  /** Why the switch cannot be used: an environment flag disables the loop for good. */
+  lockedBy: "environment" | null;
+  /** What pausing does and does not stop, in plain words. */
+  pauseEffect: string | null;
   counts: { running: number; queued: number; failed: number; stuck: number };
 };
 export type ActivityResponse = {

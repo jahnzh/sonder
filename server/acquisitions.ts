@@ -1,3 +1,4 @@
+import { isPaused } from "./activity-pause.ts";
 import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { and, eq, inArray } from "drizzle-orm";
@@ -439,6 +440,8 @@ export async function refreshAcquisition(id: string) {
   }
 }
 export async function refreshQueue() {
+  // Paused: downloads are not checked or imported. The torrents keep running in the client.
+  if (isPaused("acquisitions")) return;
   const jobs = db
     .select()
     .from(s.acquisitions)

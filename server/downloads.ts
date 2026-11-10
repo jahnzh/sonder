@@ -1,3 +1,4 @@
+import { isPaused } from "./activity-pause.ts";
 import {
   createWriteStream,
   existsSync,
@@ -124,6 +125,8 @@ export async function processServerDownloads() {
     for (const job of jobs) {
       // The batch is a snapshot: skip jobs paused or removed since it was read.
       if (!jobIsActive(job.recordingId)) continue;
+      // Paused: start no new copy. One already running finishes; the rest wait.
+      if (isPaused("server-copies")) break;
       const ctrl = new AbortController();
       controllers.set(job.recordingId, ctrl);
       try {
