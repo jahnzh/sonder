@@ -54,14 +54,13 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 export const DEFAULTS = {
   factor: 1.0,
-  ceiling: 3,
-  cost: { load: 8, memGB: 4, diskGB: 3 },
+  ceiling: 2,
+  cost: { load: 8, memGB: 8, diskGB: 3 },
   reserve: { memGB: 2, diskGB: 10 },
   recentSeconds: 240,
   probeTtlSeconds: 10,
 };
 
-const QUEUE_GRACE_MS = 2000;
 const now = () => Math.floor(Date.now() / 1000);
 const iso = (t = now()) => new Date(t * 1000).toISOString().replace(/\.\d+Z$/, "Z");
 const sleepMs = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -176,6 +175,7 @@ export function probeCommand(host, env = process.env) {
     'echo "cpus=$(nproc)"',
     `echo "load1=$(cut -d' ' -f1 /proc/loadavg)"`,
     `echo "memAvailKB=$(awk '/MemAvailable/{print $2}' /proc/meminfo)"`,
+    ...(base ? [`mkdir -p ${diskDir} 2>/dev/null || true`] : []),
     `echo "diskFreeKB=$(df -Pk ${diskDir} | awk 'NR==2{print $4}')"`,
     "n=0",
     `for d in ${runBase}/${host.runPattern}; do ${loop}; done`,
@@ -314,7 +314,9 @@ function withLock(state, fn) {
       } catch {
         // owner has not written its pid yet
       }
-      if (owner && !processAlive(owner)) fs.rmSync(dir, { recursive: true, force: true });
+      let stale = false;
+      try { stale = !owner && Date.now() - fs.statSync(dir).mtimeMs > 5000; } catch { /* lock disappeared */ }
+      if ((owner && !processAlive(owner)) || stale) fs.rmSync(dir, { recursive: true, force: true });
       else sleepMs(50);
     }
     if (i === 1199) throw new Error("could not take the dispatcher lock");
@@ -338,7 +340,7 @@ function sharedProbes(state, hosts, ttl, env) {
   let changed = false;
   for (const h of hosts) {
     const c = cached[h.id];
-    if (c && now() - c.at < ttl) continue;
+    if (c && !c.stale && now() - c.at < ttl) continue;
     out[h.id] = probeHost(h, env);
     changed = true;
   }
@@ -388,16 +390,21 @@ function admit(opts, env) {
   process.on("SIGINT", () => { cleanup(); process.exit(130); });
   const deadline = now() + timeout;
   let announced = false;
-  const startedMs = Date.now();
   for (;;) {
     const result = withLock(state, () => {
       const queue = liveEntries(state, "queue");
       const position = queue.findIndex((t) => t.file === ticketFile) + 1;
       if (position === 0) return { error: "ticket vanished" };
-      if (position > 1) return { position };
+      if (position > 1) return { position, waiting: queue[0].waiting === true };
       const runs = liveEntries(state, "runs");
-      const probes = sharedProbes(state, hosts, config.global.probeTtlSeconds, env);
-      const pick = chooseHost(primary.map((i) => config.hosts[i]), fallback.map((i) => config.hosts[i]), probes, runs);
+      const primaryHosts = primary.map((i) => config.hosts[i]);
+      const fallbackHosts = fallback.map((i) => config.hosts[i]);
+      let probes = sharedProbes(state, primaryHosts, config.global.probeTtlSeconds, env);
+      let pick = chooseHost(primaryHosts, [], probes, runs);
+      if (!pick) {
+        probes = sharedProbes(state, fallbackHosts, config.global.probeTtlSeconds, env);
+        pick = chooseHost([], fallbackHosts, probes, runs);
+      }
       const nextPort = () => {
         const used = new Set(runs.map((r) => Number(r.port)).filter((p) => Number.isInteger(p) && p > 0));
         let port = 4400;
@@ -417,17 +424,17 @@ function admit(opts, env) {
       }
       // Nothing reachable at all: the first enabled runner falls back to a
       // local check, as ci-run.sh always has.
-      if (hosts.every((h) => probes[h.id] && !probes[h.id].ok)) {
+      if (runs.length === 0 && hosts.every((h) => probes[h.id] && !probes[h.id].ok)) {
         return { local: allIds[0], port: register(allIds[0]) };
       }
-      return { position: 1 };
+      writeJson(ticketFile, { ...queue[0], waiting: true });
+      return { position: 1, waiting: true };
     });
     if (result.error) die(result.error, 1);
     if (result.admit) { console.log(`admit ${result.admit} port=${result.port}`); return; }
     if (result.local) { console.log(`admit-local ${result.local} port=${result.port}`); return; }
-    // Callers that start together take turns at the head: announce `queued`
-    // only for a caller that waits for room, or for a turn longer than a moment.
-    if (!announced && (result.position === 1 || Date.now() - startedMs > QUEUE_GRACE_MS)) {
+    // Only announce after the head has actually found no capacity.
+    if (!announced && result.waiting) {
       announced = true;
       console.log(`queued position=${result.position}`);
     }
@@ -441,9 +448,24 @@ function release(opts, env) {
   const pid = Number(opts.pid);
   if (!Number.isInteger(pid) || pid <= 0) die("release needs --pid");
   const state = stateDir(env);
-  for (const dir of ["runs", "queue"]) {
-    for (const e of readEntries(state, dir)) if (e.pid === pid) fs.rmSync(e.file, { force: true });
-  }
+  ensureState(state);
+  withLock(state, () => {
+    let removedRun = false;
+    for (const dir of ["runs", "queue"]) {
+      for (const e of readEntries(state, dir)) if (e.pid === pid) {
+        fs.rmSync(e.file, { force: true });
+        if (dir === "runs") removedRun = true;
+      }
+    }
+    if (removedRun) {
+      const file = path.join(state, "probes.json");
+      try {
+        const probes = JSON.parse(fs.readFileSync(file, "utf8"));
+        for (const probe of Object.values(probes)) probe.stale = true;
+        writeJson(file, probes);
+      } catch { /* no usable cache */ }
+    }
+  });
 }
 
 // Prints KEY='value' lines for `eval` in ci-run.sh.
@@ -453,6 +475,9 @@ function hostEnv(id, env) {
   if (!h) die(`unknown host id '${id}'`);
   console.log(`DISPATCH_HOST_SSH=${shq(h.ssh)}`);
   console.log(`DISPATCH_RUNNER=${shq(h.runner)}`);
+  console.log(`DISPATCH_REMOTE_BASE=${shq(h.remoteBase)}`);
+  console.log(`DISPATCH_TMPDIR=${shq(h.tmpdir)}`);
+  console.log(`DISPATCH_MAX_WAIT=${shq(h.maxWait ?? "")}`);
 }
 
 function status(env) {

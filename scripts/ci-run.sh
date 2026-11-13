@@ -75,7 +75,7 @@ Environment:
 EOF
 }
 
-DISPATCH=""
+DISPATCH=${SONDER_CI_DISPATCH:-}
 REQUESTED_REF=""
 STATUS=0
 while [[ $# -gt 0 ]]; do
@@ -99,16 +99,16 @@ done
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 DISPATCHER="$ROOT/scripts/ci-dispatch.mjs"
 
+# Same allowlist as scripts/lib/ci-history.sh: reject invalid IDs before doing work.
+[[ -z $DISPATCH || $DISPATCH =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
+  || { echo "invalid --dispatch id: ${DISPATCH}" >&2; exit 2; }
+
 if [[ $STATUS -eq 1 ]]; then
   [[ -z $REQUESTED_REF ]] || { echo "--status takes no commit" >&2; exit 2; }
   exec node "$DISPATCHER" status
 fi
 
 [[ -n $REQUESTED_REF ]] || { usage >&2; exit 2; }
-# Same allowlist as scripts/lib/ci-history.sh: an invalid id would only be
-# discovered at the very end of the run, so reject it up front.
-[[ -z $DISPATCH || $DISPATCH =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
-  || { echo "invalid --dispatch id: ${DISPATCH}" >&2; exit 2; }
 
 POLL_INTERVAL=${SONDER_CI_POLL_INTERVAL:-5}
 QUEUE_TIMEOUT=${SONDER_CI_QUEUE_TIMEOUT:-3600}
@@ -147,7 +147,9 @@ blocking_runs() {
     if [[ -f $dir/ci-deck-result.txt ]]; then
       file=$dir/ci-deck-result.txt; host=deck
     elif [[ -f $dir/ci-ssh-result.txt ]]; then
-      file=$dir/ci-ssh-result.txt; host=wsl
+      file=$dir/ci-ssh-result.txt
+      host=$(sed -n 's/^host=//p' "$file" | head -n 1)
+      [[ $host == 192.168.1.119 || -z $host ]] && host=wsl
     else
       continue
     fi
@@ -248,6 +250,10 @@ fi
 
 echo "started ${ADMITTED} ${FULL_SHA} log=${LOG_FILE}"
 rc=0
+# Preserve caller overrides, including explicitly empty values.
+[[ ${SONDER_CI_REMOTE_BASE+x} ]] || { [[ -z $DISPATCH_REMOTE_BASE ]] || export SONDER_CI_REMOTE_BASE="$DISPATCH_REMOTE_BASE"; }
+[[ ${SONDER_CI_TMPDIR+x} ]] || { [[ -z $DISPATCH_TMPDIR ]] || export SONDER_CI_TMPDIR="$DISPATCH_TMPDIR"; }
+[[ ${SONDER_CI_MAX_WAIT+x} ]] || { [[ -z $DISPATCH_MAX_WAIT ]] || export SONDER_CI_MAX_WAIT="$DISPATCH_MAX_WAIT"; }
 # Distinct loopback ports so two checks admitted on one host do not share
 # Playwright's readiness probe (prototype used 4400+).
 if [[ -n $DISPATCH ]]; then

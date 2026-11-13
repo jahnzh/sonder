@@ -37,7 +37,7 @@ Verification steps run by the coordinator before landing:
 4. Run the worker's specs with a distinct `PLAYWRIGHT_PORT`.
 5. Run new or changed e2e specs also with `--repeat-each 2` (tests that reuse a book title break under repeats and combined runs: use a unique title per test).
 6. Mutation proofs via `scripts/mutate.mjs`.
-7. ONE `ci:deck` at a time read with `scripts/ci-result.sh`, never a rerun to get a pass.
+7. Start committed checks with `npm run ci:run` read with `scripts/ci-result.sh`, never a rerun to get a pass.
 8. Landing with `scripts/orca-land.sh`.
 
 ## Template

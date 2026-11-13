@@ -6,7 +6,7 @@ import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 
 /** Fast ci-run cases only; the full file is what hung pre-push in the original incident. */
-const CI_RUN_FAST_PATTERN = "help|usage error|invalid commit ref";
+const CI_RUN_FAST_PATTERN = "help|usage error|invalid commit ref|idle fleet starts";
 
 const hosting = process.argv[2];
 assert.ok(hosting && fs.existsSync(hosting), "usage: node ci-script-host-runner.mjs <hosting-repo-dir>");

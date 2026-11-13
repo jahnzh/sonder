@@ -3,8 +3,8 @@
     "order": ["wsl", "lisa"],
     "fallback": ["deck"],
     "factor": 1.0,
-    "ceiling": 3,
-    "cost": { "load": 8, "memGB": 4, "diskGB": 3 },
+    "ceiling": 2,
+    "cost": { "load": 8, "memGB": 8, "diskGB": 3 },
     "reserve": { "memGB": 2, "diskGB": 10 },
     "recentSeconds": 240,
     "probeTtlSeconds": 10

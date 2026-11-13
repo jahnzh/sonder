@@ -104,7 +104,7 @@ test("4. Coordinator verification section in worker-spec.md", () => {
   assert.match(content, /unique title per test/, "must mention unique title per test");
   assert.match(content, /scripts\/mutate\.mjs/, "must mention scripts/mutate.mjs");
   assert.match(content, /scripts\/ci-result\.sh/, "must mention scripts/ci-result.sh");
-  assert.match(content, /ONE `ci:deck` at a time/, "must mention ONE ci:deck at a time");
+  assert.match(content, /Start committed checks with `npm run ci:run`/, "must use the dispatcher for committed checks");
   assert.match(content, /scripts\/orca-land\.sh/, "must mention scripts/orca-land.sh");
 });
 

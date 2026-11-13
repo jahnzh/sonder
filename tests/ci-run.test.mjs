@@ -33,6 +33,7 @@ for h in \${STUB_SSH_DOWN_HOSTS:-}; do
 done
 case "$*" in
   *sonder-ci-probe*)
+    [[ -n \${STUB_PROBE_DELAY:-} ]] && sleep "$STUB_PROBE_DELAY"
     [[ -f "$STUB_PROBE_DIR/$host" ]] && { cat "$STUB_PROBE_DIR/$host"; exit 0; }
     echo "ssh: connect to host $host port 22: No route to host" >&2
     exit 255 ;;
@@ -47,7 +48,7 @@ exec bash -c "$*"
 function runnerStubFor(name) {
   return `#!/usr/bin/env bash
 echo "stub-runner ${name} host=\${SONDER_CI_HOST:-} sha=$1"
-echo "invoked runner=${name} host=\${SONDER_CI_HOST:-} sha=$1 dispatch=\${SONDER_CI_DISPATCH:-} loopback=\${SONDER_CI_LOOPBACK_PORT:-}" >>"$STUB_RUNNER_LOG"
+echo "invoked runner=${name} host=\${SONDER_CI_HOST:-} sha=$1 dispatch=\${SONDER_CI_DISPATCH:-} loopback=\${SONDER_CI_LOOPBACK_PORT:-} remoteBase=\${SONDER_CI_REMOTE_BASE:-} tmpdir=\${SONDER_CI_TMPDIR:-} maxWait=\${SONDER_CI_MAX_WAIT:-}" >>"$STUB_RUNNER_LOG"
 secs=\${STUB_RUNNER_SLEEP:-}
 [[ -f "\${STUB_SLEEP_DIR:-/nonexistent}/\${SONDER_CI_HOST:-}" ]] && secs=$(cat "$STUB_SLEEP_DIR/$SONDER_CI_HOST")
 [[ -n $secs ]] && sleep "$secs"
@@ -129,6 +130,8 @@ function fixture() {
   // host's probe between polls.
   const config = JSON.parse(fs.readFileSync(trackedConfig, "utf8"));
   config.dispatch.probeTtlSeconds = 0;
+  // Synthetic capacity fixture exercises multiple slots independent of production costs.
+  config.dispatch.cost.memGB = 4;
   fs.writeFileSync(path.join(repo, "scripts", "ci-hosts.json"), JSON.stringify(config, null, 2));
   fs.writeFileSync(path.join(repo, "scripts", "ci-deck.sh"), runnerStubFor("deck"), { mode: 0o755 });
   fs.writeFileSync(path.join(repo, "scripts", "ci-ssh.sh"), runnerStubFor("ssh"), { mode: 0o755 });
@@ -203,6 +206,7 @@ function fixture() {
       cwd: repo,
       env: envFor(env),
       stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
     });
     children.push(child);
     let stdout = "";
@@ -218,11 +222,27 @@ function fixture() {
   function cleanup() {
     for (const child of children) {
       try {
-        child.kill("SIGKILL");
+        process.kill(-child.pid, "SIGKILL");
       } catch {
         // already gone
       }
     }
+    // Check each fixture process group for surviving runners or sleeps (ignore zombies).
+    const deadline = Date.now() + 5000;
+    let survivors;
+    do {
+      survivors = [];
+      for (const pid of fs.readdirSync("/proc").filter((n) => /^\d+$/.test(n))) {
+        try {
+          const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8").replace(/^.*\) /, "").split(" ");
+          const cmd = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").replaceAll("\0", " ");
+          if (stat[0] !== "Z" && children.some((c) => Number(stat[2]) === c.pid) &&
+              (cmd.includes("ci-ssh.sh") || /(?:^|\/)sleep(?: |$)/.test(cmd))) survivors.push(cmd);
+        } catch { /* process exited */ }
+      }
+      if (survivors.length) spawnSync("sleep", ["0.05"]);
+    } while (survivors.length && Date.now() < deadline);
+    assert.deepEqual(survivors, [], "fixture runners and sleeps must exit");
     fs.rmSync(base, { recursive: true, force: true });
   }
 
@@ -238,7 +258,7 @@ function writeResult(repo, sha, host, result, extra = {}) {
   fs.mkdirSync(dir, { recursive: true });
   const lines = [
     "mode=remote",
-    `host=${host === "deck" ? "deck@steamdeck" : "192.168.1.119"}`,
+    `host=${host === "deck" ? "deck@steamdeck" : host === "lisa" ? "lisa" : "192.168.1.119"}`,
     `commit=${sha}`,
     "exit_code=0",
     `result=${result}`,
@@ -447,8 +467,8 @@ test("four ci:run calls for different commits start at once across both hosts an
 
     const status = f.run(["--status"], null);
     assert.equal(status.status, 0, status.output);
-    assert.match(status.stdout, /^host wsl: cpus=16 .* -> full \(load 24\.0 > 16\.0\)/m);
-    assert.match(status.stdout, /^host lisa: cpus=20 .* -> full \(load 24\.0 > 20\.0\)/m);
+    assert.match(status.stdout, /^host wsl: cpus=16 .* -> full \(ceiling 2\/2.*\)/m);
+    assert.match(status.stdout, /^host lisa: cpus=20 .* -> full \(ceiling 2\/2.*\)/m);
     assert.equal((status.stdout.match(/^running /gm) ?? []).length, 4);
     assert.match(status.stdout, new RegExp(`^queued #1 ${f.commits[4].slice(0, 12)} age=`, "m"));
   } finally {
@@ -552,6 +572,13 @@ test("SONDER_CI_<ID>_HOST overrides the ssh target of a host", () => {
     const out = f.run([], f.second, { SONDER_CI_HOSTS: "lisa", SONDER_CI_LISA_HOST: "lisa.example" });
     assert.equal(out.status, 0, out.output);
     assert.equal(f.onHost("lisa.example").length, 1);
+    const actual = f.onHost("lisa.example")[0];
+    assert.equal(actual.remoteBase, f.remote); // explicit caller override
+    assert.equal(actual.tmpdir, "/home/jahn/sonder-ci-tmp");
+    assert.equal(actual.maxWait, "3600");
+    const configured = f.run([], f.commits[2], { SONDER_CI_HOSTS: "lisa", SONDER_CI_LISA_HOST: "lisa.example", SONDER_CI_REMOTE_BASE: undefined });
+    assert.equal(configured.status, 0, configured.output);
+    assert.equal(f.onHost("lisa.example")[1].remoteBase, "/home/jahn/sonder-ci-tmp");
   } finally {
     f.cleanup();
   }
@@ -822,21 +849,21 @@ test("admission: load after admission must stay within CPUs x factor", () => {
   assert.equal(hostRoom(wslHost, okProbe, runsOn("wsl", 1, -1000), 0).room, true, "second check: 16 <= 16");
   const third = hostRoom(wslHost, okProbe, runsOn("wsl", 2, -1000), 0);
   assert.equal(third.room, false);
-  assert.match(third.why, /load 24\.0 > 16\.0/);
+  assert.match(third.why, /ceiling 2\/2/);
   // A measured load of 41 (the #314 overload) blocks even an empty ledger.
   assert.match(hostRoom(lisaHost, { ...okProbe, cpus: 20, load1: 41 }, [], 0).why, /load 49\.0 > 20\.0/);
 });
 
 test("admission: MemAvailable must cover one check plus the reserve, less recently started runs", () => {
-  const low = hostRoom(wslHost, { ...okProbe, memAvailGB: 5.9 }, [], 0);
+  const low = hostRoom(wslHost, { ...okProbe, memAvailGB: 9.9 }, [], 0);
   assert.equal(low.room, false);
-  assert.match(low.why, /memory 5\.9GB < 6GB/);
-  assert.equal(hostRoom(wslHost, { ...okProbe, memAvailGB: 6 }, [], 0).room, true);
-  // A run started 10 s ago is not in MemAvailable yet: its 4 GB is held back.
-  const recent = hostRoom(wslHost, { ...okProbe, memAvailGB: 9 }, runsOn("wsl", 1, -10), 0);
-  assert.match(recent.why, /memory 5\.0GB < 6GB/);
+  assert.match(low.why, /memory 9\.9GB < 10GB/);
+  assert.equal(hostRoom(wslHost, { ...okProbe, memAvailGB: 10 }, [], 0).room, true);
+  // A run started 10 s ago is not in MemAvailable yet: its 8 GB is held back.
+  const recent = hostRoom(wslHost, { ...okProbe, memAvailGB: 17 }, runsOn("wsl", 1, -10), 0);
+  assert.match(recent.why, /memory 9\.0GB < 10GB/);
   // The same run 10 minutes later already shows in MemAvailable.
-  assert.equal(hostRoom(wslHost, { ...okProbe, memAvailGB: 9 }, runsOn("wsl", 1, -600), 0).room, true);
+  assert.equal(hostRoom(wslHost, { ...okProbe, memAvailGB: 17 }, runsOn("wsl", 1, -600), 0).room, true);
 });
 
 test("admission: free disk must cover one check plus the reserve", () => {
@@ -936,6 +963,8 @@ test("tracked ci-hosts.json: WSL and lisa primary, the Deck fallback, named admi
   assert.deepEqual(raw.dispatch.order, ["wsl", "lisa"]);
   assert.deepEqual(raw.dispatch.fallback, ["deck"]);
   for (const key of ["factor", "ceiling", "cost", "reserve"]) assert.ok(raw.dispatch[key] !== undefined, key);
+  assert.equal(raw.dispatch.ceiling, 2);
+  assert.ok(raw.dispatch.cost.memGB >= 8);
   assert.deepEqual(Object.keys(raw.dispatch.cost).sort(), ["diskGB", "load", "memGB"]);
   assert.deepEqual(Object.keys(raw.dispatch.reserve).sort(), ["diskGB", "memGB"]);
   assert.equal(cfg.hosts.lisa.ssh, "lisa");
@@ -945,4 +974,92 @@ test("tracked ci-hosts.json: WSL and lisa primary, the Deck fallback, named admi
   assert.equal(cfg.hosts.wsl.ssh, WSL);
   assert.equal(cfg.hosts.deck.ssh, DECK);
   assert.equal(cfg.hosts.deck.runner, "ci-deck.sh");
+});
+
+
+test("unreachable hosts queue local fallback behind a running check", async () => {
+  const f = fixture();
+  try {
+    for (const host of [WSL, LISA, DECK]) f.clearProbe(host);
+    f.setSleep(WSL, 60);
+    const first = f.start([], f.commits[0]);
+    await waitFor(() => f.invocations().length === 1, 30000, "first local fallback");
+    const second = f.start([], f.commits[1]);
+    await waitFor(() => /^queued /m.test(second.stdout()), 30000, "second fallback to queue");
+    assert.equal(f.invocations().length, 1);
+    f.setSleep(WSL, 0);
+    process.kill(-first.child.pid, "SIGKILL");
+    await first.wait();
+    assert.equal((await second.wait()).status, 0);
+    assert.equal(f.invocations().length, 2);
+  } finally { f.cleanup(); }
+});
+
+test("slow probes do not announce a queue while primary capacity remains", async () => {
+  const f = fixture();
+  try {
+    const a = f.start([], f.commits[0], { STUB_PROBE_DELAY: "1.2" });
+    await waitFor(() => f.read(f.logs.ssh).includes("sonder-ci-probe"), 30000, "slow probe");
+    const b = f.start([], f.commits[1], { STUB_PROBE_DELAY: "1.2" });
+    for (const run of [a, b]) {
+      const result = await run.wait();
+      assert.equal(result.status, 0, result.output);
+      assert.doesNotMatch(result.stdout, /^queued /m);
+    }
+    assert.doesNotMatch(f.read(f.logs.ssh), /^deck@steamdeck /m);
+  } finally { f.cleanup(); }
+});
+
+test("release invalidates cached probes and stale ownerless locks recover", () => {
+  const f = fixture();
+  try {
+    fs.mkdirSync(path.join(f.state, "lock"), { recursive: true });
+    const old = new Date(Date.now() - 10000);
+    fs.utimesSync(path.join(f.state, "lock"), old, old);
+    const configFile = path.join(f.repo, "scripts", "ci-hosts.json");
+    const config = JSON.parse(fs.readFileSync(configFile));
+    config.dispatch.probeTtlSeconds = 3600;
+    fs.writeFileSync(configFile, JSON.stringify(config));
+    const out = f.run();
+    assert.equal(out.status, 0, out.output);
+    assert.ok(Object.values(JSON.parse(fs.readFileSync(path.join(f.state, "probes.json")))).every((probe) => probe.stale === true));
+    const probesBefore = f.read(f.logs.ssh).split("sonder-ci-probe").length;
+    assert.equal(f.run([], f.commits[2]).status, 0);
+    assert.ok(f.read(f.logs.ssh).split("sonder-ci-probe").length > probesBefore, "release forces a new probe despite the long TTL");
+  } finally { f.cleanup(); }
+});
+
+test("probe creates a missing remote base before measuring disk", () => {
+  const f = fixture();
+  try {
+    const dir = path.join(f.base, "new base");
+    const host = loadConfig(trackedConfig).hosts.lisa;
+    const result = spawnSync("bash", ["-c", probeCommand(host, { SONDER_CI_REMOTE_BASE: dir })], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(parseProbe(result.stdout).ok, true);
+    assert.ok(fs.existsSync(dir));
+  } finally { f.cleanup(); }
+});
+
+test("environment dispatch is validated and appears in status", async () => {
+  const f = fixture();
+  try {
+    const bad = f.run([], f.second, { SONDER_CI_DISPATCH: "invalid id" });
+    assert.equal(bad.status, 2);
+    assert.equal(f.run(["--status"], null, { SONDER_CI_DISPATCH: "invalid id" }).status, 2);
+    f.setSleep(LISA, 2);
+    const run = f.start([], f.second, { SONDER_CI_HOSTS: "lisa", SONDER_CI_DISPATCH: "ctx_env" });
+    await waitFor(() => f.invocations().length === 1, 30000, "runner");
+    assert.equal(f.invocations()[0].dispatch, "ctx_env");
+    assert.match(f.run(["--status"], null).stdout, /dispatch=ctx_env/);
+    assert.equal((await run.wait()).status, 0);
+  } finally { f.cleanup(); }
+});
+
+test("failed lisa result reports the actual host", () => {
+  const f = fixture();
+  try {
+    writeResult(f.repo, f.second, "lisa", "remote_check_failed");
+    assert.match(f.run().output, /host=lisa result=remote_check_failed/);
+  } finally { f.cleanup(); }
 });
