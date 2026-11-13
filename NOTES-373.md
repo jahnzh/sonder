@@ -1,21 +1,49 @@
-# Issue 373 handover
+# Issue 373 handover (complete)
 
-The defect is in `processAnchored`: the successful `/anchor-batch` path used `continue`, then the next loop iteration hit `if (!pending.length) break`, bypassing `selectAnchors` and segment planning. The same early break also prevents resumed jobs whose samples are already complete from advancing. The fix removes both exits, preserving the existing single-sample fallback and allowing completed samples to reach selection. The outlier rule and scheduler were not changed.
+The defect is in `processAnchored`: the successful `/anchor-batch` path used `continue`, then the next loop iteration hit `if (!pending.length) break`, bypassing `selectAnchors` and segment planning. The same early break also prevents resumed jobs whose samples are already complete from advancing. The fix removes both exits (`f1a83d4`), preserving the existing single-sample fallback and allowing completed samples to reach selection. The outlier rule and scheduler were not changed.
 
-A source-control bisect used a structural oracle for those two control-flow statements between good `18a4778` (2026-11-07 UTC) and deployed `23c0dee`: bad `dad41ce`, bad `ea09f39`, good `ac083b8`, bad `32c6949`, bad `d0f3994`, first bad `78c1b62` (batch sampling). The oracle was structural, not a real-media run at every revision; its log and script are `/tmp/sonder-issue373/bisect.log` and `/tmp/sonder-issue373/bisect-oracle.py`.
+## Bisect
 
-The integration test `historical Earth Awakens batch samples advance to anchored alignment` replays the 103 stored historical 2026-11-07 samples (98 matched) from `tests/earth-awakens-ctc-samples.json`; it compresses the actual fragment indices to a generated EPUB. It failed on main with `selected 0 anchors` (`/tmp/sonder-373-real-fixture-red.log`) and passes with the fix (`/tmp/sonder-373-real-fixture.log`). The existing batch integration test was also strengthened and failed before/passed after. `npx tsx --test tests/alignment-ctc.test.ts` passed 18 tests before the last new test was added, and the new test passed separately. `npm run build` passed before the last test was added (`/tmp/sonder-373-build.log`); the commit hook is running typecheck on the final files. `npm test` started before the last test was added and is still running in `/tmp/sonder-373-tests.log`; repeat it on the final revision. No browser tests or committed check were run.
+Structural oracle between good `18a4778` (2026-11-07 UTC) and deployed `23c0dee`: bad `dad41ce`, bad `ea09f39`, good `ac083b8`, bad `32c6949`, bad `d0f3994`, first bad `78c1b62` (batch sampling).
 
-Production DB was read only. The prior Earth Awakens job `506bb13c-9383-4610-9f50-9b48a788d21b` records historical coverage 0.9850575486302753 with 98 anchors; the issue reports the newer real-media run had coverage 0. A query found 14 finished zero-interval CTC backfills, six with matched samples; those jobs need investigation/rebuild as appropriate, and not all can be assumed to have this cause. Example `139c4ed3-e48c-478f-b1df-2ae39341569c` / `recording-torbox-128622025` has 124 samples and zero stored matches; no production job was rerun.
+## Regression test
 
-## Active isolated reproduction; finish or clean up
+`historical Earth Awakens batch samples advance to anchored alignment` (`tests/earth-awakens-ctc-samples.json`). Fails without the fix (`selected 0 anchors`); passes with it.
 
-WSL host `192.168.1.119`: own directory `/home/jahn/sonder-replication/issue373-wXxRdU`; own FastAPI worker PID `600583`, nice 10, port 31173; token `issue373-test-token`; own downloaded CTC model and media root in that directory, worker log `worker.log`. Production workers/services were not touched. Immediately before starting the worker `nvidia-smi` showed 1669 MiB of 8192 MiB used. The worker is running the baseline Earth Awakens run: its ffmpeg child was decoding the first track. Local SSH tunnel process created with `ssh -o BatchMode=yes -o ConnectTimeout=5 -N -L 127.0.0.2:31173:127.0.0.1:31173 192.168.1.119`. The baseline driver runs as a local child of the shell, with log `/tmp/sonder-issue373/earth-before.log`, result `/tmp/sonder-issue373/earth-before.json`, isolated copied DB `/tmp/sonder-issue373/db-baseline/sonder.db`, isolated media `/tmp/sonder-issue373/media`, and source snapshot `/tmp/sonder-issue373/baseline`; see `/tmp/sonder-issue373/driver.ts` for exact driver code. It uses `127.0.0.2:31173` for the tunnel, and SSH/SCP stages only production audio read-only into the owned WSL directory.
+## Checks on final revision
 
-Exact baseline invocation (from the worktree):
-```
-env DATA_DIR=/tmp/sonder-issue373/db-baseline MEDIA_ROOT=/tmp/sonder-issue373/media REQUIRE_MEDIA_MOUNT=false ALIGNMENT_POOL_ENABLED=1 ALIGNMENT_WORKER_URL=http://127.0.0.1:31999 ALIGNMENT_WORKER_TOKEN=issue373-test-token TEST_REPO=/tmp/sonder-issue373/baseline TEST_EBOOK=libgen-ee7ab30a8874644c0e0c6db444bbc5c3 TEST_RECORDING=recording-local-1a605b4b1b1b52cc0b8a05db7a05c02d3c63139e TEST_RESULT=/tmp/sonder-issue373/earth-before.json nice -n 10 ./node_modules/.bin/tsx /tmp/sonder-issue373/driver.ts > /tmp/sonder-issue373/earth-before.log 2>&1
-```
-When it settles, run the same command with `DATA_DIR=/tmp/sonder-issue373/db-fixed`, `TEST_REPO` set to the absolute worktree path, and `TEST_RESULT=/tmp/sonder-issue373/earth-after.json`; log to `earth-after.log`. Run the baseline example backfill separately with `DATA_DIR=/tmp/sonder-issue373/db-backfill`, `TEST_REPO=/tmp/sonder-issue373/baseline`, `TEST_EBOOK=libgen-152da3294573ddd4ed4c18a5e13dfaf0`, `TEST_RECORDING=recording-torbox-128622025`, and a separate result and log. Run only one real-media job at a time and check GPU headroom before each; these runs may take substantial time. Backfill files are available as local media copies and are staged by the driver.
+- `npx tsx --test tests/alignment-ctc.test.ts`: 19 pass
+- `npm run build`: pass
+- `npm test`: 1671 pass, 0 fail
+- No browser tests or `npm run check` (coordinator)
 
-After experiments, terminate only the owned WSL worker PID and its owned children, stop the SSH tunnel, delete `/home/jahn/sonder-replication/issue373-wXxRdU`, and remove `/tmp/sonder-issue373` (contains a private production DB copy and media metadata). Never touch WSL production workers or the forbidden `issue6-1793194927` directory. Record actual before/after coverage and any unavailable verification; do not claim the historical 0.985 result is a new run.
+## Real-media Earth Awakens (done)
+
+Isolated WSL worker (port 31173, dir `issue373-wXxRdU`) — production workers untouched.
+
+| | before (buggy main snapshot) | after (fix `f1a83d4`) |
+| --- | --- | --- |
+| matched / samples | 98 / 103 | 98 / 103 |
+| anchors | 0 | 98 |
+| intervals | 0 | 14229 |
+| coverage | 0 | 0.9577303627919499 |
+| outcome | unsynced | partial |
+
+Historical production job `506bb13c-9383-4610-9f50-9b48a788d21b` still shows coverage 0.985 (not claimed as a new run).
+
+## Backfills needing rebuild (not re-run)
+
+Six zero-interval CTC backfills with matched samples:
+
+- `546d8eee-7320-4a05-a125-c6db5f1f960c` (`recording-local-3b4cbf70…`, 184 matched)
+- `17a39c0b-8adc-4116-81ae-82aaad24ab3c` (`recording-torbox-129969003`, 58)
+- `0d3aff3f-b3bc-4fc5-9797-a3854f5e0c67` (`recording-local-134ce691…`, 859)
+- `a71d3970-28d2-4410-a3e7-ca00acda53c5` (`recording-local-0db50534…`, 801)
+- `70e1d020-9681-482d-8b02-d3821450d034` (`recording-torbox-141788941`, 228)
+- `3dd1b336-8e62-4ad6-94ff-6897a0ed10ff` (`recording-local-7945edec…`, 689)
+
+`139c4ed3…` / `recording-torbox-128622025` has zero stored matches — different failure mode; not assumed this bug. Full report: `docs/handoff/issue-373-report.md`.
+
+## Cleanup status
+
+Terminate owned WSL worker, SSH tunnel, delete `~/sonder-replication/issue373-wXxRdU` and `/tmp/sonder-issue373` after verification (see completion commit).
