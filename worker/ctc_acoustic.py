@@ -13,6 +13,9 @@ CONTEXT = 5 * SAMPLE_RATE
 CHECKPOINT = "wav2vec2_fairseq_base_ls960_asr_ls960.pth"
 CHECKPOINT_SHA256 = "488fd4f16de84438ffc945334278c1b9fb9b7159a806c1080b16111a958c945d"
 ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-v1"
+# Starting defaults (#276); ALIGNMENT_CTC_ENCODE_BATCH overrides the microbatch.
+RESIDENT_MODELS_PER_DEVICE = 1
+ACOUSTIC_MICROBATCH = 4
 
 
 def checkpoint_path(folder):
@@ -50,6 +53,43 @@ def frame_boundary(context_start, frame):
     return context_start + frame * STRIDE + (RECEPTIVE_FIELD - STRIDE) // 2
 
 
+def is_out_of_memory(error):
+    """CUDA (torch.cuda.OutOfMemoryError) and CPU allocator failures, without importing torch."""
+    if isinstance(error, MemoryError) or type(error).__name__ == "OutOfMemoryError":
+        return True
+    message = str(error).lower()
+    return isinstance(error, RuntimeError) and ("out of memory" in message or "can't allocate memory" in message)
+
+
+class Microbatch:
+    """Acoustic microbatch for one request. An out-of-memory error halves it and retries the same cores."""
+    def __init__(self, size, configured=None):
+        self.configured = size if configured is None else configured
+        self.size = size
+        self.halvings = 0
+
+    def encode(self, model, items):
+        results = []
+        offset = 0
+        while offset < len(items):
+            group = items[offset:offset + self.size]
+            try:
+                results.extend(model.encode_chunks(group))
+            except Exception as error:
+                if not is_out_of_memory(error) or self.size == 1:
+                    raise
+                model.release_memory()
+                self.size = max(1, self.size // 2)
+                self.halvings += 1
+                continue
+            offset += len(group)
+        return results
+
+    def report(self):
+        return {"acousticMicrobatch": self.configured, "acousticMicrobatchUsed": self.size,
+                "oomHalvings": self.halvings}
+
+
 class AcousticModel:
     def __init__(self, folder):
         import torch
@@ -70,6 +110,11 @@ class AcousticModel:
         self.dtype = torch.float16 if self.device.type == "cuda" else torch.float32
         self.model = model.eval().to(device=self.device, dtype=self.dtype)
         self.labels = bundle.get_labels()
+
+    def release_memory(self):
+        """Return cached CUDA blocks after an out-of-memory error, so the smaller retry can allocate."""
+        if self.device.type == "cuda":
+            self.torch.cuda.empty_cache()
 
     def encode_chunk(self, audio, core_start, core_end, context_start):
         """Encode one core using the supplied context on the track sample grid."""

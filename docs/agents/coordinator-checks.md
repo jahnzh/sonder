@@ -4,7 +4,7 @@ How a coordinator watches CI, stays reachable when unattended, and closes issues
 
 ## Watch a running check yourself
 
-A completion watcher (`kill -0 $PID` loop, `npm run ci:ssh` exit) never fires for a hung check, so a hang looks like "still running". Look at every live check, not at its notification.
+A completion watcher (`kill -0 $PID` loop, `npm run ci:run` / runner exit) never fires for a hung check, so a hang looks like "still running". Look at every live check, not at its notification. Start checks with `npm run ci:run <sha>` (or `npm run ci:run -- --status` to list the queue and each host's last probe); do not start `ci:ssh` / `ci:deck` directly.
 
 1. Note the start time and the expected totals. Sharded browser stage: complete check about 10 minutes on WSL and 12 on lisa; install 10 s, build 10 to 40 s, unit 90 to 150 s, browser about 5 minutes. A serial browser stage (`SONDER_BROWSER_SHARDS=1`, filtered runs, hosts under 8 CPUs) takes 12 to 25 minutes.
 2. At every heartbeat read, for each check: `ps -o etimes= -p <pid>` (age), `cut -d' ' -f1 /proc/loadavg` on the host over ssh, and `tail check.log` in the run directory (`/tmp/sonder-ci-*` on WSL, `~/sonder-ci-tmp/sonder-ci-*` on lisa).

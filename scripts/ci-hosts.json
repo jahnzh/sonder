@@ -1,4 +1,14 @@
 {
+  "dispatch": {
+    "order": ["wsl", "lisa"],
+    "fallback": ["deck"],
+    "factor": 1.0,
+    "ceiling": 2,
+    "cost": { "load": 8, "memGB": 8, "diskGB": 3 },
+    "reserve": { "memGB": 2, "diskGB": 10 },
+    "recentSeconds": 240,
+    "probeTtlSeconds": 10
+  },
   "lisa": {
     "host": "lisa",
     "remoteBase": "/home/jahn/sonder-ci-tmp",
@@ -19,5 +29,13 @@
     "tmpdir": "",
     "maxWait": 1800,
     "maxParallel": 1
+  },
+  "deck": {
+    "host": "deck@steamdeck",
+    "runner": "ci-deck.sh",
+    "remoteBase": "",
+    "tmpdir": "",
+    "factor": 1.5,
+    "ceiling": 1
   }
 }

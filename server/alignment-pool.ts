@@ -326,6 +326,14 @@ export class AlignmentPoolCoordinator {
     return true;
   }
 
+  /** Drops every lease a job holds: host slots, its recording and the local worker. */
+  releaseJob(jobId: string) {
+    for (const slot of this.slots.values()) slot.delete(jobId);
+    for (const [recordingId, lease] of this.recordings)
+      if (lease.jobId === jobId) this.recordings.delete(recordingId);
+    this.localJobs.delete(jobId);
+  }
+
   release(hostId: PoolHostId, jobId: string, recordingId: string) {
     this.slots.get(hostId)?.delete(jobId);
     const lease = this.recordings.get(recordingId);

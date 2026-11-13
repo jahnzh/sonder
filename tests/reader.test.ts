@@ -744,6 +744,8 @@ test("r5: pausing or cancelling during the last narration sample is not replaced
     };
     const job = await createAlignment(id, "recording-single", undefined, "anchored");
     await held;
+    const beforeLast = sampling();
+    const doneBefore = beforeLast.anchoring.samples.filter((sample: { done?: boolean }) => sample.done).length;
     await local.inject({
       method: "PATCH",
       url: `/api/alignments/${job.id}`,
@@ -754,12 +756,21 @@ test("r5: pausing or cancelling during the last narration sample is not replaced
     for (let i = 0; i < 100; i++) {
       await new Promise((resolve) => setTimeout(resolve, 10));
       map = (await local.inject(`/api/alignments?ebookId=${id}`)).json().jobs.find((value: any) => value.id === job.id);
-      if (map.anchoring.samples.every((sample: any) => sample.done)) break;
+      if (action === "pause" && map.anchoring.samples.every((sample: any) => sample.done)) break;
+      if (action === "cancel" && map.status === "cancelled") break;
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
     map = (await local.inject(`/api/alignments?ebookId=${id}`)).json().jobs.find((value: any) => value.id === job.id);
-    assert.ok(map.anchoring.samples.every((sample: any) => sample.done));
+    // Pause keeps work finished after the pause; cancel must not publish the late sample (#276 HIGH-1).
+    if (action === "pause") assert.ok(map.anchoring.samples.every((sample: any) => sample.done));
+    else
+      assert.equal(
+        map.anchoring.samples.filter((sample: any) => sample.done).length,
+        doneBefore,
+        "a cancelled job must not publish the in-flight last sample",
+      );
     assert.equal(map.status, action === "pause" ? "paused" : "cancelled", map.error);
+    assert.equal(map.error, null);
   }
   globalThis.fetch = original;
 });

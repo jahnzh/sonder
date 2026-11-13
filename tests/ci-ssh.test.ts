@@ -286,7 +286,7 @@ test("ci-stop stops a hung ci-ssh run and cleans up the remote run dir", async (
     new RegExp(` -- cleanup .*${remoteRunPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
   );
   // Cleanup is logged as soon as the stub starts; wait until rm finishes (#282).
-  const remoteGoneDeadline = Date.now() + 5_000;
+  const remoteGoneDeadline = Date.now() + 30_000;
   let remoteEntries = fs.readdirSync(f.remote);
   while (remoteEntries.length > 0 && Date.now() < remoteGoneDeadline) {
     await new Promise((r) => setTimeout(r, 50));

@@ -7,6 +7,15 @@ export const workerMetadata = z.object({
   stageTimings: z.record(z.string(), z.number().nonnegative().finite()).optional(),
   /** Mean GPU utilization percent for the request; null on CPU-only hosts. */
   gpuUtilization: z.number().min(0).max(100).finite().nullable().optional(),
+  /** Microbatch, OOM halvings and worker pools the request ran with (#276); older workers omit it. */
+  runConfig: z.object({
+    acousticMicrobatch: z.number().int().positive().optional(),
+    acousticMicrobatchUsed: z.number().int().positive().optional(),
+    oomHalvings: z.number().int().nonnegative().optional(),
+    decodeWorkers: z.number().int().nonnegative().optional(),
+    extractWorkers: z.number().int().nonnegative().optional(),
+    residentModelsPerDevice: z.number().int().positive().optional(),
+  }).optional(),
 });
 export type WorkerMetadata = z.infer<typeof workerMetadata>;
 export const anchorResult = z.object({
