@@ -1624,13 +1624,10 @@ const scheduler: AlignmentScheduler = new AlignmentScheduler({
   run: (candidate) => runAlignmentJob(alignmentJob(candidate.id)),
   // Paused: start no new job. Jobs already running finish; the next one waits.
   held: () => stopping || !process.env.ALIGNMENT_WORKER_TOKEN || isPaused("alignment"),
-  stillActive: (id) => {
-    try {
-      return activeStatuses.includes(alignmentJob(id).status);
-    } catch {
-      return false;
-    }
-  },
+  // A removed job is no longer active.
+  stillActive: (id) =>
+    !!sqlite.prepare("SELECT 1 FROM alignment_jobs WHERE id=?").get(id) &&
+    activeStatuses.includes(alignmentJob(id).status),
 });
 /** Scheduler settings recorded on each job it runs (#276). */
 export const alignmentSchedulerConfig = () => ({

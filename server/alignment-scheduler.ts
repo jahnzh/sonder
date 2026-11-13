@@ -148,8 +148,9 @@ export class AlignmentScheduler {
           "UPDATE alignment_jobs SET claim_owner=NULL, claim_generation=NULL, claimed_at=NULL WHERE id=? AND claim_owner=? AND COALESCE(claim_generation,'')=?",
         )
         .run(fence.jobId, fence.owner, fence.generation);
-    } catch {
+    } catch (error) {
       // The database may already be closed during shutdown; the claim then goes stale.
+      console.warn(`alignment scheduler: could not release the claim on ${fence.jobId}: ${(error as Error).message}`);
     }
   }
 
@@ -159,16 +160,18 @@ export class AlignmentScheduler {
       sqlite
         .prepare("UPDATE alignment_jobs SET claim_owner=NULL, claim_generation=NULL, claimed_at=NULL WHERE claim_owner=?")
         .run(this.owner);
-    } catch {
+    } catch (error) {
       // See release().
+      console.warn(`alignment scheduler: could not release this instance's claims: ${(error as Error).message}`);
     }
   }
 
   private renew() {
     try {
       sqlite.prepare("UPDATE alignment_jobs SET claimed_at=? WHERE claim_owner=?").run(this.now(), this.owner);
-    } catch {
-      // See release().
+    } catch (error) {
+      // See release(); a missed renewal lets another instance take the claim after it goes stale.
+      console.warn(`alignment scheduler: could not renew this instance's claims: ${(error as Error).message}`);
     }
   }
 
