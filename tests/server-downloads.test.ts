@@ -8,6 +8,7 @@ process.env.DATA_DIR = join(temp, "db");
 process.env.MEDIA_ROOT = join(temp, "media");
 process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
+process.env.SONDER_DOWNLOAD_RETRY_MS = "1,1,1";
 const { db, sqlite } = await import("../server/db.ts");
 const s = await import("../server/schema.ts");
 const { eq } = await import("drizzle-orm");
@@ -135,4 +136,35 @@ test("r2#3: jobs paused or removed while an earlier job in the batch runs are no
   assert.equal(job("removed"), undefined);
   assert.equal(copy("removed"), undefined);
   assert.deepEqual(requested, ["https://audio.example.test/first.wav"]);
+});
+
+test("a file the source refuses once is retried and saved without a manual retry", async () => {
+  book("flaky");
+  const wav = wave();
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    if (calls === 1) return new Response("Bad Request", { status: 400 });
+    return new Response(wav, {
+      headers: { "Content-Type": "audio/wav", "Content-Length": String(wav.length) },
+    });
+  };
+  await processServerDownloads();
+  assert.equal(calls, 2);
+  assert.equal(job("flaky")?.status, "ready");
+  assert.ok(copy("flaky"));
+});
+
+test("a file the source keeps refusing fails after the last attempt", async () => {
+  book("broken");
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return new Response("Bad Request", { status: 400 });
+  };
+  await processServerDownloads();
+  assert.equal(calls, 4);
+  assert.equal(job("broken")?.status, "error");
+  assert.match(job("broken")?.error || "", /could not be downloaded/);
+  assert.equal(copy("broken"), undefined);
 });

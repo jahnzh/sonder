@@ -22,6 +22,10 @@ import { listUserIds } from "./users.ts";
 import { audioFileExtension, audioFileMime, isCompleteMediaResponse } from "./media-response.ts";
 const controllers = new Map<string, AbortController>();
 let running = false;
+// Waits before the 2nd, 3rd and 4th attempt at one file.
+const retryDelays = (process.env.SONDER_DOWNLOAD_RETRY_MS || "2000,5000,15000")
+  .split(",")
+  .map(Number);
 function jobIsActive(recordingId: string) {
   const job = db
     .select({ status: s.serverDownloads.status })
@@ -152,104 +156,122 @@ export async function processServerDownloads() {
               .run();
             continue;
           }
-          ensureMediaStorage();
-          let url = t.source;
-          if (t.sourceType === "torbox") {
-            const source = JSON.parse(t.source);
-            url = await torboxUrl(source.torrentId, source.fileId);
-          }
           if (t.sourceType === "local")
             throw new Error(
               "An original audio file is missing from the media drive.",
             );
-          const response = await fetch(url, {
-            headers: { "Accept-Encoding": "identity" },
-            signal: AbortSignal.any([
-              ctrl.signal,
-              AbortSignal.timeout(24 * 3600000),
-            ]),
-          });
-          if (!isCompleteMediaResponse(response) || !response.body)
-            throw new Error(
-              "The full audio file could not be downloaded. Retry to continue from completed chapters.",
-            );
-          const expected =
-            Number(response.headers.get("content-length")) ||
-            Number(
-              /\/(\d+)$/.exec(response.headers.get("content-range") || "")?.[1],
-            ) ||
-            0;
-          const pathPrefix = join(
-            mediaRoot,
-            "saved",
-            createHash("sha256").update(t.id).digest("hex"),
-          );
-          const temp = pathPrefix + ".part";
-          if (existsSync(temp)) unlinkSync(temp);
-          const writer = createWriteStream(temp, { flags: "wx", mode: 0o640 });
-          let size = 0;
-          let updated = 0;
-          try {
-            const counter = new Transform({
-              transform(chunk: Buffer, _encoding, callback) {
-                size += chunk.byteLength;
-                if (Date.now() - updated > 1000) {
-                  db.update(s.serverDownloads)
-                    .set({
-                      progress:
-                        (i +
-                          (expected ? Math.min(0.999, size / expected) : 0)) /
-                        tracks.length,
-                      updatedAt: Date.now(),
-                    })
-                    .where(eq(s.serverDownloads.recordingId, job.recordingId))
-                    .run();
-                  updated = Date.now();
-                }
-                callback(null, chunk);
-              },
-            });
-            await pipeline(
-              Readable.fromWeb(
-                response.body as import("node:stream/web").ReadableStream,
-              ),
-              counter,
-              writer,
-              { signal: ctrl.signal },
-            );
-            ctrl.signal.throwIfAborted();
-            if (!size || (expected && size !== expected))
-              throw new Error("The audio download was interrupted.");
-            const metadata = await parseFile(temp, audioParseOptions);
-            ctrl.signal.throwIfAborted();
-            if (!metadata.format.codec)
-              throw new Error("The source did not return a valid audio file.");
-            const mime = audioFileMime(temp) || response.headers.get("content-type") || "application/octet-stream";
-            const path = pathPrefix + audioFileExtension(mime);
-            if (!jobIsActive(job.recordingId)) ctrl.abort();
-            ctrl.signal.throwIfAborted();
-            renameSync(temp, path);
-            db.update(s.tracks)
-              .set({
-                duration: metadata.format.duration || t.duration,
-                chapters: normalizeChapters(
-                  metadata.format.chapters,
-                  metadata.format.duration || 0,
-                ),
-              })
-              .where(eq(s.tracks.id, t.id))
-              .run();
-            db.insert(s.mediaCopies)
-              .values({ trackId: t.id, path, size, mime })
-              .onConflictDoUpdate({
-                target: s.mediaCopies.trackId,
-                set: { path, size, mime },
-              })
-              .run();
-          } catch (error) {
-            writer.destroy();
-            if (existsSync(temp)) unlinkSync(temp);
-            throw error;
+          // TorBox's CDN occasionally answers one request with an error or
+          // cuts it short; retry the file with a fresh link before giving up.
+          for (let attempt = 0; ; attempt++) {
+            try {
+              ensureMediaStorage();
+              let url = t.source;
+              if (t.sourceType === "torbox") {
+                const source = JSON.parse(t.source);
+                url = await torboxUrl(source.torrentId, source.fileId, attempt > 0);
+              }
+              const response = await fetch(url, {
+                headers: { "Accept-Encoding": "identity" },
+                signal: AbortSignal.any([
+                  ctrl.signal,
+                  AbortSignal.timeout(24 * 3600000),
+                ]),
+              });
+              if (!isCompleteMediaResponse(response) || !response.body) {
+                await response.body?.cancel().catch(() => {});
+                throw new Error(
+                  "The full audio file could not be downloaded. Retry to continue from completed chapters.",
+                );
+              }
+              const expected =
+                Number(response.headers.get("content-length")) ||
+                Number(
+                  /\/(\d+)$/.exec(response.headers.get("content-range") || "")?.[1],
+                ) ||
+                0;
+              const pathPrefix = join(
+                mediaRoot,
+                "saved",
+                createHash("sha256").update(t.id).digest("hex"),
+              );
+              const temp = pathPrefix + ".part";
+              if (existsSync(temp)) unlinkSync(temp);
+              const writer = createWriteStream(temp, { flags: "wx", mode: 0o640 });
+              let size = 0;
+              let updated = 0;
+              try {
+                const counter = new Transform({
+                  transform(chunk: Buffer, _encoding, callback) {
+                    size += chunk.byteLength;
+                    if (Date.now() - updated > 1000) {
+                      db.update(s.serverDownloads)
+                        .set({
+                          progress:
+                            (i +
+                              (expected ? Math.min(0.999, size / expected) : 0)) /
+                            tracks.length,
+                          updatedAt: Date.now(),
+                        })
+                        .where(eq(s.serverDownloads.recordingId, job.recordingId))
+                        .run();
+                      updated = Date.now();
+                    }
+                    callback(null, chunk);
+                  },
+                });
+                await pipeline(
+                  Readable.fromWeb(
+                    response.body as import("node:stream/web").ReadableStream,
+                  ),
+                  counter,
+                  writer,
+                  { signal: ctrl.signal },
+                );
+                ctrl.signal.throwIfAborted();
+                if (!size || (expected && size !== expected))
+                  throw new Error("The audio download was interrupted.");
+                const metadata = await parseFile(temp, audioParseOptions);
+                ctrl.signal.throwIfAborted();
+                if (!metadata.format.codec)
+                  throw new Error("The source did not return a valid audio file.");
+                const mime = audioFileMime(temp) || response.headers.get("content-type") || "application/octet-stream";
+                const path = pathPrefix + audioFileExtension(mime);
+                if (!jobIsActive(job.recordingId)) ctrl.abort();
+                ctrl.signal.throwIfAborted();
+                renameSync(temp, path);
+                db.update(s.tracks)
+                  .set({
+                    duration: metadata.format.duration || t.duration,
+                    chapters: normalizeChapters(
+                      metadata.format.chapters,
+                      metadata.format.duration || 0,
+                    ),
+                  })
+                  .where(eq(s.tracks.id, t.id))
+                  .run();
+                db.insert(s.mediaCopies)
+                  .values({ trackId: t.id, path, size, mime })
+                  .onConflictDoUpdate({
+                    target: s.mediaCopies.trackId,
+                    set: { path, size, mime },
+                  })
+                  .run();
+              } catch (error) {
+                writer.destroy();
+                if (existsSync(temp)) unlinkSync(temp);
+                throw error;
+              }
+              break;
+            } catch (error) {
+              if (ctrl.signal.aborted || attempt >= retryDelays.length)
+                throw error;
+              await new Promise((resolve) =>
+                setTimeout(resolve, retryDelays[attempt]),
+              );
+              ctrl.signal.throwIfAborted();
+              if (!jobIsActive(job.recordingId)) ctrl.abort();
+              ctrl.signal.throwIfAborted();
+            }
           }
         }
         db.update(s.serverDownloads)
