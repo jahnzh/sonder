@@ -16,7 +16,6 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "worker"))
 import deadline  # noqa: E402
-import pipeline  # noqa: E402
 from deadline import AlignmentFailed, AlignmentTimeout, Gate, WorkerBusy, alignment_limit, anchor_limit  # noqa: E402
 
 FAKE_CHILD = textwrap.dedent("""
@@ -101,66 +100,12 @@ class Limit(unittest.TestCase):
                     self.assertEqual(name in warning.getvalue(), bool(bad.strip()), "an empty value counts as unset and is not reported")
 
 class Deadline(Worker):
-    def test_timeout_kills_the_child_and_its_group_frees_the_gate_and_cleans_up(self):
-        gate = Gate()
-        started = time.monotonic()
-        with self.assertRaises(AlignmentTimeout) as caught:
-            with gate.hold():
-                self.run_align("sleep")
-        self.assertLess(time.monotonic() - started, 10)
-        self.assertEqual(str(caught.exception).split(".")[0], "Local alignment timed out after 1 seconds")
-        child, grandchild = (int(value) for value in self.pidfile.read_text().split())
-        self.assertFalse(alive(child), "the child process is gone")
-        self.assertFalse(alive(grandchild), "the child's own subprocess is gone too")
-        self.assertFalse(gate.busy)
-        self.assertIsNone(gate.busy_seconds())
-        self.assertRegex(gate.last_timeout, r"^\d{4}-\d\d-\d\dT")
-        self.assertEqual(self.leftovers(), [])
-        with gate.hold():  # a request right after is accepted, not "busy"
-            result = self.run_align("ok")
-        self.assertEqual(result["intervals"], [{"index": 0, "start": 1.0, "end": 2.0}])
 
-    def test_the_limit_covers_audio_extraction_too(self):
-        with self.assertRaises(AlignmentTimeout):
-            self.run_align("ok", ffmpeg=self.make_executable("slow-ffmpeg", SLOW_FFMPEG))
-        self.assertEqual(self.leftovers(), [])
 
-    def test_success_writes_the_cache_file_and_removes_working_files(self):
-        result = self.run_align("ok")
-        self.assertEqual(result["peakMemoryMB"], 12.5)
-        self.assertEqual(result["engine"], "aeneas-1.7.3")
-        self.assertEqual(result["outcome"], "partial")
-        self.assertEqual(set(result["stageTimings"]), {"audioExtraction", "alignment"})
-        self.assertTrue(all(value >= 0 for value in result["stageTimings"].values()))
-        self.assertEqual(json.loads((self.folder / "section-1" / "out.json").read_text()), result)
-        self.assertEqual(self.leftovers(), ["section-1/out.json"])
 
-    def test_anchor_reports_engine_outcome_and_timing(self):
-        for match, outcome in [(None, "unsynced"), ({"index": 0, "score": 1}, "mapped")]:
-            with self.subTest(outcome=outcome), mock.patch.object(pipeline, "_run_child", return_value={"match": match}):
-                result = pipeline.locate_passage(audio=self.dir / "a.m4b", folder=self.folder, fragments=["x"], language="eng", start=0, duration=30, env=self.env)
-                self.assertEqual(result["engine"], "aeneas-1.7.3")
-                self.assertEqual(result["outcome"], outcome)
-                self.assertGreaterEqual(result["stageTimings"]["speechRecovery"], 0)
 
-    def test_align_distinguishes_fully_mapped_and_unsynced(self):
-        self.assertEqual(self.run_align("full")["outcome"], "mapped")
-        self.assertEqual(self.run_align("empty")["outcome"], "unsynced")
 
-    def test_a_crashing_child_is_a_failure_not_a_timeout(self):
-        with self.assertRaises(AlignmentFailed):
-            self.run_align("crash")
-        self.assertEqual(self.leftovers(), [])
 
-    def test_locate_passage_has_its_own_deadline(self):
-        # A killed child skips its own cleanup and leaves its sample on the drive.
-        (self.folder / "anchor-sample.wav").write_bytes(b"x")
-        started = time.monotonic()
-        with self.assertRaises(AlignmentTimeout):
-            pipeline.locate_passage(audio=self.dir / "a.m4b", folder=self.folder, fragments=["x"], language="eng", start=0, duration=30, env=self.env,
-                                    child=[sys.executable, str(self.child_script), "sleep", str(self.pidfile)])
-        self.assertLess(time.monotonic() - started, 10)
-        self.assertEqual(self.leftovers(), [], "no anchor sample or working file is left on the media drive")
 
     def test_a_child_that_survives_the_kill_keeps_the_slot_until_it_is_gone(self):
         gate = Gate()
@@ -229,29 +174,29 @@ class Http(unittest.TestCase):
         return caught.exception.status_code, str(caught.exception.detail), log.getvalue()
 
     def test_a_timeout_is_504_on_both_endpoints(self):
-        for call, request, target in [(self.align.align, self.align_request(), "align_section"), (self.align.anchor, self.anchor_request(), "locate_passage")]:
+        for call, request, target in [(self.align.align, self.align_request(), "align_ctc_section"), (self.align.anchor, self.anchor_request(), "align_ctc_section")]:
             with self.subTest(target=target):
                 status, detail, _ = self.status_of(call, request, target, AlignmentTimeout(5))
                 self.assertEqual(status, 504)
                 self.assertIn("timed out", detail)
 
     def test_worker_failure_responses_include_metadata(self):
-        for call, request, target in [(self.align.align, self.align_request(), "align_section"), (self.align.anchor, self.anchor_request(), "locate_passage")]:
+        for call, request, target in [(self.align.align, self.align_request(), "align_ctc_section"), (self.align.anchor, self.anchor_request(), "align_ctc_section")]:
             with self.subTest(target=target), mock.patch.object(self.align, target, side_effect=AlignmentTimeout(5)):
                 with self.assertRaises(self.align.HTTPException) as caught:
                     call(request)
                 detail = caught.exception.detail
-                self.assertEqual(detail["engine"], "aeneas-1.7.3")
+                self.assertEqual(detail["engine"], self.align.CTC_ENGINE)
                 self.assertEqual(detail["outcome"], "error")
                 self.assertGreaterEqual(detail["stageTimings"]["failedRequest"], 0)
 
     def test_a_busy_worker_is_409_and_other_failures_are_422_with_a_log_line(self):
         with self.align.gate.hold():
-            status, _, _ = self.status_of(self.align.align, self.align_request(), "align_section", AlignmentTimeout(5))
+            status, _, _ = self.status_of(self.align.align, self.align_request(), "align_ctc_section", AlignmentTimeout(5))
         self.assertEqual(status, 409)
-        status, _, log = self.status_of(self.align.align, self.align_request(), "align_section", AlignmentFailed("espeak data missing"))
+        status, _, log = self.status_of(self.align.align, self.align_request(), "align_ctc_section", AlignmentFailed("decoder failed"))
         self.assertEqual(status, 422)
-        self.assertIn("espeak data missing", log, "the worker log says why, the response does not")
+        self.assertIn("decoder failed", log, "the worker log says why, the response does not")
 
     def test_health_reports_a_stuck_job(self):
         self.assertEqual(set(self.align.health()) >= {"busy", "stuck", "busySeconds", "lastTimeout"}, True)
@@ -261,16 +206,13 @@ class Http(unittest.TestCase):
         for call, request in [(self.align.align, self.align_request()), (self.align.anchor, self.anchor_request())]:
             request.language = "jpn"
             result = call(request)
-            self.assertEqual(result["engine"], "aeneas-1.7.3")
+            self.assertEqual(result["engine"], self.align.CTC_ENGINE)
             self.assertEqual(result["outcome"], "language_not_supported")
             self.assertGreaterEqual(result["stageTimings"]["requestValidation"], 0)
 
-    def test_ctc_is_explicit_and_legacy_requests_keep_aeneas(self):
+    def test_ctc_is_the_default(self):
         request = self.align_request()
-        self.assertEqual(request.engine, "aeneas")
-        with mock.patch.object(self.align, "align_section", return_value={"engine": "aeneas-1.7.3"}) as legacy:
-            self.assertEqual(self.align.align(request)["engine"], "aeneas-1.7.3")
-            legacy.assert_called_once()
+        self.assertEqual(request.engine, "ctc")
         request.engine = "ctc"
         request.recordingId = "recording"
         request.audioFingerprint = "audio-version"
@@ -301,13 +243,11 @@ class Http(unittest.TestCase):
         request.audioFingerprint = "audio-version"
         request.trackId = "track"
         fake = {"engine": self.align.CTC_ENGINE, "outcome": "mapped", "match": {"index": 0}}
-        with mock.patch.object(self.align, "align_ctc_section", return_value=fake) as ctc, \
-                mock.patch.object(self.align, "locate_passage") as whisper:
+        with mock.patch.object(self.align, "align_ctc_section", return_value=fake) as ctc:
             self.assertEqual(self.align.anchor(request), fake)
             self.assertTrue(ctc.call_args.kwargs["locate"])
             self.assertEqual({key: ctc.call_args.kwargs[key] for key in ("recording_id", "recording_fingerprint", "track_id")},
                              {"recording_id": "recording", "recording_fingerprint": "audio-version", "track_id": "track"})
-            whisper.assert_not_called()
             request.language = "fra"
             result = self.align.anchor(request)
             self.assertEqual(result["outcome"], "language_not_supported")

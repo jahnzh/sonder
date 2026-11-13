@@ -424,9 +424,9 @@ async function plannedJob(input: {
     recordingId,
     status: copying ? "copying" : "queued",
     progress: 0,
-    // Chapter and anchored jobs use CTC unless ALIGNMENT_CHAPTER_ENGINE=aeneas.
+    // New chapter and anchored jobs use CTC.
     engine: currentAlignmentEngine(),
-    ...(process.env.ALIGNMENT_CHAPTER_ENGINE !== "aeneas" ? { ctcValidationVersion: 1 as const } : {}),
+    ctcValidationVersion: 1 as const,
     error: null,
     warning: null,
     intervals: [],
@@ -445,7 +445,7 @@ async function plannedJob(input: {
           anchoring: {
             stage: "sampling" as const,
             refinements: 0,
-            samples: planSamples(tracks, undefined, undefined, process.env.ALIGNMENT_CHAPTER_ENGINE !== "aeneas"),
+            samples: planSamples(tracks, undefined, undefined, true),
             anchors: [],
             segments: [],
             rate: 0,

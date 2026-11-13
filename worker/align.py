@@ -1,6 +1,5 @@
 """Local known-text alignment. This service never downloads or uploads audio."""
 import os
-import importlib.util
 import secrets
 import sys
 import time
@@ -10,13 +9,11 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from deadline import AlignmentTimeout, Gate, WorkerBusy
-from pipeline import ENGINE, align_section, locate_passage
 from ctc_acoustic import ENGINE as CTC_ENGINE, checkpoint_path
 from ctc_pipeline import align_ctc_batch_locate, align_ctc_section, shutdown_locate_pool
 from ctc_decode import evict_decoded
 from ctc_gpu import GpuMonitor
 import ctc_prefetch
-from align_task import LANGUAGES
 
 root = Path(os.environ.get("MEDIA_ROOT", "/mnt/usb_4t_1/sonder")).resolve()
 
@@ -53,7 +50,7 @@ class AlignRequest(BaseModel):
     language: str = "eng"
     start: float = Field(default=0, ge=0)
     duration: float = Field(gt=0, le=7200)
-    engine: Literal["aeneas", "ctc"] = "aeneas"
+    engine: Literal["ctc"] = "ctc"
     # Upcoming sections of this job: their audio is extracted in parallel while this one runs (CTC only).
     prefetch: list[PrefetchWindow] = Field(default_factory=list, max_length=16)
     recordingId: str | None = Field(default=None, max_length=512)
@@ -88,7 +85,7 @@ def anchor(request: AnchorRequest):
     if not token or not secrets.compare_digest(request.token, token):
         raise HTTPException(401, "Worker authentication required.")
     started = time.monotonic()
-    engine = CTC_ENGINE if request.engine == "ctc" else ENGINE
+    engine = CTC_ENGINE
     try:
         with gate.hold():
             with GpuMonitor() as gpu:
@@ -97,20 +94,16 @@ def anchor(request: AnchorRequest):
                 if expected and (not marker.is_file() or marker.read_text().strip() != expected):
                     raise HTTPException(503, "The media drive is unavailable.")
                 audio = checked_path(request.audio, True)
-                if request.language not in ({"eng"} if request.engine == "ctc" else LANGUAGES):
+                if request.language != "eng":
                     return {"engine": engine, "outcome": "language_not_supported", "stageTimings": {"requestValidation": time.monotonic() - started}, "match": None, "gpuUtilization": None}
-                if request.engine == "ctc":
-                    output = checked_path(request.output)
-                    if not output.is_relative_to(root / "alignment"):
-                        raise HTTPException(400, "Alignment output must be in its cache directory.")
-                    result = align_ctc_section(audio=audio, output=output, fragments=request.fragments,
-                                             language=request.language, start=request.start, duration=request.duration,
-                                             media_folder=root / "alignment", recording_id=request.recordingId,
-                                             recording_fingerprint=request.audioFingerprint, track_id=request.trackId, locate=True,
-                                             microbatch=request.microbatch)
-                else:
-                    result = locate_passage(audio=audio, folder=root / "alignment", fragments=request.fragments,
-                                          language=request.language, start=request.start, duration=request.duration)
+                output = checked_path(request.output)
+                if not output.is_relative_to(root / "alignment"):
+                    raise HTTPException(400, "Alignment output must be in its cache directory.")
+                result = align_ctc_section(audio=audio, output=output, fragments=request.fragments,
+                                           language=request.language, start=request.start, duration=request.duration,
+                                           media_folder=root / "alignment", recording_id=request.recordingId,
+                                           recording_fingerprint=request.audioFingerprint, track_id=request.trackId, locate=True,
+                                           microbatch=request.microbatch)
                 result["gpuUtilization"] = gpu.mean()
                 return result
     except WorkerBusy:
@@ -163,7 +156,7 @@ def anchor_batch(request: AnchorBatchRequest):
         print(f"[anchor-batch] failed: {error!r}", file=sys.stderr, flush=True)
         raise HTTPException(422, error_detail("Local speech recovery is unavailable. Check that the required model is installed on the media drive.", started, engine))
 
-def error_detail(message, started, engine=ENGINE):
+def error_detail(message, started, engine=CTC_ENGINE):
     return {"message": message, "engine": engine, "outcome": "error",
             "stageTimings": {"failedRequest": time.monotonic() - started}}
 
@@ -193,13 +186,11 @@ def health():
                        (selected.index is None or selected.index < torch.cuda.device_count()))))
     except (ImportError, OSError, RuntimeError, ValueError):
         pass
-    anchor_ready = (importlib.util.find_spec("faster_whisper") is not None and
-                    (root / "alignment" / "models" / "whisper").is_dir())
-    return {"ready": True, "engine": ENGINE, "busy": gate.busy, "stuck": gate.stuck,
+    return {"ready": True, "engine": CTC_ENGINE, "busy": gate.busy, "stuck": gate.stuck,
             "busySeconds": gate.busy_seconds(), "lastTimeout": gate.last_timeout,
             "mediaRoot": str(root), "ctc": {"engine": CTC_ENGINE, "ready": ctc_ready,
             "device": device, "precision": "float16" if device == "cuda" else "float32",
-            "anchorReady": anchor_ready, "passageReady": True, "anchorBatch": True}}
+            "anchorReady": ctc_ready, "passageReady": True, "anchorBatch": True}}
 
 @app.post("/align")
 def align(request: AlignRequest):
@@ -207,7 +198,7 @@ def align(request: AlignRequest):
     if not token or not secrets.compare_digest(request.token, token):
         raise HTTPException(401, "Worker authentication required.")
     started = time.monotonic()
-    engine = CTC_ENGINE if request.engine == "ctc" else ENGINE
+    engine = CTC_ENGINE
     try:
         with gate.hold():
             with GpuMonitor() as gpu:
@@ -219,20 +210,18 @@ def align(request: AlignRequest):
                 output = checked_path(request.output)
                 if not output.is_relative_to(root / "alignment"):
                     raise HTTPException(400, "Alignment output must be in its cache directory.")
-                if request.language not in ({"eng"} if request.engine == "ctc" else LANGUAGES):
+                if request.language != "eng":
                     elapsed = time.monotonic() - started
                     return {"engine": engine, "outcome": "language_not_supported", "stageTimings": {"requestValidation": elapsed}, "elapsedSeconds": elapsed, "intervals": [], "gpuUtilization": None}
-                if request.engine == "ctc":
-                    for window in request.prefetch:
-                        try:
-                            ctc_prefetch.prefetch(checked_path(window.audio, True), window.start, window.duration, root / "alignment")
-                        except HTTPException:
-                            pass
-                operation = align_ctc_section if request.engine == "ctc" else align_section
-                identity = ({"recording_id": request.recordingId, "recording_fingerprint": request.audioFingerprint,
-                             "track_id": request.trackId, "microbatch": request.microbatch} if request.engine == "ctc" else {})
-                result = operation(audio=audio, output=output, fragments=request.fragments, language=request.language,
-                                 start=request.start, duration=request.duration, media_folder=root / "alignment", **identity)
+                for window in request.prefetch:
+                    try:
+                        ctc_prefetch.prefetch(checked_path(window.audio, True), window.start, window.duration, root / "alignment")
+                    except HTTPException:
+                        pass
+                result = align_ctc_section(audio=audio, output=output, fragments=request.fragments, language=request.language,
+                                           start=request.start, duration=request.duration, media_folder=root / "alignment",
+                                           recording_id=request.recordingId, recording_fingerprint=request.audioFingerprint,
+                                           track_id=request.trackId, microbatch=request.microbatch)
                 result["gpuUtilization"] = gpu.mean()
                 return result
     except WorkerBusy:

@@ -28,8 +28,6 @@ const { getAlignmentPoolCoordinator, resetAlignmentPoolCoordinator, setAlignment
   await import("../server/alignment-pool.ts");
 const { groupFragments, sampleFromCtcAnchor } = await import("../server/ebook-set-ctc-probe.ts");
 const {
-  DEFAULT_EBOOK_SET_PROBER,
-  ebookSetProber,
   evaluateEbookSetMember,
   fetchTopKIntoEbookSet,
   listEbookSetMembers,
@@ -174,13 +172,6 @@ function ctcWorker(behaviours: Record<string, Behaviour>): Handler {
     return Response.json({ ...base, match, matches: [match], start: body.start + 1 });
   };
 }
-
-test("CTC is the default prober and Whisper stays selectable by setting", () => {
-  assert.equal(DEFAULT_EBOOK_SET_PROBER, "ctc");
-  assert.equal(ebookSetProber({}), "ctc");
-  assert.equal(ebookSetProber({ EBOOK_SET_PROBER: "whisper" }), "whisper");
-  assert.equal(ebookSetProber({ EBOOK_SET_PROBER: "other" }), "ctc");
-});
 
 test("candidates are accepted and rejected by the unchanged outlier rule using CTC sample scores", async () => {
   const { workId, recordingId, trackId } = seedWork();
@@ -487,64 +478,10 @@ test("consensus sync still runs once when reevaluate throws mid-batch (MEDIUM-2)
   );
 });
 
-test("whisper batch defers consensus sync until after the probe session (MEDIUM-2)", async () => {
-  process.env.EBOOK_SET_PROBER = "whisper";
-  const { workId } = seedWork(true, 300);
-  const ids = [await seedEpub(workId, "Right"), await seedEpub(workId, "Other")];
-  for (const ebookId of ids) {
-    db.insert(schema.workEbookSetMembers)
-      .values({
-        workId,
-        ebookId,
-        status: "held",
-        holdReason: "awaiting_audio",
-        evidence: JSON.stringify({
-          outlier: {
-            passed: false,
-            reason: "no_spoken_samples",
-            spokenSampleCount: 0,
-            matchedSampleCount: 0,
-            anchorCount: 0,
-            forwardOrder: true,
-            samples: [],
-          },
-        }),
-        updatedAt: Date.now(),
-      })
-      .run();
-  }
-  const consensusId = `${CONSENSUS_EBOOK_PREFIX}${workId}`;
-  let syncDuringProbe = false;
-  let anchorCalls = 0;
-  const original = globalThis.fetch;
-  globalThis.fetch = async (input, init) => {
-    const url = String(input);
-    if (!url.startsWith("http://production-worker.test")) return original(input, init);
-    const body = JSON.parse(String(init?.body ?? "{}"));
-    anchorCalls++;
-    if (listAlignmentJobs().some((job) => job.ebookId === consensusId)) syncDuringProbe = true;
-    return Response.json({ text: "word ".repeat(30), start: body.start + 1, match: { index: Math.max(1, anchorCalls) * 5, score: 0.8 } });
-  };
-  try {
-    const results = await reevaluateEbookSetForWork(workId);
-    assert.deepEqual(results.map((r) => r.status), ["accepted", "accepted"]);
-    assert.equal(syncDuringProbe, false, "no consensus job while whisper candidates are still probing");
-    assert.ok(
-      listAlignmentJobs().some((job) => job.ebookId === consensusId),
-      "consensus sync runs once after the whisper batch",
-    );
-    assert.ok(anchorCalls > 0);
-  } finally {
-    globalThis.fetch = original;
-  }
-});
-
 test("uppercase and undetermined EPUB languages still probe as English (LOW-2)", async () => {
   assert.equal(iso3("ENG"), "eng");
   assert.equal(iso3("und"), "eng");
   assert.equal(iso3("unknown"), "eng");
-  const fixture = readFileSync(fileURLToPath(new URL("./alignment-browser-fixture.ts", import.meta.url)), "utf8");
-  assert.match(fixture, /EBOOK_SET_PROBER\s*=\s*['"]whisper['"]/);
   const { workId } = seedWork();
   handler = ctcWorker({ Right: "forward" });
   for (const language of ["ENG", "und"]) {
@@ -706,29 +643,6 @@ test("a worker that is not the CTC engine is a failed probe, not a score", async
   const result = await evaluateEbookSetMember(workId, ebook);
   assert.equal(result.status, "held");
   assert.equal(listEbookSetMembers(workId)[0].holdReason, "awaiting_worker");
-});
-
-test("Whisper stays selectable and uses the local worker's /anchor without the CTC engine", async () => {
-  process.env.EBOOK_SET_PROBER = "whisper";
-  const { workId } = seedWork(true, 300);
-  const ebook = await seedEpub(workId, "Right");
-  const seen: string[] = [];
-  const original = globalThis.fetch;
-  globalThis.fetch = async (input, init) => {
-    const url = String(input);
-    if (!url.startsWith("http://production-worker.test")) return original(input, init);
-    const body = JSON.parse(String(init?.body));
-    seen.push(body.engine ?? "whisper");
-    return Response.json({ text: "word ".repeat(30), start: body.start + 1, match: { index: seen.length * 5, score: 0.8 } });
-  };
-  try {
-    const result = await evaluateEbookSetMember(workId, ebook);
-    assert.equal(result.status, "accepted");
-    assert.ok(seen.length > 0 && seen.every((engine) => engine === "whisper"));
-  } finally {
-    globalThis.fetch = original;
-  }
-  assert.equal(probes().length, 0, "no pool request");
 });
 
 test("sampleFromCtcAnchor ignores matches outside the sample and rejects other engines", () => {

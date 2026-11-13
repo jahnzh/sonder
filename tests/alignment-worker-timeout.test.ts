@@ -142,47 +142,6 @@ test("a busy worker (409) is still retried", async () => {
   assert.equal(calls, 2, "the first section was asked again after the 409");
 });
 
-test("a queued reading sync takes the worker after a background sample and prevents another sample", async () => {
-  const { workerAnchorSample } = await import("../server/ebook-set.ts");
-  let releaseSample!: () => void;
-  let sampleStarted!: () => void;
-  const started = new Promise<void>((resolve) => { sampleStarted = resolve; });
-  const released = new Promise<void>((resolve) => { releaseSample = resolve; });
-  let sampleCalls = 0;
-  let busy = true;
-  let conflicts = 0;
-  globalThis.fetch = async (input, init) => {
-    if (String(input).endsWith("/anchor")) {
-      sampleCalls++;
-      if (sampleCalls === 1) {
-        sampleStarted();
-        await released;
-        busy = false;
-      }
-      return Response.json({ text: "sample", match: null });
-    }
-    if (busy) {
-      conflicts++;
-      return new Response("{}", { status: 409 });
-    }
-    return aligned(JSON.parse(String(init?.body)));
-  };
-  const input = { audioPath: file, fragmentTexts: ["sample"], language: "en", start: 0, duration: 30 };
-  const first = workerAnchorSample(input);
-  await started;
-  const job = await createAlignment(ebook, "recording-alice");
-  while (!conflicts) await new Promise((resolve) => setTimeout(resolve, 10));
-  const second = workerAnchorSample(input);
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  assert.equal(sampleCalls, 1, "queued alignment blocks the next sample");
-  releaseSample();
-  await first;
-  const done = await settled(job.id, (value) => ["partial", "error"].includes(value.status));
-  assert.equal(done.status, "partial", done.error);
-  await second;
-  assert.equal(sampleCalls, 2);
-});
-
 test("a reading sync waits through more than five busy responses", async () => {
   let now = 0;
   setWorkerRetryClockForTests({

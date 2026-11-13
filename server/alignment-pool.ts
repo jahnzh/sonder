@@ -697,7 +697,7 @@ export function clearPoolStaging(job: AlignmentJob, triedHosts: PoolHostId[]) {
 }
 
 export function currentPoolEngine(): "ctc" | "aeneas" {
-  return process.env.ALIGNMENT_CHAPTER_ENGINE === "aeneas" ? "aeneas" : "ctc";
+  return "ctc";
 }
 
 export function activePoolHosts(

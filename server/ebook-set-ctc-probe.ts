@@ -96,19 +96,6 @@ export function sampleFromCtcAnchor(
   };
 }
 
-/** The Whisper prober's answer (`/anchor` without an engine) in the same shape. */
-export function sampleFromWhisperAnchor(
-  result: { text?: string; start?: number; match?: { index: number; score: number } | null },
-  fallbackStart: number,
-): AnchorSampleScore {
-  return {
-    spokenWords: result.text ? wordCount(result.text) : 0,
-    match: result.match
-      ? { fragment: result.match.index, score: result.match.score, start: result.start ?? fallbackStart }
-      : null,
-  };
-}
-
 const NETWORK_RETRIES = 2;
 
 async function post(target: CtcProbeTarget, path: string, body: object, timeout: number): Promise<unknown> {

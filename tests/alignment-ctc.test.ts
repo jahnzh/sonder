@@ -120,22 +120,6 @@ test("chapter CTC publishes first and last sentences with worker metadata and re
   assert.match(failed.error ?? "", /did not use the requested CTC engine/);
   assert.equal(failed.intervals.length, 0);
 
-  // The rollback switch sends new chapter jobs back to aeneas, and the worker is then asked for aeneas.
-  process.env.ALIGNMENT_CHAPTER_ENGINE = "aeneas";
-  const requested: string[] = [];
-  mockWorker(async (_input, init) => {
-    const request = JSON.parse(String(init?.body));
-    requested.push(request.engine);
-    return Response.json({ engine: "aeneas-1.7.3", elapsedSeconds: 1,
-      intervals: request.fragments.map((_: string, i: number) => ({ index: i, start: request.start + i, end: request.start + i + 0.8 })) });
-  });
-  const rolledBack = await createAlignment("ctc-ebook", "ctc-recording", pairings, "chapters");
-  assert.equal(rolledBack.engine, "aeneas-1.7.3");
-  const rolledBackJob = await settled(rolledBack.id);
-  assert.equal(rolledBackJob.status, "partial", rolledBackJob.error ?? undefined);
-  assert.ok(requested.length > 0 && requested.every((engine) => engine === undefined));
-  delete process.env.ALIGNMENT_CHAPTER_ENGINE;
-
   // Anchored jobs also default to CTC for their alignment windows.
   delete process.env.ALIGNMENT_WORKER_TOKEN;
   const anchored = await createAlignment("ctc-ebook", "ctc-recording", undefined, "anchored");
@@ -562,7 +546,10 @@ test("unsynced passages and unsupported-language outcomes survive storage and AP
     db.insert(schema.ebookEditions).values({ id: "fr-ebook", workId: "ctc-work", format: "epub", source: french }).run();
     calls = 0;
     globalThis.fetch = async () => { calls++; throw new Error("unsupported languages must not reach the worker"); };
+    process.env.ALIGNMENT_CHAPTER_ENGINE = "aeneas";
     const fr = await createAlignment("fr-ebook", "fr-recording", undefined, "anchored");
+    delete process.env.ALIGNMENT_CHAPTER_ENGINE;
+    assert.equal(fr.engine, engine);
     const frJob = await settled(fr.id);
     assert.equal(frJob.outcome, "language_not_supported");
     assert.equal(calls, 0);

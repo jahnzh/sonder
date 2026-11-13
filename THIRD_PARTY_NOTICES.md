@@ -28,8 +28,6 @@ The eight illustrated covers and Sonder mark in this repository are original SVG
 
 - [EPUB.js 0.3.93](https://github.com/futurepress/epub.js): BSD-2-Clause. Its XML fallback is overridden to `@xmldom/xmldom` 0.9.12. The browser uses its native DOM parser.
 - [DOMPurify](https://github.com/cure53/DOMPurify): Apache-2.0 or MPL-2.0; used to sanitize EPUB documents. [JSZip](https://github.com/Stuk/jszip): MIT or GPL-3.0; used under MIT. [fast-xml-parser](https://github.com/NaturalIntelligence/fast-xml-parser): MIT.
-- [aeneas 1.7.3](https://github.com/readbeyond/aeneas): AGPL-3.0. The unmodified distribution and license are included in the worker image. The worker source and Dockerfile are in this repository's `worker/` directory. It uses eSpeak (GPL-3.0) and FFmpeg from Debian; their package notices remain in the image.
-- [faster-whisper](https://github.com/SYSTRAN/faster-whisper) and [CTranslate2](https://github.com/OpenNMT/CTranslate2): MIT. The multilingual tiny model is converted from [OpenAI Whisper](https://github.com/openai/whisper), whose code and weights are MIT licensed. Pinned weights are stored on the configured media drive.
 - [ctc-forced-aligner](https://github.com/MahmoudAshraf97/ctc-forced-aligner), commit `64293cc6d711e57666c4a8b098e9fd93b381fd88`: CC-BY-NC-4.0. It is only in the separate comparison image and is not used by the production worker.
 
 Dependency license files remain in their installed packages. No downloaded book content is relicensed by this project.
