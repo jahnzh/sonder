@@ -13,6 +13,8 @@ const runner = path.join(repoRoot, "tests", "ci-script-host-runner.mjs");
 const HOSTING_COPY_PATHS = [
   "package.json",
   "scripts/ci-run.sh",
+  "scripts/ci-dispatch.mjs",
+  "scripts/ci-hosts.json",
   "tests/ci-run.test.mjs",
 ];
 

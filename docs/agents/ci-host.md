@@ -49,18 +49,18 @@ Known host failures (issue #37) are listed in `tests/known-failures.wsl-host.jso
 
 ## Stopping a run
 
-Agents start checks with `npm run ci:ssh -- <sha>`. Killing the `npm` or `sh -c` wrapper does not stop `scripts/ci-ssh.sh`; the remote check keeps running until something sends TERM to the bash process.
+Start checks with `npm run ci:run -- <sha>` (see below). Killing the `npm` or `sh -c` wrapper does not stop the downstream `ci-ssh.sh` / `ci-deck.sh`; the remote check keeps running until something sends TERM to that bash process.
 
-- Each run writes its PID to `artifacts/ci/<sha>/<run-id>/ci-ssh.pid` and prints a stop line at startup.
+- Each SSH run writes its PID to `artifacts/ci/<sha>/<run-id>/ci-ssh.pid` and prints a stop line at startup.
 - Stop the run with `npm run ci:stop -- <sha>` (or `bash scripts/ci-stop.sh <path-to/ci-ssh.pid>`). That sends TERM to the recorded PID and to its direct child processes (for example a blocking `ssh` poll), which lets the existing `on_signal` / `cleanup_remote` path run.
 - The `ci:ssh` npm script uses `exec`, so a signal delivered to the `sh -c` child also reaches `ci-ssh.sh` when that PID is what you kill.
 
 ## Running a check on the host
 
-- Run `npm run ci:ssh -- <sha>`, which `exec`s into `scripts/ci-ssh.sh`.
-- Remote run directories (checkout, bundle, report) live under `${TMPDIR:-/tmp}` on the host unless you set `SONDER_CI_REMOTE_BASE` to an absolute path. The script logs `Remote run directory: <host>:<path>` once the directory is created.
+- Prefer `npm run ci:run -- <sha>`, which admits the check through the central dispatcher. Use `npm run ci:ssh -- <sha>` only when debugging `scripts/ci-ssh.sh` itself.
+- Remote run directories (checkout, bundle, report) live under `${TMPDIR:-/tmp}` on WSL unless you set `SONDER_CI_REMOTE_BASE`; on lisa they default to `/home/jahn/sonder-ci-tmp` from `scripts/ci-hosts.json`. The script logs `Remote run directory: <host>:<path>` once the directory is created.
 - `scripts/ci-ssh.sh` runs preflights for loopback refusal, Playwright browsers, and WebKit packages, and detects a dead run.
-- A full check takes about 4 to 5 minutes.
+- A full check takes about 10 minutes on lisa / WSL (install ~10 s, build ~40 s, unit ~2.5 min, browser ~6 min).
 - Keep live verification scripts (`scripts/verify-*.mjs`) on the production machine; never run them on the host.
 
 ## Summarising a check: `scripts/ci-summary.sh`
@@ -69,17 +69,22 @@ Agents start checks with `npm run ci:ssh -- <sha>`. Killing the `npm` or `sh -c`
 
 ## Choosing a host: `scripts/ci-run.sh`
 
-`npm run ci:run [--dispatch <id>] <commit-sha>` (issue #119) is the single entry point for committed checks. It probes the Deck (`deck@steamdeck`) and the WSL host (`192.168.1.119`), starts the check on the **first idle** host by invoking `scripts/ci-deck.sh` or `scripts/ci-ssh.sh`, and **queues behind a busy host by waiting on the runner's process** — never on a log line. It forwards the downstream runner's exit status. The runners above still work standalone; `ci-run.sh` only decides which one to call.
+`npm run ci:run [--dispatch <id>] <commit-sha>` (issues #119, #365) is the **only** entry point for committed checks. `scripts/ci-push.sh` also starts checks through it. `ci:ssh` / `ci:deck` stay as the low-level runners the dispatcher calls; do not start them for ordinary committed checks. The central dispatcher (`scripts/ci-dispatch.mjs`) keeps one FIFO queue and one table of running checks under a shared state dir (`SONDER_CI_STATE_DIR`, default `${XDG_RUNTIME_DIR:-/tmp}/sonder-ci-dispatch-<uid>`), probes each host over SSH, and admits on the host with the most headroom while that host's admission rule holds.
 
-- **Host order**: `SONDER_CI_HOSTS` is the comma-separated list of enabled hosts in priority order (default `deck,wsl`); the rest are skipped with a `[ci-run]` note. An unknown token, an empty list, or a bad `--dispatch` id is a usage error (exit 2).
-- **Busy**: a live local runner process (`ci-deck.sh` / `ci-ssh.sh` in the command line, from any checkout) marks the host busy, as does a live `check.pid` in a run directory found by the remote probe (`runs/*` on the Deck, `sonder-ci-*` on WSL). A zombie pid is not busy: `kill -0` answers for it, so every liveness check also reads the state out of `/proc/<pid>/stat`.
-- **Queueing**: when no enabled host is idle and at least one is busy (including a host with a live local runner process but an unreachable ssh target), it waits behind the first busy host, polling every `SONDER_CI_POLL_INTERVAL` seconds (default 5) until that runner process exits, and starts the run then. It prints one `queued <host> <sha> log=<path>` line per queue-host change and exits 124 at `SONDER_CI_QUEUE_TIMEOUT` seconds (default 3600) without starting a run.
+- **Hosts**: `scripts/ci-hosts.json` lists WSL (`wsl` → `192.168.1.119`) and lisa as primary (`dispatch.order`), each with runner settings (lisa: `remoteBase`/`tmpdir` `/home/jahn/sonder-ci-tmp`, `maxWait` 3600). The Deck is `dispatch.fallback` only: used when neither WSL nor lisa has room, or when listed explicitly in `SONDER_CI_HOSTS` (every listed id becomes primary, no fallback tier).
+- **Admission** (named settings under `dispatch`, overridable per host): before starting a check, probe CPUs, 1-minute load, `MemAvailable`, free space on the run's tmp dir, and live `check.pid` runs on the host. Admit when all hold, else queue:
+  - `running = max(registered live runs, remote check.pid runs) < ceiling`
+  - `load after admission (max(load1, running × cost.load) + cost.load) ≤ CPUs × factor`
+  - `MemAvailable − recentRuns × cost.memGB ≥ cost.memGB + reserve.memGB` (`recentSeconds` covers runs whose RSS is not in MemAvailable yet)
+  - `diskFree ≥ cost.diskGB + reserve.diskGB`
+- **Starting costs** (2026-11-13): `factor=1.0`, `ceiling=3`, `cost={load:8, memGB:4, diskGB:3}`, `reserve={memGB:2, diskGB:10}`. Measured on lisa during a complete check of `c348746` (origin/main) started 02:01Z via the coordinator's prototype dispatcher; samples every 10 s of `/proc/loadavg`, `MemAvailable`, and `df` of `/home/jahn/sonder-ci-tmp` while `checks=1` (worktree `artifacts/ci-dispatch-measure/`, gitignored). With one check: 1-minute load rose from ~3 (background) to a browser-stage peak of **25.5** (avg across the run ~14); MemAvailable fell to a low of **5.0 GB** (~7–8 GB used versus ~12–13 GB idle); the run dir used about **1 GB** of disk. `cost.load=8` is the idle-admission budget that lets each primary host take two checks when load is low (acceptance: four across WSL+lisa, fifth queues); once a running check's `load1` rises above ~CPUs−cost, further admits are refused. Two checks that start together on an idle host can both reach browser and push load above `CPUs×factor` — the hard `ceiling` is 3; watch with `--status` and revisit costs after more samples. `cost.memGB=4` plus a 2 GB reserve; `cost.diskGB=3` plus a 10 GB reserve. **WSL was not measured under a live check the same night** — the same costs apply there (same Node check) until a WSL sample says otherwise. The earlier overload that failed timing-sensitive unit tests (#314, #262) was five concurrent checks taking lisa to load 41.
+- **Queue**: FIFO across callers (directory lock + ticket files). A queued check waits PID-based (never `ps | grep`) and is admitted as soon as any host has room. Prints `queued <sha> position=N log=…` / `started <host> <sha> log=…` / `finished <host> <sha> exit=… log=…`. Exits 124 at `SONDER_CI_QUEUE_TIMEOUT` (default 3600).
+- **Status**: `npm run ci:run -- --status` lists running and queued checks (host, sha, age) and each host's last probe (load, memory, disk, or skip reason).
 - **Refusal**: a commit that already has a **finished** run with a failing check result on any host is refused with exit 1 and never rerun on the other host to obtain a pass. A failing check result means `result=failed` or `result=remote_check_failed` in the run's `ci-deck-result.txt` / `ci-ssh-result.txt`, or a `passed` result whose `report.json` / `check-report.json` says the check failed. Host failures (`host_*`, `timeout`, …) did not judge the commit and do not block; a report that does not parse is not evidence and does not block either.
-- **All hosts unreachable**: no enabled host is idle or busy, so it invokes the first enabled host's runner, which falls back to a local `npm run check` the way it always has.
-- **Output**: one line per started or queued run on stdout — `started <host> <sha> log=<path>`, `queued <host> <sha> log=<path>`, `finished <host> <sha> exit=<rc> log=<path>` — with `[ci-run]`-prefixed diagnostics on stdout. The runner's stdout and stderr append to the log file at `artifacts/ci/<sha>/ci-run-<UTC timestamp>-<pid>.log`.
+- **All hosts unreachable**: the first enabled host's runner is invoked and falls back to a local `npm run check` the way it always has.
 - **Dispatch**: `--dispatch <id>` (or `--dispatch=<id>`) sets `SONDER_CI_DISPATCH` for the downstream runner so the finished check is recorded on that worker history dispatch. The id is validated up front against the `scripts/lib/ci-history.sh` allowlist.
-- **Exit codes**: 0 the downstream check passed; 1 the ref is not a commit or the commit already failed on a finished run; 2 usage; 124 the queue wait cap was reached; otherwise the downstream runner's exit status (see `scripts/ci-deck.sh`'s list).
-- **Environment**: `SONDER_CI_HOSTS`, `SONDER_CI_DECK_HOST` (default `deck@steamdeck`), `SONDER_CI_WSL_HOST` (default `192.168.1.119`), `SONDER_CI_REMOTE_BASE` (WSL: unset uses the host's `${TMPDIR:-/tmp}`; Deck: unset uses `$HOME/sonder-ci` on the Deck), `SONDER_CI_POLL_INTERVAL`, `SONDER_CI_QUEUE_TIMEOUT`, `SONDER_CI_DISPATCH`.
+- **Exit codes**: 0 the downstream check passed; 1 the ref is not a commit or the commit already failed on a finished run; 2 usage; 124 the queue wait cap was reached; otherwise the downstream runner's exit status.
+- **Environment**: `SONDER_CI_HOSTS`, `SONDER_CI_WSL_HOST` / `SONDER_CI_LISA_HOST` / `SONDER_CI_DECK_HOST`, `SONDER_CI_REMOTE_BASE`, `SONDER_CI_STATE_DIR`, `SONDER_CI_HOST_CONFIG`, `SONDER_CI_POLL_INTERVAL`, `SONDER_CI_QUEUE_TIMEOUT`, `SONDER_CI_DISPATCH`.
 
 ## Reader e2e timing (issue #115)
 
@@ -113,9 +118,7 @@ Parallel alignment workers need one `MEDIA_ROOT` each (hard-link the inputs); se
 
 ## Parallel checks per host
 
-`scripts/ci-hosts.json` sets `maxParallel: 1` for `lisa`, `192.168.1.119` and `wsl`, so `ci-run.sh` runs one complete check per host and queues the rest. The limit came from 2026-11-07: five checks started together took lisa (20 CPUs) to load 41, and four failed only on timing in the unit stage (#314, #262):
+`ci-run.sh` no longer uses a static one-per-host cap. Admission (above) keeps projected load at or below `CPUs × factor` so timing-sensitive unit tests stay green. The overload that motivated the old `maxParallel: 1` (still present on host entries for `ci-ssh.sh` lookups, unused by the dispatcher) was 2026-11-07: five checks started together took lisa (20 CPUs) to load 41, and four failed only on timing in the unit stage (#314, #262):
 
-- `ci-run tests do not mutate a hosting repo HEAD or branch` (`tests/ci-script-host.test.mjs`) failed after 60291 ms. That was the 60 s timeout on the nested `node --test` run in `tests/ci-script-host-runner.mjs`, not a wait on other checks' runners: `waitForNoForeignRunners` only counts processes under the fixture's own temp repo. The nested run now has 240 s (the outer test 300 s).
+- `ci-run tests do not mutate a hosting repo HEAD or branch` (`tests/ci-script-host.test.mjs`) failed after 60291 ms. That was the 60 s timeout on the nested `node --test` run in `tests/ci-script-host-runner.mjs`. The nested run now has 240 s (the outer test 300 s).
 - The `ci-stop` test's wait for the remote run directory to disappear is now 30 s instead of 5 s.
-
-A central dispatcher that admits checks by each host's free CPU, memory and disk is tracked in #365.

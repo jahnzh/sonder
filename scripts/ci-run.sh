@@ -210,6 +210,7 @@ trap 'on_signal 143' TERM
 # Join the central queue and wait for admission. The dispatcher prints
 # `queued position=N` once and then `admit <host>` or `admit-local <host>`.
 ADMITTED=""
+ADMIT_PORT=""
 LOCAL_FALLBACK=0
 new_log_file
 exec 3< <(SONDER_CI_POLL_INTERVAL=$POLL_INTERVAL SONDER_CI_QUEUE_TIMEOUT=$QUEUE_TIMEOUT \
@@ -218,8 +219,15 @@ ADMIT_PID=$!
 while IFS= read -r -u 3 line; do
   case $line in
     queued\ position=*) echo "queued ${FULL_SHA} ${line#queued } log=${LOG_FILE}" ;;
-    admit-local\ *) ADMITTED=${line#admit-local }; LOCAL_FALLBACK=1 ;;
-    admit\ *) ADMITTED=${line#admit } ;;
+    admit-local\ *)
+      rest=${line#admit-local }
+      ADMITTED=${rest%% *}
+      [[ $rest == *" port="* ]] && ADMIT_PORT=${rest##* port=}
+      LOCAL_FALLBACK=1 ;;
+    admit\ *)
+      rest=${line#admit }
+      ADMITTED=${rest%% *}
+      [[ $rest == *" port="* ]] && ADMIT_PORT=${rest##* port=} ;;
   esac
 done
 exec 3<&-
@@ -240,11 +248,16 @@ fi
 
 echo "started ${ADMITTED} ${FULL_SHA} log=${LOG_FILE}"
 rc=0
+# Distinct loopback ports so two checks admitted on one host do not share
+# Playwright's readiness probe (prototype used 4400+).
 if [[ -n $DISPATCH ]]; then
-  env SONDER_CI_HOST="$DISPATCH_HOST_SSH" SONDER_CI_DISPATCH="$DISPATCH" \
+  env SONDER_CI_HOST="$DISPATCH_HOST_SSH" \
+    ${ADMIT_PORT:+SONDER_CI_LOOPBACK_PORT="$ADMIT_PORT"} \
+    SONDER_CI_DISPATCH="$DISPATCH" \
     bash "$ROOT/scripts/$DISPATCH_RUNNER" "$FULL_SHA" >>"$LOG_FILE" 2>&1 || rc=$?
 else
   env SONDER_CI_HOST="$DISPATCH_HOST_SSH" \
+    ${ADMIT_PORT:+SONDER_CI_LOOPBACK_PORT="$ADMIT_PORT"} \
     bash "$ROOT/scripts/$DISPATCH_RUNNER" "$FULL_SHA" >>"$LOG_FILE" 2>&1 || rc=$?
 fi
 release_slot

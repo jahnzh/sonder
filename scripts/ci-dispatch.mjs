@@ -13,8 +13,12 @@
 // events (one per line):
 //
 //   queued position=<N>      first time the check could not start at once
-//   admit <host-id>          start the runner of this host (exit 0)
-//   admit-local <host-id>    no host is reachable; start that host's runner,
+//   admit <host-id> port=<N> start the runner of this host (exit 0); port is a
+//                            free SONDER_CI_LOOPBACK_PORT (from 4400) so two
+//                            checks on the same host do not share Playwright's
+//                            readiness port
+//   admit-local <host-id> port=<N>
+//                            no host is reachable; start that host's runner,
 //                            which falls back to a local check (exit 0)
 //
 // Exit status: 0 admitted, 2 usage or configuration error, 124 queue cap.
@@ -394,27 +398,33 @@ function admit(opts, env) {
       const runs = liveEntries(state, "runs");
       const probes = sharedProbes(state, hosts, config.global.probeTtlSeconds, env);
       const pick = chooseHost(primary.map((i) => config.hosts[i]), fallback.map((i) => config.hosts[i]), probes, runs);
+      const nextPort = () => {
+        const used = new Set(runs.map((r) => Number(r.port)).filter((p) => Number.isInteger(p) && p > 0));
+        let port = 4400;
+        while (used.has(port)) port += 1;
+        return port;
+      };
       const register = (id) => {
+        const port = nextPort();
         writeJson(path.join(state, "runs", `${pid}-${sha.slice(0, 12)}.json`), {
-          host: id, sha, pid, startedAt: now(), label: opts.label ?? "", dispatch: opts.dispatch ?? "",
+          host: id, sha, pid, startedAt: now(), port, label: opts.label ?? "", dispatch: opts.dispatch ?? "",
         });
         cleanup();
+        return port;
       };
       if (pick) {
-        register(pick.id);
-        return { admit: pick.id };
+        return { admit: pick.id, port: register(pick.id) };
       }
       // Nothing reachable at all: the first enabled runner falls back to a
       // local check, as ci-run.sh always has.
       if (hosts.every((h) => probes[h.id] && !probes[h.id].ok)) {
-        register(allIds[0]);
-        return { local: allIds[0] };
+        return { local: allIds[0], port: register(allIds[0]) };
       }
       return { position: 1 };
     });
     if (result.error) die(result.error, 1);
-    if (result.admit) { console.log(`admit ${result.admit}`); return; }
-    if (result.local) { console.log(`admit-local ${result.local}`); return; }
+    if (result.admit) { console.log(`admit ${result.admit} port=${result.port}`); return; }
+    if (result.local) { console.log(`admit-local ${result.local} port=${result.port}`); return; }
     // Callers that start together take turns at the head: announce `queued`
     // only for a caller that waits for room, or for a turn longer than a moment.
     if (!announced && (result.position === 1 || Date.now() - startedMs > QUEUE_GRACE_MS)) {

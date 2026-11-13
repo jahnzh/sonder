@@ -14,8 +14,8 @@ test("1. Coordinator state file documentation in worker-spec.md", () => {
   assert.match(content, /never paste the run state into the prompt/, "must caution against pasting run state into prompt");
   assert.match(content, /Active deploy-or-land goals/, "must document active deploy-or-land goals rule");
   assert.match(content, /never treat a status question as a stop/, "must forbid idling on status questions");
-  assert.match(content, /npm run ci:run/, "must prefer npm run ci:run over fire-and-forget parallel ci:deck");
-  assert.match(content, /SONDER_CI_LOOPBACK_PORT/, "must allow parallel ci:ssh with distinct SONDER_CI_LOOPBACK_PORT");
+  assert.match(content, /npm run ci:run/, "must prefer npm run ci:run as the committed-check entry point");
+  assert.match(content, /SONDER_CI_LOOPBACK_PORT/, "must document distinct SONDER_CI_LOOPBACK_PORT for concurrent checks on one host");
   assert.match(content, /reads its orchestrator's terminal at least every 10 minutes/, "must require reading orchestrator terminals every 10 minutes");
 });
 

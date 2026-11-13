@@ -137,7 +137,7 @@ Record state and decision notes using `scripts/orca/note.sh state "<text>"` and 
 
 Wakeups: the prompt is one line, `Read artifacts/orca/STATE.md and do its next action`, and the coordinator updates the file whenever it schedules one; never paste the run state into the prompt (stale wakeups re-fired after work was done about 12 times this session).
 
-Active deploy-or-land goals: either block on `node scripts/orca-check.mjs --wait` (or a background wait job) until the next actionable result, or post a progress line and continue immediately — never treat a status question as a stop. Prefer `npm run ci:run` (queues) over fire-and-forget parallel `ci:deck`; parallel `npm run ci:ssh` on the WSL host with distinct `SONDER_CI_LOOPBACK_PORT` is fine. An orchestrator that finishes a task starts the next one at once; a coordinator reads its orchestrator's terminal at least every 10 minutes (an idle agent sends no message).
+Active deploy-or-land goals: either block on `node scripts/orca-check.mjs --wait` (or a background wait job) until the next actionable result, or post a progress line and continue immediately — never treat a status question as a stop. Start every committed check with `npm run ci:run` (central resource admission and FIFO queue across WSL and lisa; Deck only as fallback). Do not fire parallel `ci:ssh` / `ci:deck` yourself — those bypass the dispatcher. When the dispatcher admits more than one check on the same host it assigns each a distinct `SONDER_CI_LOOPBACK_PORT` (from 4400) so Playwright readiness probes do not collide. An orchestrator that finishes a task starts the next one at once; a coordinator reads its orchestrator's terminal at least every 10 minutes (an idle agent sends no message).
 
 ## Worker prompt delivery (send-agent)
 

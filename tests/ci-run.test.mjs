@@ -47,7 +47,7 @@ exec bash -c "$*"
 function runnerStubFor(name) {
   return `#!/usr/bin/env bash
 echo "stub-runner ${name} host=\${SONDER_CI_HOST:-} sha=$1"
-echo "invoked runner=${name} host=\${SONDER_CI_HOST:-} sha=$1 dispatch=\${SONDER_CI_DISPATCH:-}" >>"$STUB_RUNNER_LOG"
+echo "invoked runner=${name} host=\${SONDER_CI_HOST:-} sha=$1 dispatch=\${SONDER_CI_DISPATCH:-} loopback=\${SONDER_CI_LOOPBACK_PORT:-}" >>"$STUB_RUNNER_LOG"
 secs=\${STUB_RUNNER_SLEEP:-}
 [[ -f "\${STUB_SLEEP_DIR:-/nonexistent}/\${SONDER_CI_HOST:-}" ]] && secs=$(cat "$STUB_SLEEP_DIR/$SONDER_CI_HOST")
 [[ -n $secs ]] && sleep "$secs"
@@ -433,6 +433,11 @@ test("four ci:run calls for different commits start at once across both hosts an
     assert.equal(f.onHost(WSL).length, 2);
     assert.equal(f.onHost(LISA).length, 2);
     assert.equal(new Set(f.invocations().map((i) => i.sha)).size, 4);
+    // Distinct loopback ports across the concurrent admits (Playwright readiness).
+    const ports = f.invocations().map((i) => i.loopback);
+    assert.equal(ports.length, 4);
+    assert.equal(new Set(ports).size, 4);
+    for (const p of ports) assert.match(p, /^44\d\d$/);
 
     const fifth = f.start([], f.commits[4]);
     await waitFor(() => /^queued /m.test(fifth.stdout()), 15_000, "the fifth check to queue");
