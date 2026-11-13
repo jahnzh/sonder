@@ -3,7 +3,7 @@ import { userStorageKey } from "../lib";
 import { useEffect, useRef, useState } from "react";
 import { BookOpen, Headphones, Loader2, Link2 } from "lucide-react";
 import { api, clock } from "../lib";
-import { createAlignmentMapLifecycle } from "../alignment-map-lifecycle";
+import { alignmentJobNeedsPolling, createAlignmentMapLifecycle } from "../alignment-map-lifecycle";
 import { alignmentMapDeps } from "../alignment-map-deps";
 import { usePlayer } from "../player";
 import { PoolFailureReasons } from "./PoolFailureReasons";
@@ -22,8 +22,6 @@ type Options = {
   languageMatch: boolean;
   anchored?: boolean;
 };
-const processing = (status: AlignmentJob["status"]) =>
-  ["queued", "copying", "processing"].includes(status);
 function flagText(flag: AlignmentFlag) {
   const range =
     flag.start !== undefined && flag.end !== undefined
@@ -91,7 +89,7 @@ export function ReadingSync({
   const visible = useRef(loadOptions);
   visible.current = loadOptions;
   const shouldPoll = (job: AlignmentJob | undefined) =>
-    visible.current || (!!job && processing(job.status));
+    visible.current || alignmentJobNeedsPolling(job);
   const [jobs, setJobs] = useState<AlignmentJob[]>([]),
     [selected, setSelected] = useState(
       (player.book?.workId === book.workId ? player.book.recordingId : null) ||

@@ -290,6 +290,56 @@ test("a superseded generation never publishes; the rebuild runs once the old run
   assert.ok(requests.filter((entry) => entry.request.start < 30).length === 1, "the old run sent nothing after it was superseded");
 });
 
+test("a second scheduler waits out a live claim after a superseding prepare", async () => {
+  reset();
+  const old = await create("a", "ebook-a", 10);
+  await until(() => held.length === 1, "first instance worker request");
+  const firstOwner = claim(old.id).claim_owner;
+  assert.ok(firstOwner);
+  assert.equal(claim(old.id).claim_generation, old.generation);
+
+  // Pause the production scheduler so only the second instance can admit after the lease ends.
+  setPaused("alignment", true);
+  const rebuilt = await create("a", "ebook-a", 30);
+  assert.equal(rebuilt.id, old.id);
+  assert.notEqual(rebuilt.generation, old.generation);
+  assert.equal(claim(old.id).claim_owner, firstOwner, "supersession leaves the live claim in place");
+  assert.equal(claim(old.id).claim_generation, old.generation);
+
+  const started: string[] = [];
+  const second = new AlignmentScheduler({
+    candidates: () => {
+      const job = alignmentJob(old.id);
+      return job.generation === rebuilt.generation && ["queued", "copying", "processing"].includes(job.status)
+        ? [{ id: job.id, generation: job.generation!, recordingId: "rec-a", local: false }]
+        : [];
+    },
+    held: () => false,
+    stillActive: (id) => ["queued", "copying", "processing"].includes(alignmentJob(id).status),
+    run: async () => {
+      started.push("second");
+    },
+  });
+  void second.pump();
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.deepEqual(started, [], "second instance must not start while the first claim is live");
+  assert.equal(claim(old.id).claim_owner, firstOwner);
+
+  take().resolve(mapped(requests.at(-1)!.request));
+  await alignmentSchedulerForTests().settled();
+  assert.equal(claim(old.id).claim_owner, null, "the first run releases its claim when it ends");
+
+  const pumped = second.pump();
+  await until(() => started.length === 1, "second instance starts after the lease ends");
+  await pumped;
+  await second.settled();
+  assert.equal(started.length, 1);
+  assert.equal(claim(old.id).claim_owner, null);
+  // Leave no active job for later tests: the second run did not finish the queued replacement.
+  putAlignmentJob({ ...alignmentJob(old.id), status: "cancelled", error: null });
+  setPaused("alignment", false);
+});
+
 test("a run's stale write is refused after a rebuild, a cancel or a takeover", async () => {
   reset();
   const id = (await create("c")).id;

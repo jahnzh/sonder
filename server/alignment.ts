@@ -41,6 +41,15 @@ import {
 } from "./alignment-pool.ts";
 import { prefetchSectionCount, upcomingPrefetchWindows } from "./alignment-prefetch.ts";
 import {
+  REBUILT_STATUSES,
+  currentAlignmentEngine,
+  engineIsOlder,
+  publishesMap,
+  rebuildAdmissionOrder,
+  servedDuringRebuild,
+  usableMap,
+} from "./alignment-rebuild.ts";
+import {
   ALIGNMENT_ADMITTED_BOOKS,
   AlignmentScheduler,
   RESIDENT_MODELS_PER_DEVICE,
@@ -140,11 +149,14 @@ export function audioFingerprint(recordingId: string, stable = true) {
   return stable ? `audio-v2:${hash}` : hash;
 }
 type AlignmentRow = { data: string; engine: string; outcome: AlignmentOutcome | null; stage_timings: string | null };
-function readJob(row: AlignmentRow): AlignmentJob {
-  const job = JSON.parse(row.data) as AlignmentJob & { unverifiedCount?: number };
-  job.engine ||= row.engine;
-  if (!job.outcome && row.outcome) job.outcome = row.outcome;
-  if (!job.stageTimings && row.stage_timings) job.stageTimings = JSON.parse(row.stage_timings);
+function readJob(row: AlignmentRow, data = row.data): AlignmentJob {
+  const job = JSON.parse(data) as AlignmentJob & { unverifiedCount?: number };
+  // The columns describe the row's current job; a kept map (#277) carries its own values.
+  if (data === row.data) {
+    job.engine ||= row.engine;
+    if (!job.outcome && row.outcome) job.outcome = row.outcome;
+    if (!job.stageTimings && row.stage_timings) job.stageTimings = JSON.parse(row.stage_timings);
+  }
   delete job.unverifiedCount;
   job.intervals = job.intervals.map(({ verified: _verified, ...interval }: AlignmentInterval & { verified?: boolean }) => interval);
   if (job.warning && /reviewed/i.test(job.warning))
@@ -156,9 +168,40 @@ const jobs = () =>
     sqlite
       .prepare("SELECT data,engine,outcome,stage_timings FROM alignment_jobs ORDER BY updated_at DESC")
       .all() as AlignmentRow[]
-  ).map(readJob);
+  ).map((row) => readJob(row));
 export function listAlignmentJobs() {
   return jobs();
+}
+type ServedRow = AlignmentRow & { published_map: string | null };
+/** What the listing and /map serve: the kept map while a rebuild runs in the row, else the job itself. */
+function servedJob(row: ServedRow) {
+  const working = readJob(row);
+  return row.published_map ? servedDuringRebuild(readJob(row, row.published_map), working) : working;
+}
+const servedJobs = () =>
+  (
+    sqlite
+      .prepare("SELECT data,engine,outcome,stage_timings,published_map FROM alignment_jobs ORDER BY updated_at DESC")
+      .all() as ServedRow[]
+  ).map(servedJob);
+/** Listing view that keeps a published_map in front of a failed or in-flight rebuild (#277). */
+export function listServedAlignmentJobs() {
+  return servedJobs();
+}
+/** True while a rebuild (or its failed/cancelled result) still holds a map for serving (#277). */
+export function alignmentKeepsPublishedMap(id: string) {
+  return !!(
+    sqlite.prepare("SELECT published_map FROM alignment_jobs WHERE id=?").get(id) as
+      | { published_map: string | null }
+      | undefined
+  )?.published_map;
+}
+function servedAlignmentJob(id: string) {
+  const row = sqlite
+    .prepare("SELECT data,engine,outcome,stage_timings,published_map FROM alignment_jobs WHERE id=?")
+    .get(id) as ServedRow | undefined;
+  if (!row) throw new Error("This reading-sync job could not be found.");
+  return servedJob(row);
 }
 export function alignmentJob(id: string) {
   const row = sqlite
@@ -180,9 +223,10 @@ function store(job: AlignmentJob) {
     writeFileSync(path + ".part", JSON.stringify(job), { mode: 0o640 });
     renameSync(path + ".part", path);
   }
+  // One statement: a map that publishes replaces the kept map of a rebuild (#277) atomically.
   sqlite
     .prepare(
-      "INSERT INTO alignment_jobs(id,ebook_id,recording_id,data,updated_at,engine,outcome,stage_timings) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at,engine=excluded.engine,outcome=excluded.outcome,stage_timings=excluded.stage_timings",
+      "INSERT INTO alignment_jobs(id,ebook_id,recording_id,data,updated_at,engine,outcome,stage_timings) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at,engine=excluded.engine,outcome=excluded.outcome,stage_timings=excluded.stage_timings,published_map=CASE WHEN ? THEN NULL ELSE alignment_jobs.published_map END",
     )
     .run(
       job.id,
@@ -193,8 +237,13 @@ function store(job: AlignmentJob) {
       job.engine,
       job.outcome ?? null,
       job.stageTimings ? JSON.stringify(job.stageTimings) : null,
+      publishesMap(job) ? 1 : 0,
     );
   return job;
+}
+/** Drops the map a rebuild kept serving: the row's own job is what callers see from now on. */
+function dropKeptMap(id: string) {
+  sqlite.prepare("UPDATE alignment_jobs SET published_map=NULL WHERE id=?").run(id);
 }
 export function putAlignmentJob(job: AlignmentJob) {
   return store(job);
@@ -272,6 +321,50 @@ export async function createAlignment(
   origin?: AlignmentJob["origin"],
 ) {
   ensureMediaStorage();
+  const { book, edition, tracks } = await alignablePair(ebookId, recordingId);
+  // (ebook_id, recording_id) is unique, including projected ebook-set maps.
+  // Projected/ready rows are overwritten; an in-flight backfill must not swallow
+  // explicit pairings from a manual prepare. A manual prepare, a fingerprint change,
+  // or an active engine rebuild (#277) supersedes the existing job instead of returning it.
+  const existing = jobs().find(
+    (job) => job.ebookId === ebookId && job.recordingId === recordingId,
+  );
+  const explicitPrepare = Boolean(pairings?.length) || mode === "chapters";
+  const manualPrepare = origin !== "backfill";
+  const fingerprintChanged = !!existing && existing.fingerprint !== book.fingerprint;
+  const supersedeRebuild = Boolean(existing?.rebuildOf);
+  const shouldSupersede =
+    explicitPrepare || manualPrepare || fingerprintChanged || supersedeRebuild;
+  if (
+    existing &&
+    existing.origin !== "projected" &&
+    activeStatuses.includes(existing.status) &&
+    !shouldSupersede
+  )
+    return existing;
+  if (
+    existing &&
+    existing.origin !== "projected" &&
+    activeStatuses.includes(existing.status) &&
+    shouldSupersede
+  ) {
+    existing.status = "cancelled";
+    existing.error = null;
+    store(existing);
+  }
+  const copying = tracks.some((track) => !hasServerMedia(track));
+  const job = await plannedJob({ ebookId, recordingId, pairings, mode, origin, existing, copying });
+  if (copying) requestServerDownload(edition.id);
+  store(job);
+  // A new prepare replaces the row at once; only a rebuild keeps serving the previous map.
+  // A backfill that supersedes while a kept map is still served (first rebuild, or another
+  // consensus fingerprint change before the replacement publishes) retains published_map
+  // until the replacement run publishes — keyed off the row, not rebuildOf (#277).
+  if (!(origin === "backfill" && alignmentKeepsPublishedMap(job.id))) dropKeptMap(job.id);
+  void processAlignments();
+  return job;
+}
+async function alignablePair(ebookId: string, recordingId: string) {
   const book = await extractBook(ebookId),
     { edition, tracks } = recordingContext(recordingId);
   if (book.workId !== edition.workId)
@@ -282,30 +375,20 @@ export async function createAlignment(
     throw new Error(
       "The ebook and audiobook languages differ. Choose a matching release.",
     );
-  // (ebook_id, recording_id) is unique, including projected ebook-set maps.
-  // Projected/ready rows are overwritten; an in-flight backfill must not swallow
-  // explicit pairings from a manual prepare.
-  const existing = jobs().find(
-    (job) => job.ebookId === ebookId && job.recordingId === recordingId,
-  );
-  const explicitPrepare = Boolean(pairings?.length) || mode === "chapters";
-  if (
-    existing &&
-    existing.origin !== "projected" &&
-    activeStatuses.includes(existing.status) &&
-    !explicitPrepare
-  )
-    return existing;
-  if (
-    existing &&
-    existing.origin !== "projected" &&
-    activeStatuses.includes(existing.status) &&
-    explicitPrepare
-  ) {
-    existing.status = "cancelled";
-    existing.error = null;
-    store(existing);
-  }
+  return { book, edition, tracks };
+}
+/** A fresh job for a pair under the current engine. Validates the pairings; stores nothing. */
+async function plannedJob(input: {
+  ebookId: string;
+  recordingId: string;
+  pairings?: AlignmentJob["pairings"];
+  mode?: AlignmentJob["mode"];
+  origin?: AlignmentJob["origin"];
+  existing?: AlignmentJob;
+  copying: boolean;
+}): Promise<AlignmentJob> {
+  const { ebookId, recordingId, pairings, mode, origin, existing, copying } = input;
+  const { book, tracks } = await alignablePair(ebookId, recordingId);
   const options = await alignmentOptions(ebookId, recordingId);
   const chosen = pairings?.length ? pairings : options.pairings;
   const anchored =
@@ -334,9 +417,7 @@ export async function createAlignment(
       );
     seen.add(pair.section);
   }
-  const copying = tracks.some((track) => !hasServerMedia(track));
-  if (copying) requestServerDownload(edition.id);
-  const job: AlignmentJob = {
+  return {
     id: existing?.id || randomUUID(),
     generation: randomUUID(),
     ebookId,
@@ -344,9 +425,7 @@ export async function createAlignment(
     status: copying ? "copying" : "queued",
     progress: 0,
     // Chapter and anchored jobs use CTC unless ALIGNMENT_CHAPTER_ENGINE=aeneas.
-    engine: process.env.ALIGNMENT_CHAPTER_ENGINE !== "aeneas"
-      ? CTC_ENGINE
-      : "aeneas-1.7.3",
+    engine: currentAlignmentEngine(),
     ...(process.env.ALIGNMENT_CHAPTER_ENGINE !== "aeneas" ? { ctcValidationVersion: 1 as const } : {}),
     error: null,
     warning: null,
@@ -375,9 +454,6 @@ export async function createAlignment(
         }
       : {}),
   };
-  store(job);
-  void processAlignments();
-  return job;
 }
 const slimJob = (job: AlignmentJob) => ({
   ...job,
@@ -431,14 +507,16 @@ async function backfillDecision(
   ebookId: string,
   recordingId: string,
 ): Promise<BackfillDecision> {
-  const existing = jobs().find(
+  // Use the served view so a failed/cancelled rebuild that still holds published_map
+  // counts as ready and is not re-queued (which would dropKeptMap).
+  const existing = servedJobs().find(
     (job) => job.ebookId === ebookId && job.recordingId === recordingId,
   );
   if (existing) {
-    if (activeStatuses.includes(existing.status)) return "inProgress";
-    if (existing.status === "paused") return "paused";
-    if (existing.status === "ready" || existing.status === "partial")
-      return "ready";
+    const runStatus = existing.rebuild?.status ?? existing.status;
+    if (activeStatuses.includes(runStatus)) return "inProgress";
+    if (runStatus === "paused") return "paused";
+    if (usableMap(existing)) return "ready";
   }
   return (await backfillEligibility(ebookId, recordingId)).eligible
     ? "queue"
@@ -536,6 +614,110 @@ export async function autoQueueAlignmentsForWork(
       }`,
     );
   }
+}
+export type RebuildScan = { queued: number; replanned: number; projections: number; skipped: number; failed: number };
+/**
+ * Automatic rebuild (#277): queues a rebuild for every map made by an older engine generation, partial, failed
+ * and cancelled ones included. Idempotent across restarts: a queued rebuild is a job of the current engine, so
+ * a later scan passes it by, and a rebuild that is running keeps its generation and resumes where it was. A job
+ * of an older engine still in flight (or paused) is planned again under the current engine in place, keeping its
+ * status and priority. Projected ebook-set maps are never rebuilt on their own: the work's consensus map is
+ * rebuilt once and regenerates them when it publishes.
+ */
+export async function queueEngineRebuilds(log: AutoQueueLog = console): Promise<RebuildScan> {
+  const result: RebuildScan = { queued: 0, replanned: 0, projections: 0, skipped: 0, failed: 0 };
+  if (!process.env.ALIGNMENT_WORKER_TOKEN) return result;
+  const target = currentAlignmentEngine();
+  // Without the pool a CTC job fails at once; keep the old maps rather than queue rebuilds that cannot run.
+  if (target === CTC_ENGINE && !poolEnabled()) return result;
+  const projectedWorks = new Set<string>();
+  for (const old of jobs()) {
+    if (!engineIsOlder(old.engine, target)) continue;
+    if (old.origin === "projected") {
+      const workId = db.select({ workId: s.ebookEditions.workId }).from(s.ebookEditions)
+        .where(eq(s.ebookEditions.id, old.ebookId)).get()?.workId;
+      if (workId) projectedWorks.add(workId);
+      continue;
+    }
+    const inFlight = activeStatuses.includes(old.status) || old.status === "paused";
+    if (!inFlight && !REBUILT_STATUSES.includes(old.status)) continue;
+    try {
+      const { tracks } = recordingContext(old.recordingId);
+      // A rebuild never starts a copy of the audio to the server; it waits until the audio is there.
+      if (!tracks.length || !tracks.every((track) => hasServerMedia(track))) {
+        result.skipped++;
+        continue;
+      }
+      const job = await rebuildPlan(old);
+      if (inFlight) {
+        job.status = old.status === "paused" ? "paused" : "queued";
+        if (old.rebuildOf) job.rebuildOf = old.rebuildOf;
+      } else job.rebuildOf = { engine: old.engine, status: old.status, requestedAt: Date.now() };
+      if (commitRebuild(old, job)) result[inFlight ? "replanned" : "queued"]++;
+      else result.skipped++;
+    } catch (error) {
+      result.failed++;
+      log.warn(`Reading sync rebuild could not be queued for ${old.id}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  if (projectedWorks.size) {
+    const { getEbookSetPresentation, onConsensusAlignmentFinished } = await import("./ebook-set-consensus.ts");
+    for (const workId of projectedWorks) {
+      // A consensus map of an older engine is queued above and regenerates its projections when it
+      // publishes. One that already published (the server stopped before it projected) projects now.
+      const consensusJobId = getEbookSetPresentation(workId).consensus?.jobId;
+      const consensus = consensusJobId ? jobs().find((job) => job.id === consensusJobId) : undefined;
+      if (!consensus || engineIsOlder(consensus.engine, target) || !usableMap(consensus)) continue;
+      try {
+        await onConsensusAlignmentFinished(workId, consensus);
+        result.projections++;
+      } catch (error) {
+        result.failed++;
+        log.warn(`Projected reading-sync maps could not be regenerated: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  }
+  if (result.queued || result.replanned) void processAlignments();
+  return result;
+}
+/** The old map's own plan (its chapter pairings or anchored mode) under the current engine. */
+async function rebuildPlan(old: AlignmentJob) {
+  const chapters = old.mode !== "anchored" && old.pairings.length > 0;
+  const base = { ebookId: old.ebookId, recordingId: old.recordingId, existing: old, copying: false };
+  let job: AlignmentJob;
+  try {
+    job = await plannedJob(chapters ? { ...base, pairings: old.pairings, mode: "chapters" }
+      : { ...base, mode: old.mode === "anchored" ? "anchored" : undefined });
+  } catch (error) {
+    if (!chapters) throw error;
+    // The stored pairings no longer fit the files: plan the pair as a new job would.
+    job = await plannedJob(base);
+  }
+  if (old.origin) job.origin = old.origin;
+  return job;
+}
+/**
+ * Writes the rebuild onto the row only if nobody changed it since it was read (another scan, a prepare, a
+ * resume). A usable old map is kept for serving until the rebuild publishes; an older kept map stays.
+ */
+function commitRebuild(old: AlignmentJob, job: AlignmentJob) {
+  return sqlite.transaction(() => {
+    const row = sqlite.prepare("SELECT data, published_map FROM alignment_jobs WHERE id=?").get(old.id) as
+      { data: string; published_map: string | null } | undefined;
+    if (!row) return false;
+    const current = JSON.parse(row.data) as AlignmentJob;
+    if (current.generation !== old.generation || current.updatedAt !== old.updatedAt || current.status !== old.status)
+      return false;
+    store(job);
+    if (!row.published_map && usableMap(old))
+      sqlite.prepare("UPDATE alignment_jobs SET published_map=? WHERE id=?").run(JSON.stringify(old), old.id);
+    return true;
+  }).immediate();
+}
+let rebuildScan: Promise<RebuildScan | null> = Promise.resolve(null);
+/** Tests: the scan the latest registerAlignment started. */
+export function alignmentRebuildScanForTests() {
+  return rebuildScan;
 }
 // The worker ends a request itself (HTTP 504) after at most 1700 s, so these client
 // waits must stay longer than that for its clear error to arrive first.
@@ -968,6 +1150,12 @@ async function processAnchored(
         job.unsyncedPassages = unsyncedPassages(book, []);
         job.warning = "The narration could not be matched reliably. The text remains unsynced.";
         store(job);
+        if (job.ebookId.startsWith("set-consensus:")) {
+          const { onConsensusAlignmentFinished } = await import(
+            "./ebook-set-consensus.ts"
+          );
+          await onConsensusAlignmentFinished(job.ebookId.slice("set-consensus:".length), job);
+        }
         return;
       }
       job.status = "error";
@@ -1551,7 +1739,8 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
 }
 const scheduler: AlignmentScheduler = new AlignmentScheduler({
   candidates: () =>
-    claimOrder(jobs().filter((job) => activeStatuses.includes(job.status)), scheduler.owner).map((job) => ({
+    // New work first, then rebuilds oldest engine first (#277); a previous instance's claims ahead of both.
+    claimOrder(rebuildAdmissionOrder(jobs().filter((job) => activeStatuses.includes(job.status))), scheduler.owner).map((job) => ({
       id: job.id,
       generation: job.generation,
       recordingId: job.recordingId,
@@ -1644,6 +1833,10 @@ export function registerAlignment(app: FastifyInstance) {
       }
     } catch {}
   }
+  rebuildScan = queueEngineRebuilds(app.log).catch((error) => {
+    app.log.warn(`Reading-sync rebuilds could not be queued: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  });
   app.post("/api/alignments/recover", async (req) => {
     const input = z
       .object({
@@ -1783,7 +1976,8 @@ export function registerAlignment(app: FastifyInstance) {
     const slim = summary === "1" || summary === "true";
     // Prefer real prepares over ebook-set projections so callers that take
     // jobs[0] (reader e2e fixtures, older clients) see sectionsDone progress.
-    const listed = jobs()
+    // A row whose rebuild runs lists the map it keeps serving, with the rebuild's state under `rebuild`.
+    const listed = servedJobs()
       .filter((job) => !ebookId || job.ebookId === ebookId)
       .sort((a, b) => Number(a.origin === "projected") - Number(b.origin === "projected"));
     return {
@@ -1862,7 +2056,8 @@ export function registerAlignment(app: FastifyInstance) {
     // later /map fetch — including after a rebuild — until the cache is gone.
     reply.header("Cache-Control", "private, no-store");
     const { id } = req.params as { id: string };
-    const job = alignmentJob(id),
+    // The old map stays usable until its rebuild publishes (#277).
+    const job = servedAlignmentJob(id),
       book = await extractBook(job.ebookId);
     if (job.status === "cancelled")
       throw Object.assign(
@@ -1900,8 +2095,13 @@ export function registerAlignment(app: FastifyInstance) {
       book = await extractBook(job.ebookId);
     if (job.outcome === "language_not_supported")
       throw new Error("This language is not supported by the alignment worker.");
+    // Refuse edits against a paused/failed/cancelled rebuild (or any non-usable row) while
+    // published_map is what the client sees: mutating row.data would replace the served map
+    // in the response with the unusable rebuild. Apply-to-served-map was rejected so a
+    // prepare/rebuild remains the path back to an editable map (#277 LOW 2).
     if (
-      activeStatuses.includes(job.status) ||
+      !usableMap(job) ||
+      alignmentKeepsPublishedMap(id) ||
       job.fingerprint !== book.fingerprint ||
       job.audioFingerprint !== audioFingerprint(job.recordingId)
     )

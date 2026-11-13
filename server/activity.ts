@@ -182,6 +182,8 @@ type ParsedAlignment = {
   createdAt: number | null;
   hostId: string | null;
   outcome: string | null;
+  /** Queued automatically to replace a map of an older engine (#277). */
+  rebuild: boolean;
 };
 function parseAlignment(data: string): ParsedAlignment {
   try {
@@ -193,10 +195,11 @@ function parseAlignment(data: string): ParsedAlignment {
       createdAt: typeof job.createdAt === "number" ? job.createdAt : null,
       hostId: typeof job.pool?.hostId === "string" ? job.pool.hostId : null,
       outcome: typeof job.outcome === "string" ? job.outcome : null,
+      rebuild: !!job.rebuildOf,
     };
   } catch (error) {
     return {
-      status: "error", progress: null, createdAt: null, hostId: null, outcome: null,
+      status: "error", progress: null, createdAt: null, hostId: null, outcome: null, rebuild: false,
       error: `The job record could not be read: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
@@ -239,7 +242,7 @@ export function draftsFrom(input: ActivityInput): Draft[] {
     const consensus = row.ebook_id.startsWith("set-consensus:");
     drafts.push({
       id: `alignment:${row.id}`, kind: "alignment", processId: "alignment", title: row.title || row.recording_id,
-      detail: consensus ? "Ebook set check" : "Alignment map", user: null, state,
+      detail: consensus ? "Ebook set check" : job.rebuild ? "Alignment map rebuild" : "Alignment map", user: null, state,
       progress: state === "done" ? 1 : job.progress, host: job.hostId, startedAt: job.createdAt, updatedAt: row.updated_at,
       error: job.error, changedAt: row.updated_at,
     });
