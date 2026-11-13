@@ -1,0 +1,1231 @@
+{
+  "description": "Earth Awakens 2026-11-07 historical anchored CTC sample results, with track identifiers anonymized; 98 of 103 matched.",
+  "tracks": [
+    {
+      "id": "track-0",
+      "duration": 27068.6825
+    },
+    {
+      "id": "track-1",
+      "duration": 26362.122448979593
+    }
+  ],
+  "samples": [
+    {
+      "trackId": "track-0",
+      "time": 10,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 31,
+      "match": null
+    },
+    {
+      "trackId": "track-0",
+      "time": 60,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 78,
+      "match": {
+        "fragment": 72,
+        "score": 0.912,
+        "start": 60
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 150,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 85,
+      "match": {
+        "fragment": 84,
+        "score": 0.953,
+        "start": 150
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 300,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 77,
+      "match": {
+        "fragment": 107,
+        "score": 0.936,
+        "start": 300.72
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 900,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 83,
+      "match": {
+        "fragment": 209,
+        "score": 0.964,
+        "start": 900
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 1500,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 81,
+      "match": {
+        "fragment": 334,
+        "score": 0.943,
+        "start": 1500
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 2100,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 76,
+      "match": {
+        "fragment": 475,
+        "score": 0.936,
+        "start": 2100
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 2700,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 78,
+      "match": {
+        "fragment": 608,
+        "score": 0.949,
+        "start": 2700
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 3300,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 80,
+      "match": {
+        "fragment": 748,
+        "score": 0.852,
+        "start": 3300
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 3900,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 77,
+      "match": {
+        "fragment": 892,
+        "score": 0.9,
+        "start": 3900
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 4500,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 76,
+      "match": {
+        "fragment": 1043,
+        "score": 0.857,
+        "start": 4500
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 5100,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 77,
+      "match": {
+        "fragment": 1229,
+        "score": 0.937,
+        "start": 5100
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 5700,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 78,
+      "match": {
+        "fragment": 1396,
+        "score": 0.949,
+        "start": 5700
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 6300,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 73,
+      "match": {
+        "fragment": 1553,
+        "score": 0.96,
+        "start": 6300
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 6900,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 74,
+      "match": {
+        "fragment": 1702,
+        "score": 0.987,
+        "start": 6900
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 7500,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 89,
+      "match": {
+        "fragment": 1818,
+        "score": 0.938,
+        "start": 7500
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 8100,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 85,
+      "match": {
+        "fragment": 1985,
+        "score": 0.828,
+        "start": 8100
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 8700,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 92,
+      "match": {
+        "fragment": 2145,
+        "score": 0.914,
+        "start": 8700
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 9300,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 77,
+      "match": {
+        "fragment": 2303,
+        "score": 0.857,
+        "start": 9300
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 9900,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 74,
+      "match": {
+        "fragment": 2468,
+        "score": 0.897,
+        "start": 9900
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 10500,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 77,
+      "match": {
+        "fragment": 2618,
+        "score": 0.8,
+        "start": 10500
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 11100,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 72,
+      "match": {
+        "fragment": 2721,
+        "score": 0.919,
+        "start": 11100
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 11700,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 63,
+      "match": {
+        "fragment": 2853,
+        "score": 0.97,
+        "start": 11700
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 12300,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 84,
+      "match": {
+        "fragment": 3007,
+        "score": 0.86,
+        "start": 12300
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 12900,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 86,
+      "match": {
+        "fragment": 3173,
+        "score": 0.943,
+        "start": 12900
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 13500,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 96,
+      "match": {
+        "fragment": 3371,
+        "score": 0.853,
+        "start": 13500
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 14100,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 70,
+      "match": {
+        "fragment": 3537,
+        "score": 0.746,
+        "start": 14100
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 14700,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 87,
+      "match": {
+        "fragment": 3680,
+        "score": 0.908,
+        "start": 14700
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 15300,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 83,
+      "match": {
+        "fragment": 3852,
+        "score": 0.966,
+        "start": 15300
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 15900,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 90,
+      "match": {
+        "fragment": 4051,
+        "score": 0.882,
+        "start": 15900
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 16500,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 68,
+      "match": {
+        "fragment": 4232,
+        "score": 0.926,
+        "start": 16501.62
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 17100,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 66,
+      "match": {
+        "fragment": 4395,
+        "score": 0.836,
+        "start": 17100.78
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 17700,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 92,
+      "match": {
+        "fragment": 4567,
+        "score": 0.946,
+        "start": 17700
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 18300,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 85,
+      "match": {
+        "fragment": 4748,
+        "score": 0.977,
+        "start": 18300
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 18900,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 79,
+      "match": {
+        "fragment": 4901,
+        "score": 0.963,
+        "start": 18900
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 19500,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 84,
+      "match": {
+        "fragment": 5093,
+        "score": 0.868,
+        "start": 19500
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 20100,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 76,
+      "match": {
+        "fragment": 5265,
+        "score": 0.887,
+        "start": 20100
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 20700,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 83,
+      "match": {
+        "fragment": 5441,
+        "score": 0.919,
+        "start": 20700
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 21300,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 80,
+      "match": {
+        "fragment": 5614,
+        "score": 0.902,
+        "start": 21300
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 21900,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 73,
+      "match": {
+        "fragment": 5761,
+        "score": 0.91,
+        "start": 21900
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 22500,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 75,
+      "match": {
+        "fragment": 5934,
+        "score": 0.922,
+        "start": 22500
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 23100,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 85,
+      "match": {
+        "fragment": 6118,
+        "score": 0.922,
+        "start": 23100
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 23700,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 82,
+      "match": {
+        "fragment": 6268,
+        "score": 1,
+        "start": 23700
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 24300,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 79,
+      "match": {
+        "fragment": 6412,
+        "score": 0.95,
+        "start": 24300
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 24900,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 57,
+      "match": {
+        "fragment": 6604,
+        "score": 0.983,
+        "start": 24900
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 25500,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 81,
+      "match": {
+        "fragment": 6773,
+        "score": 0.81,
+        "start": 25500
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 26100,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 70,
+      "match": {
+        "fragment": 6912,
+        "score": 0.819,
+        "start": 26100
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 26700,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 64,
+      "match": {
+        "fragment": 7052,
+        "score": 0.984,
+        "start": 26700
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 26747.6825,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 75,
+      "match": {
+        "fragment": 7065,
+        "score": 0.895,
+        "start": 26747.6825
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 26897.6825,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 71,
+      "match": {
+        "fragment": 7102,
+        "score": 0.972,
+        "start": 26897.6825
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 26987.6825,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 59,
+      "match": {
+        "fragment": 7119,
+        "score": 0.898,
+        "start": 26987.6825
+      }
+    },
+    {
+      "trackId": "track-0",
+      "time": 27037.6825,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 62,
+      "match": null
+    },
+    {
+      "trackId": "track-1",
+      "time": 10,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 44,
+      "match": null
+    },
+    {
+      "trackId": "track-1",
+      "time": 60,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 83,
+      "match": {
+        "fragment": 7138,
+        "score": 0.964,
+        "start": 60
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 150,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 78,
+      "match": {
+        "fragment": 7152,
+        "score": 0.924,
+        "start": 150
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 300,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 70,
+      "match": {
+        "fragment": 7189,
+        "score": 0.824,
+        "start": 300.9
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 900,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 65,
+      "match": {
+        "fragment": 7369,
+        "score": 0.925,
+        "start": 900
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 1500,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 78,
+      "match": {
+        "fragment": 7553,
+        "score": 0.911,
+        "start": 1500
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 2100,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 69,
+      "match": {
+        "fragment": 7709,
+        "score": 0.946,
+        "start": 2100
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 2700,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 74,
+      "match": {
+        "fragment": 7894,
+        "score": 0.829,
+        "start": 2700
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 3300,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 72,
+      "match": {
+        "fragment": 8052,
+        "score": 0.89,
+        "start": 3300
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 3900,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 79,
+      "match": {
+        "fragment": 8195,
+        "score": 0.963,
+        "start": 3900
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 4500,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 68,
+      "match": {
+        "fragment": 8349,
+        "score": 0.972,
+        "start": 4500
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 5100,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 81,
+      "match": {
+        "fragment": 8496,
+        "score": 0.93,
+        "start": 5100
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 5700,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 69,
+      "match": {
+        "fragment": 8697,
+        "score": 0.958,
+        "start": 5700
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 6300,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 98,
+      "match": {
+        "fragment": 8878,
+        "score": 0.942,
+        "start": 6300
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 6900,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 84,
+      "match": {
+        "fragment": 9090,
+        "score": 0.905,
+        "start": 6900
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 7500,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 78,
+      "match": {
+        "fragment": 9252,
+        "score": 0.887,
+        "start": 7500
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 8100,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 69,
+      "match": {
+        "fragment": 9449,
+        "score": 0.958,
+        "start": 8100
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 8700,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 62,
+      "match": {
+        "fragment": 9627,
+        "score": 0.984,
+        "start": 8700
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 9300,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 59,
+      "match": {
+        "fragment": 9779,
+        "score": 0.9,
+        "start": 9300
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 9900,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 95,
+      "match": {
+        "fragment": 9975,
+        "score": 0.853,
+        "start": 9900
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 10500,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 72,
+      "match": {
+        "fragment": 10152,
+        "score": 0.851,
+        "start": 10500
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 11100,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 57,
+      "match": {
+        "fragment": 10337,
+        "score": 0.965,
+        "start": 11100
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 11700,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 65,
+      "match": {
+        "fragment": 10497,
+        "score": 0.833,
+        "start": 11700
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 12300,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 62,
+      "match": {
+        "fragment": 10650,
+        "score": 0.806,
+        "start": 12300
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 12900,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 74,
+      "match": {
+        "fragment": 10809,
+        "score": 0.932,
+        "start": 12900
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 13500,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 62,
+      "match": {
+        "fragment": 10959,
+        "score": 0.903,
+        "start": 13500
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 14100,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 72,
+      "match": {
+        "fragment": 11114,
+        "score": 0.944,
+        "start": 14100
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 14700,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 70,
+      "match": {
+        "fragment": 11252,
+        "score": 0.986,
+        "start": 14700
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 15300,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 73,
+      "match": {
+        "fragment": 11386,
+        "score": 0.867,
+        "start": 15300
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 15900,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 82,
+      "match": {
+        "fragment": 11522,
+        "score": 0.845,
+        "start": 15900
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 16500,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 88,
+      "match": {
+        "fragment": 11703,
+        "score": 0.876,
+        "start": 16500
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 17100,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 82,
+      "match": {
+        "fragment": 11896,
+        "score": 0.918,
+        "start": 17100
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 17700,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 75,
+      "match": {
+        "fragment": 12062,
+        "score": 0.896,
+        "start": 17700
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 18300,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 80,
+      "match": {
+        "fragment": 12228,
+        "score": 0.976,
+        "start": 18300
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 18900,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 82,
+      "match": {
+        "fragment": 12442,
+        "score": 0.904,
+        "start": 18900
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 19500,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 81,
+      "match": {
+        "fragment": 12705,
+        "score": 0.94,
+        "start": 19500
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 20100,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 72,
+      "match": {
+        "fragment": 12930,
+        "score": 0.895,
+        "start": 20100
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 20700,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 70,
+      "match": {
+        "fragment": 13129,
+        "score": 0.861,
+        "start": 20700
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 21300,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 72,
+      "match": {
+        "fragment": 13306,
+        "score": 0.896,
+        "start": 21300
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 21900,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 103,
+      "match": {
+        "fragment": 13506,
+        "score": 0.951,
+        "start": 21900
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 22500,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 78,
+      "match": {
+        "fragment": 13680,
+        "score": 0.95,
+        "start": 22500
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 23100,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 68,
+      "match": {
+        "fragment": 13840,
+        "score": 0.971,
+        "start": 23100
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 23700,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 76,
+      "match": {
+        "fragment": 14001,
+        "score": 0.923,
+        "start": 23700
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 24300,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 74,
+      "match": {
+        "fragment": 14196,
+        "score": 0.907,
+        "start": 24300
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 24900,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 89,
+      "match": {
+        "fragment": 14318,
+        "score": 0.933,
+        "start": 24900
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 25500,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 69,
+      "match": {
+        "fragment": 14502,
+        "score": 0.959,
+        "start": 25500
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 26041.122448979593,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 66,
+      "match": {
+        "fragment": 14664,
+        "score": 0.971,
+        "start": 26042.362448979595
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 26100,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 71,
+      "match": {
+        "fragment": 14676,
+        "score": 0.88,
+        "start": 26100
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 26191.122448979593,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 78,
+      "match": {
+        "fragment": 14708,
+        "score": 0.949,
+        "start": 26191.122448979593
+      }
+    },
+    {
+      "trackId": "track-1",
+      "time": 26281.122448979593,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 48,
+      "match": null
+    },
+    {
+      "trackId": "track-1",
+      "time": 26331.122448979593,
+      "duration": 30,
+      "done": true,
+      "spokenWords": 7,
+      "match": null
+    }
+  ]
+}

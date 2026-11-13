@@ -848,8 +848,7 @@ async function processAnchored(
     const pending = job.anchoring!.samples
       .map((sample, index) => ({ sample, index }))
       .filter(({ sample }) => !sample.done);
-    if (!pending.length) break;
-    const useBatch = job.engine === CTC_ENGINE && await workerSupportsAnchorBatch(workerBase, live);
+    const useBatch = pending.length > 0 && job.engine === CTC_ENGINE && await workerSupportsAnchorBatch(workerBase, live);
     if (useBatch) {
       const byTrack = new Map<string, typeof pending>();
       for (const item of pending) {
@@ -911,7 +910,6 @@ async function processAnchored(
         }
         if (fellBack) break;
       }
-      if (!fellBack && !anchorBatchDisabled(workerBase.replace(/\/$/, ""))) continue;
     }
     for (const { sample, index: i } of job.anchoring!.samples
       .map((sample, index) => ({ sample, index }))
