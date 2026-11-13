@@ -323,10 +323,16 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
       projection,
       memberBook,
     );
-    if (!intervals.length) continue;
+    const projectedId = projectedJobId(workId, member.ebookId, consensusJob.recordingId);
+    if (!intervals.length) {
+      // A projection of an earlier consensus map (an older engine, #277) is replaced
+      // even when the new one maps nothing for this edition.
+      const stale = listAlignmentJobs().find((job) => job.id === projectedId);
+      if (stale && stale.generation !== consensusJob.generation) deleteAlignmentJob(stale.id);
+      continue;
+    }
     // (ebook, recording) is unique: a cancelled or failed prepare of this
     // ebook still holds that slot, and the projection takes its place.
-    const projectedId = projectedJobId(workId, member.ebookId, consensusJob.recordingId);
     for (const stale of listAlignmentJobs())
       if (
         stale.ebookId === member.ebookId &&

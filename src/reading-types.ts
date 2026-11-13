@@ -172,6 +172,20 @@ export type AlignmentJob = {
   anchoring?: AlignmentAnchoring;
   /** "backfill" for jobs queued automatically; "projected" for ebook-set maps. */
   origin?: "backfill" | "manual" | "projected";
+  /** Set on a job queued automatically to replace a map made by an older engine (#277). */
+  rebuildOf?: { engine: string; status: AlignmentJob["status"]; requestedAt: number };
+  /**
+   * Listed and /map responses only: the job serves its previous map while this rebuild runs, and the
+   * rebuild replaces it when it publishes.
+   */
+  rebuild?: {
+    status: AlignmentJob["status"];
+    progress: number;
+    engine: string;
+    error: string | null;
+    outcome?: AlignmentOutcome;
+    updatedAt: number;
+  };
   /** Most recent dispatch failure per remote host, if any. */
   poolErrors?: Partial<Record<AlignmentPoolHostId, string>>;
   /** Remote SSH pool dispatch for CTC or full anchored jobs. */

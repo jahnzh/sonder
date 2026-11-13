@@ -38,9 +38,10 @@ export async function workerAnchorSample(input: {
   if (!process.env.ALIGNMENT_WORKER_URL || !process.env.ALIGNMENT_WORKER_TOKEN)
     throw new Error("The local alignment worker is not configured.");
   // An in-flight sample may finish, but no new background sample may start
-  // while a reading-sync job is queued or processing.
+  // while a reading-sync job is queued or processing. Rebuilds (#277) do not
+  // hold it back: a newly added edition goes ahead of them.
   while (listAlignmentJobs().some((job) =>
-    job.status === "queued" || job.status === "processing"
+    !job.rebuildOf && (job.status === "queued" || job.status === "processing")
   )) await new Promise((resolve) => setTimeout(resolve, 1000));
   const response = await fetch(
     `${process.env.ALIGNMENT_WORKER_URL.replace(/\/$/, "")}/anchor`,
