@@ -52,6 +52,8 @@ for (const [column, definition] of [
   ["claim_owner", "TEXT"],
   ["claim_generation", "TEXT"],
   ["claimed_at", "INTEGER"],
+  // Automatic rebuild (#277): the usable map that stays served until its rebuild publishes.
+  ["published_map", "TEXT"],
 ] as const)
   if (!alignmentColumns.has(column))
     sqlite.exec(`ALTER TABLE alignment_jobs ADD COLUMN ${column} ${definition}`);

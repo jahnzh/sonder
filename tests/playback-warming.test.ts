@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  alignmentJobNeedsPolling,
   createAlignmentMapLifecycle,
   mapCacheKey,
   type MapLifecycleDeps,
@@ -73,9 +74,9 @@ const warmTarget = (over: Partial<WarmTarget> = {}): WarmTarget => ({
 });
 
 /**
- * The retained warmPlaybackReading poll loop, driven only by lifecycle.warm
- * outcomes: null stops; a queued/copying/processing job-summary reschedules
- * at WARM_POLL_MS.
+ * warmPlaybackReading's poll loop, driven by lifecycle.warm outcomes and the
+ * shared production polling decision: null stops; alignmentJobNeedsPolling
+ * reschedules at WARM_POLL_MS.
  */
 function pollWarming(check: () => Promise<AlignmentJob | null>) {
   const outcomes: (AlignmentJob | null)[] = [];
@@ -88,7 +89,7 @@ function pollWarming(check: () => Promise<AlignmentJob | null>) {
     });
   };
   const pollIfProcessing = (next: AlignmentJob) => {
-    if (["queued", "copying", "processing"].includes(next.status)) {
+    if (alignmentJobNeedsPolling(next)) {
       armTick();
       pollTimer = setTimeout(() => {
         pollTimer = null;
@@ -182,6 +183,44 @@ test("a processing job-summary keeps polling at the existing interval", async (c
     assert.equal(checks, 3);
     assert.equal(poll.outcomes.length, 3);
     assert.equal(t.data.has(KEY), false, "zero-interval summaries do not touch the cache");
+  } finally {
+    poll.stop();
+    context.mock.timers.reset();
+  }
+});
+
+test("a ready summary with an active rebuild.status keeps polling", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  let checks = 0;
+  // Drive the poll loop directly: warmMap would fetch the full map when intervalCount > 0.
+  const poll = pollWarming(async () => {
+    checks++;
+    return job({
+      status: "ready",
+      progress: 1,
+      intervalCount: 4,
+      updatedAt: 100 + checks,
+      rebuild: {
+        status: checks < 3 ? "processing" : "ready",
+        progress: checks < 3 ? 0.5 : 1,
+        engine: "ctc-wav2vec2-base-960h-torchaudio-2.8-v1",
+        error: null,
+        updatedAt: 100 + checks,
+      },
+    });
+  });
+  try {
+    await poll.start();
+    assert.equal(poll.outcomes[0]?.status, "ready");
+    assert.equal(poll.outcomes[0]?.rebuild?.status, "processing");
+    assert.equal(poll.scheduled(), true, "rebuild.status must keep the warm poll alive");
+    await poll.advance((ms) => context.mock.timers.tick(ms));
+    assert.equal(checks, 2);
+    assert.equal(poll.scheduled(), true);
+    await poll.advance((ms) => context.mock.timers.tick(ms));
+    assert.equal(checks, 3);
+    assert.equal(poll.outcomes[2]?.rebuild?.status, "ready");
+    assert.equal(poll.scheduled(), false, "poll stops once rebuild.status leaves the active set");
   } finally {
     poll.stop();
     context.mock.timers.reset();

@@ -1,5 +1,5 @@
 import { userStorageKey } from "./lib";
-import { warmMap } from "./alignment-map-lifecycle";
+import { alignmentJobNeedsPolling, warmMap } from "./alignment-map-lifecycle";
 import { alignmentMapDeps } from "./alignment-map-deps";
 import { api, localDB, authDB, userId } from "./lib";
 import type {
@@ -519,7 +519,8 @@ export function warmPlaybackReading(
 
     const pollIfProcessing = (job: AlignmentJob) => {
       if (cancelled) return;
-      if (["queued", "copying", "processing"].includes(job.status)) {
+      // A background rebuild keeps job.status as the published map; poll on rebuild.status (#277).
+      if (alignmentJobNeedsPolling(job)) {
         pollTimer = setTimeout(async () => {
           if (cancelled) return;
           const updated = await checkJobAndMap();

@@ -37,6 +37,7 @@ export const alignmentJobs = sqliteTable("alignment_jobs", {
   claimOwner: text("claim_owner"),
   claimGeneration: text("claim_generation"),
   claimedAt: integer("claimed_at"),
+  publishedMap: text("published_map"),
 });
 export const tracks = sqliteTable("tracks", {
   chapters: text("chapters", { mode: "json" })
