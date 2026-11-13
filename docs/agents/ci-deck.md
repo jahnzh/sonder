@@ -12,7 +12,7 @@ Facts verified on 2026-10-29 for the second remote CI host. It is on when the WS
 ## Running a check
 
 ```bash
-npm run ci:run <sha>   # preferred: queues on a busy Deck, picks idle host
+npm run ci:run <sha>   # central dispatcher; Deck is fallback when WSL and lisa are down or full
 npm run ci:deck <sha>  # direct runner; only when debugging scripts/ci-deck.sh
 ```
 
@@ -39,7 +39,7 @@ podman run --rm --name sonder-ci-run-<id> --cpus 2 --memory 6g --pids-limit 2048
 
 ## Choosing a host
 
-`npm run ci:run [--dispatch <id>] <commit-sha>` probes both hosts in the order of `SONDER_CI_HOSTS` (default `deck,wsl`), starts the check on the first idle one, and queues behind a busy one by waiting on its runner process. A commit that already has a finished failed check on any host is refused with exit 1 and never rerun on the other host. If every enabled host is unreachable, the first enabled host's runner falls back to a local check. Full semantics, output lines and environment overrides: `docs/agents/ci-host.md`, "Choosing a host: `scripts/ci-run.sh`".
+`npm run ci:run [--dispatch <id>] <commit-sha>` admits checks on WSL and lisa by available resources and uses the Deck only when neither has room, or when explicitly listed in `SONDER_CI_HOSTS`. A commit with a finished failed check is refused. If all enabled hosts are unreachable and no checks are running, the first enabled runner falls back to a local check. Full semantics: `docs/agents/ci-host.md`, "Choosing a host: `scripts/ci-run.sh`".
 
 ## Exit codes
 
