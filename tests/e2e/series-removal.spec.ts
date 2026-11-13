@@ -45,7 +45,9 @@ test("remove a saved series while keeping its works", async ({ page }) => {
     (book: { inLibrary: boolean }) => book.inLibrary,
   );
   expect(after.length).toBe(before.length);
-  expect(await (await page.request.get("/api/series")).json()).toEqual([]);
+  // Other tests on this server may leave series 702 saved; only 701 is removed here.
+  const saved = (await (await page.request.get("/api/series")).json()) as { id: number }[];
+  expect(saved.map((series) => series.id)).not.toContain(701);
 });
 
 test("removal preview defaults preserve separately added works", async ({ page }) => {
