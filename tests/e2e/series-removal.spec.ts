@@ -22,8 +22,22 @@ test("remove a saved series while keeping its works", async ({ page }) => {
   );
 
   await page.goto("/#library");
+  // Revisiting a saved series refreshes it, and the fixture can then list a
+  // new work (#206), pre-selected for adding. While a work is selected the
+  // dialog offers "Add selected works" instead of "Remove series", so wait for
+  // the refresh and leave any selected new work out instead of racing it.
+  const refreshed = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/api/series/701",
+  );
   await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
-  await page.getByRole("button", { name: "Remove series", exact: true }).click();
+  await refreshed;
+  const remove = page.getByRole("button", { name: "Remove series", exact: true });
+  await expect(async () => {
+    for (const checkbox of await page.getByRole("dialog").getByRole("checkbox", { checked: true }).all())
+      await checkbox.uncheck();
+    await expect(remove).toBeVisible({ timeout: 1000 });
+  }).toPass();
+  await remove.click();
   await page.getByRole("button", { name: "Remove series", exact: true }).last().click();
   await expect(page.getByRole("button", { name: "Open The Crossing by Ada North" })).toHaveCount(0);
 
@@ -31,7 +45,9 @@ test("remove a saved series while keeping its works", async ({ page }) => {
     (book: { inLibrary: boolean }) => book.inLibrary,
   );
   expect(after.length).toBe(before.length);
-  expect(await (await page.request.get("/api/series")).json()).toEqual([]);
+  // Other tests on this server may leave series 702 saved; only 701 is removed here.
+  const saved = (await (await page.request.get("/api/series")).json()) as { id: number }[];
+  expect(saved.map((series) => series.id)).not.toContain(701);
 });
 
 test("removal preview defaults preserve separately added works", async ({ page }) => {
