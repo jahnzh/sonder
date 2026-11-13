@@ -125,7 +125,7 @@ test("a paused alignment processor starts no job; resumed, it picks the job up",
     sqlite.prepare("INSERT INTO alignment_jobs(id,ebook_id,recording_id,data,updated_at) VALUES('job-pause','eb-missing','ra',?,?)").run(
       JSON.stringify({
         id: "job-pause", generation: "g1", ebookId: "eb-missing", recordingId: "ra", status: "queued", progress: 0,
-        engine: "ctc-wav2vec2-base-960h-torchaudio-2.8-v1", error: null, warning: null, intervals: [], sectionsDone: [],
+        engine: "ctc-wav2vec2-base-960h-torchaudio-2.8-v2", error: null, warning: null, intervals: [], sectionsDone: [],
         elapsedSeconds: 0, fingerprint: "", audioFingerprint: "", updatedAt: now, createdAt: now, coverage: 0, pairings: [],
       }),
       now,

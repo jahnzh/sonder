@@ -172,7 +172,8 @@ def take(audio, start, duration, destination, deadline):
         return False
 
 
-def shutdown():
+def shutdown(wait=False):
+    """Drop every entry. `wait` also lets running extractions finish removing their files."""
     global _POOL, _POOL_WORKERS
     with _LOCK:
         for entry in _ENTRIES.values():
@@ -180,4 +181,4 @@ def shutdown():
         _ENTRIES.clear()
         pool, _POOL, _POOL_WORKERS = _POOL, None, 0
     if pool is not None:
-        pool.shutdown(wait=False, cancel_futures=True)
+        pool.shutdown(wait=wait, cancel_futures=True)

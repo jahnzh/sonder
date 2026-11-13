@@ -32,7 +32,7 @@ const { resetAlignmentPoolCoordinator, setAlignmentPoolDepsForTests } = await im
 const { AlignmentScheduler, ALIGNMENT_ADMITTED_BOOKS, StaleAlignmentRun } = await import("../server/alignment-scheduler.ts");
 type AlignmentJob = ReturnType<typeof alignmentJob>;
 
-const engine = "ctc-wav2vec2-base-960h-torchaudio-2.8-v1";
+const engine = "ctc-wav2vec2-base-960h-torchaudio-2.8-v2";
 const hosts = [
   { id: "wsl" as const, sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test" },
   { id: "lisa" as const, sshTarget: "lisa", maxConcurrent: 1, remoteWorkRoot: temp, workerUrl: "http://lisa-worker.test" },

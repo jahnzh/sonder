@@ -27,7 +27,7 @@ const { extractBook } = await import("../server/reader.ts");
 const { createAlignment, alignmentJob, putAlignmentJob, processAlignments, stopAlignments, registerAlignment, resetAnchorBatchSupportForTests, resetAlignmentRunnerForTests, setAnchorBatchClockForTests, ANCHOR_BATCH_CHUNK } = await import("../server/alignment.ts");
 const { resetAlignmentPoolCoordinator, setAlignmentPoolDepsForTests } = await import("../server/alignment-pool.ts");
 const originalFetch = globalThis.fetch;
-const engine = "ctc-wav2vec2-base-960h-torchaudio-2.8-v1";
+const engine = "ctc-wav2vec2-base-960h-torchaudio-2.8-v2";
 resetAlignmentPoolCoordinator([
   { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test" },
   { id: "lisa", sshTarget: "lisa", maxConcurrent: 1, remoteWorkRoot: temp, workerUrl: "http://lisa-worker.test" },

@@ -265,7 +265,9 @@ def _infer_from_pcm(pcm, folder, fragments, start, duration, source, source_vers
     loaded = time.monotonic()
     first_sample = round(start * SAMPLE_RATE)
     end_sample = min(round((start + duration) * SAMPLE_RATE), len(pcm))
-    outputs, boundaries = [], []
+    # Cached chunks are ready at once while missing ones wait for a batch, so each
+    # chunk keeps its place by core index; the path needs them in audio order.
+    selected_chunks = {}
     encoding_seconds = cache_seconds = cache_write_seconds = 0.0
     pending = []
     microbatch = microbatch or Microbatch(encode_batch_size(env))
@@ -288,15 +290,15 @@ def _infer_from_pcm(pcm, folder, fragments, start, duration, source, source_vers
                 data = emission.detach().to(device="cpu", dtype=model.torch.float32).contiguous().numpy().astype("<f4", copy=False).tobytes()
                 cache.write(item["index"], chunk_boundaries[0], len(chunk_boundaries), len(model.labels), data)
                 cache_write_seconds += time.monotonic() - cache_started
-            _select(item["first_sample"], item["end_sample"], emission, chunk_boundaries, outputs, boundaries)
+            _select(item["index"], item["first_sample"], item["end_sample"], emission, chunk_boundaries)
         pending.clear()
 
-    def _select(first, end, emission, chunk_boundaries, outs, bounds):
+    def _select(core_index, first, end, emission, chunk_boundaries):
         selected = [i for i, boundary in enumerate(chunk_boundaries)
                     if first <= boundary + STRIDE // 2 < end]
         if selected:
-            outs.append(emission[:, selected[0]:selected[-1] + 1])
-            bounds.extend(chunk_boundaries[i] - first for i in selected)
+            selected_chunks[core_index] = (emission[:, selected[0]:selected[-1] + 1],
+                                           [chunk_boundaries[i] - first for i in selected])
 
     for core_index, core_start, core_end, context_start, context_end in _window_cores(first_sample, end_sample, len(pcm)):
         cache_started = time.monotonic()
@@ -317,8 +319,10 @@ def _infer_from_pcm(pcm, folder, fragments, start, duration, source, source_vers
             chunk_boundaries = [first + i * STRIDE for i in range(frames)]
             emission = model.torch.from_numpy(np.frombuffer(data, dtype="<f4").copy().reshape(1, frames, len(model.labels))).to(model.device)
             cache_seconds += time.monotonic() - cache_started
-            _select(first_sample, end_sample, emission, chunk_boundaries, outputs, boundaries)
+            _select(core_index, first_sample, end_sample, emission, chunk_boundaries)
     flush()
+    outputs = [selected_chunks[index][0] for index in sorted(selected_chunks)]
+    boundaries = [boundary for index in sorted(selected_chunks) for boundary in selected_chunks[index][1]]
     if not outputs:
         raise ValueError("Audio is too short for the CTC encoder.")
     emissions = model.torch.cat(outputs, dim=1).contiguous()
