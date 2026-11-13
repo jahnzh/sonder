@@ -4,6 +4,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { readerFixture } from "./reader-fixture.ts";
 
 // Env before any server import: storage.ts and db.ts capture paths at load.
@@ -29,6 +30,7 @@ const {
   DEFAULT_EBOOK_SET_PROBER,
   ebookSetProber,
   evaluateEbookSetMember,
+  fetchTopKIntoEbookSet,
   listEbookSetMembers,
   reevaluateEbookSetForWork,
   resetEbookSetDeps,
@@ -127,8 +129,8 @@ function paragraphs(prefix: string) {
   return Array.from({ length: PARAGRAPHS }, (_, i) => `<p>${prefix} paragraph ${i} of the story continues here.</p>`).join("");
 }
 
-async function seedEpub(workId: string, prefix: string, language = "en") {
-  const ebookId = `ebook-${randomUUID()}`;
+async function seedEpub(workId: string, prefix: string, language = "en", id = `ebook-${randomUUID()}`) {
+  const ebookId = id;
   const path = join(temp, "media", `${ebookId}.epub`);
   writeFileSync(path, await readerFixture({ language, title: prefix, bodies: [paragraphs(prefix), paragraphs(prefix)] }));
   db.insert(schema.ebookEditions).values({ id: ebookId, workId, format: "epub", source: path }).run();
@@ -270,6 +272,34 @@ test("candidates re-evaluated together share one staging, one host lease and one
   assert.equal(removals.length, 1);
   assert.match(removals[0].command, /pool-jobs\/ctc-probe-/);
   assert.equal(getAlignmentPoolCoordinator().activeOnHost("wsl"), 0, "the host is free again");
+});
+
+test("a top-k run frees the pool host while it downloads the next candidate", async () => {
+  const { workId } = seedWork();
+  db.update(schema.works).set({ title: "Probe Book", author: "Ada Author" }).where(eq(schema.works.id, workId)).run();
+  handler = ctcWorker({ Right: "forward", Wrong: "none" });
+  const heldWhileDownloading: number[] = [];
+  const names = ["Right", "Wrong"];
+  setEbookSetDeps({
+    search: async () => ({
+      website: "https://example.test",
+      files: names.map((name, i) => ({
+        md5: `${i}`.repeat(32), source: "libgen" as const, title: `Probe Book ${name}`, authors: ["Ada Author"],
+        extension: "epub", language: "English", size: "1 MB", year: "2020", coverUrl: null, url: `https://example.test/${i}`,
+      })),
+    }),
+    save: async (file) => {
+      heldWhileDownloading.push(getAlignmentPoolCoordinator().activeOnHost("wsl"));
+      const id = `${file.source}-${file.md5}`;
+      await seedEpub(workId, file.title.split(" ").at(-1)!, "en", id);
+      return { id, alreadySaved: false };
+    },
+  });
+  const result = await fetchTopKIntoEbookSet(workId);
+  assert.deepEqual(result.downloaded.map((d) => d.status), ["accepted", "rejected"]);
+  assert.deepEqual(heldWhileDownloading, [0, 0], "no lease is held while a candidate downloads");
+  assert.equal(probeUploads().length, 2, "each candidate stages the recording again; the acoustic cache is shared");
+  assert.equal(getAlignmentPoolCoordinator().activeOnHost("wsl"), 0);
 });
 
 test("lisa takes the probe when WSL is unreachable", async () => {

@@ -336,7 +336,7 @@ export async function runOutlierCheckForEbook(
     try {
       scores = await session.score({ fragmentTexts: passages, language: "eng", samples: planned });
     } finally {
-      if (!probe) await session.close();
+      if (!probe) await session.release();
     }
   }
   const samples = planned.map((sample, i) => ({
@@ -366,7 +366,7 @@ export async function withProbeSession<T>(
   try {
     return await run(session);
   } finally {
-    await session?.close();
+    await session?.release();
   }
 }
 
@@ -611,6 +611,9 @@ export async function fetchTopKIntoEbookSet(
         } catch (evaluateError) {
           failures.push((evaluateError as Error).message);
           dropOrphanEbookEdition(saved.id, workId);
+        } finally {
+          // The next candidate has to be downloaded first; do not hold the host meanwhile.
+          await probe?.release();
         }
       } catch (error) {
         failures.push((error as Error).message);

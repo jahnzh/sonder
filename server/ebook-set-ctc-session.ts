@@ -1,5 +1,6 @@
 // One recording's CTC probing session: leases a pool host (WSL GPU first, lisa CPU as the fallback), stages the
-// audio once, and scores every candidate's samples on it, so five candidates cost about one acoustic pass.
+// audio, and scores a run's candidates on it. Every request carries the recording's cache identity, so five
+// candidates cost about one acoustic pass.
 import { isPaused } from "./activity-pause.ts";
 import { audioFingerprint, recordingContext, trackLocalAudioPath } from "./alignment.ts";
 import {
@@ -22,7 +23,11 @@ export type ProbeSample = { trackId: string; time: number; duration: number };
 
 export type ProbeSession = {
   score(input: { fragmentTexts: string[]; language: string; samples: ProbeSample[] }): Promise<AnchorSampleScore[]>;
-  close(): Promise<void>;
+  /**
+   * Frees the pool host and removes the staged audio. The session stays usable: the next `score` leases again.
+   * A run releases between candidates while it downloads the next one, so queued alignments can take the host.
+   */
+  release(): Promise<void>;
 };
 
 /** The pool could not run the probe now; the candidate stays held and is probed again on the next evaluation. */
@@ -107,6 +112,6 @@ export function createCtcProbeSession(
         throw error;
       }
     },
-    close: release,
+    release,
   };
 }
