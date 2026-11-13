@@ -203,8 +203,7 @@ function fixture() {
   }
 
   // No stale stub runner from an earlier attempt in this same temp repo.
-  // A hosting-repo run passes its own root so it never waits on unrelated runners.
-  waitForNoForeignRunners(process.env.SONDER_TEST_SCOPE_ROOT || repo);
+  waitForNoForeignRunners(repo);
 
   return { base, repo, remote, first, second, run, read, logs, runnerInvocations, startBusy, spawnSleeper, cleanup };
 }
@@ -356,7 +355,8 @@ test("an unrelated ci-ssh.sh process outside the fixture repo does not stall idl
   const foreignDir = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-ci-foreign-"));
   const foreignScript = path.join(foreignDir, "ci-ssh.sh");
   fs.writeFileSync(foreignScript, "#!/usr/bin/env bash\nsleep 120\n", { mode: 0o755 });
-  const foreign = spawn("bash", [foreignScript], { stdio: "ignore" });
+  // Own process group, so cleanup also kills the sleep child (killing bash alone orphaned it).
+  const foreign = spawn("bash", [foreignScript], { stdio: "ignore", detached: true });
   try {
     assert.ok(waitForProcessVisible(foreign.pid));
     const startedAt = Date.now();
@@ -370,7 +370,7 @@ test("an unrelated ci-ssh.sh process outside the fixture repo does not stall idl
     assert.ok(isProcessAlive(foreign.pid), "foreign runner should still be sleeping");
   } finally {
     try {
-      foreign.kill("SIGKILL");
+      process.kill(-foreign.pid, "SIGKILL");
     } catch {
       // already gone
     }
