@@ -69,14 +69,14 @@ function cleanRunnerEnv(base) {
   return env;
 }
 
-test("ci-run tests do not mutate a hosting repo HEAD or branch", { timeout: 120_000 }, () => {
+test("ci-run tests do not mutate a hosting repo HEAD or branch", { timeout: 330_000 }, () => {
   const { base, hosting, before } = makeHostingRepo();
   const startedAt = Date.now();
   try {
     const result = spawnSync(process.execPath, [runner, hosting], {
       encoding: "utf8",
       env: cleanRunnerEnv(base),
-      timeout: 90_000,
+      timeout: 300_000,
     });
     const elapsedMs = Date.now() - startedAt;
     assert.equal(

@@ -24,7 +24,9 @@ const result = spawnSync(
     cwd: hosting,
     encoding: "utf8",
     env: process.env,
-    timeout: 60_000,
+    // Under a loaded CI host (several complete checks at once) this nested node --test run
+    // took over 60 s and was killed; the "(60291ms)" failure in #314 was this timeout.
+    timeout: 240_000,
   },
 );
 
