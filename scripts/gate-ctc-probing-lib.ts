@@ -131,3 +131,22 @@ export function renderTable(titles: TitleResult[]) {
   }
   return lines.join("\n");
 }
+
+/** Samples found per candidate (rows) and title (columns), as "Whisper/CTC" over the sample count. */
+export function renderMatrix(titles: TitleResult[]) {
+  const candidates = titles[0]?.whisper.map((outcome) => outcome.candidate) ?? [];
+  const lines = [
+    `| Candidate | ${titles.map((entry) => `${entry.truth} (${entry.whisper[0]?.spoken ?? 0})`).join(" | ")} |`,
+    `| --- | ${titles.map(() => "---").join(" | ")} |`,
+  ];
+  for (const candidate of candidates) {
+    const cells = titles.map((entry) => {
+      const whisper = entry.whisper.find((outcome) => outcome.candidate === candidate);
+      const ctc = entry.ctc.find((outcome) => outcome.candidate === candidate);
+      const cell = `${whisper?.matched ?? "-"}/${ctc?.matched ?? "-"}`;
+      return (entry.books?.[candidate] ?? candidate) === entry.truth ? `**${cell}**` : cell;
+    });
+    lines.push(`| ${candidate} | ${cells.join(" | ")} |`);
+  }
+  return lines.join("\n");
+}

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { gatePasses, judgeCandidate, pickEdition, pickedBook, renderTable, verdict, type CandidateOutcome } from "../scripts/gate-ctc-probing-lib.ts";
+import { gatePasses, judgeCandidate, pickEdition, pickedBook, renderMatrix, renderTable, verdict, type CandidateOutcome } from "../scripts/gate-ctc-probing-lib.ts";
 import { planSamples } from "../server/alignment-anchors.ts";
 
 const tracks = [{ id: "t", duration: 3600 }];
@@ -67,6 +67,10 @@ test("two copies of the right book are one answer, and either copy counts as the
   assert.equal(pickedBook(entry, entry.ctc), "v3");
   assert.equal(gatePasses([entry]), true);
   assert.match(renderTable([entry]), /\| same \|$/m);
+  const matrix = renderMatrix([entry]);
+  assert.match(matrix, /\| v3 \(20\) \|/);
+  assert.match(matrix, /\| v3 \| \*\*18\/19\*\* \|/);
+  assert.match(matrix, /\| v4 \| 0\/0 \|/);
   const wrongCopy = { ...entry, ctc: [outcome("v3", false, 0), outcome("prod-v3", false, 0), outcome("v4", true, 0.9)] };
   assert.equal(gatePasses([wrongCopy]), false);
 });

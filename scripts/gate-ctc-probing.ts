@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { planSamples, wordCount, type AnchorFragment } from "../server/alignment-anchors.ts";
 import { scoreCtcSamples, sampleFromWhisperAnchor, type AnchorSampleScore } from "../server/ebook-set-ctc-probe.ts";
-import { gatePasses, judgeCandidate, pickedBook, renderTable, verdict, type TitleResult } from "./gate-ctc-probing-lib.ts";
+import { gatePasses, judgeCandidate, pickedBook, renderMatrix, renderTable, verdict, type TitleResult } from "./gate-ctc-probing-lib.ts";
 
 type Manifest = {
   titles: { key: string; title: string; audio: string; duration: number; truth: string }[];
@@ -129,7 +129,11 @@ function report() {
   const lines = [
     renderTable(titles),
     "",
-    "CTC probing time per title (seconds; the first candidate pays the acoustic pass, later candidates read the cache):",
+    "Samples found per candidate and title, Whisper/CTC (bold: a copy of the right book; the column header is the sample count):",
+    "",
+    renderMatrix(titles),
+    "",
+    "CTC probing time per title in seconds (the first candidate encodes the uncached cores; the others read the cache):",
     "",
     "| Title | Samples | First candidate | Mean of the others |",
     "| --- | --- | --- | --- |",
