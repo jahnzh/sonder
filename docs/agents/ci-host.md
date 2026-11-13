@@ -111,3 +111,7 @@ Each step prints count, median, p90 and max in ms; steps whose max is above 10 s
 
 Parallel alignment workers need one `MEDIA_ROOT` each (hard-link the inputs); see the speech-sample issue (#291). When multiple workers share a single `MEDIA_ROOT`, intermediate alignment files collide or get deleted across processes. Hard-linking the input media into separate `MEDIA_ROOT` directories allows parallel execution without duplicating audio storage.
 
+
+## Parallel checks per host
+
+`scripts/ci-hosts.json` sets `maxParallel: 1` for `lisa`, `192.168.1.119` and `wsl`: each host runs one complete check at a time, and further runs queue (`ci-run.sh`). The limit exists because five checks started at once took lisa to load 41, which pushed timing-sensitive unit tests (`ci-run` hosting-repo test, `ci-stop` removal wait) past their limits (#314, #262). The hosting-repo test now passes its own scope root (`SONDER_TEST_SCOPE_ROOT`) so it never waits on other checks' runner processes.

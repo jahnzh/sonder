@@ -203,7 +203,8 @@ function fixture() {
   }
 
   // No stale stub runner from an earlier attempt in this same temp repo.
-  waitForNoForeignRunners(repo);
+  // A hosting-repo run passes its own root so it never waits on unrelated runners.
+  waitForNoForeignRunners(process.env.SONDER_TEST_SCOPE_ROOT || repo);
 
   return { base, repo, remote, first, second, run, read, logs, runnerInvocations, startBusy, spawnSleeper, cleanup };
 }

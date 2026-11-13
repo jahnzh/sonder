@@ -23,7 +23,7 @@ const result = spawnSync(
   {
     cwd: hosting,
     encoding: "utf8",
-    env: process.env,
+    env: { ...process.env, SONDER_TEST_SCOPE_ROOT: hosting },
     timeout: 60_000,
   },
 );

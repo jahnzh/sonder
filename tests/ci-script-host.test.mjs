@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -88,6 +88,32 @@ test("ci-run tests do not mutate a hosting repo HEAD or branch", { timeout: 120_
     assert.equal(gitIn(hosting, "symbolic-ref", "--short", "HEAD"), before.branch);
     assert.equal(gitIn(hosting, "status", "--porcelain"), before.status);
   } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("ci-run hosting-repo tests do not wait for an unrelated runner process", { timeout: 120_000 }, () => {
+  const { base, hosting } = makeHostingRepo();
+  const foreignScript = path.join(base, "ci-ssh.sh");
+  fs.writeFileSync(foreignScript, "#!/usr/bin/env bash\nsleep 120\n", { mode: 0o755 });
+  const foreign = spawn("bash", [foreignScript], { stdio: "ignore" });
+  try {
+    const startedAt = Date.now();
+    const result = spawnSync(process.execPath, [runner, hosting], {
+      encoding: "utf8",
+      env: cleanRunnerEnv(base),
+      timeout: 90_000,
+    });
+    const elapsedMs = Date.now() - startedAt;
+    assert.equal(result.status, 0, `hosting run failed (${elapsedMs}ms):\n${result.stderr}\n${result.stdout}`);
+    assert.ok(elapsedMs < 45_000, `hosting run waited on an unrelated runner (${elapsedMs}ms)`);
+    process.kill(foreign.pid, 0); // still alive: it was ignored, not reaped
+  } finally {
+    try {
+      foreign.kill("SIGKILL");
+    } catch {
+      // already gone
+    }
     fs.rmSync(base, { recursive: true, force: true });
   }
 });
