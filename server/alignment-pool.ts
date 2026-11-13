@@ -1,5 +1,6 @@
 // SSH pool for full (anchored) alignment jobs: isolated staging, host caps, one cross-host retry.
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { cpSync, mkdirSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
@@ -184,21 +185,21 @@ function formatPoolError(step: string, error: unknown) {
   return detail.toLowerCase().startsWith(`${step}:`) ? detail : `${step}: ${detail}`;
 }
 
-function recordPoolError(job: AlignmentJob, hostId: PoolHostId, step: string, error: unknown) {
+function recordPoolError(job: Pick<AlignmentJob, "poolErrors">, hostId: PoolHostId, step: string, error: unknown) {
   job.poolErrors ??= {};
   const formatted = formatPoolError(step, error);
   job.poolErrors[hostId] = formatted;
   getAlignmentPoolCoordinator().recordHostError(hostId, formatted);
 }
 
-function clearHostError(job: AlignmentJob, hostId: PoolHostId) {
+function clearHostError(job: Pick<AlignmentJob, "poolErrors">, hostId: PoolHostId) {
   getAlignmentPoolCoordinator().clearHostError(hostId);
   if (!job.poolErrors) return;
   delete job.poolErrors[hostId];
   if (!Object.keys(job.poolErrors).length) delete job.poolErrors;
 }
 
-async function probeHost(job: AlignmentJob, host: PoolHost) {
+async function probeHost(job: Pick<AlignmentJob, "poolErrors">, host: PoolHost) {
   try {
     if (await poolDeps().probe(host.sshTarget)) return true;
     recordPoolError(job, host.id, "ssh", "probe failed");
@@ -469,8 +470,11 @@ async function stageCtcTracks(input: StageTracksInput, workerRoot: string) {
   return { jobMediaRoot, stagedAudio };
 }
 
+/** What CTC dispatch needs of a job; an ebook-set probe supplies the same fields without being a queued alignment job. */
+type CtcDispatchTarget = Pick<AlignmentJob, "id" | "recordingId" | "mode" | "poolErrors" | "ctcDevice" | "ctcPrecision">;
+
 async function dispatchCtcJob(
-  job: AlignmentJob,
+  job: CtcDispatchTarget,
   tracks: (typeof schema.tracks.$inferSelect)[],
   localAudio: StageTracksInput["localAudio"],
   triedHosts: PoolHostId[],
@@ -524,6 +528,51 @@ async function dispatchCtcJob(
   }
   if (busy) throw new PoolBusyError(attempted);
   throw new Error(POOL_FAILURE_MESSAGE);
+}
+
+export type CtcProbeLease = {
+  hostId: PoolHostId;
+  workerUrl: string;
+  /** Directory on the worker (inside its MEDIA_ROOT/alignment) for the probe's output files. */
+  outputDir: string;
+  stagedAudio: Record<string, string>;
+  /** Frees the host and removes the staged audio. Safe to call twice. */
+  release(): Promise<void>;
+};
+
+/**
+ * Leases one pool host (WSL first, lisa as the fallback) for ebook candidate probing and stages the audio it
+ * will sample. Throws PoolBusyError when every reachable host is held by other CTC work. The lease holds the
+ * worker's single gate, so a probe never overlaps a queued alignment on the same host or recording.
+ */
+export async function acquireCtcProbeLease(
+  recordingId: string,
+  tracks: (typeof schema.tracks.$inferSelect)[],
+  localAudio: StageTracksInput["localAudio"],
+  triedHosts: PoolHostId[] = [],
+): Promise<CtcProbeLease & { triedHosts: PoolHostId[]; poolErrors: AlignmentJob["poolErrors"] }> {
+  if (!poolEnabled()) throw new Error("CTC alignment requires the remote pool.");
+  const target: CtcDispatchTarget = { id: `ctc-probe-${randomUUID()}`, recordingId, mode: "anchored" };
+  const state = await dispatchCtcJob(target, tracks, localAudio, triedHosts);
+  const coord = getAlignmentPoolCoordinator();
+  const host = coord.hostById(state.hostId);
+  let released = false;
+  return {
+    hostId: state.hostId,
+    workerUrl: state.workerUrl,
+    outputDir: join(state.jobMediaRoot, "alignment", target.id),
+    stagedAudio: state.stagedAudio,
+    triedHosts: state.triedHosts,
+    poolErrors: target.poolErrors,
+    async release() {
+      if (released) return;
+      released = true;
+      coord.release(state.hostId, target.id, recordingId);
+      // The staged copy is the whole recording; it is this probe's alone, so remove it.
+      if (host && state.jobMediaRoot.includes(`/alignment/pool-jobs/${target.id}`))
+        await poolDeps().exec(host.sshTarget, `rm -rf ${shellQuote(state.jobMediaRoot)}`).catch(() => undefined);
+    },
+  };
 }
 
 export async function dispatchFullAlignmentJob(

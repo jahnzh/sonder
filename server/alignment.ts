@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { anchorResult, workerMetadata, type WorkerMetadata } from "./alignment-worker-contract.ts";
 import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
 import { extractBook, ebookRecord } from "./reader.ts";
@@ -578,14 +579,6 @@ let workerRetryClock = defaultWorkerRetryClock;
 export function setWorkerRetryClockForTests(clock: typeof defaultWorkerRetryClock | null) {
   workerRetryClock = clock ?? defaultWorkerRetryClock;
 }
-const workerMetadata = z.object({
-  engine: z.string().min(1).optional(),
-  outcome: z.enum(["mapped", "partial", "unsynced", "language_not_supported", "error"]).optional(),
-  stageTimings: z.record(z.string(), z.number().nonnegative().finite()).optional(),
-  /** Mean GPU utilization percent for the request; null on CPU-only hosts. */
-  gpuUtilization: z.number().min(0).max(100).finite().nullable().optional(),
-});
-type WorkerMetadata = z.infer<typeof workerMetadata>;
 class WorkerRequestError extends Error {
   constructor(message: string, readonly metadata?: WorkerMetadata, readonly status?: number) { super(message); }
 }
@@ -740,20 +733,6 @@ async function workerRequest(
     return response.json();
   }
 }
-const anchorResult = z.object({
-  ...workerMetadata.shape,
-  match: z
-    .object({ index: z.number().int().nonnegative(), lastIndex: z.number().int().nonnegative().optional(), score: z.number().min(0).max(1).finite() })
-    .nullable(),
-  start: z.number().nonnegative().finite().optional(),
-  matches: z.array(z.object({
-    index: z.number().int().nonnegative(),
-    lastIndex: z.number().int().nonnegative().optional(),
-    score: z.number().min(0).max(1).finite(),
-    start: z.number().nonnegative().finite(),
-  })).max(8).optional(),
-  text: z.string().optional(),
-});
 const sectionResult = z.object({
   ...workerMetadata.shape,
   intervals: z.array(z.object({
