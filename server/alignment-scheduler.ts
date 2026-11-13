@@ -126,7 +126,8 @@ export class AlignmentScheduler {
 
   /**
    * Durable claim. A claim is free when nobody holds it, it belongs to this instance (a leftover after a
-   * test reset), it is for an older generation, or its holder stopped renewing it (a dead process).
+   * test reset), or its holder stopped renewing it (a dead process). A live foreign claim stays the
+   * execution lease across generation changes until that run ends or the claim goes stale (#277 / #276).
    */
   claim(id: string, generation: string) {
     const now = this.now();
@@ -135,9 +136,9 @@ export class AlignmentScheduler {
         `UPDATE alignment_jobs SET claim_owner=?, claim_generation=?, claimed_at=?
          WHERE id=? AND COALESCE(json_extract(data,'$.generation'),'')=?
            AND json_extract(data,'$.status') IN ('queued','copying','processing')
-           AND (claim_owner IS NULL OR claim_owner=? OR COALESCE(claim_generation,'')<>? OR COALESCE(claimed_at,0)<?)`,
+           AND (claim_owner IS NULL OR claim_owner=? OR COALESCE(claimed_at,0)<?)`,
       )
-      .run(this.owner, generation, now, id, generation, this.owner, generation, now - CLAIM_STALE_MS);
+      .run(this.owner, generation, now, id, generation, this.owner, now - CLAIM_STALE_MS);
     return result.changes === 1;
   }
 
@@ -176,16 +177,15 @@ export class AlignmentScheduler {
   }
 
   /**
-   * A claim held by another instance for this generation that has not gone stale yet. After an unclean
+   * A claim held by another instance that has not gone stale yet — including after a supersession that
+   * advanced the job generation while the old run still holds the worker (#277). After an unclean
    * restart those slots stay reserved until CLAIM_STALE_MS so newer queued work cannot jump them.
    */
-  private holdsLiveForeignClaim(id: string, generation: string) {
+  private holdsLiveForeignClaim(id: string, _generation: string) {
     const row = readClaim(id);
     if (!row) return false;
-    if ((row.generation ?? "") !== generation) return false;
     if (!ACTIVE.includes(row.status ?? "")) return false;
     if (!row.claim_owner || row.claim_owner === this.owner) return false;
-    if ((row.claim_generation ?? "") !== generation) return false;
     return (row.claimed_at ?? 0) >= this.now() - CLAIM_STALE_MS;
   }
 

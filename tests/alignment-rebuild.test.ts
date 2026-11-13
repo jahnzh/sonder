@@ -555,6 +555,51 @@ test("a new edition or manual prepare supersedes a queued rebuild with a fresh g
   assert.ok(keptMap(old.id), "a backfill that supersedes a rebuild keeps published_map until it publishes");
 });
 
+test("successive fingerprint changes keep published_map until a later failure", async () => {
+  await reset();
+  const old = await oldMap("a", aeneas, "ready");
+  assert.equal((await queueEngineRebuilds()).queued, 1);
+  assert.ok(keptMap(old.id));
+  const firstEngine = alignmentJob(old.id).engine;
+
+  // First automatic supersession (stale fingerprint → current book): clears rebuildOf.
+  putAlignmentJob({ ...alignmentJob(old.id), fingerprint: "stale-first" });
+  const first = await createAlignment("ebook-a", "rec-a", undefined, "anchored", "backfill");
+  assert.equal(first.rebuildOf, undefined);
+  assert.ok(keptMap(old.id), "first backfill supersession retains the published map");
+  assert.equal(listServedAlignmentJobs().find((job) => job.id === old.id)?.engine, aeneas);
+  assert.equal(listServedAlignmentJobs().find((job) => job.id === old.id)?.status, "ready");
+
+  // Second fingerprint change before the replacement publishes: must not dropKeptMap.
+  putAlignmentJob({ ...alignmentJob(old.id), fingerprint: "stale-second" });
+  const second = await createAlignment("ebook-a", "rec-a", undefined, "anchored", "backfill");
+  assert.notEqual(second.generation, first.generation);
+  assert.equal(second.rebuildOf, undefined);
+  assert.ok(keptMap(old.id), "a second fingerprint supersession must keep published_map");
+  const servedWhileQueued = listServedAlignmentJobs().find((job) => job.id === old.id)!;
+  assert.equal(servedWhileQueued.status, "ready");
+  assert.equal(servedWhileQueued.engine, aeneas);
+  assert.equal(servedWhileQueued.rebuild?.status, "queued");
+
+  putAlignmentJob({
+    ...alignmentJob(old.id),
+    status: "error",
+    coverage: 0,
+    intervals: [],
+    error: "replacement failed",
+    engine: firstEngine,
+  });
+  assert.ok(keptMap(old.id), "failure after successive supersessions still keeps the map");
+  const servedAfterFail = listServedAlignmentJobs().find((job) => job.id === old.id)!;
+  assert.equal(servedAfterFail.status, "ready");
+  assert.equal(servedAfterFail.engine, aeneas);
+  assert.equal(servedAfterFail.rebuild?.status, "error");
+  const map = await app.inject(`/api/alignments/${old.id}/map`);
+  assert.equal(map.statusCode, 200, map.body);
+  assert.equal(map.json().status, "ready");
+  assert.equal(map.json().engine, aeneas);
+});
+
 test("publishProjectedMaps and backfill leave a failed rebuild's published_map in place", async () => {
   await reset();
   const workId = "work-keep-map";
@@ -756,15 +801,32 @@ test("manual anchor edits are refused while a kept published_map is served", asy
   assert.equal((await app.inject(`/api/alignments/${old.id}/map`)).json().intervals[0].paragraphId, paragraphId);
 });
 
-test("ReadingSync shouldPoll treats an active rebuild.status as processing", () => {
-  const processing = (status: AlignmentJob["status"]) =>
-    ["queued", "copying", "processing"].includes(status);
-  const shouldPoll = (job: AlignmentJob | undefined) =>
-    !!job && (processing(job.status) || (!!job.rebuild && processing(job.rebuild.status)));
-  assert.equal(shouldPoll({ status: "ready", rebuild: { status: "queued", progress: 0, engine, error: null, updatedAt: 1 } } as AlignmentJob), true);
-  assert.equal(shouldPoll({ status: "ready", rebuild: { status: "processing", progress: 0.2, engine, error: null, updatedAt: 1 } } as AlignmentJob), true);
-  assert.equal(shouldPoll({ status: "ready" } as AlignmentJob), false);
-  assert.equal(shouldPoll({ status: "ready", rebuild: { status: "error", progress: 0, engine, error: "x", updatedAt: 1 } } as AlignmentJob), false);
+test("alignmentJobNeedsPolling treats an active rebuild.status as processing", async () => {
+  const { alignmentJobNeedsPolling } = await import("../src/alignment-map-lifecycle.ts");
+  assert.equal(
+    alignmentJobNeedsPolling({
+      status: "ready",
+      rebuild: { status: "queued", progress: 0, engine, error: null, updatedAt: 1 },
+    } as AlignmentJob),
+    true,
+  );
+  assert.equal(
+    alignmentJobNeedsPolling({
+      status: "ready",
+      rebuild: { status: "processing", progress: 0.2, engine, error: null, updatedAt: 1 },
+    } as AlignmentJob),
+    true,
+  );
+  assert.equal(alignmentJobNeedsPolling({ status: "ready" } as AlignmentJob), false);
+  assert.equal(
+    alignmentJobNeedsPolling({
+      status: "ready",
+      rebuild: { status: "error", progress: 0, engine, error: "x", updatedAt: 1 },
+    } as AlignmentJob),
+    false,
+  );
+  assert.equal(alignmentJobNeedsPolling({ status: "processing" } as AlignmentJob), true);
+  assert.equal(alignmentJobNeedsPolling(undefined), false);
 });
 
 function allJobs() {

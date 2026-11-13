@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  alignmentJobNeedsPolling,
   createAlignmentMapLifecycle,
   mapCacheKey,
   type MapLifecycleDeps,
@@ -73,9 +74,9 @@ const warmTarget = (over: Partial<WarmTarget> = {}): WarmTarget => ({
 });
 
 /**
- * The retained warmPlaybackReading poll loop, driven only by lifecycle.warm
- * outcomes: null stops; a queued/copying/processing job-summary reschedules
- * at WARM_POLL_MS.
+ * warmPlaybackReading's poll loop, driven by lifecycle.warm outcomes and the
+ * shared production polling decision: null stops; alignmentJobNeedsPolling
+ * reschedules at WARM_POLL_MS.
  */
 function pollWarming(check: () => Promise<AlignmentJob | null>) {
   const outcomes: (AlignmentJob | null)[] = [];
@@ -88,8 +89,7 @@ function pollWarming(check: () => Promise<AlignmentJob | null>) {
     });
   };
   const pollIfProcessing = (next: AlignmentJob) => {
-    // Mirrors warmPlaybackReading: a rebuild keeps status on the published map (#277).
-    if (["queued", "copying", "processing"].includes(next.rebuild?.status ?? next.status)) {
+    if (alignmentJobNeedsPolling(next)) {
       armTick();
       pollTimer = setTimeout(() => {
         pollTimer = null;

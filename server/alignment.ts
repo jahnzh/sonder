@@ -396,9 +396,10 @@ export async function createAlignment(
   if (copying) requestServerDownload(edition.id);
   store(job);
   // A new prepare replaces the row at once; only a rebuild keeps serving the previous map.
-  // A backfill that supersedes a rebuild (new ebook edition / consensus fingerprint) keeps
-  // published_map until the replacement run publishes.
-  if (!(origin === "backfill" && supersedeRebuild)) dropKeptMap(job.id);
+  // A backfill that supersedes while a kept map is still served (first rebuild, or another
+  // consensus fingerprint change before the replacement publishes) retains published_map
+  // until the replacement run publishes — keyed off the row, not rebuildOf (#277).
+  if (!(origin === "backfill" && alignmentKeepsPublishedMap(job.id))) dropKeptMap(job.id);
   void processAlignments();
   return job;
 }

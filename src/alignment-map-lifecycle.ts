@@ -44,6 +44,29 @@ export const mapCacheKey = (ebookId: string, recordingId: string) =>
 export const intervalCountOf = (job: AlignmentJob) =>
   job.intervalCount ?? job.intervals?.length ?? 0;
 
+const ACTIVE_ALIGNMENT_STATUSES: ReadonlyArray<AlignmentJob["status"]> = [
+  "queued",
+  "copying",
+  "processing",
+];
+
+/**
+ * Whether Reading Sync or playback warming should keep polling: the job itself is
+ * active, or a background rebuild is (#277). Shared so a regression in either caller
+ * fails the same unit checks.
+ */
+export function alignmentJobNeedsPolling(
+  job:
+    | (Pick<AlignmentJob, "status"> & { rebuild?: Pick<NonNullable<AlignmentJob["rebuild"]>, "status"> | null })
+    | null
+    | undefined,
+): boolean {
+  if (!job) return false;
+  const active = (status: AlignmentJob["status"] | undefined | null) =>
+    !!status && ACTIVE_ALIGNMENT_STATUSES.includes(status);
+  return active(job.status) || active(job.rebuild?.status);
+}
+
 /** The server refused the map because its sources changed (or it is gone). */
 const gone = (status: number | undefined) => status === 404 || status === 410;
 
