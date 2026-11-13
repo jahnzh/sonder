@@ -10,7 +10,8 @@ from concurrent.futures import ProcessPoolExecutor
 import ctc_path
 import ctc_candidates
 import ctc_prefetch
-from ctc_acoustic import CONTEXT, CORE, ENGINE, SAMPLE_RATE, STRIDE, resident_model
+from ctc_acoustic import (ACOUSTIC_MICROBATCH, CONTEXT, CORE, ENGINE, RESIDENT_MODELS_PER_DEVICE, SAMPLE_RATE, STRIDE,
+                          Microbatch, resident_model)
 from ctc_cache import AcousticCache, audio_digest, budget_bytes, file_version
 from ctc_decode import ensure_decoded, forget_decoded
 from deadline import AlignmentFailed, AlignmentTimeout, alignment_limit, run_with_deadline
@@ -38,13 +39,33 @@ class ResidentTask:
         self.done.wait()
 
 
+# Concurrent CTC path decodes (forced-align DP over emissions) in one worker process (#276). The request gate
+# admits one request per worker today, so this cap only binds once the gate admits more than one book.
+CTC_DECODE_WORKERS = 2
+_DECODE_SLOTS = threading.BoundedSemaphore(CTC_DECODE_WORKERS)
+
+
 def encode_batch_size(env=None):
     env = os.environ if env is None else env
     try:
-        value = int(env.get("ALIGNMENT_CTC_ENCODE_BATCH", "8"))
+        value = int(env.get("ALIGNMENT_CTC_ENCODE_BATCH", str(ACOUSTIC_MICROBATCH)))
     except (TypeError, ValueError):
-        return 8
-    return value if 1 <= value <= 64 else 8
+        return ACOUSTIC_MICROBATCH
+    return value if 1 <= value <= 64 else ACOUSTIC_MICROBATCH
+
+
+def request_microbatch(env=None, requested=None):
+    """The server sends back a microbatch an earlier out-of-memory error halved; never exceed the configured one."""
+    configured = encode_batch_size(env)
+    if isinstance(requested, int) and 1 <= requested < configured:
+        return Microbatch(requested)
+    return Microbatch(configured)
+
+
+def run_config(microbatch, env=None):
+    """Concurrency settings this request ran with; the server stores them on the job."""
+    return {**microbatch.report(), "decodeWorkers": CTC_DECODE_WORKERS,
+            "extractWorkers": ctc_prefetch.extract_workers(env), "residentModelsPerDevice": RESIDENT_MODELS_PER_DEVICE}
 
 
 def locate_pool_workers(env=None):
@@ -179,7 +200,7 @@ def _window_cores(first_sample, end_sample, total_samples):
 
 def _infer_from_pcm(pcm, folder, fragments, start, duration, source, source_version,
                     recording_id, recording_fingerprint, track_id, env, locate=False,
-                    digest=None, index=None, model=None):
+                    digest=None, index=None, model=None, microbatch=None):
     """Encode one window from a decoded track PCM buffer. Digest/model/index may be shared."""
     identity_started = time.monotonic()
     if digest is None:
@@ -197,15 +218,15 @@ def _infer_from_pcm(pcm, folder, fragments, start, duration, source, source_vers
     outputs, boundaries = [], []
     encoding_seconds = cache_seconds = cache_write_seconds = 0.0
     pending = []
-    batch = encode_batch_size(env)
+    microbatch = microbatch or Microbatch(encode_batch_size(env))
 
     def flush():
         nonlocal encoding_seconds, cache_write_seconds
         if not pending:
             return
         encode_started = time.monotonic()
-        encoded = model.encode_chunks([(item["audio"], item["core_start"], item["core_end"], item["context_start"])
-                                       for item in pending])
+        encoded = microbatch.encode(model, [(item["audio"], item["core_start"], item["core_end"], item["context_start"])
+                                            for item in pending])
         if model.device.type == "cuda":
             model.torch.cuda.synchronize()
         encoding_seconds += time.monotonic() - encode_started
@@ -237,7 +258,7 @@ def _infer_from_pcm(pcm, folder, fragments, start, duration, source, source_vers
                 "core_start": core_start, "core_end": core_end, "context_start": context_start,
                 "first_sample": first_sample, "end_sample": end_sample,
             })
-            if len(pending) >= batch:
+            if len(pending) >= microbatch.size:
                 flush()
         else:
             cache_started = time.monotonic()
@@ -252,9 +273,10 @@ def _infer_from_pcm(pcm, folder, fragments, start, duration, source, source_vers
         raise ValueError("Audio is too short for the CTC encoder.")
     emissions = model.torch.cat(outputs, dim=1).contiguous()
     encoded = time.monotonic()
-    result = (ctc_candidates.locate(emissions, boundaries, fragments, model.labels, first_sample, index=index)
-              if locate else ctc_path.align(emissions, boundaries, fragments, model.labels, end_sample - first_sample,
-                                            first_sample, model.torch))
+    with _DECODE_SLOTS:
+        result = (ctc_candidates.locate(emissions, boundaries, fragments, model.labels, first_sample, index=index)
+                  if locate else ctc_path.align(emissions, boundaries, fragments, model.labels, end_sample - first_sample,
+                                                first_sample, model.torch))
     if model.device.type == "cuda":
         model.torch.cuda.synchronize()
     return result, {"acousticCacheKey": model_started - identity_started,
@@ -264,7 +286,7 @@ def _infer_from_pcm(pcm, folder, fragments, start, duration, source, source_vers
 
 
 def _infer(wave_path, folder, fragments, start, duration, wave_start, source, source_version,
-           recording_id, recording_fingerprint, track_id, env, locate=False):
+           recording_id, recording_fingerprint, track_id, env, locate=False, microbatch=None):
     try:
         import numpy as np
         import wave
@@ -277,18 +299,20 @@ def _infer(wave_path, folder, fragments, start, duration, wave_start, source, so
         pcm = np.zeros(total, dtype="float32")
         pcm[wave_start:] = window
         return _infer_from_pcm(pcm, folder, fragments, start, duration, source, source_version,
-                               recording_id, recording_fingerprint, track_id, env, locate=locate)
+                               recording_id, recording_fingerprint, track_id, env, locate=locate,
+                               microbatch=microbatch)
     finally:
         wave_path.unlink(missing_ok=True)
 
 
 def align_ctc_section(*, audio, output, fragments, language, start, duration, media_folder, env=None, ffmpeg="ffmpeg",
-                      recording_id=None, recording_fingerprint=None, track_id=None, locate=False):
+                      recording_id=None, recording_fingerprint=None, track_id=None, locate=False, microbatch=None):
     limit = alignment_limit(duration, env)
     started = time.monotonic()
     deadline = started + limit
     output.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ if env is None else env
+    batch = request_microbatch(env, microbatch)
     # Single-window /anchor keeps a section extract so it stays inside the server's
     # 180 s speech-recovery wait. Full-track decode lives on /anchor-batch instead.
     wave_path = output.with_suffix(".ctc.wav")
@@ -310,7 +334,7 @@ def align_ctc_section(*, audio, output, fragments, language, start, duration, me
     def infer():
         arguments = (wave_path, media_folder, fragments, start, duration, wave_start, audio,
                      source_version, recording_id, recording_fingerprint, track_id, env)
-        return _infer(*arguments, locate=True) if locate else _infer(*arguments)
+        return _infer(*arguments, locate, batch)
 
     task = ResidentTask(infer)
     if not task.done.wait(max(0, deadline - time.monotonic())):
@@ -326,7 +350,8 @@ def align_ctc_section(*, audio, output, fragments, language, start, duration, me
         outcome = "mapped" if mapped == len(fragments) else "partial" if mapped else "unsynced"
     result = {"engine": ENGINE, "outcome": outcome,
               "stageTimings": {"audioExtraction": extracted - started, "extractionPrefetched": 1.0 if prefetched else 0.0, **timings},
-              "elapsedSeconds": finished - started, "peakMemoryMB": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024}
+              "elapsedSeconds": finished - started, "peakMemoryMB": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024,
+              "runConfig": run_config(batch, env)}
     if locate:
         result.update(value)
     else:
@@ -341,7 +366,7 @@ def align_ctc_section(*, audio, output, fragments, language, start, duration, me
 
 
 def align_ctc_batch_locate(*, audio, output, fragments, language, windows, media_folder, env=None, ffmpeg="ffmpeg",
-                           recording_id=None, recording_fingerprint=None, track_id=None):
+                           recording_id=None, recording_fingerprint=None, track_id=None, microbatch=None):
     """Locate many sample windows on one track: decode/hash/index once, encode in GPU batches."""
     if not windows:
         raise ValueError("At least one window is required.")
@@ -353,6 +378,7 @@ def align_ctc_batch_locate(*, audio, output, fragments, language, windows, media
     started = time.monotonic()
     deadline = started + limit
     output.parent.mkdir(parents=True, exist_ok=True)
+    microbatch = request_microbatch(env, microbatch)
 
     # Index + process pool on the calling thread (not ResidentTask): workers build the token
     # list once in the initializer; locate jobs stay ordered via plan_i futures.
@@ -398,7 +424,7 @@ def align_ctc_batch_locate(*, audio, output, fragments, language, windows, media
                     }
             plans.append({"start": start, "duration": duration, "first_sample": first_sample,
                           "end_sample": end_sample, "cores": cores})
-        batch = encode_batch_size(env)
+        batch = microbatch.configured
         encoding_seconds = cache_read = cache_write = 0.0
         # Store CPU paths per core so locate can run off-GPU without holding tensors.
         paths_by_core = {}
@@ -461,8 +487,8 @@ def align_ctc_batch_locate(*, audio, output, fragments, language, windows, media
         for offset in range(0, len(missing), batch):
             group = missing[offset:offset + batch]
             encode_started = time.monotonic()
-            encoded = model.encode_chunks([(spec["audio"], spec["core_start"], spec["core_end"], spec["context_start"])
-                                           for _index_id, spec in group])
+            encoded = microbatch.encode(model, [(spec["audio"], spec["core_start"], spec["core_end"], spec["context_start"])
+                                                for _index_id, spec in group])
             if model.device.type == "cuda":
                 model.torch.cuda.synchronize()
             encoding_seconds += time.monotonic() - encode_started
@@ -535,6 +561,7 @@ def align_ctc_batch_locate(*, audio, output, fragments, language, windows, media
         "stageTimings": timings,
         "elapsedSeconds": finished - started,
         "peakMemoryMB": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024,
+        "runConfig": run_config(microbatch, env),
         "results": results,
     }
     temporary = output.with_suffix(".part")

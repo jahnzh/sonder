@@ -48,6 +48,10 @@ for (const [column, definition] of [
   ["engine", "TEXT NOT NULL DEFAULT 'aeneas-1.7.3'"],
   ["outcome", "TEXT"],
   ["stage_timings", "TEXT"],
+  // Durable scheduler claim (#276): which server instance runs which generation.
+  ["claim_owner", "TEXT"],
+  ["claim_generation", "TEXT"],
+  ["claimed_at", "INTEGER"],
 ] as const)
   if (!alignmentColumns.has(column))
     sqlite.exec(`ALTER TABLE alignment_jobs ADD COLUMN ${column} ${definition}`);

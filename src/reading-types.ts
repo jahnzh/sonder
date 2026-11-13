@@ -100,6 +100,20 @@ export type AlignmentAnchoring = {
   rate: number;
   flags: AlignmentFlag[];
 };
+export type AlignmentRunConfig = {
+  /** Books the server aligns at the same time. */
+  admittedBooks: number;
+  residentModelsPerDevice: number;
+  /** Microbatch configured on the worker. */
+  acousticMicrobatch?: number;
+  /** Microbatch after out-of-memory halving; later requests of this job start from it. */
+  acousticMicrobatchUsed?: number;
+  /** Times the worker halved the microbatch on an out-of-memory error, over the whole job. */
+  oomHalvings?: number;
+  /** Concurrent CTC path decodes and parallel audio extractions on the worker. */
+  decodeWorkers?: number;
+  extractWorkers?: number;
+};
 export type AlignmentJob = {
   id: string;
   generation?: string;
@@ -131,6 +145,11 @@ export type AlignmentJob = {
   outcome?: AlignmentOutcome;
   /** Total seconds spent in each worker stage across completed requests. */
   stageTimings?: Record<string, number>;
+  /**
+   * Concurrency settings the job ran with (#276): the scheduler's from the server, the rest as the worker
+   * reported them on its latest request. Diagnostics only; none of it changes the map generation.
+   */
+  runConfig?: AlignmentRunConfig;
   error: string | null;
   warning: string | null;
   intervals: AlignmentInterval[];

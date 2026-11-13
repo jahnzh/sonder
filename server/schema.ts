@@ -34,6 +34,9 @@ export const alignmentJobs = sqliteTable("alignment_jobs", {
   engine: text("engine").notNull().default("aeneas-1.7.3"),
   outcome: text("outcome"),
   stageTimings: text("stage_timings", { mode: "json" }).$type<Record<string, number>>(),
+  claimOwner: text("claim_owner"),
+  claimGeneration: text("claim_generation"),
+  claimedAt: integer("claimed_at"),
 });
 export const tracks = sqliteTable("tracks", {
   chapters: text("chapters", { mode: "json" })

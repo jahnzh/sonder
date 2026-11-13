@@ -59,6 +59,8 @@ class AlignRequest(BaseModel):
     recordingId: str | None = Field(default=None, max_length=512)
     audioFingerprint: str | None = Field(default=None, max_length=512)
     trackId: str | None = Field(default=None, max_length=512)
+    # A microbatch an earlier out-of-memory error halved for this job (CTC only); older servers omit it.
+    microbatch: int | None = Field(default=None, ge=1, le=64)
 
 class AnchorRequest(AlignRequest):
     duration: float = Field(gt=0, le=60)
@@ -78,6 +80,7 @@ class AnchorBatchRequest(BaseModel):
     recordingId: str | None = Field(default=None, max_length=512)
     audioFingerprint: str | None = Field(default=None, max_length=512)
     trackId: str | None = Field(default=None, max_length=512)
+    microbatch: int | None = Field(default=None, ge=1, le=64)
 
 @app.post("/anchor")
 def anchor(request: AnchorRequest):
@@ -103,7 +106,8 @@ def anchor(request: AnchorRequest):
                     result = align_ctc_section(audio=audio, output=output, fragments=request.fragments,
                                              language=request.language, start=request.start, duration=request.duration,
                                              media_folder=root / "alignment", recording_id=request.recordingId,
-                                             recording_fingerprint=request.audioFingerprint, track_id=request.trackId, locate=True)
+                                             recording_fingerprint=request.audioFingerprint, track_id=request.trackId, locate=True,
+                                             microbatch=request.microbatch)
                 else:
                     result = locate_passage(audio=audio, folder=root / "alignment", fragments=request.fragments,
                                           language=request.language, start=request.start, duration=request.duration)
@@ -145,7 +149,8 @@ def anchor_batch(request: AnchorBatchRequest):
                     audio=audio, output=output, fragments=request.fragments, language=request.language,
                     windows=[window.model_dump() for window in request.windows],
                     media_folder=root / "alignment", recording_id=request.recordingId,
-                    recording_fingerprint=request.audioFingerprint, track_id=request.trackId)
+                    recording_fingerprint=request.audioFingerprint, track_id=request.trackId,
+                    microbatch=request.microbatch)
                 result["gpuUtilization"] = gpu.mean()
                 return result
     except WorkerBusy:
@@ -225,7 +230,7 @@ def align(request: AlignRequest):
                             pass
                 operation = align_ctc_section if request.engine == "ctc" else align_section
                 identity = ({"recording_id": request.recordingId, "recording_fingerprint": request.audioFingerprint,
-                             "track_id": request.trackId} if request.engine == "ctc" else {})
+                             "track_id": request.trackId, "microbatch": request.microbatch} if request.engine == "ctc" else {})
                 result = operation(audio=audio, output=output, fragments=request.fragments, language=request.language,
                                  start=request.start, duration=request.duration, media_folder=root / "alignment", **identity)
                 result["gpuUtilization"] = gpu.mean()
