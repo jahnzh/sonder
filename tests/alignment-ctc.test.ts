@@ -712,7 +712,9 @@ test("anchored CTC sampling uses /anchor-batch when the worker advertises it and
   assert.equal(job.status, "partial", job.error ?? undefined);
   assert.ok(batchCalls.length >= 1, "expected at least one /anchor-batch call");
   assert.equal(singleCalls.length, 0);
-  assert.equal(job.gpuUtilization, 55);
+  assert.ok(job.anchoring!.anchors.length >= 3, "batch samples must proceed to anchor selection");
+  assert.ok(job.intervals.length > 0, "batch samples must proceed to alignment");
+  assert.ok(job.gpuUtilization! > 0);
   assert.ok(job.stageTimings!.fragmentIndex! > 0);
   resetAnchorBatchSupportForTests();
 });
@@ -905,4 +907,59 @@ test("anchorBatchSupport negative cache expires after TTL while true stays stick
   assert.ok(batchHits > afterTrue, "cached true must keep using /anchor-batch");
   setAnchorBatchClockForTests(null);
   resetAnchorBatchSupportForTests();
+});
+
+test("historical Earth Awakens batch samples advance to anchored alignment", async () => {
+  resetAnchorBatchSupportForTests();
+  resetAlignmentPoolCoordinator([
+    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test" },
+  ]);
+  setAlignmentPoolDepsForTests(testPoolDeps);
+  resetAlignmentRunnerForTests();
+  const fixture = JSON.parse(readFileSync(new URL("./earth-awakens-ctc-samples.json", import.meta.url), "utf8")) as {
+    tracks: { id: string; duration: number }[];
+    samples: { trackId: string; time: number; duration: number; spokenWords?: number; match: { fragment: number; score: number; start: number } | null }[];
+  };
+  assert.equal(fixture.samples.length, 103);
+  assert.equal(fixture.samples.filter((sample) => sample.match).length, 98);
+  const file = join(process.env.MEDIA_ROOT!, "earth-sample-book.epub");
+  writeFileSync(file, await readerFixture());
+  db.insert(schema.ebookEditions).values({ id: "ctc-earth-ebook", workId: "ctc-work", format: "epub", source: file }).run();
+  const book = await extractBook("ctc-earth-ebook");
+  const count = book.sections.flatMap((section) => section.paragraphs).length;
+  const maxFragment = Math.max(...fixture.samples.flatMap((sample) => sample.match ? [sample.match.fragment] : []));
+  db.insert(schema.editions).values({ id: "ctc-earth-edition", workId: "ctc-work", cover: "", narrator: "", rating: 0, sourceLabel: "", language: "en" }).run();
+  db.insert(schema.recordings).values({ id: "ctc-earth-recording", editionId: "ctc-earth-edition" }).run();
+  for (const [index, track] of fixture.tracks.entries())
+    db.insert(schema.tracks).values({ id: track.id, recordingId: "ctc-earth-recording", title: track.id, index,
+      duration: track.duration, chapters: [], source: audio, sourceType: "local" }).run();
+  let batchSamples = 0;
+  mockWorker(async (input, init) => {
+    const request = JSON.parse(String(init?.body));
+    if (String(input).endsWith("/anchor-batch")) {
+      batchSamples += request.windows.length;
+      return Response.json({ engine, outcome: "mapped", results: request.windows.map((window: { start: number }) => {
+        const sample = fixture.samples.find((item) => item.trackId === request.trackId && item.time === window.start);
+        const match = sample?.match;
+        // Compress the historical paragraph indices to fit the generated test EPUB.
+        return { engine, outcome: match ? "mapped" : "unsynced", start: match?.start ?? window.start,
+          match: match ? { index: Math.floor(match.fragment * (count - 1) / maxFragment), score: match.score } : null,
+          text: "word ".repeat(sample?.spokenWords ?? 0) };
+      }) });
+    }
+    assert.ok(String(input).endsWith("/align"));
+    const step = request.duration / request.fragments.length;
+    return Response.json({ engine, outcome: "mapped", elapsedSeconds: 1,
+      intervals: request.fragments.map((_: string, i: number) => ({ index: i, start: request.start + i * step, end: request.start + (i + 1) * step })) });
+  }, { anchorReady: false, anchorBatch: true });
+  const created = await createAlignment("ctc-earth-ebook", "ctc-earth-recording", undefined, "anchored");
+  let job = alignmentJob(created.id);
+  for (let i = 0; i < 1000 && !["partial", "ready", "error"].includes(job.status); i++) {
+    if (job.status === "queued") void processAlignments();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    job = alignmentJob(created.id);
+  }
+  assert.ok(batchSamples >= 103);
+  assert.ok(job.anchoring!.anchors.length >= 30, `selected ${job.anchoring!.anchors.length} anchors`);
+  assert.ok(job.intervals.length > 0, job.error ?? "expected aligned intervals");
 });
