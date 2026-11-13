@@ -63,8 +63,8 @@ def is_out_of_memory(error):
 
 class Microbatch:
     """Acoustic microbatch for one request. An out-of-memory error halves it and retries the same cores."""
-    def __init__(self, size):
-        self.configured = size
+    def __init__(self, size, configured=None):
+        self.configured = size if configured is None else configured
         self.size = size
         self.halvings = 0
 

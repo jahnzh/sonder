@@ -827,8 +827,14 @@ async function processAnchored(
       current.generation === generation
     );
   };
-  // Work finished after a pause is still kept; only a rebuild discards it.
-  const current = () => alignmentJob(job.id).generation === generation;
+  // Work finished after a pause is still kept; a cancel or rebuild must not publish.
+  const current = () => {
+    const latest = alignmentJob(job.id);
+    return (
+      latest.generation === generation &&
+      (activeStatuses.includes(latest.status) || latest.status === "paused")
+    );
+  };
   const paragraphs = book.sections.flatMap((section) =>
     section.paragraphs.map((paragraph) => ({
       ...paragraph,
@@ -1363,6 +1369,7 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
             await processAnchored(job, book, context.tracks, folder);
             break;
           } catch (error) {
+            if (error instanceof StaleAlignmentRun) throw error;
             job = alignmentJob(job.id);
             if (!activeStatuses.includes(job.status) || job.generation !== generation)
               break;
@@ -1548,6 +1555,7 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
           }
           break;
         } catch (error) {
+          if (error instanceof StaleAlignmentRun) throw error;
           job = alignmentJob(job.id);
           if (!activeStatuses.includes(job.status) || job.generation !== generation) break;
           if (job.engine !== CTC_ENGINE || !job.pool || job.pool.triedHosts.length >= 2)
@@ -1907,11 +1915,14 @@ export function registerAlignment(app: FastifyInstance) {
     }
     job.status = action === "pause" ? "paused" : action === "cancel" ? "cancelled" : "queued";
     job.error = null;
-    if (action === "resume") delete job.poolErrors;
-    if (action === "resume" && (job.outcome === "error" || job.outcome === "language_not_supported"))
-      delete job.outcome;
-    if (action === "resume" && job.pool)
-      clearPoolStaging(job, job.engine === CTC_ENGINE ? [] : job.pool.triedHosts);
+    if (action === "resume") {
+      // A fresh generation lets any in-flight section of the paused run exit at its boundary without
+      // writing onto the resumed job, and drops a prior ADMISSION_RETRY_MS wait for the old generation.
+      job.generation = randomUUID();
+      delete job.poolErrors;
+      if (job.outcome === "error" || job.outcome === "language_not_supported") delete job.outcome;
+      if (job.pool) clearPoolStaging(job, job.engine === CTC_ENGINE ? [] : job.pool.triedHosts);
+    }
     store(job);
     writeMeta.set(req, { action, jobId: job.id, jobStatus: job.status });
     if (action === "resume") void processAlignments();

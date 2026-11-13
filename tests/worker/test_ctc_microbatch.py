@@ -84,7 +84,7 @@ class Configuration(unittest.TestCase):
 
     def test_a_halved_microbatch_from_the_server_is_used_but_never_raises_the_configured_one(self):
         self.assertEqual(ctc_pipeline.request_microbatch({}, 2).report(),
-                         {"acousticMicrobatch": 2, "acousticMicrobatchUsed": 2, "oomHalvings": 0})
+                         {"acousticMicrobatch": 4, "acousticMicrobatchUsed": 2, "oomHalvings": 0})
         self.assertEqual(ctc_pipeline.request_microbatch({}, 16).size, 4)
         self.assertEqual(ctc_pipeline.request_microbatch({}, None).size, 4)
 

@@ -66,9 +66,9 @@ const readClaim = (jobId: string) =>
 
 /**
  * Called before a run writes its own job. The write is refused when the job was rebuilt (new generation),
- * deleted, claimed by another instance, or moved out of the active states by someone else (pause, cancel)
- * and the write would change that status. A write that keeps a pause in place is allowed: work finished
- * after a pause is kept.
+ * deleted, claimed by another instance, or moved out of the active states by someone else (pause, cancel).
+ * A write that keeps a pause in place is allowed: work finished after a pause is kept. A cancelled (or
+ * other terminal) status is never kept in place — a late in-flight answer must not publish onto it.
  */
 export function assertRunMayWrite(fence: RunFence, nextStatus: string) {
   const row = readClaim(fence.jobId);
@@ -76,7 +76,7 @@ export function assertRunMayWrite(fence: RunFence, nextStatus: string) {
   if ((row.generation ?? "") !== fence.generation) throw new StaleAlignmentRun("the job was rebuilt");
   if (row.claim_owner !== fence.owner || (row.claim_generation ?? "") !== fence.generation)
     throw new StaleAlignmentRun("another run owns the job");
-  if (!ACTIVE.includes(row.status ?? "") && nextStatus !== row.status)
+  if (!ACTIVE.includes(row.status ?? "") && !(row.status === "paused" && nextStatus === "paused"))
     throw new StaleAlignmentRun(`the job is ${row.status}`);
 }
 
@@ -175,20 +175,53 @@ export class AlignmentScheduler {
     }
   }
 
+  /**
+   * A claim held by another instance for this generation that has not gone stale yet. After an unclean
+   * restart those slots stay reserved until CLAIM_STALE_MS so newer queued work cannot jump them.
+   */
+  private holdsLiveForeignClaim(id: string, generation: string) {
+    const row = readClaim(id);
+    if (!row) return false;
+    if ((row.generation ?? "") !== generation) return false;
+    if (!ACTIVE.includes(row.status ?? "")) return false;
+    if (!row.claim_owner || row.claim_owner === this.owner) return false;
+    if ((row.claim_generation ?? "") !== generation) return false;
+    return (row.claimed_at ?? 0) >= this.now() - CLAIM_STALE_MS;
+  }
+
   private admit() {
     if (!this.deps.held()) {
       const now = this.now();
+      // Live foreign claims (another instance that may still be alive) occupy capacity until they go stale.
+      let reserved = 0;
+      const reservedRecordings = new Set<string>();
+      let reservedLocal = 0;
       for (const candidate of this.deps.candidates()) {
-        if (this.inFlight.size >= ALIGNMENT_ADMITTED_BOOKS) break;
+        if (this.inFlight.size + reserved >= ALIGNMENT_ADMITTED_BOOKS) break;
         const generation = candidate.generation ?? "";
         if (this.inFlight.has(candidate.id)) continue;
         const running = [...this.inFlight.values()].map(({ candidate }) => candidate);
         // One acoustic lease per recording: two editions of one recording never encode it twice at once.
-        if (running.some((other) => other.recordingId === candidate.recordingId)) continue;
-        if (candidate.local && running.filter((other) => other.local).length >= ALIGNMENT_LOCAL_WORKER_JOBS) continue;
+        if (
+          running.some((other) => other.recordingId === candidate.recordingId) ||
+          reservedRecordings.has(candidate.recordingId)
+        )
+          continue;
+        if (
+          candidate.local &&
+          running.filter((other) => other.local).length + reservedLocal >= ALIGNMENT_LOCAL_WORKER_JOBS
+        )
+          continue;
         const wait = this.retryAfter.get(candidate.id);
         if (wait && wait.generation === generation && wait.until > now) continue;
-        if (!this.claim(candidate.id, generation)) continue;
+        if (!this.claim(candidate.id, generation)) {
+          if (this.holdsLiveForeignClaim(candidate.id, generation)) {
+            reserved++;
+            reservedRecordings.add(candidate.recordingId);
+            if (candidate.local) reservedLocal++;
+          }
+          continue;
+        }
         this.start(candidate, generation);
       }
     }

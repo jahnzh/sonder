@@ -410,6 +410,40 @@ test("a restart picks up a previous instance's claimed jobs before newer queued 
   await pumped;
 });
 
+test("a live foreign claim holds capacity until it goes stale; then the interrupted job resumes ahead of newer work", async () => {
+  reset();
+  setPaused("alignment", true);
+  const first = await create("c"), second = await create("b"), newer = await create("a");
+  // Two books were running when the previous instance crashed; their claims are still fresh.
+  const fresh = Date.now();
+  for (const job of [first, second]) {
+    sqlite
+      .prepare(
+        "UPDATE alignment_jobs SET updated_at=0, data=json_set(data,'$.status','processing'), claim_owner='crashed', claim_generation=?, claimed_at=? WHERE id=?",
+      )
+      .run(job.generation, fresh, job.id);
+  }
+  setPaused("alignment", false);
+  await processAlignments();
+  assert.deepEqual(alignmentSchedulerForTests().running(), [], "live foreign claims occupy both slots");
+  assert.equal(alignmentJob(newer.id).status, "queued");
+  assert.equal(claim(first.id).claim_owner, "crashed");
+  assert.equal(claim(second.id).claim_owner, "crashed");
+
+  // Once the claims go stale, the interrupted books resume before the newer queued work.
+  sqlite.prepare("UPDATE alignment_jobs SET claimed_at=0 WHERE id IN (?, ?)").run(first.id, second.id);
+  const pumped = processAlignments();
+  assert.equal(alignmentSchedulerForTests().running().length, 2);
+  assert.deepEqual(
+    new Set(alignmentSchedulerForTests().running()),
+    new Set([first.id, second.id]),
+    "stale foreign claims resume before newer queued work",
+  );
+  assert.equal(alignmentJob(newer.id).status, "queued");
+  await drive([first.id, second.id, newer.id]);
+  await pumped;
+});
+
 test("pausing alignment admits nothing new; running books finish", async () => {
   reset();
   const a = await create("a"), b = await create("b"), c = await create("c");
@@ -437,7 +471,8 @@ test("out-of-memory halving and the run configuration are stored on the job and 
   await until(() => held.length === 1, "second section");
   const second = take();
   assert.equal(second.request.microbatch, 2, "the halved microbatch carries over to the next request");
-  second.resolve(mapped(second.request, { runConfig: { ...halvedOnce, acousticMicrobatch: 4, oomHalvings: 0 } }));
+  // Same shape the real worker returns when the server sends microbatch: 2 (configured stays 4).
+  second.resolve(mapped(second.request, { runConfig: { acousticMicrobatch: 4, acousticMicrobatchUsed: 2, oomHalvings: 0, decodeWorkers: 2, extractWorkers: 6, residentModelsPerDevice: 1 } }));
   await drive([job.id]);
   const stored = alignmentJob(job.id);
   const expected = { admittedBooks: 2, residentModelsPerDevice: 1, acousticMicrobatch: 4, acousticMicrobatchUsed: 2,
@@ -446,4 +481,80 @@ test("out-of-memory halving and the run configuration are stored on the job and 
   assert.deepEqual(JSON.parse(readFileSync(mapPath(job.id), "utf8")).runConfig, expected);
   const summary = await app.inject({ method: "GET", url: "/api/alignments?ebookId=ebook-a&summary=1" });
   assert.deepEqual(summary.json().jobs.find((row: AlignmentJob) => row.id === job.id).runConfig, expected);
+});
+
+test("a cancelled anchored job never publishes a late in-flight sample", async () => {
+  reset();
+  const job = await createAlignment("ebook-b", "rec-b", undefined, "anchored");
+  assert.equal(job.mode, "anchored");
+  await until(() => held.length === 1, "anchored worker request");
+  const before = alignmentJob(job.id);
+  const snapshot = {
+    intervals: before.intervals,
+    anchoring: structuredClone(before.anchoring),
+    progress: before.progress,
+    coverage: before.coverage,
+  };
+  const response = await app.inject({ method: "PATCH", url: `/api/alignments/${job.id}`, payload: { action: "cancel" } });
+  assert.equal(response.statusCode, 200);
+  const late = take();
+  // A successful sample that would have written anchors/intervals if the cancel were ignored.
+  late.resolve(Response.json({
+    engine,
+    outcome: "mapped",
+    elapsedSeconds: 1,
+    results: (late.request.windows ?? [{}]).map(() => ({
+      match: { index: 0, score: 0.9, text: "b one" },
+      start: 10,
+      text: "word ".repeat(40),
+      engine,
+      outcome: "mapped",
+    })),
+    match: { index: 0, score: 0.9, text: "b one" },
+    start: 10,
+    text: "word ".repeat(40),
+  }));
+  await alignmentSchedulerForTests().settled();
+  const after = alignmentJob(job.id);
+  assert.equal(after.status, "cancelled");
+  assert.deepEqual(after.intervals, snapshot.intervals);
+  assert.deepEqual(after.anchoring, snapshot.anchoring);
+  assert.equal(after.progress, snapshot.progress);
+  assert.equal(after.coverage, snapshot.coverage);
+  assert.equal(existsSync(mapPath(job.id)), false);
+});
+
+test("resume while a section is in flight starts a fresh generation so the late answer does not publish", async () => {
+  reset();
+  const job = await create("a");
+  await until(() => held.length === 1, "section in flight");
+  const inFlight = take();
+  const oldGeneration = alignmentJob(job.id).generation!;
+  assert.ok(alignmentJob(job.id).pool?.workerUrl);
+
+  assert.equal((await app.inject({ method: "PATCH", url: `/api/alignments/${job.id}`, payload: { action: "pause" } })).statusCode, 200);
+  assert.equal(alignmentJob(job.id).status, "paused");
+
+  const resumed = await app.inject({ method: "PATCH", url: `/api/alignments/${job.id}`, payload: { action: "resume" } });
+  assert.equal(resumed.statusCode, 200);
+  const afterResume = alignmentJob(job.id);
+  assert.equal(afterResume.status, "queued");
+  assert.notEqual(afterResume.generation, oldGeneration);
+  assert.equal(afterResume.pool?.workerUrl, "");
+  assert.deepEqual(afterResume.intervals, []);
+  assert.deepEqual(afterResume.sectionsDone, []);
+
+  // The paused run's late section answer must exit without publishing onto the resumed generation.
+  inFlight.resolve(mapped(inFlight.request, { intervals: [{ index: 0, start: 10, end: 10.4 }] }));
+  await until(() => held.length === 1, "resumed run's first section");
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  const during = alignmentJob(job.id);
+  assert.equal(during.generation, afterResume.generation);
+  assert.deepEqual(during.sectionsDone, [], "old generation did not publish");
+  assert.ok(during.pool?.workerUrl, "the resumed run got a fresh pool dispatch");
+  await drive([job.id]);
+  const done = alignmentJob(job.id);
+  assert.equal(done.status, "partial");
+  assert.equal(done.generation, afterResume.generation);
+  assert.ok(done.sectionsDone.length > 0);
 });

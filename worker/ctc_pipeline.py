@@ -58,7 +58,7 @@ def request_microbatch(env=None, requested=None):
     """The server sends back a microbatch an earlier out-of-memory error halved; never exceed the configured one."""
     configured = encode_batch_size(env)
     if isinstance(requested, int) and 1 <= requested < configured:
-        return Microbatch(requested)
+        return Microbatch(requested, configured=configured)
     return Microbatch(configured)
 
 
