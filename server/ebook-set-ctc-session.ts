@@ -65,7 +65,8 @@ export function createCtcProbeSession(
           continue;
         }
         const refusal = new ProbeUnavailable(error instanceof Error ? error.message : String(error));
-        unavailable = refusal;
+        // Only latch when the initial acquire fails; a per-candidate failover retry must not skip later candidates.
+        if (tried.length === 0) unavailable = refusal;
         throw refusal;
       }
     }
@@ -87,6 +88,8 @@ export function createCtcProbeSession(
     let retried = false;
     for (;;) {
       const active = lease ?? (await acquire(trackIds, tried));
+      // A reused lease still carries hosts already excluded for this recording staging.
+      for (const host of active.triedHosts) if (!tried.includes(host)) tried.push(host);
       const windows = samples.map((sample) => ({ ...sample, audio: active.stagedAudio[sample.trackId] }));
       if (windows.some((window) => !window.audio)) throw new ProbeUnavailable("The recording audio could not be staged.");
       try {
@@ -105,7 +108,8 @@ export function createCtcProbeSession(
         // A failed probe retries once on the other host (ADR 0005), then this candidate stays held.
         if (!tried.includes(active.hostId)) tried.push(active.hostId);
         await release();
-        if (retried) throw new ProbeUnavailable(error instanceof Error ? error.message : String(error));
+        if (retried || (tried.includes("wsl") && tried.includes("lisa")))
+          throw new ProbeUnavailable(error instanceof Error ? error.message : String(error));
         retried = true;
       }
     }

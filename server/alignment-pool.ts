@@ -497,6 +497,7 @@ async function dispatchCtcJob(
     const host = coord.hostById(id);
     if (!host) {
       recordPoolError(job, id, "configuration", "host is not configured");
+      attempted.push(id);
       continue;
     }
     let health: CtcHealth;
@@ -504,10 +505,13 @@ async function dispatchCtcJob(
       health = await ctcHealth(host);
     } catch (error) {
       recordPoolError(job, id, "health", error);
+      // Unreachable / unhealthy hosts stay excluded for this dispatch (and probe lease retries).
+      attempted.push(id);
       continue;
     }
     if (job.mode === "anchored" && health.ctc.passageReady !== true) {
       recordPoolError(job, id, "health", "passage discovery is not ready");
+      attempted.push(id);
       continue;
     }
     if (health.busy || health.stuck || coord.activeOnHost(id) > 0) {
@@ -515,7 +519,10 @@ async function dispatchCtcJob(
       busy = true;
       continue;
     }
-    if (!(await probeHost(job, host))) continue;
+    if (!(await probeHost(job, host))) {
+      attempted.push(id);
+      continue;
+    }
     if (!coord.tryAcquireCtc(id, job.id, job.recordingId)) {
       recordPoolError(job, id, "capacity", "worker or recording is busy");
       busy = true;
@@ -544,6 +551,8 @@ export type CtcProbeLease = {
   /** Directory on the worker (inside its MEDIA_ROOT/alignment) for the probe's output files. */
   outputDir: string;
   stagedAudio: Record<string, string>;
+  /** Hosts dispatch already considered for this lease, including the one that succeeded. */
+  triedHosts: PoolHostId[];
   /** Frees the host and removes the staged audio. Safe to call twice. */
   release(): Promise<void>;
 };

@@ -393,20 +393,150 @@ test("a score failure on one candidate does not latch the rest of the session (M
 
 test("dispatch triedHosts are seeded so a broken first host is not retried (MEDIUM-3)", async () => {
   const { workId } = seedWork();
-  const ebook = await seedEpub(workId, "Right");
+  const broken = await seedEpub(workId, "Broken");
+  const right = await seedEpub(workId, "Right");
+  for (const ebookId of [broken, right]) {
+    db.insert(schema.workEbookSetMembers)
+      .values({
+        workId,
+        ebookId,
+        status: "held",
+        holdReason: "awaiting_audio",
+        evidence: JSON.stringify({
+          outlier: {
+            passed: false,
+            reason: "no_spoken_samples",
+            spokenSampleCount: 0,
+            matchedSampleCount: 0,
+            anchorCount: 0,
+            forwardOrder: true,
+            samples: [],
+          },
+        }),
+        updatedAt: Date.now(),
+      })
+      .run();
+  }
+  // Start with wsl down so the session leases lisa (triedHosts includes wsl). After lisa
+  // fails, bring wsl back: without seeding triedHosts from the lease, the retry would hit wsl.
   health.down = ["wsl"];
   let lisaCalls = 0;
   handler = (path, body, host) => {
-    if (host === "lisa") {
+    if (host === "lisa" && String(body.fragments?.[1] ?? "").startsWith("Broken")) {
       lisaCalls++;
+      health.down = [];
       return new Response("{}", { status: 500 });
     }
-    return ctcWorker({ Right: "forward" })(path, body, host);
+    return ctcWorker({ Right: "forward", Broken: "forward" })(path, body, host);
   };
-  const result = await evaluateEbookSetMember(workId, ebook);
-  assert.equal(result.status, "held");
+  await reevaluateEbookSetForWork(workId);
+  const members = Object.fromEntries(listEbookSetMembers(workId).map((m) => [m.ebookId, m]));
+  assert.equal(members[broken].status, "held");
   assert.ok(lisaCalls > 0);
-  assert.ok(!probes().some((r) => r.host === "wsl"), "unreachable wsl is not retried after lisa fails");
+  assert.ok(
+    !probes().some((r) => r.host === "wsl" && String(r.body.fragments?.[1] ?? "").startsWith("Broken")),
+    "unreachable wsl is not retried after lisa fails",
+  );
+  // A failed failover acquire must not latch unavailable for the rest of the session.
+  assert.equal(members[right].status, "accepted");
+  assert.ok(probes().some((r) => String(r.body.fragments?.[1] ?? "").startsWith("Right")));
+});
+
+test("consensus sync still runs once when reevaluate throws mid-batch (MEDIUM-2)", async () => {
+  const { workId } = seedWork();
+  // Deterministic ids so Right is evaluated before Boom (no ORDER BY on members).
+  const right = await seedEpub(workId, "Right", "en", "ebook-1-right");
+  const boom = await seedEpub(workId, "Boom", "en", "ebook-2-boom");
+  for (const ebookId of [right, boom]) {
+    db.insert(schema.workEbookSetMembers)
+      .values({
+        workId,
+        ebookId,
+        status: "held",
+        holdReason: "awaiting_audio",
+        evidence: JSON.stringify({
+          outlier: {
+            passed: false,
+            reason: "no_spoken_samples",
+            spokenSampleCount: 0,
+            matchedSampleCount: 0,
+            anchorCount: 0,
+            forwardOrder: true,
+            samples: [],
+          },
+        }),
+        updatedAt: Date.now(),
+      })
+      .run();
+  }
+  const consensusId = `${CONSENSUS_EBOOK_PREFIX}${workId}`;
+  handler = (path, body, host) => {
+    // Corrupt Boom's EPUB during its own probe so runOutlierCheck can finish, then buildEvidence throws
+    // (Right's earlier buildEvidence still sees a valid Boom file).
+    if (path === "/anchor" && String(body.fragments?.[1] ?? "").startsWith("Boom")) {
+      const row = db.select().from(schema.ebookEditions).where(eq(schema.ebookEditions.id, boom)).get();
+      if (row) writeFileSync(row.source, "not-an-epub");
+    }
+    return ctcWorker({ Right: "forward", Boom: "forward" })(path, body, host);
+  };
+  await assert.rejects(() => reevaluateEbookSetForWork(workId));
+  assert.equal(listEbookSetMembers(workId).find((m) => m.ebookId === right)?.status, "accepted");
+  assert.ok(
+    listAlignmentJobs().some((job) => job.ebookId === consensusId),
+    "consensus sync runs in finally after the mid-batch throw",
+  );
+});
+
+test("whisper batch defers consensus sync until after the probe session (MEDIUM-2)", async () => {
+  process.env.EBOOK_SET_PROBER = "whisper";
+  const { workId } = seedWork(true, 300);
+  const ids = [await seedEpub(workId, "Right"), await seedEpub(workId, "Other")];
+  for (const ebookId of ids) {
+    db.insert(schema.workEbookSetMembers)
+      .values({
+        workId,
+        ebookId,
+        status: "held",
+        holdReason: "awaiting_audio",
+        evidence: JSON.stringify({
+          outlier: {
+            passed: false,
+            reason: "no_spoken_samples",
+            spokenSampleCount: 0,
+            matchedSampleCount: 0,
+            anchorCount: 0,
+            forwardOrder: true,
+            samples: [],
+          },
+        }),
+        updatedAt: Date.now(),
+      })
+      .run();
+  }
+  const consensusId = `${CONSENSUS_EBOOK_PREFIX}${workId}`;
+  let syncDuringProbe = false;
+  let anchorCalls = 0;
+  const original = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (!url.startsWith("http://production-worker.test")) return original(input, init);
+    const body = JSON.parse(String(init?.body ?? "{}"));
+    anchorCalls++;
+    if (listAlignmentJobs().some((job) => job.ebookId === consensusId)) syncDuringProbe = true;
+    return Response.json({ text: "word ".repeat(30), start: body.start + 1, match: { index: Math.max(1, anchorCalls) * 5, score: 0.8 } });
+  };
+  try {
+    const results = await reevaluateEbookSetForWork(workId);
+    assert.deepEqual(results.map((r) => r.status), ["accepted", "accepted"]);
+    assert.equal(syncDuringProbe, false, "no consensus job while whisper candidates are still probing");
+    assert.ok(
+      listAlignmentJobs().some((job) => job.ebookId === consensusId),
+      "consensus sync runs once after the whisper batch",
+    );
+    assert.ok(anchorCalls > 0);
+  } finally {
+    globalThis.fetch = original;
+  }
 });
 
 test("uppercase and undetermined EPUB languages still probe as English (LOW-2)", async () => {

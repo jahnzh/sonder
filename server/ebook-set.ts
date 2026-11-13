@@ -382,7 +382,8 @@ export async function evaluateEbookSetMember(
 ) {
   // A shared probe session holds the recording lease across candidates; consensus
   // alignment must wait until that session releases (HIGH-1 / ADR 0005 stages).
-  const deferSync = Boolean(probe);
+  // `probe` is null under Whisper / injected samples, but still means "batch caller".
+  const deferSync = probe !== undefined;
   const sync = async () => {
     if (deferSync) return;
     const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
@@ -529,26 +530,30 @@ export async function registerUploadedEbookSetMember(
 export async function reevaluateEbookSetForWork(workId: string) {
   const members = listEbookSetMembers(workId).filter((m) => m.status === "held");
   if (!firstRecordingWithLocalAudio(workId)) return [];
-  const results = await withProbeSession(workId, async (probe) => {
-    const out = [];
-    for (const member of members)
-      out.push(
-        await evaluateEbookSetMember(
-          workId,
-          member.ebookId,
-          {
-            sourceTitle: member.sourceTitle,
-            sourceAuthor: member.sourceAuthor,
-            language: member.language,
-            byteSize: member.byteSize,
-          },
-          probe,
-        ),
-      );
-    return out;
-  });
-  const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
-  await syncEbookSetConsensus(workId);
+  let results: Awaited<ReturnType<typeof evaluateEbookSetMember>>[] = [];
+  try {
+    results = await withProbeSession(workId, async (probe) => {
+      const out = [];
+      for (const member of members)
+        out.push(
+          await evaluateEbookSetMember(
+            workId,
+            member.ebookId,
+            {
+              sourceTitle: member.sourceTitle,
+              sourceAuthor: member.sourceAuthor,
+              language: member.language,
+              byteSize: member.byteSize,
+            },
+            probe,
+          ),
+        );
+      return out;
+    });
+  } finally {
+    const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
+    await syncEbookSetConsensus(workId);
+  }
   return results;
 }
 
@@ -619,28 +624,31 @@ export async function fetchTopKIntoEbookSet(
     }
   }
   const downloaded: { id: string; status: EbookSetMemberStatus }[] = [];
-  await withProbeSession(workId, async (probe) => {
-    for (const candidate of pending) {
-      try {
-        const result = await evaluateEbookSetMember(
-          workId,
-          candidate.id,
-          {
-            sourceTitle: candidate.sourceTitle,
-            sourceAuthor: candidate.sourceAuthor,
-            language: candidate.language,
-          },
-          probe,
-        );
-        downloaded.push({ id: candidate.id, status: result.status });
-      } catch (evaluateError) {
-        failures.push((evaluateError as Error).message);
-        dropOrphanEbookEdition(candidate.id, workId);
+  try {
+    await withProbeSession(workId, async (probe) => {
+      for (const candidate of pending) {
+        try {
+          const result = await evaluateEbookSetMember(
+            workId,
+            candidate.id,
+            {
+              sourceTitle: candidate.sourceTitle,
+              sourceAuthor: candidate.sourceAuthor,
+              language: candidate.language,
+            },
+            probe,
+          );
+          downloaded.push({ id: candidate.id, status: result.status });
+        } catch (evaluateError) {
+          failures.push((evaluateError as Error).message);
+          dropOrphanEbookEdition(candidate.id, workId);
+        }
       }
-    }
-  });
-  const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
-  await syncEbookSetConsensus(workId);
+    });
+  } finally {
+    const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
+    await syncEbookSetConsensus(workId);
+  }
   return { downloaded, skipped: null, failures };
 }
 
