@@ -20,13 +20,32 @@ import {
   type AnchorFragment,
 } from "./alignment-anchors.ts";
 import { extractBook } from "./reader.ts";
+import { poolEnabled } from "./alignment-pool.ts";
+import {
+  ProbeLanguageNotSupported,
+  sampleFromWhisperAnchor,
+  type AnchorSampleScore,
+} from "./ebook-set-ctc-probe.ts";
+import {
+  createCtcProbeSession,
+  ProbeUnavailable,
+  type ProbeSession,
+} from "./ebook-set-ctc-session.ts";
 import { normalizeReaderText } from "../src/reading-types.ts";
 import { searchEbooks, saveEbook } from "./ebooks.ts";
 import { join } from "node:path";
 import { mediaRoot } from "./storage.ts";
+import { iso3 } from "./language.ts";
 
-const iso3 = (value: string) =>
-  value.length === 3 ? value : value.slice(0, 2).toLowerCase() === "en" ? "eng" : value.slice(0, 3).toLowerCase();
+/**
+ * Which prober scores a candidate's audio samples. CTC is the ADR 0006 prober; Whisper stays selectable until
+ * its code is removed (#279), then this setting and the Whisper branches go with it.
+ */
+export type EbookSetProber = "ctc" | "whisper";
+export const DEFAULT_EBOOK_SET_PROBER: EbookSetProber = "ctc";
+export function ebookSetProber(env: NodeJS.ProcessEnv = process.env): EbookSetProber {
+  return env.EBOOK_SET_PROBER === "whisper" ? "whisper" : DEFAULT_EBOOK_SET_PROBER;
+}
 
 export async function workerAnchorSample(input: {
   audioPath: string;
@@ -71,16 +90,7 @@ export async function workerAnchorSample(input: {
     start?: number;
     match?: { index: number; score: number } | null;
   };
-  return {
-    spokenWords: result.text ? wordCount(result.text) : 0,
-    match: result.match
-      ? {
-          fragment: result.match.index,
-          score: result.match.score,
-          start: result.start ?? input.start,
-        }
-      : null,
-  };
+  return sampleFromWhisperAnchor(result, input.start);
 }
 
 export const EBOOK_SET_TOP_K = 5;
@@ -96,10 +106,7 @@ export type EbookSetMemberEvidence = {
   byteSize: number | null;
 };
 
-export type EbookSetAnchorSample = {
-  spokenWords: number;
-  match: { fragment: number; score: number; start: number } | null;
-};
+export type EbookSetAnchorSample = AnchorSampleScore;
 
 export type EbookSetDeps = {
   search?: typeof searchEbooks;
@@ -111,7 +118,12 @@ export type EbookSetDeps = {
     start: number;
     duration: number;
   }) => Promise<EbookSetAnchorSample>;
+  /** CTC probing: how long to wait for a busy pool host, and the sleep between tries (tests). */
+  probeWaitMs?: number;
+  probeSleep?: (ms: number) => Promise<void>;
 };
+
+const probeSessionOptions = () => ({ waitMs: deps.probeWaitMs, sleep: deps.probeSleep });
 
 let deps: EbookSetDeps = {};
 
@@ -262,10 +274,32 @@ function upsertMember(input: {
     .run();
 }
 
+/** Scores each sample with the injected or Whisper prober, one worker request per sample. */
+async function whisperScores(
+  samples: { audioPath: string; time: number; duration: number }[],
+  fragmentTexts: string[],
+  language: string,
+) {
+  const anchorSample = deps.anchorSample ?? workerAnchorSample;
+  const scores: AnchorSampleScore[] = [];
+  for (const sample of samples)
+    scores.push(
+      await anchorSample({
+        audioPath: sample.audioPath,
+        fragmentTexts,
+        language,
+        start: sample.time,
+        duration: sample.duration,
+      }),
+    );
+  return scores;
+}
+
 export async function runOutlierCheckForEbook(
   workId: string,
   ebookId: string,
   recordingId: string,
+  probe?: ProbeSession | null,
 ): Promise<OutlierCheckResult> {
   const book = await extractBook(ebookId);
   const paragraphs = book.sections.flatMap((section) =>
@@ -285,29 +319,55 @@ export async function runOutlierCheckForEbook(
     id: track.id,
     duration: track.duration,
   }));
-  const planned = planSamples(timeline);
-  const anchorSample = deps.anchorSample ?? workerAnchorSample;
-  const samples = [];
-  for (const sample of planned) {
+  // A track whose audio is not on the server cannot be sampled.
+  const planned = planSamples(timeline).flatMap((sample) => {
     const track = tracks.find((t) => t.id === sample.trackId);
-    if (!track) continue;
-    const audioPath = trackLocalAudioPath(track);
-    if (!audioPath) continue;
-    const result = await anchorSample({
-      audioPath,
-      fragmentTexts: passages,
-      language: book.language || "eng",
-      start: sample.time,
-      duration: sample.duration,
-    });
-    samples.push({
-      ...sample,
-      done: true,
-      spokenWords: result.spokenWords,
-      match: result.match,
-    });
+    const audioPath = track && trackLocalAudioPath(track);
+    return audioPath ? [{ ...sample, audioPath }] : [];
+  });
+  const language = book.language || "eng";
+  let scores: AnchorSampleScore[];
+  if (deps.anchorSample || ebookSetProber() === "whisper") {
+    scores = await whisperScores(planned, passages, language);
+  } else {
+    if (iso3(language) !== "eng") throw new ProbeLanguageNotSupported();
+    const session = probe ?? createCtcProbeSession(recordingId, probeSessionOptions());
+    try {
+      scores = await session.score({ fragmentTexts: passages, language: "eng", samples: planned });
+    } finally {
+      if (!probe) await session.release();
+    }
   }
+  const samples = planned.map((sample, i) => ({
+    trackId: sample.trackId,
+    time: sample.time,
+    duration: sample.duration,
+    done: true,
+    spokenWords: scores[i].spokenWords,
+    match: scores[i].match,
+    ...(scores[i].matches ? { matches: scores[i].matches } : {}),
+  }));
   return evaluateOutlierCheck(samples, fragments, timeline, passages);
+}
+
+/**
+ * Opens one probing session for a run over several candidates of a work, so they share the pool host, the staged
+ * audio and the recording's acoustic cache. Returns null when no CTC session applies.
+ */
+export async function withProbeSession<T>(
+  workId: string,
+  run: (probe: ProbeSession | null) => Promise<T>,
+): Promise<T> {
+  const recordingId =
+    deps.anchorSample || ebookSetProber() === "whisper"
+      ? null
+      : firstRecordingWithLocalAudio(workId);
+  const session = recordingId ? createCtcProbeSession(recordingId, probeSessionOptions()) : null;
+  try {
+    return await run(session);
+  } finally {
+    await session?.release();
+  }
 }
 
 export async function evaluateEbookSetMember(
@@ -319,7 +379,17 @@ export async function evaluateEbookSetMember(
     language?: string | null;
     byteSize?: number | null;
   } = {},
+  probe?: ProbeSession | null,
 ) {
+  // A shared probe session holds the recording lease across candidates; consensus
+  // alignment must wait until that session releases (HIGH-1 / ADR 0005 stages).
+  // `probe` is null under Whisper / injected samples, but still means "batch caller".
+  const deferSync = probe !== undefined;
+  const sync = async () => {
+    if (deferSync) return;
+    const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
+    await syncEbookSetConsensus(workId);
+  };
   const row = db
     .select()
     .from(s.ebookEditions)
@@ -362,14 +432,16 @@ export async function evaluateEbookSetMember(
       byteSize,
       evidence,
     });
-    const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
-    await syncEbookSetConsensus(workId);
+    await sync();
     return { status: "held" as const, evidence };
   }
-  const workerReady =
-    Boolean(process.env.ALIGNMENT_WORKER_URL) &&
-    Boolean(process.env.ALIGNMENT_WORKER_TOKEN);
-  const usesWorker = !deps.anchorSample;
+  const injected = Boolean(deps.anchorSample);
+  const usesCtc = !injected && ebookSetProber() === "ctc";
+  const workerReady = usesCtc
+    ? poolEnabled() && Boolean(process.env.ALIGNMENT_WORKER_TOKEN)
+    : Boolean(process.env.ALIGNMENT_WORKER_URL) &&
+      Boolean(process.env.ALIGNMENT_WORKER_TOKEN);
+  const usesWorker = !injected;
   const pendingOutlier: OutlierCheckResult = {
     passed: false,
     reason: "no_spoken_samples",
@@ -381,13 +453,17 @@ export async function evaluateEbookSetMember(
   };
   let outlier = pendingOutlier;
   let workerUnavailable = usesWorker && !workerReady;
+  let holdReason = "awaiting_worker";
   if (!workerUnavailable) {
     try {
-      outlier = await runOutlierCheckForEbook(workId, ebookId, recordingId);
-    } catch {
+      outlier = await runOutlierCheckForEbook(workId, ebookId, recordingId, probe);
+    } catch (error) {
       if (usesWorker) {
         outlier = pendingOutlier;
         workerUnavailable = true;
+        // The CTC engine only hears English; a book in another language is neither accepted nor rejected on it.
+        if (error instanceof ProbeLanguageNotSupported) holdReason = "language_not_supported";
+        else if (!(error instanceof ProbeUnavailable)) console.warn(`Ebook candidate probe failed: ${(error as Error).message}`);
       } else {
         throw new Error("The ebook set outlier check failed.");
       }
@@ -405,15 +481,14 @@ export async function evaluateEbookSetMember(
       workId,
       ebookId,
       status: "held",
-      holdReason: "awaiting_worker",
+      holdReason,
       sourceTitle: meta.sourceTitle,
       sourceAuthor: meta.sourceAuthor,
       language: meta.language,
       byteSize,
       evidence,
     });
-    const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
-    await syncEbookSetConsensus(workId);
+    await sync();
     return { status: "held" as const, evidence };
   }
   const evidence = await buildEvidence(
@@ -436,8 +511,7 @@ export async function evaluateEbookSetMember(
     evidence,
   });
   const result = { status, evidence };
-  const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
-  await syncEbookSetConsensus(workId);
+  await sync();
   return result;
 }
 
@@ -457,16 +531,30 @@ export async function registerUploadedEbookSetMember(
 export async function reevaluateEbookSetForWork(workId: string) {
   const members = listEbookSetMembers(workId).filter((m) => m.status === "held");
   if (!firstRecordingWithLocalAudio(workId)) return [];
-  const results = [];
-  for (const member of members)
-    results.push(
-      await evaluateEbookSetMember(workId, member.ebookId, {
-        sourceTitle: member.sourceTitle,
-        sourceAuthor: member.sourceAuthor,
-        language: member.language,
-        byteSize: member.byteSize,
-      }),
-    );
+  let results: Awaited<ReturnType<typeof evaluateEbookSetMember>>[] = [];
+  try {
+    results = await withProbeSession(workId, async (probe) => {
+      const out = [];
+      for (const member of members)
+        out.push(
+          await evaluateEbookSetMember(
+            workId,
+            member.ebookId,
+            {
+              sourceTitle: member.sourceTitle,
+              sourceAuthor: member.sourceAuthor,
+              language: member.language,
+              byteSize: member.byteSize,
+            },
+            probe,
+          ),
+        );
+      return out;
+    });
+  } finally {
+    const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
+    await syncEbookSetConsensus(workId);
+  }
   return results;
 }
 
@@ -491,10 +579,16 @@ export async function fetchTopKIntoEbookSet(
       f.extension === "epub" &&
       cheapTitleAuthorMatch(work, { title: f.title, authors: f.authors }),
   );
-  const downloaded: { id: string; status: EbookSetMemberStatus }[] = [];
+  // Download first so the pool lease is not held across LibGen transfers (MEDIUM-1).
+  const pending: {
+    id: string;
+    sourceTitle: string;
+    sourceAuthor: string | null;
+    language: string | null;
+  }[] = [];
   const failures: string[] = [];
   for (const file of filtered) {
-    if (downloaded.length >= remaining) break;
+    if (pending.length >= remaining) break;
     const already = db
       .select()
       .from(s.workEbookSetMembers)
@@ -509,31 +603,52 @@ export async function fetchTopKIntoEbookSet(
         saved = await save({ ...file, workId });
       } catch (saveError) {
         const message = (saveError as Error).message;
-        const existing = db
+        const existingRow = db
           .select()
           .from(s.ebookEditions)
           .where(eq(s.ebookEditions.id, ebookId))
           .get();
-        if (!existing || existing.workId !== workId) {
+        if (!existingRow || existingRow.workId !== workId) {
           failures.push(message);
           continue;
         }
         saved = { id: ebookId };
       }
-      try {
-        const result = await evaluateEbookSetMember(workId, saved.id, {
-          sourceTitle: file.title,
-          sourceAuthor: file.authors.join(", ") || null,
-          language: file.language,
-        });
-        downloaded.push({ id: saved.id, status: result.status });
-      } catch (evaluateError) {
-        failures.push((evaluateError as Error).message);
-        dropOrphanEbookEdition(saved.id, workId);
-      }
+      pending.push({
+        id: saved.id,
+        sourceTitle: file.title,
+        sourceAuthor: file.authors.join(", ") || null,
+        language: file.language,
+      });
     } catch (error) {
       failures.push((error as Error).message);
     }
+  }
+  const downloaded: { id: string; status: EbookSetMemberStatus }[] = [];
+  try {
+    await withProbeSession(workId, async (probe) => {
+      for (const candidate of pending) {
+        try {
+          const result = await evaluateEbookSetMember(
+            workId,
+            candidate.id,
+            {
+              sourceTitle: candidate.sourceTitle,
+              sourceAuthor: candidate.sourceAuthor,
+              language: candidate.language,
+            },
+            probe,
+          );
+          downloaded.push({ id: candidate.id, status: result.status });
+        } catch (evaluateError) {
+          failures.push((evaluateError as Error).message);
+          dropOrphanEbookEdition(candidate.id, workId);
+        }
+      }
+    });
+  } finally {
+    const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
+    await syncEbookSetConsensus(workId);
   }
   return { downloaded, skipped: null, failures };
 }
