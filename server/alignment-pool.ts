@@ -486,9 +486,14 @@ async function dispatchCtcJob(
   tracks: (typeof schema.tracks.$inferSelect)[],
   localAudio: StageTracksInput["localAudio"],
   triedHosts: PoolHostId[],
+  // Probe leases exclude unreachable hosts for their retries; alignment jobs must not,
+  // because PoolBusyError persists triedHosts on the job and a transient outage would
+  // then exclude that host for good.
+  opts: { excludeUnhealthy?: boolean } = {},
 ): Promise<AlignmentJobPoolState> {
   const coord = getAlignmentPoolCoordinator();
   let busy = false;
+  const exclude = (id: "wsl" | "lisa") => { if (opts.excludeUnhealthy) attempted.push(id); };
   // Older anchored jobs could carry a Steam Deck attempt; it is not one of
   // the two eligible CTC hosts and must not consume the CTC retry.
   const attempted = triedHosts.filter((id) => id === "wsl" || id === "lisa");
@@ -497,7 +502,7 @@ async function dispatchCtcJob(
     const host = coord.hostById(id);
     if (!host) {
       recordPoolError(job, id, "configuration", "host is not configured");
-      attempted.push(id);
+      exclude(id);
       continue;
     }
     let health: CtcHealth;
@@ -506,12 +511,12 @@ async function dispatchCtcJob(
     } catch (error) {
       recordPoolError(job, id, "health", error);
       // Unreachable / unhealthy hosts stay excluded for this dispatch (and probe lease retries).
-      attempted.push(id);
+      exclude(id);
       continue;
     }
     if (job.mode === "anchored" && health.ctc.passageReady !== true) {
       recordPoolError(job, id, "health", "passage discovery is not ready");
-      attempted.push(id);
+      exclude(id);
       continue;
     }
     if (health.busy || health.stuck || coord.activeOnHost(id) > 0) {
@@ -520,7 +525,7 @@ async function dispatchCtcJob(
       continue;
     }
     if (!(await probeHost(job, host))) {
-      attempted.push(id);
+      exclude(id);
       continue;
     }
     if (!coord.tryAcquireCtc(id, job.id, job.recordingId)) {
@@ -570,7 +575,7 @@ export async function acquireCtcProbeLease(
 ): Promise<CtcProbeLease & { triedHosts: PoolHostId[]; poolErrors: AlignmentJob["poolErrors"] }> {
   if (!poolEnabled()) throw new Error("CTC alignment requires the remote pool.");
   const target: CtcDispatchTarget = { id: `ctc-probe-${randomUUID()}`, recordingId, mode: "anchored" };
-  const state = await dispatchCtcJob(target, tracks, localAudio, triedHosts);
+  const state = await dispatchCtcJob(target, tracks, localAudio, triedHosts, { excludeUnhealthy: true });
   const coord = getAlignmentPoolCoordinator();
   const host = coord.hostById(state.hostId);
   let released = false;

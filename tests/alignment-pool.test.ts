@@ -676,3 +676,43 @@ test("getAlignmentPoolStatus surfaces incompatible device and SSH probe errors a
     fs.rmSync(temp, { recursive: true, force: true });
   }
 });
+
+test("a transient health failure does not exclude the host from a later alignment dispatch", async () => {
+  const originalFetch = globalThis.fetch;
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "ctc-health-"));
+  const audio = path.join(temp, "audio.wav");
+  fs.writeFileSync(audio, "audio");
+  resetAlignmentPoolCoordinator([
+    hosts[0],
+    { ...hosts[1], id: "lisa", sshTarget: "lisa-host", workerUrl: "http://lisa-worker" },
+  ]);
+  setAlignmentPoolDepsForTests({
+    async probe() { return true; },
+    async exec() { return { code: 0, stdout: "", stderr: "" }; },
+    async uploadFile() {},
+  });
+  let wslDown = true;
+  globalThis.fetch = async (input) => {
+    const lisa = String(input).includes("lisa-worker");
+    if (!lisa && wslDown) throw new Error("connect ECONNREFUSED");
+    return Response.json({ ready: true, busy: lisa, stuck: false, mediaRoot: temp,
+      ctc: { engine: CTC_ENGINE, ready: true, device: lisa ? "cpu" : "cuda",
+        precision: lisa ? "float32" : "float16", anchorReady: true, passageReady: true } });
+  };
+  const job = { id: "ctc-health", recordingId: "rec-health", engine: CTC_ENGINE } as AlignmentJob;
+  const tracks = [{ id: "track" }] as any[];
+  try {
+    await assert.rejects(() => dispatchFullAlignmentJob(job, tracks, () => audio, []), (error: Error) => {
+      assert.ok(error instanceof PoolBusyError);
+      // WSL was unreachable, not tried: the job must try it again on the next tick.
+      assert.deepEqual(error.triedHosts, []);
+      return true;
+    });
+    wslDown = false;
+    const pool = await dispatchFullAlignmentJob(job, tracks, () => audio, []);
+    assert.equal(pool.hostId, "wsl");
+  } finally {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
