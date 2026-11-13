@@ -1,4 +1,4 @@
-# An explicit current-position cutoff for book knowledge
+# An explicit knowledge cutoff for book knowledge
 
 Book chat, the character index/glossary and the relationship graph default to spoiler-free mode using a knowledge cutoff explicitly chosen by the user, rather than automatically granting access through the furthest position ever reached. Suggest the narrated sentence while following audio, otherwise the reading position; show the cutoff and require a manual choice when no reliable position is available, so rewinding or uncertain alignment does not silently reveal later material.
 

@@ -87,16 +87,16 @@ The position a user explicitly chooses as the end of the text available to spoil
 _Avoid_: Progress (when the chosen limit is meant), furthest read
 
 **Knowledge fact**:
-A statement about a character, term or relationship, supported by passages in the selected ebook edition and available only once the text needed to establish it has been reached.
+A statement about a knowledge entity, such as a name, description, relationship or identity link, supported by passages in the selected ebook edition and available only once the text needed to establish it has been reached.
 _Avoid_: Full-book biography (when an individual statement is meant)
 
 **Knowledge entity**:
-A character, place, group, object or concept that book knowledge describes, with one identity that its facts, names and mentions attach to across the whole work.
-_Avoid_: Node (a drawing of an entity in the graph), character (when places, groups or objects are included)
+A character, place, group, important object or unfamiliar term that book knowledge describes, and that knowledge facts and mentions refer to.
+_Avoid_: Node (a drawing of an entity in the graph), character (when places, groups, objects or terms are included)
 
 **Identity link**:
-A knowledge fact stating that two knowledge entities are the same one, available only from the position where the text, or the evidence for the match, establishes it. Views before that position keep them separate.
-_Avoid_: Merge, dedupe (both suggest rewriting earlier views)
+A knowledge fact stating that two knowledge entities are the same one, either because the story reveals it or because extraction recorded one entity twice.
+_Avoid_: Merge, dedupe (both suggest rewriting earlier views), identity assertion
 
 **Spoiler-free mode**:
 Book knowledge limited to information available through the user's chosen knowledge cutoff.
