@@ -22,6 +22,7 @@ writeFileSync(ebook, await readerFixture({ bodies: ["<p>First sentence. Another 
 
 const { db, sqlite } = await import("../server/db.ts");
 const schema = await import("../server/schema.ts");
+const { eq } = await import("drizzle-orm");
 const { extractBook } = await import("../server/reader.ts");
 const { createAlignment, alignmentJob, putAlignmentJob, processAlignments, stopAlignments, registerAlignment, resetAnchorBatchSupportForTests, resetAlignmentRunnerForTests, setAnchorBatchClockForTests, ANCHOR_BATCH_CHUNK } = await import("../server/alignment.ts");
 const { resetAlignmentPoolCoordinator, setAlignmentPoolDepsForTests } = await import("../server/alignment-pool.ts");
@@ -962,4 +963,75 @@ test("historical Earth Awakens batch samples advance to anchored alignment", asy
   assert.ok(batchSamples >= 103);
   assert.ok(job.anchoring!.anchors.length >= 30, `selected ${job.anchoring!.anchors.length} anchors`);
   assert.ok(job.intervals.length > 0, job.error ?? "expected aligned intervals");
+});
+
+test("file lengths learned after an anchored job starts are used to choose anchors", async () => {
+  // Streamed releases start with zero-length tracks; each length is only known
+  // once its server copy finishes, which may be after the job has started.
+  resetAnchorBatchSupportForTests();
+  resetAlignmentPoolCoordinator([
+    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test" },
+  ]);
+  setAlignmentPoolDepsForTests(testPoolDeps);
+  resetAlignmentRunnerForTests();
+  const pause = await import("../server/activity-pause.ts");
+  const perTrack = 40, trackCount = 8;
+  const sentence = (i: number) => `<p>Sentence ${i} tells part ${i} of the story.</p>`;
+  const half = (perTrack * trackCount) / 2;
+  const file = join(process.env.MEDIA_ROOT!, "late-lengths.epub");
+  writeFileSync(file, await readerFixture({ bodies: [
+    Array.from({ length: half }, (_, i) => sentence(i)).join(""),
+    Array.from({ length: half }, (_, i) => sentence(half + i)).join(""),
+  ] }));
+  db.insert(schema.ebookEditions).values({ id: "ctc-late-ebook", workId: "ctc-work", format: "epub", source: file }).run();
+  const book = await extractBook("ctc-late-ebook");
+  const paragraphs = book.sections.flatMap((section) => section.paragraphs);
+  const first = paragraphs.findIndex((paragraph) => paragraph.text.startsWith("Sentence 0 "));
+  const spoken = (local: number) => 30 + local * 5;
+  const duration = spoken(perTrack) + 20;
+  db.insert(schema.editions).values({ id: "ctc-late-edition", workId: "ctc-work", cover: "", narrator: "", rating: 0, sourceLabel: "", language: "en" }).run();
+  db.insert(schema.recordings).values({ id: "ctc-late-recording", editionId: "ctc-late-edition" }).run();
+  const ids = Array.from({ length: trackCount }, (_, i) => `ctc-late-track-${i}`);
+  for (const [index, id] of ids.entries())
+    db.insert(schema.tracks).values({ id, recordingId: "ctc-late-recording", title: id, index,
+      duration, chapters: [], source: audio, sourceType: "local" }).run();
+  const setLengths = (value: number) => {
+    for (const id of ids.slice(1))
+      db.update(schema.tracks).set({ duration: value }).where(eq(schema.tracks.id, id)).run();
+  };
+  let restored = false;
+  mockWorker(async (input, init) => {
+    const request = JSON.parse(String(init?.body));
+    if (String(input).endsWith("/anchor")) {
+      if (!restored) {
+        restored = true;
+        setLengths(duration); // the server copies finish while sampling runs
+      }
+      const track = ids.indexOf(request.trackId);
+      const local = Math.max(0, Math.ceil((request.start - 30) / 5));
+      if (local >= perTrack || spoken(local) > request.start + request.duration - 3)
+        return Response.json({ engine, outcome: "unsynced", match: null, start: request.start, text: "" });
+      return Response.json({ engine, outcome: "mapped", start: spoken(local),
+        match: { index: first + track * perTrack + local, score: 0.9 }, text: "word ".repeat(40) });
+    }
+    const step = request.duration / request.fragments.length;
+    return Response.json({ engine, outcome: "mapped", elapsedSeconds: 1,
+      intervals: request.fragments.map((_: string, i: number) => ({ index: i, start: request.start + i * step, end: request.start + (i + 1) * step })) });
+  }, { anchorReady: false });
+  pause.setPaused("alignment", true);
+  const created = await createAlignment("ctc-late-ebook", "ctc-late-recording", undefined, "anchored");
+  assert.ok(created.anchoring!.samples.length >= trackCount * 3, "samples cover every file");
+  setLengths(0); // when the job starts, only the first file's length is known
+  pause.setPaused("alignment", false);
+  let job = alignmentJob(created.id);
+  for (let i = 0; i < 1000 && !(job.anchoring?.stage === "done" || job.status === "error"); i++) {
+    if (job.status === "queued") void processAlignments();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    job = alignmentJob(created.id);
+  }
+  assert.ok(restored);
+  assert.notEqual(job.outcome, "unsynced", job.warning ?? undefined);
+  const anchoredTracks = new Set(job.anchoring!.anchors.map((anchor) => anchor.trackId));
+  assert.equal(anchoredTracks.size, trackCount, `anchors in ${anchoredTracks.size} of ${trackCount} files`);
+  assert.ok(job.intervals.length > 0);
 });

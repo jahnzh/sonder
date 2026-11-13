@@ -956,10 +956,18 @@ async function processAnchored(
   );
   const words = prefixWords(paragraphs),
     order = new Map(paragraphs.map((paragraph, i) => [paragraph.id, i]));
-  const timeline = tracks.map((track) => ({
-    id: track.id,
-    duration: track.duration,
-  }));
+  // Durations are read fresh: a streamed file's length is only known once its
+  // server copy finishes, which can be after this job started.
+  const timelineNow = () =>
+    tracks.map((track) => ({
+      id: track.id,
+      duration:
+        db
+          .select({ duration: s.tracks.duration })
+          .from(s.tracks)
+          .where(eq(s.tracks.id, track.id))
+          .get()?.duration || track.duration,
+    }));
   // The worker accepts up to 20,000 fragments, so very long books are sent as
   // groups of consecutive sentences.
   const group = Math.ceil(paragraphs.length / 20000);
@@ -1133,6 +1141,7 @@ async function processAnchored(
     if (!live()) return;
     job = alignmentJob(job.id);
     const plan = job.anchoring!;
+    const timeline = timelineNow();
     const anchors = selectAnchors(plan.samples, words, timeline);
     const spoken = plan.samples.filter(
       (sample) => (sample.spokenWords ?? 0) >= 10,
@@ -1281,7 +1290,7 @@ async function processAnchored(
   if (!live()) return;
   job = alignmentJob(job.id);
   const plan = job.anchoring!;
-  job.intervals = stitch(job.intervals, order, timeline);
+  job.intervals = stitch(job.intervals, order, timelineNow());
   job.coverage = job.intervals.length / paragraphs.length;
   job.unsyncedPassages = unsyncedPassages(book, job.intervals);
   // Sections with real text and no narration at all, such as front matter.
