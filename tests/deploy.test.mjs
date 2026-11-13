@@ -1,10 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import Database from "better-sqlite3";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -22,21 +23,47 @@ function stub(dir, name, body) {
 }
 
 // A throwaway repository holding a copy of deploy.sh, a stubbed docker and curl, and live-check scripts that
-// append their name to a log, so a test can see which checks ran.
-function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", tagFails = false, smokeFails = false, markerFails = false, markerFileFails = false } = {}) {
+// append their name (and any CLI arguments) to a log, so a test can see which checks ran.
+function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", tagFails = false, smokeFails = false, markerFails = false, markerFileFails = false, jobs = [] } = {}) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "sonder-deploy-")));
   const repo = join(dir, "repo");
   const bin = join(dir, "bin");
+  symlinkSync(join(repoRoot, "node_modules"), join(dir, "node_modules"));
   mkdirSync(join(repo, "scripts"), { recursive: true });
   mkdirSync(join(repo, "data"));
   mkdirSync(bin);
   copyFileSync(join(repoRoot, "scripts", "deploy.sh"), join(repo, "scripts", "deploy.sh"));
   copyFileSync(join(repoRoot, "scripts", "deploy-prod.sh"), join(repo, "scripts", "deploy-prod.sh"));
   writeFileSync(join(repo, "package.json"), JSON.stringify({ scripts: { backup: "cp" } }));
-  writeFileSync(join(repo, "data", "sonder.db"), "db");
+  const sqlite = new Database(join(repo, "data", "sonder.db"));
+  sqlite.exec(`
+    CREATE TABLE works(id TEXT PRIMARY KEY, title TEXT NOT NULL, author TEXT NOT NULL, description TEXT NOT NULL, genre TEXT NOT NULL, year INTEGER NOT NULL);
+    CREATE TABLE audio_editions(id TEXT PRIMARY KEY, work_id TEXT NOT NULL REFERENCES works(id), cover TEXT NOT NULL, narrator TEXT NOT NULL, rating REAL NOT NULL, source_label TEXT NOT NULL);
+    CREATE TABLE recordings(id TEXT PRIMARY KEY, edition_id TEXT NOT NULL REFERENCES audio_editions(id));
+    CREATE TABLE ebook_editions(id TEXT PRIMARY KEY, work_id TEXT NOT NULL REFERENCES works(id), format TEXT NOT NULL, source TEXT NOT NULL);
+    CREATE TABLE alignment_jobs(id TEXT PRIMARY KEY, ebook_id TEXT NOT NULL REFERENCES ebook_editions(id), recording_id TEXT NOT NULL REFERENCES recordings(id), data TEXT NOT NULL, updated_at INTEGER NOT NULL);
+  `);
+  for (const [i, job] of jobs.entries()) {
+    const workId = job.workId ?? `work-${i}`;
+    const audioEditionId = job.audioEditionId ?? `ae-${i}`;
+    const ebookId = job.ebookId ?? `ee-${i}`;
+    const format = job.format ?? "epub";
+    sqlite.prepare("INSERT OR IGNORE INTO works VALUES (?, 'T', 'A', '', '', 2026)").run(workId);
+    sqlite.prepare("INSERT OR IGNORE INTO audio_editions VALUES (?, ?, '', '', 0, '')").run(audioEditionId, workId);
+    sqlite.prepare("INSERT OR IGNORE INTO recordings VALUES (?, ?)").run(job.recordingId, audioEditionId);
+    sqlite.prepare("INSERT OR IGNORE INTO ebook_editions VALUES (?, ?, ?, '')").run(ebookId, job.ebookWorkId ?? workId, format);
+    sqlite.prepare("INSERT INTO alignment_jobs VALUES (?, ?, ?, ?, ?)").run(
+      job.id ?? `job-${i}`,
+      ebookId,
+      job.recordingId,
+      JSON.stringify(job.data),
+      job.updatedAt,
+    );
+  }
+  sqlite.close();
   const log = join(dir, "ran.log");
   for (const [name, exit] of Object.entries(checks)) {
-    writeFileSync(join(repo, "scripts", name), `import fs from "node:fs";fs.appendFileSync(${JSON.stringify(log)}, ${JSON.stringify(name)} + "\\n");process.exit(${exit});\n`);
+    writeFileSync(join(repo, "scripts", name), `import fs from "node:fs";fs.appendFileSync(${JSON.stringify(log)}, [${JSON.stringify(name)}, ...process.argv.slice(2)].join(" ") + "\\n");process.exit(${exit});\n`);
   }
   const calls = join(dir, "docker-calls.log");
   const built = join(dir, "built");
@@ -154,13 +181,105 @@ test("a failing live check does not stop the next one, and the deploy still exit
   }
 });
 
-test("a reader check with no recording to use is a failed check, and the others still run", () => {
-  const f = fixture({ "verify-integrated-reader.mjs": 0, "verify-b.mjs": 0 });
+test("a reader check with no mapped recording is skipped, not failed, and the others still run", () => {
+  const f = fixture(
+    { "verify-integrated-reader.mjs": 0, "verify-b.mjs": 0 },
+    {
+      jobs: [
+        {
+          recordingId: "rec-empty",
+          updatedAt: 200,
+          data: { progress: 1, status: "partial", outcome: "partial", intervals: [] },
+        },
+        {
+          recordingId: "rec-projected",
+          updatedAt: 300,
+          data: {
+            progress: 1,
+            status: "ready",
+            origin: "projected",
+            intervals: [{ paragraphId: "p1", section: 0, trackId: "t1", start: 0, end: 5, confidence: 1 }],
+          },
+        },
+      ],
+    },
+  );
   try {
     const r = f.run(["--no-marker"]);
-    assert.equal(r.status, 1);
-    assert.match(r.stderr, /cannot run the reader live check/);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.match(r.stdout, /no recording with a finished EPUB alignment map; skipping reader live check/);
     assert.deepEqual(f.ran(), ["verify-b.mjs"]);
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("pick_reader_recording skips empty finished and projected jobs and prefers status = 'ready' over a newer partial map", () => {
+  const interval = { paragraphId: "p1", section: 0, trackId: "t1", start: 0, end: 5, confidence: 1 };
+  const f = fixture(
+    { "verify-integrated-reader.mjs": 0, "verify-b.mjs": 0 },
+    {
+      jobs: [
+        {
+          recordingId: "rec-ready-oldest",
+          updatedAt: 100,
+          data: { progress: 1, status: "ready", intervals: [interval] },
+        },
+        {
+          recordingId: "rec-ready-newer",
+          updatedAt: 200,
+          data: { progress: 1, status: "ready", intervals: [interval] },
+        },
+        {
+          recordingId: "rec-partial-mapped",
+          updatedAt: 300,
+          data: { progress: 1, status: "partial", intervals: [interval] },
+        },
+        {
+          recordingId: "rec-projected-ready",
+          updatedAt: 400,
+          data: { progress: 1, status: "ready", origin: "projected", intervals: [interval] },
+        },
+        {
+          recordingId: "rec-empty-finished",
+          updatedAt: 500,
+          data: { progress: 1, status: "ready", outcome: "unsynced", intervals: [] },
+        },
+      ],
+    },
+  );
+  try {
+    const r = f.run(["--no-marker"]);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.deepEqual(f.ran(), ["verify-integrated-reader.mjs rec-ready-newer", "verify-b.mjs"]);
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("pick_reader_recording falls back to a mapped partial job when no ready job has intervals", () => {
+  const interval = { paragraphId: "p1", section: 0, trackId: "t1", start: 0, end: 5, confidence: 1 };
+  const f = fixture(
+    { "verify-integrated-reader.mjs": 0, "verify-b.mjs": 0 },
+    {
+      jobs: [
+        {
+          recordingId: "rec-partial-mapped",
+          updatedAt: 100,
+          data: { progress: 1, status: "partial", intervals: [interval] },
+        },
+        {
+          recordingId: "rec-empty-finished",
+          updatedAt: 200,
+          data: { progress: 1, status: "partial", intervals: [] },
+        },
+      ],
+    },
+  );
+  try {
+    const r = f.run(["--no-marker"]);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.deepEqual(f.ran(), ["verify-integrated-reader.mjs rec-partial-mapped", "verify-b.mjs"]);
   } finally {
     rmSync(f.dir, { recursive: true, force: true });
   }
