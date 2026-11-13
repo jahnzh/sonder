@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { anchorResult, workerMetadata, type WorkerMetadata } from "./alignment-worker-contract.ts";
 import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
 import { extractBook, ebookRecord } from "./reader.ts";
@@ -60,6 +61,7 @@ import {
   stitch,
   wordCount,
 } from "./alignment-anchors.ts";
+import { iso3, languagesConflict } from "./language.ts";
 export { matchTitle } from "./alignment-pairings.ts";
 export function recordingContext(id: string) {
   const rec = db
@@ -214,47 +216,6 @@ export function removeProjectedMapsForWork(workId: string) {
       sqlite.prepare("DELETE FROM alignment_jobs WHERE id=?").run(job.id);
   }
 }
-// ISO 639 codes that mean "no usable language": treated like a missing one.
-const unknownLanguages = new Set(["und", "mis", "mul", "zxx", "unknown"]);
-const language = (value: string) => {
-  const code = value.toLowerCase().split(/[-_]/)[0];
-  if (unknownLanguages.has(code)) return "";
-  return (
-    {
-      english: "en",
-      french: "fr",
-      german: "de",
-      spanish: "es",
-      italian: "it",
-      portuguese: "pt",
-      norwegian: "no",
-      nob: "no",
-      nor: "no",
-      eng: "en",
-      fra: "fr",
-      fre: "fr",
-    }[code as "english"] || code
-  );
-};
-const iso3 = (value: string) =>
-  ({
-    en: "eng",
-    fr: "fra",
-    de: "deu",
-    es: "spa",
-    it: "ita",
-    pt: "por",
-    no: "nob",
-    nb: "nob",
-    da: "dan",
-    sv: "swe",
-    nl: "nld",
-  })[language(value) as "en"] || language(value) || "eng";
-/** Two languages conflict only when both are known and differ. */
-const languagesConflict = (a?: string | null, b?: string | null) => {
-  const x = a ? language(a) : "", y = b ? language(b) : "";
-  return !!x && !!y && x !== y;
-};
 const activeStatuses = ["queued", "copying", "processing"];
 export async function alignmentOptions(ebookId: string, recordingId: string) {
   const book = await extractBook(ebookId),
@@ -591,23 +552,6 @@ let workerRetryClock = defaultWorkerRetryClock;
 export function setWorkerRetryClockForTests(clock: typeof defaultWorkerRetryClock | null) {
   workerRetryClock = clock ?? defaultWorkerRetryClock;
 }
-const workerMetadata = z.object({
-  engine: z.string().min(1).optional(),
-  outcome: z.enum(["mapped", "partial", "unsynced", "language_not_supported", "error"]).optional(),
-  stageTimings: z.record(z.string(), z.number().nonnegative().finite()).optional(),
-  /** Mean GPU utilization percent for the request; null on CPU-only hosts. */
-  gpuUtilization: z.number().min(0).max(100).finite().nullable().optional(),
-  /** Microbatch, OOM halvings and worker pools the request ran with (#276); older workers omit it. */
-  runConfig: z.object({
-    acousticMicrobatch: z.number().int().positive().optional(),
-    acousticMicrobatchUsed: z.number().int().positive().optional(),
-    oomHalvings: z.number().int().nonnegative().optional(),
-    decodeWorkers: z.number().int().nonnegative().optional(),
-    extractWorkers: z.number().int().nonnegative().optional(),
-    residentModelsPerDevice: z.number().int().positive().optional(),
-  }).optional(),
-});
-type WorkerMetadata = z.infer<typeof workerMetadata>;
 class WorkerRequestError extends Error {
   constructor(message: string, readonly metadata?: WorkerMetadata, readonly status?: number) { super(message); }
 }
@@ -774,20 +718,6 @@ async function workerRequest(
     return response.json();
   }
 }
-const anchorResult = z.object({
-  ...workerMetadata.shape,
-  match: z
-    .object({ index: z.number().int().nonnegative(), lastIndex: z.number().int().nonnegative().optional(), score: z.number().min(0).max(1).finite() })
-    .nullable(),
-  start: z.number().nonnegative().finite().optional(),
-  matches: z.array(z.object({
-    index: z.number().int().nonnegative(),
-    lastIndex: z.number().int().nonnegative().optional(),
-    score: z.number().min(0).max(1).finite(),
-    start: z.number().nonnegative().finite(),
-  })).max(8).optional(),
-  text: z.string().optional(),
-});
 const sectionResult = z.object({
   ...workerMetadata.shape,
   intervals: z.array(z.object({

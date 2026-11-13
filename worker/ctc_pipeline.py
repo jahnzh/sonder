@@ -188,6 +188,44 @@ def _audio_slice(pcm, lo, hi):
     return pcm[lo:hi]
 
 
+class OffsetWindow:
+    """Window PCM indexed as if prefixed with ``offset`` silent samples, without allocating them."""
+
+    def __init__(self, samples, offset):
+        self._samples = samples
+        self._offset = int(offset)
+
+    def __len__(self):
+        return self._offset + len(self._samples)
+
+    def slice(self, lo, hi):
+        import numpy as np
+        lo = max(0, int(lo))
+        hi = min(len(self), int(hi))
+        if hi <= lo:
+            raise ValueError("Audio is too short for the requested window.")
+        local_lo = lo - self._offset
+        local_hi = hi - self._offset
+        if local_lo >= 0 and local_hi <= len(self._samples):
+            return self._samples[local_lo:local_hi]
+        out = np.zeros(hi - lo, dtype="float32")
+        src_lo = max(0, local_lo)
+        src_hi = min(len(self._samples), local_hi)
+        if src_hi > src_lo:
+            out[src_lo - local_lo:src_hi - local_lo] = self._samples[src_lo:src_hi]
+        return out
+
+
+class _LengthOnly:
+    """Track length for a full acoustic-cache hit that never needs PCM samples."""
+
+    def __init__(self, nframes):
+        self._nframes = int(nframes)
+
+    def __len__(self):
+        return self._nframes
+
+
 def _window_cores(first_sample, end_sample, total_samples):
     """Yield (core_start, core_end, context_start, context_end) for cores covering a window."""
     for index in range(first_sample // CORE, (end_sample + CORE - 1) // CORE):
@@ -196,6 +234,18 @@ def _window_cores(first_sample, end_sample, total_samples):
         context_start = max(0, core_start - CONTEXT)
         context_end = min(core_start + CORE + CONTEXT, total_samples)
         yield index, core_start, core_end, context_start, context_end
+
+
+def _window_cache_hit(cache, model, start, duration, total_samples):
+    """True when every core covering [start, start+duration) is already in AcousticCache."""
+    first_sample = round(start * SAMPLE_RATE)
+    end_sample = min(round((start + duration) * SAMPLE_RATE), total_samples)
+    if end_sample <= first_sample:
+        return False
+    for index, *_ in _window_cores(first_sample, end_sample, total_samples):
+        if cache.read(index, len(model.labels)) is None:
+            return False
+    return True
 
 
 def _infer_from_pcm(pcm, folder, fragments, start, duration, source, source_version,
@@ -294,10 +344,8 @@ def _infer(wave_path, folder, fragments, start, duration, wave_start, source, so
             if (audio_file.getnchannels(), audio_file.getsampwidth(), audio_file.getframerate()) != (1, 2, SAMPLE_RATE):
                 raise ValueError("Expected mono 16-bit PCM at 16 kHz.")
             window = np.frombuffer(audio_file.readframes(audio_file.getnframes()), dtype="<i2").astype("float32") / 32768.0
-        # Rebuild a track-aligned buffer so core indices match the recording-level cache.
-        total = wave_start + len(window)
-        pcm = np.zeros(total, dtype="float32")
-        pcm[wave_start:] = window
+        # Track-aligned view without allocating a wave_start-sized zero prefix (MEDIUM-2).
+        pcm = OffsetWindow(window, wave_start)
         return _infer_from_pcm(pcm, folder, fragments, start, duration, source, source_version,
                                recording_id, recording_fingerprint, track_id, env, locate=locate,
                                microbatch=microbatch)
@@ -318,6 +366,63 @@ def align_ctc_section(*, audio, output, fragments, language, start, duration, me
     wave_path = output.with_suffix(".ctc.wav")
     wave_start, wave_end = ctc_prefetch.section_window(start, duration)
     source_version = file_version(audio)
+    # Skip ffmpeg and PCM allocation when every core for this window is already cached (MEDIUM-2).
+    # Model load / digest failures fall through to the extract path (unit tests without a checkpoint).
+    cache_total = max(wave_end, round((start + duration) * SAMPLE_RATE))
+    cached = None
+    try:
+        digest, digest_version = audio_digest(audio)
+        if digest_version != source_version:
+            raise ValueError("Audio changed during extraction.")
+        model = resident_model(media_folder)
+        cache = AcousticCache(media_folder, recording_id or str(audio), ENGINE,
+                              recording_fingerprint or "direct", [track_id or str(audio), digest],
+                              budget_bytes(env))
+        if _window_cache_hit(cache, model, start, duration, cache_total):
+            cached = (digest, model)
+    except ValueError:
+        raise
+    except Exception:
+        cached = None
+    if cached is not None:
+        digest, model = cached
+        extracted = time.monotonic()
+
+        def infer_cached():
+            return _infer_from_pcm(_LengthOnly(cache_total), media_folder, fragments, start, duration, audio,
+                                   source_version, recording_id, recording_fingerprint, track_id, env,
+                                   locate=locate, digest=digest, model=model, microbatch=batch)
+
+        task = ResidentTask(infer_cached)
+        if not task.done.wait(max(0, deadline - time.monotonic())):
+            raise AlignmentTimeout(limit, stuck=task)
+        if task.error:
+            raise task.error
+        value, timings = task.value
+        finished = time.monotonic()
+        if locate:
+            outcome = "mapped" if value["match"] else "unsynced"
+        else:
+            mapped = len({item["index"] for item in value})
+            outcome = "mapped" if mapped == len(fragments) else "partial" if mapped else "unsynced"
+        result = {"engine": ENGINE, "outcome": outcome,
+                  "stageTimings": {"audioExtraction": extracted - started, "extractionPrefetched": 0.0,
+                                   "acousticCacheHit": 1.0, **timings},
+                  "elapsedSeconds": finished - started,
+                  "peakMemoryMB": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024,
+                  "runConfig": run_config(batch, env)}
+        if locate:
+            result.update(value)
+        else:
+            result.update({"intervals": value, "quality": None})
+        temporary = output.with_suffix(".part")
+        try:
+            temporary.write_text(json.dumps(result))
+            temporary.replace(output)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return result
+
     # A window the server named in an earlier request is usually decoded already (worker/ctc_prefetch.py).
     prefetched = ctc_prefetch.take(audio, start, duration, wave_path, deadline)
     try:

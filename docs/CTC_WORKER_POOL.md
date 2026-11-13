@@ -287,6 +287,16 @@ Lisa CPU:
 
 Gate: PASS; engine: `ctc-wav2vec2-base-960h-torchaudio-2.8-v1`; outcome: `mapped`.
 
+## Probing gate (#278)
+
+`scripts/gate-ctc-probing.ts` and `worker/gate_whisper_probe.py` compare the CTC prober with the Whisper prober on a series, as ADR 0006 requires before Whisper is removed. Every candidate EPUB is probed against every recording with the production sample plan (`planSamples`) and the unchanged outlier rule, so a wrong edition has to be rejected as well as the right one found. The pick per title is the accepted candidate with the best audio-supported coverage (then the higher mean match score); the gate fails if CTC picks a worse edition than Whisper for any title. Run it on the host that holds the audio, outside `npm test`, never on the production worker:
+
+1. A manifest lists the titles (`key`, `title`, `audio` inside the CTC worker's `MEDIA_ROOT`, `duration`, `truth`) and the candidates (`key`, `epub`, optional `book` for a second copy of a volume).
+2. `tsx scripts/gate-ctc-probing.ts plan manifest.json WORK` extracts the paragraphs of every EPUB and the sample plan of every title into `WORK`.
+3. Whisper arm, in a Python environment with `faster-whisper` and the tiny model under `MEDIA_ROOT/alignment/models/whisper`: `python worker/gate_whisper_probe.py --work WORK --media-root MEDIA_ROOT`. Each sample is transcribed once and matched to every candidate with the worker's own excerpt matcher, which is what `/anchor` does per request.
+4. CTC arm, against a CTC worker started for the run on its own port and `MEDIA_ROOT` (`ALIGNMENT_CTC_DEVICE=cuda` on WSL): `ALIGNMENT_WORKER_TOKEN=... tsx scripts/gate-ctc-probing.ts ctc manifest.json WORK http://127.0.0.1:PORT`. It resumes after an interruption.
+5. `tsx scripts/gate-ctc-probing.ts report manifest.json WORK` prints the per-title table, the found-sample matrix and the CTC timings, writes `report.md` and `report.json`, and exits 1 when CTC is worse.
+
 ## Implementation evidence
 
 | Proposal | Evidence |

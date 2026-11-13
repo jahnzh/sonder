@@ -2,6 +2,8 @@ export function installAlignmentFixture(){
  process.env.ALIGNMENT_WORKER_URL='http://alignment-browser.test';
  // The fixture models the local aeneas worker; CTC jobs go to the remote pool, which the browser server does not run.
  process.env.ALIGNMENT_CHAPTER_ENGINE='aeneas';
+ // Keep ebook-set probing on Whisper until #279 updates the fixture for CTC.
+ process.env.EBOOK_SET_PROBER='whisper';
  process.env.ALIGNMENT_WORKER_TOKEN='browser-fixture-token';const original=globalThis.fetch;
  globalThis.fetch=async(input,init)=>{if(!String(input).startsWith('http://alignment-browser.test/'))return original(input,init);const body=JSON.parse(String(init?.body));
   // Speech samples: a narration that starts at 5 s and reads one sentence every 8 s.
