@@ -78,6 +78,19 @@ async function waitFor(predicate, timeoutMs = 20_000, what = "condition") {
   assert.fail(`timed out waiting for ${what}`);
 }
 
+function waitForProcessVisible(pid, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      if (fs.readFileSync(`/proc/${pid}/cmdline`, "utf8")) return true;
+    } catch {
+      // not visible yet
+    }
+    spawnSync("sleep", ["0.1"]);
+  }
+  return false;
+}
+
 function isProcessAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -353,6 +366,36 @@ test("an invalid commit ref exits 1 before any probe", () => {
 });
 
 // ---- dispatch and admission through ci-run.sh ----------------------------
+
+// Kept from #314: the old dispatcher waited on any local ci-ssh.sh/ci-deck.sh
+// process. The resource dispatcher never looks at foreign runner processes, so
+// an unrelated ci-ssh.sh outside this fixture must not stall an idle admit.
+test("an unrelated ci-ssh.sh process outside the fixture repo does not stall idle-host dispatch", () => {
+  const f = fixture();
+  const foreignDir = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-ci-foreign-"));
+  const foreignScript = path.join(foreignDir, "ci-ssh.sh");
+  fs.writeFileSync(foreignScript, "#!/usr/bin/env bash\nsleep 120\n", { mode: 0o755 });
+  // Own process group, so cleanup also kills the sleep child (killing bash alone orphaned it).
+  const foreign = spawn("bash", [foreignScript], { stdio: "ignore", detached: true });
+  try {
+    assert.ok(waitForProcessVisible(foreign.pid));
+    const startedAt = Date.now();
+    const out = f.run();
+    const elapsedMs = Date.now() - startedAt;
+    assert.equal(out.status, 0, out.output);
+    assert.equal(f.invocations().length, 1);
+    assert.ok(elapsedMs < 30_000, `should not wait on a foreign runner (${elapsedMs}ms)`);
+    assert.ok(isProcessAlive(foreign.pid), "foreign runner should still be sleeping");
+  } finally {
+    try {
+      process.kill(-foreign.pid, "SIGKILL");
+    } catch {
+      // already gone
+    }
+    fs.rmSync(foreignDir, { recursive: true, force: true });
+    f.cleanup();
+  }
+});
 
 test("an idle fleet starts the check at once on the host with the most headroom", () => {
   const f = fixture();

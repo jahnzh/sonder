@@ -111,3 +111,11 @@ Each step prints count, median, p90 and max in ms; steps whose max is above 10 s
 
 Parallel alignment workers need one `MEDIA_ROOT` each (hard-link the inputs); see the speech-sample issue (#291). When multiple workers share a single `MEDIA_ROOT`, intermediate alignment files collide or get deleted across processes. Hard-linking the input media into separate `MEDIA_ROOT` directories allows parallel execution without duplicating audio storage.
 
+## Parallel checks per host
+
+`scripts/ci-hosts.json` sets `maxParallel: 1` for `lisa`, `192.168.1.119` and `wsl`, so `ci-run.sh` runs one complete check per host and queues the rest. The limit came from 2026-11-07: five checks started together took lisa (20 CPUs) to load 41, and four failed only on timing in the unit stage (#314, #262):
+
+- `ci-run tests do not mutate a hosting repo HEAD or branch` (`tests/ci-script-host.test.mjs`) failed after 60291 ms. That was the 60 s timeout on the nested `node --test` run in `tests/ci-script-host-runner.mjs`, not a wait on other checks' runners: `waitForNoForeignRunners` only counts processes under the fixture's own temp repo. The nested run now has 240 s (the outer test 300 s).
+- The `ci-stop` test's wait for the remote run directory to disappear is now 30 s instead of 5 s.
+
+A central dispatcher that admits checks by each host's free CPU, memory and disk is tracked in #365.
