@@ -958,16 +958,20 @@ async function processAnchored(
     order = new Map(paragraphs.map((paragraph, i) => [paragraph.id, i]));
   // Durations are read fresh: a streamed file's length is only known once its
   // server copy finishes, which can be after this job started.
-  const timelineNow = () =>
-    tracks.map((track) => ({
+  const timelineNow = () => {
+    const known = new Map(
+      db
+        .select({ id: s.tracks.id, duration: s.tracks.duration })
+        .from(s.tracks)
+        .where(eq(s.tracks.recordingId, job.recordingId))
+        .all()
+        .map((row) => [row.id, row.duration]),
+    );
+    return tracks.map((track) => ({
       id: track.id,
-      duration:
-        db
-          .select({ duration: s.tracks.duration })
-          .from(s.tracks)
-          .where(eq(s.tracks.id, track.id))
-          .get()?.duration || track.duration,
+      duration: known.get(track.id) || track.duration,
     }));
+  };
   // The worker accepts up to 20,000 fragments, so very long books are sent as
   // groups of consecutive sentences.
   const group = Math.ceil(paragraphs.length / 20000);
@@ -1034,6 +1038,26 @@ async function processAnchored(
     ...workerMetadata.shape,
     results: z.array(anchorResult).max(ANCHOR_BATCH_CHUNK),
   });
+  // A file whose length was unknown when the job was created got no samples;
+  // its copy has finished by now, so plan them.
+  if (job.anchoring!.stage === "sampling") {
+    const sampled = new Set(job.anchoring!.samples.map((sample) => sample.trackId));
+    const unsampled = timelineNow().filter(
+      (track) => !sampled.has(track.id) && track.duration > 0,
+    );
+    if (unsampled.length) {
+      job.anchoring!.samples.push(
+        ...planSamples(unsampled, undefined, undefined, process.env.ALIGNMENT_CHAPTER_ENGINE !== "aeneas"),
+      );
+      job.anchoring!.samples.sort(
+        (a, b) =>
+          tracks.findIndex((track) => track.id === a.trackId) -
+            tracks.findIndex((track) => track.id === b.trackId) ||
+          a.time - b.time,
+      );
+      store(job);
+    }
+  }
   while (job.anchoring!.stage === "sampling") {
     const pending = job.anchoring!.samples
       .map((sample, index) => ({ sample, index }))

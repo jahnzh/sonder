@@ -1035,3 +1035,62 @@ test("file lengths learned after an anchored job starts are used to choose ancho
   assert.equal(anchoredTracks.size, trackCount, `anchors in ${anchoredTracks.size} of ${trackCount} files`);
   assert.ok(job.intervals.length > 0);
 });
+
+test("files with no length when an anchored job is created are sampled once their length is known", async () => {
+  resetAnchorBatchSupportForTests();
+  resetAlignmentPoolCoordinator([
+    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test" },
+  ]);
+  setAlignmentPoolDepsForTests(testPoolDeps);
+  resetAlignmentRunnerForTests();
+  const pause = await import("../server/activity-pause.ts");
+  const perTrack = 40, trackCount = 4;
+  const sentence = (i: number) => `<p>Line ${i} carries part ${i} of the tale.</p>`;
+  const half = (perTrack * trackCount) / 2;
+  const file = join(process.env.MEDIA_ROOT!, "unknown-lengths.epub");
+  writeFileSync(file, await readerFixture({ bodies: [
+    Array.from({ length: half }, (_, i) => sentence(i)).join(""),
+    Array.from({ length: half }, (_, i) => sentence(half + i)).join(""),
+  ] }));
+  db.insert(schema.ebookEditions).values({ id: "ctc-unknown-ebook", workId: "ctc-work", format: "epub", source: file }).run();
+  const book = await extractBook("ctc-unknown-ebook");
+  const first = book.sections.flatMap((section) => section.paragraphs)
+    .findIndex((paragraph) => paragraph.text.startsWith("Line 0 "));
+  const spoken = (local: number) => 30 + local * 5;
+  const duration = spoken(perTrack) + 20;
+  db.insert(schema.editions).values({ id: "ctc-unknown-edition", workId: "ctc-work", cover: "", narrator: "", rating: 0, sourceLabel: "", language: "en" }).run();
+  db.insert(schema.recordings).values({ id: "ctc-unknown-recording", editionId: "ctc-unknown-edition" }).run();
+  const ids = Array.from({ length: trackCount }, (_, i) => `ctc-unknown-track-${i}`);
+  for (const [index, id] of ids.entries())
+    db.insert(schema.tracks).values({ id, recordingId: "ctc-unknown-recording", title: id, index,
+      duration: index === 0 ? duration : 0, chapters: [], source: audio, sourceType: "local" }).run();
+  mockWorker(async (input, init) => {
+    const request = JSON.parse(String(init?.body));
+    if (String(input).endsWith("/anchor")) {
+      const track = ids.indexOf(request.trackId);
+      const local = Math.max(0, Math.ceil((request.start - 30) / 5));
+      if (local >= perTrack || spoken(local) > request.start + request.duration - 3)
+        return Response.json({ engine, outcome: "unsynced", match: null, start: request.start, text: "" });
+      return Response.json({ engine, outcome: "mapped", start: spoken(local),
+        match: { index: first + track * perTrack + local, score: 0.9 }, text: "word ".repeat(40) });
+    }
+    const step = request.duration / request.fragments.length;
+    return Response.json({ engine, outcome: "mapped", elapsedSeconds: 1,
+      intervals: request.fragments.map((_: string, i: number) => ({ index: i, start: request.start + i * step, end: request.start + (i + 1) * step })) });
+  }, { anchorReady: false });
+  pause.setPaused("alignment", true);
+  const created = await createAlignment("ctc-unknown-ebook", "ctc-unknown-recording", undefined, "anchored");
+  assert.deepEqual(new Set(created.anchoring!.samples.map((sample) => sample.trackId)), new Set([ids[0]]));
+  for (const id of ids) // the server copies finish before the job runs
+    db.update(schema.tracks).set({ duration }).where(eq(schema.tracks.id, id)).run();
+  pause.setPaused("alignment", false);
+  let job = alignmentJob(created.id);
+  for (let i = 0; i < 1000 && !(job.anchoring?.stage === "done" || job.status === "error"); i++) {
+    if (job.status === "queued") void processAlignments();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    job = alignmentJob(created.id);
+  }
+  const anchoredTracks = new Set(job.anchoring!.anchors.map((anchor) => anchor.trackId));
+  assert.equal(anchoredTracks.size, trackCount, `anchors in ${anchoredTracks.size} of ${trackCount} files`);
+  assert.ok(job.intervals.length > 0);
+});

@@ -10,10 +10,10 @@ process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
 process.env.SONDER_DOWNLOAD_RETRY_MS = "1,1,1";
 const { db, sqlite } = await import("../server/db.ts");
-const { readFileSync } = await import("node:fs");
+const { readFileSync, readdirSync, existsSync, writeFileSync, mkdirSync } = await import("node:fs");
 const s = await import("../server/schema.ts");
 const { eq } = await import("drizzle-orm");
-const { processServerDownloads, pauseServerDownload } = await import(
+const { processServerDownloads, pauseServerDownload, cancelServerDownload } = await import(
   "../server/downloads.ts"
 );
 const original = globalThis.fetch;
@@ -273,4 +273,105 @@ test("several files of one book are copied at the same time, in chapter order", 
       .filter((c) => c.trackId.startsWith("track-parallel")).length,
     5,
   );
+});
+
+const savedParts = () => {
+  const dir = join(temp, "media", "saved");
+  return existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".part")) : [];
+};
+
+test("cancelling a paused copy deletes its partial files", async () => {
+  book("cancelled");
+  const wav = wave();
+  globalThis.fetch = async () => {
+    pauseServerDownload("recording-cancelled");
+    return cutOff(wav, 5000);
+  };
+  await processServerDownloads();
+  assert.equal(job("cancelled")?.status, "paused");
+  assert.equal(savedParts().length, 1, "a pause keeps the part to continue later");
+  cancelServerDownload("recording-cancelled");
+  assert.deepEqual(savedParts(), []);
+  assert.equal(job("cancelled"), undefined);
+});
+
+test("a range answer that does not reach the end restarts the file instead of failing forever", async () => {
+  book("capped");
+  const wav = wave();
+  const ranges: (string | null)[] = [];
+  globalThis.fetch = async (_input, init) => {
+    const range = new Headers(init?.headers).get("range");
+    ranges.push(range);
+    if (!range && ranges.length === 1) return cutOff(wav, 5000);
+    if (range)
+      return new Response(wav.subarray(5000, 6000), {
+        status: 206,
+        headers: {
+          "Content-Type": "audio/wav",
+          "Content-Length": "1000",
+          "Content-Range": `bytes 5000-5999/${wav.length}`,
+        },
+      });
+    return new Response(wav, {
+      headers: { "Content-Type": "audio/wav", "Content-Length": String(wav.length) },
+    });
+  };
+  await processServerDownloads();
+  assert.deepEqual(ranges, [null, "bytes=5000-", null]);
+  assert.equal(job("capped")?.status, "ready");
+  assert.ok(readFileSync(copy("capped")!.path).equals(wav));
+});
+
+test("a failure a retry cannot fix stops the copy at once", async () => {
+  book("unconnected");
+  db.update(s.tracks)
+    .set({ sourceType: "torbox", source: JSON.stringify({ torrentId: 1, fileId: 2 }) })
+    .where(eq(s.tracks.id, "track-unconnected"))
+    .run();
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return new Response("", { status: 500 });
+  };
+  await processServerDownloads();
+  assert.equal(calls, 0);
+  assert.equal(job("unconnected")?.status, "error");
+  assert.match(job("unconnected")?.error || "", /Connect TorBox/);
+});
+
+test("a part saved from an older source is not continued with a different file", async () => {
+  book("relinked");
+  const wav = wave();
+  const dir = join(temp, "media", "saved");
+  mkdirSync(dir, { recursive: true });
+  const { createHash } = await import("node:crypto");
+  const prefix = createHash("sha256").update("track-relinked").digest("hex");
+  writeFileSync(join(dir, `${prefix}-000000000000.part`), Buffer.alloc(5000, 7));
+  const ranges: (string | null)[] = [];
+  globalThis.fetch = async (_input, init) => {
+    ranges.push(new Headers(init?.headers).get("range"));
+    return new Response(wav, {
+      headers: { "Content-Type": "audio/wav", "Content-Length": String(wav.length) },
+    });
+  };
+  await processServerDownloads();
+  assert.deepEqual(ranges, [null]);
+  assert.equal(job("relinked")?.status, "ready");
+  assert.ok(readFileSync(copy("relinked")!.path).equals(wav));
+  assert.deepEqual(savedParts().filter((f) => f.startsWith(prefix)), [], "the stale part is removed");
+});
+
+test("pausing during the wait before a retry stops the copy at once", async () => {
+  book("waiting");
+  globalThis.fetch = async () => {
+    setTimeout(() => pauseServerDownload("recording-waiting"), 0);
+    return new Response("", { status: 400 });
+  };
+  const { setTimeout: sleep } = await import("node:timers/promises");
+  const started = Date.now();
+  process.env.SONDER_DOWNLOAD_RETRY_MS = "60000";
+  await Promise.race([processServerDownloads(), sleep(2000)]);
+  assert.ok(Date.now() - started < 2000, "the copy did not wait for the retry delay");
+  assert.equal(job("waiting")?.status, "paused");
+  process.env.SONDER_DOWNLOAD_RETRY_MS = "1,1,1";
 });
