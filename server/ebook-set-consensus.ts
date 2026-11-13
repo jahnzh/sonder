@@ -11,9 +11,11 @@ import {
   firstRecordingWithLocalAudio,
   audioFingerprint,
   alignmentJob,
+  alignmentKeepsPublishedMap,
   createAlignment,
   deleteAlignmentJob,
   listAlignmentJobs,
+  listServedAlignmentJobs,
   putAlignmentJob,
   removeProjectedMapsForWork,
 } from "./alignment.ts";
@@ -305,16 +307,19 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
     const projection = state.projections[member.ebookId];
     if (!projection?.length) continue;
     // A prepared (non-projected) map for this release wins over the projection,
-    // while it runs and once it maps something. A finished map with no mapped
-    // text (for example from a wrong chapter pairing) must not shadow it.
-    const prepared = listAlignmentJobs().find(
+    // while it runs and once it maps something — including a failed/cancelled
+    // rebuild that still serves its kept published_map (#277). A finished map
+    // with no mapped text (for example from a wrong chapter pairing) must not
+    // shadow it.
+    const prepared = listServedAlignmentJobs().find(
       (job) =>
         job.ebookId === member.ebookId &&
         job.recordingId === consensusJob.recordingId &&
         job.origin !== "projected" &&
         job.status !== "cancelled" &&
         job.status !== "error" &&
-        (["queued", "copying", "processing", "paused"].includes(job.status) || job.coverage > 0),
+        (["queued", "copying", "processing", "paused"].includes(job.rebuild?.status ?? job.status) ||
+          job.coverage > 0),
     );
     if (prepared) continue;
     const memberBook = await extractBook(member.ebookId);
@@ -332,12 +337,14 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
       continue;
     }
     // (ebook, recording) is unique: a cancelled or failed prepare of this
-    // ebook still holds that slot, and the projection takes its place.
+    // ebook still holds that slot, and the projection takes its place — unless
+    // that row still keeps a usable published_map from a rebuild (#277).
     for (const stale of listAlignmentJobs())
       if (
         stale.ebookId === member.ebookId &&
         stale.recordingId === consensusJob.recordingId &&
-        stale.id !== projectedId
+        stale.id !== projectedId &&
+        !alignmentKeepsPublishedMap(stale.id)
       )
         deleteAlignmentJob(stale.id);
     const sectionsDone = [

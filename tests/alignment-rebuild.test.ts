@@ -26,7 +26,7 @@ const { setPaused } = await import("../server/activity-pause.ts");
 const {
   createAlignment, alignmentJob, putAlignmentJob, deleteAlignmentJob, processAlignments, stopAlignments,
   resetAlignmentRunnerForTests, alignmentSchedulerForTests, audioFingerprint, queueEngineRebuilds,
-  alignmentRebuildScanForTests,
+  alignmentRebuildScanForTests, autoQueueAlignmentForPair, listServedAlignmentJobs,
 } = await import("../server/alignment.ts");
 const { setEngineGenerationsForTests } = await import("../server/alignment-rebuild.ts");
 const { consensusEbookId, publishProjectedMaps, syncEbookSetConsensus } = await import("../server/ebook-set-consensus.ts");
@@ -519,6 +519,252 @@ test("projections left on an older engine are regenerated from a consensus that 
   assert.equal(scan.queued, 0);
   assert.equal(scan.projections, 1);
   assert.ok(allJobs().filter((job) => job.origin === "projected").every((job) => job.engine === engine));
+});
+
+test("a new edition or manual prepare supersedes a queued rebuild with a fresh generation", async () => {
+  await reset();
+  const old = await oldMap("a", aeneas, "ready");
+  assert.equal((await queueEngineRebuilds()).queued, 1);
+  const queued = alignmentJob(old.id);
+  assert.ok(queued.rebuildOf);
+  assert.ok(keptMap(old.id));
+
+  // Manual anchored prepare (Reading Sync "Rebuild without chapter matching"): fresh work, no rebuildOf.
+  const manual = await createAlignment("ebook-a", "rec-a", undefined, "anchored");
+  assert.equal(manual.id, old.id);
+  assert.notEqual(manual.generation, queued.generation);
+  assert.equal(manual.rebuildOf, undefined);
+  assert.equal(manual.mode, "anchored");
+  assert.equal(manual.status, "queued");
+  assert.equal(keptMap(old.id), null, "a manual prepare replaces the served map at once");
+
+  // Re-queue a rebuild, then a backfill with a new fingerprint (new ebook-set consensus edition).
+  putAlignmentJob({ ...alignmentJob(old.id), status: "partial", engine: aeneas, progress: 1, coverage: 1,
+    intervals: old.intervals, pairings: old.pairings, mode: "chapters", rebuildOf: undefined });
+  assert.equal((await queueEngineRebuilds()).queued, 1);
+  const rebuilding = alignmentJob(old.id);
+  assert.ok(rebuilding.rebuildOf);
+  assert.ok(keptMap(old.id));
+  putAlignmentJob({ ...rebuilding, fingerprint: "stale-before-new-edition" });
+  const backfill = await createAlignment("ebook-a", "rec-a", undefined, "anchored", "backfill");
+  assert.equal(backfill.id, old.id);
+  assert.notEqual(backfill.generation, rebuilding.generation);
+  assert.equal(backfill.rebuildOf, undefined, "superseding a rebuild clears rebuild priority");
+  assert.equal(backfill.fingerprint, (await extractBook("ebook-a")).fingerprint);
+  assert.notEqual(backfill.fingerprint, "stale-before-new-edition");
+  assert.ok(keptMap(old.id), "a backfill that supersedes a rebuild keeps published_map until it publishes");
+});
+
+test("publishProjectedMaps and backfill leave a failed rebuild's published_map in place", async () => {
+  await reset();
+  const workId = "work-keep-map";
+  db.insert(schema.works).values({ id: workId, title: "Keep", author: "Author", description: "", genre: "", year: 2026 }).run();
+  db.insert(schema.editions).values({ id: "edition-keep", workId, cover: "", narrator: "", rating: 0, sourceLabel: "", language: "en" }).run();
+  db.insert(schema.recordings).values({ id: "rec-keep", editionId: "edition-keep" }).run();
+  const audio = join(process.env.MEDIA_ROOT!, "keep.wav");
+  writeFileSync(audio, "audio keep");
+  for (const ebookId of ["keep-1", "keep-2"]) {
+    const file = join(process.env.MEDIA_ROOT!, `${ebookId}.epub`);
+    writeFileSync(file, await readerFixture());
+    db.insert(schema.ebookEditions).values({ id: ebookId, workId, format: "epub", source: file }).run();
+    db.insert(schema.workEbookSetMembers).values({
+      workId, ebookId, status: "accepted", holdReason: null, sourceTitle: ebookId, sourceAuthor: null, language: "en", byteSize: 1,
+      evidence: JSON.stringify({ sharedSentenceCount: 10, uniqueSentenceCount: 0, audioSupportedCoverage: 0.9,
+        outlier: { passed: true, reason: "ok", spokenSampleCount: 4, matchedSampleCount: 4, anchorCount: 4, forwardOrder: true, samples: [] },
+        language: "en", byteSize: 1 }),
+      updatedAt: Date.now(),
+    }).run();
+  }
+  const paragraphs = (await extractBook("keep-1")).sections.flatMap((section) => section.paragraphs).length;
+  db.insert(schema.tracks).values({ id: "track-keep", recordingId: "rec-keep", title: "Keep.m4b", index: 0,
+    duration: spoken(paragraphs) + 20, chapters: [], source: audio, sourceType: "local" }).run();
+
+  const presentation = await syncEbookSetConsensus(workId);
+  const consensusId = presentation.consensus!.jobId!;
+  const consensusBook = await extractBook(consensusEbookId(workId));
+  const sentences = consensusBook.sections[0].paragraphs;
+  const queuedConsensus = alignmentJob(consensusId);
+  putAlignmentJob({
+    ...queuedConsensus, status: "partial", engine: engine, progress: 1, generation: "keep-consensus",
+    intervals: sentences.slice(0, 4).map((p, i) => ({ paragraphId: p.id, section: 0, trackId: "track-keep", start: 30 + i * 5, end: 34 + i * 5, confidence: 0.65 })),
+    coverage: 4 / sentences.length, anchoring: { ...queuedConsensus.anchoring!, stage: "done" },
+  });
+  await publishProjectedMaps(workId, alignmentJob(consensusId));
+  const projectedKeep2 = allJobs().find((job) => job.origin === "projected" && job.ebookId === "keep-2")!;
+  deleteAlignmentJob(projectedKeep2.id);
+  const explicitBook = await extractBook("keep-2");
+  const explicitIntervals = explicitBook.sections.flatMap((section) => section.paragraphs.map((p) => ({ section: section.index, id: p.id })))
+    .slice(0, 2).map((p, i) => ({ paragraphId: p.id, section: p.section, trackId: "track-keep", start: 30 + i * 5, end: 34 + i * 5, confidence: 0.65 }));
+  putAlignmentJob({
+    id: "explicit-keep-2", ebookId: "keep-2", recordingId: "rec-keep", status: "partial", engine: aeneas,
+    progress: 1, generation: "old-explicit-keep", origin: undefined, fingerprint: explicitBook.fingerprint,
+    audioFingerprint: audioFingerprint("rec-keep"), createdAt: Date.now() - 60_000, updatedAt: Date.now() - 60_000,
+    coverage: 0.5, pairings: [], mode: "anchored", intervals: explicitIntervals, sectionsDone: [0],
+    elapsedSeconds: 5, error: null, warning: null,
+  });
+  assert.equal((await queueEngineRebuilds()).queued, 1);
+  assert.ok(keptMap("explicit-keep-2"));
+  putAlignmentJob({ ...alignmentJob("explicit-keep-2"), status: "error", coverage: 0, intervals: [], error: "rebuild failed", rebuildOf: { engine: aeneas, status: "partial", requestedAt: Date.now() } });
+  assert.ok(keptMap("explicit-keep-2"), "store preserves published_map on a failed rebuild");
+  assert.equal(listServedAlignmentJobs().find((job) => job.id === "explicit-keep-2")?.status, "partial");
+
+  await publishProjectedMaps(workId, alignmentJob(consensusId));
+  assert.ok(alignmentJob("explicit-keep-2"), "publishProjectedMaps must not delete a kept explicit map");
+  assert.ok(keptMap("explicit-keep-2"));
+  assert.equal(allJobs().filter((job) => job.ebookId === "keep-2").length, 1);
+  assert.equal(allJobs().find((job) => job.ebookId === "keep-2")?.origin, undefined);
+
+  assert.equal(await autoQueueAlignmentForPair("keep-2", "rec-keep"), false);
+  assert.ok(keptMap("explicit-keep-2"), "backfillDecision must treat a kept published_map as ready");
+});
+
+test("cancelling a rebuild still serves the kept map; empty projections delete the old projected row", async () => {
+  await reset();
+  const old = await oldMap("a", aeneas, "ready");
+  await queueEngineRebuilds();
+  assert.ok(keptMap(old.id));
+  const cancel = await app.inject({ method: "PATCH", url: `/api/alignments/${old.id}`, payload: { action: "cancel" } });
+  assert.equal(cancel.statusCode, 200, cancel.body);
+  assert.equal(alignmentJob(old.id).status, "cancelled");
+  assert.ok(keptMap(old.id));
+  const map = await app.inject(`/api/alignments/${old.id}/map`);
+  assert.equal(map.statusCode, 200, map.body);
+  assert.equal(map.json().engine, aeneas);
+  assert.equal(map.json().status, "ready");
+  assert.equal(map.json().rebuild.status, "cancelled");
+
+  const workId = "work-empty-proj";
+  db.insert(schema.works).values({ id: workId, title: "Empty", author: "Author", description: "", genre: "", year: 2026 }).run();
+  db.insert(schema.editions).values({ id: "edition-empty", workId, cover: "", narrator: "", rating: 0, sourceLabel: "", language: "en" }).run();
+  db.insert(schema.recordings).values({ id: "rec-empty", editionId: "edition-empty" }).run();
+  const audio = join(process.env.MEDIA_ROOT!, "empty.wav");
+  writeFileSync(audio, "audio empty");
+  // Member 1 matches the consensus; member 2 has unrelated text so projection yields no intervals.
+  writeFileSync(join(process.env.MEDIA_ROOT!, "empty-1.epub"), await readerFixture({ bodies: ["<p>Alpha one. Alpha two. Alpha three.</p>", "<p>Alpha four. Alpha five.</p>"] }));
+  writeFileSync(join(process.env.MEDIA_ROOT!, "empty-2.epub"), await readerFixture({ bodies: ["<p>Zeta unrelated. Completely different wording here.</p>", "<p>More zeta text that shares nothing.</p>"] }));
+  for (const ebookId of ["empty-1", "empty-2"]) {
+    db.insert(schema.ebookEditions).values({ id: ebookId, workId, format: "epub", source: join(process.env.MEDIA_ROOT!, `${ebookId}.epub`) }).run();
+    db.insert(schema.workEbookSetMembers).values({
+      workId, ebookId, status: "accepted", holdReason: null, sourceTitle: ebookId, sourceAuthor: null, language: "en", byteSize: 1,
+      evidence: JSON.stringify({ sharedSentenceCount: ebookId === "empty-1" ? 10 : 0, uniqueSentenceCount: ebookId === "empty-1" ? 0 : 10,
+        audioSupportedCoverage: 0.9,
+        outlier: { passed: true, reason: "ok", spokenSampleCount: 4, matchedSampleCount: 4, anchorCount: 4, forwardOrder: true, samples: [] },
+        language: "en", byteSize: 1 }),
+      updatedAt: Date.now(),
+    }).run();
+  }
+  const emptyParagraphs = (await extractBook("empty-1")).sections.flatMap((section) => section.paragraphs).length;
+  db.insert(schema.tracks).values({ id: "track-empty", recordingId: "rec-empty", title: "Empty.m4b", index: 0,
+    duration: spoken(emptyParagraphs) + 20, chapters: [], source: audio, sourceType: "local" }).run();
+
+  const presentation = await syncEbookSetConsensus(workId);
+  const consensusId = presentation.consensus!.jobId!;
+  const consensusBook = await extractBook(consensusEbookId(workId));
+  const sentences = consensusBook.sections[0].paragraphs;
+  const queued = alignmentJob(consensusId);
+  putAlignmentJob({
+    ...queued, status: "partial", engine: aeneas, progress: 1, generation: "old-empty-consensus",
+    intervals: sentences.slice(0, 3).map((p, i) => ({ paragraphId: p.id, section: 0, trackId: "track-empty", start: 30 + i * 5, end: 34 + i * 5, confidence: 0.65 })),
+    coverage: 3 / sentences.length, anchoring: { ...queued.anchoring!, stage: "done" },
+  });
+  await publishProjectedMaps(workId, alignmentJob(consensusId));
+  const before = allJobs().filter((job) => job.origin === "projected");
+  assert.ok(before.some((job) => job.ebookId === "empty-2"));
+  // Force empty-2's projection to map nothing (as when a rebuilt consensus no longer covers that edition).
+  const stateRow = sqlite.prepare("SELECT projections FROM work_ebook_set WHERE work_id=?").get(workId) as { projections: string };
+  const projections = JSON.parse(stateRow.projections) as Record<string, (string | null)[]>;
+  projections["empty-2"] = projections["empty-2"].map(() => null);
+  sqlite.prepare("UPDATE work_ebook_set SET projections=? WHERE work_id=?").run(JSON.stringify(projections), workId);
+  putAlignmentJob({
+    ...alignmentJob(consensusId), generation: "new-empty-consensus", engine,
+    intervals: sentences.slice(0, 3).map((p, i) => ({ paragraphId: p.id, section: 0, trackId: "track-empty", start: 30 + i * 5, end: 34 + i * 5, confidence: 0.65 })),
+  });
+  await publishProjectedMaps(workId, alignmentJob(consensusId));
+  const after = allJobs().filter((job) => job.origin === "projected");
+  assert.ok(after.every((job) => job.ebookId !== "empty-2"), "a member with no projected intervals loses its old projected row");
+  assert.ok(after.some((job) => job.ebookId === "empty-1" && job.generation === "new-empty-consensus"));
+});
+
+test("an unsynced consensus rebuild still clears stale projected maps", async () => {
+  await reset();
+  const workId = "work-unsynced";
+  db.insert(schema.works).values({ id: workId, title: "Unsynced", author: "Author", description: "", genre: "", year: 2026 }).run();
+  db.insert(schema.editions).values({ id: "edition-unsynced", workId, cover: "", narrator: "", rating: 0, sourceLabel: "", language: "en" }).run();
+  db.insert(schema.recordings).values({ id: "rec-unsynced", editionId: "edition-unsynced" }).run();
+  const audio = join(process.env.MEDIA_ROOT!, "unsynced.wav");
+  writeFileSync(audio, "audio unsynced");
+  writeFileSync(join(process.env.MEDIA_ROOT!, "unsynced-1.epub"), await readerFixture());
+  db.insert(schema.ebookEditions).values({ id: "unsynced-1", workId, format: "epub", source: join(process.env.MEDIA_ROOT!, "unsynced-1.epub") }).run();
+  db.insert(schema.workEbookSetMembers).values({
+    workId, ebookId: "unsynced-1", status: "accepted", holdReason: null, sourceTitle: "unsynced-1", sourceAuthor: null, language: "en", byteSize: 1,
+    evidence: JSON.stringify({ sharedSentenceCount: 10, uniqueSentenceCount: 0, audioSupportedCoverage: 0.9,
+      outlier: { passed: true, reason: "ok", spokenSampleCount: 4, matchedSampleCount: 4, anchorCount: 4, forwardOrder: true, samples: [] },
+      language: "en", byteSize: 1 }),
+    updatedAt: Date.now(),
+  }).run();
+  // Too short for three anchors: CTC early-unsynced path.
+  db.insert(schema.tracks).values({ id: "track-unsynced", recordingId: "rec-unsynced", title: "Unsynced.m4b", index: 0,
+    duration: 40, chapters: [], source: audio, sourceType: "local" }).run();
+
+  const presentation = await syncEbookSetConsensus(workId);
+  const consensusId = presentation.consensus!.jobId!;
+  const consensusBook = await extractBook(consensusEbookId(workId));
+  const sentences = consensusBook.sections[0].paragraphs;
+  putAlignmentJob({
+    ...alignmentJob(consensusId), status: "partial", engine: aeneas, progress: 1, generation: "old-unsynced",
+    intervals: sentences.slice(0, 2).map((p, i) => ({ paragraphId: p.id, section: 0, trackId: "track-unsynced", start: 5 + i * 5, end: 9 + i * 5, confidence: 0.65 })),
+    coverage: 2 / sentences.length, anchoring: { ...alignmentJob(consensusId).anchoring!, stage: "done" },
+  });
+  await publishProjectedMaps(workId, alignmentJob(consensusId));
+  assert.equal(allJobs().filter((job) => job.origin === "projected").length, 1);
+
+  assert.equal((await queueEngineRebuilds()).queued, 1);
+  autoAnswer = (entry) => {
+    if (entry.url.endsWith("/anchor"))
+      return Response.json({ engine, outcome: "unsynced", stageTimings: { acousticEncoding: 0.25 }, match: null, start: entry.request.start, text: "" });
+    return anchoredWorker(entry);
+  };
+  setPaused("alignment", false);
+  void processAlignments();
+  await until(() => !active(consensusId), "unsynced consensus rebuild", 10_000);
+  const consensus = alignmentJob(consensusId);
+  assert.equal(consensus.outcome, "unsynced", consensus.error ?? undefined);
+  assert.equal(consensus.status, "partial");
+  assert.equal(allJobs().filter((job) => job.origin === "projected").length, 0,
+    "early unsynced must still run onConsensusAlignmentFinished and drop stale projections");
+});
+
+test("manual anchor edits are refused while a kept published_map is served", async () => {
+  await reset();
+  const old = await oldMap("a", aeneas, "ready");
+  await queueEngineRebuilds();
+  assert.ok(keptMap(old.id));
+  putAlignmentJob({ ...alignmentJob(old.id), status: "error", coverage: 0, intervals: [], error: "rebuild failed" });
+  assert.ok(keptMap(old.id));
+  const served = await app.inject(`/api/alignments/${old.id}/map`);
+  assert.equal(served.statusCode, 200);
+  assert.equal(served.json().status, "ready");
+  const paragraphId = served.json().intervals[0].paragraphId as string;
+  const refused = await app.inject({
+    method: "POST",
+    url: `/api/alignments/${old.id}/anchors`,
+    payload: { paragraphId, trackId: "track-a", start: 12, end: 18 },
+  });
+  assert.ok([400, 500].includes(refused.statusCode), refused.body);
+  assert.match(refused.body, /Finish or rebuild this alignment before correcting sentence timings/);
+  assert.equal(alignmentJob(old.id).intervals.length, 0, "the failed rebuild row must not receive the edit");
+  assert.equal((await app.inject(`/api/alignments/${old.id}/map`)).json().intervals[0].paragraphId, paragraphId);
+});
+
+test("ReadingSync shouldPoll treats an active rebuild.status as processing", () => {
+  const processing = (status: AlignmentJob["status"]) =>
+    ["queued", "copying", "processing"].includes(status);
+  const shouldPoll = (job: AlignmentJob | undefined) =>
+    !!job && (processing(job.status) || (!!job.rebuild && processing(job.rebuild.status)));
+  assert.equal(shouldPoll({ status: "ready", rebuild: { status: "queued", progress: 0, engine, error: null, updatedAt: 1 } } as AlignmentJob), true);
+  assert.equal(shouldPoll({ status: "ready", rebuild: { status: "processing", progress: 0.2, engine, error: null, updatedAt: 1 } } as AlignmentJob), true);
+  assert.equal(shouldPoll({ status: "ready" } as AlignmentJob), false);
+  assert.equal(shouldPoll({ status: "ready", rebuild: { status: "error", progress: 0, engine, error: "x", updatedAt: 1 } } as AlignmentJob), false);
 });
 
 function allJobs() {

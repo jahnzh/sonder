@@ -182,6 +182,18 @@ const servedJobs = () =>
       .prepare("SELECT data,engine,outcome,stage_timings,published_map FROM alignment_jobs ORDER BY updated_at DESC")
       .all() as ServedRow[]
   ).map(servedJob);
+/** Listing view that keeps a published_map in front of a failed or in-flight rebuild (#277). */
+export function listServedAlignmentJobs() {
+  return servedJobs();
+}
+/** True while a rebuild (or its failed/cancelled result) still holds a map for serving (#277). */
+export function alignmentKeepsPublishedMap(id: string) {
+  return !!(
+    sqlite.prepare("SELECT published_map FROM alignment_jobs WHERE id=?").get(id) as
+      | { published_map: string | null }
+      | undefined
+  )?.published_map;
+}
 function servedAlignmentJob(id: string) {
   const row = sqlite
     .prepare("SELECT data,engine,outcome,stage_timings,published_map FROM alignment_jobs WHERE id=?")
@@ -348,26 +360,32 @@ export async function createAlignment(
   origin?: AlignmentJob["origin"],
 ) {
   ensureMediaStorage();
-  const { edition, tracks } = await alignablePair(ebookId, recordingId);
+  const { book, edition, tracks } = await alignablePair(ebookId, recordingId);
   // (ebook_id, recording_id) is unique, including projected ebook-set maps.
   // Projected/ready rows are overwritten; an in-flight backfill must not swallow
-  // explicit pairings from a manual prepare.
+  // explicit pairings from a manual prepare. A manual prepare, a fingerprint change,
+  // or an active engine rebuild (#277) supersedes the existing job instead of returning it.
   const existing = jobs().find(
     (job) => job.ebookId === ebookId && job.recordingId === recordingId,
   );
   const explicitPrepare = Boolean(pairings?.length) || mode === "chapters";
+  const manualPrepare = origin !== "backfill";
+  const fingerprintChanged = !!existing && existing.fingerprint !== book.fingerprint;
+  const supersedeRebuild = Boolean(existing?.rebuildOf);
+  const shouldSupersede =
+    explicitPrepare || manualPrepare || fingerprintChanged || supersedeRebuild;
   if (
     existing &&
     existing.origin !== "projected" &&
     activeStatuses.includes(existing.status) &&
-    !explicitPrepare
+    !shouldSupersede
   )
     return existing;
   if (
     existing &&
     existing.origin !== "projected" &&
     activeStatuses.includes(existing.status) &&
-    explicitPrepare
+    shouldSupersede
   ) {
     existing.status = "cancelled";
     existing.error = null;
@@ -378,7 +396,9 @@ export async function createAlignment(
   if (copying) requestServerDownload(edition.id);
   store(job);
   // A new prepare replaces the row at once; only a rebuild keeps serving the previous map.
-  dropKeptMap(job.id);
+  // A backfill that supersedes a rebuild (new ebook edition / consensus fingerprint) keeps
+  // published_map until the replacement run publishes.
+  if (!(origin === "backfill" && supersedeRebuild)) dropKeptMap(job.id);
   void processAlignments();
   return job;
 }
@@ -525,14 +545,16 @@ async function backfillDecision(
   ebookId: string,
   recordingId: string,
 ): Promise<BackfillDecision> {
-  const existing = jobs().find(
+  // Use the served view so a failed/cancelled rebuild that still holds published_map
+  // counts as ready and is not re-queued (which would dropKeptMap).
+  const existing = servedJobs().find(
     (job) => job.ebookId === ebookId && job.recordingId === recordingId,
   );
   if (existing) {
-    if (activeStatuses.includes(existing.status)) return "inProgress";
-    if (existing.status === "paused") return "paused";
-    if (existing.status === "ready" || existing.status === "partial")
-      return "ready";
+    const runStatus = existing.rebuild?.status ?? existing.status;
+    if (activeStatuses.includes(runStatus)) return "inProgress";
+    if (runStatus === "paused") return "paused";
+    if (usableMap(existing)) return "ready";
   }
   return (await backfillEligibility(ebookId, recordingId)).eligible
     ? "queue"
@@ -1199,6 +1221,12 @@ async function processAnchored(
         job.unsyncedPassages = unsyncedPassages(book, []);
         job.warning = "The narration could not be matched reliably. The text remains unsynced.";
         store(job);
+        if (job.ebookId.startsWith("set-consensus:")) {
+          const { onConsensusAlignmentFinished } = await import(
+            "./ebook-set-consensus.ts"
+          );
+          await onConsensusAlignmentFinished(job.ebookId.slice("set-consensus:".length), job);
+        }
         return;
       }
       job.status = "error";
@@ -2138,8 +2166,13 @@ export function registerAlignment(app: FastifyInstance) {
       book = await extractBook(job.ebookId);
     if (job.outcome === "language_not_supported")
       throw new Error("This language is not supported by the alignment worker.");
+    // Refuse edits against a paused/failed/cancelled rebuild (or any non-usable row) while
+    // published_map is what the client sees: mutating row.data would replace the served map
+    // in the response with the unusable rebuild. Apply-to-served-map was rejected so a
+    // prepare/rebuild remains the path back to an editable map (#277 LOW 2).
     if (
-      activeStatuses.includes(job.status) ||
+      !usableMap(job) ||
+      alignmentKeepsPublishedMap(id) ||
       job.fingerprint !== book.fingerprint ||
       job.audioFingerprint !== audioFingerprint(job.recordingId)
     )

@@ -519,7 +519,8 @@ export function warmPlaybackReading(
 
     const pollIfProcessing = (job: AlignmentJob) => {
       if (cancelled) return;
-      if (["queued", "copying", "processing"].includes(job.status)) {
+      // A background rebuild keeps job.status as the published map; poll on rebuild.status (#277).
+      if (["queued", "copying", "processing"].includes(job.rebuild?.status ?? job.status)) {
         pollTimer = setTimeout(async () => {
           if (cancelled) return;
           const updated = await checkJobAndMap();

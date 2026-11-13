@@ -91,7 +91,8 @@ export function ReadingSync({
   const visible = useRef(loadOptions);
   visible.current = loadOptions;
   const shouldPoll = (job: AlignmentJob | undefined) =>
-    visible.current || (!!job && processing(job.status));
+    visible.current ||
+    (!!job && (processing(job.status) || (!!job.rebuild && processing(job.rebuild.status))));
   const [jobs, setJobs] = useState<AlignmentJob[]>([]),
     [selected, setSelected] = useState(
       (player.book?.workId === book.workId ? player.book.recordingId : null) ||
