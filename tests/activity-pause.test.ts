@@ -9,6 +9,7 @@ process.env.MEDIA_ROOT = join(temp, "media");
 process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
 process.env.APP_PASSWORD = "admin-password";
+process.env.SONDER_DOWNLOAD_RETRY_MS = "1,1,1";
 delete process.env.SONDER_SKIP_SERIES_ACQUISITION;
 const realFetch = globalThis.fetch;
 const { createApp } = await import("../server/app.ts");
@@ -88,7 +89,11 @@ test("a paused copy queue starts nothing, and pausing during a copy lets it fini
   }) as typeof fetch;
   await processServerDownloads();
   globalThis.fetch = realFetch;
-  assert.deepEqual(fetched, ["http://audio.test/ra.mp3"], "only the copy that was already running ran");
+  assert.ok(fetched.length > 0, "the running copy was attempted");
+  assert.ok(
+    fetched.every((url) => url === "http://audio.test/ra.mp3"),
+    "only the copy that was already running ran (its file is retried)",
+  );
   assert.equal(status("server_downloads", "recording_id", "ra"), "error", "the running copy finished (here: failed on its own)");
   assert.equal(status("server_downloads", "recording_id", "rb"), "queued", "the next copy waits");
   pause.setPaused("server-copies", false);

@@ -10,6 +10,7 @@ process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
 process.env.SONDER_DOWNLOAD_RETRY_MS = "1,1,1";
 const { db, sqlite } = await import("../server/db.ts");
+const { readFileSync } = await import("node:fs");
 const s = await import("../server/schema.ts");
 const { eq } = await import("drizzle-orm");
 const { processServerDownloads, pauseServerDownload } = await import(
@@ -167,4 +168,109 @@ test("a file the source keeps refusing fails after the last attempt", async () =
   assert.equal(job("broken")?.status, "error");
   assert.match(job("broken")?.error || "", /could not be downloaded/);
   assert.equal(copy("broken"), undefined);
+});
+
+function cutOff(bytes: Buffer, keep: number) {
+  return new Response(
+    new ReadableStream({
+      sent: false,
+      pull(controller) {
+        if (this.sent) return controller.error(new Error("connection reset"));
+        this.sent = true;
+        controller.enqueue(bytes.subarray(0, keep));
+      },
+    } as UnderlyingDefaultSource<Uint8Array> & { sent: boolean }),
+    {
+      headers: {
+        "Content-Type": "audio/wav",
+        "Content-Length": String(bytes.length),
+      },
+    },
+  );
+}
+
+test("a file cut off part-way continues from the bytes already saved", async () => {
+  book("resumed");
+  const wav = wave();
+  const ranges: (string | null)[] = [];
+  globalThis.fetch = async (_input, init) => {
+    const range = new Headers(init?.headers).get("range");
+    ranges.push(range);
+    if (!range) return cutOff(wav, 5000);
+    const from = Number(/bytes=(\d+)-/.exec(range)![1]);
+    return new Response(wav.subarray(from), {
+      status: 206,
+      headers: {
+        "Content-Type": "audio/wav",
+        "Content-Length": String(wav.length - from),
+        "Content-Range": `bytes ${from}-${wav.length - 1}/${wav.length}`,
+      },
+    });
+  };
+  await processServerDownloads();
+  assert.deepEqual(ranges, [null, "bytes=5000-"]);
+  assert.equal(job("resumed")?.status, "ready");
+  assert.ok(readFileSync(copy("resumed")!.path).equals(wav));
+});
+
+test("a source that ignores the range restarts the file from the beginning", async () => {
+  book("restarted");
+  const wav = wave();
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    if (calls === 1) return cutOff(wav, 5000);
+    return new Response(wav, {
+      headers: { "Content-Type": "audio/wav", "Content-Length": String(wav.length) },
+    });
+  };
+  await processServerDownloads();
+  assert.equal(job("restarted")?.status, "ready");
+  assert.ok(readFileSync(copy("restarted")!.path).equals(wav));
+});
+
+test("several files of one book are copied at the same time, in chapter order", async () => {
+  book("parallel");
+  for (let i = 1; i < 5; i++)
+    db.insert(s.tracks)
+      .values({
+        id: `track-parallel-${i}`,
+        recordingId: "recording-parallel",
+        title: `Chapter ${i}`,
+        index: i,
+        duration: 1,
+        source: `https://audio.example.test/parallel-${i}.wav`,
+        sourceType: "remote",
+      })
+      .run();
+  const wav = wave();
+  const started: string[] = [];
+  let inFlight = 0,
+    most = 0;
+  globalThis.fetch = async (input) => {
+    started.push(String(input).split("/").pop()!);
+    inFlight++;
+    most = Math.max(most, inFlight);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    inFlight--;
+    return new Response(wav, {
+      headers: { "Content-Type": "audio/wav", "Content-Length": String(wav.length) },
+    });
+  };
+  await processServerDownloads();
+  assert.equal(job("parallel")?.status, "ready");
+  assert.equal(most, 3);
+  assert.deepEqual(started.slice(0, 3), [
+    "parallel.wav",
+    "parallel-1.wav",
+    "parallel-2.wav",
+  ]);
+  assert.equal(
+    db
+      .select()
+      .from(s.mediaCopies)
+      .all()
+      .filter((c) => c.trackId.startsWith("track-parallel")).length,
+    5,
+  );
 });

@@ -1,6 +1,5 @@
 import { isPaused } from "./activity-pause.ts";
 import {
-  createWriteStream,
   existsSync,
   statSync,
   unlinkSync,
@@ -8,8 +7,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { Readable, Transform } from "node:stream";
-import { pipeline } from "node:stream/promises";
+import { open } from "node:fs/promises";
 import { parseFile } from "music-metadata";
 import { audioParseOptions, normalizeChapters } from "./chapters.ts";
 import { eq, inArray } from "drizzle-orm";
@@ -117,6 +115,153 @@ export async function waitUntilServerDownloadIdle(
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 }
+// Files of one book copied at the same time.
+const concurrency = Math.max(
+  1,
+  Number(process.env.SONDER_DOWNLOAD_CONCURRENCY) || 3,
+);
+type Track = typeof s.tracks.$inferSelect;
+function partialPath(track: Track) {
+  return join(
+    mediaRoot,
+    "saved",
+    createHash("sha256").update(track.id).digest("hex"),
+  );
+}
+function fileSize(path: string) {
+  return existsSync(path) ? statSync(path).size : 0;
+}
+// Starts or continues one file. A `.part` left by an interrupted attempt,
+// a pause or an earlier run is continued with a range request; a source that
+// ignores the range sends the whole file and the copy starts over.
+async function fetchIntoPart(
+  track: Track,
+  temp: string,
+  refreshLink: boolean,
+  signal: AbortSignal,
+  onBytes: (size: number, total: number) => void,
+) {
+  let url = track.source;
+  if (track.sourceType === "torbox") {
+    const source = JSON.parse(track.source);
+    url = await torboxUrl(source.torrentId, source.fileId, refreshLink);
+  }
+  const have = fileSize(temp);
+  const response = await fetch(url, {
+    headers: {
+      "Accept-Encoding": "identity",
+      ...(have ? { Range: `bytes=${have}-` } : {}),
+    },
+    signal: AbortSignal.any([signal, AbortSignal.timeout(24 * 3600000)]),
+  });
+  const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(
+    response.headers.get("content-range") || "",
+  );
+  const resumed =
+    have > 0 &&
+    response.status === 206 &&
+    !!range &&
+    Number(range[1]) === have &&
+    Number(range[2]) + 1 === Number(range[3]);
+  // The part already holds the whole file.
+  if (have > 0 && response.status === 416) {
+    await response.body?.cancel().catch(() => {});
+    const total = Number(
+      /\/(\d+)$/.exec(response.headers.get("content-range") || "")?.[1],
+    );
+    if (total === have) return { size: have, type: null };
+    unlinkSync(temp);
+    throw new Error("The saved part of this file no longer matches the source.");
+  }
+  if (!response.body || (!resumed && !isCompleteMediaResponse(response))) {
+    await response.body?.cancel().catch(() => {});
+    throw new Error(
+      "The full audio file could not be downloaded. Retry to continue from completed chapters.",
+    );
+  }
+  const total = resumed
+    ? Number(range![3])
+    : Number(response.headers.get("content-length")) ||
+      Number(
+        /\/(\d+)$/.exec(response.headers.get("content-range") || "")?.[1],
+      ) ||
+      0;
+  let size = resumed ? have : 0;
+  // Written chunk by chunk, so whatever arrived before a cut-off is on disk
+  // for the next attempt to continue from.
+  const file = await open(temp, resumed ? "a" : "w", 0o640);
+  try {
+    for await (const chunk of response.body as AsyncIterable<Uint8Array>) {
+      signal.throwIfAborted();
+      await file.write(chunk);
+      size += chunk.byteLength;
+      onBytes(size, total);
+    }
+  } finally {
+    await file.close();
+  }
+  if (!size || (total && size !== total))
+    throw new Error("The audio download was interrupted.");
+  return { size, type: response.headers.get("content-type") };
+}
+async function copyTrack(
+  track: Track,
+  signal: AbortSignal,
+  onBytes: (size: number, total: number) => void,
+) {
+  if (track.sourceType === "local")
+    throw new Error("An original audio file is missing from the media drive.");
+  const pathPrefix = partialPath(track);
+  const temp = pathPrefix + ".part";
+  // TorBox's CDN occasionally answers one request with an error or cuts it
+  // short; retry with a fresh link, keeping what already arrived.
+  let size = 0;
+  let type: string | null = null;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      ensureMediaStorage();
+      ({ size, type } = await fetchIntoPart(
+        track,
+        temp,
+        attempt > 0,
+        signal,
+        onBytes,
+      ));
+      break;
+    } catch (error) {
+      if (signal.aborted || attempt >= retryDelays.length) throw error;
+      await new Promise((resolve) => setTimeout(resolve, retryDelays[attempt]));
+      signal.throwIfAborted();
+    }
+  }
+  const metadata = await parseFile(temp, audioParseOptions).catch(() => null);
+  signal.throwIfAborted();
+  if (!metadata?.format.codec) {
+    // A corrupt part must not be continued on the next retry.
+    if (existsSync(temp)) unlinkSync(temp);
+    throw new Error("The source did not return a valid audio file.");
+  }
+  const mime = audioFileMime(temp) || type || "application/octet-stream";
+  const path = pathPrefix + audioFileExtension(mime);
+  renameSync(temp, path);
+  db.update(s.tracks)
+    .set({
+      duration: metadata.format.duration || track.duration,
+      chapters: normalizeChapters(
+        metadata.format.chapters,
+        metadata.format.duration || 0,
+      ),
+    })
+    .where(eq(s.tracks.id, track.id))
+    .run();
+  db.insert(s.mediaCopies)
+    .values({ trackId: track.id, path, size, mime })
+    .onConflictDoUpdate({
+      target: s.mediaCopies.trackId,
+      set: { path, size, mime },
+    })
+    .run();
+}
 export async function processServerDownloads() {
   if (running) return;
   running = true;
@@ -133,6 +278,9 @@ export async function processServerDownloads() {
       if (isPaused("server-copies")) break;
       const ctrl = new AbortController();
       controllers.set(job.recordingId, ctrl);
+      // Stops the other files of this book when one fails for good.
+      const failed = new AbortController();
+      const signal = AbortSignal.any([ctrl.signal, failed.signal]);
       try {
         ensureMediaStorage();
         const tracks = db
@@ -146,134 +294,50 @@ export async function processServerDownloads() {
           .set({ status: "downloading", error: null, updatedAt: Date.now() })
           .where(eq(s.serverDownloads.recordingId, job.recordingId))
           .run();
-        for (let i = 0; i < tracks.length; i++) {
-          ctrl.signal.throwIfAborted();
-          const t = tracks[i];
-          if (hasServerMedia(t)) {
-            db.update(s.serverDownloads)
-              .set({ progress: (i + 1) / tracks.length, updatedAt: Date.now() })
-              .where(eq(s.serverDownloads.recordingId, job.recordingId))
-              .run();
-            continue;
-          }
-          if (t.sourceType === "local")
-            throw new Error(
-              "An original audio file is missing from the media drive.",
-            );
-          // TorBox's CDN occasionally answers one request with an error or
-          // cuts it short; retry the file with a fresh link before giving up.
-          for (let attempt = 0; ; attempt++) {
+        const share = new Map<string, number>();
+        for (const t of tracks) if (hasServerMedia(t)) share.set(t.id, 1);
+        let updated = 0;
+        const report = (force = false) => {
+          if (!force && Date.now() - updated < 1000) return;
+          updated = Date.now();
+          let sum = 0;
+          for (const v of share.values()) sum += v;
+          db.update(s.serverDownloads)
+            .set({ progress: sum / tracks.length, updatedAt: Date.now() })
+            .where(eq(s.serverDownloads.recordingId, job.recordingId))
+            .run();
+        };
+        report(true);
+        // Files are taken in chapter order, so the first chapters arrive first.
+        const pending = tracks.filter((t) => !hasServerMedia(t));
+        let firstError: unknown = null;
+        const worker = async () => {
+          for (let t = pending.shift(); t; t = pending.shift()) {
+            if (signal.aborted) return;
+            const track = t;
             try {
-              ensureMediaStorage();
-              let url = t.source;
-              if (t.sourceType === "torbox") {
-                const source = JSON.parse(t.source);
-                url = await torboxUrl(source.torrentId, source.fileId, attempt > 0);
-              }
-              const response = await fetch(url, {
-                headers: { "Accept-Encoding": "identity" },
-                signal: AbortSignal.any([
-                  ctrl.signal,
-                  AbortSignal.timeout(24 * 3600000),
-                ]),
+              await copyTrack(track, signal, (size, total) => {
+                share.set(track.id, total ? Math.min(0.999, size / total) : 0);
+                report();
               });
-              if (!isCompleteMediaResponse(response) || !response.body) {
-                await response.body?.cancel().catch(() => {});
-                throw new Error(
-                  "The full audio file could not be downloaded. Retry to continue from completed chapters.",
-                );
-              }
-              const expected =
-                Number(response.headers.get("content-length")) ||
-                Number(
-                  /\/(\d+)$/.exec(response.headers.get("content-range") || "")?.[1],
-                ) ||
-                0;
-              const pathPrefix = join(
-                mediaRoot,
-                "saved",
-                createHash("sha256").update(t.id).digest("hex"),
-              );
-              const temp = pathPrefix + ".part";
-              if (existsSync(temp)) unlinkSync(temp);
-              const writer = createWriteStream(temp, { flags: "wx", mode: 0o640 });
-              let size = 0;
-              let updated = 0;
-              try {
-                const counter = new Transform({
-                  transform(chunk: Buffer, _encoding, callback) {
-                    size += chunk.byteLength;
-                    if (Date.now() - updated > 1000) {
-                      db.update(s.serverDownloads)
-                        .set({
-                          progress:
-                            (i +
-                              (expected ? Math.min(0.999, size / expected) : 0)) /
-                            tracks.length,
-                          updatedAt: Date.now(),
-                        })
-                        .where(eq(s.serverDownloads.recordingId, job.recordingId))
-                        .run();
-                      updated = Date.now();
-                    }
-                    callback(null, chunk);
-                  },
-                });
-                await pipeline(
-                  Readable.fromWeb(
-                    response.body as import("node:stream/web").ReadableStream,
-                  ),
-                  counter,
-                  writer,
-                  { signal: ctrl.signal },
-                );
-                ctrl.signal.throwIfAborted();
-                if (!size || (expected && size !== expected))
-                  throw new Error("The audio download was interrupted.");
-                const metadata = await parseFile(temp, audioParseOptions);
-                ctrl.signal.throwIfAborted();
-                if (!metadata.format.codec)
-                  throw new Error("The source did not return a valid audio file.");
-                const mime = audioFileMime(temp) || response.headers.get("content-type") || "application/octet-stream";
-                const path = pathPrefix + audioFileExtension(mime);
-                if (!jobIsActive(job.recordingId)) ctrl.abort();
-                ctrl.signal.throwIfAborted();
-                renameSync(temp, path);
-                db.update(s.tracks)
-                  .set({
-                    duration: metadata.format.duration || t.duration,
-                    chapters: normalizeChapters(
-                      metadata.format.chapters,
-                      metadata.format.duration || 0,
-                    ),
-                  })
-                  .where(eq(s.tracks.id, t.id))
-                  .run();
-                db.insert(s.mediaCopies)
-                  .values({ trackId: t.id, path, size, mime })
-                  .onConflictDoUpdate({
-                    target: s.mediaCopies.trackId,
-                    set: { path, size, mime },
-                  })
-                  .run();
-              } catch (error) {
-                writer.destroy();
-                if (existsSync(temp)) unlinkSync(temp);
-                throw error;
-              }
-              break;
+              share.set(track.id, 1);
+              report(true);
             } catch (error) {
-              if (ctrl.signal.aborted || attempt >= retryDelays.length)
-                throw error;
-              await new Promise((resolve) =>
-                setTimeout(resolve, retryDelays[attempt]),
-              );
-              ctrl.signal.throwIfAborted();
-              if (!jobIsActive(job.recordingId)) ctrl.abort();
-              ctrl.signal.throwIfAborted();
+              if (!signal.aborted) {
+                firstError = error;
+                failed.abort();
+              }
+              return;
             }
+            if (!jobIsActive(job.recordingId)) ctrl.abort();
           }
-        }
+        };
+        await Promise.all(
+          Array.from({ length: Math.min(concurrency, pending.length) }, worker),
+        );
+        if (firstError) throw firstError;
+        ctrl.signal.throwIfAborted();
+        if (!jobIsActive(job.recordingId)) continue;
         db.update(s.serverDownloads)
           .set({
             status: "ready",
@@ -286,6 +350,23 @@ export async function processServerDownloads() {
         for (const userId of listUserIds())
           queueHardcoverProgress(userId, job.recordingId);
       } catch (error) {
+        // Cancelled: drop the partial files; a pause keeps them to continue.
+        if (
+          ctrl.signal.aborted &&
+          !db
+            .select()
+            .from(s.serverDownloads)
+            .where(eq(s.serverDownloads.recordingId, job.recordingId))
+            .get()
+        )
+          for (const t of db
+            .select()
+            .from(s.tracks)
+            .where(eq(s.tracks.recordingId, job.recordingId))
+            .all()) {
+            const temp = partialPath(t) + ".part";
+            if (existsSync(temp)) unlinkSync(temp);
+          }
         if (!ctrl.signal.aborted)
           db.update(s.serverDownloads)
             .set({
