@@ -72,13 +72,15 @@ async function ctc() {
   if (!workerUrl || !token) throw new Error("ctc needs a worker URL and ALIGNMENT_WORKER_TOKEN");
   const wanted = (only ?? "").split(",").filter(Boolean);
   mkdirSync(join(work, "ctc"), { recursive: true });
+  // Output files are written by the worker, inside its own MEDIA_ROOT/alignment.
+  const health = (await (await fetch(`${workerUrl.replace(/\/$/, "")}/health`)).json()) as { mediaRoot?: string };
+  if (!health.mediaRoot) throw new Error("The worker did not report its media root.");
   for (const title of manifest.titles) {
     if (wanted.length && !wanted.includes(title.key)) continue;
     const out = join(work, "ctc", `${title.key}.json`);
     if (existsSync(out)) continue;
     const planned = json(join(work, "samples", `${title.key}.json`)) as Plan;
-    const outputDir = join(resolve(workdirArg), "ctc-out", title.key);
-    mkdirSync(outputDir, { recursive: true });
+    const outputDir = join(health.mediaRoot, "alignment", "gate-probe", title.key);
     const results: Record<string, { scores: AnchorSampleScore[]; seconds: number }> = {};
     for (const candidate of manifest.candidates) {
       const passages = json(join(work, "passages", `${candidate.key}.json`)) as Passages;

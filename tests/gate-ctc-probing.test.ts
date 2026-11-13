@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { gatePasses, judgeCandidate, pickEdition, renderTable, verdict, type CandidateOutcome } from "../scripts/gate-ctc-probing-lib.ts";
+import { gatePasses, judgeCandidate, pickEdition, pickedBook, renderTable, verdict, type CandidateOutcome } from "../scripts/gate-ctc-probing-lib.ts";
 import { planSamples } from "../server/alignment-anchors.ts";
 
 const tracks = [{ id: "t", duration: 3600 }];
@@ -52,4 +52,21 @@ test("the gate fails when CTC is worse on any title and the table names the numb
   assert.match(table, /\| One \| v1 \| v1 \(20\/20 found/);
   assert.match(table, /\| Two \| v2 \| v2 .* \| none accepted \|/);
   assert.match(table, /worse \|$/m);
+});
+
+test("two copies of the right book are one answer, and either copy counts as the right edition", () => {
+  const entry = {
+    title: "Three",
+    truth: "v3",
+    books: { v3: "v3", "prod-v3": "v3", v4: "v4" },
+    whisper: [outcome("v3", true, 0.9), outcome("prod-v3", true, 0.95), outcome("v4", false, 0)],
+    ctc: [outcome("v3", true, 0.95), outcome("prod-v3", true, 0.9), outcome("v4", false, 0)],
+  };
+  // The picks differ as candidates (prod-v3 against v3) but name the same book.
+  assert.equal(pickedBook(entry, entry.whisper), "v3");
+  assert.equal(pickedBook(entry, entry.ctc), "v3");
+  assert.equal(gatePasses([entry]), true);
+  assert.match(renderTable([entry]), /\| same \|$/m);
+  const wrongCopy = { ...entry, ctc: [outcome("v3", false, 0), outcome("prod-v3", false, 0), outcome("v4", true, 0.9)] };
+  assert.equal(gatePasses([wrongCopy]), false);
 });

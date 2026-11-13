@@ -24,7 +24,7 @@ const { evaluateOutlierCheck } = await import("../server/ebook-set-outlier.ts");
 const { planSamples } = await import("../server/alignment-anchors.ts");
 const { getAlignmentPoolCoordinator, resetAlignmentPoolCoordinator, setAlignmentPoolDepsForTests, CTC_ENGINE } =
   await import("../server/alignment-pool.ts");
-const { groupFragments, sampleFromCtcAnchor, PROBE_BATCH_WINDOWS } = await import("../server/ebook-set-ctc-probe.ts");
+const { groupFragments, sampleFromCtcAnchor } = await import("../server/ebook-set-ctc-probe.ts");
 const {
   DEFAULT_EBOOK_SET_PROBER,
   ebookSetProber,
@@ -46,7 +46,7 @@ type Handler = (path: string, body: any, host: "wsl" | "lisa") => Response | Pro
 let requests: { host: "wsl" | "lisa"; path: string; body: any }[] = [];
 let uploads: { local: string; remote: string; target: string }[] = [];
 let commands: { target: string; command: string }[] = [];
-let health: { down: string[]; busy: string[]; anchorBatch: boolean } = { down: [], busy: [], anchorBatch: true };
+let health: { down: string[]; busy: string[] } = { down: [], busy: [] };
 let handler: Handler = () => new Response("{}", { status: 500 });
 
 setAlignmentPoolDepsForTests({
@@ -81,7 +81,6 @@ globalThis.fetch = async (input, init) => {
         device: lisa ? "cpu" : "cuda",
         precision: lisa ? "float32" : "float16",
         passageReady: true,
-        anchorBatch: health.anchorBatch,
       },
     });
   }
@@ -92,7 +91,7 @@ globalThis.fetch = async (input, init) => {
 
 /** The accepted candidate also queues a real alignment whose samples reuse the cache; only probe requests count here. */
 const probeUploads = () => uploads.filter((u) => u.remote.includes("/ctc-probe-"));
-const probes = () => requests.filter((r) => String(r.body.output ?? "").includes("/probe"));
+const probes = () => requests.filter((r) => String(r.body.output ?? "").includes("/probe-"));
 
 function resetPool() {
   resetAlignmentPoolCoordinator([
@@ -107,7 +106,7 @@ beforeEach(() => {
   requests = [];
   uploads = [];
   commands = [];
-  health = { down: [], busy: [], anchorBatch: true };
+  health = { down: [], busy: [] };
   handler = () => new Response("{}", { status: 500 });
   delete process.env.EBOOK_SET_PROBER;
   process.env.ALIGNMENT_POOL_ENABLED = "1";
@@ -155,25 +154,16 @@ function seedWork(withRecording = true, duration = 3600) {
 type Behaviour = "forward" | "none" | "backward";
 /** A fake CTC worker: the candidate's behaviour is chosen by its first body paragraph (the first fragment is a heading). */
 function ctcWorker(behaviours: Record<string, Behaviour>): Handler {
-  const answer = (fragments: string[], start: number, duration: number, order: number, count: number) => {
-    const behaviour = behaviours[fragments[1].split(" ")[0]] ?? "none";
-    const base = { engine: CTC_ENGINE, outcome: "mapped", text: Array.from({ length: 40 }, () => "word").join(" ") };
-    if (behaviour === "none") return { ...base, outcome: "unsynced", match: null, matches: [], start };
-    const index = behaviour === "forward" ? order * 7 : (count - 1 - order) * 7;
-    const match = { index, lastIndex: index, score: 0.82, start: start + 1 };
-    return { ...base, match, matches: [match], start: start + 1 };
-  };
   return (path, body) => {
-    if (path === "/anchor-batch")
-      return Response.json({
-        engine: CTC_ENGINE,
-        outcome: "mapped",
-        results: body.windows.map((window: any, order: number) =>
-          answer(body.fragments, window.start, window.duration, order, body.windows.length),
-        ),
-      });
-    if (path === "/anchor") return Response.json(answer(body.fragments, body.start, body.duration, 0, 1));
-    return new Response("{}", { status: 404 });
+    if (path !== "/anchor") return new Response("{}", { status: 404 });
+    const behaviour = behaviours[body.fragments[1].split(" ")[0]] ?? "none";
+    const base = { engine: CTC_ENGINE, outcome: "mapped", text: Array.from({ length: 40 }, () => "word").join(" ") };
+    if (behaviour === "none") return Response.json({ ...base, outcome: "unsynced", match: null, matches: [], start: body.start });
+    // The paragraph grows (or shrinks) with the position in the recording, as a real match does.
+    const slot = Math.floor(body.start / 12);
+    const index = behaviour === "forward" ? slot : 297 - slot;
+    const match = { index, lastIndex: index, score: 0.82, start: body.start + 1 };
+    return Response.json({ ...base, match, matches: [match], start: body.start + 1 });
   };
 }
 
@@ -225,19 +215,20 @@ test("candidates are accepted and rejected by the unchanged outlier rule using C
   );
 
   // Requests carry the recording's cache identity and run on the pool, never on the production worker.
-  const batches = probes().filter((r) => r.path === "/anchor-batch");
-  assert.equal(batches.length, 3);
+  const anchors = probes().filter((r) => r.path === "/anchor");
+  assert.equal(anchors.length, 3 * planned.length, "one request per sample and candidate");
   assert.ok(probes().every((r) => r.host === "wsl"));
-  for (const { body } of batches) {
+  for (const { body } of anchors) {
     assert.equal(body.engine, "ctc");
     assert.equal(body.language, "eng");
     assert.equal(body.recordingId, recordingId);
     assert.equal(body.trackId, trackId);
     assert.equal(body.audioFingerprint, audioFingerprint(recordingId), "the same cache identity a full alignment sends");
     assert.equal(body.token, "probe-token");
-    assert.equal(body.windows.length, planned.length);
+    assert.equal(body.duration, 30);
     assert.ok(body.audio.startsWith(join(temp, "wsl", "alignment", "pool-jobs")), body.audio);
     assert.ok(body.output.startsWith(join(temp, "wsl", "alignment", "pool-jobs")), body.output);
+    assert.ok(planned.some((sample) => sample.time === body.start), "windows are the planned samples");
     assert.equal(body.fragments.length, PARAGRAPHS * 2 + 2, "every paragraph and the two chapter headings");
   }
   assert.ok(!requests.some((r) => String(JSON.stringify(r)).includes("production-worker")));
@@ -274,7 +265,7 @@ test("candidates re-evaluated together share one staging, one host lease and one
   const results = await reevaluateEbookSetForWork(workId);
   assert.deepEqual(results.map((r) => r.status).sort(), ["accepted", "rejected", "rejected"]);
   assert.equal(probeUploads().length, 1, "the recording is copied to the host once");
-  assert.equal(probes().filter((r) => r.path === "/anchor-batch").length, 3);
+  assert.equal(probes().length, 3 * planSamples([{ id: "t", duration: 3600 }]).length);
   const removals = commands.filter((c) => c.command.startsWith("rm -rf"));
   assert.equal(removals.length, 1);
   assert.match(removals[0].command, /pool-jobs\/ctc-probe-/);
@@ -380,35 +371,10 @@ test("the Activity pause switch holds new probes", async () => {
   }
 });
 
-test("a worker without /anchor-batch is probed window by window", async () => {
-  const { workId, trackId } = seedWork();
-  const ebook = await seedEpub(workId, "Right");
-  health.anchorBatch = false;
-  let order = 0;
-  // A single-window answer places every sample at the same paragraph, which the rule rejects as not forward;
-  // answer with a growing paragraph instead, as a real worker does.
-  handler = (path, body) => {
-    if (path !== "/anchor") return new Response("{}", { status: 404 });
-    const index = order++ * 7;
-    const match = { index, lastIndex: index, score: 0.82, start: body.start + 1 };
-    return Response.json({ engine: CTC_ENGINE, outcome: "mapped", text: "word ".repeat(40), match, matches: [match], start: body.start + 1 });
-  };
-  const result = await evaluateEbookSetMember(workId, ebook);
-  const planned = planSamples([{ id: trackId, duration: 3600 }]);
-  assert.equal(result.status, "accepted");
-  assert.equal(probes().filter((r) => r.path === "/anchor").length, planned.length);
-  assert.equal(probes().filter((r) => r.path === "/anchor-batch").length, 0);
-});
-
 test("a worker that is not the CTC engine is a failed probe, not a score", async () => {
   const { workId } = seedWork();
   const ebook = await seedEpub(workId, "Right");
-  handler = (_path, body) =>
-    Response.json({
-      engine: "aeneas-1.7.3",
-      outcome: "mapped",
-      results: body.windows?.map(() => ({ engine: "aeneas-1.7.3", match: null })) ?? [],
-    });
+  handler = () => Response.json({ engine: "aeneas-1.7.3", outcome: "mapped", match: null });
   const result = await evaluateEbookSetMember(workId, ebook);
   assert.equal(result.status, "held");
   assert.equal(listEbookSetMembers(workId)[0].holdReason, "awaiting_worker");
@@ -454,5 +420,4 @@ test("very long books are sent as groups of paragraphs and mapped back to paragr
   assert.equal(group, 3);
   assert.equal(blocks.length, 15000);
   assert.equal(blocks[1], "p3 p4 p5");
-  assert.ok(PROBE_BATCH_WINDOWS <= 256);
 });
