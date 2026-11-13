@@ -15,7 +15,7 @@ import type * as schema from "./schema.ts";
 const execFileAsync = promisify(execFile);
 
 export type PoolHostId = AlignmentPoolHostId;
-export const CTC_ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-v1";
+export const CTC_ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-v2";
 
 export type AlignmentJobPoolState = {
   hostId: PoolHostId;

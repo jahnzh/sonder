@@ -12,7 +12,8 @@ CORE = 20 * SAMPLE_RATE
 CONTEXT = 5 * SAMPLE_RATE
 CHECKPOINT = "wav2vec2_fairseq_base_ls960_asr_ls960.pth"
 CHECKPOINT_SHA256 = "488fd4f16de84438ffc945334278c1b9fb9b7159a806c1080b16111a958c945d"
-ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-v1"
+# v2: windows partly in the acoustic cache keep their audio in time order.
+ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-v2"
 # Starting defaults (#276); ALIGNMENT_CTC_ENCODE_BATCH overrides the microbatch.
 RESIDENT_MODELS_PER_DEVICE = 1
 ACOUSTIC_MICROBATCH = 4
