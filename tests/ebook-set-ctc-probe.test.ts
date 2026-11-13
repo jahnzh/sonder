@@ -393,6 +393,29 @@ test("the Activity pause switch holds new probes", async () => {
   }
 });
 
+test("a connection the worker closed between samples is retried, not counted as a failed probe", async () => {
+  const { workId } = seedWork();
+  const ebook = await seedEpub(workId, "Right");
+  const answer = ctcWorker({ Right: "forward" });
+  const real = globalThis.fetch;
+  let dropped = 0;
+  globalThis.fetch = async (input, init) => {
+    if (String(input).endsWith("/anchor") && dropped < 2 && String(init?.body).includes('"start":300')) {
+      dropped++;
+      throw new TypeError("fetch failed", { cause: Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" }) });
+    }
+    return real(input, init);
+  };
+  handler = answer;
+  try {
+    const result = await evaluateEbookSetMember(workId, ebook);
+    assert.equal(result.status, "accepted");
+    assert.equal(dropped, 2, "two retries, then the request got through");
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
 test("a worker that is not the CTC engine is a failed probe, not a score", async () => {
   const { workId } = seedWork();
   const ebook = await seedEpub(workId, "Right");

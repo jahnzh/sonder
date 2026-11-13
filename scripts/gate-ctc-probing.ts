@@ -81,8 +81,11 @@ async function ctc() {
     if (existsSync(out)) continue;
     const planned = json(join(work, "samples", `${title.key}.json`)) as Plan;
     const outputDir = join(health.mediaRoot, "alignment", "gate-probe", title.key);
-    const results: Record<string, { scores: AnchorSampleScore[]; seconds: number }> = {};
+    // A long run resumes at the first candidate without a saved result.
+    const partial = `${out}.partial`;
+    const results: Record<string, { scores: AnchorSampleScore[]; seconds: number }> = existsSync(partial) ? json(partial) : {};
     for (const candidate of manifest.candidates) {
+      if (results[candidate.key]) continue;
       const passages = json(join(work, "passages", `${candidate.key}.json`)) as Passages;
       const started = Date.now();
       // The same cache identity for every candidate of a title, as the server sends for one recording.
@@ -95,6 +98,7 @@ async function ctc() {
         },
       );
       results[candidate.key] = { scores, seconds: (Date.now() - started) / 1000 };
+      write(partial, results);
       console.log(`${title.key} x ${candidate.key}: ${results[candidate.key].seconds.toFixed(1)} s`);
     }
     write(out, results);

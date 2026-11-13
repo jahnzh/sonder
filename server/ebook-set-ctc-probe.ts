@@ -79,22 +79,33 @@ export function sampleFromWhisperAnchor(
   };
 }
 
+const NETWORK_RETRIES = 2;
+
 async function post(target: CtcProbeTarget, path: string, body: object, timeout: number): Promise<unknown> {
-  const response = await fetch(`${target.workerUrl}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token: target.token, ...body }),
-    signal: AbortSignal.timeout(timeout),
-  });
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(
-      response.status === 504
-        ? "The alignment worker timed out on this sample."
-        : `The alignment worker could not score this sample (HTTP ${response.status}${detail ? `: ${detail.replace(/\s+/g, " ").slice(0, 160)}` : ""}).`,
-    );
+  for (let attempt = 0; ; attempt++) {
+    let response: Response;
+    try {
+      response = await fetch(`${target.workerUrl}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: target.token, ...body }),
+        signal: AbortSignal.timeout(timeout),
+      });
+    } catch (error) {
+      // A kept-alive connection the worker just closed fails the next request; scoring a sample is idempotent.
+      if (error instanceof TypeError && attempt < NETWORK_RETRIES) continue;
+      throw error;
+    }
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(
+        response.status === 504
+          ? "The alignment worker timed out on this sample."
+          : `The alignment worker could not score this sample (HTTP ${response.status}${detail ? `: ${detail.replace(/\s+/g, " ").slice(0, 160)}` : ""}).`,
+      );
+    }
+    return response.json();
   }
-  return response.json();
 }
 
 /**
