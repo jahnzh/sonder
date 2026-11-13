@@ -1,5 +1,7 @@
 # Issue 373 report
 
+> **Historical note.** This records the #373 investigation on 2026-11-13 and is not current instructions. Sonder is live at https://sonder.pecori.no (Caddy → 127.0.0.1:3001); see `README.md` for the current setup.
+
 ## Root cause
 
 In `processAnchored`, a successful `/anchor-batch` path ended with `continue`, and the next loop iteration hit `if (!pending.length) break` once every sample was marked done. That skipped `selectAnchors` and segment planning, so matched samples never became anchors and the map stayed empty (coverage 0). The same early break also blocked resumed jobs whose samples were already complete.
