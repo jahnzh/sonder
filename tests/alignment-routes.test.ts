@@ -15,7 +15,7 @@ process.env.MEDIA_ROOT = join(temp, "media");
 process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
 process.env.APP_PASSWORD = "admin-password";
-process.env.ALIGNMENT_CHAPTER_ENGINE = "aeneas";
+delete process.env.ALIGNMENT_CHAPTER_ENGINE;
 delete process.env.ALIGNMENT_POOL_ENABLED;
 delete process.env.ALIGNMENT_WORKER_URL;
 delete process.env.ALIGNMENT_WORKER_TOKEN;
@@ -349,9 +349,7 @@ test("GET /api/alignments/pool requires admin and exposes per-host pool state an
     403,
   );
 
-  const prevEngine = process.env.ALIGNMENT_CHAPTER_ENGINE;
   process.env.ALIGNMENT_POOL_ENABLED = "1";
-  delete process.env.ALIGNMENT_CHAPTER_ENGINE;
 
   resetAlignmentPoolCoordinator([
     {
@@ -488,8 +486,6 @@ test("GET /api/alignments/pool requires admin and exposes per-host pool state an
     assert.match(adminMarkup, /Busy/);
   } finally {
     delete process.env.ALIGNMENT_POOL_ENABLED;
-    if (prevEngine === undefined) delete process.env.ALIGNMENT_CHAPTER_ENGINE;
-    else process.env.ALIGNMENT_CHAPTER_ENGINE = prevEngine;
     setAlignmentPoolDepsForTests(null);
     resetAlignmentPoolCoordinator();
     globalThis.fetch = originalFetch;

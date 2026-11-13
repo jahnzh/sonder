@@ -216,7 +216,7 @@ export type AlignmentPoolHostStatus = {
 };
 export type AlignmentPoolStatus = {
   enabled: boolean;
-  engine: "ctc" | "aeneas";
+  engine: "ctc";
   checkedAt: number;
   hosts: AlignmentPoolHostStatus[];
 };

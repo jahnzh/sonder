@@ -696,17 +696,14 @@ export function clearPoolStaging(job: AlignmentJob, triedHosts: PoolHostId[]) {
   };
 }
 
-export function currentPoolEngine(): "ctc" | "aeneas" {
+export function currentPoolEngine(): "ctc" {
   return "ctc";
 }
 
 export function activePoolHosts(
   hosts: PoolHost[] = getAlignmentPoolCoordinator().listHosts(),
-  engine: "ctc" | "aeneas" = currentPoolEngine(),
 ) {
-  return engine === "aeneas"
-    ? hosts.filter((host) => host.id !== "lisa")
-    : hosts.filter((host) => host.id === "wsl" || host.id === "lisa");
+  return hosts.filter((host) => host.id === "wsl" || host.id === "lisa");
 }
 
 function safeWorkerUrl(raw: string) {
@@ -735,7 +732,7 @@ type ProbedHostSnapshot = {
 type CachedPoolProbe = {
   key: string;
   enabled: boolean;
-  engine: "ctc" | "aeneas";
+  engine: "ctc";
   checkedAt: number;
   hosts: ProbedHostSnapshot[];
 };
@@ -751,32 +748,17 @@ export function resetAlignmentPoolStatusCache() {
 
 function poolProbeCacheKey() {
   const engine = currentPoolEngine();
-  const hosts = activePoolHosts(getAlignmentPoolCoordinator().listHosts(), engine)
+  const hosts = activePoolHosts(getAlignmentPoolCoordinator().listHosts())
     .map((host) => `${host.id}:${host.sshTarget}:${host.workerUrl}:${host.maxConcurrent}`)
     .join("|");
   return `${poolEnabled() ? "1" : "0"}\n${engine}\n${process.env.ALIGNMENT_WORKER_URL ?? ""}\n${hosts}`;
 }
 
-async function probeSinglePoolHost(host: PoolHost, engine: "ctc" | "aeneas"): Promise<ProbedHostSnapshot> {
-  const maxConcurrent = engine === "ctc" ? 1 : host.maxConcurrent;
+async function probeSinglePoolHost(host: PoolHost): Promise<ProbedHostSnapshot> {
+  const maxConcurrent = 1;
   const workerUrl = safeWorkerUrl(host.workerUrl);
-  if (engine === "ctc") {
-    const guardError = ctcUrlGuardError(host);
-    if (guardError) {
-      return {
-        id: host.id,
-        sshTarget: host.sshTarget,
-        workerUrl,
-        maxConcurrent,
-        reachable: false,
-        device: null,
-        precision: null,
-        workerBusy: false,
-        stuck: false,
-        probeError: formatPoolError("health", guardError),
-      };
-    }
-  } else if (!URL.canParse(host.workerUrl)) {
+  const guardError = ctcUrlGuardError(host);
+  if (guardError) {
     return {
       id: host.id,
       sshTarget: host.sshTarget,
@@ -787,7 +769,7 @@ async function probeSinglePoolHost(host: PoolHost, engine: "ctc" | "aeneas"): Pr
       precision: null,
       workerBusy: false,
       stuck: false,
-      probeError: "health: invalid worker URL",
+      probeError: formatPoolError("health", guardError),
     };
   }
   let device: string | null = null;
@@ -811,15 +793,10 @@ async function probeSinglePoolHost(host: PoolHost, engine: "ctc" | "aeneas"): Pr
           workerBusy = raw.busy === true;
           stuck = raw.stuck === true;
           if (typeof raw.ctc?.device === "string") device = raw.ctc.device;
-          else if (engine === "aeneas" && raw.ready === true) device = "cpu";
           if (typeof raw.ctc?.precision === "string") precision = raw.ctc.precision;
         }
-        if (engine === "ctc") {
-          if (!validCtcHealth(host, raw))
-            healthError = "health: worker is not ready or has incompatible CTC settings";
-        } else if (!raw || raw.ready !== true) {
-          healthError = "health: worker is not ready";
-        }
+        if (!validCtcHealth(host, raw))
+          healthError = "health: worker is not ready or has incompatible CTC settings";
       } catch (error) {
         healthError = formatPoolError("health", error);
       }
@@ -850,7 +827,7 @@ async function probeSinglePoolHost(host: PoolHost, engine: "ctc" | "aeneas"): Pr
 async function runPoolProbe(): Promise<CachedPoolProbe> {
   const enabled = poolEnabled();
   const engine = currentPoolEngine();
-  const hosts = activePoolHosts(getAlignmentPoolCoordinator().listHosts(), engine);
+  const hosts = activePoolHosts(getAlignmentPoolCoordinator().listHosts());
   const checkedAt = Date.now();
   const key = poolProbeCacheKey();
   if (!enabled) {
@@ -863,7 +840,7 @@ async function runPoolProbe(): Promise<CachedPoolProbe> {
         id: host.id,
         sshTarget: host.sshTarget,
         workerUrl: safeWorkerUrl(host.workerUrl),
-        maxConcurrent: engine === "ctc" ? 1 : host.maxConcurrent,
+        maxConcurrent: 1,
         reachable: false,
         device: null,
         precision: null,
@@ -873,7 +850,7 @@ async function runPoolProbe(): Promise<CachedPoolProbe> {
       })),
     };
   }
-  const probed = await Promise.all(hosts.map((host) => probeSinglePoolHost(host, engine)));
+  const probed = await Promise.all(hosts.map((host) => probeSinglePoolHost(host)));
   return {
     key,
     enabled: true,

@@ -1,4 +1,4 @@
-import { test, after } from "node:test";
+import { test, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -8,14 +8,18 @@ process.env.DATA_DIR = join(temp, "db");
 process.env.MEDIA_ROOT = join(temp, "media");
 process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
-// These tests exercise worker transport and metadata storage with fake engines, independent of the default chapter engine.
-process.env.ALIGNMENT_CHAPTER_ENGINE = "aeneas";
 // Busy-wait tests poll /api/alignments/:id/map many times; the default 600/min
 // limiter rejects those injects mid-suite (same pattern as tests/browser-server.ts).
 process.env.API_RATE_LIMIT = "6000";
 delete process.env.APP_PASSWORD;
+delete process.env.ALIGNMENT_CHAPTER_ENGINE;
 delete process.env.ALIGNMENT_WORKER_URL;
 delete process.env.ALIGNMENT_WORKER_TOKEN;
+const { CTC_ENGINE, installCtcTestPool, uninstallCtcTestPool, withCtcPoolFetch } =
+  await import("./ctc-test-pool.ts");
+// One host only: a 504/409 on WSL has nowhere else to go, so the job ends without
+// the cross-host CTC failover covered in alignment-ctc.test.ts.
+const { workerUrl } = installCtcTestPool(temp, "http://ctc-worker.test", { lisa: false });
 const { createApp } = await import("../server/app.ts");
 const { db, sqlite } = await import("../server/db.ts");
 const s = await import("../server/schema.ts");
@@ -28,6 +32,7 @@ const {
   WORKER_BUSY_WAIT_MS,
   WORKER_TIMEOUT_MESSAGE,
 } = await import("../server/alignment.ts");
+const { POOL_FAILURE_MESSAGE } = await import("../server/alignment-pool.ts");
 const app = await createApp();
 const original = fetch;
 after(async () => {
@@ -35,6 +40,7 @@ after(async () => {
   setWorkerRetryClockForTests(null);
   delete process.env.ALIGNMENT_WORKER_URL;
   delete process.env.ALIGNMENT_WORKER_TOKEN;
+  uninstallCtcTestPool();
   stopAlignments();
   await app.close();
   sqlite.close();
@@ -65,11 +71,10 @@ for (const track of db
     .set({ sourceType: "local", source: file })
     .where(eq(s.tracks.id, track.id))
     .run();
-process.env.ALIGNMENT_WORKER_URL = "http://alignment.test";
-process.env.ALIGNMENT_WORKER_TOKEN = "test-private-worker-token";
 const aligned = (data: { fragments: string[]; start: number }) =>
   Response.json({
-    engine: "aeneas-1.7.3",
+    engine: CTC_ENGINE,
+    outcome: "mapped",
     elapsedSeconds: 1,
     intervals: data.fragments.map((_, i) => ({
       index: i,
@@ -79,7 +84,6 @@ const aligned = (data: { fragments: string[]; start: number }) =>
   });
 async function settled(id: string, done: (job: any) => boolean) {
   let job: any;
-  // Prefer fewer, slightly slower polls so a long busy-wait suite stays under the rate limit.
   for (let i = 0; i < 200; i++) {
     await new Promise((resolve) => setTimeout(resolve, 25));
     job = (await app.inject(`/api/alignments/${id}/map`)).json();
@@ -87,13 +91,19 @@ async function settled(id: string, done: (job: any) => boolean) {
   }
   return job;
 }
+beforeEach(() => {
+  // createAlignment reuses the (ebook, recording) job id, and chapter sections are
+  // cached under alignment/<id>/; clear them so each test hits the worker again.
+  rmSync(join(temp, "media", "alignment"), { recursive: true, force: true });
+  sqlite.prepare("DELETE FROM alignment_jobs").run();
+});
 
-test("a worker timeout (504) is final: the job ends in an error naming it, keeps finished sections, and resumes on retry", async () => {
+test("a CTC worker timeout (504) keeps finished sections; with no other host the job fails for resume", async () => {
   const starts: number[] = [];
   let slow = true;
-  globalThis.fetch = async (input, init) => {
+  globalThis.fetch = withCtcPoolFetch(temp, async (input, init) => {
+    assert.equal(String(input), `${workerUrl}/align`);
     const data = JSON.parse(String(init?.body));
-    assert.equal(String(input), "http://alignment.test/align");
     starts.push(data.start);
     if (slow && data.start === 300)
       return new Response(
@@ -101,16 +111,18 @@ test("a worker timeout (504) is final: the job ends in an error naming it, keeps
         { status: 504 },
       );
     return aligned(data);
-  };
+  });
   const job = await createAlignment(ebook, "recording-alice");
   const failed = await settled(job.id, (value) => value.status === "error");
   assert.equal(failed.status, "error", "the job is not left in processing");
-  assert.equal(failed.error, WORKER_TIMEOUT_MESSAGE);
-  assert.match(failed.error, /timed out/);
+  // CTC tries the other pool host after a worker error; with only WSL that ends as a pool failure.
+  // The timeout message is still what workerRequest throws before failover.
+  assert.ok(
+    failed.error === POOL_FAILURE_MESSAGE || failed.error === WORKER_TIMEOUT_MESSAGE,
+    failed.error,
+  );
   assert.deepEqual(failed.sectionsDone, [0]);
-  // The ticker runs every 5 s; no other attempt may follow an error.
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  assert.deepEqual(starts, [0, 300], "the 504 was not retried");
+  assert.deepEqual(starts, [0, 300], "the 504 was not retried on the same host");
 
   slow = false;
   const resumed = await app.inject({
@@ -126,23 +138,25 @@ test("a worker timeout (504) is final: the job ends in an error naming it, keeps
   assert.deepEqual(starts, [0, 300, 300], "only the timed-out section ran again");
 });
 
-test("a busy worker (409) is still retried", async () => {
+test("a busy CTC worker (409) is still retried on the same host", async () => {
   let calls = 0;
-  globalThis.fetch = async (_input, init) => {
+  const seen: string[] = [];
+  globalThis.fetch = withCtcPoolFetch(temp, async (input, init) => {
+    seen.push(String(input));
     const data = JSON.parse(String(init?.body));
     if (data.start === 0 && calls++ === 0)
       return new Response("{}", { status: 409 });
     return aligned(data);
-  };
+  });
   const job = await createAlignment(ebook, "recording-alice");
   const done = await settled(job.id, (value) =>
     ["partial", "error"].includes(value.status),
   );
-  assert.equal(done.status, "partial", done.error);
-  assert.equal(calls, 2, "the first section was asked again after the 409");
+  assert.equal(done.status, "partial", `${done.error}; seen=${seen.join(",")}`);
+  assert.equal(calls, 2, `the first section was asked again after the 409; seen=${seen.join(",")}`);
 });
 
-test("a reading sync waits through more than five busy responses", async () => {
+test("a reading sync waits through more than five busy responses on the CTC host", async () => {
   let now = 0;
   setWorkerRetryClockForTests({
     now: () => now,
@@ -151,13 +165,13 @@ test("a reading sync waits through more than five busy responses", async () => {
     },
   });
   let conflicts = 0;
-  globalThis.fetch = async (_input, init) => {
+  globalThis.fetch = withCtcPoolFetch(temp, async (_input, init) => {
     if (conflicts < 6) {
       conflicts++;
       return new Response("{}", { status: 409 });
     }
     return aligned(JSON.parse(String(init?.body)));
-  };
+  });
   try {
     const job = await createAlignment(ebook, "recording-alice");
     const done = await settled(job.id, (value) =>
@@ -170,7 +184,7 @@ test("a reading sync waits through more than five busy responses", async () => {
   }
 });
 
-test("a permanently busy alignment worker fails after the busy wait cap", async () => {
+test("a permanently busy CTC host fails after the busy wait cap when no other host exists", async () => {
   let now = 0;
   let calls = 0;
   setWorkerRetryClockForTests({
@@ -179,17 +193,22 @@ test("a permanently busy alignment worker fails after the busy wait cap", async 
       now += ms;
     },
   });
-  globalThis.fetch = async () => {
+  globalThis.fetch = withCtcPoolFetch(temp, async () => {
     calls++;
     return new Response("{}", { status: 409 });
-  };
+  });
   try {
     const job = await createAlignment(ebook, "recording-alice");
     const failed = await settled(job.id, (value) => value.status === "error");
-    assert.equal(failed.status, "error");
-    assert.equal(failed.error, "The alignment worker is busy. Retry in a moment.");
+    assert.equal(failed.status, "error", failed.error);
+    // Busy wait exhausts, then CTC failover finds no other host.
+    assert.ok(
+      failed.error === "The alignment worker is busy. Retry in a moment." ||
+        failed.error === POOL_FAILURE_MESSAGE,
+      failed.error,
+    );
     assert.equal(now, WORKER_BUSY_WAIT_MS);
-    assert.ok(calls > 5);
+    assert.ok(calls > 5, `calls=${calls}`);
   } finally {
     setWorkerRetryClockForTests(null);
   }

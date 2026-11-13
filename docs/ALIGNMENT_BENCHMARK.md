@@ -7,8 +7,8 @@ Measured on 26 October 2026 on the deployed Intel N150 host: four CPU cores, 16 
 - Semantic app themes, validated import/export, account defaults and device overrides, cached pre-render appearance and separate reader typography.
 - Sandboxed, sanitized EPUB.js reader with search, contents, bookmarks, stable CFI/sentence locators, offline ebook files and revision-aware offline reconciliation.
 - Exact EPUB/recording pairing, language checks, editable chapter boundaries, HDD copies, persistent jobs, section caching, pause/resume/cancel and fingerprint invalidation.
-- Local known-text alignment using aeneas 1.7.3, plus a short independent multilingual Whisper tiny excerpt to reject gross mismatches. Word timestamps are used only within these short local excerpts; there is no whole-book transcription stage.
-- Reader → audio and audio → reader switching, optional follow-along, approximate local speech recovery when a map is missing, and explicit sentence timing corrections.
+- Local known-text alignment using the CTC engine (Wav2Vec2 Base, English only). Whisper and aeneas are retired; see ADR 0006.
+- Reader → audio and audio → reader switching, optional follow-along, approximate local speech recovery when a map is missing (CTC locate on a short excerpt), and explicit sentence timing corrections.
 - Independent Hardcover reading outbox, with retries and percentage/page conversion even without local audio. This does not alter the recording's native listening checkpoint or import coarse remote positions into the precise reader checkpoint.
 
 ## Samples and results
@@ -29,7 +29,7 @@ Speech match scores measure normalized token similarity, not timestamp accuracy 
 
 The CPU CTC comparison uses commit `64293cc6d711e57666c4a8b098e9fd93b381fd88` of [ctc-forced-aligner](https://github.com/MahmoudAshraf97/ctc-forced-aligner). It was not selected: it was much slower on this host and its current CC-BY-NC-4.0 terms complicate reuse beyond personal noncommercial deployment. Its image is a separate benchmark image, not a production dependency. Storyteller remains a reference rather than an additional deployed library service.
 
-The production short-excerpt engine is [faster-whisper](https://github.com/SYSTRAN/faster-whisper), pinned to 1.2.1, CPU int8, two threads. Multilingual tiny model revision `d90ca5fe260221311c53c58e660288d3deb8d356` occupies about 75 MB. `download_model.py` explicitly downloads it once; runtime inference loads local files only. This uses the same short-anchor approach proposed for whisper.cpp, with a Python-native engine inside the existing worker.
+Short-excerpt speech recovery uses the same CTC locate path as anchored alignment (`/anchor`). The pinned Wav2Vec2 Base checkpoint is downloaded once by `download_model.py`; runtime inference loads local files only. Non-English books stay unsynced.
 
 ## Accuracy boundaries
 

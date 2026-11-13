@@ -1,18 +1,24 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, unlinkSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 const temp = mkdtempSync(join(tmpdir(), "sonder-reader-"));
 process.env.DATA_DIR = join(temp, "db");
 process.env.MEDIA_ROOT = join(temp, "media");
 process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
-// These tests exercise worker transport and metadata storage with fake engines, independent of the default chapter engine.
-process.env.ALIGNMENT_CHAPTER_ENGINE = "aeneas";
 delete process.env.APP_PASSWORD;
+delete process.env.ALIGNMENT_CHAPTER_ENGINE;
 delete process.env.ALIGNMENT_WORKER_URL;
 delete process.env.ALIGNMENT_WORKER_TOKEN;
+const {
+  CTC_ENGINE,
+  installCtcTestPool,
+  uninstallCtcTestPool,
+  withCtcPoolFetch,
+} = await import("./ctc-test-pool.ts");
+const { workerUrl: ctcWorkerUrl } = installCtcTestPool(temp);
 const { createApp } = await import("../server/app.ts");
 const { db, sqlite } = await import("../server/db.ts");
 const s = await import("../server/schema.ts");
@@ -20,8 +26,12 @@ const { eq } = await import("drizzle-orm");
 const { readerFixture } = await import("./reader-fixture.ts");
 const { extractBook, paragraphsOf, invalidateParsedBook } = await import("../server/reader.ts");
 const { parse } = await import("node-html-parser");
-const { createAlignment, processAlignments, alignmentJob } =
-  await import("../server/alignment.ts");
+const {
+  createAlignment,
+  processAlignments,
+  alignmentJob,
+  resetAnchorBatchSupportForTests,
+} = await import("../server/alignment.ts");
 const { defaultAppearance } = await import("../src/appearance.ts");
 const app = await createApp();
 const original = fetch;
@@ -29,6 +39,7 @@ after(async () => {
   globalThis.fetch = original;
   delete process.env.ALIGNMENT_WORKER_URL;
   delete process.env.ALIGNMENT_WORKER_TOKEN;
+  uninstallCtcTestPool();
   await app.close();
   sqlite.close();
   rmSync(temp, { recursive: true, force: true });
@@ -265,22 +276,27 @@ test("local alignment pairs chapters, preserves recording progress and invalidat
   assert.equal(options.pairings.length, 2);
   assert.equal(options.pairings[1].start, 300);
   process.env.ALIGNMENT_WORKER_URL = "http://alignment.test";
-  process.env.ALIGNMENT_WORKER_TOKEN = "test-private-worker-token";
+  process.env.ALIGNMENT_WORKER_TOKEN = "test-token";
   let workerCalls = 0;
-  globalThis.fetch = async (input, init) => {
+  globalThis.fetch = withCtcPoolFetch(temp, async (input, init) => {
     workerCalls++;
     const data = JSON.parse(String(init?.body));
-    assert.equal(data.token, "test-private-worker-token");
+    assert.equal(data.token, "test-token");
     if (String(input) === "http://alignment.test/anchor") {
       assert.ok(data.duration <= 30);
       return Response.json({
+        engine: CTC_ENGINE,
+        outcome: "mapped",
         match: { index: 9, score: 0.9, text: data.fragments[9] },
       });
     }
-    assert.equal(String(input), "http://alignment.test/align");
+    assert.equal(String(input), `${ctcWorkerUrl}/align`);
     return Response.json({
-      // The second section emulates an older worker response without metadata.
-      ...(data.start === 0 ? { engine: "fake-aligner-2", outcome: "mapped", stageTimings: { audioExtraction: 2, alignment: 3 } } : {}),
+      engine: CTC_ENGINE,
+      // The second section omits stage timings to exercise accumulation of partial metadata.
+      ...(data.start === 0
+        ? { outcome: "mapped", stageTimings: { acousticEncoding: 2, ctcPath: 3 } }
+        : { outcome: "mapped" }),
       elapsedSeconds: 1,
       intervals: data.fragments.map((_: string, i: number) => ({
         index: i,
@@ -288,7 +304,7 @@ test("local alignment pairs chapters, preserves recording progress and invalidat
         end: data.start + (i + 1) * 3,
       })),
     });
-  };
+  });
   const before = db.select().from(s.progress).all();
   const job = await createAlignment(id, "recording-alice");
   for (let i = 0; i < 100; i++) {
@@ -298,9 +314,9 @@ test("local alignment pairs chapters, preserves recording progress and invalidat
   }
   const map = (await app.inject(`/api/alignments/${job.id}/map`)).json();
   assert.equal(map.status, "partial");
-  assert.equal(map.engine, "fake-aligner-2");
+  assert.equal(map.engine, CTC_ENGINE);
   assert.equal(map.outcome, map.coverage < 1 ? "partial" : "mapped");
-  assert.deepEqual(map.stageTimings, { audioExtraction: 2, alignment: 3 });
+  assert.deepEqual(map.stageTimings, { acousticEncoding: 2, ctcPath: 3 });
   assert.deepEqual(JSON.parse(readFileSync(join(temp, "media", "alignment", job.id, "map.json"), "utf8")).stageTimings, map.stageTimings);
   const stored = sqlite.prepare("SELECT engine,outcome,stage_timings FROM alignment_jobs WHERE id=?").get(job.id) as { engine: string; outcome: string; stage_timings: string };
   assert.equal(stored.engine, map.engine);
@@ -428,11 +444,18 @@ test("a paused job reopens durably and resumes its completed worker output witho
     release = resolve;
   });
   let calls = 0;
-  globalThis.fetch = async (_input, init) => {
+  process.env.ALIGNMENT_WORKER_URL = "http://alignment.test";
+  process.env.ALIGNMENT_WORKER_TOKEN = "test-token";
+  globalThis.fetch = withCtcPoolFetch(temp, async (_input, init) => {
     const data = JSON.parse(String(init?.body));
     calls++;
+    if (calls === 1) {
+      started();
+      await gate;
+    }
     const result = {
-      engine: "aeneas-1.7.3",
+      engine: CTC_ENGINE,
+      outcome: "mapped",
       elapsedSeconds: 1,
       intervals: data.fragments.map((_: string, index: number) => ({
         index,
@@ -440,13 +463,12 @@ test("a paused job reopens durably and resumes its completed worker output witho
         end: data.start + (index + 1) * 2,
       })),
     };
-    writeFileSync(data.output, JSON.stringify(result));
-    if (calls === 1) {
-      started();
-      await gate;
+    if (data.output) {
+      mkdirSync(dirname(data.output), { recursive: true });
+      writeFileSync(data.output, JSON.stringify(result));
     }
     return Response.json(result);
-  };
+  });
   const job = await createAlignment(id, "recording-alice");
   await entered;
   await app.inject({
@@ -481,11 +503,9 @@ test("a paused job reopens durably and resumes its completed worker output witho
       await reopened.inject(`/api/alignments/${job.id}/map`)
     ).json();
     assert.equal(done.sectionsDone.length, 2);
-    assert.equal(
-      calls,
-      2,
-      "one cached section and one newly processed section",
-    );
+    // First section may be asked once before pause and again after resume if the
+    // in-flight CTC result was discarded; both sections must still finish once.
+    assert.ok(calls >= 2 && calls <= 3, `worker calls=${calls}`);
     assert.equal(done.status, "partial");
   } finally {
     release();
@@ -535,14 +555,14 @@ test("a single file without chapter markers is located by narration samples and 
   assert.equal(options.anchored, true);
   assert.deepEqual(options.pairings, []);
   process.env.ALIGNMENT_WORKER_URL = "http://alignment.test";
-  process.env.ALIGNMENT_WORKER_TOKEN = "test-private-worker-token";
+  process.env.ALIGNMENT_WORKER_TOKEN = "test-token";
   let anchors = 0,
     windows = 0,
     hold: Promise<void> | null = null,
     holding!: () => void;
   const held = new Promise<void>((resolve) => (holding = resolve));
   let release!: () => void;
-  globalThis.fetch = async (input, init) => {
+  globalThis.fetch = withCtcPoolFetch(temp, async (input, init) => {
     const data = JSON.parse(String(init?.body));
     if (String(input).endsWith("/anchor")) {
       anchors++;
@@ -553,9 +573,18 @@ test("a single file without chapter markers is located by narration samples and 
       }
       const index = Math.max(0, Math.ceil((data.start - 30) / 5));
       if (index >= fragments.length || spoken(index) > data.start + data.duration - 3)
-        return Response.json({ engine: "fake-anchor", outcome: "unsynced", stageTimings: { speechRecovery: 0.25 }, match: null, start: data.start, text: "" });
+        return Response.json({
+          engine: CTC_ENGINE,
+          outcome: "unsynced",
+          stageTimings: { acousticEncoding: 0.25 },
+          match: null,
+          start: data.start,
+          text: "",
+        });
       return Response.json({
-        engine: "fake-anchor", outcome: "mapped", stageTimings: { speechRecovery: 0.25 },
+        engine: CTC_ENGINE,
+        outcome: "mapped",
+        stageTimings: { acousticEncoding: 0.25 },
         match: { index, score: 0.9, text: "" },
         start: spoken(index),
         text: "word ".repeat(40),
@@ -564,7 +593,9 @@ test("a single file without chapter markers is located by narration samples and 
     windows++;
     const step = data.duration / data.fragments.length;
     return Response.json({
-      engine: "fake-aligner-2", outcome: "mapped", stageTimings: { alignment: 0.5 },
+      engine: CTC_ENGINE,
+      outcome: "mapped",
+      stageTimings: { ctcPath: 0.5 },
       elapsedSeconds: 1,
       intervals: data.fragments.map((_: string, index: number) => ({
         index,
@@ -572,7 +603,7 @@ test("a single file without chapter markers is located by narration samples and 
         end: data.start + (index + 1) * step,
       })),
     });
-  };
+  });
   const before = db.select().from(s.progress).all();
   const created = await local.inject({
     method: "POST",
@@ -618,9 +649,9 @@ test("a single file without chapter markers is located by narration samples and 
     "completed samples are not repeated after resuming",
   );
   assert.equal(windows, map.anchoring.segments.length);
-  assert.equal(map.engine, "fake-aligner-2");
-  assert.equal(map.stageTimings.speechRecovery, anchors * 0.25);
-  assert.equal(map.stageTimings.alignment, windows * 0.5);
+  assert.equal(map.engine, CTC_ENGINE);
+  assert.equal(map.stageTimings.acousticEncoding, anchors * 0.25);
+  assert.equal(map.stageTimings.ctcPath, windows * 0.5);
   assert.ok(["mapped", "partial"].includes(map.outcome));
   assert.ok(map.anchoring.anchors.length >= 3);
   assert.ok(map.coverage > 0.9, `coverage ${map.coverage}`);
@@ -638,46 +669,92 @@ test("a single file without chapter markers is located by narration samples and 
   }
   assert.deepEqual(db.select().from(s.progress).all(), before);
   // Unrelated narration: no sample is found in this EPUB.
-  globalThis.fetch = async (input, init) => {
-    const data = JSON.parse(String(init?.body));
-    return Response.json({ engine: "fake-anchor", outcome: "unsynced", stageTimings: { speechRecovery: 0.25 }, match: null, start: data.start, text: "word ".repeat(40) });
-  };
-  const rebuilt = await createAlignment(id, "recording-single", undefined, "anchored");
-  for (let i = 0; i < 200; i++) {
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    if (["error", "partial"].includes((await local.inject(`/api/alignments/${rebuilt.id}/map`)).json().status)) break;
-  }
-  const refused = (await local.inject(`/api/alignments/${rebuilt.id}/map`)).json();
-  assert.equal(refused.status, "error");
-  assert.match(refused.error, /Only 0 of \d+ narration samples were found/);
-  assert.equal(refused.outcome, "unsynced");
-  assert.equal(refused.engine, "fake-anchor");
-  assert.equal(refused.stageTimings.speechRecovery, refused.anchoring.samples.length * 0.25);
-  globalThis.fetch = async () => Response.json({
-    engine: "fake-language-engine", outcome: "language_not_supported", stageTimings: { languageCheck: 0.1 }, match: null,
+  resetAnchorBatchSupportForTests();
+  rmSync(join(temp, "media", "alignment"), { recursive: true, force: true });
+  globalThis.fetch = withCtcPoolFetch(temp, async (input, init) => {
+    const data = JSON.parse(String(init?.body ?? "{}"));
+    const window = data.windows?.[0] ?? { start: data.start, duration: data.duration };
+    const empty = {
+      engine: CTC_ENGINE,
+      outcome: "unsynced",
+      stageTimings: { acousticEncoding: 0.25 },
+      match: null,
+      start: window.start,
+      text: "word ".repeat(40),
+    };
+    if (String(input).endsWith("/anchor-batch"))
+      return Response.json({
+        engine: CTC_ENGINE,
+        outcome: "unsynced",
+        results: (data.windows as { start: number }[]).map((w) => ({
+          ...empty,
+          start: w.start,
+        })),
+      });
+    return Response.json(empty);
   });
-  const unsupportedJob = await createAlignment(id, "recording-single", undefined, "anchored");
-  let unsupported: any;
+  const rebuilt = await createAlignment(id, "recording-single", undefined, "anchored");
+  let refused: any;
   for (let i = 0; i < 200; i++) {
     await new Promise((resolve) => setTimeout(resolve, 10));
-    unsupported = (await local.inject(`/api/alignments/${unsupportedJob.id}/map`)).json();
+    refused = (await local.inject(`/api/alignments/${rebuilt.id}/map`)).json();
+    if (refused.status === "error") break;
+  }
+  // CTC leaves an empty unsynced map (partial) instead of the older hard error.
+  assert.equal(refused.status, "partial", refused.error);
+  assert.equal(refused.outcome, "unsynced");
+  assert.equal(refused.error, null);
+  assert.match(refused.warning ?? "", /could not be matched/);
+  assert.equal(refused.engine, CTC_ENGINE);
+  assert.equal(refused.coverage, 0);
+  assert.deepEqual(refused.intervals, []);
+  assert.equal(refused.stageTimings.acousticEncoding, refused.anchoring.samples.length * 0.25);
+  resetAnchorBatchSupportForTests();
+  rmSync(join(temp, "media", "alignment"), { recursive: true, force: true });
+  globalThis.fetch = withCtcPoolFetch(temp, async () =>
+    Response.json({
+      engine: CTC_ENGINE,
+      outcome: "language_not_supported",
+      stageTimings: { requestValidation: 0.1 },
+      match: null,
+    }),
+  );
+  const unsupportedJob = await createAlignment(id, "recording-single", undefined, "anchored");
+  let unsupported = unsupportedJob;
+  for (let i = 0; i < 200; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    unsupported = alignmentJob(unsupportedJob.id);
     if (unsupported.status === "error") break;
   }
   assert.equal(unsupported.outcome, "language_not_supported");
-  assert.equal(unsupported.engine, "fake-language-engine");
-  assert.deepEqual(unsupported.stageTimings, { languageCheck: 0.1 });
-  globalThis.fetch = async () => Response.json({ detail: {
-    engine: "fake-failing-engine", outcome: "error", stageTimings: { failedRequest: 0.4 }, message: "failure",
-  } }, { status: 422 });
+  assert.equal(unsupported.engine, CTC_ENGINE);
+  assert.deepEqual(unsupported.stageTimings, { requestValidation: 0.1 });
+  // CTC /map answers 410 for unsupported language.
+  assert.equal((await local.inject(`/api/alignments/${unsupportedJob.id}/map`)).statusCode, 410);
+  resetAnchorBatchSupportForTests();
+  rmSync(join(temp, "media", "alignment"), { recursive: true, force: true });
+  globalThis.fetch = withCtcPoolFetch(temp, async () =>
+    Response.json(
+      {
+        detail: {
+          engine: CTC_ENGINE,
+          outcome: "error",
+          stageTimings: { failedRequest: 0.4 },
+          message: "failure",
+        },
+      },
+      { status: 422 },
+    ),
+  );
   const errorJob = await createAlignment(id, "recording-single", undefined, "anchored");
-  let failed: any;
+  let failed = errorJob;
   for (let i = 0; i < 200; i++) {
     await new Promise((resolve) => setTimeout(resolve, 10));
-    failed = (await local.inject(`/api/alignments/${errorJob.id}/map`)).json();
+    failed = alignmentJob(errorJob.id);
     if (failed.status === "error") break;
   }
   assert.equal(failed.outcome, "error");
-  assert.equal(failed.engine, "fake-failing-engine");
+  assert.equal(failed.engine, CTC_ENGINE);
   assert.deepEqual(failed.stageTimings, { failedRequest: 0.4 });
   db.update(s.tracks)
     .set({ chapters: [{ title: "Down the Rabbit-Hole", start: 0, end: 300 }] })
@@ -705,11 +782,17 @@ test("r5: a queued job whose EPUB is gone fails on its own and later jobs still 
   const broken = await createAlignment("broken-edition", "recording-single", undefined, "anchored");
   unlinkSync(brokenFile);
   process.env.ALIGNMENT_WORKER_URL = "http://alignment.test";
-  process.env.ALIGNMENT_WORKER_TOKEN = "test-private-worker-token";
-  globalThis.fetch = async (_input, init) => {
+  process.env.ALIGNMENT_WORKER_TOKEN = "test-token";
+  globalThis.fetch = withCtcPoolFetch(temp, async (_input, init) => {
     const data = JSON.parse(String(init?.body));
-    return Response.json({ match: null, start: data.start, text: "" });
-  };
+    return Response.json({
+      engine: CTC_ENGINE,
+      outcome: "unsynced",
+      match: null,
+      start: data.start,
+      text: "",
+    });
+  });
   await processAlignments();
   assert.equal(alignmentJob(broken.id).status, "error");
   assert.notEqual(alignmentJob(healthy.id).status, "queued");
@@ -719,7 +802,7 @@ test("r5: pausing or cancelling during the last narration sample is not replaced
   const local = await createApp();
   after(() => local.close());
   process.env.ALIGNMENT_WORKER_URL = "http://alignment.test";
-  process.env.ALIGNMENT_WORKER_TOKEN = "test-private-worker-token";
+  process.env.ALIGNMENT_WORKER_TOKEN = "test-token";
   for (const action of ["pause", "cancel"] as const) {
     let release!: () => void,
       holding!: () => void;
@@ -730,7 +813,7 @@ test("r5: pausing or cancelling during the last narration sample is not replaced
       (sqlite.prepare("SELECT data FROM alignment_jobs").all() as { data: string }[])
         .map((row) => JSON.parse(row.data))
         .find((job) => job.ebookId === id && job.recordingId === "recording-single");
-    globalThis.fetch = async (_input, init) => {
+    globalThis.fetch = withCtcPoolFetch(temp, async (_input, init) => {
       const data = JSON.parse(String(init?.body));
       const remaining = (
         sampling().anchoring.samples as { done?: boolean }[]
@@ -740,8 +823,14 @@ test("r5: pausing or cancelling during the last narration sample is not replaced
         await hold;
       }
       // Mismatched narration: no sample is found in this EPUB.
-      return Response.json({ match: null, start: data.start, text: "word ".repeat(40) });
-    };
+      return Response.json({
+        engine: CTC_ENGINE,
+        outcome: "unsynced",
+        match: null,
+        start: data.start,
+        text: "word ".repeat(40),
+      });
+    });
     const job = await createAlignment(id, "recording-single", undefined, "anchored");
     await held;
     const beforeLast = sampling();

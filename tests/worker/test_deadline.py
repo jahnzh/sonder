@@ -1,14 +1,11 @@
 """Worker deadline tests. Run with `python3 -m unittest discover -s tests/worker`; needs neither fastapi nor aeneas."""
 import contextlib
 import io
-import json
 import os
 import signal
-import stat
 import subprocess
 import sys
 import tempfile
-import textwrap
 import time
 import unittest
 from pathlib import Path
@@ -17,60 +14,6 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "worker"))
 import deadline  # noqa: E402
 from deadline import AlignmentFailed, AlignmentTimeout, Gate, WorkerBusy, alignment_limit, anchor_limit  # noqa: E402
-
-FAKE_CHILD = textwrap.dedent("""
-    import json, subprocess, sys, time
-    mode, pidfile, spec, result = sys.argv[1:5]
-    if mode == "sleep":
-        grandchild = subprocess.Popen(["sleep", "300"])
-        open(pidfile, "w").write(f"{__import__('os').getpid()} {grandchild.pid}")
-        time.sleep(300)
-    elif mode == "crash":
-        sys.exit(3)
-    else:
-        intervals = [] if mode == "empty" else [{"index": 0, "start": 1.0, "end": 2.0}]
-        if mode == "full": intervals.append({"index": 1, "start": 2.0, "end": 3.0})
-        json.dump({"intervals": intervals, "quality": None, "peakMemoryMB": 12.5}, open(result, "w"))
-""")
-# Writes an empty file at its last argument, like ffmpeg writing the wave.
-FAKE_FFMPEG = "#!/bin/sh\nfor last; do :; done\n: > \"$last\"\n"
-SLOW_FFMPEG = "#!/bin/sh\nsleep 300\n"
-
-def alive(pid):
-    try:
-        # A zombie still answers kill(0) but is already dead; only a reaped process is gone.
-        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"
-    except FileNotFoundError:
-        return False
-
-class Worker(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.dir = Path(self.temp.name)
-        self.folder = self.dir / "alignment"
-        self.folder.mkdir()
-        self.child_script = self.dir / "child.py"
-        self.child_script.write_text(FAKE_CHILD)
-        self.ffmpeg = self.make_executable("ffmpeg", FAKE_FFMPEG)
-        self.pidfile = self.dir / "pids"
-        # A one second limit keeps the timeout tests short.
-        self.env = {"ALIGNMENT_TIMEOUT_BASE_SECONDS": "1", "ALIGNMENT_TIMEOUT_PER_AUDIO_SECOND": "0", "ALIGNMENT_TIMEOUT_MAX_SECONDS": "1"}
-
-    def make_executable(self, name, body):
-        path = self.dir / name
-        path.write_text(body)
-        path.chmod(path.stat().st_mode | stat.S_IXUSR)
-        return str(path)
-
-    def run_align(self, mode, ffmpeg=None):
-        return pipeline.align_section(
-            audio=self.dir / "book.m4b", output=self.folder / "section-1" / "out.json", fragments=["One.", "Two."], language="eng",
-            start=0, duration=600, media_folder=self.folder, env=self.env, ffmpeg=ffmpeg or self.ffmpeg,
-            child=[sys.executable, str(self.child_script), mode, str(self.pidfile)])
-
-    def leftovers(self):
-        return sorted(str(path.relative_to(self.folder)) for path in self.folder.rglob("*") if path.is_file())
 
 class Limit(unittest.TestCase):
     def test_defaults_scale_with_audio_and_stop_at_the_ceiling(self):
@@ -99,14 +42,7 @@ class Limit(unittest.TestCase):
                     self.assertEqual(alignment_limit(100, {name: bad}), default_limit)
                     self.assertEqual(name in warning.getvalue(), bool(bad.strip()), "an empty value counts as unset and is not reported")
 
-class Deadline(Worker):
-
-
-
-
-
-
-
+class Deadline(unittest.TestCase):
     def test_a_child_that_survives_the_kill_keeps_the_slot_until_it_is_gone(self):
         gate = Gate()
         with mock.patch.object(deadline, "KILL_WAIT_SECONDS", 0.2), mock.patch.object(deadline, "REAP_SECONDS", 0.2):

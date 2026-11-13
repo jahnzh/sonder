@@ -1,4 +1,4 @@
-"""Wall-clock limits for alignment work. Standard library only, so it runs without fastapi or aeneas."""
+"""Wall-clock limits for alignment work. Standard library only, so it runs without fastapi."""
 import ctypes
 import math
 import os

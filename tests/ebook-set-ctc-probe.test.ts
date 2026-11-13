@@ -17,7 +17,6 @@ process.env.NODE_ENV = "test";
 process.env.ALIGNMENT_WORKER_URL = "http://production-worker.test";
 process.env.ALIGNMENT_WORKER_TOKEN = "probe-token";
 process.env.ALIGNMENT_POOL_ENABLED = "1";
-delete process.env.EBOOK_SET_PROBER;
 mkdirSync(process.env.MEDIA_ROOT, { recursive: true });
 
 const { db, sqlite } = await import("../server/db.ts");
@@ -105,7 +104,7 @@ function resetPool() {
 }
 
 beforeEach(() => {
-  // Drop leftover consensus jobs so Whisper probing does not wait on them forever.
+  // Drop leftover consensus jobs so probing does not wait on them forever.
   sqlite.prepare("DELETE FROM alignment_jobs").run();
   resetEbookSetDeps();
   resetPool();
@@ -114,7 +113,6 @@ beforeEach(() => {
   commands = [];
   health = { down: [], busy: [] };
   handler = () => new Response("{}", { status: 500 });
-  delete process.env.EBOOK_SET_PROBER;
   process.env.ALIGNMENT_POOL_ENABLED = "1";
 });
 
