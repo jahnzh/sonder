@@ -25,7 +25,6 @@ export type ProbeSession = {
   score(input: { fragmentTexts: string[]; language: string; samples: ProbeSample[] }): Promise<AnchorSampleScore[]>;
   /**
    * Frees the pool host and removes the staged audio. The session stays usable: the next `score` leases again.
-   * A run releases between candidates while it downloads the next one, so queued alignments can take the host.
    */
   release(): Promise<void>;
 };
@@ -40,13 +39,16 @@ export function createCtcProbeSession(
   const waitMs = options.waitMs ?? PROBE_HOST_WAIT_MS;
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   let lease: CtcProbeLease | null = null;
-  const tried: PoolHostId[] = [];
-  let retried = false;
-  // Once the pool has refused this run, its other candidates stay held at once instead of each waiting again.
+  // Latch only when no pool host can be acquired for this run (MEDIUM-3); a per-candidate score failure must not
+  // skip the rest of the session.
   let unavailable: ProbeUnavailable | null = null;
 
-  async function acquire(trackIds: Set<string>) {
-    if (isPaused("alignment")) throw new ProbeUnavailable("Alignment is paused.");
+  async function acquire(trackIds: Set<string>, tried: PoolHostId[]) {
+    if (isPaused("alignment")) {
+      const error = new ProbeUnavailable("Alignment is paused.");
+      unavailable = error;
+      throw error;
+    }
     const { tracks } = recordingContext(recordingId);
     const needed = tracks.filter((track) => trackIds.has(track.id));
     const deadline = Date.now() + waitMs;
@@ -54,13 +56,17 @@ export function createCtcProbeSession(
       try {
         const next = await acquireCtcProbeLease(recordingId, needed, trackLocalAudioPath, tried);
         lease = next;
+        // Hosts dispatch already tried (including the one that succeeded) stay excluded on a later retry.
+        for (const host of next.triedHosts) if (!tried.includes(host)) tried.push(host);
         return next;
       } catch (error) {
         if (error instanceof PoolBusyError && Date.now() < deadline) {
           await sleep(PROBE_RETRY_MS);
           continue;
         }
-        throw new ProbeUnavailable(error instanceof Error ? error.message : String(error));
+        const refusal = new ProbeUnavailable(error instanceof Error ? error.message : String(error));
+        unavailable = refusal;
+        throw refusal;
       }
     }
   }
@@ -76,8 +82,11 @@ export function createCtcProbeSession(
     const fingerprint = audioFingerprint(recordingId);
     const token = process.env.ALIGNMENT_WORKER_TOKEN;
     if (!token) throw new ProbeUnavailable("The alignment worker is not configured.");
+    // tried / retried are per candidate so one score failure does not permanently skip later candidates.
+    const tried: PoolHostId[] = [];
+    let retried = false;
     for (;;) {
-      const active = lease ?? (await acquire(trackIds));
+      const active = lease ?? (await acquire(trackIds, tried));
       const windows = samples.map((sample) => ({ ...sample, audio: active.stagedAudio[sample.trackId] }));
       if (windows.some((window) => !window.audio)) throw new ProbeUnavailable("The recording audio could not be staged.");
       try {
@@ -93,8 +102,8 @@ export function createCtcProbeSession(
         );
       } catch (error) {
         if (error instanceof ProbeLanguageNotSupported) throw error;
-        // A failed probe retries once on the other host (ADR 0005), then the candidate stays held.
-        tried.push(active.hostId);
+        // A failed probe retries once on the other host (ADR 0005), then this candidate stays held.
+        if (!tried.includes(active.hostId)) tried.push(active.hostId);
         await release();
         if (retried) throw new ProbeUnavailable(error instanceof Error ? error.message : String(error));
         retried = true;
@@ -105,12 +114,7 @@ export function createCtcProbeSession(
   return {
     async score({ fragmentTexts, language, samples }) {
       if (unavailable) throw unavailable;
-      try {
-        return await run(fragmentTexts, language, samples);
-      } catch (error) {
-        if (error instanceof ProbeUnavailable) unavailable = error;
-        throw error;
-      }
+      return await run(fragmentTexts, language, samples);
     },
     release,
   };

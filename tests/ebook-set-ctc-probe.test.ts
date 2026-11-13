@@ -1,8 +1,9 @@
 import { after, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { readerFixture } from "./reader-fixture.ts";
@@ -37,7 +38,10 @@ const {
   setEbookSetDeps,
 } = await import("../server/ebook-set.ts");
 const { setPaused } = await import("../server/activity-pause.ts");
-const { audioFingerprint, stopAlignments } = await import("../server/alignment.ts");
+const { audioFingerprint, listAlignmentJobs, resetAlignmentRunnerForTests, stopAlignments } =
+  await import("../server/alignment.ts");
+const { iso3 } = await import("../server/language.ts");
+const { CONSENSUS_EBOOK_PREFIX } = await import("../server/ebook-set-consensus.ts");
 
 const originalFetch = globalThis.fetch;
 const PARAGRAPHS = 150;
@@ -103,6 +107,8 @@ function resetPool() {
 }
 
 beforeEach(() => {
+  // Drop leftover consensus jobs so Whisper probing does not wait on them forever.
+  sqlite.prepare("DELETE FROM alignment_jobs").run();
   resetEbookSetDeps();
   resetPool();
   requests = [];
@@ -274,7 +280,7 @@ test("candidates re-evaluated together share one staging, one host lease and one
   assert.equal(getAlignmentPoolCoordinator().activeOnHost("wsl"), 0, "the host is free again");
 });
 
-test("a top-k run frees the pool host while it downloads the next candidate", async () => {
+test("a top-k run downloads first then probes every candidate on one staging (MEDIUM-1)", async () => {
   const { workId } = seedWork();
   db.update(schema.works).set({ title: "Probe Book", author: "Ada Author" }).where(eq(schema.works.id, workId)).run();
   handler = ctcWorker({ Right: "forward", Wrong: "none" });
@@ -297,9 +303,126 @@ test("a top-k run frees the pool host while it downloads the next candidate", as
   });
   const result = await fetchTopKIntoEbookSet(workId);
   assert.deepEqual(result.downloaded.map((d) => d.status), ["accepted", "rejected"]);
-  assert.deepEqual(heldWhileDownloading, [0, 0], "no lease is held while a candidate downloads");
-  assert.equal(probeUploads().length, 2, "each candidate stages the recording again; the acoustic cache is shared");
+  assert.ok(heldWhileDownloading.every((n) => n === 0), "no lease is held while candidates download");
+  assert.equal(probeUploads().length, 1, "k candidates share one staging of the recording");
+  assert.equal(commands.filter((c) => c.command.startsWith("rm -rf")).length, 1);
   assert.equal(getAlignmentPoolCoordinator().activeOnHost("wsl"), 0);
+});
+
+test("consensus sync waits until the shared probe session releases (HIGH-1)", async () => {
+  const { workId } = seedWork();
+  const ids = [await seedEpub(workId, "Right"), await seedEpub(workId, "Other")];
+  for (const ebookId of ids) {
+    db.insert(schema.workEbookSetMembers)
+      .values({
+        workId,
+        ebookId,
+        status: "held",
+        holdReason: "awaiting_audio",
+        evidence: JSON.stringify({
+          outlier: {
+            passed: false,
+            reason: "no_spoken_samples",
+            spokenSampleCount: 0,
+            matchedSampleCount: 0,
+            anchorCount: 0,
+            forwardOrder: true,
+            samples: [],
+          },
+        }),
+        updatedAt: Date.now(),
+      })
+      .run();
+  }
+  const consensusId = `${CONSENSUS_EBOOK_PREFIX}${workId}`;
+  let syncDuringProbe = false;
+  handler = (path, body, host) => {
+    if (path === "/anchor" && listAlignmentJobs().some((job) => job.ebookId === consensusId)) {
+      syncDuringProbe = true;
+    }
+    return ctcWorker({ Right: "forward", Other: "forward" })(path, body, host);
+  };
+  const results = await reevaluateEbookSetForWork(workId);
+  assert.deepEqual(results.map((r) => r.status), ["accepted", "accepted"]);
+  assert.equal(syncDuringProbe, false, "no consensus job while the probe lease is held");
+  assert.ok(
+    listAlignmentJobs().some((job) => job.ebookId === consensusId),
+    "consensus sync runs once after the session releases",
+  );
+  assert.equal(getAlignmentPoolCoordinator().activeOnHost("wsl"), 0);
+});
+
+test("a score failure on one candidate does not latch the rest of the session (MEDIUM-3)", async () => {
+  const { workId } = seedWork();
+  const bad = await seedEpub(workId, "Broken");
+  const good = await seedEpub(workId, "Right");
+  for (const ebookId of [bad, good]) {
+    db.insert(schema.workEbookSetMembers)
+      .values({
+        workId,
+        ebookId,
+        status: "held",
+        holdReason: "awaiting_audio",
+        evidence: JSON.stringify({
+          outlier: {
+            passed: false,
+            reason: "no_spoken_samples",
+            spokenSampleCount: 0,
+            matchedSampleCount: 0,
+            anchorCount: 0,
+            forwardOrder: true,
+            samples: [],
+          },
+        }),
+        updatedAt: Date.now(),
+      })
+      .run();
+  }
+  // Broken fails on every host; Right must still be scored in the same session.
+  handler = (path, body, host) => {
+    if (String(body.fragments?.[1] ?? "").startsWith("Broken")) return new Response("{}", { status: 500 });
+    return ctcWorker({ Right: "forward" })(path, body, host);
+  };
+  await reevaluateEbookSetForWork(workId);
+  const members = Object.fromEntries(listEbookSetMembers(workId).map((m) => [m.ebookId, m]));
+  assert.equal(members[bad].status, "held");
+  assert.equal(members[bad].holdReason, "awaiting_worker");
+  assert.equal(members[good].status, "accepted");
+  assert.ok(probes().some((r) => String(r.body.fragments?.[1] ?? "").startsWith("Right")));
+});
+
+test("dispatch triedHosts are seeded so a broken first host is not retried (MEDIUM-3)", async () => {
+  const { workId } = seedWork();
+  const ebook = await seedEpub(workId, "Right");
+  health.down = ["wsl"];
+  let lisaCalls = 0;
+  handler = (path, body, host) => {
+    if (host === "lisa") {
+      lisaCalls++;
+      return new Response("{}", { status: 500 });
+    }
+    return ctcWorker({ Right: "forward" })(path, body, host);
+  };
+  const result = await evaluateEbookSetMember(workId, ebook);
+  assert.equal(result.status, "held");
+  assert.ok(lisaCalls > 0);
+  assert.ok(!probes().some((r) => r.host === "wsl"), "unreachable wsl is not retried after lisa fails");
+});
+
+test("uppercase and undetermined EPUB languages still probe as English (LOW-2)", async () => {
+  assert.equal(iso3("ENG"), "eng");
+  assert.equal(iso3("und"), "eng");
+  assert.equal(iso3("unknown"), "eng");
+  const fixture = readFileSync(fileURLToPath(new URL("./alignment-browser-fixture.ts", import.meta.url)), "utf8");
+  assert.match(fixture, /EBOOK_SET_PROBER\s*=\s*['"]whisper['"]/);
+  const { workId } = seedWork();
+  handler = ctcWorker({ Right: "forward" });
+  for (const language of ["ENG", "und"]) {
+    const ebook = await seedEpub(workId, "Right", language);
+    const result = await evaluateEbookSetMember(workId, ebook);
+    assert.equal(result.status, "accepted", language);
+    assert.equal(listEbookSetMembers(workId).find((m) => m.ebookId === ebook)?.holdReason, null);
+  }
 });
 
 test("lisa takes the probe when WSL is unreachable", async () => {
@@ -487,6 +610,32 @@ test("sampleFromCtcAnchor ignores matches outside the sample and rejects other e
   assert.throws(() => sampleFromCtcAnchor({ ...found, engine: "aeneas" }, window, 1, 10), /requested CTC engine/);
   assert.throws(() => sampleFromCtcAnchor({ ...found, outcome: "language_not_supported" }, window, 1, 10), /English/);
   assert.equal(sampleFromCtcAnchor({ ...found, match: { index: 3, score: 0.7 } }, window, 4, 10).match?.fragment, 12);
+});
+
+test("sampleFromCtcAnchor keeps lastFragment and alternate matches for selectAnchors (LOW-1)", () => {
+  const window = { time: 600, duration: 30 };
+  const found = {
+    engine: CTC_ENGINE,
+    outcome: "mapped" as const,
+    text: "a b c",
+    match: { index: 3, lastIndex: 4, score: 0.7 },
+    start: 610,
+    matches: [
+      { index: 3, lastIndex: 4, score: 0.7, start: 610 },
+      { index: 20, lastIndex: 20, score: 0.65, start: 612 },
+      { index: 1, lastIndex: 1, score: 0.9, start: 700 },
+    ],
+  };
+  const sample = sampleFromCtcAnchor(found, window, 2, 30, 60);
+  assert.equal(sample.match?.fragment, 6);
+  assert.equal(sample.match?.lastFragment, 9);
+  assert.deepEqual(
+    sample.matches?.map((m) => [m.fragment, m.lastFragment, m.start]),
+    [
+      [6, 9, 610],
+      [40, 41, 612],
+    ],
+  );
 });
 
 test("very long books are sent as groups of paragraphs and mapped back to paragraph numbers", () => {

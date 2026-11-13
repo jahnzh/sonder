@@ -35,9 +35,7 @@ import { normalizeReaderText } from "../src/reading-types.ts";
 import { searchEbooks, saveEbook } from "./ebooks.ts";
 import { join } from "node:path";
 import { mediaRoot } from "./storage.ts";
-
-const iso3 = (value: string) =>
-  value.length === 3 ? value : value.slice(0, 2).toLowerCase() === "en" ? "eng" : value.slice(0, 3).toLowerCase();
+import { iso3 } from "./language.ts";
 
 /**
  * Which prober scores a candidate's audio samples. CTC is the ADR 0006 prober; Whisper stays selectable until
@@ -346,6 +344,7 @@ export async function runOutlierCheckForEbook(
     done: true,
     spokenWords: scores[i].spokenWords,
     match: scores[i].match,
+    ...(scores[i].matches ? { matches: scores[i].matches } : {}),
   }));
   return evaluateOutlierCheck(samples, fragments, timeline, passages);
 }
@@ -381,6 +380,14 @@ export async function evaluateEbookSetMember(
   } = {},
   probe?: ProbeSession | null,
 ) {
+  // A shared probe session holds the recording lease across candidates; consensus
+  // alignment must wait until that session releases (HIGH-1 / ADR 0005 stages).
+  const deferSync = Boolean(probe);
+  const sync = async () => {
+    if (deferSync) return;
+    const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
+    await syncEbookSetConsensus(workId);
+  };
   const row = db
     .select()
     .from(s.ebookEditions)
@@ -423,8 +430,7 @@ export async function evaluateEbookSetMember(
       byteSize,
       evidence,
     });
-    const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
-    await syncEbookSetConsensus(workId);
+    await sync();
     return { status: "held" as const, evidence };
   }
   const injected = Boolean(deps.anchorSample);
@@ -480,8 +486,7 @@ export async function evaluateEbookSetMember(
       byteSize,
       evidence,
     });
-    const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
-    await syncEbookSetConsensus(workId);
+    await sync();
     return { status: "held" as const, evidence };
   }
   const evidence = await buildEvidence(
@@ -504,8 +509,7 @@ export async function evaluateEbookSetMember(
     evidence,
   });
   const result = { status, evidence };
-  const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
-  await syncEbookSetConsensus(workId);
+  await sync();
   return result;
 }
 
@@ -525,10 +529,10 @@ export async function registerUploadedEbookSetMember(
 export async function reevaluateEbookSetForWork(workId: string) {
   const members = listEbookSetMembers(workId).filter((m) => m.status === "held");
   if (!firstRecordingWithLocalAudio(workId)) return [];
-  return withProbeSession(workId, async (probe) => {
-    const results = [];
+  const results = await withProbeSession(workId, async (probe) => {
+    const out = [];
     for (const member of members)
-      results.push(
+      out.push(
         await evaluateEbookSetMember(
           workId,
           member.ebookId,
@@ -541,8 +545,11 @@ export async function reevaluateEbookSetForWork(workId: string) {
           probe,
         ),
       );
-    return results;
+    return out;
   });
+  const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
+  await syncEbookSetConsensus(workId);
+  return results;
 }
 
 export async function fetchTopKIntoEbookSet(
@@ -566,60 +573,74 @@ export async function fetchTopKIntoEbookSet(
       f.extension === "epub" &&
       cheapTitleAuthorMatch(work, { title: f.title, authors: f.authors }),
   );
-  const downloaded: { id: string; status: EbookSetMemberStatus }[] = [];
+  // Download first so the pool lease is not held across LibGen transfers (MEDIUM-1).
+  const pending: {
+    id: string;
+    sourceTitle: string;
+    sourceAuthor: string | null;
+    language: string | null;
+  }[] = [];
   const failures: string[] = [];
-  await withProbeSession(workId, async (probe) => {
-    for (const file of filtered) {
-      if (downloaded.length >= remaining) break;
-      const already = db
-        .select()
-        .from(s.workEbookSetMembers)
-        .where(eq(s.workEbookSetMembers.workId, workId))
-        .all()
-        .some((m) => m.ebookId === `${file.source}-${file.md5}`);
-      if (already) continue;
-      const ebookId = `${file.source}-${file.md5}`;
+  for (const file of filtered) {
+    if (pending.length >= remaining) break;
+    const already = db
+      .select()
+      .from(s.workEbookSetMembers)
+      .where(eq(s.workEbookSetMembers.workId, workId))
+      .all()
+      .some((m) => m.ebookId === `${file.source}-${file.md5}`);
+    if (already) continue;
+    const ebookId = `${file.source}-${file.md5}`;
+    try {
+      let saved: { id: string };
       try {
-        let saved: { id: string };
-        try {
-          saved = await save({ ...file, workId });
-        } catch (saveError) {
-          const message = (saveError as Error).message;
-          const existing = db
-            .select()
-            .from(s.ebookEditions)
-            .where(eq(s.ebookEditions.id, ebookId))
-            .get();
-          if (!existing || existing.workId !== workId) {
-            failures.push(message);
-            continue;
-          }
-          saved = { id: ebookId };
+        saved = await save({ ...file, workId });
+      } catch (saveError) {
+        const message = (saveError as Error).message;
+        const existingRow = db
+          .select()
+          .from(s.ebookEditions)
+          .where(eq(s.ebookEditions.id, ebookId))
+          .get();
+        if (!existingRow || existingRow.workId !== workId) {
+          failures.push(message);
+          continue;
         }
-        try {
-          const result = await evaluateEbookSetMember(
-            workId,
-            saved.id,
-            {
-              sourceTitle: file.title,
-              sourceAuthor: file.authors.join(", ") || null,
-              language: file.language,
-            },
-            probe,
-          );
-          downloaded.push({ id: saved.id, status: result.status });
-        } catch (evaluateError) {
-          failures.push((evaluateError as Error).message);
-          dropOrphanEbookEdition(saved.id, workId);
-        } finally {
-          // The next candidate has to be downloaded first; do not hold the host meanwhile.
-          await probe?.release();
-        }
-      } catch (error) {
-        failures.push((error as Error).message);
+        saved = { id: ebookId };
+      }
+      pending.push({
+        id: saved.id,
+        sourceTitle: file.title,
+        sourceAuthor: file.authors.join(", ") || null,
+        language: file.language,
+      });
+    } catch (error) {
+      failures.push((error as Error).message);
+    }
+  }
+  const downloaded: { id: string; status: EbookSetMemberStatus }[] = [];
+  await withProbeSession(workId, async (probe) => {
+    for (const candidate of pending) {
+      try {
+        const result = await evaluateEbookSetMember(
+          workId,
+          candidate.id,
+          {
+            sourceTitle: candidate.sourceTitle,
+            sourceAuthor: candidate.sourceAuthor,
+            language: candidate.language,
+          },
+          probe,
+        );
+        downloaded.push({ id: candidate.id, status: result.status });
+      } catch (evaluateError) {
+        failures.push((evaluateError as Error).message);
+        dropOrphanEbookEdition(candidate.id, workId);
       }
     }
   });
+  const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
+  await syncEbookSetConsensus(workId);
   return { downloaded, skipped: null, failures };
 }
 

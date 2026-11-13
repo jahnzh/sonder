@@ -61,6 +61,7 @@ import {
   stitch,
   wordCount,
 } from "./alignment-anchors.ts";
+import { iso3, languagesConflict } from "./language.ts";
 export { matchTitle } from "./alignment-pairings.ts";
 export function recordingContext(id: string) {
   const rec = db
@@ -215,47 +216,6 @@ export function removeProjectedMapsForWork(workId: string) {
       sqlite.prepare("DELETE FROM alignment_jobs WHERE id=?").run(job.id);
   }
 }
-// ISO 639 codes that mean "no usable language": treated like a missing one.
-const unknownLanguages = new Set(["und", "mis", "mul", "zxx", "unknown"]);
-const language = (value: string) => {
-  const code = value.toLowerCase().split(/[-_]/)[0];
-  if (unknownLanguages.has(code)) return "";
-  return (
-    {
-      english: "en",
-      french: "fr",
-      german: "de",
-      spanish: "es",
-      italian: "it",
-      portuguese: "pt",
-      norwegian: "no",
-      nob: "no",
-      nor: "no",
-      eng: "en",
-      fra: "fr",
-      fre: "fr",
-    }[code as "english"] || code
-  );
-};
-const iso3 = (value: string) =>
-  ({
-    en: "eng",
-    fr: "fra",
-    de: "deu",
-    es: "spa",
-    it: "ita",
-    pt: "por",
-    no: "nob",
-    nb: "nob",
-    da: "dan",
-    sv: "swe",
-    nl: "nld",
-  })[language(value) as "en"] || language(value) || "eng";
-/** Two languages conflict only when both are known and differ. */
-const languagesConflict = (a?: string | null, b?: string | null) => {
-  const x = a ? language(a) : "", y = b ? language(b) : "";
-  return !!x && !!y && x !== y;
-};
 const activeStatuses = ["queued", "copying", "processing"];
 export async function alignmentOptions(ebookId: string, recordingId: string) {
   const book = await extractBook(ebookId),

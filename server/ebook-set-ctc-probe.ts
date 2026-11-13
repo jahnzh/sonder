@@ -6,10 +6,20 @@ import { anchorResult, type AnchorResult } from "./alignment-worker-contract.ts"
 import { wordCount } from "./alignment-anchors.ts";
 import { CTC_ENGINE } from "./alignment-pool.ts";
 
+/** One located match the outlier rule / selectAnchors can consider (including alternate occurrences). */
+export type AnchorMatchScore = {
+  fragment: number;
+  lastFragment?: number;
+  score: number;
+  start: number;
+};
+
 /** What the outlier rule needs from one sample: how many words were heard and where they match in the book. */
 export type AnchorSampleScore = {
   spokenWords: number;
-  match: { fragment: number; score: number; start: number } | null;
+  match: AnchorMatchScore | null;
+  /** Alternate locations for repeated passages; same shape as anchored alignment samples. */
+  matches?: AnchorMatchScore[];
 };
 
 export type ProbeWindow = { trackId: string; audio: string; time: number; duration: number };
@@ -44,25 +54,45 @@ export function groupFragments(texts: string[]) {
 
 /**
  * Turns a worker answer into the sample the outlier rule reads. As in anchored alignment, a match whose audio
- * position lies outside the sample window is not evidence and counts as not found.
+ * position lies outside the sample window is not evidence and counts as not found. Alternate locations
+ * (`matches` / `lastFragment`) are kept so selectAnchors can disambiguate repeated passages (LOW-1).
  */
 export function sampleFromCtcAnchor(
   result: AnchorResult,
   window: { time: number; duration: number },
   group: number,
   blocks: number,
+  paragraphCount = blocks * group,
 ): AnchorSampleScore {
   if (result.engine !== CTC_ENGINE) throw new Error("The alignment worker did not use the requested CTC engine.");
   if (result.outcome === "language_not_supported") throw new ProbeLanguageNotSupported();
   if (result.outcome === "error") throw new Error("The speech recovery worker failed.");
+  const inSample = (index: number, start: number) =>
+    index < blocks && start >= window.time && start <= window.time + window.duration;
   const start = result.start ?? window.time;
-  const match =
-    result.match && result.match.index < blocks && start >= window.time && start <= window.time + window.duration
-      ? result.match
-      : null;
+  const match = result.match && inSample(result.match.index, start) ? result.match : null;
+  const lastFragment = (index: number, lastIndex: number | undefined) =>
+    lastIndex !== undefined && lastIndex >= index && lastIndex < blocks
+      ? Math.min(paragraphCount - 1, (lastIndex + 1) * group - 1)
+      : undefined;
+  const mapped = (item: { index: number; lastIndex?: number; score: number }, at: number): AnchorMatchScore => ({
+    fragment: item.index * group,
+    ...(lastFragment(item.index, item.lastIndex) === undefined
+      ? {}
+      : { lastFragment: lastFragment(item.index, item.lastIndex) }),
+    score: item.score,
+    start: at,
+  });
   return {
     spokenWords: result.text ? wordCount(result.text) : 0,
-    match: match ? { fragment: match.index * group, score: match.score, start } : null,
+    match: match ? mapped(match, start) : null,
+    ...(result.matches
+      ? {
+          matches: result.matches
+            .filter((item) => inSample(item.index, item.start))
+            .map((item) => mapped(item, item.start)),
+        }
+      : {}),
   };
 }
 
@@ -141,7 +171,7 @@ export async function scoreCtcSamples(
         SAMPLE_TIMEOUT_MS,
       ),
     );
-    scores.push(sampleFromCtcAnchor(result, window, group, blocks.length));
+    scores.push(sampleFromCtcAnchor(result, window, group, blocks.length, input.fragmentTexts.length));
   }
   return scores;
 }
