@@ -321,6 +321,28 @@ test("busy hosts hold the candidate after the wait and the pool is left free", a
   assert.equal(sleeps, 0);
 });
 
+test("when the pool stays busy only the first candidate of a run waits; the others are held at once", async () => {
+  const { workId } = seedWork();
+  const ids = [await seedEpub(workId, "Right"), await seedEpub(workId, "Other")];
+  for (const ebookId of ids)
+    db.insert(schema.workEbookSetMembers)
+      .values({ workId, ebookId, status: "held", holdReason: "awaiting_audio", evidence: JSON.stringify({ outlier: { passed: false, reason: "no_spoken_samples", spokenSampleCount: 0, matchedSampleCount: 0, anchorCount: 0, forwardOrder: true, samples: [] } }), updatedAt: Date.now() })
+      .run();
+  health.busy = ["wsl", "lisa"];
+  let sleeps = 0;
+  let clock = Date.now();
+  const realNow = Date.now;
+  Date.now = () => clock;
+  setEbookSetDeps({ probeWaitMs: 20_000, probeSleep: async (ms) => { sleeps++; clock += ms; } });
+  try {
+    const results = await reevaluateEbookSetForWork(workId);
+    assert.deepEqual(results.map((r) => r.status), ["held", "held"]);
+    assert.equal(sleeps, 4, "20 s in 5 s steps, once for the whole run");
+  } finally {
+    Date.now = realNow;
+  }
+});
+
 test("a probe waits for a busy host and then runs on it", async () => {
   const { workId } = seedWork();
   const ebook = await seedEpub(workId, "Right");

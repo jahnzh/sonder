@@ -37,6 +37,8 @@ export function createCtcProbeSession(
   let lease: CtcProbeLease | null = null;
   const tried: PoolHostId[] = [];
   let retried = false;
+  // Once the pool has refused this run, its other candidates stay held at once instead of each waiting again.
+  let unavailable: ProbeUnavailable | null = null;
 
   async function acquire(trackIds: Set<string>) {
     if (isPaused("alignment")) throw new ProbeUnavailable("Alignment is paused.");
@@ -64,38 +66,45 @@ export function createCtcProbeSession(
     await held?.release();
   }
 
+  async function run(fragmentTexts: string[], language: string, samples: ProbeSample[]) {
+    const trackIds = new Set(samples.map((sample) => sample.trackId));
+    const fingerprint = audioFingerprint(recordingId);
+    const token = process.env.ALIGNMENT_WORKER_TOKEN;
+    if (!token) throw new ProbeUnavailable("The alignment worker is not configured.");
+    for (;;) {
+      const active = lease ?? (await acquire(trackIds));
+      const windows = samples.map((sample) => ({ ...sample, audio: active.stagedAudio[sample.trackId] }));
+      if (windows.some((window) => !window.audio)) throw new ProbeUnavailable("The recording audio could not be staged.");
+      try {
+        return await scoreCtcSamples(
+          {
+            workerUrl: active.workerUrl.replace(/\/$/, ""),
+            token,
+            outputDir: active.outputDir,
+            recordingId,
+            audioFingerprint: fingerprint,
+          },
+          { fragmentTexts, language, windows },
+        );
+      } catch (error) {
+        if (error instanceof ProbeLanguageNotSupported) throw error;
+        // A failed probe retries once on the other host (ADR 0005), then the candidate stays held.
+        tried.push(active.hostId);
+        await release();
+        if (retried) throw new ProbeUnavailable(error instanceof Error ? error.message : String(error));
+        retried = true;
+      }
+    }
+  }
+
   return {
     async score({ fragmentTexts, language, samples }) {
-      const trackIds = new Set(samples.map((sample) => sample.trackId));
-      const fingerprint = audioFingerprint(recordingId);
-      const token = process.env.ALIGNMENT_WORKER_TOKEN;
-      if (!token) throw new ProbeUnavailable("The alignment worker is not configured.");
-      for (;;) {
-        const active = lease ?? (await acquire(trackIds));
-        const windows = samples.map((sample) => ({
-          ...sample,
-          audio: active.stagedAudio[sample.trackId],
-        }));
-        if (windows.some((window) => !window.audio)) throw new ProbeUnavailable("The recording audio could not be staged.");
-        try {
-          return await scoreCtcSamples(
-            {
-              workerUrl: active.workerUrl.replace(/\/$/, ""),
-              token,
-              outputDir: active.outputDir,
-              recordingId,
-              audioFingerprint: fingerprint,
-            },
-            { fragmentTexts, language, windows },
-          );
-        } catch (error) {
-          if (error instanceof ProbeLanguageNotSupported) throw error;
-          // A failed probe retries once on the other host (ADR 0005), then the candidate stays held.
-          tried.push(active.hostId);
-          await release();
-          if (retried) throw new ProbeUnavailable(error instanceof Error ? error.message : String(error));
-          retried = true;
-        }
+      if (unavailable) throw unavailable;
+      try {
+        return await run(fragmentTexts, language, samples);
+      } catch (error) {
+        if (error instanceof ProbeUnavailable) unavailable = error;
+        throw error;
       }
     },
     close: release,
