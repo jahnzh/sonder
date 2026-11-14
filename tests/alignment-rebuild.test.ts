@@ -374,17 +374,7 @@ test("the old map stays served until its rebuild publishes, and an equal rebuild
   assert.equal(stillServed.statusCode, 200, stillServed.body);
   assert.equal(stillServed.json().engine, aeneas);
   assert.equal(stillServed.json().rebuild.status, "error");
-
-  // "Language not supported" is an explicit outcome: it replaces the old map, which then no longer serves.
-  const unsupported = await oldMap("c", aeneas, "partial");
-  await queueEngineRebuilds();
-  void processAlignments();
-  await drive([unsupported.id], () => Response.json({ engine, outcome: "language_not_supported", elapsedSeconds: 1, stageTimings: {}, intervals: [] }));
-  assert.equal(alignmentJob(unsupported.id).outcome, "language_not_supported");
-  assert.equal(keptMap(unsupported.id), null);
-  const gone = await app.inject(`/api/alignments/${unsupported.id}/map`);
-  assert.equal(gone.statusCode, 410, gone.body);
-  assert.equal(gone.json().code, "alignment_language_not_supported");
+  // "Language not supported" over a kept map is rejected too (#379): see the rebuild guard tests below.
 });
 
 test("listening and reading positions are untouched by a rebuild", async () => {
@@ -674,7 +664,7 @@ test("publishProjectedMaps and backfill leave a failed rebuild's published_map i
   assert.ok(keptMap("explicit-keep-2"), "backfillDecision must treat a kept published_map as ready");
 });
 
-test("cancelling a rebuild still serves the kept map; empty projections delete the old projected row", async () => {
+test("cancelling a rebuild still serves the kept map; an empty projection does not replace a member's map (#379)", async () => {
   await reset();
   const old = await oldMap("a", aeneas, "ready");
   await queueEngineRebuilds();
@@ -737,8 +727,21 @@ test("cancelling a rebuild still serves the kept map; empty projections delete t
   });
   await publishProjectedMaps(workId, alignmentJob(consensusId));
   const after = allJobs().filter((job) => job.origin === "projected");
-  assert.ok(after.every((job) => job.ebookId !== "empty-2"), "a member with no projected intervals loses its old projected row");
   assert.ok(after.some((job) => job.ebookId === "empty-1" && job.generation === "new-empty-consensus"));
+  const member = after.find((job) => job.ebookId === "empty-2")!;
+  assert.equal(member.status, "error");
+  assert.equal(member.outcome, "rejected");
+  assert.match(member.error ?? "", /rejected: it mapped none of the text/);
+  const served = listServedAlignmentJobs().find((job) => job.id === member.id)!;
+  assert.equal(served.engine, aeneas, "the member keeps its old projection");
+  assert.ok(served.intervals.length > 0);
+  assert.equal(served.rebuild?.outcome, "rejected");
+
+  // A member whose old projection maps nothing has nothing to keep: its row is dropped as before.
+  sqlite.prepare("DELETE FROM alignment_jobs WHERE id=?").run(member.id);
+  putAlignmentJob({ ...member, status: "partial", outcome: "unsynced", error: null, intervals: [], coverage: 0, generation: "empty-old" });
+  await publishProjectedMaps(workId, alignmentJob(consensusId));
+  assert.ok(allJobs().every((job) => job.id !== member.id), "an empty old projection is dropped");
 });
 
 // ---- Rebuild guard (#379): an empty or much worse rebuild must not replace a good map ----
@@ -959,6 +962,207 @@ test("a consensus rebuild with too few anchors is rejected: the kept consensus a
   assert.equal(JSON.parse(keptMap(consensusId)!).engine, aeneas);
   assert.equal(allJobs().filter((job) => job.origin === "projected").length, 1,
     "the projections of the kept consensus are not dropped by a rejected rebuild");
+});
+
+test("rebuildRejection: a kept map without a usable stored coverage is counted from its intervals, never NaN%", () => {
+  const map = (intervals: number, coverage: number) => ({ intervals: Array.from({ length: intervals }, () => ({}) as never), coverage });
+  for (const coverage of [Number.NaN, undefined as unknown as number, null as unknown as number, Number.POSITIVE_INFINITY]) {
+    const reason = rebuildRejection(map(40, 0.4), map(80, coverage));
+    assert.match(reason ?? "", /it mapped 40% of the text, more than 2 points less than the previous map\. The previous map \(80% of the text mapped\)/, String(coverage));
+    assert.equal(rebuildRejection(map(79, 0.79), map(80, coverage)), null, `1 point worse publishes: ${coverage}`);
+    const empty = rebuildRejection(map(0, 0), map(80, coverage)) ?? "";
+    assert.match(empty, /mapped none of the text\. The previous map stays published\./);
+    assert.doesNotMatch(empty, /NaN/);
+    assert.equal(rebuildRejection(map(5, 0.05), map(0, coverage)), null, "anything over an empty kept map");
+  }
+});
+
+test("a rebuild that ends 'language not supported' keeps a kept map with intervals; a first job is unchanged (#379)", async () => {
+  await reset();
+  const unsupported = () => Response.json({ engine, outcome: "language_not_supported", elapsedSeconds: 1, stageTimings: {}, intervals: [] });
+  const old = await rebuildAgainst("a", 1, unsupported);
+  await assertRejected(old, /rejected: the alignment worker does not support this language\. The previous map \(100% of the text mapped\) stays published/);
+  assert.deepEqual(await queueEngineRebuilds(), { queued: 0, replanned: 0, projections: 0, skipped: 0, failed: 0 }, "not retried in a loop");
+
+  // A first job for a pair ends as before: nothing to keep, and /map answers 410.
+  await reset();
+  const fresh = await create("b");
+  setPaused("alignment", false);
+  void processAlignments();
+  await drive([fresh.id], unsupported);
+  assert.equal(alignmentJob(fresh.id).outcome, "language_not_supported");
+  const gone = await app.inject(`/api/alignments/${fresh.id}/map`);
+  assert.equal(gone.statusCode, 410, gone.body);
+  assert.equal(gone.json().code, "alignment_language_not_supported");
+});
+
+test("retrying a rejected rebuild does the work again from the start while the kept map stays served (#379)", async () => {
+  await reset();
+  const old = await rebuildAgainst("a", 1, () =>
+    Response.json({ engine, outcome: "mapped", elapsedSeconds: 1, stageTimings: {}, intervals: [] }));
+  assert.equal(alignmentJob(old.id).outcome, "rejected");
+  const rejected = alignmentJob(old.id);
+  // Worker requests are held from here, so the retry is seen while it runs.
+  autoAnswer = null;
+  const before = requests.length;
+  const resume = await app.inject({ method: "PATCH", url: `/api/alignments/${old.id}`, payload: { action: "resume" } });
+  assert.equal(resume.statusCode, 200, resume.body);
+  const queued = resume.json() as AlignmentJob;
+  assert.equal(queued.status, "queued");
+  assert.equal(queued.outcome, undefined);
+  assert.deepEqual(queued.sectionsDone, []);
+  assert.deepEqual(queued.intervals, []);
+  assert.equal(queued.progress, 0);
+  assert.notEqual(queued.generation, rejected.generation);
+  assert.deepEqual(queued.rebuildOf, rejected.rebuildOf);
+  await until(() => held.length === 1, "the retry on a worker");
+  assert.equal(JSON.parse(keptMap(old.id)!).engine, aeneas, "the kept map stays while the retry runs");
+  const during = await app.inject(`/api/alignments/${old.id}/map`);
+  assert.equal(during.json().engine, aeneas);
+  assert.equal(during.json().intervals.length, old.intervals.length);
+
+  await drive([old.id], (entry) => mapped(entry.request));
+  assert.equal(requests.length - before, old.pairings.length, "every section is aligned again");
+  const rebuilt = alignmentJob(old.id);
+  assert.equal(rebuilt.status, "partial", rebuilt.error ?? undefined);
+  assert.equal(rebuilt.coverage, 1);
+  assert.equal(keptMap(old.id), null, "the retried rebuild publishes");
+  assert.equal((await app.inject(`/api/alignments/${old.id}/map`)).json().engine, engine);
+});
+
+test("the Reading sync card offers Resume / retry for a stopped or rejected rebuild, judged by the rebuild (#379)", async () => {
+  const { readingSyncControls, rejectedRebuildReason } = await import("../src/reading-sync-controls.ts");
+  const rebuild = (status: AlignmentJob["status"], outcome?: AlignmentJob["outcome"]) =>
+    ({ status, progress: 1, engine, error: outcome === "rejected" ? "The rebuild was rejected: it mapped none of the text." : null,
+      ...(outcome ? { outcome } : {}), updatedAt: 1 });
+  const served = (rebuildState?: ReturnType<typeof rebuild>, origin?: AlignmentJob["origin"]) =>
+    ({ status: "ready", ...(rebuildState ? { rebuild: rebuildState } : {}), ...(origin ? { origin } : {}) }) as AlignmentJob;
+  assert.equal(readingSyncControls(served(rebuild("error", "rejected"))), "resume", "a rejected rebuild over a kept ready map");
+  assert.equal(readingSyncControls(served(rebuild("paused"))), "resume");
+  assert.equal(readingSyncControls(served(rebuild("cancelled"))), "resume");
+  assert.equal(readingSyncControls(served(rebuild("processing"))), "rebuild", "a running rebuild keeps today's controls");
+  assert.equal(readingSyncControls(served()), "rebuild");
+  assert.equal(readingSyncControls(served(rebuild("error", "rejected"), "projected")), "rebuild", "a projection is not retried on its own");
+  assert.equal(readingSyncControls(undefined), "prepare");
+  assert.equal(readingSyncControls({ status: "processing" } as AlignmentJob), "running");
+  assert.equal(readingSyncControls({ status: "error" } as AlignmentJob), "resume");
+  assert.match(rejectedRebuildReason(served(rebuild("error", "rejected"))) ?? "", /mapped none of the text/);
+  assert.equal(rejectedRebuildReason(served(rebuild("error"))), null);
+  assert.equal(rejectedRebuildReason(served()), null);
+});
+
+/** An ebook set of reader-fixture `members` with one recording of `duration` seconds, and its consensus job. */
+async function ebookSet(name: string, members: string[], duration?: number) {
+  const workId = `work-${name}`;
+  db.insert(schema.works).values({ id: workId, title: name, author: "Author", description: "", genre: "", year: 2026 }).run();
+  db.insert(schema.editions).values({ id: `edition-${name}`, workId, cover: "", narrator: "", rating: 0, sourceLabel: "", language: "en" }).run();
+  db.insert(schema.recordings).values({ id: `rec-${name}`, editionId: `edition-${name}` }).run();
+  const audio = join(process.env.MEDIA_ROOT!, `${name}.wav`);
+  writeFileSync(audio, `audio ${name}`);
+  for (const ebookId of members) {
+    const file = join(process.env.MEDIA_ROOT!, `${ebookId}.epub`);
+    writeFileSync(file, await readerFixture());
+    db.insert(schema.ebookEditions).values({ id: ebookId, workId, format: "epub", source: file }).run();
+    db.insert(schema.workEbookSetMembers).values({
+      workId, ebookId, status: "accepted", holdReason: null, sourceTitle: ebookId, sourceAuthor: null, language: "en", byteSize: 1,
+      evidence: JSON.stringify({ sharedSentenceCount: 10, uniqueSentenceCount: 0, audioSupportedCoverage: 0.9,
+        outlier: { passed: true, reason: "ok", spokenSampleCount: 4, matchedSampleCount: 4, anchorCount: 4, forwardOrder: true, samples: [] },
+        language: "en", byteSize: 1 }),
+      updatedAt: Date.now(),
+    }).run();
+  }
+  const paragraphs = (await extractBook(members[0])).sections.flatMap((section) => section.paragraphs).length;
+  db.insert(schema.tracks).values({ id: `track-${name}`, recordingId: `rec-${name}`, title: `${name}.m4b`, index: 0,
+    duration: duration ?? spoken(paragraphs) + 20, chapters: [], source: audio, sourceType: "local" }).run();
+  const consensusId = (await syncEbookSetConsensus(workId)).consensus!.jobId!;
+  const sentences = (await extractBook(consensusEbookId(workId))).sections[0].paragraphs;
+  // The consensus map an older engine made from the first `count` sentences, and its projections.
+  const publishOld = async (count: number, start = 30) => {
+    const queued = alignmentJob(consensusId);
+    const old: AlignmentJob = {
+      ...queued, status: "partial", engine: aeneas, progress: 1, generation: `old-${name}`,
+      intervals: sentences.slice(0, count).map((p, i) => ({ paragraphId: p.id, section: 0, trackId: `track-${name}`, start: start + i * 5, end: start + 4 + i * 5, confidence: 0.65 })),
+      coverage: count / sentences.length, anchoring: { ...queued.anchoring!, stage: "done" },
+    };
+    delete old.ctcValidationVersion;
+    putAlignmentJob(old);
+    await publishProjectedMaps(workId, alignmentJob(consensusId));
+  };
+  return { workId, consensusId, sentences, publishOld };
+}
+const projectionOf = (ebookId: string) => allJobs().find((job) => job.origin === "projected" && job.ebookId === ebookId);
+const servedProjectionOf = async (ebookId: string) =>
+  (await app.inject(`/api/alignments?ebookId=${ebookId}&summary=1`)).json().jobs
+    .find((job: AlignmentJob) => job.origin === "projected") as AlignmentJob & { intervalCount?: number };
+
+test("an accepted consensus rebuild does not replace a member projection it makes much worse (#379)", async () => {
+  await reset();
+  const { workId, consensusId, publishOld } = await ebookSet("degrade", ["degrade-1", "degrade-2"]);
+  await publishOld(4);
+  const kept = projectionOf("degrade-2")!;
+  assert.equal(kept.intervals.length, 4);
+  assert.equal(projectionOf("degrade-1")!.intervals.length, 4);
+  // The rebuilt consensus keeps its coverage overall but no longer reaches most of member 2's text.
+  const row = sqlite.prepare("SELECT projections FROM work_ebook_set WHERE work_id=?").get(workId) as { projections: string };
+  const projections = JSON.parse(row.projections) as Record<string, (string | null)[]>;
+  projections["degrade-2"] = projections["degrade-2"].map((id, i) => (i === 0 ? id : null));
+  sqlite.prepare("UPDATE work_ebook_set SET projections=? WHERE work_id=?").run(JSON.stringify(projections), workId);
+
+  assert.equal((await queueEngineRebuilds()).queued, 1);
+  autoAnswer = anchoredWorker;
+  setPaused("alignment", false);
+  void processAlignments();
+  await until(() => !active(consensusId), "consensus rebuild", 10_000);
+  await until(() => projectionOf("degrade-1")?.engine === engine, "member 1 regenerated");
+  const consensus = alignmentJob(consensusId);
+  assert.equal(consensus.status, "partial", consensus.error ?? undefined);
+  assert.equal(keptMap(consensusId), null, "the consensus itself publishes");
+  assert.ok(projectionOf("degrade-1")!.intervals.length > 4, "the member it improves publishes");
+
+  const member = projectionOf("degrade-2")!;
+  assert.equal(member.status, "error");
+  assert.equal(member.outcome, "rejected");
+  assert.match(member.error ?? "", /rejected: it mapped \d+% of the text, more than 2 points less than the previous map/);
+  assert.equal(JSON.parse(keptMap(member.id)!).engine, aeneas);
+  const served = await app.inject(`/api/alignments/${member.id}/map`);
+  assert.equal(served.statusCode, 200, served.body);
+  assert.equal(served.json().engine, aeneas);
+  assert.equal(served.json().intervals.length, kept.intervals.length);
+  assert.equal(served.json().rebuild.outcome, "rejected");
+  const listed = await servedProjectionOf("degrade-2");
+  assert.equal(listed.engine, aeneas);
+  assert.equal(listed.rebuild?.outcome, "rejected");
+});
+
+test("a rejected consensus rebuild shows its rejection on each member's Reading sync card (#379)", async () => {
+  await reset();
+  const { readingSyncControls, rejectedRebuildReason } = await import("../src/reading-sync-controls.ts");
+  // Too short for three anchors: the CTC early-unsynced path.
+  const { consensusId, publishOld } = await ebookSet("rejected-set", ["rejected-set-1", "rejected-set-2"], 40);
+  await publishOld(2, 5);
+  const before = projectionOf("rejected-set-1")!;
+  assert.equal(before.intervals.length, 2);
+  assert.equal((await queueEngineRebuilds()).queued, 1);
+  autoAnswer = (entry) => entry.url.endsWith("/anchor")
+    ? Response.json({ engine, outcome: "unsynced", stageTimings: { acousticEncoding: 0.25 }, match: null, start: entry.request.start, text: "" })
+    : anchoredWorker(entry);
+  setPaused("alignment", false);
+  void processAlignments();
+  await until(() => !active(consensusId), "rejected consensus rebuild", 10_000);
+  assert.equal(alignmentJob(consensusId).outcome, "rejected");
+  for (const ebookId of ["rejected-set-1", "rejected-set-2"]) {
+    const listed = await servedProjectionOf(ebookId);
+    assert.equal(listed.engine, aeneas, "the member keeps its projection");
+    assert.equal(listed.status, "partial");
+    assert.equal(listed.rebuild?.status, "error");
+    assert.equal(listed.rebuild?.outcome, "rejected");
+    assert.match(rejectedRebuildReason(listed) ?? "", /rejected: it mapped none of the text/, "the card shows the reason");
+    assert.equal(readingSyncControls(listed), "rebuild");
+    const map = await app.inject(`/api/alignments/${listed.id}/map`);
+    assert.equal(map.statusCode, 200, map.body);
+    assert.equal(map.json().intervals.length, before.intervals.length);
+  }
+  assert.deepEqual(await queueEngineRebuilds(), { queued: 0, replanned: 0, projections: 0, skipped: 0, failed: 0 });
 });
 
 test("manual anchor edits are refused while a kept published_map is served", async () => {

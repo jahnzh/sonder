@@ -50,8 +50,8 @@ export const usableMap = (job: Pick<AlignmentJob, "status">) => job.status === "
 
 /**
  * A write of this job state publishes it and drops the kept map: a finished map, or an explicit "language not
- * supported" outcome. A failed or cancelled rebuild keeps the old map, and so does a finished one that
- * `rebuildRejection` refuses: `store` turns that into a rejected (error) state before this is asked.
+ * supported" outcome. A failed or cancelled rebuild keeps the old map, and so does a finished or unsupported
+ * one that `rebuildRejection` refuses: `store` turns that into a rejected (error) state before this is asked.
  */
 export const publishesMap = (job: Pick<AlignmentJob, "status" | "outcome">) =>
   usableMap(job) || (job.status === "error" && job.outcome === "language_not_supported");
@@ -65,19 +65,37 @@ export const REBUILD_MAX_COVERAGE_DROP = 0.02;
 const percent = (fraction: number) => `${Math.round(fraction * 100)}%`;
 
 /**
+ * The kept map's coverage. An older stored map can lack a usable number; coverage is mapped sentences over the
+ * text's sentences, and the rebuild maps the same text, so the kept intervals are counted at the rebuild's
+ * coverage per interval. Null when that cannot be known (the rebuild mapped nothing).
+ */
+function keptCoverage(job: Pick<AlignmentJob, "intervals" | "coverage">, kept: Pick<AlignmentJob, "intervals" | "coverage">) {
+  if (Number.isFinite(kept.coverage)) return kept.coverage;
+  if (!kept.intervals.length) return 0;
+  return job.intervals.length && Number.isFinite(job.coverage)
+    ? Math.min(1, (kept.intervals.length * job.coverage) / job.intervals.length) : null;
+}
+
+/**
  * Why a finished rebuild must not replace `kept` (the map the row serves), or null when it may publish. Never
  * publishes a map without intervals over one that has some, nor one that covers more than
- * REBUILD_MAX_COVERAGE_DROP less of the text. The reason is shown to the user on the Reading sync card.
+ * REBUILD_MAX_COVERAGE_DROP less of the text, nor a "language not supported" result over a map with
+ * intervals. The reason is shown to the user on the Reading sync card.
  * Nothing kept (a first map for the pair) is the caller's case: it always publishes.
  */
 export function rebuildRejection(
-  job: Pick<AlignmentJob, "intervals" | "coverage">,
+  job: Pick<AlignmentJob, "intervals" | "coverage" | "outcome">,
   kept: Pick<AlignmentJob, "intervals" | "coverage">,
 ): string | null {
-  const keptText = `The previous map (${percent(kept.coverage)} of the text mapped) stays published.`;
+  const coverage = keptCoverage(job, kept);
+  const keptText = coverage === null ? "The previous map stays published."
+    : `The previous map (${percent(coverage)} of the text mapped) stays published.`;
+  if (job.outcome === "language_not_supported")
+    return kept.intervals.length
+      ? `The rebuild was rejected: the alignment worker does not support this language. ${keptText}` : null;
   if (!job.intervals.length && kept.intervals.length)
     return `The rebuild was rejected: it mapped none of the text. ${keptText}`;
-  if (Number.isFinite(kept.coverage) && kept.coverage - job.coverage > REBUILD_MAX_COVERAGE_DROP + 1e-9)
+  if (coverage !== null && coverage - job.coverage > REBUILD_MAX_COVERAGE_DROP + 1e-9)
     return `The rebuild was rejected: it mapped ${percent(job.coverage)} of the text, more than ${
       Math.round(REBUILD_MAX_COVERAGE_DROP * 100)} points less than the previous map. ${keptText}`;
   return null;

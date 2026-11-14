@@ -16,9 +16,10 @@ import {
   deleteAlignmentJob,
   listAlignmentJobs,
   listServedAlignmentJobs,
-  putAlignmentJob,
+  putProjectedRebuild,
   removeProjectedMapsForWork,
 } from "./alignment.ts";
+import { usableMap } from "./alignment-rebuild.ts";
 import {
   listEbookSetMembers,
   type EbookSetMemberEvidence,
@@ -299,6 +300,8 @@ export function setDefaultEbookOverride(workId: string, ebookId: string | null) 
 export async function publishProjectedMaps(workId: string, consensusJob: AlignmentJob) {
   const state = readState(workId);
   if (!state || consensusJob.id !== state.consensusJobId) return;
+  if (consensusJob.status === "error" && consensusJob.outcome === "rejected")
+    return showRejectedConsensus(workId, consensusJob);
   if (!["partial", "ready"].includes(consensusJob.status)) return;
   const members = listEbookSetMembers(workId).filter(
     (member) => member.status === "accepted",
@@ -330,11 +333,15 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
     );
     const projectedId = projectedJobId(workId, member.ebookId, consensusJob.recordingId);
     if (!intervals.length) {
-      // A projection of an earlier consensus map (an older engine, #277) is replaced
-      // even when the new one maps nothing for this edition.
-      const stale = listAlignmentJobs().find((job) => job.id === projectedId);
-      if (stale && stale.generation !== consensusJob.generation) deleteAlignmentJob(stale.id);
-      continue;
+      // A projection of an earlier consensus map (an older engine, #277) that maps nothing for this
+      // edition is dropped, unless it maps something now: then the empty one is written below and
+      // rejected, and the member keeps its map (#379).
+      const stale = listServedAlignmentJobs().find((job) => job.id === projectedId);
+      if (!stale?.intervals.length || stale.fingerprint !== memberBook.fingerprint ||
+        stale.audioFingerprint !== consensusJob.audioFingerprint) {
+        if (stale && stale.generation !== consensusJob.generation) deleteAlignmentJob(stale.id);
+        continue;
+      }
     }
     // (ebook, recording) is unique: a cancelled or failed prepare of this
     // ebook still holds that slot, and the projection takes its place — unless
@@ -350,7 +357,7 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
     const sectionsDone = [
       ...new Set(intervals.map((interval) => interval.section)),
     ].sort((a, b) => a - b);
-    putAlignmentJob({
+    putProjectedRebuild({
       id: projectedId,
       generation: consensusJob.generation,
       ebookId: member.ebookId,
@@ -373,6 +380,23 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
       pairings: [],
       mode: "anchored",
       origin: "projected",
+    });
+  }
+}
+
+/**
+ * A consensus rebuild that was rejected (#379) regenerates no projection: each member keeps its projected map,
+ * and its row records the rejection so the member's Reading sync card shows it.
+ */
+function showRejectedConsensus(workId: string, consensusJob: AlignmentJob) {
+  for (const member of listEbookSetMembers(workId).filter((member) => member.status === "accepted")) {
+    const id = projectedJobId(workId, member.ebookId, consensusJob.recordingId);
+    const existing = listAlignmentJobs().find((job) => job.id === id);
+    if (!existing || !(usableMap(existing) || alignmentKeepsPublishedMap(id))) continue;
+    putProjectedRebuild({
+      ...existing, generation: consensusJob.generation, engine: consensusJob.engine, status: "error",
+      outcome: "rejected", error: consensusJob.error, warning: null, progress: consensusJob.progress,
+      intervals: [], sectionsDone: [], coverage: 0, unsyncedPassages: undefined, updatedAt: Date.now(),
     });
   }
 }

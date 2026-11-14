@@ -9,6 +9,8 @@ import {
   readFileSync,
   writeFileSync,
   renameSync,
+  readdirSync,
+  rmSync,
 } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
@@ -219,13 +221,14 @@ function keptMapOf(id: string) {
   return row?.published_map ? (JSON.parse(row.published_map) as AlignmentJob) : null;
 }
 /**
- * A finished rebuild that is empty or much worse than the kept map is stored as rejected (#379): status
- * "error" with outcome "rejected" and the reason in `error`, so it keeps the kept map like any failed rebuild
- * (older clients already read an error status) and the automatic rebuild queue passes it by (it already
- * holds the current engine). A first map (nothing kept) is never rejected.
+ * A finished rebuild that is empty or much worse than the kept map, or that ends "language not supported" over
+ * a kept map with intervals, is stored as rejected (#379): status "error" with outcome "rejected" and the
+ * reason in `error`, so it keeps the kept map like any failed rebuild (older clients already read an error
+ * status) and the automatic rebuild queue passes it by (it already holds the current engine). A first map
+ * (nothing kept) is never rejected.
  */
 function rejectWorseRebuild(job: AlignmentJob) {
-  if (!usableMap(job)) return;
+  if (!usableMap(job) && !(job.status === "error" && job.outcome === "language_not_supported")) return;
   const kept = keptMapOf(job.id);
   const reason = kept && rebuildRejection(job, kept);
   if (!reason) return;
@@ -271,6 +274,21 @@ function dropKeptMap(id: string) {
 }
 export function putAlignmentJob(job: AlignmentJob) {
   return store(job);
+}
+/**
+ * Writes a regenerated ebook-set projection as a rebuild of the member's existing map (#379): a usable existing
+ * map of the same files is kept for serving first, so `store` publishes the projection only when
+ * `rebuildRejection` allows it. A rejected (error) write leaves the member's map served with the rejection.
+ */
+export function putProjectedRebuild(job: AlignmentJob) {
+  return sqlite.transaction(() => {
+    const exists = sqlite.prepare("SELECT 1 FROM alignment_jobs WHERE id=?").get(job.id);
+    const old = exists && !alignmentKeepsPublishedMap(job.id) ? alignmentJob(job.id) : null;
+    if (old && usableMap(old) && old.intervals.length && old.fingerprint === job.fingerprint &&
+      old.audioFingerprint === job.audioFingerprint)
+      sqlite.prepare("UPDATE alignment_jobs SET published_map=? WHERE id=?").run(JSON.stringify(old), job.id);
+    return store(job);
+  }).immediate();
 }
 export function deleteAlignmentJob(id: string) {
   sqlite.prepare("DELETE FROM alignment_jobs WHERE id=?").run(id);
@@ -2089,11 +2107,23 @@ export function registerAlignment(app: FastifyInstance) {
       .object({ action: z.enum(["pause", "resume", "cancel", "review"]) })
       .parse(req.body);
     writeMeta.set(req, { action });
-    const job = alignmentJob(id);
+    let job = alignmentJob(id);
     // Older client builds can still send review; maps remain estimated.
     if (action === "review") {
       writeMeta.set(req, { action, jobId: job.id, jobStatus: job.status });
       return job;
+    }
+    // A rejected rebuild (#379) finished all its work: a retry plans it again from the start, and the kept map
+    // stays served until the new run publishes.
+    if (action === "resume" && job.outcome === "rejected" && job.origin !== "projected") {
+      const retry = await rebuildPlan(job);
+      if (job.rebuildOf) retry.rebuildOf = job.rebuildOf;
+      job = retry;
+      // The run's section and window results are cached in the job folder; the retry must not read them back.
+      const folder = join(mediaRoot, "alignment", job.id);
+      if (existsSync(folder))
+        for (const name of readdirSync(folder))
+          if (/^(section|window)-.*\.json$/.test(name)) rmSync(join(folder, name), { force: true });
     }
     job.status = action === "pause" ? "paused" : action === "cancel" ? "cancelled" : "queued";
     job.error = null;
