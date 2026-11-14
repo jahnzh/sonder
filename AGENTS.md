@@ -96,7 +96,7 @@ Agent skills setup follows the main flow from https://www.aihero.dev/skills-setu
 
 ## Coordinator shell helpers (Orca)
 
-Tracked under `scripts/orca/` (commit `send-agent.sh`, `check-workers.sh`, `watch-inbox.sh`, `tick.sh`, `note.sh`); thin wrappers at `artifacts/orca/*.sh` exec those paths so existing coordinator commands keep working. `watch-inbox.sh` uses `${XDG_RUNTIME_DIR:-/tmp}/sonder-watch-inbox-<run>.lock` (exclusive `flock`), `.pid` (holder PID for a second instance, exiting 0 with 'already running' if live), and `.log` (append-only record of consumed messages).
+Tracked under `scripts/orca/` (commit `send-agent.sh`, `check-workers.sh`, `watch-inbox.sh`, `watchdog.sh`, `tick.sh`, `note.sh`); `check-workers.sh`, `watch-inbox.sh` and `watchdog.sh` take the run id as their first argument (`bash scripts/orca/check-workers.sh <run_id>`) and print a usage line and exit 2 without it: there is no default run. Thin wrappers at `artifacts/orca/*.sh` exec those paths so existing coordinator commands keep working. `watch-inbox.sh` uses `${XDG_RUNTIME_DIR:-/tmp}/sonder-watch-inbox-<run>.lock` (exclusive `flock`), `.pid` (holder PID for a second instance, exiting 0 with 'already running' if live), and `.log` (append-only record of consumed messages).
 
 ## Spawning subagents
 
