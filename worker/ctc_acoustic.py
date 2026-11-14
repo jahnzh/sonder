@@ -168,6 +168,14 @@ _model_folder = None
 _lock = threading.Lock()
 
 
+def _share_cpu_threads(model, env=None):
+    """On a CPU host, requests running at once split the cores instead of each claiming all of them."""
+    from deadline import worker_slots
+    slots = worker_slots(env)
+    if model.device.type == "cpu" and slots > 1:
+        model.torch.set_num_threads(max(1, (os.cpu_count() or 1) // slots))
+
+
 def resident_model(folder):
     """One model per worker process; never silently switch checkpoint roots."""
     global _model, _model_folder
@@ -175,6 +183,7 @@ def resident_model(folder):
     with _lock:
         if _model is None:
             _model = AcousticModel(folder)
+            _share_cpu_threads(_model)
             _model_folder = folder
         elif folder != _model_folder:
             raise ValueError("The resident CTC model belongs to another media root.")

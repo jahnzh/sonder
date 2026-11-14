@@ -8,8 +8,16 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { sqlite } from "./db.ts";
 
-/** Books aligned at the same time. With one resident model per device this is one book per pool host. */
+/** Books aligned at the same time by default: one per pool host when each worker has one slot. */
 export const ALIGNMENT_ADMITTED_BOOKS = 2;
+/**
+ * Books aligned at the same time: ALIGNMENT_PARALLEL_BOOKS (1-32), set to the pool's total worker slots.
+ * A book admitted while every slot is taken waits ADMISSION_RETRY_MS and tries again.
+ */
+export function admittedBooks(env: NodeJS.ProcessEnv = process.env) {
+  const value = Number(env.ALIGNMENT_PARALLEL_BOOKS);
+  return Number.isInteger(value) && value >= 1 && value <= 32 ? value : ALIGNMENT_ADMITTED_BOOKS;
+}
 /** The production (N150) worker has one gate: jobs that run on it stay serial, as before. */
 export const ALIGNMENT_LOCAL_WORKER_JOBS = 1;
 /** A pool host keeps one resident CTC model per device and runs one job on it at a time. */
@@ -197,7 +205,7 @@ export class AlignmentScheduler {
       const reservedRecordings = new Set<string>();
       let reservedLocal = 0;
       for (const candidate of this.deps.candidates()) {
-        if (this.inFlight.size + reserved >= ALIGNMENT_ADMITTED_BOOKS) break;
+        if (this.inFlight.size + reserved >= admittedBooks()) break;
         const generation = candidate.generation ?? "";
         if (this.inFlight.has(candidate.id)) continue;
         const running = [...this.inFlight.values()].map(({ candidate }) => candidate);

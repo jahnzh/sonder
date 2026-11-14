@@ -50,7 +50,7 @@ import {
   usableMap,
 } from "./alignment-rebuild.ts";
 import {
-  ALIGNMENT_ADMITTED_BOOKS,
+  admittedBooks,
   AlignmentScheduler,
   RESIDENT_MODELS_PER_DEVICE,
   StaleAlignmentRun,
@@ -1789,7 +1789,7 @@ const scheduler: AlignmentScheduler = new AlignmentScheduler({
 });
 /** Scheduler settings recorded on each job it runs (#276). */
 export const alignmentSchedulerConfig = () => ({
-  admittedBooks: ALIGNMENT_ADMITTED_BOOKS,
+  admittedBooks: admittedBooks(),
   residentModelsPerDevice: RESIDENT_MODELS_PER_DEVICE,
 });
 /**
