@@ -122,7 +122,7 @@ export async function acquire(
     workId: metadata.workId || null,
     language: metadata.language || null,
     narrator: metadata.narrator || null,
-    status: "checking",
+    status: "checking" as const,
     progress: 0,
     error: null,
     bookId: null,
