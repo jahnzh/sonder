@@ -203,7 +203,7 @@ test("a ready summary with an active rebuild.status keeps polling", async (conte
       rebuild: {
         status: checks < 3 ? "processing" : "ready",
         progress: checks < 3 ? 0.5 : 1,
-        engine: "ctc-wav2vec2-base-960h-torchaudio-2.8-v1",
+        engine: "ctc-wav2vec2-base-960h-torchaudio-2.8-v2",
         error: null,
         updatedAt: 100 + checks,
       },

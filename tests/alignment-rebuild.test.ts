@@ -33,7 +33,7 @@ const { consensusEbookId, publishProjectedMaps, syncEbookSetConsensus } = await 
 const { resetAlignmentPoolCoordinator, setAlignmentPoolDepsForTests } = await import("../server/alignment-pool.ts");
 type AlignmentJob = ReturnType<typeof alignmentJob>;
 
-const engine = "ctc-wav2vec2-base-960h-torchaudio-2.8-v1";
+const engine = "ctc-wav2vec2-base-960h-torchaudio-2.8-v2";
 const aeneas = "aeneas-1.7.3";
 const hosts = [
   { id: "wsl" as const, sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test" },
@@ -265,6 +265,16 @@ test("maps of an older engine are queued for rebuild once, also after a restart,
   assert.equal(requests.length, 0);
   assert.equal(alignmentSchedulerForTests().running().length, 0);
   assert.equal(alignmentJob(ready.id).status, "queued");
+});
+
+test("maps of the first CTC engine, which joined partly cached audio out of order, are rebuilt", async () => {
+  await reset();
+  const first = await oldMap("a", "ctc-wav2vec2-base-960h-torchaudio-2.8-v1", "partial");
+  assert.deepEqual(await queueEngineRebuilds(), { queued: 1, replanned: 0, projections: 0, skipped: 0, failed: 0 });
+  const job = alignmentJob(first.id);
+  assert.equal(job.engine, engine);
+  assert.equal(job.rebuildOf?.engine, "ctc-wav2vec2-base-960h-torchaudio-2.8-v1");
+  assert.ok(keptMap(first.id), "the old map is served until the rebuild publishes");
 });
 
 test("new work goes ahead of rebuilds, rebuilds run oldest engine first, and a running rebuild finishes", async () => {

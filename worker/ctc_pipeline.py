@@ -10,6 +10,7 @@ from concurrent.futures import ProcessPoolExecutor
 import ctc_path
 import ctc_candidates
 import ctc_prefetch
+from deadline import worker_slots
 from ctc_acoustic import (ACOUSTIC_MICROBATCH, CONTEXT, CORE, ENGINE, RESIDENT_MODELS_PER_DEVICE, SAMPLE_RATE, STRIDE,
                           Microbatch, resident_model)
 from ctc_cache import AcousticCache, audio_digest, budget_bytes, file_version
@@ -39,9 +40,9 @@ class ResidentTask:
         self.done.wait()
 
 
-# Concurrent CTC path decodes (forced-align DP over emissions) in one worker process (#276). The request gate
-# admits one request per worker today, so this cap only binds once the gate admits more than one book.
-CTC_DECODE_WORKERS = 2
+# Concurrent CTC path decodes (forced-align DP over emissions) in one worker process (#276): at least two,
+# and one per request slot when the gate admits more books at once.
+CTC_DECODE_WORKERS = max(2, worker_slots())
 _DECODE_SLOTS = threading.BoundedSemaphore(CTC_DECODE_WORKERS)
 
 
@@ -90,63 +91,61 @@ def locate_pool_idle_seconds(env=None):
     return value if value >= 0 else 120.0
 
 
-_LOCATE_POOL = None
-_LOCATE_POOL_TOKENS = None
+# One locate process pool per book being located, shared by the requests for that book and closed only
+# when none uses it (after the idle timeout). Requests for different books run at once when the worker has
+# several slots, so one book's request must never shut down or replace another book's pool.
+_LOCATE_POOLS = []  # {"tokens", "pool", "refs", "timer", "generation"}
 _LOCATE_POOL_LOCK = threading.Lock()
-_LOCATE_POOL_IDLE_TIMER = None
 _LOCATE_POOL_GENERATION = 0
 
 
 def locate_pool_is_open():
-    """True while a shared locate process pool is retained."""
-    return _LOCATE_POOL is not None
+    """True while any locate process pool is retained."""
+    return bool(_LOCATE_POOLS)
 
 
-def _cancel_idle_timer_locked():
-    global _LOCATE_POOL_IDLE_TIMER
-    if _LOCATE_POOL_IDLE_TIMER is not None:
-        _LOCATE_POOL_IDLE_TIMER.cancel()
-        _LOCATE_POOL_IDLE_TIMER = None
-
-
-def _shutdown_locate_pool_locked():
-    global _LOCATE_POOL, _LOCATE_POOL_TOKENS, _LOCATE_POOL_GENERATION
-    _cancel_idle_timer_locked()
-    if _LOCATE_POOL is not None:
-        _LOCATE_POOL.shutdown(wait=True, cancel_futures=False)
-        _LOCATE_POOL = None
-        _LOCATE_POOL_TOKENS = None
-        _LOCATE_POOL_GENERATION += 1
+def _close_entry_locked(entry, wait=True):
+    if entry["timer"] is not None:
+        entry["timer"].cancel()
+        entry["timer"] = None
+    if entry in _LOCATE_POOLS:
+        _LOCATE_POOLS.remove(entry)
+    entry["pool"].shutdown(wait=wait, cancel_futures=False)
 
 
 def shutdown_locate_pool():
-    """Tear down the shared locate pool (worker stop, idle timeout, or idle=0)."""
+    """Tear down every locate pool (worker stop)."""
     with _LOCATE_POOL_LOCK:
-        _shutdown_locate_pool_locked()
+        for entry in list(_LOCATE_POOLS):
+            _close_entry_locked(entry)
 
 
-def _idle_shutdown(generation):
+def _idle_shutdown(entry, generation):
     with _LOCATE_POOL_LOCK:
-        if generation != _LOCATE_POOL_GENERATION or _LOCATE_POOL is None:
-            return
-        _shutdown_locate_pool_locked()
+        if entry in _LOCATE_POOLS and entry["refs"] == 0 and entry["generation"] == generation:
+            _close_entry_locked(entry)
 
 
-def release_locate_pool(env=None):
-    """After a batch request: shut down now (idle=0) or schedule an idle timeout."""
-    global _LOCATE_POOL_IDLE_TIMER
+def release_locate_pool(env=None, pool=None):
+    """After a batch request: the last user of a pool shuts it down now (idle=0) or after the idle timeout.
+    Without `pool`, releases the most recently opened one (single-book callers)."""
+    global _LOCATE_POOL_GENERATION
     idle = locate_pool_idle_seconds(env)
     with _LOCATE_POOL_LOCK:
-        if _LOCATE_POOL is None:
+        entry = next((e for e in reversed(_LOCATE_POOLS) if pool is None or e["pool"] is pool), None)
+        if entry is None:
             return
-        _cancel_idle_timer_locked()
+        entry["refs"] = max(0, entry["refs"] - 1)
+        if entry["refs"]:
+            return
         if idle <= 0:
-            _shutdown_locate_pool_locked()
+            _close_entry_locked(entry)
             return
-        generation = _LOCATE_POOL_GENERATION
-        timer = threading.Timer(idle, _idle_shutdown, args=(generation,))
+        _LOCATE_POOL_GENERATION += 1
+        entry["generation"] = _LOCATE_POOL_GENERATION
+        timer = threading.Timer(idle, _idle_shutdown, args=(entry, entry["generation"]))
         timer.daemon = True
-        _LOCATE_POOL_IDLE_TIMER = timer
+        entry["timer"] = timer
         timer.start()
 
 
@@ -156,29 +155,30 @@ def open_locate_pool(fragment_tokens, workers=None, env=None):
     Call from the request/script thread — never from inside ResidentTask — so spawn
     does not race CUDA work and scripts can use ``if __name__ == '__main__'``.
     Reuses the pool across requests that share the same token list (same book).
-    Call ``release_locate_pool`` when the batch request finishes.
+    Call ``release_locate_pool(env, pool)`` when the batch request finishes.
     """
-    global _LOCATE_POOL, _LOCATE_POOL_TOKENS, _LOCATE_POOL_GENERATION
     workers = locate_pool_workers(env) if workers is None else workers
     if workers <= 0:
         return None
     with _LOCATE_POOL_LOCK:
-        _cancel_idle_timer_locked()
-        if _LOCATE_POOL is not None and _LOCATE_POOL_TOKENS == fragment_tokens:
-            return _LOCATE_POOL
-        if _LOCATE_POOL is not None:
-            _LOCATE_POOL.shutdown(wait=False, cancel_futures=True)
-            _LOCATE_POOL = None
-            _LOCATE_POOL_TOKENS = None
-            _LOCATE_POOL_GENERATION += 1
-        _LOCATE_POOL_TOKENS = fragment_tokens
-        _LOCATE_POOL = ProcessPoolExecutor(
+        for entry in _LOCATE_POOLS:
+            if entry["tokens"] == fragment_tokens:
+                if entry["timer"] is not None:
+                    entry["timer"].cancel()
+                    entry["timer"] = None
+                entry["refs"] += 1
+                return entry["pool"]
+        # Idle pools of other books hold whole-book indexes; free them before starting another.
+        for entry in [e for e in _LOCATE_POOLS if e["refs"] == 0]:
+            _close_entry_locked(entry, wait=False)
+        pool = ProcessPoolExecutor(
             max_workers=workers,
             mp_context=mp.get_context("spawn"),
             initializer=ctc_candidates._pool_init,
             initargs=(fragment_tokens,),
         )
-        return _LOCATE_POOL
+        _LOCATE_POOLS.append({"tokens": fragment_tokens, "pool": pool, "refs": 1, "timer": None, "generation": 0})
+        return pool
 
 
 def _audio_slice(pcm, lo, hi):
@@ -265,7 +265,9 @@ def _infer_from_pcm(pcm, folder, fragments, start, duration, source, source_vers
     loaded = time.monotonic()
     first_sample = round(start * SAMPLE_RATE)
     end_sample = min(round((start + duration) * SAMPLE_RATE), len(pcm))
-    outputs, boundaries = [], []
+    # Cached chunks are ready at once while missing ones wait for a batch, so each
+    # chunk keeps its place by core index; the path needs them in audio order.
+    selected_chunks = {}
     encoding_seconds = cache_seconds = cache_write_seconds = 0.0
     pending = []
     microbatch = microbatch or Microbatch(encode_batch_size(env))
@@ -288,15 +290,15 @@ def _infer_from_pcm(pcm, folder, fragments, start, duration, source, source_vers
                 data = emission.detach().to(device="cpu", dtype=model.torch.float32).contiguous().numpy().astype("<f4", copy=False).tobytes()
                 cache.write(item["index"], chunk_boundaries[0], len(chunk_boundaries), len(model.labels), data)
                 cache_write_seconds += time.monotonic() - cache_started
-            _select(item["first_sample"], item["end_sample"], emission, chunk_boundaries, outputs, boundaries)
+            _select(item["index"], item["first_sample"], item["end_sample"], emission, chunk_boundaries)
         pending.clear()
 
-    def _select(first, end, emission, chunk_boundaries, outs, bounds):
+    def _select(core_index, first, end, emission, chunk_boundaries):
         selected = [i for i, boundary in enumerate(chunk_boundaries)
                     if first <= boundary + STRIDE // 2 < end]
         if selected:
-            outs.append(emission[:, selected[0]:selected[-1] + 1])
-            bounds.extend(chunk_boundaries[i] - first for i in selected)
+            selected_chunks[core_index] = (emission[:, selected[0]:selected[-1] + 1],
+                                           [chunk_boundaries[i] - first for i in selected])
 
     for core_index, core_start, core_end, context_start, context_end in _window_cores(first_sample, end_sample, len(pcm)):
         cache_started = time.monotonic()
@@ -317,8 +319,10 @@ def _infer_from_pcm(pcm, folder, fragments, start, duration, source, source_vers
             chunk_boundaries = [first + i * STRIDE for i in range(frames)]
             emission = model.torch.from_numpy(np.frombuffer(data, dtype="<f4").copy().reshape(1, frames, len(model.labels))).to(model.device)
             cache_seconds += time.monotonic() - cache_started
-            _select(first_sample, end_sample, emission, chunk_boundaries, outputs, boundaries)
+            _select(core_index, first_sample, end_sample, emission, chunk_boundaries)
     flush()
+    outputs = [selected_chunks[index][0] for index in sorted(selected_chunks)]
+    boundaries = [boundary for index in sorted(selected_chunks) for boundary in selected_chunks[index][1]]
     if not outputs:
         raise ValueError("Audio is too short for the CTC encoder.")
     emissions = model.torch.cat(outputs, dim=1).contiguous()
@@ -490,7 +494,9 @@ def align_ctc_batch_locate(*, audio, output, fragments, language, windows, media
     index_started = time.monotonic()
     index = ctc_candidates.FragmentIndex(fragments)
     index_seconds = time.monotonic() - index_started
+    # Books located at once share the configured locate processes.
     workers = locate_pool_workers(env)
+    workers = max(1, workers // worker_slots()) if workers > 0 else 0
     pool = open_locate_pool(index.fragment_tokens, workers=workers, env=env) if workers > 0 and len(windows) > 1 else None
 
     decoded_track = None
@@ -654,7 +660,7 @@ def align_ctc_batch_locate(*, audio, output, fragments, language, windows, media
     finally:
         # Idle=0 tears the pool down per request; otherwise an idle timer frees Xenocide-sized indexes.
         if pool is not None:
-            release_locate_pool(env)
+            release_locate_pool(env, pool)
         # PCM is no longer needed once acoustic cores are written; drop the multi-GB WAV.
         if decoded_track is not None:
             forget_decoded(decoded_track, media_folder=media_folder, env=env)

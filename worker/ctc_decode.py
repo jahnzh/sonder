@@ -81,8 +81,8 @@ def evict_decoded(media_folder, env=None, protect=None):
     budget = decoded_budget_bytes(env)
     folder = decoded_dir(media_folder)
     protected = {Path(path).resolve() for path in (protect or ())}
-    protected |= _in_use_paths()
     with _LOCK:
+        protected |= _in_use_paths()
         files = [path for path in folder.glob("*.wav") if path.is_file()]
         sizes = {}
         order = []
