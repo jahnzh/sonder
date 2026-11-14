@@ -339,23 +339,13 @@ export function ctcWorkerSlots(health: { slots?: unknown } | null | undefined) {
   return typeof slots === "number" && Number.isInteger(slots) && slots >= 1 ? Math.min(slots, 16) : 1;
 }
 
-function workerOrigin(value: string) {
-  const url = new URL(value);
-  const hostname = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
-    ? "loopback" : url.hostname;
-  return `${url.protocol}//${hostname}:${url.port || (url.protocol === "https:" ? "443" : "80")}`;
-}
-
 function ctcUrlGuardError(host: PoolHost): string | null {
   if (!URL.canParse(host.workerUrl)) return "invalid worker URL";
-  // A pool URL accidentally pointed at the local worker must never send it
-  // CTC, even if that worker happens to advertise a compatible CPU runtime.
+  // A pool URL pointed at the production machine itself must never send it
+  // CTC (ADR 0006), even if something there advertises a compatible CPU runtime.
   const hostname = new URL(host.workerUrl).hostname;
   if (["localhost", "127.0.0.1", "[::1]"].includes(hostname))
     return "worker URL points to the local host";
-  const localWorker = process.env.ALIGNMENT_WORKER_URL;
-  if (localWorker && URL.canParse(localWorker) && workerOrigin(host.workerUrl) === workerOrigin(localWorker))
-    return "worker URL points to the local worker";
   return null;
 }
 
@@ -648,7 +638,7 @@ function poolProbeCacheKey() {
   const hosts = activePoolHosts(getAlignmentPoolCoordinator().listHosts())
     .map((host) => `${host.id}:${host.sshTarget}:${host.workerUrl}:${host.maxConcurrent}`)
     .join("|");
-  return `${poolEnabled() ? "1" : "0"}\n${engine}\n${process.env.ALIGNMENT_WORKER_URL ?? ""}\n${hosts}`;
+  return `${poolEnabled() ? "1" : "0"}\n${engine}\n${hosts}`;
 }
 
 async function probeSinglePoolHost(host: PoolHost): Promise<ProbedHostSnapshot> {

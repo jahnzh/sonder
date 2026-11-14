@@ -462,8 +462,9 @@ const slimJob = (job: AlignmentJob) => ({
   intervalCount: job.intervals.length,
   intervals: [],
 });
+// All alignment runs on the remote pool (#279); a leftover ALIGNMENT_WORKER_URL is ignored.
 const workerConfigured = () =>
-  !!process.env.ALIGNMENT_WORKER_URL && !!process.env.ALIGNMENT_WORKER_TOKEN;
+  poolEnabled() && !!process.env.ALIGNMENT_WORKER_TOKEN;
 export type BackfillEligibility =
   | { eligible: true }
   | { eligible: false; reason: "linked" | "language" | "media" };
@@ -560,7 +561,7 @@ export async function runAlignmentBackfill() {
   return result;
 }
 type AutoQueueLog = { warn: (...args: unknown[]) => void };
-/** Non-fatal: queues the pair when eligible and the worker is configured. */
+/** Non-fatal: queues the pair when eligible and the pool and its token are configured. */
 export async function autoQueueAlignmentForPair(
   ebookId: string,
   recordingId: string,
@@ -891,7 +892,8 @@ async function workerRequest(
   failure = path === "/anchor"
     ? "Local speech recovery is unavailable. Check that the speech model is installed on the media drive."
     : "Local alignment could not process part of this narration. Retry, or choose a release with chapters.",
-  workerBase = process.env.ALIGNMENT_WORKER_URL!,
+  // Always a pool worker (poolWorkerBase): the production machine runs no alignment worker (#279).
+  workerBase: string,
   live: () => boolean = () => true,
 ) {
   let busyDeadline: number | null = null;
@@ -1992,9 +1994,7 @@ export function registerAlignment(app: FastifyInstance) {
       .filter((job) => !ebookId || job.ebookId === ebookId)
       .sort((a, b) => Number(a.origin === "projected") - Number(b.origin === "projected"));
     return {
-      available:
-        !!process.env.ALIGNMENT_WORKER_URL &&
-        !!process.env.ALIGNMENT_WORKER_TOKEN,
+      available: workerConfigured(),
       localOnly: true,
       jobs: slim ? listed.map(slimJob) : listed,
     };
