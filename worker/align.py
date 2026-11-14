@@ -4,6 +4,7 @@ import importlib.util
 import secrets
 import sys
 import time
+import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -121,6 +122,7 @@ def anchor(request: AnchorRequest):
         raise
     except Exception as error:
         print(f"[anchor] failed: {error!r}", file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
         raise HTTPException(422, error_detail("Local speech recovery is unavailable. Check that the required model is installed on the media drive.", started, engine))
 
 @app.post("/anchor-batch")
@@ -161,6 +163,7 @@ def anchor_batch(request: AnchorBatchRequest):
         raise
     except Exception as error:
         print(f"[anchor-batch] failed: {error!r}", file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
         raise HTTPException(422, error_detail("Local speech recovery is unavailable. Check that the required model is installed on the media drive.", started, engine))
 
 def error_detail(message, started, engine=ENGINE):
@@ -244,4 +247,5 @@ def align(request: AlignRequest):
         raise
     except Exception as error:
         print(f"[align] failed: {error!r}", file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
         raise HTTPException(422, error_detail("Local alignment could not match this section. Check the edition and chapter pairing.", started, engine))
