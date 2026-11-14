@@ -25,7 +25,7 @@ import {
 } from "./orca-routing.mjs";
 
 const REQUIREMENTS = ["mechanical", "standard", "reasoning-heavy"];
-const DEFAULT_CONCURRENCY = 3;
+const DEFAULT_CONCURRENCY = 5;
 const TASK_KINDS = ["feature", "fix", "refactor", "test", "docs", "review"];
 
 const USAGE = `Usage: node scripts/orca-plan.mjs --wave <file.json> [--models <file>] [--concurrency <n>]

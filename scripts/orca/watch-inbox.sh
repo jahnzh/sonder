@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 # Blocks until a non-heartbeat message is in the run inbox, prints it, then acks that delivery. Exit 0 = message printed.
+#   bash scripts/orca/watch-inbox.sh <run_id>
+# The run id is required: there is no default run, so a watcher never consumes another run's messages.
 set -u
-run=${1:-run_8d0bd7ca46e3}
+if [ -z "${1:-}" ]; then
+  echo "usage: watch-inbox.sh <run_id>" >&2
+  exit 2
+fi
+run=$1
 rtdir="${XDG_RUNTIME_DIR:-/tmp}"
 LOCK="$rtdir/sonder-watch-inbox-${run}.lock"
 HOLDER="$rtdir/sonder-watch-inbox-${run}.pid"
