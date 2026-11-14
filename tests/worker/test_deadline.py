@@ -342,5 +342,28 @@ class GateState(unittest.TestCase):
         with gate.hold():
             pass
 
+    def test_a_gate_with_slots_admits_that_many_and_reports_the_oldest_age(self):
+        gate = Gate(3)
+        with gate.hold():
+            with gate.hold():
+                self.assertFalse(gate.busy, "a slot is still free")
+                self.assertEqual(gate.active, 2)
+                with gate.hold():
+                    self.assertTrue(gate.busy)
+                    with self.assertRaises(WorkerBusy):
+                        with gate.hold():
+                            pass
+                self.assertFalse(gate.busy)
+            self.assertIsNotNone(gate.busy_seconds())
+        self.assertEqual(gate.active, 0)
+        self.assertIsNone(gate.busy_seconds())
+
+    def test_slots_come_from_the_environment_and_bad_values_fall_back_to_one(self):
+        from deadline import worker_slots
+        self.assertEqual(worker_slots({}), 1)
+        self.assertEqual(worker_slots({"ALIGNMENT_WORKER_SLOTS": "4"}), 4)
+        for bad in ("0", "17", "two", ""):
+            self.assertEqual(worker_slots({"ALIGNMENT_WORKER_SLOTS": bad}), 1)
+
 if __name__ == "__main__":
     unittest.main()

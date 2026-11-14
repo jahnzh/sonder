@@ -300,14 +300,16 @@ export class AlignmentPoolCoordinator {
     return candidates[0]?.host ?? null;
   }
 
-  // Each worker reports one busy/free gate. Reserve it across the whole job,
-  // including gaps between its individual HTTP requests.
-  tryAcquireCtc(hostId: PoolHostId, jobId: string, recordingId: string) {
-    if (this.activeOnHost(hostId) > 0) return false;
+  // A worker runs up to `capacity` jobs (its reported slots). Reserve a slot across the
+  // whole job, including gaps between its individual HTTP requests.
+  tryAcquireCtc(hostId: PoolHostId, jobId: string, recordingId: string, capacity = 1) {
+    if (this.activeOnHost(hostId) >= capacity) return false;
     const lease = this.recordings.get(recordingId);
     if (lease && (lease.jobId !== jobId || lease.site === "local")) return false;
     if (!this.hostById(hostId)) return false;
-    this.slots.set(hostId, new Set([jobId]));
+    const active = this.slots.get(hostId) ?? new Set<string>();
+    active.add(jobId);
+    this.slots.set(hostId, active);
     this.recordings.set(recordingId, { jobId, site: "remote" });
     return true;
   }
@@ -405,8 +407,16 @@ type CtcHealth = {
   mediaRoot: string;
   busy: boolean;
   stuck: boolean;
+  /** Requests the worker runs at once; older workers omit it and run one. */
+  slots?: number;
   ctc: { engine: string; ready: boolean; device: string; precision: string; passageReady?: boolean };
 };
+
+/** Book jobs a CTC worker takes at once: the slots it reports, 1 for workers that report none. */
+export function ctcWorkerSlots(health: { slots?: unknown } | null | undefined) {
+  const slots = health?.slots;
+  return typeof slots === "number" && Number.isInteger(slots) && slots >= 1 ? Math.min(slots, 16) : 1;
+}
 
 function workerOrigin(value: string) {
   const url = new URL(value);
@@ -519,8 +529,10 @@ async function dispatchCtcJob(
       exclude(id);
       continue;
     }
-    if (health.busy || health.stuck || coord.activeOnHost(id) > 0) {
-      recordPoolError(job, id, "health", health.stuck ? "worker is stuck" : "worker is busy");
+    const capacity = ctcWorkerSlots(health);
+    // A stuck request keeps its slot, so a worker with every slot taken reports busy.
+    if (health.busy || (capacity === 1 && health.stuck) || coord.activeOnHost(id) >= capacity) {
+      recordPoolError(job, id, "health", health.stuck && capacity === 1 ? "worker is stuck" : "worker is busy");
       busy = true;
       continue;
     }
@@ -528,7 +540,7 @@ async function dispatchCtcJob(
       exclude(id);
       continue;
     }
-    if (!coord.tryAcquireCtc(id, job.id, job.recordingId)) {
+    if (!coord.tryAcquireCtc(id, job.id, job.recordingId, capacity)) {
       recordPoolError(job, id, "capacity", "worker or recording is busy");
       busy = true;
       continue;
@@ -758,7 +770,7 @@ function poolProbeCacheKey() {
 }
 
 async function probeSinglePoolHost(host: PoolHost, engine: "ctc" | "aeneas"): Promise<ProbedHostSnapshot> {
-  const maxConcurrent = engine === "ctc" ? 1 : host.maxConcurrent;
+  let maxConcurrent = engine === "ctc" ? 1 : host.maxConcurrent;
   const workerUrl = safeWorkerUrl(host.workerUrl);
   if (engine === "ctc") {
     const guardError = ctcUrlGuardError(host);
@@ -810,6 +822,7 @@ async function probeSinglePoolHost(host: PoolHost, engine: "ctc" | "aeneas"): Pr
         if (raw && typeof raw === "object") {
           workerBusy = raw.busy === true;
           stuck = raw.stuck === true;
+          if (engine === "ctc") maxConcurrent = ctcWorkerSlots(raw);
           if (typeof raw.ctc?.device === "string") device = raw.ctc.device;
           else if (engine === "aeneas" && raw.ready === true) device = "cpu";
           if (typeof raw.ctc?.precision === "string") precision = raw.ctc.precision;

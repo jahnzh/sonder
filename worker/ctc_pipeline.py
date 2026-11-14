@@ -10,6 +10,7 @@ from concurrent.futures import ProcessPoolExecutor
 import ctc_path
 import ctc_candidates
 import ctc_prefetch
+from deadline import worker_slots
 from ctc_acoustic import (ACOUSTIC_MICROBATCH, CONTEXT, CORE, ENGINE, RESIDENT_MODELS_PER_DEVICE, SAMPLE_RATE, STRIDE,
                           Microbatch, resident_model)
 from ctc_cache import AcousticCache, audio_digest, budget_bytes, file_version
@@ -39,9 +40,9 @@ class ResidentTask:
         self.done.wait()
 
 
-# Concurrent CTC path decodes (forced-align DP over emissions) in one worker process (#276). The request gate
-# admits one request per worker today, so this cap only binds once the gate admits more than one book.
-CTC_DECODE_WORKERS = 2
+# Concurrent CTC path decodes (forced-align DP over emissions) in one worker process (#276): at least two,
+# and one per request slot when the gate admits more books at once.
+CTC_DECODE_WORKERS = max(2, worker_slots())
 _DECODE_SLOTS = threading.BoundedSemaphore(CTC_DECODE_WORKERS)
 
 

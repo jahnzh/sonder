@@ -51,6 +51,8 @@ type Held = { host: "wsl" | "lisa"; recordingId: string; request: Record<string,
 const held: Held[] = [];
 const requests: Held[] = [];
 let inFlight = 0, maxInFlight = 0;
+/** Request slots the fake WSL worker reports; undefined is an older worker that reports none. */
+let wslSlots: number | undefined;
 const perRecording = new Map<string, number>();
 let maxPerRecording = 0;
 const originalFetch = globalThis.fetch;
@@ -60,6 +62,7 @@ globalThis.fetch = async (input, init) => {
   const host = url.includes("lisa-worker") ? "lisa" : "wsl";
   if (url.endsWith("/health"))
     return Response.json({ ready: true, busy: false, stuck: false, mediaRoot: join(temp, host),
+      ...(host === "wsl" && wslSlots ? { slots: wslSlots } : {}),
       ctc: { engine, ready: true, device: host === "lisa" ? "cpu" : "cuda", precision: host === "lisa" ? "float32" : "float16",
         anchorReady: true, passageReady: true } });
   const request = JSON.parse(String(init?.body));
@@ -218,6 +221,24 @@ test("two books progress at once on WSL and lisa while the API keeps answering",
   assert.equal(alignmentJob(b.id).status, "partial");
   assert.equal(alignmentJob(a.id).pool?.hostId === alignmentJob(b.id).pool?.hostId, false);
   assert.equal(claim(a.id).claim_owner, null, "a finished job releases its claim");
+});
+
+test("a worker with several slots runs that many books at once, up to ALIGNMENT_PARALLEL_BOOKS", async () => {
+  reset();
+  wslSlots = 3;
+  process.env.ALIGNMENT_PARALLEL_BOOKS = "4";
+  try {
+    const a = await create("a"), b = await create("b"), c = await create("c");
+    await until(() => held.length === 3, "three admitted books");
+    assert.deepEqual(new Set(held.map((entry) => entry.host)), new Set(["wsl"]), "one worker takes all three");
+    await drive([a.id, b.id, c.id]);
+    assert.equal(maxInFlight, 3);
+    for (const job of [a, b, c]) assert.equal(alignmentJob(job.id).status, "partial");
+    assert.equal(alignmentJob(a.id).runConfig?.admittedBooks, 4);
+  } finally {
+    wslSlots = undefined;
+    delete process.env.ALIGNMENT_PARALLEL_BOOKS;
+  }
 });
 
 test("a third book is admitted as soon as one of the two running books finishes", async () => {
