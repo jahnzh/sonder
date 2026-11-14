@@ -73,6 +73,37 @@ class CacheStorage(unittest.TestCase):
             self.assertFalse(tiny.write(0, 40, 1, 2, data))
             self.assertLessEqual(sum(p.stat().st_size for p in tiny.root.rglob("*") if p.is_file()), size - 1)
 
+    def test_writes_do_not_rescan_every_chunk_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            data = struct.pack("<2f", 1, 2)
+            caches = [self.cache(folder, name) for name in ("one", "two", "three")]
+            scans = []
+            original = ctc_cache.AcousticCache._usage
+            def counted(cache, directory):
+                scans.append(directory.name)
+                return original(cache, directory)
+            with mock.patch.object(ctc_cache.AcousticCache, "_usage", counted):
+                for index in range(20):
+                    for cache in caches:
+                        self.assertTrue(cache.write(index, index * 320000 + 40, 1, 2, data))
+            # The size index was built when the caches opened, so 60 writes scanned no directory.
+            self.assertEqual(scans, [])
+            sizes = ctc_cache._INDEXES[str(caches[0].root)]["sizes"]
+            for cache in caches:
+                self.assertEqual(sizes[cache.recording], sum(p.stat().st_size for p in (cache.root / cache.recording).iterdir()))
+
+    def test_the_size_index_is_rebuilt_after_the_rescan_interval(self):
+        with tempfile.TemporaryDirectory() as folder:
+            cache = self.cache(folder, "one")
+            cache.write(0, 40, 1, 2, struct.pack("<2f", 1, 2))
+            stray = cache.root / "other-process"
+            stray.mkdir()
+            (stray / "0.complete").write_bytes(b"x" * 10)
+            with mock.patch.object(ctc_cache, "_RESCAN_SECONDS", -1):
+                with cache._locked():
+                    cache._evict(0)
+            self.assertEqual(ctc_cache._INDEXES[str(cache.root)]["sizes"]["other-process"], 10)
+
     def test_same_size_audio_replacement_with_restored_mtime_changes_digest(self):
         with tempfile.TemporaryDirectory() as folder:
             audio = Path(folder) / "audio"
