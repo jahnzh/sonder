@@ -36,7 +36,7 @@ Run `--help` for every option. `--policy` selects the routing policy (default: `
 
 | Field | Meaning |
 | --- | --- |
-| `concurrency` | Max workers including active ones (default 5, or `--concurrency`). Matches `maxConcurrentTotal` in `docs/agents/routing-policy.json` and the guidance in `docs/agents/models.md`; a policy still caps it at `maxConcurrentTotal`. |
+| `concurrency` | Max workers including active ones (default 3, or `--concurrency`). Matches `maxConcurrentTotal` in `docs/agents/routing-policy.json` and the guidance in `docs/agents/models.md`; a policy still caps it at `maxConcurrentTotal`. |
 | `completed` | Task ids whose dependencies are already satisfied. |
 | `activeWorkers` | Workers already running; each counts against concurrency and against that agent's shared allowance. |
 | `tasks[].ready` | `false` keeps the task out of assignment (`not-ready`). Default true. |

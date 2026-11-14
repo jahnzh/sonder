@@ -10,7 +10,7 @@ The owner holds a Claude Max subscription for November 2026 ("I have Claude max 
 
 - Claude Code: `claude-opus-5-5` and `claude-sonnet-5-5` are allowed. The `claude` reserve entry is gone, and `claude` is first in `order`.
 - Antigravity's Claude models stay allowed beside Claude Code (they draw from a different bucket).
-- Concurrency caps raised for the Max plan (owner: "Raise caps for Max plan"): `maxConcurrentPerBucket: 4` and `maxConcurrentTotal: 5`. The owner gave no numbers. **These two numbers are the coordinator's choice**: the coordinator host has 4 cores and each worker runs `npm test`. Before this the caps were 2 and 3.
+- Concurrency caps: `maxConcurrentPerBucket: 3` and `maxConcurrentTotal: 3` (before this 2 and 3). The owner asked to raise the caps for the Max plan and gave no numbers; the coordinator first chose 4 and 5. On 2026-11-14 four Claude workers, one Codex reviewer and a check dispatch ran together on the coordinator host (4 cores, 15 GB RAM): the host ran out of memory at about 19:20Z and had to be reset. **The limit is the host's memory, not the subscription**, so the total stays at 3 and only the per-bucket cap rises, which lets all three workers be Claude. Raise the total only after workers run on a host with more memory.
 - First-guess expected share of the Claude weekly window: Opus 10 %, Sonnet 5 %. Three Claude workers moved the week from about 2 % to 5 % on 2026-11-14, so these are guesses; `bucketCostNotes` says so. Worker history (`meanBucketDeltaPercent`) replaces them once measured.
 
 ## Owner decision 2026-10-31 (policy C)
@@ -40,8 +40,8 @@ Every key in `routing-policy.json`:
 | `reserve` | Same shape plus required `reason`. Matched candidates are listed under `excluded` (not silently dropped). |
 | `order` | Agent tie-break when burn pressures are within 5% of each other (the repository file lists claude, antigravity, codex, cursor, opencode). |
 | `safetyFloorPercent` | Skip a candidate whose **binding** non-5-hour window has less than this percent left (default 10). |
-| `maxConcurrentPerBucket` | Max active+proposed workers sharing one agent/bucket id (default 2 when no policy file applies; the repository file sets 4). |
-| `maxConcurrentTotal` | Cap on wave concurrency including active workers (default 3 when no policy file applies; the repository file sets 5). |
+| `maxConcurrentPerBucket` | Max active+proposed workers sharing one agent/bucket id (default 2 when no policy file applies; the repository file sets 3). |
+| `maxConcurrentTotal` | Cap on wave concurrency including active workers (default 3 when no policy file applies; the repository file sets 3). |
 | `expiringBoost` | Multiplier for pressure when the binding window resets within 48 h and has more than 20% left (default `1.0` = no effect). |
 | `reviewerOnDifferentPool` | When true, `--review-of` / wave `reviewOf` excludes the implementer's agent and binding bucket. |
 | `maxBucketSharePerWorkerPercent` | Default expected percent a worker may take from its binding window when the model is not in `expectedBucketSharePercent` (default 25). |

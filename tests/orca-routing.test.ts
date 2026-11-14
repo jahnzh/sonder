@@ -177,8 +177,8 @@ test("the repository policy holds the owner's policy C as updated on 2026-11-14 
   assert.match(p.decision, /Claude Code/);
   assert.match(p.decision, /December/);
   assert.equal(p.safetyFloorPercent, 10);
-  assert.equal(p.maxConcurrentPerBucket, 4);
-  assert.equal(p.maxConcurrentTotal, 5);
+  assert.equal(p.maxConcurrentPerBucket, 3);
+  assert.equal(p.maxConcurrentTotal, 3);
   assert.equal(p.expiringBoost, 1);
   assert.equal(p.reviewerOnDifferentPool, true);
   assert.deepEqual(p.order, ["claude", "antigravity", "codex", "cursor", "opencode"]);

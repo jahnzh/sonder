@@ -1,7 +1,7 @@
 {
   "version": 1,
   "decidedAt": "2026-11-14",
-  "decision": "Owner policy C, updated 2026-11-14: workers run on Claude Code (Claude Max, November 2026, re-check in December), Cursor Models, Antigravity Claude Opus 5.5 / Sonnet 5.5 / Gemini 3.8 Flash, Codex gpt-6.1-terra and OpenCode Qwen3.8-27B; Gemini 4 Argon is excluded while exhausted. Caps raised for the Max plan to 4 per bucket and 5 in total (coordinator's choice, no numbers from the owner).",
+  "decision": "Owner policy C, updated 2026-11-14: workers run on Claude Code (Claude Max, November 2026, re-check in December), Cursor Models, Antigravity Claude Opus 5.5 / Sonnet 5.5 / Gemini 3.8 Flash, Codex gpt-6.1-terra and OpenCode Qwen3.8-27B; Gemini 4 Argon is excluded while exhausted. Caps are 3 per bucket and 3 in total: five agents at once exhausted the 15 GB coordinator host's memory on 2026-11-14.",
   "allow": [
     { "agent": "claude", "models": ["claude-opus-5-5", "claude-sonnet-5-5"] },
     { "agent": "cursor", "models": ["auto", "composer-*"] },
@@ -18,8 +18,8 @@
   ],
   "order": ["claude", "antigravity", "codex", "cursor", "opencode"],
   "safetyFloorPercent": 10,
-  "maxConcurrentPerBucket": 4,
-  "maxConcurrentTotal": 5,
+  "maxConcurrentPerBucket": 3,
+  "maxConcurrentTotal": 3,
   "expiringBoost": 1.0,
   "reviewerOnDifferentPool": true,
   "maxBucketSharePerWorkerPercent": 25,
