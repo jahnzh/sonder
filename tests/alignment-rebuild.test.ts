@@ -12,7 +12,6 @@ process.env.MEDIA_ROOT = join(temp, "media");
 process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
 delete process.env.APP_PASSWORD;
-delete process.env.ALIGNMENT_CHAPTER_ENGINE;
 process.env.ALIGNMENT_WORKER_URL = "http://production-worker.test";
 process.env.ALIGNMENT_WORKER_TOKEN = "test-token";
 process.env.ALIGNMENT_POOL_ENABLED = "1";
@@ -33,7 +32,7 @@ const { consensusEbookId, publishProjectedMaps, syncEbookSetConsensus } = await 
 const { resetAlignmentPoolCoordinator, setAlignmentPoolDepsForTests } = await import("../server/alignment-pool.ts");
 type AlignmentJob = ReturnType<typeof alignmentJob>;
 
-const engine = "ctc-wav2vec2-base-960h-torchaudio-2.8-v1";
+const engine = "ctc-wav2vec2-base-960h-torchaudio-2.8-v2";
 const aeneas = "aeneas-1.7.3";
 const hosts = [
   { id: "wsl" as const, sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test" },
@@ -264,6 +263,16 @@ test("maps of an older engine are queued for rebuild once, also after a restart,
   assert.equal(requests.length, 0);
   assert.equal(alignmentSchedulerForTests().running().length, 0);
   assert.equal(alignmentJob(ready.id).status, "queued");
+});
+
+test("maps of the first CTC engine, which joined partly cached audio out of order, are rebuilt", async () => {
+  await reset();
+  const first = await oldMap("a", "ctc-wav2vec2-base-960h-torchaudio-2.8-v1", "partial");
+  assert.deepEqual(await queueEngineRebuilds(), { queued: 1, replanned: 0, projections: 0, skipped: 0, failed: 0 });
+  const job = alignmentJob(first.id);
+  assert.equal(job.engine, engine);
+  assert.equal(job.rebuildOf?.engine, "ctc-wav2vec2-base-960h-torchaudio-2.8-v1");
+  assert.ok(keptMap(first.id), "the old map is served until the rebuild publishes");
 });
 
 test("new work goes ahead of rebuilds, rebuilds run oldest engine first, and a running rebuild finishes", async () => {
@@ -832,3 +841,69 @@ test("alignmentJobNeedsPolling treats an active rebuild.status as processing", a
 function allJobs() {
   return (sqlite.prepare("SELECT id FROM alignment_jobs").all() as { id: string }[]).map((row) => alignmentJob(row.id));
 }
+
+/**
+ * A job row as the aeneas era stored it: no engine fields in its data, so the column default names the engine.
+ * Chapter jobs ran on the production worker and have no pool; `deck` adds a Steam Deck pool dispatch.
+ */
+async function aeneasEraRow(name: string, status: AlignmentJob["status"], { deck = false } = {}) {
+  const { engine: _engine, ctcValidationVersion: _version, ...data } = await oldMap(name, aeneas, status);
+  sqlite.prepare("DELETE FROM alignment_jobs WHERE id=?").run(data.id);
+  const stored = deck ? { ...data, pool: { hostId: "steamdeck", attempt: 1, jobMediaRoot: "/deck/media",
+    workerUrl: "http://deck.test:3012", triedHosts: ["steamdeck"], stagedAudio: {} } } : data;
+  sqlite.prepare("INSERT INTO alignment_jobs(id,ebook_id,recording_id,data,updated_at) VALUES(?,?,?,?,?)")
+    .run(data.id, data.ebookId, data.recordingId, JSON.stringify(stored), data.updatedAt);
+  return alignmentJob(data.id);
+}
+
+test("an aeneas-era job row is served as stored, and running it re-plans it under CTC on the pool (#279)", async () => {
+  await reset();
+  const row = (id: string) => sqlite.prepare("SELECT engine FROM alignment_jobs WHERE id=?").get(id) as { engine: string };
+  // Reading: the old map keeps working as it was stored.
+  const partial = await aeneasEraRow("a", "partial", { deck: true });
+  assert.equal(row(partial.id).engine, aeneas, "the column default names the aeneas engine");
+  assert.equal(partial.engine, aeneas);
+  const served = await app.inject(`/api/alignments/${partial.id}/map`);
+  assert.equal(served.statusCode, 200, served.body);
+  assert.equal(served.json().engine, aeneas);
+  assert.equal(served.json().intervals.length, partial.intervals.length);
+
+  // An aeneas-era failure the startup scan never rebuilt (for instance with the pool off) is resumed by hand.
+  const failed = await aeneasEraRow("b", "error");
+  const resumed = await app.inject({ method: "PATCH", url: `/api/alignments/${failed.id}`, payload: { action: "resume" } });
+  assert.equal(resumed.statusCode, 200, resumed.body);
+  assert.equal(alignmentJob(failed.id).engine, aeneas, "resume itself leaves the stored engine alone");
+  const outside: string[] = [];
+  const poolFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    if (!/ctc-worker\.test|lisa-worker\.test/.test(String(input))) outside.push(String(input));
+    return poolFetch(input, init);
+  };
+  try {
+    setPaused("alignment", false);
+    void processAlignments();
+    await drive([failed.id]);
+  } finally {
+    globalThis.fetch = poolFetch;
+  }
+  assert.deepEqual(outside, [], "no request may reach the production worker");
+  const rebuilt = alignmentJob(failed.id);
+  assert.equal(rebuilt.engine, engine);
+  assert.equal(rebuilt.ctcValidationVersion, 1);
+  assert.equal(rebuilt.status, "partial", rebuilt.error ?? "");
+  assert.deepEqual([rebuilt.pool?.hostId, rebuilt.pool?.triedHosts], ["wsl", ["wsl"]]);
+  assert.deepEqual(rebuilt.pairings, failed.pairings, "the re-plan keeps the map's chapter plan");
+  assert.equal(row(failed.id).engine, engine);
+  // Every request went to a CTC pool worker as a CTC request; none reached the production worker.
+  const forB = requests.filter((entry) => entry.recordingId === "rec-b");
+  assert.ok(forB.length > 0);
+  assert.ok(forB.every((entry) => entry.url.startsWith("http://ctc-worker.test/") && entry.request.engine === "ctc"));
+
+  // The automatic rebuild replaces the served aeneas map with a CTC one.
+  assert.equal((await queueEngineRebuilds()).queued, 1);
+  assert.equal((await app.inject(`/api/alignments/${partial.id}/map`)).json().engine, aeneas, "kept until the rebuild publishes");
+  await drive([partial.id]);
+  const replaced = await app.inject(`/api/alignments/${partial.id}/map`);
+  assert.equal(replaced.statusCode, 200, replaced.body);
+  assert.equal(replaced.json().engine, engine);
+});

@@ -19,6 +19,7 @@ Options:
   --device <cpu|cuda>       Worker device target (default: auto-detected, fallback: cpu)
   --dir <path>              Installation target directory (default: $HOME/sonder-ctc-worker)
   --port <port>             Worker HTTP port (default: 3012)
+  --slots <n>               Book jobs the worker runs at once, sharing one model (1-16; default: keep, else 1)
   --token <token>           Alignment worker auth token (prefer passing ALIGNMENT_WORKER_TOKEN in env)
   --python <path>           Python interpreter for venv (default: python3)
   --caddy-domain <domain>   Domain for Caddy snippet (required with --print-caddy)
@@ -101,6 +102,7 @@ python_bin="python3"
 caddy_domain=""
 prod_ip=""
 skip_models=false
+slots=""
 skip_service=false
 service_only=false
 print_service=false
@@ -124,6 +126,11 @@ while [[ $# -gt 0 ]]; do
     --dir=*)
       target_dir="${1#*=}"
       shift
+      ;;
+    --slots)
+      slots="${2:-}"
+      [[ "$slots" =~ ^([1-9]|1[0-6])$ ]] || { echo "error: --slots expects 1-16" >&2; exit 2; }
+      shift 2
       ;;
     --port)
       port="$2"
@@ -266,6 +273,10 @@ if [[ -z "$token" ]]; then
   token_source="generated"
 fi
 
+if [[ -z "$slots" && -f "${target_dir}/worker.env" ]]; then
+  slots="$(grep -E '^ALIGNMENT_WORKER_SLOTS=' "${target_dir}/worker.env" | cut -d= -f2- || true)"
+fi
+
 mkdir -p "$target_dir"
 mkdir -p "$target_dir/media"
 mkdir -p "$target_dir/worker"
@@ -308,6 +319,7 @@ ALIGNMENT_WORKER_TOKEN=${token}
 MEDIA_ROOT=${target_dir}/media
 ALIGNMENT_CTC_DEVICE=${device}
 EOF
+  if [[ -n "$slots" ]]; then echo "ALIGNMENT_WORKER_SLOTS=${slots}" >> "${target_dir}/worker.env"; fi
 )
 chmod 600 "${target_dir}/worker.env"
 echo "Configured ${target_dir}/worker.env"

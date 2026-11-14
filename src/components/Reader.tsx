@@ -887,12 +887,16 @@ export function ReaderView({
       navigatedUntil.current = performance.now() + 1000;
     });
   };
+  // Counts Word mode steps, so a follow jump that was still waiting for the
+  // page when the reader stepped on does not pull the display back.
+  const wordSteps = useRef(0);
   const showFragment = async (
     paragraphId: string,
     persist = false,
     recordingId = mapRef.current?.recordingId,
   ) => {
     const request = ++jumpEpoch.current;
+    const steps = wordSteps.current;
     const current = bookRef.current,
       view = rendition.current;
     if (!current || !view) return false;
@@ -929,6 +933,8 @@ export function ReaderView({
       if (opening) hidePages(-1);
     }
     if (request !== jumpEpoch.current || rendition.current !== view) return false;
+    // Reported as shown: the step superseded it, so there is nothing to retry.
+    if (steps !== wordSteps.current) return true;
     const all = current.sections.flatMap((section) => section.paragraphs);
     const value: TextLocator = {
       cfi,
@@ -1369,6 +1375,7 @@ export function ReaderView({
     if (!next) return;
     const value = locateParagraph(next.id);
     if (!value) return;
+    wordSteps.current++;
     const moved = follow && moveAudioTo(next.id);
     if (follow && !moved) setFollow(false);
     latest.current = value;
@@ -1542,6 +1549,7 @@ export function ReaderView({
             onSeek={(word, _index, { time, auto }) => {
               const value = locateParagraph(word.paragraphId);
               if (!value) return;
+              if (!auto) wordSteps.current++;
               const moved = !auto && follow && time != null && moveAudioTo(word.paragraphId, time);
               // A sentence without timing, or audio that stays where it is, ends the narration follow.
               if (!auto && follow && !moved) setFollow(false);

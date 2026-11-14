@@ -72,38 +72,69 @@ def alignment_limit(duration, env=None):
 def anchor_limit(duration, env=None):
     return min(ANCHOR_CEILING, alignment_limit(duration, env))
 
-class Gate:
-    """The single job slot: one request at a time, with its age and last timeout visible.
+def worker_slots(env=None):
+    """Requests one worker process runs at once (ALIGNMENT_WORKER_SLOTS, 1-16). They share its resident model."""
+    env = os.environ if env is None else env
+    raw = env.get("ALIGNMENT_WORKER_SLOTS", "1")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 0
+    if not 1 <= value <= 16:
+        print(f"Ignoring ALIGNMENT_WORKER_SLOTS={raw!r}: expected a whole number from 1 to 16. Using 1.", file=sys.stderr)
+        return 1
+    return value
 
-    A job whose child survived the kill keeps the slot until that process is gone, so the next job never runs
+class Gate:
+    """The worker's job slots: up to `slots` requests at a time, with the oldest one's age and the last timeout visible.
+
+    A job whose child survived the kill keeps its slot until that process is gone, so the next job never runs
     next to a runaway one; /health shows it as stuck."""
-    def __init__(self):
+    def __init__(self, slots=1):
+        self.slots = max(1, int(slots))
         self._lock = threading.Lock()
-        self._started = None
+        self._started = {}
+        self._stuck = set()
         self.last_timeout = None
-        self.stuck = False
+
+    @property
+    def active(self):
+        with self._lock:
+            return len(self._started)
 
     @property
     def busy(self):
-        return self._lock.locked()
+        """True when every slot is taken."""
+        return self.active >= self.slots
+
+    @property
+    def stuck(self):
+        with self._lock:
+            return bool(self._stuck)
 
     def busy_seconds(self):
-        started = self._started
-        return round(time.monotonic() - started, 1) if started is not None else None
+        with self._lock:
+            oldest = min(self._started.values(), default=None)
+        return round(time.monotonic() - oldest, 1) if oldest is not None else None
 
-    def _release_when_gone(self, process):
+    def _free(self, token):
+        with self._lock:
+            self._started.pop(token, None)
+            self._stuck.discard(token)
+
+    def _release_when_gone(self, process, token):
         try:
             process.wait()
         finally:
-            self._started = None
-            self.stuck = False
-            self._lock.release()
+            self._free(token)
 
     @contextmanager
     def hold(self):
-        if not self._lock.acquire(blocking=False):
-            raise WorkerBusy()
-        self._started = time.monotonic()
+        token = object()
+        with self._lock:
+            if len(self._started) >= self.slots:
+                raise WorkerBusy()
+            self._started[token] = time.monotonic()
         survivor = None
         try:
             yield
@@ -113,11 +144,11 @@ class Gate:
             raise
         finally:
             if survivor is not None and survivor.poll() is None:
-                self.stuck = True
-                threading.Thread(target=self._release_when_gone, args=(survivor,), daemon=True).start()
+                with self._lock:
+                    self._stuck.add(token)
+                threading.Thread(target=self._release_when_gone, args=(survivor, token), daemon=True).start()
             else:
-                self._started = None
-                self._lock.release()
+                self._free(token)
 
 _subreaper = False
 

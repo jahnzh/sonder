@@ -10,7 +10,6 @@ process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
 process.env.APP_PASSWORD = "admin-password";
 // These tests exercise queue policy with a deliberately stalled CTC pool worker.
-delete process.env.ALIGNMENT_CHAPTER_ENGINE;
 delete process.env.ALIGNMENT_WORKER_URL;
 delete process.env.ALIGNMENT_WORKER_TOKEN;
 const { installCtcTestPool, uninstallCtcTestPool } = await import("./ctc-test-pool.ts");

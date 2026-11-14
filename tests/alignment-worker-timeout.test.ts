@@ -12,7 +12,6 @@ process.env.NODE_ENV = "test";
 // limiter rejects those injects mid-suite (same pattern as tests/browser-server.ts).
 process.env.API_RATE_LIMIT = "6000";
 delete process.env.APP_PASSWORD;
-delete process.env.ALIGNMENT_CHAPTER_ENGINE;
 delete process.env.ALIGNMENT_WORKER_URL;
 delete process.env.ALIGNMENT_WORKER_TOKEN;
 const { CTC_ENGINE, installCtcTestPool, uninstallCtcTestPool, withCtcPoolFetch } =

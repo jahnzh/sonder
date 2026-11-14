@@ -1,9 +1,12 @@
 # CTC worker pool
 
 CTC jobs use WSL first and lisa second. Each worker exposes its configured CTC
-device, precision, model availability, media root and single busy gate through
-`GET /health`; the server also checks SSH access before staging the audio.
-Busy hosts are skipped, and if every eligible host is busy the job waits. A
+device, precision, model availability, media root, job slots and requests in
+progress through `GET /health`; the server also checks SSH access before staging
+the audio. A worker runs up to `slots` requests at once
+(`ALIGNMENT_WORKER_SLOTS`, 1 to 16, default 1), sharing its resident model, and
+the server admits that many jobs to it. A host with every slot taken is skipped,
+and if every eligible host is busy the job waits. A
 failed attempt can run once on the other host; after both fail, Resume starts a
 new pair of attempts. CPU float32 and GPU float16 use the same engine identity
 and cache generation; the selected device and precision are stored on the job
@@ -25,9 +28,12 @@ on the trusted network.
 ## Host roles and capabilities
 
 | Host | Device | Precision | Default URL | SSH Target & Port | Concurrency | Role |
-| --- | --- | --- | --- | --- | ---: | --- |
-| **WSL** (`192.168.1.119`) | `cuda` | `float16` | `http://192.168.1.119:3012` | `jahn@192.168.1.119:22` | 3 | Primary CTC worker (NVIDIA GPU) |
-| **Lisa** (`audiobooks.amatox.in`) | `cpu` | `float32` | `https://audiobooks.amatox.in/sonder-ctc` | `jahn@audiobooks.amatox.in:2269` (alias `lisa`) | 1 | Fallback CTC worker (CPU) |
+| --- | --- | --- | --- | --- | --- | --- |
+| **WSL** (`192.168.1.119`) | `cuda` | `float16` | `http://192.168.1.119:3012` | `jahn@192.168.1.119:22` | its `slots` | Primary CTC worker (NVIDIA GPU) |
+| **Lisa** (`audiobooks.amatox.in`) | `cpu` | `float32` | `https://audiobooks.amatox.in/sonder-ctc` | `jahn@audiobooks.amatox.in:2269` (alias `lisa`) | its `slots` | Fallback CTC worker (CPU) |
+
+The Steam Deck is no longer a pool host (#279): `ALIGNMENT_POOL_DECK_HOST` and
+`ALIGNMENT_POOL_DECK_WORKER_URL` are ignored.
 
 - **WSL (Primary)**: Equipped with an NVIDIA GPU running PyTorch with CUDA `2.8.0+cu128`. Port 3012 is forwarded from the Windows host to the WSL2 virtual machine via Windows portproxy and firewall rules.
 - **Lisa (Fallback)**: CPU-only worker running PyTorch `2.8.0+cpu`. Worker listens locally on `127.0.0.1:3012` and is reverse-proxied by Caddy under `https://audiobooks.amatox.in/sonder-ctc` with an IP allowlist restricted to the production server.
@@ -217,23 +223,27 @@ Verify the `/health` endpoint:
 curl -s http://127.0.0.1:3012/health | jq .
 ```
 
-Expected JSON response structure:
+Expected JSON response structure (WSL; the fields a worker of this revision
+returns):
 ```json
 {
   "ready": true,
-  "engine": "ctc-wav2vec2-base-960h-torchaudio-2.8-v1",
+  "engine": "ctc-wav2vec2-base-960h-torchaudio-2.8-v2",
   "busy": false,
   "stuck": false,
   "busySeconds": null,
   "lastTimeout": null,
+  "slots": 1,
+  "activeRequests": 0,
   "mediaRoot": "/home/jahn/sonder-ctc-worker/media",
   "ctc": {
-    "engine": "ctc-wav2vec2-base-960h-torchaudio-2.8-v1",
+    "engine": "ctc-wav2vec2-base-960h-torchaudio-2.8-v2",
     "ready": true,
     "device": "cuda",
     "precision": "float16",
     "anchorReady": true,
-    "passageReady": true
+    "passageReady": true,
+    "anchorBatch": true
   }
 }
 ```
@@ -287,6 +297,33 @@ Lisa CPU:
 
 Gate: PASS; engine: `ctc-wav2vec2-base-960h-torchaudio-2.8-v1`; outcome: `mapped`.
 
+## Qualification, 2026-11-14 (#279)
+
+The gate was run again after Whisper and aeneas were removed, on the worker
+files of this change (`align.py`, `ctc_*.py`, `deadline.py`,
+`download_model.py`, `gate_ctc.py`; SHA-256 checked against the branch). Each
+host ran a temporary worker from `~/sonder-replication/retire-279/` on port
+43279, with its own media root, the pinned checkpoint linked read-only from the
+installed worker, the installed worker's Python environment (read-only) and
+`slots` 1. The input was the same 128-utterance labelled sample
+(`alignment-labelled-20261106-7tasSF/inputs/`, the same SHA-256 on both hosts).
+Both workers reported engine `ctc-wav2vec2-base-960h-torchaudio-2.8-v2` at the
+top level of `/health` and under `ctc`.
+
+| Metric | WSL GPU (cuda, float16) | lisa CPU (cpu, float32) | Required |
+| --- | ---: | ---: | ---: |
+| Covered utterances | 128/128 | 128/128 | 128/128 |
+| Both sentence endpoints ≤250 ms | 128/128 | 128/128 | 128/128 |
+| Transition midpoints ≤250 ms | 127/127 | 127/127 | 127/127 |
+| Missing utterances | 0 | 0 | 0 |
+| Maximum endpoint or transition error | 194.3 ms | 194.3 ms | ≤1000 ms |
+| First sentence located and kept | yes | yes | yes |
+| Last sentence located and kept | yes | yes | yes |
+| Unrelated chapter left unsynced | yes | yes | yes |
+| Gate run (health to report) | about 12 s | about 94 s | — |
+
+Gate: PASS on both hosts; outcome `mapped`. CPU and GPU give the same outcomes.
+
 ## Probing gate (#278)
 
 The one-off CTC and Whisper probing comparison passed for all eight titles; the results are recorded in [PR #375](https://github.com/jahnzh/sonder/pull/375). The comparison scripts and Whisper prober have been retired.
@@ -295,7 +332,7 @@ The one-off CTC and Whisper probing comparison passed for all eight titles; the 
 
 | Proposal | Evidence |
 | --- | --- |
-| Route CTC to WSL first and lisa as the only fallback; never send it to production; preserve non-CTC routing. | `tests/alignment-ctc.test.ts`: unreachable, busy or incompatible WSL; legacy assignment; disabled pool; and cross-host retry tests. `tests/alignment-pool.test.ts`: production URL rejection and existing non-CTC dispatch tests. |
+| Route CTC to WSL first and lisa as the only fallback; never send it to production. | `tests/alignment-ctc.test.ts`: unreachable, busy or incompatible WSL; legacy assignment; disabled pool; and cross-host retry tests. `tests/alignment-pool.test.ts`: production URL rejection, SSH diagnostics and staging tests. |
 | Use reported device and busy state for capability and capacity. | `tests/alignment-ctc.test.ts`: incompatible or busy WSL and both workers busy. Real `/health` responses identified WSL as CUDA float16 and lisa as CPU float32 before the gates. |
 | Retry a failure once on the other host, retain a retryable failure, and keep CPU and GPU in the same engine generation with device and precision for diagnostics. | `tests/alignment-ctc.test.ts`: cross-host retry and manual Resume, anchored-window failover, and the CPU and GPU metadata assertions. |
 | Install the lisa environment with the pinned CPU wheels and the anchored planner dependency; document the commands. | The commands above completed on lisa; its environment imported Torch and TorchAudio `2.8.0+cpu`, FastAPI `0.121.3`, Uvicorn `0.38.0`. |

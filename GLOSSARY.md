@@ -76,6 +76,40 @@ _Avoid_: Page bookmark, marker
 The action that moves the narration to a chosen sentence in the ebook.
 _Avoid_: Jump audio, seek to text
 
+## Book knowledge
+
+**Book knowledge**:
+The characters, terms and relationships described by a work, available through chat, a character index and glossary, and a relationship graph.
+_Avoid_: Book chat (when all three experiences are meant)
+
+**Knowledge cutoff**:
+The position a user explicitly chooses as the end of the text available to spoiler-free book knowledge. It stays fixed while Book knowledge is open until explicitly changed, and can move backward independently of the furthest position reached.
+_Avoid_: Progress (when the chosen limit is meant), furthest read
+
+**Knowledge fact**:
+A statement about a knowledge entity, such as a name, description, relationship or identity link, supported by passages in the selected ebook edition and available only once the text needed to establish it has been reached.
+_Avoid_: Full-book biography (when an individual statement is meant)
+
+**Knowledge entity**:
+A character, place, group, important object or unfamiliar term that book knowledge describes, and that knowledge facts and mentions refer to.
+_Avoid_: Node (a drawing of an entity in the graph), character (when places, groups, objects or terms are included)
+
+**Identity link**:
+A knowledge fact stating that two knowledge entities are the same one, either because the story reveals it or because extraction recorded one entity twice.
+_Avoid_: Merge, dedupe (both suggest rewriting earlier views), identity assertion
+
+**Spoiler-free mode**:
+Book knowledge limited to information available through the user's chosen knowledge cutoff.
+_Avoid_: Progress mode, up-to-position mode
+
+**Complete mode**:
+Book knowledge with access to the whole work's selected text, regardless of the user's knowledge cutoff.
+_Avoid_: Whole-book mode
+
+**Term highlight**:
+An optional mark on a relevant name or term in the reader that links to its entry in Book knowledge, subject to the selected mode and knowledge cutoff.
+_Avoid_: Narration highlight (which marks the narrated sentence)
+
 ## Background work
 
 **Activity**:

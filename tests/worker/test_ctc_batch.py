@@ -267,6 +267,27 @@ class LocatePoolLifecycle(unittest.TestCase):
         self.assertFalse(ctc_pipeline.locate_pool_is_open())
 
 
+    def test_a_second_book_never_shuts_down_the_pool_another_request_is_using(self):
+        book_a = [(0, ["THE", "CURIOUS", "RABBIT", "RAN"])]
+        book_b = [(0, ["A", "QUIET", "HARBOUR", "TOWN"])]
+        env = {"ALIGNMENT_CTC_LOCATE_WORKERS": "1", "ALIGNMENT_CTC_LOCATE_IDLE_SECONDS": "0"}
+        job = ([], [], ("-",), 0)
+        pool_a = ctc_pipeline.open_locate_pool(book_a, env=env)
+        pool_a.submit(ctc_candidates._pool_locate, job).result()
+        # Another book's request opens, uses and releases its own pool while A's request still runs.
+        pool_b = ctc_pipeline.open_locate_pool(book_b, env=env)
+        self.assertIsNot(pool_a, pool_b)
+        pool_b.submit(ctc_candidates._pool_locate, job).result()
+        ctc_pipeline.release_locate_pool(env, pool_b)
+        # A's pool still takes work ("cannot schedule new futures after shutdown" in production before).
+        pool_a.submit(ctc_candidates._pool_locate, job).result()
+        # A second request for book A shares its pool, which closes only after both release it.
+        self.assertIs(ctc_pipeline.open_locate_pool(book_a, env=env), pool_a)
+        ctc_pipeline.release_locate_pool(env, pool_a)
+        pool_a.submit(ctc_candidates._pool_locate, job).result()
+        ctc_pipeline.release_locate_pool(env, pool_a)
+        self.assertFalse(ctc_pipeline.locate_pool_is_open())
+
 class BatchMatchesSingle(unittest.TestCase):
 
     def test_batch_locate_matches_single_window_results(self):

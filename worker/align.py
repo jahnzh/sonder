@@ -3,12 +3,13 @@ import os
 import secrets
 import sys
 import time
+import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-from deadline import AlignmentTimeout, Gate, WorkerBusy
+from deadline import AlignmentTimeout, Gate, WorkerBusy, worker_slots
 from ctc_acoustic import ENGINE as CTC_ENGINE, checkpoint_path
 from ctc_pipeline import align_ctc_batch_locate, align_ctc_section, shutdown_locate_pool
 from ctc_decode import evict_decoded
@@ -34,7 +35,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
-gate = Gate()
+gate = Gate(worker_slots())
 
 class PrefetchWindow(BaseModel):
     audio: str
@@ -114,6 +115,7 @@ def anchor(request: AnchorRequest):
         raise
     except Exception as error:
         print(f"[anchor] failed: {error!r}", file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
         raise HTTPException(422, error_detail("Local speech recovery is unavailable. Check that the required model is installed on the media drive.", started, engine))
 
 @app.post("/anchor-batch")
@@ -154,6 +156,7 @@ def anchor_batch(request: AnchorBatchRequest):
         raise
     except Exception as error:
         print(f"[anchor-batch] failed: {error!r}", file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
         raise HTTPException(422, error_detail("Local speech recovery is unavailable. Check that the required model is installed on the media drive.", started, engine))
 
 def error_detail(message, started, engine=CTC_ENGINE):
@@ -188,6 +191,7 @@ def health():
         pass
     return {"ready": True, "engine": CTC_ENGINE, "busy": gate.busy, "stuck": gate.stuck,
             "busySeconds": gate.busy_seconds(), "lastTimeout": gate.last_timeout,
+            "slots": gate.slots, "activeRequests": gate.active,
             "mediaRoot": str(root), "ctc": {"engine": CTC_ENGINE, "ready": ctc_ready,
             "device": device, "precision": "float16" if device == "cuda" else "float32",
             "anchorReady": ctc_ready, "passageReady": True, "anchorBatch": True}}
@@ -232,4 +236,5 @@ def align(request: AlignRequest):
         raise
     except Exception as error:
         print(f"[align] failed: {error!r}", file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
         raise HTTPException(422, error_detail("Local alignment could not match this section. Check the edition and chapter pairing.", started, engine))

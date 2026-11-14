@@ -37,7 +37,8 @@ class Prefetch(unittest.TestCase):
         ctc_prefetch.shutdown()
 
     def tearDown(self):
-        ctc_prefetch.shutdown()
+        # An extraction still running would write into the folder being removed.
+        ctc_prefetch.shutdown(wait=True)
         self.tmp.cleanup()
 
     def wait_for(self, start, duration):

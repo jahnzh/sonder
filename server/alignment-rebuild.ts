@@ -14,7 +14,12 @@ import type { AlignmentJob } from "../src/reading-types.ts";
  * one. An identity missing from the list is treated as not older, so a rolled-back server never rebuilds the
  * maps of a newer engine with its own older one.
  */
-export const ENGINE_GENERATIONS: readonly string[] = ["aeneas-1.7.3", CTC_ENGINE];
+// The first CTC engine joined partly cached windows out of time order, dropping many sentences.
+export const ENGINE_GENERATIONS: readonly string[] = [
+  "aeneas-1.7.3",
+  "ctc-wav2vec2-base-960h-torchaudio-2.8-v1",
+  CTC_ENGINE,
+];
 let generations: readonly string[] = ENGINE_GENERATIONS;
 
 export function setEngineGenerationsForTests(list: readonly string[] | null) {

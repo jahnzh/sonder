@@ -2,8 +2,6 @@ export async function installAlignmentFixture() {
   process.env.ALIGNMENT_WORKER_URL = "http://alignment-browser.test";
   process.env.ALIGNMENT_WORKER_TOKEN = "browser-fixture-token";
   process.env.ALIGNMENT_POOL_ENABLED = "1";
-  delete process.env.ALIGNMENT_CHAPTER_ENGINE;
-  delete process.env.EBOOK_SET_PROBER;
   const temp = process.env.MEDIA_ROOT!;
   const { CTC_ENGINE, installCtcTestPool, withCtcPoolFetch } = await import("./ctc-test-pool.ts");
   installCtcTestPool(temp, "http://alignment-browser.test");

@@ -9,7 +9,6 @@ process.env.MEDIA_ROOT = join(temp, "media");
 process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
 delete process.env.APP_PASSWORD;
-delete process.env.ALIGNMENT_CHAPTER_ENGINE;
 delete process.env.ALIGNMENT_WORKER_URL;
 delete process.env.ALIGNMENT_WORKER_TOKEN;
 const {
@@ -278,16 +277,24 @@ test("local alignment pairs chapters, preserves recording progress and invalidat
   process.env.ALIGNMENT_WORKER_URL = "http://alignment.test";
   process.env.ALIGNMENT_WORKER_TOKEN = "test-token";
   let workerCalls = 0;
+  let recoverCalls = 0;
   globalThis.fetch = withCtcPoolFetch(temp, async (input, init) => {
     workerCalls++;
     const data = JSON.parse(String(init?.body));
     assert.equal(data.token, "test-token");
-    if (String(input) === "http://alignment.test/anchor") {
+    // Locating a passage runs on the CTC pool worker, never on the production worker (#279).
+    if (String(input) === `${ctcWorkerUrl}/anchor`) {
       assert.ok(data.duration <= 30);
+      assert.equal(data.engine, "ctc");
+      assert.equal(data.recordingId, "recording-alice");
+      assert.equal(data.trackId, "alice-0");
+      recoverCalls++;
       return Response.json({
         engine: CTC_ENGINE,
         outcome: "mapped",
-        match: { index: 9, score: 0.9, text: data.fragments[9] },
+        start: 50,
+        text: data.fragments[9],
+        match: { index: 9, score: 0.9 },
       });
     }
     assert.equal(String(input), `${ctcWorkerUrl}/align`);
@@ -408,6 +415,7 @@ test("local alignment pairs chapters, preserves recording progress and invalidat
   });
   assert.equal(recovered.statusCode, 200, recovered.body);
   assert.equal(recovered.json().locator.paragraphId, "0:9");
+  assert.equal(recoverCalls, 1);
   assert.equal(recovered.json().approximate, true);
   assert.deepEqual(db.select().from(s.progress).all(), before);
   writeFileSync(file, await readerFixture({ language: "fr" }));

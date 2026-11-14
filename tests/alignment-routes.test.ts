@@ -15,7 +15,6 @@ process.env.MEDIA_ROOT = join(temp, "media");
 process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
 process.env.APP_PASSWORD = "admin-password";
-delete process.env.ALIGNMENT_CHAPTER_ENGINE;
 delete process.env.ALIGNMENT_POOL_ENABLED;
 delete process.env.ALIGNMENT_WORKER_URL;
 delete process.env.ALIGNMENT_WORKER_TOKEN;

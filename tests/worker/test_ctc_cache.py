@@ -73,6 +73,37 @@ class CacheStorage(unittest.TestCase):
             self.assertFalse(tiny.write(0, 40, 1, 2, data))
             self.assertLessEqual(sum(p.stat().st_size for p in tiny.root.rglob("*") if p.is_file()), size - 1)
 
+    def test_writes_do_not_rescan_every_chunk_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            data = struct.pack("<2f", 1, 2)
+            caches = [self.cache(folder, name) for name in ("one", "two", "three")]
+            scans = []
+            original = ctc_cache.AcousticCache._usage
+            def counted(cache, directory):
+                scans.append(directory.name)
+                return original(cache, directory)
+            with mock.patch.object(ctc_cache.AcousticCache, "_usage", counted):
+                for index in range(20):
+                    for cache in caches:
+                        self.assertTrue(cache.write(index, index * 320000 + 40, 1, 2, data))
+            # The size index was built when the caches opened, so 60 writes scanned no directory.
+            self.assertEqual(scans, [])
+            sizes = ctc_cache._INDEXES[str(caches[0].root)]["sizes"]
+            for cache in caches:
+                self.assertEqual(sizes[cache.recording], sum(p.stat().st_size for p in (cache.root / cache.recording).iterdir()))
+
+    def test_the_size_index_is_rebuilt_after_the_rescan_interval(self):
+        with tempfile.TemporaryDirectory() as folder:
+            cache = self.cache(folder, "one")
+            cache.write(0, 40, 1, 2, struct.pack("<2f", 1, 2))
+            stray = cache.root / "other-process"
+            stray.mkdir()
+            (stray / "0.complete").write_bytes(b"x" * 10)
+            with mock.patch.object(ctc_cache, "_RESCAN_SECONDS", -1):
+                with cache._locked():
+                    cache._evict(0)
+            self.assertEqual(ctc_cache._INDEXES[str(cache.root)]["sizes"]["other-process"], 10)
+
     def test_same_size_audio_replacement_with_restored_mtime_changes_digest(self):
         with tempfile.TemporaryDirectory() as folder:
             audio = Path(folder) / "audio"
@@ -223,6 +254,59 @@ class CachedPipeline(unittest.TestCase):
                 # publishes no acoustic cache entries, so resume re-encodes every core.
                 run("resumed", 8.5, 42, "interrupted-recording")
                 self.assertEqual(model.calls, [0, 320000, 0, 320000, 640000])
+
+
+    def test_a_window_partly_in_the_cache_keeps_its_audio_in_time_order(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "audio.wav"
+            with wave.open(str(source), "wb") as output:
+                output.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+                output.writeframes(b"\0\0" * (65 * 16000))
+            class Model:
+                labels = ("-", "A", "B")
+                device = torch.device("cpu")
+                torch = torch
+                def encode_chunks(self, items):
+                    encoded = []
+                    for audio, start, end, context in items:
+                        valid = max(0, (len(audio) - 400) // 320 + 1)
+                        first, last = ctc_acoustic.core_frames(start, end, context, valid)
+                        boundaries = [ctc_acoustic.frame_boundary(context, i) for i in range(first, last)]
+                        encoded.append((torch.tensor([[float(b), 1.0, 2.0] for b in boundaries],
+                                                     dtype=torch.float32).unsqueeze(0), boundaries))
+                    return encoded
+            def extract(command, *_):
+                start = round(float(command[command.index("-ss") + 1]) * 16000)
+                length = round(float(command[command.index("-t") + 1]) * 16000)
+                with wave.open(str(source), "rb") as inp:
+                    inp.setpos(min(start, inp.getnframes()))
+                    frames = inp.readframes(length)
+                with wave.open(command[-1], "wb") as out:
+                    out.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+                    out.writeframes(frames)
+                return 0, ""
+            paths = []
+            def align(emissions, boundaries, fragments, labels, samples, offset, _torch):
+                paths.append((emissions.clone(), boundaries[:], offset))
+                return [{"index": 0, "start": offset / 16000, "end": (offset + samples) / 16000}]
+            def run(name, start, duration):
+                return ctc_pipeline.align_ctc_section(
+                    audio=source, output=root / "alignment" / f"{name}.json", fragments=["text"],
+                    language="eng", start=start, duration=duration, media_folder=root / "alignment",
+                    env={"ALIGNMENT_CTC_ENCODE_BATCH": "4"},
+                    recording_id="recording", recording_fingerprint="same-recording", track_id="track")
+            with mock.patch.object(ctc_pipeline, "run_with_deadline", side_effect=extract), \
+                 mock.patch.object(ctc_pipeline, "resident_model", return_value=Model()), \
+                 mock.patch.object(ctc_pipeline.ctc_path, "align", side_effect=align):
+                # An earlier window cached only the middle 20 s of audio.
+                run("middle", 25, 10)
+                run("window", 8.5, 42)
+            emissions, boundaries, offset = paths[-1]
+            self.assertEqual(boundaries, sorted(boundaries))
+            # Each frame carries its own position, so frame order is audio order.
+            self.assertTrue(torch.equal(emissions[0, :, 0],
+                                        torch.tensor([b + offset for b in boundaries], dtype=torch.float32)))
 
 
 if __name__ == "__main__":

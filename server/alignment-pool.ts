@@ -15,7 +15,7 @@ import type * as schema from "./schema.ts";
 const execFileAsync = promisify(execFile);
 
 export type PoolHostId = AlignmentPoolHostId;
-export const CTC_ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-v1";
+export const CTC_ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-v2";
 
 export type AlignmentJobPoolState = {
   hostId: PoolHostId;
@@ -76,7 +76,6 @@ export function defaultPoolHosts(): PoolHost[] {
     process.env.ALIGNMENT_POOL_REMOTE_ROOT ??
     "~/sonder-replication/alignment-pool";
   const wslHost = process.env.ALIGNMENT_POOL_WSL_HOST ?? "192.168.1.119";
-  const deckHost = process.env.ALIGNMENT_POOL_DECK_HOST ?? "deck@steamdeck";
   const lisaHost = process.env.ALIGNMENT_POOL_LISA_HOST ?? "lisa";
   return [
     {
@@ -89,15 +88,6 @@ export function defaultPoolHosts(): PoolHost[] {
         `http://${hostNameFromSshTarget(wslHost)}:3012`,
     },
     {
-      id: "steamdeck",
-      sshTarget: deckHost,
-      maxConcurrent: 1,
-      remoteWorkRoot: workRoot,
-      workerUrl:
-        process.env.ALIGNMENT_POOL_DECK_WORKER_URL ??
-        `http://${hostNameFromSshTarget(deckHost)}:3012`,
-    },
-    {
       id: "lisa",
       sshTarget: lisaHost,
       maxConcurrent: 1,
@@ -107,21 +97,6 @@ export function defaultPoolHosts(): PoolHost[] {
         `http://${hostNameFromSshTarget(lisaHost)}:3012`,
     },
   ];
-}
-
-export function sharedAlignmentModelsRoot(host: PoolHost) {
-  return (
-    process.env.ALIGNMENT_POOL_REMOTE_MODELS_ROOT ??
-    `${host.remoteWorkRoot}/shared/alignment`
-  );
-}
-
-export function isolatedJobMediaRoot(host: PoolHost, jobId: string) {
-  return `${host.remoteWorkRoot}/jobs/${jobId}/media`;
-}
-
-export function isolatedAlignmentFolder(host: PoolHost, jobId: string) {
-  return `${isolatedJobMediaRoot(host, jobId)}/alignment/${jobId}`;
 }
 
 let depsOverride: PoolSshDeps | null = null;
@@ -209,20 +184,17 @@ async function probeHost(job: Pick<AlignmentJob, "poolErrors">, host: PoolHost) 
   return false;
 }
 
-type RecordingLease = { jobId: string; site: "local" | "remote" };
+type RecordingLease = { jobId: string };
 
 export class AlignmentPoolCoordinator {
   private slots = new Map<PoolHostId, Set<string>>();
   private recordings = new Map<string, RecordingLease>();
-  private localJobs = new Set<string>();
   private hostErrors = new Map<PoolHostId, string | null>();
-  private readonly maxLocalConcurrent = 1;
   constructor(private hosts: PoolHost[] = defaultPoolHosts()) {}
 
   reset() {
     this.slots.clear();
     this.recordings.clear();
-    this.localJobs.clear();
     this.hostErrors.clear();
   }
 
@@ -258,86 +230,31 @@ export class AlignmentPoolCoordinator {
     return this.slots.get(hostId)?.has(jobId) ?? false;
   }
 
-  canUseLocalWorker(recordingId: string) {
+  // A worker runs up to `capacity` jobs (its reported slots). Reserve a slot across the
+  // whole job, including gaps between its individual HTTP requests.
+  tryAcquireCtc(hostId: PoolHostId, jobId: string, recordingId: string, capacity = 1) {
+    if (this.activeOnHost(hostId) >= capacity) return false;
     const lease = this.recordings.get(recordingId);
-    return !lease || lease.site === "local";
-  }
-
-  tryAcquireLocal(jobId: string) {
-    if (this.localJobs.size >= this.maxLocalConcurrent) return false;
-    this.localJobs.add(jobId);
-    return true;
-  }
-
-  releaseLocal(jobId: string) {
-    this.localJobs.delete(jobId);
-  }
-
-  localFullAlignmentStarting(recordingId: string, jobId: string) {
-    const lease = this.recordings.get(recordingId);
-    if (lease && lease.site === "remote")
-      throw new Error(
-        "This recording is being aligned on a remote pool host.",
-      );
-    this.recordings.set(recordingId, { jobId, site: "local" });
-  }
-
-  localFullAlignmentFinished(recordingId: string, jobId: string) {
-    const lease = this.recordings.get(recordingId);
-    if (lease?.jobId === jobId && lease.site === "local")
-      this.recordings.delete(recordingId);
-  }
-
-  selectHost(exclude: PoolHostId[] = []) {
-    const candidates = this.hosts
-      .filter((host) => host.id !== "lisa" && !exclude.includes(host.id))
-      .map((host) => ({
-        host,
-        free: host.maxConcurrent - this.activeOnHost(host.id),
-      }))
-      .filter((row) => row.free > 0)
-      .sort((a, b) => b.free - a.free);
-    return candidates[0]?.host ?? null;
-  }
-
-  // Each worker reports one busy/free gate. Reserve it across the whole job,
-  // including gaps between its individual HTTP requests.
-  tryAcquireCtc(hostId: PoolHostId, jobId: string, recordingId: string) {
-    if (this.activeOnHost(hostId) > 0) return false;
-    const lease = this.recordings.get(recordingId);
-    if (lease && (lease.jobId !== jobId || lease.site === "local")) return false;
+    if (lease && lease.jobId !== jobId) return false;
     if (!this.hostById(hostId)) return false;
-    this.slots.set(hostId, new Set([jobId]));
-    this.recordings.set(recordingId, { jobId, site: "remote" });
-    return true;
-  }
-
-  tryAcquire(hostId: PoolHostId, jobId: string, recordingId: string) {
-    const host = this.hostById(hostId);
-    if (!host) return false;
-    const lease = this.recordings.get(recordingId);
-    if (lease && (lease.jobId !== jobId || lease.site === "local"))
-      return false;
     const active = this.slots.get(hostId) ?? new Set<string>();
-    if (active.size >= host.maxConcurrent) return false;
     active.add(jobId);
     this.slots.set(hostId, active);
-    this.recordings.set(recordingId, { jobId, site: "remote" });
+    this.recordings.set(recordingId, { jobId });
     return true;
   }
 
-  /** Drops every lease a job holds: host slots, its recording and the local worker. */
+  /** Drops every lease a job holds: host slots and its recording. */
   releaseJob(jobId: string) {
     for (const slot of this.slots.values()) slot.delete(jobId);
     for (const [recordingId, lease] of this.recordings)
       if (lease.jobId === jobId) this.recordings.delete(recordingId);
-    this.localJobs.delete(jobId);
   }
 
   release(hostId: PoolHostId, jobId: string, recordingId: string) {
     this.slots.get(hostId)?.delete(jobId);
     const lease = this.recordings.get(recordingId);
-    if (lease?.jobId === jobId && lease.site === "remote")
+    if (lease?.jobId === jobId)
       this.recordings.delete(recordingId);
   }
 }
@@ -351,26 +268,6 @@ export function getAlignmentPoolCoordinator() {
 export function resetAlignmentPoolCoordinator(hosts?: PoolHost[]) {
   coordinator = new AlignmentPoolCoordinator(hosts);
   resetAlignmentPoolStatusCache();
-}
-
-export async function stageTracksOnHost(input: StageTracksInput) {
-  const mediaRoot = isolatedJobMediaRoot(input.host, input.jobId);
-  const modelsRoot = sharedAlignmentModelsRoot(input.host);
-  const deps = poolDeps();
-  await deps.exec(
-    input.host.sshTarget,
-    `mkdir -p '${mediaRoot}/tracks' '${mediaRoot}/alignment/${input.jobId}' && ` +
-      `if [ -e '${modelsRoot}/models' ]; then ln -sfn '${modelsRoot}/models' '${mediaRoot}/alignment/models'; fi`,
-  );
-  const stagedAudio: Record<string, string> = {};
-  for (const track of input.tracks) {
-    const local = input.localAudio(track);
-    if (!local) continue;
-    const remote = `${mediaRoot}/tracks/${track.id}${local.endsWith(".mp3") ? ".mp3" : ""}`;
-    await deps.uploadFile(local, remote, input.host.sshTarget);
-    stagedAudio[track.id] = remote;
-  }
-  return { jobMediaRoot: mediaRoot, stagedAudio };
 }
 
 /** Local test stub: copy into a temp tree instead of SSH. */
@@ -405,8 +302,16 @@ type CtcHealth = {
   mediaRoot: string;
   busy: boolean;
   stuck: boolean;
+  /** Requests the worker runs at once; older workers omit it and run one. */
+  slots?: number;
   ctc: { engine: string; ready: boolean; device: string; precision: string; passageReady?: boolean };
 };
+
+/** Book jobs a CTC worker takes at once: the slots it reports, 1 for workers that report none. */
+export function ctcWorkerSlots(health: { slots?: unknown } | null | undefined) {
+  const slots = health?.slots;
+  return typeof slots === "number" && Number.isInteger(slots) && slots >= 1 ? Math.min(slots, 16) : 1;
+}
 
 function workerOrigin(value: string) {
   const url = new URL(value);
@@ -519,8 +424,10 @@ async function dispatchCtcJob(
       exclude(id);
       continue;
     }
-    if (health.busy || health.stuck || coord.activeOnHost(id) > 0) {
-      recordPoolError(job, id, "health", health.stuck ? "worker is stuck" : "worker is busy");
+    const capacity = ctcWorkerSlots(health);
+    // A stuck request keeps its slot, so a worker with every slot taken reports busy.
+    if (health.busy || (capacity === 1 && health.stuck) || coord.activeOnHost(id) >= capacity) {
+      recordPoolError(job, id, "health", health.stuck && capacity === 1 ? "worker is stuck" : "worker is busy");
       busy = true;
       continue;
     }
@@ -528,7 +435,7 @@ async function dispatchCtcJob(
       exclude(id);
       continue;
     }
-    if (!coord.tryAcquireCtc(id, job.id, job.recordingId)) {
+    if (!coord.tryAcquireCtc(id, job.id, job.recordingId, capacity)) {
       recordPoolError(job, id, "capacity", "worker or recording is busy");
       busy = true;
       continue;
@@ -603,51 +510,7 @@ export async function dispatchFullAlignmentJob(
   localAudio: (track: typeof schema.tracks.$inferSelect) => string | null,
   triedHosts: PoolHostId[] = job.pool?.triedHosts ?? [],
 ): Promise<AlignmentJobPoolState> {
-  if (job.engine === CTC_ENGINE)
-    return dispatchCtcJob(job, tracks, localAudio, triedHosts);
-  const coord = getAlignmentPoolCoordinator();
-  const exclude = [...triedHosts];
-  for (let attempts = 0; attempts < 2; attempts++) {
-    const host = coord.selectHost(exclude);
-    if (!host) {
-      for (const id of ["wsl", "steamdeck"] as const) {
-        if (!exclude.includes(id) && coord.hostById(id))
-          recordPoolError(job, id, "capacity", "no free worker slots");
-      }
-      break;
-    }
-    if (!(await probeHost(job, host))) {
-      exclude.push(host.id);
-      continue;
-    }
-    if (!coord.tryAcquire(host.id, job.id, job.recordingId)) {
-      recordPoolError(job, host.id, "capacity", "worker or recording is busy");
-      exclude.push(host.id);
-      continue;
-    }
-    try {
-      const staged = await stageTracksOnHost({
-        jobId: job.id,
-        host,
-        tracks,
-        localAudio,
-      });
-      clearHostError(job, host.id);
-      return {
-        hostId: host.id,
-        attempt: triedHosts.length + 1,
-        jobMediaRoot: staged.jobMediaRoot,
-        workerUrl: host.workerUrl,
-        triedHosts: [...triedHosts, host.id],
-        stagedAudio: staged.stagedAudio,
-      };
-    } catch (error) {
-      recordPoolError(job, host.id, "staging", error);
-      coord.release(host.id, job.id, job.recordingId);
-      exclude.push(host.id);
-    }
-  }
-  throw new Error(POOL_FAILURE_MESSAGE);
+  return dispatchCtcJob(job, tracks, localAudio, triedHosts);
 }
 
 export function poolFailureMessage(error: unknown) {
@@ -656,10 +519,9 @@ export function poolFailureMessage(error: unknown) {
 }
 
 export function poolWorkerBase(job: AlignmentJob) {
-  if (job.engine === CTC_ENGINE &&
-      (!job.pool?.workerUrl || !["wsl", "lisa"].includes(job.pool.hostId)))
+  if (!job.pool?.workerUrl || !["wsl", "lisa"].includes(job.pool.hostId))
     throw new Error("CTC alignment requires a remote pool worker.");
-  return job.pool?.workerUrl ?? process.env.ALIGNMENT_WORKER_URL ?? "";
+  return job.pool.workerUrl;
 }
 
 export function poolAudioPath(
@@ -755,7 +617,7 @@ function poolProbeCacheKey() {
 }
 
 async function probeSinglePoolHost(host: PoolHost): Promise<ProbedHostSnapshot> {
-  const maxConcurrent = 1;
+  let maxConcurrent = 1;
   const workerUrl = safeWorkerUrl(host.workerUrl);
   const guardError = ctcUrlGuardError(host);
   if (guardError) {
@@ -792,6 +654,7 @@ async function probeSinglePoolHost(host: PoolHost): Promise<ProbedHostSnapshot> 
         if (raw && typeof raw === "object") {
           workerBusy = raw.busy === true;
           stuck = raw.stuck === true;
+          maxConcurrent = ctcWorkerSlots(raw);
           if (typeof raw.ctc?.device === "string") device = raw.ctc.device;
           if (typeof raw.ctc?.precision === "string") precision = raw.ctc.precision;
         }

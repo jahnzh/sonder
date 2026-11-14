@@ -16,6 +16,7 @@ process.env.MEDIA_ROOT = join(temp, "media");
 process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
 delete process.env.APP_PASSWORD;
+process.env.SONDER_DOWNLOAD_RETRY_MS = "1,1,1";
 const { createApp, listBooks } = await import("../server/app.ts");
 const { db, sqlite } = await import("../server/db.ts");
 const s = await import("../server/schema.ts");

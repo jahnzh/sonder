@@ -4,7 +4,8 @@ RUN pip install --no-cache-dir 'numpy==1.26.4' 'fastapi==0.121.3' 'uvicorn==0.38
 COPY requirements-ctc.txt /worker/requirements-ctc.txt
 RUN pip install --no-cache-dir -r /worker/requirements-ctc.txt
 WORKDIR /worker
-COPY *.py /worker/
+# The service and the model download only; research and gate scripts stay out of the image.
+COPY align.py ctc_*.py deadline.py download_model.py /worker/
 ENV PYTHONUNBUFFERED=1 OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2
 EXPOSE 3012
 CMD ["uvicorn", "align:app", "--host", "0.0.0.0", "--port", "3012", "--no-access-log"]
