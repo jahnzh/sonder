@@ -29,33 +29,5 @@ services:
     tmpfs:
       - /tmp:size=64m
     stop_grace_period: 30s
-  alignment-worker:
-    build: ./worker
-    image: sonder-alignment:local
-    container_name: sonder-alignment
-    restart: unless-stopped
-    user: "1000:1000"
-    ports:
-      - "127.0.0.1:3012:3012"
-    environment:
-      MEDIA_ROOT: ${MEDIA_ROOT:-/mnt/usb_4t_1/sonder}
-      MEDIA_VOLUME_ID: ${MEDIA_VOLUME_ID:?Set the mounted media volume ID}
-      ALIGNMENT_WORKER_TOKEN: ${ALIGNMENT_WORKER_TOKEN:?Generate a private worker token}
-      # Alignment time limit: min(MAX, BASE + PER_AUDIO_SECOND x audio seconds). Empty uses the
-      # defaults 120 s, 0.15 and 1200 s; see README. Set them in .env, not here.
-      ALIGNMENT_TIMEOUT_BASE_SECONDS: ${ALIGNMENT_TIMEOUT_BASE_SECONDS:-}
-      ALIGNMENT_TIMEOUT_PER_AUDIO_SECOND: ${ALIGNMENT_TIMEOUT_PER_AUDIO_SECOND:-}
-      ALIGNMENT_TIMEOUT_MAX_SECONDS: ${ALIGNMENT_TIMEOUT_MAX_SECONDS:-}
-      ALIGNMENT_CTC_CACHE_BYTES: ${ALIGNMENT_CTC_CACHE_BYTES:-}
-    volumes:
-      - ${MEDIA_ROOT:-/mnt/usb_4t_1/sonder}:${MEDIA_ROOT:-/mnt/usb_4t_1/sonder}
-    cpus: 2
-    mem_limit: 6g
-    read_only: true
-    tmpfs:
-      - /tmp:size=128m
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3012/health')"]
-      interval: 30s
-      timeout: 5s
-      start_period: 10s
+# Alignment runs only on the remote CTC pool hosts (ADR 0006, #279); this machine runs no alignment
+# worker. worker/ holds the code those hosts run (scripts/install-ctc-workers.sh).

@@ -132,6 +132,29 @@ If the running image could not be tagged (or no rollback image exists), roll bac
 git checkout <previous-commit> && docker compose build sonder && docker compose up -d sonder
 ```
 
+### Deploying the alignment-worker retirement (#279)
+
+`deploy.sh` builds and recreates only `sonder`; it never touches the alignment workers. The deploy that retires Whisper, aeneas and the local `sonder-alignment` container needs two more steps:
+
+1. **Update the remote workers first**, so the deploy's image smoke (step 5) checks the new worker code. On WSL and on lisa, in a checkout of `<commit>` on that host, run:
+
+   ```bash
+   cat ~/sonder-ctc-worker/worker.env                # note any lines besides the token, MEDIA_ROOT, device and slots
+   scripts/install-ctc-workers.sh --device cuda      # WSL
+   scripts/install-ctc-workers.sh --device cpu       # lisa
+   curl -s http://127.0.0.1:3012/health              # ready: true, ctc.engine ctc-wav2vec2-base-960h-torchaudio-2.8-v2
+   ```
+
+   The installer installs into `~/sonder-ctc-worker` (its `--dir` default), keeps the token and slots from the existing `worker.env`, rewrites `worker.env` with only those plus `MEDIA_ROOT` and the device (add back any other line you noted, such as `ALIGNMENT_TIMEOUT_*` or `ALIGNMENT_CTC_CACHE_BYTES`), and restarts `sonder-ctc-worker.service`. It copies `worker/` over the old files without deleting any and does not uninstall packages, so the retired files and Whisper stay on disk until removed by hand: `rm -f ~/sonder-ctc-worker/worker/{anchors,align_task,pipeline,gate_whisper_probe}.py`, `~/sonder-ctc-worker/env/bin/pip uninstall -y faster-whisper`, and the old weights under `~/sonder-ctc-worker/media/alignment/models/whisper`. Roll back a worker by running the installer from a checkout of the previous commit.
+
+2. **Deploy the app** with `scripts/deploy-prod.sh <commit> --marker <string>` as above, **then stop and remove the old container**, which the new server never calls:
+
+   ```bash
+   docker stop sonder-alignment && docker rm sonder-alignment
+   ```
+
+   `compose.yaml` no longer defines it, so nothing recreates it; until it is removed, `docker compose up` reports it as an orphan and it keeps its 6 GB memory reservation. The `sonder-alignment:local` image can stay (`worker/Dockerfile.ctc-benchmark` builds on it). A leftover `ALIGNMENT_WORKER_URL` in `.env` is ignored and can be deleted. To roll back, restore the previous app image as above and recreate the container from the previous commit's `compose.yaml` (`git checkout <previous-commit> && docker compose up -d --no-build alignment-worker`).
+
 The script prints the exact rollback command on failure and at the end of a successful run. Record every deploy in `artifacts/orca/STATE.md` (commit, backup path, image tag, markers, live-check results).
 
 ## Live verification

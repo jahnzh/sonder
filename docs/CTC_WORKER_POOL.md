@@ -1,6 +1,9 @@
 # CTC worker pool
 
-CTC jobs use WSL first and lisa second. Each worker exposes its configured CTC
+All alignment work runs on these pool hosts only: alignment maps, ebook
+candidate probing and passage locating (**Read from audio**). The production
+server runs no alignment worker; its `sonder-alignment` container was retired
+in #279. CTC jobs use WSL first and lisa second. Each worker exposes its configured CTC
 device, precision, model availability, media root, job slots and requests in
 progress through `GET /health`; the server also checks SSH access before staging
 the audio. A worker runs up to `slots` requests at once
@@ -12,7 +15,10 @@ new pair of attempts. CPU float32 and GPU float16 use the same engine identity
 and cache generation; the selected device and precision are stored on the job
 for diagnosis.
 
-Set `ALIGNMENT_POOL_ENABLED=1` on the server to enable the pool. The SSH
+Set `ALIGNMENT_POOL_ENABLED=1` on the server to enable the pool; reading sync
+is shown as available, and newly linked pairs are queued, only when it is set
+together with `ALIGNMENT_WORKER_TOKEN`. A leftover `ALIGNMENT_WORKER_URL` in
+`.env` is ignored. The SSH
 targets default to `192.168.1.119` and `lisa`, overridden by
 `ALIGNMENT_POOL_WSL_HOST` and `ALIGNMENT_POOL_LISA_HOST`. Worker HTTP URLs
 default to port 3012 on those hosts; override them with
@@ -21,8 +27,10 @@ server SSH access to both hosts and configure the same private
 `ALIGNMENT_WORKER_TOKEN` on the server and both workers. The worker's
 `MEDIA_ROOT` must be writable by the SSH user, with its models under
 `MEDIA_ROOT/alignment/models`. The pool copies audio into per-job directories
-under that root. Pool URLs must address the remote hosts; loopback URLs and the
-configured local worker URL are refused for CTC. Protect the worker HTTP ports
+under that root. Pool URLs must address the remote hosts; loopback URLs are
+refused for CTC. A passage-locating request has 180 seconds for staging,
+scoring and cleanup together; past that its SSH/SCP processes are stopped, the
+host is freed and the reader gets an error. Protect the worker HTTP ports
 on the trusted network.
 
 ## Host roles and capabilities

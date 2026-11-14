@@ -56,3 +56,13 @@ test("r10#6: handoff notes are marked historical and point at sonder.pecori.no",
     assert.doesNotMatch(text, /^- Still open: the Caddy deploy/m, name);
   }
 });
+
+test("production runs no local alignment worker: compose has only sonder and .env.example names no worker URL (#279)", () => {
+  const compose = readFileSync("compose.yaml", "utf8");
+  const services = compose.slice(compose.indexOf("services:\n"));
+  assert.deepEqual([...services.matchAll(/^  ([a-z][\w-]*):\s*$/gm)].map((match) => match[1]), ["sonder"]);
+  assert.doesNotMatch(compose, /sonder-alignment|3012/);
+  const example = readFileSync(".env.example", "utf8");
+  assert.doesNotMatch(example, /^ALIGNMENT_WORKER_URL=/m);
+  assert.match(example, /^ALIGNMENT_POOL_ENABLED=1$/m);
+});

@@ -45,6 +45,8 @@ Hosted processing remains disabled. The original [plan's pricing comparison](THE
 
 ## Reproduce
 
+Historical: these measurements used the aeneas worker and the local `alignment-worker` compose service, both retired in #279. The commands below need the previous commit's `compose.yaml`; current alignment runs on the CTC pool ([CTC_WORKER_POOL.md](CTC_WORKER_POOL.md)).
+
 ```bash
 docker compose build alignment-worker
 docker compose run --rm --no-deps alignment-worker python download_model.py
