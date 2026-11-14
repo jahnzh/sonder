@@ -163,6 +163,17 @@ class Http(unittest.TestCase):
         self.assertEqual(self.align.align(request)["outcome"], "language_not_supported")
         self.assertEqual(self.align.align(request)["engine"], self.align.CTC_ENGINE)
 
+    def test_a_retired_engine_is_refused_by_request_validation(self):
+        # An older server may still name aeneas (#279). FastAPI answers a failed body validation with 422,
+        # so the caller gets a clear error instead of a CTC run it did not ask for.
+        from pydantic import ValidationError
+        for model, extra in ((self.align.AlignRequest, {"duration": 60}),
+                             (self.align.AnchorRequest, {"duration": 30})):
+            with self.assertRaises(ValidationError) as caught:
+                model(token="secret", audio=str(self.root / "book.m4b"), output=str(self.root / "alignment" / "x.json"),
+                      fragments=["One."], engine="aeneas", **extra)
+            self.assertIn("engine", str(caught.exception))
+
     def test_ctc_failures_report_the_ctc_engine(self):
         request = self.align_request()
         request.engine = "ctc"
