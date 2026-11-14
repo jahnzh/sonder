@@ -716,3 +716,38 @@ test("a transient health failure does not exclude the host from a later alignmen
     fs.rmSync(temp, { recursive: true, force: true });
   }
 });
+
+test("CTC jobs lease each worker URL independently on one host", async () => {
+  const originalFetch = globalThis.fetch;
+  const host = { ...hosts[0], workerUrls: ["http://wsl-worker:3012/w1", "http://wsl-worker:3012/w2"] };
+  resetAlignmentPoolCoordinator([host]);
+  setAlignmentPoolDepsForTests({
+    async probe() { return true; },
+    async exec() { return { code: 0, stdout: "", stderr: "" }; },
+    async uploadFile() {},
+  });
+  globalThis.fetch = async (input) => Response.json({
+    ready: true, busy: false, stuck: false, slots: 1,
+    mediaRoot: String(input).includes("/w2") ? "/media-two" : "/media-one",
+    ctc: { engine: CTC_ENGINE, ready: true, device: "cuda", precision: "float16", passageReady: true },
+  });
+  const previous = process.env.ALIGNMENT_POOL_ENABLED;
+  process.env.ALIGNMENT_POOL_ENABLED = "1";
+  try {
+    const job = (id: string, recordingId = id) => ({ id, recordingId, engine: CTC_ENGINE, mode: "anchored" }) as AlignmentJob;
+    const first = await dispatchFullAlignmentJob(job("one"), [], () => null);
+    const second = await dispatchFullAlignmentJob(job("two"), [], () => null);
+    assert.equal(first.workerUrl, "http://wsl-worker:3012/w1");
+    assert.equal(second.workerUrl, "http://wsl-worker:3012/w2");
+    assert.match(first.jobMediaRoot, /^\/media-one\//);
+    assert.match(second.jobMediaRoot, /^\/media-two\//);
+    await assert.rejects(dispatchFullAlignmentJob(job("three"), [], () => null), PoolBusyError);
+    getAlignmentPoolCoordinator().release("wsl", "one", "one");
+    assert.equal((await dispatchFullAlignmentJob(job("four"), [], () => null)).workerUrl, first.workerUrl);
+    await assert.rejects(dispatchFullAlignmentJob(job("duplicate", "two"), [], () => null), PoolBusyError);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previous === undefined) delete process.env.ALIGNMENT_POOL_ENABLED;
+    else process.env.ALIGNMENT_POOL_ENABLED = previous;
+  }
+});

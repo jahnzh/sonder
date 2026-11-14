@@ -1,7 +1,7 @@
 # CTC worker pool
 
 CTC jobs use WSL first and lisa second. Each worker exposes its configured CTC
-device, precision, model availability, media root and single busy gate through
+device, precision, model availability, media root and slot count through
 `GET /health`; the server also checks SSH access before staging the audio.
 Busy hosts are skipped, and if every eligible host is busy the job waits. A
 failed attempt can run once on the other host; after both fail, Resume starts a
@@ -13,7 +13,14 @@ Set `ALIGNMENT_POOL_ENABLED=1` on the server to enable the pool. The SSH
 targets default to `192.168.1.119` and `lisa`, overridden by
 `ALIGNMENT_POOL_WSL_HOST` and `ALIGNMENT_POOL_LISA_HOST`. Worker HTTP URLs
 default to port 3012 on those hosts; override them with
-`ALIGNMENT_POOL_WSL_WORKER_URL` and `ALIGNMENT_POOL_LISA_WORKER_URL`. Give the
+`ALIGNMENT_POOL_WSL_WORKER_URL` and `ALIGNMENT_POOL_LISA_WORKER_URL`. To run
+multiple worker processes on one host, set the corresponding plural variable,
+`ALIGNMENT_POOL_WSL_WORKER_URLS` or `ALIGNMENT_POOL_LISA_WORKER_URLS`, to a
+comma-separated list of URLs; it takes precedence over the singular URL. Each
+process reports its own capacity and needs its own writable media root and
+acoustic cache; models may be shared read-only. Installing with a nondefault
+`--port` uses a distinct `sonder-ctc-worker-<port>.service`, so it does not
+replace the default service. Give the
 server SSH access to both hosts and configure the same private
 `ALIGNMENT_WORKER_TOKEN` on the server and both workers. The worker's
 `MEDIA_ROOT` must be writable by the SSH user, with its models under
@@ -312,3 +319,20 @@ The pool remains off by default. No schema migration is needed. The worker
 ran `npx tsc --noEmit`, the focused alignment tests, `npm test`, and the Python
 worker tests; the coordinator runs `npm run check -- --ref <commit>` on the
 committed revision.
+
+### Multiple WSL processes behind one forwarded port
+
+Where Windows forwards only port 3012, the standard-library router in
+`worker/ctc_proxy.py` can expose `/w1` and `/w2` on that port while the two
+workers listen on internal ports 3013 and 3014. Bare paths go to worker one,
+so older server configurations remain usable. The router streams request and
+response bodies and allows 1900 seconds for upstream operations. Protect port
+3012 on the trusted network as for an ordinary worker.
+
+Give each worker its own installation directory, media root and acoustic cache;
+the model directory may be shared read-only. Configure the first worker to use
+3013 and the second 3014, and install the router as a systemd user service using
+`deploy/ctc-proxy.service.tmpl` with `{{TARGET_DIR}}` replaced by the first
+installation's absolute directory. Set the server's plural URL to the two
+prefixes, for example `http://host:3012/w1,http://host:3012/w2`. Verify each
+prefix's `/health` and check the available GPU memory before increasing slots.

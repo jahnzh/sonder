@@ -32,6 +32,7 @@ export type PoolHost = {
   maxConcurrent: number;
   remoteWorkRoot: string;
   workerUrl: string;
+  workerUrls?: string[];
 };
 
 export type PoolSshDeps = {
@@ -81,6 +82,7 @@ export function defaultPoolHosts(): PoolHost[] {
   return [
     {
       id: "wsl",
+      workerUrls: process.env.ALIGNMENT_POOL_WSL_WORKER_URLS?.split(",").map((url) => url.trim()).filter(Boolean),
       sshTarget: wslHost,
       maxConcurrent: 3,
       remoteWorkRoot: workRoot,
@@ -99,6 +101,7 @@ export function defaultPoolHosts(): PoolHost[] {
     },
     {
       id: "lisa",
+      workerUrls: process.env.ALIGNMENT_POOL_LISA_WORKER_URLS?.split(",").map((url) => url.trim()).filter(Boolean),
       sshTarget: lisaHost,
       maxConcurrent: 1,
       remoteWorkRoot: workRoot,
@@ -214,6 +217,7 @@ type RecordingLease = { jobId: string; site: "local" | "remote" };
 export class AlignmentPoolCoordinator {
   private slots = new Map<PoolHostId, Set<string>>();
   private recordings = new Map<string, RecordingLease>();
+  private ctcWorkers = new Map<string, string>();
   private localJobs = new Set<string>();
   private hostErrors = new Map<PoolHostId, string | null>();
   private readonly maxLocalConcurrent = 1;
@@ -222,6 +226,7 @@ export class AlignmentPoolCoordinator {
   reset() {
     this.slots.clear();
     this.recordings.clear();
+    this.ctcWorkers.clear();
     this.localJobs.clear();
     this.hostErrors.clear();
   }
@@ -302,8 +307,9 @@ export class AlignmentPoolCoordinator {
 
   // A worker runs up to `capacity` jobs (its reported slots). Reserve a slot across the
   // whole job, including gaps between its individual HTTP requests.
-  tryAcquireCtc(hostId: PoolHostId, jobId: string, recordingId: string, capacity = 1) {
-    if (this.activeOnHost(hostId) >= capacity) return false;
+  tryAcquireCtc(hostId: PoolHostId, jobId: string, recordingId: string, capacity = 1, workerUrl?: string) {
+    const worker = workerUrl ?? this.hostById(hostId)?.workerUrl;
+    if (!worker || [...this.ctcWorkers.values()].filter((value) => value === worker).length >= capacity) return false;
     const lease = this.recordings.get(recordingId);
     if (lease && (lease.jobId !== jobId || lease.site === "local")) return false;
     if (!this.hostById(hostId)) return false;
@@ -311,6 +317,7 @@ export class AlignmentPoolCoordinator {
     active.add(jobId);
     this.slots.set(hostId, active);
     this.recordings.set(recordingId, { jobId, site: "remote" });
+    this.ctcWorkers.set(jobId, worker);
     return true;
   }
 
@@ -330,6 +337,7 @@ export class AlignmentPoolCoordinator {
 
   /** Drops every lease a job holds: host slots, its recording and the local worker. */
   releaseJob(jobId: string) {
+    this.ctcWorkers.delete(jobId);
     for (const slot of this.slots.values()) slot.delete(jobId);
     for (const [recordingId, lease] of this.recordings)
       if (lease.jobId === jobId) this.recordings.delete(recordingId);
@@ -337,6 +345,7 @@ export class AlignmentPoolCoordinator {
   }
 
   release(hostId: PoolHostId, jobId: string, recordingId: string) {
+    this.ctcWorkers.delete(jobId);
     this.slots.get(hostId)?.delete(jobId);
     const lease = this.recordings.get(recordingId);
     if (lease?.jobId === jobId && lease.site === "remote")
@@ -515,48 +524,50 @@ async function dispatchCtcJob(
       exclude(id);
       continue;
     }
-    let health: CtcHealth;
-    try {
-      health = await ctcHealth(host);
-    } catch (error) {
-      recordPoolError(job, id, "health", error);
-      // Unreachable / unhealthy hosts stay excluded for this dispatch (and probe lease retries).
-      exclude(id);
-      continue;
+    const urls = [...new Set((host.workerUrls?.length ? host.workerUrls : [host.workerUrl]).map((url) => url.replace(/\/$/, "")))];
+    let hostBusy = false;
+    let stagingFailed = false;
+    for (const workerUrl of urls) {
+      const worker = { ...host, workerUrl };
+      let health: CtcHealth;
+      try {
+        health = await ctcHealth(worker);
+      } catch (error) {
+        recordPoolError(job, id, "health", error);
+        continue;
+      }
+      if (job.mode === "anchored" && health.ctc.passageReady !== true) {
+        recordPoolError(job, id, "health", "passage discovery is not ready");
+        continue;
+      }
+      const capacity = ctcWorkerSlots(health);
+      if (health.busy || (capacity === 1 && health.stuck)) {
+        recordPoolError(job, id, "health", health.stuck && capacity === 1 ? "worker is stuck" : "worker is busy");
+        hostBusy = true;
+        continue;
+      }
+      if (!(await probeHost(job, worker))) continue;
+      if (!coord.tryAcquireCtc(id, job.id, job.recordingId, capacity, workerUrl)) {
+        recordPoolError(job, id, "capacity", "worker or recording is busy");
+        hostBusy = true;
+        continue;
+      }
+      try {
+        const staged = await stageCtcTracks({ jobId: job.id, host: worker, tracks, localAudio }, health.mediaRoot);
+        job.ctcDevice = health.ctc.device;
+        job.ctcPrecision = health.ctc.precision;
+        clearHostError(job, id);
+        return { hostId: id, attempt: attempted.length + 1, ...staged,
+          workerUrl, triedHosts: [...attempted, id] };
+      } catch (error) {
+        recordPoolError(job, id, "staging", error);
+        coord.release(id, job.id, job.recordingId);
+        stagingFailed = true;
+      }
     }
-    if (job.mode === "anchored" && health.ctc.passageReady !== true) {
-      recordPoolError(job, id, "health", "passage discovery is not ready");
-      exclude(id);
-      continue;
-    }
-    const capacity = ctcWorkerSlots(health);
-    // A stuck request keeps its slot, so a worker with every slot taken reports busy.
-    if (health.busy || (capacity === 1 && health.stuck) || coord.activeOnHost(id) >= capacity) {
-      recordPoolError(job, id, "health", health.stuck && capacity === 1 ? "worker is stuck" : "worker is busy");
-      busy = true;
-      continue;
-    }
-    if (!(await probeHost(job, host))) {
-      exclude(id);
-      continue;
-    }
-    if (!coord.tryAcquireCtc(id, job.id, job.recordingId, capacity)) {
-      recordPoolError(job, id, "capacity", "worker or recording is busy");
-      busy = true;
-      continue;
-    }
-    try {
-      const staged = await stageCtcTracks({ jobId: job.id, host, tracks, localAudio }, health.mediaRoot);
-      job.ctcDevice = health.ctc.device;
-      job.ctcPrecision = health.ctc.precision;
-      clearHostError(job, id);
-      return { hostId: id, attempt: attempted.length + 1, ...staged,
-        workerUrl: host.workerUrl, triedHosts: [...attempted, id] };
-    } catch (error) {
-      recordPoolError(job, id, "staging", error);
-      coord.release(id, job.id, job.recordingId);
-      attempted.push(id);
-    }
+    if (hostBusy) busy = true;
+    else if (stagingFailed) attempted.push(id);
+    else exclude(id);
   }
   if (busy) throw new PoolBusyError(attempted);
   throw new Error(POOL_FAILURE_MESSAGE);
@@ -764,7 +775,7 @@ export function resetAlignmentPoolStatusCache() {
 function poolProbeCacheKey() {
   const engine = currentPoolEngine();
   const hosts = activePoolHosts(getAlignmentPoolCoordinator().listHosts(), engine)
-    .map((host) => `${host.id}:${host.sshTarget}:${host.workerUrl}:${host.maxConcurrent}`)
+    .map((host) => `${host.id}:${host.sshTarget}:${host.workerUrl}:${host.workerUrls?.join(",") ?? ""}:${host.maxConcurrent}`)
     .join("|");
   return `${poolEnabled() ? "1" : "0"}\n${engine}\n${process.env.ALIGNMENT_WORKER_URL ?? ""}\n${hosts}`;
 }
@@ -886,7 +897,18 @@ async function runPoolProbe(): Promise<CachedPoolProbe> {
       })),
     };
   }
-  const probed = await Promise.all(hosts.map((host) => probeSinglePoolHost(host, engine)));
+  const probed = await Promise.all(hosts.map(async (host) => {
+    const urls = engine === "ctc" && host.workerUrls?.length ? [...new Set(host.workerUrls.map((url) => url.replace(/\/$/, "")))] : [host.workerUrl];
+    const results = await Promise.all(urls.map((workerUrl) => probeSinglePoolHost({ ...host, workerUrl }, engine)));
+    const reachable = results.filter((result) => result.reachable);
+    const representative = reachable[0] ?? results[0];
+    return {
+      ...representative,
+      maxConcurrent: reachable.reduce((sum, result) => sum + result.maxConcurrent, 0) || representative.maxConcurrent,
+      workerBusy: reachable.length > 0 && reachable.every((result) => result.workerBusy),
+      stuck: results.some((result) => result.stuck),
+    };
+  }));
   return {
     key,
     enabled: true,

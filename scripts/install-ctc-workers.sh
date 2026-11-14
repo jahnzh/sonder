@@ -18,7 +18,7 @@ weights, and configures/restarts the systemd user service.
 Options:
   --device <cpu|cuda>       Worker device target (default: auto-detected, fallback: cpu)
   --dir <path>              Installation target directory (default: $HOME/sonder-ctc-worker)
-  --port <port>             Worker HTTP port (default: 3012)
+  --port <port>             Worker HTTP port (default: 3012; other ports get their own service)
   --slots <n>               Book jobs the worker runs at once, sharing one model (1-16; default: keep, else 1)
   --token <token>           Alignment worker auth token (prefer passing ALIGNMENT_WORKER_TOKEN in env)
   --python <path>           Python interpreter for venv (default: python3)
@@ -209,6 +209,15 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "$port" != "$DEFAULT_PORT" ]]; then
+  [[ "$port" =~ ^[0-9]+$ ]] && (( port >= 1 && port <= 65535 )) || { echo "error: --port expects 1-65535" >&2; exit 2; }
+  if [[ "$target_dir" == "${HOME}/sonder-ctc-worker" && "$print_service" == false ]]; then
+    echo "error: a nondefault port requires a separate --dir for its media cache" >&2
+    exit 2
+  fi
+  UNIT="sonder-ctc-worker-${port}.service"
+fi
 
 if [[ "$print_service" == true ]]; then
   render_service "$target_dir" "$port"

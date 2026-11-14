@@ -353,3 +353,11 @@ test("docs/agents/worker-spec.md contains exact orchestration line from issue #3
   const matches = content.split("\n").filter((l) => l.includes(expectedLine));
   assert.equal(matches.length, 1, "The line must appear exactly once in worker-spec.md");
 });
+
+test("a second port has its own service name", () => {
+  const run = spawnSync(installer, ["--device", "cuda", "--port", "3013", "--dir", "/tmp/worker-two", "--dry-run"], { encoding: "utf8" });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /sonder-ctc-worker-3013\.service/);
+  const invalid = spawnSync(installer, ["--port", "65536", "--dry-run"], { encoding: "utf8" });
+  assert.equal(invalid.status, 2);
+});
