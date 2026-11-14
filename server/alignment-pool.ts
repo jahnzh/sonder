@@ -34,14 +34,40 @@ export type PoolHost = {
   workerUrl: string;
 };
 
+/** `signal` ends the SSH/SCP child process when a caller's deadline passes. */
+export type PoolSshOptions = { signal?: AbortSignal };
+
 export type PoolSshDeps = {
   exec: (
     sshTarget: string,
     command: string,
+    options?: PoolSshOptions,
   ) => Promise<{ code: number; stdout: string; stderr: string }>;
-  uploadFile: (localPath: string, remotePath: string, sshTarget: string) => Promise<void>;
-  probe: (sshTarget: string) => Promise<boolean>;
+  uploadFile: (localPath: string, remotePath: string, sshTarget: string, options?: PoolSshOptions) => Promise<void>;
+  probe: (sshTarget: string, options?: PoolSshOptions) => Promise<boolean>;
 };
+
+/** Settles with `work`, or rejects with the signal's reason as soon as it aborts. */
+export function untilAborted<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return work;
+  if (signal.aborted) {
+    work.catch(() => undefined);
+    return Promise.reject(signal.reason);
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(
+      (value) => { signal.removeEventListener("abort", onAbort); resolve(value); },
+      (error) => { signal.removeEventListener("abort", onAbort); reject(error); },
+    );
+  });
+}
+
+function withDeadline(timeoutMs: number, signal?: AbortSignal) {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([timeout, signal]) : timeout;
+}
 
 export type StageTracksInput = {
   jobId: string;
@@ -107,17 +133,17 @@ export function setAlignmentPoolDepsForTests(deps: PoolSshDeps | null) {
 }
 
 function defaultPoolSshDeps(): PoolSshDeps {
-  const exec = async (sshTarget: string, command: string) => {
+  const exec = async (sshTarget: string, command: string, options: PoolSshOptions = {}) => {
     const { stdout, stderr } = await execFileAsync(
       "ssh",
       ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", sshTarget, command],
-      { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
+      { encoding: "utf8", maxBuffer: 10 * 1024 * 1024, signal: options.signal },
     );
     return { code: 0, stdout, stderr };
   };
   return {
     exec,
-    async uploadFile(localPath, remotePath, sshTarget) {
+    async uploadFile(localPath, remotePath, sshTarget, options = {}) {
       await execFileAsync(
         "scp",
         [
@@ -129,11 +155,11 @@ function defaultPoolSshDeps(): PoolSshDeps {
           localPath,
           `${sshTarget}:${remotePath}`,
         ],
-        { maxBuffer: 10 * 1024 * 1024 },
+        { maxBuffer: 10 * 1024 * 1024, signal: options.signal },
       );
     },
-    async probe(sshTarget) {
-      await exec(sshTarget, "true");
+    async probe(sshTarget, options = {}) {
+      await exec(sshTarget, "true", options);
       return true;
     },
   };
@@ -174,9 +200,9 @@ function clearHostError(job: Pick<AlignmentJob, "poolErrors">, hostId: PoolHostI
   if (!Object.keys(job.poolErrors).length) delete job.poolErrors;
 }
 
-async function probeHost(job: Pick<AlignmentJob, "poolErrors">, host: PoolHost) {
+async function probeHost(job: Pick<AlignmentJob, "poolErrors">, host: PoolHost, signal?: AbortSignal) {
   try {
-    if (await poolDeps().probe(host.sshTarget)) return true;
+    if (await untilAborted(poolDeps().probe(host.sshTarget, { signal }), signal)) return true;
     recordPoolError(job, host.id, "ssh", "probe failed");
   } catch (error) {
     recordPoolError(job, host.id, "ssh", error);
@@ -349,11 +375,11 @@ function validCtcHealth(host: PoolHost, health: Partial<CtcHealth> | null | unde
   );
 }
 
-async function ctcHealth(host: PoolHost): Promise<CtcHealth> {
+async function ctcHealth(host: PoolHost, signal?: AbortSignal): Promise<CtcHealth> {
   const guardError = ctcUrlGuardError(host);
   if (guardError) throw new Error(guardError);
   const response = await fetch(`${host.workerUrl.replace(/\/$/, "")}/health`, {
-    signal: AbortSignal.timeout(5000),
+    signal: withDeadline(5000, signal),
   });
   if (!response.ok) throw new Error(`worker returned HTTP ${response.status}`);
   const health = await response.json() as CtcHealth;
@@ -364,20 +390,20 @@ async function ctcHealth(host: PoolHost): Promise<CtcHealth> {
 
 const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
 
-async function stageCtcTracks(input: StageTracksInput, workerRoot: string) {
+async function stageCtcTracks(input: StageTracksInput, workerRoot: string, signal?: AbortSignal) {
   // The worker validates outputs against MEDIA_ROOT/alignment. Both the audio
   // and per-job output must therefore be inside its reported root.
   const jobMediaRoot = join(workerRoot, "alignment", "pool-jobs", input.jobId);
   const folder = join(jobMediaRoot, "alignment", input.jobId);
   const deps = poolDeps();
-  await deps.exec(input.host.sshTarget,
-    `mkdir -p ${shellQuote(join(jobMediaRoot, "tracks"))} ${shellQuote(folder)}`);
+  await untilAborted(deps.exec(input.host.sshTarget,
+    `mkdir -p ${shellQuote(join(jobMediaRoot, "tracks"))} ${shellQuote(folder)}`, { signal }), signal);
   const stagedAudio: Record<string, string> = {};
   for (const track of input.tracks) {
     const local = input.localAudio(track);
     if (!local) continue;
     const remote = join(jobMediaRoot, "tracks", encodeURIComponent(track.id));
-    await deps.uploadFile(local, remote, input.host.sshTarget);
+    await untilAborted(deps.uploadFile(local, remote, input.host.sshTarget, { signal }), signal);
     stagedAudio[track.id] = remote;
   }
   return { jobMediaRoot, stagedAudio };
@@ -394,7 +420,8 @@ async function dispatchCtcJob(
   // Probe leases exclude unreachable hosts for their retries; alignment jobs must not,
   // because PoolBusyError persists triedHosts on the job and a transient outage would
   // then exclude that host for good.
-  opts: { excludeUnhealthy?: boolean } = {},
+  // `signal` ends the dispatch (and its SSH/SCP children) when the caller's deadline passes; no other host is tried.
+  opts: { excludeUnhealthy?: boolean; signal?: AbortSignal } = {},
 ): Promise<AlignmentJobPoolState> {
   const coord = getAlignmentPoolCoordinator();
   let busy = false;
@@ -402,7 +429,9 @@ async function dispatchCtcJob(
   // Older anchored jobs could carry a Steam Deck attempt; it is not one of
   // the two eligible CTC hosts and must not consume the CTC retry.
   const attempted = triedHosts.filter((id) => id === "wsl" || id === "lisa");
+  const signal = opts.signal;
   for (const id of ["wsl", "lisa"] as const) {
+    signal?.throwIfAborted();
     if (attempted.includes(id)) continue;
     const host = coord.hostById(id);
     if (!host) {
@@ -412,7 +441,7 @@ async function dispatchCtcJob(
     }
     let health: CtcHealth;
     try {
-      health = await ctcHealth(host);
+      health = await ctcHealth(host, signal);
     } catch (error) {
       recordPoolError(job, id, "health", error);
       // Unreachable / unhealthy hosts stay excluded for this dispatch (and probe lease retries).
@@ -431,7 +460,7 @@ async function dispatchCtcJob(
       busy = true;
       continue;
     }
-    if (!(await probeHost(job, host))) {
+    if (!(await probeHost(job, host, signal))) {
       exclude(id);
       continue;
     }
@@ -441,18 +470,20 @@ async function dispatchCtcJob(
       continue;
     }
     try {
-      const staged = await stageCtcTracks({ jobId: job.id, host, tracks, localAudio }, health.mediaRoot);
+      const staged = await stageCtcTracks({ jobId: job.id, host, tracks, localAudio }, health.mediaRoot, signal);
       job.ctcDevice = health.ctc.device;
       job.ctcPrecision = health.ctc.precision;
       clearHostError(job, id);
       return { hostId: id, attempt: attempted.length + 1, ...staged,
         workerUrl: host.workerUrl, triedHosts: [...attempted, id] };
     } catch (error) {
-      recordPoolError(job, id, "staging", error);
       coord.release(id, job.id, job.recordingId);
+      if (signal?.aborted) throw signal.reason;
+      recordPoolError(job, id, "staging", error);
       attempted.push(id);
     }
   }
+  signal?.throwIfAborted();
   if (busy) throw new PoolBusyError(attempted);
   throw new Error(POOL_FAILURE_MESSAGE);
 }
@@ -479,10 +510,12 @@ export async function acquireCtcProbeLease(
   tracks: (typeof schema.tracks.$inferSelect)[],
   localAudio: StageTracksInput["localAudio"],
   triedHosts: PoolHostId[] = [],
+  /** Ends staging and the cleanup in `release` when it aborts; the host slot is freed either way. */
+  signal?: AbortSignal,
 ): Promise<CtcProbeLease & { triedHosts: PoolHostId[]; poolErrors: AlignmentJob["poolErrors"] }> {
   if (!poolEnabled()) throw new Error("CTC alignment requires the remote pool.");
   const target: CtcDispatchTarget = { id: `ctc-probe-${randomUUID()}`, recordingId, mode: "anchored" };
-  const state = await dispatchCtcJob(target, tracks, localAudio, triedHosts, { excludeUnhealthy: true });
+  const state = await dispatchCtcJob(target, tracks, localAudio, triedHosts, { excludeUnhealthy: true, signal });
   const coord = getAlignmentPoolCoordinator();
   const host = coord.hostById(state.hostId);
   let released = false;
@@ -499,7 +532,9 @@ export async function acquireCtcProbeLease(
       coord.release(state.hostId, target.id, recordingId);
       // The staged copy is the whole recording; it is this probe's alone, so remove it.
       if (host && state.jobMediaRoot.includes(`/alignment/pool-jobs/${target.id}`))
-        await poolDeps().exec(host.sshTarget, `rm -rf ${shellQuote(state.jobMediaRoot)}`).catch(() => undefined);
+        await untilAborted(
+          poolDeps().exec(host.sshTarget, `rm -rf ${shellQuote(state.jobMediaRoot)}`, { signal }), signal,
+        ).catch(() => undefined);
     },
   };
 }

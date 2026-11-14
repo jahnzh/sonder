@@ -37,6 +37,7 @@ import {
   poolRemoteAlignmentFolder,
   poolWorkerBase,
   shouldDispatchToPool,
+  untilAborted,
   type PoolHostId,
 } from "./alignment-pool.ts";
 import { prefetchSectionCount, upcomingPrefetchWindows } from "./alignment-prefetch.ts";
@@ -754,6 +755,14 @@ const defaultWorkerRetryClock = {
 let workerRetryClock = defaultWorkerRetryClock;
 export function setWorkerRetryClockForTests(clock: typeof defaultWorkerRetryClock | null) {
   workerRetryClock = clock ?? defaultWorkerRetryClock;
+}
+/** One deadline over a recovery's staging, scoring and cleanup on the pool (the old Whisper call's limit). */
+export const RECOVER_DEADLINE_MS = 180_000;
+export const RECOVER_TIMEOUT_MESSAGE =
+  "Locating this passage took too long on the alignment workers. Try again in a moment.";
+let recoverDeadlineMs = RECOVER_DEADLINE_MS;
+export function setRecoverDeadlineForTests(ms: number | null) {
+  recoverDeadlineMs = ms ?? RECOVER_DEADLINE_MS;
 }
 class WorkerRequestError extends Error {
   constructor(message: string, readonly metadata?: WorkerMetadata, readonly status?: number) { super(message); }
@@ -1881,15 +1890,25 @@ export function registerAlignment(app: FastifyInstance) {
     const fragments = book.sections.flatMap((section) => section.paragraphs);
     const { createCtcProbeSession, ProbeUnavailable } = await import("./ebook-set-ctc-session.ts");
     // No waiting for a busy host: the reader asked now and can ask again.
-    const session = createCtcProbeSession(input.recordingId, { waitMs: 0 });
+    // The deadline ends staging, scoring and cleanup and their SSH/SCP children; the lease is freed either way.
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(new Error(RECOVER_TIMEOUT_MESSAGE)), recoverDeadlineMs);
+    const session = createCtcProbeSession(input.recordingId, { waitMs: 0, signal: deadline.signal });
     let sample: AnchorSampleScore;
     try {
-      [sample] = await session.score({
-        fragmentTexts: fragments.map((p) => p.text),
-        language: "eng",
-        samples: [{ trackId: track.id, time: start, duration }],
-      });
+      [sample] = await untilAborted((async () => {
+        try {
+          return await session.score({
+            fragmentTexts: fragments.map((p) => p.text),
+            language: "eng",
+            samples: [{ trackId: track.id, time: start, duration }],
+          });
+        } finally {
+          await session.release();
+        }
+      })(), deadline.signal);
     } catch (error) {
+      if (deadline.signal.aborted) throw new Error(RECOVER_TIMEOUT_MESSAGE);
       if (error instanceof ProbeLanguageNotSupported)
         throw new Error("This language is not supported by the alignment worker.");
       throw new Error(
@@ -1898,7 +1917,7 @@ export function registerAlignment(app: FastifyInstance) {
           : "This passage could not be located. Check that an alignment worker is reachable and retry.",
       );
     } finally {
-      await session.release();
+      clearTimeout(timer);
     }
     const fragment = sample.match && fragments[sample.match.fragment];
     if (!fragment)
