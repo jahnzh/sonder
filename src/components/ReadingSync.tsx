@@ -7,6 +7,7 @@ import { alignmentJobNeedsPolling, createAlignmentMapLifecycle } from "../alignm
 import { alignmentMapDeps } from "../alignment-map-deps";
 import { usePlayer } from "../player";
 import { PoolFailureReasons } from "./PoolFailureReasons";
+import { readingSyncControls, rejectedRebuildReason } from "../reading-sync-controls";
 import type { Book } from "../types";
 import type {
   AlignmentFlag,
@@ -507,8 +508,8 @@ export function ReadingSync({
             </ul>
           )}
           {job.error && <p className="inline-error">{job.error}</p>}
-          {job.rebuild?.outcome === "rejected" && job.rebuild.error && (
-            <p className="inline-error" data-testid="rebuild-rejected">{job.rebuild.error}</p>
+          {rejectedRebuildReason(job) && (
+            <p className="inline-error" data-testid="rebuild-rejected">{rejectedRebuildReason(job)}</p>
           )}
           <PoolFailureReasons job={job} />
         </div>
@@ -519,7 +520,7 @@ export function ReadingSync({
         </p>
       )}
       <div className="reading-sync-actions">
-        {job && ["queued", "copying", "processing"].includes(job.status) ? (
+        {readingSyncControls(job) === "running" ? (
           <>
             <button
               className="button subtle"
@@ -536,7 +537,7 @@ export function ReadingSync({
               Cancel
             </button>
           </>
-        ) : job && ["paused", "error", "cancelled"].includes(job.status) ? (
+        ) : readingSyncControls(job) === "resume" ? (
           <>
             <button
               className="button subtle"
