@@ -58,6 +58,13 @@ def audio_digest(path):
     return digest, before
 
 
+# Sizes of the cache's recording directories, kept per cache root so a write does not stat every file
+# (a full scan of a few GB of chunks took about a second, under the exclusive lock, on every write).
+# Each process rescans at most every _RESCAN_SECONDS, which also picks up other processes' writes.
+_RESCAN_SECONDS = 60.0
+_INDEXES = {}
+
+
 def _key(value):
     return hashlib.sha256(json.dumps(value, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
 
@@ -70,7 +77,9 @@ class AcousticCache:
         self.track = _key(track)
         self.budget = budget
         with self._locked():
-            self._clean_temporaries()
+            # Its own leftovers go at once; other directories' on the next rescan.
+            for path in (self.root / self.recording).glob("*.tmp"):
+                path.unlink(missing_ok=True)
             self._evict(0)
 
     @contextmanager
@@ -93,9 +102,25 @@ class AcousticCache:
     def _usage(self, directory):
         return sum(p.stat().st_size for p in directory.iterdir() if p.is_file() and not p.is_symlink())
 
+    def _sizes(self):
+        """Directory name -> bytes, rescanned (with leftover temporaries removed) once it is older than
+        _RESCAN_SECONDS. Call with the lock held."""
+        index = _INDEXES.get(str(self.root))
+        if index is None or time.monotonic() - index["scanned"] > _RESCAN_SECONDS:
+            self._clean_temporaries()
+            index = {"scanned": time.monotonic(), "sizes": {p.name: self._usage(p) for p in self._directories()}}
+            _INDEXES[str(self.root)] = index
+        return index["sizes"]
+
     def _evict(self, incoming, protect=None):
         directories = self._directories()
-        sizes = {p: self._usage(p) for p in directories}
+        known = self._sizes()
+        for directory in directories:
+            if directory.name not in known:
+                known[directory.name] = self._usage(directory)
+        for name in [name for name in known if name not in {p.name for p in directories}]:
+            del known[name]
+        sizes = {p: known[p.name] for p in directories}
         total = sum(sizes.values())
         for directory in sorted(directories, key=lambda p: (p.stat().st_mtime_ns, p.name)):
             if total + incoming <= self.budget:
@@ -103,6 +128,7 @@ class AcousticCache:
             if directory.name == protect:
                 continue
             shutil.rmtree(directory)
+            known.pop(directory.name, None)
             total -= sizes[directory]
         return total + incoming <= self.budget
 
@@ -158,6 +184,8 @@ class AcousticCache:
                     os.fsync(handle.fileno())
                 # The complete file is itself the atomic completion marker.
                 os.replace(temporary, path)
+                sizes = self._sizes()
+                sizes[self.recording] = sizes.get(self.recording, 0) + len(content)
                 os.utime(path.parent, None)
             finally:
                 temporary.unlink(missing_ok=True)
