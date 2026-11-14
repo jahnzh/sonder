@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import struct
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -33,6 +34,7 @@ def file_version(path):
 # older than the hash is remembered: a file written within the timestamp tick of an earlier version can
 # share its version, so it is always hashed again.
 _DIGESTS = {}
+_DIGEST_LOCK = threading.Lock()
 _DIGEST_LIMIT = 64
 _QUIET_NS = 2_000_000_000
 
@@ -41,7 +43,8 @@ def audio_digest(path):
     """Hash the audio bytes, including replacements that preserve file timestamps."""
     path = Path(path)
     before = file_version(path)
-    remembered = _DIGESTS.get((str(path), before))
+    with _DIGEST_LOCK:
+        remembered = _DIGESTS.get((str(path), before))
     if remembered:
         return remembered, before
     hasher = hashlib.sha256()
@@ -52,9 +55,10 @@ def audio_digest(path):
         raise ValueError("Audio changed while computing its cache identity.")
     digest = hasher.hexdigest()
     if time.time_ns() - before[4] > _QUIET_NS:
-        if len(_DIGESTS) >= _DIGEST_LIMIT:
-            _DIGESTS.pop(next(iter(_DIGESTS)))
-        _DIGESTS[(str(path), before)] = digest
+        with _DIGEST_LOCK:
+            if len(_DIGESTS) >= _DIGEST_LIMIT:
+                _DIGESTS.pop(next(iter(_DIGESTS)))
+            _DIGESTS[(str(path), before)] = digest
     return digest, before
 
 
