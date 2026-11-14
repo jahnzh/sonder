@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # One line per live worker in the run, read from its terminal screen (not from git status): a stalled
 # worker can still have uncommitted changes, so a changed-file count says nothing about whether it runs.
-#   bash scripts/orca/check-workers.sh [run_id]
+#   bash scripts/orca/check-workers.sh <run_id>
+# The run id is required: there is no default run, so the list never shows another run's workers.
 # Prints: dispatch, terminal, state (busy/idle/exited), and any alert found near the bottom of its screen
 # (Cursor "High Load"/errors, usage-limit prompts, Codex limits). Exit 1 if any worker needs attention
 # (idle without a finished report, or an alert).
 set -u
-run=${1:-run_8d0bd7ca46e3}
+if [ -z "${1:-}" ]; then
+  echo "usage: check-workers.sh <run_id>" >&2
+  exit 2
+fi
+run=$1
 attention=0
 while read -r dispatch; do
   [ -n "$dispatch" ] || continue

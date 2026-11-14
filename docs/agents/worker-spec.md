@@ -121,6 +121,8 @@ Run `node scripts/orca-check.mjs [--run <run_id>] [--wait [<seconds>]] [--ack <d
 2. Read the queue with `node scripts/orca-check.mjs --run <run_id>`.
 3. List active and retained workers: `orca orchestration worker-list --run <run_id>`
 
+4. Restart the helpers on the same run id: `bash scripts/orca/watch-inbox.sh <run_id>`, `nohup bash scripts/orca/watchdog.sh <run_id> &` and `bash scripts/orca/check-workers.sh <run_id>`. They have no default run and exit 2 with a usage line without the argument.
+
 A restart deletes the session scratchpad and stops background waits, so keep specs in this repository or in `docs/`.
 
 ## Usage limits
@@ -149,7 +151,7 @@ Active deploy-or-land goals: either block on `node scripts/orca-check.mjs --wait
 
 ## Worker screen monitoring
 
-`scripts/orca/check-workers.sh` inspects worker terminal screens to classify their state as `busy`, `idle`, or `exited`. Busy markers recognised across agent engines:
+`bash scripts/orca/check-workers.sh <run_id>` (the run id is required; without it the script prints `usage: check-workers.sh <run_id>` and exits 2) inspects worker terminal screens to classify their state as `busy`, `idle`, or `exited`. Busy markers recognised across agent engines:
 - **Cursor**: Braille spinner glyphs (`[\u2800-\u28FF]`) followed by a capitalized `-ing` word (`Running`, `Waiting`, `Thinking`, etc.).
 - **Codex**: `Working (\d` or `• Working (` lines.
 - **Antigravity**: Braille spinner glyph lines (`[\u2800-\u28FF]`), `Running command`, `Thought for`, `ManageTask`.

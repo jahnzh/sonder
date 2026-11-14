@@ -29,7 +29,7 @@ A row meets its own level and those below it. The levels are the coordinator's r
 
 ## Usage limits
 
-`scripts/orca-recommend.mjs` and `scripts/orca-plan.mjs` refresh Claude, Codex, Cursor, Antigravity and OpenCode usage from the collector before recommending (`docs/agents/usage-collector.md`). Failed or missing readings stay `unknown` / `unavailable` and are never treated as confirmed capacity. Which agents and models may run is governed by `docs/agents/routing-policy.md` (policy C allow-list, safety floor, burn-pressure ranking, concurrency caps). For a ready wave, the planner applies that policy across tasks (`docs/agents/wave-planner.md`). The coordinator still keeps the number concurrent modest (default plan limit: three).
+`scripts/orca-recommend.mjs` and `scripts/orca-plan.mjs` refresh Claude, Codex, Cursor, Antigravity and OpenCode usage from the collector before recommending (`docs/agents/usage-collector.md`). Failed or missing readings stay `unknown` / `unavailable` and are never treated as confirmed capacity. Which agents and models may run is governed by `docs/agents/routing-policy.md` (policy C allow-list, safety floor, burn-pressure ranking, concurrency caps). For a ready wave, the planner applies that policy across tasks (`docs/agents/wave-planner.md`). The coordinator keeps the number concurrent modest (default plan limit: five in total and four per bucket, raised on 2026-11-14 for the Claude Max plan; the numbers are the coordinator's choice, see `docs/agents/routing-policy.md`).
 
 ## Quota buckets
 
@@ -80,4 +80,4 @@ For providers that support it, launch a subagent with `--model`, read the effect
 - Codex `gpt-6.1-terra` at `max` went `stale_status` twice (#77 after about 94 minutes, #25 after about 45) with its work uncommitted and no `worker_done`, and did not answer a status request. Follow the liveness playbook in `docs/agents/worker-spec.md` (check `worker-list` liveness, nudge once, then `worker-stop`, preflight `--after-stop` and finish or respawn). Its uncommitted code was good, so inspect the worktree before discarding it.
 - Claude `claude-sonnet-5-5` at `high` was reliable for fix lists on existing code (#79 and #25 review fixes), with mutation proofs for each fix.
 - Cursor `auto` workers can report ambient failures as "noise": check them (the unit suite failures in #78/#36 were a full local disk, #89).
-- Keep concurrency at three workers and one `ci:deck` at a time; check `df -h /` first (keep more than 15 GB free).
+- Keep concurrency within the policy caps (three workers in total, three per bucket; the per-bucket cap was two before 2026-11-14, and the total is held at three by the coordinator host's 15 GB of memory) and one `ci:deck` at a time; check `df -h /` first (keep more than 15 GB free).
