@@ -45,6 +45,7 @@ import {
   currentAlignmentEngine,
   engineIsOlder,
   publishesMap,
+  rebuildRejection,
   rebuildAdmissionOrder,
   servedDuringRebuild,
   usableMap,
@@ -210,11 +211,34 @@ export function alignmentJob(id: string) {
   if (!row) throw new Error("This reading-sync job could not be found.");
   return readJob(row);
 }
+/** The map the row keeps serving while a rebuild runs in it, if any. */
+function keptMapOf(id: string) {
+  const row = sqlite.prepare("SELECT published_map FROM alignment_jobs WHERE id=?").get(id) as
+    | { published_map: string | null }
+    | undefined;
+  return row?.published_map ? (JSON.parse(row.published_map) as AlignmentJob) : null;
+}
+/**
+ * A finished rebuild that is empty or much worse than the kept map is stored as rejected (#379): status
+ * "error" with outcome "rejected" and the reason in `error`, so it keeps the kept map like any failed rebuild
+ * (older clients already read an error status) and the automatic rebuild queue passes it by (it already
+ * holds the current engine). A first map (nothing kept) is never rejected.
+ */
+function rejectWorseRebuild(job: AlignmentJob) {
+  if (!usableMap(job)) return;
+  const kept = keptMapOf(job.id);
+  const reason = kept && rebuildRejection(job, kept);
+  if (!reason) return;
+  job.status = "error";
+  job.outcome = "rejected";
+  job.error = reason;
+}
 function store(job: AlignmentJob) {
   // A scheduled run may only write its own job while it still owns the claimed generation.
   const fence = currentRunFence();
   if (fence && fence.jobId === job.id) assertRunMayWrite(fence, job.status);
   job.updatedAt = Date.now();
+  rejectWorseRebuild(job);
   if (["ready", "partial"].includes(job.status)) {
     ensureMediaStorage();
     const folder = join(mediaRoot, "alignment", job.id);
@@ -1708,9 +1732,12 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
         job.warning ||=
           "Timings are estimated from the supplied text. Sections without matching narration are left unsynced.";
         store(job);
-        const path = join(folder, "map.json");
-        writeFileSync(path + ".part", JSON.stringify(job));
-        renameSync(path + ".part", path);
+        // store() writes map.json for a published map; a rejected rebuild must not overwrite the kept one.
+        if (usableMap(job)) {
+          const path = join(folder, "map.json");
+          writeFileSync(path + ".part", JSON.stringify(job));
+          renameSync(path + ".part", path);
+        }
       }
     } finally {
       if (job.engine === CTC_ENGINE && job.pool)

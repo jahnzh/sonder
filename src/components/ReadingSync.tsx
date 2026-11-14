@@ -507,6 +507,9 @@ export function ReadingSync({
             </ul>
           )}
           {job.error && <p className="inline-error">{job.error}</p>}
+          {job.rebuild?.outcome === "rejected" && job.rebuild.error && (
+            <p className="inline-error" data-testid="rebuild-rejected">{job.rebuild.error}</p>
+          )}
           <PoolFailureReasons job={job} />
         </div>
       )}
