@@ -826,17 +826,24 @@ class DiskPeaks:
 
 
 class ResultStages(FakeStages):
-    """Writes a result of about `size` bytes the way the real stages do: reserved from its real size first."""
+    """Writes a result of about `size` bytes with write_reserved, as the real stages do, or (`own`) after
+    reserving it itself: the job's folder, the result's temporary copy and room for the state file."""
 
-    def __init__(self, size):
+    def __init__(self, size, own=False):
         super().__init__()
         self.size = size
+        self.own = own
 
     def run(self, job, session, should_stop):
         self.order.append(job.key)
         result = {"jobId": job.key, "engine": BOOK_ENGINE, "outcome": "unsynced", "intervals": [],
                   "unsyncedPassages": [{"section": 0, "title": "x" * self.size}]}
-        book_job.write_reserved(job, session, job.folder / "result.json", result, should_stop, STATE)
+        if not self.own:
+            book_job.write_reserved(job, session, job.folder / "result.json", result, should_stop, STATE)
+            return
+        text = json.dumps(result, separators=(",", ":"))
+        session.reserve_disk(book_session.folder_bytes(job.folder) + len(text) + STATE)
+        book_job.write_json(job.folder / "result.json", result)
 
 
 class ResultDisk(unittest.TestCase):
@@ -916,7 +923,7 @@ class ResultDisk(unittest.TestCase):
         # 291bd56 wrote the stages' result.json again when the job finished: a temporary copy of the whole
         # result next to it, which nothing had reserved.
         registry = SessionRegistry(DiskBudget(100_000), idle=900, clock=self.clock)
-        jobs = BookJobs(self.root, ResultStages(20_000), registry, clock=self.clock, state_bytes=STATE)
+        jobs = BookJobs(self.root, ResultStages(20_000, own=True), registry, clock=self.clock, state_bytes=STATE)
         with DiskPeaks(registry.budget, "job-1", self.root / "job-1") as peaks:
             jobs.start(request())
             self.assertTrue(wait_for(lambda: jobs.status("job-1")["state"] in ("done", "failed")))

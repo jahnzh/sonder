@@ -353,16 +353,17 @@ class Pipeline(PipelineFixture):
              "sentenceCount": 20, "excerpt": "Sentence number 0 here."}])
         self.assertEqual([t["id"] for t in result["tracks"]], ["t0", "t1"])
 
-    def long_titled_mismatch(self, budget):
+    def long_titled_mismatch(self, budget, sentences=2000):
         """A wrong book of 2,000 one-sentence sections, each with a 2,000-character non-ASCII title (align.py's
         limit; six bytes a character as JSON): 2,000 unsynced passages, a result of about 24 MB, more than
         the 16 MiB + 1 KiB a sentence #402 reserved for all of a book's small files (#403 review)."""
         self.match.stop()  # the real check: random emissions are not this text
-        sentences = 2000
         self.request["sentences"] = [{"id": f"p{k}", "section": k, "text": f"Sentence number {k} here."}
                                      for k in range(sentences)]
         self.request["sections"] = [{"index": k, "title": "\u00e9" * 2000} for k in range(sentences)]
         stages = WorkerStages(self.media / "alignment", lambda: FakeModel(), "cpu", env=self.env)
+        if callable(budget):  # of the request's size: the request holds the titles too
+            budget = budget(len(json.dumps(self.request, separators=(",", ":"))))
         jobs = BookJobs(self.media / "alignment" / "book-jobs", stages,
                         SessionRegistry(DiskBudget(budget), idle=900))
         folder = self.media / "alignment" / "book-jobs" / "book-1"
@@ -393,8 +394,10 @@ class Pipeline(PipelineFixture):
 
     def test_a_result_that_does_not_fit_the_budget_fails_the_job_and_is_not_written(self):
         from book_session import meta_bytes
-        # Room for every stage before the result (its estimate included), not for the result.
-        jobs, status, peaks, folder = self.long_titled_mismatch(meta_bytes(2000) + (4 << 20))
+        # 3,000 sections: room for the request and every stage before the result (the decode's peak and the
+        # estimate of the small files included), not for the result of 36 MB.
+        jobs, status, peaks, folder = self.long_titled_mismatch(
+            lambda request: request + meta_bytes(3000) + (12 << 20), sentences=3000)
         self.assertEqual(status["state"], "failed", status)
         self.assertIn("result is", status["error"])
         self.assertIn("was not written", status["error"])
