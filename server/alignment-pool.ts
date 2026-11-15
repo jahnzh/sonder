@@ -447,8 +447,7 @@ async function untilWorkerRequestsEnd(host: PoolHost, open: OpenWorkerRequest[])
   if (!open.length) return;
   const youngest = Math.max(...open.map((request) => request.sentAt));
   const giveUpAt = Math.max(...open.map((request) => request.sentAt + request.limitMs));
-  // The wait never keeps the process alive on its own (the server stays up anyway; a test process may exit).
-  const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)).unref());
+  const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
   for (;;) {
     const now = Date.now();
     if (now >= giveUpAt) return;
