@@ -3,7 +3,7 @@
 // the folder's name before it sends the removal, so a removal that outlives its deadline cannot reach a later run.
 import { after, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readerFixture } from "./reader-fixture.ts";
@@ -658,7 +658,8 @@ test("a pool-jobs folder that resolves elsewhere after the listing fails the rem
     assert.ok(existsSync(join(host.root, "alignment", "pool-jobs-checked", job.id)), "the checked folder was not reached either");
   } finally {
     host.holdCommand = undefined;
-    rmSync(poolJobs, { force: true });
+    // unlink, not rm: the link points at a directory, and rm refuses that on some Node versions.
+    unlinkSync(poolJobs);
     renameSync(join(host.root, "alignment", "pool-jobs-checked"), poolJobs);
   }
 });
