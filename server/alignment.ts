@@ -556,6 +556,12 @@ export async function queueEngineRebuilds(log: AutoQueueLog = console): Promise<
     }
     const inFlight = alignmentJobInFlight(old.status);
     if (!inFlight && !REBUILT_STATUSES.includes(old.status)) continue;
+    // Nothing automatic queues an alignment for an ebook whose ebook-set check is pending (#325 review); a job
+    // already in flight is only planned again. The next scan (at start) rebuilds the map once the check has ended.
+    if (!inFlight && ebookSetCheckPending(old.ebookId)) {
+      result.skipped++;
+      continue;
+    }
     try {
       const { tracks } = recordingContext(old.recordingId);
       // A rebuild never starts a copy of the audio to the server; it waits until the audio is there.

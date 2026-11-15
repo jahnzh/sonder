@@ -23,7 +23,7 @@ mkdirSync(process.env.MEDIA_ROOT, { recursive: true });
 const { db, sqlite } = await import("../server/db.ts");
 const schema = await import("../server/schema.ts");
 const { CTC_ENGINE, resetAlignmentPoolCoordinator, setAlignmentPoolDepsForTests } = await import("../server/alignment-pool.ts");
-const { forgetEbookSetRunsForTests, listEbookSetMembers, resetEbookSetDeps } = await import("../server/ebook-set.ts");
+const { forgetEbookSetRunsForTests, listEbookSetMembers, resetEbookSetDeps, setEbookSetDeps } = await import("../server/ebook-set.ts");
 const { AWAITING_WORKER_RETRY_MS, ebookSetEvaluationsSettled, forgetEbookSetRoundForTests } =
   await import("../server/ebook-set-evaluation.ts");
 const { backgroundRunner } = await import("../server/background-runner.ts");
@@ -45,6 +45,8 @@ let behaviours: Record<string, Behaviour> = {};
 let gate: Promise<void> = Promise.resolve();
 let open: () => void = () => {};
 let anchorRequests = 0;
+/** When set, only the /anchor requests of these behaviour keys wait for the gate; the others answer at once. */
+let gatedKeys: Set<string> | null = null;
 function closeGate() {
   gate = new Promise((resolve) => (open = resolve));
 }
@@ -53,8 +55,9 @@ function closeGate() {
 async function anchorAnswer(_host: unknown, path: string, body: any) {
   if (path !== "/anchor") return new Response("unexpected request", { status: 500 });
   anchorRequests++;
-  await gate;
-  const behaviour = behaviours[body.fragments[1].split(" ")[0]] ?? "none";
+  const key = body.fragments[1].split(" ")[0];
+  if (!gatedKeys || gatedKeys.has(key)) await gate;
+  const behaviour = behaviours[key] ?? "none";
   const base = { engine: CTC_ENGINE, outcome: "mapped", text: Array.from({ length: 40 }, () => "word").join(" ") };
   if (behaviour === "none") return { ...base, outcome: "unsynced", match: null, matches: [], start: body.start };
   const index = Math.floor(body.start / 12);
@@ -85,6 +88,7 @@ beforeEach(async () => {
   installPool();
   behaviours = {};
   gate = Promise.resolve();
+  gatedKeys = null;
   anchorRequests = 0;
   process.env.ALIGNMENT_POOL_ENABLED = "1";
 });
@@ -512,7 +516,8 @@ heldTest("HIGH 4: a check whose ebook is relinked to another work while it runs 
   open();
   await round;
   await ebookSetEvaluationsSettled();
-  assert.equal(member(workId, ebookId)?.status, "pending", "the result for the old work was dropped");
+  // Review round 2: the relink removed the pending member from the work it left; the check's result was dropped.
+  assert.equal(member(workId, ebookId), undefined, "the result for the old work was dropped and the member removed");
   assert.equal(member(otherWork, ebookId), undefined);
   // The work's next pending member is checked; the one whose ebook moved is not tried again (it would only fail).
   const next = (await seedLibgenEpub(workId, "Right")).ebookId;
@@ -526,7 +531,7 @@ heldTest("HIGH 4: a check whose ebook is relinked to another work while it runs 
     console.warn = warn;
   }
   assert.equal(member(workId, next)?.status, "accepted");
-  assert.equal(member(workId, ebookId)?.status, "pending");
+  assert.equal(member(workId, ebookId), undefined);
   assert.deepEqual(warnings.filter((line) => line.includes(ebookId)), [], "a member whose ebook is in another work is not checked again");
 });
 
@@ -638,4 +643,162 @@ heldTest("MEDIUM 1: only the member being checked is running; the stuck time cou
   assert.ok(running.startedAt >= long + 60_000, "startedAt is the start of the check");
   open();
   await round;
+});
+
+// Review round 2 of #325 (artifacts/orca/review-325-round2.md).
+
+const link = (ebookId: string, workId: string) =>
+  app.inject({ method: "POST", url: `/api/reader/${ebookId}/link`, payload: { workId } });
+
+/** Points an ebook at another work behind the routes' back: the state a relink left before this fix. */
+const moveBehindTheRoutes = (ebookId: string, workId: string) =>
+  sqlite.prepare("UPDATE ebook_editions SET work_id=? WHERE id=?").run(workId, ebookId);
+
+heldTest("R2 HIGH 1: relinking an ebook whose member is pending removes that member from the work it leaves; the work it joins gets what main did", async () => {
+  const left = seedWork();
+  const joined = seedWork();
+  const { ebookId } = await seedLibgenEpub(left, "Right");
+  seedMember(left, ebookId, "pending", null);
+  const res = await link(ebookId, joined);
+  assert.equal(res.statusCode, 200, res.body);
+  assert.equal(member(left, ebookId), undefined, "the pending member left behind is removed");
+  const view = await app.inject(`/api/works/${left}/ebook-set`);
+  assert.deepEqual(view.json().members, [], "the work it left no longer shows it as Checking");
+  const activity = await app.inject("/api/activity");
+  assert.equal(activity.json().items.find((i: { id: string }) => i.id === `ebook-set:${left}:${ebookId}`), undefined);
+  // As on main, the link registers no member in the work it joins and auto-queues the pair there.
+  assert.equal(member(joined, ebookId), undefined);
+  assert.equal(backfillJobs(ebookId).length, 1, "main's link auto-queue for the work it joins");
+});
+
+heldTest("R2 HIGH 1: relinking an ebook whose member is held, accepted or rejected keeps that member, as on main", async () => {
+  for (const [status, holdReason] of [["held", "awaiting_worker"], ["accepted", null], ["rejected", null]] as const) {
+    const left = seedWork();
+    const joined = seedWork();
+    const { ebookId } = await seedLibgenEpub(left, "Right");
+    seedMember(left, ebookId, status, holdReason);
+    const res = await link(ebookId, joined);
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(member(left, ebookId)?.status, status, status);
+    assert.equal(member(joined, ebookId), undefined, status);
+  }
+});
+
+heldTest("R2 HIGH 1: after the removal the work it left has its set brought up to date (consensus synced)", async () => {
+  const left = seedWork();
+  const joined = seedWork();
+  const accepted = (await seedLibgenEpub(left, "Right")).ebookId;
+  seedMember(left, accepted, "accepted", null);
+  const { ebookId } = await seedLibgenEpub(left, "Right");
+  seedMember(left, ebookId, "pending", null);
+  assert.equal((await app.inject(`/api/works/${left}/ebook-set`)).json().consensus, null, "no consensus yet");
+  const res = await link(ebookId, joined);
+  assert.equal(res.statusCode, 200, res.body);
+  const view = (await app.inject(`/api/works/${left}/ebook-set`)).json();
+  assert.deepEqual(view.members.map((m: { ebookId: string }) => m.ebookId), [accepted]);
+  assert.ok(view.consensus?.sentenceCount > 0, "the set was synced after the member was removed");
+});
+
+heldTest("R2 HIGH 1: saving an ebook already on the server for another work removes its pending member in the old one", async () => {
+  const left = seedWork();
+  const joined = seedWork();
+  const { md5, ebookId } = await seedLibgenEpub(left, "Right");
+  seedMember(left, ebookId, "pending", null);
+  behaviours = { Right: "forward" };
+  closeGate();
+  const res = await postEbook(joined, md5);
+  assert.equal(res.statusCode, 200, res.body);
+  assert.equal(member(left, ebookId), undefined);
+  assert.equal(member(joined, ebookId)?.status, "pending", "the work it joins registers it, as this branch does for any save");
+  open();
+  await ebookSetEvaluationsSettled();
+  assert.equal(member(joined, ebookId)?.status, "accepted");
+});
+
+heldTest("R2 HIGH 1: reevaluate skips a member whose ebook is linked to another work, removes it if pending, and checks the rest", async () => {
+  const workId = seedWork();
+  const elsewhere = seedWork();
+  const stalePending = (await seedLibgenEpub(workId, "Right")).ebookId;
+  seedMember(workId, stalePending, "pending", null);
+  const staleHeld = (await seedLibgenEpub(workId, "Right")).ebookId;
+  seedMember(workId, staleHeld, "held", "awaiting_worker");
+  const valid = (await seedLibgenEpub(workId, "Right")).ebookId;
+  seedMember(workId, valid, "pending", null);
+  moveBehindTheRoutes(stalePending, elsewhere);
+  moveBehindTheRoutes(staleHeld, elsewhere);
+  behaviours = { Right: "forward" };
+  const res = await app.inject({ method: "POST", url: `/api/works/${workId}/ebook-set/reevaluate` });
+  assert.equal(res.statusCode, 200, res.body);
+  assert.deepEqual(res.json().map((r: { status: string }) => r.status), ["accepted"]);
+  assert.equal(member(workId, stalePending), undefined, "a stale pending member is removed");
+  assert.equal(member(workId, staleHeld)?.status, "held", "a stale held member is skipped and kept");
+  assert.equal(member(workId, valid)?.status, "accepted");
+});
+
+heldTest("R2 HIGH 3: an accepted member's alignment is queued right after its result, before the next member's check starts", async () => {
+  const workId = seedWork();
+  const right = (await seedLibgenEpub(workId, "Right")).ebookId;
+  seedMember(workId, right, "pending", null);
+  const later = (await seedLibgenEpub(workId, "Later")).ebookId;
+  seedMember(workId, later, "pending", null);
+  behaviours = { Right: "forward", Later: "forward" };
+  // Members are checked in the listing order; the one checked second waits at the gate.
+  const [first, second] = listEbookSetMembers(workId).map((m) => m.ebookId);
+  gatedKeys = new Set([second === later ? "Later" : "Right"]);
+  closeGate();
+  const round = backgroundRunner(app).tick("ebook-set");
+  await until(() => member(workId, first)?.status === "accepted", "the first member's result");
+  await until(() => (anchorRequests > 0 && backfillJobs(first).length > 0) || member(workId, second)?.status !== "pending", "the queueing");
+  assert.equal(member(workId, second)?.status, "pending", "the second check is still running");
+  assert.equal(backfillJobs(first).length, 1, "queued before the batch ends");
+  assert.equal(backfillJobs(second).length, 0);
+  open();
+  await round;
+  await ebookSetEvaluationsSettled();
+  assert.equal(member(workId, second)?.status, "accepted");
+  assert.equal(backfillJobs(first).length, 1, "once");
+  assert.equal(backfillJobs(second).length, 1);
+});
+
+heldTest("R2 HIGH 3: a queueing that fails is logged with its member and does not stop the batch", async () => {
+  const workId = seedWork();
+  const first = (await seedLibgenEpub(workId, "Right")).ebookId;
+  seedMember(workId, first, "pending", null);
+  const second = (await seedLibgenEpub(workId, "Right")).ebookId;
+  seedMember(workId, second, "pending", null);
+  behaviours = { Right: "forward" };
+  const queued: string[] = [];
+  setEbookSetDeps({
+    queueAlignment: async (_workId: string, filter: { ebookId: string }) => {
+      if (filter.ebookId === first) throw new Error("the queue is broken");
+      queued.push(filter.ebookId);
+    },
+  } as never);
+  const warnings: string[] = [];
+  const warn = console.warn;
+  console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+  try {
+    await backgroundRunner(app).tick("ebook-set");
+  } finally {
+    console.warn = warn;
+  }
+  assert.equal(member(workId, first)?.status, "accepted", "the failed queueing does not change the result");
+  assert.equal(member(workId, second)?.status, "accepted", "the batch went on");
+  assert.deepEqual(queued, [second]);
+  assert.ok(warnings.some((line) => line.includes(first) && line.includes("the queue is broken")), warnings.join("\n"));
+});
+
+heldTest("R2 HIGH 3: reevaluate queues the alignment of a member it moves from pending to accepted, not of a held one (as main)", async () => {
+  const workId = seedWork();
+  const pending = (await seedLibgenEpub(workId, "Right")).ebookId;
+  seedMember(workId, pending, "pending", null);
+  const held = (await seedLibgenEpub(workId, "Right")).ebookId;
+  seedMember(workId, held, "held", "awaiting_worker");
+  behaviours = { Right: "forward" };
+  const res = await app.inject({ method: "POST", url: `/api/works/${workId}/ebook-set/reevaluate` });
+  assert.equal(res.statusCode, 200, res.body);
+  assert.equal(member(workId, pending)?.status, "accepted");
+  assert.equal(member(workId, held)?.status, "accepted");
+  assert.equal(backfillJobs(pending).length, 1, "queued on acceptance");
+  assert.equal(backfillJobs(held).length, 0, "main's reevaluate of a held member queued nothing");
 });

@@ -1,4 +1,5 @@
 import { autoQueueAlignmentsForWork } from "./alignment.ts";
+import { ebookSetMembersRemoved, removePendingMembersLeftBehind } from "./ebook-set-link.ts";
 import { currentUserId } from "./users.ts";
 import type { FastifyInstance } from "fastify";
 import JSZip from "jszip";
@@ -208,11 +209,17 @@ export function registerReader(app: FastifyInstance) {
     ebookRecord(id);
     if (!db.select().from(s.works).where(eq(s.works.id, workId)).get())
       throw new Error("This audiobook could not be found.");
-    db.update(s.ebookEditions)
-      .set({ workId })
-      .where(eq(s.ebookEditions.id, id))
-      .run();
+    // Its pending ebook-set member in the work it leaves goes with the link change (#325); the work it joins gets
+    // what it got on main: no member, and the auto-queue below.
+    const left = sqlite.transaction(() => {
+      db.update(s.ebookEditions)
+        .set({ workId })
+        .where(eq(s.ebookEditions.id, id))
+        .run();
+      return removePendingMembersLeftBehind(id, workId);
+    })();
     invalidateParsedBook(id);
+    await ebookSetMembersRemoved(left);
     await autoQueueAlignmentsForWork(workId, { ebookId: id }, req.log);
     return { ok: true };
   });

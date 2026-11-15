@@ -9,6 +9,7 @@ import {
   type OutlierCheckResult,
 } from "./ebook-set-outlier.ts";
 import {
+  autoQueueAlignmentsForWork,
   firstRecordingWithLocalAudio,
   recordingContext,
   trackLocalAudioPath,
@@ -74,6 +75,8 @@ export type EbookSetDeps = {
   /** CTC probing: how long to wait for a busy pool host, and the sleep between tries (tests). */
   probeWaitMs?: number;
   probeSleep?: (ms: number) => Promise<void>;
+  /** Queues the alignment of a member whose check ended accepted (tests: a queueing that fails). */
+  queueAlignment?: (workId: string, filter: { ebookId: string }) => Promise<void>;
 };
 
 const probeSessionOptions = () => ({ waitMs: deps.probeWaitMs, sleep: deps.probeSleep });
@@ -282,6 +285,38 @@ function writeMemberResult(input: Parameters<typeof upsertMember>[0], startedFor
     upsertMember(input);
     return true;
   })();
+}
+
+/**
+ * A member whose ebook is no longer linked to its work is skipped by a check; a pending one is removed, in one
+ * transaction with the link test, so a set never shows a check that cannot end (#325 review round 2).
+ */
+function removeUnlinkedPendingMember(workId: string, ebookId: string) {
+  sqlite.transaction(() => {
+    if (ebookLinkedToWork(workId, ebookId)) return;
+    db.delete(s.workEbookSetMembers)
+      .where(
+        and(
+          eq(s.workEbookSetMembers.workId, workId),
+          eq(s.workEbookSetMembers.ebookId, ebookId),
+          eq(s.workEbookSetMembers.status, "pending"),
+        ),
+      )
+      .run();
+  })();
+}
+
+/**
+ * Queues the alignment of a member whose check ended accepted, right after its result is written and before the
+ * next member's check starts. A failure is logged with the member and never stops the batch. A server stop between
+ * the write and the queueing loses this queueing; the backfill picks the ebook up, as on main.
+ */
+async function queueAcceptedAlignment(workId: string, ebookId: string) {
+  try {
+    await (deps.queueAlignment ?? autoQueueAlignmentsForWork)(workId, { ebookId });
+  } catch (error) {
+    console.warn(`Reading sync for accepted ebook-set member ${ebookId} of ${workId} could not be queued: ${(error as Error).message}`);
+  }
 }
 
 /** Scores samples using the injected test prober. */
@@ -660,6 +695,8 @@ async function evaluateMembers(
     onFailure?: (member: ListedMember, error: unknown, startedFor: EbookSetMemberSnapshot) => void;
     /** Read before each member's check: false leaves it and the rest as they are. */
     mayStart?: () => boolean;
+    /** Whether a member that started in this status and ends accepted has its alignment queued. */
+    queueWhenAccepted?: (startedAs: EbookSetMemberStatus) => boolean;
   },
 ) {
   const results: MemberResult[] = [];
@@ -670,6 +707,11 @@ async function evaluateMembers(
         // The member as it is now: one removed or given a result since the listing is not checked.
         const startedFor = ebookSetMemberSnapshot(workId, member.ebookId);
         if (!startedFor || !options.due(startedFor.status as EbookSetMemberStatus)) continue;
+        // One whose ebook is now in another work is skipped, and removed if pending: its check could only fail.
+        if (!ebookLinkedToWork(workId, member.ebookId)) {
+          removeUnlinkedPendingMember(workId, member.ebookId);
+          continue;
+        }
         const meta = {
           sourceTitle: member.sourceTitle,
           sourceAuthor: member.sourceAuthor,
@@ -677,15 +719,21 @@ async function evaluateMembers(
           byteSize: member.byteSize,
         };
         ebookSetCheckStarted(workId, member.ebookId);
+        let queue = false;
         try {
           const result = await evaluateEbookSetMember(workId, member.ebookId, meta, probe);
           if (result.written) results.push({ ...result, ebookId: member.ebookId });
+          queue =
+            result.written &&
+            result.status === "accepted" &&
+            !!options.queueWhenAccepted?.(startedFor.status as EbookSetMemberStatus);
         } catch (error) {
           if (!options.onFailure) throw error;
           options.onFailure(member, error, startedFor);
         } finally {
           ebookSetCheckEnded(workId, member.ebookId);
         }
+        if (queue) await queueAcceptedAlignment(workId, member.ebookId);
       }
     });
   } finally {
@@ -712,11 +760,17 @@ export function evaluatePendingEbookSetMembers(workId: string, options: { maySta
       due: (status) => status === "pending",
       onFailure: holdFailedMember,
       mayStart: options.mayStart,
+      // No alignment is queued while a member is pending; one that ends accepted gets what the upload queued on main.
+      queueWhenAccepted: () => true,
     });
   });
 }
 
-/** Evaluates a work's held and pending members again and waits for the results (`POST .../ebook-set/reevaluate`). */
+/**
+ * Evaluates a work's held and pending members again and waits for the results (`POST .../ebook-set/reevaluate`).
+ * A member whose ebook is linked to another work is skipped (and removed if pending), so one such member never
+ * makes the request fail.
+ */
 export function reevaluateEbookSetForWork(workId: string) {
   return runForWork(workId, async () => {
     const hasAudio = !!firstRecordingWithLocalAudio(workId);
@@ -725,7 +779,9 @@ export function reevaluateEbookSetForWork(workId: string) {
     const members = listEbookSetMembers(workId).filter((member) => due(member.status));
     // With server audio the consensus is synced even when no member needed a new result, as before.
     if (!hasAudio && !members.length) return [];
-    const results = await evaluateMembers(workId, members, { due });
+    // A member moved from pending to accepted has its alignment queued as in the loop; a held one queues nothing,
+    // as on main.
+    const results = await evaluateMembers(workId, members, { due, queueWhenAccepted: (startedAs) => startedAs === "pending" });
     return results.map(({ status, evidence }) => ({ status, evidence }));
   });
 }
