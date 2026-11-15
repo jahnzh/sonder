@@ -9,6 +9,7 @@ import {
 } from "react";
 import { liveQuery } from "dexie";
 import { createProgressClock } from "./progress-clock";
+import { playRequests as createPlayRequests, type PlayLoad } from "./play-requests";
 import { api, forgetPositionHistory, localDB, offlineUrl, peekPositionHistory, positionHistorySettled, prunePositionHistory, saveProgress, syncProgress, updatePositionHistory } from "./lib";
 import { HISTORY_LIFETIME, planUndo, recentPositions, restored, type JumpKind, type PositionEntry } from "./position-history";
 import {
@@ -158,7 +159,8 @@ export function PlayerProvider({
   const objectUrl = useRef<string | null>(null);
   const sleepEnd = useRef<number | null>(null);
   const generation = useRef(0);
-  const playRequests = useRef(0);
+  // A listener's pause while a load waits lands that load paused instead of dropping it (#419).
+  const [playRequests] = useState(createPlayRequests);
   // The explicit server or original load now in the element. A switch to the
   // device copy is kept in `recovery`, so a load switches at most once; a failed
   // attempt is forgotten, so a later failure in the same load tries again.
@@ -349,10 +351,10 @@ export function PlayerProvider({
   const pendingJumps = useRef(new Set<Promise<void>>());
   const load = useCallback(
     async (
+      flight: PlayLoad,
       b: Book,
       t?: Track,
       start = 0,
-      autoplay = true,
       forceReload = false,
       jump: JumpKind | null = null,
       previousProgress?: Progress | null,
@@ -360,7 +362,7 @@ export function PlayerProvider({
       onRecord?: RecordedPosition,
       moved?: () => void,
     ) => {
-      const request = ++playRequests.current;
+      const request = flight.request;
       const el = audio.current;
       if (!b.tracks.length) {
         setError("No audio is available for this book yet.");
@@ -432,8 +434,10 @@ export function PlayerProvider({
           persist();
         }
         setError(null);
+        const playNow = flight.autoplay();
+        flight.landed();
         try {
-          if (autoplay) await el.play();
+          if (playNow) await el.play();
           else el.pause();
         } catch {
           if (request === playRequests.current)
@@ -489,7 +493,7 @@ export function PlayerProvider({
           : null;
       const streamed = !!streamLoad.current;
       const notice = rememberedNotice(plan, step);
-      if (autoplay && notice && noticedFor.current !== b.recordingId) {
+      if (flight.autoplay() && notice && noticedFor.current !== b.recordingId) {
         noticedFor.current = b.recordingId;
         notifyRef.current?.(fallbackNotice(notice));
       }
@@ -542,8 +546,10 @@ export function PlayerProvider({
           ],
         });
       }
+      const playNow = flight.autoplay();
+      flight.landed();
       try {
-        if (autoplay) await el.play();
+        if (playNow) await el.play();
         else setPlaying(false);
       } catch (e) {
         if (currentGeneration === generation.current) {
@@ -577,15 +583,17 @@ export function PlayerProvider({
       saveAfterLoad = false,
       onRecord?: RecordedPosition,
     ) => {
-      if (!jump) return load(b, t, start, autoplay, forceReload, jump, previousProgress, saveAfterLoad, onRecord);
+      const flight = playRequests.start(autoplay);
+      if (!jump) return load(flight, b, t, start, forceReload, jump, previousProgress, saveAfterLoad, onRecord).finally(flight.landed);
       let moved!: () => void;
       const gate = new Promise<void>((resolve) => { moved = resolve; });
       pendingJumps.current.add(gate);
       void gate.then(() => pendingJumps.current.delete(gate));
       try {
-        await load(b, t, start, autoplay, forceReload, jump, previousProgress, saveAfterLoad, onRecord, moved);
+        await load(flight, b, t, start, forceReload, jump, previousProgress, saveAfterLoad, onRecord, moved);
       } finally {
         moved();
+        flight.landed();
       }
     },
     [load],
@@ -750,18 +758,20 @@ export function PlayerProvider({
     if (!el.src) return;
     if (el.paused) {
       setError(null);
+      // Played again while a load paused by the listener still waits: it lands playing.
+      if (playRequests.resume()) return;
       const { book, track } = state.current;
       if (book && track) void playRef.current(book, track, pendingSeek.current ?? el.currentTime);
     } else {
-      ++playRequests.current;
+      playRequests.pause();
       el.pause();
     }
-  }, []);
+  }, [playRequests]);
   const pause = useCallback(() => {
-    ++playRequests.current;
+    playRequests.cancel();
     audio.current.pause();
     setLoading(false);
-  }, []);
+  }, [playRequests]);
   const setPlaybackSource = useCallback(
     async (choice: PlaybackSourceChoice) => {
       const { book, track } = state.current;
@@ -991,8 +1001,13 @@ export function PlayerProvider({
     navigator.serviceWorker?.addEventListener("message", mediaSource);
     if ("mediaSession" in navigator) {
       for (const [action, handler] of Object.entries({
-        play: () => void el.play(),
-        pause: () => el.pause(),
+        play: () => {
+          if (!playRequests.resume()) void el.play();
+        },
+        pause: () => {
+          playRequests.pause();
+          el.pause();
+        },
         seekbackward: () => skip(-30),
         seekforward: () => skip(30),
         previoustrack: () => skip(-30),
