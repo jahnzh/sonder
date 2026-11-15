@@ -161,6 +161,7 @@ snapshot() {
 }
 host_systemctl() {
   printf 'systemctl %s\\n' "$*" >> "$LOG"
+  if [[ -f ${shellQuote(join(root, "fail"))} ]] && grep -qx -- "$1" ${shellQuote(join(root, "fail"))}; then return 1; fi
   case "$1" in
     is-active) cat ${shellQuote(activeFile)} ;;
     restart)
@@ -253,7 +254,7 @@ test("an update of a legacy host keeps worker.env byte for byte, quoted MEDIA_RO
 
   // Service: two checks for running requests, then one restart after the switch.
   assert.deepEqual(host.systemctlCalls(), [
-    `is-active ${UNIT}`, `is-active ${UNIT}`, "daemon-reload", `enable ${UNIT}`, `restart ${UNIT}`,
+    "show-environment", `is-active ${UNIT}`, `is-active ${UNIT}`, "daemon-reload", `enable ${UNIT}`, `restart ${UNIT}`,
   ]);
   assert.equal(host.worker.restarts, 1);
   const [started] = host.worker.snapshots;
@@ -298,7 +299,7 @@ test("an update refuses while the worker runs requests, and changes nothing; --f
     assert.deepEqual(readFileSync(host.unitFile), host.original.unit, label);
     assert.ok(!existsSync(join(host.dir, "releases")) && !existsSync(join(host.dir, "envs")), label);
     assert.ok(!existsSync(join(host.dir, "rollback")), label);
-    assert.deepEqual(host.systemctlCalls(), [`is-active ${UNIT}`], label);
+    assert.deepEqual(host.systemctlCalls(), ["show-environment", `is-active ${UNIT}`], label);
     assert.equal(host.worker.restarts, 0, label);
 
     const forced = await host.install(["--revision", "rev-a1", "--force"]);
@@ -361,7 +362,7 @@ test("a stopped service needs no /health; a fresh install creates worker.env 060
   assert.match(unit, /Description=Sonder CTC alignment worker/);
   assert.match(unit, new RegExp(`WorkingDirectory=%h/sonder-ctc-worker/${currentRelease(host)}/worker\n`));
   assert.deepEqual(host.systemctlCalls(), [
-    `is-active ${UNIT}`, `is-active ${UNIT}`, "daemon-reload", `enable ${UNIT}`, `restart ${UNIT}`,
+    "show-environment", `is-active ${UNIT}`, `is-active ${UNIT}`, "daemon-reload", `enable ${UNIT}`, `restart ${UNIT}`,
   ]);
 });
 
@@ -405,7 +406,7 @@ test("a failed verification is reported with exit 4, blocks the next update, and
   assert.equal(statSync(join(host.dir, "worker.env")).mode & 0o777, 0o600);
   assert.deepEqual(readFileSync(host.unitFile), host.original.unit);
   assert.ok(!existsSync(join(host.dir, "current")), "the legacy layout had no current release");
-  assert.deepEqual(host.systemctlCalls(), [`is-active ${UNIT}`, "daemon-reload", `restart ${UNIT}`]);
+  assert.deepEqual(host.systemctlCalls(), ["show-environment", `is-active ${UNIT}`, "daemon-reload", `restart ${UNIT}`]);
   assert.equal(host.worker.snapshots.at(-1).workingDirectory, join(host.dir, "worker"), "the old code runs again");
   assert.equal(host.worker.snapshots.at(-1).revision, "");
   assert.equal(readFileSync(join(host.dir, "rollback", "status"), "utf8"), "rolled-back\n");
@@ -439,6 +440,32 @@ test("--rollback after an update between two releases restores the previous rele
   assert.equal(host.worker.revision, "rev-a1");
   assert.equal(host.systemctlCalls().filter((call) => call.startsWith("restart")).length, 1);
   assert.match(rolledBack.stdout, /ready again on revision rev-a1/);
+});
+
+test("an update stops before any change when systemctl --user cannot reach the service manager", async (t) => {
+  const host = await fakeHost(t);
+  writeFileSync(join(host.root, "fail"), "show-environment\n");
+  for (const args of [["--revision", "rev-a1"], ["--revision", "rev-a1", "--dry-run"]]) {
+    const result = await host.install(args);
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stderr, /systemctl --user cannot reach the user service manager/);
+  }
+  assert.ok(!existsSync(join(host.dir, "releases")) && !existsSync(join(host.dir, "rollback")));
+  assert.deepEqual(readFileSync(host.unitFile), host.original.unit);
+});
+
+test("a restart that fails after the switch is recorded as failed and --rollback restores the old worker", async (t) => {
+  const host = await fakeHost(t);
+  writeFileSync(join(host.root, "fail"), "restart\n");
+  const failed = await host.install(["--revision", "rev-a1", "--slots", "2"]);
+  assert.equal(failed.status, 4, failed.stdout + failed.stderr);
+  assert.match(failed.stderr, /systemctl failed after the switch.*--rollback/);
+  assert.equal(readFileSync(join(host.dir, "rollback", "status"), "utf8"), "failed\n");
+  rmSync(join(host.root, "fail"));
+  const rolledBack = await host.install(["--rollback"]);
+  assert.equal(rolledBack.status, 0, rolledBack.stdout + rolledBack.stderr);
+  assert.deepEqual(readFileSync(join(host.dir, "worker.env")), host.original.env);
+  assert.deepEqual(readFileSync(host.unitFile), host.original.unit);
 });
 
 test("--rollback refuses while the failed worker runs requests, unless --force", async (t) => {
@@ -549,7 +576,7 @@ test("a dry run reads the host and changes nothing", async (t) => {
   assert.match(result.stdout, /\[dry-run\] worker\.env: kept MEDIA_ROOT/);
   assert.match(result.stdout, /-WorkingDirectory=%h\/sonder-ctc-worker\/worker/);
   assert.deepEqual(listTree(host.root).filter((line) => line !== "host.log"), before.filter((line) => line !== "host.log"));
-  assert.deepEqual(host.systemctlCalls(), [`is-active ${UNIT}`]);
+  assert.deepEqual(host.systemctlCalls(), ["show-environment", `is-active ${UNIT}`]);
 
   host.worker.activeRequests = 1;
   const busy = await host.install(["--revision", "rev-a1", "--dry-run"]);

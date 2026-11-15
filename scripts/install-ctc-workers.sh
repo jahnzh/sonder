@@ -391,6 +391,14 @@ require_idle() {
   esac
 }
 
+# Before anything changes: an update whose daemon-reload or restart cannot run would leave new settings for the
+# next start of the old worker.
+require_service_manager() {
+  [[ "$skip_service" == false ]] || return 0
+  host_systemctl show-environment > /dev/null \
+    || die 1 "systemctl --user cannot reach the user service manager (XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-unset}); log in on the host, or pass --skip-service"
+}
+
 expected_engine() {
   grep -oE '^ENGINE = "[^"]+"' "$1/ctc_acoustic.py" | sed -e 's/^ENGINE = "//' -e 's/"$//'
 }
@@ -478,11 +486,13 @@ cmd_rollback() {
   fi
   echo "Rolling back ${target_dir} to revision ${previous_revision} (last update: $(cat -- "${rollback_dir}/revision" 2>/dev/null), ${status})"
   if [[ "$dry_run" == true ]]; then
+    require_service_manager
     require_idle "dry run"
     echo "[dry-run] Would restore worker.env, ${unit_file} and the code of revision ${previous_revision}, and restart once"
     return 0
   fi
   lock_target
+  require_service_manager
   require_idle "before rollback"
 
   if [[ -f "${rollback_dir}/worker.env" ]]; then
@@ -701,6 +711,7 @@ cmd_install() {
   echo "  Worker URL:       $worker_url"
 
   if [[ "$dry_run" == true ]]; then
+    require_service_manager
     require_idle "dry run"
     if [[ "$installed_release" == "$release" ]]; then
       echo "[dry-run] Would keep releases/$release, which is installed (settings only)"
@@ -731,6 +742,7 @@ cmd_install() {
   fi
 
   lock_target
+  require_service_manager
   require_idle "before the update"
 
   # --- Stage: nothing below touches the code, packages or settings the running worker uses. ---
@@ -800,9 +812,11 @@ cmd_install() {
   else
     mv -fT -- "${unit_file}.next" "$unit_file"
     echo "Wrote service unit to ${unit_file}"
-    host_systemctl daemon-reload
-    host_systemctl enable "$UNIT"
-    host_systemctl restart "$UNIT"
+    if ! { host_systemctl daemon-reload && host_systemctl enable "$UNIT" && host_systemctl restart "$UNIT"; }; then
+      set_rollback_status failed
+      echo "error: systemctl failed after the switch. Restore the previous worker with: scripts/install-ctc-workers.sh --rollback (with the same --host or --dir)" >&2
+      exit 4
+    fi
     echo "Restarted ${UNIT} once"
     host_linger_check
     if verify_worker "$engine" "$device_type" "$revision" "$media_root" "$token"; then
