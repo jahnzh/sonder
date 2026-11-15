@@ -272,9 +272,15 @@ ADR 0016's whole-book request, on the worker only: the server does not call it
 yet. The window endpoints (`/align`, `/anchor`, `/anchor-batch`) and their
 engine `ctc-wav2vec2-base-960h-torchaudio-2.8-v2` are unchanged. A whole-book
 job is a new engine generation, `ctc-wav2vec2-base-960h-torchaudio-2.8-book-v1`
-(`book_job.BOOK_ENGINE`), with the same model. `/health` reports it under
-`bookJobs: {engine, ready, jobs, slotsHeld}`; `slotsHeld` is the number of the
-worker's slots that encode batches hold at that moment (see "Shared GPU").
+(`book_job.BOOK_ENGINE`), with the same model. `/health`'s existing fields
+(`busy`, `busySeconds`, `activeRequests`, `slots`, `stuck`) describe window
+requests only, exactly as before; book work is reported only under
+`bookJobs: {engine, ready, jobs, slotsHeld, batchSeconds, stuck,
+diskReservedBytes, diskBudgetBytes}`. `slotsHeld` is the number of the
+worker's slots that encode batches hold at that moment and `batchSeconds` the
+age of the oldest (see "Shared GPU"); `stuck` lists the jobs whose session is
+kept because a process is still there (`jobId`, `reason`, `since`,
+`reservedBytes`, see "Session, disk budget and resume").
 
 Code: `worker/book_job.py` (lifecycle, stages, resume), `book_session.py`
 (per-book session, #391), `book_audio.py` (decode), `book_encode.py`
@@ -302,10 +308,10 @@ is the same model as the window endpoints.
 
 | Request | Answer |
 | --- | --- |
-| `POST /book-jobs` with the start request | `202` and the progress. The same `jobId` with the same request returns the existing job and does not run it again. The same `jobId` with another request is `409`. A track outside `MEDIA_ROOT` or missing is `400`. A missing media volume is `503`. |
+| `POST /book-jobs` with the start request | `202` and the progress. The same `jobId` with the same request returns the existing job and does not run it again. The same `jobId` with another request, or one whose cancelled job is still stopping, is `409`. A track outside `MEDIA_ROOT` or missing is `400`. A missing media volume is `503`. A request whose files do not fit the disk budget next to the other jobs is `507`, before anything is written. |
 | `GET /book-jobs/{jobId}` | `200` and the progress; `404` for an unknown job |
 | `DELETE /book-jobs/{jobId}` | `200` `{jobId, engine, state: "cancelled"}`. The job stops and its folder is deleted. Later requests for it answer `404`. |
-| `GET /book-jobs/{jobId}/result` | `200` and the result once `state` is `done`. Before that, `409` `{jobId, engine, state, message}`. |
+| `GET /book-jobs/{jobId}/result` | `200` and the result once `state` is `done`. Before that, `409` `{jobId, engine, state, message}`. The fetch ends the job: its folder is deleted with its reservation, and later requests for it answer `404`. |
 
 ### Start request
 
@@ -336,17 +342,21 @@ that. `duration` is used only for a track whose duration ffprobe cannot read.
  "error": null, "resumed": 0}
 ```
 
-`state` goes `queued` (waiting for the disk budget) → `decoding` → `encoding` →
+`state` goes `queued` (waiting for the disk budget, or after a restart for its
+turn to resume) → `decoding` → `encoding` →
 `anchoring` → `aligning` → `finishing` → `done`, or ends in `failed` (with
 `error`) or `cancelled`. `progress` grows as the job goes on:
 `tracksTotal`, `tracksDecoded`, `tracksEncoded`; `diskReservedBytes`, the
-job's current disk reservation; `encodeQueuePosition` while
-encoding (`0` encoding, `1…` waiting); then `groupsTotal`, `groupsDone` and
+job's current disk reservation; `resumeQueuePosition` (`1…`) while a retained
+job waits for its turn after a restart; `encodeQueuePosition` while
+encoding (`0` holds the encoder, `1…` waiting behind it);
+`waitingForWindowRequests` (`true` while the encode waits for the window
+endpoints' gate, `false` once it got it again) with `gateWaitSeconds`, how long
+the current wait has lasted; then `groupsTotal`, `groupsDone` and
 `anchors` (`candidates`, `chain`, `chainRateDropped`, `groups`,
 `anchorSeconds`). `stageTimings` holds seconds per stage (`identity`, `decode`,
-`encodeQueue`, `encode`, `prepare`, `anchor`, `align`, `finish`). After a
-result fetch, `fetched` is `true`. `resumed` counts the worker restarts the job
-has continued from. `encode` holds the encode statistics (`encodeSeconds`,
+`encodeQueue`, `gateWait`, `encode`, `prepare`, `anchor`, `align`, `finish`).
+`resumed` counts the worker restarts the job has continued from. `encode` holds the encode statistics (`encodeSeconds`,
 `audioSeconds`, `realtime`, `batch`, `oomHalvings`, `gpuUtilization`).
 
 ### Result
@@ -397,7 +407,8 @@ yet (next ticket).
   6.1, WAV, AAC and MP3, caps 0.1 to 200 MB); 1 MiB is allowed per range.
 * **One continuous encode.** The windows of all tracks (each track on its own
   grid: 20 s cores, 5 s context) form one stream. Consecutive windows of equal
-  length are batched, `ALIGNMENT_BOOK_ENCODE_BATCH` (default 8), with no padding.
+  length are batched, `ALIGNMENT_BOOK_ENCODE_BATCH` (default 8 on a GPU and 1
+  on the CPU, see "Shared GPU"), with no padding.
   Each track's emissions (float16, 29 labels) go to their own file. A track's
   PCM is deleted once its emissions are written.
 * **One encode per GPU.** Jobs enter a first-come queue per device before
@@ -406,17 +417,30 @@ yet (next ticket).
 * **Shared GPU.** Each encode batch also holds one slot of the gate the window
   endpoints use (`deadline.Gate`, `ALIGNMENT_WORKER_SLOTS`), only for that
   batch, with the batch's results back on the CPU before the slot is given
-  back. So `/health`'s `busy`, `activeRequests` and `busySeconds` include book
-  batches, as `bookJobs.slotsHeld` does. Window requests come first: a batch
-  starts only when a slot is free, no window request runs, none ended in the
+  back. `/health`'s `busy`, `activeRequests`, `busySeconds` and `stuck` do not
+  count book batches (the server reads `/health` first and skips a worker that
+  says it is busy); `bookJobs.slotsHeld` does. Window requests come first: a
+  batch starts only when no window request runs or waits, none ended in the
   last 2 s (`WINDOW_GRACE_S`; a window job's next request follows within it)
   and no window request refused with `409` is still due to retry (the server
-  retries after 3 s; the batch waits for it at most 5 s, `WINDOW_RETRY_S`). The
-  window endpoints take their slot as before and are refused only while a
-  batch runs; with one slot that is at most one batch (a fraction of a second
-  on the GPU, tens of seconds on lisa's CPU). While window requests keep
-  arriving within 2 s of each other the encode waits. A cancel during that
-  wait stops the job.
+  retries after 3 s; the batch waits for it at most 5 s, `WINDOW_RETRY_S`). A
+  window request is refused only when window requests hold every slot, as
+  before. One that arrives while a batch holds the slot it needs waits for
+  that batch, so for at most one batch, and no batch starts while it waits.
+  The longest batch, measured on WSL (2026-11-15, 30 s windows, results back on
+  the CPU): 8 windows on the RTX 3070 Ti in float16 take 0.13 s; on the CPU in
+  float32 one window takes 0.93 s with 8 threads, 1.3 s with 4 and 4.8 s with
+  1, and 8 windows 12.9 s with 4 threads. So a CPU batch is one window. lisa
+  (Xeon E5-2470 v2, 20 threads) was not measured; its per-thread speed is
+  lower, so a batch there may take a few seconds, far inside a window
+  request's own limit (120 s plus 0.15 s per audio second) and the server's
+  wait. A batch that holds the slot for more than 60 s
+  (`WINDOW_WAIT_MAX_S`) is taken to be hung and the waiting request gets
+  `409`, as when every slot is taken. While window requests keep arriving
+  within 2 s of each other the encode waits, with no timeout; the job says so
+  in its progress (`waitingForWindowRequests`, `gateWaitSeconds`) and later
+  books keep their `encodeQueuePosition`. A cancel during that wait stops the
+  job.
 * **The aligner** is the v2 anchor chain of `PROTO-D-E-BOOKS.md`, unchanged in
   its parameters (δ 1.5, skip 8, 60 s windows, 20 s margin, text × 1.3) and its
   four chain constants (locate every 240 s, groups ≥ 600 s, rate floor 0.25).
@@ -444,25 +468,33 @@ Each job has one per-book session (#391), keyed by the job. The session owns the
 decoded audio, the tracks' digests, the emissions handle and the process pool.
 It ends exactly once:
 
-* when the result is fetched (decoded audio, emissions and pool go; the small
-  `result.json` stays fetchable);
+* when the result is fetched (the whole folder goes);
 * on cancel (the whole folder goes);
 * after `ALIGNMENT_BOOK_IDLE_SECONDS` (default 900) without a request for the job
   from the server, which also stops a running job and deletes its folder;
+* on failure, when only a small error record (`state.json`: the job's id,
+  engine, state, error cut to 2,000 characters and times) is kept and counted
+  in the budget until the idle sweep removes it;
 * on worker stop, when the folder is kept.
 
 Ending a session stops its group-alignment processes first: SIGTERM, then
-SIGKILL after 5 s (`book_session.TERMINATE_GRACE_S`), and waits until they
-have exited. Only then are the folder deleted and the reservation released.
-A process stuck in the kernel (a read from a failing disk) delays that until
-it exits.
+SIGKILL after 5 s (`book_session.TERMINATE_GRACE_S`), then a wait of at most
+5 s more (`KILL_WAIT_S`). Cancel, fetch and idle end also wait up to 30 s
+(`book_job.STOP_WAIT_S`) for the job's thread. Only when all of them are gone
+are the folder deleted and the reservation released, together. A process that
+is still there (stuck in the kernel, for example on a read from a failing
+disk), or a thread that has not stopped, keeps the session: the folder and the
+reservation stay, `/health` lists the job under `bookJobs.stuck`, a new start
+of the same `jobId` is `409`, and the sweep (every 30 s) releases it once
+everything has exited. A visible leak is preferred to disk reused under a live
+process.
 
 Locks are taken in the order `BookJobs` → session registry → session → disk
 budget, and `Job.save_lock` before `Job.lock`. No lock is held while waiting
 for the encode queue, a process or book I/O.
 
 One disk budget per worker, `ALIGNMENT_BOOK_DISK_BYTES` (default 64 GiB), covers
-everything in the job folders. A job's reservation is what its folder holds plus
+every byte in the job folders. A job's reservation is what its folder holds plus
 the most the next stage adds at its peak, set again before each stage that
 writes, from the probed durations and the files on disk:
 
@@ -473,18 +505,31 @@ writes, from the probed durations and the files on disk:
 * before the book copy is written: its size;
 * always: 16 MiB plus 1 KiB per sentence for state, plan, group and result files.
 
-`start` counts the request and state files it writes. A book that does not fit
-next to the other sessions waits in `queued`. A book larger than the whole budget
-fails at once. When the worker starts, the files of every retained job folder
-(and of any folder it does not recognise) are claimed in the budget before any
-job is resumed, so a restart cannot admit more than the disk holds.
+`start` reserves the request and state files it writes (the request's exact
+size plus 64 KiB): a request that does not fit next to the other jobs is
+refused with `507` before anything is written. Lowering a reservation never
+waits. Raising one is first come, first served: only the oldest waiting job
+may grow, and it fails with a clear error ("can never fit") when it cannot fit
+even after every job that is not waiting has released its bytes, that is when
+the rest is held by jobs that release only after it (later waiters, retained
+jobs still to resume, folders the worker does not recognise). A book larger
+than the whole budget fails at once. A failed job's files go except its
+record. So two books can never wait for each other's disk.
+
+When the worker starts, the files of every retained job folder (and of any
+folder it does not recognise) are claimed in the budget before any job is
+resumed, so a restart cannot admit more than the disk holds; decoded PCM and
+partial files of unfinished jobs are deleted first, as they are never reused.
+Unfinished jobs then resume one at a time, oldest first (`createdAt`); the
+next starts when the previous one's run has ended (done, failed or cancelled).
+While a job waits for its turn its files count as held for the one resuming.
 
 Everything is kept under `MEDIA_ROOT/alignment/book-jobs/<jobId>/`:
 `request.json`, `state.json`, `tracks/` (PCM), `emissions/<n>.f16` + `<n>.json`
 (per track, with engine and source sha256), `emissions/book.f16`,
 `groups/plan.json` and `groups/<n>.json` (one per finished group),
 `result.json`. Groups are the unit of progress and resume. When the worker
-starts, every unfinished job continues. Tracks whose emissions match their
+starts, every unfinished job continues, in turn. Tracks whose emissions match their
 source digest are not decoded or encoded again; the stored plan and finished
 groups are reused. A track whose bytes changed is decoded and encoded again,
 and the book copy of the emissions, the plan and the finished groups are

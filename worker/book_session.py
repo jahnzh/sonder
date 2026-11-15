@@ -5,24 +5,26 @@ the decoded audio and the emissions in the job's folder, the tracks' digests, th
 aligner reads, and the process pool that locates and aligns its groups. It ends exactly once:
 
 * when the server has fetched the result,
-* when the job is cancelled,
+* when the job is cancelled or fails,
 * after IDLE_SECONDS without a request from the server for this job (the server never came back),
 * when the worker stops (its resources are released; the folder is kept so the job resumes on restart).
 
-Ending a session stops its pool's processes (SIGTERM, SIGKILL after TERMINATE_GRACE_S) and waits until
-they have exited, then drops its handles, deletes the decoded audio and the emissions (except on worker
-stop) and only then releases its disk reservation.
+Ending a session stops its pool's processes (SIGTERM, SIGKILL after TERMINATE_GRACE_S, then at most
+KILL_WAIT_S more) and drops its handles. Only once every process has exited (and the job's thread, when
+the caller says so) is the job's folder deleted (except on worker stop) and its reservation released,
+together. A process still there after the bounded wait keeps the session "stuck": folder and reservation
+stay, and `SessionRegistry.retry_stuck` releases them once it is gone.
 
 Lock order: (`book_job.BookJobs._lock` ->) `SessionRegistry._lock` -> `BookSession._lock` -> `DiskBudget._lock`. A lock is never taken
 while a later one in that order is held, and none is held while waiting for the encode queue, for a
 process to exit or for disk I/O on book data. The one exception is `start_pool`: it starts the pool's
 processes under `BookSession._lock`, so that a session ending at the same time stops every one of them.
 
-Disk budget: one budget per worker for decoded audio and emissions together (ALIGNMENT_BOOK_DISK_BYTES).
+Disk budget: one budget per worker for every byte under the job folders (ALIGNMENT_BOOK_DISK_BYTES).
 A session's reservation is what its folder holds plus the most the next stage adds at its peak; it is
 set again before each stage that writes (decode, encode, the book's concatenated emissions) from the
-probed durations and the files really on disk, never from the request. A book that does not fit next to
-the other sessions waits; a book larger than the whole budget fails at once. At worker start the files
+probed durations and the files really on disk, never from the request. Raising a reservation is first
+come, first served (DiskBudget); a book that can never fit fails at once. At worker start the files
 of retained jobs are claimed before any job runs, so a restart cannot admit more than the disk holds.
 """
 import os
