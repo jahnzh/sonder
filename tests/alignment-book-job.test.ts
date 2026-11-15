@@ -952,3 +952,61 @@ test("a host whose status bodies stay unreadable has failed for this job after t
   assert.equal(job.status, "partial", job.error ?? undefined);
   assert.equal(job.pool?.hostId, "lisa");
 });
+
+/** A recording of its own whose one track has chapter markers: a 20 s introduction, then one chapter per section. */
+function chapteredRecording(titles: string[]) {
+  const { recordingId, trackId } = recording();
+  const starts = [0, 20, ...book.sections.slice(1).map((_, i) => 200 + i * 100)].slice(0, titles.length);
+  const chapters = titles.map((title, i) => ({ title, start: starts[i], ...(i + 1 < titles.length ? { end: starts[i + 1] } : {}) }));
+  sqlite.prepare("UPDATE tracks SET chapters=? WHERE id=?").run(JSON.stringify(chapters), trackId);
+  return { recordingId, trackId, chapters };
+}
+
+test("pairings change nothing in a whole-book job (#405, #348): a shifted pairing, the right one and anchored send the same request and store the same map", async () => {
+  const { recordingId, trackId, chapters } = chapteredRecording(["Introduction", ...book.sections.map((_, i) => `Chapter ${i + 1}`)]);
+  const clip = (i: number) => ({ trackId, start: chapters[i].start, duration: (chapters[i].end ?? 400) - chapters[i].start });
+  // #348: ebook section 1 paired with the 20 s introduction, and so on, one chapter early.
+  const shifted = book.sections.map((section, i) => ({ section: section.index, ...clip(i) }));
+  const right = book.sections.map((section, i) => ({ section: section.index, ...clip(i + 1) }));
+  assert.ok(book.sections.length >= 2);
+  assert.notDeepEqual(shifted, right);
+  const maps = [];
+  for (const [pairings, mode] of [[shifted, "chapters"], [right, "chapters"], [undefined, "anchored"]] as const) {
+    const created = await createAlignment("book-ebook", recordingId, pairings ? [...pairings] : undefined, mode);
+    assert.equal(created.engine, BOOK_ENGINE);
+    const job = await settled(created.id);
+    assert.equal(job.status, "partial", job.error ?? undefined);
+    assert.deepEqual(job.pairings, pairings ?? [], "the job stores the pairing it was given");
+    maps.push({ intervals: job.intervals, coverage: job.coverage, outcome: job.outcome, warning: job.warning,
+      unsyncedPassages: job.unsyncedPassages, flags: job.anchoring?.flags ?? [] });
+  }
+  const requests = fake.hosts.wsl.starts.map(({ jobId: _, tracks, ...request }) =>
+    ({ ...request, tracks: tracks.map(({ id, duration }: { id: string; duration: number }) => ({ id, duration })) }));
+  assert.equal(requests.length, 3);
+  assert.deepEqual(requests[1], requests[0]);
+  assert.deepEqual(requests[2], requests[0]);
+  assert.deepEqual(Object.keys(requests[0]).sort(), ["audioFingerprint", "language", "recordingId", "sentences", "tracks"]);
+  assert.deepEqual(requests[0].sentences, sentences, "every sentence of the book, whatever was paired");
+  assert.deepEqual(maps[1], maps[0]);
+  assert.deepEqual(maps[2], maps[0]);
+});
+
+test("the options say which runner a Prepare starts; with whole-book jobs a chaptered release with no matched section is planned anchored, not refused", async () => {
+  const { alignmentOptions } = alignment;
+  // The fixture's sections are too short to be matched by title, so nothing pairs automatically.
+  const { recordingId } = chapteredRecording(["Opening credits", "Part the first", "Part the second"]);
+  const options = await alignmentOptions("book-ebook", recordingId);
+  assert.equal(options.bookJobs, true);
+  assert.equal(options.anchored, false);
+  assert.deepEqual(options.pairings, []);
+  const created = await createAlignment("book-ebook", recordingId);
+  assert.equal(created.engine, BOOK_ENGINE);
+  assert.equal(created.mode, "anchored");
+  assert.deepEqual(created.pairings, []);
+  assert.equal((await settled(created.id)).status, "partial");
+
+  delete process.env.ALIGNMENT_BOOK_JOBS;
+  const off = chapteredRecording(["Opening credits", "Part the first", "Part the second"]);
+  assert.equal((await alignmentOptions("book-ebook", off.recordingId)).bookJobs, false);
+  await assert.rejects(createAlignment("book-ebook", off.recordingId), /Match ebook sections to audio chapters before preparing sync/);
+});

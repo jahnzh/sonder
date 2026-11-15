@@ -9,6 +9,7 @@ import { usePlayer } from "../player";
 import { PoolFailureReasons } from "./PoolFailureReasons";
 import { readingSyncControls, rejectedRebuildReason, runJobAction, shownAfterAction } from "../reading-sync-controls";
 import { pauseLabel, pausedLabel, syncProgressLine } from "../reading-sync-status";
+import { anchoredMode as pairingsAnchored, offersChapterMatching, pairingBlock, prepareBody, prepareHelp } from "../reading-sync-prepare";
 import type { Book } from "../types";
 import {
   alignmentJobActive,
@@ -24,6 +25,8 @@ type Options = {
   sameWork: boolean;
   languageMatch: boolean;
   anchored?: boolean;
+  /** The server runs whole-book jobs (#405); absent from an older server. */
+  bookJobs?: boolean;
 };
 function flagText(flag: AlignmentFlag) {
   const range =
@@ -222,11 +225,7 @@ export function ReadingSync({
     setError("");
     void api("/alignments", {
       method: "POST",
-      body: JSON.stringify({
-        ebookId: book.id,
-        recordingId: selected,
-        ...(anchoredMode || forceAnchored === true ? { mode: "anchored" } : { pairings }),
-      }),
+      body: JSON.stringify(prepareBody(book.id, selected, options, pairings, forceAnchored === true)),
     })
       // The buttons are freed when the POST answers, not when the listing does (#324).
       .then(async () => {
@@ -239,7 +238,8 @@ export function ReadingSync({
   const noChapterMarkers =
     options?.clips.length === 1 &&
     !selectedAudio?.tracks.some((track) => track.chapters?.length);
-  const anchoredMode = !!options?.anchored && !pairings.length;
+  const anchoredMode = pairingsAnchored(options, pairings);
+  const matching = offersChapterMatching(options);
   const blockedReason = !selected
     ? "Choose an audiobook release to prepare reading sync."
     : busy
@@ -254,17 +254,7 @@ export function ReadingSync({
             ? "Link this EPUB to the selected book before preparing sync."
             : !options.languageMatch
               ? "The ebook and narration languages differ. Choose a release in the ebook’s language."
-              : !pairings.length
-                ? anchoredMode
-                  ? options.clips.every((clip) => clip.duration <= 0)
-                    ? "Audio lengths are unknown. Save this release to the server to read its chapter details."
-                    : null
-                  : noChapterMarkers && options.clips[0].duration > 7200
-                  ? "This release is one long audio file without chapter markers. Choose a release with chapters, or open the chapter matcher and set an audio start and length for each ebook section."
-                  : options.clips.every((clip) => clip.duration <= 0)
-                    ? "Audio lengths are unknown. Save this release to the server to read its chapter details."
-                    : "No ebook sections matched automatically. Open the chapter matcher and select at least one audio chapter."
-                : null;
+              : pairingBlock(options, pairings, noChapterMarkers);
   const prepareDisabled = !!blockedReason;
   const chapteredAlternatives = books.filter(
     (audio) =>
@@ -324,7 +314,7 @@ export function ReadingSync({
           <Link2 size={14} /> Link this EPUB to the selected book
         </button>
       )}
-      {options && (
+      {options && matching && (
         <details>
           <summary>
             <span>Match ebook sections to audio chapters</span>{" "}
@@ -431,7 +421,8 @@ export function ReadingSync({
           })}
         </details>
       )}
-      {noChapterMarkers &&
+      {matching &&
+        noChapterMarkers &&
         !pairings.length &&
         chapteredAlternatives.length > 0 && (
           <div className="sync-alternatives">
@@ -564,7 +555,7 @@ export function ReadingSync({
             {job ? "Rebuild reading sync" : "Prepare reading sync"}
           </button>
         )}
-        {job && !anchoredMode && !job.anchoring && ["partial", "error"].includes(job.status) && job.coverage < 0.05 && (
+        {job && matching && !anchoredMode && !job.anchoring && ["partial", "error"].includes(job.status) && job.coverage < 0.05 && (
           <button
             className="button subtle"
             disabled={prepareDisabled}
@@ -575,11 +566,7 @@ export function ReadingSync({
         )}
       </div>
       <p id="reading-sync-help" className="sync-preparation-help" role="status">
-        {blockedReason ||
-          (anchoredMode
-            ? "No chapter markers. Reading sync samples the narration to locate the ebook text, then aligns the passages between those points."
-            : null) ||
-          `${pairings.length} ebook ${pairings.length === 1 ? "section matched" : "sections matched"} to audio. Review the chapter matches, then prepare sentence timings.`}
+        {blockedReason || prepareHelp(options, pairings)}
       </p>
       {job &&
         locator &&
