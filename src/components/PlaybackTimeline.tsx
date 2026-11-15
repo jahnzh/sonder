@@ -6,7 +6,7 @@ import {
   type CSSProperties,
 } from "react";
 import { flushSync } from "react-dom";
-import { usePlayer } from "../player";
+import { usePlayer, type SeekTarget } from "../player";
 import { useAppearance } from "./Appearance";
 import { playbackTimeline } from "../chapters";
 import { clock } from "../lib";
@@ -28,11 +28,14 @@ export function PlaybackTimeline({
   book,
   compact = false,
   scoped = false,
+  onSeek,
 }: {
   book: Book;
   compact?: boolean;
   // Compact layout that still names its scope, as in the desktop reader footer.
   scoped?: boolean;
+  /** A seek was committed (a drag released, or a key or change that moved the thumb): where it goes. */
+  onSeek?: (target: SeekTarget | null) => void;
 }) {
   const p = usePlayer(),
     { appearance } = useAppearance();
@@ -59,8 +62,8 @@ export function PlaybackTimeline({
   const disabled = !actual || !length;
   const commit = (value: number, range = actual) => {
     if (!range) return;
-    if (range.scope === "book") p.seekBook(value);
-    else p.seekTrack(range.trackId, range.start + value);
+    const target = range.scope === "book" ? p.seekBook(value) : p.seekTrack(range.trackId, range.start + value);
+    onSeek?.(target);
   };
   const show = (value: number, timeline: Timeline, sensitivity: number) => {
     // Keep the native one-second thumb, timestamp and committed destination identical.

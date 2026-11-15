@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   createAlignmentMapLifecycle,
   mapCacheKey,
+  mapIdentityOf,
   type MapLifecycleDeps,
 } from "../src/alignment-map-lifecycle.ts";
 import type { AlignmentJob } from "../src/reading-types.ts";
@@ -73,6 +74,8 @@ function setup(opts: { online?: boolean } = {}) {
   };
   const lifecycle = createAlignmentMapLifecycle(deps);
   const shown: (AlignmentJob | null)[] = [];
+  // Whether the server had confirmed each map shown.
+  const confirmed: boolean[] = [];
   const errors: string[] = [];
   let current = true;
   const refresh = () =>
@@ -81,7 +84,10 @@ function setup(opts: { online?: boolean } = {}) {
       recordingId: REC,
       isCurrent: () => current,
       onJobs: () => {},
-      onMap: (m) => shown.push(m),
+      onMap: (m, c) => {
+        shown.push(m);
+        confirmed.push(c);
+      },
       onError: (m) => errors.push(m),
     });
   return {
@@ -89,6 +95,7 @@ function setup(opts: { online?: boolean } = {}) {
     data,
     log,
     shown,
+    confirmed,
     errors,
     refresh,
     setSummary: (fn: typeof summary) => (summary = fn),
@@ -452,4 +459,83 @@ test("overlapping warm calls: the superseded call's outcome does not land", asyn
   assert.equal((await second)?.id, "job-1");
   assert.equal(t.data.get(KEY)?.updatedAt, 200, "only the current warm may cache");
   assert.equal(t.log.puts.length, 1);
+});
+
+test("a map is shown confirmed only once the map endpoint answered it for this job run", async () => {
+  // Cached and matching: shown at once unconfirmed, then the server's answer confirmed.
+  const t = setup();
+  t.data.set(KEY, fullMap());
+  await t.refresh();
+  assert.deepEqual(t.confirmed, [false, true]);
+  // The same run again in this lifecycle: the cache is shown confirmed, without asking again.
+  await t.refresh();
+  assert.deepEqual(t.confirmed, [false, true, true]);
+  assert.equal(t.log.maps, 1);
+  // A new job run is unconfirmed again until its answer.
+  t.setSummary(async () => ({ jobs: [job({ updatedAt: 200 })], available: true }));
+  t.setMap(async () => fullMap({ updatedAt: 200 }));
+  t.data.set(KEY, fullMap({ updatedAt: 200 }));
+  await t.refresh();
+  assert.deepEqual(t.confirmed.slice(3), [false, true]);
+  // No cache: the fetched map is confirmed.
+  const fresh = setup();
+  await fresh.refresh();
+  assert.deepEqual(fresh.confirmed, [true]);
+});
+
+test("a cached map kept after a failed or refused check, or offline, is not confirmed", async () => {
+  // The audio changed in place: the cached map is shown, then refused.
+  const refused = setup();
+  refused.data.set(KEY, fullMap());
+  refused.setMap(async () => {
+    throw new HttpError("gone", 410);
+  });
+  await refused.refresh();
+  assert.equal(refused.shown[0]?.id, "job-1");
+  assert.equal(refused.shown.at(-1), null);
+  assert.deepEqual(refused.confirmed, refused.shown.map(() => false));
+  // A temporary failure keeps the cached map, unconfirmed.
+  for (const status of [500, 503]) {
+    const failed = setup();
+    failed.data.set(KEY, fullMap({ updatedAt: 50 }));
+    failed.setMap(async () => {
+      throw new HttpError("fail", status);
+    });
+    await failed.refresh();
+    assert.equal(failed.shown.at(-1)?.updatedAt, 50);
+    assert.equal(failed.confirmed.at(-1), false, String(status));
+  }
+  // Offline or the server down: the stored map, unconfirmed.
+  const offline = setup();
+  offline.data.set(KEY, fullMap());
+  offline.setSummary(async () => {
+    throw new HttpError("down", 502);
+  });
+  await offline.refresh();
+  assert.equal(offline.shown.at(-1)?.id, "job-1");
+  assert.deepEqual(offline.confirmed, [false]);
+});
+
+test("a map's identity is the same for a cached copy and the server's answer, and another for a rebuilt or corrected map", () => {
+  const map = fullMap();
+  assert.equal(mapIdentityOf(map), mapIdentityOf(structuredClone(map)));
+  // Fields that change with every write but not with the map's sentences.
+  assert.equal(mapIdentityOf(map), mapIdentityOf(fullMap({ updatedAt: 999, progress: 0.5, status: "processing" })));
+  const corrected = fullMap({
+    intervals: [{ paragraphId: "p", section: 0, trackId: "t", start: 0, end: 1.5, confidence: 1 }],
+  });
+  assert.notEqual(mapIdentityOf(map), mapIdentityOf(corrected));
+  const rebuilt = fullMap({
+    intervals: [
+      { paragraphId: "p", section: 0, trackId: "t", start: 0, end: 1, confidence: 1 },
+      { paragraphId: "q", section: 0, trackId: "t", start: 1, end: 2, confidence: 1 },
+    ],
+  });
+  assert.notEqual(mapIdentityOf(map), mapIdentityOf(rebuilt));
+  assert.notEqual(mapIdentityOf(map), mapIdentityOf(fullMap({ id: "job-2" })));
+  assert.notEqual(mapIdentityOf(map), mapIdentityOf(fullMap({ recordingId: "rec-2" })));
+  assert.notEqual(
+    mapIdentityOf(map),
+    mapIdentityOf(fullMap({ intervals: [{ paragraphId: "p", section: 0, trackId: "t2", start: 0, end: 1, confidence: 1 }] })),
+  );
 });

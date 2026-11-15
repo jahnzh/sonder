@@ -84,8 +84,9 @@ type PlayerState = {
   pause: () => void;
   setPlaybackSource: (choice: PlaybackSourceChoice) => Promise<void>;
   seek: (n: number) => void;
-  seekTrack: (trackId: string, position: number) => void;
-  seekBook: (position: number) => void;
+  /** Seeks in the book in the player; answers where it goes, or null when it does not move. */
+  seekTrack: (trackId: string, position: number) => SeekTarget | null;
+  seekBook: (position: number) => SeekTarget | null;
   skip: (n: number) => void;
   canUndoJump: boolean;
   /** Recent positions for the book in the player, oldest first. */
@@ -100,6 +101,12 @@ type PlayerState = {
   next: () => void;
   previous: () => void;
 };
+/**
+ * Where a seek goes. The player reports that track and position once it is there (at once on the
+ * same track; another track loads first). `done` settles when the seek ended, there or not
+ * (it failed, or a newer play replaced it).
+ */
+export type SeekTarget = { recordingId: string; trackId: string; position: number; done: Promise<void> };
 const Context = createContext<PlayerState>(null!);
 export function PlayerProvider({
   children,
@@ -666,22 +673,24 @@ export function PlayerProvider({
     void queued.finally(() => { if (pendingSkips.current === queued) pendingSkips.current = null; });
   }, [performSkip]);
   const seekTrack = useCallback(
-    (trackId: string, position: number) => {
+    (trackId: string, position: number): SeekTarget | null => {
       const { book, track } = state.current;
-      if (!book) return;
-      if (track?.id === trackId) seek(position);
-      else {
-        const target = book.tracks.find((track) => track.id === trackId);
-        if (target)
-          void playRef.current(book, target, position, !audio.current.paused, false, "seek");
+      if (!book) return null;
+      if (track?.id === trackId) {
+        if (!seek(position)) return null;
+        return { recordingId: book.recordingId, trackId, position: audio.current.currentTime, done: Promise.resolve() };
       }
+      const target = book.tracks.find((track) => track.id === trackId);
+      if (!target) return null;
+      const done = playRef.current(book, target, position, !audio.current.paused, false, "seek").catch(() => {});
+      return { recordingId: book.recordingId, trackId, position, done };
     },
     [seek],
   );
   const seekBook = useCallback(
-    (position: number) => {
+    (position: number): SeekTarget | null => {
       const { book, track, length } = state.current;
-      if (!book || !track) return;
+      if (!book || !track) return null;
       const target = absoluteSeekTarget(
         book.tracks.map((item) => ({
           ...item,
@@ -691,7 +700,7 @@ export function PlayerProvider({
         })),
         position,
       );
-      if (target) seekTrack(target.track.id, target.position);
+      return target ? seekTrack(target.track.id, target.position) : null;
     },
     [seekTrack],
   );
