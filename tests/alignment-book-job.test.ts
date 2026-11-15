@@ -509,3 +509,49 @@ test("the worker's result becomes the stored map in one function: checked interv
   assert.deepEqual(applyBookResult(base(), book, trackIds, result("text_mismatch", [])),
     { error: "The alignment worker returned an outcome this server does not know (text_mismatch).", outcome: "error" });
 });
+
+test("chapter-paired jobs run as whole-book jobs on the pool too: two books on the two hosts at once", async () => {
+  fake.hosts.wsl.holdAt = "encoding";
+  fake.hosts.lisa.holdAt = "encoding";
+  const chapterJob = async () => {
+    const { recordingId, trackId } = recording();
+    const pairings = book.sections.map((section, i) => ({ section: section.index, trackId, start: 10 + i * 100, duration: 80 }));
+    return createAlignment("book-ebook", recordingId, pairings, "chapters");
+  };
+  const [one, two] = [await chapterJob(), await chapterJob()];
+  await until(() => [one, two].every((job) => alignmentJob(job.id).bookJob?.state === "encoding"), "both encoding");
+  assert.deepEqual([one, two].map((job) => alignmentJob(job.id).pool?.hostId).sort(), ["lisa", "wsl"]);
+  fake.hosts.wsl.holdAt = null;
+  fake.hosts.lisa.holdAt = null;
+  for (const job of [one, two]) assert.equal((await settled(job.id)).status, "partial");
+  assert.deepEqual(fake.hosts.wsl.requests, [], "no window request");
+});
+
+test("with the pool off the rebuild scan queues no whole-book rebuild", async () => {
+  const created = await anchoredJob();
+  await settled(created.id);
+  only(created.id);
+  windowEngineMap(created.id, 1);
+  process.env.ALIGNMENT_POOL_ENABLED = "0";
+  try {
+    assert.equal((await queueEngineRebuilds({ warn: () => {} })).queued, 0);
+    assert.equal(alignmentJob(created.id).engine, CTC_ENGINE);
+  } finally {
+    process.env.ALIGNMENT_POOL_ENABLED = "1";
+  }
+});
+
+test("a host that failed the job is not tried first again when the job waited in the queue meanwhile", async () => {
+  fake.hosts.wsl.failAt = { stage: "aligning", error: "CUDA out of memory" };
+  fake.hosts.lisa.busy = true;
+  const created = await anchoredJob();
+  const waiting = await settled(created.id, ["queued"]);
+  assert.equal(waiting.bookJob, undefined, "the failed host's worker job is no longer the job's");
+  assert.deepEqual(waiting.pool?.triedHosts, ["wsl"]);
+  fake.hosts.lisa.busy = false;
+  await processAlignments();
+  const job = await settled(created.id);
+  assert.equal(job.status, "partial", job.error ?? undefined);
+  assert.equal(job.pool?.hostId, "lisa");
+  assert.equal(fake.hosts.wsl.starts.length, 1, "WSL was not tried again");
+});
