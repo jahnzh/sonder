@@ -154,12 +154,12 @@ const key = (hostId: PoolHostId, folder: string) => `${hostId}\0${folder}`;
 function readRecords(): Records {
   const records: Records = { jobs: new Map(), owners: new Map(), orphans: new Map() };
   const rows = sqlite.prepare(
-    "SELECT id, recording_id, CASE WHEN json_valid(data) THEN json_extract(data,'$.status') END AS status, CASE WHEN json_valid(data) THEN json_extract(data,'$.pool') END AS pool FROM alignment_jobs",
+    "SELECT id, recording_id, CASE WHEN json_valid(data) THEN json_extract(data,'$.status') END AS status, CASE WHEN json_valid(data) AND json_type(data,'$.pool')='object' THEN json_extract(data,'$.pool') END AS pool FROM alignment_jobs",
   ).all() as { id: string; recording_id: string; status: string | null; pool: string | null }[];
   for (const row of rows) {
     const job: JobRecord = { id: row.id, recordingId: row.recording_id, status: row.status ?? "" };
     records.jobs.set(row.id, job);
-    // json_extract returns valid JSON text or NULL, so this parse cannot fail.
+    // Only an object-valued pool is selected, which json_extract returns as valid JSON text: this parse cannot fail.
     const pool: Partial<AlignmentJobPoolState> | null = row.pool ? JSON.parse(row.pool) : null;
     for (const [hostId, folder] of Object.entries(storedStaging(pool))) records.owners.set(key(hostId, folder), job);
   }
@@ -324,13 +324,25 @@ function retireUnderLease(hostId: PoolHostId, root: string, listed: StagedFolder
   }
 }
 
-async function removeFolder(host: PoolHost, root: string, folder: StagedFolder): Promise<RemovalOutcome> {
+/**
+ * The removal names the folder by the real pool-jobs path the refusal was checked against, and only while the
+ * worker's pool-jobs folder still resolves to it: a symlink retargeted after the listing fails the removal instead
+ * of sending it into another tree.
+ */
+export function removalCommand(dir: string, realPoolJobs: string, name: string) {
+  return `d=$(cd -P -- ${shellQuote(dir)} && pwd -P) && [ "$d" = ${shellQuote(realPoolJobs)} ] || ` +
+    `{ echo "the pool-jobs folder no longer resolves to the path that was checked" >&2; exit 3; }; ` +
+    `rm -rf -- "$d"/${shellQuote(name)}`;
+}
+
+async function removeFolder(host: PoolHost, root: string, realPoolJobs: string | null, folder: StagedFolder): Promise<RemovalOutcome> {
   const kept = (detail: string): RemovalOutcome => ({ ...folder, result: "kept", detail });
   const coord = getAlignmentPoolCoordinator();
   const path = stagingFolder(root, folder.name);
   if (!STAGING_NAME.test(folder.name) || folder.path !== path || !isAbsolute(path)) return kept("Not a folder the pool stages into.");
   const recordingId = folder.recordingId;
   if (!recordingId) return kept("No recording to lease.");
+  if (!realPoolJobs || !isAbsolute(realPoolJobs)) return kept("The host did not report the real path of its pool-jobs folder.");
   const holder = `pool-sweep-${randomUUID()}`;
   if (!coord.holdRecording(recordingId, holder)) return kept("Its recording is leased by a running job or probe.");
   try {
@@ -339,7 +351,7 @@ async function removeFolder(host: PoolHost, root: string, folder: StagedFolder):
     // The name is retired: from here on nothing stages into it, so this removal may run as late as it likes.
     const signal = AbortSignal.timeout(timeouts.removeMs);
     try {
-      await untilAborted(poolDeps().exec(host.sshTarget, `rm -rf -- ${shellQuote(path)}`, { signal }), signal);
+      await untilAborted(poolDeps().exec(host.sshTarget, removalCommand(stagingFolder(root, ""), realPoolJobs, folder.name), { signal }), signal);
     } catch (error) {
       return { ...folder, result: "failed", detail: `${failure(error)} The name stays retired; a later run removes the folder.` };
     }
@@ -368,7 +380,7 @@ export async function removePoolStaging(options: { host?: string } = {}): Promis
       const folders: RemovalOutcome[] = [];
       for (const folder of listing.folders)
         folders.push(folder.action === "remove" && listing.root && !listing.refused
-          ? await removeFolder(host, listing.root, folder)
+          ? await removeFolder(host, listing.root, listing.realPoolJobs, folder)
           : { ...folder, result: "kept", detail: null });
       return { hostId: host.id, root: listing.root, error: listing.error, refused: listing.refused, folders };
     }));

@@ -3,7 +3,7 @@
 // the folder's name before it sends the removal, so a removal that outlives its deadline cannot reach a later run.
 import { after, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readerFixture } from "./reader-fixture.ts";
@@ -49,7 +49,7 @@ function install(answer?: Parameters<typeof fakePoolHosts>[2]) {
 
 const removals = (host: FakeHostState) => host.commands.filter((command) => /\brm\b/.test(command));
 const isListing = (command: string) => command.includes("du -sk");
-const isRemoval = (command: string) => /^rm -rf /.test(command);
+const isRemoval = (command: string) => /\brm -rf /.test(command);
 const folderOf = (host: FakeHostState, name: string) => join(host.root, "alignment", "pool-jobs", name);
 
 function recording() {
@@ -635,4 +635,42 @@ test("a deleted job whose id is planned again keeps its old folder until that jo
   } finally {
     endQueued(gone.id);
   }
+});
+
+test("a pool-jobs folder that resolves elsewhere after the listing fails the removal and deletes nothing there", async () => {
+  const job = await finishedJob();
+  const host = fake.hosts.wsl;
+  const poolJobs = join(host.root, "alignment", "pool-jobs");
+  const elsewhere = join(host.root, "elsewhere");
+  mkdirSync(join(elsewhere, job.id), { recursive: true });
+  writeFileSync(join(elsewhere, job.id, "live.wav"), "another tree");
+  host.holdCommand = async (command) => {
+    if (!isRemoval(command)) return;
+    host.holdCommand = undefined;
+    renameSync(poolJobs, join(host.root, "alignment", "pool-jobs-checked"));
+    symlinkSync(elsewhere, poolJobs);
+  };
+  try {
+    const run = await sweep.removePoolStaging();
+    assert.equal(result(run, "wsl", job.id).result, "failed");
+    assert.match(result(run, "wsl", job.id).detail ?? "", /no longer resolves/);
+    assert.equal(readFileSync(join(elsewhere, job.id, "live.wav"), "utf8"), "another tree");
+    assert.ok(existsSync(join(host.root, "alignment", "pool-jobs-checked", job.id)), "the checked folder was not reached either");
+  } finally {
+    host.holdCommand = undefined;
+    rmSync(poolJobs, { force: true });
+    renameSync(join(host.root, "alignment", "pool-jobs-checked"), poolJobs);
+  }
+});
+
+test("a job row whose pool is a string or whose data is not JSON does not break the listing and can be deleted", async () => {
+  const job = await finishedJob();
+  const setData = (data: string) => sqlite.prepare("UPDATE alignment_jobs SET data=? WHERE id=?").run(data, job.id);
+  setData(JSON.stringify({ id: job.id, status: "error", pool: "broken" }));
+  assert.equal(entry(await sweep.listPoolStaging(), "wsl", job.id).action, "unknown", "no staging record: never removed");
+  setData("{bad");
+  assert.equal(entry(await sweep.listPoolStaging(), "wsl", job.id).action, "unknown");
+  setData(JSON.stringify({ id: job.id, status: "error", pool: "broken" }));
+  transition.deleteAlignmentJob(job.id);
+  assert.equal((sqlite.prepare("SELECT COUNT(*) AS n FROM alignment_jobs WHERE id=?").get(job.id) as { n: number }).n, 0);
 });

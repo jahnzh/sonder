@@ -460,9 +460,9 @@ export function rejectRebuild(projected: AlignmentJob, consensus: AlignmentJob) 
  */
 function deleteJobRows(where: string, value: string) {
   sqlite.transaction(() => {
-    // A row whose data is not valid JSON has no readable staging record and gets no orphan entry.
+    // A row whose data is not valid JSON, or whose pool is not an object, has no staging record and gets no orphan entry.
     const rows = sqlite.prepare(
-      `SELECT id,recording_id,CASE WHEN json_valid(data) THEN json_extract(data,'$.pool') END AS pool FROM alignment_jobs WHERE ${where}=?`,
+      `SELECT id,recording_id,CASE WHEN json_valid(data) AND json_type(data,'$.pool')='object' THEN json_extract(data,'$.pool') END AS pool FROM alignment_jobs WHERE ${where}=?`,
     ).all(value) as { id: string; recording_id: string; pool: string | null }[];
     const keep = sqlite.prepare(
       "INSERT OR REPLACE INTO alignment_pool_orphans(host_id,folder,job_id,recording_id,deleted_at) VALUES(?,?,?,?,?)",
