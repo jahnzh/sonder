@@ -99,6 +99,25 @@
         }
       },
       {
+        "id": "ebook-set",
+        "label": "Ebook set checks",
+        "type": "loop",
+        "notTracked": false,
+        "pausable": true,
+        "paused": false,
+        "lockedBy": null,
+        "pauseEffect": "No new ebook-set check starts. A check already running finishes. Pausing alignment also holds the checks.",
+        "health": "degraded",
+        "reason": "2 failed, 1 stuck",
+        "since": 1794650400000,
+        "counts": {
+          "running": 2,
+          "queued": 1,
+          "failed": 2,
+          "stuck": 1
+        }
+      },
+      {
         "id": "torrent-client",
         "label": "Torrent client",
         "type": "service",
@@ -426,6 +445,26 @@
         "blockedBy": null
       },
       {
+        "id": "ebook-set:w2:eb-failed",
+        "kind": "ebook-set",
+        "processId": "ebook-set",
+        "title": "Xenocide",
+        "detail": "Ebook set check failed: Edition eb-failed",
+        "user": null,
+        "state": "failed",
+        "progress": null,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794657180000,
+        "error": "This file is not a valid EPUB.",
+        "permanent": false,
+        "actions": [
+          "retry"
+        ],
+        "stuck": null,
+        "blockedBy": null
+      },
+      {
         "id": "acquisition:acq-legacy-queued",
         "kind": "acquisition",
         "processId": "acquisitions",
@@ -552,6 +591,24 @@
         "blockedBy": null
       },
       {
+        "id": "ebook-set:w2:eb-unknown",
+        "kind": "ebook-set",
+        "processId": "ebook-set",
+        "title": "Xenocide",
+        "detail": "Ebook set check: Edition eb-unknown",
+        "user": null,
+        "state": "failed",
+        "progress": null,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794656880000,
+        "error": "Unknown status \"exploded\"",
+        "permanent": false,
+        "actions": [],
+        "stuck": null,
+        "blockedBy": null
+      },
+      {
         "id": "alignment:align-processing",
         "kind": "alignment",
         "processId": "alignment",
@@ -590,6 +647,26 @@
         ],
         "stuck": {
           "reason": "Unsent for 45 min"
+        },
+        "blockedBy": null
+      },
+      {
+        "id": "ebook-set:w2:eb-pending-old",
+        "kind": "ebook-set",
+        "processId": "ebook-set",
+        "title": "Xenocide",
+        "detail": "Ebook set check against the narration: Edition eb-pending-old",
+        "user": null,
+        "state": "running",
+        "progress": null,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794650400000,
+        "error": null,
+        "permanent": false,
+        "actions": [],
+        "stuck": {
+          "reason": "No change for 2 h"
         },
         "blockedBy": null
       },
@@ -659,6 +736,24 @@
         "host": null,
         "startedAt": null,
         "updatedAt": 1794657480000,
+        "error": null,
+        "permanent": false,
+        "actions": [],
+        "stuck": null,
+        "blockedBy": null
+      },
+      {
+        "id": "ebook-set:w2:eb-pending",
+        "kind": "ebook-set",
+        "processId": "ebook-set",
+        "title": "Xenocide",
+        "detail": "Ebook set check against the narration: Edition eb-pending",
+        "user": null,
+        "state": "running",
+        "progress": null,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794657300000,
         "error": null,
         "permanent": false,
         "actions": [],
@@ -749,6 +844,26 @@
         "host": null,
         "startedAt": 1794657480000,
         "updatedAt": 1794657480000,
+        "error": null,
+        "permanent": false,
+        "actions": [
+          "retry"
+        ],
+        "stuck": null,
+        "blockedBy": null
+      },
+      {
+        "id": "ebook-set:w2:eb-worker",
+        "kind": "ebook-set",
+        "processId": "ebook-set",
+        "title": "Xenocide",
+        "detail": "Ebook set check waiting for an alignment worker: Edition eb-worker",
+        "user": null,
+        "state": "queued",
+        "progress": null,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794657240000,
         "error": null,
         "permanent": false,
         "actions": [
@@ -936,9 +1051,45 @@
         "actions": [],
         "stuck": null,
         "blockedBy": null
+      },
+      {
+        "id": "ebook-set:w2:eb-accepted",
+        "kind": "ebook-set",
+        "processId": "ebook-set",
+        "title": "Xenocide",
+        "detail": "Accepted into the ebook set: Edition eb-accepted",
+        "user": null,
+        "state": "done",
+        "progress": null,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794657120000,
+        "error": null,
+        "permanent": false,
+        "actions": [],
+        "stuck": null,
+        "blockedBy": null
+      },
+      {
+        "id": "ebook-set:w2:eb-rejected",
+        "kind": "ebook-set",
+        "processId": "ebook-set",
+        "title": "Xenocide",
+        "detail": "Rejected from the ebook set: Edition eb-rejected",
+        "user": null,
+        "state": "done",
+        "progress": null,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794657060000,
+        "error": null,
+        "permanent": false,
+        "actions": [],
+        "stuck": null,
+        "blockedBy": null
       }
     ],
-    "attention": 23
+    "attention": 26
   },
   "probesFail": {
     "checkedAt": 1794657600000,
@@ -1036,6 +1187,25 @@
           "running": 2,
           "queued": 2,
           "failed": 3,
+          "stuck": 1
+        }
+      },
+      {
+        "id": "ebook-set",
+        "label": "Ebook set checks",
+        "type": "loop",
+        "notTracked": false,
+        "pausable": true,
+        "paused": false,
+        "lockedBy": null,
+        "pauseEffect": "No new ebook-set check starts. A check already running finishes. Pausing alignment also holds the checks.",
+        "health": "degraded",
+        "reason": "2 failed, 1 stuck",
+        "since": 1794650400000,
+        "counts": {
+          "running": 2,
+          "queued": 1,
+          "failed": 2,
           "stuck": 1
         }
       },
@@ -1268,6 +1438,26 @@
         "blockedBy": null
       },
       {
+        "id": "ebook-set:w2:eb-failed",
+        "kind": "ebook-set",
+        "processId": "ebook-set",
+        "title": "Xenocide",
+        "detail": "Ebook set check failed: Edition eb-failed",
+        "user": null,
+        "state": "failed",
+        "progress": null,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794657180000,
+        "error": "This file is not a valid EPUB.",
+        "permanent": false,
+        "actions": [
+          "retry"
+        ],
+        "stuck": null,
+        "blockedBy": null
+      },
+      {
         "id": "acquisition:acq-legacy-queued",
         "kind": "acquisition",
         "processId": "acquisitions",
@@ -1394,6 +1584,24 @@
         "blockedBy": null
       },
       {
+        "id": "ebook-set:w2:eb-unknown",
+        "kind": "ebook-set",
+        "processId": "ebook-set",
+        "title": "Xenocide",
+        "detail": "Ebook set check: Edition eb-unknown",
+        "user": null,
+        "state": "failed",
+        "progress": null,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794656880000,
+        "error": "Unknown status \"exploded\"",
+        "permanent": false,
+        "actions": [],
+        "stuck": null,
+        "blockedBy": null
+      },
+      {
         "id": "alignment:align-processing",
         "kind": "alignment",
         "processId": "alignment",
@@ -1432,6 +1640,26 @@
         ],
         "stuck": {
           "reason": "Unsent for 45 min"
+        },
+        "blockedBy": null
+      },
+      {
+        "id": "ebook-set:w2:eb-pending-old",
+        "kind": "ebook-set",
+        "processId": "ebook-set",
+        "title": "Xenocide",
+        "detail": "Ebook set check against the narration: Edition eb-pending-old",
+        "user": null,
+        "state": "running",
+        "progress": null,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794650400000,
+        "error": null,
+        "permanent": false,
+        "actions": [],
+        "stuck": {
+          "reason": "No change for 2 h"
         },
         "blockedBy": null
       },
@@ -1580,6 +1808,24 @@
         "blockedBy": null
       },
       {
+        "id": "ebook-set:w2:eb-pending",
+        "kind": "ebook-set",
+        "processId": "ebook-set",
+        "title": "Xenocide",
+        "detail": "Ebook set check against the narration: Edition eb-pending",
+        "user": null,
+        "state": "running",
+        "progress": null,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794657300000,
+        "error": null,
+        "permanent": false,
+        "actions": [],
+        "stuck": null,
+        "blockedBy": null
+      },
+      {
         "id": "server-copy:rec-queued",
         "kind": "server-copy",
         "processId": "server-copies",
@@ -1663,6 +1909,26 @@
         "host": null,
         "startedAt": 1794657480000,
         "updatedAt": 1794657480000,
+        "error": null,
+        "permanent": false,
+        "actions": [
+          "retry"
+        ],
+        "stuck": null,
+        "blockedBy": null
+      },
+      {
+        "id": "ebook-set:w2:eb-worker",
+        "kind": "ebook-set",
+        "processId": "ebook-set",
+        "title": "Xenocide",
+        "detail": "Ebook set check waiting for an alignment worker: Edition eb-worker",
+        "user": null,
+        "state": "queued",
+        "progress": null,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794657240000,
         "error": null,
         "permanent": false,
         "actions": [
@@ -1850,9 +2116,45 @@
         "actions": [],
         "stuck": null,
         "blockedBy": null
+      },
+      {
+        "id": "ebook-set:w2:eb-accepted",
+        "kind": "ebook-set",
+        "processId": "ebook-set",
+        "title": "Xenocide",
+        "detail": "Accepted into the ebook set: Edition eb-accepted",
+        "user": null,
+        "state": "done",
+        "progress": null,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794657120000,
+        "error": null,
+        "permanent": false,
+        "actions": [],
+        "stuck": null,
+        "blockedBy": null
+      },
+      {
+        "id": "ebook-set:w2:eb-rejected",
+        "kind": "ebook-set",
+        "processId": "ebook-set",
+        "title": "Xenocide",
+        "detail": "Rejected from the ebook set: Edition eb-rejected",
+        "user": null,
+        "state": "done",
+        "progress": null,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794657060000,
+        "error": null,
+        "permanent": false,
+        "actions": [],
+        "stuck": null,
+        "blockedBy": null
       }
     ],
-    "attention": 17
+    "attention": 20
   },
   "noProbes": {
     "checkedAt": 1794657600000,
@@ -1950,6 +2252,25 @@
           "running": 2,
           "queued": 2,
           "failed": 3,
+          "stuck": 1
+        }
+      },
+      {
+        "id": "ebook-set",
+        "label": "Ebook set checks",
+        "type": "loop",
+        "notTracked": false,
+        "pausable": true,
+        "paused": false,
+        "lockedBy": null,
+        "pauseEffect": "No new ebook-set check starts. A check already running finishes. Pausing alignment also holds the checks.",
+        "health": "degraded",
+        "reason": "2 failed, 1 stuck",
+        "since": 1794650400000,
+        "counts": {
+          "running": 2,
+          "queued": 1,
+          "failed": 2,
           "stuck": 1
         }
       },
@@ -2163,6 +2484,26 @@
         "blockedBy": null
       },
       {
+        "id": "ebook-set:w2:eb-failed",
+        "kind": "ebook-set",
+        "processId": "ebook-set",
+        "title": "Xenocide",
+        "detail": "Ebook set check failed: Edition eb-failed",
+        "user": null,
+        "state": "failed",
+        "progress": null,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794657180000,
+        "error": "This file is not a valid EPUB.",
+        "permanent": false,
+        "actions": [
+          "retry"
+        ],
+        "stuck": null,
+        "blockedBy": null
+      },
+      {
         "id": "acquisition:acq-legacy-queued",
         "kind": "acquisition",
         "processId": "acquisitions",
@@ -2289,6 +2630,24 @@
         "blockedBy": null
       },
       {
+        "id": "ebook-set:w2:eb-unknown",
+        "kind": "ebook-set",
+        "processId": "ebook-set",
+        "title": "Xenocide",
+        "detail": "Ebook set check: Edition eb-unknown",
+        "user": null,
+        "state": "failed",
+        "progress": null,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794656880000,
+        "error": "Unknown status \"exploded\"",
+        "permanent": false,
+        "actions": [],
+        "stuck": null,
+        "blockedBy": null
+      },
+      {
         "id": "alignment:align-processing",
         "kind": "alignment",
         "processId": "alignment",
@@ -2327,6 +2686,26 @@
         ],
         "stuck": {
           "reason": "Unsent for 45 min"
+        },
+        "blockedBy": null
+      },
+      {
+        "id": "ebook-set:w2:eb-pending-old",
+        "kind": "ebook-set",
+        "processId": "ebook-set",
+        "title": "Xenocide",
+        "detail": "Ebook set check against the narration: Edition eb-pending-old",
+        "user": null,
+        "state": "running",
+        "progress": null,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794650400000,
+        "error": null,
+        "permanent": false,
+        "actions": [],
+        "stuck": {
+          "reason": "No change for 2 h"
         },
         "blockedBy": null
       },
@@ -2475,6 +2854,24 @@
         "blockedBy": null
       },
       {
+        "id": "ebook-set:w2:eb-pending",
+        "kind": "ebook-set",
+        "processId": "ebook-set",
+        "title": "Xenocide",
+        "detail": "Ebook set check against the narration: Edition eb-pending",
+        "user": null,
+        "state": "running",
+        "progress": null,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794657300000,
+        "error": null,
+        "permanent": false,
+        "actions": [],
+        "stuck": null,
+        "blockedBy": null
+      },
+      {
         "id": "server-copy:rec-queued",
         "kind": "server-copy",
         "processId": "server-copies",
@@ -2558,6 +2955,26 @@
         "host": null,
         "startedAt": 1794657480000,
         "updatedAt": 1794657480000,
+        "error": null,
+        "permanent": false,
+        "actions": [
+          "retry"
+        ],
+        "stuck": null,
+        "blockedBy": null
+      },
+      {
+        "id": "ebook-set:w2:eb-worker",
+        "kind": "ebook-set",
+        "processId": "ebook-set",
+        "title": "Xenocide",
+        "detail": "Ebook set check waiting for an alignment worker: Edition eb-worker",
+        "user": null,
+        "state": "queued",
+        "progress": null,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794657240000,
         "error": null,
         "permanent": false,
         "actions": [
@@ -2745,8 +3162,44 @@
         "actions": [],
         "stuck": null,
         "blockedBy": null
+      },
+      {
+        "id": "ebook-set:w2:eb-accepted",
+        "kind": "ebook-set",
+        "processId": "ebook-set",
+        "title": "Xenocide",
+        "detail": "Accepted into the ebook set: Edition eb-accepted",
+        "user": null,
+        "state": "done",
+        "progress": null,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794657120000,
+        "error": null,
+        "permanent": false,
+        "actions": [],
+        "stuck": null,
+        "blockedBy": null
+      },
+      {
+        "id": "ebook-set:w2:eb-rejected",
+        "kind": "ebook-set",
+        "processId": "ebook-set",
+        "title": "Xenocide",
+        "detail": "Rejected from the ebook set: Edition eb-rejected",
+        "user": null,
+        "state": "done",
+        "progress": null,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794657060000,
+        "error": null,
+        "permanent": false,
+        "actions": [],
+        "stuck": null,
+        "blockedBy": null
       }
     ],
-    "attention": 17
+    "attention": 20
   }
 }

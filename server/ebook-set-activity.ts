@@ -94,7 +94,8 @@ export const ebookSetSource = defineSource<EbookSetMemberRow[]>({
         title: row.title || row.work_id, detail: `${detail}: ${row.source_title || row.ebook_id}`, user: null, state,
         progress: null, host: null, startedAt: null, updatedAt: row.updated_at,
         error: unknown ?? (state === "failed" ? evidenceError(row.evidence) : null), changedAt: row.updated_at,
-        actions: state === "failed" || state === "queued" ? ["retry" as const] : [],
+        // Retry for a check that failed or waits for a worker; a status outside the vocabulary has nothing to retry.
+        actions: !unknown && (state === "failed" || state === "queued") ? ["retry" as const] : [],
       };
     });
     return { drafts };

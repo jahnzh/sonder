@@ -23,6 +23,7 @@ process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
 const { sqlite } = await import("../server/db.ts");
 const { collectActivity } = await import("../server/activity.ts");
+const { ACTIVITY_SOURCES } = await import("../server/activity-sources.ts");
 after(() => rmSync(temp, { recursive: true, force: true }));
 
 const GOLDEN = new URL("./fixtures/activity-golden.json", import.meta.url);
@@ -121,6 +122,25 @@ run("INSERT INTO user_hardcover_outbox(user_id,book_id,account_id,status_id,inte
 run("INSERT INTO user_hardcover_progress(user_id,book_id,account_id,recording_id,position,duration,updated_at,error) VALUES(1,21,1,'rec-queued',10,100,?,?)", NOW - 3 * MIN, "socket hang up");
 run("INSERT INTO user_hardcover_reading_outbox(user_id,book_id,account_id,work_id,fraction,updated_at,error) VALUES(2,31,1,'w1',0.5,?,NULL)", NOW - 45 * MIN);
 
+// Ebook-set members (#325): every status and hold; the holds for audio and language are not background work.
+const members: Array<[string, string, string | null, string, number]> = [
+  ["eb-pending", "pending", null, "{}", NOW - 5 * MIN],
+  ["eb-pending-old", "pending", null, "{}", NOW - 2 * 60 * MIN],
+  ["eb-worker", "held", "awaiting_worker", "{}", NOW - 6 * MIN],
+  ["eb-failed", "held", "evaluation_failed", JSON.stringify({ error: "This file is not a valid EPUB." }), NOW - 7 * MIN],
+  ["eb-accepted", "accepted", null, "{}", NOW - 8 * MIN],
+  ["eb-rejected", "rejected", null, "{}", NOW - 9 * MIN],
+  ["eb-accepted-old", "accepted", null, "{}", NOW - 2 * DAY],
+  ["eb-audio", "held", "awaiting_audio", "{}", NOW - 10 * MIN],
+  ["eb-language", "held", "language_not_supported", "{}", NOW - 11 * MIN],
+  ["eb-unknown", "exploded", null, "{}", NOW - 12 * MIN],
+];
+for (const [ebookId, status, holdReason, evidence, updated] of members) {
+  run("INSERT INTO ebook_editions(id,work_id,format,source) VALUES(?,'w2','epub',?)", ebookId, `/media/${ebookId}.epub`);
+  run("INSERT INTO work_ebook_set_members(work_id,ebook_id,status,hold_reason,source_title,evidence,updated_at) VALUES('w2',?,?,?,?,?,?)",
+    ebookId, status, holdReason, `Edition ${ebookId}`, evidence, updated);
+}
+
 const torrentDown: TorrentHealth = {
   status: "unreachable", session: false, network: "unknown", version: null, message: "The local torrent client cannot be reached.", checkedAt: NOW,
 };
@@ -145,20 +165,24 @@ const deps = (over: Record<string, unknown>) => ({
     "series-acquisition": { paused: false, locked: true },
     "hardcover-sync": { paused: false, locked: false },
     alignment: { paused: false, locked: false },
+    "ebook-set": { paused: false, locked: false },
   }),
   setPaused: () => {},
   now: () => NOW,
   ...over,
 }) as any;
 
-const snapshots = async () => ({
-  probesAnswer: await collectActivity(deps({})),
+const snapshots = async (sources = ACTIVITY_SOURCES) => ({
+  probesAnswer: await collectActivity(deps({}), { probes: true }, sources),
   probesFail: await collectActivity(deps({
     torrentHealth: async () => { throw new Error("ECONNREFUSED"); },
     poolStatus: () => { throw new Error("ssh timed out"); },
-  })),
-  noProbes: await collectActivity(deps({}), { probes: false }),
+  }), { probes: true }, sources),
+  noProbes: await collectActivity(deps({}), { probes: false }, sources),
 });
+
+/** The sources that existed when the Activity module was split; the ebook-set checks came later (#325). */
+const sourcesAtSplit = ACTIVITY_SOURCES.filter((source) => source.kind !== "ebook-set");
 
 /** Rows whose Activity state changes on purpose with #392: statuses outside a vocabulary, failed series jobs. */
 function deleteIntendedChanges() {
@@ -174,6 +198,6 @@ test("GET /api/activity returns the recorded JSON for the same rows", async () =
   assert.deepEqual(all, JSON.parse(readFileSync(GOLDEN, "utf8")));
 
   deleteIntendedChanges();
-  const unchanged = `${JSON.stringify(await snapshots(), null, 2)}\n`;
+  const unchanged = `${JSON.stringify(await snapshots(sourcesAtSplit), null, 2)}\n`;
   assert.equal(unchanged, readFileSync(BEFORE_SOURCES, "utf8"), "same rows, same JSON text as before the split into sources");
 });

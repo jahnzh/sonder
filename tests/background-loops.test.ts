@@ -24,7 +24,7 @@ const app = await createApp({ background: { manual: true } });
 const runner = backgroundRunner(app);
 after(() => rmSync(temp, { recursive: true, force: true }));
 
-test("the app runs its six loops in one runner, with the intervals and immediate runs they always had", { timeout: 10_000 }, () => {
+test("the app runs its seven loops in one runner, with the intervals and immediate runs they always had", { timeout: 10_000 }, () => {
   assert.deepEqual(
     runner.processes().map(({ id, intervalMs, runAtStart, pausedBy }) => ({ id, intervalMs, runAtStart: !!runAtStart, pausedBy })),
     [
@@ -34,6 +34,8 @@ test("the app runs its six loops in one runner, with the intervals and immediate
       { id: "server-copies", intervalMs: 10_000, runAtStart: true, pausedBy: "server-copies" },
       { id: "series-acquisition", intervalMs: 30_000, runAtStart: true, pausedBy: "series-acquisition" },
       { id: "hardcover-sync", intervalMs: 60_000, runAtStart: true, pausedBy: "hardcover-sync" },
+      // The ebook-set evaluation (#325) runs at start, so members left pending by a restart resume.
+      { id: "ebook-set", intervalMs: 30_000, runAtStart: true, pausedBy: "ebook-set" },
     ],
     "start order; the app stops them in reverse",
   );

@@ -119,6 +119,7 @@ test("ebook-set checks: every member status and every hold the loop works on map
   const unknownHold = itemFor(ebookSetSource, ebookSetRow("held", "exploded"));
   assert.equal(unknownHold.state, "failed");
   assert.equal(unknownHold.error, `${UNKNOWN_STATUS} "exploded"`);
+  assert.deepEqual(unknownHold.actions, [], "nothing to retry for a status outside the vocabulary");
 });
 
 test("a stored status outside a source's vocabulary is failed with Unknown status, never running", () => {
