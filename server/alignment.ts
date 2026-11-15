@@ -29,7 +29,8 @@ import {
 import { requireAdmin } from "./users.ts";
 import { matchSections } from "./alignment-pairings.ts";
 import { unsyncedPassages } from "./alignment-passages.ts";
-import { CTC_ENGINE } from "./alignment-engine.ts";
+import { BOOK_ENGINE, CTC_ENGINE } from "./alignment-engine.ts";
+import { runBookJob } from "./alignment-book-job.ts";
 import { untilAborted } from "./until-aborted.ts";
 // The pool's lease interface (ADR 0013), and its status for the Activity page.
 import {
@@ -43,6 +44,7 @@ import {
   type LeaseRelease,
   type PoolHostId,
   type WorkerLease,
+  type WorkerLeaseRequest,
 } from "./alignment-pool.ts";
 import { prefetchSectionCount, upcomingPrefetchWindows } from "./alignment-prefetch.ts";
 // Loading it installs the retired-name check every staging consults (#421).
@@ -544,7 +546,7 @@ export async function queueEngineRebuilds(log: AutoQueueLog = console): Promise<
   if (!process.env.ALIGNMENT_WORKER_TOKEN) return result;
   const target = currentAlignmentEngine();
   // Without the pool a CTC job fails at once; keep the old maps rather than queue rebuilds that cannot run.
-  if (target === CTC_ENGINE && !poolEnabled()) return result;
+  if ((target === CTC_ENGINE || target === BOOK_ENGINE) && !poolEnabled()) return result;
   const projectedWorks = new Set<string>();
   for (const old of jobs()) {
     if (!engineIsOlder(old.engine, target)) continue;
@@ -1276,12 +1278,15 @@ type RunLease = { lease: WorkerLease | null };
  * on the job. Returns null when the run must stop: the job waits in the queue (every host is busy), failed (no
  * host can take it), or was paused, cancelled or superseded meanwhile.
  */
-async function leaseWorker(job: AlignmentJob, tracks: ReturnType<typeof recordingContext>["tracks"], run: RunLease) {
+async function leaseWorker(
+  job: AlignmentJob, tracks: ReturnType<typeof recordingContext>["tracks"], run: RunLease,
+  options: Pick<WorkerLeaseRequest, "book" | "firstHost" | "unstagedFirstHost"> = {},
+) {
   try {
     if (run.lease) await run.lease.failover();
     else run.lease = await acquireWorkerLease({
       id: job.id, recordingId: job.recordingId, mode: job.mode, tracks, localAudio,
-      kind: "job", assignment: job.pool, diagnostics: job,
+      kind: "job", assignment: job.pool, diagnostics: job, ...options,
     });
   } catch (error) {
     if (ctcDispatchStopped(job)) return null;
@@ -1347,7 +1352,7 @@ async function runAlignmentJobSteps(pending: AlignmentJob, run: RunLease) {
         transition.fail(job, download.error || "The audio could not be saved on the HDD.");
       return;
     }
-    if (job.engine !== CTC_ENGINE) {
+    if (job.engine !== currentAlignmentEngine()) {
       const replanned = await replanRetiredEngineJob(job);
       if (!replanned) return;
       job = replanned;
@@ -1397,6 +1402,14 @@ async function runAlignmentJobSteps(pending: AlignmentJob, run: RunLease) {
       transition.fail(job, "CTC alignment requires the remote alignment pool. Enable it to retry.", "error");
       return;
     }
+    // ALIGNMENT_BOOK_JOBS (#404): one whole-book job on the worker under the same lease.
+    if (job.engine === BOOK_ENGINE)
+      return await runBookJob(job, book, context.tracks, {
+        lease: (current, options) => leaseWorker(current, context.tracks, run, { book: true, ...options }),
+        current: () => run.lease,
+        stopping: () => stopping,
+        finished: finishConsensus,
+      });
     // Every run takes a new lease: staging stored by an earlier run (or server) is staged again, and the hosts
     // the job already tried are skipped.
     const leased = await leaseWorker(job, context.tracks, run);
@@ -1902,7 +1915,7 @@ export function registerAlignment(app: FastifyInstance) {
         new Error("This alignment was cancelled. Rebuild it before using it."),
         { statusCode: 410, code: "alignment_cancelled" },
       );
-    if (job.engine === CTC_ENGINE && job.outcome === "language_not_supported")
+    if ((job.engine === CTC_ENGINE || job.engine === BOOK_ENGINE) && job.outcome === "language_not_supported")
       throw Object.assign(
         new Error("This language is not supported by the alignment worker."),
         { statusCode: 410, code: "alignment_language_not_supported" },

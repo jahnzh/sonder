@@ -223,6 +223,18 @@ export type AlignmentJob = {
     /** Every host the job has staged its tracks on, and the folder there (older rows omit it). */
     stagedHosts?: Record<AlignmentPoolHostId, string>;
   };
+  /**
+   * The whole-book job this job last started on a pool worker (#404): its id there, the host, and the worker's
+   * state when the server last read it. A run of the same generation polls it again instead of starting anew.
+   */
+  bookJob?: {
+    id: string;
+    hostId: AlignmentPoolHostId;
+    state: string;
+    /** Worker restarts the job has continued from. */
+    resumed?: number;
+    startedAt: number;
+  };
   /** Present on summary list responses; full intervals live on /map. */
   intervalCount?: number;
 };
