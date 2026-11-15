@@ -15,6 +15,12 @@ Installs a reproducible Sonder CTC worker into a target directory, creates its
 Python virtual environment with pinned dependencies, fetches pinned model
 weights, and configures/restarts the systemd user service.
 
+An update keeps every line of an existing worker.env except the ones this
+script sets (ALIGNMENT_WORKER_TOKEN, ALIGNMENT_CTC_DEVICE and, with --slots,
+ALIGNMENT_WORKER_SLOTS); an existing MEDIA_ROOT is kept and receives the model.
+It refuses to run while the worker on --port reports active requests, stops
+the service before changing any file, and starts it once worker.env is final.
+
 Options:
   --device <cpu|cuda>       Worker device target (default: auto-detected, fallback: cpu)
   --dir <path>              Installation target directory (default: $HOME/sonder-ctc-worker)
@@ -29,6 +35,7 @@ Options:
   --service-only            Only install and configure the systemd user service
   --print-service           Print the rendered systemd user unit to stdout and exit
   --print-caddy             Print the Caddy reverse-proxy snippet to stdout and exit
+  --force                   Install even while the worker reports active requests (they are interrupted)
   --dry-run                 Show actions without modifying files or system services
   -h, --help                Show this help text and exit 0
 
@@ -108,6 +115,7 @@ service_only=false
 print_service=false
 print_caddy=false
 dry_run=false
+force=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -198,6 +206,10 @@ while [[ $# -gt 0 ]]; do
       dry_run=true
       shift
       ;;
+    --force)
+      force=true
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -253,6 +265,37 @@ if [[ "$dry_run" == true ]]; then
   exit 0
 fi
 
+# Requests the worker on this port is running, from its /health (activeRequests, or busySeconds on a
+# worker without that field). Prints nothing when no worker answers there.
+worker_active_requests() {
+  local body count
+  body="$(curl -fsS -m 5 "http://127.0.0.1:${port}/health" 2>/dev/null)" || return 0
+  count="$(printf '%s' "$body" | grep -oE '"activeRequests"[[:space:]]*:[[:space:]]*[0-9]+' | grep -oE '[0-9]+$' || true)"
+  if [[ -z "$count" ]]; then
+    if printf '%s' "$body" | grep -qE '"busySeconds"[[:space:]]*:[[:space:]]*[0-9]'; then count=1; else count=0; fi
+  fi
+  echo "$count"
+}
+
+# Never update under running work: copying code and packages under it, or restarting it, interrupts it.
+if [[ "$force" == false ]]; then
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "error: curl is needed to check the worker for active requests (or pass --force)" >&2
+    exit 3
+  fi
+  active="$(worker_active_requests)"
+  if [[ -n "$active" && "$active" != "0" ]]; then
+    echo "error: the worker on port ${port} reports ${active} active request(s); wait until /health shows activeRequests 0, or pass --force to interrupt them" >&2
+    exit 3
+  fi
+fi
+
+env_file="${target_dir}/worker.env"
+existing_value() {
+  [[ -f "$env_file" ]] || return 0
+  grep -E "^$1=" "$env_file" | tail -n 1 | cut -d= -f2- || true
+}
+
 # Determine token
 token_source=""
 if [[ -n "$token" ]]; then
@@ -260,8 +303,8 @@ if [[ -n "$token" ]]; then
 elif [[ -n "${ALIGNMENT_WORKER_TOKEN:-}" ]]; then
   token="${ALIGNMENT_WORKER_TOKEN}"
   token_source="env"
-elif [[ -f "${target_dir}/worker.env" ]]; then
-  existing_token="$(grep -E '^ALIGNMENT_WORKER_TOKEN=' "${target_dir}/worker.env" | cut -d= -f2- || true)"
+else
+  existing_token="$(existing_value ALIGNMENT_WORKER_TOKEN)"
   if [[ -n "$existing_token" ]]; then
     token="$existing_token"
     token_source="existing_file"
@@ -273,12 +316,17 @@ if [[ -z "$token" ]]; then
   token_source="generated"
 fi
 
-if [[ -z "$slots" && -f "${target_dir}/worker.env" ]]; then
-  slots="$(grep -E '^ALIGNMENT_WORKER_SLOTS=' "${target_dir}/worker.env" | cut -d= -f2- || true)"
+# An existing MEDIA_ROOT holds the model, caches and staged jobs; it is kept, never replaced by the default.
+media_root="$(existing_value MEDIA_ROOT)"
+media_root="${media_root:-${target_dir}/media}"
+
+# Stop the worker before its code and packages change; it starts again once worker.env is final.
+if [[ "$skip_service" == false ]] && command -v systemctl >/dev/null 2>&1; then
+  systemctl --user stop "$UNIT" 2>/dev/null || true
 fi
 
 mkdir -p "$target_dir"
-mkdir -p "$target_dir/media"
+mkdir -p "$media_root"
 mkdir -p "$target_dir/worker"
 
 # Copy worker files
@@ -306,23 +354,38 @@ if [[ "$service_only" == false ]]; then
 
   # Download model weights
   if [[ "$skip_models" == false ]]; then
-    echo "Downloading model weights into $target_dir/media/alignment..."
-    MEDIA_ROOT="$target_dir/media" "$target_dir/env/bin/python" "$target_dir/worker/download_model.py"
+    echo "Downloading model weights into $media_root/alignment..."
+    MEDIA_ROOT="$media_root" "$target_dir/env/bin/python" "$target_dir/worker/download_model.py"
   fi
 fi
 
-# Write environment file with restrictive permissions from creation
+# Write worker.env with restrictive permissions from creation. Lines this script does not set (timeouts, cache
+# budget, MEDIA_ROOT, comments, ...) are kept as they are and in their order; the owned ones are updated in place.
 (
   umask 077
-  cat > "${target_dir}/worker.env" <<EOF
-ALIGNMENT_WORKER_TOKEN=${token}
-MEDIA_ROOT=${target_dir}/media
-ALIGNMENT_CTC_DEVICE=${device}
-EOF
-  if [[ -n "$slots" ]]; then echo "ALIGNMENT_WORKER_SLOTS=${slots}" >> "${target_dir}/worker.env"; fi
+  tmp_env="${env_file}.new.$$"
+  : > "$tmp_env"
+  seen_token=false seen_device=false seen_slots=false seen_media=false
+  if [[ -f "$env_file" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      case "$line" in
+        ALIGNMENT_WORKER_TOKEN=*) seen_token=true; line="ALIGNMENT_WORKER_TOKEN=${token}" ;;
+        ALIGNMENT_CTC_DEVICE=*) seen_device=true; line="ALIGNMENT_CTC_DEVICE=${device}" ;;
+        ALIGNMENT_WORKER_SLOTS=*) seen_slots=true; if [[ -n "$slots" ]]; then line="ALIGNMENT_WORKER_SLOTS=${slots}"; fi ;;
+        MEDIA_ROOT=*) seen_media=true ;;
+      esac
+      printf '%s\n' "$line" >> "$tmp_env"
+    done < "$env_file"
+  fi
+  [[ "$seen_token" == true ]] || echo "ALIGNMENT_WORKER_TOKEN=${token}" >> "$tmp_env"
+  [[ "$seen_media" == true ]] || echo "MEDIA_ROOT=${media_root}" >> "$tmp_env"
+  [[ "$seen_device" == true ]] || echo "ALIGNMENT_CTC_DEVICE=${device}" >> "$tmp_env"
+  if [[ "$seen_slots" == false && -n "$slots" ]]; then echo "ALIGNMENT_WORKER_SLOTS=${slots}" >> "$tmp_env"; fi
+  chmod 600 "$tmp_env"
+  mv -f "$tmp_env" "$env_file"
 )
-chmod 600 "${target_dir}/worker.env"
-echo "Configured ${target_dir}/worker.env"
+chmod 600 "$env_file"
+echo "Configured ${env_file}"
 
 # Install systemd user service
 if [[ "$skip_service" == false ]]; then
