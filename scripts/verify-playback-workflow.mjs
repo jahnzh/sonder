@@ -4,22 +4,29 @@ import {protectBrowserMutations, closeProtectedBrowser} from "./verification-saf
 import { chromium, expect as baseExpect } from "@playwright/test";
 import { defaultAppearance } from "../src/appearance.ts";
 import { createReaderControls, waitForBox } from "./live-reader-controls.mjs";
+import { verifyBaseURL } from "./live-check-target.mjs";
+import { pickPlaybackRecording, NoSuitableRecording, NO_SUITABLE_RECORDING_EXIT } from "./live-check-recording.mjs";
 const expect=baseExpect.configure({timeout:20000});
 process.loadEnvFile(".env");
-const recordingId=process.argv[2];
-if(!recordingId) throw new Error("Usage: node --import tsx scripts/verify-playback-workflow.mjs recording-id");
+// The recording id is a preference: the check plays it when it qualifies and otherwise picks another (#431).
+const preferred=process.argv[2]||null;
+const baseURL=verifyBaseURL();
 const browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || "/home/jahn/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome"});
-const baseURL=process.env.SONDER_VERIFY_URL || "https://sonder.pecori.no";
 const context=await browser.newContext({baseURL,viewport:{width:390,height:844},hasTouch:true,serviceWorkers:"block"});
-const report={recordingId,protectedWrites:0,checks:[],errors:[]};
+const report={recordingId:null,preferred,protectedWrites:0,checks:[],errors:[]};
 const check=(name,details={})=>report.checks.push({name,...details});
 let readAudio;
 try {
   const login=await context.request.post("/api/auth/login",{data:{password:process.env.APP_PASSWORD}});
   if(!login.ok()) throw new Error("Sign-in failed");
-  const books=await(await context.request.get("/api/books")).json();
-  const book=books.find(b=>b.recordingId===recordingId);
-  if(!book) throw new Error("Recording not found");
+  // Playback starts at the owner's saved position, which this check must not move: choose a recording where it can run.
+  const booksResponse=await context.request.get("/api/books");
+  if(!booksResponse.ok()) throw new Error(`GET /api/books answered ${booksResponse.status()}`);
+  const pick=pickPlaybackRecording({books:await booksResponse.json()},{preferred});
+  if(!pick.recordingId) throw new NoSuitableRecording(pick.reason);
+  const book=pick.book;
+  report.recordingId=pick.recordingId;
+  report.selection={start:pick.start,...(pick.preferred?{preferred:pick.preferred}:{})};
   const ebooks=await (await context.request.get("/api/ebooks")).json();
   const hasEbook=ebooks.some(e=>e.workId===book.workId && e.format==="epub" && e.available);
   await protectBrowserMutations(context,baseURL,report);
@@ -168,7 +175,13 @@ try {
   expect(report.errors).toEqual([]);
   report.ok=true;
 } catch(error) {
-  report.ok=false;report.failure=error.message;report.audio=await readAudio?.().catch(()=>null);process.exitCode=1;
+  // Nothing to run on is a result of its own, not a failure: no page was opened, so nothing could write (#431).
+  if(error instanceof NoSuitableRecording){
+    report.ok=null;report.skipped=error.reason;process.exitCode=NO_SUITABLE_RECORDING_EXIT;console.log(error.message);
+    if(process.env.SONDER_LIVE_CHECK_SKIP_FILE) fs.writeFileSync(process.env.SONDER_LIVE_CHECK_SKIP_FILE,error.reason);
+  } else {
+    report.ok=false;report.failure=error.message;report.audio=await readAudio?.().catch(()=>null);process.exitCode=1;
+  }
 } finally {
   await closeProtectedBrowser(context,browser,report);
   fs.mkdirSync("artifacts",{recursive:true});

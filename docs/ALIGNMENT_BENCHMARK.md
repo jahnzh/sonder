@@ -82,7 +82,7 @@ Live QA used the real API, worker, EPUB and media stream. Only the QA browser's 
 Reproduce the read/listen switching checks on an already prepared pair with:
 
 ```bash
-node scripts/verify-reading-sync.mjs <ebook-id> <recording-id>
+SONDER_VERIFY_PRODUCTION=1 node scripts/verify-reading-sync.mjs <ebook-id> <recording-id>
 ```
 
 The script records `artifacts/reading-sync-verification.json` and a phone screenshot. It does not create processing jobs or change canonical progress. The regression suite now has 70 passing backend tests; the three reader browser tests also pass, including same-release reselection and offline release persistence.

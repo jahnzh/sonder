@@ -4,27 +4,35 @@ import {protectBrowserMutations, closeProtectedBrowser} from './verification-saf
 import {chromium,expect as baseExpect} from '@playwright/test';
 import {pickMappedIntervals,intervalMiddle} from './live-reader-samples.mjs';
 import {createReaderControls,waitForBox} from './live-reader-controls.mjs';
+import {verifyBaseURL} from './live-check-target.mjs';
+import {pickReaderRecording,NoSuitableRecording,NO_SUITABLE_RECORDING_EXIT} from './live-check-recording.mjs';
 const expect=baseExpect.configure({timeout:25000});
 process.loadEnvFile('.env');
-const recordingId=process.argv[2];
-if(!recordingId)throw Error('Usage: node scripts/verify-integrated-reader.mjs recording-id');
+// The recording id is a preference: the check plays it when it qualifies and otherwise picks another (#431).
+const preferred=process.argv[2]||null;
+const baseURL=verifyBaseURL();
 const browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || '/home/jahn/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome'});
-const baseURL=process.env.SONDER_VERIFY_URL || 'https://sonder.pecori.no';
 const context=await browser.newContext({baseURL,viewport:{width:390,height:844},serviceWorkers:'block'});
-const report={recordingId,protectedWrites:0,checks:[],errors:[]};
+const report={recordingId:null,preferred,protectedWrites:0,checks:[],errors:[]};
 fs.mkdirSync('artifacts',{recursive:true});
 let page;
 try {
  const login=await context.request.post('/api/auth/login',{data:{password:process.env.APP_PASSWORD}});if(!login.ok())throw Error('Sign-in failed');
- const books=await(await context.request.get('/api/books')).json(),book=books.find(b=>b.recordingId===recordingId);if(!book)throw Error('Recording not found');
- const ebooks=(await(await context.request.get('/api/ebooks')).json()).filter(e=>e.workId===book.workId&&e.format==='epub'&&e.available);
- let ebook,map;
- for(const item of ebooks){
-  const jobs=await(await context.request.get('/api/alignments?ebookId='+encodeURIComponent(item.id))).json();
-  const job=jobs.jobs.find(j=>j.recordingId===recordingId&&j.progress===1&&j.intervals.length);
-  if(job){const response=await context.request.get(`/api/alignments/${job.id}/map`);if(response.ok()){ebook=item;map=await response.json();break;}}
+ // Choose the recording from the listing: playback starts at the owner's saved position, which this check must not move.
+ const read=async path=>{const response=await context.request.get(path);if(!response.ok())throw Error(`GET ${path} answered ${response.status()}`);return response.json();};
+ const listing={books:await read('/api/books'),ebooks:await read('/api/ebooks'),jobs:(await read('/api/alignments')).jobs};
+ const excluded=[];let pick,map;
+ for(;;){
+  pick=pickReaderRecording(listing,{preferred,excluded});
+  if(!pick.recordingId)throw new NoSuitableRecording(pick.reason);
+  const response=await context.request.get(`/api/alignments/${encodeURIComponent(pick.jobId)}/map`);
+  if(!response.ok()){excluded.push({recordingId:pick.recordingId,reason:`its map did not load (HTTP ${response.status()})`});continue;}
+  map=await response.json();
+  if(pickMappedIntervals(map.intervals||[],pick.start.trackId).length)break;
+  excluded.push({recordingId:pick.recordingId,reason:`its map has no mapped passage longer than 4 s on file ${pick.start.trackId}`});
  }
- if(!map)throw Error('Prepare a reading-sync map for this recording first');
+ const book=pick.book,ebook=listing.ebooks.find(e=>e.id===pick.ebookId);
+ report.recordingId=pick.recordingId;report.selection={ebookId:ebook.id,jobId:pick.jobId,start:pick.start,...(pick.preferred?{preferred:pick.preferred}:{})};
  const appearance=await(await context.request.get('/api/appearance')).json();
  await context.addInitScript(({appearance,ebook,workId})=>{
   localStorage.setItem('sonder-appearance-device','true');localStorage.setItem('sonder-appearance',JSON.stringify({...appearance,playback:{progressScope:'book'},reader:{...appearance.reader,display:'book',segmentWords:30}}));
@@ -166,6 +174,9 @@ try {
  await page.screenshot({path:'artifacts/live-integrated-reader-desktop.png'});
  report.checks.push({name:'Reader and player bar fit narrow mobile and desktop'});
  expect(report.errors).toEqual([]);report.ok=true;
-} catch(error){report.ok=false;report.failure=error.message;process.exitCode=1;await page?.screenshot({path:'artifacts/live-integrated-reader-failure.png'}).catch(()=>{});report.state=await page?.evaluate(()=>({passage:document.querySelector('.inline-reader')?.getAttribute('data-current-passage'),follow:document.querySelectorAll('.inline-reader .sonder-follow').length,backToNarration:!!document.querySelector('.reader-back-narration')})).catch(()=>null);}
+} catch(error){
+ // Nothing to run on is a result of its own, not a failure: no page was opened, so nothing could write (#431).
+ if(error instanceof NoSuitableRecording){report.ok=null;report.skipped=error.reason;process.exitCode=NO_SUITABLE_RECORDING_EXIT;console.log(error.message);if(process.env.SONDER_LIVE_CHECK_SKIP_FILE)fs.writeFileSync(process.env.SONDER_LIVE_CHECK_SKIP_FILE,error.reason);}
+ else{report.ok=false;report.failure=error.message;process.exitCode=1;await page?.screenshot({path:'artifacts/live-integrated-reader-failure.png'}).catch(()=>{});report.state=await page?.evaluate(()=>({passage:document.querySelector('.inline-reader')?.getAttribute('data-current-passage'),follow:document.querySelectorAll('.inline-reader .sonder-follow').length,backToNarration:!!document.querySelector('.reader-back-narration')})).catch(()=>null);}}
 finally{// Close the page while its writes are still intercepted: unrouting first would let a queued progress save reach the server.
 await closeProtectedBrowser(context,browser,report);fs.mkdirSync('artifacts',{recursive:true});fs.writeFileSync('artifacts/integrated-reader-verification.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));}

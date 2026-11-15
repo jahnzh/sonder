@@ -34,7 +34,7 @@ Before `gh pr merge` or `scripts/orca-land.sh`, read the issue body and comments
 
 - Run `node scripts/alignment-status.mjs` (or query `alignment_jobs`) for queued, copying or processing jobs before `scripts/deploy-prod.sh`. A restart kills the running job; tell the owner first.
 - Pass `--marker <string in the new code>`, `--marker-file <path in the image>` or `--no-marker`; the script refuses a deploy with none.
-- The reader live check (`verify-integrated-reader.mjs`) picks the most recent recording with a finished map; on a partially mapped book it can fail without a regression (#349). Re-run it on a warm server before treating it as a failure of the deploy.
+- The reader live check (`verify-integrated-reader.mjs`) picks its own recording: one with a finished map whose saved position is clear of the end of the book (#431; rule in `README.md`). With none it is reported as `live check skipped: ... (no suitable recording: ...)`, which is not a failure; on a partially mapped book it can fail without a regression (#349). Re-run it on a warm server before treating it as a failure of the deploy.
 
 ## When the owner restates a request
 
