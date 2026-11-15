@@ -214,8 +214,9 @@ class Encode(unittest.TestCase):
                 self.assertIsNone(book_encode.complete_emissions(folder / "em", track["index"], {"engine": "other"}))
 
 
-@unittest.skipUnless(READY, "numpy, torch and ffmpeg are needed")
-class Pipeline(unittest.TestCase):
+class PipelineFixture(unittest.TestCase):
+    """Two staged WAV tracks, a 20-sentence request and BookJobs with the real stages (no tests of its own)."""
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)
@@ -253,6 +254,9 @@ class Pipeline(unittest.TestCase):
         third = frames // 3
         return book_align.group_tasks([(0, 0), (third, 5), (2 * third, 12)], frames), {"groups": 3}
 
+
+@unittest.skipUnless(READY, "numpy, torch and ffmpeg are needed")
+class Pipeline(PipelineFixture):
     def test_a_job_runs_to_a_result_in_the_interval_shape(self):
         model = FakeModel()
         jobs = self.jobs(model)
@@ -414,6 +418,86 @@ class Pipeline(unittest.TestCase):
         self.assertEqual(jobs.registry.budget.reserved(), 0)
         self.assertFalse((self.media / "alignment" / "book-jobs" / "book-1").exists())
         self.assertIsNone(book_encode.encode_queue("cpu").holder)
+
+
+def running(pid):
+    """True while the process exists and has not exited (a zombie has exited)."""
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except (OSError, IndexError):
+        return False
+    return state != "Z"
+
+
+@unittest.skipUnless(READY and sys.platform.startswith("linux"), "Linux, numpy, torch and ffmpeg are needed")
+class StopGroups(PipelineFixture):
+    """Cancel, idle end and worker stop end running group processes before the folder and the budget go."""
+
+    def setUp(self):
+        super().setUp()
+        self.env = {"ALIGNMENT_BOOK_ALIGN_WORKERS": "2"}
+        self.pids = self.dir / "pids"
+        self.pids.mkdir()
+
+    def tearDown(self):
+        for pid in self.started_pids():
+            try:
+                os.kill(pid, 9)  # never leave a sleeper behind, even when the test fails
+            except OSError:
+                pass
+        super().tearDown()
+
+    def started_pids(self):
+        return [int(p.name) for p in self.pids.iterdir()] if self.pids.exists() else []
+
+    def run_until_groups_run(self):
+        import book_pool_helpers
+        import book_session
+        jobs = self.jobs(FakeModel())
+        patches = [mock.patch.object(book_align, "plan_groups", lambda longform, should_stop=None:
+                                     self.plan(longform.em.shape[0])),
+                   mock.patch.object(book_align, "pool_align", book_pool_helpers.sleep_ignoring_term),
+                   mock.patch.object(book_session, "TERMINATE_GRACE_S", 0.5, create=True),
+                   mock.patch.dict(os.environ, {"BOOK_TEST_PID_DIR": str(self.pids)})]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        jobs.start(self.request)
+        deadline = time.monotonic() + 120
+        while len(self.started_pids()) < 2:
+            self.assertLess(time.monotonic(), deadline, jobs.status("book-1"))
+            time.sleep(0.1)
+        pids = self.started_pids()
+        self.assertTrue(all(running(pid) for pid in pids))
+        return jobs, pids
+
+    def assert_stopped(self, pids, started, folder_kept):
+        folder = self.media / "alignment" / "book-jobs" / "book-1"
+        self.assertEqual([pid for pid in pids if running(pid)], [], "a group process outlived the job")
+        self.assertLess(time.monotonic() - started, 20, "the stop waited for the processes, not for their groups")
+        self.assertEqual(folder.exists(), folder_kept)
+
+    def test_cancel_stops_running_group_processes(self):
+        jobs, pids = self.run_until_groups_run()
+        started = time.monotonic()
+        self.assertEqual(jobs.cancel("book-1")["state"], "cancelled")
+        self.assert_stopped(pids, started, folder_kept=False)
+        self.assertEqual(jobs.registry.budget.reserved(), 0)
+
+    def test_idle_end_stops_running_group_processes(self):
+        jobs, pids = self.run_until_groups_run()
+        jobs._job("book-1").last_request -= 10_000
+        started = time.monotonic()
+        self.assertEqual(jobs.sweep(), ["book-1"])
+        self.assert_stopped(pids, started, folder_kept=False)
+        self.assertEqual(jobs.registry.budget.reserved(), 0)
+
+    def test_worker_stop_stops_running_group_processes(self):
+        jobs, pids = self.run_until_groups_run()
+        started = time.monotonic()
+        jobs.shutdown()
+        self.assert_stopped(pids, started, folder_kept=True)
+        self.assertEqual(jobs.registry.budget.reserved(), 0)
 
 
 @unittest.skipUnless(READY and sys.platform.startswith("linux"), "Linux, numpy, torch and ffmpeg are needed")

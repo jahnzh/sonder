@@ -3,6 +3,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "worker"))
@@ -15,6 +16,50 @@ class FakePool:
 
     def shutdown(self, wait=True, cancel_futures=False):
         self.shutdowns.append((wait, cancel_futures))
+
+
+class FakeProcess:
+    """A pool process that ignores SIGTERM unless told otherwise; records what was still there when it exited."""
+
+    def __init__(self, folder, budget, key, obeys_terminate=False):
+        self.folder, self.budget, self.key = folder, budget, key
+        self.obeys_terminate = obeys_terminate
+        self.signals = []
+        self.alive = True
+        self.seen_at_exit = None
+
+    def terminate(self):
+        self.signals.append("TERM")
+        if self.obeys_terminate:
+            self._exit()
+
+    def kill(self):
+        self.signals.append("KILL")
+        self._exit()
+
+    def _exit(self):
+        if self.alive:
+            self.alive = False
+            self.seen_at_exit = {"emissions": (self.folder / "emissions").exists(),
+                                 "reserved": self.budget.reserved(self.key)}
+
+    def is_alive(self):
+        return self.alive
+
+    def join(self, timeout=None):
+        pass
+
+
+class ProcessPool(FakePool):
+    """FakePool with the processes a ProcessPoolExecutor keeps in `_processes` (pid -> Process)."""
+
+    def __init__(self, processes):
+        super().__init__()
+        self._processes = {i: p for i, p in enumerate(processes)}
+
+    def shutdown(self, wait=True, cancel_futures=False):
+        super().shutdown(wait, cancel_futures)
+        self._processes = None  # as ProcessPoolExecutor.shutdown does
 
 
 class Clock:
@@ -181,6 +226,31 @@ class Sessions(unittest.TestCase):
         self.assertTrue(done.wait(5))
         thread.join(5)
         self.assertEqual(self.registry.budget.reserved("job"), 4000)
+
+    def test_ending_stops_the_pool_processes_before_deleting_and_releasing(self):
+        import book_session
+        for reason in ("cancelled", "idle", "worker stop"):
+            with self.subTest(reason=reason):
+                (self.folder / "tracks").mkdir(exist_ok=True)
+                (self.folder / "emissions").mkdir(exist_ok=True)
+                session = self.registry.open("job", self.folder)
+                session.reserve_disk(4000)
+                stubborn = FakeProcess(self.folder, self.registry.budget, "job")
+                polite = FakeProcess(self.folder, self.registry.budget, "job", obeys_terminate=True)
+                pool = ProcessPool([stubborn, polite])
+                session.set_pool(pool)
+                with unittest.mock.patch.object(book_session, "TERMINATE_GRACE_S", 0.01, create=True):
+                    if reason == "worker stop":
+                        self.registry.close_all(reason)
+                    else:
+                        self.registry.end("job", reason)
+                self.assertFalse(stubborn.alive or polite.alive, "no group process outlives its session")
+                self.assertEqual(stubborn.signals, ["TERM", "KILL"], "killed after the grace time")
+                self.assertEqual(polite.signals, ["TERM"])
+                for process in (stubborn, polite):
+                    self.assertEqual(process.seen_at_exit, {"emissions": True, "reserved": 4000},
+                                     "the folder and the reservation outlive the processes")
+                self.assertEqual(self.registry.budget.reserved(), 0)
 
     def test_drop_decoded_deletes_one_track(self):
         session, _pool, _closed = self.held()

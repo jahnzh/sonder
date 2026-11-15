@@ -184,6 +184,7 @@ class BookJobs:
         self._stop(job, "cancelled")
         if job.thread is not None and job.thread is not threading.current_thread():
             job.thread.join(timeout=30)
+        # Stops the pool's processes and waits for them before the folder and the reservation go.
         self.registry.end(key, "cancelled", delete=True)
         if job.state["state"] not in TERMINAL or job.state["state"] == "done":
             job.update(state="cancelled", error=None)
@@ -330,7 +331,9 @@ class BookJobs:
             job.update(state="failed", error=str(error))
             self.registry.end(job.key, "failed", delete=True)
         except Exception as error:  # noqa: BLE001 - every failure must reach the job state
-            if should_stop() and job.stop_reason == "worker stop":
+            if should_stop():  # a stage broke because the job was stopped (cancel, idle end or worker stop)
+                if job.stop_reason != "worker stop" and job.state["state"] not in TERMINAL:
+                    job.update(state="cancelled", error=None, stopReason=job.stop_reason or "stopped")
                 return
             print(f"[book-job {job.key}] failed: {error!r}", flush=True)
             traceback.print_exc()
@@ -568,9 +571,10 @@ class WorkerStages:
             max_workers=min(workers, len(todo)), mp_context=multiprocessing.get_context("spawn"),
             initializer=book_align.pool_init, initargs=(str(book_path), 29, LABELS, sentences, None, os.getpid()))
         futures = {}
-        session.set_pool(pool)
+        finished_all = False
         try:
-            futures = {pool.submit(book_align.pool_align, task): task for task in todo}
+            futures = session.start_pool(
+                pool, lambda started: {started.submit(book_align.pool_align, task): task for task in todo})
             pending = set(futures)
             while pending:
                 if should_stop():
@@ -578,12 +582,17 @@ class WorkerStages:
                 finished, pending = concurrent.futures.wait(pending, timeout=0.5,
                                                             return_when=concurrent.futures.FIRST_COMPLETED)
                 for future in finished:
-                    save(futures[future], *future.result())
+                    try:
+                        output = future.result()
+                    except Exception:
+                        if should_stop():  # the session ended and stopped the processes
+                            raise Stopped()
+                        raise
+                    save(futures[future], *output)
+            finished_all = True
         finally:
-            for future in futures:
-                future.cancel()
-            pool.shutdown(wait=True, cancel_futures=True)
-            session.pool = None
+            # A stopped or failed job's processes are terminated and waited for, not left to finish their group.
+            session.release_pool(pool, stop=not finished_all)
 
     @staticmethod
     def offsets(metas):
