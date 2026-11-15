@@ -13,7 +13,7 @@ import type {
   AlignmentPoolHostStatus,
   AlignmentPoolStatus,
 } from "../src/reading-types.ts";
-import { CTC_ENGINE } from "./alignment-engine.ts";
+import { BOOK_ENGINE, CTC_ENGINE } from "./alignment-engine.ts";
 import { untilAborted } from "./until-aborted.ts";
 import type * as schema from "./schema.ts";
 
@@ -99,7 +99,7 @@ export function isFullAlignmentJob(job: AlignmentJob) {
 
 export function shouldDispatchToPool(job: AlignmentJob) {
   return poolEnabled() && job.origin !== "projected" &&
-    (job.engine === CTC_ENGINE || isFullAlignmentJob(job));
+    (job.engine === CTC_ENGINE || job.engine === BOOK_ENGINE || isFullAlignmentJob(job));
 }
 
 function hostNameFromSshTarget(sshTarget: string) {
@@ -513,7 +513,18 @@ type CtcHealth = {
   /** Requests the worker runs at once; older workers omit it and run one. */
   slots?: number;
   ctc: { engine: string; ready: boolean; device: string; precision: string; passageReady?: boolean };
+  /** Whole-book jobs (#402); workers without them omit it. */
+  bookJobs?: { engine?: unknown; ready?: unknown };
 };
+
+/** Why a healthy CTC worker cannot take a whole-book job (#404), or null when it can. */
+export function bookJobsProblem(health: Pick<CtcHealth, "bookJobs">): string | null {
+  const book = health.bookJobs;
+  if (!book || typeof book !== "object") return "worker runs no whole-book jobs";
+  if (book.engine !== BOOK_ENGINE) return `worker runs whole-book engine ${String(book.engine ?? "none")}, expected ${BOOK_ENGINE}`;
+  if (book.ready !== true) return "whole-book jobs are not ready";
+  return null;
+}
 
 /** Book jobs a CTC worker takes at once: the slots it reports, 1 for workers that report none. */
 export function ctcWorkerSlots(health: { slots?: unknown } | null | undefined) {
@@ -685,6 +696,13 @@ export type WorkerLeaseRequest = {
   diagnostics?: PoolDiagnostics;
   /** Ends staging (and its SSH/SCP children); no further host is tried. It also bounds a probe's removal in `release`. */
   signal?: AbortSignal;
+  /** A whole-book job (#404): only a worker whose `/health` reports whole-book jobs ready can take it. */
+  book?: boolean;
+  /**
+   * Tried before the hosts in rank order, and not counted as tried by the stored assignment: the host a whole-book
+   * job was started on, so the next run (after a server restart) polls the worker's job there.
+   */
+  firstHost?: PoolHostId;
 };
 
 export type WorkerLease = {
@@ -824,7 +842,7 @@ function startingTriedHosts(request: WorkerLeaseRequest): PoolHostId[] {
   // A stored staging on a host that left the pool (the Steam Deck, #279) starts a fresh pair of attempts.
   const fromAssignment = stored?.jobMediaRoot && !coord.hostById(stored.hostId) ? [] : stored?.triedHosts ?? [];
   const tried = [...fromAssignment, ...(request.triedHosts ?? [])];
-  return [...new Set(tried)].filter((id) => !!coord.hostById(id));
+  return [...new Set(tried)].filter((id) => !!coord.hostById(id) && id !== request.firstHost);
 }
 
 /** Takes the first healthy untried host with a free slot and stages the tracks on it. */
@@ -839,7 +857,9 @@ async function takeHost(
   const exclude = (id: PoolHostId) => { if (probe) attempted.push(id); };
   let busy = false;
   const roundOver = () => !probe && attempted.length >= JOB_HOST_ATTEMPTS;
-  for (const host of coord.listHosts()) {
+  const hosts = coord.listHosts();
+  const first = hosts.filter((host) => host.id === request.firstHost);
+  for (const host of [...first, ...hosts.filter((host) => !first.includes(host))]) {
     signal?.throwIfAborted();
     if (roundOver()) break;
     const id = host.id;
@@ -855,6 +875,12 @@ async function takeHost(
     }
     if (request.mode === "anchored" && health.ctc.passageReady !== true) {
       recordPoolError(diagnostics, id, "health", "passage discovery is not ready");
+      exclude(id);
+      continue;
+    }
+    const bookProblem = request.book ? bookJobsProblem(health) : null;
+    if (bookProblem) {
+      recordPoolError(diagnostics, id, "health", bookProblem);
       exclude(id);
       continue;
     }
