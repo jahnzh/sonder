@@ -6,7 +6,13 @@ import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
 // narration to follow they are dropped, without one they are kept and saved. Sequences 1, 2 and 6 of the issue.
 test.use({serviceWorkers:"block"});
 installReaderWaitBudget(test);
-test.afterEach(async({page})=>{await page.unrouteAll({behavior:"wait"});});
+// Every test makes its own book the one in the player. The specs after this file share the server and open the
+// player's book, so each book leaves the library again, as media-controls.spec.ts does with its own.
+const imported:string[]=[];
+test.afterEach(async({page})=>{
+ await page.unrouteAll({behavior:"wait"});
+ for(const id of imported.splice(0))expect((await page.request.delete(`/api/library/${id}`)).ok()).toBe(true);
+});
 const chapterOne=`<p>The first paragraph opens here. It carries a second sentence. A third sentence closes it.</p>`+
  `<p>The second paragraph begins now. Its middle sentence follows quickly. The last sentence ends the block.</p>`;
 const chapterTwo=`<p>Leading words open this block. Then more words follow here.</p>`+
@@ -19,7 +25,7 @@ async function fixture(page:Page,title:string,{map:align=true,tracks=1}={}){
  const files=Object.fromEntries(Array.from({length:tracks},(_,i)=>[`file${i}`,{name:`Narration ${i+1}.mp3`,mimeType:"audio/mpeg",buffer:audio}]));
  const response=await page.request.post("/api/import",{multipart:{title,author:"Reader QA",...files}});
  expect(response.ok()).toBe(true);
- const id=(await response.json()).id;
+ const id=(await response.json()).id;imported.push(id);
  const book=(await(await page.request.get("/api/books")).json()).find((b:any)=>b.id===id);
  const uploaded=await page.request.post(`/api/ebooks/import?workId=${book.workId}`,{multipart:{file:{name:"Narrated.epub",mimeType:"application/epub+zip",buffer:await readerFixture({bodies:[chapterOne,chapterTwo]})}}});
  expect(uploaded.ok()).toBe(true);const ebook=(await uploaded.json()).id;
