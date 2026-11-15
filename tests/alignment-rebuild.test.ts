@@ -1269,6 +1269,22 @@ test("a member projection that maps more of the member publishes over one stored
   assert.equal(keptMap(better.id), null);
 });
 
+test("kept intervals that no longer name a sentence of the member do not count against a better projection (#379)", async () => {
+  await reset();
+  const { publishOld, few, many, ownSentences, rebuildConsensus } = await resizableSet("resegment");
+  await publishOld(few);
+  const stored = projectionOf("resegment-2")!;
+  // The reader now segments the same file differently: the kept map still holds intervals for sentence ids
+  // the member no longer has. Counted, they would read as more coverage than the new projection has.
+  const gone = Array.from({ length: many }, (_, i) => ({ ...stored.intervals[0], paragraphId: `gone:${i}`, start: 9000 + i, end: 9000.5 + i }));
+  putAlignmentJob({ ...stored, intervals: [...stored.intervals, ...gone], coverage: (few + many) / ownSentences });
+  assert.ok((few + many) / ownSentences > many / ownSentences + 0.02 && many > few);
+  const better = await rebuildConsensus(many);
+  assert.equal(better.status, "partial", `the projection that maps more real sentences publishes: ${better.error}`);
+  assert.equal(better.intervals.length, many);
+  assert.equal(keptMap(better.id), null);
+});
+
 test("a rejected consensus rebuild shows its rejection on each member's Reading sync card (#379)", async () => {
   await reset();
   const { readingSyncControls, rejectedRebuildReason } = await import("../src/reading-sync-controls.ts");

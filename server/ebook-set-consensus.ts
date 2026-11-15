@@ -326,7 +326,8 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
     );
     if (prepared) continue;
     const memberBook = await extractBook(member.ebookId);
-    const memberSentences = memberBook.sections.reduce((count, section) => count + section.paragraphs.length, 0);
+    const memberSentenceIds = new Set(memberBook.sections.flatMap((section) => section.paragraphs.map((paragraph) => paragraph.id)));
+    const memberSentences = memberSentenceIds.size;
     const intervals = projectIntervals(
       consensusJob.intervals,
       projection,
@@ -383,7 +384,7 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
       pairings: [],
       mode: "anchored",
       origin: "projected",
-    }, memberSentences);
+    }, memberSentenceIds);
   }
 }
 
