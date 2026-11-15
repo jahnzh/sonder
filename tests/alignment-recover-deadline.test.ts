@@ -214,6 +214,8 @@ test("recovery stalled in remote cleanup answers at its deadline, kills the clea
   });
   assertTimedOut(await recover());
   assert.deepEqual(commands, ["mkdir", "rm"]);
+  // The host and recording stay held while the staged audio is still being removed.
+  assert.equal(getAlignmentPoolCoordinator().activeOnHost("wsl"), 1);
   await leaseFreed();
   assert.deepEqual(killed, ["rm"]);
 });
