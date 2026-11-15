@@ -1213,19 +1213,41 @@ test("a manual save held for a scrubber return is saved once the return no longe
 });
 
 // #417 flake (flake-b2n-165), sequence 6 under load: while a Contents choice was displaying, epub.js reported the
-// place it had already reported once more, and that report was saved as the reader's move after the pause.
-test("a navigation's report of the place already reported is not a move: it pages nothing and arms no save", () => {
+// section it was leaving once more, and that report was saved as the reader's move after the pause.
+test("while a Contents choice displays, a report of another section is not its relocation: it pages nothing and arms no save", () => {
   const t = setup();
-  t.following.relocated("listening place", false);
-  t.following.navigate();
+  t.following.relocated("listening place", false, 1);
+  t.following.navigate(0);
   const ended = t.following.beginNavigation();
-  assert.equal(t.following.relocated("listening place", true, true), "shown");
+  assert.equal(t.following.relocated("listening place", true, 1), "shown");
   assert.equal(t.following.pendingManual(), null);
   t.clock.advance(MANUAL_SAVE_DELAY_MS * 2);
   assert.deepEqual(t.saved, []);
   ended();
-  // The chapter the navigation reached is the reader's, as before.
-  assert.equal(t.following.relocated("chapter", true), "manual");
+  // The chapter chosen is the reader's, as before.
+  assert.equal(t.following.relocated("chapter", true, 0), "manual");
   t.clock.advance(MANUAL_SAVE_DELAY_MS);
   assert.deepEqual(t.saved, ["chapter"]);
+});
+
+test("a Contents choice of the section shown, a page turn into another section, and a gesture after a choice are still the reader's", () => {
+  // The chapter shown chosen again (integrated-reader: Contents during a follow jump wins and is saved).
+  const same = setup();
+  same.following.relocated("chapter start", false, 0);
+  same.following.navigate(0);
+  same.following.beginNavigation()();
+  assert.equal(same.following.relocated("chapter start", true, 0), "manual");
+  same.clock.advance(MANUAL_SAVE_DELAY_MS);
+  assert.deepEqual(same.saved, ["chapter start"]);
+  // A page turn has no section to go to: its relocation in the next section is the reader's.
+  const turn = setup();
+  turn.following.navigate();
+  turn.following.beginNavigation()();
+  assert.equal(turn.following.relocated("next chapter", true, 1), "manual");
+  // A swipe after a Contents choice into a neighbouring section is the reader's too.
+  const swipe = setup();
+  swipe.following.navigate(0);
+  swipe.following.beginNavigation()();
+  swipe.following.gesture();
+  assert.equal(swipe.following.relocated("next chapter", true, 1), "manual");
 });

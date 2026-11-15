@@ -106,6 +106,9 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
   let epoch = 0;
   // The epoch of the latest navigation (Contents, page turns): a jump started after it ends its window.
   let navigationEpoch = 0;
+  // The section a Contents choice goes to (null for a page turn), and the gestures counted when it was made.
+  let navigationTarget: number | null = null;
+  let navigationGestures = 0;
   // Navigation in flight, and until when its relocation still counts as the reader's own choice.
   let navigating = 0;
   let navigatedUntil = 0;
@@ -349,12 +352,14 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
       const limit = clock.setTimeout(settled, LAYOUT_LIMIT_MS);
       return settled;
     },
-    /** Contents or a page turn: replaces a jump in flight and pages away. */
-    navigate() {
+    /** Contents (`section`: the section it goes to) or a page turn: replaces a jump in flight and pages away. */
+    navigate(section?: number) {
       navigationEpoch = ++epoch;
       set(false);
       automaticUntil = 0;
       gestureNow();
+      navigationTarget = section ?? null;
+      navigationGestures = gestures;
     },
     /** The display of a navigation is in flight; call the returned function when it ended. */
     beginNavigation() {
@@ -394,11 +399,12 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
       return { due: () => chosen === chosenThen };
     },
     /**
-     * The view relocated. `known` says whether a locator is already shown. `unmoved`: epub.js reported
-     * the place it reported last again (it does so while a navigation is displaying, for the place the
-     * navigation leaves); that is no move of the reader's, so it neither pages away nor arms a save.
+     * The view relocated. `known` says whether a locator is already shown; `section` is the section it
+     * shows. While a Contents choice displays, epub.js can report the place it leaves once more: a
+     * section other than the one chosen, with no gesture since, is not the choice's relocation, so it
+     * neither pages away nor arms a save.
      */
-    relocated(locator: L, known: boolean, unmoved = false): Relocation {
+    relocated(locator: L, known: boolean, section?: number): Relocation {
       const now = clock.now();
       const gestured = now - lastGesture < GESTURE_REPORT_MS;
       // A navigation from before a back to narration counts only with a gesture made since.
@@ -407,7 +413,10 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
       const ownLayout = !navigated && (layoutPending > 0 || now <= automaticUntil);
       if (ownLayout && known) return "ignored";
       const manual = navigated || (!ownLayout && gestured);
-      if (!manual || unmoved) return "shown";
+      if (!manual) return "shown";
+      const stray = navigated && navigationTarget !== null && section !== undefined &&
+        section !== navigationTarget && gestures === navigationGestures;
+      if (stray) return "shown";
       // Caused by a navigation or gesture from before a back to narration that found nothing to
       // follow: not a manual move, so following stays on; nothing replaces its place, so it is saved.
       const beforeReturn = !!armed && gestures === armed.gesture;
