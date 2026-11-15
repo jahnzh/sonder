@@ -18,7 +18,8 @@
     "ci:deck": "bash scripts/ci-deck.sh",
     "ci:run": "bash scripts/ci-run.sh",
     "ci:push": "bash scripts/ci-push.sh",
-    "backup": "node scripts/backup-db.mjs"
+    "backup": "node scripts/backup-db.mjs",
+    "pool:sweep": "node --import tsx server/alignment-pool-sweep.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
