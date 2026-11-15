@@ -770,6 +770,29 @@ class Jobs(unittest.TestCase):
         self.assertNotEqual(base, request_digest(request(text="Other.")))
         self.assertNotEqual(base, request_digest({**request(), "recordingId": "other"}))
         self.assertEqual(base, request_digest({**request(), "jobId": "renamed"}))
+        # #403: the section titles are part of the result (passages and flags), so of the identity too.
+        self.assertNotEqual(base, request_digest({**request(), "sections": [{"index": 0, "title": "One"}]}))
+
+    def test_a_folder_of_the_earlier_book_generation_starts_over(self):
+        # #403 made book-v2: a retained book-v1 folder (its groups, emissions and result) is not reused.
+        self.assertTrue(BOOK_ENGINE.endswith("-book-v2"))
+        folder = self.root / "job-1"
+        (folder / "groups").mkdir(parents=True)
+        (folder / "emissions").mkdir()
+        (folder / "groups" / "0.json").write_text(json.dumps({"index": 0}))
+        (folder / "emissions" / "0.f16").write_bytes(b"\0" * 58)
+        (folder / "result.json").write_text("{}")
+        (folder / "request.json").write_text(json.dumps(request()))
+        old = BOOK_ENGINE.replace("-book-v2", "-book-v1")
+        (folder / "state.json").write_text(json.dumps({
+            "jobId": "job-1", "engine": old, "digest": request_digest(request()), "state": "aligning",
+            "createdAt": 1.0, "updatedAt": 1.0, "progress": {}, "stageTimings": {}, "error": None, "resumed": 0}))
+        stages = FakeStages()
+        jobs = self.jobs(stages)
+        jobs.resume_all()
+        self.assertTrue(self.done(jobs))
+        self.assertEqual(stages.aligned, [0, 1, 2, 3])  # group 0 of book-v1 aligned again
+        self.assertEqual(jobs.status("job-1")["engine"], BOOK_ENGINE)
 
 
 if __name__ == "__main__":

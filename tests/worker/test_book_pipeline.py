@@ -29,6 +29,7 @@ if READY:
     import book_align
     import book_audio
     import book_encode
+    import book_match
     from book_job import BOOK_ENGINE, BookJobs, WorkerStages
     from book_session import DiskBudget, SessionRegistry
 
@@ -272,6 +273,12 @@ class PipelineFixture(unittest.TestCase):
                         "sentences": [{"id": f"p{k}", "section": 0, "text": f"Sentence number {k} here."}
                                       for k in range(20)]}
         self.env = {"ALIGNMENT_BOOK_ALIGN_WORKERS": "1"}
+        # The fake models' random emissions are no book's text: the text-match check (#403) would stop every
+        # job before alignment. These tests are about the stages around it, so it passes here;
+        # test_a_wrong_book_ends_with_the_mismatch_outcome runs the real check.
+        self.match = mock.patch.object(book_match, "check", lambda *a, **k: {"score": None, "matches": True})
+        self.match.start()
+        self.addCleanup(self.match.stop)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -310,6 +317,10 @@ class Pipeline(PipelineFixture):
         result = jobs.result("book-1")
         self.assertEqual(result["engine"], BOOK_ENGINE)
         self.assertEqual(result["outcome"], "unsynced")  # random emissions map nothing
+        self.assertEqual(result["flags"], [])
+        self.assertEqual(len(result["unsyncedPassages"]), 1)
+        self.assertEqual(result["stats"]["chainMapped"], 0)
+        self.assertIn("leftover", result["stats"])
         self.assertEqual([t["id"] for t in result["tracks"]], ["t0", "t1"])
         for row, track in zip(result["tracks"], self.tracks):
             self.assertTrue(row["durationOk"])
@@ -319,6 +330,28 @@ class Pipeline(PipelineFixture):
         folder = self.media / "alignment" / "book-jobs" / "book-1"
         self.assertFalse((folder / "emissions").exists())
         self.assertFalse((folder / "tracks").exists())
+
+    def test_a_wrong_book_ends_with_the_mismatch_outcome(self):
+        self.match.stop()  # the real check: random emissions are not this text
+        self.request["sections"] = [{"index": 0, "title": "Chapter One"}]
+        jobs = self.jobs(FakeModel())
+        planned = []
+        with mock.patch.object(book_align, "plan_groups", lambda *a, **k: planned.append(1)):
+            jobs.start(self.request)
+            status = self.wait(jobs)
+        self.assertEqual(status["state"], "done", status)
+        self.assertEqual(status["outcome"], book_match.TEXT_MISMATCH)
+        self.assertEqual(planned, [])  # no alignment ran
+        self.assertIn("textMatch", status["stageTimings"])
+        result = jobs.result("book-1")
+        self.assertEqual(result["outcome"], "text_mismatch")
+        self.assertEqual((result["intervals"], result["mapped"], result["flags"]), ([], 0, []))
+        self.assertLess(result["textMatch"]["score"], book_match.MATCH_THRESHOLD)
+        self.assertEqual(result["textMatch"]["threshold"], book_match.MATCH_THRESHOLD)
+        self.assertEqual(result["unsyncedPassages"], [
+            {"section": 0, "title": "Chapter One", "firstParagraphId": "p0", "lastParagraphId": "p19",
+             "sentenceCount": 20, "excerpt": "Sentence number 0 here."}])
+        self.assertEqual([t["id"] for t in result["tracks"]], ["t0", "t1"])
 
     def test_resume_after_a_restart_reuses_emissions_and_finished_groups(self):
         first_model = FakeModel()

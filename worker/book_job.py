@@ -37,7 +37,10 @@ RECORD_KEYS = ("jobId", "engine", "digest", "state", "recordingId", "createdAt",
                "resumed", "stopReason")
 
 # A new aligner, so a new engine generation (ADR 0016). The window endpoints keep ctc_acoustic.ENGINE.
-BOOK_ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-book-v1"
+# book-v2 (#403): the leftover pass adds intervals the v1 chain never produced (chapters out of the ebook's
+# order) and a wrong book ends as `text_mismatch` instead of an empty map, so a map's content depends on the
+# generation. Retained folders of book-v1 start over (their emissions carry the engine in their identity).
+BOOK_ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-book-v2"
 # torchaudio WAV2VEC2_ASR_BASE_960H labels (the emissions' 29 classes, blank first).
 LABELS = ("-", "|", "E", "T", "A", "O", "N", "I", "H", "S", "R", "D", "L", "U", "M", "W", "C", "F", "G", "Y",
           "P", "B", "V", "K", "'", "X", "J", "Q", "Z")
@@ -71,7 +74,7 @@ class Stopped(Exception):
 
 
 def request_digest(request):
-    keys = ("recordingId", "audioFingerprint", "language", "sentences", "tracks")
+    keys = ("recordingId", "audioFingerprint", "language", "sentences", "tracks", "sections")
     canonical = json.dumps({k: request.get(k) for k in keys}, sort_keys=True, separators=(",", ":"),
                            ensure_ascii=True)
     return hashlib.sha256(canonical.encode()).hexdigest()
@@ -720,6 +723,7 @@ class WorkerStages:
     def align(self, job, session, metas, should_stop):
         import numpy as np
         import book_align
+        import book_match
         from book_encode import CLASSES, emission_paths
         sentences = [s["text"] for s in job.request["sentences"]]
         groups_dir = job.folder / "groups"
@@ -753,6 +757,21 @@ class WorkerStages:
         session.emissions = emissions
         longform = book_align.LongForm(emissions, LABELS, sentences)
         job.timing("prepare", time.monotonic() - started)
+        # The text-match check (#403): before any alignment, on this job's emissions.
+        started = time.monotonic()
+        match = book_match.check(longform.greedy_words, frames_total,
+                                 [book_align.text_words(text) for text in sentences], should_stop)
+        if match is None:
+            raise Stopped()
+        job.timing("textMatch", time.monotonic() - started)
+        job.progress(textMatch=match)
+        if not match["matches"]:
+            result = self.result(job, metas, longform, {}, [], match, outcome=book_match.TEXT_MISMATCH)
+            with job.lock:
+                result["stageTimings"] = dict(job.state.get("stageTimings", {}))
+                result["encode"] = job.state.get("encode")
+            write_json(job.folder / "result.json", result)
+            return
         job.update(state="anchoring")
         plan = read_json(groups_dir / "plan.json")
         if plan is None or plan.get("emissionsKey") != key or plan.get("frames") != frames_total:
@@ -787,12 +806,21 @@ class WorkerStages:
             for name, value in group["stats"].items():
                 stats[name] = stats.get(name, 0) + value
         merged, conflicts = book_align.merge_groups(outputs)
-        result = self.result(job, metas, longform, merged)
+        job.timing("finish", time.monotonic() - started)
+        # The leftover pass (#403): unmapped audio against unmapped text; it adds, never changes the chain.
+        started = time.monotonic()
+        try:
+            pieces, leftover = book_align.leftover_pass(longform, merged, should_stop)
+        except book_align.Cancelled:
+            raise Stopped()
+        job.timing("leftover", time.monotonic() - started)
+        started = time.monotonic()
+        result = self.result(job, metas, longform, merged, pieces, match)
         starts = self.book_seconds(metas)
-        result["stats"] = {**stats, "orderConflictsDropped": conflicts, "groups": len(tasks),
-                           "groupStartsSeconds": [round(starts(t["aStart"]), 3) for t in tasks],
-                           "anchors": plan["anchors"], "kernel": book_align.kernel_name(),
-                           "rawMapped": len(merged), "device": self.device}
+        result["stats"].update({**stats, "orderConflictsDropped": conflicts, "groups": len(tasks),
+                                "groupStartsSeconds": [round(starts(t["aStart"]), 3) for t in tasks],
+                                "anchors": plan["anchors"], "kernel": book_align.kernel_name(),
+                                "rawMapped": len(merged), "device": self.device, "leftover": leftover})
         job.timing("finish", time.monotonic() - started)
         with job.lock:
             result["stageTimings"] = dict(job.state.get("stageTimings", {}))
@@ -873,15 +901,21 @@ class WorkerStages:
             return (sample_offsets[t] + book_align.frame_boundary(frame - frame_offsets[t])) / book_align.RATE
         return to_seconds
 
-    def result(self, job, metas, longform, merged):
-        """Validate the merged intervals and express them in each track's own time."""
+    def result(self, job, metas, longform, merged, pieces, match, outcome=None):
+        """Validate the chain's merged intervals and each leftover piece on its own, express them in each
+        track's own time, and describe what is left: unsynced passages and flags (book_report)."""
         import bisect
         import book_align
+        import book_report
         tracks = job.request["tracks"]
         sentences = job.request["sentences"]
         _, sample_offsets = self.offsets(metas)
         to_seconds = self.book_seconds(metas)
-        accepted = book_align.validate(longform, merged, to_seconds)
+        accepted = book_align.validate(longform, merged, to_seconds) if merged else {}
+        chain_mapped = len(accepted)
+        for piece in pieces:
+            for k, value in book_align.validate(longform, piece, to_seconds).items():
+                accepted.setdefault(k, value)  # pieces hold only sentences the chain did not map
         intervals = []
         for k in sorted(accepted):
             start, end = accepted[k]
@@ -901,7 +935,14 @@ class WorkerStages:
                                "containerSeconds": check.get("containerSeconds"),
                                "differenceSeconds": check.get("differenceSeconds"), "durationOk": check.get("ok"),
                                "ranges": (meta.get("decode") or {}).get("ranges")})
+        titles = book_report.section_titles(job.request.get("sections"))
+        mapped_ids = {i["paragraphId"] for i in intervals}
+        flags = book_report.flags(sentences, intervals,
+                                  [{"id": row["id"], "seconds": row["decodedSeconds"]} for row in track_rows], titles)
         return {"jobId": job.key, "engine": BOOK_ENGINE, "recordingId": job.request.get("recordingId"),
                 "audioFingerprint": job.request.get("audioFingerprint"),
-                "outcome": "mapped" if intervals else "unsynced", "sentences": len(sentences),
-                "mapped": len(intervals), "intervals": intervals, "tracks": track_rows}
+                "outcome": outcome or ("mapped" if intervals else "unsynced"), "sentences": len(sentences),
+                "mapped": len(intervals), "intervals": intervals,
+                "unsyncedPassages": book_report.unsynced_passages(sentences, mapped_ids, titles),
+                "flags": flags, "textMatch": match, "tracks": track_rows,
+                "stats": {"chainMapped": chain_mapped, "leftoverMapped": len(intervals) - chain_mapped}}

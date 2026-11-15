@@ -73,6 +73,8 @@ def run(args):
             "sentences": [{"id": p["id"], "section": p.get("section", 0), "text": p["text"]} for p in book["paragraphs"]],
             "tracks": [{"id": t["id"], "audio": str(args.track_dir / t["id"]), "duration": t["listed_duration"]}
                        for t in tracks]}
+    if book.get("sections"):  # titles for the unsynced passages and flags (#403)
+        body["sections"] = [{"index": s["index"], "title": s.get("title") or ""} for s in book["sections"]]
     result, status, wall = run_job(args.url.rstrip("/"), body, keep="unfetched" if args.no_fetch else args.keep)
     if args.no_fetch:
         print(json.dumps({"jobId": body["jobId"], "wallSeconds": wall, "state": status["state"]}), flush=True)
@@ -81,8 +83,13 @@ def run(args):
     result["finalStatus"] = {k: v for k, v in status.items() if k != "progress"}
     result["finalStatus"]["progress"] = status.get("progress")
     args.out.write_text(json.dumps(result))
-    summary = {k: result.get(k) for k in ("outcome", "sentences", "mapped", "wallSeconds", "stageTimings", "encode")}
-    summary["groups"] = result["stats"]["groups"]
+    summary = {k: result.get(k) for k in ("outcome", "sentences", "mapped", "wallSeconds", "stageTimings", "encode",
+                                          "textMatch")}
+    summary["flags"] = len(result.get("flags") or [])
+    summary["unsyncedPassages"] = len(result.get("unsyncedPassages") or [])
+    summary["groups"] = result["stats"].get("groups")
+    summary["chainMapped"] = result["stats"].get("chainMapped")
+    summary["leftover"] = result["stats"].get("leftover")
     summary["durationChecks"] = [t for t in result["tracks"] if t.get("durationOk") is False]
     print(json.dumps(summary), flush=True)
 
