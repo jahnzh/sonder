@@ -62,7 +62,7 @@ import {
   ensureMediaStorage,
   torrentDownloadDir,
 } from "./storage.ts";
-import { acquire, refreshQueue } from "./acquisitions.ts";
+import { acquire, controlAcquisition, refreshQueue } from "./acquisitions.ts";
 import { tickSeriesAcquisition, SERIES_ACQUISITION_TICK_MS, resetStrandedSeriesAcquisitionClaims, seriesAcquisitionTickerEnabled } from "./series-acquisition.ts";
 import { transmission, transmissionConfigured } from "./transmission.ts";
 import { getTorrentHealth } from "./torrent-health.ts";
@@ -695,41 +695,7 @@ export async function createApp(options?: { logger?: FastifyServerOptions["logge
       else requestServerDownload(copy.bookId);
       return { ok: true };
     }
-    const job = db
-      .select()
-      .from(s.acquisitions)
-      .where(eq(s.acquisitions.id, id))
-      .get();
-    if (!job) throw new Error("This download could not be found.");
-    if (action === "retry") {
-      db.update(s.acquisitions)
-        .set({ status: "error" })
-        .where(eq(s.acquisitions.id, id))
-        .run();
-      return acquire(job.magnet, {
-        title: job.title,
-        author: job.author,
-        cover: job.cover,
-        workId: job.workId || undefined,
-        language: job.language,
-        narrator: job.narrator,
-        userId: currentUserId(req),
-      });
-    }
-    if (job.backend !== "local" || job.status === "ready")
-      throw new Error("Only active local downloads can be paused or resumed.");
-    await transmission(action === "pause" ? "torrent-stop" : "torrent-start", {
-      ids: [job.hash],
-    });
-    db.update(s.acquisitions)
-      .set({
-        status: action === "pause" ? "paused" : "downloading",
-        error: null,
-        updatedAt: Date.now(),
-      })
-      .where(eq(s.acquisitions.id, id))
-      .run();
-    return { ok: true };
+    return controlAcquisition(id, action, currentUserId(req));
   });
   app.get("/api/torrents/health", async (req) => {
     const { fresh } = z

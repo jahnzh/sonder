@@ -11,19 +11,16 @@ import {
 import { mediaRoot } from "./storage.ts";
 import { transmission } from "./transmission.ts";
 import { syncWorkMediaState } from "./work-media-state.ts";
+import {
+  isActiveAcquisitionStatus,
+  setAcquisitionStatus,
+} from "./acquisition-status.ts";
 import { userIsAdmin } from "./users.ts";
 import {
   removeUserLibraryRow,
   seriesRemovalWorkSelectedByDefault,
   workIntroducedViaSeries,
 } from "./library-origin.ts";
-
-const activeAcquisition = new Set([
-  "checking",
-  "preparing",
-  "downloading",
-  "paused",
-]);
 
 export type SeriesRemovalAudioEdition = {
   editionId: string;
@@ -186,7 +183,7 @@ function userActiveDownloads(userId: number, workId: string) {
     )
     .all()
     .map(({ job }) => job)
-    .filter((job) => activeAcquisition.has(job.status))
+    .filter((job) => isActiveAcquisitionStatus(job.status))
     .map((job) => ({ id: job.id, title: job.title, status: job.status }));
 }
 
@@ -317,10 +314,10 @@ function collectDeletablePaths(
 }
 
 function markAcquisitionCancelledInDb(acquisitionId: string) {
-  db.update(s.acquisitions)
-    .set({ status: "error", error: "Removed with series.", updatedAt: Date.now() })
-    .where(eq(s.acquisitions.id, acquisitionId))
-    .run();
+  setAcquisitionStatus(acquisitionId, "error", {
+    error: "Removed with series.",
+    updatedAt: Date.now(),
+  });
 }
 
 function detachUserFromAcquisition(
@@ -347,7 +344,7 @@ function detachUserFromAcquisition(
     .from(s.acquisitions)
     .where(eq(s.acquisitions.id, acquisitionId))
     .get();
-  if (!job || !activeAcquisition.has(job.status)) return;
+  if (!job || !isActiveAcquisitionStatus(job.status)) return;
   if (job.backend === "local" && job.hash) torrentCancels.push({ hash: job.hash });
   markAcquisitionCancelledInDb(acquisitionId);
 }

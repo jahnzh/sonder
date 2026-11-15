@@ -12,6 +12,12 @@ import { addTorrent, getTorrent, transmission } from "./transmission.ts";
 import { getTorrentHealth } from "./torrent-health.ts";
 import { syncWorkMediaState, syncWorkMediaStateForAcquisition } from "./work-media-state.ts";
 import {
+  ACTIVE_ACQUISITION_STATUSES,
+  isFinishedAcquisitionStatus,
+  setAcquisitionStatus,
+  startAcquisitionRecord,
+} from "./acquisition-status.ts";
+import {
   ensureMediaStorage,
   resolveTorrentFile,
   torrentDownloadDir,
@@ -122,17 +128,13 @@ export async function acquire(
     workId: metadata.workId || null,
     language: metadata.language || null,
     narrator: metadata.narrator || null,
-    status: "checking",
     progress: 0,
     error: null,
     bookId: null,
     createdAt: existing?.createdAt || Date.now(),
     updatedAt: Date.now(),
   };
-  db.insert(s.acquisitions)
-    .values(entry)
-    .onConflictDoUpdate({ target: s.acquisitions.hash, set: entry })
-    .run();
+  startAcquisitionRecord(entry);
   db.insert(s.userAcquisitions).values({userId: metadata.userId ?? 1, acquisitionId: id}).onConflictDoNothing().run();
   if (metadata.workId) syncWorkMediaState(metadata.userId ?? 1, metadata.workId);
   try {
@@ -160,15 +162,11 @@ export async function acquire(
               ? "The cached torrent is not ready."
               : "TorBox did not accept this torrent.",
           );
-        db.update(s.acquisitions)
-          .set({
-            backend: "torbox",
-            remoteId: String(data.torrent_id),
-            status: "preparing",
-            updatedAt: Date.now(),
-          })
-          .where(eq(s.acquisitions.id, id))
-          .run();
+        setAcquisitionStatus(id, "preparing", {
+          backend: "torbox",
+          remoteId: String(data.torrent_id),
+          updatedAt: Date.now(),
+        });
       } catch {
         backend = "local";
       }
@@ -197,15 +195,11 @@ export async function acquire(
           "The torrent client’s incomplete folder must be on the media drive. Configure the dedicated Sonder queue.",
         );
       const torrent = await addTorrent(magnet, torrentDownloadDir);
-      db.update(s.acquisitions)
-        .set({
-          backend: "local",
-          remoteId: torrent.hashString,
-          status: "downloading",
-          updatedAt: Date.now(),
-        })
-        .where(eq(s.acquisitions.id, id))
-        .run();
+      setAcquisitionStatus(id, "downloading", {
+        backend: "local",
+        remoteId: torrent.hashString,
+        updatedAt: Date.now(),
+      });
     }
     await refreshAcquisition(id);
     if (metadata.workId)
@@ -216,14 +210,10 @@ export async function acquire(
       .where(eq(s.acquisitions.id, id))
       .get()!;
   } catch (error) {
-    db.update(s.acquisitions)
-      .set({
-        status: "error",
-        error: (error as Error).message,
-        updatedAt: Date.now(),
-      })
-      .where(eq(s.acquisitions.id, id))
-      .run();
+    setAcquisitionStatus(id, "error", {
+      error: (error as Error).message,
+      updatedAt: Date.now(),
+    });
     if (metadata.workId)
       syncWorkMediaState(metadata.userId ?? 1, metadata.workId);
     throw error;
@@ -288,16 +278,12 @@ function createBook(
       db.insert(s.userLibrary).values({ userId, bookId: id, status: "unread", addedAt: Date.now() }).onConflictDoNothing().run();
     }
     claimHardcoverAudio(workId, id);
-    db.update(s.acquisitions)
-      .set({
-        status: "ready",
-        progress: 1,
-        error: null,
-        bookId: id,
-        updatedAt: Date.now(),
-      })
-      .where(eq(s.acquisitions.id, job.id))
-      .run();
+    setAcquisitionStatus(job.id, "ready", {
+      progress: 1,
+      error: null,
+      bookId: id,
+      updatedAt: Date.now(),
+    });
   })();
   syncWorkMediaStateForAcquisition(job.id);
 }
@@ -313,25 +299,16 @@ export async function refreshAcquisition(id: string) {
       .from(s.acquisitions)
       .where(eq(s.acquisitions.id, id))
       .get();
-    if (
-      !job ||
-      job.status === "ready" ||
-      job.status === "error" ||
-      job.status === "checking"
-    )
+    if (!job || isFinishedAcquisitionStatus(job.status) || job.status === "checking")
       return;
     if (job.backend === "local") {
       const torrent = await getTorrent(job.hash);
       if (!torrent) {
-        db.update(s.acquisitions)
-          .set({
-            status: "error",
-            error:
-              "This torrent is no longer in the local queue. Retry to add it again.",
-            updatedAt: Date.now(),
-          })
-          .where(eq(s.acquisitions.id, id))
-          .run();
+        setAcquisitionStatus(id, "error", {
+          error:
+            "This torrent is no longer in the local queue. Retry to add it again.",
+          updatedAt: Date.now(),
+        });
         return;
       }
       if (torrent.error) {
@@ -346,15 +323,11 @@ export async function refreshAcquisition(id: string) {
           .run();
         return;
       }
-      db.update(s.acquisitions)
-        .set({
-          status: torrent.status === 0 ? "paused" : "downloading",
-          progress: torrent.percentDone,
-          error: null,
-          updatedAt: Date.now(),
-        })
-        .where(eq(s.acquisitions.id, id))
-        .run();
+      setAcquisitionStatus(id, torrent.status === 0 ? "paused" : "downloading", {
+        progress: torrent.percentDone,
+        error: null,
+        updatedAt: Date.now(),
+      });
       const files = torrent.files
         .map((file, index) => ({
           ...file,
@@ -426,14 +399,13 @@ export async function refreshAcquisition(id: string) {
       );
     }
   } catch (error) {
-    db.update(s.acquisitions)
-      .set({
-        ...(error instanceof InvalidTorrentError ? { status: "error" } : {}),
-        error: (error as Error).message,
-        updatedAt: Date.now(),
-      })
-      .where(eq(s.acquisitions.id, id))
-      .run();
+    const fields = { error: (error as Error).message, updatedAt: Date.now() };
+    if (error instanceof InvalidTorrentError) setAcquisitionStatus(id, "error", fields);
+    else
+      db.update(s.acquisitions)
+        .set(fields)
+        .where(eq(s.acquisitions.id, id))
+        .run();
   } finally {
     processing.delete(id);
     syncWorkMediaStateForAcquisition(id);
@@ -446,22 +418,14 @@ export async function refreshQueue() {
     .select()
     .from(s.acquisitions)
     .where(
-      inArray(s.acquisitions.status, [
-        "checking",
-        "preparing",
-        "downloading",
-        "paused",
-      ]),
+      inArray(s.acquisitions.status, [...ACTIVE_ACQUISITION_STATUSES]),
     )
     .all();
   for (const job of jobs) {
     if (job.status === "checking") {
       if (Date.now() - job.updatedAt < 60000) continue; // A restart may have interrupted source selection. Stable hashes make retrying idempotent.
       try {
-        db.update(s.acquisitions)
-          .set({ status: "error" })
-          .where(eq(s.acquisitions.id, job.id))
-          .run();
+        setAcquisitionStatus(job.id, "error");
         const owner = db.select().from(s.userAcquisitions).where(eq(s.userAcquisitions.acquisitionId, job.id)).get();
         if (!owner) continue;
         await acquire(job.magnet, {
@@ -476,4 +440,51 @@ export async function refreshQueue() {
       } catch {}
     } else await refreshAcquisition(job.id);
   }
+}
+
+export type AcquisitionControl = "pause" | "resume" | "retry";
+
+/**
+ * Pause, resume or retry an acquisition (the control route without HTTP). Retry marks the
+ * acquisition failed and starts it again for `userId`; pause and resume act on the local
+ * torrent client and move the status between `paused` and `downloading`.
+ */
+export async function controlAcquisition(
+  id: string,
+  action: AcquisitionControl,
+  userId: number,
+  deps: {
+    transmission?: typeof transmission;
+    acquire?: typeof acquire;
+  } = {},
+) {
+  const job = db
+    .select()
+    .from(s.acquisitions)
+    .where(eq(s.acquisitions.id, id))
+    .get();
+  if (!job) throw new Error("This download could not be found.");
+  if (action === "retry") {
+    setAcquisitionStatus(id, "error");
+    return (deps.acquire ?? acquire)(job.magnet, {
+      title: job.title,
+      author: job.author,
+      cover: job.cover,
+      workId: job.workId || undefined,
+      language: job.language,
+      narrator: job.narrator,
+      userId,
+    });
+  }
+  if (job.backend !== "local" || job.status === "ready")
+    throw new Error("Only active local downloads can be paused or resumed.");
+  await (deps.transmission ?? transmission)(
+    action === "pause" ? "torrent-stop" : "torrent-start",
+    { ids: [job.hash] },
+  );
+  setAcquisitionStatus(id, action === "pause" ? "paused" : "downloading", {
+    error: null,
+    updatedAt: Date.now(),
+  });
+  return { ok: true };
 }
