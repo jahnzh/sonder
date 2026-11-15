@@ -355,8 +355,10 @@ job is a new engine generation, `ctc-wav2vec2-base-960h-torchaudio-2.8-book-v1`
 (`book_job.BOOK_ENGINE`), with the same model. `/health`'s existing fields
 (`busy`, `busySeconds`, `activeRequests`, `slots`, `stuck`) describe window
 requests only, exactly as before; book work is reported only under
-`bookJobs: {engine, ready, jobs, slotsHeld, batchSeconds, stuck,
-diskReservedBytes, diskBudgetBytes}`. `slotsHeld` is the number of the
+`bookJobs: {engine, ready, jobs, resuming, slotsHeld, batchSeconds, stuck,
+diskReservedBytes, diskBudgetBytes}`. `resuming` is `true` while the worker
+still picks up its retained job folders after a start (book requests get
+`503` until then). `slotsHeld` is the number of the
 worker's slots that encode batches hold at that moment and `batchSeconds` the
 age of the oldest (see "Shared GPU"); `stuck` lists the jobs whose session is
 kept because a process is still there or files of its folder could not be
@@ -389,7 +391,7 @@ is the same model as the window endpoints.
 
 | Request | Answer |
 | --- | --- |
-| `POST /book-jobs` with the start request | `202` and the progress. The same `jobId` with the same request returns the existing job and does not run it again. The same `jobId` with another request, or one whose cancelled job is still stopping, is `409`. A track outside `MEDIA_ROOT` or missing is `400`. A missing media volume is `503`. A request whose files do not fit the disk budget next to the other jobs is `507`, before anything is written. |
+| `POST /book-jobs` with the start request | `202` and the progress. The same `jobId` with the same request returns the existing job and does not run it again. The same `jobId` with another request, or one whose cancelled job is still stopping, is `409`. A track outside `MEDIA_ROOT` or missing is `400`. A missing media volume is `503`. A request whose files do not fit the disk budget next to the other jobs is `507`, before anything is written. While the worker still picks up its retained jobs after a start (`bookJobs.resuming`), this and the three requests below are `503` with that reason; retry shortly. |
 | `GET /book-jobs/{jobId}` | `200` and the progress; `404` for an unknown job |
 | `DELETE /book-jobs/{jobId}` | `200` `{jobId, engine, state: "cancelled"}`. The job stops and its folder is deleted. Later requests for it answer `404`. |
 | `GET /book-jobs/{jobId}/result` | `200` and the result once `state` is `done`. Before that, `409` `{jobId, engine, state, message}`. The fetch ends the job: its folder is deleted with its reservation, and later requests for it answer `404`. |
@@ -521,7 +523,16 @@ yet (next ticket).
   within 2 s of each other the encode waits, with no timeout; the job says so
   in its progress (`waitingForWindowRequests`, `gateWaitSeconds`) and later
   books keep their `encodeQueuePosition`. A cancel during that wait stops the
-  job.
+  job. That status is written to `state.json` only while the book holds no
+  slot: the end of a wait is reported just before the slot is taken (and when
+  a window request came in meanwhile the book waits again), so a slow or stuck
+  disk write never keeps a window request waiting or refused.
+* **Book bookkeeping stays off the window path.** No lock that `/health`, a
+  window request or the gate waits on is held across file I/O, hashing, a
+  process wait or a sleep (the lock table is in `worker/book_session.py`).
+  `/health` and a job's status read a copy of the job list that is replaced,
+  not changed, so a start or the resume stalled on a slow disk does not delay
+  them.
 * **The aligner** is the v2 anchor chain of `PROTO-D-E-BOOKS.md`, unchanged in
   its parameters (δ 1.5, skip 8, 60 s windows, 20 s margin, text × 1.3) and its
   four chain constants (locate every 240 s, groups ≥ 600 s, rate floor 0.25).
@@ -612,7 +623,10 @@ jobs still to resume, folders the worker does not recognise). A book larger
 than the whole budget fails at once. A failed job's files go except its
 record. So two books can never wait for each other's disk.
 
-When the worker starts, the files of every retained job folder (and of any
+When the worker starts, it serves `/health` and the window endpoints at once
+and picks up the retained job folders in a background thread; until that has
+finished (or failed, which is logged), book requests are answered `503`, so
+none of them meets a half-loaded job. The files of every retained job folder (and of any
 folder it does not recognise) are claimed in the budget before any job is
 resumed, so a restart cannot admit more than the disk holds; decoded PCM and
 partial files of unfinished jobs are deleted first, as they are never reused.

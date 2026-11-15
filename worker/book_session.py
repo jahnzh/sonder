@@ -16,11 +16,13 @@ together. A process still there after the bounded wait keeps the session "stuck"
 stay, and `SessionRegistry.retry_stuck` releases them once it is gone.
 
 Lock order: (`book_job.Job.end_lock` -> `book_job.BookJobs._lock` ->) `SessionRegistry._lock` -> `BookSession._lock` -> `DiskBudget._lock`. A lock is never taken
-while a later one in that order is held, and none is held while waiting for the encode queue, for a
-process to exit or for disk I/O on book data. The exceptions: `start_pool` starts the pool's processes
-under `BookSession._lock`, so that a session ending at the same time stops every one of them; and a job's
-`end_lock` is held for its whole end, so a second end of the same job waits for the first (one end at a
-time, `SessionRegistry.end` likewise) instead of deleting a folder that a live process still uses.
+while a later one in that order is held. The rule (#402 round 4): a lock that /health, a window request or
+the gate can wait on (`SessionRegistry._lock`, `DiskBudget._lock`, `deadline.Gate._lock`) guards memory
+only and is never held across file I/O, hashing, a process wait or a sleep. The locks held across such work
+are waited on by book work only: `Job.end_lock` (a whole end), `BookJobs._lock` (a start's or the resume's
+folder reads and writes; /health and status read `BookJobs._view` instead), `Job.save_lock` (a state.json
+write), the pool's stop lock (a bounded terminate and join), and `BookSession._lock`, which `start_pool`
+holds while it starts the pool's processes so that a session ending at the same time stops every one.
 
 Disk budget: one budget per worker for every byte under the job folders (ALIGNMENT_BOOK_DISK_BYTES).
 A session's reservation is what its folder holds plus the most the next stage adds at its peak; it is
@@ -100,6 +102,8 @@ def stop_pool(pool, grace=None, kill_wait=None):
     use. Safe to call more than once and from several threads: a later call checks the same processes again."""
     grace = TERMINATE_GRACE_S if grace is None else grace
     kill_wait = KILL_WAIT_S if kill_wait is None else kill_wait
+    # Held across the processes' terminate/join, bounded and taken with a timeout; only book ends and job
+    # threads stopping their own pool wait on it.
     lock = pool.__dict__.setdefault("_sonder_stop_lock", threading.Lock())
     if not lock.acquire(timeout=grace + kill_wait + 1.0):
         return False  # another thread is stopping it and has not finished in the bounded time
@@ -160,6 +164,7 @@ class DiskBudget:
 
     def __init__(self, total):
         self.total = int(total)
+        # Arithmetic on the reservations only, never held across I/O: /health (reserved) waits on it.
         self._lock = threading.Lock()
         self._reserved = {}
         self._waiting = []  # keys waiting to raise their reservation, oldest first
@@ -241,6 +246,8 @@ class BookSession:
         self.folder = Path(folder)
         self.budget = budget
         self._clock = clock
+        # The session's attributes. Held across I/O nowhere; start_pool holds it while the pool's processes
+        # are started (not waited for). Book requests (touch) and the job thread wait on it, /health does not.
         self._lock = threading.Lock()
         self.last_used = clock()
         self.ended = None  # reason once ended
@@ -393,6 +400,7 @@ class SessionRegistry:
         self.budget = budget if budget is not None else DiskBudget(disk_budget_bytes())
         self.idle = idle if idle is not None else idle_seconds()
         self._clock = clock
+        # The dicts only: never held across I/O or while another lock is waited for. /health (stuck) waits on it.
         self._lock = threading.Lock()
         self._sessions = {}
         self._stuck = {}  # key -> session that ended while one of its processes was still there

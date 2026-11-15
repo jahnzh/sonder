@@ -123,12 +123,18 @@ class Job:
         self.stop = threading.Event()
         self.stop_reason = None
         self.thread = None
+        # Locks (#402 round 4: none that /health, a window request or the gate waits on is held across I/O):
+        # `lock` guards `state` in memory only, never held across I/O; the job thread and status wait on it.
         self.lock = threading.Lock()
+        # `save_lock` serialises state.json writes and is held across them; only the job thread and book
+        # requests wait on it (the gate calls the wait report only while the book holds no slot).
         self.save_lock = threading.Lock()  # taken before self.lock, never after it
         self.last_request = time.monotonic()
         self.cancelled = False  # set by cancel and idle end; a cancelled job is never launched again
         self.resume_waiting = False  # a retained job waiting for its turn to resume (resume_all)
-        self.end_lock = threading.Lock()  # one end at a time (BookJobs._end_job); taken before every other lock
+        # One end at a time (BookJobs._end_job), held across the thread join and the folder delete; only
+        # cancel, fetch and the idle sweeper wait on it. Taken before every other lock.
+        self.end_lock = threading.Lock()
         self.end_outcome = None  # the outcome of that end, for the callers that waited for it
 
     def save(self):

@@ -123,6 +123,8 @@ class Gate:
     def __init__(self, slots=1, clock=time.monotonic):
         self.slots = max(1, int(slots))
         self._clock = clock
+        # Slot accounting only: never held across I/O or a callback (on_wait runs outside it, and only while
+        # the background holder has no slot). Every window request, /health and each book batch wait on it.
         self._lock = threading.Lock()
         self._changed = threading.Condition(self._lock)
         self._started = {}  # window requests, admitted (running or waiting for a batch) -> admission time

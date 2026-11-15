@@ -51,6 +51,8 @@ class EncodeQueue:
     """First come, first served admission to one device's encoder."""
 
     def __init__(self):
+        # Guards the queue's list only, never held across I/O (wait() releases it); book job threads and
+        # status (position) wait on it, no window request does.
         self._condition = threading.Condition()
         self._waiting = []
         self._holder = None
@@ -88,7 +90,7 @@ class EncodeQueue:
 
 
 _QUEUES = {}
-_QUEUES_LOCK = threading.Lock()
+_QUEUES_LOCK = threading.Lock()  # the dict only; book job threads and status
 
 
 def encode_queue(device):
