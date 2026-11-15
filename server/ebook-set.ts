@@ -643,7 +643,8 @@ type ListedMember = ReturnType<typeof listEbookSetMembers>[number];
 /**
  * An evaluation that threw: the member is held with the reason, so it neither runs again by itself nor vanishes.
  * The hold follows the rule of every result (it is dropped if the member changed or its ebook moved while it was
- * checked), and it never throws: one member's failure does not stop the checks of the others.
+ * checked), and it never throws: one member's failure does not stop the checks of the others. Returns whether the
+ * hold was written: a written hold is a result like any other, and its alignment is queued after it.
  */
 function holdFailedMember(member: ListedMember, error: unknown, startedFor: EbookSetMemberSnapshot) {
   const message = error instanceof Error ? error.message : String(error);
@@ -660,8 +661,10 @@ function holdFailedMember(member: ListedMember, error: unknown, startedFor: Eboo
       startedFor,
     );
     if (!written) console.warn(`Ebook set member ${member.ebookId} changed while it was checked; its failure is not recorded.`);
+    return written;
   } catch (writeError) {
     console.warn(`Ebook set failure of ${member.ebookId} could not be recorded: ${(writeError as Error).message}`);
+    return false;
   }
 }
 
@@ -694,7 +697,8 @@ async function evaluateMembers(
   options: {
     /** Whether a member in this status (read again just before its check) is still due. */
     due: (status: EbookSetMemberStatus) => boolean;
-    onFailure?: (member: ListedMember, error: unknown, startedFor: EbookSetMemberSnapshot) => void;
+    /** Records a check that threw; returns whether it wrote a result for the member. */
+    onFailure?: (member: ListedMember, error: unknown, startedFor: EbookSetMemberSnapshot) => boolean;
     /** Read before each member's check: false leaves it and the rest as they are. */
     mayStart?: () => boolean;
     /** Whether a member that started in this status has its alignment queued once its result is written. */
@@ -728,7 +732,8 @@ async function evaluateMembers(
           queue = result.written && !!options.queueAfterResult?.(startedFor.status as EbookSetMemberStatus);
         } catch (error) {
           if (!options.onFailure) throw error;
-          options.onFailure(member, error, startedFor);
+          const held = options.onFailure(member, error, startedFor);
+          queue = held && !!options.queueAfterResult?.(startedFor.status as EbookSetMemberStatus);
         } finally {
           ebookSetCheckEnded(workId, member.ebookId);
         }

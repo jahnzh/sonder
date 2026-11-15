@@ -799,6 +799,19 @@ heldTest("R2 HIGH 3: a queueing that fails is logged with its member and does no
   assert.ok(warnings.some((line) => line.includes(first) && line.includes("the queue is broken")), warnings.join("\n"));
 });
 
+heldTest("R3: a check that throws writes its hold and then queues the alignment, like every written result", async () => {
+  const workId = seedWork();
+  const { ebookId } = await seedLibgenEpub(workId, "Right");
+  seedMember(workId, ebookId, "pending", null);
+  behaviours = { Right: "forward" };
+  writeFileSync(db.select().from(schema.ebookEditions).all().find((row) => row.id === ebookId)!.source, "not an epub");
+  const queued: string[] = [];
+  setEbookSetDeps({ queueAlignment: async (_workId: string, filter: { ebookId: string }) => void queued.push(filter.ebookId) } as never);
+  await backgroundRunner(app).tick("ebook-set");
+  assert.equal(member(workId, ebookId)?.holdReason, "evaluation_failed");
+  assert.deepEqual(queued, [ebookId], "queued once, after the hold was written");
+});
+
 heldTest("R2 HIGH 3: reevaluate queues the alignment of a member it moves from pending to a result, not of a held one (as main)", async () => {
   const workId = seedWork();
   const accepted = (await seedLibgenEpub(workId, "Right")).ebookId;
