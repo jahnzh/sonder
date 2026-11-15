@@ -19,14 +19,22 @@ import {
 } from "./chapters";
 import type { Book, Track, Progress, PlaybackSourceChoice } from "./types";
 import {
-  canFallBackToDevice,
   deviceFault,
   fallbackNotice,
   isTransportFailure,
   playbackInput,
   setPreferredSource,
-  type StreamRequest,
 } from "./playback-sources";
+import {
+  afterUnreachable,
+  looksForDevice,
+  rememberedNotice,
+  reportedSource,
+  shownFor,
+  stallFallsBackToDevice,
+  startingStep,
+  type StreamStep,
+} from "./delivery-plan";
 import {
   failureMemory,
   playFailureAction,
@@ -143,7 +151,8 @@ export function PlayerProvider({
   // attempt is forgotten, so a later failure in the same load tries again.
   const streamLoad = useRef<{
     generation: number;
-    request: StreamRequest;
+    // The plan's explicit stream, which recovery follows to the device copy.
+    step: StreamStep;
     book: Book;
     track: Track;
     // A complete download exists, so a stalled stream has somewhere to switch.
@@ -275,7 +284,8 @@ export function PlayerProvider({
         localDB.downloads.get(load.track.id),
         deviceFault(load.book.recordingId),
       ]);
-      if (!canFallBackToDevice(load.request, download, fault)) return false;
+      const target = afterUnreachable(load.step, { download, deviceFault: fault });
+      if (!target) return false;
       // offlineUrl rejects a copy whose stored bytes are incomplete.
       const local = await offlineUrl(load.track);
       if (!local) return false;
@@ -295,13 +305,13 @@ export function PlayerProvider({
       streamLoad.current = null;
       stall.current?.cancel();
       pendingSeek.current = position;
-      setSource("device");
+      setSource(shownFor(target));
       setError(null);
       setLoading(true);
       setPlaying(false);
       if (noticedFor.current !== load.book.recordingId) {
         noticedFor.current = load.book.recordingId;
-        notifyRef.current?.(fallbackNotice(load.request));
+        notifyRef.current?.(fallbackNotice(load.step.request));
       }
       el.src = local;
       el.load();
@@ -358,9 +368,9 @@ export function PlayerProvider({
         current ||
         b.tracks.find((track) => track.id === progress?.trackId) ||
         b.tracks[0];
-      let input: Awaited<ReturnType<typeof playbackInput>>;
+      let plan: Awaited<ReturnType<typeof playbackInput>>;
       try {
-        input = await playbackInput(b, selected, failures.recent(), () =>
+        plan = await playbackInput(b, selected, failures.recent(), () =>
           failures.clear(),
         );
       } catch (error) {
@@ -395,7 +405,7 @@ export function PlayerProvider({
         !forceReload &&
         current?.id === selected.id &&
         el.readyState >= 1 &&
-        !input.bad(sourceRef.current)
+        !plan.faulty(sourceRef.current)
       ) {
         applyRate(rate);
         if (t) {
@@ -432,9 +442,9 @@ export function PlayerProvider({
       el.pause();
       setLoading(true);
       setError(null);
-      const local =
-        input.device || input.remembered ? await offlineUrl(selected) : null;
-      if (input.preference === "device" && !local) {
+      const local = looksForDevice(plan) ? await offlineUrl(selected) : null;
+      const step = startingStep(plan, !!local);
+      if (!step) {
         setLoading(false);
         setError(
           "This device copy is incomplete. Remove it and download it again, or choose another source.",
@@ -454,40 +464,36 @@ export function PlayerProvider({
       if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
       objectUrl.current = local;
       streamLoad.current =
-        !local && (input.preference === "server" || input.preference === "original")
+        step.source === "stream" && step.recover
           ? {
               generation: currentGeneration,
-              request: input.preference,
+              step,
               book: b,
               track: selected,
-              deviceCopy: input.deviceCopy,
+              deviceCopy: stallFallsBackToDevice(plan, step),
             }
           : null;
       const streamed = !!streamLoad.current;
-      if (
-        autoplay &&
-        local &&
-        input.remembered &&
-        noticedFor.current !== b.recordingId
-      ) {
+      const notice = rememberedNotice(plan, step);
+      if (autoplay && notice && noticedFor.current !== b.recordingId) {
         noticedFor.current = b.recordingId;
-        notifyRef.current?.(
-          fallbackNotice(input.preference === "original" ? "original" : "server"),
-        );
+        notifyRef.current?.(fallbackNotice(notice));
       }
-      setSource(local ? "device" : (input.expected as PlayerState["source"]));
-      if (!local)
+      setSource(shownFor(step));
+      if (step.source === "stream")
         void api<{ source: "server" | "torbox" | "remote" }>(
-          `/media/${encodeURIComponent(selected.id)}/location?source=${input.request}`,
+          `/media/${encodeURIComponent(selected.id)}/location?source=${step.request}`,
         )
           .then((location) => {
             failures.clear();
-            if (
-              currentGeneration === generation.current &&
-              !objectUrl.current &&
-              sourceReportedFor.current !== currentGeneration
-            )
-              setSource(location.source);
+            const shown = reportedSource({
+              from: "location",
+              source: location.source,
+              currentLoad: currentGeneration === generation.current,
+              playingDeviceCopy: !!objectUrl.current,
+              workerReported: sourceReportedFor.current === currentGeneration,
+            });
+            if (shown !== null) setSource(shown);
           })
           .catch(() => {});
       pendingSeek.current = targetPosition;
@@ -504,8 +510,9 @@ export function PlayerProvider({
       };
       applyRate(rate);
       el.src =
-        local ||
-        `/api/media/${encodeURIComponent(selected.id)}${input.request === "auto" ? "" : `?source=${input.request}`}`;
+        step.source === "stream"
+          ? `/api/media/${encodeURIComponent(selected.id)}${step.request === "auto" ? "" : `?source=${step.request}`}`
+          : local!;
       el.load();
       if ("mediaSession" in navigator) {
         navigator.mediaSession.metadata = new MediaMetadata({
@@ -938,13 +945,17 @@ export function PlayerProvider({
       const data = event.data;
       if (
         event.source !== navigator.serviceWorker.controller ||
-        data?.type !== "sonder:media-source" ||
-        data.trackId !== state.current.track?.id ||
-        !["device", "server", "torbox", "remote"].includes(data.source) ||
-        objectUrl.current
+        data?.type !== "sonder:media-source"
       )
         return;
-      setSource(data.source);
+      const shown = reportedSource({
+        from: "worker",
+        source: data.source,
+        currentLoad: data.trackId === state.current.track?.id,
+        playingDeviceCopy: !!objectUrl.current,
+      });
+      if (shown === null) return;
+      setSource(shown);
       sourceReportedFor.current = generation.current;
     };
     el.addEventListener("timeupdate", time);
