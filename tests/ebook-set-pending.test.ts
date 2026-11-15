@@ -356,9 +356,9 @@ const backfillJobs = (ebookId: string) =>
     .map((row) => JSON.parse(row.data) as { origin?: string })
     .filter((job) => job.origin === "backfill");
 
-async function uploadEpub(workId: string, prefix: string) {
+async function uploadEpub(workId: string, prefix: string, language = "en") {
   const boundary = "sonder-ebook-set-pending";
-  const epub = await readerFixture({ language: "en", title: prefix, bodies: [paragraphs(prefix), paragraphs(prefix)] });
+  const epub = await readerFixture({ language, title: prefix, bodies: [paragraphs(prefix), paragraphs(prefix)] });
   const res = await app.inject({
     method: "POST",
     url: `/api/ebooks/import?workId=${workId}`,
@@ -405,14 +405,23 @@ test("HIGH 1: an uploaded EPUB is not aligned while its check is pending; the ch
   });
 });
 
-test("HIGH 1: a check that ends rejected or held queues no alignment", async () => {
+// Round 2 (coordinator, superseding round 1's option B): the only gate is "not while pending"; a check that ends
+// with any result queues the alignment once, as main's upload did whatever its check said.
+test("HIGH 1: a check that ends rejected or held queues the alignment once, as main's upload did", async () => {
   await withAlignmentsHeld(async () => {
     const workId = seedWork();
     behaviours = { Wrong: "none" };
     const rejected = await uploadEpub(workId, "Wrong");
     await ebookSetEvaluationsSettled();
     assert.equal(member(workId, rejected)?.status, "rejected");
-    assert.equal(backfillJobs(rejected).length, 0);
+    assert.equal(backfillJobs(rejected).length, 1, "rejected: queued");
+    const french = await uploadEpub(workId, "Francais", "fr");
+    await ebookSetEvaluationsSettled();
+    assert.equal(member(workId, french)?.holdReason, "language_not_supported");
+    assert.equal(backfillJobs(french).length, 1, "held: queued");
+    await backgroundRunner(app).tick("ebook-set");
+    assert.equal(backfillJobs(rejected).length + backfillJobs(french).length, 2, "once");
+    // autoQueueAlignmentsForWork keeps main's own eligibility: without a configured worker it queues nothing.
     process.env.ALIGNMENT_POOL_ENABLED = "0";
     const held = await uploadEpub(workId, "Held");
     await ebookSetEvaluationsSettled();
@@ -735,19 +744,21 @@ heldTest("R2 HIGH 1: reevaluate skips a member whose ebook is linked to another 
   assert.equal(member(workId, valid)?.status, "accepted");
 });
 
-heldTest("R2 HIGH 3: an accepted member's alignment is queued right after its result, before the next member's check starts", async () => {
+for (const [result, behaviour] of [["accepted", "forward"], ["rejected", "none"]] as const)
+heldTest(`R2 HIGH 3: a member's alignment is queued right after its result (${result}), before the next member's check starts`, async () => {
   const workId = seedWork();
   const right = (await seedLibgenEpub(workId, "Right")).ebookId;
   seedMember(workId, right, "pending", null);
   const later = (await seedLibgenEpub(workId, "Later")).ebookId;
   seedMember(workId, later, "pending", null);
-  behaviours = { Right: "forward", Later: "forward" };
   // Members are checked in the listing order; the one checked second waits at the gate.
   const [first, second] = listEbookSetMembers(workId).map((m) => m.ebookId);
-  gatedKeys = new Set([second === later ? "Later" : "Right"]);
+  const [firstKey, secondKey] = first === right ? ["Right", "Later"] : ["Later", "Right"];
+  behaviours = { [firstKey]: behaviour, [secondKey]: "forward" };
+  gatedKeys = new Set([secondKey]);
   closeGate();
   const round = backgroundRunner(app).tick("ebook-set");
-  await until(() => member(workId, first)?.status === "accepted", "the first member's result");
+  await until(() => member(workId, first)?.status === result, "the first member's result");
   await until(() => (anchorRequests > 0 && backfillJobs(first).length > 0) || member(workId, second)?.status !== "pending", "the queueing");
   assert.equal(member(workId, second)?.status, "pending", "the second check is still running");
   assert.equal(backfillJobs(first).length, 1, "queued before the batch ends");
@@ -788,17 +799,21 @@ heldTest("R2 HIGH 3: a queueing that fails is logged with its member and does no
   assert.ok(warnings.some((line) => line.includes(first) && line.includes("the queue is broken")), warnings.join("\n"));
 });
 
-heldTest("R2 HIGH 3: reevaluate queues the alignment of a member it moves from pending to accepted, not of a held one (as main)", async () => {
+heldTest("R2 HIGH 3: reevaluate queues the alignment of a member it moves from pending to a result, not of a held one (as main)", async () => {
   const workId = seedWork();
-  const pending = (await seedLibgenEpub(workId, "Right")).ebookId;
-  seedMember(workId, pending, "pending", null);
+  const accepted = (await seedLibgenEpub(workId, "Right")).ebookId;
+  seedMember(workId, accepted, "pending", null);
+  const rejected = (await seedLibgenEpub(workId, "Wrong")).ebookId;
+  seedMember(workId, rejected, "pending", null);
   const held = (await seedLibgenEpub(workId, "Right")).ebookId;
   seedMember(workId, held, "held", "awaiting_worker");
-  behaviours = { Right: "forward" };
+  behaviours = { Right: "forward", Wrong: "none" };
   const res = await app.inject({ method: "POST", url: `/api/works/${workId}/ebook-set/reevaluate` });
   assert.equal(res.statusCode, 200, res.body);
-  assert.equal(member(workId, pending)?.status, "accepted");
+  assert.equal(member(workId, accepted)?.status, "accepted");
+  assert.equal(member(workId, rejected)?.status, "rejected");
   assert.equal(member(workId, held)?.status, "accepted");
-  assert.equal(backfillJobs(pending).length, 1, "queued on acceptance");
+  assert.equal(backfillJobs(accepted).length, 1, "pending to accepted: queued");
+  assert.equal(backfillJobs(rejected).length, 1, "pending to rejected: queued");
   assert.equal(backfillJobs(held).length, 0, "main's reevaluate of a held member queued nothing");
 });

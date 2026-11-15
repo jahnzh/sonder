@@ -63,7 +63,7 @@ async function evaluateDue() {
     // Both switches are read again before each member's check: the check that runs finishes, no other starts.
     if (held()) return;
     try {
-      // A member that ends accepted has its alignment queued right after its result (`evaluateMembers`).
+      // Each member has its alignment queued right after its result is written (`evaluateMembers`).
       await evaluatePendingEbookSetMembers(workId, { mayStart: () => !held() });
     } catch (error) {
       // The members stay pending and the next round tries again.

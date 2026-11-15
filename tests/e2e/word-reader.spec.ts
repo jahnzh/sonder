@@ -43,6 +43,34 @@ async function fixture(page: Page, title: string, align: "all" | "first" | "none
   const book = (await (await page.request.get("/api/books")).json()).find(
     (b: { id: string }) => b.id === id,
   );
+  if (align === "none") {
+    // A book and an ebook with no narration map. An upload for the work queues its backfill job only once the
+    // ebook-set check ends (#325), and the fixture's alignment can finish before a poll sees it. So the EPUB is
+    // uploaded on its own and linked while alignment is paused: the link queues the job in the request, as an upload
+    // did on main, and the job is cancelled before it can start.
+    const loose = await page.request.post("/api/ebooks/import", {
+      multipart: { file: { name: "Companion.epub", mimeType: "application/epub+zip", buffer: await readerFixture() } },
+    });
+    expect(loose.ok()).toBe(true);
+    const ebook = (await loose.json()).id;
+    const pause = (paused: boolean) =>
+      page.request.post("/api/activity/processes/alignment/pause", { data: { paused } });
+    expect((await pause(true)).ok()).toBe(true);
+    try {
+      const linked = await page.request.post(`/api/reader/${ebook}/link`, { data: { workId: book.workId } });
+      expect(linked.ok()).toBe(true);
+      const jobs = (await (await page.request.get(`/api/alignments?ebookId=${ebook}`)).json()).jobs;
+      expect(jobs.length, "linking queued a backfill job").toBeGreaterThan(0);
+      const cancelled = await page.request.patch(`/api/alignments/${jobs[0].id}`, {
+        data: { action: "cancel" },
+      });
+      expect(cancelled.ok()).toBe(true);
+    } finally {
+      expect((await pause(false)).ok()).toBe(true);
+    }
+    const manifest = await (await page.request.get(`/api/reader/${ebook}`)).json();
+    return { book, ebook, manifest };
+  }
   const uploaded = await page.request.post(
     `/api/ebooks/import?workId=${book.workId}`,
     {
@@ -60,22 +88,6 @@ async function fixture(page: Page, title: string, align: "all" | "first" | "none
   const manifest = await (
     await page.request.get(`/api/reader/${ebook}`)
   ).json();
-  if (align === "none") {
-    // Linking queued a backfill job; cancel it so this book has no narration map.
-    await expect
-      .poll(
-        async () =>
-          (await (await page.request.get(`/api/alignments?ebookId=${ebook}`)).json()).jobs.length,
-        { timeout: 20000 },
-      )
-      .toBeGreaterThan(0);
-    const jobs = (await (await page.request.get(`/api/alignments?ebookId=${ebook}`)).json()).jobs;
-    const cancelled = await page.request.patch(`/api/alignments/${jobs[0].id}`, {
-      data: { action: "cancel" },
-    });
-    expect(cancelled.ok()).toBe(true);
-    return { book, ebook, manifest };
-  }
   const sections = align === "first" ? manifest.sections.slice(0, 1) : manifest.sections;
   const created = await page.request.post("/api/alignments", {
     data: {
