@@ -284,6 +284,30 @@ test("a failing job tries one other host and then fails, however many hosts are 
   assert.deepEqual(fake.stagedFolders("third"), []);
 });
 
+test("a host whose upload failed half way is recorded with the job: the folder it left is still audio on that host", async () => {
+  const upload = fake.deps.uploadFile;
+  const failOn = (targets: string[]) => {
+    fake.deps.uploadFile = async (local, remote, target, options) => {
+      if (targets.includes(target)) throw new Error("scp: disk full");
+      return upload(local, remote, target, options);
+    };
+  };
+  // WSL fails to stage, lisa takes the job: both are recorded, although only lisa ran it.
+  failOn([fake.hosts.wsl.sshTarget]);
+  const moved = await settled((await chapterJob()).id);
+  assert.equal(moved.status, "partial", moved.error ?? undefined);
+  assert.deepEqual(Object.keys(moved.pool?.stagedHosts ?? {}).sort(), ["lisa", "wsl"]);
+  assert.equal(moved.pool?.stagedHosts?.wsl, join(fake.hosts.wsl.root, "alignment", "pool-jobs", moved.id));
+  assert.deepEqual(fake.stagedFolders("wsl"), [moved.id], "the folder was created before the upload failed");
+
+  // No host can stage and no lease is ever handed out: the failed job still records both folders.
+  failOn([fake.hosts.wsl.sshTarget, fake.hosts.lisa.sshTarget]);
+  const failed = await settled((await chapterJob()).id);
+  assert.equal(failed.status, "error");
+  assert.deepEqual(Object.keys(failed.pool?.stagedHosts ?? {}).sort(), ["lisa", "wsl"]);
+  fake.deps.uploadFile = upload;
+});
+
 test("a finished job deletes nothing on the hosts and records every host it staged on", async () => {
   // Published after moving to lisa: staged on both hosts, both copies stay, both recorded.
   fake.hosts.wsl.onRequest = (n) => { if (n === 2) fake.hosts.wsl.failRequests = 1; };

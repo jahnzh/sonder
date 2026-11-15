@@ -1264,7 +1264,9 @@ async function leaseWorker(job: AlignmentJob, tracks: ReturnType<typeof recordin
       if (job.pool || error.triedHosts.length) job.pool = error.assignment;
       transition.requeue(job);
     } else {
+      const failed = (error as { poolAssignment?: AlignmentJob["pool"] } | null)?.poolAssignment;
       if (run.lease) job.pool = run.lease.assignment;
+      else if (failed?.stagedHosts) job.pool = failed;
       transition.fail(job, poolFailureMessage(error));
     }
     return null;

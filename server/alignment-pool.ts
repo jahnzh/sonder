@@ -715,9 +715,12 @@ class PoolWorkerLease implements WorkerLease {
 
   async take() {
     try {
-      this.held = await takeHost(this.request, this.tried, this.diagnostics);
+      this.held = await takeHost(this.request, this.tried, this.diagnostics,
+        this.request.kind === "job" ? (hostId, jobMediaRoot) => { this.staged[hostId] = jobMediaRoot; } : undefined);
     } catch (error) {
       if (error instanceof PoolBusyError) error.stagedHosts = this.stagedHosts();
+      // No lease is handed out when the first take fails: the hosts staging began on travel with the error.
+      else if (error instanceof Error) Object.assign(error, { poolAssignment: this.assignment });
       throw error;
     }
     this.tried = [...this.held.triedHosts];
@@ -772,7 +775,10 @@ function startingTriedHosts(request: WorkerLeaseRequest): PoolHostId[] {
 }
 
 /** Takes the first healthy untried host with a free slot and stages the tracks on it. */
-async function takeHost(request: WorkerLeaseRequest, triedHosts: PoolHostId[], diagnostics: PoolDiagnostics): Promise<HeldHost> {
+async function takeHost(
+  request: WorkerLeaseRequest, triedHosts: PoolHostId[], diagnostics: PoolDiagnostics,
+  onStaging?: (hostId: PoolHostId, jobMediaRoot: string) => void,
+): Promise<HeldHost> {
   const coord = getAlignmentPoolCoordinator();
   const probe = request.kind === "probe";
   const signal = request.signal;
@@ -816,6 +822,8 @@ async function takeHost(request: WorkerLeaseRequest, triedHosts: PoolHostId[], d
       continue;
     }
     try {
+      // Recorded before the first byte is sent: an upload that fails half way still leaves audio on the host.
+      onStaging?.(id, stagingFolder(health.mediaRoot, request.id));
       const staged = await stageCtcTracks(
         { jobId: request.id, host, tracks: request.tracks, localAudio: request.localAudio },
         health.mediaRoot, { signal, removeOnFailure: probe });
