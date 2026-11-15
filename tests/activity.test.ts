@@ -184,8 +184,8 @@ test("Hardcover queues: permanent errors and long waits are flagged, one row per
 test("processes: untracked ones are listed, loops degrade from their items, pool hosts appear only when enabled", () => {
   const none = buildActivity(base());
   assert.deepEqual(none.processes.map((process) => process.id), [
-    "acquisitions", "server-copies", "series-acquisition", "hardcover-sync", "alignment", "torrent-client", "imports", "backups",
-  ]);
+    "acquisitions", "server-copies", "series-acquisition", "hardcover-sync", "alignment", "torrent-client", "imports",
+  ], "the backups are a source now (#361), not an untracked process");
   assert.equal(none.processes.find((process) => process.id === "imports")!.notTracked, true);
   assert.equal(none.processes.find((process) => process.id === "torrent-client")!.health, "unknown");
   assert.equal(none.attention, 0);
@@ -237,7 +237,7 @@ test("only the loops can be paused, and each shows its switch state, lock and wh
   assert.equal(byId["series-acquisition"].paused, false);
   assert.match(byId["hardcover-sync"].pauseEffect ?? "", /Sync now still works/);
   assert.match(byId.acquisitions.pauseEffect ?? "", /keep downloading in the torrent client/);
-  for (const id of ["torrent-client", "imports", "backups"]) {
+  for (const id of ["torrent-client", "imports"]) {
     assert.equal(byId[id].pausable, false, id);
     assert.equal(byId[id].pauseEffect, null, id);
     assert.equal(byId[id].paused, false, id);

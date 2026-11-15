@@ -24,10 +24,9 @@ export const FINISHED_VISIBLE_MS = DAY;
 /** Until Retry and Discard exist, a failure older than this stays listed but stops lighting the Settings indicator. */
 export const ATTENTION_FAILURE_MS = 7 * DAY;
 
-/** Work Activity lists although nothing reports it yet (#361, #362). */
+/** Work Activity lists although nothing reports it yet (#362). */
 const UNTRACKED_PROCESSES = [
   { id: "imports", label: "Imports" },
-  { id: "backups", label: "Database backups" },
 ];
 
 export function stuckMultiplier(raw: string | undefined | null) {
@@ -51,10 +50,12 @@ const loopOrder = (snapshot: SourceSnapshot) => PAUSABLE_PROCESSES.indexOf(snaps
 
 export function buildActivity(input: ActivityInput): ActivityResponse {
   const { now, multiplier, tracker } = input;
+  const held = (id: string) => !!(input.pause?.[id]?.paused || input.pause?.[id]?.locked);
   const reports = input.snapshots.map((snapshot) => ({
     source: snapshot.source,
-    ...snapshot.source.report(snapshot.rows, snapshot.probe, { now, tracker }),
+    ...snapshot.source.report(snapshot.rows, snapshot.probe, { now, tracker, held: held(snapshot.source.process.id) }),
   }));
+  const summaries = new Map<string, string>(reports.flatMap((report) => (report.summary ? [[report.source.process.id, report.summary] as const] : [])));
   const services: ActivityService[] = reports.flatMap((report) => report.services ?? []);
   const downService = new Map(services.filter((service) => service.health === "down").map((service) => [service.id, service.label]));
 
@@ -111,6 +112,8 @@ export function buildActivity(input: ActivityInput): ActivityResponse {
       health = "degraded";
       reason = [counts.failed ? `${counts.failed} failed` : "", counts.stuck ? `${counts.stuck} stuck` : ""].filter(Boolean).join(", ");
     }
+    const summary = summaries.get(process.id);
+    if (summary) reason = reason ? `${reason} · ${summary}` : summary;
     const since = health === "ok" ? null : mine.filter((item) => item.stuck || item.state === "failed").reduce<number | null>(
       (oldest, item) => (oldest === null ? item.updatedAt : Math.min(oldest, item.updatedAt)), null);
     return { ...process, ...pauseFields, health, reason, since, counts };

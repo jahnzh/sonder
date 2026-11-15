@@ -11,7 +11,9 @@ import { tmpdir } from "node:os";
 import Fastify from "fastify";
 import type { ActivityKind, ActivityState } from "../src/types.ts";
 import type { AlignmentJob } from "../src/reading-types.ts";
-import { ACQUISITION_STATUSES, SERVER_COPY_STATUSES, type AcquisitionJobStatus, type ServerCopyStatus } from "../server/schema.ts";
+import {
+  ACQUISITION_STATUSES, BACKUP_RUN_STATUSES, SERVER_COPY_STATUSES, type AcquisitionJobStatus, type BackupRunStatus, type ServerCopyStatus,
+} from "../server/schema.ts";
 import type { SeriesAcquisitionJobStatus } from "../server/series-acquisition.ts";
 import { ChangeTracker, buildActivity, collectActivity, registerActivity, type ActivityDeps } from "../server/activity.ts";
 import { UNKNOWN_STATUS, defineSource, type ActivitySource } from "../server/activity-source.ts";
@@ -21,6 +23,7 @@ import { serverCopySource } from "../server/downloads-activity.ts";
 import { seriesAcquisitionSource } from "../server/series-acquisition-activity.ts";
 import { alignmentSource } from "../server/alignment-activity.ts";
 import { hardcoverSource, hardcoverQueueStatus, type HardcoverQueueStatus } from "../server/hardcover-activity.ts";
+import { backupSource, type BackupRunRow } from "../server/backups-activity.ts";
 import { PAUSABLE_PROCESSES } from "../server/activity-pause-model.ts";
 
 const MIN = 60_000;
@@ -90,6 +93,62 @@ test("Hardcover queues: waiting is queued and failing is failed", () => {
   assert.equal(itemFor(hardcoverSource, hardcoverRow("socket hang up")).state, expected.failing);
 });
 
+const backupRow = (status: string, over: Partial<BackupRunRow> = {}): BackupRunRow => ({
+  day: "2026-11-14", file: "daily-2026-11-14.db", status, bytes: status === "done" ? 25_300_000 : null, error: status === "failed" ? "Backup failed: disk I/O error" : null,
+  started_at: NOW - 2 * MIN, finished_at: status === "running" ? null : NOW - MIN, updated_at: status === "running" ? NOW - 2 * MIN : NOW - MIN, ...over,
+});
+const backupActivity = (rows: { latest: BackupRunRow | null; lastDone: BackupRunRow | null }, now = NOW, pause: Record<string, { paused: boolean; locked: boolean }> = {}) =>
+  buildActivity({ now, multiplier: 1, tracker: new ChangeTracker(), pause, snapshots: [{ source: backupSource, rows, probe: none }] });
+
+test("daily backups: every status the backup runs store maps to its Activity state (#361)", () => {
+  const expected = { running: "running", done: "done", failed: "failed" } satisfies Record<BackupRunStatus, ActivityState>;
+  assert.deepEqual(Object.keys(expected).sort(), [...BACKUP_RUN_STATUSES].sort(), "the walk covers the whole vocabulary");
+  for (const status of BACKUP_RUN_STATUSES) {
+    const row = backupRow(status);
+    const item = backupActivity({ latest: row, lastDone: status === "done" ? row : null }).items[0];
+    assert.equal(item.id, "backup:2026-11-14", status);
+    assert.equal(item.processId, "backups", status);
+    assert.equal(item.state, expected[status], status);
+  }
+  const unknown = backupActivity({ latest: backupRow("exploded"), lastDone: null }).items[0];
+  assert.equal(unknown.state, "failed");
+  assert.equal(unknown.error, `${UNKNOWN_STATUS} "exploded"`);
+});
+
+test("daily backups: the process row shows the last run, its result and size, and the next run (#361)", () => {
+  const process = (activity: ReturnType<typeof backupActivity>) => activity.processes.find((entry) => entry.id === "backups")!;
+  const done = backupRow("done");
+  const ok = backupActivity({ latest: done, lastDone: done });
+  assert.equal(process(ok).notTracked, false);
+  assert.equal(process(ok).pausable, true);
+  assert.equal(process(ok).health, "ok");
+  assert.equal(process(ok).reason, "Last run 14 Nov 11:59 UTC: succeeded, 25.3 MB · Next run 15 Nov 03:00 UTC");
+  assert.equal(ok.items[0].detail, "daily-2026-11-14.db, 25.3 MB");
+  assert.equal(ok.attention, 0);
+
+  const at = Date.UTC(2026, 10, 15, 3, 10);
+  const failedRow = backupRow("failed", { day: "2026-11-15", file: "daily-2026-11-15.db", started_at: at, finished_at: at, updated_at: at });
+  const failed = backupActivity({ latest: failedRow, lastDone: done }, Date.UTC(2026, 10, 15, 4));
+  assert.equal(process(failed).health, "degraded");
+  assert.equal(process(failed).reason, "1 failed · Last run 15 Nov 03:10 UTC: failed · Next run within 10 minutes", "a failed day is retried at the next check");
+  assert.equal(failed.items[0].state, "failed");
+  assert.equal(failed.items[0].error, "Backup failed: disk I/O error", "the reason is shown on the failed run");
+  assert.equal(failed.attention, 1, "a failed backup lights the Settings indicator");
+
+  const none = backupActivity({ latest: null, lastDone: null });
+  assert.equal(process(none).reason, "No backup yet · Next run within 10 minutes");
+  assert.deepEqual(none.items, []);
+
+  const paused = backupActivity({ latest: done, lastDone: done }, NOW, { backups: { paused: true, locked: false } });
+  assert.equal(process(paused).paused, true);
+  assert.equal(process(paused).reason, "Last run 14 Nov 11:59 UTC: succeeded, 25.3 MB · Next run when resumed");
+
+  const running = backupActivity({ latest: backupRow("running"), lastDone: null });
+  assert.equal(process(running).reason, "Running since 14 Nov 11:58 UTC · Next run 15 Nov 03:00 UTC");
+  const stuck = backupActivity({ latest: backupRow("running"), lastDone: null }, NOW + 40 * MIN);
+  assert.equal(stuck.items[0].stuck?.reason, "No change for 42 min", "a backup running for over 30 minutes is stuck");
+});
+
 test("a stored status outside a source's vocabulary is failed with Unknown status, never running", () => {
   const cases: Array<[ActivitySource<unknown, unknown>, unknown]> = [
     [acquisitionSource, acquisitionRow("exploded")],
@@ -107,7 +166,7 @@ test("a stored status outside a source's vocabulary is failed with Unknown statu
 });
 
 test("every loop has exactly one source and every kind is reported", () => {
-  const kinds: Record<ActivityKind, true> = { acquisition: true, "server-copy": true, "series-acquisition": true, alignment: true, hardcover: true };
+  const kinds: Record<ActivityKind, true> = { acquisition: true, "server-copy": true, "series-acquisition": true, alignment: true, hardcover: true, backup: true };
   assert.deepEqual(ACTIVITY_SOURCES.map((source) => source.kind).sort(), Object.keys(kinds).sort());
   assert.deepEqual(ACTIVITY_SOURCES.map((source) => source.process.id).sort(), [...PAUSABLE_PROCESSES].sort());
 });
@@ -152,11 +211,12 @@ test("the pause switches import no feature, and the Activity modules do not open
   assert.deepEqual(runtimeImports(source("activity-pause.ts")).sort(), ["./activity-pause-model.ts", "./activity-pause-model.ts", "./db.ts"]);
   assert.deepEqual(runtimeImports(source("activity-pause-model.ts")), []);
   for (const file of ["activity.ts", "activity-source.ts", "activity-sources.ts", "acquisitions-activity.ts", "downloads-activity.ts",
-    "series-acquisition-activity.ts", "alignment-activity.ts", "hardcover-activity.ts"]) {
+    "series-acquisition-activity.ts", "alignment-activity.ts", "hardcover-activity.ts", "backups-activity.ts"]) {
     const imports = runtimeImports(source(file));
     assert.ok(imports.every((path) => path === "./activity-source.ts" || path === "./activity-pause-model.ts" || path === "./activity-sources.ts"
-      || /^\.\/[a-z-]+-activity\.ts$/.test(path) || path === "fastify"), `${file} imports ${imports.join(", ")}`);
+      || /^\.\/[a-z-]+-activity\.ts$/.test(path) || path === "fastify" || path === "./backup-schedule.ts"), `${file} imports ${imports.join(", ")}`);
   }
+  assert.deepEqual(runtimeImports(source("backup-schedule.ts")), [], "the backup rules are pure");
 });
 
 // Series acquisition reads its vocabulary from the CHECK constraint of a real database built here.

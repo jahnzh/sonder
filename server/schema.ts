@@ -115,6 +115,9 @@ export type AcquisitionJobStatus = AcquisitionStatus;
 /** The statuses a copy to the server (`server_downloads`) can hold, as `server/downloads.ts` writes them. */
 export const SERVER_COPY_STATUSES = ["queued", "downloading", "paused", "ready", "error"] as const;
 export type ServerCopyStatus = (typeof SERVER_COPY_STATUSES)[number];
+/** The statuses of a daily database backup run (`backup_runs`), as `server/backups.ts` writes them (#361). */
+export const BACKUP_RUN_STATUSES = ["running", "done", "failed"] as const;
+export type BackupRunStatus = (typeof BACKUP_RUN_STATUSES)[number];
 export const acquisitions = sqliteTable("acquisitions", {
   workId: text("work_id"),
   language: text("language"),
@@ -151,6 +154,19 @@ export const serverDownloads = sqliteTable("server_downloads", {
   progress: real("progress").notNull(),
   error: text("error"),
   createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+export const backupRuns = sqliteTable("backup_runs", {
+  /** The scheduled UTC day, YYYY-MM-DD. */
+  day: text("day").primaryKey(),
+  /** The file name in the backups folder, daily-<day>.db. */
+  file: text("file").notNull(),
+  status: text("status", { enum: BACKUP_RUN_STATUSES }).notNull(),
+  bytes: integer("bytes"),
+  error: text("error"),
+  attempts: integer("attempts").notNull().default(1),
+  startedAt: integer("started_at").notNull(),
+  finishedAt: integer("finished_at"),
   updatedAt: integer("updated_at").notNull(),
 });
 export const hardcoverLinks = sqliteTable("hardcover_links", {
