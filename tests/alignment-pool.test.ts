@@ -10,15 +10,12 @@ import {
   CTC_ENGINE,
   PoolBusyError,
   POOL_FAILURE_MESSAGE,
+  acquireWorkerLease,
   clearPoolStaging,
   defaultPoolHosts,
-  dispatchFullAlignmentJob,
   getAlignmentPoolCoordinator,
   getAlignmentPoolStatus,
   isFullAlignmentJob,
-  poolAlignmentFolder,
-  poolJobNeedsStaging,
-  poolRemoteAlignmentFolder,
   resetAlignmentPoolCoordinator,
   setAlignmentPoolDepsForTests,
   stageTracksLocally,
@@ -35,6 +32,9 @@ const hosts: PoolHost[] = [
     maxConcurrent: 3,
     remoteWorkRoot: "/pool",
     workerUrl: "http://wsl-worker",
+    device: "cuda",
+    precision: "float16",
+    rank: 1,
   },
   {
     id: "lisa",
@@ -42,8 +42,23 @@ const hosts: PoolHost[] = [
     maxConcurrent: 1,
     remoteWorkRoot: "/pool",
     workerUrl: "http://lisa-worker",
+    device: "cpu",
+    precision: "float32",
+    rank: 2,
   },
 ];
+
+/** A job's lease, as the runner takes it: its tried hosts skipped, why each host was skipped recorded on the job. */
+async function dispatchFullAlignmentJob(
+  job: AlignmentJob,
+  tracks: any[],
+  localAudio: (track: any) => string | null,
+  triedHosts: string[] = job.pool?.triedHosts ?? [],
+) {
+  const lease = await acquireWorkerLease({ id: job.id, recordingId: job.recordingId, mode: job.mode, tracks, localAudio,
+    kind: "job", triedHosts, diagnostics: job });
+  return lease.assignment;
+}
 
 /** Both CTC workers healthy, with their media root in `mediaRoot`. */
 function healthyCtcWorkers(mediaRoot: string): typeof fetch {
@@ -396,22 +411,6 @@ test("default pool worker URLs target remote hosts, not loopback", () => {
   }
 });
 
-test("poolAlignmentFolder keeps local cache paths for remote jobs", () => {
-  const local = "/data/alignment/job-1";
-  const job = {
-    id: "job-1",
-    pool: {
-      hostId: "wsl",
-      jobMediaRoot: "/pool/jobs/job-1/media",
-    },
-  } as AlignmentJob;
-  assert.equal(poolAlignmentFolder(job, local), local);
-  assert.equal(
-    poolRemoteAlignmentFolder(job),
-    "/pool/jobs/job-1/media/alignment/job-1",
-  );
-});
-
 test("resume clears staging but keeps triedHosts for failover", () => {
   const prevPool = process.env.ALIGNMENT_POOL_ENABLED;
   process.env.ALIGNMENT_POOL_ENABLED = "1";
@@ -432,7 +431,7 @@ test("resume clears staging but keeps triedHosts for failover", () => {
     clearPoolStaging(job, job.pool!.triedHosts);
     assert.deepEqual(job.pool?.triedHosts, ["wsl"]);
     assert.equal(job.pool?.jobMediaRoot, "");
-    assert.ok(poolJobNeedsStaging(job));
+    assert.deepEqual(job.pool?.stagedAudio, {});
   } finally {
     if (prevPool === undefined) delete process.env.ALIGNMENT_POOL_ENABLED;
     else process.env.ALIGNMENT_POOL_ENABLED = prevPool;
