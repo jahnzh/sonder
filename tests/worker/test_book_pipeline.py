@@ -64,6 +64,26 @@ class FakeModel:
         return torch.randn(wave.shape[0], frames, 29, generator=generator), None
 
 
+class ContentModel(FakeModel):
+    """Like FakeModel, but each window's log-probabilities follow from its samples, not only its length."""
+
+    def model(self, wave):
+        import zlib
+        self.calls += 1
+        self.windows += wave.shape[0]
+        frames = (wave.shape[1] - 400) // 320 + 1
+        rows = []
+        for row in wave:
+            seed = zlib.crc32(row.numpy().tobytes())
+            rows.append(torch.randn(frames, 29, generator=torch.Generator().manual_seed(seed)))
+        return torch.stack(rows), None
+
+
+def emissions_digest(longform, task):
+    import zlib
+    return zlib.crc32(np.ascontiguousarray(longform.em[task["aStart"]:task["aEnd"]]).tobytes())
+
+
 @unittest.skipUnless(READY, "numpy, torch and ffmpeg are needed")
 class Decode(unittest.TestCase):
     def setUp(self):
@@ -325,6 +345,49 @@ class Pipeline(unittest.TestCase):
             self.assertEqual(self.wait(restarted)["state"], "done")
         self.assertGreater(second.windows, 0)
         self.assertLess(second.windows, model.windows, "only the changed track is encoded again")
+
+    def test_a_track_replaced_while_stopped_gives_a_result_from_the_new_audio(self):
+        # Review round 1: the same request, track 1 replaced by different audio of the same duration while the
+        # worker is stopped after group 1. The concatenated emissions, the plan and groups 0 and 1 are stale.
+        real = book_align.align_group
+
+        def recording(stop_after=None, jobs_ref=None, key="book-1"):
+            def align(longform, task, should_stop=None):
+                kept, stats, trimmed = real(longform, task, should_stop)
+                stats = dict(stats, emissionsDigest=emissions_digest(longform, task))
+                if stop_after is not None and task["index"] == stop_after:
+                    jobs_ref[0]._stop(jobs_ref[0]._job(key), "worker stop")
+                return kept, stats, trimmed
+            return align
+
+        plan = mock.patch.object(book_align, "plan_groups", lambda longform, should_stop=None:
+                                 self.plan(longform.em.shape[0]))
+        holder = [self.jobs(ContentModel())]
+        with plan, mock.patch.object(book_align, "align_group", recording(1, holder)):
+            holder[0].start(self.request)
+            holder[0]._job("book-1").thread.join(30)
+            holder[0].shutdown()
+        folder = self.media / "alignment" / "book-jobs" / "book-1"
+        self.assertTrue((folder / "groups" / "1.json").is_file())
+        self.assertFalse((folder / "groups" / "2.json").exists())
+        old_group = json.loads((folder / "groups" / "0.json").read_text())["stats"]["emissionsDigest"]
+
+        write_wav(Path(self.tracks[1]["audio"]), 25.0, seed=9)  # same duration, other samples
+        restarted = self.jobs(ContentModel())
+        with plan, mock.patch.object(book_align, "align_group", recording()):
+            self.assertEqual(restarted.resume_all(), ["book-1"])
+            self.assertEqual(self.wait(restarted)["state"], "done")
+            resumed = restarted.result("book-1")
+            fresh_jobs = self.jobs(ContentModel())
+            fresh_jobs.start({**self.request, "jobId": "book-2"})
+            self.assertEqual(self.wait(fresh_jobs, "book-2")["state"], "done")
+            fresh = fresh_jobs.result("book-2")
+        fresh_group = json.loads((self.media / "alignment" / "book-jobs" / "book-2" / "groups" / "0.json")
+                                 .read_text())["stats"]["emissionsDigest"]
+        self.assertNotEqual(old_group, fresh_group, "the new audio gives other emissions")
+        self.assertEqual(resumed["stats"]["emissionsDigest"], fresh["stats"]["emissionsDigest"],
+                         "every group of the resumed job was aligned on the new audio's emissions")
+        self.assertEqual(resumed["stats"]["groups"], 3)
 
     def test_cancel_during_the_encode_releases_everything(self):
         model = FakeModel()

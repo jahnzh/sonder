@@ -80,6 +80,15 @@ def words_in(text):
     return len(text.split())
 
 
+def emissions_key(metas):
+    """Identity of the book's emissions: every track's source hash and engine, in order, with its frames.
+
+    The concatenated emissions, the plan and the finished groups are all computed from these emissions and
+    carry this key; when any track changes they are invalidated together."""
+    parts = [{"index": m["index"], "identity": m.get("identity"), "frames": m["frames"]} for m in metas]
+    return hashlib.sha256(json.dumps(parts, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
 class Job:
     def __init__(self, key, folder, request, digest, state):
         self.key = key
@@ -460,9 +469,18 @@ class WorkerStages:
         groups_dir.mkdir(parents=True, exist_ok=True)
         emissions_dir = job.folder / "emissions"
         book_path = emissions_dir / "book.f16"
+        book_meta = emissions_dir / "book.json"
         started = time.monotonic()
         frames_total = sum(m["frames"] for m in metas)
-        if not book_path.is_file() or book_path.stat().st_size != frames_total * CLASSES * 2:
+        key = emissions_key(metas)
+        stored = read_json(book_meta) or {}
+        if (stored.get("emissionsKey") != key or not book_path.is_file()
+                or book_path.stat().st_size != frames_total * CLASSES * 2):
+            # Another set of emissions (a track changed): the old concatenation, plan and groups all go.
+            book_meta.unlink(missing_ok=True)
+            book_path.unlink(missing_ok=True)
+            for stale in groups_dir.glob("*.json"):
+                stale.unlink()
             temporary = emissions_dir / "book.f16.part"
             with temporary.open("wb") as out:
                 for meta in metas:
@@ -470,13 +488,14 @@ class WorkerStages:
                     with data.open("rb") as source:
                         shutil.copyfileobj(source, out, 1 << 20)
             temporary.replace(book_path)
+            write_json(book_meta, {"emissionsKey": key, "frames": frames_total})
         emissions = np.memmap(book_path, dtype=np.float16, mode="r").reshape(-1, CLASSES)
         session.emissions = emissions
         longform = book_align.LongForm(emissions, LABELS, sentences)
         job.timing("prepare", time.monotonic() - started)
         job.update(state="anchoring")
         plan = read_json(groups_dir / "plan.json")
-        if plan is None or plan.get("frames") != frames_total:
+        if plan is None or plan.get("emissionsKey") != key or plan.get("frames") != frames_total:
             started = time.monotonic()
             for stale in groups_dir.glob("*.json"):
                 stale.unlink()
@@ -484,17 +503,18 @@ class WorkerStages:
                 tasks, info = book_align.plan_groups(longform, should_stop)
             except book_align.Cancelled:
                 raise Stopped()
-            plan = {"frames": frames_total, "tasks": tasks, "anchors": info}
+            plan = {"frames": frames_total, "emissionsKey": key, "tasks": tasks, "anchors": info}
             write_json(groups_dir / "plan.json", plan)
             job.timing("anchor", time.monotonic() - started)
         tasks = plan["tasks"]
-        done = {t["index"] for t in tasks if (groups_dir / f"{t['index']}.json").is_file()}
+        done = {t["index"] for t in tasks
+                if (read_json(groups_dir / f"{t['index']}.json") or {}).get("emissionsKey") == key}
         job.update(state="aligning")
         job.progress(groupsTotal=len(tasks), groupsDone=len(done), anchors=plan["anchors"])
         todo = [t for t in tasks if t["index"] not in done]
         started = time.monotonic()
         if todo:
-            self._align_groups(job, session, longform, book_path, sentences, todo, groups_dir, done, should_stop)
+            self._align_groups(job, session, longform, book_path, sentences, todo, groups_dir, done, should_stop, key)
         job.timing("align", time.monotonic() - started)
         if should_stop():
             raise Stopped()
@@ -519,13 +539,15 @@ class WorkerStages:
             result["encode"] = job.state.get("encode")
         write_json(job.folder / "result.json", result)
 
-    def _align_groups(self, job, session, longform, book_path, sentences, todo, groups_dir, done, should_stop):
+    def _align_groups(self, job, session, longform, book_path, sentences, todo, groups_dir, done, should_stop,
+                      key=None):
         import book_align
         workers = self.align_workers()
 
         def save(task, intervals, stats, trimmed):
             write_json(groups_dir / f"{task['index']}.json",
-                       {"index": task["index"], "intervals": {str(k): list(v) for k, v in intervals.items()},
+                       {"index": task["index"], "emissionsKey": key,
+                        "intervals": {str(k): list(v) for k, v in intervals.items()},
                         "trimmed": {str(k): list(v) for k, v in trimmed.items()}, "stats": stats})
             done.add(task["index"])
             job.progress(groupsDone=len(done))
