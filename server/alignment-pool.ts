@@ -5,7 +5,6 @@ import { execFile } from "node:child_process";
 import { cpSync, mkdirSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
-import { z } from "zod";
 import type {
   AlignmentJob,
   AlignmentPoolHostId,
@@ -92,17 +91,6 @@ function hostNameFromSshTarget(sshTarget: string) {
   return at >= 0 ? sshTarget.slice(at + 1) : sshTarget;
 }
 
-const configuredHost = z.object({
-  id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/, "use letters, digits, - and _"),
-  sshTarget: z.string().min(1),
-  workerUrl: z.string().refine((url) => URL.canParse(url), "not a URL"),
-  device: z.string().min(1),
-  precision: z.string().min(1),
-  rank: z.number().int().optional(),
-  maxConcurrent: z.number().int().min(1).optional(),
-  remoteWorkRoot: z.string().min(1).optional(),
-}).strict();
-
 /**
  * The pool hosts, in rank order. `ALIGNMENT_POOL_HOSTS` (a JSON array of `{id, sshTarget, workerUrl, device,
  * precision, rank?, maxConcurrent?, remoteWorkRoot?}`) replaces the default, which is today's two hosts: WSL's GPU
@@ -114,7 +102,7 @@ export function defaultPoolHosts(): PoolHost[] {
     process.env.ALIGNMENT_POOL_REMOTE_ROOT ??
     "~/sonder-replication/alignment-pool";
   const raw = process.env.ALIGNMENT_POOL_HOSTS?.trim();
-  if (raw) return parsePoolHosts(raw, workRoot);
+  if (raw) return byRank(parsePoolHosts(raw, workRoot));
   const wslHost = process.env.ALIGNMENT_POOL_WSL_HOST ?? "192.168.1.119";
   const lisaHost = process.env.ALIGNMENT_POOL_LISA_HOST ?? "lisa";
   return [
@@ -145,6 +133,9 @@ export function defaultPoolHosts(): PoolHost[] {
   ];
 }
 
+const HOST_FIELDS = ["id", "sshTarget", "workerUrl", "device", "precision", "rank", "maxConcurrent", "remoteWorkRoot"];
+
+// Plain checks, no schema library: the deploy's image smoke loads this module on its own.
 function parsePoolHosts(raw: string, workRoot: string): PoolHost[] {
   let value: unknown;
   try {
@@ -152,19 +143,44 @@ function parsePoolHosts(raw: string, workRoot: string): PoolHost[] {
   } catch (error) {
     throw new Error(`ALIGNMENT_POOL_HOSTS is not JSON: ${(error as Error).message}`);
   }
-  const parsed = z.array(configuredHost).min(1).safeParse(value);
-  if (!parsed.success) {
-    const issue = parsed.error.issues[0];
-    throw new Error(`ALIGNMENT_POOL_HOSTS: ${issue.path.join(".") || "value"}: ${issue.message}`);
-  }
-  const ids = parsed.data.map((host) => host.id);
+  if (!Array.isArray(value) || !value.length) throw new Error("ALIGNMENT_POOL_HOSTS must be a non-empty JSON array of hosts.");
+  const hosts = value.map((entry: unknown, index): PoolHost => {
+    const at = `ALIGNMENT_POOL_HOSTS[${index}]`;
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error(`${at} is not an object.`);
+    const host = entry as Record<string, unknown>;
+    const unknown = Object.keys(host).find((key) => !HOST_FIELDS.includes(key));
+    if (unknown) throw new Error(`${at}.${unknown} is not a host setting.`);
+    const text = (key: string, optional = false) => {
+      const field = host[key];
+      if (field === undefined && optional) return undefined;
+      if (typeof field !== "string" || !field.trim()) throw new Error(`${at}.${key} must be a non-empty string.`);
+      return field;
+    };
+    const integer = (key: string, min: number) => {
+      const field = host[key];
+      if (field === undefined) return undefined;
+      if (typeof field !== "number" || !Number.isInteger(field) || field < min)
+        throw new Error(`${at}.${key} must be an integer of at least ${min}.`);
+      return field;
+    };
+    const id = text("id")!;
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(id)) throw new Error(`${at}.id may use only letters, digits, - and _.`);
+    const workerUrl = text("workerUrl")!;
+    if (!URL.canParse(workerUrl)) throw new Error(`${at}.workerUrl is not a URL.`);
+    return {
+      id,
+      sshTarget: text("sshTarget")!,
+      workerUrl,
+      device: text("device")!,
+      precision: text("precision")!,
+      rank: integer("rank", Number.MIN_SAFE_INTEGER) ?? index + 1,
+      maxConcurrent: integer("maxConcurrent", 1) ?? 1,
+      remoteWorkRoot: text("remoteWorkRoot", true) ?? workRoot,
+    };
+  });
+  const ids = hosts.map((host) => host.id);
   if (new Set(ids).size !== ids.length) throw new Error("ALIGNMENT_POOL_HOSTS: host ids must be unique.");
-  return parsed.data.map((host, index) => ({
-    ...host,
-    rank: host.rank ?? index + 1,
-    maxConcurrent: host.maxConcurrent ?? 1,
-    remoteWorkRoot: host.remoteWorkRoot ?? workRoot,
-  }));
+  return hosts;
 }
 
 /** Rank order, ties in configuration order. */
