@@ -75,8 +75,76 @@ class Check(unittest.TestCase):
         self.assertGreaterEqual(ranges[0][0], 120 * 50)
         self.assertLessEqual(ranges[-1][1], frames - 120 * 50)
         self.assertTrue(all(hi - lo == 60 * 50 for lo, hi in ranges))
-        self.assertEqual(book_match.sample_ranges(250 * 50), [(0, 60 * 50)])  # too short to keep the edges
-        self.assertEqual(book_match.sample_ranges(30 * 50), [(0, 30 * 50)])
+        # Exactly inspect_match.py's positions for every recording long enough for 24 samples between the edges.
+        for hours in (0.5, 1, 9.7, 33):
+            frames = int(hours * 3600 * 50)
+            usable = frames - 2 * 120 * 50 - 60 * 50
+            self.assertEqual(book_match.sample_ranges(frames),
+                             [(6000 + int(usable * (i + 0.5) / 24), 6000 + int(usable * (i + 0.5) / 24) + 3000)
+                              for i in range(24)])
+
+    def test_a_short_recording_is_sampled_over_its_whole_length(self):
+        # Fewer samples, spread the same way over the recording; never only its first minute.
+        for seconds in (90, 150, 240, 300, 600, 1200, 1500):
+            frames = seconds * 50
+            ranges = book_match.sample_ranges(frames)
+            self.assertGreaterEqual(len(ranges), 1, seconds)
+            self.assertLessEqual(len(ranges), 24, seconds)
+            self.assertTrue(all(hi - lo == 60 * 50 for lo, hi in ranges), (seconds, ranges))
+            self.assertTrue(all(0 <= lo and hi <= frames for lo, hi in ranges), (seconds, ranges))
+            if seconds >= 180:
+                self.assertGreater(len(ranges), 1, seconds)
+                # Spread over the recording: the last sample ends in its last quarter.
+                self.assertGreater(ranges[-1][1], frames * 3 // 4, (seconds, ranges))
+            starts = [lo for lo, _ in ranges]
+            self.assertEqual(starts, sorted(set(starts)), seconds)
+        self.assertEqual(len(book_match.sample_ranges(240 * 50)), 3)
+        self.assertEqual(len(book_match.sample_ranges(600 * 50)), 8)
+
+    def test_a_recording_too_short_for_one_sample_is_one_sample_of_all_of_it(self):
+        for seconds in (5, 30, 60, 70):
+            self.assertEqual(book_match.sample_ranges(seconds * 50), [(0, seconds * 50)], seconds)
+
+    def test_a_short_recording_with_a_spoken_introduction_matches(self):
+        # 240 s: a minute of an unrelated spoken introduction, then three minutes of this ebook's text.
+        rng = random.Random(5)
+        other = vocabulary(9)
+        intro_end = 60 * 50
+
+        def greedy_words(lo, hi):
+            words = []
+            for frame in range(lo, hi, 20):  # about 2.5 words a second
+                if frame < intro_end:
+                    words.append(rng.choice(other))
+                else:
+                    words.append(self.flat[(frame - intro_end) // 20])
+            return words
+
+        result = book_match.check(greedy_words, 240 * 50, self.book)
+        self.assertTrue(result["matches"], result)
+        self.assertGreater(result["score"], 0.5)
+        self.assertGreater(result["samples"], 1)
+
+    def test_short_sentences_match_as_the_heard_words_cross_them(self):
+        # An ebook of three-word sentences, narrated exactly: every heard 4-gram crosses a sentence boundary.
+        rng = random.Random(6)
+        book = [[rng.choice(self.words) for _ in range(3)] for _ in range(4000)]
+        flat = [w for sentence in book for w in sentence]
+
+        def greedy_words(lo, hi):
+            at = (lo // 3000) * 150 % (len(flat) - 150)
+            return flat[at:at + 150]
+
+        result = book_match.check(greedy_words, 1_000_000, book)
+        self.assertEqual(result["wordHit"], 1.0)
+        self.assertEqual(result["score"], 1.0, result)
+        self.assertTrue(result["matches"])
+        # 40 alternating three-word sentences and their exact concatenation (the review's probe).
+        two = [["THE", "OLD", "MAN"], ["SAW", "A", "DOG"]]
+        alternating = [two[k % 2] for k in range(40)]
+        heard = [w for sentence in alternating for w in sentence]
+        grams, vocabulary_ = book_match.book_vocabulary(alternating)
+        self.assertEqual(book_match.score([heard], grams, vocabulary_)["score"], 1.0)
 
     def test_a_stop_ends_the_check(self):
         self.assertIsNone(book_match.check(lambda lo, hi: [], 1_000_000, self.book, should_stop=lambda: True))

@@ -1,7 +1,7 @@
 """Text-match check of a whole-book job (#403, ADR 0016): is this ebook the recording's text at all?
 
-Runs in the book job after encoding and before alignment, on the job's own emissions. SAMPLES evenly
-spaced SAMPLE_SECONDS stretches of audio are decoded greedily; the score is the median share of their
+Runs in the book job after encoding and before alignment, on the job's own emissions. Up to SAMPLES
+evenly spaced SAMPLE_SECONDS stretches of audio (`sample_ranges`) are decoded greedily; the score is the median share of their
 heard word 4-grams found anywhere in the ebook (`scripts/arch-proto/books/inspect_match.py` on
 `jahnzh/ctc-arch-more-books-2`, PROTO-D-E-BOOKS.md "Method" 4). It needs no alignment, so a wrong book
 or an ebook in another language ends with the explicit TEXT_MISMATCH outcome instead of an empty map.
@@ -13,8 +13,10 @@ import statistics
 
 SAMPLES = 24
 SAMPLE_SECONDS = 60
-# Samples keep away from the first and last two minutes (credits, music) when the recording is long enough.
+# Samples keep away from the first and last two minutes (credits, music); a recording shorter than
+# EDGE_SECONDS * EDGE_SHARE keeps a 1 / EDGE_SHARE of its length at each end instead.
 EDGE_SECONDS = 120
+EDGE_SHARE = 10
 # A sample with fewer heard words is not speech (music, silence) and does not count.
 MIN_WORDS = 20
 # The median 4-gram hit below which the ebook is not the recording's text. Measured on the 2026-11-14 set
@@ -39,24 +41,31 @@ def ngrams(words, n=4):
 
 
 def sample_ranges(frames, samples=SAMPLES, seconds=SAMPLE_SECONDS, edge=EDGE_SECONDS):
-    """[lo, hi) frame ranges of the samples, as inspect_match.py: spread evenly between the edges when the
-    recording is longer than both edges and one sample, else one sample from the start."""
+    """[lo, hi) frame ranges of the samples, spread evenly between the edges (inspect_match.py's positions).
+
+    A recording with room for `samples` samples side by side between its edges (28 minutes and longer)
+    gets all of them, exactly where inspect_match.py puts them; a shorter one gets as many as fit there
+    side by side, spread the same way, so a spoken introduction is one sample of several, never the
+    whole check. A recording too short for one sample between its edges (under 75 s) is one sample of
+    all of it."""
     width = int(seconds * RATE / STRIDE)
-    margin = int(edge * RATE / STRIDE)
-    if frames <= 2 * margin + width:
-        return [(0, min(frames, width))]
-    usable = frames - 2 * margin - width
-    return [(margin + int(usable * (i + 0.5) / samples), margin + int(usable * (i + 0.5) / samples) + width)
-            for i in range(samples)]
+    margin = min(int(edge * RATE / STRIDE), frames // EDGE_SHARE)
+    room = frames - 2 * margin
+    if room < width:
+        return [(0, frames)]
+    count = min(samples, room // width)
+    usable = room - width
+    return [(margin + int(usable * (i + 0.5) / count), margin + int(usable * (i + 0.5) / count) + width)
+            for i in range(count)]
 
 
 def book_vocabulary(sentence_words):
-    """(the set of word 4-grams, the set of words) of the ebook, from each sentence's words."""
-    grams, vocabulary = set(), set()
-    for words in sentence_words:
-        vocabulary.update(words)
-        grams.update(ngrams(words))
-    return grams, vocabulary
+    """(the set of word 4-grams, the set of words) of the ebook, from each sentence's words in reading order.
+
+    The 4-grams run across sentence boundaries, as the heard ones do: an ebook of short sentences (three
+    words or fewer) has 4-grams only there (#403 review)."""
+    flat = [word for words in sentence_words for word in words]
+    return set(zip(flat, flat[1:], flat[2:], flat[3:])), set(flat)
 
 
 def score(heard_samples, grams, vocabulary):
