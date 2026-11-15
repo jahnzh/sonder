@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, primaryKey } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, primaryKey, index } from "drizzle-orm/sqlite-core";
 export const works = sqliteTable("works", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),
@@ -18,13 +18,13 @@ export const editions = sqliteTable("audio_editions", {
   narrator: text("narrator").notNull(),
   rating: real("rating").notNull(),
   sourceLabel: text("source_label").notNull(),
-});
+}, (t) => [index("audio_editions_work").on(t.workId)]);
 export const recordings = sqliteTable("recordings", {
   id: text("id").primaryKey(),
   editionId: text("edition_id")
     .notNull()
     .references(() => editions.id),
-});
+}, (t) => [index("recordings_edition").on(t.editionId)]);
 export const alignmentJobs = sqliteTable("alignment_jobs", {
   id: text("id").primaryKey(),
   ebookId: text("ebook_id").notNull().references(() => ebookEditions.id),
@@ -53,7 +53,7 @@ export const tracks = sqliteTable("tracks", {
   duration: real("duration").notNull().default(0),
   source: text("source").notNull(),
   sourceType: text("source_type").notNull(),
-});
+}, (t) => [index("tracks_recording").on(t.recordingId)]);
 export const library = sqliteTable("library", {
   bookId: text("book_id")
     .primaryKey()
