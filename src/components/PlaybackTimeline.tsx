@@ -62,7 +62,8 @@ export function PlaybackTimeline({
   const disabled = !actual || !length;
   const commit = (value: number, range = actual) => {
     if (!range) return;
-    onSeek?.(range.scope === "book" ? p.seekBook(value) : p.seekTrack(range.trackId, range.start + value));
+    const target = range.scope === "book" ? p.seekBook(value) : p.seekTrack(range.trackId, range.start + value);
+    onSeek?.(target);
   };
   const show = (value: number, timeline: Timeline, sensitivity: number) => {
     // Keep the native one-second thumb, timestamp and committed destination identical.
