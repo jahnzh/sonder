@@ -3,7 +3,9 @@
 // answers `/health` (with `bookJobs`), the four `/book-jobs` requests, and `/anchor` and `/align` for probes and the
 // window runner. SSH staging comes from `fake-pool-host.ts` (each host's directory stands in for its MEDIA_ROOT).
 // Switches per host: slow progress, a stage a job waits at, a job that fails, a restart that answers 503 and then
-// resumes (or forgets its jobs, so 404), a host that is down, a worker without whole-book jobs.
+// resumes (or forgets its jobs, so 404), a host that is down, a worker without whole-book jobs; a cancel held open
+// or failing, a start whose reply is lost, a status or result answered with an error, a body cut after its headers
+// or not JSON. Every upload into a file a job on the host reads is recorded.
 import { existsSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { resolve } from "node:path";
@@ -53,6 +55,29 @@ export type FakeBookHost = FakeHostState & {
   resultEngine: string;
   /** Runs before a whole-book request is answered. */
   onBook?: (method: string, path: string) => void | Promise<void>;
+  /** Every whole-book request this host sent an answer to (or cut or dropped), as "METHOD path", in order. */
+  answered: string[];
+  /** A cancel (DELETE) waits for this before it answers; the job keeps running until then, as a worker's does. */
+  holdCancel: Promise<void> | null;
+  /** The next n cancels answer 503 and leave the job running. */
+  cancelFails: number;
+  /** The next n starts create (or find) the job and then drop the connection: the reply is lost. */
+  loseStartReplies: number;
+  /** Status polls answer this HTTP status while it is set (the job is not advanced). */
+  statusAnswer: number | null;
+  /** Result fetches answer this HTTP status while it is set; the job keeps its result. */
+  resultAnswer: number | null;
+  /** The next n status polls (or result fetches) send their headers and a part of the body, then cut the connection. */
+  cutStatus: number;
+  cutResult: number;
+  /** The next n status polls answer 200 with a body that is not JSON. */
+  garbleStatus: number;
+  /** The next n status polls answer 200 with JSON that is not a progress answer. */
+  misshapeStatus: number;
+  /** Every upload's remote path, in order. */
+  uploads: string[];
+  /** Uploads into a file that a job on this host (running, or cancelled and not stopped yet) reads. */
+  uploadsIntoLiveJobs: string[];
 };
 
 export type FakeBookPool = {
@@ -77,6 +102,13 @@ const STAGE_SECONDS: Record<string, [string, number]> = {
 function send(response: ServerResponse, status: number, body: unknown) {
   response.writeHead(status, { "Content-Type": "application/json" });
   response.end(JSON.stringify(body));
+}
+
+/** The headers and the first bytes of the body, then the connection is cut: the reader fails after the headers. */
+function cut(response: ServerResponse, body: unknown) {
+  const text = JSON.stringify(body);
+  response.writeHead(200, { "Content-Type": "application/json", "Content-Length": String(Buffer.byteLength(text)) });
+  response.write(text.slice(0, 8), () => setTimeout(() => response.socket?.destroy(), 5));
 }
 
 async function readBody(request: IncomingMessage) {
@@ -143,6 +175,11 @@ function advance(host: FakeBookHost, job: FakeBookJob) {
 async function answerBook(host: FakeBookHost, method: string, path: string, raw: string, authorization: string | undefined, response: ServerResponse) {
   host.book.push(`${method} ${path}`);
   await host.onBook?.(method, path);
+  await answerBookRequest(host, method, path, raw, authorization, response);
+  host.answered.push(`${method} ${path}`);
+}
+
+async function answerBookRequest(host: FakeBookHost, method: string, path: string, raw: string, authorization: string | undefined, response: ServerResponse) {
   if (authorization !== `Bearer ${process.env.ALIGNMENT_WORKER_TOKEN}`)
     return send(response, 401, { detail: "Worker authentication required." });
   if (host.resuming > 0) {
@@ -160,32 +197,60 @@ async function answerBook(host: FakeBookHost, method: string, path: string, raw:
         return send(response, 400, { detail: "The audio must be on the configured media drive." });
     const identity = JSON.stringify(request);
     const existing = host.jobs.get(request.jobId);
-    if (existing) {
-      if (existing.identity !== identity) return send(response, 409, { detail: "This job id already holds another request." });
-      return send(response, 202, progress(existing));
-    }
+    if (existing && existing.identity !== identity) return send(response, 409, { detail: "This job id already holds another request." });
     const now = Date.now() / 1000;
-    const job: FakeBookJob = { jobId: request.jobId, request, identity, step: 0, polls: 0, failed: null,
+    const job: FakeBookJob = existing ?? { jobId: request.jobId, request, identity, step: 0, polls: 0, failed: null,
       failAt: host.failAt, resumed: 0, createdAt: now, updatedAt: now, stageTimings: {} };
     host.jobs.set(job.jobId, job);
+    if (host.loseStartReplies > 0) {
+      // The worker has the job; the server never hears so.
+      host.loseStartReplies--;
+      response.socket?.destroy();
+      return;
+    }
     return send(response, 202, progress(job));
   }
   const match = /^\/book-jobs\/([^/]+)(\/result)?$/.exec(path);
   const job = match && host.jobs.get(decodeURIComponent(match[1]));
   if (!match || !job) return send(response, 404, { detail: match ? "Unknown book job." : "Not Found" });
   if (method === "DELETE" && !match[2]) {
+    // The worker answers once the job's processes have stopped; until then the job still reads its files.
+    if (host.holdCancel) await host.holdCancel;
+    if (host.cancelFails > 0) {
+      host.cancelFails--;
+      return send(response, 503, { detail: "The worker could not stop the job." });
+    }
     host.jobs.delete(job.jobId);
     return send(response, 200, { jobId: job.jobId, engine: BOOK_ENGINE, state: "cancelled" });
   }
   if (method === "GET" && match[2]) {
+    if (host.resultAnswer !== null) return send(response, host.resultAnswer, { detail: "The result could not be read." });
     if (state(job) !== "done")
       return send(response, 409, { jobId: job.jobId, engine: BOOK_ENGINE, state: state(job), message: "The job has not finished." });
     // The fetch ends the job.
     host.jobs.delete(job.jobId);
+    if (host.cutResult > 0) {
+      host.cutResult--;
+      return cut(response, result(host, job));
+    }
     return send(response, 200, result(host, job));
   }
   if (method === "GET") {
+    if (host.statusAnswer !== null) return send(response, host.statusAnswer, { detail: "The worker cannot answer." });
     advance(host, job);
+    if (host.cutStatus > 0) {
+      host.cutStatus--;
+      return cut(response, progress(job));
+    }
+    if (host.garbleStatus > 0) {
+      host.garbleStatus--;
+      response.writeHead(200, { "Content-Type": "application/json" });
+      return response.end("{\"jobId\": ");
+    }
+    if (host.misshapeStatus > 0) {
+      host.misshapeStatus--;
+      return send(response, 200, { jobId: job.jobId, state: 7 });
+    }
     return send(response, 200, progress(job));
   }
   return send(response, 405, { detail: "Method Not Allowed" });
@@ -217,7 +282,9 @@ export async function fakeBookWorkers(
   for (const spec of specs) {
     const host = Object.assign(ssh.hosts[spec.id], {
       book: [], starts: [], jobs: new Map(), pollsPerStage: 1, holdAt: null, failAt: null, resuming: 0,
-      noBookJobs: false, mapShare: 1, resultEngine: BOOK_ENGINE,
+      noBookJobs: false, mapShare: 1, resultEngine: BOOK_ENGINE, answered: [], holdCancel: null, cancelFails: 0,
+      loseStartReplies: 0, statusAnswer: null, resultAnswer: null, cutStatus: 0, cutResult: 0, garbleStatus: 0, misshapeStatus: 0,
+      uploads: [], uploadsIntoLiveJobs: [],
     }) as FakeBookHost;
     hosts[spec.id] = host;
     const server = createServer((request, response) => {
@@ -247,9 +314,21 @@ export async function fakeBookWorkers(
     host.workerUrl = `http://127.0.0.2:${(server.address() as AddressInfo).port}`;
     servers.push(server);
   }
+  const deps: PoolSshDeps = {
+    ...ssh.deps,
+    async uploadFile(local, remote, target, options) {
+      const host = Object.values(hosts).find((candidate) => candidate.sshTarget === target);
+      if (host) {
+        host.uploads.push(remote);
+        if ([...host.jobs.values()].some((job) => job.request.tracks.some((track: any) => track.audio === remote)))
+          host.uploadsIntoLiveJobs.push(remote);
+      }
+      return ssh.deps.uploadFile(local, remote, target, options);
+    },
+  };
   return {
     hosts,
-    deps: ssh.deps,
+    deps,
     poolHosts: (ids = Object.keys(hosts)) => ids.map((id, index) => {
       const host = hosts[id];
       return { id, sshTarget: host.sshTarget, workerUrl: host.workerUrl, device: host.device, precision: host.precision,

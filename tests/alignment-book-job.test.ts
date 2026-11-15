@@ -35,6 +35,7 @@ const { currentAlignmentEngine } = await import("../server/alignment-rebuild.ts"
 const bookJob = await import("../server/alignment-book-job.ts");
 const { BOOK_POLL_MS, BOOK_WORKER_RESTART_WAIT_MS, bookWorkerJobId, setBookJobClockForTests } = bookJob;
 const { createCtcProbeSession } = await import("../server/ebook-set-ctc-session.ts");
+const { setBookWorkerTimeoutsForTests } = await import("../server/alignment-book-worker.ts");
 
 db.insert(schema.works).values({ id: "book-work", title: "Book", author: "Author", description: "", genre: "", year: 2026 }).run();
 db.insert(schema.ebookEditions).values({ id: "book-ebook", workId: "book-work", format: "epub", source: ebookPath }).run();
@@ -94,6 +95,7 @@ const polls = (hostId: string) => fake.hosts[hostId].book.filter((call) => /^GET
 
 beforeEach(async () => {
   process.env.ALIGNMENT_BOOK_JOBS = "1";
+  setBookWorkerTimeoutsForTests?.(null);
   resetAlignmentRunnerForTests();
   await install();
 });
@@ -554,4 +556,223 @@ test("a host that failed the job is not tried first again when the job waited in
   assert.equal(job.status, "partial", job.error ?? undefined);
   assert.equal(job.pool?.hostId, "lisa");
   assert.equal(fake.hosts.wsl.starts.length, 1, "WSL was not tried again");
+});
+
+// Review round 1 (#404): restart, cancel, result fetch, a job the worker may be running, broken bodies.
+
+/** The folder names retired for this job (#421): nothing stages into them again. */
+const retiredNames = (id: string) =>
+  (sqlite.prepare("SELECT name FROM alignment_pool_retired WHERE job_id=? ORDER BY name").all(id) as { name: string }[]).map((row) => row.name);
+
+test("after a server restart the worker's job is polled without staging: nothing is uploaded while it exists", async () => {
+  const created = await heldJob();
+  const workerJobId = bookWorkerJobId(created);
+  const uploads = fake.hosts.wsl.uploads.length;
+  await restartServer(() => { fake.hosts.wsl.holdAt = null; });
+  const job = await settled(created.id);
+  assert.equal(job.status, "partial", job.error ?? undefined);
+  assert.equal(fake.hosts.wsl.uploads.length, uploads, "the restarted run uploads nothing");
+  assert.deepEqual(fake.hosts.wsl.uploadsIntoLiveJobs, []);
+  assert.deepEqual(calls("wsl"), ["POST /book-jobs", `GET /book-jobs/${workerJobId}/result`]);
+  assert.equal(job.pool?.jobMediaRoot, join(fake.hosts.wsl.root, "alignment", "pool-jobs", created.id), "the staging stays recorded");
+});
+
+test("after a server restart a 404 for the worker's job stages the tracks again, after the poll and before the start", async () => {
+  const created = await heldJob();
+  const uploads = fake.hosts.wsl.uploads.length;
+  let atFirstPoll = -1, atStart = -1;
+  await restartServer(() => {
+    fake.restart("wsl", { keepJobs: false, resumingFor: 0 });
+    fake.hosts.wsl.holdAt = null;
+    fake.hosts.wsl.onBook = (method, path) => {
+      if (method === "GET" && !path.endsWith("/result") && atFirstPoll < 0) atFirstPoll = fake.hosts.wsl.uploads.length;
+      if (method === "POST" && atStart < 0) atStart = fake.hosts.wsl.uploads.length;
+    };
+  });
+  const job = await settled(created.id);
+  assert.equal(job.status, "partial", job.error ?? undefined);
+  assert.equal(atFirstPoll, uploads, "nothing is uploaded before the worker answers for its job");
+  assert.ok(atStart > uploads, "the 404 stages the tracks again before the start");
+  assert.deepEqual(fake.hosts.wsl.uploadsIntoLiveJobs, []);
+});
+
+test("a start whose reply was lost: after a server restart the worker's job is polled, not staged over or started again", async () => {
+  fake.hosts.wsl.loseStartReplies = 1_000_000;
+  const created = await anchoredJob();
+  const workerJobId = bookWorkerJobId(created);
+  await until(() => fake.hosts.wsl.jobs.has(workerJobId), "the worker has the job");
+  await restartServer(() => { fake.hosts.wsl.loseStartReplies = 0; });
+  const starts = fake.hosts.wsl.starts.length;
+  const job = await settled(created.id);
+  assert.equal(job.status, "partial", job.error ?? undefined);
+  assert.equal(job.pool?.hostId, "wsl");
+  assert.equal(fake.hosts.wsl.starts.length, starts, "the restarted run starts nothing");
+  assert.deepEqual(fake.hosts.wsl.uploadsIntoLiveJobs, []);
+  assert.deepEqual(fake.hosts.lisa.book, []);
+});
+
+test("pause and cancel wait for the worker's answer to the cancel before the lease is released", async () => {
+  for (const action of ["pause", "cancel"] as const) {
+    await install();
+    const created = await heldJob();
+    const workerJobId = bookWorkerJobId(created);
+    let answer!: () => void;
+    fake.hosts.wsl.holdCancel = new Promise((resolve) => { answer = resolve; });
+    transition[action](alignmentJob(created.id));
+    await until(() => fake.hosts.wsl.book.includes(`DELETE /book-jobs/${workerJobId}`), `${action}: cancel sent`);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assert.ok(leaseHeld(created.id), `${action}: the lease is held while the worker stops its job`);
+    assert.ok(alignmentSchedulerForTests().running().includes(created.id), `${action}: the run has not returned`);
+    answer();
+    const job = await settled(created.id, [action === "pause" ? "paused" : "cancelled"]);
+    assert.equal(fake.hosts.wsl.jobs.size, 0, action);
+    assert.equal(slotsHeld(), 0, action);
+    assert.deepEqual(retiredNames(created.id), [], `${action}: a cancel that succeeded retires nothing`);
+    assert.equal(job.poolErrors?.wsl, undefined, action);
+  }
+});
+
+test("a cancel answered 404 (the worker no longer has the job) is a success: nothing is retired or recorded", async () => {
+  const created = await heldJob();
+  const workerJobId = bookWorkerJobId(created);
+  fake.hosts.wsl.onBook = (method) => { if (method === "DELETE") fake.hosts.wsl.jobs.clear(); };
+  transition.pause(alignmentJob(created.id));
+  const paused = await settled(created.id, ["paused"]);
+  assert.ok(calls("wsl").includes(`DELETE /book-jobs/${workerJobId}`));
+  assert.deepEqual(retiredNames(created.id), []);
+  assert.equal(paused.poolErrors?.wsl, undefined);
+  fake.hosts.wsl.holdAt = null;
+  transition.resume(alignmentJob(created.id));
+  void processAlignments();
+  const job = await settled(created.id);
+  assert.equal(job.status, "partial", job.error ?? undefined);
+  assert.equal(job.pool?.jobMediaRoot, join(fake.hosts.wsl.root, "alignment", "pool-jobs", created.id), "the folder is used again");
+});
+
+test("a cancel that fails or does not answer in time: the lease is released, the failure recorded, the next run stages under a new name", async () => {
+  for (const [label, breakCancel] of [
+    ["503", () => { fake.hosts.wsl.cancelFails = 1; }],
+    ["timeout", () => { fake.hosts.wsl.holdCancel = new Promise(() => {}); setBookWorkerTimeoutsForTests({ cancel: 50 }); }],
+  ] as const) {
+    await install();
+    const created = await heldJob();
+    const firstId = bookWorkerJobId(created);
+    breakCancel();
+    transition.pause(alignmentJob(created.id));
+    const paused = await settled(created.id, ["paused"]);
+    setBookWorkerTimeoutsForTests(null);
+    assert.equal(slotsHeld(), 0, `${label}: the lease is released`);
+    assert.ok(calls("wsl").includes(`DELETE /book-jobs/${firstId}`), label);
+    assert.ok(fake.hosts.wsl.jobs.has(firstId), `${label}: the worker's job may still be running`);
+    assert.match(paused.poolErrors?.wsl ?? "", /cancel/i, `${label}: recorded with the job's pool state`);
+    assert.deepEqual(retiredNames(created.id), [created.id], `${label}: the run's folder name is retired`);
+
+    // Resume: the job still running on the worker reads the old folder, so the new run stages under a new name.
+    fake.hosts.wsl.holdAt = null;
+    fake.hosts.wsl.holdCancel = null;
+    transition.resume(alignmentJob(created.id));
+    void processAlignments();
+    const job = await settled(created.id);
+    assert.equal(job.status, "partial", `${label}: ${job.error}`);
+    assert.equal(job.pool?.jobMediaRoot, join(fake.hosts.wsl.root, "alignment", "pool-jobs", `${created.id}.r1`), label);
+    assert.deepEqual(fake.hosts.wsl.uploadsIntoLiveJobs, [], `${label}: nothing is uploaded into the old folder`);
+  }
+});
+
+test("a cancelled job whose cancel fails releases its lease and retires its folder name", async () => {
+  const created = await heldJob();
+  fake.hosts.wsl.cancelFails = 1;
+  transition.cancel(alignmentJob(created.id));
+  await settled(created.id, ["cancelled"]);
+  assert.equal(slotsHeld(), 0);
+  assert.deepEqual(retiredNames(created.id), [created.id]);
+});
+
+test("a result that cannot be fetched while the status says done: after the bound the host has failed for this job", async () => {
+  for (const status of [503, 409]) {
+    await install();
+    fake.hosts.wsl.resultAnswer = status;
+    let doneAt = 0, failedOverAt = 0;
+    fake.hosts.wsl.onBook = (method, path) => { if (method === "GET" && path.endsWith("/result") && !doneAt) doneAt = now; };
+    fake.hosts.lisa.onBook = (method) => { if (method === "POST" && !failedOverAt) failedOverAt = now; };
+    const job = await settled((await anchoredJob()).id);
+    assert.equal(job.status, "partial", `${status}: ${job.error}`);
+    assert.equal(job.pool?.hostId, "lisa", String(status));
+    assert.ok(failedOverAt - doneAt >= BOOK_WORKER_RESTART_WAIT_MS, `${status}: waited the bound`);
+    assert.ok(failedOverAt - doneAt < BOOK_WORKER_RESTART_WAIT_MS + 3 * BOOK_POLL_MS, `${status}: and not much longer`);
+    assert.ok(calls("wsl").some((call) => call.startsWith("DELETE")), `${status}: the job on the failed host is cancelled`);
+  }
+});
+
+test("a start whose reply was lost is cancelled on pause", async () => {
+  fake.hosts.wsl.loseStartReplies = 1_000_000;
+  const created = await anchoredJob();
+  const workerJobId = bookWorkerJobId(created);
+  await until(() => fake.hosts.wsl.jobs.has(workerJobId), "the worker has the job");
+  transition.pause(alignmentJob(created.id));
+  await settled(created.id, ["paused"]);
+  assert.ok(calls("wsl").includes(`DELETE /book-jobs/${workerJobId}`));
+  assert.equal(fake.hosts.wsl.jobs.size, 0);
+});
+
+test("fallback after a lost start reply: the first host's job is cancelled, and answered, before the second host starts", async () => {
+  fake.hosts.wsl.loseStartReplies = 1_000_000;
+  fake.hosts.wsl.holdCancel = new Promise((resolve) => setTimeout(resolve, 200));
+  let cancelAnswered: boolean | null = null;
+  fake.hosts.lisa.onBook = (method) => {
+    if (method === "POST" && cancelAnswered === null) cancelAnswered = fake.hosts.wsl.answered.some((call) => call.startsWith("DELETE"));
+  };
+  const job = await settled((await anchoredJob()).id);
+  assert.equal(job.status, "partial", job.error ?? undefined);
+  assert.equal(job.pool?.hostId, "lisa");
+  assert.equal(cancelAnswered, true, "lisa started only after WSL answered the cancel");
+  assert.equal(fake.hosts.wsl.jobs.size, 0);
+});
+
+test("a terminal failure on the last host cancels the worker's job before the job fails", async () => {
+  await install(["wsl"]);
+  const created = await heldJob();
+  fake.hosts.wsl.statusAnswer = 400;
+  const job = await settled(created.id);
+  assert.equal(job.status, "error");
+  assert.match(job.error ?? "", /refused/);
+  assert.ok(calls("wsl").includes(`DELETE /book-jobs/${bookWorkerJobId(created)}`));
+  assert.equal(fake.hosts.wsl.jobs.size, 0, "the worker's job was cancelled before the lease was released");
+});
+
+test("after a server restart on another host the first host's job is cancelled before the second starts", async () => {
+  const created = await heldJob();
+  const workerJobId = bookWorkerJobId(created);
+  let cancelAnswered: boolean | null = null;
+  fake.hosts.lisa.onBook = (method) => {
+    if (method === "POST" && cancelAnswered === null) cancelAnswered = fake.hosts.wsl.answered.includes(`DELETE /book-jobs/${workerJobId}`);
+  };
+  await restartServer(() => { fake.hosts.wsl.busy = true; });
+  const job = await settled(created.id);
+  assert.equal(job.status, "partial", job.error ?? undefined);
+  assert.equal(job.pool?.hostId, "lisa");
+  assert.equal(cancelAnswered, true);
+  assert.equal(fake.hosts.wsl.jobs.size, 0);
+});
+
+test("a status or result body cut after its headers, not JSON or not a progress answer, is a failed answer: the job continues on its host", async () => {
+  fake.hosts.wsl.cutStatus = 2;
+  fake.hosts.wsl.garbleStatus = 1;
+  fake.hosts.wsl.misshapeStatus = 1;
+  fake.hosts.wsl.cutResult = 1;
+  const job = await settled((await anchoredJob()).id);
+  assert.equal(job.status, "partial", job.error ?? undefined);
+  assert.equal(job.pool?.hostId, "wsl");
+  // The cut result was consumed: the worker no longer has the job, so it ran again there.
+  assert.equal(fake.hosts.wsl.starts.length, 2);
+  assert.deepEqual(fake.hosts.lisa.book, []);
+});
+
+test("a host whose status bodies stay unreadable has failed for this job after the bound", async () => {
+  const created = await heldJob();
+  fake.hosts.wsl.cutStatus = 1_000_000;
+  fake.hosts.wsl.holdAt = null;
+  const job = await settled(created.id);
+  assert.equal(job.status, "partial", job.error ?? undefined);
+  assert.equal(job.pool?.hostId, "lisa");
 });

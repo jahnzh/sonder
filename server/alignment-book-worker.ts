@@ -53,7 +53,8 @@ export type BookResult = z.infer<typeof bookResult>;
 
 /**
  * How the worker answered: `ok` with its body; `unknown` (404, no such job); `unavailable` (no answer, a 503 while
- * it resumes after a restart, or another server error); `conflict` (409); `refused` (any other 4xx, and 507).
+ * it resumes after a restart, another server error, or a successful answer whose body could not be read as JSON:
+ * cut after its headers or malformed); `conflict` (409); `refused` (any other 4xx, and 507).
  */
 export type BookAnswer =
   | { kind: "ok"; body: unknown }
@@ -64,6 +65,11 @@ export type BookAnswer =
 
 /** Per request: a start sends up to 32 MiB, a cancel waits up to about 40 s for the job to stop, a result can be large. */
 const TIMEOUT_MS = { start: 120_000, status: 30_000, cancel: 90_000, result: 300_000 };
+let timeouts = { ...TIMEOUT_MS };
+/** Tests: shorter bounds for some requests (a cancel the worker never answers); null restores them. */
+export function setBookWorkerTimeoutsForTests(next: Partial<typeof TIMEOUT_MS> | null) {
+  timeouts = { ...TIMEOUT_MS, ...next };
+}
 
 async function detail(response: Response) {
   const text = await response.text().catch((error: unknown) => `(no body: ${(error as Error).message})`);
@@ -97,7 +103,14 @@ async function call(
     const cause = error instanceof Error && error.cause instanceof Error ? `: ${error.cause.message}` : "";
     return { kind: "unavailable", reason: `${error instanceof Error ? error.message : String(error)}${cause}` };
   }
-  if (response.ok) return { kind: "ok", body: await response.json() };
+  if (response.ok) {
+    try {
+      return { kind: "ok", body: await response.json() };
+    } catch (error) {
+      // The headers said yes, the body is cut or not JSON: no answer from this host, under the same bound.
+      return { kind: "unavailable", reason: `HTTP ${response.status} with a body that could not be read: ${(error as Error).message}` };
+    }
+  }
   const reason = `HTTP ${response.status}: ${await detail(response)}`;
   if (response.status === 404) return { kind: "unknown" };
   if (response.status === 409) return { kind: "conflict", reason };
@@ -108,8 +121,8 @@ async function call(
 const jobPath = (jobId: string) => `/book-jobs/${encodeURIComponent(jobId)}`;
 
 export const bookWorker = {
-  start: (workerUrl: string, request: BookStartRequest) => call(workerUrl, "POST", "/book-jobs", TIMEOUT_MS.start, request),
-  status: (workerUrl: string, jobId: string) => call(workerUrl, "GET", jobPath(jobId), TIMEOUT_MS.status),
-  cancel: (workerUrl: string, jobId: string) => call(workerUrl, "DELETE", jobPath(jobId), TIMEOUT_MS.cancel),
-  result: (workerUrl: string, jobId: string) => call(workerUrl, "GET", `${jobPath(jobId)}/result`, TIMEOUT_MS.result),
+  start: (workerUrl: string, request: BookStartRequest) => call(workerUrl, "POST", "/book-jobs", timeouts.start, request),
+  status: (workerUrl: string, jobId: string) => call(workerUrl, "GET", jobPath(jobId), timeouts.status),
+  cancel: (workerUrl: string, jobId: string) => call(workerUrl, "DELETE", jobPath(jobId), timeouts.cancel),
+  result: (workerUrl: string, jobId: string) => call(workerUrl, "GET", `${jobPath(jobId)}/result`, timeouts.result),
 };

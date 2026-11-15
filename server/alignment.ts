@@ -1258,7 +1258,7 @@ type RunLease = { lease: WorkerLease | null };
  */
 async function leaseWorker(
   job: AlignmentJob, tracks: ReturnType<typeof recordingContext>["tracks"], run: RunLease,
-  options: Pick<WorkerLeaseRequest, "book" | "firstHost"> = {},
+  options: Pick<WorkerLeaseRequest, "book" | "firstHost" | "unstagedFirstHost"> = {},
 ) {
   try {
     if (run.lease) await run.lease.failover();

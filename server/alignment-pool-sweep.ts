@@ -44,6 +44,18 @@ export function stagingNameRetired(name: string) {
 }
 setRetiredStagingNameCheck(stagingNameRetired);
 
+/**
+ * Retires a folder name without removing anything (#404): a whole-book job the server could not cancel may still be
+ * reading the folder, so no later staging of the job uses that name again (`stagingName` picks `<id>.r<n>`). A run
+ * of the sweep then treats the folder like any retired one: it removes it once no lease or run of the job is live
+ * and its recording is free, which can only cut short the worker job that was being cancelled.
+ */
+export function retireStagingName(name: string, jobId: string, recordingId: string) {
+  if (!STAGING_NAME.test(name)) return;
+  sqlite.prepare("INSERT OR IGNORE INTO alignment_pool_retired(name,job_id,recording_id,retired_at) VALUES(?,?,?,?)")
+    .run(name, jobId, recordingId, Date.now());
+}
+
 export const POOL_SWEEP_LIST_TIMEOUT_MS = 30_000;
 export const POOL_SWEEP_REMOVE_TIMEOUT_MS = 60_000;
 let timeouts = { listMs: POOL_SWEEP_LIST_TIMEOUT_MS, removeMs: POOL_SWEEP_REMOVE_TIMEOUT_MS };

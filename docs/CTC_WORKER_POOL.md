@@ -741,32 +741,58 @@ worker under one worker lease. Unset, nothing of the window runner changes.
   stored map by `applyBookResult` and published with `publish`, so the #379
   rule keeps a better kept map. The map records the engine the result names,
   which must be the whole-book engine.
-* **Pause, cancel, a new plan, a deleted row.** The run cancels the worker's
-  job (`DELETE`) and ends; the lease is released (retryable for a pause).
-  Resume is a new generation and therefore a new worker job that starts from
-  nothing: the worker's decoded audio, emissions and finished groups are lost.
-  That is the cost of the stored job never saying "paused" while the worker
-  still works on it, and of a paused job holding no host slot.
+* **A job the worker may be running.** From the moment the start is sent,
+  the worker's job counts as possibly existing until a 404 for its id says
+  otherwise: a lost start reply changes nothing. The run stores `bookJob` with
+  state `starting` before it sends the start, so a server that stops before the
+  reply polls that id after its restart. Every end of the run on a host except a
+  server stop and a published result (pause, cancel, a new plan, a deleted row,
+  a failed host before the fallback, a refused start, every terminal failure)
+  first sends the cancel (`DELETE`) for that id on that host and waits for the
+  answer, within the cancel's 90 s bound; a 404 is success. Only then does the
+  run end and the lease go back.
+* **A cancel that fails or times out.** The lease is still released, so the
+  stored job becomes paused, cancelled or moves on as asked. The failure is
+  logged, written to the job's `poolErrors` for that host (while the job is
+  active or paused; a cancelled job cannot be written), and the name of the
+  folder the job staged on that host is retired (`retireStagingName`, the #421
+  table). The worker's job may still be reading that folder, so the job's next
+  run stages under `<id>.r<n>`, on every host. A probe never touches that
+  folder: it stages and removes only its own. The sweep removes a retired
+  folder once no lease or run of its job is live; that can only cut short the
+  worker job the server already gave up, whose result is never fetched.
+* **Pause and resume.** Resume is a new generation and therefore a new worker
+  job that starts from nothing: the worker's decoded audio, emissions and
+  finished groups are lost. That is the cost of the stored job never saying
+  "paused" while the worker still works on it, and of a paused job holding no
+  host slot. A pause keeps the host slot until the worker has answered the
+  cancel (at most 90 s).
 * **Server restart.** A stopping server does not cancel the worker's job. The
-  next process's run of the same generation leases the stored host first and
-  polls the stored id; when the worker answers 404 (it lost or ended the job,
-  for example after 15 idle minutes), the job is started again there. A result
-  the server fetched but did not publish before it stopped is gone, and the job
-  runs again.
-* **Worker restart.** A worker that answers 503 (it still picks up its
-  retained jobs) or does not answer is waited for, polling every 5 s, up to
-  `BOOK_WORKER_RESTART_WAIT_MS` (5 minutes). After that, or when the job
-  fails on the worker, the result cannot be read, names another engine, or the
-  worker lost the job more than three times, the host has failed for this job:
-  the run cancels the job there if it still answers and moves to the next host
-  once, as the window runner does; with no host left the job fails with the
-  reason. A start answered 413 or 422 fails the job at once; 400, 401 and 507
-  count as a failed host. A 409 at start is answered by one cancel and a new
-  start (the same id with another request), then waited for.
+  next process's run of the same generation leases the stored host first
+  (`firstHost`) without staging (`unstagedFirstHost`): it holds the slot and the
+  recording and uploads nothing while the worker's job exists, and polls the
+  stored id. Only when the worker answers 404 (it lost or ended the job, for
+  example after 15 idle minutes) are the tracks staged again
+  (`WorkerLease.stageTracks`) and the job started again there. When the stored
+  host cannot be leased, the job's worker job there is cancelled before the
+  other host starts it. A result the server fetched but did not publish before
+  it stopped is gone, and the job runs again.
+* **Worker restart and failed answers.** A worker that answers 503 (it still
+  picks up its retained jobs), does not answer, or answers 2xx with a body that
+  cannot be read or is not a progress answer, is waited for, polling every 5 s,
+  up to `BOOK_WORKER_RESTART_WAIT_MS` (5 minutes). A status of `done` whose
+  result fetch then fails (no answer, 409, 5xx, a cut body) does not restart that
+  clock. After the bound, or when the job fails on the worker, the result cannot
+  be read, names another engine, or the worker lost the job more than three
+  times, the host has failed for this job: the run cancels the job there and
+  moves to the next host once, as the window runner does; with no host left the
+  job fails with the reason. A start answered 413 or 422 fails the job at once;
+  400, 401 and 507 count as a failed host. A 409 at start is answered by one
+  cancel and a new start (the same id with another request), then waited for.
 * **Not done here.** The text-match outcome, unsynced passages and extra-audio
-  flags arrive with #403; `applyBookResult` is where they go. A re-staging after
-  a server restart uploads the tracks again into the folder the running worker
-  job reads.
+  flags arrive with #403; `applyBookResult` is where they go. A run that ends by
+  an exception (another process took the job over, a closed database) sends no
+  cancel: after a takeover the other process polls the same worker job.
 
 Tests: `tests/alignment-book-job.test.ts` against the fake whole-book worker
 `tests/fake-book-worker.ts` (real HTTP on 127.0.0.2, fake SSH staging).
