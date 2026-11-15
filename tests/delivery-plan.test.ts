@@ -306,7 +306,7 @@ function loadFromPlan(plan: DeliveryPlan, complete: boolean): LegacyLoad {
         "This device copy is incomplete. Remove it and download it again, or choose another source.",
     };
   if (step.source === "device")
-    return { plays: "device", show: "device", notice: rememberedNotice(plan, step) };
+    return { plays: "device", show: shownFor(step) as "device", notice: rememberedNotice(plan, step) };
   return {
     plays: "stream",
     query: step.request === "auto" ? "" : `?source=${step.request}`,
@@ -468,7 +468,11 @@ test("plan: an unreachable stream goes to the device copy exactly when it did be
         ? legacyRecovers(step.request as "server" | "original", now.download, now.deviceFault)
         : false;
       assert.equal(!!switched, before, JSON.stringify({ step, now }));
-      if (switched) assert.deepEqual(switched, { source: "device" });
+      // recoverOnDevice shows the step it switched to.
+      if (switched) {
+        assert.deepEqual(switched, { source: "device" });
+        assert.equal(shownFor(switched), "device");
+      }
       seen.add(`${step.request}:${step.recover}:${!!switched}`);
     }
   // Every kind of stream the plan produces was compared.
