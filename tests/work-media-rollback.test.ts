@@ -328,6 +328,19 @@ test("an acquisition status other than ready leaves the hold in place", () => {
   assert.equal(getWorkMediaState(1, "w")?.holdReason, "empty_search");
 });
 
+test("an acquisition started without a work clears the hold of the work its imported book belongs to", () => {
+  addWork("w");
+  db.insert(s.users).values({ id: 2, username: "second", role: "user", createdAt: 1 } as never).onConflictDoNothing().run();
+  markWorkEmptySearch(1, "w");
+  setWorkMediaHold(2, "w", "unreleased");
+  // Added through the plain acquire route: no work id on the acquisition. The import resolves the work.
+  const id = start([1, 2], null);
+  addAudio("w");
+  setAcquisitionStatus(id, "ready", { bookId: "e-w", updatedAt: ++clock });
+  assert.equal(getWorkMediaState(1, "w")?.holdReason, null, "the first user's hold is cleared");
+  assert.equal(getWorkMediaState(2, "w")?.holdReason, null, "and the second user's, who never opened the work");
+});
+
 test("reading media states writes nothing, also for a playable work with a stored hold", () => {
   addWork("w");
   addWork("q");

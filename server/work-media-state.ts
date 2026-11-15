@@ -87,8 +87,10 @@ export function setWorkMediaHold(
 
 /**
  * The acquisition reached `ready`: clear the hold reason of its work for every user of the
- * acquisition, also users who never read the work while its audio was there. Called by
- * `setAcquisitionStatus`, inside the status write's transaction.
+ * acquisition, also users who never read the work while its audio was there. The work is
+ * the one the acquisition was started for and the one its imported book belongs to: an
+ * acquisition started without a work id is matched to an existing work only at import.
+ * Called by `setAcquisitionStatus`, inside the status write's transaction.
  */
 export function clearWorkMediaHoldsOfAcquisition(acquisitionId: string) {
   sqlite
@@ -97,9 +99,14 @@ export function clearWorkMediaHoldsOfAcquisition(acquisitionId: string) {
        WHERE hold_reason IS NOT NULL AND (user_id,work_id) IN (
          SELECT u.user_id,a.work_id FROM user_acquisitions u
            JOIN acquisitions a ON a.id=u.acquisition_id
-         WHERE a.id=? AND a.work_id IS NOT NULL)`,
+         WHERE a.id=? AND a.work_id IS NOT NULL
+         UNION
+         SELECT u.user_id,e.work_id FROM user_acquisitions u
+           JOIN acquisitions a ON a.id=u.acquisition_id
+           JOIN audio_editions e ON e.id=a.book_id
+         WHERE a.id=?)`,
     )
-    .run(Date.now(), acquisitionId);
+    .run(Date.now(), acquisitionId, acquisitionId);
 }
 
 /**
