@@ -8,9 +8,11 @@ import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
+from starlette.concurrency import run_in_threadpool
 from deadline import AlignmentTimeout, Gate, WorkerBusy, worker_slots
 from ctc_acoustic import ENGINE as CTC_ENGINE, checkpoint_path
 from ctc_pipeline import align_ctc_batch_locate, align_ctc_section, shutdown_locate_pool
@@ -295,11 +297,36 @@ class BookJobRequest(BaseModel):
     sentences: list[BookSentence] = Field(min_length=1, max_length=200000)
     tracks: list[BookTrack] = Field(min_length=1, max_length=2000)
 
+# The largest request of the 2026-11-14 set is 7.8 MB (an ebook of the complete works, 71,225 sentences);
+# the 33 h book's is 2.9 MB. 32 MiB is four times the largest, and about the size of a request at the
+# model's limit of 200,000 sentences of that book's average length. Anything larger is refused unread.
+BOOK_REQUEST_MAX_BYTES = 32 * 1024 * 1024
+
+
 def _book_auth(authorization):
     token = os.environ.get("ALIGNMENT_WORKER_TOKEN", "")
     supplied = (authorization or "").removeprefix("Bearer ").strip()
     if not token or not secrets.compare_digest(supplied, token):
         raise HTTPException(401, "Worker authentication required.")
+
+
+async def _book_request_body(request: Request):
+    """The body, read only after the token check and never past BOOK_REQUEST_MAX_BYTES."""
+    limit = BOOK_REQUEST_MAX_BYTES
+    too_large = HTTPException(413, f"A book request may have at most {limit} bytes.")
+    declared = request.headers.get("content-length")
+    if declared is not None:
+        try:
+            if int(declared) > limit:
+                raise too_large
+        except ValueError:
+            raise HTTPException(400, "Invalid Content-Length.")
+    body = bytearray()
+    async for chunk in request.stream():  # also bounds a chunked body without a Content-Length
+        body += chunk
+        if len(body) > limit:
+            raise too_large
+    return bytes(body)
 
 def _media_ready():
     expected = os.environ.get("MEDIA_VOLUME_ID")
@@ -308,8 +335,18 @@ def _media_ready():
         raise HTTPException(503, "The media drive is unavailable.")
 
 @app.post("/book-jobs", status_code=202)
-def start_book_job(request: BookJobRequest, authorization: str | None = Header(default=None)):
-    _book_auth(authorization)
+async def start_book_job(request: Request):
+    # The body is not a declared parameter: FastAPI would read and parse all of it before the token check.
+    _book_auth(request.headers.get("authorization"))
+    raw = await _book_request_body(request)
+    try:
+        parsed = BookJobRequest.model_validate_json(raw)
+    except ValidationError as error:
+        raise RequestValidationError([{**e, "loc": ("body", *e["loc"])} for e in error.errors(include_url=False, include_input=False)])
+    return await run_in_threadpool(_start_book_job, parsed)
+
+
+def _start_book_job(request: BookJobRequest):
     _media_ready()
     body = request.model_dump()
     for track in body["tracks"]:
