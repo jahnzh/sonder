@@ -79,7 +79,8 @@ async function until(condition: () => boolean) {
   assert.ok(condition(), "condition not reached");
 }
 
-const leaseHeld = (id: string) => ["wsl", "lisa"].some((host) => getAlignmentPoolCoordinator().hasJobLease(host, id));
+const hostIds = () => getAlignmentPoolCoordinator().listHosts().map((host) => host.id);
+const leaseHeld = (id: string) => hostIds().some((host) => getAlignmentPoolCoordinator().hasJobLease(host, id));
 /** A job a test left paused or interrupted must not run again in a later test. */
 function endInterrupted(id: string) {
   sqlite.prepare("UPDATE alignment_jobs SET claim_owner=NULL WHERE id=?").run(id);
@@ -225,6 +226,41 @@ test("a job releases its host slot on every exit: published, failed on both host
       endInterrupted(created.id);
     }
   }
+});
+
+test("a failing job tries one other host and then fails, however many hosts are configured", async () => {
+  const threeHosts = [
+    { id: "wsl", device: "cuda", precision: "float16" },
+    { id: "lisa", device: "cpu", precision: "float32" },
+    { id: "third", device: "cpu", precision: "float32" },
+  ];
+  install(threeHosts);
+  for (const host of Object.values(fake.hosts)) host.failRequests = 1;
+  const failed = await settled((await chapterJob()).id);
+  assert.equal(failed.status, "error");
+  assert.deepEqual(failed.pool?.triedHosts, ["wsl", "lisa"]);
+  assert.deepEqual(fake.hosts.wsl.requests, ["/align"]);
+  assert.deepEqual(fake.hosts.lisa.requests, ["/align"]);
+  assert.deepEqual(fake.hosts.third.requests, [], "no second retry on the third host");
+  assert.deepEqual(fake.stagedFolders("third"), []);
+
+  // The same when the retry's host fails to stage: the round is over, the third host is not tried.
+  install(threeHosts);
+  fake.hosts.wsl.failRequests = 1;
+  const upload = fake.deps.uploadFile;
+  let lisaUploads = 0;
+  fake.deps.uploadFile = async (local, remote, target, options) => {
+    if (target === fake.hosts.lisa.sshTarget) {
+      lisaUploads++;
+      throw new Error("scp: disk full");
+    }
+    return upload(local, remote, target, options);
+  };
+  const unstaged = await settled((await chapterJob()).id);
+  assert.equal(unstaged.status, "error");
+  assert.equal(lisaUploads, 1, "the retry went to lisa and failed to stage");
+  assert.deepEqual(fake.hosts.third.requests, []);
+  assert.deepEqual(fake.stagedFolders("third"), []);
 });
 
 test("a finished job removes its staged tracks from every host it staged on", async () => {

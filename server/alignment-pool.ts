@@ -73,6 +73,12 @@ export type StageTracksInput = {
 const POOL_FAILURE_MESSAGE =
   "Remote alignment failed on all pool hosts. Resume to retry.";
 
+/**
+ * Hosts a job tries per round, however many are configured: the first, then one retry on another host. Resume
+ * starts a new round. Probes are not capped here; their session caps its own retries.
+ */
+const JOB_HOST_ATTEMPTS = 2;
+
 export function poolEnabled() {
   return process.env.ALIGNMENT_POOL_ENABLED === "1";
 }
@@ -606,7 +612,7 @@ export type WorkerLease = {
   readonly assignment: AlignmentJobPoolState;
   /** Why hosts were skipped, by host. */
   readonly poolErrors: AlignmentJob["poolErrors"];
-  /** A configured host is left that this work has not tried. */
+  /** A configured host is left that this work has not tried, and a job has not used its one retry yet. */
   readonly canFailover: boolean;
   /**
    * Frees this host and takes the next untried one, staging the tracks there again; the audio staged here is kept
@@ -653,6 +659,7 @@ class PoolWorkerLease implements WorkerLease {
     return { ...state, triedHosts: [...state.triedHosts], stagedAudio: { ...state.stagedAudio } };
   }
   get canFailover() {
+    if (this.request.kind === "job" && this.tried.length >= JOB_HOST_ATTEMPTS) return false;
     return getAlignmentPoolCoordinator().listHosts().some((host) => !this.tried.includes(host.id));
   }
 
@@ -711,8 +718,10 @@ async function takeHost(request: WorkerLeaseRequest, triedHosts: PoolHostId[], d
   const attempted = [...triedHosts];
   const exclude = (id: PoolHostId) => { if (probe) attempted.push(id); };
   let busy = false;
+  const roundOver = () => !probe && attempted.length >= JOB_HOST_ATTEMPTS;
   for (const host of coord.listHosts()) {
     signal?.throwIfAborted();
+    if (roundOver()) break;
     const id = host.id;
     if (attempted.includes(id)) continue;
     let health: CtcHealth;
@@ -760,7 +769,7 @@ async function takeHost(request: WorkerLeaseRequest, triedHosts: PoolHostId[], d
     }
   }
   signal?.throwIfAborted();
-  if (busy) throw new PoolBusyError(attempted);
+  if (busy && !roundOver()) throw new PoolBusyError(attempted);
   throw new Error(POOL_FAILURE_MESSAGE);
 }
 

@@ -52,8 +52,9 @@ has the work's device and precision, answers SSH and has a free slot, with the
 recording's tracks staged under `MEDIA_ROOT/alignment/pool-jobs/<id>` on it.
 Alignment jobs and ebook-set probes (also passage locating) use the same lease.
 After a failed request, `failover` moves the lease to the next host the work has
-not tried and stages the tracks there again; a job tries each host once, and
-Resume starts a new round. A job takes a new lease on every run, so after a
+not tried and stages the tracks there again. A job tries at most two hosts, the
+first and one retry on another, however many are configured; Resume starts a
+new round. A job takes a new lease on every run, so after a
 server restart its stored staging is staged again.
 
 The caller releases the lease on every exit, saying how the work ended:
