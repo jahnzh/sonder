@@ -359,8 +359,9 @@ requests only, exactly as before; book work is reported only under
 diskReservedBytes, diskBudgetBytes}`. `slotsHeld` is the number of the
 worker's slots that encode batches hold at that moment and `batchSeconds` the
 age of the oldest (see "Shared GPU"); `stuck` lists the jobs whose session is
-kept because a process is still there (`jobId`, `reason`, `since`,
-`reservedBytes`, see "Session, disk budget and resume").
+kept because a process is still there or files of its folder could not be
+deleted (`jobId`, `reason`, `since`, `reservedBytes`, see "Session, disk
+budget and resume").
 
 Code: `worker/book_job.py` (lifecycle, stages, resume), `book_session.py`
 (per-book session, #391), `book_audio.py` (decode), `book_encode.py`
@@ -555,7 +556,8 @@ It ends exactly once:
 * on failure, when only a small error record (`state.json`: the job's id,
   engine, state, error cut to 2,000 characters and times) is kept and counted
   in the budget until the idle sweep removes it;
-* on worker stop, when the folder is kept.
+* on worker stop, when the folder is kept. A job thread still running after
+  `STOP_WAIT_S` keeps its reservation and is listed as stuck.
 
 Ending a session stops its group-alignment processes first: SIGTERM, then
 SIGKILL after 5 s (`book_session.TERMINATE_GRACE_S`), then a wait of at most
@@ -569,9 +571,23 @@ of the same `jobId` is `409`, and the sweep (every 30 s) releases it once
 everything has exited. A visible leak is preferred to disk reused under a live
 process.
 
-Locks are taken in the order `BookJobs` → session registry → session → disk
-budget, and `Job.save_lock` before `Job.lock`. No lock is held while waiting
-for the encode queue, a process or book I/O.
+A job ends once at a time: when cancel, fetch, the idle sweep or the job's own
+failure end it together, the later caller waits for the first end and gets its
+outcome; it never deletes the folder or releases the reservation itself. The
+reservation shrinks only by the bytes really removed: a file that fails to
+delete stays reserved, the job is listed under `bookJobs.stuck`, and the sweep
+tries the delete again. A failed job's error record is reserved before the
+rest of its bytes are released. A `start` that fails after writing deletes
+what it wrote and keeps reserved what it could not delete.
+
+Locks are taken in the order `Job.end_lock` → `BookJobs` → session registry →
+session → disk budget, and `Job.save_lock` before `Job.lock`. No lock is held
+while waiting for the encode queue, a process or book I/O, except a job's
+`end_lock`, which its end holds throughout so that a second end waits for it.
+
+An encode batch's report that it waits for or got the gate (a `state.json`
+write) never holds the gate: a failed report is logged, and the batch's slot is
+freed on every exit once taken.
 
 One disk budget per worker, `ALIGNMENT_BOOK_DISK_BYTES` (default 64 GiB), covers
 every byte in the job folders. A job's reservation is what its folder holds plus
