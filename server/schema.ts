@@ -168,6 +168,12 @@ export const backupRuns = sqliteTable("backup_runs", {
   startedAt: integer("started_at").notNull(),
   finishedAt: integer("finished_at"),
   updatedAt: integer("updated_at").notNull(),
+  /** SHA-256 (hex) of the file a `done` run published; with `bytes`, what retention checks before it deletes. */
+  sha256: text("sha256"),
+  /** The token of the run that holds the day; only that run may record its result. */
+  claim: text("claim"),
+  /** Set when the file at `file` is no longer the one this run published: retention leaves it alone for good. */
+  disownedAt: integer("disowned_at"),
 });
 export const hardcoverLinks = sqliteTable("hardcover_links", {
   workId: text("work_id")

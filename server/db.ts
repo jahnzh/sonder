@@ -124,6 +124,13 @@ if (!(sqlite.prepare("PRAGMA table_info(sessions)").all() as {name:string}[]).so
   sqlite.exec("ALTER TABLE sessions ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1");
 if (!(sqlite.prepare("PRAGMA table_info(user_saved_series)").all() as {name:string}[]).some(c => c.name === "refreshed_at"))
   sqlite.exec("ALTER TABLE user_saved_series ADD COLUMN refreshed_at INTEGER");
+// Daily backups (#361): the identity of the file a run published (size is `bytes`), which retention checks before
+// it deletes anything; the run's claim on its day; and when the file at the recorded name stopped being that file.
+{
+  const backupColumns = new Set((sqlite.prepare("PRAGMA table_info(backup_runs)").all() as { name: string }[]).map((c) => c.name));
+  for (const [column, type] of [["sha256", "TEXT"], ["claim", "TEXT"], ["disowned_at", "INTEGER"]] as const)
+    if (!backupColumns.has(column)) sqlite.exec(`ALTER TABLE backup_runs ADD COLUMN ${column} ${type}`);
+}
 sqlite.transaction(() => {
   sqlite.prepare("INSERT OR IGNORE INTO users(id,username,password_hash,role,created_at) VALUES(1,'admin',NULL,'admin',?)").run(Date.now());
   if (!sqlite.prepare("SELECT 1 FROM settings WHERE key='migration:multi-user'").get()) {
