@@ -1,7 +1,7 @@
 import { api } from "../lib";
 import type { Download, SavedEbook, SeriesWorkAcquisition } from "../types";
 import { formatEbookDeviceSuffix, workEbookOnDevice } from "../series-ebook-device";
-import { workMediaStateLabel } from "../work-media-state";
+import { workMediaStateLabel, workMediaStateOffersRetry } from "../work-media-state";
 import { SeriesWorkReleaseSearch } from "./SeriesWorkReleaseSearch";
 
 const SERIES_SAVED_POLL_MS = 2500;
@@ -69,9 +69,7 @@ function canRetryAudio(
   acquisition: SeriesWorkAcquisition | null | undefined,
 ) {
   if (acquisition?.status === "failed") return true;
-  if (mediaState?.state === "failed") return true;
-  if (mediaState?.holdReason === "empty_search") return true;
-  return false;
+  return workMediaStateOffersRetry(mediaState);
 }
 
 function canRetryEbook(acquisition: SeriesWorkAcquisition | null | undefined) {

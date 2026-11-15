@@ -1,209 +1,125 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
-import { db, sqlite } from "./db.ts";
-import * as s from "./schema.ts";
+import { sqlite } from "./db.ts";
+import {
+  deriveWorkMediaStates,
+  materialiseWorkMediaStates as materialise,
+  playableWorks,
+  type WorkMediaHoldReason,
+  type WorkMediaState,
+} from "./work-media-derivation.ts";
 
-export type WorkMediaStateValue =
-  | "missing"
-  | "queued"
-  | "failed"
-  | "available";
+export type {
+  WorkMediaHoldReason,
+  WorkMediaState,
+  WorkMediaStateValue,
+} from "./work-media-derivation.ts";
 
-export type WorkMediaHoldReason = "unreleased" | "empty_search";
+/*
+ * A work's media state for a user is derived when read (ADR 0011): from the work's tracks
+ * and the user's most recently updated acquisition for it. Nothing refreshes it. The
+ * queries are in `work-media-derivation.ts`.
+ *
+ * Presence: a work has a media state for a user while either
+ *  - the user has an acquisition for the work (`user_acquisitions` → `acquisitions.work_id`), or
+ *  - a `work_media_states` row exists for the pair. The row marks the work as tracked for
+ *    the user and holds the hold reason; its `state` and `acquisition_id` columns are not
+ *    read here. They are written only by `materialiseWorkMediaStates`, before a rollback
+ *    to an image that reads them. Rows are written by the hold functions and by
+ *    `trackWorkMediaState`.
+ * Otherwise (e.g. a library book that was uploaded or imported) the read returns null.
+ *
+ * Holds: reads never write. A hold set by `setWorkMediaHold` or `markWorkEmptySearch` is
+ * returned exactly as stored, also while the work is playable. Two writes clear it, and
+ * nothing else does: an acquisition for the work reaching `ready`, for every user of that
+ * acquisition (`clearWorkMediaHoldsOfAcquisition`, called by the status writer), and the
+ * user's retry (`clearWorkMediaHold`).
+ */
 
-export type WorkMediaState = {
-  state: WorkMediaStateValue;
-  holdReason: WorkMediaHoldReason | null;
-  acquisitionId: string | null;
-  updatedAt: number;
-};
-
-const activeAcquisition = new Set([
-  "checking",
-  "preparing",
-  "downloading",
-  "paused",
-]);
-
-export function workHasActiveQueuedAcquisition(userId: number, workId: string) {
-  return getWorkMediaState(userId, workId)?.state === "queued";
-}
-
-export function workHasPlayableAudio(workId: string) {
-  for (const edition of db
-    .select()
-    .from(s.editions)
-    .where(eq(s.editions.workId, workId))
-    .all()) {
-    if (edition.id.startsWith("hc-")) continue;
-    const recording = db
-      .select()
-      .from(s.recordings)
-      .where(eq(s.recordings.editionId, edition.id))
-      .get();
-    if (
-      recording &&
-      db
-        .select()
-        .from(s.tracks)
-        .where(eq(s.tracks.recordingId, recording.id))
-        .get()
-    )
-      return true;
-  }
-  return false;
-}
-
-function latestUserAcquisition(userId: number, workId: string) {
-  return db
-    .select({ job: s.acquisitions })
-    .from(s.userAcquisitions)
-    .innerJoin(
-      s.acquisitions,
-      eq(s.acquisitions.id, s.userAcquisitions.acquisitionId),
-    )
-    .where(
-      and(
-        eq(s.userAcquisitions.userId, userId),
-        eq(s.acquisitions.workId, workId),
-      ),
-    )
-    .orderBy(desc(s.acquisitions.updatedAt))
-    .all()[0]?.job;
-}
-
-export function computeWorkMediaState(
-  userId: number,
-  workId: string,
-  holdReason: WorkMediaHoldReason | null,
-): WorkMediaState {
-  const now = Date.now();
-  if (workHasPlayableAudio(workId)) {
-    return {
-      state: "available",
-      holdReason: null,
-      acquisitionId: null,
-      updatedAt: now,
-    };
-  }
-  const job = latestUserAcquisition(userId, workId);
-  if (job && activeAcquisition.has(job.status)) {
-    return {
-      state: "queued",
-      holdReason,
-      acquisitionId: job.id,
-      updatedAt: now,
-    };
-  }
-  if (job?.status === "error") {
-    return {
-      state: "failed",
-      holdReason,
-      acquisitionId: job.id,
-      updatedAt: now,
-    };
-  }
-  return {
-    state: "missing",
-    holdReason,
-    acquisitionId: null,
-    updatedAt: now,
-  };
-}
-
-export function setWorkMediaHold(
-  userId: number,
-  workId: string,
-  holdReason: WorkMediaHoldReason | null,
-) {
-  const row = computeWorkMediaState(userId, workId, holdReason);
-  sqlite.transaction(() => {
-    db.insert(s.workMediaStates)
-      .values({
-        userId,
-        workId,
-        state: row.state,
-        holdReason,
-        acquisitionId: row.acquisitionId,
-        updatedAt: row.updatedAt,
-      })
-      .onConflictDoUpdate({
-        target: [s.workMediaStates.userId, s.workMediaStates.workId],
-        set: {
-          state: row.state,
-          holdReason,
-          acquisitionId: row.acquisitionId,
-          updatedAt: row.updatedAt,
-        },
-      })
-      .run();
-  })();
-}
-
-export function syncWorkMediaState(userId: number, workId: string) {
-  const existing = db
-    .select()
-    .from(s.workMediaStates)
-    .where(
-      and(
-        eq(s.workMediaStates.userId, userId),
-        eq(s.workMediaStates.workId, workId),
-      ),
-    )
-    .get();
-  const holdReason =
-    (existing?.holdReason as WorkMediaHoldReason | null) ?? null;
-  const row = computeWorkMediaState(userId, workId, holdReason);
-  db.insert(s.workMediaStates)
-    .values({
-      userId,
-      workId,
-      state: row.state,
-      holdReason: row.holdReason,
-      acquisitionId: row.acquisitionId,
-      updatedAt: row.updatedAt,
-    })
-    .onConflictDoUpdate({
-      target: [s.workMediaStates.userId, s.workMediaStates.workId],
-      set: {
-        state: row.state,
-        holdReason: row.holdReason,
-        acquisitionId: row.acquisitionId,
-        updatedAt: row.updatedAt,
-      },
-    })
-    .run();
-  return row;
+/**
+ * Media states of many works for one user in three queries, whatever the number of works.
+ * Works without a media state are absent from the map. Writes nothing.
+ */
+export function getWorkMediaStates(userId: number, workIds: Iterable<string>) {
+  return deriveWorkMediaStates(sqlite, userId, workIds);
 }
 
 export function getWorkMediaState(
   userId: number,
   workId: string,
 ): WorkMediaState | null {
-  const row = db
-    .select()
-    .from(s.workMediaStates)
-    .where(
-      and(
-        eq(s.workMediaStates.userId, userId),
-        eq(s.workMediaStates.workId, workId),
-      ),
-    )
-    .get();
-  if (!row) return null;
-  return {
-    state: row.state as WorkMediaStateValue,
-    holdReason: (row.holdReason as WorkMediaHoldReason | null) ?? null,
-    acquisitionId: row.acquisitionId,
-    updatedAt: row.updatedAt,
-  };
+  return getWorkMediaStates(userId, [workId]).get(workId) ?? null;
 }
 
-export function workMediaStatesForUser(userId: number) {
-  return db
-    .select()
-    .from(s.workMediaStates)
-    .where(eq(s.workMediaStates.userId, userId))
-    .all();
+export function workHasPlayableAudio(workId: string) {
+  return playableWorks(sqlite, [workId]).has(workId);
+}
+
+export function workHasActiveQueuedAcquisition(userId: number, workId: string) {
+  return getWorkMediaState(userId, workId)?.state === "queued";
+}
+
+/**
+ * Start tracking a work's media state for a user without an acquisition or a hold, as the
+ * series flows and "Add series" do. Never changes an existing row.
+ */
+export function trackWorkMediaState(userId: number, workId: string) {
+  sqlite
+    .prepare(
+      `INSERT OR IGNORE INTO work_media_states(user_id,work_id,state,hold_reason,acquisition_id,updated_at)
+       VALUES(?,?,'missing',NULL,NULL,?)`,
+    )
+    .run(userId, workId, Date.now());
+}
+
+/** Store (or clear, with null) the hold reason; this also tracks the work. */
+export function setWorkMediaHold(
+  userId: number,
+  workId: string,
+  holdReason: WorkMediaHoldReason | null,
+) {
+  sqlite
+    .prepare(
+      `INSERT INTO work_media_states(user_id,work_id,state,hold_reason,acquisition_id,updated_at)
+       VALUES(?,?,'missing',?,NULL,?)
+       ON CONFLICT(user_id,work_id) DO UPDATE SET hold_reason=excluded.hold_reason,updated_at=excluded.updated_at`,
+    )
+    .run(userId, workId, holdReason, Date.now());
+}
+
+/**
+ * The acquisition reached `ready`: clear the hold reason of its work for every user of the
+ * acquisition, also users who never read the work while its audio was there. The work is
+ * the one the acquisition was started for and the one its imported book belongs to: an
+ * acquisition started without a work id is matched to an existing work only at import.
+ * Called by `setAcquisitionStatus`, inside the status write's transaction.
+ */
+export function clearWorkMediaHoldsOfAcquisition(acquisitionId: string) {
+  sqlite
+    .prepare(
+      `UPDATE work_media_states SET hold_reason=NULL,updated_at=?
+       WHERE hold_reason IS NOT NULL AND (user_id,work_id) IN (
+         SELECT u.user_id,a.work_id FROM user_acquisitions u
+           JOIN acquisitions a ON a.id=u.acquisition_id
+         WHERE a.id=? AND a.work_id IS NOT NULL
+         UNION
+         SELECT u.user_id,e.work_id FROM user_acquisitions u
+           JOIN acquisitions a ON a.id=u.acquisition_id
+           JOIN audio_editions e ON e.id=a.book_id
+         WHERE a.id=?)`,
+    )
+    .run(Date.now(), acquisitionId, acquisitionId);
+}
+
+/**
+ * Write the derived state into the stored `state`, `hold_reason`, `acquisition_id` and
+ * `updated_at` columns for every user and work with a media state, so an image from before
+ * ADR 0011 reads the same states after a rollback. Idempotent, one transaction. Run by
+ * `scripts/materialise-media-states.mjs`.
+ */
+export function materialiseWorkMediaStates(
+  options: { dryRun?: boolean } = {},
+  database = sqlite,
+) {
+  return materialise(database, options);
 }
 
 export function markWorkEmptySearch(userId: number, workId: string) {
@@ -211,38 +127,6 @@ export function markWorkEmptySearch(userId: number, workId: string) {
 }
 
 export function clearWorkMediaHold(userId: number, workId: string) {
-  const existing = getWorkMediaState(userId, workId);
-  if (!existing?.holdReason) return syncWorkMediaState(userId, workId);
-  db.update(s.workMediaStates)
-    .set({ holdReason: null, updatedAt: Date.now() })
-    .where(
-      and(
-        eq(s.workMediaStates.userId, userId),
-        eq(s.workMediaStates.workId, workId),
-      ),
-    )
-    .run();
-  return syncWorkMediaState(userId, workId);
-}
-
-export function syncWorkMediaStatesForAcquisitions(acquisitionIds: string[]) {
-  if (!acquisitionIds.length) return;
-  const rows = db
-    .select({
-      userId: s.userAcquisitions.userId,
-      workId: s.acquisitions.workId,
-    })
-    .from(s.userAcquisitions)
-    .innerJoin(
-      s.acquisitions,
-      eq(s.acquisitions.id, s.userAcquisitions.acquisitionId),
-    )
-    .where(inArray(s.userAcquisitions.acquisitionId, acquisitionIds))
-    .all();
-  for (const row of rows)
-    if (row.workId) syncWorkMediaState(row.userId, row.workId);
-}
-
-export function syncWorkMediaStateForAcquisition(acquisitionId: string) {
-  syncWorkMediaStatesForAcquisitions([acquisitionId]);
+  setWorkMediaHold(userId, workId, null);
+  return getWorkMediaState(userId, workId);
 }

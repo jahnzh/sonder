@@ -35,7 +35,7 @@ Whether a user can listen to a work: missing, queued, failed or available. It is
 _Avoid_: Download status, availability
 
 **Hold reason**:
-Why Sonder is not trying to acquire a missing work for now: it is unreleased, or the last search found nothing.
+Why Sonder is not trying to acquire a missing work for now: it is unreleased, or the last search found nothing. It stays until an acquisition for the work is ready or the user retries.
 _Avoid_: Block, skip reason
 
 ## Reading along
