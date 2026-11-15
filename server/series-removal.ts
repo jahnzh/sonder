@@ -10,7 +10,7 @@ import {
 } from "./downloads.ts";
 import { mediaRoot } from "./storage.ts";
 import { transmission } from "./transmission.ts";
-import { syncWorkMediaState } from "./work-media-state.ts";
+import { trackWorkMediaState } from "./work-media-state.ts";
 import {
   isActiveAcquisitionStatus,
   setAcquisitionStatus,
@@ -730,7 +730,8 @@ export async function removeSavedHardcoverSeries(
             editionDeletePlans,
           ),
         );
-        syncWorkMediaState(userId, work.workId);
+        // The work stays tracked for the user after removal, as before.
+        trackWorkMediaState(userId, work.workId);
       }
     }
     db.delete(s.seriesAcquisitionJobs)

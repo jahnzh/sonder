@@ -96,13 +96,22 @@ import {
   releaseDisplayTitle,
 } from "./sources/prowlarr.ts";
 import type { Book } from "../src/types.ts";
-import { getWorkMediaState } from "./work-media-state.ts";
+import { getWorkMediaStates } from "./work-media-state.ts";
 const uploadDir = importedDir;
 export function listBooks(userId = 1): Book[] {
   const allTracks = db.select().from(s.tracks).all();
   const allProgress = db.select().from(s.userProgress).where(eq(s.userProgress.userId, userId)).all();
   const lib = db.select().from(s.userLibrary).where(eq(s.userLibrary.userId, userId)).all();
   const hidden = hiddenHardcoverPlaceholders(userId);
+  const libraryWorkIds = sqlite
+    .prepare(
+      "SELECT DISTINCT e.work_id AS workId FROM user_library u JOIN audio_editions e ON e.id=u.book_id WHERE u.user_id=?",
+    )
+    .all(userId) as { workId: string }[];
+  const mediaStates = getWorkMediaStates(
+    userId,
+    libraryWorkIds.map((row) => row.workId),
+  );
   return db
     .select({ work: s.works, edition: s.editions, recording: s.recordings })
     .from(s.editions)
@@ -156,7 +165,7 @@ export function listBooks(userId = 1): Book[] {
         status: (saved?.status || "unread") as Book["status"],
         addedAt: saved?.addedAt || 0,
         progress: allProgress.find((p) => p.recordingId === recording.id),
-        mediaState: saved ? getWorkMediaState(userId, work.id) : null,
+        mediaState: saved ? (mediaStates.get(work.id) ?? null) : null,
       };
     });
 }

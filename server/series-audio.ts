@@ -6,8 +6,9 @@ import {
   torboxCachedHashes,
 } from "./services.ts";
 import {
+  getWorkMediaState,
   markWorkEmptySearch,
-  syncWorkMediaState,
+  trackWorkMediaState,
   workHasPlayableAudio,
 } from "./work-media-state.ts";
 
@@ -352,7 +353,10 @@ export async function autoAcquireSeriesVolume(
   deps: SeriesAudioSearchDeps = defaultDeps(),
   mayAcquire?: () => boolean,
 ) {
-  if (workHasPlayableAudio(input.workId)) return syncWorkMediaState(userId, input.workId);
+  if (workHasPlayableAudio(input.workId)) {
+    trackWorkMediaState(userId, input.workId);
+    return getWorkMediaState(userId, input.workId);
+  }
   const candidates = await searchVolumeAudioCandidates(
     input.volume,
     input.seriesName,
@@ -363,12 +367,12 @@ export async function autoAcquireSeriesVolume(
   const chosen = pickAutoAcquireCandidate(candidates);
   if (!chosen?.hash) {
     markWorkEmptySearch(userId, input.workId);
-    return syncWorkMediaState(userId, input.workId);
+    return getWorkMediaState(userId, input.workId);
   }
   const magnet = await resolveCandidateMagnet(chosen, deps);
   if (!magnet) {
     markWorkEmptySearch(userId, input.workId);
-    return syncWorkMediaState(userId, input.workId);
+    return getWorkMediaState(userId, input.workId);
   }
   if (mayAcquire && !mayAcquire()) {
     throw new Error("cancelled");
@@ -384,9 +388,10 @@ export async function autoAcquireSeriesVolume(
       userId,
     });
   } catch {
-    syncWorkMediaState(userId, input.workId);
+    // An acquire that threw before recording an acquisition still tracks the work.
+    trackWorkMediaState(userId, input.workId);
   }
-  return syncWorkMediaState(userId, input.workId);
+  return getWorkMediaState(userId, input.workId);
 }
 
 async function resolveCandidateMagnet(

@@ -18,7 +18,7 @@ import {
 } from "./services.ts";
 import {
   getWorkMediaState,
-  syncWorkMediaState,
+  trackWorkMediaState,
   workHasPlayableAudio,
   type WorkMediaState,
 } from "./work-media-state.ts";
@@ -160,7 +160,7 @@ export async function replacePreviousAcquisition(
         ),
       )
       .run();
-    if (previous.workId) syncWorkMediaState(userId, previous.workId);
+    if (previous.workId) trackWorkMediaState(userId, previous.workId);
     return { action: "detached_shared" };
   }
 
@@ -346,7 +346,6 @@ export async function selectSeriesWorkRelease(
       bookId,
       work.workId,
     );
-    syncWorkMediaState(userId, work.workId);
     return {
       acquisition: job,
       mediaState: getWorkMediaState(userId, work.workId) as WorkMediaState,
