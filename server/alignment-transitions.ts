@@ -232,6 +232,9 @@ function persist(job: AlignmentJob) {
       job.stageTimings ? JSON.stringify(job.stageTimings) : null,
       alignmentMapPublishes(job) ? 1 : 0,
     );
+  // A row keeps its id when an explicit prepare replaces a projection: the job is then no longer projected.
+  if (job.origin !== "projected")
+    sqlite.prepare("UPDATE alignment_jobs SET projected_from=NULL WHERE id=? AND projected_from IS NOT NULL").run(job.id);
   return job;
 }
 /** A scheduled run may only write its own job while it still owns the claimed generation. */

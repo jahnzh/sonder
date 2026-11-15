@@ -199,6 +199,18 @@ test("a projection records the consensus job it was projected from", () => {
   assert.equal("projectedFrom" in projected, false);
 });
 
+test("a job that replaces a projection under the same id no longer names the consensus it was projected from", () => {
+  sqlite.prepare("DELETE FROM alignment_jobs").run();
+  const consensus = jobAt("ready", { id: "consensus-job" });
+  transitions.project(consensus, { id: "projected-2", ebookId: "ebook-2", fingerprint: "ebook-fp", intervals: consensus.intervals,
+    sectionsDone: [0], coverage: 1 }, sentences);
+  assert.equal(stored("projected-2")?.projected_from, "consensus-job");
+  // An explicit prepare reuses the row: the stored job is a prepared one from now on.
+  const { origin: _origin, ...prepared } = transitions.alignmentJob("projected-2");
+  transitions.putAlignmentJob({ ...prepared, status: "queued", intervals: [] });
+  assert.equal(stored("projected-2")?.projected_from, null);
+});
+
 test("removing a recording's jobs leaves none of them and keeps other recordings' jobs", () => {
   sqlite.prepare("DELETE FROM alignment_jobs").run();
   transitions.putAlignmentJob(jobAt("ready", { id: "kept", recordingId: "rec-2" }));
