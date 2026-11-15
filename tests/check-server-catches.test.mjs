@@ -20,6 +20,12 @@ test("server catch check flags empty and error-dropping catches through the buil
       try {} catch (error) { (() => { const error = 1; return error; })(); }
       try {} catch (error) { console.log({ error: "unrelated" }); }
     `);
+    // JavaScript files are checked with the same rules: a catch that uses its error is not flagged (#361).
+    writeFileSync(path.join(server, "nested", "good.mjs"), `
+      try {} catch (error) { if (error.code === "EEXIST") throw new Error("x", { cause: error }); throw error; }
+      try {} catch (error) { report(error); }
+    `);
+    writeFileSync(path.join(server, "bad.mjs"), "try {} catch (error) { returnFallback(); }\n");
     writeFileSync(path.join(server, "nested", "good.ts"), `
       const text = "catch {}";
       try {} catch (error) { console.error(error); }
@@ -31,9 +37,11 @@ test("server catch check flags empty and error-dropping catches through the buil
     const result = spawnSync(process.execPath, [script, server], { encoding: "utf8" });
     assert.equal(result.status, 1, result.stderr);
     assert.match(result.stderr, /bad\.ts:2:\d+: empty catch block/);
-    assert.equal((result.stderr.match(/caught error is discarded/g) ?? []).length, 5);
-    assert.doesNotMatch(result.stderr, /good\.ts/);
+    assert.equal((result.stderr.match(/caught error is discarded/g) ?? []).length, 6);
+    assert.match(result.stderr, /bad\.mjs:1:\d+: caught error is discarded/);
+    assert.doesNotMatch(result.stderr, /good\.(?:ts|mjs)/);
     writeFileSync(path.join(server, "bad.ts"), "try {} catch (error) { report(error); }\n");
+    writeFileSync(path.join(server, "bad.mjs"), "try {} catch (error) { report(error); }\n");
     const clean = spawnSync(process.execPath, [script, server], { encoding: "utf8" });
     assert.equal(clean.status, 0, clean.stderr);
     assert.match(clean.stdout, /Server catch check passed/);

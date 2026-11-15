@@ -212,7 +212,7 @@ export type TorrentHealth = {
 };
 
 // Activity page (#357): one row per unit of background work, grouped under the background process that produces it.
-export type ActivityKind = "acquisition" | "server-copy" | "series-acquisition" | "alignment" | "hardcover";
+export type ActivityKind = "acquisition" | "server-copy" | "series-acquisition" | "alignment" | "hardcover" | "backup";
 export type ActivityState = "running" | "queued" | "paused" | "failed" | "done";
 export type ActivityItem = {
   id: string;
@@ -246,7 +246,7 @@ export type ActivityProcess = {
   reason: string | null;
   /** When the current health began, if known. */
   since: number | null;
-  /** True for a process the app does not track yet (imports, backups). */
+  /** True for a process the app does not track yet (imports). */
   notTracked: boolean;
   /** The loop can be paused from the page (the services and untracked processes cannot). */
   pausable: boolean;

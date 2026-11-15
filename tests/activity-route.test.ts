@@ -56,7 +56,12 @@ test("the Activity list reads every kind from the real tables and is admin only"
   assert.equal(byId["hardcover:status:1"].permanent, true);
   assert.equal(byId["hardcover:status:1"].user, "admin");
   assert.ok(activity.processes.some((process: any) => process.id === "torrent-client"));
-  assert.ok(activity.processes.some((process: any) => process.id === "backups" && process.notTracked));
+  const backups = activity.processes.find((process: any) => process.id === "backups");
+  assert.equal(backups?.label, "Database backups");
+  assert.equal(backups?.notTracked, false, "the daily backups report themselves (#361)");
+  assert.equal(backups?.pausable, true);
+  assert.match(backups?.reason ?? "", /Next run /);
+  assert.ok(activity.processes.some((process: any) => process.id === "imports" && process.notTracked));
   assert.equal(activity.stuckMultiplier, 1);
   assert.ok(activity.attention >= 1);
 });

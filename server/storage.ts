@@ -15,33 +15,31 @@ export const torrentDownloadDir =
 export const completedDir = join(mediaRoot, "complete");
 export const ebookDir = join(mediaRoot, "ebooks");
 export const importedDir = join(mediaRoot, "imports");
-export function ensureMediaStorage() {
-  if (process.env.REQUIRE_MEDIA_MOUNT !== "false") {
-    const marker = join(mediaRoot, ".media-volume");
-    const expected = process.env.MEDIA_VOLUME_ID;
-    if (
-      expected &&
-      (!existsSync(marker) || readFileSync(marker, "utf8").trim() !== expected)
-    )
-      throw new Error(
-        "The configured media volume is unavailable. Refusing to write media to another disk.",
-      );
-    if (existsSync("/.dockerenv") && !expected)
-      throw new Error(
-        "Run scripts/setup-local-torrents.mjs to record the media volume before starting Docker.",
-      );
-  }
-
+/**
+ * Why the media drive must not be written now (`REQUIRE_MEDIA_MOUNT`), or null: the recorded volume is missing,
+ * Docker runs without a recorded volume, or the media root is on the system disk. Reads only.
+ */
+export function mediaMountProblem() {
+  if (process.env.REQUIRE_MEDIA_MOUNT === "false") return null;
+  const marker = join(mediaRoot, ".media-volume");
+  const expected = process.env.MEDIA_VOLUME_ID;
+  if (
+    expected &&
+    (!existsSync(marker) || readFileSync(marker, "utf8").trim() !== expected)
+  )
+    return "The configured media volume is unavailable. Refusing to write media to another disk.";
+  if (existsSync("/.dockerenv") && !expected)
+    return "Run scripts/setup-local-torrents.mjs to record the media volume before starting Docker.";
   let parent = mediaRoot;
   while (!existsSync(parent) && parent !== dirname(parent))
     parent = dirname(parent);
-  if (
-    process.env.REQUIRE_MEDIA_MOUNT !== "false" &&
-    statSync(parent).dev === statSync("/").dev
-  )
-    throw new Error(
-      `The media drive is not mounted at ${mediaRoot}. Refusing to store media on the system disk.`,
-    );
+  if (statSync(parent).dev === statSync("/").dev)
+    return `The media drive is not mounted at ${mediaRoot}. Refusing to store media on the system disk.`;
+  return null;
+}
+export function ensureMediaStorage() {
+  const problem = mediaMountProblem();
+  if (problem) throw new Error(problem);
   for (const dir of [
     mediaRoot,
     completedDir,

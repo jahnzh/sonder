@@ -184,3 +184,29 @@ test("Retry now sends the item's id and shows a failure on the row", async ({ pa
   await expect(item.getByRole("alert")).toContainText("Add your Hardcover token first.");
   expect(requests).toEqual([{ id: "hardcover:listening:2" }]);
 });
+
+// The real server, no mocked response: the daily backups report their schedule and use the real pause switch (#361).
+test("the database backups row lists the schedule, and its switch pauses and resumes it", async ({ page }) => {
+  await page.goto("/#activity");
+  const row = page.getByTestId("activity-process-backups");
+  await expect(row).toContainText("Database backups");
+  // Repeat-safe: a run that stopped halfway may have left the switch on.
+  const resume = page.getByRole("button", { name: "Resume Database backups" });
+  if (await resume.isVisible()) {
+    await resume.click();
+    await expect(row.getByTestId("activity-process-paused")).toHaveCount(0);
+  }
+  await expect(row).not.toContainText("Not tracked yet");
+  // A backup may be running at this moment (the test server starts one when due): the row then says so.
+  await expect(row).toContainText(/No backup yet|Running since|Last run \d+ \w{3} \d{2}:\d{2} UTC: (succeeded, \d+\.\d MB|failed)/);
+  await expect(row).toContainText(/Next run (within 10 minutes|\d+ \w{3} 03:00 UTC)|Running since/);
+  await expect(row).toContainText("No new daily database backup starts. A backup already running finishes.");
+
+  await page.getByRole("button", { name: "Pause Database backups" }).click();
+  await expect(row.getByTestId("activity-process-paused")).toBeVisible();
+  await expect(row).toContainText("Next run when resumed");
+  await resume.click();
+  await expect(row.getByTestId("activity-process-paused")).toHaveCount(0);
+  await expect(row).toContainText(/Next run (within 10 minutes|\d+ \w{3} 03:00 UTC)/);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});

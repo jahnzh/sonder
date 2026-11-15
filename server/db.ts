@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS progress(recording_id TEXT PRIMARY KEY REFERENCES rec
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS media_copies(track_id TEXT PRIMARY KEY REFERENCES tracks(id),path TEXT NOT NULL,size INTEGER NOT NULL,mime TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS server_downloads(recording_id TEXT PRIMARY KEY REFERENCES recordings(id),book_id TEXT NOT NULL,status TEXT NOT NULL,progress REAL NOT NULL,error TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
+-- One row per scheduled day of the daily database backups (#361); a retry of the same day updates its row.
+CREATE TABLE IF NOT EXISTS backup_runs(day TEXT PRIMARY KEY,file TEXT NOT NULL,status TEXT NOT NULL,bytes INTEGER,error TEXT,attempts INTEGER NOT NULL DEFAULT 1,started_at INTEGER NOT NULL,finished_at INTEGER,updated_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,expires_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS ebook_editions(id TEXT PRIMARY KEY,work_id TEXT NOT NULL REFERENCES works(id),format TEXT NOT NULL,source TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS hardcover_progress(book_id INTEGER PRIMARY KEY,account_id INTEGER NOT NULL,recording_id TEXT NOT NULL REFERENCES recordings(id),position REAL NOT NULL,duration REAL NOT NULL,updated_at INTEGER NOT NULL,error TEXT);
@@ -122,6 +124,14 @@ if (!(sqlite.prepare("PRAGMA table_info(sessions)").all() as {name:string}[]).so
   sqlite.exec("ALTER TABLE sessions ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1");
 if (!(sqlite.prepare("PRAGMA table_info(user_saved_series)").all() as {name:string}[]).some(c => c.name === "refreshed_at"))
   sqlite.exec("ALTER TABLE user_saved_series ADD COLUMN refreshed_at INTEGER");
+// Daily backups (#361): the identity of the file a run published (size is `bytes`), which retention checks before
+// it deletes anything; the run's claim on its day; when the file at the recorded name stopped being that file; and
+// the result of the retention that followed a successful run, with its reason when it failed.
+{
+  const backupColumns = new Set((sqlite.prepare("PRAGMA table_info(backup_runs)").all() as { name: string }[]).map((c) => c.name));
+  for (const [column, type] of [["sha256", "TEXT"], ["claim", "TEXT"], ["disowned_at", "INTEGER"], ["cleanup", "TEXT"], ["cleanup_error", "TEXT"]] as const)
+    if (!backupColumns.has(column)) sqlite.exec(`ALTER TABLE backup_runs ADD COLUMN ${column} ${type}`);
+}
 sqlite.transaction(() => {
   sqlite.prepare("INSERT OR IGNORE INTO users(id,username,password_hash,role,created_at) VALUES(1,'admin',NULL,'admin',?)").run(Date.now());
   if (!sqlite.prepare("SELECT 1 FROM settings WHERE key='migration:multi-user'").get()) {

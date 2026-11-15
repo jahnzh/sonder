@@ -1,6 +1,6 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 const temp = mkdtempSync(join(tmpdir(), "sonder-loops-"));
@@ -24,7 +24,7 @@ const app = await createApp({ background: { manual: true } });
 const runner = backgroundRunner(app);
 after(() => rmSync(temp, { recursive: true, force: true }));
 
-test("the app runs its six loops in one runner, with the intervals and immediate runs they always had", { timeout: 10_000 }, () => {
+test("the app runs its seven loops in one runner, with the intervals and immediate runs they always had", { timeout: 10_000 }, () => {
   assert.deepEqual(
     runner.processes().map(({ id, intervalMs, runAtStart, pausedBy }) => ({ id, intervalMs, runAtStart: !!runAtStart, pausedBy })),
     [
@@ -34,6 +34,7 @@ test("the app runs its six loops in one runner, with the intervals and immediate
       { id: "server-copies", intervalMs: 10_000, runAtStart: true, pausedBy: "server-copies" },
       { id: "series-acquisition", intervalMs: 30_000, runAtStart: true, pausedBy: "series-acquisition" },
       { id: "hardcover-sync", intervalMs: 60_000, runAtStart: true, pausedBy: "hardcover-sync" },
+      { id: "backups", intervalMs: 600_000, runAtStart: false, pausedBy: "backups" },
     ],
     "start order; the app stops them in reverse",
   );
@@ -60,6 +61,33 @@ test("the runner holds each loop while its switch is on, and the series loop whi
   }
   for (const id of ["hardcover-sync", "series-acquisition", "activity-sampler"])
     assert.equal(await runner.tick(id), "ran", `${id}: resumed`);
+});
+
+test("the daily backup loop starts no backup while paused, makes one when resumed, and the Activity page shows it (#361)", { timeout: 20_000 }, async () => {
+  const folder = join(temp, "db", "backups");
+  setPaused("backups", true);
+  try {
+    assert.equal(await runner.tick("backups"), "held");
+    assert.equal(existsSync(folder) && readdirSync(folder).length > 0, false, "pausing stops new runs");
+  } finally {
+    setPaused("backups", false);
+  }
+  assert.equal(await runner.tick("backups"), "ran");
+  const made = readdirSync(folder);
+  assert.equal(made.length, 1, made.join(", "));
+  assert.match(made[0], /^daily-\d{4}-\d{2}-\d{2}\.db$/);
+  const run = sqlite.prepare("SELECT status, error FROM backup_runs").get() as { status: string; error: string | null };
+  assert.deepEqual(run, { status: "done", error: null }, "free space under the temporary folder must be at least 1 GiB");
+  assert.equal(await runner.tick("backups"), "ran");
+  assert.equal(readdirSync(folder).length, 1, "one backup a day");
+
+  const login = await app.inject({ method: "POST", url: "/api/auth/login", headers: { "x-forwarded-for": "203.0.113.190" }, payload: { password: "admin-password" } });
+  const activity = (await app.inject({ method: "GET", url: "/api/activity", cookies: { sonder_session: login.cookies[0].value } })).json();
+  const process = activity.processes.find((entry: { id: string }) => entry.id === "backups");
+  assert.equal(process.notTracked, false);
+  assert.match(process.reason, /^Last run \d+ \w{3} \d{2}:\d{2} UTC: succeeded, \d+\.\d MB · Next run \d+ \w{3} 03:00 UTC$/);
+  const item = activity.items.find((entry: { id: string }) => entry.id === `backup:${made[0].slice(6, 16)}`);
+  assert.equal(item?.state, "done");
 });
 
 test("the loops keep their start and close work, and closing the app releases this instance's alignment claims", { timeout: 10_000 }, async () => {
