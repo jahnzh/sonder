@@ -24,6 +24,14 @@ async function instrument(page: Page) {
         handlers[action] = handler;
         native(action, handler);
       };
+      const states: MediaPositionState[] = [];
+      (window as any).__positionStates = states;
+      const report = navigator.mediaSession.setPositionState?.bind(navigator.mediaSession);
+      if (report)
+        navigator.mediaSession.setPositionState = (state?: MediaPositionState) => {
+          if (state) states.push({ ...state });
+          report(state);
+        };
     }
   });
 }
@@ -95,6 +103,18 @@ test("onscreen, lock-screen and headphone commands seek 30 seconds and persist t
       return books.find((book: any) => book.id === "alice").progress.position;
     })
     .toBeCloseTo(100, 0);
+  // The lock-screen scrubber gets the position after the remote seeks and the element's real rate.
+  const lockScreen = await page.evaluate(() => {
+    const audio = ((window as any).__audioElements as HTMLAudioElement[]).find(
+      (audio) => !!audio.src,
+    )!;
+    return {
+      state: ((window as any).__positionStates as MediaPositionState[]).at(-1),
+      rate: audio.playbackRate,
+    };
+  });
+  expect(lockScreen.state?.position).toBeCloseTo(100, 0);
+  expect(lockScreen.state?.playbackRate).toBe(lockScreen.rate);
   await expect(
     page.getByRole("button", { name: "Next chapter", exact: true }),
   ).toHaveCount(0);

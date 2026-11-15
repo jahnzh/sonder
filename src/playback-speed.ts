@@ -40,6 +40,7 @@ type PreferenceRow = { key: string; value: unknown };
 export type SpeedPreferences = {
   get(key: string): Promise<PreferenceRow | undefined>;
   put(row: PreferenceRow): Promise<unknown>;
+  delete(key: string): Promise<unknown>;
 };
 /**
  * Speeds saved on this device for one user. Each recording keeps its own; a
@@ -56,24 +57,37 @@ export function speedMemory(preferences: SpeedPreferences) {
     },
     () => {},
   );
+  const load = async (recordingId: string | undefined) => {
+    if (recordingId && !recordings.has(recordingId)) {
+      const [row] = await Promise.all([
+        preferences.get(recordingSpeedKey(recordingId)).catch(() => undefined),
+        deviceLoaded,
+      ]);
+      if (!recordings.has(recordingId))
+        recordings.set(recordingId, clampSpeed(row?.value));
+    } else await deviceLoaded;
+  };
   return {
     deviceLoaded,
     device: () => device,
     /** The speed a recording plays at, given the saved Settings default. */
     async speedOf(recordingId: string | undefined, preferred: unknown) {
-      if (recordingId && !recordings.has(recordingId)) {
-        const [row] = await Promise.all([
-          preferences.get(recordingSpeedKey(recordingId)).catch(() => undefined),
-          deviceLoaded,
-        ]);
-        if (!recordings.has(recordingId))
-          recordings.set(recordingId, clampSpeed(row?.value));
-      } else await deviceLoaded;
+      await load(recordingId);
       return resolveSpeed({
         recording: recordingId ? recordings.get(recordingId) : null,
         preferred,
         legacy: device,
       });
+    },
+    /** The recording's own speed, or null when it follows the default. */
+    async own(recordingId: string) {
+      await load(recordingId);
+      return recordings.get(recordingId) ?? null;
+    },
+    /** Drops the recording's own speed so it follows the default again. */
+    forget(recordingId: string) {
+      recordings.set(recordingId, null);
+      return preferences.delete(recordingSpeedKey(recordingId)).catch(() => {});
     },
     remember(recordingId: string | undefined, speed: number) {
       if (recordingId) recordings.set(recordingId, speed);

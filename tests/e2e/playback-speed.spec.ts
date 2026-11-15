@@ -10,7 +10,7 @@ async function expectDockSpeed(page: Page, speed: string) {
   ).toHaveText(speed);
   await nowPlaying.getByRole("button", { name: "Close dialog", exact: true }).click();
 }
-test("the default speed applies once saved, sets chapter lengths for a book not in the player, and a saved reset clears it", async ({
+test("the default speed applies once saved, chapter lengths stay real for a book not in the player, and a saved reset clears it", async ({
   page,
 }) => {
   const original = await (await page.request.get("/api/appearance")).json();
@@ -51,9 +51,10 @@ test("the default speed applies once saved, sets chapter lengths for a book not 
     await page.locator(".mobile-nav").getByRole("button", { name: "My library", exact: true }).click();
     await page.getByRole("button", { name: `About ${otherBook!.title}`, exact: true }).click();
     const details = page.getByRole("dialog", { name: "Book details", exact: true });
+    // Chapter lengths stay real lengths at any speed; only the current chapter's time left is adjusted.
     await expect(
       details.locator(".detail-chapters .chapter-row small").first(),
-    ).toHaveAttribute("title", "Chapter length at 1.8×");
+    ).toHaveAttribute("title", "Chapter length");
     await details.getByRole("button", { name: "Close dialog", exact: true }).click();
     await page.locator(".mobile-nav").getByRole("button", { name: "Settings", exact: true }).click();
     await page.getByRole("button", { name: "Reset", exact: true }).click();
