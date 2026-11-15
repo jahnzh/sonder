@@ -31,14 +31,14 @@ import { fontFamilies, paletteFor } from "../appearance";
 import { ReadingSync } from "./ReadingSync";
 import { LyricsReader } from "./LyricsReader";
 import { WordReader } from "./WordReader";
-import { audioMove, createCheckpointSaver, seekInside } from "../word-timing";
+import { audioMove, seekInside } from "../word-timing";
 import { PlaybackSource } from "./PlaybackSource";
 import { PlaybackOptions } from "./PlaybackOptions";
 import { PlaybackTimeline } from "./PlaybackTimeline";
 import {PlaybackExtra,usePlaybackMenu} from "./PlaybackMenu";
 import { readerWords, readerSegment } from "../reader-segments";
 import { readerNeedsScripts } from "../reader-sandbox";
-import { createReaderFollowing } from "../reader-following";
+import { createReaderFollowing, type NarrationReturn, type SaveOrigin } from "../reader-following";
 import { currentChapter, playbackTimeline } from "../chapters";
 import { usePlayer } from "../player";
 import { api, forgetPositionHistory, localDB } from "../lib";
@@ -316,16 +316,33 @@ export function ReaderView({
     highlight = useRef<string | null>(null);
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
+  // Whether the open ebook's map has a sentence at this place of this recording.
+  const narrationAt = (recordingId: string | undefined, trackId: string | undefined, position: number) => {
+    const current = mapRef.current;
+    return !!current && !!recordingId && recordingId === current.recordingId &&
+      current.intervals.some((interval) => interval.trackId === trackId && interval.start <= position && interval.end > position);
+  };
   const [followRevision,setFollowRevision]=useState(0);
   // Following the narration or paged away, and which input wins (ADR 0014).
-  const followingEvents = useRef({ manualSave: (_locator: TextLocator) => {}, retry: () => {}, clearFollowError: () => {} });
+  const followingEvents = useRef({
+    manualSave: (_locator: TextLocator, _origin: SaveOrigin) => {},
+    narrationToFollow: (): boolean => false,
+    retry: () => {},
+    clearFollowError: () => {},
+  });
   followingEvents.current = {
-    manualSave: (locator) => void saveReading(id, locator, "reading", mapRef.current?.recordingId),
+    manualSave: (locator, origin) => void saveReading(id, locator, origin, mapRef.current?.recordingId).catch(() => {}),
+    // A map for this ebook that matches the recording in the player, with a sentence at its position.
+    narrationToFollow: () => {
+      const player = playerRef.current;
+      return narrationAt(player.book?.recordingId, player.track?.id, player.position);
+    },
     retry: () => setFollowRevision((value) => value + 1),
     clearFollowError: () => setError(""),
   };
   const [following] = useState(() => createReaderFollowing<TextLocator>({
-    onManualSave: (locator) => followingEvents.current.manualSave(locator),
+    onManualSave: (locator, origin) => followingEvents.current.manualSave(locator, origin),
+    narrationToFollow: () => followingEvents.current.narrationToFollow(),
     onRetry: () => followingEvents.current.retry(),
     onClearFollowError: () => followingEvents.current.clearFollowError(),
     // Rendered from React state, so it batches with the locator as before.
@@ -915,11 +932,39 @@ export function ReaderView({
   };
   jumpRef.current = showFragment;
   mapRef.current = map;
+  // Speech recovery for Read from audio: its answer moves the view only while it is still
+  // current (no manual move, no other return and no change of recording since the request).
+  const recover = async (back: NarrationReturn, player: typeof p) => {
+    if (!player.book || !player.track) return;
+    const recordingId = player.book.recordingId, trackId = player.track.id;
+    setRecovering(true);
+    try {
+      const result = await api<{ locator: TextLocator }>(
+        "/alignments/recover",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            ebookId: id,
+            recordingId,
+            trackId,
+            position: player.position,
+          }),
+        },
+      );
+      const now = playerRef.current;
+      if (!back.current() || now.book?.recordingId !== recordingId || now.track?.id !== trackId) return;
+      // The recovered passage is the narration to follow: what the return kept is dropped.
+      back.confirm();
+      await jumpRef.current(result.locator.paragraphId, true, recordingId);
+      setRecoveryStatus("Approximate passage · Located using local speech recognition");
+    } catch (error) {
+      notify((error as Error).message, true);
+    } finally {
+      setRecovering(false);
+    }
+  };
   const fromAudio = async () => {
-    following.cancelManualSave();
-    following.follow();
-    following.resetRetries();
-    following.forgetFollowed();
+    const back = following.backToNarration();
     setRecoveryStatus("");
     const player = playerRef.current,
       currentMap = mapRef.current;
@@ -938,31 +983,7 @@ export function ReaderView({
         return;
       }
       if (!isAdmin()) { notify("No reading sync is available for this position."); return; }
-      setRecovering(true);
-      try {
-        const result = await api<{ locator: TextLocator }>(
-          "/alignments/recover",
-          {
-            method: "POST",
-            body: JSON.stringify({
-              ebookId: id,
-              recordingId: player.book.recordingId,
-              trackId: player.track.id,
-              position: player.position,
-            }),
-          },
-        );
-        await jumpRef.current(
-          result.locator.paragraphId,
-          true,
-          player.book.recordingId,
-        );
-        setRecoveryStatus("Approximate passage · Located using local speech recognition");
-      } catch (error) {
-        notify((error as Error).message, true);
-      } finally {
-        setRecovering(false);
-      }
+      await recover(back, player);
       return;
     }
     const interval = currentMap.intervals.find(
@@ -977,31 +998,7 @@ export function ReaderView({
       finally { following.endExplicitJump(); setFollowRevision(value => value + 1); }
     } else {
       if (!isAdmin()) { notify("No reading sync is available for this position."); return; }
-      setRecovering(true);
-      try {
-        const result = await api<{ locator: TextLocator }>(
-          "/alignments/recover",
-          {
-            method: "POST",
-            body: JSON.stringify({
-              ebookId: id,
-              recordingId: player.book.recordingId,
-              trackId: player.track.id,
-              position: player.position,
-            }),
-          },
-        );
-        await jumpRef.current(
-          result.locator.paragraphId,
-          true,
-          player.book.recordingId,
-        );
-        setRecoveryStatus("Approximate passage · Located using local speech recognition");
-      } catch (error) {
-        notify((error as Error).message, true);
-      } finally {
-        setRecovering(false);
-      }
+      await recover(back, player);
     }
   };
   useEffect(() => {
@@ -1054,9 +1051,8 @@ export function ReaderView({
     const track = audio.tracks.find((track) => track.id === interval.trackId);
     if (!track) return;
     const previous = p.book && p.track ? { book: p.book, trackId: p.track.id, position: p.position } : null;
-    following.cancelManualSave();
-    following.follow();
-    following.forgetFollowed();
+    // The narration moves to a mapped sentence of this map's recording.
+    following.backToNarration(true);
     const records = { undone: false, entries: [] as { recordingId: string; entry: PositionEntry }[] };
     listenRecords.current = records;
     void p.play(audio, track, interval.start, {
@@ -1088,8 +1084,9 @@ export function ReaderView({
     // Nothing was playing before: Undo just stops the narration again.
     if (previous && track) void p.play(previous.book, track, previous.position, { kind: null });
     else if (playerRef.current.playing) playerRef.current.toggle();
-    following.follow();
-    following.forgetFollowed();
+    // Decided for where the narration goes back to; with nothing playing before, it stays where it is.
+    if (previous && track) following.backToNarration(narrationAt(previous.book.recordingId, track.id, previous.position));
+    else following.backToNarration();
     setToast(null);
   };
   const bookmark = async () => {
@@ -1127,9 +1124,12 @@ export function ReaderView({
       const cursor = Math.max(0, Math.min(words.length - 1, segment.start + direction * preferences.segmentWords));
       setManualWord(cursor);
       const word = words[cursor];
-      if (word) void showFragment(word.paragraphId, false).then(() => {
-        if (latest.current) void saveReading(id, latest.current, "reading", map?.recordingId);
-      });
+      if (word) {
+        const place = following.manualPlace();
+        void showFragment(word.paragraphId, false).then(() => {
+          if (latest.current) place.save(latest.current);
+        });
+      }
     } else navigate(view => direction < 0 ? view.prev() : view.next());
   };
   pageAction.current = (action, content, event) => {
@@ -1160,7 +1160,7 @@ export function ReaderView({
       // The Now Playing reader stays mounted while its dialog is closed.
       if (event.ctrlKey || event.metaKey || event.altKey || (event.target as HTMLElement)?.closest("input,select,textarea,button") || panel || viewport.current?.closest('[data-state="closed"]')) return;
       const overlay = preferences.display === "segment" || preferences.display === "word";
-      if (overlay && event.key.toLowerCase() === "f") { event.preventDefault(); following.follow(); following.forgetFollowed(); }
+      if (overlay && event.key.toLowerCase() === "f") { event.preventDefault(); following.backToNarration(); }
       else if (overlay && event.key.toLowerCase() === "p") { event.preventDefault(); editReader({display:"book"}); }
       else if (!p.book && preferences.display === "book" && (event.key === "ArrowLeft" || event.key === "ArrowRight")) { event.preventDefault(); pageAction.current(event.key === "ArrowLeft" ? "previous" : "next"); }
     };
@@ -1206,8 +1206,9 @@ export function ReaderView({
     if (!fragment) return;
     following.pageAway();
     setManualWord(null);
+    const place = following.manualPlace();
     void showFragment(fragment.id, false).then(() => {
-      if (latest.current) void saveReading(id, latest.current, "reading", map?.recordingId);
+      if (latest.current) place.save(latest.current);
     });
   };
   // With this book's narration loaded, the bar is the audio position and the page follows it.
@@ -1217,16 +1218,24 @@ export function ReaderView({
   const barPercent = audio
     ? audioWhole?.duration ? Math.round((audioWhole.position / audioWhole.duration) * 100) : 0
     : shownPercent;
-  const followScrub = () => {
-    following.cancelManualSave();
-    following.follow();
-    following.forgetFollowed();
-    following.resetRetries();
+  // Scrubbing the narration brings the page back to following it, decided from where the
+  // scrub ends: back to narration runs once the seek is committed (pointer released, or a key
+  // or change that moved the thumb), not while dragging. The seek reaches the player only with
+  // the next render, so it passes false and the drop waits until following starts to work.
+  const scrubDrag = useRef<number | null>(null);
+  const scrubStart = (event: { pointerId: number; button: number }) => {
+    if (event.button === 0) scrubDrag.current = event.pointerId;
   };
-  // Tab leaves the scrubber; only keys that move the thumb count as scrubbing.
-  const followScrubKey = (event: { key: string }) => {
-    if (event.key === "Tab") return;
-    followScrub();
+  const scrubEnd = (event: { pointerId: number }) => {
+    if (scrubDrag.current !== event.pointerId) return;
+    scrubDrag.current = null;
+    following.backToNarration(false);
+  };
+  const scrubCancel = (event: { pointerId: number }) => {
+    if (scrubDrag.current === event.pointerId) scrubDrag.current = null;
+  };
+  const scrubChange = () => {
+    if (scrubDrag.current === null) following.backToNarration(false);
   };
   const controls = controlsVisible || desktop;
   const timing = currentInterval ? " · estimated timings" : "";
@@ -1268,35 +1277,28 @@ export function ReaderView({
     else void p.play(audioBook, track, at);
     return true;
   };
-  // Word mode saves like page turns do: after a pause, and not for every sentence it reads by itself.
-  const wordSaver = useMemo(
-    () =>
-      createCheckpointSaver<{ value: TextLocator; origin: "reading" | "listening" }>(
-        ({ value, origin }) =>
-          void saveReading(id, value, origin, mapRef.current?.recordingId).catch(() => {}),
-      ),
-    [id],
-  );
+  // Word mode saves like page turns do: after a pause, and not for every sentence it reads by
+  // itself. Its checkpoint waits in the following module, which back to narration can drop.
   useEffect(() => {
     const hidden = () => {
-      if (document.hidden) wordSaver.flush();
+      if (document.hidden) following.flushWordCheckpoint();
     };
-    const flush = () => wordSaver.flush();
+    const flush = () => following.flushWordCheckpoint();
     window.addEventListener("pagehide", flush);
     document.addEventListener("visibilitychange", hidden);
     return () => {
       window.removeEventListener("pagehide", flush);
       document.removeEventListener("visibilitychange", hidden);
-      wordSaver.flush();
+      following.flushWordCheckpoint();
     };
-  }, [wordSaver]);
+  }, [following]);
   // Whatever way the display changes to Page, the page goes to the sentence Word mode was on.
   const previousDisplay = useRef(preferences.display);
   useEffect(() => {
     const was = previousDisplay.current;
     previousDisplay.current = preferences.display;
     if (was !== "word" || preferences.display === "word") return;
-    wordSaver.flush();
+    following.flushWordCheckpoint();
     if (preferences.display === "book" && latest.current?.paragraphId)
       void jumpRef.current(latest.current.paragraphId, false);
   }, [preferences.display]);
@@ -1311,7 +1313,7 @@ export function ReaderView({
     following.wordStep(moved);
     latest.current = value;
     setLocator(value);
-    wordSaver.request({ value, origin: moved ? "listening" : "reading" });
+    following.wordCheckpoint(value, moved ? "listening" : "reading");
   };
   const openMore = () => {
     setPanel(null);
@@ -1447,7 +1449,8 @@ export function ReaderView({
               const audio=books.find(item=>item.recordingId===map?.recordingId);
               const track=audio?.tracks.find(item=>item.id===interval?.trackId);
               if (!interval || !audio || !track) {setPanel("sync");return;}
-              following.follow(); following.forgetFollowed();
+              // The narration moves to a mapped sentence of this map's recording.
+              following.backToNarration(true);
               void p.play(audio,track,interval.start+fraction*(interval.end-interval.start));
             }}
           />}
@@ -1487,7 +1490,7 @@ export function ReaderView({
               latest.current = value;
               setLocator(value);
               if (paragraphChanged)
-                wordSaver.request({ value, origin: moved ? "listening" : "reading" }, auto);
+                following.wordCheckpoint(value, moved ? "listening" : "reading", auto);
             }}
           />}
           {desktop && preferences.display === "book" && <>
@@ -1515,7 +1518,7 @@ export function ReaderView({
         <div className="reader-player-line" aria-hidden="true"><i style={{ width: `${barPercent}%` }} /></div>
         {audio ? (
           // Scrubbing the narration brings the page back to following it.
-          <div className="reader-audio-timeline" onPointerDownCapture={followScrub} onKeyDownCapture={followScrubKey} onChangeCapture={followScrub}>
+          <div className="reader-audio-timeline" onPointerDownCapture={scrubStart} onPointerUp={scrubEnd} onPointerCancel={scrubCancel} onChange={scrubChange}>
             <PlaybackTimeline book={audio.book} compact scoped />
           </div>
         ) : <input
@@ -1539,7 +1542,7 @@ export function ReaderView({
             className="icon-button reader-back-narration"
             aria-label="Back to narration"
             disabled={follow || !currentInterval}
-            onClick={() => {following.cancelManualSave(); following.follow(); following.forgetFollowed(); following.resetRetries(); setError("");}}
+            onClick={() => following.backToNarration()}
           >
             <BookToHeadphones size={20} />
           </button>
@@ -1645,14 +1648,9 @@ export function ReaderView({
                   onClick={() => {
                     following.pageAway();
                     setManualWord(null);
+                    const place = following.manualPlace();
                     void showFragment(fragment.id, false).then(() => {
-                      if (latest.current)
-                        void saveReading(
-                          id,
-                          latest.current,
-                          "reading",
-                          map?.recordingId,
-                        );
+                      if (latest.current) place.save(latest.current);
                     });
                     setPanel(null);
                   }}
@@ -1790,7 +1788,7 @@ export function ReaderView({
                 <input
                   type="checkbox"
                   checked={follow}
-                  onChange={(event) => event.target.checked ? following.follow() : following.pageAway()}
+                  onChange={(event) => { if (event.target.checked) following.backToNarration(); else following.pageAway(); }}
                 />{" "}
                 Follow the narration
               </label>

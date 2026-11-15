@@ -45,15 +45,19 @@ function fakeClock() {
 function setup() {
   const clock = fakeClock();
   const saved: string[] = [];
+  const origins: string[] = [];
   let retries = 0;
   let cleared = 0;
+  // Whether the player is on a mapped sentence of the open ebook's map: set by each test.
+  const narration = { now: false };
   const following = createReaderFollowing<string>({
     clock,
-    onManualSave: (locator) => saved.push(locator),
+    onManualSave: (locator, origin) => { saved.push(locator); origins.push(origin); },
+    narrationToFollow: () => narration.now,
     onRetry: () => { retries++; },
     onClearFollowError: () => { cleared++; },
   });
-  return { clock, saved, following, retries: () => retries, cleared: () => cleared };
+  return { clock, saved, origins, narration, following, retries: () => retries, cleared: () => cleared };
 }
 
 test("a relocation with no gesture and no layout of ours is shown and keeps following", () => {
@@ -228,8 +232,7 @@ test("a follow jump started after a navigation ends the navigation's window: its
   const ended = following.beginNavigation();
   ended();
   assert.equal(following.relocated("chapter one", true), "manual");
-  following.cancelManualSave();
-  following.follow();
+  following.backToNarration(true);
   const jump = following.startJump();
   const display = following.beginOwnDisplay();
   assert.equal(following.relocated("narrated", true), "ignored");
@@ -297,13 +300,13 @@ test("a Lyrics page turn pages away, ends the window of our last display and cou
   assert.equal(following.relocated("a", true), "manual");
 });
 
-test("dropping the waiting manual position cancels its save and ends the navigation's window", () => {
+test("back to narration with a narration to follow drops the waiting manual position and ends the navigation's window", () => {
   const { following, clock, saved } = setup();
   const layout = following.beginOwnDisplay();
   following.navigate();
   following.beginNavigation()();
   assert.equal(following.relocated("chapter one", true), "manual");
-  following.cancelManualSave();
+  following.backToNarration(true);
   assert.equal(following.pendingManual(), null);
   clock.advance(MANUAL_SAVE_DELAY_MS * 2);
   assert.deepEqual(saved, []);
@@ -373,13 +376,13 @@ test("a follow jump that ended after the narration moved on neither retries nor 
   assert.equal(retries(), 0);
 });
 
-test("resetting the retries gives a sentence its full count again", () => {
+test("back to narration gives a sentence its full count of retries again", () => {
   const { following } = setup();
   for (let attempt = 1; attempt <= FOLLOW_RETRIES; attempt++) {
     following.followTarget("r:p1");
     following.followShown("r:p1", false);
   }
-  following.resetRetries();
+  following.backToNarration();
   following.followTarget("r:p1");
   assert.equal(following.followShown("r:p1", false), "retrying");
 });
@@ -404,7 +407,7 @@ test("each change of following is reported once, and dispose drops the retry tim
   });
   following.pageAway();
   following.pageAway();
-  following.follow();
+  following.backToNarration();
   following.navigate();
   assert.deepEqual(heard, [false, true, false]);
   following.followTarget("r:p1");
@@ -440,4 +443,358 @@ test("the time windows keep their values", () => {
     [OWN_LAYOUT_SETTLE_MS, NAVIGATION_REPORT_MS, GESTURE_REPORT_MS, LAYOUT_LIMIT_MS, OPENING_DISPLAY_MS, MANUAL_SAVE_DELAY_MS, FOLLOW_RETRY_DELAY_MS, FOLLOW_RETRIES],
     [500, 1000, 1500, 10000, 1200, 500, 180, 3],
   );
+});
+
+// Back to narration and the pending manual saves it owns (#417). The sequences are the issue's; a
+// "Reader" step names the call Reader.tsx makes for that user action.
+
+// Every kind of pending manual save, each waiting: a Contents relocation, a Word step, a search result.
+function pendAll(t: ReturnType<typeof setup>) {
+  t.following.navigate();
+  t.following.beginNavigation()();
+  assert.equal(t.following.relocated("chapter", true), "manual");
+  t.following.wordCheckpoint("word step", "reading");
+  return t.following.manualPlace();
+}
+
+test("sequence 1: without a narration to follow, back to narration keeps every waiting manual save, and each is still saved", () => {
+  const t = setup();
+  const search = pendAll(t);
+  t.narration.now = false;
+  t.following.backToNarration();
+  assert.equal(t.following.isFollowing(), true);
+  assert.equal(t.following.pendingManual(), "chapter");
+  search.save("search result");
+  t.clock.advance(MANUAL_SAVE_DELAY_MS);
+  assert.deepEqual(t.saved.sort(), ["chapter", "search result", "word step"]);
+});
+
+test("sequence 1: without a narration to follow, a waiting manual position is still handed back when the reader closes", () => {
+  const t = setup();
+  t.following.gesture();
+  t.following.relocated("page", true);
+  t.following.wordCheckpoint("word step", "reading");
+  t.following.backToNarration();
+  assert.equal(t.following.takeManualSave(), "page");
+  t.following.flushWordCheckpoint();
+  assert.deepEqual(t.saved, ["word step"]);
+});
+
+test("with a narration to follow, back to narration drops every waiting manual save, wherever it waits", () => {
+  const t = setup();
+  const search = pendAll(t);
+  t.narration.now = true;
+  t.following.backToNarration();
+  assert.equal(t.following.pendingManual(), null);
+  search.save("search result");
+  t.following.flushWordCheckpoint();
+  t.clock.advance(MANUAL_SAVE_DELAY_MS * 20);
+  assert.deepEqual(t.saved, []);
+  assert.equal(t.following.takeManualSave(), null);
+});
+
+test("back to narration follows, forgets the followed sentence, resets the retries and clears a follow error", () => {
+  const t = setup();
+  t.following.followTarget("r:p1");
+  t.following.pageAway();
+  t.following.backToNarration();
+  assert.equal(t.following.isFollowing(), true);
+  assert.equal(t.following.followed(), "");
+  assert.equal(t.cleared(), 1);
+});
+
+test("a manual save made after back to narration is the reader's again and is saved", () => {
+  const t = setup();
+  t.narration.now = true;
+  t.following.backToNarration();
+  const search = t.following.manualPlace();
+  t.following.pageAway();
+  search.save("search result");
+  t.following.wordCheckpoint("word step", "reading");
+  t.clock.advance(MANUAL_SAVE_DELAY_MS);
+  assert.deepEqual(t.saved, ["search result", "word step"]);
+});
+
+test("sequence 2: back to narration right after a Word mode sentence step drops its checkpoint", () => {
+  const t = setup();
+  // Reader: the step stayed in the text (audio not moved), pages away and queues a reading checkpoint.
+  t.following.wordStep(false);
+  t.following.wordCheckpoint("1:1", "reading");
+  t.clock.advance(MANUAL_SAVE_DELAY_MS - 100);
+  t.narration.now = true;
+  t.following.backToNarration();
+  t.clock.advance(MANUAL_SAVE_DELAY_MS * 20);
+  assert.deepEqual(t.saved, []);
+});
+
+test("a Word mode step that moved the narration keeps its listening checkpoint through back to narration", () => {
+  const t = setup();
+  t.following.wordStep(true);
+  t.following.wordCheckpoint("1:2", "listening");
+  t.narration.now = true;
+  t.following.backToNarration();
+  t.clock.advance(MANUAL_SAVE_DELAY_MS);
+  assert.deepEqual(t.saved, ["1:2"]);
+  assert.deepEqual(t.origins, ["listening"]);
+});
+
+test("sequence 3: back to narration drops Word mode's automatic checkpoint while the words advance at a set speed", () => {
+  const t = setup();
+  t.following.wordStep(false);
+  t.following.wordCheckpoint("first", "reading");
+  t.clock.advance(MANUAL_SAVE_DELAY_MS);
+  assert.deepEqual(t.saved, ["first"]);
+  // Reading at a set speed: the next sentence's checkpoint waits for the five-second spacing.
+  t.following.wordCheckpoint("auto", "reading", true);
+  t.clock.advance(MANUAL_SAVE_DELAY_MS * 2);
+  assert.deepEqual(t.saved, ["first"]);
+  t.narration.now = true;
+  t.following.backToNarration();
+  t.clock.advance(10_000);
+  assert.deepEqual(t.saved, ["first"]);
+  // Without the return the automatic checkpoint is saved once its spacing passed.
+  const kept = setup();
+  kept.following.wordCheckpoint("auto", "reading", true);
+  kept.clock.advance(MANUAL_SAVE_DELAY_MS);
+  assert.deepEqual(kept.saved, ["auto"]);
+});
+
+test("sequence 4: a page turn whose relocation arrives after back to narration and after the follow jump settled does not page away or arm a save", () => {
+  const t = setup();
+  t.following.navigate();
+  const ended = t.following.beginNavigation();
+  t.narration.now = true;
+  t.following.backToNarration();
+  // The follow jump to the narrated sentence starts and settles.
+  const jump = t.following.startJump();
+  const display = t.following.beginOwnDisplay();
+  display();
+  t.clock.advance(OWN_LAYOUT_SETTLE_MS + 1);
+  ended();
+  // Still inside the page turn's gesture window.
+  assert.ok(OWN_LAYOUT_SETTLE_MS + 1 < GESTURE_REPORT_MS);
+  assert.notEqual(t.following.relocated("turned page", true), "manual");
+  assert.equal(t.following.isFollowing(), true);
+  assert.equal(jump.current(), true);
+  t.clock.advance(MANUAL_SAVE_DELAY_MS * 4);
+  assert.deepEqual(t.saved, []);
+});
+
+test("sequence 4: a page turn whose relocation arrives after back to narration but before the follow jump started does not page away or arm a save", () => {
+  const t = setup();
+  t.following.navigate();
+  t.following.beginNavigation();
+  t.narration.now = true;
+  t.following.backToNarration();
+  assert.notEqual(t.following.relocated("turned page", true), "manual");
+  assert.equal(t.following.isFollowing(), true);
+  t.clock.advance(MANUAL_SAVE_DELAY_MS * 4);
+  assert.deepEqual(t.saved, []);
+});
+
+test("without a narration to follow, a page turn reported after back to narration still counts as the reader's and is saved", () => {
+  const t = setup();
+  t.following.navigate();
+  const ended = t.following.beginNavigation();
+  t.narration.now = false;
+  t.following.backToNarration();
+  ended();
+  assert.equal(t.following.relocated("turned page", true), "manual");
+  t.clock.advance(MANUAL_SAVE_DELAY_MS);
+  assert.deepEqual(t.saved, ["turned page"]);
+});
+
+test("sequence 5: back to narration before the map arrived, then the map arrives inside the save pause: the kept saves are dropped when following starts to work", () => {
+  const t = setup();
+  const search = pendAll(t);
+  t.narration.now = false;
+  t.following.backToNarration();
+  assert.equal(t.following.pendingManual(), "chapter");
+  t.clock.advance(MANUAL_SAVE_DELAY_MS - 100);
+  // Reader: the map arrived and the player is on a mapped sentence; the follow step runs.
+  t.narration.now = true;
+  assert.equal(t.following.followTarget("r:p1"), true);
+  assert.equal(t.following.pendingManual(), null);
+  search.save("search result");
+  t.following.flushWordCheckpoint();
+  t.clock.advance(MANUAL_SAVE_DELAY_MS * 20);
+  assert.deepEqual(t.saved, []);
+});
+
+test("sequence 5: a page turn reported after following started to work is not the reader's either", () => {
+  const t = setup();
+  t.following.navigate();
+  t.following.beginNavigation();
+  t.following.backToNarration();
+  t.narration.now = true;
+  t.following.followTarget("r:p1");
+  assert.notEqual(t.following.relocated("turned page", true), "manual");
+  assert.equal(t.following.isFollowing(), true);
+  t.clock.advance(MANUAL_SAVE_DELAY_MS * 4);
+  assert.deepEqual(t.saved, []);
+});
+
+test("a save kept by back to narration that ran before following started to work stays saved", () => {
+  const t = setup();
+  t.following.gesture();
+  t.following.relocated("chapter", true);
+  t.following.backToNarration();
+  t.clock.advance(MANUAL_SAVE_DELAY_MS);
+  t.narration.now = true;
+  t.following.followTarget("r:p1");
+  assert.deepEqual(t.saved, ["chapter"]);
+});
+
+test("a manual move after back to narration without a narration is not dropped when following later works", () => {
+  const t = setup();
+  t.following.backToNarration();
+  t.following.gesture();
+  assert.equal(t.following.relocated("new page", true), "manual");
+  // Following stopped with the move; a follow step that still ran from an older render drops nothing.
+  t.following.followTarget("r:p1");
+  t.clock.advance(MANUAL_SAVE_DELAY_MS);
+  assert.deepEqual(t.saved, ["new page"]);
+});
+
+test("sequence 6: the audio scrubber dragged from a mapped sentence into a gap keeps the waiting manual position", () => {
+  const t = setup();
+  t.following.gesture();
+  t.following.relocated("chapter", true);
+  // The drag starts on a mapped sentence; Reader runs back to narration only when it ends, in a gap,
+  // and passes false: the seek has not reached the player yet.
+  t.narration.now = true;
+  t.clock.advance(100);
+  t.narration.now = false;
+  t.following.backToNarration(false);
+  t.clock.advance(MANUAL_SAVE_DELAY_MS);
+  assert.deepEqual(t.saved, ["chapter"]);
+});
+
+test("sequence 6: the audio scrubber dragged from a gap onto a mapped sentence drops the waiting manual position once following works", () => {
+  const t = setup();
+  t.following.gesture();
+  t.following.relocated("chapter", true);
+  t.narration.now = false;
+  t.following.backToNarration(false);
+  // The seek landed on a mapped sentence: the follow step runs inside the save pause.
+  t.narration.now = true;
+  t.following.followTarget("r:p9");
+  t.clock.advance(MANUAL_SAVE_DELAY_MS * 4);
+  assert.deepEqual(t.saved, []);
+});
+
+test("sequence 7: a Read from audio answer after a newer manual position neither drops it nor counts as current", () => {
+  const t = setup();
+  const search = t.following.manualPlace();
+  // Read from audio in a gap: no narration, so the search result is kept while speech recovery runs.
+  const recovery = t.following.backToNarration();
+  assert.equal(recovery.current(), true);
+  // The reader chooses Contents while the request runs.
+  t.following.navigate();
+  t.following.beginNavigation()();
+  assert.equal(t.following.relocated("chosen chapter", true), "manual");
+  assert.equal(recovery.current(), false);
+  recovery.confirm();
+  search.save("search result");
+  t.clock.advance(MANUAL_SAVE_DELAY_MS);
+  assert.deepEqual(t.saved.sort(), ["chosen chapter", "search result"]);
+});
+
+test("sequence 7: a Read from audio answer after the player switched to another recording is not current and drops nothing", () => {
+  const t = setup();
+  t.following.gesture();
+  t.following.relocated("page", true);
+  const recovery = t.following.backToNarration();
+  t.following.recordingChanged();
+  assert.equal(recovery.current(), false);
+  recovery.confirm();
+  t.clock.advance(MANUAL_SAVE_DELAY_MS);
+  assert.deepEqual(t.saved, ["page"]);
+});
+
+test("a Read from audio answer that is still current confirms the narration and drops what the return kept", () => {
+  const t = setup();
+  t.following.gesture();
+  t.following.relocated("page", true);
+  const recovery = t.following.backToNarration();
+  t.clock.advance(MANUAL_SAVE_DELAY_MS - 100);
+  assert.equal(recovery.current(), true);
+  recovery.confirm();
+  t.clock.advance(MANUAL_SAVE_DELAY_MS * 4);
+  assert.deepEqual(t.saved, []);
+  // A later back to narration makes the answer stale too.
+  const older = t.following.backToNarration();
+  t.following.backToNarration();
+  assert.equal(older.current(), false);
+});
+
+test("sequence 8: after back to narration a scroll gesture during an earlier navigation's display is a manual move", () => {
+  for (const layout of ["resize", "display"] as const) {
+    const t = setup();
+    // A layout of ours is in flight when the reader chooses Contents.
+    const settled = layout === "resize" ? t.following.beginLayout() : t.following.beginOwnDisplay();
+    t.following.navigate();
+    t.following.beginNavigation();
+    t.narration.now = true;
+    t.following.backToNarration();
+    // Wheel or touch scrolling calls gesture(), not navigate().
+    t.following.gesture();
+    assert.equal(t.following.relocated("scrolled", true), "manual", layout);
+    assert.equal(t.following.isFollowing(), false);
+    t.clock.advance(MANUAL_SAVE_DELAY_MS);
+    assert.deepEqual(t.saved, ["scrolled"], layout);
+    settled();
+  }
+});
+
+test("sequence 9: a Word checkpoint dropped by back to narration does not delay the next automatic one", () => {
+  const t = setup();
+  t.following.wordStep(false);
+  t.following.wordCheckpoint("step", "reading");
+  t.narration.now = true;
+  t.following.backToNarration();
+  t.clock.advance(MANUAL_SAVE_DELAY_MS * 2);
+  assert.deepEqual(t.saved, []);
+  // Paged away again, the words advance by themselves: only the debounce applies, no spacing after a save that never happened.
+  t.following.wordStep(false);
+  t.following.wordCheckpoint("auto", "reading", true);
+  t.clock.advance(MANUAL_SAVE_DELAY_MS);
+  assert.deepEqual(t.saved, ["auto"]);
+});
+
+test("sequence 9: an automatic Word checkpoint after a real save waits for the spacing", () => {
+  const t = setup();
+  t.following.wordCheckpoint("step", "reading");
+  t.clock.advance(MANUAL_SAVE_DELAY_MS);
+  t.following.wordCheckpoint("auto", "reading", true);
+  t.clock.advance(4_000);
+  assert.deepEqual(t.saved, ["step"]);
+  t.clock.advance(1_000);
+  assert.deepEqual(t.saved, ["step", "auto"]);
+});
+
+test("a display of a place chosen by hand saves once and only through its own answer", () => {
+  const t = setup();
+  const place = t.following.manualPlace();
+  place.save("one");
+  place.save("two");
+  assert.deepEqual(t.saved, ["one"]);
+});
+
+test("sequence 5: an automatic Word checkpoint queued while following waited for a narration is dropped when following works; a listening one is kept", () => {
+  const t = setup();
+  t.following.backToNarration();
+  // No narration: the words keep advancing at their set speed and queue a reading checkpoint.
+  t.following.wordCheckpoint("auto", "reading", true);
+  t.narration.now = true;
+  t.following.followTarget("r:p1");
+  t.clock.advance(10_000);
+  assert.deepEqual(t.saved, []);
+
+  const moved = setup();
+  moved.following.backToNarration();
+  moved.following.wordCheckpoint("narrated", "listening");
+  moved.following.followTarget("r:p1");
+  moved.clock.advance(MANUAL_SAVE_DELAY_MS);
+  assert.deepEqual(moved.saved, ["narrated"]);
 });
