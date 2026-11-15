@@ -279,14 +279,22 @@ export function putAlignmentJob(job: AlignmentJob) {
  * Writes a regenerated ebook-set projection as a rebuild of the member's existing map (#379): a usable existing
  * map of the same files is kept for serving first, so `store` publishes the projection only when
  * `rebuildRejection` allows it. A rejected (error) write leaves the member's map served with the rejection.
+ * `memberSentences` is the member edition's own sentence count, the denominator of `job.coverage`: the kept
+ * map's coverage is counted again from its intervals over it, since a projection stored earlier counted it over
+ * the consensus rows, whose number changes with the set's membership.
  */
-export function putProjectedRebuild(job: AlignmentJob) {
+export function putProjectedRebuild(job: AlignmentJob, memberSentences?: number) {
   return sqlite.transaction(() => {
     const exists = sqlite.prepare("SELECT 1 FROM alignment_jobs WHERE id=?").get(job.id);
     const old = exists && !alignmentKeepsPublishedMap(job.id) ? alignmentJob(job.id) : null;
-    if (old && usableMap(old) && old.intervals.length && old.fingerprint === job.fingerprint &&
-      old.audioFingerprint === job.audioFingerprint)
-      sqlite.prepare("UPDATE alignment_jobs SET published_map=? WHERE id=?").run(JSON.stringify(old), job.id);
+    const kept = !old ? keptMapOf(job.id)
+      : usableMap(old) && old.intervals.length && old.fingerprint === job.fingerprint &&
+        old.audioFingerprint === job.audioFingerprint ? old : null;
+    if (kept) {
+      if (memberSentences && kept.fingerprint === job.fingerprint)
+        kept.coverage = kept.intervals.length / Math.max(1, memberSentences);
+      sqlite.prepare("UPDATE alignment_jobs SET published_map=? WHERE id=?").run(JSON.stringify(kept), job.id);
+    }
     return store(job);
   }).immediate();
 }

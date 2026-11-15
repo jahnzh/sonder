@@ -1134,6 +1134,66 @@ test("an accepted consensus rebuild does not replace a member projection it make
   assert.equal(listed.rebuild?.outcome, "rejected");
 });
 
+/** An ebook set whose consensus can be shortened, as a membership change does, and rebuilt by the current engine. */
+async function resizableSet(name: string) {
+  const set = await ebookSet(name, [`${name}-1`, `${name}-2`]);
+  const { workId, consensusId, sentences } = set;
+  const total = sentences.length;
+  const ownSentences = (await extractBook(`${name}-2`)).sections.flatMap((section) => section.paragraphs).length;
+  const full = JSON.parse((sqlite.prepare("SELECT projections FROM work_ebook_set WHERE work_id=?")
+    .get(workId) as { projections: string }).projections) as Record<string, (string | null)[]>;
+  /** The consensus now has `length` rows for each member. */
+  const consensusLength = (length: number) => {
+    const projections = Object.fromEntries(Object.entries(full).map(([id, rows]) => [id, rows.slice(0, length)]));
+    sqlite.prepare("UPDATE work_ebook_set SET projections=? WHERE work_id=?").run(JSON.stringify(projections), workId);
+  };
+  /** A rebuilt consensus of the current engine mapping its first `count` sentences, projected onto the members. */
+  const rebuildConsensus = async (count: number) => {
+    const old = alignmentJob(consensusId);
+    putAlignmentJob({ ...old, engine, generation: `new-${name}-${count}`,
+      intervals: sentences.slice(0, count).map((p, i) => ({ paragraphId: p.id, section: 0, trackId: `track-${name}`, start: 30 + i * 5, end: 34 + i * 5, confidence: 0.9 })),
+      coverage: count / total });
+    await publishProjectedMaps(workId, alignmentJob(consensusId));
+    return projectionOf(`${name}-2`)!;
+  };
+  // The review's example: 45% of a long consensus, then half of a consensus half as long. Over the consensus
+  // rows that reads 45% -> 50%; over the member's own text the second maps far less.
+  const half = Math.floor(total / 2), many = Math.round(total * 0.45), few = Math.round(half * 0.5);
+  assert.ok(few / half > many / total + 0.02 && (many - few) / ownSentences > 0.02, `${total} ${ownSentences}`);
+  return { ...set, total, half, many, few, ownSentences, consensusLength, rebuildConsensus };
+}
+
+test("a member projection that maps much less of the member is rejected although the shorter consensus reads better (#379)", async () => {
+  await reset();
+  const { publishOld, total, half, many, few, consensusLength, rebuildConsensus } = await resizableSet("shrink");
+  await publishOld(many);
+  assert.equal(projectionOf("shrink-2")!.intervals.length, many);
+  assert.equal(many / total < few / half, true);
+  consensusLength(half);
+  const worse = await rebuildConsensus(few);
+  assert.equal(worse.status, "error", "a projection that maps much less of the member is rejected");
+  assert.equal(worse.outcome, "rejected");
+  assert.equal(JSON.parse(keptMap(worse.id)!).intervals.length, many, "the member keeps its map");
+  assert.equal((await app.inject(`/api/alignments/${worse.id}/map`)).json().intervals.length, many);
+});
+
+test("a member projection that maps more of the member publishes over one stored with the old denominator (#379)", async () => {
+  await reset();
+  const { publishOld, total, half, many, few, ownSentences, consensusLength, rebuildConsensus } = await resizableSet("grow");
+  consensusLength(half);
+  await publishOld(few);
+  const stored = projectionOf("grow-2")!;
+  assert.equal(stored.intervals.length, few);
+  // Stored before this fix: coverage over the consensus rows, not the member's sentences.
+  putAlignmentJob({ ...stored, coverage: few / half });
+  consensusLength(total);
+  const better = await rebuildConsensus(many);
+  assert.equal(better.status, "partial", `a projection that maps more of the member publishes: ${better.error}`);
+  assert.equal(better.intervals.length, many);
+  assert.equal(better.coverage, many / ownSentences, "coverage is over the member's own sentences");
+  assert.equal(keptMap(better.id), null);
+});
+
 test("a rejected consensus rebuild shows its rejection on each member's Reading sync card (#379)", async () => {
   await reset();
   const { readingSyncControls, rejectedRebuildReason } = await import("../src/reading-sync-controls.ts");

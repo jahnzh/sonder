@@ -326,6 +326,7 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
     );
     if (prepared) continue;
     const memberBook = await extractBook(member.ebookId);
+    const memberSentences = memberBook.sections.reduce((count, section) => count + section.paragraphs.length, 0);
     const intervals = projectIntervals(
       consensusJob.intervals,
       projection,
@@ -376,11 +377,13 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
       audioFingerprint: consensusJob.audioFingerprint,
       createdAt: consensusJob.createdAt,
       updatedAt: Date.now(),
-      coverage: intervals.length / Math.max(1, projection.length),
+      // Over the member's own sentences, as for a prepared map: the consensus row count changes with the
+      // set's membership, so it is no stable measure of this member's map (#379).
+      coverage: intervals.length / Math.max(1, memberSentences),
       pairings: [],
       mode: "anchored",
       origin: "projected",
-    });
+    }, memberSentences);
   }
 }
 
