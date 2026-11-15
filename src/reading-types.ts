@@ -114,20 +114,24 @@ export type AlignmentRunConfig = {
   decodeWorkers?: number;
   extractWorkers?: number;
 };
+/** Every status an alignment job can have. Transitions between them live in server/alignment-transitions.ts (ADR 0012). */
+export const ALIGNMENT_STATUSES = [
+  "queued",
+  "copying",
+  "processing",
+  "paused",
+  "cancelled",
+  "ready",
+  "partial",
+  "error",
+] as const;
+export type AlignmentStatus = (typeof ALIGNMENT_STATUSES)[number];
 export type AlignmentJob = {
   id: string;
   generation?: string;
   ebookId: string;
   recordingId: string;
-  status:
-    | "queued"
-    | "copying"
-    | "processing"
-    | "paused"
-    | "cancelled"
-    | "ready"
-    | "partial"
-    | "error";
+  status: AlignmentStatus;
   progress: number;
   engine: string;
   /** Identifies jobs prepared with CTC passage validation. */
