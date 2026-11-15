@@ -122,10 +122,13 @@ run("INSERT INTO user_hardcover_outbox(user_id,book_id,account_id,status_id,inte
 run("INSERT INTO user_hardcover_progress(user_id,book_id,account_id,recording_id,position,duration,updated_at,error) VALUES(1,21,1,'rec-queued',10,100,?,?)", NOW - 3 * MIN, "socket hang up");
 run("INSERT INTO user_hardcover_reading_outbox(user_id,book_id,account_id,work_id,fraction,updated_at,error) VALUES(2,31,1,'w1',0.5,?,NULL)", NOW - 45 * MIN);
 
-// Ebook-set members (#325): every status and hold; the holds for audio and language are not background work.
+// Ebook-set members (#325): every status and hold; the holds for audio and language are not background work. Of
+// the pending members, eb-pending waits for its turn; eb-pending-old is being checked since 5 min (its row is 2 h
+// old, so it is not stuck); the check of eb-pending-stuck started 2 h ago, past its threshold.
 const members: Array<[string, string, string | null, string, number]> = [
   ["eb-pending", "pending", null, "{}", NOW - 5 * MIN],
   ["eb-pending-old", "pending", null, "{}", NOW - 2 * 60 * MIN],
+  ["eb-pending-stuck", "pending", null, "{}", NOW - 3 * 60 * MIN],
   ["eb-worker", "held", "awaiting_worker", "{}", NOW - 6 * MIN],
   ["eb-failed", "held", "evaluation_failed", JSON.stringify({ error: "This file is not a valid EPUB." }), NOW - 7 * MIN],
   ["eb-accepted", "accepted", null, "{}", NOW - 8 * MIN],
@@ -140,6 +143,10 @@ for (const [ebookId, status, holdReason, evidence, updated] of members) {
   run("INSERT INTO work_ebook_set_members(work_id,ebook_id,status,hold_reason,source_title,evidence,updated_at) VALUES('w2',?,?,?,?,?,?)",
     ebookId, status, holdReason, `Edition ${ebookId}`, evidence, updated);
 }
+
+const { ebookSetCheckStarted } = await import("../server/ebook-set-activity.ts");
+ebookSetCheckStarted("w2", "eb-pending-old", NOW - 5 * MIN);
+ebookSetCheckStarted("w2", "eb-pending-stuck", NOW - 2 * 60 * MIN);
 
 const torrentDown: TorrentHealth = {
   status: "unreachable", session: false, network: "unknown", version: null, message: "The local torrent client cannot be reached.", checkedAt: NOW,

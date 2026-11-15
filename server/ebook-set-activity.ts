@@ -11,6 +11,25 @@ import { activityFailure, defineSource, stateFrom, type ActivityAction } from ".
 
 const MINUTE = 60_000;
 
+/**
+ * The checks running in this process, by member, with the time each started. Only these are running; a pending
+ * member waiting for its turn is queued, and the stuck time counts from the start of the check, not from the row's
+ * last update (#325 review). Held in the process because a restart ends every check.
+ */
+const runningChecks = new Map<string, number>();
+const checkKey = (workId: string, ebookId: string) => JSON.stringify([workId, ebookId]);
+
+export function ebookSetCheckStarted(workId: string, ebookId: string, at = Date.now()) {
+  runningChecks.set(checkKey(workId, ebookId), at);
+}
+
+export function ebookSetCheckEnded(workId: string, ebookId: string) {
+  runningChecks.delete(checkKey(workId, ebookId));
+}
+
+export const ebookSetCheckStartedAt = (workId: string, ebookId: string) =>
+  runningChecks.get(checkKey(workId, ebookId)) ?? null;
+
 /** Holds that wait for something other than the background evaluation. */
 export const EBOOK_SET_IDLE_HOLDS = ["awaiting_audio", "language_not_supported"] as const satisfies readonly EbookSetHoldReason[];
 
@@ -47,6 +66,8 @@ export type EbookSetMemberRow = {
   hold_reason: string | null;
   evidence: string;
   updated_at: number;
+  /** When the check of a pending member started in this process; null while it waits for its turn. */
+  started_at: number | null;
 };
 
 function evidenceError(evidence: string) {
@@ -79,23 +100,30 @@ export const ebookSetSource = defineSource<EbookSetMemberRow[]>({
   // The reported evaluation of a whole book took 50 minutes (#325).
   stuckAfterMs: 90 * MINUTE,
   load: (sqlite) =>
-    sqlite.prepare(
-      `SELECT m.work_id, m.ebook_id, w.title, m.source_title, m.status, m.hold_reason, m.evidence, m.updated_at
-         FROM work_ebook_set_members m LEFT JOIN works w ON w.id = m.work_id
-        WHERE NOT (m.status = 'held' AND m.hold_reason IN (${EBOOK_SET_IDLE_HOLDS.map(() => "?").join(",")}))`,
-    ).all(...EBOOK_SET_IDLE_HOLDS) as EbookSetMemberRow[],
+    (
+      sqlite.prepare(
+        `SELECT m.work_id, m.ebook_id, w.title, m.source_title, m.status, m.hold_reason, m.evidence, m.updated_at
+           FROM work_ebook_set_members m LEFT JOIN works w ON w.id = m.work_id
+          WHERE NOT (m.status = 'held' AND m.hold_reason IN (${EBOOK_SET_IDLE_HOLDS.map(() => "?").join(",")}))`,
+      ).all(...EBOOK_SET_IDLE_HOLDS) as Omit<EbookSetMemberRow, "started_at">[]
+    ).map((row) => ({ ...row, started_at: ebookSetCheckStartedAt(row.work_id, row.ebook_id) })),
   report(rows) {
     const drafts = rows.map((row) => {
       const status = ebookSetCheckStatus(row.status, row.hold_reason);
-      const { state, unknown } = stateFrom(EBOOK_SET_ACTIVITY_STATES, status);
+      const mapped = stateFrom(EBOOK_SET_ACTIVITY_STATES, status);
+      const { unknown } = mapped;
+      // A pending member is running only while its check runs; until then it waits for its turn.
+      const startedAt = status === "pending" ? row.started_at : null;
+      const state = status === "pending" && startedAt === null ? ("queued" as const) : mapped.state;
       const detail = unknown ? "Ebook set check" : DETAIL[status as EbookSetCheckStatus];
       return {
         id: ebookSetItemId(row.work_id, row.ebook_id), kind: "ebook-set" as const, processId: "ebook-set",
         title: row.title || row.work_id, detail: `${detail}: ${row.source_title || row.ebook_id}`, user: null, state,
-        progress: null, host: null, startedAt: null, updatedAt: row.updated_at,
-        error: unknown ?? (state === "failed" ? evidenceError(row.evidence) : null), changedAt: row.updated_at,
+        progress: null, host: null, startedAt, updatedAt: row.updated_at,
+        error: unknown ?? (state === "failed" ? evidenceError(row.evidence) : null), changedAt: startedAt ?? row.updated_at,
         // Retry for a check that failed or waits for a worker; a status outside the vocabulary has nothing to retry.
-        actions: !unknown && (state === "failed" || state === "queued") ? ["retry" as const] : [],
+        actions:
+          !unknown && (status === "evaluation_failed" || status === "awaiting_worker") ? ["retry" as const] : [],
       };
     });
     return { drafts };

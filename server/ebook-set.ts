@@ -1,7 +1,7 @@
 // Ebook set per work: top-k provider downloads, hold until audio, outlier gate, member evidence.
 import { and, eq } from "drizzle-orm";
 import { statSync, existsSync, unlinkSync } from "node:fs";
-import { db } from "./db.ts";
+import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
 import { cheapTitleAuthorMatch } from "./ebook-set-filter.ts";
 import {
@@ -32,6 +32,7 @@ import {
 import { normalizeReaderText } from "../src/reading-types.ts";
 import { searchEbooks, saveEbook } from "./ebooks.ts";
 import { iso3 } from "./language.ts";
+import { ebookSetCheckEnded, ebookSetCheckStarted } from "./ebook-set-activity.ts";
 
 export const EBOOK_SET_TOP_K = 5;
 
@@ -99,6 +100,16 @@ function sentenceSet(ebookId: string) {
   });
 }
 
+/** A sibling's sentences, or null when its EPUB cannot be parsed: one broken sibling never fails another's check. */
+async function siblingSentenceSet(ebookId: string) {
+  try {
+    return await sentenceSet(ebookId);
+  } catch (error) {
+    console.warn(`Ebook set sibling ${ebookId} is left out of the evidence: ${(error as Error).message}`);
+    return null;
+  }
+}
+
 async function buildEvidence(
   workId: string,
   ebookId: string,
@@ -106,13 +117,17 @@ async function buildEvidence(
   language: string | null,
   byteSize: number | null,
 ): Promise<EbookSetMemberEvidence> {
+  // Every sibling that is not rejected, as before, except one whose own check failed (#325 review).
   const members = listEbookSetMembers(workId).filter(
-    (m) => m.ebookId !== ebookId && m.status !== "rejected",
+    (m) =>
+      m.ebookId !== ebookId &&
+      m.status !== "rejected" &&
+      !(m.status === "held" && m.holdReason === "evaluation_failed"),
   );
   const mine = await sentenceSet(ebookId);
-  const otherSets = await Promise.all(
-    members.map((member) => sentenceSet(member.ebookId)),
-  );
+  const otherSets = (
+    await Promise.all(members.map((member) => siblingSentenceSet(member.ebookId)))
+  ).filter((set): set is Set<string> => set !== null);
   let shared = 0;
   for (const sentence of mine) {
     if (otherSets.some((set) => set.has(sentence))) shared++;
@@ -224,6 +239,49 @@ function upsertMember(input: {
       },
     })
     .run();
+}
+
+/** A member as a check found it when it started: absent, or its status and last update. */
+export type EbookSetMemberSnapshot = { status: string; updatedAt: number } | null;
+
+export function ebookSetMemberSnapshot(workId: string, ebookId: string): EbookSetMemberSnapshot {
+  return (
+    db
+      .select({ status: s.workEbookSetMembers.status, updatedAt: s.workEbookSetMembers.updatedAt })
+      .from(s.workEbookSetMembers)
+      .where(and(eq(s.workEbookSetMembers.workId, workId), eq(s.workEbookSetMembers.ebookId, ebookId)))
+      .get() ?? null
+  );
+}
+
+/** The ebook is linked to the work, and the work exists. */
+function ebookLinkedToWork(workId: string, ebookId: string) {
+  const ebook = db
+    .select({ workId: s.ebookEditions.workId })
+    .from(s.ebookEditions)
+    .where(eq(s.ebookEditions.id, ebookId))
+    .get();
+  return ebook?.workId === workId && !!db.select({ id: s.works.id }).from(s.works).where(eq(s.works.id, workId)).get();
+}
+
+/**
+ * Writes the result of a check only if, in one transaction, the ebook is still linked to the work and the member is
+ * still the one the check started for (absent then and now, or the same status and last update). Otherwise the
+ * result is dropped and the member stays as it is (#325 review): a relink, a removal or a member added again while
+ * the check ran wins over the check. Returns whether the result was written.
+ */
+function writeMemberResult(input: Parameters<typeof upsertMember>[0], startedFor: EbookSetMemberSnapshot) {
+  return sqlite.transaction(() => {
+    if (!ebookLinkedToWork(input.workId, input.ebookId)) return false;
+    const current = ebookSetMemberSnapshot(input.workId, input.ebookId);
+    const same =
+      current === null || startedFor === null
+        ? current === startedFor
+        : current.status === startedFor.status && current.updatedAt === startedFor.updatedAt;
+    if (!same) return false;
+    upsertMember(input);
+    return true;
+  })();
 }
 
 /** Scores samples using the injected test prober. */
@@ -342,6 +400,7 @@ export async function evaluateEbookSetMember(
     const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
     await syncEbookSetConsensus(workId);
   };
+  const startedFor = ebookSetMemberSnapshot(workId, ebookId);
   const row = db
     .select()
     .from(s.ebookEditions)
@@ -373,19 +432,22 @@ export async function evaluateEbookSetMember(
       meta.language ?? null,
       byteSize,
     );
-    upsertMember({
-      workId,
-      ebookId,
-      status: "held",
-      holdReason: "awaiting_audio",
-      sourceTitle: meta.sourceTitle,
-      sourceAuthor: meta.sourceAuthor,
-      language: meta.language,
-      byteSize,
-      evidence,
-    });
+    const written = writeMemberResult(
+      {
+        workId,
+        ebookId,
+        status: "held",
+        holdReason: "awaiting_audio",
+        sourceTitle: meta.sourceTitle,
+        sourceAuthor: meta.sourceAuthor,
+        language: meta.language,
+        byteSize,
+        evidence,
+      },
+      startedFor,
+    );
     await sync();
-    return { status: "held" as const, evidence };
+    return { status: "held" as const, evidence, written };
   }
   const injected = Boolean(deps.anchorSample);
   const workerReady = ebookSetWorkerConfigured();
@@ -425,19 +487,22 @@ export async function evaluateEbookSetMember(
       meta.language ?? null,
       byteSize,
     );
-    upsertMember({
-      workId,
-      ebookId,
-      status: "held",
-      holdReason,
-      sourceTitle: meta.sourceTitle,
-      sourceAuthor: meta.sourceAuthor,
-      language: meta.language,
-      byteSize,
-      evidence,
-    });
+    const written = writeMemberResult(
+      {
+        workId,
+        ebookId,
+        status: "held",
+        holdReason,
+        sourceTitle: meta.sourceTitle,
+        sourceAuthor: meta.sourceAuthor,
+        language: meta.language,
+        byteSize,
+        evidence,
+      },
+      startedFor,
+    );
     await sync();
-    return { status: "held" as const, evidence };
+    return { status: "held" as const, evidence, written };
   }
   const evidence = await buildEvidence(
     workId,
@@ -447,18 +512,21 @@ export async function evaluateEbookSetMember(
     byteSize,
   );
   const status: EbookSetMemberStatus = outlier.passed ? "accepted" : "rejected";
-  upsertMember({
-    workId,
-    ebookId,
-    status,
-    holdReason: null,
-    sourceTitle: meta.sourceTitle,
-    sourceAuthor: meta.sourceAuthor,
-    language: meta.language,
-    byteSize,
-    evidence,
-  });
-  const result = { status, evidence };
+  const written = writeMemberResult(
+    {
+      workId,
+      ebookId,
+      status,
+      holdReason: null,
+      sourceTitle: meta.sourceTitle,
+      sourceAuthor: meta.sourceAuthor,
+      language: meta.language,
+      byteSize,
+      evidence,
+    },
+    startedFor,
+  );
+  const result = { status, evidence, written };
   await sync();
   return result;
 }
@@ -533,17 +601,31 @@ export function markEbookSetMemberPending(
   return "pending";
 }
 
-/** An evaluation that threw: the member is held with the reason, so it neither runs again by itself nor vanishes. */
-function holdFailedMember(member: ReturnType<typeof listEbookSetMembers>[number], error: unknown) {
+type ListedMember = ReturnType<typeof listEbookSetMembers>[number];
+
+/**
+ * An evaluation that threw: the member is held with the reason, so it neither runs again by itself nor vanishes.
+ * The hold follows the rule of every result (it is dropped if the member changed or its ebook moved while it was
+ * checked), and it never throws: one member's failure does not stop the checks of the others.
+ */
+function holdFailedMember(member: ListedMember, error: unknown, startedFor: EbookSetMemberSnapshot) {
   const message = error instanceof Error ? error.message : String(error);
   console.warn(`Ebook set evaluation of ${member.ebookId} failed: ${message}`);
-  upsertMember({
-    workId: member.workId,
-    ebookId: member.ebookId,
-    status: "held",
-    holdReason: "evaluation_failed",
-    evidence: { ...member.evidence, outlier: noSamples(), audioSupportedCoverage: null, error: message },
-  });
+  try {
+    const written = writeMemberResult(
+      {
+        workId: member.workId,
+        ebookId: member.ebookId,
+        status: "held",
+        holdReason: "evaluation_failed",
+        evidence: { ...member.evidence, outlier: noSamples(), audioSupportedCoverage: null, error: message },
+      },
+      startedFor,
+    );
+    if (!written) console.warn(`Ebook set member ${member.ebookId} changed while it was checked; its failure is not recorded.`);
+  } catch (writeError) {
+    console.warn(`Ebook set failure of ${member.ebookId} could not be recorded: ${(writeError as Error).message}`);
+  }
 }
 
 // One evaluation run per work at a time: the background evaluation and a reevaluate request never probe the same
@@ -566,29 +648,43 @@ export function forgetEbookSetRunsForTests() {
   workRuns.clear();
 }
 
+/** The results a run wrote, with the member each is for. A result dropped by `writeMemberResult` is left out. */
+type MemberResult = Awaited<ReturnType<typeof evaluateEbookSetMember>> & { ebookId: string };
+
 async function evaluateMembers(
   workId: string,
-  members: ReturnType<typeof listEbookSetMembers>,
-  onFailure?: (member: (typeof members)[number], error: unknown) => void,
+  members: ListedMember[],
+  options: {
+    /** Whether a member in this status (read again just before its check) is still due. */
+    due: (status: EbookSetMemberStatus) => boolean;
+    onFailure?: (member: ListedMember, error: unknown, startedFor: EbookSetMemberSnapshot) => void;
+    /** Read before each member's check: false leaves it and the rest as they are. */
+    mayStart?: () => boolean;
+  },
 ) {
-  const results: Awaited<ReturnType<typeof evaluateEbookSetMember>>[] = [];
+  const results: MemberResult[] = [];
   try {
     await withProbeSession(workId, async (probe) => {
       for (const member of members) {
+        if (options.mayStart && !options.mayStart()) break;
+        // The member as it is now: one removed or given a result since the listing is not checked.
+        const startedFor = ebookSetMemberSnapshot(workId, member.ebookId);
+        if (!startedFor || !options.due(startedFor.status as EbookSetMemberStatus)) continue;
         const meta = {
           sourceTitle: member.sourceTitle,
           sourceAuthor: member.sourceAuthor,
           language: member.language,
           byteSize: member.byteSize,
         };
-        if (!onFailure) {
-          results.push(await evaluateEbookSetMember(workId, member.ebookId, meta, probe));
-          continue;
-        }
+        ebookSetCheckStarted(workId, member.ebookId);
         try {
-          results.push(await evaluateEbookSetMember(workId, member.ebookId, meta, probe));
+          const result = await evaluateEbookSetMember(workId, member.ebookId, meta, probe);
+          if (result.written) results.push({ ...result, ebookId: member.ebookId });
         } catch (error) {
-          onFailure(member, error);
+          if (!options.onFailure) throw error;
+          options.onFailure(member, error, startedFor);
+        } finally {
+          ebookSetCheckEnded(workId, member.ebookId);
         }
       }
     });
@@ -601,13 +697,22 @@ async function evaluateMembers(
 
 /**
  * Runs the evaluation of a work's pending members (the background evaluation). A member whose evaluation throws is
- * held as `evaluation_failed`; one without server audio is held as `awaiting_audio`, as before.
+ * held as `evaluation_failed`; one without server audio is held as `awaiting_audio`, as before. `mayStart` is read
+ * before each member's check (the pause switches); a member whose ebook is now linked to another work is not
+ * checked. Returns the results written, with their member.
  */
-export function evaluatePendingEbookSetMembers(workId: string) {
+export function evaluatePendingEbookSetMembers(workId: string, options: { mayStart?: () => boolean } = {}) {
   return runForWork(workId, async () => {
-    const members = listEbookSetMembers(workId).filter((member) => member.status === "pending");
+    if (options.mayStart && !options.mayStart()) return [];
+    const members = listEbookSetMembers(workId).filter(
+      (member) => member.status === "pending" && ebookLinkedToWork(workId, member.ebookId),
+    );
     if (!members.length) return [];
-    return evaluateMembers(workId, members, holdFailedMember);
+    return evaluateMembers(workId, members, {
+      due: (status) => status === "pending",
+      onFailure: holdFailedMember,
+      mayStart: options.mayStart,
+    });
   });
 }
 
@@ -616,12 +721,12 @@ export function reevaluateEbookSetForWork(workId: string) {
   return runForWork(workId, async () => {
     const hasAudio = !!firstRecordingWithLocalAudio(workId);
     // Without server audio a held member would only be held again; a pending one still needs its first result.
-    const members = listEbookSetMembers(workId).filter(
-      (member) => member.status === "pending" || (hasAudio && member.status === "held"),
-    );
+    const due = (status: EbookSetMemberStatus) => status === "pending" || (hasAudio && status === "held");
+    const members = listEbookSetMembers(workId).filter((member) => due(member.status));
     // With server audio the consensus is synced even when no member needed a new result, as before.
     if (!hasAudio && !members.length) return [];
-    return evaluateMembers(workId, members);
+    const results = await evaluateMembers(workId, members, { due });
+    return results.map(({ status, evidence }) => ({ status, evidence }));
   });
 }
 

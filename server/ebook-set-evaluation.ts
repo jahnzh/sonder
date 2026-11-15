@@ -15,6 +15,7 @@ import { and, eq, lte } from "drizzle-orm";
 import { db } from "./db.ts";
 import * as s from "./schema.ts";
 import { isHeld, isPaused } from "./activity-pause.ts";
+import { autoQueueAlignmentsForWork } from "./alignment.ts";
 import type { BackgroundProcess } from "./background-runner.ts";
 import {
   ebookSetWorkerConfigured,
@@ -53,13 +54,21 @@ function worksWithPendingMembers() {
   return [...new Set(rows.map((row) => row.workId))];
 }
 
+// The probes run on the alignment workers, so pausing alignment holds them as well; a pending member stays pending.
+const held = () => isHeld("ebook-set") || isPaused("alignment");
+
 async function evaluateDue() {
-  // The probes run on the alignment workers, so pausing alignment holds them as well; a pending member stays pending.
-  if (isHeld("ebook-set") || isPaused("alignment")) return;
+  if (held()) return;
   requeueAwaitingWorker(Date.now());
   for (const workId of worksWithPendingMembers()) {
+    // Both switches are read again before each member's check: the check that runs finishes, no other starts.
+    if (held()) return;
     try {
-      await evaluatePendingEbookSetMembers(workId);
+      const results = await evaluatePendingEbookSetMembers(workId, { mayStart: () => !held() });
+      // No alignment is queued while a member is pending (#325 review); an accepted one now gets what the upload
+      // queued once its evaluation ended on main.
+      for (const result of results)
+        if (result.status === "accepted") await autoQueueAlignmentsForWork(workId, { ebookId: result.ebookId });
     } catch (error) {
       // The members stay pending and the next round tries again.
       console.warn(`Ebook set evaluation for ${workId} failed: ${(error as Error).message}`);

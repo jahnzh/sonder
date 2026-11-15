@@ -1,7 +1,7 @@
 import { isPaused } from "./activity-pause.ts";
 import { backgroundRunner } from "./background-runner.ts";
 import type { FastifyInstance } from "fastify";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { randomUUID, createHash } from "node:crypto";
 import {
   existsSync,
@@ -394,6 +394,21 @@ export async function backfillEligibility(
     return { eligible: false, reason: "media" };
   return { eligible: true };
 }
+/**
+ * The ebook's ebook-set member in the work it is linked to is pending: its check has not ended, and it is aligned
+ * only after it (#325 review). On main the import ran the check before it queued an alignment.
+ */
+function ebookSetCheckPending(ebookId: string) {
+  return !!db
+    .select({ ebookId: s.workEbookSetMembers.ebookId })
+    .from(s.workEbookSetMembers)
+    .innerJoin(
+      s.ebookEditions,
+      and(eq(s.ebookEditions.id, s.workEbookSetMembers.ebookId), eq(s.ebookEditions.workId, s.workEbookSetMembers.workId)),
+    )
+    .where(and(eq(s.workEbookSetMembers.ebookId, ebookId), eq(s.workEbookSetMembers.status, "pending")))
+    .get();
+}
 type BackfillDecision =
   | "queue"
   | "ready"
@@ -415,6 +430,7 @@ async function backfillDecision(
     if (runStatus === "paused") return "paused";
     if (alignmentMapUsable(existing)) return "ready";
   }
+  if (ebookSetCheckPending(ebookId)) return "notEligible";
   return (await backfillEligibility(ebookId, recordingId)).eligible
     ? "queue"
     : "notEligible";

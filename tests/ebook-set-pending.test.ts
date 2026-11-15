@@ -76,6 +76,8 @@ function installPool() {
 }
 
 beforeEach(async () => {
+  // A test that failed with the gate closed must not hold the next one.
+  open();
   await ebookSetEvaluationsSettled();
   // Consensus jobs of earlier tests must not hold the fake hosts.
   sqlite.prepare("DELETE FROM alignment_jobs").run();
@@ -340,4 +342,300 @@ test("setting the default works once the pending member is accepted", async () =
   await ebookSetEvaluationsSettled();
   const res = await app.inject({ method: "PATCH", url: `/api/works/${workId}/ebook-set/default`, payload: { ebookId } });
   assert.equal(res.statusCode, 200, res.body);
+});
+
+// Review round 1 of #325 (artifacts/orca/review-325-round1.md).
+
+/** Alignment jobs the auto-queue or the backfill made for one ebook. */
+const backfillJobs = (ebookId: string) =>
+  (sqlite.prepare("SELECT data FROM alignment_jobs WHERE ebook_id=?").all(ebookId) as { data: string }[])
+    .map((row) => JSON.parse(row.data) as { origin?: string })
+    .filter((job) => job.origin === "backfill");
+
+async function uploadEpub(workId: string, prefix: string) {
+  const boundary = "sonder-ebook-set-pending";
+  const epub = await readerFixture({ language: "en", title: prefix, bodies: [paragraphs(prefix), paragraphs(prefix)] });
+  const res = await app.inject({
+    method: "POST",
+    url: `/api/ebooks/import?workId=${workId}`,
+    headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+    payload: Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${prefix}.epub"\r\nContent-Type: application/epub+zip\r\n\r\n`),
+      epub,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]),
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  return res.json().id as string;
+}
+
+/** Queued alignment jobs stay queued: the scheduler does not start them while a test looks at the queue. */
+async function withAlignmentsHeld(run: () => Promise<void>) {
+  const { resetAlignmentRunnerForTests } = await import("../server/alignment.ts");
+  stopAlignments();
+  try {
+    await run();
+  } finally {
+    sqlite.prepare("DELETE FROM alignment_jobs").run();
+    resetAlignmentRunnerForTests();
+  }
+}
+
+/** A test whose /anchor requests are only those of ebook-set checks: alignment jobs are held. */
+const heldTest = (name: string, run: () => Promise<void>) => test(name, () => withAlignmentsHeld(run));
+
+test("HIGH 1: an uploaded EPUB is not aligned while its check is pending; the check that ends accepted queues it once", async () => {
+  await withAlignmentsHeld(async () => {
+    const workId = seedWork();
+    behaviours = { Upload: "forward" };
+    closeGate();
+    const ebookId = await uploadEpub(workId, "Upload");
+    assert.equal(member(workId, ebookId)?.status, "pending");
+    assert.equal(backfillJobs(ebookId).length, 0, "no alignment is queued while the member is pending");
+    open();
+    await ebookSetEvaluationsSettled();
+    assert.equal(member(workId, ebookId)?.status, "accepted");
+    assert.equal(backfillJobs(ebookId).length, 1, "the accepted check queues the alignment the upload queued on main");
+    await backgroundRunner(app).tick("ebook-set");
+    assert.equal(backfillJobs(ebookId).length, 1, "once");
+  });
+});
+
+test("HIGH 1: a check that ends rejected or held queues no alignment", async () => {
+  await withAlignmentsHeld(async () => {
+    const workId = seedWork();
+    behaviours = { Wrong: "none" };
+    const rejected = await uploadEpub(workId, "Wrong");
+    await ebookSetEvaluationsSettled();
+    assert.equal(member(workId, rejected)?.status, "rejected");
+    assert.equal(backfillJobs(rejected).length, 0);
+    process.env.ALIGNMENT_POOL_ENABLED = "0";
+    const held = await uploadEpub(workId, "Held");
+    await ebookSetEvaluationsSettled();
+    assert.equal(member(workId, held)?.holdReason, "awaiting_worker");
+    assert.equal(backfillJobs(held).length, 0);
+  });
+});
+
+for (const paused of ["ebook-set", "alignment"] as const) {
+  heldTest(`HIGH 2: pausing ${paused} while a check runs lets that check finish and starts no other`, async () => {
+    const workId = seedWork();
+    const first = (await seedLibgenEpub(workId, "Right")).ebookId;
+    const second = (await seedLibgenEpub(workId, "Right")).ebookId;
+    seedMember(workId, first, "pending", null);
+    seedMember(workId, second, "pending", null);
+    behaviours = { Right: "forward" };
+    closeGate();
+    const round = backgroundRunner(app).tick("ebook-set");
+    await until(() => anchorRequests > 0, "the first check");
+    setPaused(paused, true);
+    try {
+      open();
+      await round;
+      await ebookSetEvaluationsSettled();
+      const statuses = [member(workId, first)?.status, member(workId, second)?.status].sort();
+      assert.deepEqual(statuses, ["accepted", "pending"], "the running check finished; the next one did not start");
+    } finally {
+      setPaused(paused, false);
+    }
+    await backgroundRunner(app).tick("ebook-set");
+    assert.equal(member(workId, first)?.status, "accepted");
+    assert.equal(member(workId, second)?.status, "accepted", "after resume the member left pending is checked");
+  });
+}
+
+for (const order of ["valid first", "broken first"] as const) {
+  heldTest(`HIGH 3: a sibling that cannot be parsed is left out of the evidence and does not fail a valid member's check (${order})`, async () => {
+    const workId = seedWork();
+    const seedBroken = async () => {
+      const broken = (await seedLibgenEpub(workId, "Broken")).ebookId;
+      writeFileSync(db.select().from(schema.ebookEditions).all().find((row) => row.id === broken)!.source, "not an epub");
+      seedMember(workId, broken, "pending", null);
+      return broken;
+    };
+    const seedValid = async () => {
+      const valid = (await seedLibgenEpub(workId, "Right")).ebookId;
+      seedMember(workId, valid, "pending", null);
+      return valid;
+    };
+    // Members are checked in the order they were added.
+    let valid: string;
+    let broken: string;
+    if (order === "valid first") {
+      valid = await seedValid();
+      broken = await seedBroken();
+    } else {
+      broken = await seedBroken();
+      valid = await seedValid();
+    }
+    behaviours = { Right: "forward" };
+    await backgroundRunner(app).tick("ebook-set");
+    assert.equal(member(workId, broken)?.holdReason, "evaluation_failed");
+    assert.equal(member(workId, valid)?.status, "accepted", "the broken sibling did not fail this check");
+  });
+}
+
+heldTest("HIGH 3: a member held as evaluation_failed is not evidence; every other sibling that parses still is", async () => {
+  behaviours = { Right: "forward" };
+  const workId = seedWork();
+  const failed = (await seedLibgenEpub(workId, "Right")).ebookId;
+  seedMember(workId, failed, "held", "evaluation_failed");
+  const first = (await seedLibgenEpub(workId, "Right")).ebookId;
+  seedMember(workId, first, "pending", null);
+  await backgroundRunner(app).tick("ebook-set");
+  assert.equal(member(workId, first)?.status, "accepted");
+  assert.equal(member(workId, first)?.evidence.sharedSentenceCount, 0, "the failed sibling's text is not evidence");
+  // As on main, a sibling held for another reason, or accepted, is evidence.
+  for (const [status, holdReason] of [["held", "awaiting_worker"], ["accepted", null]] as const) {
+    const other = seedWork();
+    const sibling = (await seedLibgenEpub(other, "Right")).ebookId;
+    seedMember(other, sibling, status, holdReason);
+    const next = (await seedLibgenEpub(other, "Right")).ebookId;
+    seedMember(other, next, "pending", null);
+    await backgroundRunner(app).tick("ebook-set");
+    assert.ok((member(other, next)?.evidence.sharedSentenceCount ?? 0) > 0, `a ${status} sibling is evidence`);
+    assert.equal(member(other, next)?.evidence.uniqueSentenceCount, 0, status);
+  }
+});
+
+heldTest("HIGH 4: a check whose ebook is relinked to another work while it runs writes nothing", async () => {
+  const workId = seedWork();
+  const otherWork = seedWork();
+  const { ebookId } = await seedLibgenEpub(workId, "Right");
+  seedMember(workId, ebookId, "pending", null);
+  behaviours = { Right: "forward" };
+  closeGate();
+  const round = backgroundRunner(app).tick("ebook-set");
+  await until(() => anchorRequests > 0, "the check");
+  const link = await app.inject({ method: "POST", url: `/api/reader/${ebookId}/link`, payload: { workId: otherWork } });
+  assert.equal(link.statusCode, 200, link.body);
+  open();
+  await round;
+  await ebookSetEvaluationsSettled();
+  assert.equal(member(workId, ebookId)?.status, "pending", "the result for the old work was dropped");
+  assert.equal(member(otherWork, ebookId), undefined);
+  // The work's next pending member is checked; the one whose ebook moved is not tried again (it would only fail).
+  const next = (await seedLibgenEpub(workId, "Right")).ebookId;
+  seedMember(workId, next, "pending", null);
+  const warnings: string[] = [];
+  const warn = console.warn;
+  console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+  try {
+    await backgroundRunner(app).tick("ebook-set");
+  } finally {
+    console.warn = warn;
+  }
+  assert.equal(member(workId, next)?.status, "accepted");
+  assert.equal(member(workId, ebookId)?.status, "pending");
+  assert.deepEqual(warnings.filter((line) => line.includes(ebookId)), [], "a member whose ebook is in another work is not checked again");
+});
+
+heldTest("HIGH 4: a check whose member is removed while it runs does not bring it back", async () => {
+  const workId = seedWork();
+  const { ebookId } = await seedLibgenEpub(workId, "Right");
+  seedMember(workId, ebookId, "pending", null);
+  behaviours = { Right: "forward" };
+  closeGate();
+  const round = backgroundRunner(app).tick("ebook-set");
+  await until(() => anchorRequests > 0, "the check");
+  sqlite.prepare("DELETE FROM work_ebook_set_members WHERE work_id=? AND ebook_id=?").run(workId, ebookId);
+  open();
+  await round;
+  await ebookSetEvaluationsSettled();
+  assert.equal(member(workId, ebookId), undefined);
+});
+
+test("HIGH 4: a member re-added while its check runs keeps its new row and is checked again", async () => {
+  // Alignment jobs (the consensus of an accepted member) also send /anchor requests; hold them so only checks count.
+  await withAlignmentsHeld(async () => {
+    behaviours = { Right: "forward" };
+    // One check of this recording takes this many /anchor requests.
+    const probeWork = seedWork();
+    const probeEbook = (await seedLibgenEpub(probeWork, "Right")).ebookId;
+    seedMember(probeWork, probeEbook, "pending", null);
+    await backgroundRunner(app).tick("ebook-set");
+    const perCheck = anchorRequests;
+    assert.ok(perCheck > 0);
+    anchorRequests = 0;
+    const workId = seedWork();
+    const { md5, ebookId } = await seedLibgenEpub(workId, "Right");
+    seedMember(workId, ebookId, "pending", null, Date.now() - 60_000);
+    closeGate();
+    const round = backgroundRunner(app).tick("ebook-set");
+    await until(() => anchorRequests > 0, "the check");
+    // Removed and added again while the first check runs: the first result is not for the new row.
+    sqlite.prepare("DELETE FROM work_ebook_set_members WHERE work_id=? AND ebook_id=?").run(workId, ebookId);
+    await postEbook(workId, md5);
+    open();
+    await round;
+    await ebookSetEvaluationsSettled();
+    assert.equal(member(workId, ebookId)?.status, "accepted");
+    assert.equal(anchorRequests, 2 * perCheck, "the new row got a check of its own");
+  });
+});
+
+heldTest("HIGH 4: a member removed while it waits for its turn is not checked or brought back", async () => {
+  const workId = seedWork();
+  const first = (await seedLibgenEpub(workId, "Right")).ebookId;
+  seedMember(workId, first, "pending", null);
+  const second = (await seedLibgenEpub(workId, "Right")).ebookId;
+  seedMember(workId, second, "pending", null);
+  behaviours = { Right: "forward" };
+  closeGate();
+  const round = backgroundRunner(app).tick("ebook-set");
+  await until(() => anchorRequests > 0, "the first check");
+  sqlite.prepare("DELETE FROM work_ebook_set_members WHERE work_id=? AND ebook_id=?").run(workId, second);
+  open();
+  await round;
+  await ebookSetEvaluationsSettled();
+  assert.equal(member(workId, first)?.status, "accepted");
+  assert.equal(member(workId, second), undefined, "the member removed before its check is not recreated");
+});
+
+heldTest("HIGH 4: an ebook removed while its check runs does not stop the checks of the other members", async () => {
+  const workId = seedWork();
+  const gone = (await seedLibgenEpub(workId, "Right")).ebookId;
+  seedMember(workId, gone, "pending", null);
+  const other = (await seedLibgenEpub(workId, "Right")).ebookId;
+  seedMember(workId, other, "pending", null);
+  behaviours = { Right: "forward" };
+  closeGate();
+  const round = backgroundRunner(app).tick("ebook-set");
+  await until(() => anchorRequests > 0, "the first check");
+  // Which member runs first is the listing order; remove that one with its ebook.
+  const running = listEbookSetMembers(workId)[0].ebookId;
+  const survivor = running === gone ? other : gone;
+  sqlite.prepare("DELETE FROM work_ebook_set_members WHERE work_id=? AND ebook_id=?").run(workId, running);
+  sqlite.prepare("DELETE FROM ebook_editions WHERE id=?").run(running);
+  open();
+  await round;
+  await ebookSetEvaluationsSettled();
+  assert.equal(member(workId, running), undefined, "the removed member is not recreated");
+  assert.equal(member(workId, survivor)?.status, "accepted", "the other member was still checked");
+});
+
+heldTest("MEDIUM 1: only the member being checked is running; the stuck time counts from the start of its check", async () => {
+  const workId = seedWork();
+  const long = Date.now() - 3 * 60 * 60_000;
+  const first = (await seedLibgenEpub(workId, "Right")).ebookId;
+  const second = (await seedLibgenEpub(workId, "Right")).ebookId;
+  seedMember(workId, first, "pending", null, long);
+  seedMember(workId, second, "pending", null, long);
+  behaviours = { Right: "forward" };
+  closeGate();
+  const before = (await app.inject("/api/activity")).json().items.filter((i: { processId: string; id: string }) =>
+    i.processId === "ebook-set" && i.id.includes(encodeURIComponent(workId)));
+  assert.deepEqual(before.map((i: { state: string }) => i.state), ["queued", "queued"], "nothing is checked yet");
+  assert.ok(before.every((i: { stuck: unknown }) => !i.stuck), "a waiting member is not stuck");
+  const round = backgroundRunner(app).tick("ebook-set");
+  await until(() => anchorRequests > 0, "the first check");
+  const items = (await app.inject("/api/activity")).json().items.filter((i: { processId: string; id: string }) =>
+    i.processId === "ebook-set" && i.id.includes(encodeURIComponent(workId)));
+  const states = items.map((i: { state: string }) => i.state).sort();
+  assert.deepEqual(states, ["queued", "running"]);
+  const running = items.find((i: { state: string }) => i.state === "running");
+  assert.equal(running.stuck, null, "the check started just now, though the row is three hours old");
+  assert.ok(running.startedAt >= long + 60_000, "startedAt is the start of the check");
+  open();
+  await round;
 });
