@@ -1,20 +1,48 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  ChangeTracker, buildActivity, formatAge, isPermanentHardcoverError, stuckMultiplier,
+  ChangeTracker, buildActivity, formatAge, stuckMultiplier,
   ATTENTION_FAILURE_MS, FINISHED_VISIBLE_MS,
   type ActivityInput,
 } from "../server/activity.ts";
+import { acquisitionSource, type AcquisitionRow } from "../server/acquisitions-activity.ts";
+import { serverCopySource, type CopyRow } from "../server/downloads-activity.ts";
+import { seriesAcquisitionSource, type SeriesJobRow } from "../server/series-acquisition-activity.ts";
+import { alignmentSource, type AlignmentRow } from "../server/alignment-activity.ts";
+import { hardcoverSource, isPermanentHardcoverError, type HardcoverQueueRow } from "../server/hardcover-activity.ts";
 import type { TorrentHealth } from "../src/types.ts";
 import type { AlignmentPoolStatus } from "../src/reading-types.ts";
 
 const MIN = 60_000;
 const NOW = Date.UTC(2026, 10, 9, 13, 0, 0);
 
-const base = (over: Partial<ActivityInput> = {}): ActivityInput => ({
-  now: NOW, multiplier: 1, acquisitions: [], copies: [], seriesJobs: [], alignments: [], hardcoverQueues: [],
-  torrent: null, pool: null, tracker: new ChangeTracker(), ...over,
-});
+/** The rows and probe results each source would have read, by the names the cases use. */
+type Rows = {
+  acquisitions: AcquisitionRow[];
+  copies: CopyRow[];
+  seriesJobs: SeriesJobRow[];
+  alignments: AlignmentRow[];
+  hardcoverQueues: HardcoverQueueRow[];
+  torrent: TorrentHealth | null;
+  torrentFailure: string | null;
+  pool: AlignmentPoolStatus | null;
+  poolFailure: string | null;
+};
+const base = (over: Partial<Omit<ActivityInput, "snapshots"> & Rows> = {}): ActivityInput => {
+  const { acquisitions = [], copies = [], seriesJobs = [], alignments = [], hardcoverQueues = [],
+    torrent = null, torrentFailure = null, pool = null, poolFailure = null, ...rest } = over;
+  const none = { value: null, failure: null };
+  return {
+    now: NOW, multiplier: 1, tracker: new ChangeTracker(), ...rest,
+    snapshots: [
+      { source: acquisitionSource, rows: acquisitions, probe: { value: torrent, failure: torrentFailure } },
+      { source: serverCopySource, rows: copies, probe: none },
+      { source: seriesAcquisitionSource, rows: seriesJobs, probe: none },
+      { source: alignmentSource, rows: alignments, probe: { value: pool, failure: poolFailure } },
+      { source: hardcoverSource, rows: hardcoverQueues, probe: none },
+    ],
+  };
+};
 const acquisition = (id: string, over: Record<string, unknown> = {}) => ({
   id, title: `Book ${id}`, author: "Author", backend: "local", status: "downloading", progress: 0.4, error: null,
   created_at: NOW - 3 * 60 * MIN, updated_at: NOW - MIN, ...over,
