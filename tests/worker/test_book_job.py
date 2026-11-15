@@ -325,6 +325,7 @@ class Jobs(unittest.TestCase):
         jobs.start(request())
         self.assertTrue(self.done(jobs))
         self.assertEqual(jobs.status("job-1")["state"], "failed")
+        jobs._jobs["job-1"].thread.join(5)  # "failed" is set in memory just before the record is written
         record = (self.root / "job-1" / "state.json").stat().st_size
         self.assertEqual(budget.reserved("job-1"), record)
         self.assertLessEqual(budget.peak, budget.total, "the record never takes the budget over its total")
@@ -422,6 +423,89 @@ class Jobs(unittest.TestCase):
         self.assertEqual(status["state"], "done")
         self.assertEqual(status["resumed"], 1)
         self.assertEqual(restarted.result("job-1")["outcome"], "mapped")
+
+    def blocked_folder_bytes(self, name):
+        """book_job.folder_bytes that stalls on the folder `name` until `release` is set (a slow disk)."""
+        real = book_job.folder_bytes
+        entered, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+
+        def slow(folder):
+            if Path(folder).name == name and not release.is_set():
+                entered.set()
+                release.wait(10)
+            return real(folder)
+        return mock.patch.object(book_job, "folder_bytes", slow), entered, release
+
+    def answers_at_once(self, call, seconds=1.0):
+        out, errors = [], []
+
+        def run():
+            try:
+                out.append(call())
+            except BaseException as error:  # noqa: BLE001 - raised again in the test's thread
+                errors.append(error)
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        thread.join(seconds)
+        self.assertFalse(thread.is_alive(), f"{call} waited")
+        if errors:
+            raise errors[0]
+        return out[0]
+
+    def test_the_health_view_and_status_never_wait_for_a_start_on_a_slow_disk(self):
+        # Round-4 review: /health (keys) and status took the jobs' lock, which a start holds across its
+        # folder reads and writes.
+        jobs = self.jobs(FakeStages())
+        jobs.start(request())
+        self.assertTrue(self.done(jobs))
+        patch, entered, release = self.blocked_folder_bytes("job-2")
+        with patch:
+            starter = threading.Thread(target=jobs.start, args=(request("job-2"),), daemon=True)
+            starter.start()
+            self.assertTrue(entered.wait(5), "the start is on its folder read, under the jobs' lock")
+            self.assertEqual(self.answers_at_once(jobs.keys), ["job-1"])
+            self.assertEqual(self.answers_at_once(lambda: jobs.status("job-1"))["state"], "done")
+            self.assertEqual(self.answers_at_once(jobs.registry.stuck), [])
+            self.answers_at_once(jobs.registry.budget.reserved)
+            release.set()
+            starter.join(5)
+        self.assertEqual(sorted(jobs.keys()), ["job-1", "job-2"])
+        self.assertTrue(self.done(jobs, "job-2"))
+
+    def test_book_requests_get_resuming_until_the_background_resume_has_finished(self):
+        jobs = self.jobs(FakeStages())
+        jobs.start(request())
+        self.assertTrue(self.done(jobs))
+        files = {p.name: p.read_bytes() for p in (self.root / "job-1").iterdir() if p.is_file()}
+        restarted = self.jobs(FakeStages())
+        patch, entered, release = self.blocked_folder_bytes("job-1")
+        with patch:
+            thread = self.answers_at_once(restarted.resume_in_background)  # returns before the folder is read
+            self.assertTrue(entered.wait(5))
+            self.assertTrue(restarted.resuming)
+            self.assertEqual(self.answers_at_once(restarted.keys), [])
+            for call in (lambda: restarted.start(request()), lambda: restarted.status("job-1"),
+                         lambda: restarted.cancel("job-1"), lambda: restarted.result("job-1")):
+                with self.assertRaises(book_job.Resuming):
+                    self.answers_at_once(call)
+            self.assertEqual({p.name: p.read_bytes() for p in (self.root / "job-1").iterdir() if p.is_file()
+                              if p.name != "state.json"},
+                             {k: v for k, v in files.items() if k != "state.json"}, "the retained job is untouched")
+            release.set()
+            thread.join(5)
+        self.assertFalse(restarted.resuming)
+        self.assertEqual(restarted.status("job-1")["state"], "done")
+        self.assertEqual(restarted.result("job-1")["outcome"], "mapped")
+
+    def test_a_failed_background_resume_still_serves_book_requests(self):
+        restarted = self.jobs(FakeStages())
+        with mock.patch.object(restarted, "resume_all", side_effect=OSError(5, "Input/output error")), \
+                mock.patch("builtins.print"), mock.patch("traceback.print_exc"):
+            restarted.resume_in_background().join(5)
+        self.assertFalse(restarted.resuming)
+        restarted.start(request())
+        self.assertTrue(self.done(restarted))
 
     def stopped_with_retained_files(self, nbytes):
         """job-1 stopped by the worker in group 2, with `nbytes` of emissions left in its folder."""

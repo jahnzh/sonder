@@ -58,6 +58,10 @@ class UnknownJob(Exception):
     pass
 
 
+class Resuming(Exception):
+    """A book request that came while the worker still picks up its retained jobs (503, retry shortly)."""
+
+
 class NotReady(Exception):
     """The result was asked for before the job finished."""
 
@@ -183,9 +187,23 @@ class BookJobs:
         self.stages = stages
         self.registry = registry or SessionRegistry()
         self._clock = clock
+        # Guards _jobs and job launches, and is held across book bookkeeping on disk (start, resume): only
+        # book requests, the resume thread, the sweeper and shutdown wait on it, never /health, a window
+        # request or the gate. /health and status read `_view` instead.
         self._lock = threading.Lock()
         self._jobs = {}
+        # A copy of _jobs, replaced (never changed) under _lock after each change: read without any lock.
+        self._view = {}
         self._closed = False
+        self.resuming = False  # True while resume_in_background has not finished; book requests get 503
+
+    def _publish(self):
+        """Call with _lock held, after changing _jobs."""
+        self._view = dict(self._jobs)
+
+    def _ready(self):
+        if self.resuming:
+            raise Resuming("The worker is still picking up its retained book jobs. Retry shortly.")
 
     # ------------------------------------------------------------ requests
 
@@ -193,6 +211,7 @@ class BookJobs:
         key = request["jobId"]
         if not JOB_ID.match(key or ""):
             raise ValueError("Invalid job id.")
+        self._ready()
         digest = request_digest(request)
         with self._lock:
             job = self._jobs.get(key)
@@ -218,6 +237,7 @@ class BookJobs:
                     self._undo_start(key, folder, new, wrote, before)
                     raise
                 self._jobs[key] = job
+                self._publish()
             elif job.digest != digest:
                 raise JobConflict("This job id belongs to another request.")
             self._touch(job)
@@ -303,9 +323,29 @@ class BookJobs:
             with self._lock:
                 if self._jobs.get(job.key) is job:
                     self._jobs.pop(job.key, None)
+                    self._publish()
             return outcome
 
     # ------------------------------------------------------------ lifecycle
+
+    def resume_in_background(self):
+        """Worker start: `resume_all` in its own thread, so the worker serves /health and the window
+        endpoints at once however long the retained folders take to read. Until it has finished (or
+        failed), book requests are answered 503 (`Resuming`), so none of them meets a half-loaded job."""
+        self.resuming = True
+
+        def run():
+            try:
+                self.resume_all()
+            except Exception as error:  # noqa: BLE001 - book requests are served again either way
+                print(f"[book-jobs] resume failed: {error!r}", flush=True)
+                traceback.print_exc()
+            finally:
+                self.resuming = False
+
+        thread = threading.Thread(target=run, name="book-job-resume-all", daemon=True)
+        thread.start()
+        return thread
 
     def resume_all(self):
         """Worker start: pick up every job folder; unfinished jobs continue where they stopped.
@@ -319,6 +359,8 @@ class BookJobs:
             return []
         loaded = []
         for folder in sorted(p for p in self.root.iterdir() if p.is_dir()):
+            if self._closed:
+                return []  # the worker stops: what is not loaded yet stays on disk for the next start
             request = read_json(folder / "request.json")
             state = read_json(folder / "state.json") or {}
             record = (request is None and JOB_ID.match(folder.name) and state.get("jobId") == folder.name
@@ -341,6 +383,7 @@ class BookJobs:
                         discard_partial(folder)  # never reused: not claimed, so it holds no other book up
                     self.registry.open(job.key, folder).claim_disk(folder_bytes(folder))
                 self._jobs[folder.name] = job
+                self._publish()
                 job.last_request = self._clock()
             loaded.append(job)
         waiting = sorted((job for job in loaded if job.state["state"] not in TERMINAL),
@@ -399,14 +442,13 @@ class BookJobs:
         self.registry.close_all(busy={job.key: job.thread.is_alive for job in jobs if job.thread is not None})
 
     def keys(self):
-        with self._lock:
-            return list(self._jobs)
+        return list(self._view)  # no lock: /health reads it while a start or the resume is on disk
 
     # ------------------------------------------------------------ internals
 
     def _job(self, key):
-        with self._lock:
-            job = self._jobs.get(key)
+        self._ready()
+        job = self._view.get(key)
         if job is None:
             raise UnknownJob(key)
         return job

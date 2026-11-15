@@ -19,7 +19,7 @@ from ctc_pipeline import align_ctc_batch_locate, align_ctc_section, shutdown_loc
 from ctc_decode import evict_decoded
 from ctc_gpu import GpuMonitor
 import ctc_prefetch
-from book_job import BOOK_ENGINE, BookJobs, JobConflict, NotReady, UnknownJob, WorkerStages
+from book_job import BOOK_ENGINE, BookJobs, JobConflict, NotReady, Resuming, UnknownJob, WorkerStages
 from book_session import BudgetExceeded
 
 root = Path(os.environ.get("MEDIA_ROOT", "/mnt/usb_4t_1/sonder")).resolve()
@@ -52,11 +52,9 @@ async def lifespan(_app: FastAPI):
         evict_decoded(root / "alignment")
     except OSError:
         pass
-    # Unfinished whole-book jobs continue where they stopped (finished tracks and groups are kept).
-    try:
-        book_jobs.resume_all()
-    except OSError as error:
-        print(f"[book-jobs] resume failed: {error!r}", file=sys.stderr, flush=True)
+    # Unfinished whole-book jobs continue where they stopped (finished tracks and groups are kept). In the
+    # background: retained folders never delay /health or the window endpoints; book requests get 503 meanwhile.
+    book_jobs.resume_in_background()
     sweeper = threading.Thread(target=_sweep_book_jobs, name="book-job-sweeper", daemon=True)
     sweeper.start()
     try:
@@ -234,7 +232,9 @@ def health():
             "device": device, "precision": "float16" if device == "cuda" else "float32",
             "anchorReady": ctc_ready, "passageReady": True, "anchorBatch": True},
             # Book work is reported here only: the fields above describe window requests, as before #402.
+            # None of these waits on a lock that book bookkeeping holds across disk I/O (book_job.BookJobs).
             "bookJobs": {"engine": BOOK_ENGINE, "ready": ctc_ready, "jobs": len(book_jobs.keys()),
+                         "resuming": book_jobs.resuming,
                          "slotsHeld": gate.background_active, "batchSeconds": gate.background_seconds(),
                          "stuck": book_jobs.registry.stuck(),
                          "diskReservedBytes": book_jobs.registry.budget.reserved(),
@@ -361,6 +361,8 @@ def _start_book_job(request: BookJobRequest):
         track["audio"] = str(checked_path(track["audio"], True))
     try:
         return book_jobs.start(body)
+    except Resuming as error:
+        raise HTTPException(503, str(error))
     except JobConflict as error:
         raise HTTPException(409, str(error))
     except BudgetExceeded as error:
@@ -371,6 +373,8 @@ def book_job_status(job_id: str, authorization: str | None = Header(default=None
     _book_auth(authorization)
     try:
         return book_jobs.status(job_id)
+    except Resuming as error:
+        raise HTTPException(503, str(error))
     except UnknownJob:
         raise HTTPException(404, "Unknown book job.")
 
@@ -379,6 +383,8 @@ def cancel_book_job(job_id: str, authorization: str | None = Header(default=None
     _book_auth(authorization)
     try:
         return book_jobs.cancel(job_id)
+    except Resuming as error:
+        raise HTTPException(503, str(error))
     except UnknownJob:
         raise HTTPException(404, "Unknown book job.")
 
@@ -387,6 +393,8 @@ def book_job_result(job_id: str, authorization: str | None = Header(default=None
     _book_auth(authorization)
     try:
         return book_jobs.result(job_id)
+    except Resuming as error:
+        raise HTTPException(503, str(error))
     except UnknownJob:
         raise HTTPException(404, "Unknown book job.")
     except NotReady as error:

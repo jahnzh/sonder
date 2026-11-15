@@ -404,8 +404,8 @@ class SessionRegistry:
             if session is None or session.ended is not None:
                 session = BookSession(key, folder, self.budget, self._clock)
                 self._sessions[key] = session
-            session.touch()
-            return session
+        session.touch()  # outside _lock: /health waits on _lock, and start_pool holds the session's lock
+        return session
 
     def get(self, key):
         with self._lock:

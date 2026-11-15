@@ -238,6 +238,157 @@ class BookRequestOverHttp(unittest.TestCase):
         self.assertFalse((self.media / "alignment" / "book-jobs" / "http-402-full").exists())
         self.assertEqual(budget.reserved("http-402-full"), 0)
 
+    def test_health_answers_while_a_job_start_is_blocked_on_the_filesystem(self):
+        # Round-4 review: /health took the book jobs' lock, which a start holds across its folder reads.
+        # The server's probe gives up after 5 s and drops the host; /health must answer at once.
+        import book_job
+        real = book_job.folder_bytes
+        entered, release = threading.Event(), threading.Event()
+
+        def slow(folder):
+            if Path(folder).name == "http-402-slow" and not release.is_set():
+                entered.set()
+                release.wait(10)  # a stalled stat of the job's folder
+            return real(folder)
+
+        raw = self.body().replace(b'"http-402"', b'"http-402-slow"')
+        started = []
+        poster = threading.Thread(target=lambda: started.append(exchange(self.port, post_head(len(raw)), [raw],
+                                                                           timeout=15)))
+        with mock.patch.object(book_job, "folder_bytes", slow), \
+                mock.patch.object(self.align.book_jobs, "_launch", lambda job: None):  # no stages run
+            poster.start()
+            try:
+                self.assertTrue(entered.wait(5), "the start reached its folder read")
+                sent = time.monotonic()
+                health = json.loads(exchange(self.port, self.GET_HEALTH, timeout=3)[1])
+                self.assertLess(time.monotonic() - sent, 1.0, "/health does not wait for the start")
+                self.assertEqual((health["busy"], health["activeRequests"]), (False, 0))
+            finally:
+                release.set()
+                poster.join(15)
+        self.assertEqual(started[0][0], 202, started[0][1])
+        status, body = exchange(self.port, b"DELETE /book-jobs/http-402-slow HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                                b"Authorization: Bearer " + TOKEN.encode() + b"\r\nConnection: close\r\n\r\n")
+        self.assertEqual(status, 200, body)
+
+
+def book_request(job_id, audio):
+    return {"jobId": job_id, "recordingId": "r1", "audioFingerprint": None, "language": "eng",
+            "sentences": [{"id": "p0", "section": 0, "text": "Hello there."}],
+            "tracks": [{"id": "t0", "audio": str(audio), "duration": 1.0}]}
+
+
+def get(path):
+    return (f"GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {TOKEN}\r\n"
+            "Connection: close\r\n\r\n").encode()
+
+
+@unittest.skipUnless(uvicorn is not None, "fastapi and uvicorn are needed")
+class StartupWithRetainedJobs(unittest.TestCase):
+    """Round-4 review (BLOCKING): the retained folders were read before the worker served anything. A worker
+    with a retained job whose folder read blocks serves /health and the window endpoints at once; book
+    requests get 503 until the resume has finished, and the retained job is intact afterwards."""
+
+    def test_a_retained_folder_whose_read_blocks_does_not_delay_the_worker(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        media = Path(tmp.name)
+        (media / "staged").mkdir()
+        audio = media / "staged" / "t0.wav"
+        audio.write_bytes(b"RIFF")
+        import book_job
+        request = book_request("kept-1", audio)
+        folder = media / "alignment" / "book-jobs" / "kept-1"
+        folder.mkdir(parents=True)
+        (folder / "request.json").write_text(json.dumps(request))
+        (folder / "state.json").write_text(json.dumps({
+            "jobId": "kept-1", "engine": book_job.BOOK_ENGINE, "digest": book_job.request_digest(request),
+            "state": "done", "recordingId": "r1", "createdAt": 1.0, "updatedAt": 1.0, "progress": {},
+            "stageTimings": {}, "error": None, "resumed": 0, "outcome": "mapped"}))
+        result = {"jobId": "kept-1", "engine": book_job.BOOK_ENGINE, "outcome": "mapped", "intervals": []}
+        (folder / "result.json").write_text(json.dumps(result))
+        kept = {name: (folder / name).read_bytes() for name in ("request.json", "result.json")}
+
+        real = book_job.folder_bytes
+        entered, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+
+        def slow(path):
+            if Path(path).name == "kept-1" and not release.is_set():
+                entered.set()
+                release.wait(15)  # a stalled read of the retained folder (under the jobs' lock)
+            return real(path)
+
+        env = mock.patch.dict(os.environ, {"MEDIA_ROOT": str(media), "ALIGNMENT_WORKER_TOKEN": TOKEN})
+        env.start()
+        self.addCleanup(env.stop)
+        patch = mock.patch.object(book_job, "folder_bytes", slow)
+        patch.start()
+        self.addCleanup(patch.stop)
+        sys.modules.pop("align", None)
+        self.addCleanup(sys.modules.pop, "align", None)
+        import align
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        server = uvicorn.Server(uvicorn.Config(align.app, log_level="error", lifespan="on"))
+        thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
+
+        def stop():
+            release.set()
+            server.should_exit = True
+            thread.join(30)
+        self.addCleanup(stop)
+        began = time.monotonic()
+        thread.start()
+        while not server.started and time.monotonic() - began < 5:
+            time.sleep(0.02)
+        self.assertTrue(server.started, "the worker serves before its retained folders are read")
+        self.assertTrue(entered.wait(5), "the resume is blocked on the retained folder")
+
+        sent = time.monotonic()
+        health = json.loads(exchange(port, b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+                                     timeout=3)[1])
+        self.assertLess(time.monotonic() - sent, 1.0, "the first /health answers at once")
+        self.assertEqual((health["busy"], health["activeRequests"]), (False, 0))
+        self.assertTrue(health["bookJobs"]["resuming"])
+
+        window = media / "staged" / "window.wav"
+        window.write_bytes(b"RIFF")
+        body = json.dumps({"token": TOKEN, "audio": str(window), "output": str(media / "alignment" / "w.json"),
+                           "fragments": ["Hello there."], "duration": 10.0}).encode()
+        head = (b"POST /anchor HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"
+                b"Connection: close\r\nContent-Length: " + str(len(body)).encode() + b"\r\n\r\n")
+        mapped = {"engine": align.CTC_ENGINE, "outcome": "mapped", "match": None, "stageTimings": {}}
+        with mock.patch.object(align, "align_ctc_section", lambda **_: dict(mapped)):
+            sent = time.monotonic()
+            status, answer = exchange(port, head, [body], timeout=3)
+        self.assertEqual(status, 200, answer)
+        self.assertLess(time.monotonic() - sent, 1.0, "a window request is served during the resume")
+
+        status, answer = exchange(port, get("/book-jobs/kept-1"), timeout=3)
+        self.assertEqual(status, 503, answer)
+        self.assertIn("retained book jobs", json.loads(answer)["detail"])
+        raw = json.dumps(request).encode()
+        status, answer = exchange(port, post_head(len(raw)), [raw], timeout=3)
+        self.assertEqual(status, 503, answer)
+        status, _ = exchange(port, b"DELETE /book-jobs/kept-1 HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: "
+                             b"Bearer " + TOKEN.encode() + b"\r\nConnection: close\r\n\r\n", timeout=3)
+        self.assertEqual(status, 503)
+        self.assertEqual({name: (folder / name).read_bytes() for name in kept}, kept, "the retained job is untouched")
+
+        release.set()
+        waited = time.monotonic()
+        while align.book_jobs.resuming and time.monotonic() - waited < 10:
+            time.sleep(0.02)
+        self.assertFalse(align.book_jobs.resuming)
+        status, answer = exchange(port, get("/book-jobs/kept-1"), timeout=3)
+        self.assertEqual(status, 200, answer)
+        self.assertEqual(json.loads(answer)["state"], "done")
+        status, answer = exchange(port, get("/book-jobs/kept-1/result"), timeout=5)
+        self.assertEqual((status, json.loads(answer)), (200, result))
+
 
 if __name__ == "__main__":
     unittest.main()
