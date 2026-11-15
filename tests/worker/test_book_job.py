@@ -174,13 +174,22 @@ class Jobs(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name) / "book-jobs"
         self.clock = Clock()
+        self.made = []
 
     def tearDown(self):
+        # Stop every job thread before the folder goes: a thread still running records its failure and
+        # recreates book-jobs/<job> inside the removed temporary directory, which is then left behind.
+        for jobs in self.made:
+            jobs.shutdown()
         self.tmp.cleanup()
+
+    def track(self, jobs):
+        self.made.append(jobs)
+        return jobs
 
     def jobs(self, stages, budget=10_000):
         registry = SessionRegistry(DiskBudget(budget), idle=900, clock=self.clock)
-        return BookJobs(self.root, stages, registry, clock=self.clock, state_bytes=STATE)
+        return self.track(BookJobs(self.root, stages, registry, clock=self.clock, state_bytes=STATE))
 
     def done(self, jobs, key="job-1"):
         return wait_for(lambda: jobs.status(key)["state"] in ("done", "failed", "cancelled"))
@@ -322,7 +331,7 @@ class Jobs(unittest.TestCase):
         # Another book takes every byte the failing job frees, at once: the record must already be reserved.
         budget = GreedyBudget(10_000, watch="job-1")
         registry = SessionRegistry(budget, idle=900, clock=self.clock)
-        jobs = BookJobs(self.root, FakeStages(fail_at=1), registry, clock=self.clock, state_bytes=STATE)
+        jobs = self.track(BookJobs(self.root, FakeStages(fail_at=1), registry, clock=self.clock, state_bytes=STATE))
         jobs.start(request())
         self.assertTrue(self.done(jobs))
         self.assertEqual(jobs.status("job-1")["state"], "failed")
@@ -853,9 +862,18 @@ class ResultDisk(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name) / "book-jobs"
         self.clock = Clock()
+        self.made = []
 
     def tearDown(self):
+        # Stop every job thread before the folder goes: a thread still running records its failure and
+        # recreates book-jobs/<job> inside the removed temporary directory, which is then left behind.
+        for jobs in self.made:
+            jobs.shutdown()
         self.tmp.cleanup()
+
+    def track(self, jobs):
+        self.made.append(jobs)
+        return jobs
 
     def job(self, budget, sentences):
         registry = SessionRegistry(DiskBudget(budget), idle=900, clock=self.clock)
@@ -910,7 +928,7 @@ class ResultDisk(unittest.TestCase):
 
     def test_a_job_whose_result_does_not_fit_fails_with_a_clear_error(self):
         registry = SessionRegistry(DiskBudget(10_000), idle=900, clock=self.clock)
-        jobs = BookJobs(self.root, ResultStages(20_000), registry, clock=self.clock, state_bytes=STATE)
+        jobs = self.track(BookJobs(self.root, ResultStages(20_000), registry, clock=self.clock, state_bytes=STATE))
         jobs.start(request())
         self.assertTrue(wait_for(lambda: jobs.status("job-1")["state"] in ("done", "failed")))
         status = jobs.status("job-1")
@@ -923,7 +941,7 @@ class ResultDisk(unittest.TestCase):
         # 291bd56 wrote the stages' result.json again when the job finished: a temporary copy of the whole
         # result next to it, which nothing had reserved.
         registry = SessionRegistry(DiskBudget(100_000), idle=900, clock=self.clock)
-        jobs = BookJobs(self.root, ResultStages(20_000, own=True), registry, clock=self.clock, state_bytes=STATE)
+        jobs = self.track(BookJobs(self.root, ResultStages(20_000, own=True), registry, clock=self.clock, state_bytes=STATE))
         with DiskPeaks(registry.budget, "job-1", self.root / "job-1") as peaks:
             jobs.start(request())
             self.assertTrue(wait_for(lambda: jobs.status("job-1")["state"] in ("done", "failed")))
@@ -933,7 +951,7 @@ class ResultDisk(unittest.TestCase):
 
     def test_language_not_supported_reserves_its_result(self):
         registry = SessionRegistry(DiskBudget(10_000), idle=900, clock=self.clock)
-        jobs = BookJobs(self.root, FakeStages(), registry, clock=self.clock, state_bytes=STATE)
+        jobs = self.track(BookJobs(self.root, FakeStages(), registry, clock=self.clock, state_bytes=STATE))
         with DiskPeaks(registry.budget, "job-1", self.root / "job-1") as peaks:
             jobs.start({**request(), "language": "spa"})
             self.assertTrue(wait_for(lambda: jobs.status("job-1")["state"] == "done"))

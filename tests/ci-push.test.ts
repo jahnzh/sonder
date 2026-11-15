@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { trackedMkdtemp } from "./register-temp-dir.ts";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const script = path.join(repoRoot, "scripts", "ci-push.sh");
@@ -75,7 +76,7 @@ function ls(entries: Array<[string, string]>) {
 }
 
 function setup(before: Array<[string, string]>, after: Array<[string, string]>): Fixture {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ci-push-test-"));
+  const dir = trackedMkdtemp(path.join(os.tmpdir(), "ci-push-test-"));
   const bin = path.join(dir, "bin");
   fs.mkdirSync(bin);
   fs.writeFileSync(path.join(bin, "git"), gitStub, { mode: 0o755 });

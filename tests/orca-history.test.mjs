@@ -68,6 +68,8 @@ function sandbox() {
   writeFileSync(orca, stubSource.replace("#!/usr/bin/env node", `#!${process.execPath}`));
   chmodSync(orca, 0o755);
   writeFileSync(join(bin, "claude"), "#!/bin/sh\necho '9.9.9 (Claude Code)'\n", { mode: 0o755 });
+  // A cursor dispatch reads `agent --version`; the real cursor CLI leaves a log folder in TMPDIR.
+  writeFileSync(join(bin, "agent"), "#!/bin/sh\necho '2026.1.1-test'\n", { mode: 0o755 });
   const box = {
     root,
     stub,

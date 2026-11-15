@@ -31,5 +31,7 @@ export default defineConfig({
     env: { PLAYWRIGHT_PORT: String(port) },
     reuseExistingServer: false,
     timeout: 30000,
+    // Without this Playwright SIGKILLs the server, which then cannot remove its temp directory.
+    gracefulShutdown: { signal: "SIGTERM", timeout: 10000 },
   },
 });

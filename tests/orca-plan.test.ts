@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingHttpHeaders } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -15,6 +15,7 @@ import { loadCandidates, recommend } from "../scripts/orca-recommend.mjs";
 import { UsageStore } from "../scripts/orca-usage.mjs";
 // @ts-expect-error The fixture is plain JavaScript without type declarations.
 import { FAR_RESET, rateLimits, writeFakeCodex, fakeCodexCalls } from "./codex-fixture.mjs";
+import { trackedMkdtemp } from "./register-temp-dir.ts";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const script = join(repoRoot, "scripts", "orca-plan.mjs");
@@ -89,7 +90,7 @@ function stub(dir: string, name: string, body: string) {
 }
 
 function sandbox() {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), "sonder-plan-")));
+  const dir = realpathSync(trackedMkdtemp(join(tmpdir(), "sonder-plan-")));
   const bin = join(dir, "bin");
   const home = join(dir, "home");
   mkdirSync(bin);

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -11,6 +11,7 @@ import {
   main,
   readClaudeUsage,
 } from "../scripts/claude-usage.mjs";
+import { trackedMkdtemp } from "./register-temp-dir.ts";
 
 const ACCESS_TOKEN = "sk-ant-oat01-test-access-token";
 const REFRESH_TOKEN = "sk-ant-ort01-test-refresh-token";
@@ -41,7 +42,7 @@ const realProfileBody = {
 };
 
 function configDir({ credentials } = {}) {
-  const dir = mkdtempSync(path.join(tmpdir(), "claude-usage-"));
+  const dir = trackedMkdtemp(path.join(tmpdir(), "claude-usage-"));
   if (credentials !== null) {
     const claudeAiOauth = credentials ?? {
       accessToken: ACCESS_TOKEN,
@@ -379,7 +380,7 @@ test("an expired login is unavailable data and is not refreshed", async () => {
 });
 
 test("unreadable credentials are unavailable data", async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), "claude-usage-"));
+  const dir = trackedMkdtemp(path.join(tmpdir(), "claude-usage-"));
   writeFileSync(path.join(dir, ".credentials.json"), "{not json");
   const { observation } = await read({ configDir: dir });
   assert.equal(observation.status, "unavailable");
@@ -443,7 +444,7 @@ test("the command prints one JSON observation", async () => {
 });
 
 test("requesting a non-local target host returns unknown_account without reading local credentials, and legacy seven_day_oauth_apps is preserved", async () => {
-  const brokenDir = mkdtempSync(path.join(tmpdir(), "claude-usage-"));
+  const brokenDir = trackedMkdtemp(path.join(tmpdir(), "claude-usage-"));
   writeFileSync(path.join(brokenDir, ".credentials.json"), "{not json");
 
   const remote = await read({ configDir: brokenDir, hostname: "remote-worker", localHostname: "test-host" });

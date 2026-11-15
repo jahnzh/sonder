@@ -61,5 +61,7 @@ export default defineConfig({
     // connections to a closed loopback port hang instead of being refused, so the readiness probe never returns.
     reuseExistingServer: process.env.PLAYWRIGHT_REUSE_SERVER === "1",
     timeout: 30000,
+    // Without this Playwright SIGKILLs the server, which then cannot remove its temp directory.
+    gracefulShutdown: { signal: "SIGTERM", timeout: 10000 },
   },
 });

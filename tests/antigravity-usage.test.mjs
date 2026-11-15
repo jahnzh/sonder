@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -11,6 +11,7 @@ import {
   main,
   readAntigravityUsage,
 } from "../scripts/antigravity-usage.mjs";
+import { trackedMkdtemp } from "./register-temp-dir.ts";
 
 const EMAIL = "worker.account@example.com";
 const OTHER_EMAIL = "someone.else@example.com";
@@ -78,7 +79,7 @@ function clone(value) {
 }
 
 function makeHome({ token } = {}) {
-  const home = mkdtempSync(path.join(tmpdir(), "antigravity-usage-"));
+  const home = trackedMkdtemp(path.join(tmpdir(), "antigravity-usage-"));
   if (token !== null) {
     const dir = path.join(home, ".gemini", "antigravity-cli");
     mkdirSync(dir, { recursive: true });
@@ -96,7 +97,7 @@ function makeHome({ token } = {}) {
 
 // A stand-in `agy` that answers each slash command from a scenario file and logs every call.
 function fakeAgy(scenario) {
-  const dir = mkdtempSync(path.join(tmpdir(), "fake-agy-"));
+  const dir = trackedMkdtemp(path.join(tmpdir(), "fake-agy-"));
   const scenarioPath = path.join(dir, "scenario.json");
   const callsPath = path.join(dir, "calls.jsonl");
   writeFileSync(scenarioPath, JSON.stringify(scenario));

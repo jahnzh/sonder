@@ -19,6 +19,8 @@ Every invocation uses separate build output, a browser-test port, and a report d
 
 Port leases coordinate runners that use the current contender protocol. Do not overlap one with a check runner started from a revision before issue #59: a legacy runner can decide that an old lock is stale, pause, and then unlink the current runner's replacement because it does not revalidate the lock identity or observe contender records. Wait for every legacy check process to exit before starting a current runner; the current runner cannot close that mixed-version race unilaterally.
 
+Tests put their temporary files under `os.tmpdir()` (`TMPDIR`; the CI runners point it at their own temp base) and remove them in a `finally` or an `after` hook; `trackedMkdtemp()` in `tests/register-temp-dir.ts` removes its folders when the test file ends. The browser-test server removes its `sonder-browser-*` folder when it exits or gets SIGTERM/SIGINT, which Playwright sends through `webServer.gracefulShutdown` instead of SIGKILL; `SONDER_KEEP_BROWSER_TEMP=1` keeps the folder for debugging. `scripts/test-browser.mjs` and `check-local` remove the folders they create. For what a killed process leaves, `scripts/clean-temp.sh` (`--dry-run` lists) removes `sonder-browser-*` and `sonder-local-check-*` folders older than 15 minutes (`ORCA_CLEAN_TEMP_MAX_AGE_MIN`), also while browser tests run: it keeps a folder whose `.sonder-pid` marker names a live process, or that a process works in or holds a file open in. `<tmp>/sonder-port-leases` holds the port locks; acquiring a lease creates it, and the last release removes it once empty.
+
 ## Known failures
 
 ```bash

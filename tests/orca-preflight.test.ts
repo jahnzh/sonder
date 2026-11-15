@@ -1,10 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { trackedMkdtemp } from "./register-temp-dir.ts";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const script = join(repoRoot, "scripts", "orca-preflight.sh");
@@ -15,7 +16,7 @@ function git(cwd: string, ...args: string[]) {
 }
 
 function makeRepo() {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), "sonder-preflight-")));
+  const dir = realpathSync(trackedMkdtemp(join(tmpdir(), "sonder-preflight-")));
   git(dir, "init", "-q", "-b", "main");
   writeFileSync(join(dir, "AGENTS.md"), "# agents\n");
   git(dir, "add", "AGENTS.md");
@@ -28,7 +29,7 @@ function makeRepo() {
 // asked about, from "path filesystem availableKiB mount" lines in a table file.
 const GB = 1024 * 1024;
 function makeFakeDf(table: Record<string, [string, number, string]>) {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), "sonder-fakedf-")));
+  const dir = realpathSync(trackedMkdtemp(join(tmpdir(), "sonder-fakedf-")));
   const rows = Object.entries(table).map(([path, [fs, avail, mount]]) => `${path} ${fs} ${avail} ${mount}`);
   writeFileSync(join(dir, "table"), rows.join("\n") + "\n");
   const df = join(dir, "df");
@@ -175,7 +176,7 @@ test("ORCA_MIN_FREE_GB moves the threshold", () => {
 
 test("checks the workspaces directory when it is on another filesystem, and only then", () => {
   const repo = makeRepo();
-  const workspaces = realpathSync(mkdtempSync(join(tmpdir(), "sonder-ws-")));
+  const workspaces = realpathSync(trackedMkdtemp(join(tmpdir(), "sonder-ws-")));
   const nested = join(workspaces, "not-created-yet");
   try {
     const split = makeFakeDf({ "/": ["/dev/root", 50 * GB, "/"], [workspaces]: ["/dev/hdd", 3 * GB, "/mnt/hdd"] });

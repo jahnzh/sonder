@@ -534,6 +534,23 @@ function createLockFile(lockPath, port) {
   }
 }
 
+// The choosing record is a contender's first file in the lease folder. releasePortLease() removes the
+// folder once it is empty, so it can vanish between one attempt and the next, even within this
+// process's own port scan (a busy candidate's lease is taken and released again). Create it again
+// (mkdir -p) and retry; once the record exists the folder is not empty, so rmdir cannot remove it
+// while this contender, and later its lease, lives.
+function writeChoosingRecord(choosingPath, value) {
+  for (let attempt = 1; ; attempt++) {
+    fs.mkdirSync(path.dirname(choosingPath), { recursive: true });
+    try {
+      writeAtomicJson(choosingPath, value);
+      return;
+    } catch (error) {
+      if (error?.code !== "ENOENT" || attempt >= 5) throw error;
+    }
+  }
+}
+
 async function tryAcquireLockFile(lockPath, port) {
   const id = `${process.pid}-${randomUUID()}`;
   const choosingPath = `${lockPath}.choosing-${id}`;
@@ -545,7 +562,7 @@ async function tryAcquireLockFile(lockPath, port) {
   // lifetime, so a delayed stale decision by another current runner cannot
   // target the replacement lock. The legacy-runner limitation is documented
   // in docs/LOCAL_CHECKS.md.
-  writeAtomicJson(choosingPath, {
+  writeChoosingRecord(choosingPath, {
     pid: process.pid,
     time: Date.now(),
     port,
