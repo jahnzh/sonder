@@ -79,8 +79,10 @@ function deriveState(
 ): WorkMediaState {
   const holdReason = (row?.holdReason as WorkMediaHoldReason | null) ?? null;
   const updatedAt = Math.max(row?.updatedAt ?? 0, job?.updatedAt ?? 0);
+  // A stored hold is returned as stored, also while the work is playable: reads never
+  // write, and only a `ready` acquisition or the user's retry clears a hold (ADR 0011).
   if (playable)
-    return { state: "available", holdReason: null, acquisitionId: null, updatedAt };
+    return { state: "available", holdReason, acquisitionId: null, updatedAt };
   if (job && isActiveAcquisitionStatus(job.status))
     return { state: "queued", holdReason, acquisitionId: job.id, updatedAt };
   if (job?.status === "error")
@@ -90,8 +92,7 @@ function deriveState(
 
 /**
  * Media states of many works for one user in three queries, whatever the number of works.
- * Works without a media state are absent from `states`. `heldWhilePlayable` lists the
- * works that are available but still carry a stored hold reason.
+ * Works without a media state are absent from the map. Only reads: it writes nothing.
  */
 export function deriveWorkMediaStates(
   database: Database,
@@ -100,19 +101,15 @@ export function deriveWorkMediaStates(
 ) {
   const list = [...new Set(workIds)];
   const states = new Map<string, WorkMediaState>();
-  const heldWhilePlayable: string[] = [];
-  if (!list.length) return { states, heldWhilePlayable };
+  if (!list.length) return states;
   const rows = trackedRows(database, userId, list);
   const jobs = latestUserAcquisitions(database, userId, list);
   const tracked = list.filter((workId) => rows.has(workId) || jobs.has(workId));
-  if (!tracked.length) return { states, heldWhilePlayable };
+  if (!tracked.length) return states;
   const playable = playableWorks(database, tracked);
-  for (const workId of tracked) {
-    const row = rows.get(workId);
-    if (playable.has(workId) && row?.holdReason) heldWhilePlayable.push(workId);
-    states.set(workId, deriveState(row, jobs.get(workId), playable.has(workId)));
-  }
-  return { states, heldWhilePlayable };
+  for (const workId of tracked)
+    states.set(workId, deriveState(rows.get(workId), jobs.get(workId), playable.has(workId)));
+  return states;
 }
 
 export type MaterialiseResult = {
@@ -134,8 +131,8 @@ type StoredRow = {
  * Write the derived media state into the stored columns of `work_media_states` (`state`,
  * `hold_reason`, `acquisition_id`, `updated_at`) for every user and work that has a media
  * state, creating the row where it is missing, so that an image from before ADR 0011, which
- * reads those columns, shows the same states after a rollback. `hold_reason` is cleared for
- * an available work, as that image's refresh did. Idempotent: a second run changes nothing.
+ * reads those columns, shows the same states after a rollback. `hold_reason` is written as
+ * the read returns it: as stored, also for an available work. Idempotent: a second run changes nothing.
  * Runs in one transaction; with `dryRun` it only counts.
  */
 export function materialiseWorkMediaStates(
@@ -171,7 +168,7 @@ export function materialiseWorkMediaStates(
          acquisition_id=excluded.acquisition_id,updated_at=excluded.updated_at`,
     );
     for (const [userId, workIds] of byUser) {
-      const { states } = deriveWorkMediaStates(database, userId, workIds);
+      const states = deriveWorkMediaStates(database, userId, workIds);
       const rows = new Map(
         (stored.all(userId, ids(workIds)) as StoredRow[]).map((row) => [row.workId, row]),
       );

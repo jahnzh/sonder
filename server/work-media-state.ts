@@ -27,20 +27,19 @@ export type {
  *    `trackWorkMediaState`.
  * Otherwise (e.g. a library book that was uploaded or imported) the read returns null.
  *
- * Holds: an available work has no hold. A read that finds a work available while a hold
- * reason is still stored clears it, as the refresh before ADR 0011 did, so the hold does
- * not come back if the audio later goes away.
+ * Holds: reads never write. A hold set by `setWorkMediaHold` or `markWorkEmptySearch` is
+ * returned exactly as stored, also while the work is playable. Two writes clear it, and
+ * nothing else does: an acquisition for the work reaching `ready`, for every user of that
+ * acquisition (`clearWorkMediaHoldsOfAcquisition`, called by the status writer), and the
+ * user's retry (`clearWorkMediaHold`).
  */
 
 /**
- * Media states of many works for one user in a fixed number of queries (three, plus one
- * write when a stored hold has to be cleared), whatever the number of works. Works without
- * a media state are absent from the map.
+ * Media states of many works for one user in three queries, whatever the number of works.
+ * Works without a media state are absent from the map. Writes nothing.
  */
 export function getWorkMediaStates(userId: number, workIds: Iterable<string>) {
-  const { states, heldWhilePlayable } = deriveWorkMediaStates(sqlite, userId, workIds);
-  if (heldWhilePlayable.length) clearHoldsOfAvailableWorks(userId, heldWhilePlayable);
-  return states;
+  return deriveWorkMediaStates(sqlite, userId, workIds);
 }
 
 export function getWorkMediaState(
@@ -86,14 +85,21 @@ export function setWorkMediaHold(
     .run(userId, workId, holdReason, Date.now());
 }
 
-/** The read found these works available: their stored hold reasons no longer apply. */
-function clearHoldsOfAvailableWorks(userId: number, workIds: string[]) {
+/**
+ * The acquisition reached `ready`: clear the hold reason of its work for every user of the
+ * acquisition, also users who never read the work while its audio was there. Called by
+ * `setAcquisitionStatus`, inside the status write's transaction.
+ */
+export function clearWorkMediaHoldsOfAcquisition(acquisitionId: string) {
   sqlite
     .prepare(
       `UPDATE work_media_states SET hold_reason=NULL,updated_at=?
-       WHERE user_id=? AND hold_reason IS NOT NULL AND work_id IN (SELECT value FROM json_each(?))`,
+       WHERE hold_reason IS NOT NULL AND (user_id,work_id) IN (
+         SELECT u.user_id,a.work_id FROM user_acquisitions u
+           JOIN acquisitions a ON a.id=u.acquisition_id
+         WHERE a.id=? AND a.work_id IS NOT NULL)`,
     )
-    .run(Date.now(), userId, JSON.stringify(workIds));
+    .run(Date.now(), acquisitionId);
 }
 
 /**

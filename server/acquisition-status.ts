@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
-import { db } from "./db.ts";
+import { db, sqlite } from "./db.ts";
+import { clearWorkMediaHoldsOfAcquisition } from "./work-media-state.ts";
 import * as s from "./schema.ts";
 
 export {
@@ -24,17 +25,21 @@ type StatusFields = Partial<
  * The one writer of `acquisitions.status` for an existing acquisition. Fields written
  * with the status (error, progress, …) go in `fields`; `updatedAt` is written only when
  * given, as each caller did before. Nothing has to be refreshed afterwards: a work's
- * media state is derived when read (`work-media-state.ts`).
+ * media state is derived when read (`work-media-state.ts`). Reaching `ready` clears the
+ * work's hold reason for every user of the acquisition, in the same transaction (ADR 0011).
  */
 export function setAcquisitionStatus(
   id: string,
   status: AcquisitionStatus,
   fields: StatusFields = {},
 ) {
-  db.update(s.acquisitions)
-    .set({ ...fields, status })
-    .where(eq(s.acquisitions.id, id))
-    .run();
+  sqlite.transaction(() => {
+    db.update(s.acquisitions)
+      .set({ ...fields, status })
+      .where(eq(s.acquisitions.id, id))
+      .run();
+    if (status === "ready") clearWorkMediaHoldsOfAcquisition(id);
+  })();
 }
 
 /** Record a new (or restarted, same hash) acquisition; every acquisition starts `checking`. */

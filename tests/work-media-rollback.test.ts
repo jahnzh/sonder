@@ -2,7 +2,8 @@
 // - materialiseWorkMediaStates writes the derived state into the stored columns, so the
 //   image from before ADR 0011, which reads them, sees the same states after a rollback.
 // - The batched read uses indexes, not full scans of the audio and acquisition tables.
-// - A hold is cleared once the work is read as available, as the earlier refresh did.
+// - Reads never write. A hold is returned as stored and cleared only by an acquisition
+//   reaching `ready` (for every user of it) or by the user's retry.
 import { test, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -29,6 +30,7 @@ const media = await import("../server/work-media-state.ts");
 const {
   getWorkMediaState,
   getWorkMediaStates,
+  clearWorkMediaHold,
   markWorkEmptySearch,
   setWorkMediaHold,
   trackWorkMediaState,
@@ -169,7 +171,7 @@ function allPairs() {
   return [1, 2].flatMap((userId) => works.map((workId) => ({ userId, workId })));
 }
 
-// Read after the earlier image's read: a read of an available work clears a stale hold.
+// This version's read, which the earlier image's read must equal after materialising.
 const derived = (userId: number, workId: string) => getWorkMediaState(userId, workId);
 
 test("before materialising, the earlier image misreads states this version derives", () => {
@@ -204,7 +206,8 @@ test("after materialising, the earlier image's read equals the derived state for
   assert.deepEqual(seen(1, "held"), { state: "queued", holdReason: "empty_search", named: true });
   assert.deepEqual(seen(2, "unreleased"), { state: "missing", holdReason: "unreleased", named: false });
   assert.deepEqual(seen(2, "lost"), { state: "missing", holdReason: null, named: false });
-  assert.deepEqual(seen(1, "held-playable"), { state: "available", holdReason: null, named: false });
+  // A hold set on a playable work is kept as stored, as the earlier image's setter stored it.
+  assert.deepEqual(seen(1, "held-playable"), { state: "available", holdReason: "unreleased", named: false });
   assert.deepEqual(seen(1, "retried"), { state: "queued", holdReason: null, named: true });
   assert.equal(seen(1, "untracked"), null);
   assert.equal(seen(2, "queued"), null);
@@ -281,39 +284,108 @@ test("the batched media-state read uses indexes, not full scans of tracks, recor
   assert.match(used, /USING INDEX sqlite_autoindex_acquisitions_1 \(id=\?\)/, used);
 });
 
-test("a stored empty-search hold is cleared once the work reads as available and does not come back when the audio goes", () => {
+const pickHold = (userId: number, workId: string) => {
+  const state = getWorkMediaState(userId, workId);
+  return state && [state.state, state.holdReason];
+};
+
+test("a ready acquisition clears the hold of every user of it, with no read while the audio is there", () => {
+  sqlite
+    .prepare("INSERT OR IGNORE INTO users(id,username,password_hash,role,created_at) VALUES(3,'third',NULL,'user',?)")
+    .run(Date.now());
   addWork("w");
+  addWork("other");
   markWorkEmptySearch(1, "w");
-  assert.equal(getWorkMediaState(1, "w")?.holdReason, "empty_search");
-  // A later acquisition brings audio in; the read (the user opening the series) sees it.
-  const id = start([1], "w");
-  assert.deepEqual(
-    [getWorkMediaState(1, "w")?.state, getWorkMediaState(1, "w")?.holdReason],
-    ["queued", "empty_search"],
-  );
+  markWorkEmptySearch(2, "w");
+  markWorkEmptySearch(3, "w");
+  markWorkEmptySearch(1, "other");
+  // One acquisition shared by users 1 and 2; user 2 never opens the work.
+  const id = start([1, 2], "w");
+  status(id, "downloading");
   addAudio("w");
   status(id, "ready");
-  assert.deepEqual(
-    [getWorkMediaState(1, "w")?.state, getWorkMediaState(1, "w")?.holdReason],
-    ["available", null],
-  );
   removeAudio("w");
-  assert.deepEqual(
-    [getWorkMediaState(1, "w")?.state, getWorkMediaState(1, "w")?.holdReason],
-    ["missing", null],
-  );
+  assert.deepEqual(pickHold(1, "w"), ["missing", null]);
+  assert.deepEqual(pickHold(2, "w"), ["missing", null]);
+  // A user without that acquisition, and another work of the same user, keep their holds.
+  assert.deepEqual(pickHold(3, "w"), ["missing", "empty_search"]);
+  assert.deepEqual(pickHold(1, "other"), ["missing", "empty_search"]);
   // A hold set again afterwards is kept.
   markWorkEmptySearch(1, "w");
+  assert.deepEqual(pickHold(1, "w"), ["missing", "empty_search"]);
+});
+
+test("an acquisition status other than ready leaves the hold in place", () => {
+  addWork("w");
+  markWorkEmptySearch(1, "w");
+  const id = start([1], "w");
+  for (const value of ["preparing", "downloading", "paused", "error", "checking"] as const) {
+    status(id, value);
+    assert.equal(getWorkMediaState(1, "w")?.holdReason, "empty_search", value);
+  }
+  // An acquisition without a work clears nothing and does not fail.
+  status(start([1], null), "ready");
   assert.equal(getWorkMediaState(1, "w")?.holdReason, "empty_search");
 });
 
-test("clearing a hold on read touches only that user's row", () => {
+test("reading media states writes nothing, also for a playable work with a stored hold", () => {
+  addWork("w");
+  addWork("q");
+  markWorkEmptySearch(1, "w");
+  addAudio("w");
+  setWorkMediaHold(1, "q", "unreleased");
+  addAudio("q");
+  start([1], "q");
+  const changes = () => (sqlite.prepare("SELECT total_changes() AS n").get() as { n: number }).n;
+  const before = changes();
+  const statements: string[] = [];
+  const originalPrepare = sqlite.prepare;
+  const originalExec = sqlite.exec;
+  sqlite.prepare = ((source: string) => {
+    statements.push(source);
+    return originalPrepare.call(sqlite, source);
+  }) as typeof originalPrepare;
+  sqlite.exec = ((source: string) => {
+    statements.push(source);
+    return originalExec.call(sqlite, source);
+  }) as typeof originalExec;
+  let single: WorkMediaState | null;
+  let many: Map<string, WorkMediaState>;
+  try {
+    single = getWorkMediaState(1, "w");
+    many = getWorkMediaStates(1, ["w", "q"]);
+  } finally {
+    sqlite.prepare = originalPrepare;
+    sqlite.exec = originalExec;
+  }
+  assert.equal(changes(), before, "rows changed by a read");
+  for (const source of statements)
+    assert.doesNotMatch(source, /\b(INSERT|UPDATE|DELETE|REPLACE)\b/i, source);
+  // The hold is returned exactly as stored while the work is playable.
+  assert.deepEqual([single?.state, single?.holdReason], ["available", "empty_search"]);
+  assert.deepEqual([many.get("q")?.state, many.get("q")?.holdReason], ["available", "unreleased"]);
+});
+
+test("a hold on a work whose audio arrived without an acquisition stays stored until the retry clears it", () => {
   addWork("w");
   markWorkEmptySearch(1, "w");
-  markWorkEmptySearch(2, "w");
+  // Audio uploaded or imported: no acquisition reaches ready, so nothing clears the hold.
   addAudio("w");
-  assert.equal(getWorkMediaState(1, "w")?.holdReason, null);
+  assert.deepEqual(pickHold(1, "w"), ["available", "empty_search"]);
   removeAudio("w");
-  assert.equal(getWorkMediaState(1, "w")?.holdReason, null);
-  assert.equal(getWorkMediaState(2, "w")?.holdReason, "empty_search");
+  assert.deepEqual(pickHold(1, "w"), ["missing", "empty_search"]);
+  assert.deepEqual(
+    (({ state, holdReason }) => [state, holdReason])(clearWorkMediaHold(1, "w")!),
+    ["missing", null],
+  );
+  assert.deepEqual(pickHold(1, "w"), ["missing", null]);
+});
+
+test("an unreleased hold set on a playable work is kept and returns when the audio goes", () => {
+  addWork("w");
+  addAudio("w");
+  setWorkMediaHold(1, "w", "unreleased");
+  assert.deepEqual(pickHold(1, "w"), ["available", "unreleased"]);
+  removeAudio("w");
+  assert.deepEqual(pickHold(1, "w"), ["missing", "unreleased"]);
 });

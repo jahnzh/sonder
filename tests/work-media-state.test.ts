@@ -309,9 +309,11 @@ test("tracks on a recording make the work available whatever the acquisition say
   });
   addEdition("w-tracks", "e-tracks", [{ id: "r-tracks", tracks: 1 }]);
   refreshLikeTheWriters(1, "w-tracks");
+  // The hold stays stored: tracks that arrive without an acquisition reaching `ready` do
+  // not clear it (ADR 0011). The cache before ADR 0011 cleared it at this refresh.
   assert.deepEqual(pick(getWorkMediaState(1, "w-tracks")), {
     state: "available",
-    holdReason: null,
+    holdReason: "empty_search",
     acquisitionId: null,
   });
 });
