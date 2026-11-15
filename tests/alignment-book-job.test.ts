@@ -497,6 +497,14 @@ test("the worker's result becomes the stored map in one function: checked interv
   assert.equal(job.anchoring?.stage, "done");
   assert.deepEqual(job.anchoring?.samples, []);
 
+  const mismatch = base();
+  assert.deepEqual(applyBookResult(mismatch, book, trackIds, result("text_mismatch", [])), { status: "partial" });
+  assert.deepEqual(mismatch.intervals, []);
+  assert.equal(mismatch.outcome, "unsynced");
+  assert.equal(mismatch.error, null);
+  assert.match(mismatch.warning ?? "", /does not match this ebook/);
+  assert.equal(mismatch.unsyncedPassages?.reduce((count, passage) => count + passage.sentenceCount, 0), sentences.length);
+
   const unsynced = base();
   assert.deepEqual(applyBookResult(unsynced, book, trackIds, result("unsynced", [])), { status: "partial" });
   assert.equal(unsynced.outcome, "unsynced");
@@ -508,8 +516,8 @@ test("the worker's result becomes the stored map in one function: checked interv
     { error: "The alignment worker does not support this language.", outcome: "language_not_supported" });
   assert.deepEqual(language.intervals, []);
 
-  assert.deepEqual(applyBookResult(base(), book, trackIds, result("text_mismatch", [])),
-    { error: "The alignment worker returned an outcome this server does not know (text_mismatch).", outcome: "error" });
+  assert.deepEqual(applyBookResult(base(), book, trackIds, result("a_later_outcome", [])),
+    { error: "The alignment worker returned an outcome this server does not know (a_later_outcome).", outcome: "error" });
 });
 
 test("chapter-paired jobs run as whole-book jobs on the pool too: two books on the two hosts at once", async () => {
