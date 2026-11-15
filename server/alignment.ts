@@ -9,8 +9,6 @@ import {
   readFileSync,
   writeFileSync,
   renameSync,
-  readdirSync,
-  rmSync,
 } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
@@ -23,11 +21,9 @@ import { hasServerMedia, requestServerDownload } from "./downloads.ts";
 import {
   alignmentJobActive,
   alignmentJobInFlight,
-  alignmentMapPublishes,
   alignmentMapUsable,
   type AlignmentJob,
   type AlignmentInterval,
-  type AlignmentOutcome,
 } from "../src/reading-types.ts";
 import { requireAdmin } from "./users.ts";
 import { matchSections } from "./alignment-pairings.ts";
@@ -55,18 +51,14 @@ import {
   REBUILT_STATUSES,
   currentAlignmentEngine,
   engineIsOlder,
-  rebuildRejection,
   rebuildAdmissionOrder,
-  servedDuringRebuild,
 } from "./alignment-rebuild.ts";
 import {
   admittedBooks,
   AlignmentScheduler,
   RESIDENT_MODELS_PER_DEVICE,
   StaleAlignmentRun,
-  assertRunMayWrite,
   claimOrder,
-  currentRunFence,
   markRunLeased,
 } from "./alignment-scheduler.ts";
 import {
@@ -82,6 +74,23 @@ import {
 } from "./alignment-anchors.ts";
 import { iso3, languagesConflict } from "./language.ts";
 import { ProbeLanguageNotSupported, type AnchorSampleScore } from "./ebook-set-ctc-probe.ts";
+import * as transition from "./alignment-transitions.ts";
+import {
+  alignmentJob,
+  alignmentKeepsPublishedMap,
+  listAlignmentJobs,
+  listServedAlignmentJobs,
+  servedAlignmentJob,
+} from "./alignment-transitions.ts";
+export {
+  alignmentJob,
+  alignmentKeepsPublishedMap,
+  deleteAlignmentJob,
+  listAlignmentJobs,
+  listServedAlignmentJobs,
+  putAlignmentJob,
+  removeProjectedMapsForWork,
+} from "./alignment-transitions.ts";
 export { matchTitle } from "./alignment-pairings.ts";
 export function recordingContext(id: string) {
   const rec = db
@@ -159,174 +168,8 @@ export function audioFingerprint(recordingId: string, stable = true) {
     .digest("hex");
   return stable ? `audio-v2:${hash}` : hash;
 }
-type AlignmentRow = { data: string; engine: string; outcome: AlignmentOutcome | null; stage_timings: string | null };
-function readJob(row: AlignmentRow, data = row.data): AlignmentJob {
-  const job = JSON.parse(data) as AlignmentJob & { unverifiedCount?: number };
-  // The columns describe the row's current job; a kept map (#277) carries its own values.
-  if (data === row.data) {
-    job.engine ||= row.engine;
-    if (!job.outcome && row.outcome) job.outcome = row.outcome;
-    if (!job.stageTimings && row.stage_timings) job.stageTimings = JSON.parse(row.stage_timings);
-  }
-  delete job.unverifiedCount;
-  job.intervals = job.intervals.map(({ verified: _verified, ...interval }: AlignmentInterval & { verified?: boolean }) => interval);
-  if (job.warning && /reviewed/i.test(job.warning))
-    job.warning = "Timings are estimated. Passages without matching narration remain unsynced.";
-  return job;
-}
-const jobs = () =>
-  (
-    sqlite
-      .prepare("SELECT data,engine,outcome,stage_timings FROM alignment_jobs ORDER BY updated_at DESC")
-      .all() as AlignmentRow[]
-  ).map((row) => readJob(row));
-export function listAlignmentJobs() {
-  return jobs();
-}
-type ServedRow = AlignmentRow & { published_map: string | null };
-/** What the listing and /map serve: the kept map while a rebuild runs in the row, else the job itself. */
-function servedJob(row: ServedRow) {
-  const working = readJob(row);
-  return row.published_map ? servedDuringRebuild(readJob(row, row.published_map), working) : working;
-}
-const servedJobs = () =>
-  (
-    sqlite
-      .prepare("SELECT data,engine,outcome,stage_timings,published_map FROM alignment_jobs ORDER BY updated_at DESC")
-      .all() as ServedRow[]
-  ).map(servedJob);
-/** Listing view that keeps a published_map in front of a failed or in-flight rebuild (#277). */
-export function listServedAlignmentJobs() {
-  return servedJobs();
-}
-/** True while a rebuild (or its failed/cancelled result) still holds a map for serving (#277). */
-export function alignmentKeepsPublishedMap(id: string) {
-  return !!(
-    sqlite.prepare("SELECT published_map FROM alignment_jobs WHERE id=?").get(id) as
-      | { published_map: string | null }
-      | undefined
-  )?.published_map;
-}
-function servedAlignmentJob(id: string) {
-  const row = sqlite
-    .prepare("SELECT data,engine,outcome,stage_timings,published_map FROM alignment_jobs WHERE id=?")
-    .get(id) as ServedRow | undefined;
-  if (!row) throw new Error("This reading-sync job could not be found.");
-  return servedJob(row);
-}
-export function alignmentJob(id: string) {
-  const row = sqlite
-    .prepare("SELECT data,engine,outcome,stage_timings FROM alignment_jobs WHERE id=?")
-    .get(id) as AlignmentRow | undefined;
-  if (!row) throw new Error("This reading-sync job could not be found.");
-  return readJob(row);
-}
-/** The map the row keeps serving while a rebuild runs in it, if any. */
-function keptMapOf(id: string) {
-  const row = sqlite.prepare("SELECT published_map FROM alignment_jobs WHERE id=?").get(id) as
-    | { published_map: string | null }
-    | undefined;
-  return row?.published_map ? (JSON.parse(row.published_map) as AlignmentJob) : null;
-}
-/**
- * A finished rebuild that is empty or much worse than the kept map, or that ends "language not supported" over
- * a kept map with intervals, is stored as rejected (#379): status "error" with outcome "rejected" and the
- * reason in `error`, so it keeps the kept map like any failed rebuild (older clients already read an error
- * status) and the automatic rebuild queue passes it by (it already holds the current engine). A first map
- * (nothing kept) is never rejected.
- */
-function rejectWorseRebuild(job: AlignmentJob) {
-  if (!alignmentMapPublishes(job)) return;
-  const kept = keptMapOf(job.id);
-  const reason = kept && rebuildRejection(job, kept);
-  if (!reason) return;
-  job.status = "error";
-  job.outcome = "rejected";
-  job.error = reason;
-}
-function store(job: AlignmentJob) {
-  // A scheduled run may only write its own job while it still owns the claimed generation.
-  const fence = currentRunFence();
-  if (fence && fence.jobId === job.id) assertRunMayWrite(fence, job.status);
-  job.updatedAt = Date.now();
-  rejectWorseRebuild(job);
-  if (alignmentMapUsable(job)) {
-    ensureMediaStorage();
-    const folder = join(mediaRoot, "alignment", job.id);
-    mkdirSync(folder, { recursive: true, mode: 0o750 });
-    const path = join(folder, "map.json");
-    writeFileSync(path + ".part", JSON.stringify(job), { mode: 0o640 });
-    renameSync(path + ".part", path);
-  }
-  // One statement: a map that publishes replaces the kept map of a rebuild (#277) atomically.
-  sqlite
-    .prepare(
-      "INSERT INTO alignment_jobs(id,ebook_id,recording_id,data,updated_at,engine,outcome,stage_timings) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at,engine=excluded.engine,outcome=excluded.outcome,stage_timings=excluded.stage_timings,published_map=CASE WHEN ? THEN NULL ELSE alignment_jobs.published_map END",
-    )
-    .run(
-      job.id,
-      job.ebookId,
-      job.recordingId,
-      JSON.stringify(job),
-      job.updatedAt,
-      job.engine,
-      job.outcome ?? null,
-      job.stageTimings ? JSON.stringify(job.stageTimings) : null,
-      alignmentMapPublishes(job) ? 1 : 0,
-    );
-  return job;
-}
-/** Drops the map a rebuild kept serving: the row's own job is what callers see from now on. */
-function dropKeptMap(id: string) {
-  sqlite.prepare("UPDATE alignment_jobs SET published_map=NULL WHERE id=?").run(id);
-}
-export function putAlignmentJob(job: AlignmentJob) {
-  return store(job);
-}
-/**
- * Writes a regenerated ebook-set projection as a rebuild of the member's existing map (#379): a usable existing
- * map of the same files is kept for serving first, so `store` publishes the projection only when
- * `rebuildRejection` allows it. A rejected (error) write leaves the member's map served with the rejection.
- * `memberSentenceIds` are the member edition's own sentences, the denominator of `job.coverage`: the kept
- * map's coverage is counted again from its intervals over them, since a projection stored earlier counted it
- * over the consensus rows, whose number changes with the set's membership. Only kept intervals that still
- * name a sentence of the member count, as for the new projection: the reader can segment the same file
- * differently after an update, and the kept map must not be credited for sentences that no longer exist.
- */
-export function putProjectedRebuild(job: AlignmentJob, memberSentenceIds?: ReadonlySet<string>) {
-  return sqlite.transaction(() => {
-    const exists = sqlite.prepare("SELECT 1 FROM alignment_jobs WHERE id=?").get(job.id);
-    const old = exists && !alignmentKeepsPublishedMap(job.id) ? alignmentJob(job.id) : null;
-    const kept = !old ? keptMapOf(job.id)
-      : alignmentMapUsable(old) && old.intervals.length && old.fingerprint === job.fingerprint &&
-        old.audioFingerprint === job.audioFingerprint ? old : null;
-    if (kept) {
-      if (memberSentenceIds?.size && kept.fingerprint === job.fingerprint) {
-        const mapped = new Set(kept.intervals.map((interval) => interval.paragraphId).filter((id) => memberSentenceIds.has(id)));
-        kept.coverage = mapped.size / memberSentenceIds.size;
-      }
-      sqlite.prepare("UPDATE alignment_jobs SET published_map=? WHERE id=?").run(JSON.stringify(kept), job.id);
-    }
-    return store(job);
-  }).immediate();
-}
-export function deleteAlignmentJob(id: string) {
-  sqlite.prepare("DELETE FROM alignment_jobs WHERE id=?").run(id);
-}
-export function removeProjectedMapsForWork(workId: string) {
-  const ebookIds = new Set(
-    db
-      .select({ id: s.ebookEditions.id })
-      .from(s.ebookEditions)
-      .where(eq(s.ebookEditions.workId, workId))
-      .all()
-      .map((row) => row.id),
-  );
-  for (const job of jobs()) {
-    if (job.origin === "projected" && ebookIds.has(job.ebookId))
-      sqlite.prepare("DELETE FROM alignment_jobs WHERE id=?").run(job.id);
-  }
-}
+const jobs = listAlignmentJobs;
+const servedJobs = listServedAlignmentJobs;
 export async function alignmentOptions(ebookId: string, recordingId: string) {
   const book = await extractBook(ebookId),
     { edition, tracks } = recordingContext(recordingId);
@@ -409,19 +252,12 @@ export async function createAlignment(
     alignmentJobActive(existing.status) &&
     shouldSupersede
   ) {
-    existing.status = "cancelled";
-    existing.error = null;
-    store(existing);
+    transition.cancel(existing);
   }
   const copying = tracks.some((track) => !hasServerMedia(track));
-  const job = await plannedJob({ ebookId, recordingId, pairings, mode, origin, existing, copying });
+  const job = await plannedJob({ ebookId, recordingId, pairings, mode, origin, existing });
   if (copying) requestServerDownload(edition.id);
-  store(job);
-  // A new prepare replaces the row at once; only a rebuild keeps serving the previous map.
-  // A backfill that supersedes while a kept map is still served (first rebuild, or another
-  // consensus fingerprint change before the replacement publishes) retains published_map
-  // until the replacement run publishes — keyed off the row, not rebuildOf (#277).
-  if (!(origin === "backfill" && alignmentKeepsPublishedMap(job.id))) dropKeptMap(job.id);
+  transition.queue(job, { copying });
   void processAlignments();
   return job;
 }
@@ -438,7 +274,7 @@ async function alignablePair(ebookId: string, recordingId: string) {
     );
   return { book, edition, tracks };
 }
-/** A fresh job for a pair under the current engine. Validates the pairings; stores nothing. */
+/** A fresh job for a pair under the current engine. Validates the pairings; stores nothing (the queue or rebuild transition sets its status). */
 async function plannedJob(input: {
   ebookId: string;
   recordingId: string;
@@ -446,9 +282,8 @@ async function plannedJob(input: {
   mode?: AlignmentJob["mode"];
   origin?: AlignmentJob["origin"];
   existing?: AlignmentJob;
-  copying: boolean;
 }): Promise<AlignmentJob> {
-  const { ebookId, recordingId, pairings, mode, origin, existing, copying } = input;
+  const { ebookId, recordingId, pairings, mode, origin, existing } = input;
   const { book, tracks } = await alignablePair(ebookId, recordingId);
   const options = await alignmentOptions(ebookId, recordingId);
   const chosen = pairings?.length ? pairings : options.pairings;
@@ -483,7 +318,7 @@ async function plannedJob(input: {
     generation: randomUUID(),
     ebookId,
     recordingId,
-    status: copying ? "copying" : "queued",
+    status: "queued",
     progress: 0,
     // New chapter and anchored jobs use CTC.
     engine: currentAlignmentEngine(),
@@ -712,10 +547,10 @@ export async function queueEngineRebuilds(log: AutoQueueLog = console): Promise<
       }
       const job = await rebuildPlan(old);
       if (inFlight) {
-        job.status = old.status === "paused" ? "paused" : "queued";
         if (old.rebuildOf) job.rebuildOf = old.rebuildOf;
       } else job.rebuildOf = { engine: old.engine, status: old.status, requestedAt: Date.now() };
-      if (commitRebuild(old, job)) result[inFlight ? "replanned" : "queued"]++;
+      // An in-flight job keeps its status (a paused one stays paused) and priority.
+      if (transition.queueRebuild(old, job)) result[inFlight ? "replanned" : "queued"]++;
       else result.skipped++;
     } catch (error) {
       result.failed++;
@@ -751,7 +586,7 @@ export function holdRebuildPlansForTests(hold: typeof rebuildPlanHold) {
 async function rebuildPlan(old: AlignmentJob) {
   if (rebuildPlanHold) await rebuildPlanHold(old);
   const chapters = old.mode !== "anchored" && old.pairings.length > 0;
-  const base = { ebookId: old.ebookId, recordingId: old.recordingId, existing: old, copying: false };
+  const base = { ebookId: old.ebookId, recordingId: old.recordingId, existing: old };
   let job: AlignmentJob;
   try {
     job = await plannedJob(chapters ? { ...base, pairings: old.pairings, mode: "chapters" }
@@ -772,38 +607,13 @@ async function rebuildPlan(old: AlignmentJob) {
  */
 async function replanRetiredEngineJob(old: AlignmentJob) {
   if (old.origin === "projected") {
-    old.status = "error";
-    old.outcome = "error";
-    old.error = "This map is made from its ebook set's consensus map and is rebuilt with it.";
-    store(old);
+    transition.fail(old, "This map is made from its ebook set's consensus map and is rebuilt with it.", "error");
     return null;
   }
   const job = await rebuildPlan(old);
   job.generation = old.generation;
-  job.status = "queued";
   if (old.rebuildOf) job.rebuildOf = old.rebuildOf;
-  return commitRebuild(old, job) ? job : null;
-}
-/**
- * Writes the rebuild onto the row only if nobody changed it since it was read (another scan, a prepare, a
- * resume). A usable old map is kept for serving until the rebuild publishes; an older kept map stays.
- */
-function commitRebuild(old: AlignmentJob, job: AlignmentJob) {
-  return sqlite.transaction(() => {
-    if (!rowUnchanged(old)) return false;
-    const kept = alignmentKeepsPublishedMap(old.id);
-    store(job);
-    if (!kept && alignmentMapUsable(old))
-      sqlite.prepare("UPDATE alignment_jobs SET published_map=? WHERE id=?").run(JSON.stringify(old), old.id);
-    return true;
-  }).immediate();
-}
-/** The row still holds the state `old` was read from: no other write (scan, prepare, resume, cancel) since. */
-function rowUnchanged(old: AlignmentJob) {
-  const row = sqlite.prepare("SELECT data FROM alignment_jobs WHERE id=?").get(old.id) as { data: string } | undefined;
-  if (!row) return false;
-  const current = JSON.parse(row.data) as AlignmentJob;
-  return current.generation === old.generation && current.updatedAt === old.updatedAt && current.status === old.status;
+  return transition.queueRebuild(old, job) ? job : null;
 }
 let rebuildScan: Promise<RebuildScan | null> = Promise.resolve(null);
 /** Tests: the scan the latest registerAlignment started. */
@@ -933,19 +743,16 @@ const ctcMicrobatch = (job: AlignmentJob) =>
   job.runConfig?.acousticMicrobatchUsed ? { microbatch: job.runConfig.acousticMicrobatchUsed } : {};
 function stopForWorkerOutcome(job: AlignmentJob, metadata: WorkerMetadata) {
   if (metadata.outcome !== "language_not_supported" && metadata.outcome !== "error") return false;
-  // Keep the specific worker outcome even when earlier requests succeeded.
-  job.outcome = metadata.outcome;
-  job.status = "error";
   if (metadata.outcome === "language_not_supported") {
     job.intervals = [];
     job.sectionsDone = [];
     job.coverage = 0;
     delete job.unsyncedPassages;
   }
-  job.error = metadata.outcome === "language_not_supported"
+  // Keep the specific worker outcome even when earlier requests succeeded.
+  transition.fail(job, metadata.outcome === "language_not_supported"
     ? "The alignment worker does not support this language."
-    : "The alignment worker could not process this passage.";
-  store(job);
+    : "The alignment worker could not process this passage.", metadata.outcome);
   return true;
 }
 /**
@@ -1157,7 +964,7 @@ async function processAnchored(
             tracks.findIndex((track) => track.id === b.trackId) ||
           a.time - b.time,
       );
-      store(job);
+      transition.progress(job);
     }
   }
   while (job.anchoring!.stage === "sampling") {
@@ -1222,7 +1029,7 @@ async function processAnchored(
           for (const [offset, item] of chunk.entries())
             applyAnchorSample(job, item.index, item.sample, batch.results[offset]);
           progress(job);
-          store(job);
+          transition.progress(job);
         }
         if (fellBack) break;
       }
@@ -1259,7 +1066,7 @@ async function processAnchored(
       if (stopForWorkerOutcome(job, result)) return await finishConsensus(job);
       applyAnchorSample(job, i, sample, result);
       progress(job);
-      store(job);
+      transition.progress(job);
     }
     // A pause or cancel during the last sample must not be replaced by the next stage's result.
     if (!live()) return;
@@ -1274,14 +1081,13 @@ async function processAnchored(
     if (anchors.length < minimumAnchors || anchors.length < spoken * 0.3) {
       plan.anchors = anchors;
       plan.stage = "done";
-      job.status = "partial";
       job.outcome = "unsynced";
       job.progress = 1;
       job.intervals = [];
       job.coverage = 0;
       job.unsyncedPassages = unsyncedPassages(book, []);
       job.warning = "The narration could not be matched reliably. The text remains unsynced.";
-      store(job);
+      transition.publish(job, "partial");
       if (job.ebookId.startsWith("set-consensus:")) {
         const { onConsensusAlignmentFinished } = await import(
           "./ebook-set-consensus.ts"
@@ -1313,7 +1119,7 @@ async function processAnchored(
       plan.stage = "aligning";
     }
     progress(job);
-    store(job);
+    transition.progress(job);
   }
   for (const [i, segment] of job.anchoring!.segments.entries()) {
     if (segment.done) continue;
@@ -1400,7 +1206,7 @@ async function processAnchored(
     job.elapsedSeconds += result.elapsedSeconds;
     progress(job);
     job.coverage = job.intervals.length / paragraphs.length;
-    store(job);
+    transition.progress(job);
   }
   if (!live()) return;
   job = alignmentJob(job.id);
@@ -1424,11 +1230,10 @@ async function processAnchored(
       )?.title;
   plan.stage = "done";
   job.progress = 1;
-  job.status = "partial";
   finishWorkerOutcome(job);
   job.warning =
     "Timings are estimated from sampled narration. Passages without matching narration are left unsynced.";
-  store(job);
+  transition.publish(job, "partial");
   await finishConsensus(job);
   } finally {
     if (job.pool)
@@ -1458,7 +1263,7 @@ function acceptCtcDispatch(job: AlignmentJob, pool: Awaited<ReturnType<typeof di
   current.ctcPrecision = job.ctcPrecision;
   current.poolErrors = job.poolErrors;
   markRunLeased();
-  return store(current);
+  return transition.progress(current);
 }
 
 async function runAlignmentJob(pending: AlignmentJob) {
@@ -1480,12 +1285,8 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
         .from(s.serverDownloads)
         .where(eq(s.serverDownloads.recordingId, job.recordingId))
         .get();
-      if (download?.status === "error") {
-        job.status = "error";
-        job.error =
-          download.error || "The audio could not be saved on the HDD.";
-        store(job);
-      }
+      if (download?.status === "error")
+        transition.fail(job, download.error || "The audio could not be saved on the HDD.");
       return;
     }
     if (job.engine !== CTC_ENGINE) {
@@ -1494,9 +1295,7 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
       job = replanned;
     }
     if (book.fingerprint !== job.fingerprint) {
-      job.status = "error";
-      job.error = "The EPUB changed. Prepare a new reading-sync map.";
-      store(job);
+      transition.fail(job, "The EPUB changed. Prepare a new reading-sync map.");
       return;
     }
     const currentAudioFingerprint = audioFingerprint(job.recordingId);
@@ -1505,10 +1304,7 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
         job.anchoring?.samples.some((sample) => sample.done)) &&
       currentAudioFingerprint !== job.audioFingerprint
     ) {
-      job.status = "error";
-      job.error =
-        "The audio changed. Rebuild this reading-sync map before continuing.";
-      store(job);
+      transition.fail(job, "The audio changed. Rebuild this reading-sync map before continuing.");
       return;
     }
     job.audioFingerprint = currentAudioFingerprint;
@@ -1530,9 +1326,8 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
         job.anchoring = { stage: "sampling", refinements: 0, samples: planSamples(context.tracks, undefined, undefined, true),
           anchors: [], segments: [], rate: 0, flags: [] };
     }
-    job.status = "processing";
     job.runConfig = { ...job.runConfig, ...alignmentSchedulerConfig() };
-    store(job);
+    transition.start(job);
     if (iso3(book.language) !== "eng") {
       stopForWorkerOutcome(job, { outcome: "language_not_supported" });
       return;
@@ -1541,10 +1336,7 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
     const folder = join(mediaRoot, "alignment", job.id);
     mkdirSync(folder, { recursive: true, mode: 0o750 });
     if (!poolEnabled()) {
-      job.status = "error";
-      job.outcome = "error";
-      job.error = "CTC alignment requires the remote alignment pool. Enable it to retry.";
-      store(job);
+      transition.fail(job, "CTC alignment requires the remote alignment pool. Enable it to retry.", "error");
       return;
     }
     // A persisted dispatch has no lease after a server restart. Re-probe
@@ -1554,7 +1346,7 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
       const triedHosts = job.pool.hostId === "steamdeck"
         ? [] : job.pool.triedHosts.filter((id) => id === "wsl" || id === "lisa");
       clearPoolStaging(job, triedHosts);
-      store(job);
+      transition.progress(job);
     }
     if (job.mode === "anchored") {
       if (poolJobNeedsStaging(job)) {
@@ -1571,9 +1363,8 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
           if (ctcDispatchStopped(job)) return;
           if (error instanceof PoolBusyError && error.triedHosts.length)
             clearPoolStaging(job, error.triedHosts);
-          job.status = error instanceof PoolBusyError ? "queued" : "error";
-          job.error = error instanceof PoolBusyError ? null : poolFailureMessage(error);
-          store(job);
+          if (error instanceof PoolBusyError) transition.requeue(job);
+          else transition.fail(job, poolFailureMessage(error));
           return;
         }
       }
@@ -1595,7 +1386,7 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
             throw error;
           const triedHosts = job.pool.triedHosts;
           clearPoolStaging(job, triedHosts);
-          store(job);
+          transition.progress(job);
           try {
             const pool = await dispatchFullAlignmentJob(
               job,
@@ -1610,9 +1401,8 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
             if (ctcDispatchStopped(job)) break;
             if (dispatchError instanceof PoolBusyError && dispatchError.triedHosts.length)
               clearPoolStaging(job, dispatchError.triedHosts);
-            job.status = dispatchError instanceof PoolBusyError ? "queued" : "error";
-            job.error = dispatchError instanceof PoolBusyError ? null : poolFailureMessage(dispatchError);
-            store(job);
+            if (dispatchError instanceof PoolBusyError) transition.requeue(job);
+            else transition.fail(job, poolFailureMessage(dispatchError));
             break;
           }
           job = alignmentJob(job.id);
@@ -1630,9 +1420,8 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
         if (ctcDispatchStopped(job)) return;
         if (error instanceof PoolBusyError && error.triedHosts.length)
           clearPoolStaging(job, error.triedHosts);
-        job.status = error instanceof PoolBusyError ? "queued" : "error";
-        job.error = error instanceof PoolBusyError ? null : poolFailureMessage(error);
-        store(job);
+        if (error instanceof PoolBusyError) transition.requeue(job);
+        else transition.fail(job, poolFailureMessage(error));
         return;
       }
     }
@@ -1755,7 +1544,7 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
                 (count, section) => count + section.paragraphs.length,
                 0,
               );
-            store(job);
+            transition.progress(job);
           }
           break;
         } catch (error) {
@@ -1767,7 +1556,7 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
           const triedHosts = job.pool.triedHosts;
           getAlignmentPoolCoordinator().release(job.pool.hostId, job.id, job.recordingId);
           clearPoolStaging(job, triedHosts);
-          store(job);
+          transition.progress(job);
           try {
             const pool = await dispatchFullAlignmentJob(job, context.tracks, localAudio, triedHosts);
             const current = acceptCtcDispatch(job, pool);
@@ -1777,9 +1566,8 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
             if (ctcDispatchStopped(job)) break;
             if (dispatchError instanceof PoolBusyError && dispatchError.triedHosts.length)
               clearPoolStaging(job, dispatchError.triedHosts);
-            job.status = dispatchError instanceof PoolBusyError ? "queued" : "error";
-            job.error = dispatchError instanceof PoolBusyError ? null : poolFailureMessage(dispatchError);
-            store(job);
+            if (dispatchError instanceof PoolBusyError) transition.requeue(job);
+            else transition.fail(job, poolFailureMessage(dispatchError));
             break;
           }
         }
@@ -1790,13 +1578,12 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
         job.generation === generation &&
         alignmentJobActive(job.status)
       ) {
-        job.status = "partial";
         finishWorkerOutcome(job);
         job.unsyncedPassages = unsyncedPassages(book, job.intervals);
         job.warning ||=
           "Timings are estimated from the supplied text. Sections without matching narration are left unsynced.";
-        store(job);
-        // store() writes map.json for a published map; a rejected rebuild must not overwrite the kept one.
+        transition.publish(job, "partial");
+        // publish writes map.json for a published map; a rejected rebuild must not overwrite the kept one.
         if (alignmentMapUsable(job)) {
           const path = join(folder, "map.json");
           writeFileSync(path + ".part", JSON.stringify(job));
@@ -1816,15 +1603,11 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
       alignmentJobActive(current.status) &&
       current.generation === pending.generation
     ) {
-      current.status = "error";
       if (error instanceof WorkerRequestError && error.metadata)
         applyWorkerMetadata(current, error.metadata, {
           engine: error.metadata.engine === CTC_ENGINE,
         });
-      current.outcome = "error";
-      current.error =
-        error instanceof Error ? error.message : "Local alignment failed.";
-      store(current);
+      transition.fail(current, error instanceof Error ? error.message : "Local alignment failed.", "error");
     }
   }
 }
@@ -1918,10 +1701,8 @@ export function registerAlignment(app: FastifyInstance) {
     try {
       // Upgrade only maps whose complete original source fingerprint still
       // validates; never bless a changed file just because it has a new format.
-      if (job.audioFingerprint === audioFingerprint(job.recordingId, false)) {
-        job.audioFingerprint = audioFingerprint(job.recordingId);
-        store(job);
-      }
+      if (job.audioFingerprint === audioFingerprint(job.recordingId, false))
+        transition.upgradeAudioFingerprint(job, audioFingerprint(job.recordingId));
     } catch {}
   }
   rebuildScan = queueEngineRebuilds(app.log).catch((error) => {
@@ -2123,38 +1904,11 @@ export function registerAlignment(app: FastifyInstance) {
     }
     // A rejected rebuild (#379) finished all its work: a retry plans it again from the start, and the kept map
     // stays served until the new run publishes.
-    let rejected: AlignmentJob | null = null;
-    if (action === "resume" && job.outcome === "rejected" && job.origin !== "projected") {
-      rejected = job;
-      const retry = await rebuildPlan(job);
-      if (job.rebuildOf) retry.rebuildOf = job.rebuildOf;
-      job = retry;
-    }
-    job.status = action === "pause" ? "paused" : action === "cancel" ? "cancelled" : "queued";
-    job.error = null;
-    if (action === "resume") {
-      // A fresh generation lets any in-flight section of the paused run exit at its boundary without
-      // writing onto the resumed job, and drops a prior ADMISSION_RETRY_MS wait for the old generation.
-      job.generation = randomUUID();
-      delete job.poolErrors;
-      if (job.outcome === "error" || job.outcome === "language_not_supported") delete job.outcome;
-      if (job.pool) clearPoolStaging(job, []);
-    }
-    sqlite.transaction(() => {
-      if (rejected) {
-        // The row changed while the retry was planned (another retry already running, a cancel, a prepare): that
-        // later action stands, and its run's results stay.
-        if (!rowUnchanged(rejected))
-          throw Object.assign(new Error("This rebuild changed while the retry was being planned. Reload to see its current state."),
-            { statusCode: 409, code: "alignment_retry_conflict" });
-        // The rejected run's section and window results are cached in the job folder; the retry must not read them back.
-        const folder = join(mediaRoot, "alignment", job.id);
-        if (existsSync(folder))
-          for (const name of readdirSync(folder))
-            if (/^(section|window)-.*\.json$/.test(name)) rmSync(join(folder, name), { force: true });
-      }
-      store(job);
-    }).immediate();
+    if (action === "resume" && job.outcome === "rejected" && job.origin !== "projected")
+      job = transition.retryRejectedRebuild(job, await rebuildPlan(job));
+    else if (action === "pause") transition.pause(job);
+    else if (action === "cancel") transition.cancel(job);
+    else transition.resume(job);
     writeMeta.set(req, { action, jobId: job.id, jobStatus: job.status });
     if (action === "resume") void processAlignments();
     return job;
@@ -2239,7 +1993,7 @@ export function registerAlignment(app: FastifyInstance) {
       confidence: 1,
     });
     job.unsyncedPassages = unsyncedPassages(book, job.intervals);
-    const saved = store(job);
+    const saved = transition.correct(job);
     writeMeta.set(req, { jobId: saved.id, jobStatus: saved.status });
     return saved;
   });

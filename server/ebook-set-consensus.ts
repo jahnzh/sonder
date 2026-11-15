@@ -16,9 +16,9 @@ import {
   deleteAlignmentJob,
   listAlignmentJobs,
   listServedAlignmentJobs,
-  putProjectedRebuild,
   removeProjectedMapsForWork,
 } from "./alignment.ts";
+import { project, rejectRebuild } from "./alignment-transitions.ts";
 import { alignmentJobInFlight, alignmentMapUsable } from "../src/reading-types.ts";
 import {
   listEbookSetMembers,
@@ -359,31 +359,15 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
     const sectionsDone = [
       ...new Set(intervals.map((interval) => interval.section)),
     ].sort((a, b) => a - b);
-    putProjectedRebuild({
+    project(consensusJob, {
       id: projectedId,
-      generation: consensusJob.generation,
       ebookId: member.ebookId,
-      recordingId: consensusJob.recordingId,
-      status: consensusJob.status,
-      progress: consensusJob.progress,
-      engine: consensusJob.engine,
-      outcome: consensusJob.outcome,
-      stageTimings: consensusJob.stageTimings,
-      error: null,
-      warning: consensusJob.warning,
+      fingerprint: memberBook.fingerprint,
       intervals,
       sectionsDone,
-      elapsedSeconds: consensusJob.elapsedSeconds,
-      fingerprint: memberBook.fingerprint,
-      audioFingerprint: consensusJob.audioFingerprint,
-      createdAt: consensusJob.createdAt,
-      updatedAt: Date.now(),
       // Over the member's own sentences, as for a prepared map: the consensus row count changes with the
       // set's membership, so it is no stable measure of this member's map (#379).
       coverage: intervals.length / Math.max(1, memberSentences),
-      pairings: [],
-      mode: "anchored",
-      origin: "projected",
     }, memberSentenceIds);
   }
 }
@@ -397,11 +381,7 @@ function showRejectedConsensus(workId: string, consensusJob: AlignmentJob) {
     const id = projectedJobId(workId, member.ebookId, consensusJob.recordingId);
     const existing = listAlignmentJobs().find((job) => job.id === id);
     if (!existing || !(alignmentMapUsable(existing) || alignmentKeepsPublishedMap(id))) continue;
-    putProjectedRebuild({
-      ...existing, generation: consensusJob.generation, engine: consensusJob.engine, status: "error",
-      outcome: "rejected", error: consensusJob.error, warning: null, progress: consensusJob.progress,
-      intervals: [], sectionsDone: [], coverage: 0, unsyncedPassages: undefined, updatedAt: Date.now(),
-    });
+    rejectRebuild(existing, consensusJob);
   }
 }
 

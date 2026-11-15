@@ -54,6 +54,8 @@ for (const [column, definition] of [
   ["claimed_at", "INTEGER"],
   // Automatic rebuild (#277): the usable map that stays served until its rebuild publishes.
   ["published_map", "TEXT"],
+  // ADR 0012: the consensus job a member's projected map was projected from.
+  ["projected_from", "TEXT"],
 ] as const)
   if (!alignmentColumns.has(column))
     sqlite.exec(`ALTER TABLE alignment_jobs ADD COLUMN ${column} ${definition}`);

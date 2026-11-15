@@ -9,6 +9,7 @@ import {
   waitUntilServerDownloadIdle,
 } from "./downloads.ts";
 import { mediaRoot } from "./storage.ts";
+import { removeAlignmentJobsForRecording } from "./alignment-transitions.ts";
 import { transmission } from "./transmission.ts";
 import { syncWorkMediaState } from "./work-media-state.ts";
 import { userIsAdmin } from "./users.ts";
@@ -384,7 +385,7 @@ function cancelUserWorkDownloads(
 }
 
 function deleteRecordingRows(recordingId: string) {
-  sqlite.prepare("DELETE FROM alignment_jobs WHERE recording_id=?").run(recordingId);
+  removeAlignmentJobsForRecording(recordingId);
   sqlite
     .prepare("DELETE FROM user_hardcover_recording_editions WHERE recording_id=?")
     .run(recordingId);

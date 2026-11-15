@@ -38,6 +38,7 @@ export const alignmentJobs = sqliteTable("alignment_jobs", {
   claimGeneration: text("claim_generation"),
   claimedAt: integer("claimed_at"),
   publishedMap: text("published_map"),
+  projectedFrom: text("projected_from"),
 });
 export const tracks = sqliteTable("tracks", {
   chapters: text("chapters", { mode: "json" })
