@@ -27,6 +27,10 @@ test.afterEach(async ({ page }) => {
 
 /** `align`: every chapter has narration timing, only the first one, or none (a book and an ebook with no map). */
 async function fixture(page: Page, title: string, align: "all" | "first" | "none" = "all") {
+  // One server serves every repeat of a run: an earlier repeat's book with this title is taken off the shelf, so
+  // the title names one card.
+  for (const earlier of (await (await page.request.get("/api/books")).json()) as { id: string; title: string }[])
+    if (earlier.title === title) expect((await page.request.delete(`/api/library/${earlier.id}`)).ok()).toBe(true);
   const response = await page.request.post("/api/import", {
     multipart: {
       title,
@@ -125,6 +129,9 @@ async function openWordMode(page: Page, title: string) {
   const room = page.locator(".inline-reader");
   const topbar = room.locator(".reader-topbar");
   if (await topbar.isHidden()) {
+    // One server serves every repeat of a run, and the reading mode is stored: a reader that an earlier repeat
+    // left in Word mode opens in it.
+    if (await page.getByLabel("Word reader").isVisible()) return room;
     const box = (await room.locator(".reader-viewport").boundingBox())!;
     await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
     await expect(topbar).toBeVisible();
