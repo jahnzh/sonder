@@ -401,10 +401,9 @@ export function ReaderView({
   useEffect(() => () => following.dispose(), [following]);
   const redrawHighlight = () => {
     if (!mountedRef.current) return;
-    if (following.followed() || highlight.current) {
-      following.forgetFollowed();
+    // A follow jump in flight draws the highlight itself; the jump again comes after it (#369).
+    if ((following.followed() || highlight.current) && following.redrawFollowed())
       setFollowRevision((value) => value + 1);
-    }
   };
   useEffect(() => {
     const onWindowFonts = () => {

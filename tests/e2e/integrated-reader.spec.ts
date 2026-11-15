@@ -1,15 +1,37 @@
 import {test,expect,type Page} from "@playwright/test";
 import {readFileSync} from "node:fs";
+import {randomUUID} from "node:crypto";
+import {defaultAppearance} from "../../src/appearance";
 import {readerFixture} from "../reader-fixture";
 import {skipOnMobile} from "./mobile";
-test.afterEach(async({page})=>{await page.unrouteAll({behavior:"wait"});});
+// One server serves every repeat of a run (the check repeats a changed spec file). What a test leaves on the server
+// must not reach the next one: each test starts from the default reader settings, imports its books under titles of
+// its own repeat, with an EPUB of its own (the server names an uploaded EPUB by its bytes), and removes them from the
+// library when it ends.
+const imported:string[]=[];
+test.beforeEach(async({page})=>{
+ const current=await(await page.request.get("/api/appearance")).json();
+ expect((await page.request.put("/api/appearance",{data:{...current,reader:defaultAppearance.reader}})).ok()).toBe(true);
+});
+test.afterEach(async({page})=>{
+ await page.unrouteAll({behavior:"wait"});
+ for(const id of imported.splice(0))expect((await page.request.delete(`/api/library/${id}`)).ok()).toBe(true);
+});
+/** The book's title is `title` plus the repeat index, so a later repeat in the same server shows one card for it. */
+const named=(title:string)=>`${title} ${test.info().repeatEachIndex}`;
+/** An EPUB no other test or repeat uploads, so the import never returns another test's ebook and its saved place. */
+const epub=(language?:string)=>readerFixture({language,title:`Alice Reader Test ${randomUUID()}`});
 async function fixture(page:Page,title:string,language="en-US"){
- const response=await page.request.post("/api/import",{multipart:{title,author:"Reader QA",file:{name:"Narration.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
+ const response=await page.request.post("/api/import",{multipart:{title:named(title),author:"Reader QA",file:{name:"Narration.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
  expect(response.ok()).toBe(true);
  const id=(await response.json()).id;
+ imported.push(id);
  const book=(await(await page.request.get("/api/books")).json()).find((b:any)=>b.id===id);
- const uploaded=await page.request.post(`/api/ebooks/import?workId=${book.workId}`,{multipart:{file:{name:"Companion.epub",mimeType:"application/epub+zip",buffer:await readerFixture({language})}}});
- expect(uploaded.ok()).toBe(true);const ebook=(await uploaded.json()).id;
+ const uploaded=await page.request.post(`/api/ebooks/import?workId=${book.workId}`,{multipart:{file:{name:"Companion.epub",mimeType:"application/epub+zip",buffer:await epub(language)}}});
+ expect(uploaded.ok()).toBe(true);
+ const result=await uploaded.json();
+ expect(result.alreadySaved).toBe(false);
+ const ebook=result.id;
  const manifest=await(await page.request.get(`/api/reader/${ebook}`)).json();
  const created=await page.request.post("/api/alignments",{data:{ebookId:ebook,recordingId:book.recordingId,pairings:manifest.sections.map((section:any)=>({section:section.index,trackId:book.tracks[0].id,start:section.index*100,duration:95}))}});
  expect(created.ok()).toBe(true);
@@ -23,7 +45,7 @@ async function fixture(page:Page,title:string,language="en-US"){
 }
 async function start(page:Page,title:string){
  await page.goto("/");
- await page.getByRole("button",{name:`Play ${title}`,exact:true}).click();
+ await page.getByRole("button",{name:`Play ${named(title)}`,exact:true}).click();
  await page.locator(".player-dock").getByRole("button",{name:"Pause",exact:true}).click();
  await page.locator(".dock-book").click();
  await expect(page.getByRole("dialog",{name:"Now playing",exact:true})).toBeVisible();
@@ -175,7 +197,7 @@ test("opening the reader restores saved audio position without starting playback
 test("lyrics without a map remains readable and offers sync setup", async ({page}) => {
  const appearance=await(await page.request.get("/api/appearance")).json();
  try {
- const uploaded=await page.request.post("/api/ebooks/import",{multipart:{file:{name:"Unmapped.epub",mimeType:"application/epub+zip",buffer:await readerFixture()}}});
+ const uploaded=await page.request.post("/api/ebooks/import",{multipart:{file:{name:"Unmapped.epub",mimeType:"application/epub+zip",buffer:await epub()}}});
  expect(uploaded.ok()).toBe(true);
  const {id}=await uploaded.json();
  await page.goto(`/#reader/${id}`);
@@ -302,6 +324,23 @@ async function sampleFrames(page:Page){
   requestAnimationFrame(tick);
  });
 }
+// Counts the follow highlights drawn in the reader viewport from now on while `passage` is the narrated one.
+// A follow jump draws the narrated sentence's highlight once it shows that sentence; until then the previous
+// sentence's highlight may still be in place.
+async function countHighlights(page:Page,passage:string){
+ await page.evaluate((passage)=>{
+  const w=window as any;
+  w.__highlights?.disconnect();
+  w.__drawn=0;
+  const room=document.querySelector(".inline-reader")!;
+  w.__highlights=new MutationObserver(records=>{
+   if(room.getAttribute("data-current-passage")!==passage)return;
+   for(const record of records)for(const node of Array.from(record.addedNodes))
+    if(node instanceof Element&&(node.matches(".sonder-follow")||node.querySelector(".sonder-follow")))w.__drawn++;
+  });
+  w.__highlights.observe(room.querySelector(".reader-viewport")!,{childList:true,subtree:true});
+ },passage);
+}
 for(const [label,viewport] of [["phone",{width:390,height:844}],["desktop",{width:1440,height:900}]] as const)
 test(`following narration on ${label} never paints another page on the way`,async({page})=>{
  skipOnMobile(label==="desktop","desktop layout (min-width: 900px) is not reachable on a phone profile");
@@ -332,8 +371,13 @@ test(`following narration on ${label} never paints another page on the way`,asyn
  for(const [name,interval] of jumps){
   await page.evaluate((mark)=>{(window as any).__mark=mark;},name);
   await showControls(page,".inline-reader");
+  await countHighlights(page,interval.paragraphId);
   await slider.fill(String(at(interval)));
   await expect(room).toHaveAttribute("data-current-passage",interval.paragraphId);
+  // The jump has landed as the reader sees it: the sentence's highlight is drawn and the pages, hidden while
+  // another chapter opens, are shown again. The previous highlight can still be there before that, and hidden
+  // pages count as visible to Playwright, so neither check alone tells the jump has ended (#369).
+  await page.waitForFunction(()=>(window as any).__drawn>0&&!document.querySelector(".inline-reader .reader-viewport[data-jumping]"),undefined,{polling:50,timeout:10000});
   await expect(room.locator(".reader-viewport .sonder-follow").first()).toBeVisible();
   await page.waitForTimeout(500);
  }

@@ -381,6 +381,68 @@ test("a follow jump that ended after the narration moved on neither retries nor 
   assert.equal(retries(), 0);
 });
 
+test("a follow jump replaced by a newer jump to the same sentence is stale, not a failed display (#369)", () => {
+  const { following, clock, retries } = setup();
+  // Each replacement in turn: the replaced jump reports that it did not show the sentence.
+  assert.equal(following.followTarget("r:p1"), true);
+  for (let replaced = 1; replaced <= FOLLOW_RETRIES + 1; replaced++) {
+    following.forgetFollowed();
+    assert.equal(following.followTarget("r:p1"), true);
+    assert.equal(following.followShown("r:p1", false), "stale");
+    assert.equal(following.followed(), "r:p1");
+  }
+  clock.advance(FOLLOW_RETRY_DELAY_MS * 2);
+  assert.equal(retries(), 0);
+  // The newest one decides, with the full count of retries.
+  assert.equal(following.followShown("r:p1", false), "retrying");
+  assert.equal(following.followed(), "");
+});
+
+test("a redraw while a follow jump to the sentence is in flight waits for that jump to end (#369)", () => {
+  const { following, retries } = setup();
+  assert.equal(following.followTarget("r:p1"), true);
+  // The new chapter's fonts loaded during the jump: no second jump replaces the one in flight.
+  assert.equal(following.redrawFollowed(), false);
+  assert.equal(following.followed(), "r:p1");
+  assert.equal(following.followTarget("r:p1"), false);
+  // Once it showed the sentence, the follow step runs again and jumps to it once more.
+  assert.equal(following.followShown("r:p1", true), "shown");
+  assert.equal(retries(), 1);
+  assert.equal(following.followTarget("r:p1"), true);
+  assert.equal(following.followShown("r:p1", true), "shown");
+  assert.equal(retries(), 1);
+  // Back to narration forgot the sentence after its jump started (the audio scrubber): that jump is still in flight.
+  following.followTarget("r:p2");
+  following.backToNarration();
+  assert.equal(following.redrawFollowed(), false);
+  assert.equal(following.followShown("r:p2", true), "shown");
+  assert.equal(retries(), 2);
+});
+
+test("a redraw with no follow jump in flight jumps again at once; one deferred for a jump that failed is its retry", () => {
+  const now = setup();
+  assert.equal(now.following.followTarget("r:p1"), true);
+  assert.equal(now.following.followShown("r:p1", true), "shown");
+  assert.equal(now.following.redrawFollowed(), true);
+  assert.equal(now.following.followed(), "");
+  assert.equal(now.following.followTarget("r:p1"), true);
+  const failed = setup();
+  failed.following.followTarget("r:p1");
+  assert.equal(failed.following.redrawFollowed(), false);
+  assert.equal(failed.following.followShown("r:p1", false), "retrying");
+  failed.clock.advance(FOLLOW_RETRY_DELAY_MS);
+  assert.equal(failed.retries(), 1);
+  // A jump in flight for a sentence the narration has left: the redraw is for the sentence followed now.
+  const moved = setup();
+  moved.following.followTarget("r:p1");
+  moved.following.followTarget("r:p2");
+  assert.equal(moved.following.redrawFollowed(), false);
+  assert.equal(moved.following.followShown("r:p1", true), "shown");
+  assert.equal(moved.retries(), 0);
+  assert.equal(moved.following.followShown("r:p2", true), "shown");
+  assert.equal(moved.retries(), 1);
+});
+
 test("back to narration gives a sentence its full count of retries again", () => {
   const { following } = setup();
   for (let attempt = 1; attempt <= FOLLOW_RETRIES; attempt++) {

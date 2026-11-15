@@ -128,6 +128,11 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
   let wordSteps = 0;
   // The sentence last followed (`recording:paragraph`), so the same sentence is not jumped to twice.
   let followed = "";
+  // The sentences of the follow jumps started and not ended yet, oldest first. A jump that a newer one to the
+  // same sentence replaced is stale, not a failed display.
+  const flights: string[] = [];
+  // The highlight is to be drawn again once the follow jumps in flight ended.
+  let redraw = false;
   // A Read from audio jump is in flight; the follow step leaves the view to it.
   let explicit = false;
   let retry: { key: string; attempts: number; timer: unknown } = { key: "", attempts: 0, timer: null };
@@ -478,6 +483,23 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
     },
     /** Forget the last followed sentence, so the next narration update moves the view even to the same sentence. */
     forgetFollowed() { followed = ""; },
+    /**
+     * The highlight of the narrated sentence is to be drawn again (fonts loaded, the text moved): the follow step
+     * jumps to the sentence once more. While a follow jump is in flight (a back to narration may have forgotten
+     * its sentence since it started), another one would replace it, and the replaced jump, which may be the one
+     * that hid the pages to open another chapter, would show them again before the sentence's page is reached
+     * (#369). So the jump again waits until the jumps in flight ended: when the last one showed its sentence,
+     * `onRetry` runs the follow step again; when it did not, its retry is that jump. Returns whether the follow
+     * step is to run now.
+     */
+    redrawFollowed(): boolean {
+      if (flights.length) {
+        redraw = true;
+        return false;
+      }
+      followed = "";
+      return true;
+    },
     /** Read from audio jumps to `key` itself; the follow step stays out of its way until it ends. */
     beginExplicitJump(key: string) {
       followed = key;
@@ -501,15 +523,29 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
         retry = { key, attempts: 0, timer: null };
       }
       followed = key;
+      flights.push(key);
       return true;
     },
-    /** The follow jump to `key` ended; `shown` says whether the sentence is on screen. */
+    /**
+     * The follow jump to `key` ended; `shown` says whether the sentence is on screen. A jump that a newer follow
+     * jump to the same sentence replaced is stale: the newer one decides.
+     */
     followShown(key: string, shown: boolean): FollowOutcome {
+      const at = flights.indexOf(key);
+      if (at >= 0) flights.splice(at, 1);
+      const replaced = flights.includes(key);
+      if (redraw && !flights.length) {
+        redraw = false;
+        if (shown) {
+          followed = "";
+          options.onRetry();
+        }
+      }
       if (shown) {
         retry.attempts = 0;
         return "shown";
       }
-      if (followed !== key) return "stale";
+      if (replaced || followed !== key) return "stale";
       followed = "";
       if (++retry.attempts <= FOLLOW_RETRIES) {
         retry.timer = clock.setTimeout(() => options.onRetry(), FOLLOW_RETRY_DELAY_MS);
