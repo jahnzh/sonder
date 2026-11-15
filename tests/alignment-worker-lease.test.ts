@@ -359,7 +359,7 @@ test("a release as finished gives up on a removal that hangs at its own deadline
     await lease.release("finished");
     assert.ok(Date.now() - started < 2000);
     assert.equal(slotsHeld(), 0);
-    assert.deepEqual(fake.stagedFolders("wsl"), ["lease-hang"], "the sweep removes what a failed removal left");
+    assert.deepEqual(fake.stagedFolders("wsl"), ["lease-hang"], "a failed removal leaves the folder (#421 removes it later)");
   } finally {
     fake.deps.exec = exec;
     pool.setProbeCleanupTimeoutForTests(null);

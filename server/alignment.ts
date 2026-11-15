@@ -1284,7 +1284,7 @@ function leaseOutcome(id: string): LeaseRelease {
     if (!row) return "finished";
     return ["ready", "partial", "error", "cancelled"].includes(row.status) ? "finished" : "retryable";
   } catch (error) {
-    // The database may already be closed during shutdown: keep the audio, the sweep removes it later.
+    // The database may already be closed during shutdown: keep the audio (removed later under leases, #421).
     console.warn(`alignment: could not read job ${id} to release its worker lease: ${(error as Error).message}`);
     return "retryable";
   }

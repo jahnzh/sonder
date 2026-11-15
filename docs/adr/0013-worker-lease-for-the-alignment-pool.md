@@ -14,7 +14,7 @@ The lease owns the staged audio. Releasing a lease as finished (the job is ready
 ## Consequences
 
 - Order: after #393, before the server side of #389.
-- Folders staged before this change are removed by a one-time sweep that only deletes a folder whose job is finished or no longer exists. The sweep runs on request, not at startup.
+- Audio staged before this change stays on the hosts until the server removes it under leases (#421); do not delete it by hand while jobs run. A one-time sweep command outside the server was tried and dropped: it could delete a resumed job's or a running probe's audio.
 - Tests run against a fake pool host (in-process, no SSH): acquire on the first healthy host, fall back when it is down or full, re-stage after a restart, release on every exit path including a thrown error, and removal of staged audio on a finished release only.
 - Worker status, restart and per-host disable on the Activity page (#357) read the same host configuration.
 - Issue: #394.

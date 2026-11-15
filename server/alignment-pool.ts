@@ -521,7 +521,7 @@ export function setProbeCleanupTimeoutForTests(ms: number | null) {
   probeCleanupTimeoutMs = ms ?? PROBE_CLEANUP_TIMEOUT_MS;
 }
 
-/** Removes one staging folder of `id` under `signal`. A failure leaves the folder (the sweep finds it later). */
+/** Removes one staging folder of `id` under `signal`. A failure leaves the folder (removed later under leases, #421). */
 async function removeStaging(host: PoolHost, jobMediaRoot: string, id: string, signal: AbortSignal) {
   if (!jobMediaRoot.endsWith(`/alignment/pool-jobs/${id}`)) return;
   await untilAborted(

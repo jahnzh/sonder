@@ -72,31 +72,17 @@ Accepted limitations, kept as they are:
 - After a recovery (passage locate) deadline the worker may still be finishing
   the request (#398, #402).
 - Audio staged for a probe whose deadline fires during scoring stays on the
-  host; the sweep removes it later.
+  host.
 - A removal that fails or times out leaves the folder, and so does cancelling
-  a job that is not running (paused or queued with staging kept); the sweep
-  removes those too.
+  a job that is not running (paused or queued with staging kept).
 
-### Sweeping old staged folders
+### Audio staged before worker leases
 
 Before leases, job staging was never removed (32 job folders on WSL on
-2026-11-14). A sweep removes such folders on request; it never runs at
-startup:
-
-```bash
-npm run pool:sweep -- --dry-run      # list what would be removed
-npm run pool:sweep                   # remove it
-# inside the production container:
-node --import tsx server/alignment-pool-sweep.ts --dry-run
-```
-
-It reads the hosts from the pool configuration, each worker's media root from
-its `/health`, and the jobs from `DATA_DIR/sonder.db` (read-only). It removes a
-folder only when its job is finished (ready, partial, error, cancelled) or no
-longer exists, and a probe folder (`ctc-probe-*`) only once it is older than an
-hour. Every other folder is listed as kept, with the reason. A host that does
-not answer is reported and skipped, and the command then exits 1. Running it
-on production is for the owner or the coordinator; start with `--dry-run`.
+2026-11-14). That audio, and what the limitations above leave, stays on the
+hosts until the server removes it under leases (#421). Do not delete folders
+under `pool-jobs/` by hand while jobs or probes run: a resumed or rebuilt job
+reuses its folder, and a probe keeps reading its folder for the whole batch.
 
 ## Host configuration
 
@@ -430,7 +416,7 @@ The one-off CTC and Whisper probing comparison passed for all eight titles; the 
 | Proposal | Evidence |
 | --- | --- |
 | Route CTC to WSL first and lisa as the only fallback; never send it to production. | `tests/alignment-ctc.test.ts`: unreachable, busy or incompatible WSL; legacy assignment; disabled pool; and cross-host retry tests. `tests/alignment-pool.test.ts`: production URL rejection, SSH diagnostics and staging tests. |
-| Hand out worker leases: first healthy host by rank, fallback when down or full, re-staging after a worker or server restart, release on every exit, staged audio removed on a finished release only (#394). | `tests/alignment-worker-lease.test.ts` (in-process fake hosts, `tests/fake-pool-host.ts`); host configuration in `tests/alignment-pool-hosts.test.ts`; the sweep in `tests/alignment-pool-sweep.test.ts`. |
+| Hand out worker leases: first healthy host by rank, fallback when down or full, re-staging after a worker or server restart, release on every exit, staged audio removed on a finished release only (#394). | `tests/alignment-worker-lease.test.ts` (in-process fake hosts, `tests/fake-pool-host.ts`); host configuration in `tests/alignment-pool-hosts.test.ts`. |
 | Use reported device and busy state for capability and capacity. | `tests/alignment-ctc.test.ts`: incompatible or busy WSL and both workers busy. Real `/health` responses identified WSL as CUDA float16 and lisa as CPU float32 before the gates. |
 | Retry a failure once on the other host, retain a retryable failure, and keep CPU and GPU in the same engine generation with device and precision for diagnostics. | `tests/alignment-ctc.test.ts`: cross-host retry and manual Resume, anchored-window failover, and the CPU and GPU metadata assertions. |
 | Install the lisa environment with the pinned CPU wheels and the anchored planner dependency; document the commands. | The commands above completed on lisa; its environment imported Torch and TorchAudio `2.8.0+cpu`, FastAPI `0.121.3`, Uvicorn `0.38.0`. |
