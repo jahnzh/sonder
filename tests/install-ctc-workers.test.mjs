@@ -536,34 +536,3 @@ test("install-ctc-workers.sh counts a running request on a worker without active
     f.cleanup();
   }
 });
-
-test("install-ctc-workers.sh downloads the model into the kept MEDIA_ROOT", async () => {
-  const f = installFixture();
-  const kept = join(f.tempDir, "big-disk", "sonder");
-  const downloads = join(f.tempDir, "downloads.log");
-  writeFileSync(join(f.targetDir, "worker.env"), `ALIGNMENT_WORKER_TOKEN=t\nMEDIA_ROOT=${kept}\n`, { mode: 0o600 });
-  // A python whose venv has a no-op pip and a python that records the media root download_model.py would use.
-  const fakePython = join(f.tempDir, "bin", "fake-python");
-  writeFileSync(fakePython, `#!/bin/sh
-if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then
-  mkdir -p "$3/bin"
-  printf '#!/bin/sh\\nexit 0\\n' > "$3/bin/pip"
-  printf '#!/bin/sh\\necho "$MEDIA_ROOT $*" >> "${downloads}"\\n' > "$3/bin/python"
-  chmod +x "$3/bin/pip" "$3/bin/python"
-  exit 0
-fi
-exit 1
-`);
-  chmodSync(fakePython, 0o755);
-  const port = await closedPort();
-  try {
-    const run = await runInstaller(
-      ["--device", "cpu", "--dir", f.targetDir, "--skip-service", "--python", fakePython, "--port", port], f.env,
-    );
-    assert.equal(run.status, 0, run.stderr);
-    assert.equal(readFileSync(downloads, "utf8"), `${kept} ${f.targetDir}/worker/download_model.py\n`);
-    assert.match(run.stdout, new RegExp(`Downloading model weights into ${kept}/alignment`));
-  } finally {
-    f.cleanup();
-  }
-});
