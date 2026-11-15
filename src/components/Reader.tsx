@@ -38,6 +38,7 @@ import { PlaybackTimeline } from "./PlaybackTimeline";
 import {PlaybackExtra,usePlaybackMenu} from "./PlaybackMenu";
 import { readerWords, readerSegment } from "../reader-segments";
 import { readerNeedsScripts } from "../reader-sandbox";
+import { createReaderFollowing } from "../reader-following";
 import { currentChapter, playbackTimeline } from "../chapters";
 import { usePlayer } from "../player";
 import { api, forgetPositionHistory, localDB } from "../lib";
@@ -304,43 +305,37 @@ export function ReaderView({
     file = useRef<Blob | null>(null),
     latest = useRef<TextLocator | null>(null),
     bookRef = useRef<ReaderBook | null>(null),
-    saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null),
-    pendingManual = useRef<TextLocator | null>(null),
     currentFlow = useRef<string | null>(null),
-    automatic = useRef(0),
-    // Layout work of our own still in flight (displays, resizes, re-theming).
-    // Relocations while any is pending are not reader navigation.
-    layoutPending = useRef(0),
-    // Last navigation-like input on the pages. Only a relocation shortly
-    // after one counts as the reader navigating; epub.js also re-positions on
-    // its own (e.g. after loading neighbouring sections) seconds later.
-    lastGesture = useRef(Number.NEGATIVE_INFINITY),
-    // Reader navigation (Contents, page turns) in flight, and until when its
-    // relocation still counts as the reader's own choice.
-    navigating = useRef(0),
-    navigatedUntil = useRef(0),
-    // The jump epoch of that navigation: a jump of ours started after it
-    // (follow, Lyrics, progress) ends its window.
-    navigationEpoch = useRef(0),
     fromListening = useRef(initialFromAudio),
     jumpRef = useRef<
       (id: string, save?: boolean, recordingId?: string) => Promise<boolean>
     >(async () => false),
     mapRef = useRef<AlignmentJob | null>(null),
-    jumpEpoch = useRef(0),
     // Follow jumps in flight with the pages hidden.
     hiddenJumps = useRef(0),
-    highlight = useRef<string | null>(null),
-    following = useRef("");
+    highlight = useRef<string | null>(null);
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
   const [followRevision,setFollowRevision]=useState(0);
-  const followRef=useRef(follow);
-  followRef.current=follow;
+  // Following the narration or paged away, and which input wins (ADR 0014).
+  const followingEvents = useRef({ manualSave: (_locator: TextLocator) => {}, retry: () => {}, clearFollowError: () => {} });
+  followingEvents.current = {
+    manualSave: (locator) => void saveReading(id, locator, "reading", mapRef.current?.recordingId),
+    retry: () => setFollowRevision((value) => value + 1),
+    clearFollowError: () => setError(""),
+  };
+  const [following] = useState(() => createReaderFollowing<TextLocator>({
+    onManualSave: (locator) => followingEvents.current.manualSave(locator),
+    onRetry: () => followingEvents.current.retry(),
+    onClearFollowError: () => followingEvents.current.clearFollowError(),
+    // Rendered from React state, so it batches with the locator as before.
+    onFollowingChange: setFollow,
+  }));
+  useEffect(() => () => following.dispose(), [following]);
   const redrawHighlight = () => {
     if (!mountedRef.current) return;
-    if (following.current || highlight.current) {
-      following.current = "";
+    if (following.followed() || highlight.current) {
+      following.forgetFollowed();
       setFollowRevision((value) => value + 1);
     }
   };
@@ -354,8 +349,6 @@ export function ReaderView({
       document.fonts?.removeEventListener?.("loadingdone", onWindowFonts);
     };
   }, []);
-  const followRetry=useRef<{key:string;attempts:number;timer:ReturnType<typeof setTimeout>|null}>({key:"",attempts:0,timer:null});
-  useEffect(()=>()=>{if(followRetry.current.timer)clearTimeout(followRetry.current.timer);},[]);
   const playbackMenu = usePlaybackMenu();
   useEffect(()=>{
     if(!inline || !panel)return;
@@ -419,10 +412,11 @@ export function ReaderView({
         setConflict((event as CustomEvent).detail.current);
     };
     const persist = () => {
-      if (pendingManual.current)
+      const manual = following.pendingManual();
+      if (manual)
         void saveReading(
           id,
-          pendingManual.current,
+          manual,
           "reading",
           mapRef.current?.recordingId,
         );
@@ -446,10 +440,8 @@ export function ReaderView({
       window.removeEventListener("pagehide", persist);
       window.removeEventListener("sonder:reading-conflict", conflicting);
       window.removeEventListener("sonder:bookmark-rejected", rejected);
-      if (saveTimer.current) {
-        clearTimeout(saveTimer.current);
-        persist();
-      }
+      const manual = following.takeManualSave();
+      if (manual) void saveReading(id, manual, "reading", mapRef.current?.recordingId);
     };
   }, [id]);
   useEffect(() => {
@@ -616,30 +608,11 @@ export function ReaderView({
                 all.findIndex((value) => value.id === fragment.id) /
                 Math.max(1, all.length - 1),
             };
-            const navigated =
-              navigationEpoch.current === jumpEpoch.current &&
-              (navigating.current > 0 || performance.now() <= navigatedUntil.current);
-            const ownLayout = !navigated && (layoutPending.current > 0 || performance.now() <= automatic.current);
-            if (ownLayout && latest.current)
+            // A relocation the reader caused pages away and is saved after a pause.
+            if (following.relocated(next, !!latest.current) === "ignored")
               return;
             latest.current = next;
             setLocator(next);
-            if (navigated || (!ownLayout && performance.now() - lastGesture.current < 1500)) {
-              setFollow(false);
-              pendingManual.current = next;
-              if (saveTimer.current) clearTimeout(saveTimer.current);
-              saveTimer.current = setTimeout(() => {
-                saveTimer.current = null;
-                pendingManual.current = null;
-                navigatedUntil.current = 0;
-                void saveReading(
-                  id,
-                  next,
-                  "reading",
-                  mapRef.current?.recordingId,
-                );
-              }, 500);
-            }
           } catch {}
         };
         view.on("relocated", relocate);
@@ -672,7 +645,7 @@ export function ReaderView({
           let start: {x:number; y:number; time:number} | null = null;
           let hold: ReturnType<typeof setTimeout> | null = null;
           let held = false;
-          const gesture = () => { lastGesture.current = performance.now(); };
+          const gesture = () => following.gesture();
           for (const type of ["wheel", "keydown", "touchmove"])
             content.document.addEventListener(type, gesture, { passive: true });
           content.document.addEventListener("pointerdown", (event: PointerEvent) => {
@@ -730,7 +703,7 @@ export function ReaderView({
           cleanChapterFonts?.();
           cleanChapterFonts = null;
         });
-        automatic.current = performance.now() + 1200;
+        following.openingDisplay();
         try {
           await view.display(latest.current?.cfi || book.sections[0].href);
         } catch {
@@ -751,7 +724,7 @@ export function ReaderView({
         observer.observe(host);
         // Scrolling the page container itself (scroll mode, scrollbar drags).
         for (const type of ["pointerdown", "wheel", "touchmove"])
-          host.addEventListener(type, () => { lastGesture.current = performance.now(); }, { passive: true });
+          host.addEventListener(type, () => following.gesture(), { passive: true });
         (view as any).__observer = observer;
       } catch (error) {
         if (!disposed)
@@ -826,7 +799,7 @@ export function ReaderView({
     }
     const timer = setTimeout(() => {
       const player=playerRef.current,current=mapRef.current;
-      if(followRef.current && current && player.book?.recordingId===current.recordingId && current.intervals.some(interval=>interval.trackId===player.track?.id && interval.start<=player.position && interval.end>player.position))return;
+      if(following.isFollowing() && current && player.book?.recordingId===current.recordingId && current.intervals.some(interval=>interval.trackId===player.track?.id && interval.start<=player.position && interval.end>player.position))return;
       // A Word mode checkpoint is a sentence without a CFI; go to that sentence.
       if (latest.current && !latest.current.cfi) {
         void jumpRef.current(latest.current.paragraphId, false).catch(() => false);
@@ -846,26 +819,15 @@ export function ReaderView({
   // relocations as our own until that one arrives (at most 10 s). Taps,
   // swipes and keys stop following explicitly, so no gesture is missed.
   const settleAfterLayout = (view: Rendition) => {
-    layoutPending.current++;
-    let done = false;
-    const settled = () => {
-      if (done) return;
-      done = true;
-      clearTimeout(limit);
-      view.off("relocated", settled);
-      layoutPending.current--;
-      automatic.current = performance.now() + 500;
-    };
-    const limit = setTimeout(settled, 10000);
+    const settled: () => void = following.beginLayout(() => view.off("relocated", settled));
     view.on("relocated", settled);
   };
   const displayAutomatically = async (view: Rendition, target: string) => {
-    layoutPending.current++;
+    const settled = following.beginOwnDisplay();
     try {
       await view.display(target);
     } finally {
-      layoutPending.current--;
-      automatic.current = performance.now() + 500;
+      settled();
     }
   };
   const hidePages = (change: number) => {
@@ -875,28 +837,18 @@ export function ReaderView({
   // Contents and page turns replace a follow jump still in flight, and their
   // relocation is saved even while that jump's layout is pending.
   const navigate = (go: (view: Rendition) => Promise<unknown>) => {
-    navigationEpoch.current = ++jumpEpoch.current;
-    setFollow(false);
-    automatic.current = 0; lastGesture.current = performance.now();
+    following.navigate();
     const view = rendition.current;
     if (!view) return;
-    navigating.current++;
-    void go(view).catch(() => {}).finally(() => {
-      navigating.current--;
-      // epub.js reports the new location just after display() resolves.
-      navigatedUntil.current = performance.now() + 1000;
-    });
+    const ended = following.beginNavigation();
+    void go(view).catch(() => {}).finally(ended);
   };
-  // Counts Word mode steps, so a follow jump that was still waiting for the
-  // page when the reader stepped on does not pull the display back.
-  const wordSteps = useRef(0);
   const showFragment = async (
     paragraphId: string,
     persist = false,
     recordingId = mapRef.current?.recordingId,
   ) => {
-    const request = ++jumpEpoch.current;
-    const steps = wordSteps.current;
+    const jump = following.startJump();
     const current = bookRef.current,
       view = rendition.current;
     if (!current || !view) return false;
@@ -922,7 +874,7 @@ export function ReaderView({
     try {
       if (opening) {
         await displayAutomatically(view, section.href);
-        if (request !== jumpEpoch.current || rendition.current !== view) return false;
+        if (!jump.current() || rendition.current !== view) return false;
         content = shown();
       }
       node = content && blockNodes(content.document)[fragment.blockIndex];
@@ -932,9 +884,9 @@ export function ReaderView({
     } finally {
       if (opening) hidePages(-1);
     }
-    if (request !== jumpEpoch.current || rendition.current !== view) return false;
-    // Reported as shown: the step superseded it, so there is nothing to retry.
-    if (steps !== wordSteps.current) return true;
+    if (!jump.current() || rendition.current !== view) return false;
+    // Reported as shown: a Word mode step superseded it, so there is nothing to retry.
+    if (jump.stepped()) return true;
     const all = current.sections.flatMap((section) => section.paragraphs);
     const value: TextLocator = {
       cfi,
@@ -963,12 +915,11 @@ export function ReaderView({
   };
   jumpRef.current = showFragment;
   mapRef.current = map;
-  const explicitJump = useRef(false);
   const fromAudio = async () => {
-    cancelManualSave();
-    setFollow(true);
-    followRetry.current.attempts=0;
-    following.current = "";
+    following.cancelManualSave();
+    following.follow();
+    following.resetRetries();
+    following.forgetFollowed();
     setRecoveryStatus("");
     const player = playerRef.current,
       currentMap = mapRef.current;
@@ -1021,10 +972,9 @@ export function ReaderView({
         interval.end > player.position,
     );
     if (interval) {
-      following.current = `${currentMap.recordingId}:${interval.paragraphId}`;
-      explicitJump.current = true;
+      following.beginExplicitJump(`${currentMap.recordingId}:${interval.paragraphId}`);
       try { await jumpRef.current(interval.paragraphId, true); }
-      finally { explicitJump.current = false; setFollowRevision(value => value + 1); }
+      finally { following.endExplicitJump(); setFollowRevision(value => value + 1); }
     } else {
       if (!isAdmin()) { notify("No reading sync is available for this position."); return; }
       setRecovering(true);
@@ -1060,17 +1010,17 @@ export function ReaderView({
       fromAudio();
     }
   }, [map, rendered]);
-  useEffect(() => { ++jumpEpoch.current; following.current=""; }, [map?.recordingId,p.book?.recordingId]);
+  useEffect(() => { following.recordingChanged(); }, [map?.recordingId,p.book?.recordingId]);
   useEffect(() => {
     if (
-      explicitJump.current ||
+      following.explicitJump() ||
       !follow ||
       !rendered ||
       !map ||
       p.book?.recordingId !== map.recordingId
     )
       {
-        following.current = "";
+        following.forgetFollowed();
         if (highlight.current && rendition.current) {
           rendition.current.annotations.remove(highlight.current,"highlight");
           highlight.current=null;
@@ -1079,34 +1029,17 @@ export function ReaderView({
       }
     const interval = currentInterval;
     const key = interval ? `${map.recordingId}:${interval.paragraphId}` : "";
-    if (interval && key !== following.current) {
-      if(followRetry.current.key!==key){
-        if(followRetry.current.timer)clearTimeout(followRetry.current.timer);
-        followRetry.current={key,attempts:0,timer:null};
-      }
-      following.current = key;
+    if (interval && following.followTarget(key)) {
       void jumpRef.current(interval.paragraphId, false).catch(()=>false).then(shown => {
-        if(shown){followRetry.current.attempts=0;return;}
-        if(following.current!==key)return;
-        following.current="";
-        if(++followRetry.current.attempts<=3)
-          followRetry.current.timer=setTimeout(()=>setFollowRevision(value=>value+1),180);
-        else setError("Could not display the current passage. Try following audio again.");
+        if (following.followShown(key, shown) === "failed")
+          setError("Could not display the current passage. Try following audio again.");
       });
     } else if (!interval && highlight.current && rendition.current) {
       rendition.current.annotations.remove(highlight.current, "highlight");
       highlight.current = null;
-      following.current = "";
+      following.forgetFollowed();
     }
   }, [p.position, p.track?.id, p.book?.recordingId, follow, map, rendered, followRevision]);
-  // Returning to the narration drops a page-turn save still waiting on its
-  // debounce; it would otherwise land after, and overwrite, the listening place.
-  const cancelManualSave = () => {
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = null;
-    pendingManual.current = null;
-    navigatedUntil.current = 0;
-  };
   // Listen from here: move the narration to a sentence, keeping where it was for Undo.
   const listenAt = (paragraphId: string | undefined, undoable = false) => {
     const interval = map?.intervals.find(
@@ -1121,9 +1054,9 @@ export function ReaderView({
     const track = audio.tracks.find((track) => track.id === interval.trackId);
     if (!track) return;
     const previous = p.book && p.track ? { book: p.book, trackId: p.track.id, position: p.position } : null;
-    cancelManualSave();
-    setFollow(true);
-    following.current = "";
+    following.cancelManualSave();
+    following.follow();
+    following.forgetFollowed();
     const records = { undone: false, entries: [] as { recordingId: string; entry: PositionEntry }[] };
     listenRecords.current = records;
     void p.play(audio, track, interval.start, {
@@ -1155,8 +1088,8 @@ export function ReaderView({
     // Nothing was playing before: Undo just stops the narration again.
     if (previous && track) void p.play(previous.book, track, previous.position, { kind: null });
     else if (playerRef.current.playing) playerRef.current.toggle();
-    setFollow(true);
-    following.current = "";
+    following.follow();
+    following.forgetFollowed();
     setToast(null);
   };
   const bookmark = async () => {
@@ -1190,8 +1123,7 @@ export function ReaderView({
   };
   const turn = (direction: number) => {
     if (preferences.display === "segment") {
-      setFollow(false);
-      automatic.current = 0; lastGesture.current = performance.now();
+      following.manualStep();
       const cursor = Math.max(0, Math.min(words.length - 1, segment.start + direction * preferences.segmentWords));
       setManualWord(cursor);
       const word = words[cursor];
@@ -1228,7 +1160,7 @@ export function ReaderView({
       // The Now Playing reader stays mounted while its dialog is closed.
       if (event.ctrlKey || event.metaKey || event.altKey || (event.target as HTMLElement)?.closest("input,select,textarea,button") || panel || viewport.current?.closest('[data-state="closed"]')) return;
       const overlay = preferences.display === "segment" || preferences.display === "word";
-      if (overlay && event.key.toLowerCase() === "f") { event.preventDefault(); setFollow(true); following.current=""; }
+      if (overlay && event.key.toLowerCase() === "f") { event.preventDefault(); following.follow(); following.forgetFollowed(); }
       else if (overlay && event.key.toLowerCase() === "p") { event.preventDefault(); editReader({display:"book"}); }
       else if (!p.book && preferences.display === "book" && (event.key === "ArrowLeft" || event.key === "ArrowRight")) { event.preventDefault(); pageAction.current(event.key === "ArrowLeft" ? "previous" : "next"); }
     };
@@ -1272,7 +1204,7 @@ export function ReaderView({
     const fragment = fragmentAt(scrub);
     setScrub(null);
     if (!fragment) return;
-    setFollow(false);
+    following.pageAway();
     setManualWord(null);
     void showFragment(fragment.id, false).then(() => {
       if (latest.current) void saveReading(id, latest.current, "reading", map?.recordingId);
@@ -1286,10 +1218,10 @@ export function ReaderView({
     ? audioWhole?.duration ? Math.round((audioWhole.position / audioWhole.duration) * 100) : 0
     : shownPercent;
   const followScrub = () => {
-    cancelManualSave();
-    setFollow(true);
-    following.current = "";
-    followRetry.current.attempts = 0;
+    following.cancelManualSave();
+    following.follow();
+    following.forgetFollowed();
+    following.resetRetries();
   };
   // Tab leaves the scrubber; only keys that move the thumb count as scrubbing.
   const followScrubKey = (event: { key: string }) => {
@@ -1331,7 +1263,7 @@ export function ReaderView({
       playing: p.playing,
     });
     if (move === "none") return false;
-    following.current = "";
+    following.forgetFollowed();
     if (move === "seek") p.seek(at);
     else void p.play(audioBook, track, at);
     return true;
@@ -1375,9 +1307,8 @@ export function ReaderView({
     if (!next) return;
     const value = locateParagraph(next.id);
     if (!value) return;
-    wordSteps.current++;
     const moved = follow && moveAudioTo(next.id);
-    if (follow && !moved) setFollow(false);
+    following.wordStep(moved);
     latest.current = value;
     setLocator(value);
     wordSaver.request({ value, origin: moved ? "listening" : "reading" });
@@ -1510,13 +1441,13 @@ export function ReaderView({
           {preferences.display === "segment" && book && <LyricsReader
             book={book} interval={currentInterval} position={p.position} hasMap={!!map?.intervals.length} follow={follow} size={preferences.size} selectedParagraph={locator?.paragraphId} ignoreKeys={!!panel}
             onToggleControls={() => setControlsVisible(value=>!value)} onClose={() => onClose?.()}
-            onManualScroll={() => setFollow(false)} onPrepareSync={() => setPanel("sync")}
+            onManualScroll={() => following.pageAway()} onPrepareSync={() => setPanel("sync")}
             onSeek={(paragraphId, fraction) => {
               const interval=map?.intervals.find(item=>item.paragraphId===paragraphId);
               const audio=books.find(item=>item.recordingId===map?.recordingId);
               const track=audio?.tracks.find(item=>item.id===interval?.trackId);
               if (!interval || !audio || !track) {setPanel("sync");return;}
-              setFollow(true); following.current="";
+              following.follow(); following.forgetFollowed();
               void p.play(audio,track,interval.start+fraction*(interval.end-interval.start));
             }}
           />}
@@ -1549,10 +1480,9 @@ export function ReaderView({
             onSeek={(word, _index, { time, auto }) => {
               const value = locateParagraph(word.paragraphId);
               if (!value) return;
-              if (!auto) wordSteps.current++;
               const moved = !auto && follow && time != null && moveAudioTo(word.paragraphId, time);
               // A sentence without timing, or audio that stays where it is, ends the narration follow.
-              if (!auto && follow && !moved) setFollow(false);
+              if (!auto) following.wordStep(moved);
               const paragraphChanged = latest.current?.paragraphId !== value.paragraphId;
               latest.current = value;
               setLocator(value);
@@ -1609,7 +1539,7 @@ export function ReaderView({
             className="icon-button reader-back-narration"
             aria-label="Back to narration"
             disabled={follow || !currentInterval}
-            onClick={() => {cancelManualSave(); setFollow(true); following.current=""; followRetry.current.attempts=0; setError("");}}
+            onClick={() => {following.cancelManualSave(); following.follow(); following.forgetFollowed(); following.resetRetries(); setError("");}}
           >
             <BookToHeadphones size={20} />
           </button>
@@ -1713,7 +1643,7 @@ export function ReaderView({
                   className="reader-list-item"
                   key={fragment.id}
                   onClick={() => {
-                    setFollow(false);
+                    following.pageAway();
                     setManualWord(null);
                     void showFragment(fragment.id, false).then(() => {
                       if (latest.current)
@@ -1740,7 +1670,7 @@ export function ReaderView({
                   <button
                     className="reader-list-item"
                     onClick={() => {
-                      setFollow(false);
+                      following.pageAway();
                       setManualWord(null);
                       void showFragment(entry.locator.paragraphId, false);
                       setPanel(null);
@@ -1860,7 +1790,7 @@ export function ReaderView({
                 <input
                   type="checkbox"
                   checked={follow}
-                  onChange={(event) => setFollow(event.target.checked)}
+                  onChange={(event) => event.target.checked ? following.follow() : following.pageAway()}
                 />{" "}
                 Follow the narration
               </label>

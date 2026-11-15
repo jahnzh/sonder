@@ -394,31 +394,45 @@ test("a Read from audio jump marks its sentence followed and holds the follow st
   assert.equal(following.explicitJump(), false);
 });
 
-test("subscribers hear each change of following once, and dispose drops the retry timer", () => {
-  const { following, clock, retries } = setup();
-  let heard = 0;
-  const stop = following.subscribe(() => { heard++; });
+test("each change of following is reported once, and dispose drops the retry timer", () => {
+  const clock = fakeClock();
+  const heard: boolean[] = [];
+  let retries = 0;
+  const following = createReaderFollowing<string>({
+    clock, onManualSave() {}, onRetry: () => { retries++; }, onClearFollowError() {},
+    onFollowingChange: (value) => heard.push(value),
+  });
   following.pageAway();
   following.pageAway();
   following.follow();
-  assert.equal(heard, 2);
-  stop();
-  following.pageAway();
-  assert.equal(heard, 2);
+  following.navigate();
+  assert.deepEqual(heard, [false, true, false]);
   following.followTarget("r:p1");
   following.followShown("r:p1", false);
   following.dispose();
   clock.advance(FOLLOW_RETRY_DELAY_MS * 2);
-  assert.equal(retries(), 0);
+  assert.equal(retries, 0);
 });
 
-test("dispose keeps a manual save that is still waiting", () => {
+test("closing the reader hands back a manual save that is still waiting, and its timer no longer runs", () => {
   const { following, clock, saved } = setup();
+  assert.equal(following.takeManualSave(), null);
   following.gesture();
   following.relocated("page", true);
   following.dispose();
+  assert.equal(following.takeManualSave(), "page");
+  assert.equal(following.takeManualSave(), null);
+  clock.advance(MANUAL_SAVE_DELAY_MS * 2);
+  assert.deepEqual(saved, []);
+});
+
+test("a manual save that already ran is not handed back again", () => {
+  const { following, clock, saved } = setup();
+  following.gesture();
+  following.relocated("page", true);
   clock.advance(MANUAL_SAVE_DELAY_MS);
   assert.deepEqual(saved, ["page"]);
+  assert.equal(following.takeManualSave(), null);
 });
 
 test("the time windows keep their values", () => {

@@ -55,6 +55,8 @@ export interface ReaderFollowingOptions<L> {
   onRetry: () => void;
   /** Clear the follow error if it is shown. */
   onClearFollowError: () => void;
+  /** Following started or stopped. */
+  onFollowingChange?: (following: boolean) => void;
 }
 
 const systemClock: FollowingClock = {
@@ -65,7 +67,6 @@ const systemClock: FollowingClock = {
 
 export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
   const clock = options.clock ?? systemClock;
-  const listeners = new Set<() => void>();
   let following = true;
   // Each jump of ours (follow, Lyrics, progress) and each navigation takes a new epoch.
   let epoch = 0;
@@ -92,14 +93,10 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
   const set = (value: boolean) => {
     if (following === value) return;
     following = value;
-    for (const listener of listeners) listener();
+    options.onFollowingChange?.(value);
   };
 
   const self = {
-    subscribe(listener: () => void) {
-      listeners.add(listener);
-      return () => { listeners.delete(listener); };
-    },
     isFollowing: () => following,
     /** A manual position still waiting for its save. */
     pendingManual: () => pendingManual,
@@ -214,6 +211,15 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
       pendingManual = null;
       navigatedUntil = 0;
     },
+    /** The reader closes: a manual position still waiting is handed back to be saved now, and its timer is dropped. */
+    takeManualSave(): L | null {
+      if (!saveTimer) return null;
+      clock.clearTimeout(saveTimer);
+      saveTimer = null;
+      const locator = pendingManual;
+      pendingManual = null;
+      return locator;
+    },
     /** Forget the last followed sentence, so the next narration update moves the view even to the same sentence. */
     forgetFollowed() { followed = ""; },
     resetRetries() { retry.attempts = 0; },
@@ -248,10 +254,9 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
       }
       return "failed";
     },
-    /** The reader unmounts. A manual save still waiting is kept. */
+    /** The reader unmounts. A manual save still waiting is left to takeManualSave. */
     dispose() {
       if (retry.timer) clock.clearTimeout(retry.timer);
-      listeners.clear();
     },
   };
   return self;
