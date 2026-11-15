@@ -1,0 +1,13 @@
+[Unit]
+Description=Sonder: restart sonder-torrents after transmission-openvpn restarts (scripts/torrent-vpn-watch.mjs)
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@
+ExecStart=@NODE@ @REPO@/scripts/torrent-vpn-watch.mjs
+Environment=PATH=@PATH@
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target
