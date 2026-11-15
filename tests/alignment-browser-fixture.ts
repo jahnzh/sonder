@@ -1,5 +1,6 @@
 export async function installAlignmentFixture() {
-  process.env.ALIGNMENT_WORKER_URL = "http://alignment-browser.test";
+  // Alignment runs only on the CTC pool (#279); this fixture is its WSL host. The server ignores ALIGNMENT_WORKER_URL.
+  delete process.env.ALIGNMENT_WORKER_URL;
   process.env.ALIGNMENT_WORKER_TOKEN = "browser-fixture-token";
   process.env.ALIGNMENT_POOL_ENABLED = "1";
   const temp = process.env.MEDIA_ROOT!;

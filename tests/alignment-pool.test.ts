@@ -216,6 +216,44 @@ test("a pool URL that aliases the production worker is never probed for CTC", as
   }
 });
 
+test("a leftover ALIGNMENT_WORKER_URL equal to a pool URL does not refuse that pool host (#279)", async () => {
+  const originalFetch = globalThis.fetch;
+  const previousUrl = process.env.ALIGNMENT_WORKER_URL;
+  const prevPool = process.env.ALIGNMENT_POOL_ENABLED;
+  process.env.ALIGNMENT_POOL_ENABLED = "1";
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "ctc-leftover-url-"));
+  const audio = path.join(temp, "audio.wav");
+  fs.writeFileSync(audio, "audio");
+  // The browser fixture had exactly this: its WSL pool URL equal to the retired local worker URL.
+  process.env.ALIGNMENT_WORKER_URL = "http://wsl-worker:3012";
+  resetAlignmentPoolCoordinator([{ ...hosts[0], workerUrl: "http://wsl-worker:3012" }, { ...hosts[1], id: "lisa", workerUrl: "http://lisa-worker" }]);
+  setAlignmentPoolDepsForTests({
+    async probe() { return true; },
+    async exec() { return { code: 0, stdout: "", stderr: "" }; },
+    async uploadFile() {},
+  });
+  globalThis.fetch = async (input) => {
+    const lisa = String(input).includes("lisa-worker");
+    return Response.json({ ready: true, busy: false, stuck: false, mediaRoot: temp,
+      ctc: { engine: CTC_ENGINE, ready: true, device: lisa ? "cpu" : "cuda",
+        precision: lisa ? "float32" : "float16", anchorReady: true, passageReady: true } });
+  };
+  try {
+    const pool = await dispatchFullAlignmentJob(
+      { id: "ctc-leftover", recordingId: "rec", engine: CTC_ENGINE } as AlignmentJob, [{ id: "track" }] as any[], () => audio,
+    );
+    assert.equal(pool.hostId, "wsl");
+    assert.equal((await getAlignmentPoolStatus({ fresh: true })).hosts.find((host) => host.id === "wsl")?.reachable, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousUrl === undefined) delete process.env.ALIGNMENT_WORKER_URL;
+    else process.env.ALIGNMENT_WORKER_URL = previousUrl;
+    if (prevPool === undefined) delete process.env.ALIGNMENT_POOL_ENABLED;
+    else process.env.ALIGNMENT_POOL_ENABLED = prevPool;
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
 test("a staging failure is remembered while the other CTC worker is busy", async () => {
   const originalFetch = globalThis.fetch;
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "ctc-staging-"));
