@@ -2,19 +2,25 @@
 import os
 import secrets
 import sys
+import threading
 import time
 import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, ValidationError
+from starlette.concurrency import run_in_threadpool
 from deadline import AlignmentTimeout, Gate, WorkerBusy, worker_slots
 from ctc_acoustic import ENGINE as CTC_ENGINE, checkpoint_path
 from ctc_pipeline import align_ctc_batch_locate, align_ctc_section, shutdown_locate_pool
 from ctc_decode import evict_decoded
 from ctc_gpu import GpuMonitor
 import ctc_prefetch
+from book_job import BOOK_ENGINE, BookJobs, JobConflict, NotReady, Resuming, UnknownJob, WorkerStages
+from book_session import BudgetExceeded
 
 root = Path(os.environ.get("MEDIA_ROOT", "/mnt/usb_4t_1/sonder")).resolve()
 
@@ -30,6 +36,26 @@ def installed_revision():
 revision = installed_revision()
 
 
+def _book_model():
+    from ctc_acoustic import resident_model
+    return resident_model(root / "alignment")
+
+
+# Whole-book jobs (#402): one per book, in their own folder under the alignment cache.
+book_jobs = BookJobs(root / "alignment" / "book-jobs",
+                     WorkerStages(root / "alignment", _book_model, os.environ.get("ALIGNMENT_CTC_DEVICE", "cpu"),
+                                  gpu_monitor=GpuMonitor))
+_book_sweeper_stop = threading.Event()
+
+
+def _sweep_book_jobs():
+    while not _book_sweeper_stop.wait(30):
+        try:
+            book_jobs.sweep()
+        except Exception as error:  # noqa: BLE001 - the sweeper must keep running
+            print(f"[book-jobs] sweep failed: {error!r}", file=sys.stderr, flush=True)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     # Cap decoded WAVs left by prior runs before accepting work.
@@ -37,16 +63,26 @@ async def lifespan(_app: FastAPI):
         evict_decoded(root / "alignment")
     except OSError:
         pass
+    # Unfinished whole-book jobs continue where they stopped (finished tracks and groups are kept). In the
+    # background: retained folders never delay /health or the window endpoints; book requests get 503 meanwhile.
+    book_jobs.resume_in_background()
+    sweeper = threading.Thread(target=_sweep_book_jobs, name="book-job-sweeper", daemon=True)
+    sweeper.start()
     try:
         yield
     finally:
         # Persistent WSL/lisa workers must not retain book-sized locate indexes after stop.
         shutdown_locate_pool()
         ctc_prefetch.shutdown()
+        _book_sweeper_stop.set()
+        book_jobs.shutdown()
 
 
 app = FastAPI(lifespan=lifespan)
 gate = Gate(worker_slots())
+# Whole-book encode batches hold this gate's slots too, after the window requests; they are not counted in
+# /health's busy, activeRequests, busySeconds or stuck (deadline.Gate).
+book_jobs.stages.admission = gate
 
 class PrefetchWindow(BaseModel):
     audio: str
@@ -205,7 +241,15 @@ def health():
             "slots": gate.slots, "activeRequests": gate.active,
             "mediaRoot": str(root), "revision": revision, "ctc": {"engine": CTC_ENGINE, "ready": ctc_ready,
             "device": device, "precision": "float16" if device == "cuda" else "float32",
-            "anchorReady": ctc_ready, "passageReady": True, "anchorBatch": True}}
+            "anchorReady": ctc_ready, "passageReady": True, "anchorBatch": True},
+            # Book work is reported here only: the fields above describe window requests, as before #402.
+            # None of these waits on a lock that book bookkeeping holds across disk I/O (book_job.BookJobs).
+            "bookJobs": {"engine": BOOK_ENGINE, "ready": ctc_ready, "jobs": len(book_jobs.keys()),
+                         "resuming": book_jobs.resuming,
+                         "slotsHeld": gate.background_active, "batchSeconds": gate.background_seconds(),
+                         "stuck": book_jobs.registry.stuck(),
+                         "diskReservedBytes": book_jobs.registry.budget.reserved(),
+                         "diskBudgetBytes": book_jobs.registry.budget.total}}
 
 @app.post("/align")
 def align(request: AlignRequest):
@@ -249,3 +293,121 @@ def align(request: AlignRequest):
         print(f"[align] failed: {error!r}", file=sys.stderr, flush=True)
         traceback.print_exc(file=sys.stderr)
         raise HTTPException(422, error_detail("Local alignment could not match this section. Check the edition and chapter pairing.", started, engine))
+
+
+# ------------------------------------------------------------------ whole-book jobs (#402, ADR 0016)
+# Request, progress and result shapes: docs/CTC_WORKER_POOL.md ("Whole-book jobs").
+
+class BookSentence(BaseModel):
+    id: str = Field(min_length=1, max_length=512)
+    section: int = Field(default=0, ge=0)
+    text: str = Field(max_length=20000)
+
+class BookTrack(BaseModel):
+    id: str = Field(min_length=1, max_length=512)
+    audio: str = Field(min_length=1, max_length=4096)
+    duration: float = Field(gt=0, le=200000)
+
+class BookJobRequest(BaseModel):
+    jobId: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+    recordingId: str = Field(min_length=1, max_length=512)
+    audioFingerprint: str | None = Field(default=None, max_length=512)
+    language: str = "eng"
+    sentences: list[BookSentence] = Field(min_length=1, max_length=200000)
+    tracks: list[BookTrack] = Field(min_length=1, max_length=2000)
+
+# The largest request of the 2026-11-14 set is 7.8 MB (an ebook of the complete works, 71,225 sentences);
+# the 33 h book's is 2.9 MB. 32 MiB is four times the largest, and about the size of a request at the
+# model's limit of 200,000 sentences of that book's average length. Anything larger is refused unread.
+BOOK_REQUEST_MAX_BYTES = 32 * 1024 * 1024
+
+
+def _book_auth(authorization):
+    token = os.environ.get("ALIGNMENT_WORKER_TOKEN", "")
+    supplied = (authorization or "").removeprefix("Bearer ").strip()
+    if not token or not secrets.compare_digest(supplied, token):
+        raise HTTPException(401, "Worker authentication required.")
+
+
+async def _book_request_body(request: Request):
+    """The body, read only after the token check and never past BOOK_REQUEST_MAX_BYTES."""
+    limit = BOOK_REQUEST_MAX_BYTES
+    too_large = HTTPException(413, f"A book request may have at most {limit} bytes.")
+    declared = request.headers.get("content-length")
+    if declared is not None:
+        try:
+            if int(declared) > limit:
+                raise too_large
+        except ValueError:
+            raise HTTPException(400, "Invalid Content-Length.")
+    body = bytearray()
+    async for chunk in request.stream():  # also bounds a chunked body without a Content-Length
+        body += chunk
+        if len(body) > limit:
+            raise too_large
+    return bytes(body)
+
+def _media_ready():
+    expected = os.environ.get("MEDIA_VOLUME_ID")
+    marker = root / ".media-volume"
+    if expected and (not marker.is_file() or marker.read_text().strip() != expected):
+        raise HTTPException(503, "The media drive is unavailable.")
+
+@app.post("/book-jobs", status_code=202)
+async def start_book_job(request: Request):
+    # The body is not a declared parameter: FastAPI would read and parse all of it before the token check.
+    _book_auth(request.headers.get("authorization"))
+    raw = await _book_request_body(request)
+    try:
+        parsed = BookJobRequest.model_validate_json(raw)
+    except ValidationError as error:
+        raise RequestValidationError([{**e, "loc": ("body", *e["loc"])} for e in error.errors(include_url=False, include_input=False)])
+    return await run_in_threadpool(_start_book_job, parsed)
+
+
+def _start_book_job(request: BookJobRequest):
+    _media_ready()
+    body = request.model_dump()
+    for track in body["tracks"]:
+        track["audio"] = str(checked_path(track["audio"], True))
+    try:
+        return book_jobs.start(body)
+    except Resuming as error:
+        raise HTTPException(503, str(error))
+    except JobConflict as error:
+        raise HTTPException(409, str(error))
+    except BudgetExceeded as error:
+        raise HTTPException(507, str(error))
+
+@app.get("/book-jobs/{job_id}")
+def book_job_status(job_id: str, authorization: str | None = Header(default=None)):
+    _book_auth(authorization)
+    try:
+        return book_jobs.status(job_id)
+    except Resuming as error:
+        raise HTTPException(503, str(error))
+    except UnknownJob:
+        raise HTTPException(404, "Unknown book job.")
+
+@app.delete("/book-jobs/{job_id}")
+def cancel_book_job(job_id: str, authorization: str | None = Header(default=None)):
+    _book_auth(authorization)
+    try:
+        return book_jobs.cancel(job_id)
+    except Resuming as error:
+        raise HTTPException(503, str(error))
+    except UnknownJob:
+        raise HTTPException(404, "Unknown book job.")
+
+@app.get("/book-jobs/{job_id}/result")
+def book_job_result(job_id: str, authorization: str | None = Header(default=None)):
+    _book_auth(authorization)
+    try:
+        return book_jobs.result(job_id)
+    except Resuming as error:
+        raise HTTPException(503, str(error))
+    except UnknownJob:
+        raise HTTPException(404, "Unknown book job.")
+    except NotReady as error:
+        return JSONResponse(status_code=409, content={"jobId": job_id, "engine": BOOK_ENGINE,
+                                                      "state": str(error), "message": "The job has not finished."})
