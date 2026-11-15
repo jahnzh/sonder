@@ -608,8 +608,12 @@ export function ReaderView({
           allowScriptedContent,
         });
         rendition.current = view;
+        // The place epub.js reported last: while a navigation displays, it can report it again.
+        let reported = "";
         const relocate = (location: Location) => {
           if (disposed) return;
+          const unmoved = location.start.cfi === reported;
+          reported = location.start.cfi;
           try {
             const section = book.sections.find(
               (section) => section.index === location.start.index,
@@ -644,7 +648,7 @@ export function ReaderView({
                 Math.max(1, all.length - 1),
             };
             // A relocation the reader caused pages away and is saved after a pause.
-            if (following.relocated(next, !!latest.current) === "ignored")
+            if (following.relocated(next, !!latest.current, unmoved) === "ignored")
               return;
             latest.current = next;
             setLocator(next);
@@ -832,7 +836,11 @@ export function ReaderView({
       currentFlow.current = flow;
       view.flow(flow);
     }
+    // A place the reader chooses before this is due is displayed with the new theme already; restoring
+    // the place shown before it would undo the choice.
+    const restoreDue = following.restoreLater();
     const timer = setTimeout(() => {
+      if (!restoreDue.due()) return;
       const player=playerRef.current,current=mapRef.current;
       if(following.isFollowing() && current && player.book?.recordingId===current.recordingId && current.intervals.some(interval=>interval.trackId===player.track?.id && interval.start<=player.position && interval.end>player.position))return;
       // A Word mode checkpoint is a sentence without a CFI; go to that sentence.

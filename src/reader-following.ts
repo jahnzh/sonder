@@ -132,6 +132,9 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
   // them together. The page debounce: a relocation the reader caused, saved after a pause.
   let pendingManual: L | null = null;
   let saveTimer: unknown = null;
+  // The page debounce came due while a scrubber return waited for the player: `pendingManual` is held
+  // for that return's decision, which is made for where the scrub ended.
+  let held = false;
   // Word mode's checkpoint (a step by hand or the words advancing at a set speed).
   let wordOrigin: SaveOrigin | null = null;
   const wordSaver = createCheckpointSaver<{ locator: L; origin: SaveOrigin }>(({ locator, origin }) => {
@@ -163,9 +166,13 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
   // so a deferred return can tell whether it is still wanted.
   let chosen = 0;
   let deferrals = 0;
+  // The deferred return still to run, as it was made: it holds a page save that comes due only while
+  // nothing made it stale (another return, a choice of the reader); a newer one takes its place.
+  let deferral: { at: number; returns: number; chosen: number } | null = null;
+  const holding = () => !!deferral && deferral.at === deferrals && deferral.returns === returns && deferral.chosen === chosen;
   let waiting = false;
   const report = () => {
-    const now = saveTimer !== null || wordOrigin !== null || places.size > 0;
+    const now = saveTimer !== null || held || wordOrigin !== null || places.size > 0;
     if (now === waiting) return;
     waiting = now;
     options.onSaveWaiting?.(now);
@@ -184,6 +191,7 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
   const drop = (gesture: number) => {
     if (saveTimer) clock.clearTimeout(saveTimer);
     saveTimer = null;
+    held = false;
     pendingManual = null;
     navigatedUntil = 0;
     // A listening checkpoint is the narrated sentence a step moved the audio to; it is kept.
@@ -196,6 +204,15 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
     returnedFromNavigation = navigationEpoch;
     if (gestures === gesture) lastGesture = Number.NEGATIVE_INFINITY;
     report();
+  };
+  // A held page save that nothing dropped: it was due, so it is saved now.
+  const saveHeld = () => {
+    if (!held) return;
+    held = false;
+    const locator = pendingManual;
+    pendingManual = null;
+    report();
+    if (locator !== null) options.onManualSave(locator, "reading");
   };
 
   const self = {
@@ -229,7 +246,10 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
       armed = null;
       set(true);
       if (narration && mapConfirmed) drop(gesture);
-      else armed = { gesture };
+      else {
+        armed = { gesture };
+        saveHeld();
+      }
       followed = "";
       retry.attempts = 0;
       options.onClearFollowError();
@@ -253,10 +273,17 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
      */
     deferredReturn(): DeferredReturn {
       const at = ++deferrals, returnsThen = returns, chosenThen = chosen;
+      deferral = { at, returns: returnsThen, chosen: chosenThen };
       return {
-        // Running it is a back to narration, so it runs once.
+        // Running it is a back to narration, so it runs once. A page save held for it is decided by it,
+        // or saved when it no longer runs; a newer return holds it in its place.
         run(narration) {
-          if (deferrals !== at || returns !== returnsThen || chosen !== chosenThen) return null;
+          if (deferrals !== at) return null;
+          deferral = null;
+          if (returns !== returnsThen || chosen !== chosenThen) {
+            saveHeld();
+            return null;
+          }
           return narration === undefined ? self.backToNarration() : self.backToNarration(narration);
         },
       };
@@ -355,8 +382,23 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
       recordings++;
       followed = "";
     },
-    /** The view relocated. `known` says whether a locator is already shown. */
-    relocated(locator: L, known: boolean): Relocation {
+    /**
+     * A display of ours back to the place shown, due later (a re-theme re-paginated the book).
+     * `due()` is false once the reader chose a place since (Contents, a page turn, a gesture, a Word
+     * step, paging away): the place shown may still be the one from before that choice, while the
+     * choice's relocation is not reported yet. Displaying it would undo the choice, and its relocation,
+     * inside the navigation's window, would be saved as the reader's.
+     */
+    restoreLater() {
+      const chosenThen = chosen;
+      return { due: () => chosen === chosenThen };
+    },
+    /**
+     * The view relocated. `known` says whether a locator is already shown. `unmoved`: epub.js reported
+     * the place it reported last again (it does so while a navigation is displaying, for the place the
+     * navigation leaves); that is no move of the reader's, so it neither pages away nor arms a save.
+     */
+    relocated(locator: L, known: boolean, unmoved = false): Relocation {
       const now = clock.now();
       const gestured = now - lastGesture < GESTURE_REPORT_MS;
       // A navigation from before a back to narration counts only with a gesture made since.
@@ -365,15 +407,22 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
       const ownLayout = !navigated && (layoutPending > 0 || now <= automaticUntil);
       if (ownLayout && known) return "ignored";
       const manual = navigated || (!ownLayout && gestured);
-      if (!manual) return "shown";
+      if (!manual || unmoved) return "shown";
       // Caused by a navigation or gesture from before a back to narration that found nothing to
       // follow: not a manual move, so following stays on; nothing replaces its place, so it is saved.
       const beforeReturn = !!armed && gestures === armed.gesture;
       if (!beforeReturn) set(false);
       pendingManual = locator;
+      held = false;
       if (saveTimer) clock.clearTimeout(saveTimer);
       saveTimer = clock.setTimeout(() => {
         saveTimer = null;
+        if (holding()) {
+          held = true;
+          navigatedUntil = 0;
+          report();
+          return;
+        }
         pendingManual = null;
         navigatedUntil = 0;
         report();
@@ -409,9 +458,10 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
     },
     /** The reader closes: a manual position still waiting is handed back to be saved now, and its timer is dropped. */
     takeManualSave(): L | null {
-      if (!saveTimer) return null;
-      clock.clearTimeout(saveTimer);
+      if (!saveTimer && !held) return null;
+      if (saveTimer) clock.clearTimeout(saveTimer);
       saveTimer = null;
+      held = false;
       const locator = pendingManual;
       pendingManual = null;
       report();
