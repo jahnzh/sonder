@@ -19,3 +19,4 @@ artifacts/orca/*
 .codex-attachments/
 .codegraph
 __pycache__/
+worker/REVISION

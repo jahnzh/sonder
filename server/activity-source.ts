@@ -6,7 +6,9 @@
  * Imports only types (and the pure pause model), so the Activity module stays free of the database at import.
  */
 import type { FastifyBaseLogger } from "fastify";
-import type { ActivityHealth, ActivityItem, ActivityKind, ActivityState, TorrentHealth } from "../src/types.ts";
+import type {
+  ActivityHealth, ActivityHostRestart, ActivityItem, ActivityKind, ActivityState, ActivityWorkerHost, TorrentHealth,
+} from "../src/types.ts";
 import type { AlignmentPoolStatus } from "../src/reading-types.ts";
 import type { PausableProcess } from "./activity-pause-model.ts";
 
@@ -25,7 +27,20 @@ export type ActivityDeps = {
   /** Pause state per loop: the settings table plus the environment lock. */
   pauseState: () => Record<string, { paused: boolean; locked: boolean }>;
   setPaused: (id: PausableProcess, paused: boolean) => void;
+  /** The alignment worker hosts' controls (#357 PR 3); absent where a test does not need them. */
+  workerHosts?: WorkerHostControls;
   now?: () => number;
+};
+
+/** What the Activity page can do with an alignment worker host (#357 PR 3, ADR 0002). */
+export type WorkerHostControls = {
+  /** The configured host ids (ADR 0013). */
+  ids: () => string[];
+  /** Restart the worker service; throws with `statusCode` and `code` when refused or failed. */
+  restart: (hostId: string, options: { force: boolean }) => Promise<Record<string, unknown>>;
+  setDisabled: (hostId: string, disabled: boolean) => void;
+  /** Which hosts are being restarted now, and the last outcome of each. */
+  restarts: () => Record<string, { restarting: boolean; last: ActivityHostRestart | null }>;
 };
 
 /**
@@ -56,7 +71,11 @@ export type ActivityDraft = Omit<ActivityItem, "stuck" | "blockedBy" | "permanen
 };
 
 /** A service a source probes (torrent client, alignment workers), listed as a process of type "service". */
-export type ActivityService = { id: string; label: string; health: ActivityHealth; reason: string | null };
+export type ActivityService = {
+  id: string; label: string; health: ActivityHealth; reason: string | null;
+  /** A worker host's status and controls (#357 PR 3). */
+  host?: ActivityWorkerHost;
+};
 
 /** What a probe returned, or why it returned nothing (it threw or took too long). */
 export type ProbeResult<Probe> = { value: Probe | null; failure: string | null };
@@ -77,6 +96,10 @@ export type ReportContext = {
 
 export type ActivityActionContext = { deps: ActivityDeps; log: FastifyBaseLogger };
 export type ActivityAction = (id: string, context: ActivityActionContext) => Promise<Record<string, unknown>>;
+/** An action on a service the source reports (a worker host's restart or switch), with the request body. */
+export type ServiceAction = (
+  serviceId: string, body: Record<string, unknown>, context: ActivityActionContext,
+) => Promise<Record<string, unknown>>;
 
 export type ActivitySource<Rows = unknown, Probe = never> = {
   /** The item kind; every item id of this source starts with `${kind}:`. */
@@ -95,6 +118,8 @@ export type ActivitySource<Rows = unknown, Probe = never> = {
   stuck?(item: ActivityDraft, now: number, thresholdMs: number): ActivityItem["stuck"];
   retry?: ActivityAction;
   discard?: ActivityAction;
+  /** Actions on the services this source reports, whose ids start with `prefix`. */
+  services?: { prefix: string; restart?: ServiceAction; disable?: ServiceAction };
 };
 
 /** Keeps a source's row and probe types checked where it is written, then lets the list hold any source. */

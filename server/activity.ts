@@ -80,10 +80,11 @@ export function buildActivity(input: ActivityInput): ActivityResponse {
     item.state === "failed" || item.stuck ? 0 : item.state === "running" ? 1 : item.state === "queued" ? 2 : item.state === "paused" ? 3 : 4;
   items.sort((a, b) => rank(a) - rank(b) || b.updatedAt - a.updatedAt);
 
-  const base: Array<Pick<ActivityProcess, "id" | "label" | "type" | "notTracked">> = [
+  const base: Array<Pick<ActivityProcess, "id" | "label" | "type" | "notTracked" | "host">> = [
     ...[...input.snapshots].sort((a, b) => loopOrder(a) - loopOrder(b))
       .map(({ source }) => ({ id: source.process.id, label: source.process.label, type: "loop" as const, notTracked: false })),
-    ...services.map((service) => ({ id: service.id, label: service.label, type: "service" as const, notTracked: false })),
+    ...services.map((service) => ({ id: service.id, label: service.label, type: "service" as const, notTracked: false,
+      ...(service.host ? { host: service.host } : {}) })),
     ...UNTRACKED_PROCESSES.map((process) => ({ ...process, type: "loop" as const, notTracked: true })),
   ];
   const probes = new Map(services.map((service) => [service.id, { health: service.health, reason: service.reason }]));
@@ -183,6 +184,17 @@ export function registerActivity(app: FastifyInstance, deps: ActivityDeps, sourc
     app.log.info({ action: "activity.pause", process: id, paused }, "Background process pause changed");
     return { ok: true, id, paused };
   });
+  // A service's action (a worker host's restart or switch) goes to the source whose prefix starts the service id.
+  for (const name of ["restart", "disable"] as const) {
+    app.post(`/api/activity/services/:id/${name}`, async (req) => {
+      deps.requireAdmin(req);
+      const { id } = req.params as { id: string };
+      const action = sources.find((source) => source.services && id.startsWith(source.services.prefix))?.services?.[name];
+      if (!action) throw activityFailure(404, `This process has no ${name === "restart" ? "restart" : "switch"}.`);
+      const body = req.body && typeof req.body === "object" && !Array.isArray(req.body) ? req.body as Record<string, unknown> : {};
+      return action(id, body, { deps, log: app.log });
+    });
+  }
   // An item's action goes to the source whose kind prefixes the item id.
   for (const name of ["retry", "discard"] as const) {
     app.post(`/api/activity/items/${name}`, async (req) => {

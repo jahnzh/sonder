@@ -160,6 +160,19 @@
         "label": "Alignment worker (wsl)",
         "type": "service",
         "notTracked": false,
+        "host": {
+          "hostId": "wsl",
+          "device": null,
+          "online": false,
+          "disabled": false,
+          "revision": null,
+          "work": null,
+          "jobs": [
+            "Speaker for the Dead"
+          ],
+          "restarting": false,
+          "lastRestart": null
+        },
         "pausable": false,
         "paused": false,
         "lockedBy": null,
@@ -179,6 +192,19 @@
         "label": "Alignment worker (lisa)",
         "type": "service",
         "notTracked": false,
+        "host": {
+          "hostId": "lisa",
+          "device": null,
+          "online": true,
+          "disabled": false,
+          "revision": null,
+          "work": null,
+          "jobs": [
+            "Speaker for the Dead"
+          ],
+          "restarting": false,
+          "lastRestart": null
+        },
         "pausable": false,
         "paused": false,
         "lockedBy": null,

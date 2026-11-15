@@ -11,6 +11,7 @@ import type {
   AlignmentJob,
   AlignmentPoolHostId,
   AlignmentPoolHostStatus,
+  AlignmentPoolHostWork,
   AlignmentPoolStatus,
 } from "../src/reading-types.ts";
 import { BOOK_ENGINE, CTC_ENGINE } from "./alignment-engine.ts";
@@ -251,7 +252,7 @@ export function poolDeps(): PoolSshDeps {
   return defaultPoolSshDeps();
 }
 
-function failureDetail(error: unknown) {
+export function failureDetail(error: unknown) {
   const stderr = error && typeof error === "object" && "stderr" in error ? error.stderr : undefined;
   let message = typeof stderr === "string" || Buffer.isBuffer(stderr) ? String(stderr) : "";
   if (!message.trim()) {
@@ -300,6 +301,8 @@ export class AlignmentPoolCoordinator {
   private slots = new Map<PoolHostId, Set<string>>();
   private recordings = new Map<string, RecordingLease>();
   private hostErrors = new Map<PoolHostId, string | null>();
+  /** Hosts an unforced restart holds from its check until it has finished (#357): nothing new is leased there. */
+  private restartHolds = new Set<PoolHostId>();
   private hosts: PoolHost[];
   constructor(hosts: PoolHost[] = defaultPoolHosts()) {
     this.hosts = byRank(hosts);
@@ -309,6 +312,7 @@ export class AlignmentPoolCoordinator {
     this.slots.clear();
     this.recordings.clear();
     this.hostErrors.clear();
+    this.restartHolds.clear();
   }
 
   /** The configured hosts in rank order. */
@@ -347,6 +351,7 @@ export class AlignmentPoolCoordinator {
   // A worker runs up to `capacity` jobs (its reported slots). Reserve a slot across the
   // whole job, including gaps between its individual HTTP requests.
   tryAcquireCtc(hostId: PoolHostId, jobId: string, recordingId: string, capacity = 1) {
+    if (this.restartHolds.has(hostId)) return false;
     if (this.activeOnHost(hostId) >= capacity) return false;
     const lease = this.recordings.get(recordingId);
     if (lease && lease.jobId !== jobId) return false;
@@ -356,6 +361,24 @@ export class AlignmentPoolCoordinator {
     this.slots.set(hostId, active);
     this.recordings.set(recordingId, { jobId });
     return true;
+  }
+
+  /**
+   * Holds the host for a restart (#357) when nothing is leased there, in the same step as that check: from now on
+   * `tryAcquireCtc` gives it to nothing new. False when a lease is held there or a restart already holds it.
+   */
+  holdForRestart(hostId: PoolHostId) {
+    if (this.restartHolds.has(hostId) || this.activeOnHost(hostId) > 0) return false;
+    this.restartHolds.add(hostId);
+    return true;
+  }
+
+  releaseRestartHold(hostId: PoolHostId) {
+    this.restartHolds.delete(hostId);
+  }
+
+  heldForRestart(hostId: PoolHostId) {
+    return this.restartHolds.has(hostId);
   }
 
   /** Drops every lease a job holds: host slots and its recording. */
@@ -414,6 +437,19 @@ export function checkPoolHostsSetting() {
     throw new Error(`${(error as Error).message} Fix ALIGNMENT_POOL_HOSTS, or unset it to use the default hosts.`);
   }
 }
+
+let disabledHostCheck: ((hostId: PoolHostId) => boolean) | null = null;
+
+/**
+ * Wires the administrator's per-host switch (#357, stored by `server/activity-pause.ts`), so this module stays
+ * free of the database. Unset (a test of the pool alone), no host is disabled.
+ */
+export function setDisabledHostCheck(check: ((hostId: PoolHostId) => boolean) | null) {
+  disabledHostCheck = check;
+}
+
+/** The administrator took this host out of use: it gets no new jobs, probes or whole-book jobs. */
+export const hostDisabled = (hostId: PoolHostId) => disabledHostCheck?.(hostId) ?? false;
 
 // Built on first use, so an invalid setting surfaces through checkPoolHostsSetting at startup, not at import.
 let coordinator: AlignmentPoolCoordinator | null = null;
@@ -514,8 +550,36 @@ type CtcHealth = {
   slots?: number;
   ctc: { engine: string; ready: boolean; device: string; precision: string; passageReady?: boolean };
   /** Whole-book jobs (#402); workers without them omit it. */
-  bookJobs?: { engine?: unknown; ready?: unknown };
+  bookJobs?: { engine?: unknown; ready?: unknown; jobs?: unknown; slotsHeld?: unknown; resuming?: unknown; stuck?: unknown };
+  /** Window requests running now; older workers omit it. */
+  activeRequests?: unknown;
+  /** The worker's code revision (#357); older workers omit it. */
+  revision?: unknown;
 };
+
+const count = (value: unknown) => (typeof value === "number" && Number.isInteger(value) && value > 0 ? value : 0);
+
+/** What a worker's `/health` says it runs now (#357), or null when the body is not an object. */
+export function workerWork(value: unknown): AlignmentPoolHostWork | null {
+  const health = value as Partial<CtcHealth> | null | undefined;
+  if (!health || typeof health !== "object") return null;
+  const book = health.bookJobs && typeof health.bookJobs === "object" ? health.bookJobs : {};
+  return {
+    windowRequests: count(health.activeRequests),
+    bookJobs: count(book.jobs),
+    encoding: count(book.slotsHeld) > 0,
+    resuming: book.resuming === true,
+    stuck: (health.stuck === true ? 1 : 0) + (Array.isArray(book.stuck) ? book.stuck.length : 0),
+  };
+}
+
+/** The revision a worker's `/health` reports: a short printable string, or null (unknown). */
+export function workerRevision(value: unknown): string | null {
+  const revision = (value as { revision?: unknown } | null | undefined)?.revision;
+  if (typeof revision !== "string") return null;
+  const clean = revision.replace(/[^A-Za-z0-9._+/@:-]/g, "").slice(0, 64);
+  return clean || null;
+}
 
 /** Why a healthy CTC worker cannot take a whole-book job (#404), or null when it can. */
 export function bookJobsProblem(health: Pick<CtcHealth, "bookJobs">): string | null {
@@ -577,6 +641,15 @@ async function ctcHealth(host: PoolHost, signal?: AbortSignal): Promise<CtcHealt
   if (!validCtcHealth(host, health))
     throw new Error("worker is not ready or has incompatible CTC settings");
   return health;
+}
+
+/** A worker's `/health` body as it answered (#357), whatever it says; throws when it does not answer with JSON. */
+export async function readWorkerHealth(host: PoolHost, signal?: AbortSignal): Promise<unknown> {
+  const guardError = ctcUrlGuardError(host);
+  if (guardError) throw new Error(guardError);
+  const response = await fetch(`${host.workerUrl.replace(/\/$/, "")}/health`, { signal: withDeadline(5000, signal) });
+  if (!response.ok) throw new Error(`worker returned HTTP ${response.status}`);
+  return response.json();
 }
 
 /** The worker's reported media root, for listing what the pool staged there. Throws when it reports none. */
@@ -739,9 +812,10 @@ export type WorkerLease = {
   stageTracks(beforeUpload?: (assignment: AlignmentJobPoolState) => void): Promise<void>;
   /**
    * Frees this host and takes the next untried one, staging the tracks there again; the audio staged here is kept
-   * until the release. Throws as `acquireWorkerLease` does; the lease then holds no host.
+   * until the release. Throws as `acquireWorkerLease` does; the lease then holds no host. With `countTried: false`
+   * the freed host is not counted as tried (the administrator disabled it, #357): it does not use up the job's round.
    */
-  failover(): Promise<void>;
+  failover(options?: { countTried?: boolean }): Promise<void>;
   /** Frees the host; a job's staged audio stays, a probe's is removed (see LeaseRelease). Safe to call twice. */
   release(outcome: LeaseRelease): Promise<void>;
 };
@@ -854,10 +928,12 @@ class PoolWorkerLease implements WorkerLease {
     if (this.request.kind === "probe" && host) this.probeStaging.push({ host, jobMediaRoot: this.held.jobMediaRoot });
   }
 
-  async failover() {
+  async failover(options: { countTried?: boolean } = {}) {
     const held = this.current();
     getAlignmentPoolCoordinator().release(held.hostId, this.request.id, this.request.recordingId);
-    if (!this.tried.includes(held.hostId)) this.tried.push(held.hostId);
+    // The held host counts as tried from its take; a disabled one is taken off again, so it keeps the job's round.
+    if (options.countTried === false) this.tried = this.tried.filter((id) => id !== held.hostId);
+    else if (!this.tried.includes(held.hostId)) this.tried.push(held.hostId);
     this.held = null;
     try {
       await this.take();
@@ -927,11 +1003,34 @@ async function takeHost(
   const bookJob = request.book === true && !probe;
   const fallbackOnly = (host: PoolHost) => bookJob && host.device === "cpu";
   let fasterHostBusy = false;
+  /**
+   * A host that takes no new work now (#357), checked before the host is asked and again in the same step as its
+   * lease, after the awaited health and SSH probes. A disabled host is not tried, so it does not use up a job's round,
+   * and it is not a faster host that is busy, so a whole-book job goes on to the CPU fallback; only a job already
+   * started there (taken back without staging after a server restart) may lease it: that work is running there and
+   * finishes. A host held for a restart is busy: work goes to another host or waits for it.
+   */
+  const heldBack = (host: PoolHost) => {
+    const id = host.id;
+    if (hostDisabled(id) && id !== unstagedOn) {
+      diagnostics.poolErrors = { ...diagnostics.poolErrors, [id]: "disabled: the administrator disabled this host" };
+      busy = true;
+      return true;
+    }
+    if (coord.heldForRestart(id)) {
+      diagnostics.poolErrors = { ...diagnostics.poolErrors, [id]: "restarting: the administrator is restarting this host's worker" };
+      busy = true;
+      if (!fallbackOnly(host)) fasterHostBusy = true;
+      return true;
+    }
+    return false;
+  };
   for (const host of [...first, ...rest.filter((host) => !fallbackOnly(host)), ...rest.filter(fallbackOnly)]) {
     signal?.throwIfAborted();
     if (roundOver()) break;
     const id = host.id;
     if (attempted.includes(id)) continue;
+    if (heldBack(host)) continue;
     if (fallbackOnly(host) && fasterHostBusy) continue;
     let health: CtcHealth;
     try {
@@ -965,6 +1064,8 @@ async function takeHost(
       exclude(id);
       continue;
     }
+    // The switch and a restart are read again here, with nothing awaited before the lease is taken.
+    if (heldBack(host)) continue;
     if (!coord.tryAcquireCtc(id, request.id, request.recordingId, capacity)) {
       recordPoolError(diagnostics, id, "capacity", "worker or recording is busy");
       busy = true;
@@ -1050,6 +1151,8 @@ type ProbedHostSnapshot = {
   workerBusy: boolean;
   stuck: boolean;
   probeError: string | null;
+  revision: string | null;
+  work: AlignmentPoolHostWork | null;
 };
 
 type CachedPoolProbe = {
@@ -1093,12 +1196,16 @@ async function probeSinglePoolHost(host: PoolHost): Promise<ProbedHostSnapshot> 
       workerBusy: false,
       stuck: false,
       probeError: formatPoolError("health", guardError),
+      revision: null,
+      work: null,
     };
   }
   let device: string | null = null;
   let precision: string | null = null;
   let workerBusy = false;
   let stuck = false;
+  let revision: string | null = null;
+  let work: AlignmentPoolHostWork | null = null;
   let healthError: string | null = null;
   let sshError: string | null = null;
   await Promise.all([
@@ -1116,6 +1223,8 @@ async function probeSinglePoolHost(host: PoolHost): Promise<ProbedHostSnapshot> 
           workerBusy = raw.busy === true;
           stuck = raw.stuck === true;
           maxConcurrent = ctcWorkerSlots(raw);
+          revision = workerRevision(raw);
+          work = workerWork(raw);
           if (typeof raw.ctc?.device === "string") device = raw.ctc.device;
           if (typeof raw.ctc?.precision === "string") precision = raw.ctc.precision;
         }
@@ -1145,6 +1254,8 @@ async function probeSinglePoolHost(host: PoolHost): Promise<ProbedHostSnapshot> 
     workerBusy,
     stuck,
     probeError,
+    revision,
+    work,
   };
 }
 
@@ -1171,6 +1282,8 @@ async function runPoolProbe(): Promise<CachedPoolProbe> {
         workerBusy: false,
         stuck: false,
         probeError: null,
+        revision: null,
+        work: null,
       })),
     };
   }
@@ -1212,6 +1325,9 @@ function materializePoolStatus(
         activeJobs,
         maxConcurrent: host.maxConcurrent,
         lastError,
+        disabled: hostDisabled(host.id),
+        revision: host.revision,
+        work: host.work,
       };
     }),
   };

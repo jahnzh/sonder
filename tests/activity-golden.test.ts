@@ -216,12 +216,18 @@ function withBackupsUntracked(all: Record<string, { processes: Array<{ id: strin
   return all;
 }
 
+/** The worker host rows gained their status and controls on purpose with #357 PR 3 (`host`); the rest is unchanged. */
+function withoutHostDetail(all: Record<string, { processes: Array<{ id: string; host?: unknown }> }>) {
+  for (const snapshot of Object.values(all)) for (const process of snapshot.processes) delete process.host;
+  return all;
+}
+
 test("GET /api/activity returns the recorded JSON for the same rows", async () => {
   const all = await snapshots();
   if (process.env.SONDER_UPDATE_ACTIVITY_GOLDEN === "1") writeFileSync(GOLDEN, `${JSON.stringify(all, null, 2)}\n`);
   assert.deepEqual(all, JSON.parse(readFileSync(GOLDEN, "utf8")));
 
   deleteIntendedChanges();
-  const unchanged = `${JSON.stringify(withBackupsUntracked(await snapshots(sourcesAtSplit)), null, 2)}\n`;
+  const unchanged = `${JSON.stringify(withBackupsUntracked(withoutHostDetail(await snapshots(sourcesAtSplit))), null, 2)}\n`;
   assert.equal(unchanged, readFileSync(BEFORE_SOURCES, "utf8"), "same rows, same JSON text as before the split into sources");
 });

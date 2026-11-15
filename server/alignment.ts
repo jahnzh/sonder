@@ -1,4 +1,4 @@
-import { isPaused } from "./activity-pause.ts";
+import { isHostDisabled, isPaused } from "./activity-pause.ts";
 import { backgroundRunner } from "./background-runner.ts";
 import type { FastifyInstance } from "fastify";
 import { and, eq } from "drizzle-orm";
@@ -29,7 +29,7 @@ import {
 import { requireAdmin } from "./users.ts";
 import { matchSections } from "./alignment-pairings.ts";
 import { unsyncedPassages } from "./alignment-passages.ts";
-import { BOOK_ENGINE, CTC_ENGINE } from "./alignment-engine.ts";
+import { BOOK_ENGINE, CTC_ENGINE, bookJobsEnabled } from "./alignment-engine.ts";
 import { runBookJob } from "./alignment-book-job.ts";
 import { untilAborted } from "./until-aborted.ts";
 // The pool's lease interface (ADR 0013), and its status for the Activity page.
@@ -40,6 +40,7 @@ import {
   PoolBusyError,
   poolEnabled,
   poolFailureMessage,
+  setDisabledHostCheck,
   shouldDispatchToPool,
   type LeaseRelease,
   type PoolHostId,
@@ -84,6 +85,8 @@ import {
   listServedAlignmentJobs,
   servedAlignmentJob,
 } from "./alignment-transitions.ts";
+// The per-host switch of the Activity page (#357) is stored with the pause switches; every lease honours it.
+setDisabledHostCheck(isHostDisabled);
 export {
   alignmentJob,
   alignmentKeepsPublishedMap,
@@ -217,6 +220,8 @@ export async function alignmentOptions(ebookId: string, recordingId: string) {
     pairings,
     sameWork: book.workId === edition.workId,
     languageMatch: !languagesConflict(edition.language, book.language),
+    // The runner a Prepare starts (#405): a whole-book job finds the text itself, so the card offers no chapter matching.
+    bookJobs: bookJobsEnabled(),
   };
 }
 export async function createAlignment(
@@ -289,9 +294,11 @@ async function plannedJob(input: {
   const { book, tracks } = await alignablePair(ebookId, recordingId);
   const options = await alignmentOptions(ebookId, recordingId);
   const chosen = pairings?.length ? pairings : options.pairings;
+  // A whole-book job ignores the pairings (#405): with none matched, a chaptered release is planned as an anchored
+  // job, as "Rebuild without chapter matching" plans it, instead of refused.
   const anchored =
     mode === "anchored" ||
-    (mode !== "chapters" && !chosen.length && options.anchored);
+    (mode !== "chapters" && !chosen.length && (options.anchored || bookJobsEnabled()));
   // An explicit anchored request is allowed on a chaptered release: the chapter
   // pairing can be wrong (for example shifted by one) and then maps nothing.
   if (!anchored && !chosen.length)
@@ -1280,18 +1287,22 @@ type RunLease = { lease: WorkerLease | null };
  */
 async function leaseWorker(
   job: AlignmentJob, tracks: ReturnType<typeof recordingContext>["tracks"], run: RunLease,
-  options: Pick<WorkerLeaseRequest, "book" | "firstHost" | "unstagedFirstHost"> = {},
+  options: Pick<WorkerLeaseRequest, "book" | "firstHost" | "unstagedFirstHost"> & { heldHostDisabled?: boolean } = {},
 ) {
+  const { heldHostDisabled, ...request } = options;
   try {
-    if (run.lease) await run.lease.failover();
+    // A host the administrator disabled is left without counting it as tried (#357).
+    if (run.lease) await run.lease.failover({ countTried: !heldHostDisabled });
     else run.lease = await acquireWorkerLease({
       id: job.id, recordingId: job.recordingId, mode: job.mode, tracks, localAudio,
-      kind: "job", assignment: job.pool, diagnostics: job, ...options,
+      kind: "job", assignment: job.pool, diagnostics: job, ...request,
     });
   } catch (error) {
     if (ctcDispatchStopped(job)) return null;
     if (error instanceof PoolBusyError) {
       if (job.pool || error.triedHosts.length) job.pool = error.assignment;
+      // Why it waits: the hosts the move to another host skipped (a disabled host, a busy one).
+      if (heldHostDisabled && run.lease?.poolErrors) job.poolErrors = { ...job.poolErrors, ...run.lease.poolErrors };
       transition.requeue(job);
     } else {
       const failed = (error as { poolAssignment?: AlignmentJob["pool"] } | null)?.poolAssignment;

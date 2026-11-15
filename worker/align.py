@@ -21,8 +21,11 @@ from ctc_gpu import GpuMonitor
 import ctc_prefetch
 from book_job import BOOK_ENGINE, BookJobs, JobConflict, NotReady, Resuming, UnknownJob, WorkerStages
 from book_session import BudgetExceeded
+from revision import read_revision
 
 root = Path(os.environ.get("MEDIA_ROOT", "/mnt/usb_4t_1/sonder")).resolve()
+# Read once at startup; None (unknown) when the file is missing or unreadable (#357).
+REVISION = read_revision()
 
 
 def _book_model():
@@ -225,7 +228,7 @@ def health():
                        (selected.index is None or selected.index < torch.cuda.device_count()))))
     except (ImportError, OSError, RuntimeError, ValueError):
         pass
-    return {"ready": True, "engine": CTC_ENGINE, "busy": gate.busy, "stuck": gate.stuck,
+    return {"ready": True, "engine": CTC_ENGINE, "revision": REVISION, "busy": gate.busy, "stuck": gate.stuck,
             "busySeconds": gate.busy_seconds(), "lastTimeout": gate.last_timeout,
             "slots": gate.slots, "activeRequests": gate.active,
             "mediaRoot": str(root), "ctc": {"engine": CTC_ENGINE, "ready": ctc_ready,
