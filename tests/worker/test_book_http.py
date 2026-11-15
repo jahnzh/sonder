@@ -152,18 +152,91 @@ class BookRequestOverHttp(unittest.TestCase):
         status, _ = exchange(self.port, post_head(len(broken)), [broken])
         self.assertEqual(status, 422)
 
-    def test_health_shows_a_book_batch_in_its_busy_and_slot_fields(self):
-        get = b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
-        idle = json.loads(exchange(self.port, get)[1])
+    GET_HEALTH = b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+    # /health's fields as on origin/main: they describe window requests only (#402 round 2, decision A).
+    WINDOW_FIELDS = ("ready", "engine", "busy", "stuck", "busySeconds", "lastTimeout", "slots", "activeRequests",
+                     "mediaRoot", "ctc")
+
+    def health(self):
+        return json.loads(exchange(self.port, self.GET_HEALTH)[1])
+
+    def test_health_window_fields_are_the_same_with_and_without_a_book_batch(self):
+        idle = self.health()
         self.assertEqual((idle["busy"], idle["activeRequests"], idle["bookJobs"]["slotsHeld"]), (False, 0, 0))
         with mock.patch.multiple("deadline", WINDOW_GRACE_S=0, WINDOW_RETRY_S=0), \
                 self.align.gate.hold_background():  # what a book job holds during one encode batch
-            busy = json.loads(exchange(self.port, get)[1])
-        self.assertEqual(busy["activeRequests"], 1)
-        self.assertEqual(busy["busy"], self.align.gate.slots == 1)
-        self.assertIsNotNone(busy["busySeconds"])
-        self.assertEqual(busy["bookJobs"]["slotsHeld"], 1)
+            during = self.health()
+        self.assertEqual({k: during[k] for k in self.WINDOW_FIELDS}, {k: idle[k] for k in self.WINDOW_FIELDS})
+        self.assertEqual(during["bookJobs"]["slotsHeld"], 1, "book work is reported under bookJobs only")
+        self.assertIsNotNone(during["bookJobs"]["batchSeconds"])
+        self.assertEqual(during["bookJobs"]["stuck"], [])
         self.assertIs(self.align.book_jobs.stages.admission, self.align.gate, "book encodes use the window gate")
+
+    def test_the_servers_order_health_then_a_window_request_is_served_within_one_batch(self):
+        # The server reads /health first and dispatches only to a worker that is not busy
+        # (server/alignment-pool.ts). A book encode runs batch after batch; the window request is served
+        # after at most the batch it found on the device.
+        batch = 0.5
+        audio = self.media / "staged" / "window.wav"
+        audio.write_bytes(b"RIFF")
+        served = []
+
+        def fake_section(**kwargs):
+            served.append((time.monotonic(), self.align.gate.background_active))
+            return {"engine": self.align.CTC_ENGINE, "outcome": "mapped", "match": None, "stageTimings": {}}
+
+        stop = threading.Event()
+        batches = []
+
+        def book():
+            import deadline
+            while not stop.is_set():
+                try:
+                    with self.align.gate.hold_background(stop.is_set):
+                        start = time.monotonic()
+                        time.sleep(batch)
+                        batches.append((start, time.monotonic()))
+                except deadline.GateWaitStopped:
+                    return
+
+        body = json.dumps({"token": TOKEN, "audio": str(audio), "output": str(self.media / "alignment" / "w.json"),
+                           "fragments": ["Hello there."], "duration": 10.0}).encode()
+        head = (b"POST /anchor HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"
+                b"Connection: close\r\nContent-Length: " + str(len(body)).encode() + b"\r\n\r\n")
+        thread = threading.Thread(target=book, daemon=True)
+        with mock.patch.object(self.align, "align_ctc_section", fake_section):
+            thread.start()
+            try:
+                while not batches:
+                    time.sleep(0.01)
+                for _ in range(3):
+                    health = self.health()
+                    self.assertFalse(health["busy"], "a book batch never makes the worker look busy")
+                    self.assertEqual(health["activeRequests"], 0)
+                    self.assertGreaterEqual(health["bookJobs"]["slotsHeld"] + len(batches), 1)
+                    sent = time.monotonic()
+                    status, answer = exchange(self.port, head, [body], timeout=10)
+                    self.assertEqual(status, 200, answer)
+                    self.assertLess(served[-1][0] - sent, batch + 0.5, "served within one batch")
+                    self.assertEqual(served[-1][1], 0, "no batch ran beside the window request")
+                    time.sleep(0.1)
+            finally:
+                stop.set()
+                thread.join(5)
+        self.assertGreater(len(batches), 1, "the book kept encoding between the window requests")
+
+    def test_a_request_that_does_not_fit_the_disk_budget_is_refused_before_anything_is_written(self):
+        budget = self.align.book_jobs.registry.budget
+        budget.claim("someone-else", budget.total - 1000)
+        try:
+            raw = self.body().replace(b'"http-402"', b'"http-402-full"')
+            status, body = exchange(self.port, post_head(len(raw)), [raw])
+        finally:
+            budget.release("someone-else")
+        self.assertEqual(status, 507, body)
+        self.assertIn("full", json.loads(body)["detail"])
+        self.assertFalse((self.media / "alignment" / "book-jobs" / "http-402-full").exists())
+        self.assertEqual(budget.reserved("http-402-full"), 0)
 
 
 if __name__ == "__main__":

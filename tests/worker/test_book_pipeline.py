@@ -449,6 +449,40 @@ class Pipeline(PipelineFixture):
                 self.assertEqual(self.wait(restarted, key)["state"], "done")
         restarted.shutdown()
 
+    def test_two_resumed_jobs_whose_retained_emissions_need_each_others_disk_do_not_wait_forever(self):
+        # Round 2 review: each unfinished job keeps its emissions (R bytes) and needs R + its metadata room to
+        # go on; the budget holds one of them and half of the other's files. Resumed together, each waited
+        # for the other's files forever. Resumed in turn, the older one cannot fit while the other's files
+        # wait for it: it fails with a clear error and releases them, and the other finishes.
+        from book_session import meta_bytes
+        plan = mock.patch.object(book_align, "plan_groups", lambda longform, should_stop=None:
+                                 self.plan(longform.em.shape[0]))
+        root = self.media / "alignment" / "book-jobs"
+        with plan:
+            jobs = self.jobs(FakeModel())
+            for created, key in enumerate(("book-1", "book-2")):
+                jobs.start({**self.request, "jobId": key})
+                self.assertEqual(self.wait(jobs, key)["state"], "done")
+            jobs.shutdown()
+            for created, key in enumerate(("book-1", "book-2")):
+                state = json.loads((root / key / "state.json").read_text())
+                (root / key / "state.json").write_text(json.dumps({**state, "state": "aligning",
+                                                                    "createdAt": 1000.0 + created}))
+                (root / key / "result.json").unlink()
+                for group in (root / key / "groups").glob("[0-9]*.json"):
+                    group.unlink()
+            retained = book_session_folder_bytes(root / "book-1")
+            need = retained + meta_bytes(len(self.request["sentences"]))
+            budget = need + retained // 2
+            stages = WorkerStages(self.media / "alignment", lambda: FakeModel(), "cpu", env=self.env)
+            restarted = BookJobs(root, stages, SessionRegistry(DiskBudget(budget), idle=900))
+            self.assertEqual(restarted.resume_all(), ["book-1", "book-2"])
+            first, second = self.wait(restarted, "book-1"), self.wait(restarted, "book-2")
+        self.assertEqual((first["state"], second["state"]), ("failed", "done"), (first, second))
+        self.assertIn("never fit", first["error"])
+        self.assertEqual(sorted(p.name for p in (root / "book-1").iterdir()), ["state.json"])
+        restarted.shutdown()
+
     def test_a_track_replaced_while_stopped_gives_a_result_from_the_new_audio(self):
         # Review round 1: the same request, track 1 replaced by different audio of the same duration while the
         # worker is stopped after group 1. The concatenated emissions, the plan and groups 0 and 1 are stale.
@@ -484,9 +518,10 @@ class Pipeline(PipelineFixture):
             fresh_jobs = self.jobs(ContentModel())
             fresh_jobs.start({**self.request, "jobId": "book-2"})
             self.assertEqual(self.wait(fresh_jobs, "book-2")["state"], "done")
+            # Read before the fetch, which deletes the job's folder.
+            fresh_group = json.loads((self.media / "alignment" / "book-jobs" / "book-2" / "groups" / "0.json")
+                                     .read_text())["stats"]["emissionsDigest"]
             fresh = fresh_jobs.result("book-2")
-        fresh_group = json.loads((self.media / "alignment" / "book-jobs" / "book-2" / "groups" / "0.json")
-                                 .read_text())["stats"]["emissionsDigest"]
         self.assertNotEqual(old_group, fresh_group, "the new audio gives other emissions")
         self.assertEqual(resumed["stats"]["emissionsDigest"], fresh["stats"]["emissionsDigest"],
                          "every group of the resumed job was aligned on the new audio's emissions")
@@ -533,11 +568,53 @@ class Pipeline(PipelineFixture):
             client.join(10)
         self.assertEqual(status["state"], "done", status)
         self.assertGreater(len(seen), 3)
-        self.assertEqual({(a, b, c) for a, b, c, _ in seen}, {(1, True, 1)},
-                         "each batch held the gate's one slot, and /health's busy fields show it")
+        self.assertEqual({(a, b, c) for a, b, c, _ in seen}, {(0, False, 1)},
+                         "each batch held the gate's one slot; /health's window fields do not show it")
+        self.assertEqual(refusals, [], "a book batch never makes a window request refused")
         during = [calls for _, calls in windows if 0 < calls < len(seen)]
         self.assertTrue(during, "window requests ran between the book's batches")
         self.assertEqual(gate.active, 0)
+
+    def test_a_book_waiting_for_window_requests_reports_it_and_the_queue_stays_truthful(self):
+        import deadline
+        gate = deadline.Gate(1)
+        jobs = self.jobs(FakeModel())
+        jobs.stages.admission = gate
+        with mock.patch.multiple(deadline, create=True, WINDOW_GRACE_S=0.0, WINDOW_RETRY_S=0.0), \
+                mock.patch.object(book_align, "plan_groups", lambda longform, should_stop=None:
+                                  self.plan(longform.em.shape[0])):
+            with gate.hold():  # a window request that lasts while both books are ready to encode
+                jobs.start(self.request)
+                jobs.start({**self.request, "jobId": "book-2"})
+                deadline_at = time.monotonic() + 60
+
+                def holder_and_next():  # whichever book decoded first holds the encoder
+                    states = [jobs.status(key) for key in ("book-1", "book-2")]
+                    states.sort(key=lambda state: state["progress"].get("encodeQueuePosition") is None or
+                                state["progress"].get("encodeQueuePosition"))
+                    return states
+
+                while True:
+                    first, second = holder_and_next()
+                    if first["progress"].get("waitingForWindowRequests") and \
+                            second["progress"].get("encodeQueuePosition") == 1:
+                        break
+                    self.assertLess(time.monotonic(), deadline_at, (first, second))
+                    time.sleep(0.05)
+                time.sleep(0.3)
+                first, second = holder_and_next()
+                self.assertEqual(first["state"], "encoding")
+                self.assertEqual(first["progress"]["encodeQueuePosition"], 0, "it holds the encoder")
+                self.assertGreaterEqual(first["progress"]["gateWaitSeconds"], 0.3, "and says how long it has waited")
+                self.assertEqual(second["progress"]["encodeQueuePosition"], 1, "the next book waits behind it")
+                self.assertNotIn("waitingForWindowRequests", second["progress"])
+                self.assertEqual(gate.background_active, 0)
+                holder = first["jobId"]
+            for key in ("book-1", "book-2"):
+                self.assertEqual(self.wait(jobs, key)["state"], "done")
+        status = jobs.status(holder)
+        self.assertGreaterEqual(status["stageTimings"]["gateWait"], 0.3)
+        self.assertIs(status["progress"]["waitingForWindowRequests"], False)
 
     def test_cancel_during_the_encode_releases_everything(self):
         model = FakeModel()
@@ -713,11 +790,17 @@ class Endpoints(unittest.TestCase):
                 while client.get("/book-jobs/http-1", headers=auth).json()["state"] != "done":
                     self.assertLess(time.monotonic(), deadline)
                     time.sleep(0.05)
+                conflict = client.post("/book-jobs", json={**body, "recordingId": "r2"}, headers=auth)
+                self.assertEqual(conflict.status_code, 409)
                 result = client.get("/book-jobs/http-1/result", headers=auth)
                 self.assertEqual(result.status_code, 200)
                 self.assertEqual(result.json()["engine"], align.BOOK_ENGINE)
-                conflict = client.post("/book-jobs", json={**body, "recordingId": "r2"}, headers=auth)
-                self.assertEqual(conflict.status_code, 409)
+                # Fetched: the job's folder is gone with its reservation, so the job is unknown now.
+                self.assertEqual(client.get("/book-jobs/http-1", headers=auth).status_code, 404)
+                self.assertEqual(client.get("/book-jobs/http-1/result", headers=auth).status_code, 404)
+                self.assertFalse((media / "alignment" / "book-jobs" / "http-1").exists())
+                again = client.post("/book-jobs", json=body, headers=auth)
+                self.assertEqual(again.status_code, 202, again.text)
                 self.assertEqual(client.delete("/book-jobs/http-1", headers=auth).json()["state"], "cancelled")
                 self.assertEqual(client.get("/book-jobs/http-1", headers=auth).status_code, 404)
                 self.assertEqual(client.get("/book-jobs/missing/result", headers=auth).status_code, 404)
