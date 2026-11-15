@@ -35,7 +35,17 @@ import { iso3 } from "./language.ts";
 
 export const EBOOK_SET_TOP_K = 5;
 
-export type EbookSetMemberStatus = "held" | "accepted" | "rejected";
+/**
+ * `pending`: the member is recorded and its evaluation against the narration has not ended yet; the background
+ * evaluation (`server/ebook-set-evaluation.ts`) runs it, also after a restart (#325).
+ */
+export type EbookSetMemberStatus = "pending" | "held" | "accepted" | "rejected";
+
+/**
+ * Why a member is held. `awaiting_worker` is re-examined by the background evaluation once a worker is configured;
+ * `evaluation_failed` (the evaluation threw, the message is in the evidence) waits for a retry by an administrator.
+ */
+export type EbookSetHoldReason = "awaiting_audio" | "awaiting_worker" | "language_not_supported" | "evaluation_failed";
 
 export type EbookSetMemberEvidence = {
   sharedSentenceCount: number;
@@ -44,6 +54,8 @@ export type EbookSetMemberEvidence = {
   outlier: OutlierCheckResult;
   language: string | null;
   byteSize: number | null;
+  /** Why the evaluation failed (`evaluation_failed`). */
+  error?: string;
 };
 
 export type EbookSetAnchorSample = AnchorSampleScore;
@@ -129,7 +141,7 @@ export function listEbookSetMembers(workId: string) {
       workId: row.workId,
       ebookId: row.ebookId,
       status: row.status as EbookSetMemberStatus,
-      holdReason: row.holdReason,
+      holdReason: row.holdReason as EbookSetHoldReason | null,
       sourceTitle: row.sourceTitle,
       sourceAuthor: row.sourceAuthor,
       language: row.language,
@@ -181,7 +193,7 @@ function upsertMember(input: {
   workId: string;
   ebookId: string;
   status: EbookSetMemberStatus;
-  holdReason?: string | null;
+  holdReason?: EbookSetHoldReason | null;
   sourceTitle?: string | null;
   sourceAuthor?: string | null;
   language?: string | null;
@@ -376,7 +388,7 @@ export async function evaluateEbookSetMember(
     return { status: "held" as const, evidence };
   }
   const injected = Boolean(deps.anchorSample);
-  const workerReady = poolEnabled() && Boolean(process.env.ALIGNMENT_WORKER_TOKEN);
+  const workerReady = ebookSetWorkerConfigured();
   const usesWorker = !injected;
   const pendingOutlier: OutlierCheckResult = {
     passed: false,
@@ -389,7 +401,7 @@ export async function evaluateEbookSetMember(
   };
   let outlier = pendingOutlier;
   let workerUnavailable = usesWorker && !workerReady;
-  let holdReason = "awaiting_worker";
+  let holdReason: EbookSetHoldReason = "awaiting_worker";
   if (!workerUnavailable) {
     try {
       outlier = await runOutlierCheckForEbook(workId, ebookId, recordingId, probe);
@@ -451,47 +463,166 @@ export async function evaluateEbookSetMember(
   return result;
 }
 
-export async function registerUploadedEbookSetMember(
+/** The pool is on and the server holds the worker token: a probe can be tried. */
+export function ebookSetWorkerConfigured() {
+  return poolEnabled() && Boolean(process.env.ALIGNMENT_WORKER_TOKEN);
+}
+
+const noSamples = (): OutlierCheckResult => ({
+  passed: false,
+  reason: "no_spoken_samples",
+  spokenSampleCount: 0,
+  matchedSampleCount: 0,
+  anchorCount: 0,
+  forwardOrder: true,
+  samples: [],
+});
+
+/**
+ * Records an EPUB of a work as a pending member, at once, so a request that adds it never waits for the evaluation
+ * (#325). A member that was already accepted or rejected keeps its result: the file is the same (the id is its hash
+ * or provider md5), so the evaluation would give the same answer. Returns the member's status, or null for a
+ * format that does not join the set.
+ */
+export function markEbookSetMemberPending(
   workId: string,
   ebookId: string,
-) {
+  meta: { sourceTitle?: string | null; sourceAuthor?: string | null; language?: string | null } = {},
+): EbookSetMemberStatus | null {
   const row = db
     .select()
     .from(s.ebookEditions)
     .where(eq(s.ebookEditions.id, ebookId))
     .get();
-  if (!row || row.format !== "epub") return null;
-  return evaluateEbookSetMember(workId, ebookId, { sourceTitle: null });
+  if (!row || row.format !== "epub" || row.workId !== workId) return null;
+  const existing = listEbookSetMembers(workId).find((member) => member.ebookId === ebookId);
+  if (existing && (existing.status === "accepted" || existing.status === "rejected")) return existing.status;
+  let byteSize: number | null = null;
+  try {
+    byteSize = statSync(row.source).size;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const evidence: EbookSetMemberEvidence = existing?.evidence ?? {
+    sharedSentenceCount: 0,
+    uniqueSentenceCount: 0,
+    audioSupportedCoverage: null,
+    outlier: noSamples(),
+    language: meta.language ?? null,
+    byteSize,
+  };
+  const updatedAt = Date.now();
+  db.insert(s.workEbookSetMembers)
+    .values({
+      workId,
+      ebookId,
+      status: "pending",
+      holdReason: null,
+      sourceTitle: meta.sourceTitle ?? null,
+      sourceAuthor: meta.sourceAuthor ?? null,
+      language: meta.language ?? null,
+      byteSize,
+      evidence: JSON.stringify(evidence),
+      updatedAt,
+    })
+    .onConflictDoUpdate({
+      target: [s.workEbookSetMembers.workId, s.workEbookSetMembers.ebookId],
+      set: { status: "pending", holdReason: null, updatedAt },
+    })
+    .run();
+  return "pending";
 }
 
-export async function reevaluateEbookSetForWork(workId: string) {
-  const members = listEbookSetMembers(workId).filter((m) => m.status === "held");
-  if (!firstRecordingWithLocalAudio(workId)) return [];
-  let results: Awaited<ReturnType<typeof evaluateEbookSetMember>>[] = [];
+/** An evaluation that threw: the member is held with the reason, so it neither runs again by itself nor vanishes. */
+function holdFailedMember(member: ReturnType<typeof listEbookSetMembers>[number], error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  console.warn(`Ebook set evaluation of ${member.ebookId} failed: ${message}`);
+  upsertMember({
+    workId: member.workId,
+    ebookId: member.ebookId,
+    status: "held",
+    holdReason: "evaluation_failed",
+    evidence: { ...member.evidence, outlier: noSamples(), audioSupportedCoverage: null, error: message },
+  });
+}
+
+// One evaluation run per work at a time: the background evaluation and a reevaluate request never probe the same
+// members side by side, and a later run starts from the results of the earlier one.
+const workRuns = new Map<string, Promise<unknown>>();
+
+function runForWork<T>(workId: string, run: () => Promise<T>): Promise<T> {
+  const previous = workRuns.get(workId) ?? Promise.resolve();
+  const next = previous.then(run, run);
+  workRuns.set(workId, next);
+  const forget = () => {
+    if (workRuns.get(workId) === next) workRuns.delete(workId);
+  };
+  next.then(forget, forget);
+  return next;
+}
+
+/** Tests: forget the runs in progress, as a restarted server has none. */
+export function forgetEbookSetRunsForTests() {
+  workRuns.clear();
+}
+
+async function evaluateMembers(
+  workId: string,
+  members: ReturnType<typeof listEbookSetMembers>,
+  onFailure?: (member: (typeof members)[number], error: unknown) => void,
+) {
+  const results: Awaited<ReturnType<typeof evaluateEbookSetMember>>[] = [];
   try {
-    results = await withProbeSession(workId, async (probe) => {
-      const out = [];
-      for (const member of members)
-        out.push(
-          await evaluateEbookSetMember(
-            workId,
-            member.ebookId,
-            {
-              sourceTitle: member.sourceTitle,
-              sourceAuthor: member.sourceAuthor,
-              language: member.language,
-              byteSize: member.byteSize,
-            },
-            probe,
-          ),
-        );
-      return out;
+    await withProbeSession(workId, async (probe) => {
+      for (const member of members) {
+        const meta = {
+          sourceTitle: member.sourceTitle,
+          sourceAuthor: member.sourceAuthor,
+          language: member.language,
+          byteSize: member.byteSize,
+        };
+        if (!onFailure) {
+          results.push(await evaluateEbookSetMember(workId, member.ebookId, meta, probe));
+          continue;
+        }
+        try {
+          results.push(await evaluateEbookSetMember(workId, member.ebookId, meta, probe));
+        } catch (error) {
+          onFailure(member, error);
+        }
+      }
     });
   } finally {
     const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
     await syncEbookSetConsensus(workId);
   }
   return results;
+}
+
+/**
+ * Runs the evaluation of a work's pending members (the background evaluation). A member whose evaluation throws is
+ * held as `evaluation_failed`; one without server audio is held as `awaiting_audio`, as before.
+ */
+export function evaluatePendingEbookSetMembers(workId: string) {
+  return runForWork(workId, async () => {
+    const members = listEbookSetMembers(workId).filter((member) => member.status === "pending");
+    if (!members.length) return [];
+    return evaluateMembers(workId, members, holdFailedMember);
+  });
+}
+
+/** Evaluates a work's held and pending members again and waits for the results (`POST .../ebook-set/reevaluate`). */
+export function reevaluateEbookSetForWork(workId: string) {
+  return runForWork(workId, async () => {
+    const hasAudio = !!firstRecordingWithLocalAudio(workId);
+    // Without server audio a held member would only be held again; a pending one still needs its first result.
+    const members = listEbookSetMembers(workId).filter(
+      (member) => member.status === "pending" || (hasAudio && member.status === "held"),
+    );
+    // With server audio the consensus is synced even when no member needed a new result, as before.
+    if (!hasAudio && !members.length) return [];
+    return evaluateMembers(workId, members);
+  });
 }
 
 export async function fetchTopKIntoEbookSet(

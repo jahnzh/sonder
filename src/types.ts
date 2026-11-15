@@ -212,7 +212,7 @@ export type TorrentHealth = {
 };
 
 // Activity page (#357): one row per unit of background work, grouped under the background process that produces it.
-export type ActivityKind = "acquisition" | "server-copy" | "series-acquisition" | "alignment" | "hardcover";
+export type ActivityKind = "acquisition" | "server-copy" | "series-acquisition" | "alignment" | "hardcover" | "ebook-set";
 export type ActivityState = "running" | "queued" | "paused" | "failed" | "done";
 export type ActivityItem = {
   id: string;
