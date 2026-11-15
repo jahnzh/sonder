@@ -228,24 +228,32 @@ test("a job resumed, prepared again or rebuilt between the listing and the remov
   ];
   for (const [label, change] of cases) {
     install();
-    const job = await finishedJob();
+    // Two finished jobs on WSL; the run removes them in name order and awaits each removal.
+    const jobs = [await settled((await chapterJob()).id), await settled((await chapterJob()).id)]
+      .sort((a, b) => a.id.localeCompare(b.id));
+    assert.deepEqual(fake.stagedFolders("wsl"), jobs.map((job) => job.id), label);
+    const [first, second] = jobs;
     stopAlignments();
     let changed = false;
+    // While the first folder's removal runs, the second job becomes active again.
     fake.hosts.wsl.afterCommand = async (command) => {
-      if (!isListing(command) || changed) return;
+      if (!isRemoval(command) || changed) return;
       changed = true;
-      await change(alignmentJob(job.id));
+      await change(alignmentJob(second.id));
     };
     try {
       const run = await sweep.removePoolStaging();
       assert.ok(changed, label);
-      assert.notEqual(alignmentJob(job.id).status, "partial", `${label}: the job is active again`);
-      assert.equal(result(run, "wsl", job.id).result, "kept", label);
-      assert.deepEqual(removals(fake.hosts.wsl), [], `${label}: no removal sent`);
-      assert.deepEqual(fake.stagedFolders("wsl"), [job.id], label);
-      assert.equal(sweep.stagingNameRetired(job.id), false, `${label}: the name stays usable`);
+      assert.equal(result(run, "wsl", first.id).result, "removed", label);
+      assert.equal(result(run, "wsl", second.id).action, "remove", `${label}: the listing had marked it for removal`);
+      assert.notEqual(alignmentJob(second.id).status, "partial", `${label}: the job is active again`);
+      assert.equal(result(run, "wsl", second.id).result, "kept", label);
+      assert.match(result(run, "wsl", second.id).detail ?? "", /Checked again under the lease/, label);
+      assert.equal(removals(fake.hosts.wsl).length, 1, `${label}: one removal sent`);
+      assert.deepEqual(fake.stagedFolders("wsl"), [second.id], label);
+      assert.equal(sweep.stagingNameRetired(second.id), false, `${label}: the name stays usable`);
     } finally {
-      endQueued(job.id);
+      endQueued(second.id);
       resetAlignmentRunnerForTests();
     }
   }
@@ -409,4 +417,22 @@ test("a second real run while one is running is refused", async () => {
   await assert.rejects(sweep.removePoolStaging(), (error: Error & { statusCode?: number }) => error.statusCode === 409);
   release();
   await first;
+});
+
+test("a host whose worker media root lies inside a pool-jobs folder is listed with an error and nothing is removed", async () => {
+  await finishedJob();
+  const nested = join(fake.hosts.wsl.root, "alignment", "pool-jobs", "x");
+  const plain = fake.fetch;
+  globalThis.fetch = async (input, init) => {
+    const response = await plain(input, init);
+    if (!String(input).startsWith(fake.hosts.wsl.workerUrl) || !String(input).endsWith("/health")) return response;
+    return Response.json({ ...(await response.json()), mediaRoot: nested });
+  };
+  try {
+    const run = await sweep.removePoolStaging({ host: "wsl" });
+    assert.match(run.hosts[0].error ?? "", /inside a pool-jobs folder/);
+    assert.deepEqual(removals(fake.hosts.wsl), []);
+  } finally {
+    globalThis.fetch = fake.fetch;
+  }
 });
