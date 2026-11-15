@@ -273,7 +273,8 @@ yet. The window endpoints (`/align`, `/anchor`, `/anchor-batch`) and their
 engine `ctc-wav2vec2-base-960h-torchaudio-2.8-v2` are unchanged. A whole-book
 job is a new engine generation, `ctc-wav2vec2-base-960h-torchaudio-2.8-book-v1`
 (`book_job.BOOK_ENGINE`), with the same model. `/health` reports it under
-`bookJobs: {engine, ready, jobs}`.
+`bookJobs: {engine, ready, jobs, slotsHeld}`; `slotsHeld` is the number of the
+worker's slots that encode batches hold at that moment (see "Shared GPU").
 
 Code: `worker/book_job.py` (lifecycle, stages, resume), `book_session.py`
 (per-book session, #391), `book_audio.py` (decode), `book_encode.py`
@@ -284,7 +285,20 @@ interface and are not copied into the image.
 ### Endpoints
 
 Every request carries `Authorization: Bearer <ALIGNMENT_WORKER_TOKEN>`; a
-missing or wrong token is `401`.
+missing or wrong token is `401`. For `POST /book-jobs` the token is checked
+before any of the body is read. A body larger than 32 MiB
+(`align.BOOK_REQUEST_MAX_BYTES`) is `413`: refused unread when its
+`Content-Length` says so, and cut off at the limit when it is sent chunked.
+The largest request of the 2026-11-14 set is 7.8 MB (the complete works in
+the *Dorian Gray* ebook, 71,225 sentences; the 33 h book's is 2.9 MB), so the
+limit is four times that, about a request at the 200,000-sentence limit of
+that book's average sentence length. A body that is not a valid start request
+is `422`.
+
+Trust model: the worker trusts whoever holds the token. There is one server
+and one token per worker, so any holder of the token can read the progress
+and the result of any job and cancel it; jobs are not owned by a caller. This
+is the same model as the window endpoints.
 
 | Request | Answer |
 | --- | --- |
@@ -308,8 +322,9 @@ missing or wrong token is `401`.
 ```
 
 The job's identity is a hash of `recordingId`, `audioFingerprint`,
-`language`, `sentences` and `tracks`. `duration` sizes the disk reservation;
-the worker probes the container duration itself.
+`language`, `sentences` and `tracks`. The worker probes each track's container
+duration itself (ffprobe) and sizes the decode and the disk reservation from
+that. `duration` is used only for a track whose duration ffprobe cannot read.
 
 ### Progress
 
@@ -324,7 +339,8 @@ the worker probes the container duration itself.
 `state` goes `queued` (waiting for the disk budget) → `decoding` → `encoding` →
 `anchoring` → `aligning` → `finishing` → `done`, or ends in `failed` (with
 `error`) or `cancelled`. `progress` grows as the job goes on:
-`tracksTotal`, `tracksDecoded`, `tracksEncoded`; `encodeQueuePosition` while
+`tracksTotal`, `tracksDecoded`, `tracksEncoded`; `diskReservedBytes`, the
+job's current disk reservation; `encodeQueuePosition` while
 encoding (`0` encoding, `1…` waiting); then `groupsTotal`, `groupsDone` and
 `anchors` (`candidates`, `chain`, `chainRateDropped`, `groups`,
 `anchorSeconds`). `stageTimings` holds seconds per stage (`identity`, `decode`,
@@ -370,6 +386,15 @@ yet (next ticket).
   ranges, each decoded by its own ffmpeg (`-ss`/`-t`, which seek by timestamp)
   and cut or padded to its exact sample count. All ranges of all tracks share
   `ALIGNMENT_BOOK_DECODE_WORKERS` processes (default CPUs − 1, at most 8).
+  The ranges of a track are joined in place: appended to the first one and
+  deleted one at a time, so a join never holds a second copy of the track.
+* **Bounded writes.** Every ffmpeg gets a byte cap (`-fs`): its range's
+  length plus 2 s, or for the last range of a track the rest of the
+  container's duration plus 10 % and 1 s. A range that reaches its cap fails the
+  job (`Track N decodes to more audio than its container's … allow`), so a
+  file that holds more than its container says cannot write past its
+  reservation. ffmpeg stops at most 225 KB past a cap (measured on WSL, ffmpeg
+  6.1, WAV, AAC and MP3, caps 0.1 to 200 MB); 1 MiB is allowed per range.
 * **One continuous encode.** The windows of all tracks (each track on its own
   grid: 20 s cores, 5 s context) form one stream. Consecutive windows of equal
   length are batched, `ALIGNMENT_BOOK_ENCODE_BATCH` (default 8), with no padding.
@@ -378,6 +403,20 @@ yet (next ticket).
 * **One encode per GPU.** Jobs enter a first-come queue per device before
   encoding. Decoding and aligning of other books run beside it. The window
   endpoints do not use the queue.
+* **Shared GPU.** Each encode batch also holds one slot of the gate the window
+  endpoints use (`deadline.Gate`, `ALIGNMENT_WORKER_SLOTS`), only for that
+  batch, with the batch's results back on the CPU before the slot is given
+  back. So `/health`'s `busy`, `activeRequests` and `busySeconds` include book
+  batches, as `bookJobs.slotsHeld` does. Window requests come first: a batch
+  starts only when a slot is free, no window request runs, none ended in the
+  last 2 s (`WINDOW_GRACE_S`; a window job's next request follows within it)
+  and no window request refused with `409` is still due to retry (the server
+  retries after 3 s; the batch waits for it at most 5 s, `WINDOW_RETRY_S`). The
+  window endpoints take their slot as before and are refused only while a
+  batch runs; with one slot that is at most one batch (a fraction of a second
+  on the GPU, tens of seconds on lisa's CPU). While window requests keep
+  arriving within 2 s of each other the encode waits. A cancel during that
+  wait stops the job.
 * **The aligner** is the v2 anchor chain of `PROTO-D-E-BOOKS.md`, unchanged in
   its parameters (δ 1.5, skip 8, 60 s windows, 20 s margin, text × 1.3) and its
   four chain constants (locate every 240 s, groups ≥ 600 s, rate floor 0.25).
@@ -412,15 +451,33 @@ It ends exactly once:
   from the server, which also stops a running job and deletes its folder;
 * on worker stop, when the folder is kept.
 
+Ending a session stops its group-alignment processes first: SIGTERM, then
+SIGKILL after 5 s (`book_session.TERMINATE_GRACE_S`), and waits until they
+have exited. Only then are the folder deleted and the reservation released.
+A process stuck in the kernel (a read from a failing disk) delays that until
+it exits.
+
 Locks are taken in the order `BookJobs` → session registry → session → disk
 budget, and `Job.save_lock` before `Job.lock`. No lock is held while waiting
 for the encode queue, a process or book I/O.
 
 One disk budget per worker, `ALIGNMENT_BOOK_DISK_BYTES` (default 64 GiB), covers
-decoded audio and emissions together. A job reserves its estimate before
-decoding: listed duration × (32,000 B/s PCM + 5,800 B/s emissions) + 5 %. A book
-that does not fit next to the other sessions waits in `queued`. A book larger
-than the whole budget fails at once.
+everything in the job folders. A job's reservation is what its folder holds plus
+the most the next stage adds at its peak, set again before each stage that
+writes, from the probed durations and the files on disk:
+
+* before decoding: every range at its cap plus one range for the join (PCM is
+  32,000 B/s), the missing tracks' emissions (2,900 B/s) and the book's
+  concatenated copy of all emissions;
+* after decoding: the emissions still to be written and the book copy, exactly;
+* before the book copy is written: its size;
+* always: 16 MiB plus 1 KiB per sentence for state, plan, group and result files.
+
+`start` counts the request and state files it writes. A book that does not fit
+next to the other sessions waits in `queued`. A book larger than the whole budget
+fails at once. When the worker starts, the files of every retained job folder
+(and of any folder it does not recognise) are claimed in the budget before any
+job is resumed, so a restart cannot admit more than the disk holds.
 
 Everything is kept under `MEDIA_ROOT/alignment/book-jobs/<jobId>/`:
 `request.json`, `state.json`, `tracks/` (PCM), `emissions/<n>.f16` + `<n>.json`
@@ -429,8 +486,12 @@ Everything is kept under `MEDIA_ROOT/alignment/book-jobs/<jobId>/`:
 `result.json`. Groups are the unit of progress and resume. When the worker
 starts, every unfinished job continues. Tracks whose emissions match their
 source digest are not decoded or encoded again; the stored plan and finished
-groups are reused. A track whose bytes changed is decoded and encoded again. A
-job folder written by another engine generation starts over.
+groups are reused. A track whose bytes changed is decoded and encoded again,
+and the book copy of the emissions, the plan and the finished groups are
+computed again: all three carry `emissionsKey`, a hash of every track's
+emission identity (source sha256 and engine) and frame count, and are reused
+only when it matches. A job folder written by another engine generation starts
+over.
 
 ## Overlapped audio extraction (#346)
 
