@@ -608,8 +608,18 @@ test("test mode fails closed: no default directory or worker URL, and host steps
   assert.equal(local.status, 90, local.stdout + local.stderr);
   assert.match(local.stderr, /test mode: host_systemctl was not replaced by the test and would reach a real host/);
 
-  const remote = await run("bash", [installer, "--host", "192.168.1.119", "--dir", host.dir, "--worker-url", host.url],
-    { env, cwd: repoRoot });
+  // A checkout of its own: --host resolves a commit, and the snapshot `npm run check` runs in has no .git.
+  const checkout = join(host.root, "checkout");
+  for (const path of ["worker", "deploy", "scripts/install-ctc-workers.sh", "scripts/ctc-worker-install-helper.py"]) {
+    cpSync(join(repoRoot, path), join(checkout, path), { recursive: true });
+  }
+  for (const args of [["init", "-q"], ["add", "worker", "deploy", "scripts"], ["commit", "-q", "-m", "worker"]]) {
+    const git = spawnSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.invalid", ...args],
+      { cwd: checkout, env: cleanEnv(), encoding: "utf8" });
+    assert.equal(git.status, 0, git.stderr);
+  }
+  const remote = await run("bash", [join(checkout, "scripts", "install-ctc-workers.sh"), "--host", "192.168.1.119",
+    "--dir", host.dir, "--worker-url", host.url], { env, cwd: checkout });
   assert.equal(remote.status, 90, remote.stdout + remote.stderr);
   assert.match(remote.stderr, /test mode: host_ssh was not replaced/);
 
