@@ -51,7 +51,8 @@ Code that needs a worker asks the pool for a **worker lease**
 (`acquireWorkerLease` in `server/alignment-pool.ts`, ADR 0013). The pool tries
 the configured hosts in rank order and gives the first one that is healthy,
 has the work's device and precision, answers SSH and has a free slot, with the
-recording's tracks staged under `MEDIA_ROOT/alignment/pool-jobs/<id>` on it.
+recording's tracks staged under `MEDIA_ROOT/alignment/pool-jobs/<id>` on it
+(`<id>.r1`, `<id>.r2`, … once the sweep below has retired the plain name).
 Alignment jobs and ebook-set probes (also passage locating) use the same lease.
 After a failed request, `failover` moves the lease to the next host the work has
 not tried and stages the tracks there again. A job tries at most two hosts, the
@@ -69,18 +70,17 @@ The caller releases the lease on every exit, saying how the work ended:
 
 A job runner reads the outcome from the job's stored status when its run ends.
 Neither outcome deletes anything on the hosts: a job's staged audio stays
-there, as it did before leases. Removing it is #421, which runs inside the
-server under leases. Two reviewed attempts at removing it on a finished release
-showed that a remote delete can outlive the claim that protected it and reach
-the folder a later run of the same job has staged into, so this change leaves
-it out.
+there until the sweep below removes it. Two reviewed attempts at removing it on
+a finished release showed that a remote delete can outlive the claim that
+protected it and reach the folder a later run of the same job has staged into.
 
 The lease records what it staged and where: a job's stored assignment keeps
 every host it staged its tracks on and the folder there (`pool.stagedHosts`)
 across requeues, Resume, a new plan of the same pair and server restarts. An
 entry for a host that is not configured at the moment (left out of
 `ALIGNMENT_POOL_HOSTS` for a while, or a retired host in a row of older code) is
-kept. #421 reads this record to find the folders.
+kept. The sweep reads this record to find the folders. Deleting a job row
+keeps where it staged (`alignment_pool_orphans`).
 
 Probes always release as finished. A probe's folder is its own and nothing
 reuses it, so its release removes it, as before leases.
@@ -93,13 +93,83 @@ Accepted limitations, kept as they are:
   host.
 - A probe removal that fails or times out leaves the folder.
 
-### Staged job audio
+### Removing staged job audio (#421)
 
-Job staging is not removed: it was not before leases (32 job folders on WSL on
-2026-11-14), and it is not now. That audio, and what the limitations above
-leave, stays on the hosts until the server removes it under leases (#421). Do not delete folders
-under `pool-jobs/` by hand while jobs or probes run: a resumed or rebuilt job
-reuses its folder, and a probe keeps reading its folder for the whole batch.
+Staged job audio, from before leases (32 job folders on WSL on 2026-11-14) and
+after, is removed by the administrator's sweep inside the server
+(`server/alignment-pool-sweep.ts`). Run the dry run first:
+
+- `GET /api/alignments/pool/staging` (admin only; `?host=<id>` for one host)
+  lists, per configured host, the worker's media root and the real paths of
+  that root and of its `alignment/pool-jobs` folder (`realRoot`,
+  `realPoolJobs`: symlinks resolved on the host), every entry under
+  `alignment/pool-jobs` with its size (`du -sk`, KiB), the job and status the
+  server records for it, and what a run would do now: **remove** (its
+  job is finished, ready, partial, failed or cancelled, or the job was
+  deleted, or the name was retired by an earlier run), **keep** (the job is
+  queued, copying, processing or paused, a lease holds the folder, the
+  recording's lease is held by any job or probe, or a run of the job is in
+  flight between its leases: the same checks the run makes) or **unknown**
+  (the server has no record of it). Each host also reports `removableKiB`,
+  the size of the folders marked remove. A host that cannot be reached
+  reports its error and lists nothing. Every configured host is listed, also
+  for `?host=`, because of the refusal below.
+- **Refusal.** A run removes nothing on any host unless every configured host
+  was listed without an error in that run and no host's real media root or
+  real pool-jobs folder lies strictly inside another host's (or its own) real
+  pool-jobs folder: `rm -rf` of a job folder on one host would otherwise
+  remove what a worker whose root is inside it stages. Two hosts with the same
+  real pool-jobs folder are allowed (different machines often use the same
+  path; one shared folder is covered by the global retired names). The dry
+  run and the run report the reason as `refused` on every host, and a
+  refused dry run marks nothing remove and counts nothing removable. Fix the
+  host (bring it up) or the configuration (`ALIGNMENT_POOL_HOSTS`, the
+  workers' `MEDIA_ROOT`) and run the dry run again.
+- `POST /api/alignments/pool/staging/remove` (admin only; an empty body, or
+  `{"host": "<id>"}`) lists again and removes each folder marked remove, one at
+  a time per host. One run at a time; a second gets 409. Each folder's result
+  is `removed`, `kept` (with the reason it was found in use when checked
+  again) or `failed` (the removal failed or passed its 60 s deadline; the
+  name stays retired and a later run removes the folder).
+
+How a removal stays away from live work: the sweep takes the recording's lease
+(no job or probe of the recording can take a host meanwhile), then, in one
+write transaction, reads the job's row again, checks that no lease and no run of
+the job is live in this server, and retires the folder's name
+(`alignment_pool_retired`). Only then is `rm -rf -- <folder>` sent. Staging
+chooses its folder name after leasing the host and the recording and never
+uses a retired name, so a later run of the same job stages under `<id>.r1`, and
+a removal that is still running after its deadline, after a server restart or
+on a slow host can only reach a folder nothing stages into again.
+
+What the real paths cannot see: a worker root that is physically inside
+another host's pool-jobs folder without the resolved paths showing it, such
+as a bind mount, or one network share mounted at unrelated paths on two
+machines (or reached as two host entries). Configure each worker's
+`MEDIA_ROOT` on its own disk or folder, never inside or mounted from another
+worker's `alignment/pool-jobs` (`scripts/install-ctc-workers.sh` sets each
+worker's `MEDIA_ROOT` to `<its install directory>/media` on its own host).
+
+Unknown folders are never removed by this version: folders whose job row no
+longer records them (staged before `pool.stagedHosts` existed and since
+cleared, or of a job deleted before #421), probe folders of probes that ended in
+an earlier server process (nothing records probes), files, symlinks and names
+the pool does not make. Do not delete folders under `pool-jobs/` by hand while
+jobs or probes run: a resumed or rebuilt job reuses its folder, and a probe
+keeps reading its folder for the whole batch.
+
+**Leftover probe folders (a known limit).** A probe interrupted before its own
+cleanup (a server restart, a failed removal) leaves a `ctc-probe-<uuid>`
+folder that the sweep lists as unknown for good: nothing durable records
+probe stagings, and this version does not add such a record. A probe folder
+is listed as keep while its probe runs in this server; probe ids are random
+and never reused, so a `ctc-probe-<uuid>` folder the dry run lists as
+**unknown** belongs to a probe that has ended and nothing stages into it
+again. The administrator removes such a folder by hand on its host, by the
+path the dry run prints (`rm -rf -- '<path>'`), right after a dry run that
+shows it unknown and reports no `refused` on any host, while one server
+process uses the pool. Do not do this for other unknown folders: a job
+folder without a record may still belong to a job.
 
 ## Host configuration
 
@@ -951,6 +1021,7 @@ The one-off CTC and Whisper probing comparison passed for all eight titles; the 
 | --- | --- |
 | Route CTC to WSL first and lisa as the only fallback; never send it to production. | `tests/alignment-ctc.test.ts`: unreachable, busy or incompatible WSL; legacy assignment; disabled pool; and cross-host retry tests. `tests/alignment-pool.test.ts`: production URL rejection, SSH diagnostics and staging tests. |
 | Hand out worker leases: first healthy host by rank, fallback when down or full, re-staging after a worker or server restart, release on every exit, staged audio removed on a finished release only (#394). | `tests/alignment-worker-lease.test.ts` (in-process fake hosts, `tests/fake-pool-host.ts`); host configuration in `tests/alignment-pool-hosts.test.ts`. |
+| Remove staged job audio under the recording's lease, with a dry run per host; a retired folder name is never staged into again, so a late removal cannot reach a later run (#421). | `tests/alignment-pool-sweep.test.ts` (fake hosts), `tests/alignment-pool-sweep-routes.test.ts` (admin only). |
 | Use reported device and busy state for capability and capacity. | `tests/alignment-ctc.test.ts`: incompatible or busy WSL and both workers busy. Real `/health` responses identified WSL as CUDA float16 and lisa as CPU float32 before the gates. |
 | Retry a failure once on the other host, retain a retryable failure, and keep CPU and GPU in the same engine generation with device and precision for diagnostics. | `tests/alignment-ctc.test.ts`: cross-host retry and manual Resume, anchored-window failover, and the CPU and GPU metadata assertions. |
 | Install the lisa environment with the pinned CPU wheels and the anchored planner dependency; document the commands. | The commands above completed on lisa; its environment imported Torch and TorchAudio `2.8.0+cpu`, FastAPI `0.121.3`, Uvicorn `0.38.0`. |

@@ -40,6 +40,10 @@ CREATE TABLE IF NOT EXISTS alignment_jobs(id TEXT PRIMARY KEY,ebook_id TEXT NOT 
 CREATE UNIQUE INDEX IF NOT EXISTS alignment_pair ON alignment_jobs(ebook_id,recording_id);
 CREATE TABLE IF NOT EXISTS hardcover_reading_outbox(book_id INTEGER PRIMARY KEY,account_id INTEGER NOT NULL,work_id TEXT NOT NULL REFERENCES works(id),fraction REAL NOT NULL,updated_at INTEGER NOT NULL,error TEXT);
 CREATE TABLE IF NOT EXISTS media_faults(recording_id TEXT NOT NULL REFERENCES recordings(id),scope TEXT NOT NULL,reason TEXT NOT NULL,note TEXT NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(recording_id,scope));
+-- Staged pool audio (#421). A retired folder name is never staged into again; it is written before its removal is sent.
+CREATE TABLE IF NOT EXISTS alignment_pool_retired(name TEXT PRIMARY KEY,job_id TEXT NOT NULL,recording_id TEXT NOT NULL,retired_at INTEGER NOT NULL);
+-- Where a deleted alignment job had staged its tracks: its row is gone, the record stays until the folder is removed.
+CREATE TABLE IF NOT EXISTS alignment_pool_orphans(host_id TEXT NOT NULL,folder TEXT NOT NULL,job_id TEXT NOT NULL,recording_id TEXT NOT NULL,deleted_at INTEGER NOT NULL,PRIMARY KEY(host_id,folder));
 `);
 // Existing alignment maps were all produced by the current aeneas worker.
 const alignmentColumns = new Set(
