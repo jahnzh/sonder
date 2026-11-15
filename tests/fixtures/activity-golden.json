@@ -118,6 +118,25 @@
         }
       },
       {
+        "id": "backups",
+        "label": "Database backups",
+        "type": "loop",
+        "notTracked": false,
+        "pausable": true,
+        "paused": false,
+        "lockedBy": null,
+        "pauseEffect": "No new daily database backup starts. A backup already running finishes. Deploys still make their own backups.",
+        "health": "ok",
+        "reason": "No backup yet · Next run within 10 minutes",
+        "since": null,
+        "counts": {
+          "running": 0,
+          "queued": 0,
+          "failed": 0,
+          "stuck": 0
+        }
+      },
+      {
         "id": "torrent-client",
         "label": "Torrent client",
         "type": "service",
@@ -177,25 +196,6 @@
       {
         "id": "imports",
         "label": "Imports",
-        "type": "loop",
-        "notTracked": true,
-        "pausable": false,
-        "paused": false,
-        "lockedBy": null,
-        "pauseEffect": null,
-        "health": "unknown",
-        "reason": "Not tracked yet.",
-        "since": null,
-        "counts": {
-          "running": 0,
-          "queued": 0,
-          "failed": 0,
-          "stuck": 0
-        }
-      },
-      {
-        "id": "backups",
-        "label": "Database backups",
         "type": "loop",
         "notTracked": true,
         "pausable": false,
@@ -1210,6 +1210,25 @@
         }
       },
       {
+        "id": "backups",
+        "label": "Database backups",
+        "type": "loop",
+        "notTracked": false,
+        "pausable": true,
+        "paused": false,
+        "lockedBy": null,
+        "pauseEffect": "No new daily database backup starts. A backup already running finishes. Deploys still make their own backups.",
+        "health": "ok",
+        "reason": "No backup yet · Next run within 10 minutes",
+        "since": null,
+        "counts": {
+          "running": 0,
+          "queued": 0,
+          "failed": 0,
+          "stuck": 0
+        }
+      },
+      {
         "id": "torrent-client",
         "label": "Torrent client",
         "type": "service",
@@ -1250,25 +1269,6 @@
       {
         "id": "imports",
         "label": "Imports",
-        "type": "loop",
-        "notTracked": true,
-        "pausable": false,
-        "paused": false,
-        "lockedBy": null,
-        "pauseEffect": null,
-        "health": "unknown",
-        "reason": "Not tracked yet.",
-        "since": null,
-        "counts": {
-          "running": 0,
-          "queued": 0,
-          "failed": 0,
-          "stuck": 0
-        }
-      },
-      {
-        "id": "backups",
-        "label": "Database backups",
         "type": "loop",
         "notTracked": true,
         "pausable": false,
@@ -2275,6 +2275,25 @@
         }
       },
       {
+        "id": "backups",
+        "label": "Database backups",
+        "type": "loop",
+        "notTracked": false,
+        "pausable": true,
+        "paused": false,
+        "lockedBy": null,
+        "pauseEffect": "No new daily database backup starts. A backup already running finishes. Deploys still make their own backups.",
+        "health": "ok",
+        "reason": "No backup yet · Next run within 10 minutes",
+        "since": null,
+        "counts": {
+          "running": 0,
+          "queued": 0,
+          "failed": 0,
+          "stuck": 0
+        }
+      },
+      {
         "id": "torrent-client",
         "label": "Torrent client",
         "type": "service",
@@ -2296,25 +2315,6 @@
       {
         "id": "imports",
         "label": "Imports",
-        "type": "loop",
-        "notTracked": true,
-        "pausable": false,
-        "paused": false,
-        "lockedBy": null,
-        "pauseEffect": null,
-        "health": "unknown",
-        "reason": "Not tracked yet.",
-        "since": null,
-        "counts": {
-          "running": 0,
-          "queued": 0,
-          "failed": 0,
-          "stuck": 0
-        }
-      },
-      {
-        "id": "backups",
-        "label": "Database backups",
         "type": "loop",
         "notTracked": true,
         "pausable": false,

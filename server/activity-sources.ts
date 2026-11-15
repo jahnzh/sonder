@@ -9,5 +9,14 @@ import { seriesAcquisitionSource } from "./series-acquisition-activity.ts";
 import { alignmentSource } from "./alignment-activity.ts";
 import { hardcoverSource } from "./hardcover-activity.ts";
 import { ebookSetSource } from "./ebook-set-activity.ts";
+import { backupSource } from "./backups-activity.ts";
 
-export const ACTIVITY_SOURCES = [acquisitionSource, serverCopySource, seriesAcquisitionSource, alignmentSource, hardcoverSource, ebookSetSource];
+export const ACTIVITY_SOURCES = [
+  acquisitionSource,
+  serverCopySource,
+  seriesAcquisitionSource,
+  alignmentSource,
+  hardcoverSource,
+  ebookSetSource,
+  backupSource,
+];

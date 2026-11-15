@@ -19,6 +19,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 // @ts-expect-error The backup command is plain JavaScript without type declarations.
 import { BackupError, backupDatabase } from "../scripts/backup-db.mjs";
+import * as shared from "../server/db-backup.mjs";
 
 // Same dynamic-import pattern as tests/users.test.ts: better-sqlite3 is CommonJS.
 const { default: Database } = (await import("better-sqlite3")) as typeof import("better-sqlite3") & {
@@ -412,6 +413,11 @@ test(
     }
   },
 );
+
+test("npm run backup and the server's daily backups use one backup function (#361)", () => {
+  assert.equal(backupDatabase, shared.backupDatabase);
+  assert.equal(BackupError, shared.BackupError);
+});
 
 test("CLI exits nonzero on failure and zero only for a written backup", () => {
   const dir = tempDir("cli");

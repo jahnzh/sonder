@@ -55,7 +55,7 @@ function contextOf(node, sourceFile) {
 
 export function findDroppingCatches(source, file) {
   const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
-  const options = { noLib: true, noResolve: true };
+  const options = { noLib: true, noResolve: true, allowJs: true };
   const host = ts.createCompilerHost(options);
   host.getSourceFile = (name) => name === file ? sourceFile : undefined;
   const checker = ts.createProgram([file], options, host).getTypeChecker();
