@@ -1,6 +1,7 @@
 // The alignment pool (ADR 0013): it hands out worker leases. A lease is a healthy host with the work's tracks
 // staged on it and the worker's address; health checks, slots, SSH staging, the choice of host, the retry on the
-// next host and the removal of staged audio all happen here. Hosts come from configuration (`ALIGNMENT_POOL_HOSTS`).
+// next host and the record of where a job staged all happen here. Hosts come from configuration (`ALIGNMENT_POOL_HOSTS`).
+// A job's staged audio stays on the hosts: removing it is #421. Only a probe's own staging is removed, as before leases.
 import { execFile } from "node:child_process";
 import { cpSync, mkdirSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
@@ -28,8 +29,9 @@ export type AlignmentJobPoolState = {
   triedHosts: PoolHostId[];
   stagedAudio: Record<string, string>;
   /**
-   * Every host this job has staged its tracks on, and the folder there, across runs and requeues: a finished
-   * release removes them all. Rows written before it name only their current staging (`hostId`/`jobMediaRoot`).
+   * Every host this job has staged its tracks on, and the folder there, across runs, requeues, Resume and a new
+   * plan, also for a host that is not configured right now. Nothing removes these folders yet; #421 will, under
+   * leases. Rows written before it name only their current staging (`hostId`/`jobMediaRoot`).
    */
   stagedHosts?: Record<PoolHostId, string>;
 };
@@ -416,7 +418,7 @@ export async function stageTracksLocally(
 
 /**
  * The assignment a job stores while it has no lease: no current staging, the hosts it tried kept for failover, and
- * the hosts it has staged on kept for the finished release.
+ * the hosts it has staged on kept (for #421).
  */
 export function clearPoolStaging(job: AlignmentJob, triedHosts: PoolHostId[]) {
   job.pool = unstagedAssignment(triedHosts, storedStaging(job.pool));
@@ -424,7 +426,7 @@ export function clearPoolStaging(job: AlignmentJob, triedHosts: PoolHostId[]) {
 
 /**
  * What a job planned again under its own id (a prepare or rebuild) keeps from `pool`: only the hosts the id has
- * staged on, so the new plan's finished release removes them too. Undefined when it staged nowhere.
+ * staged on, so the record of its folders survives the new plan (for #421). Undefined when it staged nowhere.
  */
 export function keptPoolStaging(pool: AlignmentJobPoolState | undefined): AlignmentJobPoolState | undefined {
   const staged = storedStaging(pool);
@@ -454,19 +456,6 @@ function unstagedAssignment(triedHosts: PoolHostId[], stagedHosts: Record<PoolHo
     stagedAudio: {},
     ...(Object.keys(stagedHosts).length ? { stagedHosts: { ...stagedHosts } } : {}),
   };
-}
-
-/**
- * Removes the audio a job's stored assignment says it staged, on every configured host, for a run that ends with
- * the job finished but never held a lease (no host could take it, or it stopped before asking for one).
- */
-export async function removeStoredStaging(id: string, pool: AlignmentJobPoolState | null | undefined) {
-  const coord = getAlignmentPoolCoordinator();
-  const deadline = AbortSignal.timeout(probeCleanupTimeoutMs);
-  await Promise.all(Object.entries(storedStaging(pool)).map(([hostId, folder]) => {
-    const host = coord.hostById(hostId);
-    return host ? removeStaging(host, folder, id, deadline) : undefined;
-  }));
 }
 
 /** Every host that could take the work is held by other CTC work. */
@@ -566,9 +555,9 @@ export function stagingFolder(workerRoot: string, id: string) {
 }
 
 /**
- * How long removing staged audio may take: after a release as finished, and after a probe's staging failed or
- * aborted. It has its own deadline, never only the request's: that signal has usually aborted already, and the
- * staged copy can be the whole recording.
+ * How long removing a probe's partly staged directory may take after staging failed or aborted. It has its own
+ * deadline, never the request's: that signal has usually aborted already, and the staged copy can be the whole
+ * recording.
  */
 export const PROBE_CLEANUP_TIMEOUT_MS = 30_000;
 let probeCleanupTimeoutMs = PROBE_CLEANUP_TIMEOUT_MS;
@@ -576,11 +565,12 @@ export function setProbeCleanupTimeoutForTests(ms: number | null) {
   probeCleanupTimeoutMs = ms ?? PROBE_CLEANUP_TIMEOUT_MS;
 }
 
-/** Removes one staging folder of `id` under `signal`. A failure leaves the folder (removed later under leases, #421). */
-async function removeStaging(host: PoolHost, jobMediaRoot: string, id: string, signal: AbortSignal) {
-  if (!jobMediaRoot.endsWith(`/alignment/pool-jobs/${id}`)) return;
+/** Removes a probe's staged directory under its own short deadline. A failure leaves the directory. */
+async function removeProbeStaging(host: PoolHost, jobMediaRoot: string, probeId: string) {
+  if (!jobMediaRoot.includes(`/alignment/pool-jobs/${probeId}`)) return;
+  const cleanup = AbortSignal.timeout(probeCleanupTimeoutMs);
   await untilAborted(
-    poolDeps().exec(host.sshTarget, `rm -rf ${shellQuote(jobMediaRoot)}`, { signal }), signal,
+    poolDeps().exec(host.sshTarget, `rm -rf ${shellQuote(jobMediaRoot)}`, { signal: cleanup }), cleanup,
   ).catch(() => undefined);
 }
 
@@ -608,13 +598,16 @@ async function stageCtcTracks(
     return { jobMediaRoot, stagedAudio };
   } catch (error) {
     // A probe's directory is its own: remove the partial copy instead of leaving audio on the host.
-    if (removeOnFailure)
-      await removeStaging(input.host, jobMediaRoot, input.jobId, AbortSignal.timeout(probeCleanupTimeoutMs));
+    if (removeOnFailure) await removeProbeStaging(input.host, jobMediaRoot, input.jobId);
     throw error;
   }
 }
 
-/** How a lease ends: "finished" removes the staged tracks, "retryable" keeps them for the next run. */
+/**
+ * How a lease ends. "finished": the work has no further use for its staging; for a job that is recorded (its
+ * finished status and `pool.stagedHosts`) for #421, and nothing is deleted. "retryable": the next run of the job
+ * reuses its staging. A probe's staging is its own and never reused: its release removes it either way.
+ */
 export type LeaseRelease = "finished" | "retryable";
 
 export type WorkerLeaseRequest = {
@@ -637,7 +630,7 @@ export type WorkerLeaseRequest = {
   triedHosts?: PoolHostId[];
   /** Receives why each host was skipped (`poolErrors`), also when no host is found. */
   diagnostics?: PoolDiagnostics;
-  /** Ends staging (and its SSH/SCP children); no further host is tried. It also bounds the removal in `release`. */
+  /** Ends staging (and its SSH/SCP children); no further host is tried. It also bounds a probe's removal in `release`. */
   signal?: AbortSignal;
 };
 
@@ -664,7 +657,7 @@ export type WorkerLease = {
    * until the release. Throws as `acquireWorkerLease` does; the lease then holds no host.
    */
   failover(): Promise<void>;
-  /** Frees the host. "finished" also removes every copy this lease staged. Safe to call twice. */
+  /** Frees the host; a job's staged audio stays, a probe's is removed (see LeaseRelease). Safe to call twice. */
   release(outcome: LeaseRelease): Promise<void>;
 };
 
@@ -674,8 +667,13 @@ class PoolWorkerLease implements WorkerLease {
   private held: HeldHost | null = null;
   /** The hosts tried when the lease last lost its host. */
   private lastTried: PoolHostId[];
-  /** Every host this work staged on, and where: by this lease, and by the job's earlier runs (its assignment). */
-  private staged = new Map<PoolHostId, { host: PoolHost; jobMediaRoot: string }>();
+  /**
+   * Every host this work staged on, and the folder there: by this lease, and by the job's earlier runs (its
+   * assignment). An entry for a host that is not configured right now is kept, never dropped.
+   */
+  private staged: Record<PoolHostId, string>;
+  /** What a probe lease staged, removed by its release. */
+  private probeStaging: { host: PoolHost; jobMediaRoot: string }[] = [];
   private released = false;
   private tried: PoolHostId[];
   readonly diagnostics: PoolDiagnostics;
@@ -684,15 +682,11 @@ class PoolWorkerLease implements WorkerLease {
     this.diagnostics = request.diagnostics ?? {};
     this.tried = startingTriedHosts(request);
     this.lastTried = [...this.tried];
-    const coord = getAlignmentPoolCoordinator();
-    for (const [hostId, jobMediaRoot] of Object.entries(storedStaging(request.assignment))) {
-      const host = coord.hostById(hostId);
-      if (host) this.staged.set(hostId, { host, jobMediaRoot });
-    }
+    this.staged = storedStaging(request.assignment);
   }
 
   private stagedHosts(): Record<PoolHostId, string> {
-    return Object.fromEntries([...this.staged].map(([hostId, { jobMediaRoot }]) => [hostId, jobMediaRoot]));
+    return { ...this.staged };
   }
 
   private current() {
@@ -727,8 +721,9 @@ class PoolWorkerLease implements WorkerLease {
       throw error;
     }
     this.tried = [...this.held.triedHosts];
+    this.staged[this.held.hostId] = this.held.jobMediaRoot;
     const host = getAlignmentPoolCoordinator().hostById(this.held.hostId);
-    if (host) this.staged.set(host.id, { host, jobMediaRoot: this.held.jobMediaRoot });
+    if (this.request.kind === "probe" && host) this.probeStaging.push({ host, jobMediaRoot: this.held.jobMediaRoot });
   }
 
   async failover() {
@@ -745,19 +740,24 @@ class PoolWorkerLease implements WorkerLease {
     }
   }
 
-  async release(outcome: LeaseRelease) {
+  async release(_outcome: LeaseRelease) {
     if (this.released) return;
     this.released = true;
     const coord = getAlignmentPoolCoordinator();
     if (this.held) coord.release(this.held.hostId, this.request.id, this.request.recordingId);
     coord.releaseJob(this.request.id);
     this.held = null;
-    if (outcome !== "finished") return;
-    // The staged copies are this work's alone. A caller's deadline (a passage locate) bounds the removal; without
-    // one it has its own.
-    const deadline = this.request.signal ?? AbortSignal.timeout(probeCleanupTimeoutMs);
-    await Promise.all([...this.staged.values()].map(({ host, jobMediaRoot }) =>
-      removeStaging(host, jobMediaRoot, this.request.id, deadline)));
+    // A job's staged audio stays on the hosts, whatever the outcome: removing it is #421, under leases. Two
+    // reviewed attempts showed a delete here can outlive the claim that protected it and reach a later run.
+    if (this.request.kind !== "probe") return;
+    // The staged copy is the whole recording; it is this probe's alone, so remove it.
+    const signal = this.request.signal;
+    await Promise.all(this.probeStaging.map(({ host, jobMediaRoot }) =>
+      jobMediaRoot.includes(`/alignment/pool-jobs/${this.request.id}`)
+        ? untilAborted(
+          poolDeps().exec(host.sshTarget, `rm -rf ${shellQuote(jobMediaRoot)}`, { signal }), signal,
+        ).catch(() => undefined)
+        : undefined));
   }
 }
 

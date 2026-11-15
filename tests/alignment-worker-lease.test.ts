@@ -37,13 +37,21 @@ let recordings = 0;
 
 function install(specs?: Parameters<typeof fakePoolHosts>[1]) {
   fake = fakePoolHosts(join(temp, `hosts-${++recordings}`), specs);
-  resetAlignmentPoolCoordinator(Object.values(fake.hosts).map((host, index) => ({
-    id: host.id, sshTarget: host.sshTarget, maxConcurrent: 1, remoteWorkRoot: host.root, workerUrl: host.workerUrl,
-    device: host.device, precision: host.precision, rank: index + 1,
-  })));
+  configure(Object.keys(fake.hosts));
   setAlignmentPoolDepsForTests(fake.deps);
   globalThis.fetch = fake.fetch;
 }
+
+/** Configures the pool with only these fake hosts, as a server restarted with that `ALIGNMENT_POOL_HOSTS` would. */
+function configure(ids: string[]) {
+  resetAlignmentPoolCoordinator(Object.values(fake.hosts).filter((host) => ids.includes(host.id)).map((host, index) => ({
+    id: host.id, sshTarget: host.sshTarget, maxConcurrent: 1, remoteWorkRoot: host.root, workerUrl: host.workerUrl,
+    device: host.device, precision: host.precision, rank: index + 1,
+  })));
+}
+
+/** Every remote delete sent to the current fake hosts: a job's staging is never removed (#421 will, under leases). */
+const noRemovals = () => Object.values(fake.hosts).flatMap((host) => host.commands.filter((command) => /\brm\b/.test(command)));
 
 /** A recording of its own (one audio track on the server) so each test has its own job id and staging. */
 function recording() {
@@ -67,7 +75,7 @@ async function chapterJob() {
 async function settled(id: string, statuses = ["partial", "ready", "error", "cancelled"]) {
   for (let i = 0; i < 300; i++) {
     const job = alignmentJob(id);
-    // The run has ended, its release (and any removal of staged audio) included.
+    // The run has ended, its release included.
     if (statuses.includes(job.status) && !leaseHeld(id) && !alignmentSchedulerForTests().running().includes(id)) return job;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
@@ -276,15 +284,19 @@ test("a failing job tries one other host and then fails, however many hosts are 
   assert.deepEqual(fake.stagedFolders("third"), []);
 });
 
-test("a finished job removes its staged tracks from every host it staged on", async () => {
-  // Published after moving to lisa: staged on both hosts.
+test("a finished job deletes nothing on the hosts and records every host it staged on", async () => {
+  // Published after moving to lisa: staged on both hosts, both copies stay, both recorded.
   fake.hosts.wsl.onRequest = (n) => { if (n === 2) fake.hosts.wsl.failRequests = 1; };
   const moved = await settled((await chapterJob()).id);
   assert.equal(moved.status, "partial", moved.error ?? undefined);
   assert.deepEqual(moved.pool?.triedHosts, ["wsl", "lisa"]);
-  assert.deepEqual(fake.stagedFolders("wsl"), []);
-  assert.deepEqual(fake.stagedFolders("lisa"), []);
-  assert.ok(fake.hosts.wsl.commands.some((command) => command.startsWith("rm -rf ") && command.includes(moved.id)));
+  assert.deepEqual(fake.stagedFolders("wsl"), [moved.id]);
+  assert.deepEqual(fake.stagedFolders("lisa"), [moved.id]);
+  assert.deepEqual(moved.pool?.stagedHosts, {
+    wsl: join(fake.hosts.wsl.root, "alignment", "pool-jobs", moved.id),
+    lisa: join(fake.hosts.lisa.root, "alignment", "pool-jobs", moved.id),
+  });
+  assert.deepEqual(noRemovals(), []);
 
   // Failed for good on both hosts, and cancelled mid-request.
   install();
@@ -292,14 +304,16 @@ test("a finished job removes its staged tracks from every host it staged on", as
   fake.hosts.lisa.failRequests = 1;
   const failed = await settled((await chapterJob()).id);
   assert.equal(failed.status, "error");
-  assert.deepEqual([...fake.stagedFolders("wsl"), ...fake.stagedFolders("lisa")], []);
+  assert.deepEqual([...fake.stagedFolders("wsl"), ...fake.stagedFolders("lisa")], [failed.id, failed.id]);
+  assert.deepEqual(Object.keys(failed.pool?.stagedHosts ?? {}).sort(), ["lisa", "wsl"]);
 
   install();
   let cancelled!: Awaited<ReturnType<typeof chapterJob>>;
   fake.hosts.wsl.onRequest = (n) => { if (n === 1) putAlignmentJob({ ...alignmentJob(cancelled.id), status: "cancelled" }); };
   cancelled = await chapterJob();
   assert.equal((await settled(cancelled.id)).status, "cancelled");
-  assert.deepEqual(fake.stagedFolders("wsl"), []);
+  assert.deepEqual(fake.stagedFolders("wsl"), [cancelled.id]);
+  assert.deepEqual(noRemovals(), []);
 });
 
 test("a paused, requeued or interrupted job keeps its staged tracks for the next run", async () => {
@@ -309,7 +323,7 @@ test("a paused, requeued or interrupted job keeps its staged tracks for the next
   assert.equal((await settled(paused.id, ["paused"])).status, "paused");
   assert.deepEqual(fake.stagedFolders("wsl"), [paused.id]);
 
-  // The request fails and the next host is busy: the job waits in the queue, its staging kept.
+  // The request fails and the next host is busy: the job waits in the queue, its staging kept and recorded.
   install();
   fake.hosts.wsl.failRequests = 1;
   fake.hosts.lisa.busy = true;
@@ -317,15 +331,17 @@ test("a paused, requeued or interrupted job keeps its staged tracks for the next
   const waiting = await settled(requeued.id, ["queued"]);
   assert.deepEqual(waiting.pool?.triedHosts, ["wsl"]);
   assert.equal(waiting.pool?.jobMediaRoot, "");
+  assert.deepEqual(Object.keys(waiting.pool?.stagedHosts ?? {}), ["wsl"]);
   assert.deepEqual(fake.stagedFolders("wsl"), [requeued.id]);
-  // Its next run skips the host it tried and is staged on the freed one; the finished run removes both copies.
+  // Its next run skips the host it tried and is staged on the freed one; both copies stay, both are recorded.
   fake.hosts.lisa.busy = false;
   await processAlignments();
   const finished = await settled(requeued.id);
   assert.equal(finished.status, "partial", finished.error ?? undefined);
   assert.equal(finished.pool?.hostId, "lisa");
-  assert.deepEqual(fake.stagedFolders("wsl"), [], "the first run's copy on WSL is removed too");
-  assert.deepEqual(fake.stagedFolders("lisa"), []);
+  assert.deepEqual(Object.keys(finished.pool?.stagedHosts ?? {}).sort(), ["lisa", "wsl"]);
+  assert.deepEqual(fake.stagedFolders("wsl"), [requeued.id]);
+  assert.deepEqual(fake.stagedFolders("lisa"), [requeued.id]);
 
   // Another server took the claim mid-request: this run stops, the job is not finished, the audio stays.
   install();
@@ -342,13 +358,12 @@ test("a paused, requeued or interrupted job keeps its staged tracks for the next
   }
 });
 
-test("a finished job removes what its earlier runs staged: after a resume, a stored row of older code, no lease, a new plan", async () => {
-  // Paused on WSL (its copy kept), resumed while WSL is down: it finishes on lisa and removes both copies.
+test("a job remembers every host it staged on: after a resume, a stored row of older code, no lease, a new plan", async () => {
+  // Paused on WSL, resumed while WSL is down: it finishes on lisa and remembers both folders.
   let paused!: Awaited<ReturnType<typeof chapterJob>>;
   fake.hosts.wsl.onRequest = (n) => { if (n === 1) putAlignmentJob({ ...alignmentJob(paused.id), status: "paused" }); };
   paused = await chapterJob();
   await settled(paused.id, ["paused"]);
-  assert.deepEqual(fake.stagedFolders("wsl"), [paused.id]);
   fake.hosts.wsl.onRequest = undefined;
   fake.hosts.wsl.down = true;
   transition.resume(alignmentJob(paused.id));
@@ -356,16 +371,16 @@ test("a finished job removes what its earlier runs staged: after a resume, a sto
   const resumed = await settled(paused.id);
   assert.equal(resumed.status, "partial", resumed.error ?? undefined);
   assert.equal(resumed.pool?.hostId, "lisa");
-  assert.deepEqual(fake.stagedFolders("wsl"), []);
-  assert.deepEqual(fake.stagedFolders("lisa"), []);
+  assert.deepEqual(Object.keys(resumed.pool?.stagedHosts ?? {}).sort(), ["lisa", "wsl"]);
+  assert.deepEqual(fake.stagedFolders("wsl"), [paused.id]);
+  assert.deepEqual(fake.stagedFolders("lisa"), [paused.id]);
 
-  // A row written before stagedHosts, staged on WSL by a server that stopped: the restaged run on lisa removes both.
+  // A row written before stagedHosts, staged on WSL by a server that stopped: the restaged run on lisa adds lisa.
   install();
   const old = await chapterJob();
   await settled(old.id);
   const row = alignmentJob(old.id);
   const wslRoot = join(fake.hosts.wsl.root, "alignment", "pool-jobs", row.id);
-  mkdirSync(join(wslRoot, "tracks"), { recursive: true });
   row.status = "queued";
   row.sectionsDone = [];
   row.intervals = [];
@@ -379,25 +394,24 @@ test("a finished job removes what its earlier runs staged: after a resume, a sto
   const restaged = await settled(old.id);
   assert.equal(restaged.status, "partial", restaged.error ?? undefined);
   assert.equal(restaged.pool?.hostId, "lisa");
-  assert.deepEqual(fake.stagedFolders("wsl"), []);
-  assert.deepEqual(fake.stagedFolders("lisa"), []);
+  assert.deepEqual(restaged.pool?.stagedHosts,
+    { wsl: wslRoot, lisa: join(fake.hosts.lisa.root, "alignment", "pool-jobs", row.id) });
 
-  // Requeued with its WSL copy kept; its next run finds no host and fails without a lease: the copy still goes.
+  // Requeued with its WSL copy kept; its next run finds no host and fails without a lease: the record stays.
   install();
   fake.hosts.wsl.failRequests = 1;
   fake.hosts.lisa.busy = true;
   const requeued = await chapterJob();
   await settled(requeued.id, ["queued"]);
-  assert.deepEqual(fake.stagedFolders("wsl"), [requeued.id]);
-  assert.deepEqual(Object.keys(alignmentJob(requeued.id).pool?.stagedHosts ?? {}), ["wsl"]);
   fake.hosts.lisa.busy = false;
   fake.hosts.lisa.down = true;
   await processAlignments();
   const failed = await settled(requeued.id);
   assert.equal(failed.status, "error");
-  assert.deepEqual(fake.stagedFolders("wsl"), []);
+  assert.deepEqual(Object.keys(failed.pool?.stagedHosts ?? {}), ["wsl"]);
+  assert.deepEqual(fake.stagedFolders("wsl"), [requeued.id]);
 
-  // Paused on WSL, then prepared again: the new plan keeps the job id and its folders, and removes the WSL copy.
+  // Paused on WSL, then prepared again: the new plan keeps the job id and the record of its WSL folder.
   install();
   const { recordingId, trackId } = recording();
   const book = await extractBook("lease-ebook");
@@ -406,15 +420,17 @@ test("a finished job removes what its earlier runs staged: after a resume, a sto
   fake.hosts.wsl.onRequest = (n) => { if (n === 1) putAlignmentJob({ ...alignmentJob(first.id), status: "paused" }); };
   first = await createAlignment("lease-ebook", recordingId, pairings, "chapters");
   await settled(first.id, ["paused"]);
-  assert.deepEqual(fake.stagedFolders("wsl"), [first.id]);
   fake.hosts.wsl.onRequest = undefined;
   fake.hosts.wsl.down = true;
   const prepared = await createAlignment("lease-ebook", recordingId, pairings, "chapters");
   assert.equal(prepared.id, first.id);
+  assert.deepEqual(Object.keys(prepared.pool?.stagedHosts ?? {}), ["wsl"], "the new plan keeps the record");
   const replanned = await settled(prepared.id);
   assert.equal(replanned.status, "partial", replanned.error ?? undefined);
-  assert.deepEqual(fake.stagedFolders("wsl"), []);
-  assert.deepEqual(fake.stagedFolders("lisa"), []);
+  assert.deepEqual(Object.keys(replanned.pool?.stagedHosts ?? {}).sort(), ["lisa", "wsl"]);
+  assert.deepEqual(fake.stagedFolders("wsl"), [first.id]);
+  assert.deepEqual(fake.stagedFolders("lisa"), [first.id]);
+  assert.deepEqual(noRemovals(), []);
 });
 
 test("acquire gives a healthy host with the tracks staged and its worker address; release frees it", async () => {
@@ -444,8 +460,9 @@ test("acquire gives a healthy host with the tracks staged and its worker address
   const again = await acquireWorkerLease({ id: job.id, recordingId, mode: "chapters", tracks: [track],
     localAudio: (row) => row.source, kind: "job" });
   await again.release("finished");
-  assert.deepEqual(fake.stagedFolders("lisa"), [], "finished removes them");
+  assert.deepEqual(fake.stagedFolders("lisa"), [job.id], "finished keeps them too: removing them is #421");
   assert.equal(slotsHeld(), 0);
+  assert.deepEqual(noRemovals(), []);
 });
 
 test("failover takes the next untried host and stages again; past the last host it throws and holds nothing", async () => {
@@ -461,34 +478,14 @@ test("failover takes the next untried host and stages again; past the last host 
   assert.equal(getAlignmentPoolCoordinator().activeOnHost("wsl"), 0);
   assert.equal(getAlignmentPoolCoordinator().activeOnHost("lisa"), 1);
   assert.ok(existsSync(lease.stagedAudio[trackId]));
-  assert.deepEqual(fake.stagedFolders("wsl"), ["lease-failover"], "the first host's copy stays until the release");
+  assert.deepEqual(fake.stagedFolders("wsl"), ["lease-failover"], "the first host's copy stays");
   await assert.rejects(() => lease.failover(), /Remote alignment failed on all pool hosts/);
   assert.equal(slotsHeld(), 0);
   assert.equal(lease.assignment.jobMediaRoot, "");
   assert.deepEqual(lease.assignment.triedHosts, ["wsl", "lisa"]);
+  assert.deepEqual(Object.keys(lease.assignment.stagedHosts ?? {}).sort(), ["lisa", "wsl"]);
   await lease.release("finished");
-  assert.deepEqual([...fake.stagedFolders("wsl"), ...fake.stagedFolders("lisa")], []);
-});
-
-test("a release as finished gives up on a removal that hangs at its own deadline and keeps the slot freed", async () => {
-  pool.setProbeCleanupTimeoutForTests(30);
-  const exec = fake.deps.exec;
-  fake.deps.exec = async (target, command, options) => command.startsWith("rm -rf ")
-    ? new Promise(() => undefined) : exec(target, command, options);
-  try {
-    const { recordingId, trackId } = recording();
-    const track = db.select().from(schema.tracks).all().find((row) => row.id === trackId)!;
-    const lease = await acquireWorkerLease({ id: "lease-hang", recordingId, mode: "chapters", tracks: [track],
-      localAudio: (row) => row.source, kind: "job" });
-    const started = Date.now();
-    await lease.release("finished");
-    assert.ok(Date.now() - started < 2000);
-    assert.equal(slotsHeld(), 0);
-    assert.deepEqual(fake.stagedFolders("wsl"), ["lease-hang"], "a failed removal leaves the folder (#421 removes it later)");
-  } finally {
-    fake.deps.exec = exec;
-    pool.setProbeCleanupTimeoutForTests(null);
-  }
+  assert.deepEqual([...fake.stagedFolders("wsl"), ...fake.stagedFolders("lisa")], ["lease-failover", "lease-failover"]);
 });
 
 test("a probe lease takes the first healthy host and its release frees the slot and removes the staging", async () => {

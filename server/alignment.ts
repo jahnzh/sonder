@@ -38,7 +38,6 @@ import {
   PoolBusyError,
   poolEnabled,
   poolFailureMessage,
-  removeStoredStaging,
   shouldDispatchToPool,
   type LeaseRelease,
   type PoolHostId,
@@ -331,7 +330,7 @@ async function plannedJob(input: {
     createdAt: existing?.createdAt || Date.now(),
     updatedAt: Date.now(),
     coverage: 0,
-    // The same id stages into the same folders: the new plan's finished release removes the old plan's too.
+    // The same id stages into the same folders: the new plan keeps the record of where the old one staged (#421).
     ...(existing && keptPoolStaging(existing.pool) ? { pool: keptPoolStaging(existing.pool) } : {}),
     pairings: anchored ? [] : chosen,
     ...(origin === "backfill" ? { origin } : {}),
@@ -1281,20 +1280,19 @@ async function leaseWorker(job: AlignmentJob, tracks: ReturnType<typeof recordin
 }
 
 /**
- * A finished job (or one that is gone) has no further use for its staged audio; a paused or queued one may. Also
- * the job's stored assignment, which names every host it staged on.
+ * A finished job (or one that is gone) has no further use for its staged audio; a paused or queued one may. Either
+ * way the audio stays on the hosts (removing it is #421).
  */
-function leaseOutcome(id: string): { outcome: LeaseRelease; pool?: AlignmentJob["pool"] } {
+function leaseOutcome(id: string): LeaseRelease {
   try {
-    const row = sqlite.prepare("SELECT json_extract(data,'$.status') AS status, json_extract(data,'$.pool') AS pool " +
-      "FROM alignment_jobs WHERE id=?").get(id) as { status: string; pool: string | null } | undefined;
-    if (!row) return { outcome: "finished" };
-    const outcome = ["ready", "partial", "error", "cancelled"].includes(row.status) ? "finished" : "retryable";
-    return { outcome, pool: row.pool ? JSON.parse(row.pool) as AlignmentJob["pool"] : undefined };
+    const row = sqlite.prepare("SELECT json_extract(data,'$.status') AS status FROM alignment_jobs WHERE id=?")
+      .get(id) as { status: string } | undefined;
+    if (!row) return "finished";
+    return ["ready", "partial", "error", "cancelled"].includes(row.status) ? "finished" : "retryable";
   } catch (error) {
-    // The database may already be closed during shutdown: keep the audio (removed later under leases, #421).
+    // The database may already be closed during shutdown.
     console.warn(`alignment: could not read job ${id} to release its worker lease: ${(error as Error).message}`);
-    return { outcome: "retryable" };
+    return "retryable";
   }
 }
 
@@ -1303,11 +1301,8 @@ async function runAlignmentJob(pending: AlignmentJob) {
   try {
     await runAlignmentJobSteps(pending, run);
   } finally {
-    // Every exit path, including a fenced write that throws, gives the worker back. A run that never held a
-    // lease still removes what earlier runs staged once the job is finished.
-    const { outcome, pool } = leaseOutcome(pending.id);
-    if (run.lease) await run.lease.release(outcome);
-    else if (outcome === "finished") await removeStoredStaging(pending.id, pool);
+    // Every exit path, including a fenced write that throws, gives the worker back.
+    await run.lease?.release(leaseOutcome(pending.id));
   }
 }
 async function runAlignmentJobSteps(pending: AlignmentJob, run: RunLease) {
