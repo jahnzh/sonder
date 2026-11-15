@@ -912,6 +912,12 @@ async function takeHost(
   let busy = false;
   const roundOver = () => !probe && attempted.length >= JOB_HOST_ATTEMPTS;
   const hosts = coord.listHosts();
+  // While other work (a job, a probe or the sweep) holds the recording, no host can be taken for it: wait without
+  // checking any. A scan that ran meanwhile could find WSL held by that work, and then take lisa once the holder
+  // released both during the check of lisa (#404).
+  const holder = coord.recordingHolder(request.recordingId);
+  if (holder !== null && holder !== request.id && !roundOver() && hosts.some((host) => !attempted.includes(host.id)))
+    throw new PoolBusyError(attempted);
   const first = hosts.filter((host) => host.id === request.firstHost);
   const rest = hosts.filter((host) => !first.includes(host));
   // A whole-book job takes hours on a CPU host and minutes on a GPU host: CPU hosts come after the others, by rank,
