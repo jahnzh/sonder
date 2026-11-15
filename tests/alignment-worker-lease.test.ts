@@ -246,6 +246,18 @@ test("a failing job tries one other host and then fails, however many hosts are 
   assert.deepEqual(fake.hosts.third.requests, [], "no second retry on the third host");
   assert.deepEqual(fake.stagedFolders("third"), []);
 
+  // The lease says so itself: after the retry no failover is offered, though a configured host is left.
+  install(threeHosts);
+  const { recordingId, trackId } = recording();
+  const track = db.select().from(schema.tracks).all().find((row) => row.id === trackId)!;
+  const lease = await acquireWorkerLease({ id: "lease-three", recordingId, mode: "chapters", tracks: [track],
+    localAudio: (row) => row.source, kind: "job" });
+  assert.equal(lease.canFailover, true);
+  await lease.failover();
+  assert.deepEqual(lease.triedHosts, ["wsl", "lisa"]);
+  assert.equal(lease.canFailover, false);
+  await lease.release("finished");
+
   // The same when the retry's host fails to stage: the round is over, the third host is not tried.
   install(threeHosts);
   fake.hosts.wsl.failRequests = 1;
