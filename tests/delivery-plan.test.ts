@@ -10,9 +10,25 @@ import {
   type LegacyLoad,
   type LegacyOutcome,
 } from "./delivery-legacy.ts";
+import {
+  afterUnreachable,
+  deliveryPlan,
+  looksForDevice,
+  rememberedNotice,
+  reportedSource,
+  shownFor,
+  sourcesFromCache,
+  stallFallsBackToDevice,
+  startingStep,
+  type DeliveryPlan,
+  type DeliveryStep,
+  type StreamStep,
+} from "../src/delivery-plan.ts";
 
-// Issue #396 step 1: today's choice of delivery source and its fallback order,
-// pinned as a table before the decision moves into one module.
+// Issue #396: the choice of delivery source and its fallback order, pinned as
+// a table of the behaviour before the decision moved into one module, and the
+// plan checked against that table and against the frozen reference for every
+// combination of its inputs.
 
 const fault: MediaFault = { reason: "bad-audio", note: "", updatedAt: 1 };
 const download = { trackId: "t1" };
@@ -279,8 +295,56 @@ const table: [string, Setup, LegacyOutcome][] = [
   ],
 ];
 
+// What `load` and the stream load in src/player.tsx do with a plan, in the
+// shape of the reference: the same calls the player makes, nothing else.
+function loadFromPlan(plan: DeliveryPlan, complete: boolean): LegacyLoad {
+  // `offlineUrl` runs only when the plan starts with the device copy.
+  const step = startingStep(plan, looksForDevice(plan) && complete);
+  if (!step)
+    return {
+      error:
+        "This device copy is incomplete. Remove it and download it again, or choose another source.",
+    };
+  if (step.source === "device")
+    return { plays: "device", show: "device", notice: rememberedNotice(plan, step) };
+  return {
+    plays: "stream",
+    query: step.request === "auto" ? "" : `?source=${step.request}`,
+    show: shownFor(step) as "server" | "torbox" | "remote",
+    location: step.request,
+    streamLoad: step.recover
+      ? { request: step.request as "server" | "original", deviceCopy: stallFallsBackToDevice(plan, step) }
+      : null,
+  };
+}
+
+function planOutcome(facts: LegacyFacts): LegacyOutcome {
+  const cached = sourcesFromCache(facts);
+  const plan = deliveryPlan(facts);
+  if ("error" in plan) return { sourcesFromCache: cached, result: { error: plan.error } };
+  return {
+    sourcesFromCache: cached,
+    result: {
+      preference: plan.preference,
+      looksForDevice: looksForDevice(plan),
+      complete: loadFromPlan(plan, true),
+      incomplete: loadFromPlan(plan, false),
+      faulty: {
+        device: plan.faulty("device"),
+        server: plan.faulty("server"),
+        torbox: plan.faulty("torbox"),
+        remote: plan.faulty("remote"),
+        none: plan.faulty(null),
+      },
+    },
+  };
+}
+
 type Subject = (facts: LegacyFacts) => LegacyOutcome;
-const subjects: [string, Subject][] = [["before #396", legacyOutcome]];
+const subjects: [string, Subject][] = [
+  ["before #396", legacyOutcome],
+  ["plan", planOutcome],
+];
 
 for (const [label, subject] of subjects)
   for (const [name, setup, expected] of table)
@@ -339,4 +403,93 @@ test("before #396: the worker's report is shown for the current track unless a d
   assert.equal(legacyTakesWorkerReport({ sameTrack: true, source: "cache", playingDeviceCopy: false }), false);
   assert.equal(legacyTakesWorkerReport({ sameTrack: false, source: "server", playingDeviceCopy: false }), false);
   assert.equal(legacyTakesWorkerReport({ sameTrack: true, source: "server", playingDeviceCopy: true }), false);
+});
+
+test("plan: matches the behaviour before #396 for every combination of its inputs", () => {
+  let count = 0;
+  for (const setup of everyCombination()) {
+    count++;
+    const input = facts(setup);
+    assert.deepEqual(planOutcome(input), legacyOutcome(input), JSON.stringify(setup));
+  }
+  assert.equal(count, 4 * 2 ** 7 * 5 * 2 * 3);
+});
+
+const plan = (setup: Setup) => {
+  const decision = deliveryPlan(facts(setup));
+  assert.ok(!("error" in decision), "expected a plan");
+  return decision;
+};
+const steps = (p: DeliveryPlan) =>
+  [p.first, ...p.fallbacks].map((step) =>
+    step.source === "device" ? "device" : `${step.request}${step.recover ? "!" : ""}`,
+  );
+
+test("plan: the order of sources for each kind of choice", () => {
+  // "!" marks a stream that may switch to the device copy when unreachable.
+  assert.deepEqual(steps(plan({})), ["device", "auto"]);
+  assert.deepEqual(steps(plan({ deviceFault: true, download: true })), ["auto"]);
+  assert.deepEqual(steps(plan({ serverFault: true })), ["device", "original"]);
+  assert.deepEqual(steps(plan({ chosen: "device", download: true })), ["device"]);
+  assert.deepEqual(steps(plan({ chosen: "server" })), ["server!"]);
+  assert.deepEqual(steps(plan({ chosen: "server", download: true })), ["server!", "device"]);
+  assert.deepEqual(steps(plan({ chosen: "original", download: true, recentFailure: true })), [
+    "device",
+    "original!",
+    "device",
+  ]);
+  assert.deepEqual(steps(plan({ chosen: "original", download: true, online: false })), ["device"]);
+});
+
+test("plan: a refused play gives no plan", () => {
+  assert.deepEqual(deliveryPlan(facts({ recordingFault: true })), { error: errors.recording });
+  assert.deepEqual(deliveryPlan(facts({ chosen: "device" })), { error: errors.device });
+});
+
+test("plan: an unreachable stream goes to the device copy exactly when it did before #396", () => {
+  const streams: StreamStep[] = [];
+  for (const setup of everyCombination()) {
+    const decision = deliveryPlan(facts(setup));
+    if ("error" in decision) continue;
+    for (const step of [decision.first, ...decision.fallbacks] as DeliveryStep[])
+      if (step.source === "stream") streams.push(step);
+  }
+  const seen = new Set<string>();
+  for (const step of streams)
+    for (const now of [
+      { download, deviceFault: undefined },
+      { download: undefined, deviceFault: undefined },
+      { download, deviceFault: fault },
+      { download: undefined, deviceFault: fault },
+    ]) {
+      const switched = afterUnreachable(step, now);
+      // The player recovers only explicit streams (its stream load).
+      const before = step.recover
+        ? legacyRecovers(step.request as "server" | "original", now.download, now.deviceFault)
+        : false;
+      assert.equal(!!switched, before, JSON.stringify({ step, now }));
+      if (switched) assert.deepEqual(switched, { source: "device" });
+      seen.add(`${step.request}:${step.recover}:${!!switched}`);
+    }
+  // Every kind of stream the plan produces was compared.
+  for (const key of ["auto:false:false", "server:true:true", "original:true:true", "server:false:false", "original:false:false"])
+    assert.ok(seen.has(key), key);
+});
+
+test("plan: a reported source replaces the shown one exactly when it did before #396", () => {
+  const bools = [false, true];
+  for (const currentLoad of bools)
+    for (const playingDeviceCopy of bools) {
+      for (const workerReported of bools)
+        for (const source of ["device", "server", "torbox", "remote"] as const)
+          assert.equal(
+            reportedSource({ from: "location", source, currentLoad, playingDeviceCopy, workerReported }),
+            legacyTakesLocation({ currentLoad, playingDeviceCopy, workerReported }) ? source : null,
+          );
+      for (const source of ["device", "server", "torbox", "remote", "cache", undefined, 3])
+        assert.equal(
+          reportedSource({ from: "worker", source, currentLoad, playingDeviceCopy }),
+          legacyTakesWorkerReport({ sameTrack: currentLoad, source, playingDeviceCopy }) ? source : null,
+        );
+    }
 });
