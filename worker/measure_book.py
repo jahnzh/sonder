@@ -33,7 +33,7 @@ def call(url, method="GET", body=None, token=None, timeout=120):
             return error.code, {"detail": error.reason}
 
 
-def run_job(base, body, poll=2.0, log=print, timeout=6 * 3600):
+def run_job(base, body, poll=2.0, log=lambda line: print(line, flush=True), timeout=6 * 3600):
     """Start a job, poll it to the end and fetch the result. Returns (result, last status, wall seconds)."""
     started = time.monotonic()
     code, status = call(f"{base}/book-jobs", "POST", body)

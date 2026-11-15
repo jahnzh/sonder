@@ -266,6 +266,169 @@ returns):
 ```
 For Lisa (CPU), `device` will be `"cpu"` and `precision` will be `"float32"`.
 
+## Whole-book jobs (#402)
+
+ADR 0016's whole-book request, on the worker only: the server does not call it
+yet. The window endpoints (`/align`, `/anchor`, `/anchor-batch`) and their
+engine `ctc-wav2vec2-base-960h-torchaudio-2.8-v2` are unchanged. A whole-book
+job is a new engine generation, `ctc-wav2vec2-base-960h-torchaudio-2.8-book-v1`
+(`book_job.BOOK_ENGINE`), with the same model. `/health` reports it under
+`bookJobs: {engine, ready, jobs}`.
+
+Code: `worker/book_job.py` (lifecycle, stages, resume), `book_session.py`
+(per-book session, #391), `book_audio.py` (decode), `book_encode.py`
+(encode and encode queue), `book_align.py` (aligner). `gate_book.py` and
+`measure_book.py` are measurement scripts. They talk to a worker over this
+interface and are not copied into the image.
+
+### Endpoints
+
+Every request carries `Authorization: Bearer <ALIGNMENT_WORKER_TOKEN>`; a
+missing or wrong token is `401`.
+
+| Request | Answer |
+| --- | --- |
+| `POST /book-jobs` with the start request | `202` and the progress. The same `jobId` with the same request returns the existing job and does not run it again. The same `jobId` with another request is `409`. A track outside `MEDIA_ROOT` or missing is `400`. A missing media volume is `503`. |
+| `GET /book-jobs/{jobId}` | `200` and the progress; `404` for an unknown job |
+| `DELETE /book-jobs/{jobId}` | `200` `{jobId, engine, state: "cancelled"}`. The job stops and its folder is deleted. Later requests for it answer `404`. |
+| `GET /book-jobs/{jobId}/result` | `200` and the result once `state` is `done`. Before that, `409` `{jobId, engine, state, message}`. |
+
+### Start request
+
+```json
+{
+  "jobId": "4f0c…",                      // [A-Za-z0-9][A-Za-z0-9._-]{0,127}
+  "recordingId": "recording-torbox-129969003",
+  "audioFingerprint": "…",               // optional, part of the job's identity
+  "language": "eng",                     // anything else: outcome language_not_supported
+  "sentences": [{"id": "5:8", "section": 5, "text": "…"}],   // 1..200,000, in reading order
+  "tracks": [{"id": "torbox-129969003-1", "audio": "/…/pool-jobs/<job>/tracks/torbox-129969003-1",
+              "duration": 36458.949}]   // in play order; duration = listed seconds (> 0)
+}
+```
+
+The job's identity is a hash of `recordingId`, `audioFingerprint`,
+`language`, `sentences` and `tracks`. `duration` sizes the disk reservation;
+the worker probes the container duration itself.
+
+### Progress
+
+```json
+{"jobId": "m-lhod-1794710439", "engine": "ctc-wav2vec2-base-960h-torchaudio-2.8-book-v1",
+ "state": "encoding", "recordingId": "lhod", "createdAt": 1794710439.83, "updatedAt": 1794710473.52,
+ "progress": {"tracksTotal": 1, "tracksDecoded": 1, "tracksEncoded": 0, "encodeQueuePosition": 0},
+ "stageTimings": {"identity": 0.39, "decode": 33.29, "encodeQueue": 0.00004},
+ "error": null, "resumed": 0}
+```
+
+`state` goes `queued` (waiting for the disk budget) → `decoding` → `encoding` →
+`anchoring` → `aligning` → `finishing` → `done`, or ends in `failed` (with
+`error`) or `cancelled`. `progress` grows as the job goes on:
+`tracksTotal`, `tracksDecoded`, `tracksEncoded`; `encodeQueuePosition` while
+encoding (`0` encoding, `1…` waiting); then `groupsTotal`, `groupsDone` and
+`anchors` (`candidates`, `chain`, `chainRateDropped`, `groups`,
+`anchorSeconds`). `stageTimings` holds seconds per stage (`identity`, `decode`,
+`encodeQueue`, `encode`, `prepare`, `anchor`, `align`, `finish`). After a
+result fetch, `fetched` is `true`. `resumed` counts the worker restarts the job
+has continued from. `encode` holds the encode statistics (`encodeSeconds`,
+`audioSeconds`, `realtime`, `batch`, `oomHalvings`, `gpuUtilization`).
+
+### Result
+
+```json
+{"jobId": "…", "engine": "ctc-wav2vec2-base-960h-torchaudio-2.8-book-v1", "recordingId": "…",
+ "audioFingerprint": "…", "outcome": "mapped", "sentences": 5771, "mapped": 5460,
+ "intervals": [{"paragraphId": "5:8", "section": 5, "trackId": "torbox-129969003-1",
+                "start": 715.32, "end": 719.9, "confidence": 0.65}],
+ "tracks": [{"id": "torbox-129969003-1", "decodedSeconds": 36458.967, "containerSeconds": 36458.949,
+             "differenceSeconds": 0.018, "durationOk": true, "ranges": 21}],
+ "stats": {"groups": 49, "groupStartsSeconds": [0, 960.0], "anchors": {…}, "windows": 0,
+           "recoveries_text": 0, "recoveries_audio": 0, "gap_filled": 0, "orderConflictsDropped": 0,
+           "rawMapped": 0, "kernel": "numba", "device": "cuda"},
+ "stageTimings": {…}, "encode": {…}}
+```
+
+`intervals` has the server's `AlignmentInterval` shape. `start` and `end` are
+seconds in the track's own time, on the container timeline. `confidence` follows
+the server's rule: 0.65 for 0.3 to 6 words per second, else 0.2. `outcome` is
+`mapped` when at least one sentence is mapped and `unsynced` when none is.
+For a language other than `eng` it is `language_not_supported`; the server
+judges coverage. `tracks` is the per-track duration check: the decoded length
+against the container duration (ffprobe), `durationOk` within 0.25 s.
+Unsynced passages, extra-audio flags and the text-match check are not built
+yet (next ticket).
+
+### What the worker does
+
+* **Decode on the container timeline.** ffmpeg decodes with
+  `aresample=async=1:min_hard_comp=0.01:first_pts=0`, so samples are placed by
+  the packets' timestamps, not counted. *The Left Hand of Darkness* (AAC in MP4)
+  has 21 chapter joins whose timestamps overlap by about 64 ms each. Decoded by
+  sample count it is 36,460.25 s long; on its timeline 36,458.97 s; its
+  container says 36,458.95 s.
+* **Parallel decode.** A track longer than 1,800 s is split into equal time
+  ranges, each decoded by its own ffmpeg (`-ss`/`-t`, which seek by timestamp)
+  and cut or padded to its exact sample count. All ranges of all tracks share
+  `ALIGNMENT_BOOK_DECODE_WORKERS` processes (default CPUs − 1, at most 8).
+* **One continuous encode.** The windows of all tracks (each track on its own
+  grid: 20 s cores, 5 s context) form one stream. Consecutive windows of equal
+  length are batched, `ALIGNMENT_BOOK_ENCODE_BATCH` (default 8), with no padding.
+  Each track's emissions (float16, 29 labels) go to their own file. A track's
+  PCM is deleted once its emissions are written.
+* **One encode per GPU.** Jobs enter a first-come queue per device before
+  encoding. Decoding and aligning of other books run beside it. The window
+  endpoints do not use the queue.
+* **The aligner** is the v2 anchor chain of `PROTO-D-E-BOOKS.md`, unchanged in
+  its parameters (δ 1.5, skip 8, 60 s windows, 20 s margin, text × 1.3) and its
+  four chain constants (locate every 240 s, groups ≥ 600 s, rate floor 0.25).
+  It locates the text over the whole book, keeps the longest chain rising in
+  audio and text, and aligns the groups in a process pool
+  (`ALIGNMENT_BOOK_ALIGN_WORKERS`, default CPUs − 2, at most 8). A recovery jump
+  stays inside its group. The worker's `accepted_intervals` then validates the
+  merged map.
+* **Seam fix.** A group's audio runs 60 s (v2: 30 s) past the next group's start.
+  Before merging, the last 20 s of a non-final group and the first 20 s of a
+  non-first group are dropped: the same margin a window keeps uncommitted. A
+  sentence cut by a group end therefore comes from the neighbouring group,
+  where it is whole.
+* **Viterbi kernel.** numba when installed (the pool hosts' production
+  environments do not have it), otherwise an equivalent numpy kernel.
+  `tests/worker/test_book_align.py` checks that the two give identical paths.
+  `stats.kernel` says which one ran.
+
+### Session, disk budget and resume
+
+Each job has one per-book session (#391), keyed by the job. The session owns the
+decoded audio, the tracks' digests, the emissions handle and the process pool.
+It ends exactly once:
+
+* when the result is fetched (decoded audio, emissions and pool go; the small
+  `result.json` stays fetchable);
+* on cancel (the whole folder goes);
+* after `ALIGNMENT_BOOK_IDLE_SECONDS` (default 900) without a request for the job
+  from the server, which also stops a running job and deletes its folder;
+* on worker stop, when the folder is kept.
+
+Locks are taken in the order `BookJobs` → session registry → session → disk
+budget, and `Job.save_lock` before `Job.lock`. No lock is held while waiting
+for the encode queue, a process or book I/O.
+
+One disk budget per worker, `ALIGNMENT_BOOK_DISK_BYTES` (default 64 GiB), covers
+decoded audio and emissions together. A job reserves its estimate before
+decoding: listed duration × (32,000 B/s PCM + 5,800 B/s emissions) + 5 %. A book
+that does not fit next to the other sessions waits in `queued`. A book larger
+than the whole budget fails at once.
+
+Everything is kept under `MEDIA_ROOT/alignment/book-jobs/<jobId>/`:
+`request.json`, `state.json`, `tracks/` (PCM), `emissions/<n>.f16` + `<n>.json`
+(per track, with engine and source sha256), `emissions/book.f16`,
+`groups/plan.json` and `groups/<n>.json` (one per finished group),
+`result.json`. Groups are the unit of progress and resume. When the worker
+starts, every unfinished job continues. Tracks whose emissions match their
+source digest are not decoded or encoded again; the stored plan and finished
+groups are reused. A track whose bytes changed is decoded and encoded again. A
+job folder written by another engine generation starts over.
+
 ## Overlapped audio extraction (#346)
 
 Each `/align` request for the CTC engine may carry `prefetch`: the next sections of the same job (`audio`, `start`, `duration`). The worker extracts those windows in a thread pool of parallel ffmpeg processes while the current section encodes, and `align_ctc_section` takes the finished WAV instead of decoding inline. A window that is missing, late or failed is extracted inline as before, so results do not depend on it. Workers without the field ignore it.
