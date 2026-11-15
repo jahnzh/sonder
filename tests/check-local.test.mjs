@@ -1019,7 +1019,15 @@ test("setup-failure reports also reserve their output directory", async () => {
 });
 
 test("an empty lock file older than 60 s is reclaimed and a fresh one is left alone", async () => {
-  const port = 41000 + Math.floor(Math.random() * 500);
+  // A port that is free now, not a random one: a random port in a fixed range can be in use on a shared host.
+  const port = await new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.once("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const { port: free } = probe.address();
+      probe.close(() => resolve(free));
+    });
+  });
   const leaseDir = path.join(os.tmpdir(), "sonder-port-leases");
   fs.mkdirSync(leaseDir, { recursive: true });
   const lockPath = path.join(leaseDir, `port-${port}.lock`);

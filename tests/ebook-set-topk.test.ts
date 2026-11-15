@@ -36,6 +36,7 @@ const {
   setEbookSetDeps,
 } = await import("../server/ebook-set.ts");
 const { readerFixture } = await import("./reader-fixture.ts");
+const { ebookSetEvaluationsSettled } = await import("../server/ebook-set-evaluation.ts");
 
 const app = await createApp();
 
@@ -435,6 +436,8 @@ test("POST /api/ebooks/import registers set member when alignment worker is abse
     ]),
   });
   assert.equal(res.statusCode, 200, res.body);
+  assert.deepEqual(res.json().ebookSet, { status: "pending" }, "the evaluation runs after the response (#325)");
+  await ebookSetEvaluationsSettled();
   const members = listEbookSetMembers(workId);
   assert.equal(members.length, 1);
   assert.equal(members[0].status, "held");

@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { defaultAppearance } from "../../src/appearance";
 import { readerFixture } from "../reader-fixture";
 import { installReaderWaitBudget, READER_WAIT_MS, timedWait } from "./timing";
 
@@ -21,12 +22,25 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
+// One server serves every repeat of a run (the check repeats a changed spec file). What a test leaves on the server
+// must not reach the next one: the reader settings, the Word display among them, are a stored preference, so each
+// test starts from the defaults; and each repeat imports its books under titles of its own (`fixture`).
+test.beforeEach(async ({ page }) => {
+  const current = await (await page.request.get("/api/appearance")).json();
+  const reset = await page.request.put("/api/appearance", { data: { ...current, reader: defaultAppearance.reader } });
+  expect(reset.ok()).toBe(true);
+});
+
 test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "wait" });
 });
 
-/** `align`: every chapter has narration timing, only the first one, or none (a book and an ebook with no map). */
-async function fixture(page: Page, title: string, align: "all" | "first" | "none" = "all") {
+/**
+ * `align`: every chapter has narration timing, only the first one, or none (a book and an ebook with no map).
+ * The book's title is `name` plus the repeat index, so a later repeat in the same server shows one card for it.
+ */
+async function fixture(page: Page, name: string, align: "all" | "first" | "none" = "all") {
+  const title = `${name} ${test.info().repeatEachIndex}`;
   const response = await page.request.post("/api/import", {
     multipart: {
       title,
@@ -43,6 +57,34 @@ async function fixture(page: Page, title: string, align: "all" | "first" | "none
   const book = (await (await page.request.get("/api/books")).json()).find(
     (b: { id: string }) => b.id === id,
   );
+  if (align === "none") {
+    // A book and an ebook with no narration map. An upload for the work queues its backfill job only once the
+    // ebook-set check ends (#325), and the fixture's alignment can finish before a poll sees it. So the EPUB is
+    // uploaded on its own and linked while alignment is paused: the link queues the job in the request, as an upload
+    // did on main, and the job is cancelled before it can start.
+    const loose = await page.request.post("/api/ebooks/import", {
+      multipart: { file: { name: "Companion.epub", mimeType: "application/epub+zip", buffer: await readerFixture() } },
+    });
+    expect(loose.ok()).toBe(true);
+    const ebook = (await loose.json()).id;
+    const pause = (paused: boolean) =>
+      page.request.post("/api/activity/processes/alignment/pause", { data: { paused } });
+    expect((await pause(true)).ok()).toBe(true);
+    try {
+      const linked = await page.request.post(`/api/reader/${ebook}/link`, { data: { workId: book.workId } });
+      expect(linked.ok()).toBe(true);
+      const jobs = (await (await page.request.get(`/api/alignments?ebookId=${ebook}`)).json()).jobs;
+      expect(jobs.length, "linking queued a backfill job").toBeGreaterThan(0);
+      const cancelled = await page.request.patch(`/api/alignments/${jobs[0].id}`, {
+        data: { action: "cancel" },
+      });
+      expect(cancelled.ok()).toBe(true);
+    } finally {
+      expect((await pause(false)).ok()).toBe(true);
+    }
+    const manifest = await (await page.request.get(`/api/reader/${ebook}`)).json();
+    return { title, book, ebook, manifest };
+  }
   const uploaded = await page.request.post(
     `/api/ebooks/import?workId=${book.workId}`,
     {
@@ -60,22 +102,6 @@ async function fixture(page: Page, title: string, align: "all" | "first" | "none
   const manifest = await (
     await page.request.get(`/api/reader/${ebook}`)
   ).json();
-  if (align === "none") {
-    // Linking queued a backfill job; cancel it so this book has no narration map.
-    await expect
-      .poll(
-        async () =>
-          (await (await page.request.get(`/api/alignments?ebookId=${ebook}`)).json()).jobs.length,
-        { timeout: 20000 },
-      )
-      .toBeGreaterThan(0);
-    const jobs = (await (await page.request.get(`/api/alignments?ebookId=${ebook}`)).json()).jobs;
-    const cancelled = await page.request.patch(`/api/alignments/${jobs[0].id}`, {
-      data: { action: "cancel" },
-    });
-    expect(cancelled.ok()).toBe(true);
-    return { book, ebook, manifest };
-  }
   const sections = align === "first" ? manifest.sections.slice(0, 1) : manifest.sections;
   const created = await page.request.post("/api/alignments", {
     data: {
@@ -101,7 +127,7 @@ async function fixture(page: Page, title: string, align: "all" | "first" | "none
       { timeout: 15000 },
     )
     .toBe(sections.length);
-  return { book, ebook, manifest };
+  return { title, book, ebook, manifest };
 }
 
 async function openWordMode(page: Page, title: string) {
@@ -130,8 +156,8 @@ async function openWordMode(page: Page, title: string) {
 test("word mode keeps the ORP letter fixed, pauses on tap, steps with arrows, and keeps place in Page mode", async ({
   page,
 }) => {
-  const { ebook } = await fixture(page, "Word narration");
-  const room = await openWordMode(page, "Word narration");
+  const { title, ebook } = await fixture(page, "Word narration");
+  const room = await openWordMode(page, title);
   const reader = page.getByLabel("Word reader");
   await expect(reader).toHaveAttribute("data-paused", "true");
 
@@ -237,9 +263,9 @@ const wordIndex = async (page: Page) => Number(await wordReader(page).getAttribu
 const context = async (page: Page) => (await wordReader(page).getByTestId("word-context").textContent()) || "";
 
 test("in Word mode Space and the arrows act once and leave the audiobook alone", async ({ page }) => {
-  await fixture(page, "Word keys plain", "none");
+  const { title } = await fixture(page, "Word keys plain", "none");
   await setDisplay(page, "word");
-  await openReader(page, "Word keys plain");
+  await openReader(page, title);
   const reader = wordReader(page);
   await expect(reader).toBeVisible();
   const before = await audioState(page);
@@ -281,9 +307,9 @@ test("in Word mode Space and the arrows act once and leave the audiobook alone",
 });
 
 test("with narration Space toggles the audio once and the arrows do not skip 30 seconds", async ({ page }) => {
-  await fixture(page, "Word keys narrated");
+  const { title } = await fixture(page, "Word keys narrated");
   await setDisplay(page, "word");
-  await openReader(page, "Word keys narrated");
+  await openReader(page, title);
   const reader = wordReader(page);
   await expect(reader).toBeVisible();
   await expect(reader).toHaveAttribute("data-paused", "true");
@@ -308,9 +334,9 @@ test("with narration Space toggles the audio once and the arrows do not skip 30 
 });
 
 test("opened in Word mode with the bar hidden, a touch user reaches the top bar and More", async ({ page }) => {
-  await fixture(page, "Word touch");
+  const { title } = await fixture(page, "Word touch");
   await setDisplay(page, "word");
-  const room = await openReader(page, "Word touch");
+  const room = await openReader(page, title);
   const reader = wordReader(page);
   await expect(reader).toBeVisible();
   const topbar = room.locator(".reader-topbar");
@@ -402,9 +428,9 @@ const toPage: [string, (page: Page) => Promise<void>][] = [
 // switching from Word to Page with the p key shows the sentence reached
 for (const [name, switchToPage] of toPage) {
   test(`switching from Word to Page with ${name} shows the sentence reached`, async ({ page }) => {
-    await fixture(page, `Word to page ${name}`, "none");
+    const { title } = await fixture(page, `Word to page ${name}`, "none");
     await setDisplay(page, "word");
-    await openReader(page, `Word to page ${name}`);
+    await openReader(page, title);
     const first = await context(page);
     const sentence = await stepSentences(page, 30);
     expect(sentence).not.toBe(first);
@@ -414,9 +440,9 @@ for (const [name, switchToPage] of toPage) {
 }
 
 test("switching from Word to Page in Settings shows the sentence reached", async ({ page }) => {
-  await fixture(page, "Word to page settings", "none");
+  const { title } = await fixture(page, "Word to page settings", "none");
   await setDisplay(page, "word");
-  await openReader(page, "Word to page settings");
+  await openReader(page, title);
   const first = await context(page);
   const sentence = await stepSentences(page, 30);
   await page.keyboard.press("Escape");
@@ -434,9 +460,9 @@ test("switching from Word to Page in Settings shows the sentence reached", async
 });
 
 test("a checkpoint written in Word mode restores the sentence in Page mode after a reload", async ({ page }) => {
-  const { ebook } = await fixture(page, "Word reload", "none");
+  const { title, ebook } = await fixture(page, "Word reload", "none");
   await setDisplay(page, "word");
-  await openReader(page, "Word reload");
+  await openReader(page, title);
   const first = await context(page);
   const sentence = await stepSentences(page, 30);
   await expect
@@ -449,17 +475,15 @@ test("a checkpoint written in Word mode restores the sentence in Page mode after
   await timedWait(
     "checkpoint-restore",
     async () => {
-      await openReader(page, "Word reload");
+      await openReader(page, title);
       await expectPageShows(page, sentence, first.slice(0, 30));
     },
     { testName: test.info().title },
   );
 });
 
-test("stepping onto a sentence without timing shows it and saves what is shown", async ({ page }, testInfo) => {
-  // One server serves every repeat of a run, so each repeat needs a title of its own.
-  const title = `Word unaligned ${testInfo.repeatEachIndex}`;
-  const { ebook, manifest } = await fixture(page, title, "first");
+test("stepping onto a sentence without timing shows it and saves what is shown", async ({ page }) => {
+  const { title, ebook, manifest } = await fixture(page, "Word unaligned", "first");
   await setDisplay(page, "word");
   await openReader(page, title);
   const reader = wordReader(page);
@@ -482,9 +506,8 @@ test("stepping onto a sentence without timing shows it and saves what is shown",
     .toBe("reading:This is the beginning of the s");
 });
 
-test("a sentence step from the narrated chapter onto one without timing stays on it", async ({ page }, testInfo) => {
-  const title = `Word sentence step ${testInfo.repeatEachIndex}`;
-  const { ebook, manifest } = await fixture(page, title, "first");
+test("a sentence step from the narrated chapter onto one without timing stays on it", async ({ page }) => {
+  const { title, ebook, manifest } = await fixture(page, "Word sentence step", "first");
   await setDisplay(page, "word");
   await openReader(page, title);
   const reader = wordReader(page);
@@ -521,9 +544,9 @@ test("a sentence step from the narrated chapter onto one without timing stays on
 });
 
 test("words advancing by themselves stop in a hidden tab and do not save every sentence", async ({ page }) => {
-  const { ebook } = await fixture(page, "Word auto", "none");
+  const { title, ebook } = await fixture(page, "Word auto", "none");
   await setDisplay(page, "word");
-  await openReader(page, "Word auto");
+  await openReader(page, title);
   const reader = wordReader(page);
   await expect(reader).toBeVisible();
   await reader.getByLabel("Words per minute").fill("900");

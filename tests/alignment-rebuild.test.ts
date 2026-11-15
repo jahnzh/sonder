@@ -1479,3 +1479,31 @@ test("an aeneas-era job row is served as stored, and running it re-plans it unde
   assert.equal(replaced.statusCode, 200, replaced.body);
   assert.equal(replaced.json().engine, engine);
 });
+
+// #325 review round 2: nothing automatic queues an alignment for an ebook whose ebook-set member is pending.
+test("the rebuild scan queues no rebuild for an ebook whose ebook-set member is pending; Prepare (POST /api/alignments) is not gated, as on main", async () => {
+  await reset();
+  // The ebook-set loop of this app must not check the member while the test looks at it.
+  setPaused("ebook-set", true);
+  const setMember = (status: string) =>
+    sqlite.prepare(`INSERT INTO work_ebook_set_members (work_id, ebook_id, status, hold_reason, evidence, updated_at)
+      VALUES ('work-c', 'ebook-c', ?, NULL, '{}', ?) ON CONFLICT (work_id, ebook_id) DO UPDATE SET status=excluded.status, updated_at=excluded.updated_at`)
+      .run(status, Date.now());
+  try {
+    const old = await oldMap("c", aeneas, "ready");
+    setMember("pending");
+    assert.deepEqual(await queueEngineRebuilds(), { queued: 0, replanned: 0, projections: 0, skipped: 1, failed: 0 });
+    assert.deepEqual(alignmentJob(old.id), old, "the old map is left as it is");
+    // Any other status: the scan queues the rebuild as before.
+    setMember("accepted");
+    assert.deepEqual(await queueEngineRebuilds(), { queued: 1, replanned: 0, projections: 0, skipped: 0, failed: 0 });
+    // A user who presses Prepare gets the alignment, also while the member is pending.
+    setMember("pending");
+    const res = await app.inject({ method: "POST", url: "/api/alignments", payload: { ebookId: "ebook-c", recordingId: "rec-c" } });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(alignmentJob(res.json().id).status, "queued");
+  } finally {
+    sqlite.prepare("DELETE FROM work_ebook_set_members WHERE work_id='work-c'").run();
+    setPaused("ebook-set", false);
+  }
+});

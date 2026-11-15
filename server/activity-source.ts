@@ -20,6 +20,8 @@ export type ActivityDeps = {
   requireAdmin: (req: any) => unknown;
   /** Run a Hardcover sync for one user now (the "Retry" action on a queued change). */
   syncHardcover: (userId: number) => Promise<unknown>;
+  /** Evaluate one ebook-set member again in the background (the "Retry" action on an ebook-set check). */
+  retryEbookSetMember: (workId: string, ebookId: string) => Promise<unknown>;
   /** Pause state per loop: the settings table plus the environment lock. */
   pauseState: () => Record<string, { paused: boolean; locked: boolean }>;
   setPaused: (id: PausableProcess, paused: boolean) => void;
