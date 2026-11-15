@@ -46,7 +46,7 @@ export type AlignmentInterval = {
   end: number;
   confidence: number;
 };
-export type AlignmentOutcome = "mapped" | "partial" | "unsynced" | "language_not_supported" | "error";
+export type AlignmentOutcome = "mapped" | "partial" | "unsynced" | "language_not_supported" | "error" | "rejected";
 export type UnsyncedPassage = {
   section: number;
   title: string;
