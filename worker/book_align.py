@@ -629,10 +629,14 @@ def group_tasks(starts, frames):
 
 
 def align_group(longform, task, should_stop=None):
-    """Align one group and trim its seams. Returns {sentence: [start frame, end frame]}."""
+    """Align one group and trim its seams. Returns ({sentence: (start frame, end frame)}, stats, trimmed),
+    where `trimmed` holds the intervals the seam trim dropped (kept for diagnosis)."""
     longform.stats = new_stats()
     raw = longform.run(task["aStart"], task["aEnd"], task["cursor"], task["stop"], should_stop)
-    return trim_seams(raw, task, longform.margin), dict(longform.stats)
+    kept = trim_seams(raw, task, longform.margin)
+    trimmed = {k: v for k, v in raw.items() if k not in kept}
+    stats = dict(longform.stats, seamTrimmed=len(trimmed))
+    return kept, stats, trimmed
 
 
 def trim_seams(raw, task, margin):

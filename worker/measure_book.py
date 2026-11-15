@@ -33,7 +33,7 @@ def call(url, method="GET", body=None, token=None, timeout=120):
             return error.code, {"detail": error.reason}
 
 
-def run_job(base, body, poll=2.0, log=lambda line: print(line, flush=True), timeout=6 * 3600):
+def run_job(base, body, poll=2.0, log=lambda line: print(line, flush=True), timeout=6 * 3600, keep=False):
     """Start a job, poll it to the end and fetch the result. Returns (result, last status, wall seconds)."""
     started = time.monotonic()
     code, status = call(f"{base}/book-jobs", "POST", body)
@@ -56,10 +56,13 @@ def run_job(base, body, poll=2.0, log=lambda line: print(line, flush=True), time
     wall = time.monotonic() - started
     if status["state"] != "done":
         raise RuntimeError(f"job ended {status['state']}: {status.get('error')}")
+    if keep == "unfetched":  # leave the session (emissions included) until it goes idle
+        return {"unfetched": True}, status, wall
     code, result = call(f"{base}/book-jobs/{body['jobId']}/result")
     if code != 200:
         raise RuntimeError(f"result failed: {code} {result}")
-    call(f"{base}/book-jobs/{body['jobId']}", "DELETE")
+    if not keep:  # --keep leaves the job's groups/ on the worker for diagnosis (removed when idle)
+        call(f"{base}/book-jobs/{body['jobId']}", "DELETE")
     return result, status, wall
 
 
@@ -70,7 +73,10 @@ def run(args):
             "sentences": [{"id": p["id"], "section": p.get("section", 0), "text": p["text"]} for p in book["paragraphs"]],
             "tracks": [{"id": t["id"], "audio": str(args.track_dir / t["id"]), "duration": t["listed_duration"]}
                        for t in tracks]}
-    result, status, wall = run_job(args.url.rstrip("/"), body)
+    result, status, wall = run_job(args.url.rstrip("/"), body, keep="unfetched" if args.no_fetch else args.keep)
+    if args.no_fetch:
+        print(json.dumps({"jobId": body["jobId"], "wallSeconds": wall, "state": status["state"]}), flush=True)
+        return
     result["wallSeconds"] = wall
     result["finalStatus"] = {k: v for k, v in status.items() if k != "progress"}
     result["finalStatus"]["progress"] = status.get("progress")
@@ -139,6 +145,59 @@ def compare(args):
     print(json.dumps(result), flush=True)
 
 
+def diagnose(args):
+    """Seam losses on one job's own emissions: the grouped map against one ungrouped pass.
+
+    The ungrouped pass is the same aligner as one group spanning the book (the v2 path for a book with
+    no anchors), so every sentence it keeps and the grouped run does not is lost to the grouping.
+    """
+    import numpy as np
+    import book_align
+    from book_job import LABELS
+    job = args.job
+    request = json.loads((job / "request.json").read_text())
+    plan = json.loads((job / "groups" / "plan.json").read_text())
+    sentences = [s["text"] for s in request["sentences"]]
+    emissions = np.memmap(job / "emissions" / "book.f16", dtype=np.float16, mode="r").reshape(-1, 29)
+    longform = book_align.LongForm(emissions, LABELS, sentences)
+    groups = {t["index"]: json.loads((job / "groups" / f"{t['index']}.json").read_text()) for t in plan["tasks"]}
+    outputs = [{int(k): tuple(v) for k, v in groups[t["index"]]["intervals"].items()} for t in plan["tasks"]]
+    grouped, _ = book_align.merge_groups(outputs)
+    started = time.monotonic()
+    whole = longform.run(0, None, 0, None)
+    sequential_seconds = time.monotonic() - started
+    grouped_ok = book_align.validate(longform, grouped)
+    whole_ok = book_align.validate(longform, whole)
+    cuts = [t["aStart"] for t in plan["tasks"][1:]]
+
+    def distance(frame):
+        return min((abs(frame - c) for c in cuts), default=None)
+
+    lost = sorted(set(whole_ok) - set(grouped_ok))
+    gained = sorted(set(grouped_ok) - set(whole_ok))
+    rows = []
+    for k in lost:
+        trimmed_in = [i for i, g in groups.items() if str(k) in g.get("trimmed", {})]
+        kept_in = [i for i, g in groups.items() if str(k) in g["intervals"]]
+        if k in grouped:
+            why = "rejected by validation"
+        elif kept_in:
+            why = "dropped as an order conflict"
+        elif trimmed_in:
+            why = "only in a trimmed seam"
+        else:
+            why = "not aligned by any group"
+        rows.append({"sentence": k, "secondsFromCut": round(distance(whole[k][0]) * 0.02, 1) if cuts else None,
+                     "why": why})
+    report = {"groups": len(plan["tasks"]), "sequentialSeconds": sequential_seconds,
+              "ungroupedAccepted": len(whole_ok), "groupedAccepted": len(grouped_ok),
+              "lostToGrouping": len(lost), "gainedByGrouping": len(gained),
+              "lostWithin90sOfACut": sum(1 for r in rows if r["secondsFromCut"] is not None and r["secondsFromCut"] <= 90),
+              "why": {w: sum(1 for r in rows if r["why"] == w) for w in {r["why"] for r in rows}}, "lost": rows}
+    args.out.write_text(json.dumps(report))
+    print(json.dumps({k: v for k, v in report.items() if k != "lost"}), flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -150,6 +209,12 @@ def main():
     r.add_argument("--tracks", type=Path, required=True, help="tracks.json: [{id, listed_duration}] in order")
     r.add_argument("--track-dir", type=Path, required=True, help="folder under the worker's MEDIA_ROOT")
     r.add_argument("--out", type=Path, required=True)
+    r.add_argument("--keep", action="store_true", help="do not delete the job after fetching its result")
+    r.add_argument("--no-fetch", action="store_true",
+                   help="do not fetch the result: the job keeps its emissions until it is idle (for diagnose)")
+    d = sub.add_parser("diagnose", help="on the worker host: grouped against ungrouped on a job's own emissions")
+    d.add_argument("--job", type=Path, required=True, help="the job folder under alignment/book-jobs")
+    d.add_argument("--out", type=Path, required=True)
     c = sub.add_parser("compare")
     c.add_argument("--mine", type=Path, required=True)
     c.add_argument("--reference", type=Path, required=True, help="a map with intervals [{paragraphId, trackId, start}]")
@@ -157,7 +222,7 @@ def main():
     c.add_argument("--cuts-from", type=Path, help="the prototype's v2 intervals file (summary.group_starts)")
     c.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
-    {"run": run, "compare": compare}[args.command](args)
+    {"run": run, "compare": compare, "diagnose": diagnose}[args.command](args)
 
 
 if __name__ == "__main__":

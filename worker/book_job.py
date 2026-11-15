@@ -523,10 +523,10 @@ class WorkerStages:
         import book_align
         workers = self.align_workers()
 
-        def save(task, intervals, stats):
+        def save(task, intervals, stats, trimmed):
             write_json(groups_dir / f"{task['index']}.json",
                        {"index": task["index"], "intervals": {str(k): list(v) for k, v in intervals.items()},
-                        "stats": stats})
+                        "trimmed": {str(k): list(v) for k, v in trimmed.items()}, "stats": stats})
             done.add(task["index"])
             job.progress(groupsDone=len(done))
 
@@ -535,10 +535,10 @@ class WorkerStages:
                 if should_stop():
                     raise Stopped()
                 try:
-                    intervals, stats = book_align.align_group(longform, task, should_stop)
+                    output = book_align.align_group(longform, task, should_stop)
                 except book_align.Cancelled:
                     raise Stopped()
-                save(task, intervals, stats)
+                save(task, *output)
             return
         import concurrent.futures
         import multiprocessing
@@ -556,8 +556,7 @@ class WorkerStages:
                 finished, pending = concurrent.futures.wait(pending, timeout=0.5,
                                                             return_when=concurrent.futures.FIRST_COMPLETED)
                 for future in finished:
-                    intervals, stats = future.result()
-                    save(futures[future], intervals, stats)
+                    save(futures[future], *future.result())
         finally:
             for future in futures:
                 future.cancel()
