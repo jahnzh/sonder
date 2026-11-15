@@ -10,6 +10,9 @@ const healthyTtlMs = 5 * 60_000;
 const failingTtlMs = 30_000;
 // Transmission itself waits ~15 s for the port checker when its DNS is broken.
 const portTestTimeoutMs = 25_000;
+// sonder-torrents shares the VPN container's network; after a VPN restart it stays in the old, dead one (#123).
+const unreachableMessage =
+  "The local torrent client cannot be reached. The VPN container probably restarted and the torrent container lost its network. On the server, run: docker restart sonder-torrents";
 let cached: { key: string; health: TorrentHealth } | null = null;
 let pending: { key: string; promise: Promise<TorrentHealth> } | null = null;
 
@@ -44,7 +47,8 @@ export async function probeTorrentHealth(): Promise<TorrentHealth> {
       session: false,
       network: "unknown",
       version: null,
-      message: (error as Error).message,
+      message:
+        failure === "unreachable" ? unreachableMessage : (error as Error).message,
       checkedAt,
     };
   }
