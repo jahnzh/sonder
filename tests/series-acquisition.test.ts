@@ -25,7 +25,8 @@ type SeriesAcquisitionDeps = import("../server/series-acquisition.ts").SeriesAcq
 const { getWorkMediaState } = await import("../server/work-media-state.ts");
 const { magnetHash } = await import("../server/acquisitions.ts");
 
-const app = await createApp();
+// The series loop never ticks on its own here; the tests call tickSeriesAcquisition themselves.
+const app = await createApp({ background: { manual: ["series-acquisition"] } });
 const originalFetch = globalThis.fetch;
 
 const books = [
@@ -75,7 +76,6 @@ globalThis.fetch = async (input, init) => {
 
 beforeEach(() => {
   externalRequests = 0;
-  process.env.SONDER_SKIP_SERIES_ACQUISITION = "1";
   resetSeriesAcquisitionDeps();
   sqlite.exec("DELETE FROM series_acquisition_jobs");
   sqlite.exec("DELETE FROM user_series_seen_works");

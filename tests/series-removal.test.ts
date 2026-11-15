@@ -12,13 +12,13 @@ process.env.MEDIA_ROOT = join(temp, "media");
 mkdirSync(join(temp, "media"), { recursive: true });
 process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
-process.env.SONDER_SKIP_SERIES_ACQUISITION = "1";
 process.env.APP_PASSWORD = "admin-password";
 
 const { createApp } = await import("../server/app.ts");
 const { sqlite, db } = await import("../server/db.ts");
 const schema = await import("../server/schema.ts");
-const app = await createApp();
+// The series loop never ticks on its own here; the tests call tickSeriesAcquisition themselves.
+const app = await createApp({ background: { manual: ["series-acquisition"] } });
 
 const books = [
   { id: 301, title: "Volume one", release_year: 2020, release_date: "2020-01-01" },
@@ -748,7 +748,6 @@ test("non-admin cannot remove works and audio", async () => {
 });
 
 test("removed work does not resume series acquisition after ticker runs", async () => {
-  delete process.env.SONDER_SKIP_SERIES_ACQUISITION;
   const { tickSeriesAcquisition, setSeriesAcquisitionDeps, resetSeriesAcquisitionDeps } =
     await import("../server/series-acquisition.ts");
   let acquireCalls = 0;
@@ -776,7 +775,6 @@ test("removed work does not resume series acquisition after ticker runs", async 
   await tickSeriesAcquisition();
   assert.equal(acquireCalls, 0);
   resetSeriesAcquisitionDeps();
-  process.env.SONDER_SKIP_SERIES_ACQUISITION = "1";
 });
 
 test("removed audio-only work stays hidden from Hardcover import", async () => {
