@@ -418,8 +418,9 @@ For Lisa (CPU), `device` will be `"cpu"` and `precision` will be `"float32"`.
 
 ## Whole-book jobs (#402)
 
-ADR 0016's whole-book request, on the worker only: the server does not call it
-yet. The window endpoints (`/align`, `/anchor`, `/anchor-batch`) and their
+ADR 0016's whole-book request. The server calls it only with
+`ALIGNMENT_BOOK_JOBS=1` (#404, off by default; see "The server's whole-book
+runner" below). The window endpoints (`/align`, `/anchor`, `/anchor-batch`) and their
 engine `ctc-wav2vec2-base-960h-torchaudio-2.8-v2` are unchanged. A whole-book
 job is a new engine generation, `ctc-wav2vec2-base-960h-torchaudio-2.8-book-v1`
 (`book_job.BOOK_ENGINE`), with the same model. `/health`'s existing fields
@@ -717,6 +718,84 @@ computed again: all three carry `emissionsKey`, a hash of every track's
 emission identity (source sha256 and engine) and frame count, and are reused
 only when it matches. A job folder written by another engine generation starts
 over.
+
+### The server's whole-book runner (#404)
+
+`ALIGNMENT_BOOK_JOBS=1` on the server (read only by `bookJobsEnabled()` in
+`server/alignment-engine.ts`) makes the whole-book engine the current one: new
+jobs and rebuilds are planned under it, so every map of the window engine is
+rebuilt, and every full alignment (anchored and chapter-paired alike; the
+pairings are not used) runs in `server/alignment-book-job.ts` as one job on the
+worker under one worker lease. Unset, nothing of the window runner changes.
+
+* **Lease.** The lease takes only a host whose `/health` reports `bookJobs`
+  with the whole-book engine and `ready` (a host without them is skipped with
+  "worker runs no whole-book jobs"), and tries the host the job was started on
+  first (`firstHost`), so a restarted server goes back to it.
+* **Start, poll, fetch, publish.** The start request carries the ebook's
+  sentences in reading order and the staged tracks in play order, with the
+  durations the database holds. The worker's job id is the job's id and
+  generation (`bookWorkerJobId`). Progress is read every 5 s
+  (`BOOK_POLL_MS`) into the job's `progress`, `stageTimings` and `bookJob`
+  (`{id, hostId, state, resumed, startedAt}`). The result is turned into the
+  stored map by `applyBookResult` and published with `publish`, so the #379
+  rule keeps a better kept map. The map records the engine the result names,
+  which must be the whole-book engine.
+* **A job the worker may be running.** From the moment the start is sent,
+  the worker's job counts as possibly existing until a 404 for its id says
+  otherwise: a lost start reply changes nothing. The run stores `bookJob` with
+  state `starting` before it sends the start, so a server that stops before the
+  reply polls that id after its restart. Every end of the run on a host except a
+  server stop and a published result (pause, cancel, a new plan, a deleted row,
+  a failed host before the fallback, a refused start, every terminal failure)
+  first sends the cancel (`DELETE`) for that id on that host and waits for the
+  answer, within the cancel's 90 s bound; a 404 is success. Only then does the
+  run end and the lease go back.
+* **A cancel that fails or times out.** The lease is still released, so the
+  stored job becomes paused, cancelled or moves on as asked. The failure is
+  logged, written to the job's `poolErrors` for that host (while the job is
+  active or paused; a cancelled job cannot be written), and the name of the
+  folder the job staged on that host is retired (`retireStagingName`, the #421
+  table). The worker's job may still be reading that folder, so the job's next
+  run stages under `<id>.r<n>`, on every host. A probe never touches that
+  folder: it stages and removes only its own. The sweep removes a retired
+  folder once no lease or run of its job is live; that can only cut short the
+  worker job the server already gave up, whose result is never fetched.
+* **Pause and resume.** Resume is a new generation and therefore a new worker
+  job that starts from nothing: the worker's decoded audio, emissions and
+  finished groups are lost. That is the cost of the stored job never saying
+  "paused" while the worker still works on it, and of a paused job holding no
+  host slot. A pause keeps the host slot until the worker has answered the
+  cancel (at most 90 s).
+* **Server restart.** A stopping server does not cancel the worker's job. The
+  next process's run of the same generation leases the stored host first
+  (`firstHost`) without staging (`unstagedFirstHost`): it holds the slot and the
+  recording and uploads nothing while the worker's job exists, and polls the
+  stored id. Only when the worker answers 404 (it lost or ended the job, for
+  example after 15 idle minutes) are the tracks staged again
+  (`WorkerLease.stageTracks`) and the job started again there. When the stored
+  host cannot be leased, the job's worker job there is cancelled before the
+  other host starts it. A result the server fetched but did not publish before
+  it stopped is gone, and the job runs again.
+* **Worker restart and failed answers.** A worker that answers 503 (it still
+  picks up its retained jobs), does not answer, or answers 2xx with a body that
+  cannot be read or is not a progress answer, is waited for, polling every 5 s,
+  up to `BOOK_WORKER_RESTART_WAIT_MS` (5 minutes). A status of `done` whose
+  result fetch then fails (no answer, 409, 5xx, a cut body) does not restart that
+  clock. After the bound, or when the job fails on the worker, the result cannot
+  be read, names another engine, or the worker lost the job more than three
+  times, the host has failed for this job: the run cancels the job there and
+  moves to the next host once, as the window runner does; with no host left the
+  job fails with the reason. A start answered 413 or 422 fails the job at once;
+  400, 401 and 507 count as a failed host. A 409 at start is answered by one
+  cancel and a new start (the same id with another request), then waited for.
+* **Not done here.** The text-match outcome, unsynced passages and extra-audio
+  flags arrive with #403; `applyBookResult` is where they go. A run that ends by
+  an exception (another process took the job over, a closed database) sends no
+  cancel: after a takeover the other process polls the same worker job.
+
+Tests: `tests/alignment-book-job.test.ts` against the fake whole-book worker
+`tests/fake-book-worker.ts` (real HTTP on 127.0.0.2, fake SSH staging).
 
 ## Overlapped audio extraction (#346)
 

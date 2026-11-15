@@ -8,6 +8,7 @@
  * rebuild that is empty or much worse than the kept map does not publish (#379): see `rebuildRejection`.
  */
 import { CTC_ENGINE } from "./alignment-pool.ts";
+import { BOOK_ENGINE, bookJobsEnabled } from "./alignment-engine.ts";
 import type { AlignmentJob } from "../src/reading-types.ts";
 
 /**
@@ -20,6 +21,7 @@ export const ENGINE_GENERATIONS: readonly string[] = [
   "aeneas-1.7.3",
   "ctc-wav2vec2-base-960h-torchaudio-2.8-v1",
   CTC_ENGINE,
+  BOOK_ENGINE,
 ];
 let generations: readonly string[] = ENGINE_GENERATIONS;
 
@@ -27,9 +29,9 @@ export function setEngineGenerationsForTests(list: readonly string[] | null) {
   generations = list ?? ENGINE_GENERATIONS;
 }
 
-/** The engine new jobs are created with; rebuilds target it. */
+/** The engine new jobs are created with; rebuilds target it. The whole-book engine only with its setting on (#404). */
 export function currentAlignmentEngine() {
-  return CTC_ENGINE;
+  return bookJobsEnabled() ? BOOK_ENGINE : CTC_ENGINE;
 }
 
 /** Position in ENGINE_GENERATIONS, or -1 for an identity this server does not know. */
