@@ -690,6 +690,10 @@ LEFTOVER_MIN_RUN = 20
 LEFTOVER_SLACK_BEFORE = 60
 # Rounds of locate-and-align; a later round sees the gaps and runs the earlier ones left.
 LEFTOVER_ROUNDS = 3
+# Located probes a piece needs before it is aligned. Measured (2026-11-15, WSL, numba): on Antimemetics two
+# probes keep 1,185 of the 1,187 sentences one probe gives; on the Dorian Gray pairings, whose unmapped audio
+# is chapters the ebook lacks, one-probe pieces held 1 to 8 sentences each and none of production's.
+LEFTOVER_MIN_PROBES = 2
 
 
 def audio_gaps(intervals, frames, min_frames):
@@ -720,10 +724,11 @@ def text_runs(mapped, count, min_run):
 
 def leftover_pieces(probes, gap, runs, probe_frames):
     """Pieces of one gap from its located probes [(frame, sentence)]: consecutive probes in the same run
-    whose sentences do not run backwards form one piece. Returns tasks for LongForm.run: a piece's audio
-    starts one probe before its first probe (or at the gap's start) and ends one probe past the next
-    piece's first probe (or at the gap's end), its text starts LEFTOVER_SLACK_BEFORE sentences before the
-    first located sentence and stops at its run's end."""
+    whose sentences do not run backwards form one piece, if there are LEFTOVER_MIN_PROBES of them. Returns
+    tasks for LongForm.run: a piece's audio runs from one probe before its first probe to one probe past
+    its last (its own probe window and one more), within the gap and at most one probe into the next
+    piece; its text starts LEFTOVER_SLACK_BEFORE sentences before the first located sentence and stops at
+    its run's end. Audio a piece leaves out is a gap again in the next round."""
     def run_of(sentence):
         i = bisect.bisect_right([lo for lo, _ in runs], sentence) - 1
         return runs[i] if i >= 0 and runs[i][0] <= sentence < runs[i][1] else None
@@ -739,10 +744,13 @@ def leftover_pieces(probes, gap, runs, probe_frames):
             last["sentences"].append(sentence)
         else:
             groups.append({"run": run, "frames": [frame], "sentences": [sentence]})
+    groups = [g for g in groups if len(g["frames"]) >= LEFTOVER_MIN_PROBES]
     pieces = []
     for i, group in enumerate(groups):
-        lo = gap[0] if i == 0 else max(gap[0], group["frames"][0] - probe_frames)
-        hi = gap[1] if i + 1 == len(groups) else min(gap[1], groups[i + 1]["frames"][0] + probe_frames)
+        lo = max(gap[0], group["frames"][0] - probe_frames)
+        hi = min(gap[1], group["frames"][-1] + 2 * probe_frames)
+        if i + 1 < len(groups):
+            hi = min(hi, groups[i + 1]["frames"][0] + probe_frames)
         run_lo, run_hi = group["run"]
         pieces.append({"aStart": int(lo), "aEnd": int(hi), "cursor": int(max(run_lo, group["sentences"][0] - LEFTOVER_SLACK_BEFORE)),
                        "stop": int(run_hi), "run": [int(run_lo), int(run_hi)], "probes": len(group["frames"])})
@@ -781,12 +789,24 @@ class Covered:
         self.ends.insert(i, end)
 
 
-def leftover_pass(longform, chain, should_stop=None, rounds=LEFTOVER_ROUNDS):
+def run_piece(longform, task, should_stop=None):
+    """The long-form pass over one leftover piece: {sentence: (start frame, end frame)}."""
+    return longform.run(task["aStart"], task["aEnd"], task["cursor"], task["stop"], should_stop)
+
+
+def leftover_pass(longform, chain, should_stop=None, rounds=LEFTOVER_ROUNDS, run_pieces=None):
     """Locate and align unmapped audio against unmapped text after the chain.
 
     `chain` is the chain's merged map {sentence: (start frame, end frame)}; it is not changed. Returns
     (pieces, info): each piece is a map of sentences the chain did not map, rising in audio and text,
-    inside audio no sentence of the chain (or an earlier piece) covers. A piece is validated on its own."""
+    inside audio no sentence of the chain (or an earlier piece) covers. A piece is validated on its own.
+
+    `run_pieces(tasks)` aligns a round's pieces and returns their raw maps in task order (the job runs
+    them in its process pool); by default they run here, one after the other. A piece's alignment does
+    not depend on the others, so the order of running does not change the result."""
+    if run_pieces is None:
+        def run_pieces(tasks):
+            return [run_piece(longform, task, should_stop) for task in tasks]
     started = time.monotonic()
     frames = longform.em.shape[0]
     probe_frames = int(LOCATE_SECONDS * RATE / STRIDE)
@@ -806,6 +826,7 @@ def leftover_pass(longform, chain, should_stop=None, rounds=LEFTOVER_ROUNDS):
         for lo, hi in runs:
             allowed[lo:hi] = True
         added = 0
+        tasks = []
         for gap in gaps:
             info["gaps"] += 1
             info["gapSeconds"] += (gap[1] - gap[0]) * STRIDE / RATE
@@ -818,23 +839,25 @@ def leftover_pass(longform, chain, should_stop=None, rounds=LEFTOVER_ROUNDS):
                 if sentence is not None:
                     probes.append((frame, sentence))
             info["located"] += len(probes)
-            for task in leftover_pieces(probes, gap, runs, probe_frames):
-                if should_stop is not None and should_stop():
-                    raise Cancelled()
-                raw = longform.run(task["aStart"], task["aEnd"], task["cursor"], task["stop"], should_stop)
-                piece = {}
-                for k in sorted(raw):
-                    start, end = raw[k]
-                    if (k in taken or not task["run"][0] <= k < task["run"][1] or start < gap[0] or end > gap[1]
-                            or covered.overlaps(start, end)):
-                        continue
-                    piece[k] = (start, end)
-                    taken[k] = (start, end)
-                    covered.add(start, end)
-                if piece:
-                    pieces.append(piece)
-                    added += len(piece)
-                    info["raw"] += len(piece)
+            tasks.extend({**task, "gap": [int(gap[0]), int(gap[1])]}
+                         for task in leftover_pieces(probes, gap, runs, probe_frames))
+        if should_stop is not None and should_stop():
+            raise Cancelled()
+        for task, raw in zip(tasks, run_pieces(tasks) if tasks else []):
+            gap = task["gap"]
+            piece = {}
+            for k in sorted(raw):
+                start, end = raw[k]
+                if (k in taken or not task["run"][0] <= k < task["run"][1] or start < gap[0] or end > gap[1]
+                        or covered.overlaps(start, end)):
+                    continue
+                piece[k] = (start, end)
+                taken[k] = (start, end)
+                covered.add(start, end)
+            if piece:
+                pieces.append(piece)
+                added += len(piece)
+                info["raw"] += len(piece)
         if not added:
             break
     info["pieces"] = len(pieces)
@@ -924,3 +947,7 @@ def pool_init(emissions_path, classes, labels, sentences, kernel=None, parent=No
 
 def pool_align(task):
     return align_group(_SHARED["longform"], task)
+
+
+def pool_piece(task):
+    return run_piece(_SHARED["longform"], task)

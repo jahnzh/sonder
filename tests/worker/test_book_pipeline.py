@@ -782,6 +782,47 @@ class StopGroups(PipelineFixture):
         self.assert_stopped(pids, started, folder_kept=False)
         self.assertEqual(jobs.registry.budget.reserved(), 0)
 
+    def leftover_through(self, there):
+        """A job whose leftover pass hands three pieces to the pool, where `there` runs them."""
+        import book_pool_helpers
+        import book_session
+        seen = {}
+
+        def leftover_pass(longform, chain, should_stop=None, run_pieces=None):
+            seen["outputs"] = run_pieces([{"index": n} for n in range(3)])
+            return [], {"pieces": 0}
+
+        patches = [mock.patch.object(book_align, "plan_groups", lambda longform, should_stop=None:
+                                     self.plan(longform.em.shape[0])),
+                   mock.patch.object(book_align, "leftover_pass", leftover_pass),
+                   mock.patch.object(book_align, "pool_piece", getattr(book_pool_helpers, there)),
+                   mock.patch.object(book_session, "TERMINATE_GRACE_S", 0.5, create=True),
+                   mock.patch.dict(os.environ, {"BOOK_TEST_PID_DIR": str(self.pids)})]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        jobs = self.jobs(FakeModel())
+        jobs.start(self.request)
+        return jobs, seen
+
+    def test_leftover_pieces_run_in_the_pool_and_come_back_in_order(self):
+        jobs, seen = self.leftover_through("echo_piece")
+        self.assertEqual(self.wait(jobs)["state"], "done")
+        self.assertEqual(seen["outputs"], [{0: (0, 5)}, {1: (10, 15)}, {2: (20, 25)}])
+        self.assertIsNone(jobs.registry.get("book-1").pool)  # released once its processes exited
+
+    def test_cancel_stops_running_leftover_processes(self):
+        jobs, _ = self.leftover_through("sleep_ignoring_term")
+        deadline = time.monotonic() + 120
+        while len(self.started_pids()) < 2:
+            self.assertLess(time.monotonic(), deadline, jobs.status("book-1"))
+            time.sleep(0.1)
+        pids = self.started_pids()
+        started = time.monotonic()
+        self.assertEqual(jobs.cancel("book-1")["state"], "cancelled")
+        self.assert_stopped(pids, started, folder_kept=False)
+        self.assertEqual(jobs.registry.budget.reserved(), 0)
+
     def test_worker_stop_stops_running_group_processes(self):
         jobs, pids = self.run_until_groups_run()
         started = time.monotonic()

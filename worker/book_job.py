@@ -809,8 +809,15 @@ class WorkerStages:
         job.timing("finish", time.monotonic() - started)
         # The leftover pass (#403): unmapped audio against unmapped text; it adds, never changes the chain.
         started = time.monotonic()
+        def run_pieces(pieces):
+            outputs = {}
+            self._in_pool(session, longform, book_path, sentences, pieces, should_stop,
+                          book_align.run_piece, book_align.pool_piece,
+                          lambda n, task, output: outputs.__setitem__(n, output))
+            return [outputs[n] for n in range(len(pieces))]
+
         try:
-            pieces, leftover = book_align.leftover_pass(longform, merged, should_stop)
+            pieces, leftover = book_align.leftover_pass(longform, merged, should_stop, run_pieces=run_pieces)
         except book_align.Cancelled:
             raise Stopped()
         job.timing("leftover", time.monotonic() - started)
@@ -830,9 +837,9 @@ class WorkerStages:
     def _align_groups(self, job, session, longform, book_path, sentences, todo, groups_dir, done, should_stop,
                       key=None):
         import book_align
-        workers = self.align_workers()
 
-        def save(task, intervals, stats, trimmed):
+        def save(_n, task, output):
+            intervals, stats, trimmed = output
             write_json(groups_dir / f"{task['index']}.json",
                        {"index": task["index"], "emissionsKey": key,
                         "intervals": {str(k): list(v) for k, v in intervals.items()},
@@ -840,26 +847,34 @@ class WorkerStages:
             done.add(task["index"])
             job.progress(groupsDone=len(done))
 
-        if workers <= 1 or len(todo) == 1:
-            for task in todo:
+        self._in_pool(session, longform, book_path, sentences, todo, should_stop, book_align.align_group,
+                      book_align.pool_align, save)
+
+    def _in_pool(self, session, longform, book_path, sentences, tasks, should_stop, here, there, on_done):
+        """Run `tasks` in the session's process pool (`there(task)` in a process) or, with one worker or one
+        task, here (`here(longform, task, should_stop)`); `on_done(n, task, output)` as each finishes."""
+        import book_align
+        workers = self.align_workers()
+        if workers <= 1 or len(tasks) == 1:
+            for n, task in enumerate(tasks):
                 if should_stop():
                     raise Stopped()
                 try:
-                    output = book_align.align_group(longform, task, should_stop)
+                    output = here(longform, task, should_stop)
                 except book_align.Cancelled:
                     raise Stopped()
-                save(task, *output)
+                on_done(n, task, output)
             return
         import concurrent.futures
         import multiprocessing
         pool = concurrent.futures.ProcessPoolExecutor(
-            max_workers=min(workers, len(todo)), mp_context=multiprocessing.get_context("spawn"),
+            max_workers=min(workers, len(tasks)), mp_context=multiprocessing.get_context("spawn"),
             initializer=book_align.pool_init, initargs=(str(book_path), 29, LABELS, sentences, None, os.getpid()))
         futures = {}
         finished_all = False
         try:
             futures = session.start_pool(
-                pool, lambda started: {started.submit(book_align.pool_align, task): task for task in todo})
+                pool, lambda started: {started.submit(there, task): (n, task) for n, task in enumerate(tasks)})
             pending = set(futures)
             while pending:
                 if should_stop():
@@ -873,10 +888,10 @@ class WorkerStages:
                         if should_stop():  # the session ended and stopped the processes
                             raise Stopped()
                         raise
-                    save(futures[future], *output)
+                    on_done(*futures[future], output)
             finished_all = True
         finally:
-            # A stopped or failed job's processes are terminated and waited for, not left to finish their group.
+            # A stopped or failed job's processes are terminated and waited for, not left to finish their task.
             session.release_pool(pool, stop=not finished_all)
 
     @staticmethod

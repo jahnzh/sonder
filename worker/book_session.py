@@ -93,6 +93,10 @@ def folder_bytes(folder):
     return total
 
 
+# How long a pool's release, or a new pool, waits for a pool to read as gone (Session.release_pool, start_pool).
+PREVIOUS_POOL_WAIT_S = 2.0
+
+
 def stop_pool(pool, grace=None, kill_wait=None):
     """Stop a process pool now; True once all of its processes have exited, False if one is still there.
 
@@ -306,12 +310,31 @@ class BookSession:
     def start_pool(self, pool, submit):
         """Hand `pool` to the session and run `submit(pool)` (which starts its processes) under the session's
         lock, so an end at the same moment sees every process. Returns what `submit` returns."""
+        previous = self.pool  # read without the lock; checked again under it below
+        if previous is not None and previous is not pool:
+            # The job's earlier pool (#403: the groups' before the leftover pass's), released a moment ago, can
+            # read as running while the executor's own thread is still reaping its processes: look again, for
+            # a bounded time, holding no lock.
+            deadline = time.monotonic() + PREVIOUS_POOL_WAIT_S
+            gone = stop_pool(previous)
+            while not gone and time.monotonic() < deadline:
+                time.sleep(0.05)
+                gone = stop_pool(previous)
+            if gone:
+                with self._lock:
+                    if self.pool is previous:
+                        self.pool = None
         with self._lock:
-            if self.ended is None:
+            # One pool at a time (#403: the leftover pass starts its own after the groups'): a pool whose
+            # processes did not exit stays the session's, so its end still sees them.
+            busy = self.pool is not None and self.pool is not pool
+            if self.ended is None and not busy:
                 self.pool = pool
                 return submit(pool)
             ended = self.ended
         stop_pool(pool)
+        if ended is None:
+            raise RuntimeError("An earlier process pool of this job is still running.")
         raise SessionEnded(ended)
 
     def release_pool(self, pool, stop=True):
@@ -319,6 +342,12 @@ class BookSession:
         lets go of the pool only once they have exited; otherwise it keeps it, so an end of the session sees
         the processes and keeps the folder and the reservation while one is still there. True when gone."""
         gone = stop_pool(pool)
+        # A process the executor's own thread is still reaping can read as running for a moment (#403):
+        # look again for a bounded time, holding no lock, before keeping the pool as still running.
+        deadline = time.monotonic() + PREVIOUS_POOL_WAIT_S
+        while not gone and time.monotonic() < deadline:
+            time.sleep(0.05)
+            gone = stop_pool(pool)
         if gone:
             with self._lock:
                 if self.pool is pool:

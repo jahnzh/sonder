@@ -248,11 +248,28 @@ class LeftoverHelpers(unittest.TestCase):
 
     def test_pieces_follow_runs_and_audio(self):
         runs = [(100, 200), (400, 500)]
-        probes = [(1000, 150), (7000, 160), (13000, 420), (19000, 440), (25000, 50)]
-        pieces = book_align.leftover_pieces(probes, (500, 30000), runs, 6000)
+        probes = [(1000, 150), (7000, 160), (13000, 420), (19000, 440), (25000, 50), (61000, 120), (67000, 130),
+                  (90000, 450)]
+        pieces = book_align.leftover_pieces(probes, (500, 100000), runs, 6000)
+        # (25000, 50) lies in no run; (90000, 450) is one probe alone. Audio: one probe before the first probe
+        # to one past the last, and at most one probe into the next piece.
         self.assertEqual([(p["aStart"], p["aEnd"], p["cursor"], p["stop"]) for p in pieces],
-                         [(500, 19000, 100, 200), (7000, 30000, 400, 500)])
-        self.assertEqual([p["probes"] for p in pieces], [2, 2])
+                         [(500, 19000, 100, 200), (7000, 31000, 400, 500), (55000, 79000, 100, 200)])
+        self.assertEqual([p["probes"] for p in pieces], [2, 2, 2])
+        self.assertEqual(book_align.LEFTOVER_MIN_PROBES, 2)
+
+    def test_the_order_pieces_run_in_does_not_change_the_result(self):
+        if not hasattr(Reordered, "chain"):
+            Reordered.setUpClass()
+        longform = Reordered.longform
+
+        def backwards(tasks):  # as a pool would: in any order, results handed back in task order
+            out = {n: book_align.run_piece(longform, tasks[n]) for n in reversed(range(len(tasks)))}
+            return [out[n] for n in range(len(tasks))]
+
+        pieces, info = book_align.leftover_pass(longform, dict(Reordered.chain), run_pieces=backwards)
+        self.assertEqual(pieces, Reordered.pieces)
+        self.assertEqual(info["raw"], Reordered.info["raw"])
 
 
 @unittest.skipIf(np is None, "numpy is not installed")

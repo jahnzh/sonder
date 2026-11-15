@@ -190,6 +190,31 @@ class Sessions(unittest.TestCase):
         session.on_end(closed.append)
         return session, pool, closed
 
+    def test_a_new_pool_waits_briefly_for_the_previous_one_to_read_as_gone(self):
+        # #403: the leftover pass starts a pool after the groups' one; a process the executor is still reaping
+        # can read as running for a moment, so the first check may say "not gone".
+        import book_session
+        session = self.registry.open("job", self.folder)
+        first, second = FakePool(), FakePool()
+        session.set_pool(first)
+        answers = iter([False, False, True])
+        with unittest.mock.patch.object(book_session, "stop_pool", lambda pool, *a, **k: next(answers)):
+            self.assertEqual(session.start_pool(second, lambda pool: "started"), "started")
+        self.assertIs(session.pool, second)
+
+    def test_a_new_pool_is_refused_while_the_previous_ones_processes_run(self):
+        import book_session
+        session = self.registry.open("job", self.folder)
+        first, second = FakePool(), FakePool()
+        session.set_pool(first)
+        stopped = []
+        with unittest.mock.patch.object(book_session, "stop_pool", lambda pool, *a, **k: stopped.append(pool) or pool is not first), \
+                unittest.mock.patch.object(book_session, "PREVIOUS_POOL_WAIT_S", 0.2):
+            with self.assertRaises(RuntimeError):
+                session.start_pool(second, lambda pool: self.fail("the second pool must not start"))
+        self.assertIs(session.pool, first)  # still the session's, so its end sees those processes
+        self.assertIn(second, stopped)
+
     def assert_released(self, session, pool, closed, reason, deleted=True):
         self.assertEqual(session.ended, reason)
         self.assertEqual(pool.shutdowns, [(False, True)])

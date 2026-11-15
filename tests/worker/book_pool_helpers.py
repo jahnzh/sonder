@@ -12,3 +12,9 @@ def sleep_ignoring_term(task):
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     Path(os.environ["BOOK_TEST_PID_DIR"], str(os.getpid())).write_text(str(task["index"]))
     time.sleep(600)
+
+
+def echo_piece(task):
+    """A leftover piece that maps its own index after a delay that reverses the finishing order."""
+    time.sleep(0.4 * (2 - task["index"]))
+    return {task["index"]: (10 * task["index"], 10 * task["index"] + 5)}
