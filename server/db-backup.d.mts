@@ -11,4 +11,8 @@ export declare class BackupError extends Error {
 export declare function backupDatabase(
   sourcePath: string,
   destinationPath: string,
+  options?: {
+    /** Awaited with the verified temporary copy just before it is published; when it throws, nothing is published. */
+    beforePublish?: (temporary: string) => Promise<void> | void;
+  },
 ): Promise<{ source: string; destination: string; bytes: number }>;

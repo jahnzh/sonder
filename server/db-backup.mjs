@@ -213,8 +213,10 @@ function publishBackup(temporary, destination) {
 /**
  * Copy `sourcePath` to `destinationPath` through SQLite's online backup API.
  * Throws BackupError on any failure; the destination only exists for a verified backup.
+ * `options.beforePublish(temporary)`, when given, is awaited with the verified temporary copy just
+ * before it is published; when it throws, nothing is published. `npm run backup` passes no options.
  */
-export async function backupDatabase(sourcePath, destinationPath) {
+export async function backupDatabase(sourcePath, destinationPath, options = {}) {
   const { source, destination } = resolvePaths(sourcePath, destinationPath);
   assertIsDatabase(source, "source");
 
@@ -228,6 +230,7 @@ export async function backupDatabase(sourcePath, destinationPath) {
     sourceDatabase = null;
 
     verifyBackup(temporary);
+    if (options.beforePublish) await options.beforePublish(temporary);
     publishBackup(temporary, destination);
     const published = temporary;
     temporary = null;
