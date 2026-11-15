@@ -61,7 +61,7 @@ def run_job(base, body, poll=2.0, log=lambda line: print(line, flush=True), time
     code, result = call(f"{base}/book-jobs/{body['jobId']}/result")
     if code != 200:
         raise RuntimeError(f"result failed: {code} {result}")
-    if not keep:  # --keep leaves the job's groups/ on the worker for diagnosis (removed when idle)
+    if not keep:  # a fetch deletes the job; the DELETE (404 then) is for workers from before that
         call(f"{base}/book-jobs/{body['jobId']}", "DELETE")
     return result, status, wall
 
@@ -209,7 +209,7 @@ def main():
     r.add_argument("--tracks", type=Path, required=True, help="tracks.json: [{id, listed_duration}] in order")
     r.add_argument("--track-dir", type=Path, required=True, help="folder under the worker's MEDIA_ROOT")
     r.add_argument("--out", type=Path, required=True)
-    r.add_argument("--keep", action="store_true", help="do not delete the job after fetching its result")
+    r.add_argument("--keep", action="store_true", help="do not send DELETE after the fetch (the fetch itself deletes the job on current workers)")
     r.add_argument("--no-fetch", action="store_true",
                    help="do not fetch the result: the job keeps its emissions until it is idle (for diagnose)")
     d = sub.add_parser("diagnose", help="on the worker host: grouped against ungrouped on a job's own emissions")
