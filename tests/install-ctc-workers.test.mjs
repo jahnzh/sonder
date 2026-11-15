@@ -135,14 +135,14 @@ test("install-ctc-workers.sh --print-caddy requires --caddy-domain and --prod-ip
   assert.equal(runSuccess.stdout, expectedCaddy);
 });
 
-test("install-ctc-workers.sh warns when --token passed on CLI", () => {
-  // --print-service exits before any host step, so this reaches no service or worker.
-  const run = spawnSync(installer, ["--token", "secret123", "--print-service"], {
-    encoding: "utf8",
-    env: { ...process.env, HOME: "/home/testuser" },
-  });
-  assert.equal(run.status, 0, run.stderr);
-  assert.match(run.stderr, /warning: --token on the command line is visible in process listings; prefer passing ALIGNMENT_WORKER_TOKEN in the environment/);
+test("install-ctc-workers.sh refuses --token: a token on the command line is visible in process listings", () => {
+  // The refusal comes while the arguments are read, before any host step.
+  for (const args of [["--token", "secret123", "--print-service"], ["--token=secret123", "--print-service"]]) {
+    const run = spawnSync(installer, args, { encoding: "utf8", env: { ...process.env, HOME: "/home/testuser" } });
+    assert.equal(run.status, 2, run.stderr);
+    assert.match(run.stderr, /--token was removed: .*Pass --token-file <path>, or ALIGNMENT_WORKER_TOKEN in the environment/);
+    assert.ok(!run.stderr.includes("secret123"));
+  }
 });
 
 // Installs, updates, the token flow and the 0600 worker.env run against a fake host in

@@ -228,7 +228,7 @@ The script performs the following actions in `$HOME/sonder-ctc-worker`:
 1. Copies `worker/` of the revision to `releases/<revision>--<env>/worker/` and writes the revision beside it (`REVISION`, reported as `revision` by `/health`).
 2. Creates a Python virtual environment `envs/<device>-<hash>/` for the pinned dependency set (`torch==2.8.0`, `torchaudio==2.8.0`, `numpy==1.26.4`, `fastapi==0.121.3`, `uvicorn==0.38.0`); a later revision with the same set reuses it.
 3. Downloads the pinned Wav2Vec2 Base CTC checkpoint (`wav2vec2_fairseq_base_ls960_asr_ls960.pth`) into `$MEDIA_ROOT/alignment/models` (`media/` for a new host).
-4. Writes `worker.env` (`ALIGNMENT_WORKER_TOKEN`, `MEDIA_ROOT`, `ALIGNMENT_CTC_DEVICE`, and `ALIGNMENT_WORKER_SLOTS` with `--slots`), mode 0600.
+4. Writes `worker.env` (`ALIGNMENT_WORKER_TOKEN`, `MEDIA_ROOT`, `ALIGNMENT_CTC_DEVICE`, and `ALIGNMENT_WORKER_SLOTS` with `--slots`), mode 0600. Without `--token-file <path>` or `ALIGNMENT_WORKER_TOKEN` in the environment it generates a token; the installer never prints a token, it names the file: copy `ALIGNMENT_WORKER_TOKEN` from `worker.env` on the host to the production `.env`. (`--token` was removed: a command-line value shows in process listings.)
 5. Installs, enables and starts the systemd user service `sonder-ctc-worker.service`, then verifies it (see below).
 
 ### 3. Enable user lingering
@@ -359,11 +359,16 @@ own SSH access to `192.168.1.119` and `lisa`, not the container's pool key).
 there, so the host needs no checkout. Do one host at a time, WSL first.
 
 1. **Stop new work.** On the Activity page, pause the alignment processor and
-   wait until no request runs (`activeRequests` 0, `busy` and `stuck` false):
+   wait until no request runs (`activeRequests` 0, `busy` and `stuck` false,
+   and in `bookJobs`: `jobs` 0, `slotsHeld` 0, `resuming` false):
 
    ```sh
-   curl -s http://192.168.1.119:3012/health | jq '{activeRequests, busy, stuck, revision}'
+   curl -s http://192.168.1.119:3012/health | jq '{activeRequests, busy, stuck, revision, bookJobs}'
    ```
+
+   This step is required: the worker has no drain mode, so nothing on the host
+   stops the server from sending a request after the installer's last check
+   (see the limitations below).
 
 2. **Dry run.** It reads the host and prints the plan; it changes nothing on
    the host except the shipped copy in `~/.cache/sonder-ctc-install/`:
@@ -387,22 +392,46 @@ there, so the host needs no checkout. Do one host at a time, WSL first.
    ```
 
    In order, it:
+   - takes `~/sonder-ctc-worker/.install.lock` for the whole run (an update,
+     `--verify`, `--rollback` and `--prune` refuse with exit 3 while another
+     holds it);
    - refuses (exit 3) while `/health` shows a running request, a busy or stuck
-     worker, or cannot be read or understood; `--force` is the only way past,
-     and interrupts whatever runs;
+     worker, whole-book work (`bookJobs.jobs` above 0, `bookJobs.slotsHeld`
+     above 0, or `bookJobs.resuming` true; `jobs` counts retained book jobs,
+     finished ones not yet collected included), or cannot be read or
+     understood: `busy`, `stuck` and `bookJobs.resuming` must be JSON booleans
+     and `activeRequests`, `jobs` and `slotsHeld` JSON integers, anything else
+     is unknown. A worker from before #402 has no `bookJobs` and runs no book
+     work. `--force` is the only way past, and interrupts whatever runs;
    - copies the code to a new `releases/<revision>--<env>/` and builds or
      reuses `envs/<env>/`, downloads the model into the `MEDIA_ROOT` the
      worker uses (read as systemd reads `worker.env`: quotes, CRLF), without
      touching the code, packages or settings of the running worker;
-   - writes `worker.env` keeping every line it does not set, saves the current
-     `worker.env`, unit and release in `rollback/`, checks `/health` once
-     more, switches unit, `worker.env` and `current`, and restarts the service
-     once;
-   - verifies, for up to `--verify-timeout` seconds (default 300): `ready`,
-     `ctc.engine` of this revision, `ctc.ready`, the device, `mediaRoot`, and
+   - writes `worker.env` keeping every line it does not set byte for byte (a
+     key it sets or changes is removed where it was and written as a new line
+     at the top of the file, so no kept line changes, not even an unterminated
+     last one); saves the current `worker.env`, unit and release in
+     `rollback/` (with `--skip-service` too), and for a file that does not
+     exist the explicit record `no-worker-env` or `no-unit`;
+   - switches `worker.env`, `current` and the unit, runs `daemon-reload` and
+     `enable`, reads the unit's `ExecMainStartTimestampMonotonic`, checks
+     `/health` a last time and restarts the service once. If that last check
+     finds a request, it puts the saved `worker.env`, unit and `current` back,
+     reloads, removes `rollback/` and exits 3 without restarting: the old
+     worker never stopped running from its own paths;
+   - verifies, for up to `--verify-timeout` seconds (default 300): the unit is
+     `active` and its main process started after the time read before the
+     restart (so a restart that did not happen fails even when the old process
+     answers with the same values), then the `/health` fields the server
+     checks (`ready`, an absolute `mediaRoot`, boolean `busy`/`stuck`,
+     `ctc.engine` of this revision, `ctc.ready`, `ctc.device` and
+     `ctc.precision`), `mediaRoot` equal to the configured root and
      `revision` equal to the installed revision, then sends one authenticated
-     request (an `/anchor-batch` for audio that does not exist: the worker's
-     token check must pass, so it answers 400, not 401).
+     request: an `/anchor-batch` naming a new random file under
+     `MEDIA_ROOT/alignment/` that cannot exist. The worker checks the token
+     first, so a matching token gives HTTP 400 ("The audio must be on the
+     configured media drive.") or 409 (every slot busy) and a wrong one 401;
+     only 400 or 409 proves the token.
 
    Exit 0 means verified. Check it from here too:
 
@@ -419,12 +448,22 @@ there, so the host needs no checkout. Do one host at a time, WSL first.
    ```
 
    It restores the saved `worker.env`, the unit and the previous code, restarts
-   once and waits until the previous worker reports ready (and its revision,
-   when it had one). It refuses while the new worker runs requests, like the
-   update; `--force` interrupts them. Until you roll back or verify, a new
-   update refuses: when the worker only needed longer to load, run `--verify`,
-   which checks again and restarts nothing. `journalctl --user -u
-   sonder-ctc-worker.service` on the host shows why a worker did not start.
+   once and verifies the previous worker like an update does: the unit
+   restarted, the `/health` fields the server checks for the previous code's
+   engine and the saved device, media root and revision (when it had one;
+   `unknown` for a worker from before #411), and one authenticated request
+   with the saved token. With the record `no-unit` (there was no worker
+   before) it stops and disables the service and removes the unit instead. It
+   refuses, before changing anything, when the saved state has neither a file
+   nor its record. It refuses while the new worker runs requests, like the
+   update; `--force` interrupts them. The status is `rolling-back` until the
+   restored worker verified, then `rolled-back`; a rollback that failed or was
+   killed is finished by running `--rollback` again, which does the same
+   steps. `--rollback --skip-service` restores the files only and stays
+   `rolling-back`. Until you roll back or verify, a new update refuses: when
+   the worker only needed longer to load, run `--verify`, which checks again
+   and restarts nothing. `journalctl --user -u sonder-ctc-worker.service` on
+   the host shows why a worker did not start.
 
 5. **lisa**: steps 1 to 4 with `--host lisa` and
    `curl -s https://audiobooks.amatox.in/sonder-ctc/health` (only the production
@@ -443,8 +482,12 @@ there, so the host needs no checkout. Do one host at a time, WSL first.
    releases and environments, `MEDIA_ROOT/alignment/models/whisper`, and
    `rollback/`, then reports whether the installed environment has
    `faster_whisper` or `aeneas` (a new environment has neither). It runs only
-   after a verified update and when the unit runs the installed release, and
-   restarts nothing. After it, `--rollback` has nothing to restore.
+   after a verified update, holds the install lock for its whole run and
+   decides what to remove after it holds it, reads the unit that is installed
+   now and refuses (exit 3, nothing removed) when that unit names any path on
+   its list (itself or below it, `%h` and symlinks resolved), and restarts
+   nothing. `--prune --skip-service` is refused: prune must read the unit.
+   After it, `--rollback` has nothing to restore.
 
 Exit codes: 0 done, 1 error, 2 usage, 3 refused (requests running, `/health`
 unknown, last update not verified, a second run in progress, or `systemctl
@@ -459,26 +502,44 @@ Layout on the host after an update:
 ├── releases/<revision>--<env>/worker/   # code, with REVISION
 ├── releases/<revision>--<env>/env -> ../../envs/<env>
 ├── envs/<device>-<hash>/           # one per dependency set; never changed once complete
-├── rollback/                       # worker.env, unit, current, previous-revision, revision, status
+├── rollback/                       # worker.env or no-worker-env, unit or no-unit, current, previous-revision, revision, status
+├── .install.lock                   # held by the run in progress
 ├── worker/, env/                   # the layout from before #411, until --prune
 └── media/                          # the default MEDIA_ROOT of a new host
 ```
 
 The unit names the release and environment by their real paths, so switching
 `current` or adding a release never changes what a running worker imports.
-Accepted limitations: between the last `/health` check and the restart there
-is a window of milliseconds in which the server can send a request; a job the
-server is still staging when the worker restarts fails like any request to a
-restarting worker and runs again on the other host or waits (pausing the
-alignment processor first avoids both). With `--skip-service` nothing is
-restarted or verified: restart the worker yourself, then run `--verify`.
+Those paths go into the unit unquoted, so `--dir` must be an absolute path of
+letters, digits and `. _ - + , @ : = /`; any other character (whitespace,
+quotes, `\`, `%`, `$`, …) would need quoting in the unit and is refused (exit
+2) before anything changes, also with `--host` before anything is shipped.
+
+Accepted limitations:
+
+- The worker has no drain mode, so the installer cannot stop the server from
+  sending work: its last `/health` check runs after every file and the unit
+  are in place, immediately before the one restart, but a window remains in
+  which a request can arrive and is then interrupted. Pause the alignment
+  processor first (step 1). A job the server is still staging when the worker
+  restarts fails like any request to a restarting worker and runs again on the
+  other host or waits.
+- Verification proves that this unit restarted, but not that the process
+  answering at `--worker-url` is that unit's: a different worker reachable at
+  the same URL with the same revision, device, media root and token cannot be
+  told apart from here. Use the default URL (loopback on the host), which only
+  the unit's port serves.
+- With `--skip-service` nothing is restarted or verified: restart the worker
+  yourself, then run `--verify` (it checks that the unit is active, not that
+  it restarted).
 
 The tests run the whole procedure against a fake host (temporary directories,
 host steps replaced, a fake worker on a free local port):
 `tests/install-ctc-workers-update.test.mjs` and
 `tests/ctc-worker-install-helper.test.mjs`. In that test mode the installer
-has no default directory or worker URL, and a host step a test did not replace
-refuses instead of reaching a host.
+has no default directory or worker URL, a host step a test did not replace
+refuses instead of reaching a host, and the HTTP steps refuse any URL that is
+not loopback (`127.0.0.1`, `localhost`, `[::1]`).
 
 ## Whole-book jobs (#402)
 
