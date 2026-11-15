@@ -6,12 +6,18 @@
  *
  * - Whether a backup is due is decided from the recorded successful runs only, never from the names in the folder.
  * - A run first claims its day in the database with one statement, so two servers sharing the database never run
- *   the same day's backup at once, and only the claim's holder records the result.
+ *   the same day's backup at once, and only the claim's holder records the result. The run renews its claim at each
+ *   stage and every minute; only a claim not renewed for 30 minutes (a stopped or hung server) is taken over.
+ * - The size and SHA-256 of the verified copy are stored in the claimed row before the copy is published. A later
+ *   attempt of the same day that finds that file at the day's name adopts it instead of failing over it; any other
+ *   file there is a failure, and is never deleted or overwritten.
  * - Retention deletes a file only when a `done` row names it, it is a regular file directly in the folder, and its
- *   size and SHA-256 are still the ones recorded when the run published it. Only such files fill the 14 kept;
- *   a missing, replaced or non-regular entry is left alone and its row stops counting. The `before-*` copies of
- *   deploys and every other file are never touched, and a run that fails removes nothing.
- * - Every failure is recorded as a failed run with its reason; nothing escapes to the runner.
+ *   size and SHA-256 are still the ones recorded when the run published it: each file is checked and deleted in one
+ *   step (`checkRecordedFile`), one at a time. Only such files fill the 14 kept; a missing, replaced or non-regular
+ *   entry is left alone and its row stops counting. The `before-*` copies of deploys and every other file are never
+ *   touched, and a run that fails removes nothing.
+ * - Every failure is recorded with its reason: a failed run, or a successful run whose retention failed (which then
+ *   deleted nothing further). Nothing escapes to the runner.
  *
  * The production root filesystem is read-only: this writes only under the data directory's `backups/` folder.
  */

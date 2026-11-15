@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   BACKUP_HOUR_UTC, DAILY_BACKUPS_KEPT, MIN_FREE_BYTES,
-  STALE_CLAIM_MS, backupDue, backupPlan, backupRefusal, dailyBackupDay, dailyBackupName, expiredDailyBackups, isScheduleFileName,
+  STALE_CLAIM_MS, backupDue, backupPlan, backupRefusal, dailyBackupDay, dailyBackupName, isScheduleFileName,
   lastBackupDay, nextBackupAt, scheduledDay,
 } from "../server/backup-schedule.ts";
 
@@ -68,21 +68,6 @@ test("only daily-<date>.db names are daily backups", () => {
     "daily-2026-11-16", "Daily-2026-11-16.db", "daily-2026-1-16.db", ".daily-2026-11-16.db.backup-1-ab.tmp", "daily-latest.db", "x-daily-2026-11-16.db",
   ])
     assert.equal(dailyBackupDay(name), null, name);
-});
-
-test("retention keeps the newest 14 daily backups and returns nothing else", () => {
-  const days = Array.from({ length: 20 }, (_, index) => `2026-10-${String(index + 1).padStart(2, "0")}`);
-  const daily = days.map(dailyBackupName);
-  const others = ["before-abc-1.db", "before-def-2.db", "notes.txt", "daily-2026-10-01.db-wal", "daily-2026-10-02.db.bak"];
-  const names = [...others, ...[...daily].reverse(), "daily-2026-09-01.db"];
-  const made = new Set(daily);
-  const expired = expiredDailyBackups(names, made);
-  assert.deepEqual(expired, daily.slice(0, 6).reverse(), "the six oldest of twenty go");
-  assert.equal(expiredDailyBackups(names, made, 14).length, 6);
-  assert.ok(!expired.includes("daily-2026-09-01.db"), "a daily name the schedule did not record is never removed");
-  for (const name of others) assert.ok(!expired.includes(name), name);
-  assert.deepEqual(expiredDailyBackups(daily.slice(0, 14), made), [], "fourteen are all kept");
-  assert.deepEqual(expiredDailyBackups(daily, made, 0), daily.slice(0, 19).reverse(), "a keep below one still keeps the newest");
 });
 
 test("a run is refused when the media drive check fails for the backup folder or free space is below the limit", () => {

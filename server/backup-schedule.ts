@@ -85,17 +85,6 @@ export function dailyBackupDay(name: string) {
   return DAILY_NAME.exec(name)?.[1] ?? null;
 }
 
-/**
- * The files retention removes: daily backups that the schedule recorded as made by itself, beyond the newest
- * `keep`. Every other name, and a daily name the schedule has no record of, is never returned.
- */
-export function expiredDailyBackups(names: readonly string[], madeBySchedule: ReadonlySet<string>, keep = DAILY_BACKUPS_KEPT) {
-  return names
-    .filter((name) => dailyBackupDay(name) !== null && madeBySchedule.has(name))
-    .sort((a, b) => (a < b ? 1 : a > b ? -1 : 0))
-    .slice(Math.max(1, keep));
-}
-
 const megabytes = (bytes: number) => `${Math.round(bytes / 1e6)} MB`;
 
 /** Why a run must not start, or null. The media drive check comes first: without the drive the free space is the system disk's. */
