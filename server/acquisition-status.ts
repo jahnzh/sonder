@@ -2,44 +2,15 @@ import { eq } from "drizzle-orm";
 import { db } from "./db.ts";
 import * as s from "./schema.ts";
 
-/**
- * The status vocabulary of an acquisition (a release being brought into the library).
- * Copies to the server have their own vocabulary in `downloads.ts` (ADR 0011).
- */
-export const ACQUISITION_STATUSES = [
-  "checking",
-  "preparing",
-  "downloading",
-  "paused",
-  "ready",
-  "error",
-] as const;
-export type AcquisitionStatus = (typeof ACQUISITION_STATUSES)[number];
-
-/** Statuses of an acquisition that is still on its way: the work shows as queued. */
-export const ACTIVE_ACQUISITION_STATUSES = [
-  "checking",
-  "preparing",
-  "downloading",
-  "paused",
-] as const satisfies readonly AcquisitionStatus[];
-
-/** Statuses after which an acquisition no longer changes on its own. */
-export const FINISHED_ACQUISITION_STATUSES = [
-  "ready",
-  "error",
-] as const satisfies readonly AcquisitionStatus[];
-
-const active = new Set<string>(ACTIVE_ACQUISITION_STATUSES);
-const finished = new Set<string>(FINISHED_ACQUISITION_STATUSES);
-
-export function isActiveAcquisitionStatus(status: string) {
-  return active.has(status);
-}
-
-export function isFinishedAcquisitionStatus(status: string) {
-  return finished.has(status);
-}
+export {
+  ACQUISITION_STATUSES,
+  ACTIVE_ACQUISITION_STATUSES,
+  FINISHED_ACQUISITION_STATUSES,
+  isActiveAcquisitionStatus,
+  isFinishedAcquisitionStatus,
+  type AcquisitionStatus,
+} from "./acquisition-vocabulary.ts";
+import type { AcquisitionStatus } from "./acquisition-vocabulary.ts";
 
 type AcquisitionRow = typeof s.acquisitions.$inferInsert;
 type StatusFields = Partial<

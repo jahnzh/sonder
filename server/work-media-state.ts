@@ -1,115 +1,45 @@
 import { sqlite } from "./db.ts";
-import { isActiveAcquisitionStatus } from "./acquisition-status.ts";
+import {
+  deriveWorkMediaStates,
+  materialiseWorkMediaStates as materialise,
+  playableWorks,
+  type WorkMediaHoldReason,
+  type WorkMediaState,
+} from "./work-media-derivation.ts";
 
-export type WorkMediaStateValue =
-  | "missing"
-  | "queued"
-  | "failed"
-  | "available";
-
-export type WorkMediaHoldReason = "unreleased" | "empty_search";
-
-export type WorkMediaState = {
-  state: WorkMediaStateValue;
-  holdReason: WorkMediaHoldReason | null;
-  acquisitionId: string | null;
-  updatedAt: number;
-};
+export type {
+  WorkMediaHoldReason,
+  WorkMediaState,
+  WorkMediaStateValue,
+} from "./work-media-derivation.ts";
 
 /*
  * A work's media state for a user is derived when read (ADR 0011): from the work's tracks
- * and the user's most recently updated acquisition for it. Nothing refreshes it.
+ * and the user's most recently updated acquisition for it. Nothing refreshes it. The
+ * queries are in `work-media-derivation.ts`.
  *
  * Presence: a work has a media state for a user while either
  *  - the user has an acquisition for the work (`user_acquisitions` → `acquisitions.work_id`), or
  *  - a `work_media_states` row exists for the pair. The row marks the work as tracked for
- *    the user and holds the hold reason; its `state` and `acquisition_id` columns are no
- *    longer read. Rows are written by the hold functions and by `trackWorkMediaState`.
+ *    the user and holds the hold reason; its `state` and `acquisition_id` columns are not
+ *    read here. They are written only by `materialiseWorkMediaStates`, before a rollback
+ *    to an image that reads them. Rows are written by the hold functions and by
+ *    `trackWorkMediaState`.
  * Otherwise (e.g. a library book that was uploaded or imported) the read returns null.
+ *
+ * Holds: an available work has no hold. A read that finds a work available while a hold
+ * reason is still stored clears it, as the refresh before ADR 0011 did, so the hold does
+ * not come back if the audio later goes away.
  */
 
-type TrackedRow = { workId: string; holdReason: string | null; updatedAt: number };
-type LatestAcquisition = { workId: string; id: string; status: string; updatedAt: number };
-
-const ids = (workIds: Iterable<string>) => JSON.stringify([...new Set(workIds)]);
-
 /**
- * Works with playable audio: a non-placeholder edition (`hc-` ids are Hardcover
- * placeholders) whose first recording has a track.
- */
-function playableWorks(workIds: Iterable<string>) {
-  const rows = sqlite
-    .prepare(
-      `SELECT DISTINCT e.work_id AS workId FROM audio_editions e
-       JOIN recordings r
-         ON r.rowid=(SELECT MIN(r2.rowid) FROM recordings r2 WHERE r2.edition_id=e.id)
-       WHERE e.work_id IN (SELECT value FROM json_each(?))
-         AND substr(e.id,1,3)<>'hc-'
-         AND EXISTS(SELECT 1 FROM tracks t WHERE t.recording_id=r.id)`,
-    )
-    .all(ids(workIds)) as { workId: string }[];
-  return new Set(rows.map((row) => row.workId));
-}
-
-function trackedRows(userId: number, workIds: Iterable<string>) {
-  const rows = sqlite
-    .prepare(
-      `SELECT work_id AS workId,hold_reason AS holdReason,updated_at AS updatedAt
-       FROM work_media_states
-       WHERE user_id=? AND work_id IN (SELECT value FROM json_each(?))`,
-    )
-    .all(userId, ids(workIds)) as TrackedRow[];
-  return new Map(rows.map((row) => [row.workId, row]));
-}
-
-function latestUserAcquisitions(userId: number, workIds: Iterable<string>) {
-  const rows = sqlite
-    .prepare(
-      `SELECT workId,id,status,updatedAt FROM (
-         SELECT a.work_id AS workId,a.id,a.status,a.updated_at AS updatedAt,
-           ROW_NUMBER() OVER (PARTITION BY a.work_id ORDER BY a.updated_at DESC,a.rowid DESC) AS n
-         FROM user_acquisitions u JOIN acquisitions a ON a.id=u.acquisition_id
-         WHERE u.user_id=? AND a.work_id IN (SELECT value FROM json_each(?))
-       ) WHERE n=1`,
-    )
-    .all(userId, ids(workIds)) as LatestAcquisition[];
-  return new Map(rows.map((row) => [row.workId, row]));
-}
-
-function deriveState(
-  row: TrackedRow | undefined,
-  job: LatestAcquisition | undefined,
-  playable: boolean,
-): WorkMediaState {
-  const holdReason = (row?.holdReason as WorkMediaHoldReason | null) ?? null;
-  const updatedAt = Math.max(row?.updatedAt ?? 0, job?.updatedAt ?? 0);
-  if (playable)
-    return { state: "available", holdReason: null, acquisitionId: null, updatedAt };
-  if (job && isActiveAcquisitionStatus(job.status))
-    return { state: "queued", holdReason, acquisitionId: job.id, updatedAt };
-  if (job?.status === "error")
-    return { state: "failed", holdReason, acquisitionId: job.id, updatedAt };
-  return { state: "missing", holdReason, acquisitionId: null, updatedAt };
-}
-
-/**
- * Media states of many works for one user in a fixed number of queries (three), whatever
- * the number of works. Works without a media state are absent from the map.
+ * Media states of many works for one user in a fixed number of queries (three, plus one
+ * write when a stored hold has to be cleared), whatever the number of works. Works without
+ * a media state are absent from the map.
  */
 export function getWorkMediaStates(userId: number, workIds: Iterable<string>) {
-  const list = [...new Set(workIds)];
-  const states = new Map<string, WorkMediaState>();
-  if (!list.length) return states;
-  const rows = trackedRows(userId, list);
-  const jobs = latestUserAcquisitions(userId, list);
-  const tracked = list.filter((workId) => rows.has(workId) || jobs.has(workId));
-  if (!tracked.length) return states;
-  const playable = playableWorks(tracked);
-  for (const workId of tracked)
-    states.set(
-      workId,
-      deriveState(rows.get(workId), jobs.get(workId), playable.has(workId)),
-    );
+  const { states, heldWhilePlayable } = deriveWorkMediaStates(sqlite, userId, workIds);
+  if (heldWhilePlayable.length) clearHoldsOfAvailableWorks(userId, heldWhilePlayable);
   return states;
 }
 
@@ -121,7 +51,7 @@ export function getWorkMediaState(
 }
 
 export function workHasPlayableAudio(workId: string) {
-  return playableWorks([workId]).has(workId);
+  return playableWorks(sqlite, [workId]).has(workId);
 }
 
 export function workHasActiveQueuedAcquisition(userId: number, workId: string) {
@@ -154,6 +84,29 @@ export function setWorkMediaHold(
        ON CONFLICT(user_id,work_id) DO UPDATE SET hold_reason=excluded.hold_reason,updated_at=excluded.updated_at`,
     )
     .run(userId, workId, holdReason, Date.now());
+}
+
+/** The read found these works available: their stored hold reasons no longer apply. */
+function clearHoldsOfAvailableWorks(userId: number, workIds: string[]) {
+  sqlite
+    .prepare(
+      `UPDATE work_media_states SET hold_reason=NULL,updated_at=?
+       WHERE user_id=? AND hold_reason IS NOT NULL AND work_id IN (SELECT value FROM json_each(?))`,
+    )
+    .run(Date.now(), userId, JSON.stringify(workIds));
+}
+
+/**
+ * Write the derived state into the stored `state`, `hold_reason`, `acquisition_id` and
+ * `updated_at` columns for every user and work with a media state, so an image from before
+ * ADR 0011 reads the same states after a rollback. Idempotent, one transaction. Run by
+ * `scripts/materialise-media-states.mjs`.
+ */
+export function materialiseWorkMediaStates(
+  options: { dryRun?: boolean } = {},
+  database = sqlite,
+) {
+  return materialise(database, options);
 }
 
 export function markWorkEmptySearch(userId: number, workId: string) {
