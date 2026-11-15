@@ -2,6 +2,7 @@
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -77,6 +78,15 @@ class ProcessPool(FakePool):
     def shutdown(self, wait=True, cancel_futures=False):
         super().shutdown(wait, cancel_futures)
         self._processes = None  # as ProcessPoolExecutor.shutdown does
+
+
+def wait_until(predicate, timeout=5.0):
+    give_up = time.monotonic() + timeout
+    while time.monotonic() < give_up:
+        if predicate():
+            return True
+        time.sleep(0.005)
+    return False
 
 
 class Clock:
@@ -364,6 +374,26 @@ class Sessions(unittest.TestCase):
         self.assertEqual(self.end_in_thread("job", "cancelled"), "stuck")
         self.assertTrue(self.folder.exists())
         self.assertEqual(self.registry.budget.reserved("job"), 4000)
+        process.gone.set()
+        self.assertEqual(self.registry.retry_stuck(), ["job"])
+        self.assertEqual(self.registry.budget.reserved(), 0)
+
+    def test_a_second_end_waits_for_the_first_and_gets_its_outcome(self):
+        # Two ends of one session at once (cancel and the idle sweep): while the first still stops a live
+        # process, the second must not find "no session" (its caller then deleted the folder and released
+        # the reservation): it waits for the first and returns the same outcome.
+        _session, _pool, process = self.stuck_session()
+        first = []
+        ending = threading.Thread(target=lambda: first.append(self.registry.end("job", "cancelled")), daemon=True)
+        ending.start()
+        self.assertTrue(wait_until(lambda: process.signals), "the first end is stopping the process")
+        self.assertEqual(self.end_in_thread("job", "idle"), "stuck")
+        ending.join(10)
+        self.assertEqual(first, ["stuck"])
+        self.assertTrue((self.folder / "emissions").exists())
+        self.assertEqual(self.registry.budget.reserved("job"), 4000)
+        self.assertEqual([s["jobId"] for s in self.registry.stuck()], ["job"])
+        self.assertEqual(self.registry.end("job", "fetched"), "stuck", "a later end sees it is still stuck")
         process.gone.set()
         self.assertEqual(self.registry.retry_stuck(), ["job"])
         self.assertEqual(self.registry.budget.reserved(), 0)

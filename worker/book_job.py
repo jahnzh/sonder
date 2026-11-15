@@ -124,6 +124,8 @@ class Job:
         self.last_request = time.monotonic()
         self.cancelled = False  # set by cancel and idle end; a cancelled job is never launched again
         self.resume_waiting = False  # a retained job waiting for its turn to resume (resume_all)
+        self.end_lock = threading.Lock()  # one end at a time (BookJobs._end_job); taken before every other lock
+        self.end_outcome = None  # the outcome of that end, for the callers that waited for it
 
     def save(self):
         # The job thread and request threads (cancel) both save; one at a time, as the temporary name is shared.
@@ -265,19 +267,28 @@ class BookJobs:
     def _end_job(self, job, reason):
         """Stop the job's thread and processes, then delete its folder and release its reservation together.
         When a group process or the thread is still there after the bounded waits, the session keeps both
-        and is reported as stuck (`bookJobs.stuck` in /health) until `sweep` sees them gone."""
-        if job.thread is not None and job.thread is not threading.current_thread():
-            job.thread.join(timeout=STOP_WAIT_S)
-        thread = job.thread
-        busy = None if thread is None or thread is threading.current_thread() else thread.is_alive
-        outcome = self.registry.end(job.key, reason, delete=True, busy=busy)
-        if outcome is False:  # no session (a failed job's record): its folder and its claim go here
-            shutil.rmtree(job.folder, ignore_errors=True)
-            self.registry.budget.release(job.key)
-        with self._lock:
-            if self._jobs.get(job.key) is job:
-                self._jobs.pop(job.key, None)
-        return outcome
+        and is reported as stuck (`bookJobs.stuck` in /health) until `sweep` sees them gone.
+
+        One end per job: cancel, fetch and the idle sweep can end the same job at once; a later caller
+        waits for the first end and returns its outcome without touching the folder or the budget."""
+        with job.end_lock:
+            if job.end_outcome is not None:
+                return job.end_outcome
+            if job.thread is not None and job.thread is not threading.current_thread():
+                job.thread.join(timeout=STOP_WAIT_S)
+            thread = job.thread
+            busy = None if thread is None or thread is threading.current_thread() else thread.is_alive
+            outcome = self.registry.end(job.key, reason, delete=True, busy=busy)
+            if outcome is False:
+                # No session (a failed job's error record): end one for its folder, so the record goes the
+                # same way, only once the thread is gone.
+                self.registry.open(job.key, job.folder)
+                outcome = self.registry.end(job.key, reason, delete=True, busy=busy)
+            job.end_outcome = outcome
+            with self._lock:
+                if self._jobs.get(job.key) is job:
+                    self._jobs.pop(job.key, None)
+            return outcome
 
     # ------------------------------------------------------------ lifecycle
 

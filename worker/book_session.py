@@ -15,10 +15,12 @@ the caller says so) is the job's folder deleted (except on worker stop) and its 
 together. A process still there after the bounded wait keeps the session "stuck": folder and reservation
 stay, and `SessionRegistry.retry_stuck` releases them once it is gone.
 
-Lock order: (`book_job.BookJobs._lock` ->) `SessionRegistry._lock` -> `BookSession._lock` -> `DiskBudget._lock`. A lock is never taken
+Lock order: (`book_job.Job.end_lock` -> `book_job.BookJobs._lock` ->) `SessionRegistry._lock` -> `BookSession._lock` -> `DiskBudget._lock`. A lock is never taken
 while a later one in that order is held, and none is held while waiting for the encode queue, for a
-process to exit or for disk I/O on book data. The one exception is `start_pool`: it starts the pool's
-processes under `BookSession._lock`, so that a session ending at the same time stops every one of them.
+process to exit or for disk I/O on book data. The exceptions: `start_pool` starts the pool's processes
+under `BookSession._lock`, so that a session ending at the same time stops every one of them; and a job's
+`end_lock` is held for its whole end, so a second end of the same job waits for the first (one end at a
+time, `SessionRegistry.end` likewise) instead of deleting a folder that a live process still uses.
 
 Disk budget: one budget per worker for every byte under the job folders (ALIGNMENT_BOOK_DISK_BYTES).
 A session's reservation is what its folder holds plus the most the next stage adds at its peak; it is
@@ -382,6 +384,7 @@ class SessionRegistry:
         self._lock = threading.Lock()
         self._sessions = {}
         self._stuck = {}  # key -> session that ended while one of its processes was still there
+        self._ending = {}  # key -> _Ending of the end in progress (one end per session at a time)
 
     def open(self, key, folder):
         with self._lock:
@@ -401,17 +404,38 @@ class SessionRegistry:
             return list(self._sessions)
 
     def end(self, key, reason, delete=True, busy=None):
-        """End one session (idempotent). Returns True when this call ended and released it, "stuck" when
-        it ended but keeps its folder and reservation until its processes are gone (`retry_stuck`), and
-        False when there was no session."""
+        """End one session (idempotent). Returns True when it ended and was released, "stuck" when it
+        ended but keeps its folder and reservation until its processes are gone (`retry_stuck`), and
+        False when there was no session. One end at a time: a call while another end of the same session
+        is still stopping its processes waits for that end and returns its outcome, so no caller takes a
+        session that is being stopped for one that has none (and deletes its folder)."""
         with self._lock:
-            session = self._sessions.pop(key, None)
+            ending = self._ending.get(key)
+            if ending is None:
+                if key in self._stuck:
+                    return "stuck"
+                session = self._sessions.pop(key, None)
+                if session is None:
+                    return False
+                ending = self._ending[key] = _Ending()
+            else:
+                session = None
         if session is None:
-            return False
-        outcome = session._end(reason, delete, busy)
-        if outcome == "stuck":
+            ending.done.wait()
+            return ending.outcome
+        return self._finish(key, session, ending, reason, delete, busy)
+
+    def _finish(self, key, session, ending, reason, delete, busy):
+        outcome = "stuck"  # kept if the end itself raises: nothing is deleted or released then
+        try:
+            outcome = session._end(reason, delete, busy)
+        finally:
             with self._lock:
-                self._stuck[key] = session
+                if outcome == "stuck":
+                    self._stuck[key] = session
+                self._ending.pop(key, None)
+                ending.outcome = outcome
+            ending.done.set()
         return outcome
 
     def is_stuck(self, key):
@@ -442,11 +466,18 @@ class SessionRegistry:
             sessions = list(self._sessions.items())
         return [key for key, session in sessions if session.idle_for() >= self.idle]
 
-    def close_all(self, reason="worker stop"):
-        """Worker stop: release everything held in memory but keep the folders, so jobs resume."""
-        with self._lock:
-            sessions, self._sessions = list(self._sessions.values()), {}
-        for session in sessions:
-            if session._end(reason, delete=False) == "stuck":
-                with self._lock:
-                    self._stuck[session.key] = session
+    def close_all(self, reason="worker stop", busy=None):
+        """Worker stop: release everything held in memory but keep the folders, so jobs resume. `busy`
+        maps a key to its job thread's liveness: a session whose thread still runs keeps its reservation
+        and is reported stuck, as on every other end."""
+        busy = busy or {}
+        for key in self.keys():
+            self.end(key, reason, delete=False, busy=busy.get(key))
+
+
+class _Ending:
+    """One end in progress; later callers wait for it and get its outcome."""
+
+    def __init__(self):
+        self.done = threading.Event()
+        self.outcome = "stuck"

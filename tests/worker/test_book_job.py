@@ -27,7 +27,7 @@ class FakeStages:
     """Groups 0..groups-1, each written to groups/<n>.json; `gate` can hold a group until released."""
 
     def __init__(self, groups=4, fail_at=None, reserve=1000, before_reserve=None, fail_with=None, gate=None,
-                 ignore_stop=None):
+                 ignore_stop=None, raise_after_ignore=None):
         self.groups = groups
         self.fail_at = fail_at
         self.reserve = reserve
@@ -35,6 +35,7 @@ class FakeStages:
         self.fail_with = fail_with  # the message of the failure at fail_at
         self.gate = gate  # a deadline.Gate the "encode" takes once before the groups, as the real encode does
         self.ignore_stop = ignore_stop  # an Event the job waits for without looking at should_stop
+        self.raise_after_ignore = raise_after_ignore  # raised once ignore_stop is set
         self.order = []  # keys in the order their stages started
         self.aligned = []
         self.gates = {}
@@ -54,6 +55,8 @@ class FakeStages:
         self.entered.set()
         if self.ignore_stop is not None:
             self.ignore_stop.wait(30)
+            if self.raise_after_ignore is not None:
+                raise self.raise_after_ignore
         if self.before_reserve is not None:
             while not self.before_reserve.wait(0.01):
                 if should_stop():
@@ -435,6 +438,67 @@ class Jobs(unittest.TestCase):
         self.assertFalse((self.root / "job-1").exists())
         self.assertEqual(jobs.registry.budget.reserved(), 0)
         self.assertEqual(jobs.registry.stuck(), [])
+
+    def test_two_ends_at_once_never_delete_the_folder_of_a_live_job_thread(self):
+        # The review's reproduction: two ends of one job at once (cancel with cancel, cancel with the idle
+        # sweep) while the job's thread does not stop. Neither may delete the folder or release the
+        # reservation; both get the first end's outcome, and the job is reported stuck.
+        for other in ("cancel", "idle"):
+            with self.subTest(other=other):
+                never = threading.Event()
+                stages = FakeStages(ignore_stop=never)
+                jobs = self.jobs(stages)
+                key = f"job-{other}"
+                jobs.start(request(key))
+                self.assertTrue(stages.entered.wait(5))
+                reserved = jobs.registry.budget.reserved(key)
+                self.clock.now += 900  # idle, for the sweep
+                outcomes = []
+                calls = [lambda: outcomes.append(jobs.cancel(key)["state"]),
+                         (lambda: outcomes.append(jobs.cancel(key)["state"])) if other == "cancel"
+                         else (lambda: outcomes.append(jobs.sweep()))]
+                with mock.patch.object(book_job, "STOP_WAIT_S", 0.3, create=True):
+                    threads = [threading.Thread(target=call, daemon=True) for call in calls]
+                    for thread in threads:
+                        thread.start()
+                    for thread in threads:
+                        thread.join(10)
+                self.assertEqual(len(outcomes), 2)
+                self.assertTrue((self.root / key).exists(), "not deleted under a running thread")
+                self.assertEqual(jobs.registry.budget.reserved(key), reserved)
+                self.assertEqual([s["jobId"] for s in jobs.registry.stuck()], [key])
+                never.set()
+                stages_thread_done = wait_for(lambda: not any(
+                    t.name == f"book-job-{key}" and t.is_alive() for t in threading.enumerate()))
+                self.assertTrue(stages_thread_done)
+                jobs.sweep()
+                self.assertFalse((self.root / key).exists())
+                self.assertEqual(jobs.registry.budget.reserved(), 0)
+                self.assertEqual(jobs.registry.stuck(), [])
+
+    def test_a_failure_after_an_end_writes_no_record_and_releases_nothing(self):
+        # Cancel ends a job whose thread does not stop (stuck); the thread then fails. Its failure must not
+        # end the job a second time (delete the stuck folder, release, write and claim an error record).
+        never = threading.Event()
+        stages = FakeStages(ignore_stop=never, raise_after_ignore=BudgetExceeded("too big"))
+        jobs = self.jobs(stages)
+        jobs.start(request())
+        self.assertTrue(stages.entered.wait(5))
+        (self.root / "job-1" / "emissions").mkdir()
+        reserved = jobs.registry.budget.reserved("job-1")
+        with mock.patch.object(book_job, "STOP_WAIT_S", 0.2, create=True):
+            jobs.cancel("job-1")
+        self.assertEqual([s["jobId"] for s in jobs.registry.stuck()], ["job-1"])
+        never.set()
+        self.assertTrue(wait_for(lambda: not any(t.name == "book-job-job-1" and t.is_alive()
+                                                 for t in threading.enumerate())))
+        self.assertTrue((self.root / "job-1" / "emissions").exists(), "the stuck end's folder is untouched")
+        self.assertEqual(jobs.registry.budget.reserved("job-1"), reserved)
+        jobs.sweep()
+        self.assertFalse((self.root / "job-1").exists())
+        self.assertEqual(jobs.registry.budget.reserved(), 0)
+        with self.assertRaises(UnknownJob):
+            jobs.status("job-1")
 
     def test_a_job_waiting_for_window_requests_reports_it(self):
         gate = deadline.Gate(1)
