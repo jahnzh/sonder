@@ -7,6 +7,9 @@ import { test, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import { open } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -429,4 +432,273 @@ test("a run whose stale claim was taken over records nothing afterwards: the new
   assert.equal(row("2026-11-16")!.status, "done", "and does not overwrite the new holder's result");
   assert.equal(row("2026-11-16")!.error, null);
   assert.equal(row("2026-11-16")!.attempts, 2);
+});
+
+// Review round 2 of #361: each test below fails on d2e8b75 unless it says otherwise.
+
+/** Replaces `fs.unlinkSync` for the server's own imports (`syncBuiltinESMExports`) while `body` runs. */
+async function withUnlink(replacement: (original: typeof fs.unlinkSync, path: fs.PathLike) => void, body: () => Promise<void>) {
+  const original = fs.unlinkSync;
+  fs.unlinkSync = (path: fs.PathLike) => replacement(original, path);
+  syncBuiltinESMExports();
+  try {
+    await body();
+  } finally {
+    fs.unlinkSync = original;
+    syncBuiltinESMExports();
+  }
+}
+
+/** Runs `onRead` after each read through a file handle of the file whose inode is `ino`, while `body` runs. */
+async function withReadsOf(ino: number, onRead: () => void, body: () => Promise<void>) {
+  const probe = await open(join(temp, "db", "sonder.db"));
+  const proto = Object.getPrototypeOf(probe) as { read: (...args: unknown[]) => Promise<unknown> };
+  await probe.close();
+  const original = proto.read;
+  proto.read = async function (this: { fd: number }, ...args: unknown[]) {
+    const result = await original.apply(this, args);
+    if (fs.fstatSync(this.fd).ino === ino) onRead();
+    return result;
+  };
+  try {
+    await body();
+  } finally {
+    proto.read = original;
+  }
+}
+
+/** Overwrites the file in place: same inode, same size, other bytes. */
+function overwriteInPlace(path: string) {
+  const fd = fs.openSync(path, "r+");
+  try {
+    fs.writeSync(fd, Buffer.alloc(fs.fstatSync(fd).size, 0x42), 0, undefined, 0);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+test("a file overwritten in place after an earlier candidate was deleted is not deleted; its row stops counting", async () => {
+  const sixteen = days(16);
+  const dir = populated(sixteen);
+  const [oldest, second] = sixteen.map((day) => join(dir, dailyBackupName(day)));
+  let cleanup!: Awaited<ReturnType<typeof backups.pruneDailyBackups>>;
+  await withUnlink((original, path) => {
+    original(path);
+    // Once retention has deleted the second oldest, someone writes into the oldest, which it already looked at before.
+    if (String(path) === second) overwriteInPlace(oldest);
+  }, async () => {
+    cleanup = await backups.pruneDailyBackups(dir);
+  });
+  assert.ok(existsSync(oldest), "the overwritten file is not deleted");
+  assert.deepEqual(readFileSync(oldest), Buffer.alloc(Buffer.byteLength(`daily ${sixteen[0]}`), 0x42));
+  assert.ok(!existsSync(second), "the earlier candidate, still the schedule's file, is deleted");
+  assert.deepEqual(cleanup, { removed: [dailyBackupName(sixteen[1])], error: null });
+  assert.ok(row(sixteen[0])!.disowned_at, "the overwritten file's row no longer counts as the schedule's");
+  assert.equal(row(sixteen[1])!.disowned_at, null);
+});
+
+test("a file written to while retention hashes it is not deleted", async () => {
+  const sixteen = days(16);
+  const dir = populated(sixteen);
+  const oldest = join(dir, dailyBackupName(sixteen[0]));
+  let written = false;
+  let cleanup!: Awaited<ReturnType<typeof backups.pruneDailyBackups>>;
+  await withReadsOf(statSync(oldest).ino, () => {
+    if (written) return;
+    written = true;
+    overwriteInPlace(oldest);
+  }, async () => {
+    cleanup = await backups.pruneDailyBackups(dir);
+  });
+  assert.ok(written);
+  assert.ok(existsSync(oldest), "the file written to after its content was read is not deleted");
+  assert.deepEqual(cleanup, { removed: [dailyBackupName(sixteen[1])], error: null });
+  assert.ok(row(sixteen[0])!.disowned_at);
+});
+
+test("a path replaced by another file while retention checks it is not deleted (passes on d2e8b75 too: a guard)", async () => {
+  const sixteen = days(16);
+  const dir = populated(sixteen);
+  const oldest = join(dir, dailyBackupName(sixteen[0]));
+  const content = readFileSync(oldest);
+  let replaced = false;
+  let cleanup!: Awaited<ReturnType<typeof backups.pruneDailyBackups>>;
+  await withReadsOf(statSync(oldest).ino, () => {
+    if (replaced) return;
+    replaced = true;
+    // The same bytes in a new file put at the name: the descriptor still reads the old one.
+    writeFileSync(`${oldest}.new`, content);
+    fs.renameSync(`${oldest}.new`, oldest);
+  }, async () => {
+    cleanup = await backups.pruneDailyBackups(dir);
+  });
+  assert.ok(replaced);
+  assert.ok(existsSync(oldest), "the replacement at the name is not deleted");
+  assert.deepEqual(cleanup, { removed: [dailyBackupName(sixteen[1])], error: null });
+});
+
+test("a published backup whose result could not be recorded is not reported done, and the retry adopts it", async () => {
+  const dir = folder();
+  const path = join(dir, "daily-2026-11-16.db");
+  // The database refuses to record the success once, after the file is published.
+  sqlite.exec("CREATE TEMP TRIGGER refuse_done BEFORE UPDATE OF status ON main.backup_runs WHEN NEW.status = 'done' BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END");
+  let first: Awaited<ReturnType<typeof backups.runDailyBackup>>;
+  try {
+    first = await run(dir, "2026-11-16T03:05:00Z");
+  } finally {
+    sqlite.exec("DROP TRIGGER temp.refuse_done");
+  }
+  assert.equal(first.ran && first.status, "failed", "a result that was not recorded is not a success");
+  assert.match(first.ran ? first.error ?? "" : "", /was published, but the result could not be recorded\. disk I\/O error$/);
+  const published = readFileSync(path);
+  const inode = statSync(path).ino;
+  assert.equal(row("2026-11-16")!.status, "failed");
+  assert.equal(row("2026-11-16")!.sha256, sha256(published), "the identity was stored before publication");
+
+  const retry = await run(dir, "2026-11-16T03:15:00Z");
+  assert.equal(retry.ran && retry.status, "done", "the retry finds the day's file, the one this day published, and records it");
+  assert.equal(statSync(path).ino, inode, "the file is neither replaced nor copied again");
+  assert.deepEqual(readdirSync(dir), ["daily-2026-11-16.db"]);
+  const recorded = row("2026-11-16")!;
+  assert.equal(recorded.status, "done");
+  assert.equal(recorded.attempts, 2);
+  assert.equal(recorded.bytes, published.length);
+  assert.equal(recorded.sha256, sha256(published));
+  assert.match(activity(at("2026-11-16T03:16:00Z")).reason ?? "", /^Last run 16 Nov 03:\d\d UTC: succeeded, /);
+});
+
+test("a failure right after publication is retried by adopting the file; a file put there instead is never adopted or replaced", async () => {
+  const { backupDatabase } = await import("../server/db-backup.mjs");
+  const dir = folder();
+  const path = join(dir, "daily-2026-11-16.db");
+  const failing: typeof backupDatabase = async (source, destination, options) => {
+    await backupDatabase(source, destination, options);
+    throw new Error("EIO: i/o error, stat");
+  };
+  const first = await run(dir, "2026-11-16T03:05:00Z", { backup: failing });
+  assert.equal(first.ran && first.status, "failed");
+  assert.ok(existsSync(path));
+  const retry = await run(dir, "2026-11-16T03:15:00Z");
+  assert.equal(retry.ran && retry.status, "done", "the retry adopts the published file");
+  assert.equal(row("2026-11-16")!.sha256, sha256(readFileSync(path)));
+
+  // The next day publishes, fails, and someone puts their own file at the name before the retry.
+  const next = join(dir, "daily-2026-11-17.db");
+  assert.equal((await run(dir, "2026-11-17T03:05:00Z", { backup: failing })).ran, true);
+  rmSync(next);
+  writeFileSync(next, "someone else's file");
+  const refused = await run(dir, "2026-11-17T03:15:00Z");
+  assert.equal(refused.ran && refused.status, "failed");
+  assert.match(refused.ran ? refused.error ?? "" : "", /^Backup failed: destination already exists: .*daily-2026-11-17\.db, and it is not the backup an earlier attempt of this day published; it is left alone$/);
+  assert.equal(readFileSync(next, "utf8"), "someone else's file");
+  assert.equal(row("2026-11-17")!.status, "failed");
+});
+
+test("a healthy slow backup renews its claim and is not taken over after 30 minutes", async () => {
+  const { backupDatabase } = await import("../server/db-backup.mjs");
+  const dir = folder();
+  let virtual = at("2026-11-16T03:05:00Z");
+  let release!: () => void;
+  const held = new Promise<void>((done) => (release = done));
+  let started!: () => void;
+  const inBackup = new Promise<void>((done) => (started = done));
+  const slow = run(dir, "2026-11-16T03:05:00Z", {
+    clock: () => virtual,
+    renewEveryMs: 5,
+    backup: async (source, destination, options) => {
+      started();
+      await held;
+      return backupDatabase(source, destination, options);
+    },
+  });
+  await inBackup;
+  const wait = () => new Promise((done) => setTimeout(done, 60));
+  for (const iso of ["2026-11-16T03:40:00Z", "2026-11-16T04:20:00Z"]) {
+    virtual = at(iso);
+    await wait(); // the working run renews its claim meanwhile
+    assert.deepEqual(await run(dir, iso), { ran: false, reason: "claimed" }, `${iso}: the claim is live`);
+    assert.equal(row("2026-11-16")!.status, "running");
+  }
+  release();
+  const done = await slow;
+  assert.equal(done.ran && done.status, "done");
+  assert.equal(row("2026-11-16")!.attempts, 1, "never taken over");
+  assert.equal(row("2026-11-16")!.error, null);
+});
+
+test("retention that cannot remove a file is recorded with the run, shown on Activity, and removes nothing further", async () => {
+  const sixteen = days(16);
+  const dir = populated(sixteen);
+  let attempts = 0;
+  let result!: Awaited<ReturnType<typeof backups.runDailyBackup>>;
+  await withUnlink((original, path) => {
+    if (!String(path).startsWith(join(dir, "daily-"))) return original(path);
+    attempts += 1;
+    throw Object.assign(new Error(`EIO: i/o error, unlink '${String(path)}'`), { code: "EIO" });
+  }, async () => {
+    result = await run(dir, "2026-11-16T03:05:00Z");
+  });
+  assert.equal(attempts, 1, "after the first failure nothing further is tried");
+  for (const day of sixteen.slice(0, 3)) assert.ok(existsSync(join(dir, dailyBackupName(day))), `${day} is still there`);
+  assert.equal(result.ran && result.status, "done", "the backup itself succeeded");
+  const reason = `Old backups not removed: ${dailyBackupName(sixteen[2])} could not be checked or removed. EIO: i/o error, unlink '${join(dir, dailyBackupName(sixteen[2]))}'`;
+  assert.equal(result.ran && result.status === "done" && result.cleanupError, reason);
+  const recorded = row("2026-11-16") as { status: string; cleanup?: string; cleanup_error?: string };
+  assert.equal(recorded.status, "done");
+  assert.equal(recorded.cleanup, "failed");
+  assert.equal(recorded.cleanup_error, reason);
+  const shown = activity(at("2026-11-16T03:06:00Z"));
+  assert.match(shown.reason ?? "", new RegExp(`^Last run 16 Nov 03:\\d\\d UTC: succeeded, \\d+\\.\\d MB; ${reason.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} · Next run 17 Nov 03:00 UTC$`));
+  assert.equal(shown.item.state, "done");
+  assert.ok(shown.item.detail?.endsWith(`; ${reason}`), shown.item.detail ?? "");
+
+  // The next run's retention works again and says so.
+  const next = await run(dir, "2026-11-17T03:05:00Z");
+  assert.equal(next.ran && next.status === "done" && next.cleanupError, null);
+  assert.equal((row("2026-11-17") as { cleanup?: string }).cleanup, "done");
+  assert.doesNotMatch(activity(at("2026-11-17T03:06:00Z")).reason ?? "", /not removed/);
+});
+
+test("retention stops at a file it cannot read: nothing older is deleted, and the reason is recorded", async () => {
+  if (process.getuid?.() === 0) return; // root reads any file
+  const sixteen = days(16);
+  const dir = populated(sixteen);
+  const unreadable = join(dir, dailyBackupName(sixteen[1]));
+  chmodSync(unreadable, 0o000);
+  try {
+    const result = await run(dir, "2026-11-16T03:05:00Z");
+    assert.equal(result.ran && result.status, "done");
+    assert.deepEqual(result.ran && result.removed, [dailyBackupName(sixteen[2])], "the newer candidate goes; then retention stops");
+    assert.ok(existsSync(join(dir, dailyBackupName(sixteen[0]))), "nothing older than the unreadable file is deleted");
+    assert.ok(existsSync(unreadable));
+    assert.match(result.ran && result.status === "done" ? result.cleanupError ?? "" : "", /^Old backups not removed: daily-2026-10-02\.db could not be checked or removed\. EACCES/);
+    assert.equal((row("2026-11-16") as { cleanup?: string }).cleanup, "failed");
+  } finally {
+    chmodSync(unreadable, 0o600);
+  }
+});
+
+test("hashing a 25 MB backup yields to the event loop between 1 MiB chunks", async () => {
+  const path = join(temp, "twenty-five.db");
+  writeFileSync(path, Buffer.alloc(25e6, 7));
+  let ticks = 0;
+  let longest = 0;
+  let last = performance.now();
+  let spinning = true;
+  const spin = () => {
+    const now = performance.now();
+    longest = Math.max(longest, now - last);
+    last = now;
+    ticks += 1;
+    if (spinning) setImmediate(spin);
+  };
+  setImmediate(spin);
+  const began = performance.now();
+  const found = await backups.fileIdentity(path);
+  const took = performance.now() - began;
+  spinning = false;
+  assert.equal(found.kind === "file" && found.identity.sha256, sha256(readFileSync(path)));
+  assert.ok(ticks >= 24, `the event loop ran ${ticks} times while 24 chunks were hashed`);
+  console.log(`25 MB hashed in ${took.toFixed(1)} ms; the event loop ran ${ticks} times, its longest wait ${longest.toFixed(1)} ms`);
+  assert.ok(longest < 100, `longest wait ${longest.toFixed(1)} ms`);
 });
