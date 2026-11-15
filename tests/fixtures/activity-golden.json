@@ -51,12 +51,12 @@
         "lockedBy": "environment",
         "pauseEffect": "No new series search or download starts.",
         "health": "degraded",
-        "reason": "2 failed",
-        "since": 1794657300000,
+        "reason": "1 failed",
+        "since": 1794657360000,
         "counts": {
           "running": 1,
           "queued": 1,
-          "failed": 2,
+          "failed": 1,
           "stuck": 0
         }
       },
@@ -354,24 +354,6 @@
         "blockedBy": null
       },
       {
-        "id": "series-acquisition:series-failed-permission",
-        "kind": "series-acquisition",
-        "processId": "series-acquisition",
-        "title": "Ender volume 5",
-        "detail": "Series ebook",
-        "user": "sam",
-        "state": "failed",
-        "progress": null,
-        "host": null,
-        "startedAt": null,
-        "updatedAt": 1794657300000,
-        "error": "no_permission",
-        "permanent": false,
-        "actions": [],
-        "stuck": null,
-        "blockedBy": null
-      },
-      {
         "id": "server-copy:rec-legacy-done",
         "kind": "server-copy",
         "processId": "server-copies",
@@ -884,6 +866,24 @@
         "blockedBy": null
       },
       {
+        "id": "series-acquisition:series-failed-permission",
+        "kind": "series-acquisition",
+        "processId": "series-acquisition",
+        "title": "Ender volume 5",
+        "detail": "Series ebook: skipped, no permission to acquire",
+        "user": "sam",
+        "state": "done",
+        "progress": null,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794657300000,
+        "error": null,
+        "permanent": false,
+        "actions": [],
+        "stuck": null,
+        "blockedBy": null
+      },
+      {
         "id": "alignment:align-ready",
         "kind": "alignment",
         "processId": "alignment",
@@ -938,7 +938,7 @@
         "blockedBy": null
       }
     ],
-    "attention": 24
+    "attention": 23
   },
   "probesFail": {
     "checkedAt": 1794657600000,
@@ -992,12 +992,12 @@
         "lockedBy": "environment",
         "pauseEffect": "No new series search or download starts.",
         "health": "degraded",
-        "reason": "2 failed",
-        "since": 1794657300000,
+        "reason": "1 failed",
+        "since": 1794657360000,
         "counts": {
           "running": 1,
           "queued": 1,
-          "failed": 2,
+          "failed": 1,
           "stuck": 0
         }
       },
@@ -1196,24 +1196,6 @@
         "blockedBy": null
       },
       {
-        "id": "series-acquisition:series-failed-permission",
-        "kind": "series-acquisition",
-        "processId": "series-acquisition",
-        "title": "Ender volume 5",
-        "detail": "Series ebook",
-        "user": "sam",
-        "state": "failed",
-        "progress": null,
-        "host": null,
-        "startedAt": null,
-        "updatedAt": 1794657300000,
-        "error": "no_permission",
-        "permanent": false,
-        "actions": [],
-        "stuck": null,
-        "blockedBy": null
-      },
-      {
         "id": "server-copy:rec-legacy-done",
         "kind": "server-copy",
         "processId": "server-copies",
@@ -1798,6 +1780,24 @@
         "blockedBy": null
       },
       {
+        "id": "series-acquisition:series-failed-permission",
+        "kind": "series-acquisition",
+        "processId": "series-acquisition",
+        "title": "Ender volume 5",
+        "detail": "Series ebook: skipped, no permission to acquire",
+        "user": "sam",
+        "state": "done",
+        "progress": null,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794657300000,
+        "error": null,
+        "permanent": false,
+        "actions": [],
+        "stuck": null,
+        "blockedBy": null
+      },
+      {
         "id": "alignment:align-ready",
         "kind": "alignment",
         "processId": "alignment",
@@ -1852,7 +1852,7 @@
         "blockedBy": null
       }
     ],
-    "attention": 18
+    "attention": 17
   },
   "noProbes": {
     "checkedAt": 1794657600000,
@@ -1906,12 +1906,12 @@
         "lockedBy": "environment",
         "pauseEffect": "No new series search or download starts.",
         "health": "degraded",
-        "reason": "2 failed",
-        "since": 1794657300000,
+        "reason": "1 failed",
+        "since": 1794657360000,
         "counts": {
           "running": 1,
           "queued": 1,
-          "failed": 2,
+          "failed": 1,
           "stuck": 0
         }
       },
@@ -2091,24 +2091,6 @@
         "blockedBy": null
       },
       {
-        "id": "series-acquisition:series-failed-permission",
-        "kind": "series-acquisition",
-        "processId": "series-acquisition",
-        "title": "Ender volume 5",
-        "detail": "Series ebook",
-        "user": "sam",
-        "state": "failed",
-        "progress": null,
-        "host": null,
-        "startedAt": null,
-        "updatedAt": 1794657300000,
-        "error": "no_permission",
-        "permanent": false,
-        "actions": [],
-        "stuck": null,
-        "blockedBy": null
-      },
-      {
         "id": "server-copy:rec-legacy-done",
         "kind": "server-copy",
         "processId": "server-copies",
@@ -2693,6 +2675,24 @@
         "blockedBy": null
       },
       {
+        "id": "series-acquisition:series-failed-permission",
+        "kind": "series-acquisition",
+        "processId": "series-acquisition",
+        "title": "Ender volume 5",
+        "detail": "Series ebook: skipped, no permission to acquire",
+        "user": "sam",
+        "state": "done",
+        "progress": null,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794657300000,
+        "error": null,
+        "permanent": false,
+        "actions": [],
+        "stuck": null,
+        "blockedBy": null
+      },
+      {
         "id": "alignment:align-ready",
         "kind": "alignment",
         "processId": "alignment",
@@ -2747,6 +2747,6 @@
         "blockedBy": null
       }
     ],
-    "attention": 18
+    "attention": 17
   }
 }

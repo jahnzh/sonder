@@ -192,3 +192,16 @@ test("series acquisition: every status the CHECK constraint allows maps to its A
   assert.equal(loop.counts.failed, 1);
   assert.equal(loop.reason, "1 failed, 1 stuck");
 });
+
+test("series acquisition: a skip for missing permission and a manual takeover are done, not failed", async () => {
+  const { SERIES_ACQUISITION_CANCELLED_ERROR } = await import("../server/series-acquisition.ts");
+  const { SERIES_EXPECTED_OUTCOMES } = await import("../server/series-acquisition-activity.ts");
+  assert.ok(SERIES_EXPECTED_OUTCOMES[SERIES_ACQUISITION_CANCELLED_ERROR], "the cancel code the feature writes is covered");
+  assert.ok(SERIES_EXPECTED_OUTCOMES.no_permission);
+  const { drafts } = seriesAcquisitionSource.report([
+    seriesRow("failed", "no_permission"), seriesRow("failed", SERIES_ACQUISITION_CANCELLED_ERROR), seriesRow("failed", "No release found"),
+  ] as never, undefined as never, undefined as never);
+  assert.deepEqual(drafts.map((draft) => [draft.state, draft.error]), [["done", null], ["done", null], ["failed", "No release found"]]);
+  assert.match(drafts[0].detail ?? "", /skipped, no permission/);
+  assert.match(drafts[1].detail ?? "", /manual choice/);
+});
