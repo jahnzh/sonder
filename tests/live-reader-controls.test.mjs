@@ -48,11 +48,64 @@ test("waitForBox treats a Playwright timeout as not there yet and rethrows other
   await assert.rejects(waitForBox(boxes(new Error("strict mode violation")), clock()), /strict mode violation/);
 });
 
-test("waitForBox names the element when it never appears or never settles", async () => {
-  await assert.rejects(waitForBox(boxes(null), { ...clock(), timeout: 1000, description: "Pause narration" }), /Pause narration has no stable bounding box after 1000 ms$/);
+test("waitForBox names the element and what the last read saw when it never settles", async () => {
+  await assert.rejects(waitForBox(boxes(null), { ...clock(), timeout: 1000, description: "Pause narration" }), /^Error: Pause narration has no stable bounding box after 1000 ms \(last read: hidden\)$/);
+  await assert.rejects(waitForBox(boxes(box(0, 0, 0, 0)), { ...clock(), timeout: 1000, description: "Pause narration" }), /\(last read: zero-sized\)$/);
   let y = 0;
   const moving = { boundingBox: async () => box(0, (y += 10)) };
-  await assert.rejects(waitForBox(moving, { ...clock(), timeout: 1000, description: "slider" }), /slider .* \(it keeps moving\)/);
+  await assert.rejects(waitForBox(moving, { ...clock(), timeout: 1000, description: "slider" }), /slider .* \(last read: it keeps moving\)$/);
+  const missing = boxes(new Error("locator.boundingBox: Timeout 1000ms exceeded."));
+  await assert.rejects(waitForBox(missing, { ...clock(), timeout: 1000, description: "Pause narration" }), /\(last read: no element matched in time\)$/);
+});
+
+// #413: in Lyrics mode every sentence of the book is a <button>; resolving getByRole("button", { name: "Pause narration" })
+// over 12,000 of them took about 3 s per read while playback re-rendered them (measured on the local repro server).
+// A locator whose every read costs `cost` ms of the virtual clock, honouring the timeout it is given like Playwright does.
+function slowLocator(timing, cost, answer = box()) {
+  const options = [];
+  return {
+    options,
+    boundingBox: async (option) => {
+      options.push(option);
+      if (option.timeout < cost) {
+        await timing.wait(option.timeout);
+        throw new Error(`locator.boundingBox: Timeout ${option.timeout}ms exceeded.`);
+      }
+      await timing.wait(cost);
+      return answer;
+    },
+  };
+}
+
+test("waitForBox gives each read the remaining budget, so a slow role query still settles (#413)", async () => {
+  const timing = clock();
+  const pause = slowLocator(timing, 3000);
+  assert.deepEqual(await waitForBox(pause, { ...timing, description: "Pause narration" }), box());
+  assert.equal(pause.options.length, 2);
+  assert.equal(pause.options[0].timeout, 25000);
+  assert.equal(pause.options[1].timeout, 25000 - 3000 - 100);
+  assert.equal(timing.clock(), 6100);
+});
+
+test("waitForBox still fails when even one read cannot finish within the budget", async () => {
+  const timing = clock();
+  const pause = slowLocator(timing, 30000);
+  await assert.rejects(waitForBox(pause, { ...timing, description: "Pause narration" }), /after 25000 ms \(last read: no element matched in time\)$/);
+});
+
+test("a read that runs out of time between two good reads keeps the box it had (#413)", async () => {
+  const timing = clock();
+  const pause = boxes(box(), new Error("locator.boundingBox: Timeout 1000ms exceeded."), new Error("locator.boundingBox: Timeout 1000ms exceeded."), box());
+  assert.deepEqual(await waitForBox(pause, { ...timing, description: "Pause narration" }), box());
+  assert.equal(pause.reads(), 4);
+  assert.ok(timing.clock() < 1000, `settled after ${timing.clock()} ms, not at the 25 s deadline`);
+});
+
+test("a control that is hidden between two good reads is read again until it is shown twice in a row", async () => {
+  const timing = clock();
+  const pause = boxes(box(), null, box(), box());
+  assert.deepEqual(await waitForBox(pause, timing), box());
+  assert.equal(pause.reads(), 4);
 });
 
 // A reader room: the top bar toggles on a tap, as in Reader.tsx. `swallow` taps are lost, `delay` is how long a tap takes to show the bar.

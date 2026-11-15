@@ -19,25 +19,43 @@ const sameBox = (a, b) =>
   Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5 && Math.abs(a.width - b.width) < 0.5 && Math.abs(a.height - b.height) < 0.5;
 
 /**
- * Wait until `locator` has a non-empty bounding box that is the same on two reads in a row.
+ * Wait until `locator` has a non-empty bounding box that is the same on two successful reads in a row.
  * `boundingBox()` is null while the element is hidden or detached: reading `.x` of that crashed the checks.
+ *
+ * Each read may take the whole remaining budget. Resolving a role locator costs time in proportion to the
+ * page: in Lyrics mode every sentence of the book is a <button> (12,000 in a long book), and one
+ * `getByRole("button", { name: "Pause narration" })` took about 3 s while playback re-rendered them. A fixed
+ * 1 s limit per read made almost every read time out, so two good reads never came in a row although the
+ * button never moved (#413). A read that runs out of time says nothing about where the element is, so it
+ * keeps the previous box; a read that finds the element hidden (null) or zero-sized starts over.
  */
 export async function waitForBox(locator, { timeout = 25000, interval = 100, description = "element", wait = sleep, clock = Date.now } = {}) {
   const deadline = clock() + timeout;
   let previous = null;
+  let last = "no read";
   for (;;) {
     let box = null;
+    let timedOut = false;
     try {
-      box = await locator.boundingBox({ timeout: 1000 });
+      box = await locator.boundingBox({ timeout: Math.max(1, deadline - clock()) });
     } catch (error) {
-      // Playwright throws a timeout when the element does not exist yet; any other error is real.
+      // Playwright throws a timeout when no element matched in time; any other error is real.
       if (!/timeout/i.test(String(error?.message))) throw error;
+      timedOut = true;
     }
-    if (box && box.width > 0 && box.height > 0) {
-      if (previous && sameBox(previous, box)) return box;
+    if (timedOut) last = "no element matched in time";
+    else if (!box) {
+      previous = null;
+      last = "hidden";
+    } else if (!(box.width > 0 && box.height > 0)) {
+      previous = null;
+      last = "zero-sized";
+    } else if (previous && sameBox(previous, box)) return box;
+    else {
+      last = previous ? "it keeps moving" : "one read so far";
       previous = box;
-    } else previous = null;
-    if (clock() >= deadline) throw new Error(`${description} has no stable bounding box after ${timeout} ms${previous ? " (it keeps moving)" : ""}`);
+    }
+    if (clock() >= deadline) throw new Error(`${description} has no stable bounding box after ${timeout} ms (last read: ${last})`);
     await wait(interval);
   }
 }
