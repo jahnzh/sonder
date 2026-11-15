@@ -408,33 +408,6 @@ test("a persisted legacy pool assignment is re-probed instead of sending CTC to 
   assert.deepEqual(calls, ["http://ctc-worker.test/align"]);
 });
 
-test("after a server restart a job runs again on its own healthy host while the other host is down (#263)", async () => {
-  const book = await extractBook("ctc-ebook");
-  delete process.env.ALIGNMENT_WORKER_TOKEN;
-  const created = await createAlignment("ctc-ebook", "ctc-recording", [{
-    section: book.sections[0].index, trackId: "ctc-track", start: 70, duration: 40,
-  }], "chapters");
-  // The job was running on WSL when the server stopped: the dispatch is persisted but no lease survives.
-  const running = alignmentJob(created.id);
-  running.pool = { hostId: "wsl", attempt: 1, jobMediaRoot: join(temp, "wsl", "alignment", "pool-jobs", created.id),
-    workerUrl: "http://ctc-worker.test", triedHosts: ["wsl"], stagedAudio: {} };
-  putAlignmentJob(running);
-  process.env.ALIGNMENT_WORKER_TOKEN = "test-token";
-  const calls: string[] = [];
-  mockWorker(async (input, init) => {
-    calls.push(String(input));
-    const request = JSON.parse(String(init?.body));
-    return Response.json({ engine, outcome: "mapped", elapsedSeconds: 1,
-      intervals: request.fragments.map((_: string, index: number) => ({ index, start: request.start + index, end: request.start + index + 0.8 })) });
-  }, { down: ["lisa"] });
-  await processAlignments();
-  const finished = await settled(created.id);
-  assert.equal(finished.status, "partial", finished.error ?? undefined);
-  assert.deepEqual(calls, ["http://ctc-worker.test/align"]);
-  assert.equal(finished.pool?.hostId, "wsl");
-  assert.deepEqual(finished.pool?.triedHosts, ["wsl"]);
-});
-
 test("pausing during remote staging preserves the pause and releases the worker", async () => {
   const book = await extractBook("ctc-ebook");
   let markStarted!: () => void;

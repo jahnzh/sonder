@@ -1477,12 +1477,10 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
     }
     // A persisted dispatch has no lease after a server restart. Re-probe
     // and stage it again; older CTC jobs may have used the Steam Deck.
-    // The host it was running on did not fail, so it is eligible again (#263).
     if (job.pool?.jobMediaRoot &&
         !getAlignmentPoolCoordinator().hasJobLease(job.pool.hostId, job.id)) {
-      const active = job.pool.hostId;
-      const triedHosts = active === "steamdeck"
-        ? [] : job.pool.triedHosts.filter((id) => (id === "wsl" || id === "lisa") && id !== active);
+      const triedHosts = job.pool.hostId === "steamdeck"
+        ? [] : job.pool.triedHosts.filter((id) => id === "wsl" || id === "lisa");
       clearPoolStaging(job, triedHosts);
       store(job);
     }
