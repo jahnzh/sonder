@@ -51,6 +51,9 @@ export function ctcHealthResponse(temp: string, url: string) {
     ready: true,
     busy: false,
     stuck: false,
+    // An idle worker, as worker/align.py reports it.
+    busySeconds: null,
+    activeRequests: 0,
     mediaRoot: join(temp, lisa ? "lisa" : "wsl"),
     ctc: {
       engine: CTC_ENGINE,

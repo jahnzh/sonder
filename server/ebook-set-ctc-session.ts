@@ -103,6 +103,8 @@ export function createCtcProbeSession(
             recordingId,
             audioFingerprint: fingerprint,
             signal,
+            // A request the deadline abandons keeps the lease until the worker has ended it.
+            trackRequest: active.trackRequest,
           },
           { fragmentTexts, language, windows },
         );
