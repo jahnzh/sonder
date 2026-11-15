@@ -20,7 +20,15 @@ import * as s from "./schema.ts";
 import { extractBook, ebookRecord } from "./reader.ts";
 import { ensureMediaStorage, mediaRoot } from "./storage.ts";
 import { hasServerMedia, requestServerDownload } from "./downloads.ts";
-import type { AlignmentJob, AlignmentInterval, AlignmentOutcome } from "../src/reading-types.ts";
+import {
+  alignmentJobActive,
+  alignmentJobInFlight,
+  alignmentMapPublishes,
+  alignmentMapUsable,
+  type AlignmentJob,
+  type AlignmentInterval,
+  type AlignmentOutcome,
+} from "../src/reading-types.ts";
 import { requireAdmin } from "./users.ts";
 import { matchSections } from "./alignment-pairings.ts";
 import { unsyncedPassages } from "./alignment-passages.ts";
@@ -47,11 +55,9 @@ import {
   REBUILT_STATUSES,
   currentAlignmentEngine,
   engineIsOlder,
-  publishesMap,
   rebuildRejection,
   rebuildAdmissionOrder,
   servedDuringRebuild,
-  usableMap,
 } from "./alignment-rebuild.ts";
 import {
   admittedBooks,
@@ -230,7 +236,7 @@ function keptMapOf(id: string) {
  * (nothing kept) is never rejected.
  */
 function rejectWorseRebuild(job: AlignmentJob) {
-  if (!usableMap(job) && !(job.status === "error" && job.outcome === "language_not_supported")) return;
+  if (!alignmentMapPublishes(job)) return;
   const kept = keptMapOf(job.id);
   const reason = kept && rebuildRejection(job, kept);
   if (!reason) return;
@@ -244,7 +250,7 @@ function store(job: AlignmentJob) {
   if (fence && fence.jobId === job.id) assertRunMayWrite(fence, job.status);
   job.updatedAt = Date.now();
   rejectWorseRebuild(job);
-  if (["ready", "partial"].includes(job.status)) {
+  if (alignmentMapUsable(job)) {
     ensureMediaStorage();
     const folder = join(mediaRoot, "alignment", job.id);
     mkdirSync(folder, { recursive: true, mode: 0o750 });
@@ -266,7 +272,7 @@ function store(job: AlignmentJob) {
       job.engine,
       job.outcome ?? null,
       job.stageTimings ? JSON.stringify(job.stageTimings) : null,
-      publishesMap(job) ? 1 : 0,
+      alignmentMapPublishes(job) ? 1 : 0,
     );
   return job;
 }
@@ -292,7 +298,7 @@ export function putProjectedRebuild(job: AlignmentJob, memberSentenceIds?: Reado
     const exists = sqlite.prepare("SELECT 1 FROM alignment_jobs WHERE id=?").get(job.id);
     const old = exists && !alignmentKeepsPublishedMap(job.id) ? alignmentJob(job.id) : null;
     const kept = !old ? keptMapOf(job.id)
-      : usableMap(old) && old.intervals.length && old.fingerprint === job.fingerprint &&
+      : alignmentMapUsable(old) && old.intervals.length && old.fingerprint === job.fingerprint &&
         old.audioFingerprint === job.audioFingerprint ? old : null;
     if (kept) {
       if (memberSentenceIds?.size && kept.fingerprint === job.fingerprint) {
@@ -321,7 +327,6 @@ export function removeProjectedMapsForWork(workId: string) {
       sqlite.prepare("DELETE FROM alignment_jobs WHERE id=?").run(job.id);
   }
 }
-const activeStatuses = ["queued", "copying", "processing"];
 export async function alignmentOptions(ebookId: string, recordingId: string) {
   const book = await extractBook(ebookId),
     { edition, tracks } = recordingContext(recordingId);
@@ -394,14 +399,14 @@ export async function createAlignment(
   if (
     existing &&
     existing.origin !== "projected" &&
-    activeStatuses.includes(existing.status) &&
+    alignmentJobActive(existing.status) &&
     !shouldSupersede
   )
     return existing;
   if (
     existing &&
     existing.origin !== "projected" &&
-    activeStatuses.includes(existing.status) &&
+    alignmentJobActive(existing.status) &&
     shouldSupersede
   ) {
     existing.status = "cancelled";
@@ -571,9 +576,9 @@ async function backfillDecision(
   );
   if (existing) {
     const runStatus = existing.rebuild?.status ?? existing.status;
-    if (activeStatuses.includes(runStatus)) return "inProgress";
+    if (alignmentJobActive(runStatus)) return "inProgress";
     if (runStatus === "paused") return "paused";
-    if (usableMap(existing)) return "ready";
+    if (alignmentMapUsable(existing)) return "ready";
   }
   return (await backfillEligibility(ebookId, recordingId)).eligible
     ? "queue"
@@ -696,7 +701,7 @@ export async function queueEngineRebuilds(log: AutoQueueLog = console): Promise<
       if (workId) projectedWorks.add(workId);
       continue;
     }
-    const inFlight = activeStatuses.includes(old.status) || old.status === "paused";
+    const inFlight = alignmentJobInFlight(old.status);
     if (!inFlight && !REBUILT_STATUSES.includes(old.status)) continue;
     try {
       const { tracks } = recordingContext(old.recordingId);
@@ -724,7 +729,7 @@ export async function queueEngineRebuilds(log: AutoQueueLog = console): Promise<
       // publishes. One that already published (the server stopped before it projected) projects now.
       const consensusJobId = getEbookSetPresentation(workId).consensus?.jobId;
       const consensus = consensusJobId ? jobs().find((job) => job.id === consensusJobId) : undefined;
-      if (!consensus || engineIsOlder(consensus.engine, target) || !usableMap(consensus)) continue;
+      if (!consensus || engineIsOlder(consensus.engine, target) || !alignmentMapUsable(consensus)) continue;
       try {
         await onConsensusAlignmentFinished(workId, consensus);
         result.projections++;
@@ -788,7 +793,7 @@ function commitRebuild(old: AlignmentJob, job: AlignmentJob) {
     if (!rowUnchanged(old)) return false;
     const kept = alignmentKeepsPublishedMap(old.id);
     store(job);
-    if (!kept && usableMap(old))
+    if (!kept && alignmentMapUsable(old))
       sqlite.prepare("UPDATE alignment_jobs SET published_map=? WHERE id=?").run(JSON.stringify(old), old.id);
     return true;
   }).immediate();
@@ -1032,7 +1037,7 @@ async function processAnchored(
     const current = alignmentJob(job.id);
     return (
       !stopping &&
-      activeStatuses.includes(current.status) &&
+      alignmentJobActive(current.status) &&
       current.generation === generation
     );
   };
@@ -1041,7 +1046,7 @@ async function processAnchored(
     const latest = alignmentJob(job.id);
     return (
       latest.generation === generation &&
-      (activeStatuses.includes(latest.status) || latest.status === "paused")
+      alignmentJobInFlight(latest.status)
     );
   };
   const paragraphs = book.sections.flatMap((section) =>
@@ -1439,7 +1444,7 @@ let stopping = false,
 
 function ctcDispatchStopped(job: AlignmentJob) {
   const current = jobs().find((row) => row.id === job.id);
-  return stopping || !current || !activeStatuses.includes(current.status) || current.generation !== job.generation;
+  return stopping || !current || !alignmentJobActive(current.status) || current.generation !== job.generation;
 }
 
 function acceptCtcDispatch(job: AlignmentJob, pool: Awaited<ReturnType<typeof dispatchFullAlignmentJob>>) {
@@ -1580,7 +1585,7 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
         } catch (error) {
           if (error instanceof StaleAlignmentRun) throw error;
           job = alignmentJob(job.id);
-          if (!activeStatuses.includes(job.status) || job.generation !== generation)
+          if (!alignmentJobActive(job.status) || job.generation !== generation)
             break;
           if (
             !shouldDispatchToPool(job) ||
@@ -1639,7 +1644,7 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
             const current = alignmentJob(job.id);
             if (
               stopping ||
-              !activeStatuses.includes(current.status) ||
+              !alignmentJobActive(current.status) ||
               current.generation !== generation
             )
               break;
@@ -1696,12 +1701,12 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
                 poolWorkerBase(job),
                 () => {
                   const current = alignmentJob(job.id);
-                  return !stopping && activeStatuses.includes(current.status) && current.generation === generation;
+                  return !stopping && alignmentJobActive(current.status) && current.generation === generation;
                 },
               );
             }
             if (
-              !activeStatuses.includes(alignmentJob(job.id).status) ||
+              !alignmentJobActive(alignmentJob(job.id).status) ||
               alignmentJob(job.id).generation !== generation
             )
               break;
@@ -1756,7 +1761,7 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
         } catch (error) {
           if (error instanceof StaleAlignmentRun) throw error;
           job = alignmentJob(job.id);
-          if (!activeStatuses.includes(job.status) || job.generation !== generation) break;
+          if (!alignmentJobActive(job.status) || job.generation !== generation) break;
           if (!job.pool || job.pool.triedHosts.length >= 2)
             throw error;
           const triedHosts = job.pool.triedHosts;
@@ -1783,7 +1788,7 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
       if (
         job.sectionsDone.length === job.pairings.length &&
         job.generation === generation &&
-        activeStatuses.includes(job.status)
+        alignmentJobActive(job.status)
       ) {
         job.status = "partial";
         finishWorkerOutcome(job);
@@ -1792,7 +1797,7 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
           "Timings are estimated from the supplied text. Sections without matching narration are left unsynced.";
         store(job);
         // store() writes map.json for a published map; a rejected rebuild must not overwrite the kept one.
-        if (usableMap(job)) {
+        if (alignmentMapUsable(job)) {
           const path = join(folder, "map.json");
           writeFileSync(path + ".part", JSON.stringify(job));
           renameSync(path + ".part", path);
@@ -1808,7 +1813,7 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
     if (
       current &&
       !stopping &&
-      activeStatuses.includes(current.status) &&
+      alignmentJobActive(current.status) &&
       current.generation === pending.generation
     ) {
       current.status = "error";
@@ -1826,7 +1831,7 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
 const scheduler: AlignmentScheduler = new AlignmentScheduler({
   candidates: () =>
     // New work first, then rebuilds oldest engine first (#277); a previous instance's claims ahead of both.
-    claimOrder(rebuildAdmissionOrder(jobs().filter((job) => activeStatuses.includes(job.status))), scheduler.owner).map((job) => ({
+    claimOrder(rebuildAdmissionOrder(jobs().filter((job) => alignmentJobActive(job.status))), scheduler.owner).map((job) => ({
       id: job.id,
       generation: job.generation,
       recordingId: job.recordingId,
@@ -1838,7 +1843,7 @@ const scheduler: AlignmentScheduler = new AlignmentScheduler({
   // A removed job is no longer active.
   stillActive: (id) =>
     !!sqlite.prepare("SELECT 1 FROM alignment_jobs WHERE id=?").get(id) &&
-    activeStatuses.includes(alignmentJob(id).status),
+    alignmentJobActive(alignmentJob(id).status),
 });
 /** Scheduler settings recorded on each job it runs (#276). */
 export const alignmentSchedulerConfig = () => ({
@@ -2016,7 +2021,7 @@ export function registerAlignment(app: FastifyInstance) {
     const all = jobs();
     const count = (...statuses: string[]) =>
       all.filter((job) => statuses.includes(job.status)).length;
-    const next = all.find((job) => activeStatuses.includes(job.status));
+    const next = all.find((job) => alignmentJobActive(job.status));
     return {
       available: workerConfigured(),
       counts: {
@@ -2204,7 +2209,7 @@ export function registerAlignment(app: FastifyInstance) {
     // in the response with the unusable rebuild. Apply-to-served-map was rejected so a
     // prepare/rebuild remains the path back to an editable map (#277 LOW 2).
     if (
-      !usableMap(job) ||
+      !alignmentMapUsable(job) ||
       alignmentKeepsPublishedMap(id) ||
       job.fingerprint !== book.fingerprint ||
       job.audioFingerprint !== audioFingerprint(job.recordingId)

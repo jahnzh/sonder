@@ -1,4 +1,4 @@
-import type { AlignmentJob } from "./reading-types";
+import { alignmentJobActive, alignmentJobResumable, type AlignmentJob } from "./reading-types";
 
 type ShownJob = Pick<AlignmentJob, "status" | "origin" | "rebuild">;
 
@@ -11,9 +11,9 @@ type ShownJob = Pick<AlignmentJob, "status" | "origin" | "rebuild">;
 export function readingSyncControls(job: ShownJob | undefined): "prepare" | "running" | "resume" | "rebuild" {
   if (!job) return "prepare";
   const rebuild = job.origin !== "projected" ? job.rebuild?.status : undefined;
-  const status = rebuild && ["paused", "error", "cancelled"].includes(rebuild) ? rebuild : job.status;
-  if (["queued", "copying", "processing"].includes(status)) return "running";
-  if (["paused", "error", "cancelled"].includes(status)) return "resume";
+  const status = rebuild && alignmentJobResumable(rebuild) ? rebuild : job.status;
+  if (alignmentJobActive(status)) return "running";
+  if (alignmentJobResumable(status)) return "resume";
   return "rebuild";
 }
 

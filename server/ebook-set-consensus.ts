@@ -19,7 +19,7 @@ import {
   putProjectedRebuild,
   removeProjectedMapsForWork,
 } from "./alignment.ts";
-import { usableMap } from "./alignment-rebuild.ts";
+import { alignmentJobInFlight, alignmentMapUsable } from "../src/reading-types.ts";
 import {
   listEbookSetMembers,
   type EbookSetMemberEvidence,
@@ -302,7 +302,7 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
   if (!state || consensusJob.id !== state.consensusJobId) return;
   if (consensusJob.status === "error" && consensusJob.outcome === "rejected")
     return showRejectedConsensus(workId, consensusJob);
-  if (!["partial", "ready"].includes(consensusJob.status)) return;
+  if (!alignmentMapUsable(consensusJob)) return;
   const members = listEbookSetMembers(workId).filter(
     (member) => member.status === "accepted",
   );
@@ -321,7 +321,7 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
         job.origin !== "projected" &&
         job.status !== "cancelled" &&
         job.status !== "error" &&
-        (["queued", "copying", "processing", "paused"].includes(job.rebuild?.status ?? job.status) ||
+        (alignmentJobInFlight(job.rebuild?.status ?? job.status) ||
           job.coverage > 0),
     );
     if (prepared) continue;
@@ -396,7 +396,7 @@ function showRejectedConsensus(workId: string, consensusJob: AlignmentJob) {
   for (const member of listEbookSetMembers(workId).filter((member) => member.status === "accepted")) {
     const id = projectedJobId(workId, member.ebookId, consensusJob.recordingId);
     const existing = listAlignmentJobs().find((job) => job.id === id);
-    if (!existing || !(usableMap(existing) || alignmentKeepsPublishedMap(id))) continue;
+    if (!existing || !(alignmentMapUsable(existing) || alignmentKeepsPublishedMap(id))) continue;
     putProjectedRebuild({
       ...existing, generation: consensusJob.generation, engine: consensusJob.engine, status: "error",
       outcome: "rejected", error: consensusJob.error, warning: null, progress: consensusJob.progress,

@@ -81,3 +81,22 @@ test("a job that does not exist yet can only be queued or projected", () => {
   );
   assert.deepEqual(fromNothing.sort(), ["project", "queue"]);
 });
+
+test("the status predicates are defined once in reading-types and answer for every status", async () => {
+  const { alignmentJobActive, alignmentJobInFlight, alignmentJobResumable, alignmentMapUsable, alignmentMapPublishes } =
+    await import("../src/reading-types.ts");
+  const where = (predicate: (status: AlignmentStatus) => boolean) => all.filter(predicate);
+  assert.deepEqual(where(alignmentJobActive), ["queued", "copying", "processing"]);
+  assert.deepEqual(where(alignmentJobInFlight), ["queued", "copying", "processing", "paused"]);
+  assert.deepEqual(where(alignmentJobResumable), ["paused", "cancelled", "error"]);
+  assert.deepEqual(where((status) => alignmentMapUsable({ status })), ["ready", "partial"]);
+  assert.deepEqual(where((status) => alignmentMapPublishes({ status })), ["ready", "partial"]);
+  assert.deepEqual(where((status) => alignmentMapPublishes({ status, outcome: "language_not_supported" })), ["ready", "partial", "error"]);
+  for (const missing of [undefined, null, "", "pending"]) {
+    assert.equal(alignmentJobActive(missing), false);
+    assert.equal(alignmentJobInFlight(missing), false);
+  }
+  // The activity source maps each status to its own vocabulary; it must agree on which ones are active.
+  const { ALIGNMENT_ACTIVITY_STATES } = await import("../server/alignment-activity.ts");
+  assert.deepEqual(where((status) => ["queued", "running"].includes(ALIGNMENT_ACTIVITY_STATES[status])), where(alignmentJobActive));
+});

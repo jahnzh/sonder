@@ -2,7 +2,7 @@
  * Alignment job transitions (ADR 0012, #393). Every change of an alignment job's status goes through a named
  * transition here; this table says which status a transition may move a job from, and to which.
  */
-import { ALIGNMENT_STATUSES, type AlignmentStatus } from "../src/reading-types.ts";
+import { ALIGNMENT_ACTIVE_STATUSES, ALIGNMENT_STATUSES, type AlignmentStatus } from "../src/reading-types.ts";
 
 export type AlignmentTransition =
   /** A new or superseding prepare (manual, backfill, auto-queue) plans the pair's job. */
@@ -36,7 +36,7 @@ export type AlignmentTransition =
 export const NO_JOB = "none" as const;
 export type AlignmentTransitionFrom = AlignmentStatus | typeof NO_JOB;
 
-const ACTIVE: readonly AlignmentStatus[] = ["queued", "copying", "processing"];
+const ACTIVE = ALIGNMENT_ACTIVE_STATUSES;
 const each = (
   from: readonly AlignmentTransitionFrom[],
   to: (status: AlignmentTransitionFrom) => readonly AlignmentStatus[],
