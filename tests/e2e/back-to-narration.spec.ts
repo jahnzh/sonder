@@ -1,5 +1,6 @@
 import {test,expect,type Page} from "@playwright/test";
 import {readFileSync} from "node:fs";
+import {randomUUID} from "node:crypto";
 import {readerFixture} from "../reader-fixture";
 import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
 // Back to narration and the manual positions still waiting for their save (#417, ADR 0014): with a
@@ -27,8 +28,12 @@ async function fixture(page:Page,title:string,{map:align=true,tracks=1}={}){
  expect(response.ok()).toBe(true);
  const id=(await response.json()).id;imported.push(id);
  const book=(await(await page.request.get("/api/books")).json()).find((b:any)=>b.id===id);
- const uploaded=await page.request.post(`/api/ebooks/import?workId=${book.workId}`,{multipart:{file:{name:"Narrated.epub",mimeType:"application/epub+zip",buffer:await readerFixture({bodies:[chapterOne,chapterTwo]})}}});
- expect(uploaded.ok()).toBe(true);const ebook=(await uploaded.json()).id;
+ // The server names an imported EPUB by its bytes, and the zip's timestamps change only every two seconds: without a
+ // title of its own, a book built inside the same two seconds as the last test's is that book, with its saved place.
+ const epub=await readerFixture({title:`${title} ${randomUUID()}`,bodies:[chapterOne,chapterTwo]});
+ const uploaded=await page.request.post(`/api/ebooks/import?workId=${book.workId}`,{multipart:{file:{name:"Narrated.epub",mimeType:"application/epub+zip",buffer:epub}}});
+ expect(uploaded.ok()).toBe(true);
+ const saved=await uploaded.json();expect(saved.alreadySaved).toBe(false);const ebook=saved.id;
  const manifest=await(await page.request.get(`/api/reader/${ebook}`)).json();
  if(!align){
   // Linking queued a backfill job; cancel it so this book has no narration map.
@@ -285,7 +290,8 @@ async function scrubberSetup(page:Page,title:string){
 }
 // Chooses chapter `chapter` (the first by default) in the Contents sidebar, and as soon as the reader's position is in it (its save
 // waiting out the pause) moves the audio scrubber to `second`: a click with the real mouse (pointer released),
-// or `fill` (the change a key makes). Answers the time between.
+// or `fill` (the change a key makes), made in the frame the chapter shows: a round trip from the test can take
+// longer than the pause on a loaded host, and the scrub then comes after the chapter was saved. Answers the time between.
 async function contentsThenScrub(page:Page,second:number,via:"mouse"|"fill",chapter=0){
  const room=page.locator(".inline-reader");
  const slider=room.locator(".reader-audio-timeline input[type=range]");
@@ -295,22 +301,36 @@ async function contentsThenScrub(page:Page,second:number,via:"mouse"|"fill",chap
  expect(length).toBeGreaterThan(second);
  const x=box.x+9+(second/length)*(box.width-18),y=box.y+box.height/2;
  const title=(await room.getByLabel("Contents sidebar").getByRole("button").nth(chapter).textContent())!.trim();
- await page.evaluate(({title,via})=>new Promise<void>((done,fail)=>{
+ await page.evaluate(({title,via,second})=>new Promise<void>((done,fail)=>{
   const scope=document.querySelector(".inline-reader")!;
-  const chapter=[...scope.querySelectorAll<HTMLButtonElement>('[aria-label="Contents sidebar"] button')].find(button=>button.textContent?.trim()===title)!;
-  const limit=Date.now()+10000;
+  const chapter=()=>[...scope.querySelectorAll<HTMLButtonElement>('[aria-label="Contents sidebar"] button')].find(button=>button.textContent?.trim()===title)!;
   // The time of the scrubber press, for the elapsed check below.
   scope.querySelector(".reader-audio-timeline")!.addEventListener(via==="mouse"?"pointerdown":"input",()=>{(window as any).__scrubAt=performance.now();},{capture:true,once:true});
-  chapter.click();
-  const wait=()=>{
-   if(chapter.getAttribute("aria-current")!=="location"){if(Date.now()>limit){fail(new Error("Contents did not relocate"));return;}requestAnimationFrame(wait);return;}
+  // Acts once the sidebar marks the chapter as the reader's position, on that change itself: polling by
+  // animation frame lags on a loaded host, where frames come late, while the DOM already shows the chapter.
+  let settled=false;
+  const observer=new MutationObserver(()=>arrived());
+  const limit=setTimeout(()=>{if(settled)return;settled=true;observer.disconnect();fail(new Error("Contents did not relocate"));},10000);
+  const arrived=()=>{
+   if(settled||chapter().getAttribute("aria-current")!=="location")return;
+   settled=true;observer.disconnect();clearTimeout(limit);
    (window as any).__arrivedAt=performance.now();
+   if(via==="fill"){
+    // What Playwright's fill does to a range input: focus, set the value, then the input and change events. Its fill
+    // sets the value from an isolated world; here the native setter does it, past React's own value tracking.
+    const range=scope.querySelector<HTMLInputElement>(".reader-audio-timeline input[type=range]")!;
+    range.focus();
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value")!.set!.call(range,String(second));
+    range.dispatchEvent(new Event("input",{bubbles:true,composed:true}));
+    range.dispatchEvent(new Event("change",{bubbles:true}));
+   }
    done();
   };
-  wait();
- }),{title,via});
+  observer.observe(scope,{subtree:true,attributes:true,attributeFilter:["aria-current"]});
+  chapter().click();
+  arrived();
+ }),{title,via,second});
  if(via==="mouse")await page.mouse.click(x,y);
- else await slider.fill(String(second));
  return page.evaluate(()=>(window as any).__scrubAt-(window as any).__arrivedAt);
 }
 
