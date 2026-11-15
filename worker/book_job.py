@@ -87,6 +87,41 @@ def write_json(path, value):
     temporary.replace(path)
 
 
+def json_chunks(value):
+    """write_json's exact text in pieces, so it can be counted and written without holding it whole.
+    ASCII (`ensure_ascii`): one byte per character."""
+    return json.JSONEncoder(separators=(",", ":")).iterencode(value)
+
+
+def write_reserved(job, session, path, value, should_stop, state_bytes=STATE_BYTES, what="result"):
+    """Write `value` as JSON to `path` only once the bytes it needs are reserved (#402: every byte a book
+    job writes is reserved before it is written; #403 review: a result's passages and flags repeat section
+    titles, so no estimate bounds it). The text is counted first, then the peak of the write is reserved:
+    the job's folder as it is now (an older copy of the file included, which stays until the new one
+    replaces it), the new file's temporary copy beside it, and `state_bytes` for the state file's next
+    writes. A result that can never fit the budget fails the job (BudgetExceeded) and nothing is written.
+    Returns the file's size in bytes."""
+    path = Path(path)
+    size = sum(len(chunk) for chunk in json_chunks(value))
+    need = folder_bytes(job.folder) + size + int(state_bytes)
+    try:
+        session.reserve_disk(need, should_wait=lambda: not should_stop())
+    except BudgetExceeded as error:
+        raise BudgetExceeded(f"The book's {what} is {size} bytes of JSON and was not written: with the job's "
+                             f"other files it needs {need} bytes of disk. {error}") from None
+    job.progress(diskReservedBytes=need)
+    temporary = path.with_name(path.name + ".tmp")
+    try:
+        with temporary.open("w", encoding="ascii") as out:
+            for chunk in json_chunks(value):
+                out.write(chunk)
+        temporary.replace(path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+    return size
+
+
 def read_json(path, default=None):
     try:
         return json.loads(Path(path).read_text())
@@ -506,12 +541,15 @@ class BookJobs:
 
         try:
             if job.request.get("language", "eng") != "eng":
-                self._finish(job, {"jobId": job.key, "engine": BOOK_ENGINE, "outcome": "language_not_supported",
-                                   "intervals": [], "tracks": []})
+                write_reserved(job, session, job.folder / "result.json",
+                               {"jobId": job.key, "engine": BOOK_ENGINE, "outcome": "language_not_supported",
+                                "intervals": [], "tracks": []}, should_stop, self.state_bytes)
+                self._finish(job, read_json(job.folder / "result.json"))
                 return
             self.stages.run(job, session, should_stop)
             if should_stop():
                 raise Stopped()
+            # The stages wrote the result (reserved from its real size); it is not written a second time.
             self._finish(job, read_json(job.folder / "result.json"))
         except (Stopped, SessionEnded) as error:
             reason = job.stop_reason or str(error) or "stopped"
@@ -556,9 +594,9 @@ class BookJobs:
             self.registry.budget.claim(job.key, folder_bytes(job.folder))
 
     def _finish(self, job, result):
+        """`result` is what result.json holds: the job is done."""
         if result is None:
             raise RuntimeError("The job finished without a result.")
-        write_json(job.folder / "result.json", result)
         job.update(state="done", outcome=result.get("outcome"), error=None)
 
 
@@ -600,7 +638,7 @@ class WorkerStages:
     @staticmethod
     def reserve(job, session, should_stop, adds):
         """Reserve what the job's folder holds now plus `adds` bytes the next stage writes at its peak (and
-        room for the small state, plan, group and result files); waits while other books hold the budget."""
+        room for the small state, plan and group files; the result is reserved when it is written); waits while other books hold the budget."""
         need = folder_bytes(job.folder) + int(adds) + meta_bytes(len(job.request["sentences"]))
         session.reserve_disk(need, should_wait=lambda: not should_stop())
         job.progress(diskReservedBytes=need)
@@ -770,7 +808,7 @@ class WorkerStages:
             with job.lock:
                 result["stageTimings"] = dict(job.state.get("stageTimings", {}))
                 result["encode"] = job.state.get("encode")
-            write_json(job.folder / "result.json", result)
+            write_reserved(job, session, job.folder / "result.json", result, should_stop)
             return
         job.update(state="anchoring")
         plan = read_json(groups_dir / "plan.json")
@@ -832,7 +870,7 @@ class WorkerStages:
         with job.lock:
             result["stageTimings"] = dict(job.state.get("stageTimings", {}))
             result["encode"] = job.state.get("encode")
-        write_json(job.folder / "result.json", result)
+        write_reserved(job, session, job.folder / "result.json", result, should_stop)
 
     def _align_groups(self, job, session, longform, book_path, sentences, todo, groups_dir, done, should_stop,
                       key=None):

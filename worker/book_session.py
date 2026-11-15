@@ -77,7 +77,8 @@ def emission_bytes(samples):
 
 
 def meta_bytes(sentences):
-    """State, plan, group and result files of a book: generous for the 71,225 sentences of the largest."""
+    """State, plan and group files of a book: generous for the 71,225 sentences of the largest. The result
+    is not in it: book_job.write_reserved reserves it from its real size before it is written (#403)."""
     return (16 << 20) + 1024 * int(sentences)
 
 

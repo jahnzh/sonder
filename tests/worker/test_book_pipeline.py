@@ -353,6 +353,54 @@ class Pipeline(PipelineFixture):
              "sentenceCount": 20, "excerpt": "Sentence number 0 here."}])
         self.assertEqual([t["id"] for t in result["tracks"]], ["t0", "t1"])
 
+    def long_titled_mismatch(self, budget):
+        """A wrong book of 2,000 one-sentence sections, each with a 2,000-character non-ASCII title (align.py's
+        limit; six bytes a character as JSON): 2,000 unsynced passages, a result of about 24 MB, more than
+        the 16 MiB + 1 KiB a sentence #402 reserved for all of a book's small files (#403 review)."""
+        self.match.stop()  # the real check: random emissions are not this text
+        sentences = 2000
+        self.request["sentences"] = [{"id": f"p{k}", "section": k, "text": f"Sentence number {k} here."}
+                                     for k in range(sentences)]
+        self.request["sections"] = [{"index": k, "title": "\u00e9" * 2000} for k in range(sentences)]
+        stages = WorkerStages(self.media / "alignment", lambda: FakeModel(), "cpu", env=self.env)
+        jobs = BookJobs(self.media / "alignment" / "book-jobs", stages,
+                        SessionRegistry(DiskBudget(budget), idle=900))
+        folder = self.media / "alignment" / "book-jobs" / "book-1"
+        peaks, real = [], Path.replace
+
+        def replace(path, target):  # the peak of a write: the old file and its temporary copy are both there
+            if folder in Path(path).parents:
+                peaks.append((Path(path).name, book_session_folder_bytes(folder), jobs.registry.budget.reserved("book-1")))
+            return real(path, target)
+
+        with mock.patch.object(Path, "replace", replace):
+            jobs.start(self.request)
+            status = self.wait(jobs)
+        return jobs, status, peaks, folder
+
+    def test_a_long_titled_mismatch_result_stays_inside_its_reservation(self):
+        jobs, status, peaks, folder = self.long_titled_mismatch(10 ** 9)
+        self.assertEqual(status["state"], "done", status)
+        self.assertEqual(status["outcome"], book_match.TEXT_MISMATCH)
+        size = (folder / "result.json").stat().st_size
+        from book_session import meta_bytes
+        self.assertGreater(size, meta_bytes(2000))
+        self.assertTrue(any(name == "result.json.tmp" for name, _, _ in peaks))
+        self.assertEqual([p for p in peaks if p[1] > p[2]], [], "the job's files never exceeded its reservation")
+        result = jobs.result("book-1")
+        self.assertEqual(len(result["unsyncedPassages"]), 2000)
+        self.assertEqual(result["unsyncedPassages"][7]["title"], "\u00e9" * 2000)
+
+    def test_a_result_that_does_not_fit_the_budget_fails_the_job_and_is_not_written(self):
+        from book_session import meta_bytes
+        # Room for every stage before the result (its estimate included), not for the result.
+        jobs, status, peaks, folder = self.long_titled_mismatch(meta_bytes(2000) + (4 << 20))
+        self.assertEqual(status["state"], "failed", status)
+        self.assertIn("result is", status["error"])
+        self.assertIn("was not written", status["error"])
+        self.assertFalse((folder / "result.json").exists())
+        self.assertEqual([p for p in peaks if p[1] > p[2]], [])
+
     def test_resume_after_a_restart_reuses_emissions_and_finished_groups(self):
         first_model = FakeModel()
         jobs = self.jobs(first_model)
