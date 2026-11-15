@@ -136,7 +136,7 @@ test("Retry and Discard go to the source whose kind prefixes the item id", async
 
 const source = (path: string) => readFileSync(new URL(`../server/${path}`, import.meta.url), "utf8");
 const runtimeImports = (text: string) =>
-  [...text.matchAll(/^(?:import|export)\s+(?!type\b)[^;]*?from\s+"([^"]+)"/gms)].map((match) => match[1]);
+  [...text.matchAll(/^(?:import|export)\s+(?!type\b)(?:[^;]*?from\s+)?"([^"]+)"/gms)].map((match) => match[1]);
 
 test("the Activity module holds no SQL against feature tables and no feature status words", () => {
   const activity = source("activity.ts");
