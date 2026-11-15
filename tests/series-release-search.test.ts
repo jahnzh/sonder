@@ -315,8 +315,6 @@ test("active download requires replacement before a new selection", async () => 
     })
     .run();
   db.insert(schema.userAcquisitions).values({ userId: 1, acquisitionId: firstId }).run();
-  const { syncWorkMediaState } = await import("../server/work-media-state.ts");
-  syncWorkMediaState(1, workId);
 
   await seedAbbSearch();
   const blocked = await app.inject({
@@ -373,8 +371,9 @@ test("existing playable audio requires confirmation before another download", as
       sourceType: "local",
     })
     .run();
-  const { syncWorkMediaState } = await import("../server/work-media-state.ts");
-  syncWorkMediaState(1, workId);
+  // The saved-series flow tracks a work that already has audio (no acquisition, no hold).
+  const { trackWorkMediaState } = await import("../server/work-media-state.ts");
+  trackWorkMediaState(1, workId);
   assert.equal(getWorkMediaState(1, workId)?.state, "available");
 
   const blocked = await app.inject({
@@ -453,8 +452,6 @@ test("failed release metadata leaves an active download unchanged", async () => 
     })
     .run();
   db.insert(schema.userAcquisitions).values({ userId: 1, acquisitionId: firstId }).run();
-  const { syncWorkMediaState } = await import("../server/work-media-state.ts");
-  syncWorkMediaState(1, workId);
   setSeriesReleaseSearchDeps({
     abbRelease: async () => {
       throw new Error("abb page gone");
@@ -539,8 +536,6 @@ test("replacing a TorBox download returns a detach note", async () => {
     })
     .run();
   db.insert(schema.userAcquisitions).values({ userId: 1, acquisitionId: torboxId }).run();
-  const { syncWorkMediaState } = await import("../server/work-media-state.ts");
-  syncWorkMediaState(1, workId);
   setSeriesReleaseSearchDeps({
     abbMagnet: async () =>
       "magnet:?xt=urn:btih:cccccccccccccccccccccccccccccccccccccccc&dn=Other",
@@ -587,8 +582,6 @@ test("replacing with the same hash does not stop the active download", async () 
     })
     .run();
   db.insert(schema.userAcquisitions).values({ userId: 1, acquisitionId: firstId }).run();
-  const { syncWorkMediaState } = await import("../server/work-media-state.ts");
-  syncWorkMediaState(1, workId);
   await seedAbbSearch();
   const replaced = await app.inject({
     method: "POST",
@@ -636,8 +629,6 @@ test("shared active acquisition detaches this user without stopping the job", as
     .run();
   db.insert(schema.userAcquisitions).values({ userId: 1, acquisitionId: sharedId }).run();
   db.insert(schema.userAcquisitions).values({ userId: 2, acquisitionId: sharedId }).run();
-  const { syncWorkMediaState } = await import("../server/work-media-state.ts");
-  syncWorkMediaState(1, workId);
   setSeriesReleaseSearchDeps({
     abbMagnet: async () =>
       "magnet:?xt=urn:btih:cccccccccccccccccccccccccccccccccccccccc&dn=Other",
@@ -883,8 +874,6 @@ test("replace failure after acquire finalizes claim and does not reopen auto-acq
     })
     .run();
   db.insert(schema.userAcquisitions).values({ userId: 1, acquisitionId: firstId }).run();
-  const { syncWorkMediaState } = await import("../server/work-media-state.ts");
-  syncWorkMediaState(1, workId);
   setSeriesReleaseSearchDeps({
     replacePreviousAcquisition: async () => {
       throw new Error("replace blew up");

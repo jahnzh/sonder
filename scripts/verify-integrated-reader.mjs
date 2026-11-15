@@ -106,7 +106,7 @@ try {
  const initial=await room.getAttribute('data-current-passage');
  await play.click();
  await expect.poll(()=>room.getAttribute('data-current-passage'),{timeout:20000}).not.toBe(initial);
- await pause.click();
+ await showControls();await pause.click();
  report.checks.push({name:'Real audio advances the highlighted passage automatically'});
  // Pausing can stop inside an unsynced gap, where no sentence is highlighted by design (partially mapped books, #349).
  // Return to the middle of a sentence already proven mapped above before pressing the narrated sentence.
@@ -127,7 +127,7 @@ try {
  await page.screenshot({path:'artifacts/live-reader-listen-from-here-mobile.png'});
  await toast.getByRole('button',{name:'Undo',exact:true}).click();
  await expect.poll(async()=>Math.abs((await actual()).position-before),{timeout:20000}).toBeLessThan(3);
- await pause.click();
+ await showControls();await pause.click();
  report.checks.push({name:'Long-press listens from that sentence and Undo returns'});
  await more();
  await options.getByRole('group',{name:'Reading mode',exact:true}).getByRole('button',{name:'Lyrics',exact:true}).click();
@@ -143,7 +143,7 @@ try {
  await lines.nth(current+3).click();
  await expect.poll(async()=>Math.abs((await actual()).position-start),{timeout:20000}).toBeGreaterThan(1);
  await expect(lines.nth(current+3)).toHaveClass(/current/);
- await pause.click();
+ await showControls();await pause.click();
  await expect(page.locator('.toast')).toHaveCount(0);
  await page.screenshot({path:'artifacts/live-integrated-reader-lyrics-mobile.png'});
  report.checks.push({name:'Lyrics mode follows the narration and tapping a line seeks there',fontSize:size});

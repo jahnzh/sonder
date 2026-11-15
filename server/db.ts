@@ -54,6 +54,8 @@ for (const [column, definition] of [
   ["claimed_at", "INTEGER"],
   // Automatic rebuild (#277): the usable map that stays served until its rebuild publishes.
   ["published_map", "TEXT"],
+  // ADR 0012: the consensus job a member's projected map was projected from.
+  ["projected_from", "TEXT"],
 ] as const)
   if (!alignmentColumns.has(column))
     sqlite.exec(`ALTER TABLE alignment_jobs ADD COLUMN ${column} ${definition}`);
@@ -88,6 +90,13 @@ for (const [table, columns] of [
     if (!existing.has(column))
       sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
 }
+// Indexes for the batched media-state read (ADR 0011): a work's editions, an edition's
+// recordings and a recording's tracks. Its acquisition query uses the primary keys.
+sqlite.exec(`
+CREATE INDEX IF NOT EXISTS audio_editions_work ON audio_editions(work_id);
+CREATE INDEX IF NOT EXISTS recordings_edition ON recordings(edition_id);
+CREATE INDEX IF NOT EXISTS tracks_recording ON tracks(recording_id);
+`);
 sqlite.exec(`
 CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,username TEXT NOT NULL UNIQUE COLLATE NOCASE,password_hash TEXT,role TEXT NOT NULL CHECK(role IN ('admin','user')),created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS user_acquisitions(user_id INTEGER NOT NULL REFERENCES users(id),acquisition_id TEXT NOT NULL REFERENCES acquisitions(id),PRIMARY KEY(user_id,acquisition_id));

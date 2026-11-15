@@ -3,6 +3,11 @@ import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
 import { acquire as defaultAcquire, magnetHash } from "./acquisitions.ts";
 import {
+  isActiveAcquisitionStatus,
+  isFinishedAcquisitionStatus,
+  setAcquisitionStatus,
+} from "./acquisition-status.ts";
+import {
   abbMagnet,
   abbRelease,
   abbReleaseSearch,
@@ -13,7 +18,7 @@ import {
 } from "./services.ts";
 import {
   getWorkMediaState,
-  syncWorkMediaState,
+  trackWorkMediaState,
   workHasPlayableAudio,
   type WorkMediaState,
 } from "./work-media-state.ts";
@@ -103,13 +108,6 @@ export function defaultReleaseSearchQuery(
   return parts.join(" ");
 }
 
-const activeDownload = new Set([
-  "checking",
-  "preparing",
-  "downloading",
-  "paused",
-]);
-
 function activeWorkAcquisition(userId: number, workId: string) {
   const state = getWorkMediaState(userId, workId);
   if (state?.state !== "queued" || !state.acquisitionId) return null;
@@ -118,7 +116,7 @@ function activeWorkAcquisition(userId: number, workId: string) {
     .from(s.acquisitions)
     .where(eq(s.acquisitions.id, state.acquisitionId))
     .get();
-  if (!job || !activeDownload.has(job.status)) return null;
+  if (!job || !isActiveAcquisitionStatus(job.status)) return null;
   return job;
 }
 
@@ -162,7 +160,7 @@ export async function replacePreviousAcquisition(
         ),
       )
       .run();
-    if (previous.workId) syncWorkMediaState(userId, previous.workId);
+    if (previous.workId) trackWorkMediaState(userId, previous.workId);
     return { action: "detached_shared" };
   }
 
@@ -190,21 +188,17 @@ export async function replacePreviousAcquisition(
       ),
     )
     .run();
-  if (previous.status !== "ready" && previous.status !== "error") {
+  if (!isFinishedAcquisitionStatus(previous.status)) {
     try {
       await transmission("torrent-stop", { ids: [previous.hash] });
     } catch {
       /* best effort */
     }
   }
-  db.update(s.acquisitions)
-    .set({
-      status: "error",
-      error: "Replaced by a new release selection.",
-      updatedAt: Date.now(),
-    })
-    .where(eq(s.acquisitions.id, previousAcquisitionId))
-    .run();
+  setAcquisitionStatus(previousAcquisitionId, "error", {
+    error: "Replaced by a new release selection.",
+    updatedAt: Date.now(),
+  });
   return { action: "stopped_local" };
 }
 
@@ -352,7 +346,6 @@ export async function selectSeriesWorkRelease(
       bookId,
       work.workId,
     );
-    syncWorkMediaState(userId, work.workId);
     return {
       acquisition: job,
       mediaState: getWorkMediaState(userId, work.workId) as WorkMediaState,

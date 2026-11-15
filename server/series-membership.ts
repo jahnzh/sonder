@@ -1,11 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "./db.ts";
 import * as s from "./schema.ts";
-import {
-  getWorkMediaState,
-  syncWorkMediaState,
-  type WorkMediaState,
-} from "./work-media-state.ts";
+import { getWorkMediaState, type WorkMediaState } from "./work-media-state.ts";
 
 export type SeriesVolumeCandidate = {
   position: number | null;
@@ -97,5 +93,5 @@ export async function retryWorkMediaAcquisition(
     narrator: job.narrator,
     userId,
   });
-  return syncWorkMediaState(userId, workId);
+  return getWorkMediaState(userId, workId);
 }

@@ -9,11 +9,12 @@ import { usePlayer } from "../player";
 import { PoolFailureReasons } from "./PoolFailureReasons";
 import { readingSyncControls, rejectedRebuildReason } from "../reading-sync-controls";
 import type { Book } from "../types";
-import type {
-  AlignmentFlag,
-  AlignmentJob,
-  ReaderBook,
-  TextLocator,
+import {
+  alignmentJobActive,
+  type AlignmentFlag,
+  type AlignmentJob,
+  type ReaderBook,
+  type TextLocator,
 } from "../reading-types";
 type Options = {
   sections: { index: number; title: string; paragraphs: number }[];
@@ -587,7 +588,7 @@ export function ReadingSync({
         locator &&
         player.book?.recordingId === selected &&
         player.track &&
-        !["queued", "copying", "processing"].includes(job.status) && (
+        !alignmentJobActive(job.status) && (
           <details className="manual-anchor">
             <summary>Correct this sentence’s timing</summary>
             <p>{locator.quote || "Current sentence"}</p>
