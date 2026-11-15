@@ -117,13 +117,15 @@ test("measure Lyrics mode with an 18,000-sentence book", async ({ page }, testIn
       (window as any).__longTasks = [];
       new PerformanceObserver((list) => (window as any).__longTasks.push(...list.getEntries().map((entry) => entry.duration))).observe({ type: "longtask", buffered: false });
     });
-    await room.getByRole("button", { name: "Play narration", exact: true }).click();
+    const played = performance.now();
+    // Clicked in the page: a role query from Playwright over every line would itself be the longest task.
+    await page.evaluate(() => document.querySelector<HTMLButtonElement>(".inline-reader .reader-play")!.click());
     await page.waitForTimeout(6000);
     const longTasks: number[] = await page.evaluate(() => (window as any).__longTasks);
     const playing = await page.evaluate(() => ((window as any).__sonderAudio as HTMLAudioElement[]).some((item) => !item.paused));
     await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
-    await room.getByRole("button", { name: "Pause narration", exact: true }).click().catch(() => {});
-    results.playback6s = { playing, longTasks: longTasks.length, longTaskMs: Math.round(longTasks.reduce((sum, value) => sum + value, 0)), longestMs: Math.round(Math.max(0, ...longTasks)) };
+    await page.evaluate(() => document.querySelector<HTMLButtonElement>(".inline-reader .reader-play")!.click());
+    results.playback6s = { wallMs: Math.round(performance.now() - played), playing, longTasks: longTasks.length, longTaskMs: Math.round(longTasks.reduce((sum, value) => sum + value, 0)), longestMs: Math.round(Math.max(0, ...longTasks)) };
     // What assistive technology sees: buttons in the accessibility tree, and the time Playwright takes to resolve one
     // by its accessible name inside the reader (the 3 s query of #413). Measured last: reading the tree turns on the
     // renderer's accessibility support, which slows every later DOM change.
