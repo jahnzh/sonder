@@ -45,6 +45,8 @@ async function openAt(page:Page,book:any,position:number){
  expect((await response.json()).progress.position).toBe(position);
  await page.goto("/");
  await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
+ // The book's pages are in the frame: before that, Contents has no view to move.
+ await expect(page.frameLocator(".inline-reader .reader-viewport iframe").locator("p").first()).toBeAttached({timeout:READER_WAIT_MS.followHighlight});
 }
 // Opened on a narrated sentence: the reader follows it.
 async function openFollowing(page:Page,book:any,interval:any){
