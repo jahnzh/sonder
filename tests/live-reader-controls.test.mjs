@@ -257,6 +257,12 @@ for (const name of ["verify-integrated-reader.mjs", "verify-playback-workflow.mj
   });
 }
 
+test("the integrated reader check looks for Play and Pause narration in the player bar only (#413)", () => {
+  const source = read("verify-integrated-reader.mjs");
+  assert.match(source, /player=room\.locator\('\.reader-player'\),play=player\.getByRole\('button',\{name:'Play narration',exact:true\}\),pause=player\.getByRole\('button',\{name:'Pause narration',exact:true\}\)/);
+  assert.doesNotMatch(source, /(?:room|page)\.getByRole\('button',\{name:'(?:Play|Pause) narration'/);
+});
+
 test("the integrated reader check waits for the current Lyrics line to exist and does not scroll it", () => {
   const source = read("verify-integrated-reader.mjs");
   assert.match(source, /currentLine\.count\(\)===1/);

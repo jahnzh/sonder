@@ -96,7 +96,9 @@ try {
  const middle=samples[Math.floor(samples.length/2)];
  await seek(middle.position-20);
  await expect(room).toHaveAttribute('data-current-passage',/.+/);
- const play=room.getByRole('button',{name:'Play narration',exact:true}),pause=room.getByRole('button',{name:'Pause narration',exact:true});
+ // Look for Play/Pause inside the player bar only: in Lyrics mode every sentence of the book is a button, and a role query over
+ // the whole reader took seconds per read in a long book (#413).
+ const player=room.locator('.reader-player'),play=player.getByRole('button',{name:'Play narration',exact:true}),pause=player.getByRole('button',{name:'Pause narration',exact:true});
  const initial=await room.getAttribute('data-current-passage');
  await controls.click(play,'Play narration');
  await expect.poll(()=>room.getAttribute('data-current-passage'),{timeout:20000}).not.toBe(initial);
