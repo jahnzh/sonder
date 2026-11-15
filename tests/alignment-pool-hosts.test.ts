@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   acquireWorkerLease,
+  checkPoolHostsSetting,
   ctcHealthProblem,
   defaultPoolHosts,
   getAlignmentPoolCoordinator,
@@ -78,7 +79,7 @@ test("ALIGNMENT_POOL_HOSTS replaces the default; hosts are tried in rank order",
   assert.deepEqual(getAlignmentPoolCoordinator().listHosts().map((host) => host.id), ["cpu-c", "gpu-b", "cpu-d"]);
 });
 
-test("an invalid ALIGNMENT_POOL_HOSTS is refused with the reason, and the running pool then has no hosts", () => {
+test("an invalid ALIGNMENT_POOL_HOSTS is refused with the reason, and no pool is built from it", () => {
   const cases: [string, RegExp][] = [
     ["not json", /ALIGNMENT_POOL_HOSTS is not JSON/],
     ["[]", /non-empty JSON array/],
@@ -92,21 +93,23 @@ test("an invalid ALIGNMENT_POOL_HOSTS is refused with the reason, and the runnin
       { id: "a", sshTarget: "b", workerUrl: "http://b", device: "cpu", precision: "float32" },
     ]), /host ids must be unique/],
   ];
-  const errors: string[] = [];
-  const consoleError = console.error;
-  console.error = (line: string) => { errors.push(line); };
-  try {
-    for (const [raw, reason] of cases) {
-      set({ ALIGNMENT_POOL_HOSTS: raw });
-      assert.throws(() => defaultPoolHosts(), reason, raw);
-      resetAlignmentPoolCoordinator();
-      assert.deepEqual(getAlignmentPoolCoordinator().listHosts(), [], raw);
-    }
-  } finally {
-    console.error = consoleError;
+  for (const [raw, reason] of cases) {
+    set({ ALIGNMENT_POOL_HOSTS: raw });
+    assert.throws(() => defaultPoolHosts(), reason, raw);
+    assert.throws(() => checkPoolHostsSetting(), (error: Error) =>
+      reason.test(error.message) && /Fix ALIGNMENT_POOL_HOSTS, or unset it/.test(error.message), raw);
+    resetAlignmentPoolCoordinator();
+    assert.throws(() => getAlignmentPoolCoordinator(), reason, raw);
   }
-  assert.equal(errors.length, cases.length);
-  assert.match(errors[0], /^alignment pool: ALIGNMENT_POOL_HOSTS is not JSON/);
+});
+
+test("an unset or empty ALIGNMENT_POOL_HOSTS means the default hosts", () => {
+  for (const raw of [undefined, "", "   "]) {
+    set(raw === undefined ? {} : { ALIGNMENT_POOL_HOSTS: raw });
+    checkPoolHostsSetting();
+    resetAlignmentPoolCoordinator();
+    assert.deepEqual(getAlignmentPoolCoordinator().listHosts().map((host) => host.id), ["wsl", "lisa"], String(raw));
+  }
 });
 
 test("a worker must report the device and precision its host is configured with", () => {

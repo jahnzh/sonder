@@ -285,7 +285,7 @@ export class AlignmentPoolCoordinator {
   private recordings = new Map<string, RecordingLease>();
   private hostErrors = new Map<PoolHostId, string | null>();
   private hosts: PoolHost[];
-  constructor(hosts: PoolHost[] = configuredPoolHosts()) {
+  constructor(hosts: PoolHost[] = defaultPoolHosts()) {
     this.hosts = byRank(hosts);
   }
 
@@ -357,24 +357,28 @@ export class AlignmentPoolCoordinator {
   }
 }
 
-/** The configured hosts; an invalid `ALIGNMENT_POOL_HOSTS` leaves the pool without hosts instead of stopping the server. */
-function configuredPoolHosts() {
+/**
+ * Stops the server at startup on an invalid `ALIGNMENT_POOL_HOSTS` (malformed, an empty list, a host without a
+ * required field, duplicate ids), with the setting and the problem in the message. Unset or empty: the default hosts.
+ */
+export function checkPoolHostsSetting() {
   try {
-    return defaultPoolHosts();
+    defaultPoolHosts();
   } catch (error) {
-    console.error(`alignment pool: ${(error as Error).message} The pool has no hosts until it is fixed.`);
-    return [];
+    throw new Error(`${(error as Error).message} Fix ALIGNMENT_POOL_HOSTS, or unset it to use the default hosts.`);
   }
 }
 
-let coordinator = new AlignmentPoolCoordinator();
+// Built on first use, so an invalid setting surfaces through checkPoolHostsSetting at startup, not at import.
+let coordinator: AlignmentPoolCoordinator | null = null;
 
 export function getAlignmentPoolCoordinator() {
+  coordinator ??= new AlignmentPoolCoordinator();
   return coordinator;
 }
 
 export function resetAlignmentPoolCoordinator(hosts?: PoolHost[]) {
-  coordinator = new AlignmentPoolCoordinator(hosts);
+  coordinator = hosts ? new AlignmentPoolCoordinator(hosts) : null;
   resetAlignmentPoolStatusCache();
 }
 
