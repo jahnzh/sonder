@@ -387,8 +387,9 @@ export async function autoAcquireSeriesVolume(
       narrator: input.narrator ?? chosen.narrator,
       userId,
     });
-  } catch {
+  } catch (error) {
     // An acquire that threw before recording an acquisition still tracks the work.
+    deps.log?.(`acquire: ${(error as Error).message}`);
     trackWorkMediaState(userId, input.workId);
   }
   return getWorkMediaState(userId, input.workId);
