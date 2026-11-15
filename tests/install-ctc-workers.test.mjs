@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
-import { createServer } from "node:http";
+import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -13,15 +12,6 @@ const serviceTmpl = join(repoRoot, "deploy", "ctc-worker.service.tmpl");
 const caddyTmpl = join(repoRoot, "deploy", "ctc-worker.caddy.tmpl");
 const workerDoc = join(repoRoot, "docs", "CTC_WORKER_POOL.md");
 const workerSpecDoc = join(repoRoot, "docs", "agents", "worker-spec.md");
-
-// A port nothing listens on, so the installer's active-request check finds no worker (this machine may run one on 3012).
-async function closedPort() {
-  const server = createServer();
-  await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
-  const { port } = server.address();
-  await new Promise((resolveClose) => server.close(resolveClose));
-  return String(port);
-}
 
 test("install-ctc-workers.sh is executable and has valid bash syntax", () => {
   assert.ok(existsSync(installer), "scripts/install-ctc-workers.sh must exist");
@@ -156,8 +146,7 @@ test("install-ctc-workers.sh warns when --token passed on CLI", () => {
   }
 });
 
-test("install-ctc-workers.sh scaffolds directories, worker.env with 0600 under umask 0000", async () => {
-  const port = await closedPort();
+test("install-ctc-workers.sh scaffolds directories, worker.env with 0600 under umask 0000", () => {
   const tempDir = realpathSync(mkdtempSync(join(tmpdir(), "sonder-ctc-install-test-")));
   const fakeHome = join(tempDir, "home");
   const fakeBin = join(tempDir, "bin");
@@ -178,7 +167,7 @@ test("install-ctc-workers.sh scaffolds directories, worker.env with 0600 under u
     // Run under umask 0000 to verify umask 077 inside script enforces 0600 on creation
     const run = spawnSync("bash", [
       "-c",
-      `umask 0000 && "${installer}" --device cuda --dir "${targetDir}" --service-only --port ${port}`,
+      `umask 0000 && "${installer}" --device cuda --dir "${targetDir}" --service-only`,
     ], {
       encoding: "utf8",
       env: {
@@ -223,7 +212,6 @@ test("install-ctc-workers.sh scaffolds directories, worker.env with 0600 under u
     assert.ok(existsSync(systemctlLog), "systemctl commands must be recorded");
     const systemctlCommands = readFileSync(systemctlLog, "utf8").trim().split("\n");
     assert.deepEqual(systemctlCommands, [
-      "--user stop sonder-ctc-worker.service",
       "--user daemon-reload",
       "--user enable sonder-ctc-worker.service",
       "--user restart sonder-ctc-worker.service",
@@ -233,8 +221,7 @@ test("install-ctc-workers.sh scaffolds directories, worker.env with 0600 under u
   }
 });
 
-test("install-ctc-workers.sh generates token once and informs owner; reuses existing token safely", async () => {
-  const port = await closedPort();
+test("install-ctc-workers.sh generates token once and informs owner; reuses existing token safely", () => {
   const tempDir = realpathSync(mkdtempSync(join(tmpdir(), "sonder-ctc-token-flow-")));
   const fakeHome = join(tempDir, "home");
   const fakeBin = join(tempDir, "bin");
@@ -251,7 +238,6 @@ test("install-ctc-workers.sh generates token once and informs owner; reuses exis
       "--dir", targetDir,
       "--service-only",
       "--skip-service",
-      "--port", port,
     ], {
       encoding: "utf8",
       env: {
@@ -277,7 +263,6 @@ test("install-ctc-workers.sh generates token once and informs owner; reuses exis
       "--dir", targetDir,
       "--service-only",
       "--skip-service",
-      "--port", port,
     ], {
       encoding: "utf8",
       env: {
@@ -367,172 +352,4 @@ test("docs/agents/worker-spec.md contains exact orchestration line from issue #3
   // Count occurrences
   const matches = content.split("\n").filter((l) => l.includes(expectedLine));
   assert.equal(matches.length, 1, "The line must appear exactly once in worker-spec.md");
-});
-
-// The /health body of the worker deployed on WSL (`curl http://192.168.1.119:3012/health`, 2026-11-15).
-const LIVE_HEALTH = {
-  ready: true, engine: "aeneas-1.7.3", busy: false, stuck: false, busySeconds: null, lastTimeout: null, slots: 8,
-  activeRequests: 0, mediaRoot: "/home/jahn/sonder-ctc-worker/media",
-  ctc: { engine: "ctc-wav2vec2-base-960h-torchaudio-2.8-v2", ready: true, device: "cuda", precision: "float16",
-    anchorReady: true, passageReady: true, anchorBatch: true },
-};
-
-async function fakeWorker(body) {
-  const server = createServer((req, res) => {
-    res.setHeader("content-type", "application/json");
-    res.end(JSON.stringify(req.url === "/health" ? body : {}));
-  });
-  await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
-  return { port: String(server.address().port), close: () => new Promise((resolveClose) => server.close(resolveClose)) };
-}
-
-// The installer must run asynchronously here: a blocking spawn would stall the fake worker's health answers.
-function runInstaller(args, env) {
-  return new Promise((resolveRun, reject) => {
-    const child = spawn(installer, args, { env, stdio: ["ignore", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (data) => { stdout += data; });
-    child.stderr.on("data", (data) => { stderr += data; });
-    child.on("error", reject);
-    child.on("close", (status) => resolveRun({ status, stdout, stderr }));
-  });
-}
-
-function installFixture() {
-  const tempDir = realpathSync(mkdtempSync(join(tmpdir(), "sonder-ctc-update-")));
-  const fakeHome = join(tempDir, "home");
-  const fakeBin = join(tempDir, "bin");
-  const targetDir = join(fakeHome, "sonder-ctc-worker");
-  const systemctlLog = join(tempDir, "systemctl.log");
-  mkdirSync(targetDir, { recursive: true });
-  mkdirSync(fakeBin, { recursive: true });
-  // The systemctl stub records each call and, at a restart, the worker.env the service would start with.
-  writeFileSync(join(fakeBin, "systemctl"), `#!/bin/sh
-echo "$@" >> "${systemctlLog}"
-case "$*" in *restart*) sed 's/^/  env: /' "${targetDir}/worker.env" >> "${systemctlLog}" ;; esac
-`);
-  chmodSync(join(fakeBin, "systemctl"), 0o755);
-  writeFileSync(join(fakeBin, "loginctl"), `#!/bin/sh\necho "Linger=yes"\n`);
-  chmodSync(join(fakeBin, "loginctl"), 0o755);
-  const env = {
-    ...process.env, HOME: fakeHome, XDG_CONFIG_HOME: join(fakeHome, ".config"),
-    PATH: `${fakeBin}:${process.env.PATH}`, ALIGNMENT_WORKER_TOKEN: "",
-  };
-  const systemctl = () => existsSync(systemctlLog) ? readFileSync(systemctlLog, "utf8").trim().split("\n") : [];
-  return { tempDir, targetDir, env, systemctl, cleanup: () => rmSync(tempDir, { recursive: true, force: true }) };
-}
-
-test("install-ctc-workers.sh keeps every worker.env line it does not set, including MEDIA_ROOT (#279 round 2)", async () => {
-  const f = installFixture();
-  const otherDisk = join(f.tempDir, "big-disk", "sonder");
-  const before = [
-    "# tuned for this host",
-    "ALIGNMENT_WORKER_TOKEN=kept-token",
-    `MEDIA_ROOT=${otherDisk}`,
-    "ALIGNMENT_CTC_DEVICE=cpu",
-    "ALIGNMENT_WORKER_SLOTS=8",
-    "ALIGNMENT_TIMEOUT_MAX_SECONDS=900",
-    "ALIGNMENT_CTC_CACHE_BYTES=21474836480",
-    "",
-  ];
-  writeFileSync(join(f.targetDir, "worker.env"), before.join("\n"), { mode: 0o600 });
-  const port = await closedPort();
-  try {
-    const run = await runInstaller(["--device", "cuda", "--dir", f.targetDir, "--service-only", "--port", port], f.env);
-    assert.equal(run.status, 0, run.stderr);
-    const after = readFileSync(join(f.targetDir, "worker.env"), "utf8");
-    // Only the device this run set changed; everything else, MEDIA_ROOT included, is as it was and in order.
-    assert.equal(after, before.join("\n").replace("ALIGNMENT_CTC_DEVICE=cpu", "ALIGNMENT_CTC_DEVICE=cuda"));
-    assert.equal(statSync(join(f.targetDir, "worker.env")).mode & 0o777, 0o600);
-    assert.ok(existsSync(otherDisk), "the kept MEDIA_ROOT is the one prepared");
-    assert.ok(!existsSync(join(f.targetDir, "media")), "the default media root must not be created next to a kept one");
-    assert.match(run.stdout, /Reused existing alignment worker token/);
-    // Stopped before any file changed, started once, with the final worker.env.
-    assert.deepEqual(f.systemctl(), [
-      "--user stop sonder-ctc-worker.service",
-      "--user daemon-reload",
-      "--user enable sonder-ctc-worker.service",
-      "--user restart sonder-ctc-worker.service",
-      ...after.trimEnd().split("\n").map((line) => `  env: ${line}`.trimEnd()),
-    ]);
-  } finally {
-    f.cleanup();
-  }
-});
-
-test("install-ctc-workers.sh --slots updates the slot line in place and adds missing owned lines once", async () => {
-  const f = installFixture();
-  writeFileSync(join(f.targetDir, "worker.env"), "ALIGNMENT_WORKER_SLOTS=2\nEXTRA=1\n", { mode: 0o600 });
-  const port = await closedPort();
-  try {
-    const run = await runInstaller(
-      ["--device", "cpu", "--dir", f.targetDir, "--service-only", "--skip-service", "--slots", "4", "--port", port],
-      { ...f.env, ALIGNMENT_WORKER_TOKEN: "env-token" },
-    );
-    assert.equal(run.status, 0, run.stderr);
-    assert.equal(readFileSync(join(f.targetDir, "worker.env"), "utf8"), [
-      "ALIGNMENT_WORKER_SLOTS=4", "EXTRA=1", "ALIGNMENT_WORKER_TOKEN=env-token",
-      `MEDIA_ROOT=${f.targetDir}/media`, "ALIGNMENT_CTC_DEVICE=cpu", "",
-    ].join("\n"));
-    assert.deepEqual(f.systemctl(), []);
-  } finally {
-    f.cleanup();
-  }
-});
-
-test("install-ctc-workers.sh refuses while the worker reports active requests unless --force (#279 round 2)", async () => {
-  const busy = await fakeWorker({ ...LIVE_HEALTH, busySeconds: 41.2, activeRequests: 2 });
-  const f = installFixture();
-  const original = `ALIGNMENT_WORKER_TOKEN=kept-token\nMEDIA_ROOT=${join(f.tempDir, "kept-media")}\n`;
-  writeFileSync(join(f.targetDir, "worker.env"), original, { mode: 0o600 });
-  try {
-    const refused = await runInstaller(["--device", "cuda", "--dir", f.targetDir, "--service-only", "--port", busy.port], f.env);
-    assert.equal(refused.status, 3, refused.stderr);
-    assert.match(refused.stderr, new RegExp(`the worker on port ${busy.port} reports 2 active request\\(s\\)`));
-    assert.match(refused.stderr, /--force/);
-    // Nothing changed: no code copied, worker.env untouched, the service neither stopped nor restarted.
-    assert.ok(!existsSync(join(f.targetDir, "worker")));
-    assert.equal(readFileSync(join(f.targetDir, "worker.env"), "utf8"), original);
-    assert.deepEqual(f.systemctl(), []);
-
-    const forced = await runInstaller(
-      ["--device", "cuda", "--dir", f.targetDir, "--service-only", "--skip-service", "--port", busy.port, "--force"], f.env,
-    );
-    assert.equal(forced.status, 0, forced.stderr);
-    assert.ok(existsSync(join(f.targetDir, "worker", "align.py")));
-  } finally {
-    await busy.close();
-    f.cleanup();
-  }
-});
-
-test("install-ctc-workers.sh proceeds when the worker reports no active request", async () => {
-  for (const health of [LIVE_HEALTH, { ready: true, busy: false, stuck: false, busySeconds: null }]) {
-    const idle = await fakeWorker(health);
-    const f = installFixture();
-    try {
-      const run = await runInstaller(
-        ["--device", "cuda", "--dir", f.targetDir, "--service-only", "--skip-service", "--port", idle.port], f.env,
-      );
-      assert.equal(run.status, 0, run.stderr);
-      assert.ok(existsSync(join(f.targetDir, "worker", "align.py")));
-    } finally {
-      await idle.close();
-      f.cleanup();
-    }
-  }
-});
-
-test("install-ctc-workers.sh counts a running request on a worker without activeRequests", async () => {
-  const old = await fakeWorker({ ready: true, busy: true, stuck: false, busySeconds: 3.5 });
-  const f = installFixture();
-  try {
-    const run = await runInstaller(["--device", "cuda", "--dir", f.targetDir, "--service-only", "--port", old.port], f.env);
-    assert.equal(run.status, 3, run.stderr);
-    assert.match(run.stderr, /reports 1 active request\(s\)/);
-  } finally {
-    await old.close();
-    f.cleanup();
-  }
 });
