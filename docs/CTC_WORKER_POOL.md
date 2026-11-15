@@ -837,6 +837,25 @@ worker under one worker lease. Unset, nothing of the window runner changes.
   with the whole-book engine and `ready` (a host without them is skipped with
   "worker runs no whole-book jobs"), and tries the host the job was started on
   first (`firstHost`), so a restarted server goes back to it.
+* **CPU hosts are the fallback only.** A book takes hours on a host whose
+  configured `device` is `cpu` (lisa) and minutes on a GPU host (WSL). The
+  lease tries the other hosts first, in rank order, and while one of them is
+  healthy and only busy (its slots taken, or `/health` busy) a whole-book job
+  waits in the queue for it rather than taking the CPU host. The CPU host takes
+  the job only when no other host can be used for it: unreachable, unhealthy or
+  stuck, without whole-book jobs, or already tried by this job (it failed there).
+  The host the job was started on (`firstHost`) is never held back. Window-runner
+  jobs and ebook-set probes keep plain rank order. The rule reads the host
+  configuration (`device`, `rank`), never a host id (ADR 0013).
+* **Reading sync card.** Each poll also stores the worker's counts for its stage
+  in `bookJob.counts` (`tracksTotal`, `tracksDecoded`, `tracksEncoded`,
+  `groupsTotal`, `groupsDone`, `encodeQueuePosition`, `resumeQueuePosition`,
+  `waitingForWindowRequests`; a count that is not a non-negative integer is left
+  out). The card shows a running whole-book job as its stage and the count that
+  moves in it (`syncProgressLine` in `src/reading-sync-status.ts`), for example
+  "Decoding audio: 24 of 43 files", "Encoding audio: 1 of 2 files", "Waiting for
+  other alignment work: 1 book ahead", "Aligning text: 34 of 83 parts", and its
+  pause button reads "Pause": the worker's job is cancelled at once.
 * **Start, poll, fetch, publish.** The start request carries the ebook's
   sentences in reading order and the staged tracks in play order, with the
   durations the database holds. The worker's job id is the job's id and
@@ -900,7 +919,8 @@ worker under one worker lease. Unset, nothing of the window runner changes.
   cancel: after a takeover the other process polls the same worker job.
 
 Tests: `tests/alignment-book-job.test.ts` against the fake whole-book worker
-`tests/fake-book-worker.ts` (real HTTP on 127.0.0.2, fake SSH staging).
+`tests/fake-book-worker.ts` (real HTTP on 127.0.0.2, fake SSH staging); the
+card's line and labels in `tests/reading-sync-status.test.ts`.
 
 ## Overlapped audio extraction (#346)
 

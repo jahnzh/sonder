@@ -29,9 +29,11 @@ function fixture({ missing, failSsh } = {}) {
   mkdirSync(bin);
   mkdirSync(temp);
   copyFileSync(join(repoRoot, "scripts", "image-smoke.mjs"), join(repo, "scripts", "image-smoke.mjs"));
-  // The pool module and the server modules it imports, as the image has them.
+  // The pool module and the modules it imports, as the image has them (the engine names live in src/reading-types.ts).
   for (const name of ["alignment-pool.ts", "alignment-engine.ts", "until-aborted.ts"])
     copyFileSync(join(repoRoot, "server", name), join(repo, "server", name));
+  mkdirSync(join(repo, "src"));
+  copyFileSync(join(repoRoot, "src", "reading-types.ts"), join(repo, "src", "reading-types.ts"));
   writeFileSync(join(repo, "package.json"), '{"type":"module"}');
   writeFileSync(join(repo, "server", "app.ts"), "export function createApp() {}\n");
   writeFileSync(join(repo, "server", "ebook-set-consensus-runner.ts"), `
