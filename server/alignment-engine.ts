@@ -1,10 +1,10 @@
 /** The pinned CTC alignment engine: the identity every pool worker must run and every CTC map records. */
 export const CTC_ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-v2";
 /**
- * The whole-book engine generation (ADR 0016, #402): the same model through the worker's `/book-jobs`. A map the
+ * The whole-book engine generation (ADR 0016; book-v2 since #403): the same model through the worker's `/book-jobs`. A map the
  * whole-book runner publishes records the engine the worker's result names, which must be this one.
  */
-export const BOOK_ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-book-v1";
+export const BOOK_ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-book-v2";
 
 /**
  * `ALIGNMENT_BOOK_JOBS=1` runs every full alignment as one whole-book job on the worker (#404); off by default,

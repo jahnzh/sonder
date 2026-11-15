@@ -459,6 +459,16 @@ export function applyBookResult(
     delete job.unsyncedPassages;
     return { error: "The alignment worker does not support this language.", outcome: "language_not_supported" };
   }
+  if (result.outcome === "text_mismatch") {
+    // The worker's text-match check (#403): what is heard is not this ebook. No map; the reader sees why.
+    job.intervals = [];
+    job.coverage = 0;
+    job.unsyncedPassages = unsyncedPassages(book, []);
+    job.outcome = "unsynced";
+    job.warning = "The narration does not match this ebook's text. Check that the ebook is the right book and edition. The text remains unsynced.";
+    job.error = null;
+    return { status: "partial" };
+  }
   if (result.outcome !== "mapped" && result.outcome !== "unsynced")
     return { error: `The alignment worker returned an outcome this server does not know (${result.outcome}).`, outcome: "error" };
   const sentences = book.sections.flatMap((section) => section.paragraphs.map((paragraph) => ({ id: paragraph.id, section: section.index })));
