@@ -160,5 +160,23 @@
     "line": 67,
     "context": "verifyPassword",
     "hash": "b81f367d235d2aaaf5bc5183f06dd791372ccfadee3e70e72143728e09991b67"
+  },
+  {
+    "file": "db-backup.mjs",
+    "line": 237,
+    "context": "backupDatabase",
+    "hash": "2044c4b0e961acf1b5e9c7819cf553f04386cdae1ccbfb0462c24aa2f3a6bdf3"
+  },
+  {
+    "file": "db-backup.mjs",
+    "line": 249,
+    "context": "backupDatabase",
+    "hash": "66681f91df115afe4a534e260837c0311ebe029d20eb59a74f322e89d182c76f"
+  },
+  {
+    "file": "db-backup.mjs",
+    "line": 256,
+    "context": "backupDatabase",
+    "hash": "1eaade9839c123a0077065e6ff97a227014a11eca18cd6dd18d288d5e618dade"
   }
 ]
