@@ -1,7 +1,8 @@
 // The alignment pool (ADR 0013): it hands out worker leases. A lease is a healthy host with the work's tracks
 // staged on it and the worker's address; health checks, slots, SSH staging, the choice of host, the retry on the
 // next host and the record of where a job staged all happen here. Hosts come from configuration (`ALIGNMENT_POOL_HOSTS`).
-// A job's staged audio stays on the hosts: removing it is #421. Only a probe's own staging is removed, as before leases.
+// A job's staged audio stays on the hosts until the administrator's sweep removes it (#421, alignment-pool-sweep.ts),
+// which retires the folder's name first: staging never uses a retired name again. A probe's release removes its own.
 import { execFile } from "node:child_process";
 import { cpSync, mkdirSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
@@ -30,8 +31,8 @@ export type AlignmentJobPoolState = {
   stagedAudio: Record<string, string>;
   /**
    * Every host this job has staged its tracks on, and the folder there, across runs, requeues, Resume and a new
-   * plan, also for a host that is not configured right now. Nothing removes these folders yet; #421 will, under
-   * leases. Rows written before it name only their current staging (`hostId`/`jobMediaRoot`).
+   * plan, also for a host that is not configured right now. The sweep (#421) reads it to find what it may remove.
+   * Rows written before it name only their current staging (`hostId`/`jobMediaRoot`).
    */
   stagedHosts?: Record<PoolHostId, string>;
 };
@@ -72,6 +73,8 @@ type Track = typeof schema.tracks.$inferSelect;
 
 export type StageTracksInput = {
   jobId: string;
+  /** The folder's name under `pool-jobs`: the job's id, or a new name once the sweep retired that one (#421). */
+  folderName?: string;
   host: PoolHost;
   tracks: Track[];
   localAudio: (track: Track) => string | null;
@@ -368,6 +371,31 @@ export class AlignmentPoolCoordinator {
     if (lease?.jobId === jobId)
       this.recordings.delete(recordingId);
   }
+
+  /**
+   * Takes a recording's lease without a host slot (the staging sweep, #421): no job or probe of the recording can
+   * take a host while it is held. False when anything holds the recording.
+   */
+  holdRecording(recordingId: string, holderId: string) {
+    if (this.recordings.has(recordingId)) return false;
+    this.recordings.set(recordingId, { jobId: holderId });
+    return true;
+  }
+
+  releaseRecording(recordingId: string, holderId: string) {
+    if (this.recordings.get(recordingId)?.jobId === holderId) this.recordings.delete(recordingId);
+  }
+
+  recordingHeld(recordingId: string) {
+    return this.recordings.has(recordingId);
+  }
+
+  /** A host slot or a recording's lease is held under this job or probe id. */
+  holdsLease(id: string) {
+    for (const slot of this.slots.values()) if (slot.has(id)) return true;
+    for (const lease of this.recordings.values()) if (lease.jobId === id) return true;
+    return false;
+  }
 }
 
 /**
@@ -435,7 +463,7 @@ export function keptPoolStaging(pool: AlignmentJobPoolState | undefined): Alignm
 }
 
 /** Every host a stored assignment says the job staged on, and the folder there; older rows name only the current one. */
-function storedStaging(pool: Partial<AlignmentJobPoolState> | null | undefined): Record<PoolHostId, string> {
+export function storedStaging(pool: Partial<AlignmentJobPoolState> | null | undefined): Record<PoolHostId, string> {
   const staged: Record<PoolHostId, string> = {};
   const recorded = pool?.stagedHosts;
   if (recorded && typeof recorded === "object")
@@ -554,6 +582,26 @@ export function stagingFolder(workerRoot: string, id: string) {
   return join(workerRoot, "alignment", "pool-jobs", id);
 }
 
+let retiredStagingName: ((name: string) => boolean) | null = null;
+
+/**
+ * Installs the check for folder names the sweep has retired (#421). `alignment-pool-sweep.ts` installs it when it
+ * loads; `alignment.ts`, which runs every job and probe, imports that module.
+ */
+export function setRetiredStagingNameCheck(check: ((name: string) => boolean) | null) {
+  retiredStagingName = check;
+}
+
+/**
+ * The folder name the work `id` stages under now: its id, or the first `<id>.r<n>` the sweep has not retired. Read
+ * from the database at staging time, after the host and the recording are leased and before the first remote
+ * command, so a name retired before that is never staged into again.
+ */
+export function stagingName(id: string) {
+  if (!retiredStagingName?.(id)) return id;
+  for (let n = 1; ; n++) if (!retiredStagingName(`${id}.r${n}`)) return `${id}.r${n}`;
+}
+
 /**
  * How long removing a probe's partly staged directory may take after staging failed or aborted. It has its own
  * deadline, never the request's: that signal has usually aborted already, and the staged copy can be the whole
@@ -581,7 +629,7 @@ async function stageCtcTracks(
 ) {
   // The worker validates outputs against MEDIA_ROOT/alignment. Both the audio
   // and per-job output must therefore be inside its reported root.
-  const jobMediaRoot = stagingFolder(workerRoot, input.jobId);
+  const jobMediaRoot = stagingFolder(workerRoot, input.folderName ?? input.jobId);
   const folder = join(jobMediaRoot, "alignment", input.jobId);
   const deps = poolDeps();
   try {
@@ -605,7 +653,7 @@ async function stageCtcTracks(
 
 /**
  * How a lease ends. "finished": the work has no further use for its staging; for a job that is recorded (its
- * finished status and `pool.stagedHosts`) for #421, and nothing is deleted. "retryable": the next run of the job
+ * finished status and `pool.stagedHosts`) for the sweep (#421), and nothing is deleted here. "retryable": the next run of the job
  * reuses its staging. A probe's staging is its own and never reused: its release removes it either way.
  */
 export type LeaseRelease = "finished" | "retryable";
@@ -750,8 +798,8 @@ class PoolWorkerLease implements WorkerLease {
     if (this.held) coord.release(this.held.hostId, this.request.id, this.request.recordingId);
     coord.releaseJob(this.request.id);
     this.held = null;
-    // A job's staged audio stays on the hosts, whatever the outcome: removing it is #421, under leases. Two
-    // reviewed attempts showed a delete here can outlive the claim that protected it and reach a later run.
+    // A job's staged audio stays on the hosts, whatever the outcome: the sweep removes it (#421), under the
+    // recording's lease and after retiring the folder's name. A delete here could outlive the claim and reach a later run.
     if (this.request.kind !== "probe") return;
     // The staged copy is the whole recording; it is this probe's alone, so remove it.
     const signal = this.request.signal;
@@ -822,10 +870,12 @@ async function takeHost(
       continue;
     }
     try {
+      // Chosen now, under the host and recording leases: a name the sweep retired is never used again (#421).
+      const folderName = stagingName(request.id);
       // Recorded before the first byte is sent: an upload that fails half way still leaves audio on the host.
-      onStaging?.(id, stagingFolder(health.mediaRoot, request.id));
+      onStaging?.(id, stagingFolder(health.mediaRoot, folderName));
       const staged = await stageCtcTracks(
-        { jobId: request.id, host, tracks: request.tracks, localAudio: request.localAudio },
+        { jobId: request.id, folderName, host, tracks: request.tracks, localAudio: request.localAudio },
         health.mediaRoot, { signal, removeOnFailure: probe });
       clearHostError(diagnostics, id);
       return { hostId: id, attempt: attempted.length + 1, ...staged, workerUrl: host.workerUrl,

@@ -45,6 +45,8 @@ import {
   type WorkerLease,
 } from "./alignment-pool.ts";
 import { prefetchSectionCount, upcomingPrefetchWindows } from "./alignment-prefetch.ts";
+// Loading it installs the retired-name check every staging consults (#421).
+import { registerPoolStagingRoutes, setPoolSweepRunCheck } from "./alignment-pool-sweep.ts";
 import {
   REBUILT_STATUSES,
   currentAlignmentEngine,
@@ -1576,6 +1578,8 @@ const scheduler: AlignmentScheduler = new AlignmentScheduler({
     !!sqlite.prepare("SELECT 1 FROM alignment_jobs WHERE id=?").get(id) &&
     alignmentJobActive(alignmentJob(id).status),
 });
+// The staging sweep keeps the folder of a job whose run is still in flight here, also between its leases (#421).
+setPoolSweepRunCheck((jobId) => scheduler.running().includes(jobId));
 /** Scheduler settings recorded on each job it runs (#276). */
 export const alignmentSchedulerConfig = () => ({
   admittedBooks: admittedBooks(),
@@ -1624,6 +1628,7 @@ export function persistedPoolErrors(): Partial<Record<PoolHostId, string>> {
 export function registerAlignment(app: FastifyInstance) {
   activeApps++;
   stopping = false;
+  registerPoolStagingRoutes(app, { requireAdmin });
   const writeMeta = new WeakMap<object, AlignmentWriteMeta>();
   app.addHook("onResponse", async (req, reply) => {
     if (req.method === "GET" || req.method === "HEAD") return;
