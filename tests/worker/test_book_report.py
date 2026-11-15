@@ -143,6 +143,21 @@ class Flags(unittest.TestCase):
         intervals = [interval(sentences[k], "a", 5.0 * n, 5.0 * n + 4.5) for n, k in enumerate(order)]
         self.assertEqual(book_report.flags(sentences, intervals, [{"id": "a", "seconds": 150.0}], {}), [])
 
+    def test_text_mapped_elsewhere_is_a_jump_not_skipped_text(self):
+        # s0..s9, then (in time) s30..s39, then 60 s of audio, then s10..s19: the text between s39 and s10 runs
+        # backwards, and between s9 and s30 lies s10..s29, of which s10..s19 is mapped later. Neither pair has
+        # text between it; only the 60 s of audio is flagged, without a text range.
+        sentences = [{"id": f"p{k}", "section": 0, "text": words(10, k)} for k in range(40)]
+        order = list(range(10)) + list(range(30, 40)) + list(range(10, 20))
+        intervals, t = [], 0.0
+        for n, k in enumerate(order):
+            if n == 20:
+                t += 60.0
+            intervals.append(interval(sentences[k], "a", t, t + 4.5))
+            t += 5.0
+        flags = book_report.flags(sentences, intervals, [{"id": "a", "seconds": t}], {})
+        self.assertEqual(flags, [{"kind": "extra-audio", "trackId": "a", "start": 99.5, "end": 160.0}])
+
     def test_short_sections_and_empty_maps_are_not_flagged(self):
         sentences = [{"id": "a", "section": 0, "text": words(39)}, {"id": "b", "section": 1, "text": words(10, 1)}]
         tracks = [{"id": "t", "seconds": 100.0}]

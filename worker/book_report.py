@@ -123,9 +123,10 @@ def flags(sentences, intervals, tracks, titles=None):
     narrated = [n for n, t in enumerate(tracks) if by_track.get(t["id"])]
     by_reading = sorted(rows, key=lambda r: (r["k"], r["start"]))
     rate = speaking_rate(by_reading, words)
-    prefix = [0]
+    prefix, unmapped_before = [0], [0]
     for k, count in enumerate(words):
         prefix.append(prefix[-1] + (0 if k in mapped else count))
+        unmapped_before.append(unmapped_before[-1] + (0 if k in mapped else 1))
     out = []
     for n, track in enumerate(tracks):
         own = by_track.get(track["id"], [])
@@ -142,15 +143,18 @@ def flags(sentences, intervals, tracks, titles=None):
                         "start": 0, "end": round(own[0]["start"], 4)})
         for a, b in zip(own, own[1:]):
             gap = b["start"] - a["end"]
-            between = (a["k"] + 1, b["k"] - 1)  # the text between them, when the map runs forward here
-            unmapped_words = prefix[b["k"]] - prefix[a["k"] + 1] if b["k"] > a["k"] + 1 else 0
+            # The text between them counts only where the map runs forward here and none of it is mapped
+            # elsewhere: otherwise the map jumps (a chapter read out of the ebook's order) and there is no
+            # text between the two, only audio.
+            forward = b["k"] > a["k"] + 1 and unmapped_before[b["k"]] - unmapped_before[a["k"] + 1] == b["k"] - a["k"] - 1
+            unmapped_words = prefix[b["k"]] - prefix[a["k"] + 1] if forward else 0
             kind = mismatch(gap, unmapped_words / rate)
             if kind is None:
                 continue
             flag = {"kind": kind, "trackId": track["id"], "start": round(a["end"], 4), "end": round(b["start"], 4)}
-            unmapped = [k for k in range(between[0], between[1] + 1) if k not in mapped] if unmapped_words else []
-            if unmapped:
-                flag.update(section=sentences[unmapped[0]].get("section", 0), first=unmapped[0], last=unmapped[-1])
+            if unmapped_words:
+                first = a["k"] + 1
+                flag.update(section=sentences[first].get("section", 0), first=first, last=b["k"] - 1)
             out.append(flag)
         if seconds - own[-1]["end"] > EDGE_S:
             out.append({"kind": "outro" if last_narrated else "extra-audio", "trackId": track["id"],
