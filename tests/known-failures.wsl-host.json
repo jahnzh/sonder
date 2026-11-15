@@ -72,6 +72,22 @@
       "kind": "intermittent",
       "reason": "Failed twice on the WSL host (runs for #265 and #291), never on lisa; 30/30 local passes; the failing assertion was not retained",
       "issue": 280
+    },
+    {
+      "project": "chromium",
+      "file": "tests/e2e/integrated-reader.spec.ts",
+      "title": "following narration on desktop never paints another page on the way",
+      "kind": "intermittent",
+      "reason": "Reader ordering flake (#369): failed on lisa on 2026-11-15 in the check of c8e5998 with 'chapter two end again', a branch that changes only server Activity code. ADR 0014 (#390) moves these ordering rules into a unit-tested module; remove this entry when #369 closes.",
+      "issue": 369
+    },
+    {
+      "project": "chromium",
+      "file": "tests/e2e/integrated-reader.spec.ts",
+      "title": "back to narration right after a Contents navigation keeps following",
+      "kind": "intermittent",
+      "reason": "Reader ordering flake (#407): page.evaluate never resolved (45 s timeout) on lisa on 2026-11-15 in the check of a4ef1e3, a branch that changes only server Activity code, while a second check ran on the host; it passed in three other checks that night. Remove this entry when #407 closes.",
+      "issue": 407
     }
   ]
 }
