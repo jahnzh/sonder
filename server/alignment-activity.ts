@@ -1,6 +1,6 @@
 /**
  * Activity source of the alignment processor (`alignment_jobs`, ADR 0010). The status lives in the job record
- * (`data` JSON); its vocabulary is `AlignmentJob["status"]` in `src/reading-types.ts`, which `server/alignment.ts`
+ * (`data` JSON); its vocabulary is `AlignmentJob["status"]` in `src/reading-types.ts`, which `server/alignment-transitions.ts`
  * writes. A record without a status is queued; a record that cannot be read is failed with the reason.
  */
 import type { ActivityHealth, ActivityState } from "../src/types.ts";
