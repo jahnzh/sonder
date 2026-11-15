@@ -197,8 +197,9 @@ test("the database backups row lists the schedule, and its switch pauses and res
     await expect(row.getByTestId("activity-process-paused")).toHaveCount(0);
   }
   await expect(row).not.toContainText("Not tracked yet");
-  await expect(row).toContainText(/No backup yet|Last run \d+ \w{3} \d{2}:\d{2} UTC: (succeeded, \d+\.\d MB|failed)/);
-  await expect(row).toContainText(/Next run (within 10 minutes|\d+ \w{3} 03:00 UTC)/);
+  // A backup may be running at this moment (the test server starts one when due): the row then says so.
+  await expect(row).toContainText(/No backup yet|Running since|Last run \d+ \w{3} \d{2}:\d{2} UTC: (succeeded, \d+\.\d MB|failed)/);
+  await expect(row).toContainText(/Next run (within 10 minutes|\d+ \w{3} 03:00 UTC)|Running since/);
   await expect(row).toContainText("No new daily database backup starts. A backup already running finishes.");
 
   await page.getByRole("button", { name: "Pause Database backups" }).click();
