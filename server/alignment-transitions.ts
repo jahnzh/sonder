@@ -14,7 +14,7 @@ import * as s from "./schema.ts";
 import { ensureMediaStorage, mediaRoot } from "./storage.ts";
 import { assertRunMayWrite, currentRunFence } from "./alignment-scheduler.ts";
 import { rebuildRejection, servedDuringRebuild } from "./alignment-rebuild.ts";
-import { clearPoolStaging } from "./alignment-pool.ts";
+import { clearPoolStaging, storedStaging } from "./alignment-pool.ts";
 import {
   ALIGNMENT_ACTIVE_STATUSES,
   ALIGNMENT_STATUSES,
@@ -454,8 +454,29 @@ export function rejectRebuild(projected: AlignmentJob, consensus: AlignmentJob) 
   }, consensus.id);
 }
 
+/**
+ * Deletes the job rows `where` selects, keeping where each had staged its tracks on the pool hosts
+ * (`alignment_pool_orphans`): the row is gone, and the sweep (#421) removes those folders from this record.
+ */
+function deleteJobRows(where: string, value: string) {
+  sqlite.transaction(() => {
+    // A row whose data is not valid JSON, or whose pool is not an object, has no staging record and gets no orphan entry.
+    const rows = sqlite.prepare(
+      `SELECT id,recording_id,CASE WHEN json_valid(data) AND json_type(data,'$.pool')='object' THEN json_extract(data,'$.pool') END AS pool FROM alignment_jobs WHERE ${where}=?`,
+    ).all(value) as { id: string; recording_id: string; pool: string | null }[];
+    const keep = sqlite.prepare(
+      "INSERT OR REPLACE INTO alignment_pool_orphans(host_id,folder,job_id,recording_id,deleted_at) VALUES(?,?,?,?,?)",
+    );
+    for (const row of rows) {
+      const pool: AlignmentJob["pool"] = row.pool ? JSON.parse(row.pool) : undefined;
+      for (const [hostId, folder] of Object.entries(storedStaging(pool)))
+        keep.run(hostId, folder, row.id, row.recording_id, Date.now());
+    }
+    sqlite.prepare(`DELETE FROM alignment_jobs WHERE ${where}=?`).run(value);
+  })();
+}
 export function deleteAlignmentJob(id: string) {
-  sqlite.prepare("DELETE FROM alignment_jobs WHERE id=?").run(id);
+  deleteJobRows("id", id);
 }
 export function removeProjectedMapsForWork(workId: string) {
   const ebookIds = new Set(
@@ -468,10 +489,10 @@ export function removeProjectedMapsForWork(workId: string) {
   );
   for (const job of listAlignmentJobs()) {
     if (job.origin === "projected" && ebookIds.has(job.ebookId))
-      sqlite.prepare("DELETE FROM alignment_jobs WHERE id=?").run(job.id);
+      deleteJobRows("id", job.id);
   }
 }
 /** Removes every job of a recording that is being deleted; a run of one of them stops at its next write. */
 export function removeAlignmentJobsForRecording(recordingId: string) {
-  sqlite.prepare("DELETE FROM alignment_jobs WHERE recording_id=?").run(recordingId);
+  deleteJobRows("recording_id", recordingId);
 }
