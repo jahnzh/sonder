@@ -23,7 +23,7 @@ import {
 import { api, localDB, duration, isAdmin } from "../lib";
 import type { Book, HardcoverState, Progress } from "../types";
 import { workMediaStateLabel } from "../work-media-state";
-import { followSavedPreferences, type SyncPreferences } from "../hardcover-sync-draft";
+import { savedPreferencesToFollow, type SyncPreferences } from "../hardcover-sync-draft";
 import { Dialog } from "./ui/dialog";
 import { usePlayer } from "../player";
 type Notify = (text: string, error?: boolean) => void;
@@ -220,16 +220,17 @@ export function HardcoverSyncSettings({
   useEffect(() => {
     void refresh();
   }, [configured, refresh]);
-  // The saved preferences the form last followed: a refresh that returns the same ones keeps an unsaved pick.
+  // The saved preferences the form last followed. A refresh that returns the same ones leaves the form alone, so
+  // an unsaved pick survives it (#422); the effect never writes the draft, whose value here may predate the pick.
   const followed = useRef<SyncPreferences | null>(null);
   useEffect(() => {
     if (!state) return;
     const saved = { mode: state.mode, syncLists: state.syncLists };
-    const next = followSavedPreferences({ mode, syncLists: lists }, followed.current, saved);
+    const follow = savedPreferencesToFollow(followed.current, saved);
     followed.current = saved;
-    setMode(next.mode);
-    setLists(next.syncLists);
-    // Only a new state is a reason to follow the server; the draft values are read, not watched.
+    if (!follow) return;
+    setMode(follow.mode);
+    setLists(follow.syncLists);
   }, [state]);
   const run = async (action: "save" | "sync" | "test") => {
     setBusy(action);
