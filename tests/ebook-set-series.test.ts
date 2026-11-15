@@ -191,11 +191,15 @@ test("POST /api/hardcover/series adds one library row per canonical position", a
   assert.equal(body.volumes[1].unreleased, true);
   assert.equal(body.volumes[1].mediaState.state, "missing");
   assert.equal(body.volumes[1].mediaState.holdReason, "unreleased");
+  // A released volume is tracked too: its media state exists without an acquisition.
+  assert.equal(body.volumes[0].mediaState.state, "missing");
+  assert.equal(body.volumes[0].mediaState.holdReason, null);
 
   const library = listBooks(1);
   for (const volume of body.volumes) {
     const row = library.find((b) => b.workId === volume.workId);
     assert.ok(row?.inLibrary, `expected library row for ${volume.workId}`);
+    assert.ok(row?.mediaState, `expected a media state for ${volume.workId}`);
   }
 });
 
