@@ -10,7 +10,6 @@ process.env.MEDIA_ROOT = join(temp, "media");
 process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
 process.env.APP_PASSWORD = "admin-password";
-process.env.SONDER_SKIP_SERIES_ACQUISITION = "1";
 mkdirSync(process.env.MEDIA_ROOT, { recursive: true });
 
 const originalFetch = globalThis.fetch;
@@ -68,7 +67,8 @@ globalThis.fetch = async (input, init) => {
 const { createApp } = await import("../server/app.ts");
 const { sqlite, db } = await import("../server/db.ts");
 const schema = await import("../server/schema.ts");
-const app = await createApp();
+// The series loop never ticks on its own here.
+const app = await createApp({ background: { manual: ["series-acquisition"] } });
 
 after(async () => {
   globalThis.fetch = originalFetch;

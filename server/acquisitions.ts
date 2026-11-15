@@ -1,4 +1,5 @@
 import { isPaused } from "./activity-pause.ts";
+import type { BackgroundProcess } from "./background-runner.ts";
 import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { and, eq, inArray } from "drizzle-orm";
@@ -480,3 +481,12 @@ export async function controlAcquisition(
   });
   return { ok: true };
 }
+
+/** The download queue loop (ADR 0010): checks the torrents every 10 s and imports the finished ones. */
+export const acquisitionsLoop: BackgroundProcess = {
+  id: "acquisitions",
+  intervalMs: 10_000,
+  runAtStart: true,
+  pausedBy: "acquisitions",
+  tick: refreshQueue,
+};

@@ -33,7 +33,8 @@ const {
 type SeriesAcquisitionDeps = import("../server/series-acquisition.ts").SeriesAcquisitionDeps;
 const { encrypt } = await import("../server/security.ts");
 
-const app = await createApp();
+// The series loop never ticks on its own here; the tests call tickSeriesAcquisition themselves.
+const app = await createApp({ background: { manual: ["series-acquisition"] } });
 const originalFetch = globalThis.fetch;
 
 const books = [
@@ -78,7 +79,6 @@ globalThis.fetch = async (input, init) => {
 };
 
 beforeEach(() => {
-  process.env.SONDER_SKIP_SERIES_ACQUISITION = "1";
   resetSeriesAcquisitionDeps();
   resetSeriesReleaseSearchDeps();
   sqlite.exec("DELETE FROM series_acquisition_jobs");
@@ -472,7 +472,6 @@ test("failed release metadata leaves an active download unchanged", async () => 
 });
 
 test("failed release lookup leaves inflight auto-acquire unchanged", async () => {
-  process.env.SONDER_SKIP_SERIES_ACQUISITION = "1";
   await saveSeries([201], { searchAudio: true });
   const jobBefore = db.select().from(schema.seriesAcquisitionJobs).get();
   assert.ok(jobBefore?.status === "pending" || jobBefore?.status === "searching");
@@ -661,7 +660,6 @@ test("shared active acquisition detaches this user without stopping the job", as
 });
 
 test("manual select cancels inflight auto-acquire before the ticker runs", async () => {
-  process.env.SONDER_SKIP_SERIES_ACQUISITION = "1";
   await saveSeries([201], { searchAudio: true });
   let autoAcquireCalls = 0;
   setSeriesAcquisitionDeps({
@@ -844,7 +842,6 @@ test("manual select claim blocks ticker while manual acquire is pending", async 
 });
 
 test("replace failure after acquire finalizes claim and does not reopen auto-acquire", async () => {
-  delete process.env.SONDER_SKIP_SERIES_ACQUISITION;
   await saveSeries([201], { searchAudio: true });
   const workId = (await app.inject("/api/series/31")).json().works.find(
     (w: { id: number }) => w.id === 201,
@@ -961,7 +958,6 @@ test("concurrent manual selects for the same work are mutually exclusive", async
 });
 
 test("manual select is rejected while ticker auto-acquire is in flight for the same work", async () => {
-  delete process.env.SONDER_SKIP_SERIES_ACQUISITION;
   let unblockAutoSearch!: () => void;
   const autoSearchBlocked = new Promise<void>((resolve) => {
     unblockAutoSearch = resolve;

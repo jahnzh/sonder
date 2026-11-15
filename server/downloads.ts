@@ -1,4 +1,5 @@
 import { isPaused } from "./activity-pause.ts";
+import type { BackgroundProcess } from "./background-runner.ts";
 import {
   existsSync,
   statSync,
@@ -450,6 +451,18 @@ export async function processServerDownloads() {
 export function stopServerDownloads() {
   for (const ctrl of controllers.values()) ctrl.abort();
 }
+/**
+ * The copy queue loop (ADR 0010): every 10 s it starts the queued copies to the server. A tick lasts as long as
+ * the copies it started; enqueueing a copy starts the queue at once. On close the running copies are aborted.
+ */
+export const serverCopiesLoop: BackgroundProcess = {
+  id: "server-copies",
+  intervalMs: 10_000,
+  runAtStart: true,
+  pausedBy: "server-copies",
+  tick: processServerDownloads,
+  stop: stopServerDownloads,
+};
 /**
  * Server copies keep their own status words (`queued`, `downloading`, `paused`, `ready`,
  * `error`); the download list shows them next to acquisitions, so a queued copy reads

@@ -1,4 +1,5 @@
 import { isPaused } from "./activity-pause.ts";
+import type { BackgroundProcess } from "./background-runner.ts";
 import {
   ADMIN_USER_ID,
   getUserSecret,
@@ -1840,6 +1841,14 @@ export async function tickHardcover() {
   // One user's failing account must not hold back the others.
   for (const userId of listUserIds()) await tickUser(userId).catch(() => {});
 }
+/** The Hardcover sync loop (ADR 0010): sends each user's queued changes, once a minute. */
+export const hardcoverSyncLoop: BackgroundProcess = {
+  id: "hardcover-sync",
+  intervalMs: 60_000,
+  runAtStart: true,
+  pausedBy: "hardcover-sync",
+  tick: tickHardcover,
+};
 export async function setHardcoverListMember(
   userId: number,
   listId: number,
