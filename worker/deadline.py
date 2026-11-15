@@ -45,6 +45,20 @@ class AlignmentFailed(Exception):
 class WorkerBusy(Exception):
     pass
 
+class GateWaitStopped(Exception):
+    """A background holder stopped waiting for the gate (its job was cancelled)."""
+
+# Background work (whole-book encode batches) yields to the window endpoints: it takes a free slot only
+# when no window request runs or waits, none ended in the last WINDOW_GRACE_S (a window job's next request
+# follows within it), and no refused window request is still due to retry (the server retries a 409
+# after 3 s; WINDOW_RETRY_S bounds the wait for one that never comes back).
+WINDOW_GRACE_S = 2.0
+WINDOW_RETRY_S = 5.0
+# A window request that finds a book batch on the device waits for it; a batch is a fraction of a second
+# on the GPU and at most a few seconds on a CPU (docs/CTC_WORKER_POOL.md). Past this the batch is taken
+# to be hung and the request is refused as busy, as when every slot is taken, so the server retries.
+WINDOW_WAIT_MAX_S = 60.0
+
 def _setting(env, name):
     default = DEFAULTS[name]
     raw = env.get(name)
@@ -85,17 +99,52 @@ def worker_slots(env=None):
         return 1
     return value
 
+def _report_wait(on_wait, waiting):
+    """Call a background holder's wait report; its failure (a status write on a full disk) is only logged."""
+    if on_wait is None:
+        return
+    try:
+        on_wait(waiting)
+    except Exception as error:  # noqa: BLE001 - a report must never hold the gate or stop the batch
+        print(f"[gate] wait report failed: {error!r}", flush=True)
+
 class Gate:
     """The worker's job slots: up to `slots` requests at a time, with the oldest one's age and the last timeout visible.
 
     A job whose child survived the kill keeps its slot until that process is gone, so the next job never runs
-    next to a runaway one; /health shows it as stuck."""
-    def __init__(self, slots=1):
+    next to a runaway one; /health shows it as stuck.
+
+    Window requests take a slot with `hold()` and are refused when window requests hold every slot.
+    `active`, `busy`, `busy_seconds` and `stuck` describe window requests only, so /health means for them
+    what it always has. Background work (a whole book's encode, one batch at a time) takes a slot with
+    `hold_background()`: it waits until no window request runs or waits (see the rules above), and a
+    window request that arrives while a batch holds the slot it needs waits for that batch, at most one
+    batch, instead of being refused. `background_active` counts the batches."""
+    def __init__(self, slots=1, clock=time.monotonic):
         self.slots = max(1, int(slots))
+        self._clock = clock
+        # Slot accounting only: never held across I/O or a callback (on_wait runs outside it, and only while
+        # the background holder has no slot). Every window request, /health and each book batch wait on it.
         self._lock = threading.Lock()
-        self._started = {}
+        self._changed = threading.Condition(self._lock)
+        self._started = {}  # window requests, admitted (running or waiting for a batch) -> admission time
+        self._running = set()  # window requests on the device
         self._stuck = set()
+        self._background = {}  # background holders -> start time
         self.last_timeout = None
+        self._window_admitted = None
+        self._window_ended = None
+        self._window_refused = None
+
+    @property
+    def background_active(self):
+        with self._lock:
+            return len(self._background)
+
+    def background_seconds(self):
+        with self._lock:
+            oldest = min(self._background.values(), default=None)
+        return round(self._clock() - oldest, 1) if oldest is not None else None
 
     @property
     def active(self):
@@ -104,7 +153,7 @@ class Gate:
 
     @property
     def busy(self):
-        """True when every slot is taken."""
+        """True when window requests take every slot."""
         return self.active >= self.slots
 
     @property
@@ -115,12 +164,68 @@ class Gate:
     def busy_seconds(self):
         with self._lock:
             oldest = min(self._started.values(), default=None)
-        return round(time.monotonic() - oldest, 1) if oldest is not None else None
+        return round(self._clock() - oldest, 1) if oldest is not None else None
 
     def _free(self, token):
         with self._lock:
-            self._started.pop(token, None)
-            self._stuck.discard(token)
+            if self._background.pop(token, None) is None:
+                self._started.pop(token, None)
+                self._running.discard(token)
+                self._stuck.discard(token)
+                self._window_ended = self._clock()
+            self._changed.notify_all()
+
+    def _background_may_start(self, now):
+        if self._started or len(self._background) >= self.slots:
+            return False  # a window request runs or waits, or no slot is free
+        if self._window_ended is not None and now - self._window_ended < WINDOW_GRACE_S:
+            return False
+        refused = self._window_refused
+        if refused is not None and now - refused < WINDOW_RETRY_S and (
+                self._window_admitted is None or self._window_admitted < refused):
+            return False  # a refused window request has not come back yet
+        return True
+
+    @contextmanager
+    def hold_background(self, should_stop=None, poll=0.05, on_wait=None):
+        """A slot for one unit of background work, after window requests (see the class). Waits; raises
+        GateWaitStopped when `should_stop()` turns true while waiting. `on_wait(True)` is called when the
+        holder starts waiting and `on_wait(False)` when the slot is free after a wait (or it stops waiting).
+        `on_wait` is never called while this holder has a slot: `on_wait(False)` runs just before the slot
+        is taken, and when a window request came in meanwhile the holder reports `True` and waits again. So
+        a status write that is slow or never returns delays only this holder, never a window request. A
+        report that fails is logged and ignored: it never reaches the holder, and the slot is freed on every
+        exit once it was taken."""
+        token = object()
+        waiting = False  # what the last report said
+        taken = False
+        try:
+            try:
+                while True:
+                    with self._lock:
+                        now = self._clock()
+                        free = self._background_may_start(now)
+                        if free and not waiting:
+                            self._background[token] = now
+                            taken = True
+                            break
+                    if free:
+                        waiting = False
+                        _report_wait(on_wait, False)  # outside the gate and before the slot is taken
+                        continue
+                    if should_stop is not None and should_stop():
+                        raise GateWaitStopped()
+                    if not waiting:
+                        waiting = True
+                        _report_wait(on_wait, True)
+                    time.sleep(poll)
+            finally:
+                if waiting:
+                    _report_wait(on_wait, False)  # stopped while waiting: no slot is held
+            yield
+        finally:
+            if taken:
+                self._free(token)
 
     def _release_when_gone(self, process, token):
         try:
@@ -133,8 +238,20 @@ class Gate:
         token = object()
         with self._lock:
             if len(self._started) >= self.slots:
+                self._window_refused = self._clock()
                 raise WorkerBusy()
-            self._started[token] = time.monotonic()
+            self._started[token] = self._window_admitted = self._clock()
+            # A book batch on the slot this request needs: wait for it (it starts no new batch meanwhile).
+            give_up = time.monotonic() + WINDOW_WAIT_MAX_S
+            while self._background and len(self._running) + len(self._background) >= self.slots:
+                left = give_up - time.monotonic()
+                if left <= 0:
+                    del self._started[token]
+                    self._window_refused = self._clock()
+                    self._changed.notify_all()
+                    raise WorkerBusy()
+                self._changed.wait(min(left, 0.5))
+            self._running.add(token)
         survivor = None
         try:
             yield

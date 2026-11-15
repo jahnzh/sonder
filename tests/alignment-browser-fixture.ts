@@ -7,6 +7,9 @@ export async function installAlignmentFixture() {
   const { CTC_ENGINE, installCtcTestPool, withCtcPoolFetch } = await import("./ctc-test-pool.ts");
   installCtcTestPool(temp, "http://alignment-browser.test");
   const original = globalThis.fetch;
+  // Ebook text that carries a `pool-fails-once-<token>` word fails the first worker request that sends it, so
+  // its job ends in the error state and a Resume runs it again (#324). Each test uses its own token.
+  const failedOnce = new Set<string>();
   globalThis.fetch = withCtcPoolFetch(temp, async (input, init) => {
     if (!String(input).startsWith("http://alignment-browser.test/")) return original(input, init);
     const body = JSON.parse(String(init?.body));
@@ -46,6 +49,11 @@ export async function installAlignmentFixture() {
         start: 5 + index * 8,
         text: body.fragments[index],
       });
+    }
+    const token = JSON.stringify(body.fragments ?? []).match(/pool-fails-once-[\w-]+/)?.[0];
+    if (token && !failedOnce.has(token)) {
+      failedOnce.add(token);
+      return Response.json({ error: "Browser fixture: this alignment request fails once." }, { status: 500 });
     }
     return Response.json({
       engine: CTC_ENGINE,
