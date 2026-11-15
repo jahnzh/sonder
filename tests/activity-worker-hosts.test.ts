@@ -63,7 +63,8 @@ const restarts = (hostId: string) => fake.hosts[hostId].commands.filter((command
 beforeEach(() => {
   for (const host of Object.values(fake.hosts)) {
     Object.assign(host, { down: false, busy: false, stuck: false, activeRequests: 0, slotsHeld: 0, resuming: 0, healthDrops: 0,
-      revision: undefined, restartFails: undefined, onServiceCommand: undefined, holdAt: null, commands: [], starts: [], book: [] });
+      revision: undefined, restartFails: undefined, onServiceCommand: undefined, holdAt: null, commands: [], starts: [], book: [],
+      healthBody: undefined, holdHealth: undefined, holdProbe: undefined, noBookJobs: false });
     host.jobs.clear();
     setHostDisabled(host.id, false);
   }
@@ -125,6 +126,12 @@ async function settled(id: string, statuses = ["partial", "ready", "error", "can
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   throw new Error(`Alignment did not settle: ${alignmentJob(id).status}`);
+}
+/** A promise a fake host waits on, and the function that lets it go on. */
+function gate() {
+  let open!: () => void;
+  const promise = new Promise<void>((resolve) => { open = resolve; });
+  return { promise, open };
 }
 async function until(condition: () => boolean, label = "condition") {
   for (let i = 0; i < 2000 && !condition(); i++) await new Promise((resolve) => setTimeout(resolve, 5));
@@ -397,4 +404,210 @@ test("work already running on a host finishes there after the host is disabled, 
   assert.equal(job.pool?.hostId, "wsl");
   assert.equal(fake.hosts.wsl.starts.length, 1, "started once, on WSL, before it was disabled");
   assert.equal(fake.hosts.lisa.starts.length, 0, "and not moved to lisa");
+});
+
+test("restart reads /health strictly: a body or a field it cannot understand is refused unless forced", async () => {
+  type Body = Record<string, any>;
+  const cases: [string, (body: Body) => unknown][] = [
+    ["an array", () => []],
+    ["a string", () => "ok"],
+    ["null", () => null],
+    ["an empty object", () => ({})],
+    ["activeRequests missing", ({ activeRequests: _a, ...body }) => body],
+    ["activeRequests a boolean", (body) => ({ ...body, activeRequests: true })],
+    ["activeRequests negative", (body) => ({ ...body, activeRequests: -1 })],
+    ["activeRequests a fraction", (body) => ({ ...body, activeRequests: 0.5 })],
+    ["activeRequests a string", (body) => ({ ...body, activeRequests: "0" })],
+    ["busy missing", ({ busy: _b, ...body }) => body],
+    ["busy a string", (body) => ({ ...body, busy: "false" })],
+    ["busy a number", (body) => ({ ...body, busy: 0 })],
+    ["stuck missing", ({ stuck: _s, ...body }) => body],
+    ["stuck null", (body) => ({ ...body, stuck: null })],
+    ["bookJobs null", (body) => ({ ...body, bookJobs: null })],
+    ["bookJobs an array", (body) => ({ ...body, bookJobs: [] })],
+    ["bookJobs.jobs missing", ({ bookJobs: { jobs: _j, ...book }, ...body }) => ({ ...body, bookJobs: book })],
+    ["bookJobs.jobs negative", (body) => ({ ...body, bookJobs: { ...body.bookJobs, jobs: -2 } })],
+    ["bookJobs.jobs a boolean", (body) => ({ ...body, bookJobs: { ...body.bookJobs, jobs: false } })],
+    ["bookJobs.slotsHeld a string", (body) => ({ ...body, bookJobs: { ...body.bookJobs, slotsHeld: "1" } })],
+    ["bookJobs.slotsHeld missing", ({ bookJobs: { slotsHeld: _h, ...book }, ...body }) => ({ ...body, bookJobs: book })],
+    ["bookJobs.resuming a number", (body) => ({ ...body, bookJobs: { ...body.bookJobs, resuming: 1 } })],
+    ["bookJobs.resuming missing", ({ bookJobs: { resuming: _r, ...book }, ...body }) => ({ ...body, bookJobs: book })],
+    ["bookJobs.stuck an object", (body) => ({ ...body, bookJobs: { ...body.bookJobs, stuck: {} } })],
+    ["bookJobs.stuck a count", (body) => ({ ...body, bookJobs: { ...body.bookJobs, stuck: 0 } })],
+    ["bookJobs.stuck missing", ({ bookJobs: { stuck: _k, ...book }, ...body }) => ({ ...body, bookJobs: book })],
+  ];
+  for (const [label, body] of cases) {
+    fake.hosts.wsl.healthBody = body;
+    const response = await restart("wsl", {});
+    assert.equal(response.statusCode, 409, `${label}: ${response.body}`);
+    assert.equal(response.json().code, "host_unreadable", label);
+    assert.match(response.json().error, /^The worker's status cannot be understood: /, label);
+    assert.match((await hostRow("wsl")).host.lastRestart.message, /^Restart refused\. The worker's status cannot be understood/, label);
+  }
+  assert.deepEqual(restarts("wsl"), [], "nothing was sent for a status the server cannot understand");
+
+  // A worker that reports every window slot busy runs work, whatever its count says.
+  fake.hosts.wsl.healthBody = (body) => ({ ...body, busy: true, activeRequests: 0 });
+  const busy = await restart("wsl", {});
+  assert.equal(busy.statusCode, 409, busy.body);
+  assert.equal(busy.json().code, "host_busy");
+  assert.deepEqual(restarts("wsl"), []);
+
+  // A worker from before whole-book jobs reports no `bookJobs`: understood, idle, restarted without forcing.
+  fake.hosts.wsl.healthBody = undefined;
+  fake.hosts.wsl.noBookJobs = true;
+  const older = await restart("wsl", {});
+  assert.equal(older.statusCode, 200, older.body);
+  assert.deepEqual(restarts("wsl"), [RESTART]);
+  fake.hosts.wsl.noBookJobs = false;
+
+  // Forced, a status the server cannot understand does not stop the restart.
+  fake.hosts.wsl.healthBody = (body) => ({ ...body, bookJobs: { ...body.bookJobs, resuming: 1 } });
+  fake.hosts.wsl.onServiceCommand = () => { fake.hosts.wsl.healthBody = undefined; };
+  const forced = await restart("wsl", { force: true });
+  assert.equal(forced.statusCode, 200, forced.body);
+  assert.equal(restarts("wsl").length, 2);
+});
+
+test("an unforced restart reserves the host: nothing new is leased there until the restart has finished", async () => {
+  const { recordingId, track } = recording();
+  let leases = 0;
+  const lease = (request: Partial<Parameters<typeof acquireWorkerLease>[0]> = {}) => acquireWorkerLease({
+    id: `reserved-${++leases}`, recordingId, mode: "anchored", tracks: [track], localAudio: (row) => row.source, kind: "job", ...request,
+  });
+  const hostOf = async (request: Partial<Parameters<typeof acquireWorkerLease>[0]> = {}) => {
+    const held = await lease(request);
+    const hostId = held.hostId;
+    await held.release("finished");
+    return hostId;
+  };
+
+  // A job already past its health check, waiting on WSL's SSH probe, when the restart's check passes: it does not get WSL.
+  const probe = gate();
+  fake.hosts.wsl.holdProbe = () => probe.promise;
+  const probesBefore = fake.hosts.wsl.probes ?? 0;
+  const inFlight = lease();
+  await until(() => (fake.hosts.wsl.probes ?? 0) > probesBefore, "the job reached WSL's SSH probe");
+  const command = gate();
+  fake.hosts.wsl.onServiceCommand = () => command.promise;
+  const restarted = restart("wsl", {});
+  await until(() => restarts("wsl").length === 1, "the restart command reached the host");
+  probe.open();
+  fake.hosts.wsl.holdProbe = undefined;
+  const taken = await inFlight;
+  assert.equal(taken.hostId, "lisa", "the job in flight went to the other host");
+  await taken.release("finished");
+
+  // While the command runs, new work goes to the other host, and a whole-book job waits for the GPU host.
+  const diagnostics: { poolErrors?: Record<string, string> } = {};
+  assert.equal(await hostOf({ diagnostics }), "lisa", "window job");
+  assert.match(diagnostics.poolErrors?.wsl ?? "", /restart/);
+  assert.equal(await hostOf({ kind: "probe" }), "lisa", "probe");
+  await assert.rejects(() => lease({ book: true }), PoolBusyError, "a whole-book job waits for the GPU host, as for a busy one");
+  assert.equal(restarts("wsl").length, 1);
+  command.open();
+  assert.equal((await restarted).statusCode, 200);
+  assert.equal(await hostOf({ book: true }), "wsl", "ready again, WSL takes work again");
+
+  // The reservation ends with a failed command and with a worker that is not ready in time, too.
+  fake.hosts.wsl.onServiceCommand = undefined;
+  fake.hosts.wsl.restartFails = "Unit not found.";
+  assert.equal((await restart("wsl", {})).statusCode, 502);
+  assert.equal(await hostOf(), "wsl", "after a failed command");
+  fake.hosts.wsl.restartFails = undefined;
+  setHostRestartTimingForTests({ readyWithinMs: 50 });
+  fake.hosts.wsl.onServiceCommand = () => { fake.hosts.wsl.healthDrops = Number.MAX_SAFE_INTEGER; };
+  assert.equal((await restart("wsl", {})).statusCode, 504);
+  fake.hosts.wsl.healthDrops = 0;
+  assert.equal(await hostOf(), "wsl", "after the readiness bound");
+  // A refused restart reserves nothing.
+  fake.hosts.wsl.activeRequests = 1;
+  assert.equal((await restart("wsl", {})).statusCode, 409);
+  fake.hosts.wsl.activeRequests = 0;
+  assert.equal(await hostOf(), "wsl", "after a refusal");
+});
+
+test("a host disabled while a lease is being taken (during its health check or SSH probe) is not leased", async () => {
+  const { recordingId, track } = recording();
+  let leases = 0;
+  const lease = (request: Partial<Parameters<typeof acquireWorkerLease>[0]> = {}) => acquireWorkerLease({
+    id: `racing-${++leases}`, recordingId, mode: "anchored", tracks: [track], localAudio: (row) => row.source, kind: "job", ...request,
+  });
+  for (const [label, hold] of [["health", "holdHealth"], ["SSH probe", "holdProbe"]] as const) {
+    for (const request of [{}, { kind: "probe" as const }, { book: true }]) {
+      const held = gate();
+      const before = hold === "holdHealth" ? fake.hosts.wsl.healthRequests : fake.hosts.wsl.probes ?? 0;
+      fake.hosts.wsl[hold] = () => held.promise;
+      const stagedBefore = fake.stagedFolders("wsl").length;
+      const taking = lease(request);
+      await until(() => (hold === "holdHealth" ? fake.hosts.wsl.healthRequests : fake.hosts.wsl.probes ?? 0) > before,
+        `the lease reached WSL's ${label}`);
+      assert.equal((await disable("wsl", true)).statusCode, 200);
+      held.open();
+      fake.hosts.wsl[hold] = undefined;
+      const taken = await taking;
+      assert.equal(taken.hostId, "lisa", `${label}, ${JSON.stringify(request)}: the disabled host was not leased`);
+      assert.deepEqual(taken.triedHosts, ["lisa"], "and not counted as tried");
+      await taken.release("finished");
+      assert.equal(fake.stagedFolders("wsl").length, stagedBefore, "nothing staged there");
+      assert.equal((await disable("wsl", false)).statusCode, 200);
+    }
+  }
+});
+
+test("a whole-book job the disabled host's worker no longer has, or never started, does not start there again", async () => {
+  // The worker lost the job (it restarted without it) while the server was down: the job moves to lisa.
+  resetAlignmentRunnerForTests();
+  fake.hosts.wsl.holdAt = "encoding";
+  const lost = await createAlignment("hosts-ebook", recording().recordingId, undefined, "anchored");
+  await until(() => alignmentJob(lost.id).bookJob?.state === "encoding", "the job runs on WSL");
+  assert.equal((await disable("wsl", true)).statusCode, 200);
+  stopAlignments();
+  await alignmentSchedulerForTests().settled();
+  fake.hosts.wsl.holdAt = null;
+  fake.hosts.wsl.jobs.clear();
+  resetAlignmentRunnerForTests({ restart: true });
+  await processAlignments();
+  const moved = await settled(lost.id);
+  assert.equal(moved.status, "partial", moved.error ?? undefined);
+  assert.equal(moved.pool?.hostId, "lisa");
+  assert.equal(fake.hosts.wsl.starts.length, 1, "not started again on the disabled host");
+  assert.equal(fake.hosts.lisa.starts.length, 1);
+  assert.deepEqual(moved.pool?.triedHosts, ["lisa"], "the disabled host does not use up the job's round");
+  assert.equal(fake.hosts.wsl.jobs.size, 0);
+
+  // The server stored `starting` and stopped before the start reached the worker; every host is disabled: it waits.
+  assert.equal((await disable("wsl", false)).statusCode, 200);
+  resetAlignmentRunnerForTests();
+  fake.hosts.wsl.holdAt = "encoding";
+  fake.hosts.wsl.starts = [];
+  fake.hosts.lisa.starts = [];
+  const unsent = await createAlignment("hosts-ebook", recording().recordingId, undefined, "anchored");
+  await until(() => alignmentJob(unsent.id).bookJob?.state === "encoding", "the job runs on WSL");
+  stopAlignments();
+  await alignmentSchedulerForTests().settled();
+  fake.hosts.wsl.holdAt = null;
+  fake.hosts.wsl.jobs.clear();
+  const stored = alignmentJob(unsent.id);
+  sqlite.prepare("UPDATE alignment_jobs SET data=json_set(data,'$.bookJob.state','starting') WHERE id=?").run(unsent.id);
+  assert.equal(stored.bookJob?.hostId, "wsl");
+  assert.equal((await disable("wsl", true)).statusCode, 200);
+  assert.equal((await disable("lisa", true)).statusCode, 200);
+  resetAlignmentRunnerForTests({ restart: true });
+  await processAlignments();
+  await settled(unsent.id, ["queued"]);
+  const waiting = alignmentJob(unsent.id);
+  assert.equal(waiting.status, "queued", "it waits");
+  assert.match(waiting.poolErrors?.wsl ?? "", /^disabled: /, "and says why");
+  assert.match(waiting.poolErrors?.lisa ?? "", /^disabled: /);
+  assert.equal(fake.hosts.wsl.starts.length, 1, "not started on the disabled host");
+  assert.equal(fake.hosts.lisa.starts.length, 0);
+  // Enabled again, lisa takes it.
+  assert.equal((await disable("lisa", false)).statusCode, 200);
+  await processAlignments();
+  const done = await settled(unsent.id);
+  assert.equal(done.status, "partial", done.error ?? undefined);
+  assert.equal(done.pool?.hostId, "lisa");
+  assert.equal(fake.hosts.wsl.starts.length, 1);
+  assert.equal(fake.hosts.lisa.starts.length, 1);
 });

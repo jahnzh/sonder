@@ -301,6 +301,8 @@ export class AlignmentPoolCoordinator {
   private slots = new Map<PoolHostId, Set<string>>();
   private recordings = new Map<string, RecordingLease>();
   private hostErrors = new Map<PoolHostId, string | null>();
+  /** Hosts an unforced restart holds from its check until it has finished (#357): nothing new is leased there. */
+  private restartHolds = new Set<PoolHostId>();
   private hosts: PoolHost[];
   constructor(hosts: PoolHost[] = defaultPoolHosts()) {
     this.hosts = byRank(hosts);
@@ -310,6 +312,7 @@ export class AlignmentPoolCoordinator {
     this.slots.clear();
     this.recordings.clear();
     this.hostErrors.clear();
+    this.restartHolds.clear();
   }
 
   /** The configured hosts in rank order. */
@@ -348,6 +351,7 @@ export class AlignmentPoolCoordinator {
   // A worker runs up to `capacity` jobs (its reported slots). Reserve a slot across the
   // whole job, including gaps between its individual HTTP requests.
   tryAcquireCtc(hostId: PoolHostId, jobId: string, recordingId: string, capacity = 1) {
+    if (this.restartHolds.has(hostId)) return false;
     if (this.activeOnHost(hostId) >= capacity) return false;
     const lease = this.recordings.get(recordingId);
     if (lease && lease.jobId !== jobId) return false;
@@ -357,6 +361,24 @@ export class AlignmentPoolCoordinator {
     this.slots.set(hostId, active);
     this.recordings.set(recordingId, { jobId });
     return true;
+  }
+
+  /**
+   * Holds the host for a restart (#357) when nothing is leased there, in the same step as that check: from now on
+   * `tryAcquireCtc` gives it to nothing new. False when a lease is held there or a restart already holds it.
+   */
+  holdForRestart(hostId: PoolHostId) {
+    if (this.restartHolds.has(hostId) || this.activeOnHost(hostId) > 0) return false;
+    this.restartHolds.add(hostId);
+    return true;
+  }
+
+  releaseRestartHold(hostId: PoolHostId) {
+    this.restartHolds.delete(hostId);
+  }
+
+  heldForRestart(hostId: PoolHostId) {
+    return this.restartHolds.has(hostId);
   }
 
   /** Drops every lease a job holds: host slots and its recording. */
@@ -790,9 +812,10 @@ export type WorkerLease = {
   stageTracks(beforeUpload?: (assignment: AlignmentJobPoolState) => void): Promise<void>;
   /**
    * Frees this host and takes the next untried one, staging the tracks there again; the audio staged here is kept
-   * until the release. Throws as `acquireWorkerLease` does; the lease then holds no host.
+   * until the release. Throws as `acquireWorkerLease` does; the lease then holds no host. With `countTried: false`
+   * the freed host is not counted as tried (the administrator disabled it, #357): it does not use up the job's round.
    */
-  failover(): Promise<void>;
+  failover(options?: { countTried?: boolean }): Promise<void>;
   /** Frees the host; a job's staged audio stays, a probe's is removed (see LeaseRelease). Safe to call twice. */
   release(outcome: LeaseRelease): Promise<void>;
 };
@@ -905,10 +928,12 @@ class PoolWorkerLease implements WorkerLease {
     if (this.request.kind === "probe" && host) this.probeStaging.push({ host, jobMediaRoot: this.held.jobMediaRoot });
   }
 
-  async failover() {
+  async failover(options: { countTried?: boolean } = {}) {
     const held = this.current();
     getAlignmentPoolCoordinator().release(held.hostId, this.request.id, this.request.recordingId);
-    if (!this.tried.includes(held.hostId)) this.tried.push(held.hostId);
+    // The held host counts as tried from its take; a disabled one is taken off again, so it keeps the job's round.
+    if (options.countTried === false) this.tried = this.tried.filter((id) => id !== held.hostId);
+    else if (!this.tried.includes(held.hostId)) this.tried.push(held.hostId);
     this.held = null;
     try {
       await this.take();
@@ -978,19 +1003,34 @@ async function takeHost(
   const bookJob = request.book === true && !probe;
   const fallbackOnly = (host: PoolHost) => bookJob && host.device === "cpu";
   let fasterHostBusy = false;
+  /**
+   * A host that takes no new work now (#357), checked before the host is asked and again in the same step as its
+   * lease, after the awaited health and SSH probes. A disabled host is not tried, so it does not use up a job's round,
+   * and it is not a faster host that is busy, so a whole-book job goes on to the CPU fallback; only a job already
+   * started there (taken back without staging after a server restart) may lease it: that work is running there and
+   * finishes. A host held for a restart is busy: work goes to another host or waits for it.
+   */
+  const heldBack = (host: PoolHost) => {
+    const id = host.id;
+    if (hostDisabled(id) && id !== unstagedOn) {
+      diagnostics.poolErrors = { ...diagnostics.poolErrors, [id]: "disabled: the administrator disabled this host" };
+      busy = true;
+      return true;
+    }
+    if (coord.heldForRestart(id)) {
+      diagnostics.poolErrors = { ...diagnostics.poolErrors, [id]: "restarting: the administrator is restarting this host's worker" };
+      busy = true;
+      if (!fallbackOnly(host)) fasterHostBusy = true;
+      return true;
+    }
+    return false;
+  };
   for (const host of [...first, ...rest.filter((host) => !fallbackOnly(host)), ...rest.filter(fallbackOnly)]) {
     signal?.throwIfAborted();
     if (roundOver()) break;
     const id = host.id;
     if (attempted.includes(id)) continue;
-    // A disabled host takes no new work (#357). It is not tried, so it does not use up a job's round, and it is not
-    // a faster host that is busy, so a whole-book job goes on to the CPU fallback. Only a job already started there
-    // (taken back without staging after a server restart) may lease it: that work is running there and finishes.
-    if (hostDisabled(id) && id !== unstagedOn) {
-      diagnostics.poolErrors = { ...diagnostics.poolErrors, [id]: "disabled: the administrator disabled this host" };
-      busy = true;
-      continue;
-    }
+    if (heldBack(host)) continue;
     if (fallbackOnly(host) && fasterHostBusy) continue;
     let health: CtcHealth;
     try {
@@ -1024,6 +1064,8 @@ async function takeHost(
       exclude(id);
       continue;
     }
+    // The switch and a restart are read again here, with nothing awaited before the lease is taken.
+    if (heldBack(host)) continue;
     if (!coord.tryAcquireCtc(id, request.id, request.recordingId, capacity)) {
       recordPoolError(diagnostics, id, "capacity", "worker or recording is busy");
       busy = true;

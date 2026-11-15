@@ -422,8 +422,9 @@ A worker of this revision also returns `bookJobs` (see "Whole-book jobs").
 
 **Code version.** `/health` reports `revision`, read once at startup from a
 file `REVISION` beside the worker's code (`~/sonder-ctc-worker/worker/REVISION`);
-a missing, empty or unreadable file is reported as `null` and shown as
-"unknown", and never stops the worker. Only the first line is used, cut to 64
+a missing, empty or unreadable file (any error while reading it, a memory error
+too) is reported as `null` and shown as "unknown", and never stops the worker.
+At most the first 256 bytes are read. Only the first line is used, cut to 64
 characters of `A-Z a-z 0-9 . _ + / @ : -`. The hosts are updated by hand by
 copying `worker/`; **the copy writes the commit into `REVISION`**, then
 restarts the service. From a checkout of the commit to install, per host:
@@ -443,9 +444,19 @@ curl -s http://192.168.1.119:3012/health | jq -r .revision   # the commit
 command over the pool's SSH connection, `systemctl --user restart
 sonder-ctc-worker.service` (`RESTART_TARGETS` in
 `server/alignment-host-control.ts`, ADR 0002); the request names only the host.
-It is refused while `/health` reports window requests, whole-book jobs, an
-encode or a resume, while the server holds a lease on the host, or when
-`/health` cannot be read, unless the administrator forces it. The server then
+It is refused while `/health` reports window requests (or every slot busy),
+whole-book jobs, an encode or a resume, while the server holds a lease on the
+host, or when `/health` cannot be read or understood, unless the administrator
+forces it. For this decision `/health` is read strictly: it must be a JSON
+object whose `activeRequests` is a non-negative integer and `busy` and `stuck`
+are booleans, and when `bookJobs` is present its `jobs` and `slotsHeld` are
+non-negative integers, `resuming` a boolean and `stuck` a list; anything else
+is refused as "cannot be understood" (lease dispatch reads `/health` as
+before). An unforced restart holds the host from the moment its check passes
+until it has finished (ready again, or failed and reported): no lease is given
+on that host meanwhile, so new work goes to the other host or waits, as for a
+busy host. The check and the hold are one step, and the hold ends on every exit.
+The server then
 waits up to 120 s for `/health` to answer ready (the same check a lease uses)
 and shows the result on the host's row. The pool key is not restricted to that
 command on the hosts: it also runs the staging commands, so the allowlist is the
@@ -455,9 +466,16 @@ server's fixed list.
 is skipped by every lease (`takeHost` in `server/alignment-pool.ts`): no new
 alignment job, probe or whole-book job goes there, it is not counted as a tried
 host, and a whole-book job goes to the CPU host as when the GPU host cannot be
-used. The one exception is the host a whole-book job was started on, taken back
-without staging after a server restart: that job is running there and finishes.
-With every host disabled, new work waits as when every host is busy.
+used. The switch is read again at the moment the lease is taken, after the
+host's health check and SSH probe, so a host disabled during either is not
+leased. The one exception is the host a whole-book job was started on, taken
+back without staging after a server restart: the worker's job there is polled
+and finishes. If that worker no longer has the job (404) or the start never
+reached it, the job is not started again on the disabled host: it moves to
+another host, without counting the disabled one as tried, or waits in the queue
+with the reason in its pool errors. With every host disabled, new work waits as
+when every host is busy. The staging sweep (#421) still lists and removes staged
+folders on a disabled host, on purpose: cleaning a host taken out of use is wanted.
 
 ## Whole-book jobs (#402)
 

@@ -21,6 +21,10 @@ export type FakeHostState = {
   down: boolean;
   /** SSH does not answer. */
   sshDown: boolean;
+  /** An SSH probe waits for this before it answers (counted in `probes` first). */
+  holdProbe?: () => Promise<void> | void;
+  /** SSH probes this host received. */
+  probes?: number;
   /** /health reports busy. */
   busy: boolean;
   slots?: number;
@@ -90,7 +94,10 @@ export function fakePoolHosts(
   };
   const deps: PoolSshDeps = {
     async probe(target) {
-      if (byTarget(target).sshDown) throw Object.assign(new Error("Command failed"), { stderr: "ssh: connect to host: Connection refused" });
+      const host = byTarget(target);
+      host.probes = (host.probes ?? 0) + 1;
+      await host.holdProbe?.();
+      if (host.sshDown) throw Object.assign(new Error("Command failed"), { stderr: "ssh: connect to host: Connection refused" });
       return true;
     },
     async exec(target, command) {

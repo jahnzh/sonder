@@ -87,6 +87,10 @@ export type FakeBookHost = FakeHostState & {
   healthRequests: number;
   /** The next n `/health` requests drop the connection, as a worker that is starting. */
   healthDrops: number;
+  /** `/health` answers what this returns for the body it would send (a malformed or older worker). */
+  healthBody?: (body: ReturnType<typeof health>) => unknown;
+  /** A `/health` request waits for this before it is answered (counted in `healthRequests` first). */
+  holdHealth?: () => Promise<void> | void;
   /** Uploads into a file that a job on this host (running, or cancelled and not stopped yet) reads. */
   uploadsIntoLiveJobs: string[];
 };
@@ -307,11 +311,12 @@ export async function fakeBookWorkers(
         const raw = await readBody(request);
         if (url.pathname === "/health") {
           host.healthRequests++;
+          await host.holdHealth?.();
           if (host.healthDrops > 0) {
             host.healthDrops--;
             return request.socket.destroy();
           }
-          return send(response, 200, health(host));
+          return send(response, 200, host.healthBody ? host.healthBody(health(host)) : health(host));
         }
         if (url.pathname.startsWith("/book-jobs"))
           return answerBook(host, request.method ?? "GET", url.pathname, raw, request.headers.authorization, response);

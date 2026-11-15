@@ -1287,18 +1287,22 @@ type RunLease = { lease: WorkerLease | null };
  */
 async function leaseWorker(
   job: AlignmentJob, tracks: ReturnType<typeof recordingContext>["tracks"], run: RunLease,
-  options: Pick<WorkerLeaseRequest, "book" | "firstHost" | "unstagedFirstHost"> = {},
+  options: Pick<WorkerLeaseRequest, "book" | "firstHost" | "unstagedFirstHost"> & { heldHostDisabled?: boolean } = {},
 ) {
+  const { heldHostDisabled, ...request } = options;
   try {
-    if (run.lease) await run.lease.failover();
+    // A host the administrator disabled is left without counting it as tried (#357).
+    if (run.lease) await run.lease.failover({ countTried: !heldHostDisabled });
     else run.lease = await acquireWorkerLease({
       id: job.id, recordingId: job.recordingId, mode: job.mode, tracks, localAudio,
-      kind: "job", assignment: job.pool, diagnostics: job, ...options,
+      kind: "job", assignment: job.pool, diagnostics: job, ...request,
     });
   } catch (error) {
     if (ctcDispatchStopped(job)) return null;
     if (error instanceof PoolBusyError) {
       if (job.pool || error.triedHosts.length) job.pool = error.assignment;
+      // Why it waits: the hosts the move to another host skipped (a disabled host, a busy one).
+      if (heldHostDisabled && run.lease?.poolErrors) job.poolErrors = { ...job.poolErrors, ...run.lease.poolErrors };
       transition.requeue(job);
     } else {
       const failed = (error as { poolAssignment?: AlignmentJob["pool"] } | null)?.poolAssignment;

@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "worker"))
 from revision import REVISION_FILE, read_revision  # noqa: E402
@@ -48,6 +49,43 @@ class Revision(unittest.TestCase):
             locked.write_text("abc")
             locked.chmod(0)
             self.assertIsNone(read_revision(locked))
+
+    def test_only_a_small_fixed_number_of_bytes_is_read(self):
+        path = self.dir / "REVISION"
+        path.write_bytes(b"c901429\n" + b"x" * (8 * 1024 * 1024))
+        self.assertEqual(read_revision(path), "c901429")
+        requested = []
+
+        class Bounded:
+            # A file of unbounded size: reading all of it would exhaust memory.
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self, size=-1, *_):
+                requested.append(size)
+                if size is None or size < 0 or size > 4096:
+                    raise MemoryError
+                return b"abc123\n"[:size]
+
+            def close(self):
+                pass
+
+        with mock.patch.object(Path, "open", lambda *_args, **_kwargs: Bounded()):
+            self.assertEqual(read_revision(path), "abc123")
+        self.assertTrue(requested and all(0 < size <= 4096 for size in requested), requested)
+
+    def test_any_error_while_reading_including_a_memory_error_is_unknown(self):
+        path = self.dir / "REVISION"
+        path.write_text("abc")
+
+        def fails(*_args, **_kwargs):
+            raise MemoryError
+
+        with mock.patch.object(Path, "open", fails):
+            self.assertIsNone(read_revision(path))
 
 
 def _align():
