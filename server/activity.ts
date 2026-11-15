@@ -4,6 +4,7 @@
  * blocked items, applies the pause switches, sorts, counts and dispatches an action to the source that owns it.
  */
 import type { FastifyInstance } from "fastify";
+import type { BackgroundProcess } from "./background-runner.ts";
 import type { ActivityHealth, ActivityItem, ActivityProcess, ActivityResponse } from "../src/types.ts";
 import { PAUSABLE_PROCESSES, PAUSE_EFFECT, isPausable } from "./activity-pause-model.ts";
 import {
@@ -190,11 +191,19 @@ export function registerActivity(app: FastifyInstance, deps: ActivityDeps, sourc
       return action(itemId, { deps, log: app.log });
     });
   }
-  // Keep the change tracker current while nobody has the page open, so "no change for 20 min" is true on first view.
-  const sampler = setInterval(
-    () => void collectActivity(deps, { probes: false }, sources).catch((error) => app.log.warn({ error }, "Activity sample failed")),
-    MINUTE,
-  );
-  sampler.unref();
-  app.addHook("onClose", async () => clearInterval(sampler));
 }
+
+/**
+ * The Activity sampler loop (ADR 0010): keeps the change tracker current while nobody has the page open, so
+ * "no change for 20 min" is true on first view. It has no pause switch. The app adds it to its runner; this
+ * module only imports the runner's type, so it stays free of the database at import.
+ */
+export const activitySamplerLoop = (
+  app: FastifyInstance,
+  deps: ActivityDeps,
+  sources: ReadonlyArray<ActivitySource<unknown, unknown>> = ACTIVITY_SOURCES,
+): BackgroundProcess => ({
+  id: "activity-sampler",
+  intervalMs: MINUTE,
+  tick: () => collectActivity(deps, { probes: false }, sources).catch((error) => app.log.warn({ error }, "Activity sample failed")),
+});

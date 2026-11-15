@@ -1,4 +1,5 @@
 import { isPaused } from "./activity-pause.ts";
+import { backgroundRunner } from "./background-runner.ts";
 import type { FastifyInstance } from "fastify";
 import { eq } from "drizzle-orm";
 import { randomUUID, createHash } from "node:crypto";
@@ -2238,11 +2239,15 @@ export function registerAlignment(app: FastifyInstance) {
     writeMeta.set(req, { jobId: saved.id, jobStatus: saved.status });
     return saved;
   });
-  const timer = setInterval(() => void processAlignments(), 5000);
-  timer.unref();
-  app.addHook("onClose", async () => {
-    clearInterval(timer);
-    activeApps--;
-    if (activeApps === 0) stopAlignments();
+  backgroundRunner(app).add({
+    id: "alignment",
+    intervalMs: 5000,
+    pausedBy: "alignment",
+    // Only starts the scheduler: it runs the admitted jobs on its own, so a tick never waits for a job.
+    tick: () => void processAlignments(),
+    stop: () => {
+      activeApps--;
+      if (activeApps === 0) stopAlignments();
+    },
   });
 }

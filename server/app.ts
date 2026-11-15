@@ -32,7 +32,7 @@ import {
   queueHardcoverStatus,
   queueHardcoverProgress,
   setHardcoverToken,
-  tickHardcover,
+  hardcoverSyncLoop,
   hardcoverWorkForMedia,
   claimHardcoverAudio,
   hiddenHardcoverPlaceholders,
@@ -47,7 +47,8 @@ import { registerInvites } from "./invites.ts";
 import { registerReader } from "./reader.ts";
 import { registerAlignment, autoQueueAlignmentsForWork, persistedPoolErrors } from "./alignment.ts";
 import { getAlignmentPoolStatus } from "./alignment-pool.ts";
-import { registerActivity } from "./activity.ts";
+import { activitySamplerLoop, registerActivity } from "./activity.ts";
+import { backgroundRunner, type BackgroundOptions } from "./background-runner.ts";
 import { pauseState, setPaused } from "./activity-pause.ts";
 import {registerMediaLibrary,faultsFor,chooseMedia,sourceChoice} from "./media-library.ts";
 import { audioFileMime } from "./media-response.ts";
@@ -62,8 +63,8 @@ import {
   ensureMediaStorage,
   torrentDownloadDir,
 } from "./storage.ts";
-import { acquire, controlAcquisition, refreshQueue } from "./acquisitions.ts";
-import { tickSeriesAcquisition, SERIES_ACQUISITION_TICK_MS, resetStrandedSeriesAcquisitionClaims, seriesAcquisitionTickerEnabled } from "./series-acquisition.ts";
+import { acquire, acquisitionsLoop, controlAcquisition } from "./acquisitions.ts";
+import { seriesAcquisitionLoop } from "./series-acquisition.ts";
 import { transmission, transmissionConfigured } from "./transmission.ts";
 import { getTorrentHealth } from "./torrent-health.ts";
 import { searchEbooks, saveEbook, listEbooks, importEbook } from "./ebooks.ts";
@@ -71,9 +72,8 @@ import { registerUploadedEbookSetMember, reevaluateEbookSetForWork } from "./ebo
 import {
   hasServerMedia,
   requestServerDownload,
-  processServerDownloads,
+  serverCopiesLoop,
   pauseServerDownload,
-  stopServerDownloads,
   listServerDownloads,
 } from "./downloads.ts";
 import { encrypt, passwordMatches, hashToken } from "./security.ts";
@@ -185,7 +185,11 @@ export function logLevel(value = process.env.LOG_LEVEL) {
   const level = value?.trim().toLowerCase();
   return level && LOG_LEVELS.has(level) ? level : "info";
 }
-export async function createApp(options?: { logger?: FastifyServerOptions["logger"] }) {
+export async function createApp(options?: {
+  logger?: FastifyServerOptions["logger"];
+  /** Tests: run the background loops by hand (see `server/background-runner.ts`). */
+  background?: BackgroundOptions;
+}) {
   ensureMediaStorage();
   seed();
   sqlite
@@ -342,8 +346,10 @@ export async function createApp(options?: { logger?: FastifyServerOptions["logge
   registerEbookSetRoutes(app);
   registerAppearance(app);
   registerReader(app);
-  registerAlignment(app);
-  registerActivity(app, {
+  // The background loops start in this order and stop in reverse when the app closes (ADR 0010).
+  const background = backgroundRunner(app, options?.background);
+  registerAlignment(app); // adds the alignment loop
+  const activityDeps = {
     sqlite,
     getSetting,
     torrentHealth: () => getTorrentHealth(),
@@ -352,7 +358,9 @@ export async function createApp(options?: { logger?: FastifyServerOptions["logge
     syncHardcover,
     pauseState,
     setPaused,
-  });
+  };
+  registerActivity(app, activityDeps);
+  background.add(activitySamplerLoop(app, activityDeps));
   registerMediaLibrary(app);
   app.post("/api/library", async (req) => {
     const { bookId } = z.object({ bookId: z.string() }).parse(req.body);
@@ -884,43 +892,7 @@ export async function createApp(options?: { logger?: FastifyServerOptions["logge
       .header("Cache-Control", "private, no-store");
     return reply.send(createReadStream(row.source));
   });
-  let queueRunning = false;
-  const poll = async () => {
-    if (queueRunning) return;
-    queueRunning = true;
-    try {
-      await refreshQueue();
-      void processServerDownloads().catch(() => {});
-    } finally {
-      queueRunning = false;
-    }
-  };
-  const queueTimer = setInterval(() => void poll().catch(() => {}), 10000);
-  queueTimer.unref();
-  void poll().catch(() => {});
-  resetStrandedSeriesAcquisitionClaims();
-  const seriesAcquisitionTimer = setInterval(
-    () => {
-      if (!seriesAcquisitionTickerEnabled()) return;
-      void tickSeriesAcquisition(acquire).catch(() => {});
-    },
-    SERIES_ACQUISITION_TICK_MS,
-  );
-  seriesAcquisitionTimer.unref();
-  if (seriesAcquisitionTickerEnabled())
-    void tickSeriesAcquisition(acquire).catch(() => {});
-  app.addHook("onClose", async () => {
-    clearInterval(queueTimer);
-    clearInterval(seriesAcquisitionTimer);
-    stopServerDownloads();
-  });
-  const hardcoverTimer = setInterval(
-    () => void tickHardcover().catch(() => {}),
-    60000,
-  );
-  hardcoverTimer.unref();
-  void tickHardcover().catch(() => {});
-  app.addHook("onClose", async () => clearInterval(hardcoverTimer));
+  for (const loop of [acquisitionsLoop, serverCopiesLoop, seriesAcquisitionLoop, hardcoverSyncLoop]) background.add(loop);
   app.get("/api/discover/hardcover", async (req) => {
     const { q } = z.object({ q: z.string().min(2).max(150) }).parse(req.query);
     return hardcoverSearch(currentUserId(req), q);
