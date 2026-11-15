@@ -2,6 +2,7 @@
 // Written against the stored-cache implementation first; the same assertions must hold
 // once the state is derived on read.
 import { test, after, beforeEach } from "node:test";
+import type { AcquisitionStatus } from "../server/acquisition-vocabulary.ts";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -111,7 +112,7 @@ function addEdition(
 function addAcquisition(
   userIds: number[],
   workId: string | null,
-  status: string,
+  status: AcquisitionStatus,
   updatedAt = Date.now(),
 ) {
   const id = randomUUID();
@@ -136,7 +137,7 @@ function addAcquisition(
   return id;
 }
 
-function setStatus(id: string, status: string) {
+function setStatus(id: string, status: AcquisitionStatus) {
   db.update(s.acquisitions)
     .set({ status, updatedAt: Date.now() })
     .where(eq(s.acquisitions.id, id))
@@ -236,7 +237,7 @@ test("clearing a hold that was never set still starts tracking the work", () => 
 
 // --- State after each acquisition status and track change ---------------------------------
 
-for (const status of ["checking", "preparing", "downloading", "paused"])
+for (const status of ["checking", "preparing", "downloading", "paused"] as const)
   test(`an acquisition that is ${status} makes the work queued`, () => {
     addWork("w-active");
     const id = addAcquisition([1], "w-active", status);
@@ -287,7 +288,7 @@ test("a status sequence moves the state through queued, failed and queued again"
   addWork("w-seq");
   const id = addAcquisition([1, 2], "w-seq", "checking");
   const seen: string[] = [];
-  for (const status of ["checking", "preparing", "downloading", "paused", "downloading", "error", "checking", "ready"]) {
+  for (const status of ["checking", "preparing", "downloading", "paused", "downloading", "error", "checking", "ready"] as const) {
     setStatus(id, status);
     refreshLikeTheWriters(1, "w-seq");
     refreshLikeTheWriters(2, "w-seq");

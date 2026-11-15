@@ -44,7 +44,7 @@ export function setAcquisitionStatus(
 
 /** Record a new (or restarted, same hash) acquisition; every acquisition starts `checking`. */
 export function startAcquisitionRecord(entry: Omit<AcquisitionRow, "status">) {
-  const row = { ...entry, status: "checking" satisfies AcquisitionStatus };
+  const row = { ...entry, status: "checking" as const satisfies AcquisitionStatus };
   db.insert(s.acquisitions)
     .values(row)
     .onConflictDoUpdate({ target: s.acquisitions.hash, set: row })

@@ -80,7 +80,7 @@ export function requestServerDownload(bookId: string) {
   const values = {
     recordingId: recording.id,
     bookId,
-    status: "queued",
+    status: "queued" as const,
     progress: existing?.progress || 0,
     error: null,
     createdAt: existing?.createdAt || Date.now(),
