@@ -12,19 +12,30 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "worker"))
+from unittest import mock
+import book_job
+import deadline
 from book_job import BOOK_ENGINE, BookJobs, JobConflict, NotReady, UnknownJob, request_digest
-from book_session import DiskBudget, SessionRegistry
+from book_session import BudgetExceeded, DiskBudget, SessionRegistry
 import ctc_acoustic
+
+# The tests' budgets are a few KB: a new job reserves its request plus this for its state file.
+STATE = 1024
 
 
 class FakeStages:
     """Groups 0..groups-1, each written to groups/<n>.json; `gate` can hold a group until released."""
 
-    def __init__(self, groups=4, fail_at=None, reserve=1000, before_reserve=None):
+    def __init__(self, groups=4, fail_at=None, reserve=1000, before_reserve=None, fail_with=None, gate=None,
+                 ignore_stop=None):
         self.groups = groups
         self.fail_at = fail_at
         self.reserve = reserve
         self.before_reserve = before_reserve  # an Event the job waits for before it reserves
+        self.fail_with = fail_with  # the message of the failure at fail_at
+        self.gate = gate  # a deadline.Gate the "encode" takes once before the groups, as the real encode does
+        self.ignore_stop = ignore_stop  # an Event the job waits for without looking at should_stop
+        self.order = []  # keys in the order their stages started
         self.aligned = []
         self.gates = {}
         self.started = threading.Event()
@@ -39,13 +50,19 @@ class FakeStages:
         self.reached[group] = threading.Event()
 
     def run(self, job, session, should_stop):
+        self.order.append(job.key)
         self.entered.set()
+        if self.ignore_stop is not None:
+            self.ignore_stop.wait(30)
         if self.before_reserve is not None:
             while not self.before_reserve.wait(0.01):
                 if should_stop():
                     return
         session.reserve_disk(self.reserve, should_wait=lambda: not should_stop(), poll=0.01)
         self.started.set()
+        if self.gate is not None:
+            with self.gate.hold_background(should_stop, poll=0.01, on_wait=job.gate_wait):
+                pass
         folder = job.folder / "groups"
         folder.mkdir(exist_ok=True)
         (job.folder / "emissions").mkdir(exist_ok=True)
@@ -63,7 +80,7 @@ class FakeStages:
             if should_stop():
                 return
             if group == self.fail_at:
-                raise RuntimeError("group failed")
+                raise RuntimeError(self.fail_with or "group failed")
             self.aligned.append(group)
             (folder / f"{group}.json").write_text(json.dumps({"index": group}))
             job.progress(groupsDone=group + 1)
@@ -106,7 +123,7 @@ class Jobs(unittest.TestCase):
 
     def jobs(self, stages, budget=10_000):
         registry = SessionRegistry(DiskBudget(budget), idle=900, clock=self.clock)
-        return BookJobs(self.root, stages, registry, clock=self.clock)
+        return BookJobs(self.root, stages, registry, clock=self.clock, state_bytes=STATE)
 
     def done(self, jobs, key="job-1"):
         return wait_for(lambda: jobs.status(key)["state"] in ("done", "failed", "cancelled"))
@@ -126,12 +143,12 @@ class Jobs(unittest.TestCase):
         result = jobs.result("job-1")
         self.assertEqual(result["outcome"], "mapped")
         self.assertEqual(set(result["intervals"][0]), {"paragraphId", "section", "trackId", "start", "end", "confidence"})
-        # Fetching ends the session: emissions are gone, the budget is free, the result can be fetched again.
+        # Fetching ends the job: its whole folder goes and its reservation is released with it.
         self.assertIsNone(jobs.registry.get("job-1"))
         self.assertEqual(jobs.registry.budget.reserved(), 0)
-        self.assertFalse((self.root / "job-1" / "emissions").exists())
-        self.assertEqual(jobs.result("job-1")["outcome"], "mapped")
-        self.assertTrue(jobs.status("job-1")["fetched"])
+        self.assertFalse((self.root / "job-1").exists())
+        with self.assertRaises(UnknownJob):
+            jobs.result("job-1")
 
     def test_result_before_the_end_is_not_ready(self):
         stages = FakeStages()
@@ -179,10 +196,69 @@ class Jobs(unittest.TestCase):
         self.assertEqual(status["state"], "failed")
         self.assertEqual(status["error"], "group failed")
         self.assertIsNone(jobs.registry.get("job-1"))
+
+    def test_a_failed_job_keeps_only_a_small_counted_error_record_until_the_idle_sweep(self):
+        jobs = self.jobs(FakeStages(fail_at=2, fail_with="x" * 5000))
+        jobs.start(request())
+        self.assertTrue(self.done(jobs))
+        folder = self.root / "job-1"
+        self.assertEqual(sorted(p.name for p in folder.rglob("*")), ["state.json"],
+                         "request, emissions and groups are deleted; only the error record stays")
+        record = (folder / "state.json").stat().st_size
+        self.assertLess(record, 4096)
+        self.assertEqual(jobs.registry.budget.reserved("job-1"), record, "the record is counted")
+        status = jobs.status("job-1")
+        self.assertEqual((status["state"], len(status["error"])), ("failed", book_job.ERROR_CHARS))
+        self.assertEqual(jobs.start(request())["state"], "failed", "the same request reads the record")
+        self.clock.now += 900
+        self.assertEqual(jobs.sweep(), ["job-1"])
+        self.assertFalse(folder.exists())
         self.assertEqual(jobs.registry.budget.reserved(), 0)
 
+    def test_a_failed_jobs_record_survives_a_restart_and_is_swept(self):
+        jobs = self.jobs(FakeStages(fail_at=0))
+        jobs.start(request())
+        self.assertTrue(self.done(jobs))
+        jobs.shutdown()
+        restarted = self.jobs(FakeStages())
+        self.assertEqual(restarted.resume_all(), [])
+        self.assertEqual(restarted.status("job-1")["state"], "failed")
+        self.assertEqual(restarted.registry.budget.reserved("job-1"), (self.root / "job-1" / "state.json").stat().st_size)
+        self.clock.now += 900
+        self.assertEqual(restarted.sweep(), ["job-1"])
+        self.assertFalse((self.root / "job-1").exists())
+        self.assertEqual(restarted.registry.budget.reserved(), 0)
+
+    def test_a_request_that_does_not_fit_is_refused_before_anything_is_written(self):
+        stages = FakeStages(reserve=9000)
+        stages.hold(1)
+        jobs = self.jobs(stages)
+        jobs.start(request())
+        self.assertTrue(stages.reached[1].wait(5))
+        with self.assertRaises(BudgetExceeded) as refused:
+            jobs.start(request("job-2"))
+        self.assertIn("full", str(refused.exception))
+        self.assertFalse((self.root / "job-2").exists(), "nothing of the refused request is written")
+        self.assertEqual(jobs.registry.budget.reserved("job-2"), 0)
+        self.assertIsNone(jobs.registry.get("job-2"))
+        with self.assertRaises(UnknownJob):
+            jobs.status("job-2")
+        stages.gates[1].set()
+        self.assertTrue(self.done(jobs))
+
+    def test_a_new_jobs_request_and_state_are_counted_from_the_start(self):
+        hold = threading.Event()
+        jobs = self.jobs(FakeStages(before_reserve=hold))
+        body = request(text="word " * 500)
+        jobs.start(body)
+        written = sum(f.stat().st_size for f in (self.root / "job-1").rglob("*") if f.is_file())
+        self.assertGreaterEqual(jobs.registry.budget.reserved("job-1"), written)
+        self.assertGreaterEqual(jobs.registry.budget.reserved("job-1"), len(json.dumps(body)) - 100)
+        hold.set()
+        self.assertTrue(self.done(jobs))
+
     def test_a_book_over_the_budget_fails(self):
-        jobs = self.jobs(FakeStages(), budget=500)
+        jobs = self.jobs(FakeStages(reserve=3000), budget=2500)
         jobs.start(request())
         self.assertTrue(self.done(jobs))
         self.assertEqual(jobs.status("job-1")["state"], "failed")
@@ -272,6 +348,112 @@ class Jobs(unittest.TestCase):
         self.assertTrue(newcomer.started.wait(5))
         self.assertTrue(self.done(restarted, "job-2"))
         hold.set()
+
+    def retained(self, keys, nbytes, created):
+        """Unfinished jobs `keys`, stopped by the worker in group 2, each with `nbytes` of retained emissions
+        and the creation times `created` (key -> seconds)."""
+        for key in keys:
+            first = FakeStages()
+            first.hold(2)
+            jobs = self.jobs(first, budget=10 ** 6)
+            jobs.start(request(key))
+            self.assertTrue(first.reached[2].wait(5))
+            jobs.shutdown()
+            folder = self.root / key
+            (folder / "emissions" / "1.f16").write_bytes(b"\0" * nbytes)
+            state = json.loads((folder / "state.json").read_text())
+            (folder / "state.json").write_text(json.dumps({**state, "createdAt": created[key]}))
+
+    def test_two_retained_jobs_that_need_each_others_disk_do_not_wait_forever(self):
+        # Each keeps 4,000 B of emissions and needs 7,000 B for its next stage in a 10,000 B budget: neither
+        # can run next to the other's files. The older resumes first, cannot fit while the other's files wait
+        # for it, and fails with a clear error and its files released; then the other runs.
+        self.retained(["job-a", "job-b"], 4000, {"job-a": 100.0, "job-b": 200.0})
+        stages = FakeStages(reserve=7000)
+        restarted = self.jobs(stages)
+        self.assertEqual(restarted.resume_all(), ["job-a", "job-b"])
+        self.assertTrue(self.done(restarted, "job-a"), restarted.status("job-a"))
+        self.assertTrue(self.done(restarted, "job-b"), restarted.status("job-b"))
+        a, b = restarted.status("job-a"), restarted.status("job-b")
+        self.assertEqual((a["state"], b["state"]), ("failed", "done"), (a, b))
+        self.assertIn("never fit", a["error"])
+        self.assertEqual(stages.order, ["job-a", "job-b"])
+
+    def test_retained_jobs_resume_one_at_a_time_oldest_first(self):
+        self.retained(["job-a", "job-b", "job-c"], 100, {"job-a": 300.0, "job-b": 100.0, "job-c": 200.0})
+        stages = FakeStages()
+        stages.hold(3)
+        restarted = self.jobs(stages, budget=10 ** 6)
+        self.assertEqual(restarted.resume_all(), ["job-b", "job-c", "job-a"])
+        self.assertTrue(stages.reached[3].wait(5))
+        self.assertEqual(stages.order, ["job-b"], "the next resumes only when this one has ended")
+        self.assertEqual(restarted.status("job-c")["progress"]["resumeQueuePosition"], 1)
+        self.assertEqual(restarted.status("job-a")["progress"]["resumeQueuePosition"], 2)
+        self.assertEqual(restarted.status("job-c")["state"], "queued")
+        restarted.start(request("job-a"))  # the server asking again does not jump the queue
+        self.assertEqual(stages.order, ["job-b"])
+        stages.gates[3].set()
+        for key in ("job-b", "job-c", "job-a"):
+            self.assertTrue(self.done(restarted, key))
+            self.assertEqual(restarted.status(key)["state"], "done")
+        self.assertEqual(stages.order, ["job-b", "job-c", "job-a"])
+
+    def test_cancelling_a_job_that_waits_to_resume_releases_its_files(self):
+        self.retained(["job-a", "job-b"], 100, {"job-a": 100.0, "job-b": 200.0})
+        stages = FakeStages()
+        stages.hold(3)
+        restarted = self.jobs(stages, budget=10 ** 6)
+        restarted.resume_all()
+        self.assertTrue(stages.reached[3].wait(5))
+        restarted.cancel("job-b")
+        self.assertFalse((self.root / "job-b").exists())
+        self.assertEqual(restarted.registry.budget.reserved("job-b"), 0)
+        stages.gates[3].set()
+        self.assertTrue(self.done(restarted, "job-a"))
+        time.sleep(0.1)
+        self.assertEqual(stages.order, ["job-a"], "a cancelled job is not resumed")
+
+    def test_a_job_thread_that_does_not_stop_keeps_its_folder_and_reservation(self):
+        never = threading.Event()
+        stages = FakeStages(ignore_stop=never)  # stuck in a step that does not look at should_stop
+        jobs = self.jobs(stages)
+        jobs.start(request())
+        self.assertTrue(stages.entered.wait(5))
+        reserved = jobs.registry.budget.reserved("job-1")
+        with mock.patch.object(book_job, "STOP_WAIT_S", 0.2, create=True):
+            self.assertEqual(jobs.cancel("job-1")["state"], "cancelled")
+        self.assertTrue((self.root / "job-1").exists(), "not deleted under a running thread")
+        self.assertEqual(jobs.registry.budget.reserved("job-1"), reserved)
+        self.assertEqual([s["jobId"] for s in jobs.registry.stuck()], ["job-1"])
+        with self.assertRaises(JobConflict):
+            jobs.start(request())  # the same id cannot start while the old one is still stopping
+        self.assertEqual(jobs.sweep(), [])
+        self.assertTrue((self.root / "job-1").exists())
+        never.set()
+        self.assertTrue(wait_for(lambda: not jobs.registry.stuck() or jobs.sweep() is None))
+        jobs.sweep()
+        self.assertFalse((self.root / "job-1").exists())
+        self.assertEqual(jobs.registry.budget.reserved(), 0)
+        self.assertEqual(jobs.registry.stuck(), [])
+
+    def test_a_job_waiting_for_window_requests_reports_it(self):
+        gate = deadline.Gate(1)
+        stages = FakeStages(gate=gate)
+        jobs = self.jobs(stages)
+        with mock.patch.multiple(deadline, WINDOW_GRACE_S=0.0, WINDOW_RETRY_S=0.0):
+            with gate.hold():  # a window request runs: the book's batch waits for it
+                jobs.start(request())
+                self.assertTrue(wait_for(lambda: jobs.status("job-1")["progress"].get("waitingForWindowRequests")))
+                time.sleep(0.25)
+                progress = jobs.status("job-1")["progress"]
+                self.assertGreaterEqual(progress["gateWaitSeconds"], 0.2)
+                self.assertNotIn("gateWaitSince", progress)
+            self.assertTrue(self.done(jobs))
+        status = jobs.status("job-1")
+        self.assertEqual(status["state"], "done")
+        self.assertIs(status["progress"]["waitingForWindowRequests"], False)
+        self.assertNotIn("gateWaitSeconds", status["progress"])
+        self.assertGreaterEqual(status["stageTimings"]["gateWait"], 0.2)
 
     def test_restart_keeps_a_finished_result_and_skips_foreign_folders(self):
         jobs = self.jobs(FakeStages())

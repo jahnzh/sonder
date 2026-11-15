@@ -30,6 +30,12 @@ from pathlib import Path
 from book_session import (BudgetExceeded, SessionEnded, SessionRegistry, emission_bytes, folder_bytes,
                           meta_bytes)
 
+# A failed job keeps only this record (its state.json) until the idle sweep removes it; the error is cut to
+# ERROR_CHARS, so the record stays a few KB (ids are at most 512 characters).
+ERROR_CHARS = 2000
+RECORD_KEYS = ("jobId", "engine", "digest", "state", "recordingId", "createdAt", "updatedAt", "error",
+               "resumed", "stopReason")
+
 # A new aligner, so a new engine generation (ADR 0016). The window endpoints keep ctc_acoustic.ENGINE.
 BOOK_ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-book-v1"
 # torchaudio WAV2VEC2_ASR_BASE_960H labels (the emissions' 29 classes, blank first).
@@ -37,8 +43,10 @@ LABELS = ("-", "|", "E", "T", "A", "O", "N", "I", "H", "S", "R", "D", "L", "U", 
           "P", "B", "V", "K", "'", "X", "J", "Q", "Z")
 JOB_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 TERMINAL = ("done", "failed", "cancelled")
-# Room for state.json (and its temporary copy) next to the request.
+# Room for state.json (and its temporary copy) next to the request: what a new job reserves on top of it.
 STATE_BYTES = 64 * 1024
+# How long cancel, fetch and idle end wait for the job's thread to stop before the session is kept as stuck.
+STOP_WAIT_S = 30.0
 STATES = ("queued", "decoding", "encoding", "anchoring", "aligning", "finishing") + TERMINAL
 
 
@@ -92,6 +100,15 @@ def emissions_key(metas):
     return hashlib.sha256(json.dumps(parts, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def discard_partial(folder):
+    """Delete what an unfinished job can never reuse: decoded PCM (a track without complete emissions is
+    decoded again) and the partial files of an interrupted write."""
+    folder = Path(folder)
+    shutil.rmtree(folder / "tracks", ignore_errors=True)
+    for part in list((folder / "emissions").glob("*.part")) + list(folder.glob("*.tmp")):
+        part.unlink(missing_ok=True)
+
+
 class Job:
     def __init__(self, key, folder, request, digest, state):
         self.key = key
@@ -105,6 +122,8 @@ class Job:
         self.lock = threading.Lock()
         self.save_lock = threading.Lock()  # taken before self.lock, never after it
         self.last_request = time.monotonic()
+        self.cancelled = False  # set by cancel and idle end; a cancelled job is never launched again
+        self.resume_waiting = False  # a retained job waiting for its turn to resume (resume_all)
 
     def save(self):
         # The job thread and request threads (cancel) both save; one at a time, as the temporary name is shared.
@@ -135,12 +154,30 @@ class Job:
             timings[name] = timings.get(name, 0.0) + seconds
         self.save()
 
+    def gate_wait(self, waiting):
+        """The encode waits for the window endpoints' gate (window requests come first), or got it again."""
+        now = time.time()
+        with self.lock:
+            progress = self.state.setdefault("progress", {})
+            if waiting:
+                progress["waitingForWindowRequests"] = True
+                progress["gateWaitSince"] = now
+            else:
+                since = progress.pop("gateWaitSince", None)
+                progress["waitingForWindowRequests"] = False
+                if since is not None:
+                    timings = self.state.setdefault("stageTimings", {})
+                    timings["gateWait"] = timings.get("gateWait", 0.0) + max(0.0, now - since)
+            self.state["updatedAt"] = now
+        self.save()
+
 
 class BookJobs:
     """All whole-book jobs of one worker process."""
 
-    def __init__(self, root, stages, registry=None, clock=time.monotonic):
+    def __init__(self, root, stages, registry=None, clock=time.monotonic, state_bytes=STATE_BYTES):
         self.root = Path(root)
+        self.state_bytes = state_bytes
         self.stages = stages
         self.registry = registry or SessionRegistry()
         self._clock = clock
@@ -158,20 +195,30 @@ class BookJobs:
         with self._lock:
             job = self._jobs.get(key)
             if job is None:
+                if self.registry.is_stuck(key):
+                    raise JobConflict("This job id belongs to a job that is still stopping.")
                 folder = self.root / key
                 stored = read_json(folder / "request.json")
                 if stored is not None and request_digest(stored) != digest:
                     raise JobConflict("This job id belongs to another request.")
-                # The request and state files are written now, before the job reserves its first stage:
-                # counted first (the body is at most align.BOOK_REQUEST_MAX_BYTES).
-                self.registry.open(key, folder).claim_disk(
-                    folder_bytes(folder) + len(json.dumps(request, separators=(",", ":"))) + STATE_BYTES)
-                job = self._load_or_create(key, folder, request, digest)
+                # The request and state files are written now, before the job reserves its first stage. They
+                # must fit in the budget next to the other books, or the request is refused (DiskFull, 507)
+                # before anything is written. write_json writes this exact text (ASCII, so len is bytes).
+                self.registry.budget.fits_now(
+                    key, folder_bytes(folder) + len(json.dumps(request, separators=(",", ":"))) + self.state_bytes)
+                try:
+                    self.registry.open(key, folder)
+                    job = self._load_or_create(key, folder, request, digest)
+                except BaseException:
+                    self.registry.end(key, "failed", delete=False)
+                    self.registry.budget.release(key)
+                    raise
                 self._jobs[key] = job
             elif job.digest != digest:
                 raise JobConflict("This job id belongs to another request.")
             self._touch(job)
-            if job.state["state"] not in TERMINAL and (job.thread is None or not job.thread.is_alive()):
+            if (job.state["state"] not in TERMINAL and not job.resume_waiting
+                    and (job.thread is None or not job.thread.is_alive())):
                 self._launch(job)
         return self.status(key)
 
@@ -181,6 +228,10 @@ class BookJobs:
         with job.lock:
             state = json.loads(json.dumps(job.state))
         state.pop("digest", None)
+        progress = state.get("progress") or {}
+        since = progress.pop("gateWaitSince", None)
+        if since is not None:
+            progress["gateWaitSeconds"] = round(max(0.0, time.time() - since), 1)
         if state["state"] == "encoding":
             position = self.stages.encode_position(key)
             state.setdefault("progress", {})["encodeQueuePosition"] = position
@@ -188,16 +239,12 @@ class BookJobs:
 
     def cancel(self, key):
         job = self._job(key)
+        with self._lock:
+            job.cancelled = True
         self._stop(job, "cancelled")
-        if job.thread is not None and job.thread is not threading.current_thread():
-            job.thread.join(timeout=30)
-        # Stops the pool's processes and waits for them before the folder and the reservation go.
-        self.registry.end(key, "cancelled", delete=True)
         if job.state["state"] not in TERMINAL or job.state["state"] == "done":
             job.update(state="cancelled", error=None)
-        with self._lock:
-            self._jobs.pop(key, None)
-        shutil.rmtree(job.folder, ignore_errors=True)
+        self._end_job(job, "cancelled")
         return {"jobId": key, "engine": BOOK_ENGINE, "state": "cancelled"}
 
     def result(self, key):
@@ -208,11 +255,29 @@ class BookJobs:
         result = read_json(job.folder / "result.json")
         if result is None:
             raise NotReady("missing")
-        # The session ends on fetch: decoded audio, emissions and the pool go; the small result stays
-        # fetchable until the job has been idle for the session's idle time.
-        self.registry.end(key, "fetched", delete=True)
-        job.update(fetched=True)
+        # The session ends on fetch: the whole folder goes and its reservation is released with it. Later
+        # requests for the job answer 404 (unknown job).
+        with self._lock:
+            job.cancelled = True
+        self._end_job(job, "fetched")
         return result
+
+    def _end_job(self, job, reason):
+        """Stop the job's thread and processes, then delete its folder and release its reservation together.
+        When a group process or the thread is still there after the bounded waits, the session keeps both
+        and is reported as stuck (`bookJobs.stuck` in /health) until `sweep` sees them gone."""
+        if job.thread is not None and job.thread is not threading.current_thread():
+            job.thread.join(timeout=STOP_WAIT_S)
+        thread = job.thread
+        busy = None if thread is None or thread is threading.current_thread() else thread.is_alive
+        outcome = self.registry.end(job.key, reason, delete=True, busy=busy)
+        if outcome is False:  # no session (a failed job's record): its folder and its claim go here
+            shutil.rmtree(job.folder, ignore_errors=True)
+            self.registry.budget.release(job.key)
+        with self._lock:
+            if self._jobs.get(job.key) is job:
+                self._jobs.pop(job.key, None)
+        return outcome
 
     # ------------------------------------------------------------ lifecycle
 
@@ -220,46 +285,78 @@ class BookJobs:
         """Worker start: pick up every job folder; unfinished jobs continue where they stopped.
 
         Every retained folder's files are claimed in the disk budget before any job is launched, so the
-        jobs that resume (and new ones) are admitted against what the disk really holds."""
+        jobs that resume (and new ones) are admitted against what the disk really holds. Unfinished jobs
+        resume one at a time, oldest first: a job waiting for its turn holds its claim (parked, see
+        `DiskBudget`), so a resumed job that could fit only with those bytes fails at once instead of two
+        resumed jobs waiting for each other's disk. Returns their keys in resume order."""
         if not self.root.is_dir():
             return []
         loaded = []
         for folder in sorted(p for p in self.root.iterdir() if p.is_dir()):
             request = read_json(folder / "request.json")
-            if request is None or not JOB_ID.match(folder.name) or request.get("jobId") != folder.name:
+            state = read_json(folder / "state.json") or {}
+            record = (request is None and JOB_ID.match(folder.name) and state.get("jobId") == folder.name
+                      and state.get("state") == "failed" and state.get("digest"))
+            if not record and (request is None or not JOB_ID.match(folder.name) or request.get("jobId") != folder.name):
                 # Not a job of this worker: its files still take space; they are never deleted here.
-                self.registry.budget.claim(f"untracked/{folder.name}", folder_bytes(folder))
+                key = f"untracked/{folder.name}"
+                self.registry.budget.claim(key, folder_bytes(folder))
+                self.registry.budget.park(key)
                 continue
             with self._lock:
                 if folder.name in self._jobs:
                     continue
-                job = self._load_or_create(folder.name, folder, request, request_digest(request))
+                if record:  # a failed job's error record, until the idle sweep
+                    job = Job(folder.name, folder, None, state["digest"], state)
+                    self.registry.budget.claim(job.key, folder_bytes(folder))
+                else:
+                    job = self._load_or_create(folder.name, folder, request, request_digest(request))
+                    if job.state["state"] not in TERMINAL:
+                        discard_partial(folder)  # never reused: not claimed, so it holds no other book up
+                    self.registry.open(job.key, folder).claim_disk(folder_bytes(folder))
                 self._jobs[folder.name] = job
                 job.last_request = self._clock()
-            self.registry.open(job.key, folder).claim_disk(folder_bytes(folder))
             loaded.append(job)
-        resumed = []
-        with self._lock:
-            for job in loaded:
-                if job.state["state"] not in TERMINAL:
-                    job.update(resumed=job.state.get("resumed", 0) + 1)
+        waiting = sorted((job for job in loaded if job.state["state"] not in TERMINAL),
+                         key=lambda job: (job.state.get("createdAt") or 0, job.key))
+        for position, job in enumerate(waiting, 1):
+            self.registry.budget.park(job.key)
+            job.resume_waiting = True
+            job.update(state="queued", resumed=job.state.get("resumed", 0) + 1)
+            job.progress(resumeQueuePosition=position)
+        if waiting:
+            threading.Thread(target=self._resume_in_turn, args=(waiting,), name="book-job-resume",
+                             daemon=True).start()
+        return [job.key for job in waiting]
+
+    def _resume_in_turn(self, waiting):
+        for index, job in enumerate(waiting):
+            with self._lock:
+                if self._closed:
+                    return
+                launch = self._jobs.get(job.key) is job and not job.cancelled
+                job.resume_waiting = False
+                if launch:
+                    self.registry.budget.unpark(job.key)
+                    for position, later in enumerate(waiting[index + 1:], 1):
+                        later.progress(resumeQueuePosition=position)
+                    job.progress(resumeQueuePosition=None)
                     self._launch(job)
-                    resumed.append(job.key)
-        return resumed
+            if launch and job.thread is not None:
+                job.thread.join()
 
     def sweep(self):
-        """End jobs the server has not asked about for the idle time. Returns the keys ended."""
+        """End jobs the server has not asked about for the idle time, and release stuck sessions whose
+        processes have exited since. Returns the keys of the jobs ended."""
+        self.registry.retry_stuck()
         now = self._clock()
         with self._lock:
             idle = [job for job in self._jobs.values() if now - job.last_request >= self.registry.idle]
+            for job in idle:
+                job.cancelled = True
         for job in idle:
             self._stop(job, "idle")
-            if job.thread is not None:
-                job.thread.join(timeout=30)
-            self.registry.end(job.key, "idle", delete=True)
-            with self._lock:
-                self._jobs.pop(job.key, None)
-            shutil.rmtree(job.folder, ignore_errors=True)
+            self._end_job(job, "idle")
         return [job.key for job in idle]
 
     def shutdown(self):
@@ -316,7 +413,7 @@ class BookJobs:
         return job
 
     def _launch(self, job):
-        if self._closed:
+        if self._closed or job.cancelled:
             return
         job.stop.clear()
         job.stop_reason = None
@@ -345,8 +442,7 @@ class BookJobs:
             if job.state["state"] not in TERMINAL:
                 job.update(state="cancelled", error=None, stopReason=reason)
         except BudgetExceeded as error:
-            job.update(state="failed", error=str(error))
-            self.registry.end(job.key, "failed", delete=True)
+            self._fail(job, str(error))
         except Exception as error:  # noqa: BLE001 - every failure must reach the job state
             if should_stop():  # a stage broke because the job was stopped (cancel, idle end or worker stop)
                 if job.stop_reason != "worker stop" and job.state["state"] not in TERMINAL:
@@ -354,8 +450,30 @@ class BookJobs:
                 return
             print(f"[book-job {job.key}] failed: {error!r}", flush=True)
             traceback.print_exc()
-            job.update(state="failed", error=str(error) or type(error).__name__)
-            self.registry.end(job.key, "failed", delete=True)
+            self._fail(job, str(error) or type(error).__name__)
+
+    def _fail(self, job, message):
+        """A failed job keeps only a small error record (its state.json, counted in the budget) until the
+        idle sweep. Its processes are stopped first; while one is still there the folder and the whole
+        reservation are kept and the session is reported as stuck."""
+        with job.lock:
+            record = {k: job.state.get(k) for k in RECORD_KEYS if k in job.state}
+        record.update(state="failed", error=message[:ERROR_CHARS], updatedAt=time.time())
+        outcome = self.registry.end(job.key, "failed", delete=True)
+        if outcome is False:  # no session: delete and release here
+            shutil.rmtree(job.folder, ignore_errors=True)
+            self.registry.budget.release(job.key)
+        if outcome != "stuck":  # else the folder and the reservation stay until the process is gone
+            job.request = None
+            try:
+                job.folder.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
+        with job.lock:
+            job.state = record
+        job.save()
+        if outcome != "stuck":
+            self.registry.budget.claim(job.key, folder_bytes(job.folder))
 
     def _finish(self, job, result):
         if result is None:
@@ -435,9 +553,7 @@ class WorkerStages:
         job.timing("identity", time.monotonic() - started)
         # PCM is never reused (a track without emissions is decoded again), and unfinished files of a stopped
         # run are worthless: both go before the folder is measured for the budget.
-        shutil.rmtree(decoded_dir, ignore_errors=True)
-        for part in emissions_dir.glob("*.part"):
-            part.unlink(missing_ok=True)
+        discard_partial(job.folder)
         # Down to what is left, so a resumed job's claim on files it just deleted holds up no other book.
         session.claim_disk(folder_bytes(job.folder) + STATE_BYTES)
         complete_frames = sum(complete_emissions(emissions_dir, i, identities[i]) for i in range(len(tracks))
@@ -494,7 +610,8 @@ class WorkerStages:
                         gate = self.admission
                         stats = encode_tracks(model, work, emissions_dir, None, should_stop=should_stop,
                                               on_track=on_encoded,
-                                              admit=None if gate is None else lambda: gate.hold_background(should_stop))
+                                              admit=None if gate is None else lambda: gate.hold_background(
+                                                  should_stop, on_wait=job.gate_wait))
                     finally:
                         if monitor is not None:
                             monitor.stop()
