@@ -106,6 +106,12 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
   let automaticUntil = 0;
   // Last navigation-like input on the pages.
   let lastGesture = Number.NEGATIVE_INFINITY;
+  // Gestures counted, so a back to narration can tell whether one came after it.
+  let gestures = 0;
+  const gestureNow = () => {
+    lastGesture = clock.now();
+    gestures++;
+  };
   // Word mode steps, so a follow jump still waiting for the page when the reader stepped on does not pull the display back.
   let wordSteps = 0;
   // The sentence last followed (`recording:paragraph`), so the same sentence is not jumped to twice.
@@ -127,7 +133,7 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
   const places = new Set<{ dropped: boolean }>();
   // A back to narration that found no narration to follow kept the saves waiting. Once following
   // starts to work they are dropped after all; paging away (the reader chose again) ends this.
-  // `gesture` is the last gesture at that return.
+  // `gesture` counts the gestures at that return (a navigation counts as one).
   let armed: { gesture: number } | null = null;
   // Back to narration calls, pagings away and changes of recording, so a back to narration
   // can tell whether another one, the reader or the narration moved on since.
@@ -146,7 +152,7 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
   // Drop every save of a place chosen by hand that is still waiting. Anything queued since the
   // return was queued while following (paging away ends the return), so all of it goes. A
   // navigation or gesture from before the return stops counting, so a relocation it reports
-  // late is not the reader's; `gesture` is the last gesture at the return, one made since counts.
+  // late is not the reader's; `gesture` counts the gestures at the return, one made since counts.
   const drop = (gesture: number) => {
     if (saveTimer) clock.clearTimeout(saveTimer);
     saveTimer = null;
@@ -160,7 +166,7 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
     for (const place of places) place.dropped = true;
     places.clear();
     returnedFromNavigation = navigationEpoch;
-    if (lastGesture === gesture) lastGesture = Number.NEGATIVE_INFINITY;
+    if (gestures === gesture) lastGesture = Number.NEGATIVE_INFINITY;
   };
 
   const self = {
@@ -188,7 +194,7 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
      */
     backToNarration(narration = options.narrationToFollow?.() ?? false): NarrationReturn {
       const at = ++returns;
-      const gesture = lastGesture;
+      const gesture = gestures;
       armed = null;
       set(true);
       if (narration) drop(gesture);
@@ -210,12 +216,12 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
     /** Stop following (a search result, a bookmark, the scrubber, scrolling Lyrics, the checkbox). */
     pageAway() { set(false); },
     /** A wheel, key, swipe or link tap on the pages. */
-    gesture() { lastGesture = clock.now(); },
+    gesture() { gestureNow(); },
     /** A page turn in Lyrics mode: pages away and counts as a gesture, not as our own layout. */
     manualStep() {
       set(false);
       automaticUntil = 0;
-      lastGesture = clock.now();
+      gestureNow();
     },
     /** A Word mode step (a sentence or a word chosen by the reader). It pages away unless it moved the narration along. */
     wordStep(movedAudio: boolean) {
@@ -259,7 +265,7 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
       navigationEpoch = ++epoch;
       set(false);
       automaticUntil = 0;
-      lastGesture = clock.now();
+      gestureNow();
     },
     /** The display of a navigation is in flight; call the returned function when it ended. */
     beginNavigation() {
@@ -298,7 +304,10 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
       if (ownLayout && known) return "ignored";
       const manual = navigated || (!ownLayout && gestured);
       if (!manual) return "shown";
-      set(false);
+      // Caused by a navigation or gesture from before a back to narration that found nothing to
+      // follow: not a manual move, so following stays on; nothing replaces its place, so it is saved.
+      const beforeReturn = !!armed && gestures === armed.gesture;
+      if (!beforeReturn) set(false);
       pendingManual = locator;
       if (saveTimer) clock.clearTimeout(saveTimer);
       saveTimer = clock.setTimeout(() => {
@@ -307,7 +316,7 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
         navigatedUntil = 0;
         options.onManualSave(locator, "reading");
       }, MANUAL_SAVE_DELAY_MS);
-      return "manual";
+      return beforeReturn ? "shown" : "manual";
     },
     /**
      * A Word mode checkpoint: a sentence or word stepped to by hand is saved after a pause;

@@ -592,16 +592,57 @@ test("sequence 4: a page turn whose relocation arrives after back to narration b
   assert.deepEqual(t.saved, []);
 });
 
-test("without a narration to follow, a page turn reported after back to narration still counts as the reader's and is saved", () => {
+test("sequence 1 and 4: without a narration to follow, a page turn reported after back to narration keeps following and its place is still saved", () => {
   const t = setup();
   t.following.navigate();
   const ended = t.following.beginNavigation();
   t.narration.now = false;
   t.following.backToNarration();
   ended();
-  assert.equal(t.following.relocated("turned page", true), "manual");
+  assert.equal(t.following.relocated("turned page", true), "shown");
+  assert.equal(t.following.isFollowing(), true);
+  assert.equal(t.following.pendingManual(), "turned page");
   t.clock.advance(MANUAL_SAVE_DELAY_MS);
   assert.deepEqual(t.saved, ["turned page"]);
+});
+
+test("sequence 1: without a narration, a second relocation of a Contents choice after the switch is on keeps following and saves the last place", () => {
+  const t = setup();
+  t.following.navigate();
+  const ended = t.following.beginNavigation();
+  assert.equal(t.following.relocated("chapter", true), "manual");
+  t.following.backToNarration();
+  ended();
+  t.clock.advance(200);
+  assert.equal(t.following.relocated("chapter, settled", true), "shown");
+  assert.equal(t.following.isFollowing(), true);
+  t.clock.advance(MANUAL_SAVE_DELAY_MS);
+  assert.deepEqual(t.saved, ["chapter, settled"]);
+  // Once following works, a save it queued is dropped like the others.
+  const later = setup();
+  later.following.navigate();
+  const done = later.following.beginNavigation();
+  later.following.backToNarration();
+  done();
+  later.following.relocated("chapter", true);
+  later.narration.now = true;
+  later.following.followTarget("r:p1");
+  later.clock.advance(MANUAL_SAVE_DELAY_MS);
+  assert.deepEqual(later.saved, []);
+});
+
+test("without a narration, a gesture or navigation after back to narration pages away again as usual", () => {
+  const t = setup();
+  t.following.backToNarration();
+  t.clock.advance(10);
+  t.following.gesture();
+  assert.equal(t.following.relocated("scrolled", true), "manual");
+  assert.equal(t.following.isFollowing(), false);
+  const nav = setup();
+  nav.following.backToNarration();
+  nav.following.navigate();
+  nav.following.beginNavigation()();
+  assert.equal(nav.following.relocated("chapter", true), "manual");
 });
 
 test("sequence 5: back to narration before the map arrived, then the map arrives inside the save pause: the kept saves are dropped when following starts to work", () => {
