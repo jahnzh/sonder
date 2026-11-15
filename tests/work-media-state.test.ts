@@ -15,7 +15,6 @@ process.env.DATA_DIR = join(temp, "db");
 process.env.MEDIA_ROOT = join(temp, "media");
 process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
-process.env.SONDER_SKIP_SERIES_ACQUISITION = "1";
 delete process.env.APP_PASSWORD;
 
 const { sqlite, db } = await import("../server/db.ts");

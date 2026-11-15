@@ -1,4 +1,5 @@
 import { isHeld } from "./activity-pause.ts";
+import type { BackgroundProcess } from "./background-runner.ts";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { and, eq } from "drizzle-orm";
@@ -92,8 +93,8 @@ export function leaveSeriesWorkAcquire(userId: number, workId: string) {
   seriesWorkAcquireInFlight.delete(seriesWorkAcquireFlightKey(userId, workId));
 }
 
+/** Whether the series loop may start work: the environment flag and the Activity page switch both hold it. */
 export function seriesAcquisitionTickerEnabled() {
-  // The environment flag and the Activity page switch both hold the loop (isHeld reads both).
   return !isHeld("series-acquisition");
 }
 
@@ -574,6 +575,19 @@ export async function tickSeriesAcquisition(
   tickQueue = run().finally(() => { tickQueue = null; });
   await tickQueue;
 }
+
+/**
+ * The series acquisition loop (ADR 0010). At start it frees the claims a previous process left behind; then it
+ * works through the pending jobs every 30 s. Its switch and `SONDER_SKIP_SERIES_ACQUISITION` hold it.
+ */
+export const seriesAcquisitionLoop: BackgroundProcess = {
+  id: "series-acquisition",
+  intervalMs: SERIES_ACQUISITION_TICK_MS,
+  runAtStart: true,
+  pausedBy: "series-acquisition",
+  start: resetStrandedSeriesAcquisitionClaims,
+  tick: () => tickSeriesAcquisition(defaultAcquire),
+};
 
 function seriesJobStillActive(jobId: string) {
   return !!db
