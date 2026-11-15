@@ -59,7 +59,19 @@ export type ActivityService = { id: string; label: string; health: ActivityHealt
 /** What a probe returned, or why it returned nothing (it threw or took too long). */
 export type ProbeResult<Probe> = { value: Probe | null; failure: string | null };
 
-export type ActivityReport = { drafts: ActivityDraft[]; services?: ActivityService[] };
+export type ActivityReport = {
+  drafts: ActivityDraft[];
+  services?: ActivityService[];
+  /** One line about the process itself (a schedule's last and next run), shown on its row after any health reason. */
+  summary?: string;
+};
+
+export type ReportContext = {
+  now: number;
+  tracker: ChangeTracker;
+  /** The process's pause switch is on or an environment flag disables it: it starts no new work. */
+  held: boolean;
+};
 
 export type ActivityActionContext = { deps: ActivityDeps; log: FastifyBaseLogger };
 export type ActivityAction = (id: string, context: ActivityActionContext) => Promise<Record<string, unknown>>;
@@ -76,7 +88,7 @@ export type ActivitySource<Rows = unknown, Probe = never> = {
   /** Ask a service this work depends on; Activity runs it with a time limit and only when probes are wanted. */
   probe?(deps: ActivityDeps): Promise<Probe>;
   /** Turn rows into items, and the probe into services. Pure. */
-  report(rows: Rows, probe: ProbeResult<Probe>, context: { now: number; tracker: ChangeTracker }): ActivityReport;
+  report(rows: Rows, probe: ProbeResult<Probe>, context: ReportContext): ActivityReport;
   /** A stuck rule of the source's own, used instead of "running with no change for longer than the threshold". */
   stuck?(item: ActivityDraft, now: number, thresholdMs: number): ActivityItem["stuck"];
   retry?: ActivityAction;

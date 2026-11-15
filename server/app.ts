@@ -49,6 +49,7 @@ import { registerAlignment, autoQueueAlignmentsForWork, persistedPoolErrors } fr
 import { checkPoolHostsSetting, getAlignmentPoolStatus } from "./alignment-pool.ts";
 import { activitySamplerLoop, registerActivity } from "./activity.ts";
 import { backgroundRunner, type BackgroundOptions } from "./background-runner.ts";
+import { databaseBackupLoop } from "./backups.ts";
 import { pauseState, setPaused } from "./activity-pause.ts";
 import {registerMediaLibrary,faultsFor,chooseMedia,sourceChoice} from "./media-library.ts";
 import { audioFileMime } from "./media-response.ts";
@@ -893,7 +894,7 @@ export async function createApp(options?: {
       .header("Cache-Control", "private, no-store");
     return reply.send(createReadStream(row.source));
   });
-  for (const loop of [acquisitionsLoop, serverCopiesLoop, seriesAcquisitionLoop, hardcoverSyncLoop]) background.add(loop);
+  for (const loop of [acquisitionsLoop, serverCopiesLoop, seriesAcquisitionLoop, hardcoverSyncLoop, databaseBackupLoop(app.log)]) background.add(loop);
   app.get("/api/discover/hardcover", async (req) => {
     const { q } = z.object({ q: z.string().min(2).max(150) }).parse(req.query);
     return hardcoverSearch(currentUserId(req), q);

@@ -168,12 +168,29 @@ function deleteIntendedChanges() {
   run("DELETE FROM alignment_jobs WHERE id = 'align-unknown'");
 }
 
+/**
+ * The backups process changes on purpose with #361: it was listed as not tracked, and is a source now. For the
+ * comparison with the record from before the split, put back the row it had then, last in the list.
+ */
+const UNTRACKED_BACKUPS = {
+  id: "backups", label: "Database backups", type: "loop", notTracked: true, pausable: false, paused: false, lockedBy: null,
+  pauseEffect: null, health: "unknown", reason: "Not tracked yet.", since: null, counts: { running: 0, queued: 0, failed: 0, stuck: 0 },
+};
+function withBackupsUntracked(all: Record<string, { processes: Array<{ id: string }> }>) {
+  for (const snapshot of Object.values(all)) {
+    const tracked = snapshot.processes.filter((process) => process.id === "backups");
+    assert.equal(tracked.length, 1, "the backups source reports its process once");
+    snapshot.processes = [...snapshot.processes.filter((process) => process.id !== "backups"), UNTRACKED_BACKUPS];
+  }
+  return all;
+}
+
 test("GET /api/activity returns the recorded JSON for the same rows", async () => {
   const all = await snapshots();
   if (process.env.SONDER_UPDATE_ACTIVITY_GOLDEN === "1") writeFileSync(GOLDEN, `${JSON.stringify(all, null, 2)}\n`);
   assert.deepEqual(all, JSON.parse(readFileSync(GOLDEN, "utf8")));
 
   deleteIntendedChanges();
-  const unchanged = `${JSON.stringify(await snapshots(), null, 2)}\n`;
+  const unchanged = `${JSON.stringify(withBackupsUntracked(await snapshots()), null, 2)}\n`;
   assert.equal(unchanged, readFileSync(BEFORE_SOURCES, "utf8"), "same rows, same JSON text as before the split into sources");
 });

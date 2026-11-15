@@ -115,6 +115,12 @@ export type AcquisitionJobStatus = AcquisitionStatus;
 /** The statuses a copy to the server (`server_downloads`) can hold, as `server/downloads.ts` writes them. */
 export const SERVER_COPY_STATUSES = ["queued", "downloading", "paused", "ready", "error"] as const;
 export type ServerCopyStatus = (typeof SERVER_COPY_STATUSES)[number];
+/** The statuses of a daily database backup run (`backup_runs`), as `server/backups.ts` writes them (#361). */
+export const BACKUP_RUN_STATUSES = ["running", "done", "failed"] as const;
+export type BackupRunStatus = (typeof BACKUP_RUN_STATUSES)[number];
+/** The result of the retention after a successful backup run (`backup_runs.cleanup`). */
+export const BACKUP_CLEANUP_STATUSES = ["done", "failed"] as const;
+export type BackupCleanupStatus = (typeof BACKUP_CLEANUP_STATUSES)[number];
 export const acquisitions = sqliteTable("acquisitions", {
   workId: text("work_id"),
   language: text("language"),
@@ -152,6 +158,29 @@ export const serverDownloads = sqliteTable("server_downloads", {
   error: text("error"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
+});
+export const backupRuns = sqliteTable("backup_runs", {
+  /** The scheduled UTC day, YYYY-MM-DD. */
+  day: text("day").primaryKey(),
+  /** The file name in the backups folder, daily-<day>.db. */
+  file: text("file").notNull(),
+  status: text("status", { enum: BACKUP_RUN_STATUSES }).notNull(),
+  bytes: integer("bytes"),
+  error: text("error"),
+  attempts: integer("attempts").notNull().default(1),
+  startedAt: integer("started_at").notNull(),
+  finishedAt: integer("finished_at"),
+  /** When the run last renewed its claim (each stage, and every minute while it works); a running row not renewed for 30 minutes is stale. */
+  updatedAt: integer("updated_at").notNull(),
+  /** SHA-256 (hex) of the verified copy, stored before it is published; with `bytes`, what retention checks before it deletes, and what a retry checks before it adopts a published file. */
+  sha256: text("sha256"),
+  /** The token of the run that holds the day; only that run may record its result. */
+  claim: text("claim"),
+  /** Set when the file at `file` is no longer the one this run published: retention leaves it alone for good. */
+  disownedAt: integer("disowned_at"),
+  /** The retention after this `done` run: `done`, or `failed` with `cleanupError`; null before it ran. */
+  cleanup: text("cleanup", { enum: BACKUP_CLEANUP_STATUSES }),
+  cleanupError: text("cleanup_error"),
 });
 export const hardcoverLinks = sqliteTable("hardcover_links", {
   workId: text("work_id")

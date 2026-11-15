@@ -5,6 +5,7 @@ export const PAUSABLE_PROCESSES = [
   "series-acquisition",
   "hardcover-sync",
   "alignment",
+  "backups",
 ] as const;
 export type PausableProcess = (typeof PAUSABLE_PROCESSES)[number];
 
@@ -17,6 +18,7 @@ export const PAUSE_EFFECT: Record<PausableProcess, string> = {
   "hardcover-sync":
     "Your changes keep being saved, but nothing is sent to Hardcover until you resume. Sync now still works.",
   alignment: "No new alignment job starts. A job already running finishes.",
+  backups: "No new daily database backup starts. A backup already running finishes. Deploys still make their own backups.",
 };
 
 /** An environment flag that disables the loop for good; the UI shows it and refuses to toggle it. */
