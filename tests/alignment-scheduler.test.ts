@@ -13,7 +13,6 @@ process.env.MEDIA_ROOT = join(temp, "media");
 process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
 delete process.env.APP_PASSWORD;
-delete process.env.ALIGNMENT_CHAPTER_ENGINE;
 process.env.ALIGNMENT_WORKER_URL = "http://production-worker.test";
 process.env.ALIGNMENT_WORKER_TOKEN = "test-token";
 process.env.ALIGNMENT_POOL_ENABLED = "1";

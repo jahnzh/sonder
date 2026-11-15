@@ -40,8 +40,8 @@ const { installHardcoverFixture } = await import(
   "./hardcover-browser-fixture.ts"
 );
 installHardcoverFixture();
-const {installAlignmentFixture}=await import('./alignment-browser-fixture.ts');
-installAlignmentFixture();
+const { installAlignmentFixture } = await import("./alignment-browser-fixture.ts");
+await installAlignmentFixture();
 const { installProwlarrFixture } = await import("./prowlarr-browser-fixture.ts");
 installProwlarrFixture();
 const { installSeriesAcquisitionFixture } = await import(

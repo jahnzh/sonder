@@ -302,7 +302,7 @@ if [[ "$service_only" == false ]]; then
   fi
 
   "$target_dir/env/bin/pip" install --no-cache-dir \
-    'numpy==1.26.4' 'fastapi==0.121.3' 'uvicorn==0.38.0' 'faster-whisper==1.2.1'
+    'numpy==1.26.4' 'fastapi==0.121.3' 'uvicorn==0.38.0'
 
   # Download model weights
   if [[ "$skip_models" == false ]]; then

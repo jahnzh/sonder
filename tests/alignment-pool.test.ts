@@ -15,7 +15,6 @@ import {
   dispatchFullAlignmentJob,
   getAlignmentPoolCoordinator,
   getAlignmentPoolStatus,
-  isolatedJobMediaRoot,
   isFullAlignmentJob,
   poolAlignmentFolder,
   poolJobNeedsStaging,
@@ -38,13 +37,23 @@ const hosts: PoolHost[] = [
     workerUrl: "http://wsl-worker",
   },
   {
-    id: "steamdeck",
-    sshTarget: "deck-host",
+    id: "lisa",
+    sshTarget: "lisa-host",
     maxConcurrent: 1,
     remoteWorkRoot: "/pool",
-    workerUrl: "http://deck-worker",
+    workerUrl: "http://lisa-worker",
   },
 ];
+
+/** Both CTC workers healthy, with their media root in `mediaRoot`. */
+function healthyCtcWorkers(mediaRoot: string): typeof fetch {
+  return async (input) => {
+    const lisa = String(input).includes("lisa-worker");
+    return Response.json({ ready: true, busy: false, stuck: false, mediaRoot,
+      ctc: { engine: CTC_ENGINE, ready: true, device: lisa ? "cpu" : "cuda",
+        precision: lisa ? "float32" : "float16", anchorReady: true, passageReady: true } });
+  };
+}
 
 afterEach(() => {
   setAlignmentPoolDepsForTests(null);
@@ -62,74 +71,19 @@ test("isFullAlignmentJob excludes projected maps", () => {
   );
 });
 
-test("isolated staging paths are per job", () => {
-  const host = hosts[0];
-  const a = isolatedJobMediaRoot(host, "job-a");
-  const b = isolatedJobMediaRoot(host, "job-b");
-  assert.notEqual(a, b);
-  assert.match(a, /\/jobs\/job-a\/media$/);
-});
-
-test("host caps block a fourth WSL slot and a second deck slot", () => {
+test("a CTC host takes up to its reported slots and one job per recording", () => {
   const coord = new AlignmentPoolCoordinator(hosts);
-  assert.ok(coord.tryAcquire("wsl", "j1", "rec-1"));
-  assert.ok(coord.tryAcquire("wsl", "j2", "rec-2"));
-  assert.ok(coord.tryAcquire("wsl", "j3", "rec-3"));
-  assert.equal(coord.tryAcquire("wsl", "j4", "rec-4"), false);
-  assert.ok(coord.tryAcquire("steamdeck", "d1", "rec-d1"));
-  assert.equal(coord.tryAcquire("steamdeck", "d2", "rec-d2"), false);
-});
-
-test("the same recording cannot run locally while a remote lease is held", () => {
-  const coord = new AlignmentPoolCoordinator(hosts);
-  assert.ok(coord.tryAcquire("wsl", "remote-job", "rec-x"));
-  assert.throws(
-    () => coord.localFullAlignmentStarting("rec-x", "local-job"),
-    /remote pool host/,
-  );
-  assert.ok(coord.canUseLocalWorker("rec-y"));
-});
-
-test("dispatch retries on another host then surfaces POOL_FAILURE_MESSAGE", async () => {
-  const log: string[] = [];
-  const deps: PoolSshDeps = {
-    async probe(target) {
-      log.push(`probe:${target}`);
-      return target !== "wsl-host";
-    },
-    async exec(target, command) {
-      log.push(`exec:${target}:${command}`);
-      return { code: 0, stdout: "", stderr: "" };
-    },
-    async uploadFile(localPath, remotePath, target) {
-      log.push(`upload:${target}:${remotePath}`);
-      if (target === "deck-host") throw new Error("stage failed");
-    },
-  };
-  setAlignmentPoolDepsForTests(deps);
-  resetAlignmentPoolCoordinator(hosts);
-  const job = {
-    id: "align-1",
-    recordingId: "rec-1",
-    mode: "anchored",
-    origin: "backfill",
-  } as AlignmentJob;
-  const tracks = [{ id: "t0" }] as any[];
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pool-audio-"));
-  const audio = path.join(tmp, "t0.mp3");
-  fs.writeFileSync(audio, "x");
-  await assert.rejects(
-    () =>
-      dispatchFullAlignmentJob(job, tracks, () => audio),
-    (error: Error) => error.message === POOL_FAILURE_MESSAGE,
-  );
-  assert.ok(log.some((line) => line.includes("probe:deck-host")));
-  assert.ok(log.some((line) => line.includes("upload:deck-host")));
-  assert.deepEqual(job.poolErrors, { wsl: "ssh: probe failed", steamdeck: "staging: stage failed" });
-  fs.rmSync(tmp, { recursive: true, force: true });
+  assert.ok(coord.tryAcquireCtc("wsl", "j1", "rec-1", 2));
+  assert.ok(coord.tryAcquireCtc("wsl", "j2", "rec-2", 2));
+  assert.equal(coord.tryAcquireCtc("wsl", "j3", "rec-3", 2), false);
+  assert.equal(coord.tryAcquireCtc("lisa", "j4", "rec-1"), false);
+  assert.ok(coord.tryAcquireCtc("lisa", "j4", "rec-4"));
+  assert.equal(coord.tryAcquireCtc("lisa", "j5", "rec-5"), false);
 });
 
 test("full alignment preserves SSH diagnostics and tries the next host", async () => {
+  const originalFetch = globalThis.fetch;
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "ctc-ssh-diagnostics-"));
   resetAlignmentPoolCoordinator(hosts);
   setAlignmentPoolDepsForTests({
     async probe(target) {
@@ -141,24 +95,38 @@ test("full alignment preserves SSH diagnostics and tries the next host", async (
     async exec() { return { code: 0, stdout: "", stderr: "" }; },
     async uploadFile() {},
   });
-  const job = { id: "full", recordingId: "rec", mode: "anchored" } as AlignmentJob;
-  const pool = await dispatchFullAlignmentJob(job, [], () => null);
-  assert.equal(pool.hostId, "steamdeck");
-  assert.deepEqual(job.poolErrors, { wsl: "ssh: connect to host 127.0.0.1 port 1: Connection refused" });
+  globalThis.fetch = healthyCtcWorkers(temp);
+  try {
+    const job = { id: "full", recordingId: "rec", mode: "anchored", engine: CTC_ENGINE } as AlignmentJob;
+    const pool = await dispatchFullAlignmentJob(job, [], () => null);
+    assert.equal(pool.hostId, "lisa");
+    assert.deepEqual(job.poolErrors, { wsl: "ssh: connect to host 127.0.0.1 port 1: Connection refused" });
+  } finally {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
 });
 
 test("pool failure reasons are single-line and bounded", async () => {
+  const originalFetch = globalThis.fetch;
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "ctc-bounded-"));
   resetAlignmentPoolCoordinator(hosts);
   setAlignmentPoolDepsForTests({
     async probe() { throw new Error(`first line\n${"x".repeat(300)}`); },
     async exec() { throw new Error("staging must not run"); },
     async uploadFile() { throw new Error("staging must not run"); },
   });
-  const job = { id: "bounded", recordingId: "rec", mode: "anchored" } as AlignmentJob;
-  await assert.rejects(() => dispatchFullAlignmentJob(job, [], () => null), /Remote alignment failed/);
-  assert.equal(job.poolErrors?.wsl?.length, 205);
-  assert.match(job.poolErrors!.wsl!, /^ssh: first line x+$/);
-  assert.equal(job.poolErrors?.steamdeck, job.poolErrors?.wsl);
+  globalThis.fetch = healthyCtcWorkers(temp);
+  try {
+    const job = { id: "bounded", recordingId: "rec", mode: "anchored", engine: CTC_ENGINE } as AlignmentJob;
+    await assert.rejects(() => dispatchFullAlignmentJob(job, [], () => null), /Remote alignment failed/);
+    assert.equal(job.poolErrors?.wsl?.length, 205);
+    assert.match(job.poolErrors!.wsl!, /^ssh: first line x+$/);
+    assert.equal(job.poolErrors?.lisa, job.poolErrors?.wsl);
+  } finally {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
 });
 
 test("CTC dispatch records HTTP health and SSH failures by host", async () => {
@@ -248,6 +216,44 @@ test("a pool URL that aliases the production worker is never probed for CTC", as
   }
 });
 
+test("a leftover ALIGNMENT_WORKER_URL equal to a pool URL does not refuse that pool host (#279)", async () => {
+  const originalFetch = globalThis.fetch;
+  const previousUrl = process.env.ALIGNMENT_WORKER_URL;
+  const prevPool = process.env.ALIGNMENT_POOL_ENABLED;
+  process.env.ALIGNMENT_POOL_ENABLED = "1";
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "ctc-leftover-url-"));
+  const audio = path.join(temp, "audio.wav");
+  fs.writeFileSync(audio, "audio");
+  // The browser fixture had exactly this: its WSL pool URL equal to the retired local worker URL.
+  process.env.ALIGNMENT_WORKER_URL = "http://wsl-worker:3012";
+  resetAlignmentPoolCoordinator([{ ...hosts[0], workerUrl: "http://wsl-worker:3012" }, { ...hosts[1], id: "lisa", workerUrl: "http://lisa-worker" }]);
+  setAlignmentPoolDepsForTests({
+    async probe() { return true; },
+    async exec() { return { code: 0, stdout: "", stderr: "" }; },
+    async uploadFile() {},
+  });
+  globalThis.fetch = async (input) => {
+    const lisa = String(input).includes("lisa-worker");
+    return Response.json({ ready: true, busy: false, stuck: false, mediaRoot: temp,
+      ctc: { engine: CTC_ENGINE, ready: true, device: lisa ? "cpu" : "cuda",
+        precision: lisa ? "float32" : "float16", anchorReady: true, passageReady: true } });
+  };
+  try {
+    const pool = await dispatchFullAlignmentJob(
+      { id: "ctc-leftover", recordingId: "rec", engine: CTC_ENGINE } as AlignmentJob, [{ id: "track" }] as any[], () => audio,
+    );
+    assert.equal(pool.hostId, "wsl");
+    assert.equal((await getAlignmentPoolStatus({ fresh: true })).hosts.find((host) => host.id === "wsl")?.reachable, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousUrl === undefined) delete process.env.ALIGNMENT_WORKER_URL;
+    else process.env.ALIGNMENT_WORKER_URL = previousUrl;
+    if (prevPool === undefined) delete process.env.ALIGNMENT_POOL_ENABLED;
+    else process.env.ALIGNMENT_POOL_ENABLED = prevPool;
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
 test("a staging failure is remembered while the other CTC worker is busy", async () => {
   const originalFetch = globalThis.fetch;
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "ctc-staging-"));
@@ -328,39 +334,32 @@ test("anchored CTC requires passage discovery but does not require Whisper", asy
 });
 
 test("dispatch stages audio under an isolated job media root", async () => {
+  const originalFetch = globalThis.fetch;
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "ctc-isolated-"));
   const staged: string[] = [];
-  const deps: PoolSshDeps = {
-    async probe() {
-      return true;
-    },
+  setAlignmentPoolDepsForTests({
+    async probe() { return true; },
     async exec(_target, command) {
       staged.push(command);
       return { code: 0, stdout: "", stderr: "" };
     },
-    async uploadFile(_local, remote) {
-      staged.push(`upload:${remote}`);
-    },
-  };
-  setAlignmentPoolDepsForTests(deps);
+    async uploadFile(_local, remote) { staged.push(`upload:${remote}`); },
+  });
   resetAlignmentPoolCoordinator(hosts);
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pool-audio-"));
-  const audio = path.join(tmp, "track.mp3");
+  globalThis.fetch = healthyCtcWorkers(temp);
+  const audio = path.join(temp, "track.mp3");
   fs.writeFileSync(audio, "audio");
-  const job = {
-    id: "job-99",
-    recordingId: "rec-99",
-    mode: "anchored",
-  } as AlignmentJob;
-  const pool = await dispatchFullAlignmentJob(
-    job,
-    [{ id: "track-1" }] as any[],
-    () => audio,
-  );
-  assert.equal(pool.hostId, "wsl");
-  assert.match(pool.jobMediaRoot, /\/jobs\/job-99\/media$/);
-  assert.equal(pool.stagedAudio["track-1"], `${pool.jobMediaRoot}/tracks/track-1.mp3`);
-  assert.ok(staged.some((line) => line.includes("jobs/job-99/media")));
-  fs.rmSync(tmp, { recursive: true, force: true });
+  try {
+    const job = { id: "job-99", recordingId: "rec-99", mode: "anchored", engine: CTC_ENGINE } as AlignmentJob;
+    const pool = await dispatchFullAlignmentJob(job, [{ id: "track-1" }] as any[], () => audio);
+    assert.equal(pool.hostId, "wsl");
+    assert.equal(pool.jobMediaRoot, path.join(temp, "alignment", "pool-jobs", "job-99"));
+    assert.equal(pool.stagedAudio["track-1"], path.join(pool.jobMediaRoot, "tracks", "track-1"));
+    assert.ok(staged.some((line) => line.includes("pool-jobs/job-99/alignment/job-99")));
+  } finally {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
 });
 
 test("stageTracksLocally mirrors isolated layout for fixtures", async () => {
@@ -378,10 +377,15 @@ test("stageTracksLocally mirrors isolated layout for fixtures", async () => {
   fs.rmSync(base, { recursive: true, force: true });
 });
 
-test("default pool host caps match v1 WSL 3 and deck 1", () => {
-  const configured = defaultPoolHosts();
-  assert.equal(configured.find((h) => h.id === "wsl")?.maxConcurrent, 3);
-  assert.equal(configured.find((h) => h.id === "steamdeck")?.maxConcurrent, 1);
+test("the default pool is WSL and lisa; the Steam Deck is no longer a host", () => {
+  const previous = process.env.ALIGNMENT_POOL_DECK_HOST;
+  process.env.ALIGNMENT_POOL_DECK_HOST = "deck@steamdeck";
+  try {
+    assert.deepEqual(defaultPoolHosts().map((host) => host.id), ["wsl", "lisa"]);
+  } finally {
+    if (previous === undefined) delete process.env.ALIGNMENT_POOL_DECK_HOST;
+    else process.env.ALIGNMENT_POOL_DECK_HOST = previous;
+  }
 });
 
 test("default pool worker URLs target remote hosts, not loopback", () => {
@@ -390,14 +394,6 @@ test("default pool worker URLs target remote hosts, not loopback", () => {
     assert.doesNotMatch(host.workerUrl, /127\.0\.0\.1/);
     assert.match(host.workerUrl, /^http:\/\//);
   }
-});
-
-test("local full-alignment cap allows only one concurrent local job", () => {
-  const coord = new AlignmentPoolCoordinator(hosts);
-  assert.ok(coord.tryAcquireLocal("local-a"));
-  assert.equal(coord.tryAcquireLocal("local-b"), false);
-  coord.releaseLocal("local-a");
-  assert.ok(coord.tryAcquireLocal("local-b"));
 });
 
 test("poolAlignmentFolder keeps local cache paths for remote jobs", () => {
@@ -441,38 +437,6 @@ test("resume clears staging but keeps triedHosts for failover", () => {
     if (prevPool === undefined) delete process.env.ALIGNMENT_POOL_ENABLED;
     else process.env.ALIGNMENT_POOL_ENABLED = prevPool;
   }
-});
-
-test("stageTracksOnHost links shared read-only models into job media root", async () => {
-  const commands: string[] = [];
-  const deps: PoolSshDeps = {
-    async probe() {
-      return true;
-    },
-    async exec(_target, command) {
-      commands.push(command);
-      return { code: 0, stdout: "", stderr: "" };
-    },
-    async uploadFile() {},
-  };
-  setAlignmentPoolDepsForTests(deps);
-  resetAlignmentPoolCoordinator(hosts);
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pool-audio-"));
-  const audio = path.join(tmp, "track.mp3");
-  fs.writeFileSync(audio, "audio");
-  await dispatchFullAlignmentJob(
-    { id: "models-job", recordingId: "rec-m", mode: "anchored" } as AlignmentJob,
-    [{ id: "track-1" }] as any[],
-    () => audio,
-  );
-  assert.ok(
-    commands.some(
-      (command) =>
-        command.includes("ln -sfn '/pool/shared/alignment/models'") &&
-        command.includes("/alignment/models"),
-    ),
-  );
-  fs.rmSync(tmp, { recursive: true, force: true });
 });
 
 test("getAlignmentPoolStatus makes no HTTP or SSH requests when pool is disabled", async () => {

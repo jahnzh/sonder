@@ -1,15 +1,24 @@
 # CTC worker pool
 
-CTC jobs use WSL first and lisa second. Each worker exposes its configured CTC
-device, precision, model availability, media root and single busy gate through
-`GET /health`; the server also checks SSH access before staging the audio.
-Busy hosts are skipped, and if every eligible host is busy the job waits. A
+All alignment work runs on these pool hosts only: alignment maps, ebook
+candidate probing and passage locating (**Read from audio**). The production
+server runs no alignment worker; its `sonder-alignment` container was retired
+in #279. CTC jobs use WSL first and lisa second. Each worker exposes its configured CTC
+device, precision, model availability, media root, job slots and requests in
+progress through `GET /health`; the server also checks SSH access before staging
+the audio. A worker runs up to `slots` requests at once
+(`ALIGNMENT_WORKER_SLOTS`, 1 to 16, default 1), sharing its resident model, and
+the server admits that many jobs to it. A host with every slot taken is skipped,
+and if every eligible host is busy the job waits. A
 failed attempt can run once on the other host; after both fail, Resume starts a
 new pair of attempts. CPU float32 and GPU float16 use the same engine identity
 and cache generation; the selected device and precision are stored on the job
 for diagnosis.
 
-Set `ALIGNMENT_POOL_ENABLED=1` on the server to enable the pool. The SSH
+Set `ALIGNMENT_POOL_ENABLED=1` on the server to enable the pool; reading sync
+is shown as available, and newly linked pairs are queued, only when it is set
+together with `ALIGNMENT_WORKER_TOKEN`. A leftover `ALIGNMENT_WORKER_URL` in
+`.env` is ignored. The SSH
 targets default to `192.168.1.119` and `lisa`, overridden by
 `ALIGNMENT_POOL_WSL_HOST` and `ALIGNMENT_POOL_LISA_HOST`. Worker HTTP URLs
 default to port 3012 on those hosts; override them with
@@ -18,16 +27,30 @@ server SSH access to both hosts and configure the same private
 `ALIGNMENT_WORKER_TOKEN` on the server and both workers. The worker's
 `MEDIA_ROOT` must be writable by the SSH user, with its models under
 `MEDIA_ROOT/alignment/models`. The pool copies audio into per-job directories
-under that root. Pool URLs must address the remote hosts; loopback URLs and the
-configured local worker URL are refused for CTC. Protect the worker HTTP ports
-on the trusted network.
+under that root. Pool URLs must address the remote hosts; loopback URLs are
+refused for CTC. A passage-locating request has 180 seconds for staging,
+scoring and cleanup together; past that its SSH/SCP processes are stopped, the
+host is freed and the reader gets an error. A probe directory left by staging
+that failed or ran out of time is removed under its own 30 second deadline. A
+recovery that passes its deadline frees the server's lease while the worker
+may still be finishing the request, the same limitation as #398; the
+whole-book job (#402) removes it. Protect the worker HTTP ports on the
+trusted network.
+
+The workers on WSL and lisa keep running their current revision (`worker/` of
+`main` before #279), which works with this server: see "Deploying the
+alignment-worker retirement (#279)" in `docs/LOCAL_CHECKS.md`. Updating them is
+#411; do not run the installer below for the #279 deploy.
 
 ## Host roles and capabilities
 
 | Host | Device | Precision | Default URL | SSH Target & Port | Concurrency | Role |
-| --- | --- | --- | --- | --- | ---: | --- |
-| **WSL** (`192.168.1.119`) | `cuda` | `float16` | `http://192.168.1.119:3012` | `jahn@192.168.1.119:22` | 3 | Primary CTC worker (NVIDIA GPU) |
-| **Lisa** (`audiobooks.amatox.in`) | `cpu` | `float32` | `https://audiobooks.amatox.in/sonder-ctc` | `jahn@audiobooks.amatox.in:2269` (alias `lisa`) | 1 | Fallback CTC worker (CPU) |
+| --- | --- | --- | --- | --- | --- | --- |
+| **WSL** (`192.168.1.119`) | `cuda` | `float16` | `http://192.168.1.119:3012` | `jahn@192.168.1.119:22` | its `slots` | Primary CTC worker (NVIDIA GPU) |
+| **Lisa** (`audiobooks.amatox.in`) | `cpu` | `float32` | `https://audiobooks.amatox.in/sonder-ctc` | `jahn@audiobooks.amatox.in:2269` (alias `lisa`) | its `slots` | Fallback CTC worker (CPU) |
+
+The Steam Deck is no longer a pool host (#279): `ALIGNMENT_POOL_DECK_HOST` and
+`ALIGNMENT_POOL_DECK_WORKER_URL` are ignored.
 
 - **WSL (Primary)**: Equipped with an NVIDIA GPU running PyTorch with CUDA `2.8.0+cu128`. Port 3012 is forwarded from the Windows host to the WSL2 virtual machine via Windows portproxy and firewall rules.
 - **Lisa (Fallback)**: CPU-only worker running PyTorch `2.8.0+cpu`. Worker listens locally on `127.0.0.1:3012` and is reverse-proxied by Caddy under `https://audiobooks.amatox.in/sonder-ctc` with an IP allowlist restricted to the production server.
@@ -121,8 +144,8 @@ The script performs the following actions:
 1. Creates the target directory `$HOME/sonder-ctc-worker` with subdirectories `worker/`, `media/`, and `env/`.
 2. Copies worker source files from `worker/`.
 3. Creates a Python virtual environment at `$HOME/sonder-ctc-worker/env`.
-4. Installs pinned dependencies (`torch==2.8.0`, `torchaudio==2.8.0`, `numpy==1.26.4`, `fastapi==0.121.3`, `uvicorn==0.38.0`, `faster-whisper==1.2.1`).
-5. Downloads Whisper tiny and the pinned Wav2Vec2 Base CTC checkpoint (`wav2vec2_fairseq_base_ls960_asr_ls960.pth`) into `$MEDIA_ROOT/alignment/models`.
+4. Installs pinned dependencies (`torch==2.8.0`, `torchaudio==2.8.0`, `numpy==1.26.4`, `fastapi==0.121.3`, `uvicorn==0.38.0`).
+5. Downloads the pinned Wav2Vec2 Base CTC checkpoint (`wav2vec2_fairseq_base_ls960_asr_ls960.pth`) into `$MEDIA_ROOT/alignment/models`.
 6. Configures `$HOME/sonder-ctc-worker/worker.env` (`ALIGNMENT_WORKER_TOKEN`, `MEDIA_ROOT`, `ALIGNMENT_CTC_DEVICE`).
 7. Installs, enables, and starts the systemd user service `sonder-ctc-worker.service`.
 
@@ -217,23 +240,27 @@ Verify the `/health` endpoint:
 curl -s http://127.0.0.1:3012/health | jq .
 ```
 
-Expected JSON response structure:
+Expected JSON response structure (WSL; the fields a worker of this revision
+returns):
 ```json
 {
   "ready": true,
-  "engine": "aeneas-1.7.3",
+  "engine": "ctc-wav2vec2-base-960h-torchaudio-2.8-v2",
   "busy": false,
   "stuck": false,
   "busySeconds": null,
   "lastTimeout": null,
+  "slots": 1,
+  "activeRequests": 0,
   "mediaRoot": "/home/jahn/sonder-ctc-worker/media",
   "ctc": {
-    "engine": "ctc-wav2vec2-base-960h-torchaudio-2.8-v1",
+    "engine": "ctc-wav2vec2-base-960h-torchaudio-2.8-v2",
     "ready": true,
     "device": "cuda",
     "precision": "float16",
     "anchorReady": true,
-    "passageReady": true
+    "passageReady": true,
+    "anchorBatch": true
   }
 }
 ```
@@ -287,24 +314,45 @@ Lisa CPU:
 
 Gate: PASS; engine: `ctc-wav2vec2-base-960h-torchaudio-2.8-v1`; outcome: `mapped`.
 
+## Qualification, 2026-11-14 (#279)
+
+The gate was run again after Whisper and aeneas were removed, on the worker
+files of this change (`align.py`, `ctc_*.py`, `deadline.py`,
+`download_model.py`, `gate_ctc.py`; SHA-256 checked against the branch). Each
+host ran a temporary worker from `~/sonder-replication/retire-279/` on port
+43279, with its own media root, the pinned checkpoint linked read-only from the
+installed worker, the installed worker's Python environment (read-only) and
+`slots` 1. The input was the same 128-utterance labelled sample
+(`alignment-labelled-20261106-7tasSF/inputs/`, the same SHA-256 on both hosts).
+Both workers reported engine `ctc-wav2vec2-base-960h-torchaudio-2.8-v2` at the
+top level of `/health` and under `ctc`.
+
+| Metric | WSL GPU (cuda, float16) | lisa CPU (cpu, float32) | Required |
+| --- | ---: | ---: | ---: |
+| Covered utterances | 128/128 | 128/128 | 128/128 |
+| Both sentence endpoints ≤250 ms | 128/128 | 128/128 | 128/128 |
+| Transition midpoints ≤250 ms | 127/127 | 127/127 | 127/127 |
+| Missing utterances | 0 | 0 | 0 |
+| Maximum endpoint or transition error | 194.3 ms | 194.3 ms | ≤1000 ms |
+| First sentence located and kept | yes | yes | yes |
+| Last sentence located and kept | yes | yes | yes |
+| Unrelated chapter left unsynced | yes | yes | yes |
+| Gate run (health to report) | about 12 s | about 94 s | — |
+
+Gate: PASS on both hosts; outcome `mapped`. CPU and GPU give the same outcomes.
+
 ## Probing gate (#278)
 
-`scripts/gate-ctc-probing.ts` and `worker/gate_whisper_probe.py` compare the CTC prober with the Whisper prober on a series, as ADR 0006 requires before Whisper is removed. Every candidate EPUB is probed against every recording with the production sample plan (`planSamples`) and the unchanged outlier rule, so a wrong edition has to be rejected as well as the right one found. The pick per title is the accepted candidate with the best audio-supported coverage (then the higher mean match score); the gate fails if CTC picks a worse edition than Whisper for any title. Run it on the host that holds the audio, outside `npm test`, never on the production worker:
-
-1. A manifest lists the titles (`key`, `title`, `audio` inside the CTC worker's `MEDIA_ROOT`, `duration`, `truth`) and the candidates (`key`, `epub`, optional `book` for a second copy of a volume).
-2. `tsx scripts/gate-ctc-probing.ts plan manifest.json WORK` extracts the paragraphs of every EPUB and the sample plan of every title into `WORK`.
-3. Whisper arm, in a Python environment with `faster-whisper` and the tiny model under `MEDIA_ROOT/alignment/models/whisper`: `python worker/gate_whisper_probe.py --work WORK --media-root MEDIA_ROOT`. Each sample is transcribed once and matched to every candidate with the worker's own excerpt matcher, which is what `/anchor` does per request.
-4. CTC arm, against a CTC worker started for the run on its own port and `MEDIA_ROOT` (`ALIGNMENT_CTC_DEVICE=cuda` on WSL): `ALIGNMENT_WORKER_TOKEN=... tsx scripts/gate-ctc-probing.ts ctc manifest.json WORK http://127.0.0.1:PORT`. It resumes after an interruption.
-5. `tsx scripts/gate-ctc-probing.ts report manifest.json WORK` prints the per-title table, the found-sample matrix and the CTC timings, writes `report.md` and `report.json`, and exits 1 when CTC is worse.
+The one-off CTC and Whisper probing comparison passed for all eight titles; the results are recorded in [PR #375](https://github.com/jahnzh/sonder/pull/375). The comparison scripts and Whisper prober have been retired.
 
 ## Implementation evidence
 
 | Proposal | Evidence |
 | --- | --- |
-| Route CTC to WSL first and lisa as the only fallback; never send it to production; preserve non-CTC routing. | `tests/alignment-ctc.test.ts`: unreachable, busy or incompatible WSL; legacy assignment; disabled pool; and cross-host retry tests. `tests/alignment-pool.test.ts`: production URL rejection and existing non-CTC dispatch tests. |
+| Route CTC to WSL first and lisa as the only fallback; never send it to production. | `tests/alignment-ctc.test.ts`: unreachable, busy or incompatible WSL; legacy assignment; disabled pool; and cross-host retry tests. `tests/alignment-pool.test.ts`: production URL rejection, SSH diagnostics and staging tests. |
 | Use reported device and busy state for capability and capacity. | `tests/alignment-ctc.test.ts`: incompatible or busy WSL and both workers busy. Real `/health` responses identified WSL as CUDA float16 and lisa as CPU float32 before the gates. |
 | Retry a failure once on the other host, retain a retryable failure, and keep CPU and GPU in the same engine generation with device and precision for diagnostics. | `tests/alignment-ctc.test.ts`: cross-host retry and manual Resume, anchored-window failover, and the CPU and GPU metadata assertions. |
-| Install the lisa environment with the pinned CPU wheels and the anchored planner dependency; document the commands. | The commands above completed on lisa; its environment imported Torch and TorchAudio `2.8.0+cpu`, FastAPI `0.121.3`, Uvicorn `0.38.0`, and faster-whisper. |
+| Install the lisa environment with the pinned CPU wheels and the anchored planner dependency; document the commands. | The commands above completed on lisa; its environment imported Torch and TorchAudio `2.8.0+cpu`, FastAPI `0.121.3`, Uvicorn `0.38.0`. |
 | Run both real-model gates and report their outcomes. | The two tables above show identical passing results. |
 | Reproducible install script (`scripts/install-ctc-workers.sh`), systemd user service unit template (`deploy/ctc-worker.service.tmpl`), Caddy reverse-proxy snippet template (`deploy/ctc-worker.caddy.tmpl`), and documentation runbook. | `tests/install-ctc-workers.test.mjs` verifying installer CLI, help flag, syntax, service template, and Caddy configuration. |
 

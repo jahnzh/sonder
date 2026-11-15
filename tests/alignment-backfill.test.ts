@@ -9,10 +9,11 @@ process.env.MEDIA_ROOT = join(temp, "media");
 process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
 process.env.APP_PASSWORD = "admin-password";
-// These tests exercise queue policy with a deliberately stalled local worker.
-process.env.ALIGNMENT_CHAPTER_ENGINE = "aeneas";
+// These tests exercise queue policy with a deliberately stalled CTC pool worker.
 delete process.env.ALIGNMENT_WORKER_URL;
 delete process.env.ALIGNMENT_WORKER_TOKEN;
+const { installCtcTestPool, uninstallCtcTestPool } = await import("./ctc-test-pool.ts");
+installCtcTestPool(temp);
 const { createApp } = await import("../server/app.ts");
 const { db, sqlite } = await import("../server/db.ts");
 const s = await import("../server/schema.ts");
@@ -34,6 +35,7 @@ after(async () => {
   globalThis.fetch = original;
   delete process.env.ALIGNMENT_WORKER_URL;
   delete process.env.ALIGNMENT_WORKER_TOKEN;
+  uninstallCtcTestPool();
   stopAlignments();
   await app.close();
   sqlite.close();
@@ -253,5 +255,49 @@ test("link hook queues an eligible title, is silent without a worker, and never 
     assert.equal(jobFor("broken"), undefined, "nothing queued, request still succeeded");
   } finally {
     disableWorker();
+  }
+});
+
+test("reading sync is available and new pairs queue on the pool and its token alone, ignoring a leftover local worker URL (#279)", async () => {
+  const admin = await login(undefined, "admin-password");
+  const available = async () => ({
+    list: (await app.inject({ url: "/api/alignments", cookies: { sonder_session: admin } })).json().available,
+    backfill: (await app.inject({ url: "/api/alignments/backfill", cookies: { sonder_session: admin } })).json().available,
+  });
+  const pool = process.env.ALIGNMENT_POOL_ENABLED;
+  try {
+    // The pool and token are set and the retired local worker URL is not: available, and a new pair queues.
+    wipe();
+    delete process.env.ALIGNMENT_WORKER_URL;
+    process.env.ALIGNMENT_WORKER_TOKEN = "test-private-worker-token";
+    process.env.ALIGNMENT_POOL_ENABLED = "1";
+    assert.deepEqual(await available(), { list: true, backfill: true });
+    assert.equal(await autoQueueAlignmentForPair("ebook-good", "recording-good"), true);
+    assert.ok(jobFor("good"));
+
+    // Only a leftover local worker URL and the token: the pool is off, so nothing claims to work.
+    wipe();
+    process.env.ALIGNMENT_WORKER_URL = "http://127.0.0.1:3012";
+    delete process.env.ALIGNMENT_POOL_ENABLED;
+    assert.deepEqual(await available(), { list: false, backfill: false });
+    assert.equal(await autoQueueAlignmentForPair("ebook-good", "recording-good"), false);
+    assert.equal(jobFor("good"), undefined);
+
+    // The leftover URL next to a working pool changes nothing.
+    process.env.ALIGNMENT_POOL_ENABLED = "1";
+    assert.deepEqual(await available(), { list: true, backfill: true });
+    assert.equal(await autoQueueAlignmentForPair("ebook-good", "recording-good"), true);
+
+    // The pool without its token cannot run anything either.
+    wipe();
+    delete process.env.ALIGNMENT_WORKER_TOKEN;
+    assert.deepEqual(await available(), { list: false, backfill: false });
+    assert.equal(await autoQueueAlignmentForPair("ebook-good", "recording-good"), false);
+    assert.equal(jobFor("good"), undefined);
+  } finally {
+    if (pool === undefined) delete process.env.ALIGNMENT_POOL_ENABLED;
+    else process.env.ALIGNMENT_POOL_ENABLED = pool;
+    disableWorker();
+    wipe();
   }
 });
