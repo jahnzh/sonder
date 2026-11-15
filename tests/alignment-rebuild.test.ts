@@ -1,7 +1,7 @@
 // Automatic rebuild of maps from an older engine (#277), through the real scheduler against fake CTC workers.
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { readerFixture } from "./reader-fixture.ts";
@@ -26,7 +26,7 @@ const { setPaused } = await import("../server/activity-pause.ts");
 const {
   createAlignment, alignmentJob, putAlignmentJob, deleteAlignmentJob, processAlignments, stopAlignments,
   resetAlignmentRunnerForTests, alignmentSchedulerForTests, audioFingerprint, queueEngineRebuilds,
-  alignmentRebuildScanForTests, autoQueueAlignmentForPair, listServedAlignmentJobs,
+  alignmentRebuildScanForTests, autoQueueAlignmentForPair, listServedAlignmentJobs, holdRebuildPlansForTests,
 } = await import("../server/alignment.ts");
 const { setEngineGenerationsForTests, rebuildRejection, REBUILD_MAX_COVERAGE_DROP } = await import("../server/alignment-rebuild.ts");
 const { consensusEbookId, publishProjectedMaps, syncEbookSetConsensus } = await import("../server/ebook-set-consensus.ts");
@@ -1028,6 +1028,78 @@ test("retrying a rejected rebuild does the work again from the start while the k
   assert.equal(rebuilt.coverage, 1);
   assert.equal(keptMap(old.id), null, "the retried rebuild publishes");
   assert.equal((await app.inject(`/api/alignments/${old.id}/map`)).json().engine, engine);
+});
+
+/** A rejected rebuild of `a` whose retries wait in their planner until the test releases each one. */
+async function rejectedWithHeldPlanner() {
+  const old = await rebuildAgainst("a", 1, () =>
+    Response.json({ engine, outcome: "mapped", elapsedSeconds: 1, stageTimings: {}, intervals: [] }));
+  assert.equal(alignmentJob(old.id).outcome, "rejected");
+  autoAnswer = null;
+  const planning: (() => void)[] = [];
+  holdRebuildPlansForTests(() => new Promise<void>((resolve) => planning.push(resolve)));
+  const patch = (action: string) => app.inject({ method: "PATCH", url: `/api/alignments/${old.id}`, payload: { action } });
+  return { old, planning, patch };
+}
+after(() => holdRebuildPlansForTests(null));
+
+test("two overlapping retries of a rejected rebuild: the later one is refused and leaves the running retry alone (#379)", async () => {
+  await reset();
+  const { old, planning, patch } = await rejectedWithHeldPlanner();
+  try {
+    const first = patch("resume");
+    await until(() => planning.length === 1, "the first retry planning");
+    const second = patch("resume");
+    await until(() => planning.length === 2, "the second retry planning");
+    planning[0]();
+    const started = await first;
+    assert.equal(started.statusCode, 200, started.body);
+    const running = started.json() as AlignmentJob;
+    await until(() => held.length === 1, "the first retry on a worker");
+    // A section result the running retry has cached.
+    const cached = join(process.env.MEDIA_ROOT!, "alignment", old.id, "section-0-running.json");
+    mkdirSync(dirname(cached), { recursive: true });
+    writeFileSync(cached, "{}");
+
+    planning[1]();
+    const refused = await second;
+    assert.equal(refused.statusCode, 409, refused.body);
+    assert.equal(refused.json().code, "alignment_retry_conflict");
+    assert.match(refused.json().error, /changed while the retry was being planned/);
+    const job = alignmentJob(old.id);
+    assert.equal(job.generation, running.generation, "the running retry keeps its generation");
+    assert.ok(active(old.id), `the running retry is not restarted: ${job.status}`);
+    assert.ok(existsSync(cached), "the running retry's cached results stay");
+    assert.equal(JSON.parse(keptMap(old.id)!).engine, aeneas, "the kept map stays served");
+
+    await drive([old.id], (entry) => mapped(entry.request));
+    assert.equal(alignmentJob(old.id).status, "partial");
+    assert.equal(alignmentJob(old.id).generation, running.generation);
+  } finally {
+    holdRebuildPlansForTests(null);
+  }
+});
+
+test("a cancel during a retry's planning stands: the retry is refused and the kept map stays (#379)", async () => {
+  await reset();
+  const { old, planning, patch } = await rejectedWithHeldPlanner();
+  try {
+    const retry = patch("resume");
+    await until(() => planning.length === 1, "the retry planning");
+    const cancel = await patch("cancel");
+    assert.equal(cancel.statusCode, 200, cancel.body);
+    assert.equal(cancel.json().status, "cancelled");
+    planning[0]();
+    const refused = await retry;
+    assert.equal(refused.statusCode, 409, refused.body);
+    assert.equal(refused.json().code, "alignment_retry_conflict");
+    assert.equal(alignmentJob(old.id).status, "cancelled", "the cancel is not overwritten");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(held.length, 0, "nothing runs");
+    assert.equal(JSON.parse(keptMap(old.id)!).engine, aeneas, "the kept map stays");
+  } finally {
+    holdRebuildPlansForTests(null);
+  }
 });
 
 test("the Reading sync card offers Resume / retry for a stopped or rejected rebuild, judged by the rebuild (#379)", async () => {

@@ -730,8 +730,14 @@ export async function queueEngineRebuilds(log: AutoQueueLog = console): Promise<
   if (result.queued || result.replanned) void processAlignments();
   return result;
 }
+let rebuildPlanHold: ((old: AlignmentJob) => Promise<void>) | null = null;
+/** Tests: each rebuild plan waits for `hold` first, so a request can overlap a planning one. */
+export function holdRebuildPlansForTests(hold: typeof rebuildPlanHold) {
+  rebuildPlanHold = hold;
+}
 /** The old map's own plan (its chapter pairings or anchored mode) under the current engine. */
 async function rebuildPlan(old: AlignmentJob) {
+  if (rebuildPlanHold) await rebuildPlanHold(old);
   const chapters = old.mode !== "anchored" && old.pairings.length > 0;
   const base = { ebookId: old.ebookId, recordingId: old.recordingId, existing: old, copying: false };
   let job: AlignmentJob;
@@ -752,17 +758,20 @@ async function rebuildPlan(old: AlignmentJob) {
  */
 function commitRebuild(old: AlignmentJob, job: AlignmentJob) {
   return sqlite.transaction(() => {
-    const row = sqlite.prepare("SELECT data, published_map FROM alignment_jobs WHERE id=?").get(old.id) as
-      { data: string; published_map: string | null } | undefined;
-    if (!row) return false;
-    const current = JSON.parse(row.data) as AlignmentJob;
-    if (current.generation !== old.generation || current.updatedAt !== old.updatedAt || current.status !== old.status)
-      return false;
+    if (!rowUnchanged(old)) return false;
+    const kept = alignmentKeepsPublishedMap(old.id);
     store(job);
-    if (!row.published_map && usableMap(old))
+    if (!kept && usableMap(old))
       sqlite.prepare("UPDATE alignment_jobs SET published_map=? WHERE id=?").run(JSON.stringify(old), old.id);
     return true;
   }).immediate();
+}
+/** The row still holds the state `old` was read from: no other write (scan, prepare, resume, cancel) since. */
+function rowUnchanged(old: AlignmentJob) {
+  const row = sqlite.prepare("SELECT data FROM alignment_jobs WHERE id=?").get(old.id) as { data: string } | undefined;
+  if (!row) return false;
+  const current = JSON.parse(row.data) as AlignmentJob;
+  return current.generation === old.generation && current.updatedAt === old.updatedAt && current.status === old.status;
 }
 let rebuildScan: Promise<RebuildScan | null> = Promise.resolve(null);
 /** Tests: the scan the latest registerAlignment started. */
@@ -2123,15 +2132,12 @@ export function registerAlignment(app: FastifyInstance) {
     }
     // A rejected rebuild (#379) finished all its work: a retry plans it again from the start, and the kept map
     // stays served until the new run publishes.
+    let rejected: AlignmentJob | null = null;
     if (action === "resume" && job.outcome === "rejected" && job.origin !== "projected") {
+      rejected = job;
       const retry = await rebuildPlan(job);
       if (job.rebuildOf) retry.rebuildOf = job.rebuildOf;
       job = retry;
-      // The run's section and window results are cached in the job folder; the retry must not read them back.
-      const folder = join(mediaRoot, "alignment", job.id);
-      if (existsSync(folder))
-        for (const name of readdirSync(folder))
-          if (/^(section|window)-.*\.json$/.test(name)) rmSync(join(folder, name), { force: true });
     }
     job.status = action === "pause" ? "paused" : action === "cancel" ? "cancelled" : "queued";
     job.error = null;
@@ -2143,7 +2149,21 @@ export function registerAlignment(app: FastifyInstance) {
       if (job.outcome === "error" || job.outcome === "language_not_supported") delete job.outcome;
       if (job.pool) clearPoolStaging(job, job.engine === CTC_ENGINE ? [] : job.pool.triedHosts);
     }
-    store(job);
+    sqlite.transaction(() => {
+      if (rejected) {
+        // The row changed while the retry was planned (another retry already running, a cancel, a prepare): that
+        // later action stands, and its run's results stay.
+        if (!rowUnchanged(rejected))
+          throw Object.assign(new Error("This rebuild changed while the retry was being planned. Reload to see its current state."),
+            { statusCode: 409, code: "alignment_retry_conflict" });
+        // The rejected run's section and window results are cached in the job folder; the retry must not read them back.
+        const folder = join(mediaRoot, "alignment", job.id);
+        if (existsSync(folder))
+          for (const name of readdirSync(folder))
+            if (/^(section|window)-.*\.json$/.test(name)) rmSync(join(folder, name), { force: true });
+      }
+      store(job);
+    }).immediate();
     writeMeta.set(req, { action, jobId: job.id, jobStatus: job.status });
     if (action === "resume") void processAlignments();
     return job;
