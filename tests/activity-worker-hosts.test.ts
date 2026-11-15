@@ -472,59 +472,78 @@ test("restart reads /health strictly: a body or a field it cannot understand is 
 test("an unforced restart reserves the host: nothing new is leased there until the restart has finished", async () => {
   const { recordingId, track } = recording();
   let leases = 0;
-  const lease = (request: Partial<Parameters<typeof acquireWorkerLease>[0]> = {}) => acquireWorkerLease({
-    id: `reserved-${++leases}`, recordingId, mode: "anchored", tracks: [track], localAudio: (row) => row.source, kind: "job", ...request,
-  });
-  const hostOf = async (request: Partial<Parameters<typeof acquireWorkerLease>[0]> = {}) => {
-    const held = await lease(request);
-    const hostId = held.hostId;
-    await held.release("finished");
-    return hostId;
+  // Every lease taken here is released at the end, also when an assertion fails, so a failure stays in this test.
+  const taken: Awaited<ReturnType<typeof acquireWorkerLease>>[] = [];
+  const lease = async (request: Partial<Parameters<typeof acquireWorkerLease>[0]> = {}) => {
+    const held = await acquireWorkerLease({
+      id: `reserved-${++leases}`, recordingId, mode: "anchored", tracks: [track], localAudio: (row) => row.source, kind: "job", ...request,
+    });
+    taken.push(held);
+    return held;
   };
-
-  // A job already past its health check, waiting on WSL's SSH probe, when the restart's check passes: it does not get WSL.
   const probe = gate();
-  fake.hosts.wsl.holdProbe = () => probe.promise;
-  const probesBefore = fake.hosts.wsl.probes ?? 0;
-  const inFlight = lease();
-  await until(() => (fake.hosts.wsl.probes ?? 0) > probesBefore, "the job reached WSL's SSH probe");
   const command = gate();
-  fake.hosts.wsl.onServiceCommand = () => command.promise;
-  const restarted = restart("wsl", {});
-  await until(() => restarts("wsl").length === 1, "the restart command reached the host");
-  probe.open();
-  fake.hosts.wsl.holdProbe = undefined;
-  const taken = await inFlight;
-  assert.equal(taken.hostId, "lisa", "the job in flight went to the other host");
-  await taken.release("finished");
+  let restarted: ReturnType<typeof restart> | null = null;
+  try {
+    const hostOf = async (request: Partial<Parameters<typeof acquireWorkerLease>[0]> = {}) => {
+      const held = await lease(request);
+      const hostId = held.hostId;
+      await held.release("finished");
+      return hostId;
+    };
 
-  // While the command runs, new work goes to the other host, and a whole-book job waits for the GPU host.
-  const diagnostics: { poolErrors?: Record<string, string> } = {};
-  assert.equal(await hostOf({ diagnostics }), "lisa", "window job");
-  assert.match(diagnostics.poolErrors?.wsl ?? "", /restart/);
-  assert.equal(await hostOf({ kind: "probe" }), "lisa", "probe");
-  await assert.rejects(() => lease({ book: true }), PoolBusyError, "a whole-book job waits for the GPU host, as for a busy one");
-  assert.equal(restarts("wsl").length, 1);
-  command.open();
-  assert.equal((await restarted).statusCode, 200);
-  assert.equal(await hostOf({ book: true }), "wsl", "ready again, WSL takes work again");
+    // A job already past its health check, waiting on WSL's SSH probe, when the restart's check passes: it does not get WSL.
+    fake.hosts.wsl.holdProbe = () => probe.promise;
+    const probesBefore = fake.hosts.wsl.probes ?? 0;
+    const inFlight = lease();
+    await until(() => (fake.hosts.wsl.probes ?? 0) > probesBefore, "the job reached WSL's SSH probe");
+    fake.hosts.wsl.onServiceCommand = () => command.promise;
+    restarted = restart("wsl", {});
+    await until(() => restarts("wsl").length === 1, "the restart command reached the host");
+    probe.open();
+    fake.hosts.wsl.holdProbe = undefined;
+    const first = await inFlight;
+    assert.equal(first.hostId, "lisa", "the job in flight went to the other host");
+    await first.release("finished");
 
-  // The reservation ends with a failed command and with a worker that is not ready in time, too.
-  fake.hosts.wsl.onServiceCommand = undefined;
-  fake.hosts.wsl.restartFails = "Unit not found.";
-  assert.equal((await restart("wsl", {})).statusCode, 502);
-  assert.equal(await hostOf(), "wsl", "after a failed command");
-  fake.hosts.wsl.restartFails = undefined;
-  setHostRestartTimingForTests({ readyWithinMs: 50 });
-  fake.hosts.wsl.onServiceCommand = () => { fake.hosts.wsl.healthDrops = Number.MAX_SAFE_INTEGER; };
-  assert.equal((await restart("wsl", {})).statusCode, 504);
-  fake.hosts.wsl.healthDrops = 0;
-  assert.equal(await hostOf(), "wsl", "after the readiness bound");
-  // A refused restart reserves nothing.
-  fake.hosts.wsl.activeRequests = 1;
-  assert.equal((await restart("wsl", {})).statusCode, 409);
-  fake.hosts.wsl.activeRequests = 0;
-  assert.equal(await hostOf(), "wsl", "after a refusal");
+    // While the command runs, new work goes to the other host, and a whole-book job waits for the GPU host.
+    const diagnostics: { poolErrors?: Record<string, string> } = {};
+    assert.equal(await hostOf({ diagnostics }), "lisa", "window job");
+    assert.match(diagnostics.poolErrors?.wsl ?? "", /restart/);
+    assert.equal(await hostOf({ kind: "probe" }), "lisa", "probe");
+    // The coordinator itself gives the held host to nothing, whoever asks.
+    const other = recording().recordingId;
+    assert.equal(getAlignmentPoolCoordinator().tryAcquireCtc("wsl", "direct", other, 4), false);
+    assert.equal(getAlignmentPoolCoordinator().hasJobLease("wsl", "direct"), false);
+    await assert.rejects(() => lease({ book: true }), PoolBusyError, "a whole-book job waits for the GPU host, as for a busy one");
+    assert.equal(restarts("wsl").length, 1);
+    command.open();
+    assert.equal((await restarted).statusCode, 200);
+    assert.equal(await hostOf({ book: true }), "wsl", "ready again, WSL takes work again");
+
+    // The reservation ends with a failed command and with a worker that is not ready in time, too.
+    fake.hosts.wsl.onServiceCommand = undefined;
+    fake.hosts.wsl.restartFails = "Unit not found.";
+    assert.equal((await restart("wsl", {})).statusCode, 502);
+    assert.equal(await hostOf(), "wsl", "after a failed command");
+    fake.hosts.wsl.restartFails = undefined;
+    setHostRestartTimingForTests({ readyWithinMs: 50 });
+    fake.hosts.wsl.onServiceCommand = () => { fake.hosts.wsl.healthDrops = Number.MAX_SAFE_INTEGER; };
+    assert.equal((await restart("wsl", {})).statusCode, 504);
+    fake.hosts.wsl.healthDrops = 0;
+    assert.equal(await hostOf(), "wsl", "after the readiness bound");
+    // A refused restart reserves nothing.
+    fake.hosts.wsl.activeRequests = 1;
+    assert.equal((await restart("wsl", {})).statusCode, 409);
+    fake.hosts.wsl.activeRequests = 0;
+    assert.equal(await hostOf(), "wsl", "after a refusal");
+  } finally {
+    probe.open();
+    command.open();
+    await restarted;
+    await Promise.all(taken.map((held) => held.release("finished")));
+    getAlignmentPoolCoordinator().releaseJob("direct");
+  }
 });
 
 test("a host disabled while a lease is being taken (during its health check or SSH probe) is not leased", async () => {
@@ -540,17 +559,22 @@ test("a host disabled while a lease is being taken (during its health check or S
       fake.hosts.wsl[hold] = () => held.promise;
       const stagedBefore = fake.stagedFolders("wsl").length;
       const taking = lease(request);
-      await until(() => (hold === "holdHealth" ? fake.hosts.wsl.healthRequests : fake.hosts.wsl.probes ?? 0) > before,
-        `the lease reached WSL's ${label}`);
-      assert.equal((await disable("wsl", true)).statusCode, 200);
-      held.open();
-      fake.hosts.wsl[hold] = undefined;
-      const taken = await taking;
-      assert.equal(taken.hostId, "lisa", `${label}, ${JSON.stringify(request)}: the disabled host was not leased`);
-      assert.deepEqual(taken.triedHosts, ["lisa"], "and not counted as tried");
-      await taken.release("finished");
-      assert.equal(fake.stagedFolders("wsl").length, stagedBefore, "nothing staged there");
-      assert.equal((await disable("wsl", false)).statusCode, 200);
+      try {
+        await until(() => (hold === "holdHealth" ? fake.hosts.wsl.healthRequests : fake.hosts.wsl.probes ?? 0) > before,
+          `the lease reached WSL's ${label}`);
+        assert.equal((await disable("wsl", true)).statusCode, 200);
+        held.open();
+        fake.hosts.wsl[hold] = undefined;
+        const taken = await taking;
+        assert.equal(taken.hostId, "lisa", `${label}, ${JSON.stringify(request)}: the disabled host was not leased`);
+        assert.deepEqual(taken.triedHosts, ["lisa"], "and not counted as tried");
+        assert.equal(fake.stagedFolders("wsl").length, stagedBefore, "nothing staged there");
+      } finally {
+        // Released also when an assertion failed, so a failure stays in this test.
+        held.open();
+        await (await taking).release("finished");
+        assert.equal((await disable("wsl", false)).statusCode, 200);
+      }
     }
   }
 });
