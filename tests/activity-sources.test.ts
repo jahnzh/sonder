@@ -23,6 +23,8 @@ import { serverCopySource } from "../server/downloads-activity.ts";
 import { seriesAcquisitionSource } from "../server/series-acquisition-activity.ts";
 import { alignmentSource } from "../server/alignment-activity.ts";
 import { hardcoverSource, hardcoverQueueStatus, type HardcoverQueueStatus } from "../server/hardcover-activity.ts";
+import { EBOOK_SET_IDLE_HOLDS, ebookSetSource, type EbookSetCheckStatus } from "../server/ebook-set-activity.ts";
+import type { EbookSetHoldReason, EbookSetMemberStatus } from "../server/ebook-set.ts";
 import { backupSource, type BackupRunRow } from "../server/backups-activity.ts";
 import { PAUSABLE_PROCESSES } from "../server/activity-pause-model.ts";
 
@@ -45,6 +47,10 @@ const seriesRow = (status: string, error: string | null = null, updated = NOW - 
 });
 const alignmentRow = (status: string) => ({
   id: status, ebook_id: "eb", recording_id: "rec", title: status, data: JSON.stringify({ status, progress: 0.5 }), updated_at: NOW - MIN,
+});
+const ebookSetRow = (status: string, holdReason: string | null = null, evidence = "{}") => ({
+  work_id: "work-1", ebook_id: `ebook-${status}-${holdReason}`, title: "Book", source_title: "Edition", status, hold_reason: holdReason, evidence,
+  updated_at: NOW - MIN,
 });
 const hardcoverRow = (error: string | null) => ({ userId: 1, user: "admin", queue: "status" as const, count: 1, oldest: NOW - MIN, newest: NOW - MIN, error });
 
@@ -91,6 +97,32 @@ test("Hardcover queues: waiting is queued and failing is failed", () => {
   assert.equal(hardcoverQueueStatus("socket hang up"), "failing");
   assert.equal(itemFor(hardcoverSource, hardcoverRow(null)).state, expected.waiting);
   assert.equal(itemFor(hardcoverSource, hardcoverRow("socket hang up")).state, expected.failing);
+});
+
+test("ebook-set checks: every member status and every hold the loop works on maps to its Activity state (#325)", () => {
+  const expected = {
+    pending: "running", awaiting_worker: "queued", evaluation_failed: "failed", accepted: "done", rejected: "done",
+  } satisfies Record<EbookSetCheckStatus, ActivityState>;
+  const statuses = { pending: true, held: true, accepted: true, rejected: true } satisfies Record<EbookSetMemberStatus, true>;
+  const holds = { awaiting_audio: true, awaiting_worker: true, language_not_supported: true, evaluation_failed: true } satisfies Record<EbookSetHoldReason, true>;
+  const walked = [
+    ...Object.keys(statuses).filter((status) => status !== "held"),
+    ...Object.keys(holds).filter((hold) => !(EBOOK_SET_IDLE_HOLDS as readonly string[]).includes(hold)),
+  ];
+  assert.deepEqual(walked.sort(), Object.keys(expected).sort(), "the walk covers the whole vocabulary");
+  for (const status of Object.keys(statuses).filter((status) => status !== "held"))
+    assert.equal(itemFor(ebookSetSource, ebookSetRow(status)).state, expected[status as EbookSetCheckStatus], status);
+  for (const hold of ["awaiting_worker", "evaluation_failed"] as const)
+    assert.equal(itemFor(ebookSetSource, ebookSetRow("held", hold)).state, expected[hold], hold);
+  const failed = itemFor(ebookSetSource, ebookSetRow("held", "evaluation_failed", JSON.stringify({ error: "broken EPUB" })));
+  assert.equal(failed.error, "broken EPUB");
+  assert.deepEqual(failed.actions, ["retry"]);
+  assert.deepEqual(itemFor(ebookSetSource, ebookSetRow("held", "awaiting_worker")).actions, ["retry"]);
+  assert.deepEqual(itemFor(ebookSetSource, ebookSetRow("pending")).actions, []);
+  const unknownHold = itemFor(ebookSetSource, ebookSetRow("held", "exploded"));
+  assert.equal(unknownHold.state, "failed");
+  assert.equal(unknownHold.error, `${UNKNOWN_STATUS} "exploded"`);
+  assert.deepEqual(unknownHold.actions, [], "nothing to retry for a status outside the vocabulary");
 });
 
 const backupRow = (status: string, over: Partial<BackupRunRow> = {}): BackupRunRow => ({
@@ -156,6 +188,7 @@ test("a stored status outside a source's vocabulary is failed with Unknown statu
     [serverCopySource, copyRow("exploded")],
     [seriesAcquisitionSource, seriesRow("error")],
     [alignmentSource, alignmentRow("exploded")],
+    [ebookSetSource, ebookSetRow("exploded")],
   ];
   for (const [source, row] of cases) {
     const item = itemFor(source, row, NOW + 24 * 60 * MIN);
@@ -166,7 +199,9 @@ test("a stored status outside a source's vocabulary is failed with Unknown statu
 });
 
 test("every loop has exactly one source and every kind is reported", () => {
-  const kinds: Record<ActivityKind, true> = { acquisition: true, "server-copy": true, "series-acquisition": true, alignment: true, hardcover: true, backup: true };
+  const kinds: Record<ActivityKind, true> = {
+    acquisition: true, "server-copy": true, "series-acquisition": true, alignment: true, hardcover: true, "ebook-set": true, backup: true,
+  };
   assert.deepEqual(ACTIVITY_SOURCES.map((source) => source.kind).sort(), Object.keys(kinds).sort());
   assert.deepEqual(ACTIVITY_SOURCES.map((source) => source.process.id).sort(), [...PAUSABLE_PROCESSES].sort());
 });
@@ -211,7 +246,7 @@ test("the pause switches import no feature, and the Activity modules do not open
   assert.deepEqual(runtimeImports(source("activity-pause.ts")).sort(), ["./activity-pause-model.ts", "./activity-pause-model.ts", "./db.ts"]);
   assert.deepEqual(runtimeImports(source("activity-pause-model.ts")), []);
   for (const file of ["activity.ts", "activity-source.ts", "activity-sources.ts", "acquisitions-activity.ts", "downloads-activity.ts",
-    "series-acquisition-activity.ts", "alignment-activity.ts", "hardcover-activity.ts", "backups-activity.ts"]) {
+    "series-acquisition-activity.ts", "alignment-activity.ts", "hardcover-activity.ts", "ebook-set-activity.ts", "backups-activity.ts"]) {
     const imports = runtimeImports(source(file));
     assert.ok(imports.every((path) => path === "./activity-source.ts" || path === "./activity-pause-model.ts" || path === "./activity-sources.ts"
       || /^\.\/[a-z-]+-activity\.ts$/.test(path) || path === "fastify" || path === "./backup-schedule.ts"), `${file} imports ${imports.join(", ")}`);

@@ -22,6 +22,7 @@ import {
   statSync,
 } from "node:fs";
 import { invalidateParsedBook } from "./reader.ts";
+import { ebookSetMembersRemoved, removePendingMembersLeftBehind } from "./ebook-set-link.ts";
 import { join, basename, extname } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -225,7 +226,7 @@ export async function publicFetch(input: string, init: RequestInit = {}) {
   throw new Error("The ebook source redirected too many times.");
 }
 // Saving an ebook that is already on the server still attaches it to the chosen book.
-function linkEbook(id: string, workId: string | undefined) {
+async function linkEbook(id: string, workId: string | undefined) {
   if (!workId) return;
   const row = db
     .select()
@@ -235,11 +236,16 @@ function linkEbook(id: string, workId: string | undefined) {
   if (!row || row.workId === workId) return;
   if (!db.select().from(s.works).where(eq(s.works.id, workId)).get())
     throw new Error("The selected book could not be found.");
-  db.update(s.ebookEditions)
-    .set({ workId })
-    .where(eq(s.ebookEditions.id, id))
-    .run();
+  // Its pending ebook-set member in the work it leaves goes with the link change (#325).
+  const left = sqlite.transaction(() => {
+    db.update(s.ebookEditions)
+      .set({ workId })
+      .where(eq(s.ebookEditions.id, id))
+      .run();
+    return removePendingMembersLeftBehind(id, workId);
+  })();
   invalidateParsedBook(id);
+  await ebookSetMembersRemoved(left);
 }
 async function resolveDownload(source: EbookSource, md5: string) {
   const base = baseUrl(source);
@@ -261,7 +267,7 @@ async function downloadEbook(input: EbookResult & { workId?: string }) {
     .where(eq(s.ebookEditions.id, id))
     .get();
   if (saved && existsSync(saved.source)) {
-    linkEbook(id, input.workId);
+    await linkEbook(id, input.workId);
     return { id };
   }
   const ext = input.extension?.toLowerCase();
@@ -344,7 +350,7 @@ async function downloadEbook(input: EbookResult & { workId?: string }) {
     )
       throw new Error("The source returned an invalid ebook file.");
     renameSync(temp, path);
-    sqlite.transaction(() => {
+    const left = sqlite.transaction(() => {
       let workId = input.workId;
       if (
         workId &&
@@ -377,7 +383,9 @@ async function downloadEbook(input: EbookResult & { workId?: string }) {
           set: { workId, format: ext!, source: path },
         })
         .run();
+      return removePendingMembersLeftBehind(id, workId);
     })();
+    await ebookSetMembersRemoved(left);
     return { id };
   } catch (error) {
     clearTimeout(idle);
@@ -475,12 +483,12 @@ export async function importEbook(
       .where(eq(s.ebookEditions.id, id))
       .get();
     if (existing && existsSync(existing.source)) {
-      linkEbook(id, targetWorkId);
+      await linkEbook(id, targetWorkId);
       return { id, alreadySaved: true };
     }
     path = join(ebookDir, `${id}.${ext}`);
     renameSync(temp, path);
-    sqlite.transaction(() => {
+    const left = sqlite.transaction(() => {
       const workId = targetWorkId || existing?.workId || `work-${randomUUID()}`;
       if (!targetWorkId && !existing)
         db.insert(s.works)
@@ -503,7 +511,9 @@ export async function importEbook(
           set: { source: path!, format: ext, workId },
         })
         .run();
+      return removePendingMembersLeftBehind(id, workId);
     })();
+    await ebookSetMembersRemoved(left);
     return { id, alreadySaved: false };
   } catch (error) {
     if (

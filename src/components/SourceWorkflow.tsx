@@ -28,7 +28,14 @@ import {
   useTorrentHealth,
 } from "./TorrentHealth";
 import {openReader} from "../reading";
-import { ebookSetStatusLabel, type EbookSetMember, type EbookSetView } from "../ebook-set";
+import {
+  EBOOK_SET_PENDING_REFRESH_MS,
+  checkingNote,
+  ebookSetHasPendingMember,
+  ebookSetStatusLabel,
+  type EbookSetMember,
+  type EbookSetView,
+} from "../ebook-set";
 import type {
   Acquisition,
   EbookResult,
@@ -299,6 +306,12 @@ export function EbookDiscovery({
   useEffect(() => {
     void refreshSet();
   }, [refreshSet]);
+  const checking = ebookSetHasPendingMember(setMembers);
+  useEffect(() => {
+    if (!checking) return;
+    const timer = window.setInterval(() => void refreshSet(), EBOOK_SET_PENDING_REFRESH_MS);
+    return () => window.clearInterval(timer);
+  }, [checking, refreshSet]);
   const base = settings?.libgenUrl || "https://libgen.li";
   const website = `${base}/index.php?req=${encodeURIComponent(query)}`;
   const search = async (e: FormEvent) => {
@@ -327,7 +340,7 @@ export function EbookDiscovery({
     try {
       const body = new FormData();
       body.append("file", file);
-      const response = await api<{ alreadySaved: boolean }>(
+      const response = await api<{ alreadySaved: boolean; ebookSet?: { status: EbookSetMember["status"] } }>(
         "/ebooks/import" +
           (target ? `?workId=${encodeURIComponent(target.workId)}` : ""),
         { method: "POST", body },
@@ -335,9 +348,9 @@ export function EbookDiscovery({
       await refreshSaved();
       await refreshSet();
       notify(
-        response.alreadySaved
+        (response.alreadySaved
           ? "This ebook is already on your server."
-          : "Your ebook is saved on the 4 TB media drive.",
+          : "Your ebook is saved on the 4 TB media drive.") + checkingNote(response.ebookSet),
       );
     } catch (error) {
       notify((error as Error).message, true);
@@ -348,14 +361,14 @@ export function EbookDiscovery({
   const download = async (book: EbookResult) => {
     setDownloading(book.md5);
     try {
-      await api("/ebooks", {
+      const response = await api<{ ebookSet?: { status: EbookSetMember["status"] } }>("/ebooks", {
         method: "POST",
         body: JSON.stringify({
           ...book,
           ...(target ? { workId: target.workId } : {}),
         }),
       });
-      notify("Your ebook is saved on the 4 TB media drive.");
+      notify("Your ebook is saved on the 4 TB media drive." + checkingNote(response.ebookSet));
       await refreshSaved();
       await refreshSet();
     } catch (e) {

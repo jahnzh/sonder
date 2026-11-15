@@ -5,6 +5,7 @@ export const PAUSABLE_PROCESSES = [
   "series-acquisition",
   "hardcover-sync",
   "alignment",
+  "ebook-set",
   "backups",
 ] as const;
 export type PausableProcess = (typeof PAUSABLE_PROCESSES)[number];
@@ -18,6 +19,7 @@ export const PAUSE_EFFECT: Record<PausableProcess, string> = {
   "hardcover-sync":
     "Your changes keep being saved, but nothing is sent to Hardcover until you resume. Sync now still works.",
   alignment: "No new alignment job starts. A job already running finishes.",
+  "ebook-set": "No new ebook-set check starts. A check already running finishes. Pausing alignment also holds the checks.",
   backups: "No new daily database backup starts. A backup already running finishes. Deploys still make their own backups.",
 };
 

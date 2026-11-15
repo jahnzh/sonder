@@ -69,7 +69,8 @@ import { seriesAcquisitionLoop } from "./series-acquisition.ts";
 import { transmission, transmissionConfigured } from "./transmission.ts";
 import { getTorrentHealth } from "./torrent-health.ts";
 import { searchEbooks, saveEbook, listEbooks, importEbook } from "./ebooks.ts";
-import { registerUploadedEbookSetMember, reevaluateEbookSetForWork } from "./ebook-set.ts";
+import { reevaluateEbookSetForWork } from "./ebook-set.ts";
+import { ebookSetEvaluationLoop, registerUploadedEbookSetMember, retryEbookSetMember } from "./ebook-set-evaluation.ts";
 import {
   hasServerMedia,
   requestServerDownload,
@@ -358,6 +359,7 @@ export async function createApp(options?: {
     poolStatus: () => getAlignmentPoolStatus({ persistedErrors: persistedPoolErrors() }),
     requireAdmin,
     syncHardcover,
+    retryEbookSetMember,
     pauseState,
     setPaused,
   };
@@ -839,9 +841,10 @@ export async function createApp(options?: {
       })
       .parse(req.body);
     const saved = await saveEbook(libgenOnly(input));
-    if (input.workId && input.extension === "epub")
-      await registerUploadedEbookSetMember(input.workId, saved.id);
-    return saved;
+    // The set membership is recorded as pending and evaluated in the background (#325); `ebookSet` is additive.
+    const ebookSet =
+      input.workId && input.extension === "epub" ? registerUploadedEbookSetMember(input.workId, saved.id) : null;
+    return ebookSet ? { ...saved, ebookSet } : saved;
   });
   app.get("/api/ebooks", async () => listEbooks());
   app.post("/api/ebooks/import", async (req) => {
@@ -854,8 +857,9 @@ export async function createApp(options?: {
     if (!part) throw new Error("Choose an EPUB or PDF file.");
     const imported = await importEbook(part.file, part.filename, workId);
     if (workId) {
-      await registerUploadedEbookSetMember(workId, imported.id);
+      const ebookSet = registerUploadedEbookSetMember(workId, imported.id);
       await autoQueueAlignmentsForWork(workId, { ebookId: imported.id }, req.log);
+      if (ebookSet) return { ...imported, ebookSet };
     }
     return imported;
   });
@@ -894,7 +898,15 @@ export async function createApp(options?: {
       .header("Cache-Control", "private, no-store");
     return reply.send(createReadStream(row.source));
   });
-  for (const loop of [acquisitionsLoop, serverCopiesLoop, seriesAcquisitionLoop, hardcoverSyncLoop, databaseBackupLoop(app.log)]) background.add(loop);
+  for (const loop of [
+    acquisitionsLoop,
+    serverCopiesLoop,
+    seriesAcquisitionLoop,
+    hardcoverSyncLoop,
+    ebookSetEvaluationLoop,
+    databaseBackupLoop(app.log),
+  ])
+    background.add(loop);
   app.get("/api/discover/hardcover", async (req) => {
     const { q } = z.object({ q: z.string().min(2).max(150) }).parse(req.query);
     return hardcoverSearch(currentUserId(req), q);

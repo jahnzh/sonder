@@ -7,6 +7,7 @@ import { SeriesSaveOptions } from "./SeriesSaveOptions";
 import { SeriesRemoveDialog } from "./SeriesRemoveDialog";
 import { SeriesWorkSavedDetails } from "./SeriesWorkSavedDetails";
 import { SeriesWorkStatus, SERIES_SAVED_POLL_MS } from "./SeriesWorkStatus";
+import type { SeriesEbookSetCounts } from "../ebook-set";
 import "../series.css";
 
 type SeriesSummary = { id: number; name: string; author: string | null; count: number | null; cover?: string | null };
@@ -23,7 +24,7 @@ type SeriesWork = SeriesCandidate & {
     audio: SeriesWorkAcquisition | null;
     ebook: SeriesWorkAcquisition | null;
   } | null;
-  ebookSet?: { held: number; accepted: number; rejected: number } | null;
+  ebookSet?: SeriesEbookSetCounts | null;
   completionOverride?: "finished" | "unread" | null;
   libraryOriginLabel?: string | null;
   availability?: { audio: { server: boolean | null; recordings: { id: string; tracks: string[]; server: boolean; stream: boolean }[] }; ebook: { server: boolean | null; device: null } };

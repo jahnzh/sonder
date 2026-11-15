@@ -25,6 +25,7 @@ const {
   backfillEligibility,
   runAlignmentBackfill,
   autoQueueAlignmentForPair,
+  autoQueueAlignmentsForWork,
   alignmentJob,
 } = await import("../server/alignment.ts");
 const app = await createApp();
@@ -301,3 +302,44 @@ test("reading sync is available and new pairs queue on the pool and its token al
     wipe();
   }
 });
+
+// #325 review round 1, HIGH 1: an ebook whose ebook-set member in its work is pending is not aligned until its
+// check ends; every other status (and no member at all) queues exactly as on main.
+const memberStatuses = [
+  ["none", null, null],
+  ["pending", "pending", null],
+  ["held-awaiting-audio", "held", "awaiting_audio"],
+  ["held-awaiting-worker", "held", "awaiting_worker"],
+  ["held-evaluation-failed", "held", "evaluation_failed"],
+  ["accepted", "accepted", null],
+  ["rejected", "rejected", null],
+] as const;
+for (const [name, status, holdReason] of memberStatuses) {
+  test(`HIGH 1: auto-queue, the work auto-queue and the backfill with an ebook-set member ${name}`, async () => {
+    const id = `set-${name}`;
+    title(id);
+    if (status)
+      db.insert(s.workEbookSetMembers)
+        .values({ workId: `work-${id}`, ebookId: `ebook-${id}`, status, holdReason, evidence: "{}", updatedAt: Date.now() })
+        .run();
+    const expected = status !== "pending";
+    const pool = process.env.ALIGNMENT_POOL_ENABLED;
+    process.env.ALIGNMENT_POOL_ENABLED = "1";
+    enableWorker();
+    try {
+      wipe();
+      assert.equal(await autoQueueAlignmentForPair(`ebook-${id}`, `recording-${id}`), expected, "autoQueueAlignmentForPair");
+      wipe();
+      await autoQueueAlignmentsForWork(`work-${id}`, { ebookId: `ebook-${id}` });
+      assert.equal(!!jobFor(id), expected, "autoQueueAlignmentsForWork");
+      wipe();
+      await runAlignmentBackfill();
+      assert.equal(!!jobFor(id), expected, "runAlignmentBackfill");
+    } finally {
+      wipe();
+      if (pool === undefined) delete process.env.ALIGNMENT_POOL_ENABLED;
+      else process.env.ALIGNMENT_POOL_ENABLED = pool;
+      disableWorker();
+    }
+  });
+}

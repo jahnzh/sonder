@@ -3,6 +3,7 @@ import type { Download, SavedEbook, SeriesWorkAcquisition } from "../types";
 import { formatEbookDeviceSuffix, workEbookOnDevice } from "../series-ebook-device";
 import { workMediaStateLabel, workMediaStateOffersRetry } from "../work-media-state";
 import { SeriesWorkReleaseSearch } from "./SeriesWorkReleaseSearch";
+import { seriesEbookSetLabel, type SeriesEbookSetCounts } from "../ebook-set";
 
 const SERIES_SAVED_POLL_MS = 2500;
 
@@ -21,7 +22,7 @@ type Props = {
     audio: SeriesWorkAcquisition | null;
     ebook: SeriesWorkAcquisition | null;
   } | null;
-  ebookSet?: { held: number; accepted: number; rejected: number } | null;
+  ebookSet?: SeriesEbookSetCounts | null;
   recordings?: { id: string; tracks: string[] }[];
   downloads: Download[];
   savedEbooks?: SavedEbook[];
@@ -57,9 +58,8 @@ function ebookStatusLabel(
       ? "Not available for your account"
       : acquisition.error || "Search failed";
   if (acquisition?.skipReason === "has_ebook") return "Already on server";
-  if (ebookSet?.accepted) return `${ebookSet.accepted} accepted`;
-  if (ebookSet?.held) return `${ebookSet.held} held for review`;
-  if (ebookSet?.rejected) return "Candidates rejected";
+  const setLabel = seriesEbookSetLabel(ebookSet);
+  if (setLabel) return setLabel;
   if (acquisition?.status === "done") return "Search complete";
   return "Not searched";
 }

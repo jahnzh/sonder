@@ -13,7 +13,7 @@ import type {
   AlignmentPoolHostStatus,
   AlignmentPoolStatus,
 } from "../src/reading-types.ts";
-import { CTC_ENGINE } from "./alignment-engine.ts";
+import { BOOK_ENGINE, CTC_ENGINE } from "./alignment-engine.ts";
 import { untilAborted } from "./until-aborted.ts";
 import type * as schema from "./schema.ts";
 
@@ -99,7 +99,7 @@ export function isFullAlignmentJob(job: AlignmentJob) {
 
 export function shouldDispatchToPool(job: AlignmentJob) {
   return poolEnabled() && job.origin !== "projected" &&
-    (job.engine === CTC_ENGINE || isFullAlignmentJob(job));
+    (job.engine === CTC_ENGINE || job.engine === BOOK_ENGINE || isFullAlignmentJob(job));
 }
 
 function hostNameFromSshTarget(sshTarget: string) {
@@ -513,7 +513,18 @@ type CtcHealth = {
   /** Requests the worker runs at once; older workers omit it and run one. */
   slots?: number;
   ctc: { engine: string; ready: boolean; device: string; precision: string; passageReady?: boolean };
+  /** Whole-book jobs (#402); workers without them omit it. */
+  bookJobs?: { engine?: unknown; ready?: unknown };
 };
+
+/** Why a healthy CTC worker cannot take a whole-book job (#404), or null when it can. */
+export function bookJobsProblem(health: Pick<CtcHealth, "bookJobs">): string | null {
+  const book = health.bookJobs;
+  if (!book || typeof book !== "object") return "worker runs no whole-book jobs";
+  if (book.engine !== BOOK_ENGINE) return `worker runs whole-book engine ${String(book.engine ?? "none")}, expected ${BOOK_ENGINE}`;
+  if (book.ready !== true) return "whole-book jobs are not ready";
+  return null;
+}
 
 /** Book jobs a CTC worker takes at once: the slots it reports, 1 for workers that report none. */
 export function ctcWorkerSlots(health: { slots?: unknown } | null | undefined) {
@@ -685,6 +696,19 @@ export type WorkerLeaseRequest = {
   diagnostics?: PoolDiagnostics;
   /** Ends staging (and its SSH/SCP children); no further host is tried. It also bounds a probe's removal in `release`. */
   signal?: AbortSignal;
+  /** A whole-book job (#404): only a worker whose `/health` reports whole-book jobs ready can take it. */
+  book?: boolean;
+  /**
+   * Tried before the hosts in rank order, and not counted as tried by the stored assignment: the host a whole-book
+   * job was started on, so the next run (after a server restart) polls the worker's job there.
+   */
+  firstHost?: PoolHostId;
+  /**
+   * `firstHost` is taken without staging (#404): its slot and the recording are leased, nothing is uploaded, and
+   * `stageTracks` stages later. A whole-book job uses it after a restart, while the worker's job there may still be
+   * reading the staged files. Any other host, and every later take, stages as usual.
+   */
+  unstagedFirstHost?: boolean;
 };
 
 export type WorkerLease = {
@@ -705,6 +729,14 @@ export type WorkerLease = {
   readonly poolErrors: AlignmentJob["poolErrors"];
   /** A configured host is left that this work has not tried, and a job has not used its one retry yet. */
   readonly canFailover: boolean;
+  /** The tracks are staged on the held host: false only after an `unstagedFirstHost` take, until `stageTracks`. */
+  readonly tracksStaged: boolean;
+  /**
+   * Stages the tracks on the held host when it was taken without staging; does nothing otherwise. The folder name
+   * is chosen now (a retired name is never used again, #421) and `beforeUpload` receives the assignment that names
+   * it before the first byte is sent. Throws when staging fails; the lease still holds the host.
+   */
+  stageTracks(beforeUpload?: (assignment: AlignmentJobPoolState) => void): Promise<void>;
   /**
    * Frees this host and takes the next untried one, staging the tracks there again; the audio staged here is kept
    * until the release. Throws as `acquireWorkerLease` does; the lease then holds no host.
@@ -714,7 +746,17 @@ export type WorkerLease = {
   release(outcome: LeaseRelease): Promise<void>;
 };
 
-type HeldHost = AlignmentJobPoolState & { device: string; precision: string };
+type HeldHost = AlignmentJobPoolState & {
+  device: string;
+  precision: string;
+  /** The worker's media root its /health reported. */
+  mediaRoot: string;
+  /**
+   * Taken without staging (`unstagedFirstHost`): `stagedAudio` is empty and `jobMediaRoot` names the folder an earlier
+   * run staged there (or is empty) until `stageTracks`.
+   */
+  unstaged: boolean;
+};
 
 class PoolWorkerLease implements WorkerLease {
   private held: HeldHost | null = null;
@@ -728,6 +770,7 @@ class PoolWorkerLease implements WorkerLease {
   /** What a probe lease staged, removed by its release. */
   private probeStaging: { host: PoolHost; jobMediaRoot: string }[] = [];
   private released = false;
+  private taken = false;
   private tried: PoolHostId[];
   readonly diagnostics: PoolDiagnostics;
 
@@ -757,7 +800,7 @@ class PoolWorkerLease implements WorkerLease {
   get poolErrors() { return this.diagnostics.poolErrors; }
   get assignment(): AlignmentJobPoolState {
     if (!this.held) return unstagedAssignment([...this.lastTried], this.stagedHosts());
-    const { device: _device, precision: _precision, ...state } = this.held;
+    const { device: _device, precision: _precision, mediaRoot: _root, unstaged: _unstaged, ...state } = this.held;
     return { ...state, triedHosts: [...state.triedHosts], stagedAudio: { ...state.stagedAudio },
       stagedHosts: this.stagedHosts() };
   }
@@ -766,10 +809,33 @@ class PoolWorkerLease implements WorkerLease {
     return getAlignmentPoolCoordinator().listHosts().some((host) => !this.tried.includes(host.id));
   }
 
+  get tracksStaged() { return !this.current().unstaged; }
+
+  async stageTracks(beforeUpload?: (assignment: AlignmentJobPoolState) => void) {
+    const held = this.current();
+    if (!held.unstaged) return;
+    const host = getAlignmentPoolCoordinator().hostById(held.hostId);
+    if (!host) throw new Error(POOL_FAILURE_MESSAGE);
+    // Chosen now, under the host and recording leases: a name the sweep (or a failed cancel) retired is never used again.
+    const folderName = stagingName(this.request.id);
+    // Recorded before the first byte is sent, as by `takeHost`.
+    held.jobMediaRoot = stagingFolder(held.mediaRoot, folderName);
+    if (this.request.kind === "job") this.staged[held.hostId] = held.jobMediaRoot;
+    beforeUpload?.(this.assignment);
+    const staged = await stageCtcTracks(
+      { jobId: this.request.id, folderName, host, tracks: this.request.tracks, localAudio: this.request.localAudio },
+      held.mediaRoot, { signal: this.request.signal, removeOnFailure: this.request.kind === "probe" });
+    Object.assign(held, staged, { unstaged: false });
+    if (this.request.kind === "probe") this.probeStaging.push({ host, jobMediaRoot: held.jobMediaRoot });
+  }
+
   async take() {
+    // Only the first take may skip staging, and only on the first host.
+    const unstagedOn = !this.taken && this.request.unstagedFirstHost ? this.request.firstHost : undefined;
+    this.taken = true;
     try {
       this.held = await takeHost(this.request, this.tried, this.diagnostics,
-        this.request.kind === "job" ? (hostId, jobMediaRoot) => { this.staged[hostId] = jobMediaRoot; } : undefined);
+        this.request.kind === "job" ? (hostId, jobMediaRoot) => { this.staged[hostId] = jobMediaRoot; } : undefined, unstagedOn);
     } catch (error) {
       if (error instanceof PoolBusyError) error.stagedHosts = this.stagedHosts();
       // No lease is handed out when the first take fails: the hosts staging began on travel with the error.
@@ -777,6 +843,12 @@ class PoolWorkerLease implements WorkerLease {
       throw error;
     }
     this.tried = [...this.held.triedHosts];
+    if (this.held.unstaged) {
+      // Nothing was staged now: the assignment keeps naming the folder an earlier run staged there, which the
+      // worker's job may be reading. No staged audio is handed out until `stageTracks`.
+      this.held.jobMediaRoot = this.staged[this.held.hostId] ?? "";
+      return;
+    }
     this.staged[this.held.hostId] = this.held.jobMediaRoot;
     const host = getAlignmentPoolCoordinator().hostById(this.held.hostId);
     if (this.request.kind === "probe" && host) this.probeStaging.push({ host, jobMediaRoot: this.held.jobMediaRoot });
@@ -824,13 +896,13 @@ function startingTriedHosts(request: WorkerLeaseRequest): PoolHostId[] {
   // A stored staging on a host that left the pool (the Steam Deck, #279) starts a fresh pair of attempts.
   const fromAssignment = stored?.jobMediaRoot && !coord.hostById(stored.hostId) ? [] : stored?.triedHosts ?? [];
   const tried = [...fromAssignment, ...(request.triedHosts ?? [])];
-  return [...new Set(tried)].filter((id) => !!coord.hostById(id));
+  return [...new Set(tried)].filter((id) => !!coord.hostById(id) && id !== request.firstHost);
 }
 
-/** Takes the first healthy untried host with a free slot and stages the tracks on it. */
+/** Takes the first healthy untried host with a free slot and stages the tracks on it (not on `unstagedOn`). */
 async function takeHost(
   request: WorkerLeaseRequest, triedHosts: PoolHostId[], diagnostics: PoolDiagnostics,
-  onStaging?: (hostId: PoolHostId, jobMediaRoot: string) => void,
+  onStaging?: (hostId: PoolHostId, jobMediaRoot: string) => void, unstagedOn?: PoolHostId,
 ): Promise<HeldHost> {
   const coord = getAlignmentPoolCoordinator();
   const probe = request.kind === "probe";
@@ -839,7 +911,9 @@ async function takeHost(
   const exclude = (id: PoolHostId) => { if (probe) attempted.push(id); };
   let busy = false;
   const roundOver = () => !probe && attempted.length >= JOB_HOST_ATTEMPTS;
-  for (const host of coord.listHosts()) {
+  const hosts = coord.listHosts();
+  const first = hosts.filter((host) => host.id === request.firstHost);
+  for (const host of [...first, ...hosts.filter((host) => !first.includes(host))]) {
     signal?.throwIfAborted();
     if (roundOver()) break;
     const id = host.id;
@@ -855,6 +929,12 @@ async function takeHost(
     }
     if (request.mode === "anchored" && health.ctc.passageReady !== true) {
       recordPoolError(diagnostics, id, "health", "passage discovery is not ready");
+      exclude(id);
+      continue;
+    }
+    const bookProblem = request.book ? bookJobsProblem(health) : null;
+    if (bookProblem) {
+      recordPoolError(diagnostics, id, "health", bookProblem);
       exclude(id);
       continue;
     }
@@ -874,6 +954,12 @@ async function takeHost(
       busy = true;
       continue;
     }
+    const held = { hostId: id, attempt: attempted.length + 1, workerUrl: host.workerUrl, triedHosts: [...attempted, id],
+      device: health.ctc.device, precision: health.ctc.precision, mediaRoot: health.mediaRoot };
+    if (id === unstagedOn) {
+      clearHostError(diagnostics, id);
+      return { ...held, jobMediaRoot: "", stagedAudio: {}, unstaged: true };
+    }
     try {
       // Chosen now, under the host and recording leases: a name the sweep retired is never used again (#421).
       const folderName = stagingName(request.id);
@@ -883,8 +969,7 @@ async function takeHost(
         { jobId: request.id, folderName, host, tracks: request.tracks, localAudio: request.localAudio },
         health.mediaRoot, { signal, removeOnFailure: probe });
       clearHostError(diagnostics, id);
-      return { hostId: id, attempt: attempted.length + 1, ...staged, workerUrl: host.workerUrl,
-        triedHosts: [...attempted, id], device: health.ctc.device, precision: health.ctc.precision };
+      return { ...held, ...staged, unstaged: false };
     } catch (error) {
       coord.release(id, request.id, request.recordingId);
       if (signal?.aborted) throw signal.reason;

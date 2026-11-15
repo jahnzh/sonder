@@ -791,6 +791,8 @@ export function savedHardcoverSeries(userId: number, id: number, options?: {
               .length,
             rejected: members.filter((member) => member.status === "rejected")
               .length,
+            // A member whose check against the narration is still running (#325).
+            pending: members.filter((member) => member.status === "pending").length,
           }
         : null;
     return {

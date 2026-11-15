@@ -666,6 +666,9 @@ test("a pool-jobs folder that resolves elsewhere after the listing fails the rem
 
 test("a job row whose pool is a string or whose data is not JSON does not break the listing and can be deleted", async () => {
   const job = await finishedJob();
+  // The scheduler admits again right after a run ends and reads every job row: that pending admit is dropped
+  // before a row it cannot read is written.
+  resetAlignmentRunnerForTests();
   const setData = (data: string) => sqlite.prepare("UPDATE alignment_jobs SET data=? WHERE id=?").run(data, job.id);
   setData(JSON.stringify({ id: job.id, status: "error", pool: "broken" }));
   assert.equal(entry(await sweep.listPoolStaging(), "wsl", job.id).action, "unknown", "no staging record: never removed");
