@@ -498,7 +498,7 @@ that. `duration` is used only for a track whose duration ffprobe cannot read.
 ### Progress
 
 ```json
-{"jobId": "m-lhod-1794710439", "engine": "ctc-wav2vec2-base-960h-torchaudio-2.8-book-v1",
+{"jobId": "m-lhod-1794710439", "engine": "ctc-wav2vec2-base-960h-torchaudio-2.8-book-v2",
  "state": "encoding", "recordingId": "lhod", "createdAt": 1794710439.83, "updatedAt": 1794710473.52,
  "progress": {"tracksTotal": 1, "tracksDecoded": 1, "tracksEncoded": 0, "encodeQueuePosition": 0},
  "stageTimings": {"identity": 0.39, "decode": 33.29, "encodeQueue": 0.00004},
@@ -538,8 +538,8 @@ the current wait has lasted; then `groupsTotal`, `groupsDone` and
             "section": 7, "first": 415, "last": 427, "title": "We Need To Talk About Fifty-Five"},
            {"kind": "extra-audio", "trackId": "torbox-128690185-1", "start": 6111.6625, "end": 6731.4825},
            {"kind": "unmatched-text", "section": 1, "title": "Section 2"}],
- "textMatch": {"score": 0.2915, "threshold": 0.1, "matches": true, "samples": 24, "speechSamples": 24,
-               "minimum": 0.0, "maximum": 0.7083, "samplesOver10Percent": 18, "wordHit": 0.9234},
+ "textMatch": {"score": 0.4351, "threshold": 0.1, "matches": true, "samples": 24, "speechSamples": 24,
+               "minimum": 0.0, "maximum": 0.8125, "samplesOver10Percent": 18, "wordHit": 0.9234},
  "tracks": [{"id": "torbox-128690185-1", "decodedSeconds": 31673.922, "containerSeconds": 31673.9,
              "differenceSeconds": 0.022, "durationOk": true, "ranges": 18}],
  "stats": {"chainMapped": 2268, "leftoverMapped": 1187, "groups": 30, "groupStartsSeconds": [0.003, 720.003],
@@ -683,18 +683,23 @@ within 0.25 s.
   the same margin a window keeps uncommitted. A sentence cut by a group end
   therefore comes from the neighbouring group, where it is whole.
 * **Text-match check** (#403, `book_match.py`). After encoding and before
-  anything is aligned, 24 evenly spaced 60 s stretches of the job's own
-  emissions (two minutes away from each end) are decoded greedily. The score
-  is the median share of their word 4-grams found anywhere in the ebook,
-  counting only stretches with at least 20 heard words.
-  Below `book_match.MATCH_THRESHOLD` (0.10) the job ends with `text_mismatch`.
-  Measured on the 2026-11-14 set: matching pairings 0.29 (*Antimemetics*, a
-  rewritten edition that matches in part) and 0.51 to 0.69 (the other 12);
-  mismatches 0.000 (*Snow Crash*'s non-English ebook, *Left Hand*'s text on
-  *Hydrogen Sonata*'s audio), 0.014 (*Matter*: the audio is another book) and
-  0.029 (DCC 2's text on DCC 1's audio). With no stretch of speech at all the
-  check does not decide; the alignment then maps nothing (`unsynced`). It takes
-  well under a second; it keeps no text.
+  anything is aligned, up to 24 evenly spaced 60 s stretches of the job's own
+  emissions are decoded greedily: 24 on a recording of 28 minutes or more, two
+  minutes away from each end; a shorter recording keeps a tenth of its length
+  at each end and gets as many stretches as fit side by side (3 on 4 minutes),
+  so a spoken introduction is never the whole check; under 75 s, the whole
+  recording is one stretch. The score is the median share of their word
+  4-grams found anywhere in the ebook, whose 4-grams run across sentence
+  boundaries as the heard ones do, counting only stretches with at least 20
+  heard words. Below `book_match.MATCH_THRESHOLD` (0.10) the job ends with
+  `text_mismatch`. Measured on the 2026-11-14 set: matching pairings 0.435
+  (*Antimemetics*, a rewritten edition that matches in part) and 0.655 to
+  0.902 (the other 12); mismatches 0.000 (*Snow Crash*'s non-English ebook,
+  *Left Hand*'s text on *Hydrogen Sonata*'s audio), 0.016 (*Matter*: the audio
+  is another book) and 0.031 (DCC 2's text on DCC 1's audio). With no stretch
+  of speech at all (also a recording under 75 s with fewer than 20 heard
+  words) the check does not decide; the alignment then maps nothing
+  (`unsynced`). It takes well under a second; it keeps no text.
 * **Leftover pass** (#403, `book_align.leftover_pass`). After the chain's
   groups are merged: every unmapped audio stretch of at least 120 s is located
   every 120 s against unmapped text runs of at least 20 sentences only. Probes
@@ -773,7 +778,14 @@ writes, from the probed durations and the files on disk:
   concatenated copy of all emissions;
 * after decoding: the emissions still to be written and the book copy, exactly;
 * before the book copy is written: its size;
-* always: 16 MiB plus 1 KiB per sentence for state, plan, group and result files.
+* before the result is written: its exact size and its temporary copy (the
+  JSON is counted as a stream first, then written); a result that cannot fit
+  fails the job with `error` "The book's result is … bytes of JSON and was not
+  written: …", and nothing is written. Its passages and flags repeat their
+  section's title (as the server stores them), so no per-sentence estimate
+  bounds it. The result is written once;
+* always (until the result): 16 MiB plus 1 KiB per sentence for the state,
+  plan and group files.
 
 `start` reserves the request and state files it writes (the request's exact
 size plus 64 KiB): a request that does not fit next to the other jobs is

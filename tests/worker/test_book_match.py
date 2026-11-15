@@ -7,11 +7,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "worker"))
 import book_match
 
-# The measured scores of the 2026-11-14 set (proto-d-e-results/books/*/match-*.json: gram4_hit_median).
-MATCHING = {"antimemetics": 0.2915, "dcc4": 0.5076, "ref33h": 0.5271, "afire": 0.5358, "dcc1": 0.5427,
-            "dcc2": 0.5438, "hydrogen": 0.5619, "dorian-546d8eee": 0.5767, "dorian-6c0bc016": 0.6090,
-            "phlebas-b148638d": 0.6166, "phlebas-6d0150c7": 0.6203, "dorian-3b8420b8": 0.6563, "lhod": 0.6937}
-MISMATCHED = {"snowcrash": 0.0, "wrong-lhod-on-hydrogen": 0.0, "matter (x5)": 0.0138, "wrong-dcc2-on-dcc1": 0.0291}
+# The measured scores of the 2026-11-14 set with this check (#403 fix round 1, WSL GPU, the job's own decode and
+# encode, `artifacts/issue-403-fix-r1/score_pairs.py`): 4-grams across sentence boundaries.
+MATCHING = {"antimemetics": 0.4351, "ref33h": 0.6553, "hydrogen": 0.6934, "dcc4": 0.7053,
+            "phlebas-6d0150c7": 0.7154, "dcc2": 0.7276, "dcc1": 0.7367, "phlebas-b148638d": 0.7371,
+            "afire": 0.7548, "dorian-546d8eee": 0.7866, "dorian-6c0bc016": 0.7955, "lhod": 0.8213,
+            "dorian-3b8420b8": 0.9018}
+MISMATCHED = {"snowcrash": 0.0, "wrong-lhod-on-hydrogen": 0.0, "matter-413ac442": 0.0163, "matter-7693a908": 0.0163,
+              "matter-bcf7bc2c": 0.0163, "matter-c0852b41": 0.0163, "matter-c33d9257": 0.0163,
+              "wrong-dcc2-on-dcc1": 0.0309}
 
 
 def vocabulary(seed, size=3000):
@@ -36,8 +40,9 @@ class Check(unittest.TestCase):
     def test_the_threshold_separates_every_measured_pairing(self):
         self.assertGreater(min(MATCHING.values()), book_match.MATCH_THRESHOLD)
         self.assertLess(max(MISMATCHED.values()), book_match.MATCH_THRESHOLD)
-        # A factor of about three from each side.
-        self.assertGreater(min(MATCHING.values()) / book_match.MATCH_THRESHOLD, 2.5)
+        self.assertEqual((len(MATCHING), len(MISMATCHED)), (13, 8))
+        # A factor of three or more from each side.
+        self.assertGreater(min(MATCHING.values()) / book_match.MATCH_THRESHOLD, 4)
         self.assertGreater(book_match.MATCH_THRESHOLD / max(MISMATCHED.values()), 3)
 
     def test_the_book_read_with_recognition_errors_matches(self):

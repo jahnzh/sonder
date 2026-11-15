@@ -19,15 +19,20 @@ EDGE_SECONDS = 120
 EDGE_SHARE = 10
 # A sample with fewer heard words is not speech (music, silence) and does not count.
 MIN_WORDS = 20
-# The median 4-gram hit below which the ebook is not the recording's text. Measured on the 2026-11-14 set
-# (PROTO-D-E-BOOKS.md, `proto-d-e-results/books/*/match-*.json`, 24 samples of 60 s each):
-#   matching pairings  0.29 (Antimemetics, a later rewritten edition that only partly matches), then
-#                      0.51 to 0.69 (DCC 1, 2 and 4, Earth Afire, Hydrogen Sonata, Left Hand of Darkness,
-#                      Consider Phlebas x2, Dorian Gray x3, the 33 h book);
+# The median 4-gram hit below which the ebook is not the recording's text. Measured with this check (4-grams
+# across sentence boundaries; every recording is over 8 h, so 24 samples of 60 s) on the 2026-11-14 set, each
+# recording encoded by the job's own stages on WSL's GPU (#403 fix round 1, `score_pairs.py`):
+#   matching pairings  0.435 (Antimemetics, a later rewritten edition that only partly matches), then
+#                      0.655 to 0.902 (ref33h 0.655, lhod 0.821, DCC 1 0.737, DCC 2 0.728, DCC 4 0.705,
+#                      Earth Afire 0.755, Hydrogen Sonata 0.693, Consider Phlebas 0.715 and 0.737,
+#                      Dorian Gray 0.787, 0.796 and 0.902);
 #   mismatches         0.000 (Snow Crash: a non-English ebook; Left Hand's text on Hydrogen Sonata's audio),
-#                      0.014 (Matter: the audio is another book, all five ebooks),
-#                      0.029 (DCC 2's text on DCC 1's audio: same series, same narrator).
-# 0.10 is about the geometric middle of 0.029 and 0.29 (0.092), rounded up: a factor of three from each side.
+#                      0.016 (Matter: the audio is another book, all five ebooks),
+#                      0.031 (DCC 2's text on DCC 1's audio: same series, same narrator).
+# (The first version, 4-grams within each sentence: matches 0.29 to 0.71, mismatches 0 to 0.029.)
+# 0.10 stays: a factor of 3.2 above the highest mismatch and 4.4 below the lowest match. The geometric middle
+# is 0.116; the threshold stays nearer the mismatches because refusing a real book loses its map, while a
+# wrong book let through only runs an alignment that maps little and validates less.
 MATCH_THRESHOLD = 0.10
 # The result's `outcome` when the score is below MATCH_THRESHOLD; the job's `state` is still `done`.
 TEXT_MISMATCH = "text_mismatch"
@@ -91,7 +96,8 @@ def check(greedy_words, frames, sentence_words, should_stop=None):
     """Run the check: `greedy_words(lo, hi)` gives the heard words of frames [lo, hi).
 
     A recording with no speech sample at all (`score` None) is not called a mismatch: the alignment
-    then decides (it maps nothing, so the outcome is `unsynced`)."""
+    then decides (it maps nothing, so the outcome is `unsynced`). So is a recording under 75 s whose one
+    sample (all of it) holds fewer than MIN_WORDS heard words."""
     grams, vocabulary = book_vocabulary(sentence_words)
     heard = []
     for lo, hi in sample_ranges(frames):
