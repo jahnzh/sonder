@@ -1,6 +1,6 @@
-import { useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Check, Minus, Plus, Timer } from "lucide-react";
-import { useBookSpeed, usePlayer } from "../player";
+import { useBookSpeed, useHasOwnSpeed, usePlayer } from "../player";
 import type { Book } from "../types";
 import {
   SPEED_MAX,
@@ -23,6 +23,7 @@ export function PlaybackOptions({
 function SpeedOptions({ book }: { book?: Book | null }) {
   const p = usePlayer();
   const speed = useBookSpeed(book);
+  const own = useHasOwnSpeed(book);
   const set = (value: number) => p.setSpeed(value, book?.recordingId);
   return (
     <OptionMenu
@@ -79,6 +80,19 @@ function SpeedOptions({ book }: { book?: Book | null }) {
               {speed === value && <Check size={15} />}
             </button>
           ))}
+          {own.recordingId && (
+            <button
+              className="speed-default"
+              aria-pressed={own.has === false}
+              onClick={() => {
+                p.resetSpeed(own.recordingId!);
+                close();
+              }}
+            >
+              {`Use default · ${formatSpeed(p.defaultSpeed)}×`}
+              {own.has === false && <Check size={15} />}
+            </button>
+          )}
         </>
       )}
     </OptionMenu>
@@ -132,6 +146,12 @@ function OptionMenu({
   children: (close: () => void) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const menu = useRef<HTMLDivElement>(null);
+  const [shift, setShift] = useState<{ x: number; y: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!open || !menu.current) return setShift(null);
+    setShift(menuShift(menu.current));
+  }, [open]);
   return (
     <div className="player-option">
       <button
@@ -149,7 +169,11 @@ function OptionMenu({
             aria-label="Close options"
             onClick={() => setOpen(false)}
           />
-          <div className={`option-menu ${className}`}>
+          <div
+            ref={menu}
+            className={`option-menu ${className}`}
+            style={shift ? { translate: `${shift.x}px ${shift.y}px` } : undefined}
+          >
             <span className="menu-title">{title}</span>
             {children(() => setOpen(false))}
           </div>
@@ -157,4 +181,35 @@ function OptionMenu({
       )}
     </div>
   );
+}
+/**
+ * How far to move an open menu so it stays inside the area that shows it: the
+ * viewport, cut by any scrolling ancestor such as Now Playing. A centred menu
+ * over a button near the edge of a phone screen otherwise starts off-screen.
+ */
+function menuShift(el: HTMLElement, margin = 8) {
+  let left = 0,
+    top = 0,
+    right = window.innerWidth,
+    bottom = window.innerHeight;
+  for (let node = el.parentElement; node; node = node.parentElement) {
+    const style = getComputedStyle(node);
+    if (style.overflowX === "visible" && style.overflowY === "visible") continue;
+    const box = node.getBoundingClientRect();
+    left = Math.max(left, box.left);
+    top = Math.max(top, box.top);
+    right = Math.min(right, box.right);
+    bottom = Math.min(bottom, box.bottom);
+  }
+  const box = el.getBoundingClientRect();
+  const fit = (start: number, end: number, from: number, to: number) =>
+    start < from + margin
+      ? from + margin - start
+      : end > to - margin
+        ? -Math.min(end - (to - margin), Math.max(0, start - (from + margin)))
+        : 0;
+  return {
+    x: Math.round(fit(box.left, box.right, left, right)),
+    y: Math.round(fit(box.top, box.bottom, top, bottom)),
+  };
 }

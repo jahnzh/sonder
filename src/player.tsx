@@ -67,6 +67,10 @@ type PlayerState = {
   /** The device-wide speed from before per-recording speeds; applies until a default is saved. */
   deviceSpeed: number | null;
   speedOf: (recordingId: string | undefined) => Promise<number>;
+  /** The recording's own speed on this device, or null when it uses the default. */
+  ownSpeedOf: (recordingId: string) => Promise<number | null>;
+  /** The recording the player's speed belongs to: the book in the player, else the one it would resume. */
+  speedRecordingId: string | undefined;
   /** Changes whenever a saved speed changes. */
   speedRevision: number;
   volume: number;
@@ -96,6 +100,8 @@ type PlayerState = {
   restoreJump: (entry: PositionEntry) => void;
   /** Without a recording id, sets the speed of the book in the player. */
   setSpeed: (n: number, recordingId?: string) => void;
+  /** Removes a recording's own speed so it plays at the default again. */
+  resetSpeed: (recordingId: string) => void;
   setVolume: (n: number) => void;
   setSleep: (n: number | null) => void;
   next: () => void;
@@ -181,6 +187,7 @@ export function PlayerProvider({
     speedMemory({
       get: (key) => localDB.preferences.get(key),
       put: (row) => localDB.preferences.put(row),
+      delete: (key) => localDB.preferences.delete(key),
     }),
   );
   const [deviceSpeed, setDeviceSpeed] = useState<number | null>(null);
@@ -1061,6 +1068,12 @@ export function PlayerProvider({
     void speeds.remember(id, n);
     setSpeedRevision((revision) => revision + 1);
   };
+  const resetSpeed = (recordingId: string) => {
+    void speeds.forget(recordingId);
+    if (recordingId === (state.current.book ?? fallbackRef.current)?.recordingId)
+      void speedFor(recordingId).then(applyRate);
+    setSpeedRevision((revision) => revision + 1);
+  };
   const setVolume = (n: number) => {
     audio.current.volume = n;
     setVolumeState(n);
@@ -1082,6 +1095,8 @@ export function PlayerProvider({
         defaultSpeed: resolveSpeed({ preferred: preferredSpeed, legacy: deviceSpeed }),
         deviceSpeed,
         speedOf: speedFor,
+        ownSpeedOf: speeds.own,
+        speedRecordingId: speedTarget,
         speedRevision,
         volume,
         sleep,
@@ -1101,6 +1116,7 @@ export function PlayerProvider({
         undoJump,
         restoreJump,
         setSpeed,
+        resetSpeed,
         setVolume,
         setSleep,
         next,
@@ -1133,4 +1149,22 @@ export function useBookSpeed(book: Pick<Book, "recordingId"> | null | undefined)
   }, [id, live, speedOf, defaultSpeed, speedRevision]);
   if (live) return p.speed;
   return saved?.id === id ? saved.speed : defaultSpeed;
+}
+/** Whether a book's recording has a speed of its own on this device (undefined while loading). */
+export function useHasOwnSpeed(book: Pick<Book, "recordingId"> | null | undefined) {
+  const p = usePlayer();
+  const id = book?.recordingId ?? p.speedRecordingId;
+  const [own, setOwn] = useState<{ id: string; has: boolean } | null>(null);
+  const { ownSpeedOf, speedRevision } = p;
+  useEffect(() => {
+    if (!id) return;
+    let current = true;
+    void ownSpeedOf(id).then((speed) => {
+      if (current) setOwn({ id, has: speed !== null });
+    });
+    return () => {
+      current = false;
+    };
+  }, [id, ownSpeedOf, speedRevision]);
+  return { recordingId: id, has: own && own.id === id ? own.has : undefined };
 }
