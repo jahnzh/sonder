@@ -148,6 +148,64 @@ class BackgroundSlots(unittest.TestCase):
                 pass
         self.assertEqual(quiet, [], "no report when the slot is free at once")
 
+    def test_a_failing_wait_report_neither_leaks_the_slot_nor_reaches_the_batch(self):
+        # The review's reproduction: a window request holds the gate, the book's batch waits, and its
+        # wait report (a state.json write) raises once the batch has the slot. The batch still runs, the
+        # slot is freed, and the next window request is served at once, not after WINDOW_WAIT_MAX_S.
+        for failing in (False, True):  # the report of the wait's end (the review's case), then of its start
+            gate = Gate(1)
+            ran, errors = [], []
+
+            def report(waiting, failing=failing):
+                if waiting is failing:
+                    raise OSError(28, "No space left on device")
+
+            def book():
+                try:
+                    with gate.hold_background(on_wait=report, poll=0.01):
+                        ran.append(gate.background_active)
+                except Exception as error:  # noqa: BLE001 - the test reports what reached the batch
+                    errors.append(error)
+
+            with fast_rules(), mock.patch("builtins.print"):
+                with gate.hold():
+                    thread = threading.Thread(target=book)
+                    thread.start()
+                    time.sleep(0.1)
+                thread.join(2)
+                self.assertFalse(thread.is_alive())
+                self.assertEqual((errors, ran), ([], [1]), f"the batch runs (report {failing} failed)")
+                self.assertEqual(gate.background_active, 0, "the batch's slot is free again")
+                started = time.monotonic()
+                with gate.hold():
+                    pass
+                self.assertLess(time.monotonic() - started, 0.5, "the next window request is not held up")
+
+    def test_the_slot_is_freed_on_every_exit_after_it_was_taken(self):
+        gate = Gate(1)
+
+        def report(waiting):
+            if not waiting:  # after the slot was taken
+                raise KeyboardInterrupt()  # not an Exception: it reaches the caller, but the slot is freed
+
+        caught = []
+
+        def book():
+            try:
+                with gate.hold_background(on_wait=report, poll=0.01):
+                    pass
+            except KeyboardInterrupt:
+                caught.append(True)
+
+        with fast_rules():
+            with gate.hold():
+                thread = threading.Thread(target=book)
+                thread.start()
+                time.sleep(0.05)
+            thread.join(2)
+        self.assertEqual(caught, [True])
+        self.assertEqual(gate.background_active, 0)
+
     def test_a_book_batch_waits_while_a_window_request_runs(self):
         gate = Gate(2)  # even with a free slot
         entered = threading.Event()

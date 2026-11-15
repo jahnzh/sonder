@@ -99,6 +99,15 @@ def worker_slots(env=None):
         return 1
     return value
 
+def _report_wait(on_wait, waiting):
+    """Call a background holder's wait report; its failure (a status write on a full disk) is only logged."""
+    if on_wait is None:
+        return
+    try:
+        on_wait(waiting)
+    except Exception as error:  # noqa: BLE001 - a report must never hold the gate or stop the batch
+        print(f"[gate] wait report failed: {error!r}", flush=True)
+
 class Gate:
     """The worker's job slots: up to `slots` requests at a time, with the oldest one's age and the last timeout visible.
 
@@ -179,30 +188,34 @@ class Gate:
     def hold_background(self, should_stop=None, poll=0.05, on_wait=None):
         """A slot for one unit of background work, after window requests (see the class). Waits; raises
         GateWaitStopped when `should_stop()` turns true while waiting. `on_wait(True)` is called when the
-        holder starts waiting and `on_wait(False)` when it gets the slot after a wait."""
+        holder starts waiting and `on_wait(False)` when it gets the slot after a wait (or stops waiting).
+        A report that fails is logged and ignored: it never reaches the holder, and the slot is freed on
+        every exit once it was taken, so a failed status write cannot keep window requests out."""
         token = object()
         waited = False
+        taken = False
         try:
-            while True:
-                with self._lock:
-                    now = self._clock()
-                    if self._background_may_start(now):
-                        self._background[token] = now
-                        break
-                if should_stop is not None and should_stop():
-                    raise GateWaitStopped()
-                if not waited:
-                    waited = True
-                    if on_wait is not None:
-                        on_wait(True)
-                time.sleep(poll)
-        finally:
-            if waited and on_wait is not None:
-                on_wait(False)
-        try:
+            try:
+                while True:
+                    with self._lock:
+                        now = self._clock()
+                        if self._background_may_start(now):
+                            self._background[token] = now
+                            taken = True
+                            break
+                    if should_stop is not None and should_stop():
+                        raise GateWaitStopped()
+                    if not waited:
+                        waited = True
+                        _report_wait(on_wait, True)
+                    time.sleep(poll)
+            finally:
+                if waited:
+                    _report_wait(on_wait, False)
             yield
         finally:
-            self._free(token)
+            if taken:
+                self._free(token)
 
     def _release_when_gone(self, process, token):
         try:
