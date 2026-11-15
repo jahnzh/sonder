@@ -156,3 +156,36 @@ test("r6#4: a regular user is not offered to create or change the shared Hardcov
   await expect(page.getByRole("button", { name: /Match on Hardcover/ })).toHaveCount(0);
   await page.unrouteAll({ behavior: "ignoreErrors" });
 });
+// #422: every refresh of the Hardcover state reset the sync form to the saved preferences. The settings reload
+// after a token save refreshes a second time, and under load that response landed after the mode was picked, so
+// "Save sync preferences" saved "off". The refresh here is faked so the test does not depend on the saved mode.
+test("a Hardcover refresh after picking a sync mode keeps the unsaved pick", async ({ page }) => {
+  await page.route("**/api/settings", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const real = await (await route.fetch()).json();
+    await route.fulfill({ json: { ...real, hardcoverConfigured: true } });
+  });
+  let pending = 0;
+  await page.route("**/api/hardcover", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const real = await (await route.fetch()).json();
+    await route.fulfill({ json: { ...real, configured: true, mode: "off", syncLists: true, pending } });
+  });
+  let saved: unknown = null;
+  await page.route("**/api/hardcover/config", async (route) => {
+    // Recorded, not saved: the server's preferences stay as they were for the other tests.
+    saved = route.request().postDataJSON();
+    await route.fulfill({ json: {} });
+  });
+  await page.goto("/#settings");
+  const mode = page.getByRole("combobox", { name: "Hardcover sync mode", exact: true });
+  await expect(mode).toBeEnabled();
+  await mode.selectOption("two-way");
+  pending = 7;
+  await page.evaluate(() => window.dispatchEvent(new Event("sonder:hardcover-changed")));
+  await expect(page.getByText(/7 queued/)).toBeVisible();
+  await expect(mode).toHaveValue("two-way");
+  await page.getByRole("button", { name: "Save sync preferences", exact: true }).click();
+  await expect.poll(() => saved).toEqual({ mode: "two-way", syncLists: true });
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+});

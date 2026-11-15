@@ -23,6 +23,7 @@ import {
 import { api, localDB, duration, isAdmin } from "../lib";
 import type { Book, HardcoverState, Progress } from "../types";
 import { workMediaStateLabel } from "../work-media-state";
+import { followSavedPreferences, type SyncPreferences } from "../hardcover-sync-draft";
 import { Dialog } from "./ui/dialog";
 import { usePlayer } from "../player";
 type Notify = (text: string, error?: boolean) => void;
@@ -219,11 +220,16 @@ export function HardcoverSyncSettings({
   useEffect(() => {
     void refresh();
   }, [configured, refresh]);
+  // The saved preferences the form last followed: a refresh that returns the same ones keeps an unsaved pick.
+  const followed = useRef<SyncPreferences | null>(null);
   useEffect(() => {
-    if (state) {
-      setMode(state.mode);
-      setLists(state.syncLists);
-    }
+    if (!state) return;
+    const saved = { mode: state.mode, syncLists: state.syncLists };
+    const next = followSavedPreferences({ mode, syncLists: lists }, followed.current, saved);
+    followed.current = saved;
+    setMode(next.mode);
+    setLists(next.syncLists);
+    // Only a new state is a reason to follow the server; the draft values are read, not watched.
   }, [state]);
   const run = async (action: "save" | "sync" | "test") => {
     setBusy(action);
@@ -288,7 +294,7 @@ export function HardcoverSyncSettings({
           aria-label="Hardcover sync mode"
           value={mode}
           onChange={(e) => setMode(e.target.value as HardcoverState["mode"])}
-          disabled={!configured}
+          disabled={!configured || !state}
         >
           <option value="off">Off · catalog and matching only</option>
           <option value="import">
@@ -304,7 +310,7 @@ export function HardcoverSyncSettings({
           type="checkbox"
           checked={lists}
           onChange={(e) => setLists(e.target.checked)}
-          disabled={!configured}
+          disabled={!configured || !state}
         />
         <span>Include my Hardcover lists</span>
       </label>
@@ -329,7 +335,7 @@ export function HardcoverSyncSettings({
       <div className="hardcover-sync-actions">
         <button
           className="button primary"
-          disabled={!configured || !!busy}
+          disabled={!configured || !state || !!busy}
           onClick={() => void run("save")}
         >
           {busy === "save" ? (
