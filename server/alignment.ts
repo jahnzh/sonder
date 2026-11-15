@@ -908,6 +908,15 @@ function stopForWorkerOutcome(job: AlignmentJob, metadata: WorkerMetadata) {
   store(job);
   return true;
 }
+/**
+ * A consensus job's terminal state reaches its member projections: a finished map regenerates them, and a
+ * rejected rebuild (also one that ends "language not supported", #379) shows its rejection on each member's card.
+ */
+async function finishConsensus(job: AlignmentJob) {
+  if (!job.ebookId.startsWith("set-consensus:")) return;
+  const { onConsensusAlignmentFinished } = await import("./ebook-set-consensus.ts");
+  await onConsensusAlignmentFinished(job.ebookId.slice("set-consensus:".length), job);
+}
 function finishWorkerOutcome(job: AlignmentJob) {
   if (!job.outcome || job.outcome === "error" || job.outcome === "language_not_supported") return;
   if (!job.intervals.length) job.outcome = "unsynced";
@@ -1175,7 +1184,7 @@ async function processAnchored(
           if (batch.results.length !== chunk.length)
             throw new Error("The alignment worker returned the wrong number of sample windows.");
           applyWorkerMetadata(job, batch, { engine: false, weight: chunk.length });
-          if (stopForWorkerOutcome(job, batch)) return;
+          if (stopForWorkerOutcome(job, batch)) return await finishConsensus(job);
           for (const [offset, item] of chunk.entries())
             applyAnchorSample(job, item.index, item.sample, batch.results[offset]);
           progress(job);
@@ -1215,7 +1224,7 @@ async function processAnchored(
       if (!current()) return;
       job = alignmentJob(job.id);
       applyWorkerMetadata(job, result, { engine: job.engine !== CTC_ENGINE });
-      if (stopForWorkerOutcome(job, result)) return;
+      if (stopForWorkerOutcome(job, result)) return await finishConsensus(job);
       applyAnchorSample(job, i, sample, result);
       progress(job);
       store(job);
@@ -1242,12 +1251,7 @@ async function processAnchored(
         job.unsyncedPassages = unsyncedPassages(book, []);
         job.warning = "The narration could not be matched reliably. The text remains unsynced.";
         store(job);
-        if (job.ebookId.startsWith("set-consensus:")) {
-          const { onConsensusAlignmentFinished } = await import(
-            "./ebook-set-consensus.ts"
-          );
-          await onConsensusAlignmentFinished(job.ebookId.slice("set-consensus:".length), job);
-        }
+        await finishConsensus(job);
         return;
       }
       job.status = "error";
@@ -1351,7 +1355,7 @@ async function processAnchored(
     });
     job = alignmentJob(job.id);
     applyWorkerMetadata(job, result);
-    if (stopForWorkerOutcome(job, result)) return;
+    if (stopForWorkerOutcome(job, result)) return await finishConsensus(job);
     const plan = job.anchoring!;
     if (!intervals.length)
       plan.flags.push({
@@ -1397,12 +1401,7 @@ async function processAnchored(
   job.warning =
     "Timings are estimated from sampled narration. Passages without matching narration are left unsynced.";
   store(job);
-  if (job.ebookId.startsWith("set-consensus:")) {
-    const { onConsensusAlignmentFinished } = await import(
-      "./ebook-set-consensus.ts"
-    );
-    await onConsensusAlignmentFinished(job.ebookId.slice("set-consensus:".length), job);
-  }
+  await finishConsensus(job);
   } finally {
     if (usingLocalFull)
       getAlignmentPoolCoordinator().localFullAlignmentFinished(

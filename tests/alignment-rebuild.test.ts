@@ -27,6 +27,7 @@ const {
   createAlignment, alignmentJob, putAlignmentJob, deleteAlignmentJob, processAlignments, stopAlignments,
   resetAlignmentRunnerForTests, alignmentSchedulerForTests, audioFingerprint, queueEngineRebuilds,
   alignmentRebuildScanForTests, autoQueueAlignmentForPair, listServedAlignmentJobs, holdRebuildPlansForTests,
+  resetAnchorBatchSupportForTests,
 } = await import("../server/alignment.ts");
 const { setEngineGenerationsForTests, rebuildRejection, REBUILD_MAX_COVERAGE_DROP } = await import("../server/alignment-rebuild.ts");
 const { consensusEbookId, publishProjectedMaps, syncEbookSetConsensus } = await import("../server/ebook-set-consensus.ts");
@@ -55,6 +56,8 @@ const held: Held[] = [];
 const requests: Held[] = [];
 /** When set, worker requests are answered at once instead of held. */
 let autoAnswer: ((entry: Held) => Response) | null = null;
+/** When set, the fake workers' health offers /anchor-batch. */
+let anchorBatch = false;
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async (input, init) => {
   const url = String(input);
@@ -63,7 +66,7 @@ globalThis.fetch = async (input, init) => {
   if (url.endsWith("/health"))
     return Response.json({ ready: true, busy: false, stuck: false, mediaRoot: join(temp, host),
       ctc: { engine, ready: true, device: host === "lisa" ? "cpu" : "cuda", precision: host === "lisa" ? "float32" : "float16",
-        anchorReady: true, passageReady: true } });
+        anchorReady: true, passageReady: true, ...(anchorBatch ? { anchorBatch: true } : {}) } });
   const request = JSON.parse(String(init?.body));
   const entry = { url, recordingId: String(request.recordingId), request } as Held;
   requests.push(entry);
@@ -1296,6 +1299,51 @@ test("a rejected consensus rebuild shows its rejection on each member's Reading 
   }
   assert.deepEqual(await queueEngineRebuilds(), { queued: 0, replanned: 0, projections: 0, skipped: 0, failed: 0 });
 });
+
+// The worker can answer "language not supported" while sampling (/anchor or /anchor-batch) or aligning (/align).
+for (const path of ["anchor", "anchor-batch", "align"] as const)
+  test(`a consensus rebuild that ends 'language not supported' (${path}) shows its rejection on each member's card (#379)`, async () => {
+    await reset();
+    const { rejectedRebuildReason } = await import("../src/reading-sync-controls.ts");
+    const name = `unsupported-${path}`;
+    const { consensusId, publishOld } = await ebookSet(name, [`${name}-1`, `${name}-2`]);
+    await publishOld(4);
+    assert.equal(projectionOf(`${name}-1`)!.intervals.length, 4);
+    assert.equal((await queueEngineRebuilds()).queued, 1);
+    anchorBatch = path === "anchor-batch";
+    resetAnchorBatchSupportForTests();
+    try {
+      autoAnswer = (entry) => {
+        if (path === "align" && entry.url.endsWith("/anchor")) return anchoredWorker(entry);
+        assert.ok(entry.url.endsWith(`/${path}`), `the ${path} path runs: ${entry.url}`);
+        const unsynced = (start: number) => ({ outcome: "unsynced", stageTimings: {}, match: null, start, text: "" });
+        return Response.json(path === "anchor-batch"
+          ? { engine, outcome: "language_not_supported", stageTimings: {},
+            results: entry.request.windows.map((window: { start: number }) => unsynced(window.start)) }
+          : path === "align" ? { engine, outcome: "language_not_supported", stageTimings: {}, elapsedSeconds: 1, intervals: [] }
+            : { engine, ...unsynced(entry.request.start), outcome: "language_not_supported" });
+      };
+      setPaused("alignment", false);
+      void processAlignments();
+      await until(() => !active(consensusId), "unsupported consensus rebuild", 10_000);
+      await until(() => !alignmentSchedulerForTests().running().includes(consensusId), "run to end");
+    } finally {
+      anchorBatch = false;
+      resetAnchorBatchSupportForTests();
+    }
+    const consensus = alignmentJob(consensusId);
+    assert.equal(consensus.outcome, "rejected", consensus.error ?? undefined);
+    assert.match(consensus.error ?? "", /does not support this language/);
+    for (const ebookId of [`${name}-1`, `${name}-2`]) {
+      const listed = await servedProjectionOf(ebookId);
+      assert.equal(listed.engine, aeneas, "the member keeps its projection");
+      assert.equal(listed.rebuild?.outcome, "rejected", `${ebookId} shows the rejection`);
+      assert.match(rejectedRebuildReason(listed) ?? "", /does not support this language/, "the card shows the reason");
+      const map = await app.inject(`/api/alignments/${listed.id}/map`);
+      assert.equal(map.statusCode, 200, map.body);
+      assert.equal(map.json().intervals.length, 4);
+    }
+  });
 
 test("manual anchor edits are refused while a kept published_map is served", async () => {
   await reset();
