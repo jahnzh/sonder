@@ -112,9 +112,12 @@ test(`Lyrics mode adds lines while scrolling by hand without moving the text (ov
       await expectBounded(page);
     }
     expect(await firstRendered(page)).toBeLessThan(start);
-    // And down again, past the last rendered line.
+    // And down again, past the last rendered line: as many wheels as it takes to reach the end of the box. The window
+    // holds about 30,000 px here, and the first wheel above moves the text or not (it races the jump to the page's
+    // sentence), so a fixed count of wheels is just enough on an idle machine and 500 px short on a loaded one.
     const end = Number(await lyricsOf(page).locator(".lyrics-line").last().getAttribute("data-line-index"));
-    for (let step = 0; step < 40 && Number(await lyricsOf(page).locator(".lyrics-line").last().getAttribute("data-line-index")) <= end; step++) {
+    const wheels = await lyricsOf(page).evaluate((box) => Math.ceil((box.scrollHeight - box.clientHeight - box.scrollTop) / 500));
+    for (let step = 0; step < wheels && Number(await lyricsOf(page).locator(".lyrics-line").last().getAttribute("data-line-index")) <= end; step++) {
       const line = await middleLine(page);
       const before = await topOf(line);
       await page.mouse.wheel(0, 500);
