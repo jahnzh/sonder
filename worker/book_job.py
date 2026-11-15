@@ -613,6 +613,7 @@ class WorkerStages:
     def decode_and_encode(self, job, session, should_stop):
         from book_audio import DecodeCancelled, decode_tracks, decoded_samples_bound, peak_bytes, plan_tracks
         from book_encode import EncodeCancelled, complete_emissions, emission_paths, encode_queue, encode_tracks
+        from deadline import GateWaitStopped
         tracks = job.request["tracks"]
         decoded_dir = job.folder / "tracks"
         emissions_dir = job.folder / "emissions"
@@ -679,12 +680,23 @@ class WorkerStages:
             try:
                 with queue.hold(job.key, should_stop):
                     job.timing("encodeQueue", time.monotonic() - waited)
-                    model = self.model_loader()
+                    gate = self.admission
+                    # The first load of the resident model holds the lock the window endpoints load it
+                    # under (ctc_acoustic.resident_model), so it is a unit of background work like a
+                    # batch: it starts only when no window request runs or waits, and a window request
+                    # that arrives meanwhile waits at the gate, with its bound, not on the model lock.
+                    if gate is None:
+                        model = self.model_loader()
+                    else:
+                        try:
+                            with gate.hold_background(should_stop, on_wait=job.gate_wait):
+                                model = self.model_loader()
+                        except GateWaitStopped:
+                            raise EncodeCancelled()
                     monitor = self.gpu_monitor() if self.gpu_monitor else None
                     if monitor is not None:
                         monitor.start()
                     try:
-                        gate = self.admission
                         stats = encode_tracks(model, work, emissions_dir, None, should_stop=should_stop,
                                               on_track=on_encoded,
                                               admit=None if gate is None else lambda: gate.hold_background(

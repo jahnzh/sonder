@@ -575,6 +575,29 @@ class Pipeline(PipelineFixture):
         self.assertTrue(during, "window requests ran between the book's batches")
         self.assertEqual(gate.active, 0)
 
+    def test_the_model_is_loaded_while_holding_the_gate_like_a_batch(self):
+        # Review round 5: the load holds the model lock the window endpoints need, so it must not run
+        # beside a window request that could then wait on that lock without the gate's bound.
+        import deadline
+        gate = deadline.Gate(1)
+        model = FakeModel()
+        jobs = self.jobs(model)
+        jobs.stages.admission = gate
+        seen = []
+
+        def loader():
+            seen.append((gate.background_active, gate.active))
+            return model
+
+        jobs.stages.model_loader = loader
+        with mock.patch.object(book_align, "plan_groups", lambda longform, should_stop=None:
+                               self.plan(longform.em.shape[0])):
+            jobs.start(self.request)
+            status = self.wait(jobs)
+        self.assertEqual(status["state"], "done", status)
+        self.assertEqual(seen, [(1, 0)], "the load held the gate's background slot")
+        self.assertEqual(gate.background_active, 0)
+
     def test_a_book_waiting_for_window_requests_reports_it_and_the_queue_stays_truthful(self):
         import deadline
         gate = deadline.Gate(1)
