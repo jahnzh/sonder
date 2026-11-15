@@ -30,6 +30,14 @@ _Avoid_: Ebook file
 Where a recording's bytes come from on this play: device copy, server copy, or the original stream.
 _Avoid_: Source (alone), copy
 
+**Media state**:
+Whether a user can listen to a work: missing, queued, failed or available. It is worked out from the work's tracks and the user's latest acquisition when it is read.
+_Avoid_: Download status, availability
+
+**Hold reason**:
+Why Sonder is not trying to acquire a missing work for now: it is unreleased, or the last search found nothing.
+_Avoid_: Block, skip reason
+
 ## Reading along
 
 **Page mode**:
@@ -127,6 +135,14 @@ _Avoid_: Stop, disable
 **Stuck**:
 A running activity whose progress and last update have not changed for longer than is normal for its kind.
 _Avoid_: Hung, frozen
+
+**Activity source**:
+A feature's own description of its background process and its current activities, which the Activity page collects.
+_Avoid_: Adapter, provider
+
+**Worker lease**:
+The right to use one alignment worker for one piece of work, with the recording's audio staged on it, until it is released.
+_Avoid_: Slot, dispatch (when the caller's view is meant)
 
 ## Accounts and access
 

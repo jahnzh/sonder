@@ -81,7 +81,42 @@ const CANDIDATES = [
 ];
 
 const named = (c: { agent: string; model: string; effort?: string | null } | null) => (c ? [c.agent, c.model, c.effort].filter(Boolean).join("/") : null);
-const policy = () => loadPolicy(POLICY_FILE);
+// The ranking, cap and share tests below run against this policy built in the test, not against the repository
+// file, so a later change of the owner's policy (who is allowed, how many run) does not rewrite their expectations.
+// It is the policy C of 2026-10-31: Claude Code reserved for the coordinator, caps 2 per bucket and 3 in total.
+const FIXTURE_POLICY_FILE = "fixture-routing-policy.json";
+const FIXTURE_POLICY = {
+  version: 1,
+  decidedAt: "2026-10-31",
+  decision: "Fixture policy C: Claude Code reserved, Argon excluded.",
+  allow: [
+    { agent: "cursor", models: ["auto", "composer-*"] },
+    { agent: "antigravity", models: ["claude-opus-5-5-high", "claude-sonnet-5-5-medium", "gemini-3.8-flash-high"] },
+    { agent: "codex", models: ["gpt-6.1-terra"] },
+    { agent: "opencode", models: ["nris/Qwen3.8-27B"] },
+  ],
+  reserve: [
+    { agent: "claude", models: ["*"], reason: "Claude Code's own subscription is the coordinator's fuel and is reserved for the coordinator" },
+    { agent: "antigravity", models: ["gemini-4-argon-high"], reason: "Gemini 4 Argon is excluded while its weekly bucket is exhausted" },
+  ],
+  order: ["antigravity", "codex", "cursor", "opencode"],
+  safetyFloorPercent: 10,
+  maxConcurrentPerBucket: 2,
+  maxConcurrentTotal: 3,
+  expiringBoost: 1.0,
+  reviewerOnDifferentPool: true,
+  maxBucketSharePerWorkerPercent: 25,
+  expectedBucketSharePercent: [
+    { agent: "antigravity", model: "claude-opus-5-5-high", percent: 35 },
+    { agent: "antigravity", model: "claude-sonnet-5-5-medium", percent: 12 },
+    { agent: "codex", model: "gpt-6.1-terra", percent: 10 },
+    { agent: "cursor", model: "auto", percent: 3 },
+    { agent: "antigravity", model: "gemini-3.8-flash-high", percent: 3 },
+  ],
+  bucketCostNotes: "fixture",
+};
+const policy = () => parsePolicy(JSON.stringify(FIXTURE_POLICY), FIXTURE_POLICY_FILE);
+const repoPolicy = () => loadPolicy(POLICY_FILE);
 
 async function withoutKey<T>(fn: () => Promise<T>): Promise<T> {
   const previous = process.env.TYPESAFE_API_KEY;
@@ -106,15 +141,11 @@ function choose(requirement: string, extra: Record<string, unknown> = {}, usageB
 
 // --- 1. Policy file
 
-test("the repository policy holds the owner's policy C", () => {
+test("the fixture policy keeps Claude Code reserved: the reserve mechanism lists it under excluded, not dropped", () => {
   const p = policy();
-  assert.equal(p.source, POLICY_FILE);
-  assert.equal(p.decidedAt, "2026-10-31");
-  assert.equal(p.safetyFloorPercent, 10);
+  assert.equal(p.source, FIXTURE_POLICY_FILE);
   assert.equal(p.maxConcurrentPerBucket, 2);
   assert.equal(p.maxConcurrentTotal, 3);
-  assert.equal(p.expiringBoost, 1);
-  assert.equal(p.reviewerOnDifferentPool, true);
   assert.deepEqual(p.order, ["antigravity", "codex", "cursor", "opencode"]);
   for (const allowed of [
     "cursor/auto",
@@ -126,9 +157,7 @@ test("the repository policy holds the owner's policy C", () => {
     "opencode/nris/Qwen3.8-27B",
   ]) {
     const slash = allowed.indexOf("/");
-    const agent = allowed.slice(0, slash);
-    const model = allowed.slice(slash + 1);
-    assert.equal(policyVerdict(p, { agent, model }), null, allowed);
+    assert.equal(policyVerdict(p, { agent: allowed.slice(0, slash), model: allowed.slice(slash + 1) }), null, allowed);
   }
   const claude = policyVerdict(p, { agent: "claude", model: "claude-opus-5-5" });
   assert.equal(claude.policy, "reserve");
@@ -139,6 +168,44 @@ test("the repository policy holds the owner's policy C", () => {
   const other = policyVerdict(p, { agent: "cursor", model: "gpt-9-other" });
   assert.equal(other.policy, "not-allowed");
   assert.match(other.reason, /not in the routing policy allow list/);
+});
+
+test("the repository policy holds the owner's policy C as updated on 2026-11-14 (Claude Max)", () => {
+  const p = repoPolicy();
+  assert.equal(p.source, POLICY_FILE);
+  assert.equal(p.decidedAt, "2026-11-14");
+  assert.match(p.decision, /Claude Code/);
+  assert.match(p.decision, /December/);
+  assert.equal(p.safetyFloorPercent, 10);
+  assert.equal(p.maxConcurrentPerBucket, 3);
+  assert.equal(p.maxConcurrentTotal, 3);
+  assert.equal(p.expiringBoost, 1);
+  assert.equal(p.reviewerOnDifferentPool, true);
+  assert.deepEqual(p.order, ["claude", "antigravity", "codex", "cursor", "opencode"]);
+  for (const allowed of [
+    "claude/claude-opus-5-5",
+    "claude/claude-sonnet-5-5",
+    "cursor/auto",
+    "cursor/composer-2.5",
+    "antigravity/claude-opus-5-5-high",
+    "antigravity/claude-sonnet-5-5-medium",
+    "antigravity/gemini-3.8-flash-high",
+    "codex/gpt-6.1-terra",
+    "opencode/nris/Qwen3.8-27B",
+  ]) {
+    const slash = allowed.indexOf("/");
+    assert.equal(policyVerdict(p, { agent: allowed.slice(0, slash), model: allowed.slice(slash + 1) }), null, allowed);
+  }
+  assert.equal(p.reserve.some((r: { agent: string }) => r.agent === "claude"), false, "no reserve entry for Claude Code");
+  assert.equal(policyVerdict(p, { agent: "claude", model: "claude-haiku-5-5" }).policy, "not-allowed", "only the two named Claude models are allowed");
+  const argon = policyVerdict(p, { agent: "antigravity", model: "gemini-4-argon-high" });
+  assert.equal(argon.policy, "reserve");
+  assert.match(argon.reason, /exhausted/);
+  assert.equal(expectedShareFor(p, { agent: "claude", model: "claude-opus-5-5" }), 10);
+  assert.equal(expectedShareFor(p, { agent: "claude", model: "claude-sonnet-5-5" }), 5);
+  assert.match(p.bucketCostNotes, /guess/);
+  const other = policyVerdict(p, { agent: "cursor", model: "gpt-9-other" });
+  assert.equal(other.policy, "not-allowed");
 });
 
 test("the policy is validated on load with errors that name the file and the field", () => {
@@ -265,7 +332,7 @@ test("ranking: highest pressure first, ties within 5% by the policy order, unkno
 
 // --- 3. Chooser (live reading of 2026-10-31)
 
-test("reasoning-heavy prefers antigravity/claude-opus-5-5-high and lists Claude Code as reserved, not dropped", async () => {
+test("with Claude Code reserved, reasoning-heavy prefers antigravity/claude-opus-5-5-high and lists Claude Code under excluded, not dropped", async () => {
   const r = await choose("reasoning-heavy");
   assert.equal(r.status, "recommended");
   assert.equal(named(r.recommendation), "antigravity/claude-opus-5-5-high");
@@ -279,7 +346,7 @@ test("reasoning-heavy prefers antigravity/claude-opus-5-5-high and lists Claude 
   assert.equal(claude.policy, "reserve");
   assert.match(claude.reason, /coordinator/);
   assert.ok(!r.rejected.some((c: { agent: string }) => c.agent === "claude"), "excluded rows are not rejections");
-  assert.equal(r.policy.source, POLICY_FILE);
+  assert.equal(r.policy.source, FIXTURE_POLICY_FILE);
 });
 
 test("standard chooses the highest pressure and names the runner-up's pressure, bucket, percent and reset", async () => {
@@ -341,6 +408,40 @@ test("a candidate outside the allow list is excluded with the policy reason", as
   const other = r.excluded.find((c: { model: string }) => c.model === "gpt-9-other");
   assert.equal(other.policy, "not-allowed");
   assert.match(other.reason, /not in the routing policy allow list/);
+});
+
+// Claude Max reading of 2026-11-14 on the repository policy: session 3% used, week 5% used.
+const MAX_PLAN = { claudeSession: { usedPercent: 3 }, claudeWeek: { usedPercent: 5 } };
+const chooseOnRepoPolicy = (requirement: string, extra: Record<string, unknown> = {}, usageByCandidate = liveUsage(MAX_PLAN)) => choose(requirement, { policy: repoPolicy(), ...extra }, usageByCandidate);
+
+test("on the repository policy Claude Code is chosen first for reasoning-heavy and standard work, and is no longer excluded", async () => {
+  const deep = await chooseOnRepoPolicy("reasoning-heavy");
+  assert.equal(deep.status, "recommended");
+  assert.equal(named(deep.recommendation), "claude/claude-opus-5-5/high");
+  assert.equal(deep.recommendation.binding.bucket, "Current week (all models)");
+  assert.equal(deep.policy.source, POLICY_FILE);
+  assert.ok(!deep.excluded.some((c: { agent: string }) => c.agent === "claude"), "Claude Code is allowed, not excluded");
+  assert.ok(deep.excluded.some((c: { model: string }) => c.model === "gemini-4-argon-high"), "Argon stays excluded");
+
+  const std = await chooseOnRepoPolicy("standard");
+  assert.equal(named(std.recommendation), "claude/claude-sonnet-5-5/medium");
+
+  // The smallest allowed tier still wins: Claude Code has no mechanical model, so mechanical work stays on Flash.
+  const mech = await chooseOnRepoPolicy("mechanical");
+  assert.equal(named(mech.recommendation), "antigravity/gemini-3.8-flash-high");
+});
+
+test("on the repository policy Antigravity's Claude models stay allowed beside Claude Code", async () => {
+  const r = await chooseOnRepoPolicy("reasoning-heavy", {}, liveUsage(MAX_PLAN, { "claude/claude-opus-5-5": "exhausted" }));
+  assert.equal(named(r.recommendation), "antigravity/claude-opus-5-5-high");
+  assert.equal(policyVerdict(repoPolicy(), { agent: "antigravity", model: "claude-sonnet-5-5-medium" }), null);
+});
+
+test("on the repository policy an override of Claude Code records no deviation", async () => {
+  const r = await chooseOnRepoPolicy("reasoning-heavy", { override: { agent: "claude", model: "claude-opus-5-5", effort: "high" }, overrideReason: "owner asked" });
+  assert.equal(r.status, "overridden");
+  assert.equal(r.decision.policyDeviation, null);
+  assert.doesNotMatch(modelChoiceSection(r), /^- Policy:/m);
 });
 
 test("an override still works and records that it deviates from the policy", async () => {
@@ -407,7 +508,7 @@ test("the planner chooses by pressure and reports it in each assignment", async 
   assert.match(t.assignment.reason, /burn pressure 11\.23%\/day/);
   assert.match(t.assignment.reason, /runner-up codex\/gpt-6\.1-terra\/max/);
   assert.ok(t.excluded.some((c: { agent: string }) => c.agent === "claude"));
-  assert.equal(p.policy.source, POLICY_FILE);
+  assert.equal(p.policy.source, FIXTURE_POLICY_FILE);
 });
 
 test("active workers count against the per-bucket cap, so the next pick moves to another bucket", async () => {

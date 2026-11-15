@@ -17,10 +17,12 @@ Run new or changed tests on a many-core host (WSL, lisa) before trusting a green
 
 Arm all four, then confirm each from evidence (a log line, a timestamp), not from having started it:
 
-- an inbox Monitor on the run (`scripts/orca/watch-inbox.sh` is single-shot; a Monitor loop over `node scripts/orca-check.mjs --run <run>` delivers every message and ends after 30 minutes);
+- an inbox Monitor on the run (`bash scripts/orca/watch-inbox.sh <run_id>` is single-shot; a Monitor loop over `node scripts/orca-check.mjs --run <run>` delivers every message and ends after 30 minutes);
 - a recurring heartbeat (CronCreate, every 10 minutes) whose first action appends a UTC line to `artifacts/orca/HEARTBEAT.log`, and which re-arms the Monitors and restarts the watchdog;
-- the independent watchdog: `nohup bash scripts/orca/watchdog.sh &` writes `artifacts/orca/WATCHDOG.log` every minute (heartbeat age, unread inbox, running checks) and flags `STALE-HEARTBEAT` after 25 minutes;
+- the independent watchdog: `nohup bash scripts/orca/watchdog.sh <run_id> &` writes `artifacts/orca/WATCHDOG.log` every minute (heartbeat age, unread inbox, running checks) and flags `STALE-HEARTBEAT` after 25 minutes;
 - PID-based waits for deploys and checks: save `$!` when launching and loop on `kill -0 "$PID"`. Never wait with a `ps | grep` of a process name: the launcher's shell matches it and the wait never ends.
+
+`watch-inbox.sh`, `watchdog.sh` and `check-workers.sh` (also through the `artifacts/orca/` wrappers, which pass their arguments on) take the run id as their first argument and exit 2 with a usage line (`usage: <script> <run_id>`) when it is missing or empty. None has a default run, so an unread count or worker list can never silently belong to an old run. Check the live workers of the run with `bash scripts/orca/check-workers.sh <run_id>`.
 
 Say "running" only with that evidence, and say what you did not verify.
 
