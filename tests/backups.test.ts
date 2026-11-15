@@ -537,6 +537,39 @@ test("a path replaced by another file while retention checks it is not deleted (
   assert.deepEqual(cleanup, { removed: [dailyBackupName(sixteen[1])], error: null });
 });
 
+test("a path replaced after the descriptor's last check is not deleted: the path must still name the checked inode", async () => {
+  const sixteen = days(16);
+  const dir = populated(sixteen);
+  const oldest = join(dir, dailyBackupName(sixteen[0]));
+  const content = readFileSync(oldest);
+  const ino = statSync(oldest).ino;
+  const probe = await open(join(temp, "db", "sonder.db"));
+  const proto = Object.getPrototypeOf(probe) as { stat: (...args: unknown[]) => Promise<unknown> };
+  await probe.close();
+  const original = proto.stat;
+  let stats = 0;
+  let cleanup!: Awaited<ReturnType<typeof backups.pruneDailyBackups>>;
+  proto.stat = async function (this: { fd: number }, ...args: unknown[]) {
+    const result = await original.apply(this, args);
+    // The second look at the oldest's descriptor is the last one before the path check: replace the name now.
+    if (fs.fstatSync(this.fd).ino === ino && (stats += 1) === 2) {
+      writeFileSync(`${oldest}.new`, content);
+      fs.renameSync(`${oldest}.new`, oldest);
+    }
+    return result;
+  };
+  try {
+    cleanup = await backups.pruneDailyBackups(dir);
+  } finally {
+    proto.stat = original;
+  }
+  assert.equal(stats, 2, "retention looked at the descriptor before and after the hash");
+  assert.ok(existsSync(oldest), "the file now at the name is not deleted");
+  assert.notEqual(statSync(oldest).ino, ino);
+  assert.deepEqual(cleanup, { removed: [dailyBackupName(sixteen[1])], error: null });
+  assert.ok(row(sixteen[0])!.disowned_at);
+});
+
 test("a published backup whose result could not be recorded is not reported done, and the retry adopts it", async () => {
   const dir = folder();
   const path = join(dir, "daily-2026-11-16.db");
