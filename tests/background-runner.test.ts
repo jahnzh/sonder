@@ -105,6 +105,35 @@ test("a failing tick does not stop its loop", { timeout: 10_000 }, async () => {
   assert.equal(ticks, 2);
 });
 
+test("a pause switch that cannot be read skips the round, reports the error and keeps the loop", { timeout: 10_000 }, async () => {
+  const clock = fakeTimers();
+  const errors: string[] = [];
+  let broken = true, ticks = 0;
+  const runner = new BackgroundRunner({
+    ...clock,
+    isHeld: () => { if (broken) throw new Error("pause read failed"); return false; },
+    onError: (id, error) => errors.push(`${id}: ${(error as Error).message}`),
+  });
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    // The immediate run and the timer both discard the promise: neither may reject.
+    runner.add({ id: "held-loop", intervalMs: 1_000, runAtStart: true, pausedBy: "acquisitions", tick: () => { ticks++; } });
+    clock.timers[0].fn();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(unhandled, []);
+    assert.equal(ticks, 0, "no work starts while the switch cannot be read");
+    assert.deepEqual(errors, ["held-loop: pause read failed", "held-loop: pause read failed"]);
+    broken = false;
+    assert.equal(await runner.tick("held-loop"), "ran");
+    assert.equal(ticks, 1);
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+    runner.stop();
+  }
+});
+
 test("closing the app clears every timer and runs the stop hooks in reverse start order", { timeout: 10_000 }, async () => {
   const clock = fakeTimers();
   const app = Fastify();

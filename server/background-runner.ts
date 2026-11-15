@@ -90,9 +90,16 @@ export class BackgroundRunner {
 
   private async run(loop: Loop): Promise<TickResult> {
     if (this.stopped) return "stopped";
-    const { pausedBy } = loop.process;
-    if (pausedBy && (this.options.isHeld ?? heldBySwitch)(pausedBy)) return "held";
     if (loop.running) return "busy";
+    const { pausedBy } = loop.process;
+    // Reading the pause switch reads the database: a failure there is an error of this round, like one in the
+    // tick. Nothing may escape, because the timer discards this promise and an unhandled rejection ends the server.
+    try {
+      if (pausedBy && (this.options.isHeld ?? heldBySwitch)(pausedBy)) return "held";
+    } catch (error) {
+      this.options.onError?.(loop.process.id, error);
+      return "held";
+    }
     loop.running = true;
     try {
       await loop.process.tick();
