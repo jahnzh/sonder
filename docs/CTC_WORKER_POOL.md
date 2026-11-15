@@ -60,8 +60,11 @@ server restart its stored staging is staged again.
 The caller releases the lease on every exit, saying how the work ended:
 
 - **finished** (ready, partial, failed for good, cancelled, or the job is gone):
-  the staged tracks are removed from every host the lease staged them on,
-  under a 30 second deadline (a passage locate's own deadline instead);
+  the staged tracks are removed from every host the job ever staged them on,
+  under a 30 second deadline (a passage locate's own deadline instead). A job
+  remembers those hosts in its stored assignment (`pool.stagedHosts`) across
+  requeues, Resume, a new plan of the same pair and server restarts, so a run
+  that finishes on another host, or ends without a lease, removes them too;
 - **retryable** (paused, waiting in the queue because every host is busy, or
   the run was interrupted, for example by a server stop): they are kept.
 

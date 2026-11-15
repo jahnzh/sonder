@@ -24,6 +24,7 @@ const schema = await import("../server/schema.ts");
 const { extractBook } = await import("../server/reader.ts");
 const { createAlignment, alignmentJob, putAlignmentJob, processAlignments, stopAlignments, resetAlignmentRunnerForTests,
   alignmentSchedulerForTests } = await import("../server/alignment.ts");
+const transition = await import("../server/alignment-transitions.ts");
 const pool = await import("../server/alignment-pool.ts");
 const { getAlignmentPoolCoordinator, resetAlignmentPoolCoordinator, setAlignmentPoolDepsForTests, acquireWorkerLease, PoolBusyError } = pool;
 const originalFetch = globalThis.fetch;
@@ -311,6 +312,7 @@ test("a paused, requeued or interrupted job keeps its staged tracks for the next
   const finished = await settled(requeued.id);
   assert.equal(finished.status, "partial", finished.error ?? undefined);
   assert.equal(finished.pool?.hostId, "lisa");
+  assert.deepEqual(fake.stagedFolders("wsl"), [], "the first run's copy on WSL is removed too");
   assert.deepEqual(fake.stagedFolders("lisa"), []);
 
   // Another server took the claim mid-request: this run stops, the job is not finished, the audio stays.
@@ -326,6 +328,81 @@ test("a paused, requeued or interrupted job keeps its staged tracks for the next
   } finally {
     endInterrupted(stale.id);
   }
+});
+
+test("a finished job removes what its earlier runs staged: after a resume, a stored row of older code, no lease, a new plan", async () => {
+  // Paused on WSL (its copy kept), resumed while WSL is down: it finishes on lisa and removes both copies.
+  let paused!: Awaited<ReturnType<typeof chapterJob>>;
+  fake.hosts.wsl.onRequest = (n) => { if (n === 1) putAlignmentJob({ ...alignmentJob(paused.id), status: "paused" }); };
+  paused = await chapterJob();
+  await settled(paused.id, ["paused"]);
+  assert.deepEqual(fake.stagedFolders("wsl"), [paused.id]);
+  fake.hosts.wsl.onRequest = undefined;
+  fake.hosts.wsl.down = true;
+  transition.resume(alignmentJob(paused.id));
+  await processAlignments();
+  const resumed = await settled(paused.id);
+  assert.equal(resumed.status, "partial", resumed.error ?? undefined);
+  assert.equal(resumed.pool?.hostId, "lisa");
+  assert.deepEqual(fake.stagedFolders("wsl"), []);
+  assert.deepEqual(fake.stagedFolders("lisa"), []);
+
+  // A row written before stagedHosts, staged on WSL by a server that stopped: the restaged run on lisa removes both.
+  install();
+  const old = await chapterJob();
+  await settled(old.id);
+  const row = alignmentJob(old.id);
+  const wslRoot = join(fake.hosts.wsl.root, "alignment", "pool-jobs", row.id);
+  mkdirSync(join(wslRoot, "tracks"), { recursive: true });
+  row.status = "queued";
+  row.sectionsDone = [];
+  row.intervals = [];
+  row.generation = "older-code";
+  row.pool = { hostId: "wsl", attempt: 1, jobMediaRoot: wslRoot, workerUrl: fake.hosts.wsl.workerUrl,
+    triedHosts: ["wsl"], stagedAudio: {} };
+  putAlignmentJob(row);
+  rmSync(join(process.env.MEDIA_ROOT!, "alignment", row.id), { recursive: true, force: true });
+  resetAlignmentRunnerForTests({ restart: true });
+  await processAlignments();
+  const restaged = await settled(old.id);
+  assert.equal(restaged.status, "partial", restaged.error ?? undefined);
+  assert.equal(restaged.pool?.hostId, "lisa");
+  assert.deepEqual(fake.stagedFolders("wsl"), []);
+  assert.deepEqual(fake.stagedFolders("lisa"), []);
+
+  // Requeued with its WSL copy kept; its next run finds no host and fails without a lease: the copy still goes.
+  install();
+  fake.hosts.wsl.failRequests = 1;
+  fake.hosts.lisa.busy = true;
+  const requeued = await chapterJob();
+  await settled(requeued.id, ["queued"]);
+  assert.deepEqual(fake.stagedFolders("wsl"), [requeued.id]);
+  assert.deepEqual(Object.keys(alignmentJob(requeued.id).pool?.stagedHosts ?? {}), ["wsl"]);
+  fake.hosts.lisa.busy = false;
+  fake.hosts.lisa.down = true;
+  await processAlignments();
+  const failed = await settled(requeued.id);
+  assert.equal(failed.status, "error");
+  assert.deepEqual(fake.stagedFolders("wsl"), []);
+
+  // Paused on WSL, then prepared again: the new plan keeps the job id and its folders, and removes the WSL copy.
+  install();
+  const { recordingId, trackId } = recording();
+  const book = await extractBook("lease-ebook");
+  const pairings = book.sections.map((section, i) => ({ section: section.index, trackId, start: 10 + i * 100, duration: 80 }));
+  let first!: Awaited<ReturnType<typeof chapterJob>>;
+  fake.hosts.wsl.onRequest = (n) => { if (n === 1) putAlignmentJob({ ...alignmentJob(first.id), status: "paused" }); };
+  first = await createAlignment("lease-ebook", recordingId, pairings, "chapters");
+  await settled(first.id, ["paused"]);
+  assert.deepEqual(fake.stagedFolders("wsl"), [first.id]);
+  fake.hosts.wsl.onRequest = undefined;
+  fake.hosts.wsl.down = true;
+  const prepared = await createAlignment("lease-ebook", recordingId, pairings, "chapters");
+  assert.equal(prepared.id, first.id);
+  const replanned = await settled(prepared.id);
+  assert.equal(replanned.status, "partial", replanned.error ?? undefined);
+  assert.deepEqual(fake.stagedFolders("wsl"), []);
+  assert.deepEqual(fake.stagedFolders("lisa"), []);
 });
 
 test("acquire gives a healthy host with the tracks staged and its worker address; release frees it", async () => {

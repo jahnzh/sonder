@@ -27,6 +27,11 @@ export type AlignmentJobPoolState = {
   workerUrl: string;
   triedHosts: PoolHostId[];
   stagedAudio: Record<string, string>;
+  /**
+   * Every host this job has staged its tracks on, and the folder there, across runs and requeues: a finished
+   * release removes them all. Rows written before it name only their current staging (`hostId`/`jobMediaRoot`).
+   */
+  stagedHosts?: Record<PoolHostId, string>;
 };
 
 /** One pool host, as the configuration describes it. */
@@ -409,12 +414,36 @@ export async function stageTracksLocally(
   return { jobMediaRoot, stagedAudio };
 }
 
-/** The assignment a job stores while it has no lease: no staging, the hosts it tried kept for failover. */
+/**
+ * The assignment a job stores while it has no lease: no current staging, the hosts it tried kept for failover, and
+ * the hosts it has staged on kept for the finished release.
+ */
 export function clearPoolStaging(job: AlignmentJob, triedHosts: PoolHostId[]) {
-  job.pool = unstagedAssignment(triedHosts);
+  job.pool = unstagedAssignment(triedHosts, storedStaging(job.pool));
 }
 
-function unstagedAssignment(triedHosts: PoolHostId[]): AlignmentJobPoolState {
+/**
+ * What a job planned again under its own id (a prepare or rebuild) keeps from `pool`: only the hosts the id has
+ * staged on, so the new plan's finished release removes them too. Undefined when it staged nowhere.
+ */
+export function keptPoolStaging(pool: AlignmentJobPoolState | undefined): AlignmentJobPoolState | undefined {
+  const staged = storedStaging(pool);
+  if (!pool || !Object.keys(staged).length) return undefined;
+  return { ...unstagedAssignment([], staged), hostId: pool.hostId };
+}
+
+/** Every host a stored assignment says the job staged on, and the folder there; older rows name only the current one. */
+function storedStaging(pool: Partial<AlignmentJobPoolState> | null | undefined): Record<PoolHostId, string> {
+  const staged: Record<PoolHostId, string> = {};
+  const recorded = pool?.stagedHosts;
+  if (recorded && typeof recorded === "object")
+    for (const [hostId, folder] of Object.entries(recorded)) if (typeof folder === "string" && folder) staged[hostId] = folder;
+  if (typeof pool?.hostId === "string" && pool.hostId && typeof pool.jobMediaRoot === "string" && pool.jobMediaRoot)
+    staged[pool.hostId] = pool.jobMediaRoot;
+  return staged;
+}
+
+function unstagedAssignment(triedHosts: PoolHostId[], stagedHosts: Record<PoolHostId, string> = {}): AlignmentJobPoolState {
   return {
     // A placeholder: nothing reads the host of an assignment without staging.
     hostId: getAlignmentPoolCoordinator().listHosts()[0]?.id ?? "",
@@ -423,18 +452,34 @@ function unstagedAssignment(triedHosts: PoolHostId[]): AlignmentJobPoolState {
     workerUrl: "",
     triedHosts,
     stagedAudio: {},
+    ...(Object.keys(stagedHosts).length ? { stagedHosts: { ...stagedHosts } } : {}),
   };
+}
+
+/**
+ * Removes the audio a job's stored assignment says it staged, on every configured host, for a run that ends with
+ * the job finished but never held a lease (no host could take it, or it stopped before asking for one).
+ */
+export async function removeStoredStaging(id: string, pool: AlignmentJobPoolState | null | undefined) {
+  const coord = getAlignmentPoolCoordinator();
+  const deadline = AbortSignal.timeout(probeCleanupTimeoutMs);
+  await Promise.all(Object.entries(storedStaging(pool)).map(([hostId, folder]) => {
+    const host = coord.hostById(hostId);
+    return host ? removeStaging(host, folder, id, deadline) : undefined;
+  }));
 }
 
 /** Every host that could take the work is held by other CTC work. */
 export class PoolBusyError extends Error {
+  /** The hosts the work had staged on (set by its lease), kept with the job while it waits. */
+  stagedHosts: Record<PoolHostId, string> = {};
   constructor(readonly triedHosts: PoolHostId[] = []) {
     super("The remote alignment workers are busy.");
   }
 
-  /** What a job stores while it waits in the queue: no staging, the hosts it tried kept. */
+  /** What a job stores while it waits in the queue: no current staging, the hosts it tried and staged on kept. */
   get assignment() {
-    return unstagedAssignment(this.triedHosts);
+    return unstagedAssignment(this.triedHosts, this.stagedHosts);
   }
 }
 
@@ -627,8 +672,9 @@ type HeldHost = AlignmentJobPoolState & { device: string; precision: string };
 
 class PoolWorkerLease implements WorkerLease {
   private held: HeldHost | null = null;
-  private lastAssignment: AlignmentJobPoolState;
-  /** Every host this lease staged on, and where. */
+  /** The hosts tried when the lease last lost its host. */
+  private lastTried: PoolHostId[];
+  /** Every host this work staged on, and where: by this lease, and by the job's earlier runs (its assignment). */
   private staged = new Map<PoolHostId, { host: PoolHost; jobMediaRoot: string }>();
   private released = false;
   private tried: PoolHostId[];
@@ -637,7 +683,16 @@ class PoolWorkerLease implements WorkerLease {
   constructor(private request: WorkerLeaseRequest) {
     this.diagnostics = request.diagnostics ?? {};
     this.tried = startingTriedHosts(request);
-    this.lastAssignment = unstagedAssignment(this.tried);
+    this.lastTried = [...this.tried];
+    const coord = getAlignmentPoolCoordinator();
+    for (const [hostId, jobMediaRoot] of Object.entries(storedStaging(request.assignment))) {
+      const host = coord.hostById(hostId);
+      if (host) this.staged.set(hostId, { host, jobMediaRoot });
+    }
+  }
+
+  private stagedHosts(): Record<PoolHostId, string> {
+    return Object.fromEntries([...this.staged].map(([hostId, { jobMediaRoot }]) => [hostId, jobMediaRoot]));
   }
 
   private current() {
@@ -654,9 +709,10 @@ class PoolWorkerLease implements WorkerLease {
   get triedHosts() { return [...this.tried]; }
   get poolErrors() { return this.diagnostics.poolErrors; }
   get assignment(): AlignmentJobPoolState {
-    if (!this.held) return { ...this.lastAssignment, triedHosts: [...this.lastAssignment.triedHosts] };
+    if (!this.held) return unstagedAssignment([...this.lastTried], this.stagedHosts());
     const { device: _device, precision: _precision, ...state } = this.held;
-    return { ...state, triedHosts: [...state.triedHosts], stagedAudio: { ...state.stagedAudio } };
+    return { ...state, triedHosts: [...state.triedHosts], stagedAudio: { ...state.stagedAudio },
+      stagedHosts: this.stagedHosts() };
   }
   get canFailover() {
     if (this.request.kind === "job" && this.tried.length >= JOB_HOST_ATTEMPTS) return false;
@@ -664,7 +720,12 @@ class PoolWorkerLease implements WorkerLease {
   }
 
   async take() {
-    this.held = await takeHost(this.request, this.tried, this.diagnostics);
+    try {
+      this.held = await takeHost(this.request, this.tried, this.diagnostics);
+    } catch (error) {
+      if (error instanceof PoolBusyError) error.stagedHosts = this.stagedHosts();
+      throw error;
+    }
     this.tried = [...this.held.triedHosts];
     const host = getAlignmentPoolCoordinator().hostById(this.held.hostId);
     if (host) this.staged.set(host.id, { host, jobMediaRoot: this.held.jobMediaRoot });
@@ -679,7 +740,7 @@ class PoolWorkerLease implements WorkerLease {
       await this.take();
     } catch (error) {
       if (error instanceof PoolBusyError) this.tried = [...error.triedHosts];
-      this.lastAssignment = unstagedAssignment([...this.tried]);
+      this.lastTried = [...this.tried];
       throw error;
     }
   }

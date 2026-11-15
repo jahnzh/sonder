@@ -220,6 +220,8 @@ export type AlignmentJob = {
     workerUrl: string;
     triedHosts: AlignmentPoolHostId[];
     stagedAudio: Record<string, string>;
+    /** Every host the job has staged its tracks on, and the folder there (older rows omit it). */
+    stagedHosts?: Record<AlignmentPoolHostId, string>;
   };
   /** Present on summary list responses; full intervals live on /map. */
   intervalCount?: number;
