@@ -14,6 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "worker"))
 from unittest import mock
 import book_job
+import book_session
 import deadline
 from book_job import BOOK_ENGINE, BookJobs, JobConflict, NotReady, UnknownJob, request_digest
 from book_session import BudgetExceeded, DiskBudget, SessionRegistry
@@ -90,6 +91,58 @@ class FakeStages:
         (job.folder / "result.json").write_text(json.dumps(
             {"jobId": job.key, "engine": BOOK_ENGINE, "outcome": "mapped", "intervals": [
                 {"paragraphId": "p0", "section": 0, "trackId": "t0", "start": 1.0, "end": 2.0, "confidence": 0.65}]}))
+
+
+def rmtree_that_cannot_delete(*kept):
+    """shutil.rmtree for book_session/book_job where the files named `kept` fail to delete (an I/O or
+    permission error, ignored as with ignore_errors=True)."""
+    real = book_session.shutil.rmtree
+
+    def rmtree(path, ignore_errors=False, **kwargs):
+        path = Path(path)
+        for file in sorted(path.rglob("*"), reverse=True):
+            if file.name in kept:
+                continue
+            if file.is_dir():
+                if not any(file.iterdir()):
+                    file.rmdir()
+            else:
+                file.unlink()
+        if path.is_dir() and not any(path.iterdir()):
+            real(path, ignore_errors=ignore_errors)
+
+    return rmtree
+
+
+class GreedyBudget(DiskBudget):
+    """A budget with another book ("other") that takes every byte the moment `watch` lowers its reservation."""
+
+    def __init__(self, total, watch):
+        super().__init__(total)
+        self.watch = watch
+        self.peak = 0
+
+    def _grab(self):
+        free = self.total - self.reserved()
+        if free > 0:
+            DiskBudget.claim(self, "other", self.reserved("other") + free)
+
+    def _note(self):
+        self.peak = max(self.peak, self.reserved())
+
+    def release(self, key):
+        released = super().release(key)
+        if key == self.watch:
+            self._grab()
+        self._note()
+        return released
+
+    def claim(self, key, nbytes):
+        before = self.reserved(key)
+        super().claim(key, nbytes)
+        if key == self.watch and nbytes < before:
+            self._grab()
+        self._note()
 
 
 class Clock:
@@ -247,6 +300,60 @@ class Jobs(unittest.TestCase):
         with self.assertRaises(UnknownJob):
             jobs.status("job-2")
         stages.gates[1].set()
+        self.assertTrue(self.done(jobs))
+
+    def test_files_that_could_not_be_deleted_stay_reserved_and_the_job_is_reported_stuck(self):
+        jobs = self.jobs(FakeStages())
+        jobs.start(request())
+        self.assertTrue(self.done(jobs))
+        left = (self.root / "job-1" / "emissions" / "0.f16").stat().st_size
+        with mock.patch.object(book_session.shutil, "rmtree", rmtree_that_cannot_delete("0.f16")):
+            jobs.result("job-1")  # the fetch ends the job; one emissions file fails to delete
+        self.assertTrue((self.root / "job-1" / "emissions" / "0.f16").exists())
+        self.assertEqual(jobs.registry.budget.reserved("job-1"), left, "only the removed bytes are released")
+        self.assertEqual([(s["jobId"], s["reservedBytes"]) for s in jobs.registry.stuck()], [("job-1", left)])
+        self.assertEqual(jobs.sweep(), [])  # deleting works again: the stuck session is released
+        self.assertFalse((self.root / "job-1").exists())
+        self.assertEqual(jobs.registry.budget.reserved(), 0)
+        self.assertEqual(jobs.registry.stuck(), [])
+
+    def test_a_failed_job_reserves_its_error_record_before_it_releases_the_rest(self):
+        # Another book takes every byte the failing job frees, at once: the record must already be reserved.
+        budget = GreedyBudget(10_000, watch="job-1")
+        registry = SessionRegistry(budget, idle=900, clock=self.clock)
+        jobs = BookJobs(self.root, FakeStages(fail_at=1), registry, clock=self.clock, state_bytes=STATE)
+        jobs.start(request())
+        self.assertTrue(self.done(jobs))
+        self.assertEqual(jobs.status("job-1")["state"], "failed")
+        record = (self.root / "job-1" / "state.json").stat().st_size
+        self.assertEqual(budget.reserved("job-1"), record)
+        self.assertLessEqual(budget.peak, budget.total, "the record never takes the budget over its total")
+
+    def test_a_failed_start_deletes_what_it_wrote(self):
+        def broken_save(job):
+            raise OSError(28, "No space left on device")
+
+        jobs = self.jobs(FakeStages())
+        with mock.patch.object(book_job.Job, "save", broken_save):
+            with self.assertRaises(OSError):
+                jobs.start(request())
+        self.assertFalse((self.root / "job-1").exists(), "the request file it wrote is deleted")
+        self.assertEqual(jobs.registry.budget.reserved(), 0)
+        self.assertIsNone(jobs.registry.get("job-1"))
+        # The same, when the request file cannot be deleted: its bytes stay reserved, and are released once
+        # it is gone.
+        with mock.patch.object(book_job.Job, "save", broken_save), \
+                mock.patch.object(book_session.shutil, "rmtree", rmtree_that_cannot_delete("request.json")):
+            with self.assertRaises(OSError):
+                jobs.start(request())
+        kept = self.root / "job-1" / "request.json"
+        self.assertTrue(kept.exists())
+        self.assertEqual(jobs.registry.budget.reserved("job-1"), kept.stat().st_size)
+        self.assertEqual([s["jobId"] for s in jobs.registry.stuck()], ["job-1"])
+        jobs.sweep()
+        self.assertFalse((self.root / "job-1").exists())
+        self.assertEqual(jobs.registry.budget.reserved(), 0)
+        self.assertEqual(jobs.start(request())["jobId"], "job-1", "the job can be started again")
         self.assertTrue(self.done(jobs))
 
     def test_a_new_jobs_request_and_state_are_counted_from_the_start(self):

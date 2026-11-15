@@ -203,17 +203,19 @@ class BookJobs:
                 stored = read_json(folder / "request.json")
                 if stored is not None and request_digest(stored) != digest:
                     raise JobConflict("This job id belongs to another request.")
+                new = not folder.exists()
+                before = folder_bytes(folder)
+                wrote = [name for name in ("request.json", "state.json") if not (folder / name).exists()]
                 # The request and state files are written now, before the job reserves its first stage. They
                 # must fit in the budget next to the other books, or the request is refused (DiskFull, 507)
                 # before anything is written. write_json writes this exact text (ASCII, so len is bytes).
                 self.registry.budget.fits_now(
-                    key, folder_bytes(folder) + len(json.dumps(request, separators=(",", ":"))) + self.state_bytes)
+                    key, before + len(json.dumps(request, separators=(",", ":"))) + self.state_bytes)
                 try:
                     self.registry.open(key, folder)
                     job = self._load_or_create(key, folder, request, digest)
                 except BaseException:
-                    self.registry.end(key, "failed", delete=False)
-                    self.registry.budget.release(key)
+                    self._undo_start(key, folder, new, wrote, before)
                     raise
                 self._jobs[key] = job
             elif job.digest != digest:
@@ -223,6 +225,19 @@ class BookJobs:
                     and (job.thread is None or not job.thread.is_alive())):
                 self._launch(job)
         return self.status(key)
+
+    def _undo_start(self, key, folder, new, wrote, before):
+        """A start that failed deletes what it wrote; what it could not delete stays reserved (and a new
+        folder's session is kept as stuck until `sweep` deletes it)."""
+        if new:
+            self.registry.end(key, "failed", delete=True)
+            return
+        for path in [folder / name for name in wrote] + list(folder.glob("*.tmp")):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        self.registry.end(key, "failed", delete=False, keep=max(0, folder_bytes(folder) - before))
 
     def status(self, key):
         job = self._job(key)
@@ -470,10 +485,12 @@ class BookJobs:
         with job.lock:
             record = {k: job.state.get(k) for k in RECORD_KEYS if k in job.state}
         record.update(state="failed", error=message[:ERROR_CHARS], updatedAt=time.time())
-        outcome = self.registry.end(job.key, "failed", delete=True)
-        if outcome is False:  # no session: delete and release here
-            shutil.rmtree(job.folder, ignore_errors=True)
-            self.registry.budget.release(job.key)
+        # The record (write_json's exact text) is reserved before the rest of the job's bytes are released,
+        # so no other book can take them in between.
+        keep = len(json.dumps(record, separators=(",", ":")))
+        outcome = self.registry.end(job.key, "failed", delete=True, keep=keep)
+        if outcome is False:
+            return  # another end (worker stop) ended the job first; its folder stays for the resume
         if outcome != "stuck":  # else the folder and the reservation stay until the process is gone
             job.request = None
             try:

@@ -246,6 +246,7 @@ class BookSession:
         self.ended = None  # reason once ended
         self.ended_at = None
         self._delete = False  # what the end does with the folder once nothing runs any more
+        self._keep = 0  # bytes the end keeps reserved on top of what is left (a failed job's error record)
         self._busy = None
         self.digests = {}  # track index -> sha256 of the source audio
         self.decoded = {}  # track index -> PCM path
@@ -335,10 +336,11 @@ class BookSession:
         with self._lock:
             self._closers.append(closer)
 
-    def _end(self, reason, delete, busy=None):
+    def _end(self, reason, delete, busy=None, keep=0):
         """End the session (once). Returns False when it had already ended, "stuck" when a group process
-        (or `busy()`, the job's thread) is still there, so the folder and the reservation are kept, and
-        True when it is released. `delete` removes the job's whole folder; False keeps it (worker stop)."""
+        (or `busy()`, the job's thread) is still there, so the folder and the reservation are kept, or when
+        files of the folder could not be deleted, and True when it is released. `delete` removes the job's
+        whole folder; False keeps it (worker stop). `keep` bytes stay reserved (see finish_end)."""
         with self._lock:
             if self.ended is not None:
                 return False
@@ -354,10 +356,15 @@ class BookSession:
                 pass
         self._delete = delete
         self._busy = busy
+        self._keep = int(keep)
         return True if self.finish_end() else "stuck"
 
     def finish_end(self):
-        """Delete and release once nothing of the job runs any more; False (and nothing done) until then."""
+        """Delete and release once nothing of the job runs any more; False (and nothing done) until then.
+
+        The reservation shrinks only by the bytes really removed: what is left after the delete (a file that
+        failed to delete) stays reserved, and False keeps the session stuck so a later call retries. `keep`
+        bytes (a failed job's error record, about to be written) are reserved before the rest is released."""
         with self._lock:
             pool = self.pool
         if pool is not None and not stop_pool(pool):
@@ -368,10 +375,15 @@ class BookSession:
         with self._lock:
             if self.pool is pool:
                 self.pool = None
+        left = 0
         if self._delete:
             shutil.rmtree(self.folder, ignore_errors=True)
-        self.budget.release(self.key)
-        return True
+            left = folder_bytes(self.folder)
+        if left or self._keep:
+            self.budget.claim(self.key, left + self._keep)
+        else:
+            self.budget.release(self.key)
+        return not left
 
 
 class SessionRegistry:
@@ -403,7 +415,7 @@ class SessionRegistry:
         with self._lock:
             return list(self._sessions)
 
-    def end(self, key, reason, delete=True, busy=None):
+    def end(self, key, reason, delete=True, busy=None, keep=0):
         """End one session (idempotent). Returns True when it ended and was released, "stuck" when it
         ended but keeps its folder and reservation until its processes are gone (`retry_stuck`), and
         False when there was no session. One end at a time: a call while another end of the same session
@@ -423,12 +435,12 @@ class SessionRegistry:
         if session is None:
             ending.done.wait()
             return ending.outcome
-        return self._finish(key, session, ending, reason, delete, busy)
+        return self._finish(key, session, ending, reason, delete, busy, keep)
 
-    def _finish(self, key, session, ending, reason, delete, busy):
+    def _finish(self, key, session, ending, reason, delete, busy, keep):
         outcome = "stuck"  # kept if the end itself raises: nothing is deleted or released then
         try:
-            outcome = session._end(reason, delete, busy)
+            outcome = session._end(reason, delete, busy, keep)
         finally:
             with self._lock:
                 if outcome == "stuck":
@@ -455,7 +467,7 @@ class SessionRegistry:
         return released
 
     def stuck(self):
-        """/health's view of the sessions kept because a process is still there."""
+        """/health's view of the sessions kept because a process is still there or files are left."""
         with self._lock:
             stuck = list(self._stuck.items())
         return [{"jobId": key, "reason": session.ended, "since": session.ended_at,
