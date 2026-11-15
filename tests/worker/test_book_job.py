@@ -607,6 +607,20 @@ class Jobs(unittest.TestCase):
         with self.assertRaises(UnknownJob):
             jobs.status("job-1")
 
+    def test_shutdown_keeps_a_live_job_threads_reservation(self):
+        never = threading.Event()
+        stages = FakeStages(ignore_stop=never)  # a thread in a step that does not look at should_stop
+        jobs = self.jobs(stages)
+        jobs.start(request())
+        self.assertTrue(stages.entered.wait(5))
+        reserved = jobs.registry.budget.reserved("job-1")
+        with mock.patch.object(book_job, "STOP_WAIT_S", 0.2, create=True):
+            jobs.shutdown()
+        self.assertTrue((self.root / "job-1").exists(), "the folder stays for the resume")
+        self.assertEqual(jobs.registry.budget.reserved("job-1"), reserved, "the live thread keeps its bytes")
+        self.assertEqual([s["jobId"] for s in jobs.registry.stuck()], ["job-1"])
+        never.set()
+
     def test_a_job_waiting_for_window_requests_reports_it(self):
         gate = deadline.Gate(1)
         stages = FakeStages(gate=gate)

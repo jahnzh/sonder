@@ -386,7 +386,8 @@ class BookJobs:
         return [job.key for job in idle]
 
     def shutdown(self):
-        """Worker stop: stop the threads, release the sessions, keep the folders for resume."""
+        """Worker stop: stop the threads, release the sessions, keep the folders for resume. A job whose
+        thread is still running after STOP_WAIT_S keeps its reservation and is reported stuck."""
         with self._lock:
             self._closed = True
             jobs = list(self._jobs.values())
@@ -394,8 +395,8 @@ class BookJobs:
             self._stop(job, "worker stop")
         for job in jobs:
             if job.thread is not None:
-                job.thread.join(timeout=30)
-        self.registry.close_all()
+                job.thread.join(timeout=STOP_WAIT_S)
+        self.registry.close_all(busy={job.key: job.thread.is_alive for job in jobs if job.thread is not None})
 
     def keys(self):
         with self._lock:
