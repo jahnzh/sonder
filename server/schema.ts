@@ -41,6 +41,21 @@ export const alignmentJobs = sqliteTable("alignment_jobs", {
   publishedMap: text("published_map"),
   projectedFrom: text("projected_from"),
 });
+/** Staged pool folder names retired before their removal was sent (#421): staging never uses one again. */
+export const alignmentPoolRetired = sqliteTable("alignment_pool_retired", {
+  name: text("name").primaryKey(),
+  jobId: text("job_id").notNull(),
+  recordingId: text("recording_id").notNull(),
+  retiredAt: integer("retired_at").notNull(),
+});
+/** Where a deleted alignment job had staged its tracks (#421). */
+export const alignmentPoolOrphans = sqliteTable("alignment_pool_orphans", {
+  hostId: text("host_id").notNull(),
+  folder: text("folder").notNull(),
+  jobId: text("job_id").notNull(),
+  recordingId: text("recording_id").notNull(),
+  deletedAt: integer("deleted_at").notNull(),
+}, (table) => [primaryKey({ columns: [table.hostId, table.folder] })]);
 export const tracks = sqliteTable("tracks", {
   chapters: text("chapters", { mode: "json" })
     .$type<{ title: string; start: number; end?: number }[]>()
