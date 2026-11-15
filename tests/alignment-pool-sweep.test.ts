@@ -3,7 +3,7 @@
 // the folder's name before it sends the removal, so a removal that outlives its deadline cannot reach a later run.
 import { after, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readerFixture } from "./reader-fixture.ts";
@@ -139,6 +139,45 @@ test("the host listing parses the type, size in KiB and name of each entry, as t
     { name: "unreadable", directory: true, sizeKiB: null },
   ]);
   assert.deepEqual(sweep.parseStagingListing(""), []);
+
+  // The whole output starts with the real paths of the root and its pool-jobs folder. Printed by the listing command
+  // for a root reached through a symlink (`media-link` -> `real-media`) and for a root with no pool-jobs folder yet;
+  // only the scratch directory prefix is shortened to /srv.
+  const throughLink = "R\t/srv/real-media\nP\t/srv/real-media/alignment/pool-jobs\nd\t304\tjob-a\nf\t0\tlink\nf\t4\tloose-file\n";
+  assert.deepEqual(sweep.parseHostListing(throughLink), {
+    realRoot: "/srv/real-media", realPoolJobs: "/srv/real-media/alignment/pool-jobs",
+    entries: [
+      { name: "job-a", directory: true, sizeKiB: 304 },
+      { name: "link", directory: false, sizeKiB: 0 },
+      { name: "loose-file", directory: false, sizeKiB: 4 },
+    ],
+  });
+  assert.deepEqual(sweep.parseHostListing("R\t/srv/fresh\nP\t/srv/fresh/alignment/pool-jobs\n"),
+    { realRoot: "/srv/fresh", realPoolJobs: "/srv/fresh/alignment/pool-jobs", entries: [] });
+  // A root of / prints //alignment/pool-jobs.
+  assert.equal(sweep.parseHostListing("R\t/\nP\t//alignment/pool-jobs\n").realPoolJobs, "/alignment/pool-jobs");
+  // Without the real paths (an older listing, a path with a newline) the host is not listed.
+  assert.throws(() => sweep.parseHostListing("d\t304\tjob-a\n"), /real path/);
+  assert.throws(() => sweep.parseHostListing("R\t/srv/a\nb\nP\t/srv/a/alignment/pool-jobs\n"), /real path/);
+  assert.throws(() => sweep.parseHostListing("R\trelative\nP\t/srv/a/alignment/pool-jobs\n"), /not absolute/);
+});
+
+test("the listing command reports real paths: a root through a symlink, and a pool-jobs folder not made yet", async () => {
+  const base = join(temp, "real-paths");
+  mkdirSync(join(base, "real-media", "alignment", "pool-jobs", "job-a"), { recursive: true });
+  mkdirSync(join(base, "fresh"), { recursive: true });
+  symlinkSync(join(base, "real-media"), join(base, "media-link"));
+  const { execFileSync } = await import("node:child_process");
+  const run = (root: string) => sweep.parseHostListing(execFileSync("sh", ["-c",
+    sweep.listingCommand(root, join(root, "alignment", "pool-jobs"))], { encoding: "utf8" }));
+  const linked = run(join(base, "media-link"));
+  const real = realpathSync(join(base, "real-media"));
+  assert.equal(linked.realRoot, real);
+  assert.equal(linked.realPoolJobs, join(real, "alignment", "pool-jobs"));
+  assert.deepEqual(linked.entries.map((item) => item.name), ["job-a"]);
+  const fresh = run(join(base, "fresh"));
+  assert.equal(fresh.realPoolJobs, join(realpathSync(join(base, "fresh")), "alignment", "pool-jobs"));
+  assert.deepEqual(fresh.entries, []);
 });
 
 test("the dry run lists every folder per host with its size and what a run would do, and removes nothing", async () => {
@@ -168,13 +207,34 @@ test("the dry run lists every folder per host with its size and what a run would
   writeFileSync(join(jobs, "staged-before-leases", "tracks", "t1"), "x".repeat(10_000));
   mkdirSync(join(jobs, "ctc-probe-ended"), { recursive: true });
   writeFileSync(join(jobs, "stray-file"), "x");
-  fake.hosts.lisa.down = true;
 
   try {
+    // A host that cannot be listed refuses the whole run: the dry run says so for every host and nothing is removable.
+    fake.hosts.lisa.down = true;
+    const refusedListing = await sweep.listPoolStaging();
+    const lisa = refusedListing.hosts.find((host) => host.hostId === "lisa")!;
+    assert.match(lisa.error ?? "", /health|ECONNREFUSED|fetch failed/);
+    assert.deepEqual(lisa.folders, []);
+    for (const host of refusedListing.hosts) assert.match(host.refused ?? "", /lisa could not be listed/, host.hostId);
+    assert.equal(entry(refusedListing, "wsl", finished.id).action, "keep");
+    assert.match(entry(refusedListing, "wsl", finished.id).reason, /refused/);
+    assert.equal(refusedListing.hosts.find((host) => host.hostId === "wsl")!.removableKiB, 0);
+    // Also for a run of WSL alone.
+    const onlyWsl = await sweep.listPoolStaging({ host: "wsl" });
+    assert.match(onlyWsl.hosts[0].refused ?? "", /lisa could not be listed/);
+    const refusedRun = await sweep.removePoolStaging({ host: "wsl" });
+    assert.match(refusedRun.hosts[0].refused ?? "", /lisa could not be listed/);
+    assert.equal(result(refusedRun, "wsl", finished.id).result, "kept");
+    assert.deepEqual(removals(fake.hosts.wsl), [], "a refused run sends no removal");
+    fake.hosts.lisa.down = false;
+
     const listing = await sweep.listPoolStaging();
     const wsl = listing.hosts.find((host) => host.hostId === "wsl")!;
     assert.equal(wsl.root, fake.hosts.wsl.root);
+    assert.equal(wsl.realRoot, realpathSync(fake.hosts.wsl.root));
+    assert.equal(wsl.realPoolJobs, realpathSync(jobs));
     assert.equal(wsl.error, null);
+    assert.equal(wsl.refused, null);
     assert.deepEqual(wsl.folders.map((folder) => folder.name).sort(),
       [finished.id, paused.id, gone.id, "ctc-probe-live", "staged-before-leases", "ctc-probe-ended", "stray-file"].sort());
 
@@ -192,10 +252,7 @@ test("the dry run lists every folder per host with its size and what a run would
       assert.equal(entry(listing, "wsl", name).action, "unknown", name);
     assert.ok(entry(listing, "wsl", "staged-before-leases").sizeKiB! >= 8);
     assert.equal(wsl.removableKiB, done.sizeKiB! + entry(listing, "wsl", gone.id).sizeKiB!);
-
-    const lisa = listing.hosts.find((host) => host.hostId === "lisa")!;
-    assert.match(lisa.error ?? "", /health|ECONNREFUSED|fetch failed/);
-    assert.deepEqual(lisa.folders, []);
+    assert.equal(listing.hosts.find((host) => host.hostId === "lisa")!.error, null);
 
     assert.deepEqual(removals(fake.hosts.wsl), [], "the dry run sends no removal");
     assert.ok(existsSync(folderOf(fake.hosts.wsl, finished.id)));
@@ -262,6 +319,7 @@ test("a job resumed, prepared again or rebuilt between the listing and the remov
 test("a finished job's folder is kept while its recording is leased or a run of the job is in flight", async () => {
   const job = await finishedJob();
   const [track] = db.select().from(schema.tracks).all().filter((row) => row.recordingId === job.recordingId);
+  const wslHost = (listing: Awaited<ReturnType<typeof sweep.listPoolStaging>>) => listing.hosts.find((host) => host.hostId === "wsl")!;
   // A probe of the same recording holds the recording's lease (on lisa, so the slot is not the reason).
   fake.hosts.wsl.busy = true;
   const probe = await acquireWorkerLease({ id: "ctc-probe-same-recording", recordingId: job.recordingId, mode: "anchored",
@@ -269,26 +327,73 @@ test("a finished job's folder is kept while its recording is leased or a run of 
   fake.hosts.wsl.busy = false;
   try {
     assert.equal(probe.hostId, "lisa");
+    // The dry run says what the run does: kept, and not counted as removable.
+    const listing = await sweep.listPoolStaging();
+    assert.equal(entry(listing, "wsl", job.id).action, "keep");
+    assert.match(entry(listing, "wsl", job.id).reason, /recording is leased/);
+    assert.equal(wslHost(listing).removableKiB, 0);
     const run = await sweep.removePoolStaging({ host: "wsl" });
     assert.equal(result(run, "wsl", job.id).result, "kept");
-    assert.match(result(run, "wsl", job.id).detail ?? "", /lease/);
+    assert.match(result(run, "wsl", job.id).reason, /lease/);
     assert.deepEqual(removals(fake.hosts.wsl), []);
   } finally {
     await probe.release("finished");
   }
 
-  // The listing still says remove; a run of the job (cancelled, still unwinding) appears before the removal.
+  // A run of the job (cancelled, still unwinding) is in flight between its leases.
   sweep.setPoolSweepRunCheckForTests((id) => id === job.id);
   try {
+    const listing = await sweep.listPoolStaging();
+    assert.equal(entry(listing, "wsl", job.id).action, "keep");
+    assert.match(entry(listing, "wsl", job.id).reason, /run of its job is in flight/);
+    assert.equal(wslHost(listing).removableKiB, 0);
     const run = await sweep.removePoolStaging({ host: "wsl" });
     assert.equal(result(run, "wsl", job.id).result, "kept");
-    assert.match(result(run, "wsl", job.id).detail ?? "", /run/);
+    assert.match(result(run, "wsl", job.id).reason, /run/);
     assert.deepEqual(removals(fake.hosts.wsl), []);
   } finally {
     sweep.setPoolSweepRunCheckForTests(null);
   }
   assert.deepEqual(fake.stagedFolders("wsl"), [job.id]);
   assert.equal(sweep.stagingNameRetired(job.id), false);
+  assert.equal(entry(await sweep.listPoolStaging(), "wsl", job.id).action, "remove", "with neither, the dry run says remove");
+});
+
+test("a lease or a run that appears after the listing, while an earlier folder's removal runs, keeps the folder", async () => {
+  for (const label of ["a probe leases the recording", "a run of the job is in flight"]) {
+    install();
+    const jobs = [await settled((await chapterJob()).id), await settled((await chapterJob()).id)]
+      .sort((a, b) => a.id.localeCompare(b.id));
+    const [first, second] = jobs;
+    const [track] = db.select().from(schema.tracks).all().filter((row) => row.recordingId === second.recordingId);
+    let probe: Awaited<ReturnType<typeof acquireWorkerLease>> | null = null;
+    let changed = false;
+    fake.hosts.wsl.afterCommand = async (command) => {
+      if (!isRemoval(command) || changed) return;
+      changed = true;
+      if (label.startsWith("a probe")) {
+        fake.hosts.wsl.busy = true;
+        probe = await acquireWorkerLease({ id: "ctc-probe-late", recordingId: second.recordingId, mode: "anchored",
+          tracks: [track], localAudio: (row) => row.source, kind: "probe" });
+        fake.hosts.wsl.busy = false;
+      } else sweep.setPoolSweepRunCheckForTests((id) => id === second.id);
+    };
+    try {
+      const run = await sweep.removePoolStaging({ host: "wsl" });
+      assert.ok(changed, label);
+      assert.equal(result(run, "wsl", first.id).result, "removed", label);
+      assert.equal(result(run, "wsl", second.id).action, "remove", `${label}: the listing had marked it for removal`);
+      assert.equal(result(run, "wsl", second.id).result, "kept", label);
+      assert.match(result(run, "wsl", second.id).detail ?? "", label.startsWith("a probe") ? /leased/ : /run of its job/, label);
+      assert.equal(removals(fake.hosts.wsl).length, 1, label);
+      assert.deepEqual(fake.stagedFolders("wsl"), [second.id], label);
+      assert.equal(sweep.stagingNameRetired(second.id), false, label);
+    } finally {
+      fake.hosts.wsl.afterCommand = undefined;
+      sweep.setPoolSweepRunCheckForTests(null);
+      await (probe as Awaited<ReturnType<typeof acquireWorkerLease>> | null)?.release("finished");
+    }
+  }
 });
 
 test("staging never reuses a retired name: the next run of the job stages under a new folder", async () => {
@@ -434,5 +539,100 @@ test("a host whose worker media root lies inside a pool-jobs folder is listed wi
     assert.deepEqual(removals(fake.hosts.wsl), []);
   } finally {
     globalThis.fetch = fake.fetch;
+  }
+});
+
+test("a removal on one host is refused as a whole while another host's root lies inside a job folder it would remove", async () => {
+  // Host A (WSL) has a finished job J. Host B (lisa) is configured with its media root inside J's folder on the same
+  // machine, and a probe of another recording has staged there. Removing J would remove B's live audio.
+  for (const how of ["through a symlink", "by its path"]) {
+    install();
+    const job = await finishedJob();
+    const jobFolder = folderOf(fake.hosts.wsl, job.id);
+    const inside = join(jobFolder, "lisa-media");
+    mkdirSync(inside, { recursive: true });
+    const link = join(temp, `lisa-link-${++recordings}`);
+    if (how === "through a symlink") symlinkSync(inside, link);
+    fake.hosts.lisa.root = how === "through a symlink" ? link : inside;
+
+    const other = recording();
+    const [track] = db.select().from(schema.tracks).all().filter((row) => row.recordingId === other.recordingId);
+    fake.hosts.wsl.busy = true;
+    const probe = await acquireWorkerLease({ id: "ctc-probe-nested", recordingId: other.recordingId, mode: "anchored",
+      tracks: [track], localAudio: (row) => row.source, kind: "probe" });
+    fake.hosts.wsl.busy = false;
+    const staged = join(inside, "alignment", "pool-jobs", "ctc-probe-nested", "tracks", encodeURIComponent(track.id));
+    try {
+      assert.equal(probe.hostId, "lisa", how);
+      assert.ok(existsSync(staged), `${how}: the probe's audio is staged inside J`);
+
+      // The run first: it removes nothing on either host, and B's staged audio is still there.
+      const run = await sweep.removePoolStaging();
+      assert.deepEqual(removals(fake.hosts.wsl), [], `${how}: nothing is sent to A`);
+      assert.deepEqual(removals(fake.hosts.lisa), [], `${how}: nothing is sent to B`);
+      assert.ok(existsSync(staged), `${how}: B's staged audio is still there`);
+      assert.equal(result(run, "wsl", job.id).result, "kept", how);
+
+      const reason = how === "through a symlink"
+        ? new RegExp(`lisa's media root ${realpathSync(inside)} lies inside wsl's pool-jobs folder`)
+        : /lisa could not be listed \(worker media root lies inside a pool-jobs folder\)/;
+      for (const host of run.hosts) assert.match(host.refused ?? "", reason, `${how}: ${host.hostId}`);
+      const one = await sweep.removePoolStaging({ host: "wsl" });
+      assert.match(one.hosts[0].refused ?? "", reason, how);
+      assert.deepEqual(removals(fake.hosts.wsl), [], `${how}: nor for a run of A alone`);
+
+      // The dry run shows the refusal and its reason for every host, and nothing as removable.
+      const listing = await sweep.listPoolStaging();
+      for (const host of listing.hosts) assert.match(host.refused ?? "", reason, `${how}: ${host.hostId}`);
+      if (how === "through a symlink") assert.equal(listing.hosts.find((host) => host.hostId === "lisa")!.error, null,
+        "the reported root does not name pool-jobs: only the real path shows the nesting");
+      assert.equal(entry(listing, "wsl", job.id).action, "keep", how);
+      assert.equal(listing.hosts.find((host) => host.hostId === "wsl")!.removableKiB, 0, how);
+      assert.ok(existsSync(staged), how);
+      assert.equal(sweep.stagingNameRetired(job.id), false, how);
+    } finally {
+      await probe.release("finished");
+    }
+  }
+});
+
+test("two hosts with the same real pool-jobs folder are not refused", async () => {
+  const job = await finishedJob();
+  // lisa reaches the same folder through a symlink: one shared folder, covered by the global retired names.
+  const link = join(temp, `same-root-${++recordings}`);
+  symlinkSync(fake.hosts.wsl.root, link);
+  fake.hosts.lisa.root = link;
+  const listing = await sweep.listPoolStaging();
+  assert.equal(listing.hosts[0].realPoolJobs, listing.hosts[1].realPoolJobs);
+  for (const host of listing.hosts) assert.equal(host.refused, null, host.hostId);
+  const run = await sweep.removePoolStaging({ host: "wsl" });
+  assert.equal(result(run, "wsl", job.id).result, "removed");
+});
+
+test("a deleted job whose id is planned again keeps its old folder until that job is finished", async () => {
+  const gone = await finishedJob();
+  transition.removeAlignmentJobsForRecording(gone.recordingId);
+  assert.equal(entry(await sweep.listPoolStaging(), "wsl", gone.id).action, "remove", "deleted: removable");
+
+  // A row with the same id comes back, active and without a staging record of its own (only the orphan names the folder).
+  putAlignmentJob({ ...gone, status: "paused", pool: undefined });
+  try {
+    const listing = await sweep.listPoolStaging();
+    assert.equal(entry(listing, "wsl", gone.id).action, "keep");
+    assert.match(entry(listing, "wsl", gone.id).reason, /deleted and planned again \(paused\)/);
+    const run = await sweep.removePoolStaging();
+    assert.equal(result(run, "wsl", gone.id).result, "kept");
+    assert.deepEqual(removals(fake.hosts.wsl), []);
+    assert.deepEqual(fake.stagedFolders("wsl"), [gone.id]);
+
+    // Once that job is finished, the folder is removable again from the orphan record.
+    putAlignmentJob({ ...alignmentJob(gone.id), status: "cancelled" });
+    const again = await sweep.listPoolStaging();
+    assert.equal(entry(again, "wsl", gone.id).action, "remove");
+    assert.match(entry(again, "wsl", gone.id).reason, /deleted/);
+    assert.equal(result(await sweep.removePoolStaging(), "wsl", gone.id).result, "removed");
+    assert.deepEqual(fake.stagedFolders("wsl"), []);
+  } finally {
+    endQueued(gone.id);
   }
 });

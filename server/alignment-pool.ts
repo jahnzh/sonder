@@ -390,6 +390,11 @@ export class AlignmentPoolCoordinator {
     return this.recordings.has(recordingId);
   }
 
+  /** The job, probe or sweep id that holds the recording's lease, or null. */
+  recordingHolder(recordingId: string) {
+    return this.recordings.get(recordingId)?.jobId ?? null;
+  }
+
   /** A host slot or a recording's lease is held under this job or probe id. */
   holdsLease(id: string) {
     for (const slot of this.slots.values()) if (slot.has(id)) return true;

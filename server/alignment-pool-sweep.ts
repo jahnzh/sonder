@@ -9,8 +9,14 @@
 // (`stagingName` in alignment-pool.ts). So every staging into that name began before the removal was sent, and a
 // later run stages under another name: a removal that outlives its deadline, a restart, or a slow host can only reach
 // a folder that nothing stages into again. A later lease reads only what it staged itself.
+//
+// That argument needs one worker's folders to lie outside every other worker's pool-jobs folder: `rm -rf` of a job
+// folder on one host would otherwise remove what another host stages inside it. A run therefore lists every
+// configured host first, with the real path of its media root and pool-jobs folder (symlinks resolved on the host),
+// and removes nothing on any host unless every host was listed and none of those paths lies inside another host's
+// pool-jobs folder.
 import { randomUUID } from "node:crypto";
-import { isAbsolute, normalize } from "node:path";
+import { isAbsolute, normalize, posix } from "node:path";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { sqlite } from "./db.ts";
@@ -73,7 +79,12 @@ export type HostStaging = {
   hostId: PoolHostId;
   /** The worker's media root its /health reports; null when it could not be read. */
   root: string | null;
+  /** The real paths of that root and of its pool-jobs folder, as the host resolves them; null when not listed. */
+  realRoot: string | null;
+  realPoolJobs: string | null;
   error: string | null;
+  /** Why a run removes nothing on any host (a host not listed, or one host's folders inside another's); null when it may. */
+  refused: string | null;
   folders: StagedFolder[];
   removableKiB: number;
 };
@@ -81,14 +92,21 @@ export type PoolStagingListing = { checkedAt: number; hosts: HostStaging[] };
 export type RemovalOutcome = StagedFolder & { result: "removed" | "kept" | "failed"; detail: string | null };
 export type PoolStagingRemoval = {
   checkedAt: number;
-  hosts: { hostId: PoolHostId; root: string | null; error: string | null; folders: RemovalOutcome[] }[];
+  hosts: { hostId: PoolHostId; root: string | null; error: string | null; refused: string | null; folders: RemovalOutcome[] }[];
 };
 
 type ListedEntry = { name: string; directory: boolean; sizeKiB: number | null };
 
-/** Lists `dir` as `<d|f>\t<KiB or ->\t<name>` lines; an absent folder lists nothing. */
-function listingCommand(dir: string) {
-  return `dir=${shellQuote(dir)}; [ -d "$dir" ] || exit 0; cd "$dir" || exit 1; ` +
+/**
+ * Prints `R\t<real root>` and `P\t<real pool-jobs>` (symlinks resolved on the host; a part that does not exist yet
+ * is kept as named), then lists `dir` as `<d|f>\t<KiB or ->\t<name>` lines; an absent folder lists nothing.
+ */
+export function listingCommand(root: string, dir: string) {
+  return `real() { p=$1; s=; while [ ! -d "$p" ]; do s="/\${p##*/}$s"; p=\${p%/*}; [ -n "$p" ] || p=/; done; ` +
+    `r=$(cd -P -- "$p" && pwd -P) || return 1; printf "%s%s" "$r" "$s"; }; ` +
+    `root=${shellQuote(root)}; dir=${shellQuote(dir)}; rr=$(real "$root") || exit 1; rd=$(real "$dir") || exit 1; ` +
+    `printf "R\\t%s\\nP\\t%s\\n" "$rr" "$rd"; ` +
+    `[ -d "$dir" ] || exit 0; cd "$dir" || exit 1; ` +
     `for f in * .[!.]* ..?*; do [ -e "$f" ] || [ -L "$f" ] || continue; ` +
     `if [ -d "$f" ] && [ ! -L "$f" ]; then t=d; else t=f; fi; ` +
     `s=$(du -sk -- "$f" 2>/dev/null | cut -f1); printf "%s\\t%s\\t%s\\n" "$t" "\${s:--}" "$f"; done`;
@@ -109,6 +127,18 @@ export function parseStagingListing(stdout: string): ListedEntry[] {
     });
   }
   return entries;
+}
+
+/** The listing command's output: its first two lines are the real paths, the rest the entries. */
+export function parseHostListing(stdout: string) {
+  const [rootLine = "", poolJobsLine = "", ...rest] = stdout.split("\n");
+  const real = (line: string, tag: string) => {
+    if (!line.startsWith(`${tag}\t`)) throw new Error("the host did not report the real path of its folders");
+    const path = posix.normalize(line.slice(2));
+    if (!isAbsolute(path)) throw new Error("the host reported a real path that is not absolute");
+    return path.length > 1 ? path.replace(/\/+$/, "") : path;
+  };
+  return { realRoot: real(rootLine, "R"), realPoolJobs: real(poolJobsLine, "P"), entries: parseStagingListing(rest.join("\n")) };
 }
 
 type JobRecord = { id: string; recordingId: string; status: string };
@@ -139,7 +169,24 @@ function readRecords(): Records {
   return records;
 }
 
-function classify(hostId: PoolHostId, root: string, entry: ListedEntry, records: Records): StagedFolder {
+/**
+ * What a run does with the folder now: the server's records decide whether its job has any further use for it, and
+ * a folder they would remove is kept while its recording is leased by anything other than this sweep (`sweepHolder`),
+ * or a lease or run of its job is live. The dry run and the run's own check under the lease use this one decision.
+ */
+function classify(hostId: PoolHostId, root: string, entry: ListedEntry, records: Records, sweepHolder: string | null = null): StagedFolder {
+  const found = recordedVerdict(hostId, root, entry, records);
+  if (found.action !== "remove") return found;
+  const coord = getAlignmentPoolCoordinator();
+  const keep = (reason: string): StagedFolder => ({ ...found, action: "keep", reason });
+  const holder = found.recordingId ? coord.recordingHolder(found.recordingId) : null;
+  if (holder !== null && holder !== sweepHolder) return keep("Its recording is leased by a running job or probe.");
+  if (found.jobId && coord.holdsLease(found.jobId)) return keep("Its job holds a lease.");
+  if (found.jobId && jobRunInFlight(found.jobId)) return keep("A run of its job is in flight.");
+  return found;
+}
+
+function recordedVerdict(hostId: PoolHostId, root: string, entry: ListedEntry, records: Records): StagedFolder {
   const path = stagingFolder(root, entry.name);
   const folder = { ...entry, path, jobId: null, recordingId: null, status: null };
   const verdict = (action: StagedFolder["action"], reason: string, job?: Partial<JobRecord> & { recordingId?: string }) =>
@@ -179,14 +226,47 @@ async function listHost(host: PoolHost): Promise<HostStaging> {
   try {
     const root = await hostRoot(host, signal);
     const dir = stagingFolder(root, "");
-    const { stdout } = await untilAborted(poolDeps().exec(host.sshTarget, listingCommand(dir), { signal }), signal);
+    const { stdout } = await untilAborted(poolDeps().exec(host.sshTarget, listingCommand(root, dir), { signal }), signal);
+    const { realRoot, realPoolJobs, entries } = parseHostListing(stdout);
     const records = readRecords();
-    const folders = parseStagingListing(stdout).map((entry) => classify(host.id, root, entry, records))
+    const folders = entries.map((entry) => classify(host.id, root, entry, records))
       .sort((a, b) => a.name.localeCompare(b.name));
-    return { hostId: host.id, root, error: null, folders, removableKiB: removable(folders) };
+    return { hostId: host.id, root, realRoot, realPoolJobs, error: null, refused: null, folders, removableKiB: removable(folders) };
   } catch (error) {
-    return { hostId: host.id, root: null, error: failure(error), folders: [], removableKiB: 0 };
+    return { hostId: host.id, root: null, realRoot: null, realPoolJobs: null, error: failure(error), refused: null, folders: [], removableKiB: 0 };
   }
+}
+
+const strictlyInside = (path: string, dir: string) => path !== dir && path.startsWith(dir === "/" ? "/" : `${dir}/`);
+
+/**
+ * Why a run may not remove anything on any host: a configured host that was not listed (its folders could lie inside
+ * the ones a removal reaches), or a host's real media root or pool-jobs folder strictly inside a host's real pool-jobs
+ * folder. The same real path on two hosts is allowed: retired names are global, so neither stages into a removed name.
+ */
+export function crossHostRefusal(listings: HostStaging[]): string | null {
+  const problems: string[] = [];
+  for (const listing of listings) if (listing.error !== null) problems.push(`${listing.hostId} could not be listed (${listing.error})`);
+  for (const outer of listings) {
+    if (outer.realPoolJobs === null) continue;
+    for (const inner of listings)
+      for (const [what, path] of [["media root", inner.realRoot], ["pool-jobs folder", inner.realPoolJobs]] as const)
+        if (path !== null && strictlyInside(path, outer.realPoolJobs))
+          problems.push(`${inner.hostId}'s ${what} ${path} lies inside ${outer.hostId}'s pool-jobs folder ${outer.realPoolJobs}`);
+  }
+  return problems.length ? `A run removes nothing on any host: ${problems.join("; ")}.` : null;
+}
+
+/** Every configured host listed in this run, each marked with the run's refusal; a refused run removes nothing. */
+async function listAllHosts() {
+  const listings = await Promise.all(getAlignmentPoolCoordinator().listHosts().map((host) => listHost(host)));
+  const refused = crossHostRefusal(listings);
+  if (!refused) return listings;
+  return listings.map((listing): HostStaging => {
+    const folders = listing.folders.map((folder) =>
+      folder.action === "remove" ? { ...folder, action: "keep" as const, reason: `${folder.reason} The run is refused, so it stays.` } : folder);
+    return { ...listing, refused, folders, removableKiB: 0 };
+  });
 }
 
 const removable = (folders: StagedFolder[]) =>
@@ -207,10 +287,14 @@ function selectedHosts(hostId?: string) {
   return [host];
 }
 
-/** The dry run: every folder on every configured host, its size and what a run would do. Removes nothing. */
+/**
+ * The dry run: every folder on every configured host (or on one), its size and what a run would do now. Every
+ * configured host is listed even for one, because a run is refused unless all of them are. Removes nothing.
+ */
 export async function listPoolStaging(options: { host?: string } = {}): Promise<PoolStagingListing> {
-  const hosts = selectedHosts(options.host);
-  return { checkedAt: Date.now(), hosts: await Promise.all(hosts.map((host) => listHost(host))) };
+  const ids = new Set(selectedHosts(options.host).map((host) => host.id));
+  const listings = await listAllHosts();
+  return { checkedAt: Date.now(), hosts: listings.filter((listing) => ids.has(listing.hostId)) };
 }
 
 /**
@@ -225,7 +309,7 @@ function retireUnderLease(hostId: PoolHostId, root: string, listed: StagedFolder
   if (level < 2) sqlite.pragma("synchronous = FULL");
   try {
     return sqlite.transaction((): string | null => {
-      const now = classify(hostId, root, listed, readRecords());
+      const now = classify(hostId, root, listed, readRecords(), holder);
       if (now.action !== "remove") return `Checked again under the lease: ${now.reason}`;
       if (now.jobId !== listed.jobId || now.recordingId !== recordingId) return "Its record changed since the listing.";
       if (!coord.holdsLease(holder)) return "The sweep no longer holds its recording's lease.";
@@ -277,14 +361,16 @@ export async function removePoolStaging(options: { host?: string } = {}): Promis
   removing = true;
   try {
     const hosts = selectedHosts(options.host);
+    // Every configured host is listed before anything is sent to any of them; a refusal keeps every folder.
+    const listings = await listAllHosts();
     const listed = await Promise.all(hosts.map(async (host) => {
-      const listing = await listHost(host);
+      const listing = listings.find((candidate) => candidate.hostId === host.id)!;
       const folders: RemovalOutcome[] = [];
       for (const folder of listing.folders)
-        folders.push(folder.action === "remove" && listing.root
+        folders.push(folder.action === "remove" && listing.root && !listing.refused
           ? await removeFolder(host, listing.root, folder)
           : { ...folder, result: "kept", detail: null });
-      return { hostId: host.id, root: listing.root, error: listing.error, folders };
+      return { hostId: host.id, root: listing.root, error: listing.error, refused: listing.refused, folders };
     }));
     return { checkedAt: Date.now(), hosts: listed };
   } finally {
