@@ -35,6 +35,7 @@ type ParsedAlignment = {
   error: string | null;
   createdAt: number | null;
   hostId: string | null;
+  outcome: string | null;
   /** Queued automatically to replace a map of an older engine (#277). */
   rebuild: boolean;
 };
@@ -47,11 +48,12 @@ function parseAlignment(data: string): ParsedAlignment {
       error: typeof job.error === "string" && job.error ? job.error : null,
       createdAt: typeof job.createdAt === "number" ? job.createdAt : null,
       hostId: typeof job.pool?.hostId === "string" ? job.pool.hostId : null,
+      outcome: typeof job.outcome === "string" ? job.outcome : null,
       rebuild: !!job.rebuildOf,
     };
   } catch (error) {
     return {
-      status: "error", progress: null, createdAt: null, hostId: null, rebuild: false,
+      status: "error", progress: null, createdAt: null, hostId: null, outcome: null, rebuild: false,
       error: `The job record could not be read: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
@@ -87,7 +89,8 @@ export const alignmentSource = defineSource<AlignmentRow[], AlignmentPoolStatus>
       const consensus = row.ebook_id.startsWith("set-consensus:");
       return {
         id: `alignment:${row.id}`, kind: "alignment" as const, processId: "alignment", title: row.title || row.recording_id,
-        detail: consensus ? "Ebook set check" : job.rebuild ? "Alignment map rebuild" : "Alignment map", user: null, state,
+        detail: job.outcome === "rejected" ? "Alignment map rebuild rejected, previous map kept"
+          : consensus ? "Ebook set check" : job.rebuild ? "Alignment map rebuild" : "Alignment map", user: null, state,
         progress: state === "done" ? 1 : job.progress, host: job.hostId, startedAt: job.createdAt, updatedAt: row.updated_at,
         error: unknown ?? job.error, changedAt: row.updated_at, dependsOn: job.hostId ? hostId(job.hostId) : null,
       };

@@ -150,6 +150,17 @@ test("alignment states map and finished jobs drop off after 24 hours", () => {
   assert.equal(result.attention, 0, "a failure older than a week stays listed without lighting the indicator");
 });
 
+test("a rejected alignment rebuild is listed as failed with the reason and says the previous map is kept (#379)", () => {
+  const reason = "The rebuild was rejected: it mapped none of the text. The previous map (82% of the text mapped) stays published.";
+  const result = buildActivity(base({
+    alignments: [{ id: "rej", ebook_id: "e", recording_id: "r", title: "Rejected", updated_at: NOW - MIN,
+      data: alignmentData({ status: "error", outcome: "rejected", error: reason, rebuildOf: { engine: "aeneas-1.7.3" }, pool: undefined }) }],
+  }));
+  assert.equal(result.items[0].state, "failed");
+  assert.equal(result.items[0].detail, "Alignment map rebuild rejected, previous map kept");
+  assert.equal(result.items[0].error, reason);
+});
+
 test("Hardcover queues: permanent errors and long waits are flagged, one row per user and queue", () => {
   const result = buildActivity(base({
     hardcoverQueues: [
