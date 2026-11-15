@@ -50,6 +50,23 @@ class FakeProcess:
         pass
 
 
+class StuckProcess(FakeProcess):
+    """A process in uninterruptible I/O: it survives SIGKILL, and a join without a timeout never returns."""
+
+    def __init__(self, folder, budget, key):
+        super().__init__(folder, budget, key)
+        self.gone = threading.Event()
+
+    def kill(self):
+        self.signals.append("KILL")
+
+    def is_alive(self):
+        return not self.gone.is_set()
+
+    def join(self, timeout=None):
+        self.gone.wait(timeout)
+
+
 class ProcessPool(FakePool):
     """FakePool with the processes a ProcessPoolExecutor keeps in `_processes` (pid -> Process)."""
 
@@ -89,6 +106,47 @@ class Budget(unittest.TestCase):
         budget.reserve("a", 90)
         self.assertTrue(budget.reserve("a", 95))
         self.assertEqual(budget.reserved(), 95)
+
+    def test_lowering_a_reservation_never_waits(self):
+        budget = DiskBudget(100)
+        budget.claim("a", 80)
+        budget.claim("b", 60)  # retained files over the budget after a restart
+        self.assertTrue(budget.reserve("a", 50))
+        self.assertEqual(budget.reserved("a"), 50)
+
+    def test_raising_is_in_turn_and_fails_when_it_can_never_fit(self):
+        budget = DiskBudget(100)
+        budget.claim("a", 40)
+        budget.claim("b", 40)
+        budget.wait_turn("a")
+        budget.wait_turn("b")
+        self.assertFalse(budget.reserve("b", 50), "b waits behind a")
+        with self.assertRaises(BudgetExceeded) as raised:
+            budget.reserve("a", 70)  # 70 + b's 40, which b releases only after a
+        self.assertIn("never fit", str(raised.exception))
+        budget.leave_turn("a")
+        budget.release("a")
+        self.assertTrue(budget.reserve("b", 70))
+
+    def test_a_parked_reservation_counts_as_held(self):
+        budget = DiskBudget(100)
+        budget.claim("retained", 40)
+        budget.park("retained")
+        budget.wait_turn("a")
+        with self.assertRaises(BudgetExceeded):
+            budget.reserve("a", 70)
+        budget.unpark("retained")
+        self.assertFalse(budget.reserve("a", 70), "now it only waits")
+
+    def test_a_new_request_is_refused_when_it_does_not_fit_now(self):
+        import book_session
+        budget = DiskBudget(100)
+        budget.reserve("a", 90)
+        with self.assertRaises(book_session.DiskFull):
+            budget.fits_now("b", 20)
+        self.assertEqual(budget.reserved("b"), 0)
+        budget.fits_now("b", 10)
+        self.assertEqual(budget.reserved("b"), 10)
 
     def test_estimate_covers_pcm_and_emissions(self):
         hour = estimate_bytes(3600)
@@ -231,7 +289,7 @@ class Sessions(unittest.TestCase):
         import book_session
         for reason in ("cancelled", "idle", "worker stop"):
             with self.subTest(reason=reason):
-                (self.folder / "tracks").mkdir(exist_ok=True)
+                (self.folder / "tracks").mkdir(parents=True, exist_ok=True)
                 (self.folder / "emissions").mkdir(exist_ok=True)
                 session = self.registry.open("job", self.folder)
                 session.reserve_disk(4000)
@@ -251,6 +309,76 @@ class Sessions(unittest.TestCase):
                     self.assertEqual(process.seen_at_exit, {"emissions": True, "reserved": 4000},
                                      "the folder and the reservation outlive the processes")
                 self.assertEqual(self.registry.budget.reserved(), 0)
+
+    def stuck_session(self):
+        import book_session
+        session = self.registry.open("job", self.folder)
+        session.reserve_disk(4000)
+        process = StuckProcess(self.folder, self.registry.budget, "job")
+        pool = ProcessPool([process])
+        session.set_pool(pool)
+        patches = [unittest.mock.patch.object(book_session, "TERMINATE_GRACE_S", 0.05, create=True),
+                   unittest.mock.patch.object(book_session, "KILL_WAIT_S", 0.05, create=True)]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.addCleanup(process.gone.set)
+        return session, pool, process
+
+    def end_in_thread(self, *args):
+        outcome = []
+        thread = threading.Thread(target=lambda: outcome.append(self.registry.end(*args)), daemon=True)
+        thread.start()
+        thread.join(10)
+        self.assertFalse(thread.is_alive(), "ending a session waits a bounded time for its processes")
+        return outcome[0]
+
+    def test_a_process_that_survives_the_kill_keeps_the_folder_and_the_reservation(self):
+        session, _pool, process = self.stuck_session()
+        self.assertEqual(self.end_in_thread("job", "cancelled"), "stuck")
+        self.assertEqual(process.signals, ["TERM", "KILL"])
+        self.assertTrue((self.folder / "emissions").exists(), "the folder is kept while the process is there")
+        self.assertEqual(self.registry.budget.reserved("job"), 4000, "and so is its reservation")
+        self.assertEqual([(s["jobId"], s["reason"], s["reservedBytes"]) for s in self.registry.stuck()],
+                         [("job", "cancelled", 4000)])
+        self.assertTrue(self.registry.is_stuck("job"))
+        self.assertEqual(self.registry.retry_stuck(), [], "still there")
+        process.gone.set()  # the read returned and the process died
+        self.assertEqual(self.registry.retry_stuck(), ["job"])
+        self.assertFalse(self.folder.exists())
+        self.assertEqual(self.registry.budget.reserved(), 0)
+        self.assertEqual(self.registry.stuck(), [])
+        self.assertEqual(session.ended, "cancelled")
+
+    def test_the_jobs_own_stop_of_its_pool_does_not_hide_a_live_process(self):
+        # The job thread stops its pool when it stops (release_pool); an end right after must still see the
+        # process that did not exit, and keep the folder and the reservation.
+        session, pool, process = self.stuck_session()
+        stopped = []
+        thread = threading.Thread(target=lambda: stopped.append(session.release_pool(pool, stop=True)), daemon=True)
+        thread.start()
+        thread.join(10)
+        self.assertFalse(thread.is_alive(), "the job's stop is bounded too")
+        self.assertEqual(stopped, [False])
+        self.assertIs(session.pool, pool, "the session keeps a pool whose process is still there")
+        self.assertEqual(self.end_in_thread("job", "cancelled"), "stuck")
+        self.assertTrue(self.folder.exists())
+        self.assertEqual(self.registry.budget.reserved("job"), 4000)
+        process.gone.set()
+        self.assertEqual(self.registry.retry_stuck(), ["job"])
+        self.assertEqual(self.registry.budget.reserved(), 0)
+
+    def test_a_busy_job_thread_keeps_the_session_too(self):
+        session = self.registry.open("job", self.folder)
+        session.reserve_disk(4000)
+        running = threading.Event()
+        running.set()
+        self.assertEqual(self.registry.end("job", "idle", True, running.is_set), "stuck")
+        self.assertTrue(self.folder.exists())
+        running.clear()
+        self.assertEqual(self.registry.retry_stuck(), ["job"])
+        self.assertFalse(self.folder.exists())
+        self.assertEqual(self.registry.budget.reserved(), 0)
 
     def test_drop_decoded_deletes_one_track(self):
         session, _pool, _closed = self.held()

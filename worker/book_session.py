@@ -32,8 +32,10 @@ import time
 from pathlib import Path
 
 IDLE_SECONDS = 15 * 60
-# A stopped group-alignment process gets this long to exit after SIGTERM before it is killed.
+# A stopped group-alignment process gets this long to exit after SIGTERM before it is killed, and after
+# SIGKILL this long to be gone; one still there then is reported as stuck and keeps its session.
 TERMINATE_GRACE_S = 5.0
+KILL_WAIT_S = 5.0
 DEFAULT_DISK_BYTES = 64 * 1024 ** 3
 PCM_BYTES_PER_SECOND = 16000 * 2
 # Per-track emissions plus the book's concatenated copy for the aligner: 50 frames x 29 labels x 2 bytes, twice.
@@ -85,39 +87,58 @@ def folder_bytes(folder):
     return total
 
 
-def stop_pool(pool, grace=None):
-    """Stop a process pool now and return once its processes have exited.
+def stop_pool(pool, grace=None, kill_wait=None):
+    """Stop a process pool now; True once all of its processes have exited, False if one is still there.
 
-    Pending work is cancelled; running processes get SIGTERM, then SIGKILL after `grace` seconds. Safe to
-    call more than once and from several threads: a second call waits for the first to finish."""
+    Pending work is cancelled; running processes get SIGTERM, then SIGKILL after `grace` seconds, and are
+    waited for at most `kill_wait` seconds more. Bounded: a process stuck in the kernel (a read from a failing
+    disk) does not hold the caller; the answer is then False and the caller keeps what the process may still
+    use. Safe to call more than once and from several threads: a later call checks the same processes again."""
     grace = TERMINATE_GRACE_S if grace is None else grace
+    kill_wait = KILL_WAIT_S if kill_wait is None else kill_wait
     lock = pool.__dict__.setdefault("_sonder_stop_lock", threading.Lock())
-    with lock:
-        if pool.__dict__.get("_sonder_stopped"):
-            return
-        processes = list((getattr(pool, "_processes", None) or {}).values())
-        pool.shutdown(wait=False, cancel_futures=True)
-        for process in processes:
-            try:
-                process.terminate()
-            except (OSError, ValueError, AttributeError):
-                pass
-        deadline = time.monotonic() + grace
-        for process in processes:
-            process.join(max(0.0, deadline - time.monotonic()))
-        for process in processes:
-            if process.is_alive():
+    if not lock.acquire(timeout=grace + kill_wait + 1.0):
+        return False  # another thread is stopping it and has not finished in the bounded time
+    try:
+        processes = pool.__dict__.get("_sonder_processes")
+        if processes is None:
+            # Taken before shutdown, which forgets them.
+            processes = pool.__dict__["_sonder_processes"] = list((getattr(pool, "_processes", None) or {}).values())
+            pool.shutdown(wait=False, cancel_futures=True)
+            for process in processes:
                 try:
-                    process.kill()
+                    process.terminate()
                 except (OSError, ValueError, AttributeError):
                     pass
-        for process in processes:
-            process.join()  # SIGKILL cannot be ignored; this waits only for a process stuck in the kernel
-        pool.__dict__["_sonder_stopped"] = True
+            deadline = time.monotonic() + grace
+            for process in processes:
+                process.join(max(0.0, deadline - time.monotonic()))
+            for process in processes:
+                if process.is_alive():
+                    try:
+                        process.kill()
+                    except (OSError, ValueError, AttributeError):
+                        pass
+            deadline = time.monotonic() + kill_wait
+            for process in processes:
+                process.join(max(0.0, deadline - time.monotonic()))
+        else:
+            for process in processes:
+                if process.is_alive():
+                    process.join(0)
+        return not any(process.is_alive() for process in processes)
+    finally:
+        lock.release()
 
 
 class BudgetExceeded(Exception):
-    """The book alone needs more than the whole disk budget."""
+    """The book can never fit: larger than the whole disk budget, or than what is left of it once the
+    reservations that are released only after this book (retained jobs still to resume, folders that are
+    not jobs, other books waiting before it) are counted."""
+
+
+class DiskFull(BudgetExceeded):
+    """A new job's request does not fit next to the other books now; nothing of it was written."""
 
 
 class SessionEnded(Exception):
@@ -125,31 +146,82 @@ class SessionEnded(Exception):
 
 
 class DiskBudget:
+    """One budget for every byte under the job folders.
+
+    `reserve` sets a key's reservation. Lowering one always succeeds. Raising one is first come, first
+    served (`wait_turn`): only the oldest waiting key may raise its reservation, so two books that each
+    hold part of the budget cannot wait for each other's bytes forever. The oldest waiter gets
+    BudgetExceeded when it cannot fit even after every book that is not waiting has released its bytes,
+    i.e. when the rest is held by keys that let go only after it (`parked` ones and later waiters)."""
+
     def __init__(self, total):
         self.total = int(total)
         self._lock = threading.Lock()
         self._reserved = {}
+        self._waiting = []  # keys waiting to raise their reservation, oldest first
+        self._parked = set()  # keys whose bytes are released only after the waiters have run
 
     def reserve(self, key, nbytes):
-        """Reserve `nbytes` for `key`. True when reserved, False when it does not fit now."""
+        """Reserve `nbytes` for `key`. True when reserved, False when it does not fit now (or an older
+        waiter is first). Raises BudgetExceeded when it can never fit."""
         nbytes = int(nbytes)
         if nbytes > self.total:
-            raise BudgetExceeded(f"The book needs {nbytes} bytes of decoded audio and emissions; "
-                                 f"the worker's budget is {self.total}.")
+            raise BudgetExceeded(f"The book needs {nbytes} bytes of disk; the worker's budget is {self.total}.")
         with self._lock:
+            if nbytes <= self._reserved.get(key, 0):
+                self._reserved[key] = nbytes  # lowering never waits
+                return True
+            if self._waiting and self._waiting[0] != key and key in self._waiting:
+                return False  # an older book is first
+            held = sum(v for k, v in self._reserved.items()
+                       if k != key and (k in self._parked or (k in self._waiting and k != key)))
+            if held + nbytes > self.total:
+                raise BudgetExceeded(
+                    f"The book needs {nbytes} bytes of disk, and {held} of the worker's {self.total} are held "
+                    "by book jobs that can release them only after this one (retained jobs waiting to resume, "
+                    "other books waiting for disk, folders that are not jobs). It can never fit.")
             used = sum(v for k, v in self._reserved.items() if k != key)
             if used + nbytes > self.total:
                 return False
             self._reserved[key] = nbytes
             return True
 
+    def fits_now(self, key, nbytes):
+        """Reserve `nbytes` for a key that has nothing yet only if it fits at once (a new job's request)."""
+        nbytes = int(nbytes)
+        with self._lock:
+            used = sum(v for k, v in self._reserved.items() if k != key)
+            if used + nbytes > self.total:
+                raise DiskFull(f"The worker's book-job disk budget is full: {used} of {self.total} bytes are "
+                               f"reserved and this request needs {nbytes}. Retry when another book job has ended.")
+            self._reserved[key] = nbytes
+
     def claim(self, key, nbytes):
         """Record bytes that are already on disk (retained at a restart), whether or not they fit."""
         with self._lock:
             self._reserved[key] = int(nbytes)
 
+    def wait_turn(self, key):
+        with self._lock:
+            if key not in self._waiting:
+                self._waiting.append(key)
+
+    def leave_turn(self, key):
+        with self._lock:
+            if key in self._waiting:
+                self._waiting.remove(key)
+
+    def park(self, key):
+        with self._lock:
+            self._parked.add(key)
+
+    def unpark(self, key):
+        with self._lock:
+            self._parked.discard(key)
+
     def release(self, key):
         with self._lock:
+            self._parked.discard(key)
             return self._reserved.pop(key, 0)
 
     def reserved(self, key=None):
@@ -168,6 +240,9 @@ class BookSession:
         self._lock = threading.Lock()
         self.last_used = clock()
         self.ended = None  # reason once ended
+        self.ended_at = None
+        self._delete = False  # what the end does with the folder once nothing runs any more
+        self._busy = None
         self.digests = {}  # track index -> sha256 of the source audio
         self.decoded = {}  # track index -> PCM path
         self.emissions = None  # handle the aligner reads (numpy memmap), dropped on end
@@ -188,14 +263,19 @@ class BookSession:
             raise SessionEnded(self.ended)
 
     def reserve_disk(self, nbytes, should_wait=None, poll=1.0):
-        """Reserve the book's disk estimate, waiting while other sessions hold the budget."""
-        while True:
-            self.check()
-            if self.budget.reserve(self.key, nbytes):
-                return
-            if should_wait is not None and not should_wait():
-                raise SessionEnded("cancelled")
-            time.sleep(poll)
+        """Reserve the book's disk estimate, waiting (in turn, oldest first) while other sessions hold the
+        budget. Raises BudgetExceeded when the book can never fit (see DiskBudget)."""
+        self.budget.wait_turn(self.key)
+        try:
+            while True:
+                self.check()
+                if self.budget.reserve(self.key, nbytes):
+                    return
+                if should_wait is not None and not should_wait():
+                    raise SessionEnded("cancelled")
+                time.sleep(poll)
+        finally:
+            self.budget.leave_turn(self.key)
 
     def claim_disk(self, nbytes):
         """The files this session's folder already holds, counted before anything else is admitted."""
@@ -222,15 +302,16 @@ class BookSession:
         stop_pool(pool)
         raise SessionEnded(ended)
 
-    def release_pool(self, pool, stop):
-        """The job is done with its pool: shut it down when the work finished, stop it when it did not."""
-        with self._lock:
-            if self.pool is pool:
-                self.pool = None
-        if stop:
-            stop_pool(pool)
-        else:
-            pool.shutdown(wait=True)
+    def release_pool(self, pool, stop=True):
+        """The job is done with its pool: its processes are stopped (bounded, see stop_pool). The session
+        lets go of the pool only once they have exited; otherwise it keeps it, so an end of the session sees
+        the processes and keeps the folder and the reservation while one is still there. True when gone."""
+        gone = stop_pool(pool)
+        if gone:
+            with self._lock:
+                if self.pool is pool:
+                    self.pool = None
+        return gone
 
     def add_decoded(self, index, path, digest=None):
         with self._lock:
@@ -250,27 +331,41 @@ class BookSession:
         with self._lock:
             self._closers.append(closer)
 
-    def _end(self, reason, delete):
+    def _end(self, reason, delete, busy=None):
+        """End the session (once). Returns False when it had already ended, "stuck" when a group process
+        (or `busy()`, the job's thread) is still there, so the folder and the reservation are kept, and
+        True when it is released. `delete` removes the job's whole folder; False keeps it (worker stop)."""
         with self._lock:
             if self.ended is not None:
                 return False
             self.ended = reason
-            pool, self.pool = self.pool, None
+            self.ended_at = time.time()
             closers, self._closers = self._closers, []
             self.emissions = None
-            decoded, self.decoded = self.decoded, {}
-        if pool is not None:
-            stop_pool(pool)  # its processes have exited before the folder goes and the budget is released
+            self.decoded = {}
         for closer in closers:
             try:
                 closer(reason)
             except Exception:
                 pass
-        if delete:
-            for path in decoded.values():
-                Path(path).unlink(missing_ok=True)
-            for name in ("tracks", "emissions"):
-                shutil.rmtree(self.folder / name, ignore_errors=True)
+        self._delete = delete
+        self._busy = busy
+        return True if self.finish_end() else "stuck"
+
+    def finish_end(self):
+        """Delete and release once nothing of the job runs any more; False (and nothing done) until then."""
+        with self._lock:
+            pool = self.pool
+        if pool is not None and not stop_pool(pool):
+            return False
+        busy = self._busy
+        if busy is not None and busy():
+            return False
+        with self._lock:
+            if self.pool is pool:
+                self.pool = None
+        if self._delete:
+            shutil.rmtree(self.folder, ignore_errors=True)
         self.budget.release(self.key)
         return True
 
@@ -284,6 +379,7 @@ class SessionRegistry:
         self._clock = clock
         self._lock = threading.Lock()
         self._sessions = {}
+        self._stuck = {}  # key -> session that ended while one of its processes was still there
 
     def open(self, key, folder):
         with self._lock:
@@ -302,11 +398,42 @@ class SessionRegistry:
         with self._lock:
             return list(self._sessions)
 
-    def end(self, key, reason, delete=True):
-        """End one session (idempotent). Returns True when this call ended it."""
+    def end(self, key, reason, delete=True, busy=None):
+        """End one session (idempotent). Returns True when this call ended and released it, "stuck" when
+        it ended but keeps its folder and reservation until its processes are gone (`retry_stuck`), and
+        False when there was no session."""
         with self._lock:
             session = self._sessions.pop(key, None)
-        return session._end(reason, delete) if session is not None else False
+        if session is None:
+            return False
+        outcome = session._end(reason, delete, busy)
+        if outcome == "stuck":
+            with self._lock:
+                self._stuck[key] = session
+        return outcome
+
+    def is_stuck(self, key):
+        with self._lock:
+            return key in self._stuck
+
+    def retry_stuck(self):
+        """Release the stuck sessions whose processes have exited since. Returns the keys released."""
+        with self._lock:
+            stuck = list(self._stuck.items())
+        released = []
+        for key, session in stuck:
+            if session.finish_end():
+                with self._lock:
+                    self._stuck.pop(key, None)
+                released.append(key)
+        return released
+
+    def stuck(self):
+        """/health's view of the sessions kept because a process is still there."""
+        with self._lock:
+            stuck = list(self._stuck.items())
+        return [{"jobId": key, "reason": session.ended, "since": session.ended_at,
+                 "reservedBytes": self.budget.reserved(key)} for key, session in stuck]
 
     def idle_keys(self):
         with self._lock:
@@ -318,4 +445,6 @@ class SessionRegistry:
         with self._lock:
             sessions, self._sessions = list(self._sessions.values()), {}
         for session in sessions:
-            session._end(reason, delete=False)
+            if session._end(reason, delete=False) == "stuck":
+                with self._lock:
+                    self._stuck[session.key] = session
