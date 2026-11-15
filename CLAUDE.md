@@ -38,9 +38,9 @@ For isolated checks of a committed revision, database backups, and live-verifica
 
 ## Architecture
 
-**Two processes** (`compose.yaml`):
+**One process** (`compose.yaml`):
 - `sonder` — Fastify server (`server/`) that also serves the built SPA from `dist/`. Runs TypeScript directly through `tsx` (no server build step), host networking, read-only rootfs. The Dockerfile copies only `server/` plus `src/types.ts`, `src/appearance.ts` and `src/reading-types.ts`, so **any other `src/` file imported by the server breaks the production image**.
-- `sonder-alignment` — Python FastAPI worker (`worker/align.py`) on 127.0.0.1:3012, token-protected, 2 CPU / 6 GB. Does known-text forced alignment and short-excerpt speech recovery; models live under `MEDIA_ROOT/alignment` and are fetched only by `download_model.py`. Server side lives in `server/alignment.ts`.
+- External, alignment: the remote CTC pool (ADR 0006, `docs/CTC_WORKER_POOL.md`). The Python FastAPI worker (`worker/align.py`, token-protected, port 3012) runs only on the pool hosts, WSL's GPU first and lisa's CPU as the fallback, installed by `scripts/install-ctc-workers.sh`; production runs no alignment worker (the `sonder-alignment` container was retired in #279). It does known-text forced alignment, candidate probing and short-excerpt passage locating; models live under each worker's `MEDIA_ROOT/alignment` and are fetched only by `download_model.py`. Server side lives in `server/alignment.ts` and `server/alignment-pool.ts` (SSH staging, host leases); reading sync is available only with `ALIGNMENT_POOL_ENABLED=1` and `ALIGNMENT_WORKER_TOKEN`.
 - External: a dedicated Transmission (`sonder-torrents`) sharing the network of the user's existing `transmission-openvpn` container, configured by `scripts/setup-local-torrents.mjs` (writes credentials into `.env`).
 
 **Server layout.** `server/index.ts` loads `.env` and calls `createApp()` in `server/app.ts`, which holds auth, the core library/progress/media routes and the background tickers. Feature areas register their own routes: `hardcover-routes.ts`/`hardcover.ts`, `reader.ts`, `alignment.ts`, `appearance.ts`, `media-library.ts` (sources/faulty flags/copy choice). Other key modules:

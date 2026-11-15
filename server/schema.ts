@@ -1,4 +1,5 @@
-import { sqliteTable, text, integer, real, primaryKey } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, primaryKey, index } from "drizzle-orm/sqlite-core";
+import { ACQUISITION_STATUSES, type AcquisitionStatus } from "./acquisition-vocabulary.ts";
 export const works = sqliteTable("works", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),
@@ -18,13 +19,13 @@ export const editions = sqliteTable("audio_editions", {
   narrator: text("narrator").notNull(),
   rating: real("rating").notNull(),
   sourceLabel: text("source_label").notNull(),
-});
+}, (t) => [index("audio_editions_work").on(t.workId)]);
 export const recordings = sqliteTable("recordings", {
   id: text("id").primaryKey(),
   editionId: text("edition_id")
     .notNull()
     .references(() => editions.id),
-});
+}, (t) => [index("recordings_edition").on(t.editionId)]);
 export const alignmentJobs = sqliteTable("alignment_jobs", {
   id: text("id").primaryKey(),
   ebookId: text("ebook_id").notNull().references(() => ebookEditions.id),
@@ -53,7 +54,7 @@ export const tracks = sqliteTable("tracks", {
   duration: real("duration").notNull().default(0),
   source: text("source").notNull(),
   sourceType: text("source_type").notNull(),
-});
+}, (t) => [index("tracks_recording").on(t.recordingId)]);
 export const library = sqliteTable("library", {
   bookId: text("book_id")
     .primaryKey()
@@ -103,6 +104,16 @@ export const ebookProgress = sqliteTable("ebook_progress", {
   chapter: integer("chapter").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
+/**
+ * The statuses a download (acquisition) row can hold, as `server/acquisitions.ts`, `server/app.ts` and
+ * `server/series-removal.ts` write them. The table has no CHECK constraint; the column type checks the writers
+ * that go through Drizzle, and the Activity source maps each value (#392). TypeScript only: no SQL changes.
+ */
+export { ACQUISITION_STATUSES };
+export type AcquisitionJobStatus = AcquisitionStatus;
+/** The statuses a copy to the server (`server_downloads`) can hold, as `server/downloads.ts` writes them. */
+export const SERVER_COPY_STATUSES = ["queued", "downloading", "paused", "ready", "error"] as const;
+export type ServerCopyStatus = (typeof SERVER_COPY_STATUSES)[number];
 export const acquisitions = sqliteTable("acquisitions", {
   workId: text("work_id"),
   language: text("language"),
@@ -115,7 +126,7 @@ export const acquisitions = sqliteTable("acquisitions", {
   title: text("title").notNull(),
   author: text("author").notNull(),
   cover: text("cover").notNull(),
-  status: text("status").notNull(),
+  status: text("status", { enum: ACQUISITION_STATUSES }).notNull(),
   progress: real("progress").notNull().default(0),
   error: text("error"),
   bookId: text("book_id"),
@@ -135,7 +146,7 @@ export const serverDownloads = sqliteTable("server_downloads", {
     .primaryKey()
     .references(() => recordings.id),
   bookId: text("book_id").notNull(),
-  status: text("status").notNull(),
+  status: text("status", { enum: SERVER_COPY_STATUSES }).notNull(),
   progress: real("progress").notNull(),
   error: text("error"),
   createdAt: integer("created_at").notNull(),

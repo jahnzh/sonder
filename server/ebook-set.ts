@@ -9,7 +9,6 @@ import {
   type OutlierCheckResult,
 } from "./ebook-set-outlier.ts";
 import {
-  listAlignmentJobs,
   firstRecordingWithLocalAudio,
   recordingContext,
   trackLocalAudioPath,
@@ -23,7 +22,6 @@ import { extractBook } from "./reader.ts";
 import { poolEnabled } from "./alignment-pool.ts";
 import {
   ProbeLanguageNotSupported,
-  sampleFromWhisperAnchor,
   type AnchorSampleScore,
 } from "./ebook-set-ctc-probe.ts";
 import {
@@ -33,65 +31,7 @@ import {
 } from "./ebook-set-ctc-session.ts";
 import { normalizeReaderText } from "../src/reading-types.ts";
 import { searchEbooks, saveEbook } from "./ebooks.ts";
-import { join } from "node:path";
-import { mediaRoot } from "./storage.ts";
 import { iso3 } from "./language.ts";
-
-/**
- * Which prober scores a candidate's audio samples. CTC is the ADR 0006 prober; Whisper stays selectable until
- * its code is removed (#279), then this setting and the Whisper branches go with it.
- */
-export type EbookSetProber = "ctc" | "whisper";
-export const DEFAULT_EBOOK_SET_PROBER: EbookSetProber = "ctc";
-export function ebookSetProber(env: NodeJS.ProcessEnv = process.env): EbookSetProber {
-  return env.EBOOK_SET_PROBER === "whisper" ? "whisper" : DEFAULT_EBOOK_SET_PROBER;
-}
-
-export async function workerAnchorSample(input: {
-  audioPath: string;
-  fragmentTexts: string[];
-  language: string;
-  start: number;
-  duration: number;
-}): Promise<EbookSetAnchorSample> {
-  if (!process.env.ALIGNMENT_WORKER_URL || !process.env.ALIGNMENT_WORKER_TOKEN)
-    throw new Error("The local alignment worker is not configured.");
-  // An in-flight sample may finish, but no new background sample may start
-  // while a reading-sync job is queued or processing. Rebuilds (#277) do not
-  // hold it back: a newly added edition goes ahead of them.
-  while (listAlignmentJobs().some((job) =>
-    !job.rebuildOf && (job.status === "queued" || job.status === "processing")
-  )) await new Promise((resolve) => setTimeout(resolve, 1000));
-  const response = await fetch(
-    `${process.env.ALIGNMENT_WORKER_URL.replace(/\/$/, "")}/anchor`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(180_000),
-      body: JSON.stringify({
-        token: process.env.ALIGNMENT_WORKER_TOKEN,
-        audio: input.audioPath,
-        output: join(mediaRoot, "alignment", "ebook-set-anchor.json"),
-        fragments: input.fragmentTexts,
-        language: iso3(input.language),
-        start: input.start,
-        duration: input.duration,
-      }),
-    },
-  );
-  if (!response.ok)
-    throw new Error(
-      response.status === 504
-        ? "The alignment worker timed out on this section. Retry later, or choose a release with chapters."
-        : "This excerpt could not be matched against the ebook text.",
-    );
-  const result = (await response.json()) as {
-    text?: string;
-    start?: number;
-    match?: { index: number; score: number } | null;
-  };
-  return sampleFromWhisperAnchor(result, input.start);
-}
 
 export const EBOOK_SET_TOP_K = 5;
 
@@ -274,13 +214,13 @@ function upsertMember(input: {
     .run();
 }
 
-/** Scores each sample with the injected or Whisper prober, one worker request per sample. */
-async function whisperScores(
+/** Scores samples using the injected test prober. */
+async function injectedScores(
   samples: { audioPath: string; time: number; duration: number }[],
   fragmentTexts: string[],
   language: string,
 ) {
-  const anchorSample = deps.anchorSample ?? workerAnchorSample;
+  const anchorSample = deps.anchorSample!;
   const scores: AnchorSampleScore[] = [];
   for (const sample of samples)
     scores.push(
@@ -327,10 +267,10 @@ export async function runOutlierCheckForEbook(
   });
   const language = book.language || "eng";
   let scores: AnchorSampleScore[];
-  if (deps.anchorSample || ebookSetProber() === "whisper") {
-    scores = await whisperScores(planned, passages, language);
+  if (iso3(language) !== "eng") throw new ProbeLanguageNotSupported();
+  if (deps.anchorSample) {
+    scores = await injectedScores(planned, passages, language);
   } else {
-    if (iso3(language) !== "eng") throw new ProbeLanguageNotSupported();
     const session = probe ?? createCtcProbeSession(recordingId, probeSessionOptions());
     try {
       scores = await session.score({ fragmentTexts: passages, language: "eng", samples: planned });
@@ -359,7 +299,7 @@ export async function withProbeSession<T>(
   run: (probe: ProbeSession | null) => Promise<T>,
 ): Promise<T> {
   const recordingId =
-    deps.anchorSample || ebookSetProber() === "whisper"
+    deps.anchorSample
       ? null
       : firstRecordingWithLocalAudio(workId);
   const session = recordingId ? createCtcProbeSession(recordingId, probeSessionOptions()) : null;
@@ -383,7 +323,7 @@ export async function evaluateEbookSetMember(
 ) {
   // A shared probe session holds the recording lease across candidates; consensus
   // alignment must wait until that session releases (HIGH-1 / ADR 0005 stages).
-  // `probe` is null under Whisper / injected samples, but still means "batch caller".
+  // `probe` is null with injected samples, but still means "batch caller".
   const deferSync = probe !== undefined;
   const sync = async () => {
     if (deferSync) return;
@@ -436,11 +376,7 @@ export async function evaluateEbookSetMember(
     return { status: "held" as const, evidence };
   }
   const injected = Boolean(deps.anchorSample);
-  const usesCtc = !injected && ebookSetProber() === "ctc";
-  const workerReady = usesCtc
-    ? poolEnabled() && Boolean(process.env.ALIGNMENT_WORKER_TOKEN)
-    : Boolean(process.env.ALIGNMENT_WORKER_URL) &&
-      Boolean(process.env.ALIGNMENT_WORKER_TOKEN);
+  const workerReady = poolEnabled() && Boolean(process.env.ALIGNMENT_WORKER_TOKEN);
   const usesWorker = !injected;
   const pendingOutlier: OutlierCheckResult = {
     passed: false,

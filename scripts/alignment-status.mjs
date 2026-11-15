@@ -120,7 +120,7 @@ export function ebookSetMembers(db, workId) {
 
 /** GET <url>/health with a timeout; never throws. */
 export async function checkHealth(url, { timeoutMs = HEALTH_TIMEOUT_MS, fetchImpl = fetch } = {}) {
-  if (!url) return { url: null, state: "unconfigured", detail: "no worker URL (set ALIGNMENT_WORKER_URL or --health-url)" };
+  if (!url) return { url: null, state: "unconfigured", detail: "no worker URL (set ALIGNMENT_POOL_WSL_WORKER_URL or --health-url)" };
   const target = `${url.replace(/\/$/, "")}/health`;
   try {
     const res = await fetchImpl(target, { signal: AbortSignal.timeout(timeoutMs) });
@@ -207,7 +207,8 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   const opts = parseArgs(argv);
   const db = openReadOnly(opts.db ?? defaultDbPath(env));
   try {
-    const healthUrl = opts.healthUrl ?? env.ALIGNMENT_WORKER_URL ?? "http://127.0.0.1:3012";
+    // Production runs no alignment worker (#279): default to the WSL pool worker, the server's first host.
+    const healthUrl = opts.healthUrl ?? env.ALIGNMENT_POOL_WSL_WORKER_URL ?? "http://192.168.1.119:3012";
     const report = await buildReport(db, opts.id, { healthUrl });
     console.log(opts.json ? JSON.stringify(report, null, 2) : formatReport(report));
     return report.query && report.kind === "none" ? 1 : 0;

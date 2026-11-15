@@ -51,7 +51,6 @@ const values = {
   TRANSMISSION_USERNAME: "sonder",
   TRANSMISSION_PASSWORD: password,
   TRANSMISSION_DOWNLOAD_DIR: "/downloads/complete",
-  ALIGNMENT_WORKER_URL: get("ALIGNMENT_WORKER_URL") || "http://127.0.0.1:3012",
   ALIGNMENT_WORKER_TOKEN: get("ALIGNMENT_WORKER_TOKEN") || randomBytes(32).toString("hex"),
 };
 for (const [key, value] of Object.entries(values)) {

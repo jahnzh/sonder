@@ -132,6 +132,34 @@ If the running image could not be tagged (or no rollback image exists), roll bac
 git checkout <previous-commit> && docker compose build sonder && docker compose up -d sonder
 ```
 
+Before rolling back to an image older than ADR 0011 (derived work media state, issue #395), run `node scripts/materialise-media-states.mjs` from the production work tree as the last step before the recreate, because those images read a work's media state from the stored `state` and `acquisition_id` columns of `work_media_states`, which later images no longer keep current, and would otherwise show wrong or missing media states. It uses `data/sonder.db` (or `--db <path>`) and prints how many rows it wrote; `--dry-run` only counts. It opens the database file directly and waits for the write lock, so it works while the server is running and when the server cannot start. Changes made between the script and the recreate are not reflected, so stop the container first (`docker compose stop sonder`) unless the rollback is urgent.
+
+### Deploying the alignment-worker retirement (#279)
+
+`deploy.sh` builds and recreates only `sonder`; it never touches the alignment workers. **The workers on WSL and lisa keep running their current revision** (`worker/` of `main` before #279), which works with this server. Every request the new server sends carries `engine: "ctc"`, which that worker's `/align`, `/anchor` and `/anchor-batch` accept with the same fields (`audio`, `output`, `fragments`, `language`, `start`/`duration` or `windows`, `prefetch`, `recordingId`, `audioFingerprint`, `trackId`, `microbatch`) and answer from the same CTC pipeline; and every `/health` field the server reads (`ready`, `busy`, `stuck`, `slots`, `mediaRoot`, `ctc.engine`, `ctc.ready`, `ctc.device`, `ctc.precision`, `ctc.passageReady`, `ctc.anchorBatch`) is in that worker's answer. Its top-level `engine` still says `aeneas-1.7.3`; the server reads `ctc.engine` only. WSL's live `/health` on 2026-11-15 was `{"ready":true,"engine":"aeneas-1.7.3",...,"slots":8,...,"ctc":{"engine":"ctc-wav2vec2-base-960h-torchaudio-2.8-v2","ready":true,"device":"cuda","precision":"float16",...,"passageReady":true,"anchorBatch":true}}` (the fixture of `tests/image-smoke.test.mjs`); lisa's was not read. Updating the workers is #411: **do not run `scripts/install-ctc-workers.sh` for this deploy.**
+
+1. **Deploy the app** with `scripts/deploy-prod.sh <commit> --marker <string>` as above. The image smoke (step 5) reads each pool host's `/health` body and fails the deploy unless the worker is ready, runs `ctc.engine` `ctc-wav2vec2-base-960h-torchaudio-2.8-v2` with its model ready, and runs on the host's device (`cuda`/`float16` on WSL, `cpu`/`float32` on lisa). Then **stop the old container**, which the new server never calls:
+
+   ```bash
+   docker stop sonder-alignment
+   ```
+
+   `compose.yaml` no longer defines it, so nothing recreates it; `docker compose up` reports it as an orphan until it is removed. Until the rollback window has passed, keep the stopped container, the `sonder-alignment:local` image and `ALIGNMENT_WORKER_URL` in `.env` (the new server ignores that value): the rollback below needs all three. After the window: `docker rm sonder-alignment`, and delete the `ALIGNMENT_WORKER_URL` line. The image can stay longer (`worker/Dockerfile.ctc-benchmark` builds on it).
+
+2. **Rollback**, in this order (the old server needs `ALIGNMENT_WORKER_URL` and the old container for reading sync and passage recovery). Each check exits non-zero when it fails, and the `&&` chain stops there, before the old app is recreated:
+
+   ```bash
+   grep -q '^ALIGNMENT_WORKER_URL=.' .env \
+     && docker start sonder-alignment \
+     && curl -sf --max-time 10 http://127.0.0.1:3012/health | jq -e '.ready == true' \
+     && docker tag sonder-audiobooks:<rollback-tag> sonder-audiobooks:local \
+     && docker compose up -d --no-build sonder \
+     && docker exec sonder sh -c 'test -n "$ALIGNMENT_WORKER_URL" && test -n "$ALIGNMENT_WORKER_TOKEN"' \
+     && echo 'rollback done: reading sync configured'
+   ```
+
+   If it stops at the first line, restore `ALIGNMENT_WORKER_URL=http://127.0.0.1:3012` in `.env` and run it again. If the container was already removed, recreate it first from the previous commit's `compose.yaml` (`git show <previous-commit>:compose.yaml > /tmp/compose-prev.yaml && docker compose -f /tmp/compose-prev.yaml --project-directory . up -d --no-build alignment-worker`) and run the block again. The `/health` check waits for nothing: if the old worker is still starting, rerun the block. The last check is the old server's own availability rule (URL and token set). Then open Settings → Reading sync: "Prepare reading sync for all titles" must be enabled, without "The alignment worker is not configured on this server." This deploy does not change the workers on WSL and lisa, so the rollback does not touch them.
+
 The script prints the exact rollback command on failure and at the end of a successful run. Record every deploy in `artifacts/orca/STATE.md` (commit, backup path, image tag, markers, live-check results).
 
 ## Live verification

@@ -16,7 +16,7 @@ import {
   clearWorkMediaHold,
   getWorkMediaState,
   setWorkMediaHold,
-  syncWorkMediaState,
+  trackWorkMediaState,
   workHasActiveQueuedAcquisition,
   workHasPlayableAudio,
 } from "./work-media-state.ts";
@@ -417,7 +417,7 @@ export function enqueueSeriesAcquisition(
           error: null,
         });
       } else if (workHasPlayableAudio(work.workId)) {
-        syncWorkMediaState(userId, work.workId);
+        trackWorkMediaState(userId, work.workId);
         upsertJob({
           userId,
           seriesId,
@@ -661,7 +661,7 @@ async function runAudioJob(
       .set({ error: "has_audio", updatedAt: Date.now() })
       .where(eq(s.seriesAcquisitionJobs.id, job.id))
       .run();
-    syncWorkMediaState(job.userId, job.workId);
+    trackWorkMediaState(job.userId, job.workId);
     return;
   }
   const meta = seriesMeta(job.seriesId);
@@ -786,7 +786,6 @@ export async function retrySeriesWorkAcquisition(
       setJobState(userId, seriesId, bookId, workId, "audio", "searching");
       try {
         await retryWorkMediaAcquisition(userId, workId, acquire);
-        syncWorkMediaState(userId, workId);
         setJobState(userId, seriesId, bookId, workId, "audio", "done");
       } catch (error) {
         setJobState(

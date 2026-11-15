@@ -62,7 +62,7 @@ import {
   ensureMediaStorage,
   torrentDownloadDir,
 } from "./storage.ts";
-import { acquire, refreshQueue } from "./acquisitions.ts";
+import { acquire, controlAcquisition, refreshQueue } from "./acquisitions.ts";
 import { tickSeriesAcquisition, SERIES_ACQUISITION_TICK_MS, resetStrandedSeriesAcquisitionClaims, seriesAcquisitionTickerEnabled } from "./series-acquisition.ts";
 import { transmission, transmissionConfigured } from "./transmission.ts";
 import { getTorrentHealth } from "./torrent-health.ts";
@@ -96,13 +96,22 @@ import {
   releaseDisplayTitle,
 } from "./sources/prowlarr.ts";
 import type { Book } from "../src/types.ts";
-import { getWorkMediaState } from "./work-media-state.ts";
+import { getWorkMediaStates } from "./work-media-state.ts";
 const uploadDir = importedDir;
 export function listBooks(userId = 1): Book[] {
   const allTracks = db.select().from(s.tracks).all();
   const allProgress = db.select().from(s.userProgress).where(eq(s.userProgress.userId, userId)).all();
   const lib = db.select().from(s.userLibrary).where(eq(s.userLibrary.userId, userId)).all();
   const hidden = hiddenHardcoverPlaceholders(userId);
+  const libraryWorkIds = sqlite
+    .prepare(
+      "SELECT DISTINCT e.work_id AS workId FROM user_library u JOIN audio_editions e ON e.id=u.book_id WHERE u.user_id=?",
+    )
+    .all(userId) as { workId: string }[];
+  const mediaStates = getWorkMediaStates(
+    userId,
+    libraryWorkIds.map((row) => row.workId),
+  );
   return db
     .select({ work: s.works, edition: s.editions, recording: s.recordings })
     .from(s.editions)
@@ -156,7 +165,7 @@ export function listBooks(userId = 1): Book[] {
         status: (saved?.status || "unread") as Book["status"],
         addedAt: saved?.addedAt || 0,
         progress: allProgress.find((p) => p.recordingId === recording.id),
-        mediaState: saved ? getWorkMediaState(userId, work.id) : null,
+        mediaState: saved ? (mediaStates.get(work.id) ?? null) : null,
       };
     });
 }
@@ -695,41 +704,7 @@ export async function createApp(options?: { logger?: FastifyServerOptions["logge
       else requestServerDownload(copy.bookId);
       return { ok: true };
     }
-    const job = db
-      .select()
-      .from(s.acquisitions)
-      .where(eq(s.acquisitions.id, id))
-      .get();
-    if (!job) throw new Error("This download could not be found.");
-    if (action === "retry") {
-      db.update(s.acquisitions)
-        .set({ status: "error" })
-        .where(eq(s.acquisitions.id, id))
-        .run();
-      return acquire(job.magnet, {
-        title: job.title,
-        author: job.author,
-        cover: job.cover,
-        workId: job.workId || undefined,
-        language: job.language,
-        narrator: job.narrator,
-        userId: currentUserId(req),
-      });
-    }
-    if (job.backend !== "local" || job.status === "ready")
-      throw new Error("Only active local downloads can be paused or resumed.");
-    await transmission(action === "pause" ? "torrent-stop" : "torrent-start", {
-      ids: [job.hash],
-    });
-    db.update(s.acquisitions)
-      .set({
-        status: action === "pause" ? "paused" : "downloading",
-        error: null,
-        updatedAt: Date.now(),
-      })
-      .where(eq(s.acquisitions.id, id))
-      .run();
-    return { ok: true };
+    return controlAcquisition(id, action, currentUserId(req));
   });
   app.get("/api/torrents/health", async (req) => {
     const { fresh } = z
