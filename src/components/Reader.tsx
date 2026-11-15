@@ -644,7 +644,7 @@ export function ReaderView({
                 Math.max(1, all.length - 1),
             };
             // A relocation the reader caused pages away and is saved after a pause.
-            if (following.relocated(next, !!latest.current) === "ignored")
+            if (following.relocated(next, !!latest.current, section.index) === "ignored")
               return;
             latest.current = next;
             setLocator(next);
@@ -832,7 +832,11 @@ export function ReaderView({
       currentFlow.current = flow;
       view.flow(flow);
     }
+    // A place the reader chooses before this is due is displayed with the new theme already; restoring
+    // the place shown before it would undo the choice.
+    const restoreDue = following.restoreLater();
     const timer = setTimeout(() => {
+      if (!restoreDue.due()) return;
       const player=playerRef.current,current=mapRef.current;
       if(following.isFollowing() && current && player.book?.recordingId===current.recordingId && current.intervals.some(interval=>interval.trackId===player.track?.id && interval.start<=player.position && interval.end>player.position))return;
       // A Word mode checkpoint is a sentence without a CFI; go to that sentence.
@@ -871,8 +875,9 @@ export function ReaderView({
   };
   // Contents and page turns replace a follow jump still in flight, and their
   // relocation is saved even while that jump's layout is pending.
-  const navigate = (go: (view: Rendition) => Promise<unknown>) => {
-    following.navigate();
+  // `section`: the section a Contents choice goes to.
+  const navigate = (go: (view: Rendition) => Promise<unknown>, section?: number) => {
+    following.navigate(section);
     const view = rendition.current;
     if (!view) return;
     const ended = following.beginNavigation();
@@ -1459,7 +1464,7 @@ export function ReaderView({
               <button
                 key={section.index}
                 aria-current={section.index === locator?.section ? "location" : undefined}
-                onClick={() => { setManualWord(null); navigate((view) => view.display(section.href)); }}
+                onClick={() => { setManualWord(null); navigate((view) => view.display(section.href), section.index); }}
               >
                 <span>{section.title}</span>
                 {section.index === narratedSection?.index && <Headphones size={16} role="img" aria-label="Narrating" />}
@@ -1658,7 +1663,7 @@ export function ReaderView({
                 aria-current={section.index === locator?.section ? "location" : undefined}
                 onClick={() => {
                   setManualWord(null);
-                  navigate((view) => view.display(section.href));
+                  navigate((view) => view.display(section.href), section.index);
                   setPanel(null);
                 }}
               >
