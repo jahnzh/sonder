@@ -433,6 +433,61 @@ test("a job remembers every host it staged on: after a resume, a stored row of o
   assert.deepEqual(noRemovals(), []);
 });
 
+test("a host removed from the configuration and restored stays in the job's record of where it staged", async () => {
+  // Paused after staging on WSL.
+  let paused!: Awaited<ReturnType<typeof chapterJob>>;
+  fake.hosts.wsl.onRequest = (n) => { if (n === 1) putAlignmentJob({ ...alignmentJob(paused.id), status: "paused" }); };
+  paused = await chapterJob();
+  await settled(paused.id, ["paused"]);
+  fake.hosts.wsl.onRequest = undefined;
+  const wslFolder = join(fake.hosts.wsl.root, "alignment", "pool-jobs", paused.id);
+  assert.deepEqual(alignmentJob(paused.id).pool?.stagedHosts, { wsl: wslFolder });
+
+  // The server restarts with WSL left out of the configuration; the job is resumed and pauses again on lisa.
+  configure(["lisa"]);
+  resetAlignmentRunnerForTests({ restart: true });
+  fake.hosts.lisa.onRequest = (n) => { if (n === 1) putAlignmentJob({ ...alignmentJob(paused.id), status: "paused" }); };
+  transition.resume(alignmentJob(paused.id));
+  await processAlignments();
+  const onLisa = await settled(paused.id, ["paused"]);
+  fake.hosts.lisa.onRequest = undefined;
+  const lisaFolder = join(fake.hosts.lisa.root, "alignment", "pool-jobs", paused.id);
+  assert.equal(onLisa.pool?.hostId, "lisa");
+  assert.deepEqual(onLisa.pool?.stagedHosts, { wsl: wslFolder, lisa: lisaFolder }, "WSL is kept while it is not configured");
+
+  // WSL is configured again: the next run stages there again, and the record still names both hosts.
+  configure(["wsl", "lisa"]);
+  resetAlignmentRunnerForTests({ restart: true });
+  transition.resume(alignmentJob(paused.id));
+  await processAlignments();
+  const finished = await settled(paused.id);
+  assert.equal(finished.status, "partial", finished.error ?? undefined);
+  assert.equal(finished.pool?.hostId, "wsl");
+  assert.equal(finished.pool?.jobMediaRoot, wslFolder);
+  assert.deepEqual(finished.pool?.stagedHosts, { wsl: wslFolder, lisa: lisaFolder });
+  assert.deepEqual(fake.stagedFolders("wsl"), [paused.id]);
+  assert.deepEqual(fake.stagedFolders("lisa"), [paused.id]);
+
+  // A row of older code staged on a host that is no longer in the pool (the Steam Deck): that entry is kept too.
+  const row = alignmentJob(paused.id);
+  row.status = "queued";
+  row.sectionsDone = [];
+  row.intervals = [];
+  row.generation = "retired-host";
+  row.pool = { hostId: "steamdeck", attempt: 1, jobMediaRoot: "/steamdeck/media/alignment/pool-jobs/" + row.id,
+    workerUrl: "http://steamdeck-worker.test", triedHosts: ["steamdeck"], stagedAudio: {} };
+  putAlignmentJob(row);
+  rmSync(join(process.env.MEDIA_ROOT!, "alignment", row.id), { recursive: true, force: true });
+  resetAlignmentRunnerForTests({ restart: true });
+  await processAlignments();
+  const restaged = await settled(paused.id);
+  assert.equal(restaged.status, "partial", restaged.error ?? undefined);
+  assert.equal(restaged.pool?.hostId, "wsl");
+  assert.deepEqual(restaged.pool?.stagedHosts,
+    { steamdeck: "/steamdeck/media/alignment/pool-jobs/" + row.id, wsl: wslFolder });
+  assert.deepEqual(noRemovals(), []);
+});
+
 test("acquire gives a healthy host with the tracks staged and its worker address; release frees it", async () => {
   const { recordingId, trackId } = recording();
   const track = db.select().from(schema.tracks).all().find((row) => row.id === trackId)!;
