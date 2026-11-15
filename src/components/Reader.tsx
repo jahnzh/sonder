@@ -38,9 +38,10 @@ import { PlaybackTimeline } from "./PlaybackTimeline";
 import {PlaybackExtra,usePlaybackMenu} from "./PlaybackMenu";
 import { readerWords, readerSegment } from "../reader-segments";
 import { readerNeedsScripts } from "../reader-sandbox";
-import { createReaderFollowing, type NarrationReturn, type SaveOrigin } from "../reader-following";
+import { createReaderFollowing, type DeferredReturn, type NarrationReturn, type SaveOrigin } from "../reader-following";
+import { mapIdentityOf } from "../alignment-map-lifecycle";
 import { currentChapter, playbackTimeline } from "../chapters";
-import { usePlayer } from "../player";
+import { usePlayer, type SeekTarget } from "../player";
 import { api, forgetPositionHistory, localDB } from "../lib";
 import {
   loadReader,
@@ -276,6 +277,8 @@ export function ReaderView({
     [locator, setLocator] = useState<TextLocator | null>(null),
     [query, setQuery] = useState(""),
     [map, setMap] = useState<AlignmentJob | null>(null),
+    // The server confirmed `map` for the current audio in this reader (a cached map is not, until the map endpoint answers).
+    [mapConfirmed, setMapConfirmed] = useState(false),
     [offline, setOffline] = useState(false),
     [saving, setSaving] = useState(false),
     [recovering, setRecovering] = useState(false),
@@ -330,8 +333,14 @@ export function ReaderView({
     retry: () => {},
     clearFollowError: () => {},
   });
+  // Saves of places chosen by hand that the following module ran, counted on the pages for the browser
+  // tests, with data-save-waiting while one still waits: together they show a delayed save had its chance.
+  const manualSaves = useRef(0);
   followingEvents.current = {
-    manualSave: (locator, origin) => void saveReading(id, locator, origin, mapRef.current?.recordingId).catch(() => {}),
+    manualSave: (locator, origin) => {
+      viewport.current?.setAttribute("data-manual-saves", String(++manualSaves.current));
+      void saveReading(id, locator, origin, mapRef.current?.recordingId).catch(() => {});
+    },
     // A map for this ebook that matches the recording in the player, with a sentence at its position.
     narrationToFollow: () => {
       const player = playerRef.current;
@@ -347,7 +356,16 @@ export function ReaderView({
     onClearFollowError: () => followingEvents.current.clearFollowError(),
     // Rendered from React state, so it batches with the locator as before.
     onFollowingChange: setFollow,
+    onSaveWaiting: (waiting) => viewport.current?.toggleAttribute("data-save-waiting", waiting),
   }));
+  // The map shown, and whether the server confirmed it: the following module decides from these
+  // whether a back to narration may drop a save, and whether a Read from audio answer is still current.
+  const showMap = (job: AlignmentJob | null, confirmed: boolean) => {
+    following.mapShown(job ? mapIdentityOf(job) : null, !!job && confirmed);
+    mapRef.current = job;
+    setMap(job);
+    setMapConfirmed(!!job && confirmed);
+  };
   useEffect(() => () => following.dispose(), [following]);
   const redrawHighlight = () => {
     if (!mountedRef.current) return;
@@ -933,7 +951,8 @@ export function ReaderView({
   jumpRef.current = showFragment;
   mapRef.current = map;
   // Speech recovery for Read from audio: its answer moves the view only while it is still
-  // current (no manual move, no other return and no change of recording since the request).
+  // current (no manual move, no other return, no change of recording and no other map shown
+  // since the request: `back` holds the map it was made with).
   const recover = async (back: NarrationReturn, player: typeof p) => {
     if (!player.book || !player.track) return;
     const recordingId = player.book.recordingId, trackId = player.track.id;
@@ -1036,7 +1055,7 @@ export function ReaderView({
       highlight.current = null;
       following.forgetFollowed();
     }
-  }, [p.position, p.track?.id, p.book?.recordingId, follow, map, rendered, followRevision]);
+  }, [p.position, p.track?.id, p.book?.recordingId, follow, map, mapConfirmed, rendered, followRevision]);
   // Listen from here: move the narration to a sentence, keeping where it was for Undo.
   const listenAt = (paragraphId: string | undefined, undoable = false) => {
     const interval = map?.intervals.find(
@@ -1126,9 +1145,10 @@ export function ReaderView({
       const word = words[cursor];
       if (word) {
         const place = following.manualPlace();
-        void showFragment(word.paragraphId, false).then(() => {
-          if (latest.current) place.save(latest.current);
-        });
+        void showFragment(word.paragraphId, false).then(
+          () => place.save(latest.current),
+          () => place.save(null),
+        );
       }
     } else navigate(view => direction < 0 ? view.prev() : view.next());
   };
@@ -1207,9 +1227,10 @@ export function ReaderView({
     following.pageAway();
     setManualWord(null);
     const place = following.manualPlace();
-    void showFragment(fragment.id, false).then(() => {
-      if (latest.current) place.save(latest.current);
-    });
+    void showFragment(fragment.id, false).then(
+      () => place.save(latest.current),
+      () => place.save(null),
+    );
   };
   // With this book's narration loaded, the bar is the audio position and the page follows it.
   const audio = p.book && p.track && p.book.workId === book?.workId ? { book: p.book, track: p.track } : null;
@@ -1218,25 +1239,38 @@ export function ReaderView({
   const barPercent = audio
     ? audioWhole?.duration ? Math.round((audioWhole.position / audioWhole.duration) * 100) : 0
     : shownPercent;
-  // Scrubbing the narration brings the page back to following it, decided from where the
-  // scrub ends: back to narration runs once the seek is committed (pointer released, or a key
-  // or change that moved the thumb), not while dragging. The seek reaches the player only with
-  // the next render, so it passes false and the drop waits until following starts to work.
-  const scrubDrag = useRef<number | null>(null);
-  const scrubStart = (event: { pointerId: number; button: number }) => {
-    if (event.button === 0) scrubDrag.current = event.pointerId;
+  // Scrubbing the narration brings the page back to following it, decided from where the scrub
+  // ends: once the seek is committed (pointer released, or a key or change that moved the thumb)
+  // and the player reports the place it went to. On another track the player loads that track
+  // first; until it is there, or the seek ended without getting there, nothing changes, so every
+  // save still waiting is kept and the decision is made for the destination, not the track left.
+  const scrubReturn = useRef<{ target: SeekTarget; back: DeferredReturn; error: string | null; ended: boolean } | null>(null);
+  const [scrubEnded, setScrubEnded] = useState(0);
+  const scrubSeek = (target: SeekTarget | null) => {
+    if (!target) {
+      scrubReturn.current = null;
+      following.backToNarration();
+      return;
+    }
+    const pending = { target, back: following.deferredReturn(), error: playerRef.current.error, ended: false };
+    scrubReturn.current = pending;
+    void target.done.then(() => {
+      if (scrubReturn.current !== pending) return;
+      pending.ended = true;
+      setScrubEnded((value) => value + 1);
+    });
   };
-  const scrubEnd = (event: { pointerId: number }) => {
-    if (scrubDrag.current !== event.pointerId) return;
-    scrubDrag.current = null;
-    following.backToNarration(false);
-  };
-  const scrubCancel = (event: { pointerId: number }) => {
-    if (scrubDrag.current === event.pointerId) scrubDrag.current = null;
-  };
-  const scrubChange = () => {
-    if (scrubDrag.current === null) following.backToNarration(false);
-  };
+  useEffect(() => {
+    const pending = scrubReturn.current;
+    if (!pending) return;
+    const { target } = pending;
+    const there = p.book?.recordingId === target.recordingId && p.track?.id === target.trackId &&
+      Math.abs(p.position - target.position) < 1;
+    const failed = !!p.error && p.error !== pending.error;
+    if (!there && !failed && !pending.ended) return;
+    scrubReturn.current = null;
+    pending.back.run();
+  }, [p.book?.recordingId, p.track?.id, p.position, p.error, scrubEnded]);
   const controls = controlsVisible || desktop;
   const timing = currentInterval ? " · estimated timings" : "";
   const overlayDisplay = preferences.display === "segment" || preferences.display === "word";
@@ -1518,8 +1552,8 @@ export function ReaderView({
         <div className="reader-player-line" aria-hidden="true"><i style={{ width: `${barPercent}%` }} /></div>
         {audio ? (
           // Scrubbing the narration brings the page back to following it.
-          <div className="reader-audio-timeline" onPointerDownCapture={scrubStart} onPointerUp={scrubEnd} onPointerCancel={scrubCancel} onChange={scrubChange}>
-            <PlaybackTimeline book={audio.book} compact scoped />
+          <div className="reader-audio-timeline">
+            <PlaybackTimeline book={audio.book} compact scoped onSeek={scrubSeek} />
           </div>
         ) : <input
           className="reader-scrubber"
@@ -1649,9 +1683,10 @@ export function ReaderView({
                     following.pageAway();
                     setManualWord(null);
                     const place = following.manualPlace();
-                    void showFragment(fragment.id, false).then(() => {
-                      if (latest.current) place.save(latest.current);
-                    });
+                    void showFragment(fragment.id, false).then(
+                      () => place.save(latest.current),
+                      () => place.save(null),
+                    );
                     setPanel(null);
                   }}
                 >
@@ -1797,7 +1832,7 @@ export function ReaderView({
           <ReadingSync
             book={book}
             books={books}
-            onMap={setMap}
+            onMap={showMap}
             onLinked={() => void refresh()}
             locator={locator}
             recordingId={recordingId}

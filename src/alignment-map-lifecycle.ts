@@ -26,7 +26,12 @@ export type RefreshTarget = {
   /** False once the selection moved on; checked where the reader always checked. */
   isCurrent(): boolean;
   onJobs(jobs: AlignmentJob[], available: boolean): void;
-  onMap(map: AlignmentJob | null): void;
+  /**
+   * The map to show. `confirmed`: the server confirmed this map for the current audio in this
+   * lifecycle (the map endpoint answered it, now or earlier for the same job run). A cached map
+   * shown before that answer, or kept after a failed check, is not confirmed.
+   */
+  onMap(map: AlignmentJob | null, confirmed: boolean): void;
   onError(message: string): void;
 };
 
@@ -43,6 +48,22 @@ export const mapCacheKey = (ebookId: string, recordingId: string) =>
 
 export const intervalCountOf = (job: AlignmentJob) =>
   job.intervalCount ?? job.intervals?.length ?? 0;
+
+/**
+ * Which map this is: its job and recording and the narration intervals it holds. A cached copy and
+ * the server's answer for the same map have the same identity; a rebuilt or corrected map, or a
+ * kept map replaced by its rebuild, has another one.
+ */
+export function mapIdentityOf(job: AlignmentJob): string {
+  // FNV-1a over the intervals, so a map of thousands of sentences gives a short key.
+  let hash = 0x811c9dc5;
+  const add = (text: string) => {
+    for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);
+  };
+  for (const interval of job.intervals ?? [])
+    add(`${interval.paragraphId}|${interval.trackId}|${interval.start}|${interval.end};`);
+  return `${job.id}:${job.recordingId}:${job.intervals?.length ?? 0}:${(hash >>> 0).toString(36)}`;
+}
 
 /**
  * Whether Reading Sync or playback warming should keep polling: the job itself is
@@ -173,16 +194,16 @@ export function createAlignmentMapLifecycle(deps: MapLifecycleDeps) {
           if (job && (job.outcome === "unsynced" || job.outcome === "language_not_supported"))
             await deps.store.delete(cacheKey);
           if (!isCurrent()) return;
-          onMap(null);
+          onMap(null, false);
           return job;
         }
         const cached = await deps.store.get(cacheKey);
         const run = `${job.id}:${job.updatedAt}:${ebook.fingerprint}`;
         const stale = cachedMapStale(cached, job, ebook.fingerprint);
         if (cachedMapMatches(cached, job, ebook.fingerprint)) {
-          onMap(cached);
           // The audio may have changed in place without a new job run; let the
           // server confirm the map once per reader session.
+          onMap(cached, validated.has(run));
           if (validated.has(run)) return job;
         } else if (stale) await deps.store.delete(cacheKey);
         let map: AlignmentJob;
@@ -192,10 +213,10 @@ export function createAlignmentMapLifecycle(deps: MapLifecycleDeps) {
           if (!isCurrent()) return;
           if (gone(deps.statusOf(error))) {
             await deps.store.delete(cacheKey);
-            onMap(null);
+            onMap(null, false);
           } else if (cached && !stale) {
             // A temporary failure: keep the cached map and confirm it later.
-            onMap(cached);
+            onMap(cached, false);
             return job;
           }
           throw error;
@@ -203,7 +224,7 @@ export function createAlignmentMapLifecycle(deps: MapLifecycleDeps) {
         if (!isCurrent()) return;
         validated.add(run);
         await deps.store.put(cacheKey, map);
-        onMap(map);
+        onMap(map, true);
         return job;
       } catch (error) {
         if (!isCurrent()) return;
@@ -211,10 +232,10 @@ export function createAlignmentMapLifecycle(deps: MapLifecycleDeps) {
         if (!deps.isOnline() || status === undefined || status >= 500) {
           const value = await deps.store.get(cacheKey);
           const usable = value?.fingerprint === ebook.fingerprint ? value : null;
-          onMap(usable);
+          onMap(usable, false);
           return usable || undefined;
         }
-        onMap(null);
+        onMap(null, false);
         onError((error as Error).message);
       }
     },

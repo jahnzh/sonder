@@ -56,13 +56,13 @@ export type SaveOrigin = "reading" | "listening";
 
 /** A place the reader chose by hand whose display is still in flight (a Lyrics turn, a search result, the scrubber). */
 export interface ManualPlace<L> {
-  /** The display ended: save `locator` unless back to narration dropped this place meanwhile. */
-  save(locator: L): void;
+  /** The display ended: save `locator` unless back to narration dropped this place meanwhile; null saves nothing. */
+  save(locator: L | null): void;
 }
 
 /** One back to narration, as its caller can still act on it later (Read from audio waits for speech recovery). */
 export interface NarrationReturn {
-  /** No later back to narration, no paging away and no change of recording or map since this one. */
+  /** No later back to narration, no paging away, no change of recording and no other map shown since this one. */
   current(): boolean;
   /** A narration to follow was found for this return after all: drop what it kept, as if it had been there. */
   confirm(): void;
@@ -83,6 +83,14 @@ export interface ReaderFollowingOptions<L> {
   onClearFollowError: () => void;
   /** Following started or stopped. */
   onFollowingChange?: (following: boolean) => void;
+  /** Whether any save of a place chosen by hand is waiting now; reported when that changes. */
+  onSaveWaiting?: (waiting: boolean) => void;
+}
+
+/** Back to narration that waits for the narration to reach the place it is moving to. */
+export interface DeferredReturn {
+  /** The narration is there (or could not get there): back to narration now, unless the reader chose again since. */
+  run(narration?: boolean): NarrationReturn | null;
 }
 
 const systemClock: FollowingClock = {
@@ -111,6 +119,7 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
   const gestureNow = () => {
     lastGesture = clock.now();
     gestures++;
+    chosen++;
   };
   // Word mode steps, so a follow jump still waiting for the page when the reader stepped on does not pull the display back.
   let wordSteps = 0;
@@ -127,6 +136,7 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
   let wordOrigin: SaveOrigin | null = null;
   const wordSaver = createCheckpointSaver<{ locator: L; origin: SaveOrigin }>(({ locator, origin }) => {
     wordOrigin = null;
+    report();
     options.onManualSave(locator, origin);
   }, {}, clock);
   // Displays of a place chosen by hand that save once they end (a Lyrics turn, a search result, the scrubber).
@@ -142,6 +152,24 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
   let recordings = 0;
   // The navigation a back to narration ended: a relocation it reports late is not the reader's.
   let returnedFromNavigation = -1;
+  // The map the reader shows (its identity, null for none), and whether the server confirmed it for
+  // the current audio in this reader. A map restored from the cache, or kept after a failed check,
+  // is not confirmed: following it works, but it is no reason to drop a save. `maps` counts the
+  // changes, so a back to narration can tell that another map replaced the one it was made with.
+  let mapIdentity: string | null = null;
+  let mapConfirmed = false;
+  let maps = 0;
+  // Choices of the reader (gestures, navigations, Word steps, paging away) and deferred returns,
+  // so a deferred return can tell whether it is still wanted.
+  let chosen = 0;
+  let deferrals = 0;
+  let waiting = false;
+  const report = () => {
+    const now = saveTimer !== null || wordOrigin !== null || places.size > 0;
+    if (now === waiting) return;
+    waiting = now;
+    options.onSaveWaiting?.(now);
+  };
 
   const set = (value: boolean) => {
     if (!value) away++;
@@ -167,6 +195,7 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
     places.clear();
     returnedFromNavigation = navigationEpoch;
     if (gestures === gesture) lastGesture = Number.NEGATIVE_INFINITY;
+    report();
   };
 
   const self = {
@@ -190,20 +219,22 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
      * Without one they are kept and still saved, unless following starts to work before they
      * are (the map arrives, the audio reaches a mapped sentence): then they are dropped at that
      * moment. `narration` defaults to `narrationToFollow()`; an entry point that moves the
-     * narration itself passes what it knows about the place it moves to.
+     * narration itself passes what it knows about the place it moves to. A narration counts only
+     * on a map the server confirmed (`mapShown`); on any other map the saves are kept as without
+     * one, and dropped once the confirmation arrives while following works.
      */
     backToNarration(narration = options.narrationToFollow?.() ?? false): NarrationReturn {
       const at = ++returns;
       const gesture = gestures;
       armed = null;
       set(true);
-      if (narration) drop(gesture);
+      if (narration && mapConfirmed) drop(gesture);
       else armed = { gesture };
       followed = "";
       retry.attempts = 0;
       options.onClearFollowError();
-      const awayThen = away, recordingThen = recordings;
-      const current = () => returns === at && away === awayThen && recordings === recordingThen;
+      const awayThen = away, recordingThen = recordings, mapsThen = maps;
+      const current = () => returns === at && away === awayThen && recordings === recordingThen && maps === mapsThen;
       return {
         current,
         confirm() {
@@ -213,8 +244,39 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
         },
       };
     },
+    /**
+     * Back to narration once the narration reached the place it is moving to: the audio scrubber
+     * released on another track, which the player loads first. Until `run()` nothing changes, so
+     * every save still waiting is kept. `run()` decides for where the narration is then; it does
+     * nothing once the reader chose again (a gesture, a navigation, a Word step, paging away), after
+     * another back to narration or when a newer deferred return replaced this one.
+     */
+    deferredReturn(): DeferredReturn {
+      const at = ++deferrals, returnsThen = returns, chosenThen = chosen;
+      let done = false;
+      return {
+        run(narration) {
+          if (done || deferrals !== at || returns !== returnsThen || chosen !== chosenThen) return null;
+          done = true;
+          return narration === undefined ? self.backToNarration() : self.backToNarration(narration);
+        },
+      };
+    },
+    /**
+     * The reader shows another map (`identity`, null for none), or the same one confirmed. `confirmed`:
+     * the server confirmed this map for the current audio in this reader. Once it is, following that
+     * starts to work drops what a back to narration kept.
+     */
+    mapShown(identity: string | null, confirmed: boolean) {
+      if (identity !== mapIdentity) maps++;
+      mapIdentity = identity;
+      mapConfirmed = identity !== null && confirmed;
+    },
     /** Stop following (a search result, a bookmark, the scrubber, scrolling Lyrics, the checkbox). */
-    pageAway() { set(false); },
+    pageAway() {
+      chosen++;
+      set(false);
+    },
     /** A wheel, key, swipe or link tap on the pages. */
     gesture() { gestureNow(); },
     /** A page turn in Lyrics mode: pages away and counts as a gesture, not as our own layout. */
@@ -226,6 +288,7 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
     /** A Word mode step (a sentence or a word chosen by the reader). It pages away unless it moved the narration along. */
     wordStep(movedAudio: boolean) {
       wordSteps++;
+      chosen++;
       if (following && !movedAudio) set(false);
     },
     /** The first display after the book opened. */
@@ -314,8 +377,10 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
         saveTimer = null;
         pendingManual = null;
         navigatedUntil = 0;
+        report();
         options.onManualSave(locator, "reading");
       }, MANUAL_SAVE_DELAY_MS);
+      report();
       return beforeReturn ? "shown" : "manual";
     },
     /**
@@ -326,6 +391,7 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
     wordCheckpoint(locator: L, origin: SaveOrigin, auto = false) {
       wordOrigin = origin;
       wordSaver.request({ locator, origin }, auto);
+      report();
     },
     /** Save the Word mode checkpoint still waiting now (page hidden, reader closed, display changed). */
     flushWordCheckpoint() { wordSaver.flush(); },
@@ -333,10 +399,12 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
     manualPlace(): ManualPlace<L> {
       const place = { dropped: false };
       places.add(place);
+      report();
       return {
         save(locator) {
           if (place.dropped || !places.delete(place)) return;
-          options.onManualSave(locator, "reading");
+          report();
+          if (locator !== null) options.onManualSave(locator, "reading");
         },
       };
     },
@@ -347,6 +415,7 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
       saveTimer = null;
       const locator = pendingManual;
       pendingManual = null;
+      report();
       return locator;
     },
     /** Forget the last followed sentence, so the next narration update moves the view even to the same sentence. */
@@ -361,8 +430,9 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
     followTarget(key: string) {
       // Following works now: a back to narration that found nothing to follow drops what it kept.
       // Paged away since (the reader chose again), following is off and nothing is dropped; it
-      // comes back on only through another back to narration, which starts its own wait.
-      if (armed && following) {
+      // comes back on only through another back to narration, which starts its own wait. On a map
+      // the server has not confirmed, following works but drops nothing until it is confirmed.
+      if (armed && following && mapConfirmed) {
         const { gesture } = armed;
         armed = null;
         drop(gesture);

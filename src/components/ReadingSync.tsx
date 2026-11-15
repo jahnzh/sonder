@@ -72,7 +72,8 @@ export function ReadingSync({
 }: {
   book: ReaderBook;
   books: Book[];
-  onMap: (job: AlignmentJob | null) => void;
+  /** `confirmed`: the server confirmed this map for the current audio (see the map lifecycle's `onMap`). */
+  onMap: (job: AlignmentJob | null, confirmed: boolean) => void;
   onLinked: () => void;
   locator?: TextLocator | null;
   recordingId?: string;
@@ -120,7 +121,7 @@ export function ReadingSync({
     setSelected(recordingId);
     setOptions(null);
     setPairings([]);
-    onMap(null);
+    onMap(null, false);
     setError("");
   };
   const refresh = (): Promise<AlignmentJob | undefined> => {
@@ -168,7 +169,8 @@ export function ReadingSync({
           selected,
         );
         if (!live || requestEpoch !== epoch.current) return;
-        if (cached) onMap(cached);
+        // Shown at once, but not confirmed for the current audio until the map endpoint answers.
+        if (cached) onMap(cached, false);
       }
       const job = await refresh();
       if (!live || requestEpoch !== epoch.current) return;
@@ -655,7 +657,8 @@ export function ReadingSync({
                   })
                     .then(async (value) => {
                       await lifecycle.current!.saveCorrected(book.id, selected, value);
-                      onMap(value);
+                      // The server's answer to the correction: confirmed for the current audio.
+                      onMap(value, true);
                       ensurePoll(await refresh());
                     })
                     .catch((error) => setError(error.message))
