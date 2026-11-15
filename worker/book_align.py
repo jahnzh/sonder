@@ -709,8 +709,37 @@ def validate(longform, raw, to_seconds=None):
 _SHARED = {}
 
 
-def pool_init(emissions_path, classes, labels, sentences, kernel=None):
-    """Initializer of a group-alignment process: memory-map the book's emissions once."""
+PR_SET_PDEATHSIG = 1
+PR_GET_PDEATHSIG = 2
+
+
+def die_with_parent(parent):
+    """Linux: SIGKILL this process when the worker that started it dies, even by SIGKILL (no orphans).
+
+    The signal follows the thread that created the pool; the job thread shuts its pool down before it ends.
+    """
+    import ctypes
+    import os
+    import signal
+    try:
+        ctypes.CDLL(None, use_errno=True).prctl(PR_SET_PDEATHSIG, int(signal.SIGKILL), 0, 0, 0)
+    except (OSError, AttributeError):
+        return
+    if parent is not None and os.getppid() != parent:
+        os._exit(1)  # the worker died before the signal was armed
+
+
+def death_signal():
+    """The armed parent-death signal of this process (0 when none); for tests."""
+    import ctypes
+    value = ctypes.c_int(0)
+    ctypes.CDLL(None, use_errno=True).prctl(PR_GET_PDEATHSIG, ctypes.byref(value), 0, 0, 0)
+    return value.value
+
+
+def pool_init(emissions_path, classes, labels, sentences, kernel=None, parent=None):
+    """Initializer of a group-alignment process: die with the worker, memory-map the book's emissions once."""
+    die_with_parent(parent)
     emissions = np.memmap(emissions_path, dtype=np.float16, mode="r").reshape(-1, classes)
     _SHARED["longform"] = LongForm(emissions, labels, sentences, kernel)
 

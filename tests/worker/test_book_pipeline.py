@@ -353,6 +353,26 @@ class Pipeline(unittest.TestCase):
         self.assertIsNone(book_encode.encode_queue("cpu").holder)
 
 
+@unittest.skipUnless(READY and sys.platform.startswith("linux"), "Linux, numpy, torch and ffmpeg are needed")
+class AlignPool(unittest.TestCase):
+    def test_align_processes_die_with_the_worker(self):
+        import concurrent.futures
+        import multiprocessing
+        import signal
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "book.f16"
+            np.zeros((100, 29), np.float16).tofile(path)
+            with concurrent.futures.ProcessPoolExecutor(
+                    max_workers=1, mp_context=multiprocessing.get_context("spawn"), initializer=book_align.pool_init,
+                    initargs=(str(path), 29, book_align_labels(), ["Hello."], None, os.getpid())) as pool:
+                self.assertEqual(pool.submit(book_align.death_signal).result(timeout=60), signal.SIGKILL)
+
+
+def book_align_labels():
+    from book_job import LABELS
+    return LABELS
+
+
 try:
     from fastapi.testclient import TestClient
 except Exception:  # pragma: no cover - fastapi or httpx missing

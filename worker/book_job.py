@@ -544,7 +544,7 @@ class WorkerStages:
         import multiprocessing
         pool = concurrent.futures.ProcessPoolExecutor(
             max_workers=min(workers, len(todo)), mp_context=multiprocessing.get_context("spawn"),
-            initializer=book_align.pool_init, initargs=(str(book_path), 29, LABELS, sentences))
+            initializer=book_align.pool_init, initargs=(str(book_path), 29, LABELS, sentences, None, os.getpid()))
         futures = {}
         session.set_pool(pool)
         try:
