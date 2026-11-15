@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import {protectBrowserMutations, closeProtectedBrowser} from "./verification-safety.mjs";
 import { chromium, expect as baseExpect } from "@playwright/test";
+import { verifyBaseURL } from "./live-check-target.mjs";
 const expect = baseExpect.configure({ timeout: 20000 });
 process.loadEnvFile(".env");
 const [ebookId, recordingId] = process.argv.slice(2);
@@ -9,6 +10,7 @@ if (!ebookId || !recordingId)
   throw new Error(
     "Usage: node scripts/verify-reading-sync.mjs ebook-id recording-id",
   );
+const baseURL = verifyBaseURL();
 fs.mkdirSync("artifacts", { recursive: true });
 let jobInfo;
 const browser = await chromium.launch({
@@ -21,7 +23,6 @@ const browser = await chromium.launch({
       ? "/home/jahn/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome"
       : undefined),
 });
-const baseURL = process.env.SONDER_VERIFY_URL || "https://sonder.pecori.no";
 const context = await browser.newContext({
   baseURL,
   viewport: { width: 390, height: 844 },

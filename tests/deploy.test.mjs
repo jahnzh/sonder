@@ -62,8 +62,12 @@ function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", t
   }
   sqlite.close();
   const log = join(dir, "ran.log");
-  for (const [name, exit] of Object.entries(checks)) {
-    writeFileSync(join(repo, "scripts", name), `import fs from "node:fs";fs.appendFileSync(${JSON.stringify(log)}, [${JSON.stringify(name)}, ...process.argv.slice(2)].join(" ") + "\\n");process.exit(${exit});\n`);
+  // A check is its exit code, or {exit, skip}: a check that writes `skip` to SONDER_LIVE_CHECK_SKIP_FILE before exiting,
+  // as verify-integrated-reader.mjs does when no recording qualifies (#431).
+  for (const [name, spec] of Object.entries(checks)) {
+    const { exit, skip, logEnv } = typeof spec === "number" ? { exit: spec } : spec;
+    const writeSkip = skip === undefined ? "" : `if(process.env.SONDER_LIVE_CHECK_SKIP_FILE)fs.writeFileSync(process.env.SONDER_LIVE_CHECK_SKIP_FILE, ${JSON.stringify(skip)});`;
+    writeFileSync(join(repo, "scripts", name), `import fs from "node:fs";fs.appendFileSync(${JSON.stringify(log)}, [${JSON.stringify(name)}, ...process.argv.slice(2), ...${JSON.stringify(logEnv ?? [])}.map((key) => key + "=" + (process.env[key] ?? ""))].join(" ") + "\\n");${writeSkip}process.exit(${exit});\n`);
   }
   const calls = join(dir, "docker-calls.log");
   const built = join(dir, "built");
@@ -181,105 +185,67 @@ test("a failing live check does not stop the next one, and the deploy still exit
   }
 });
 
-test("a reader check with no mapped recording is skipped, not failed, and the others still run", () => {
-  const f = fixture(
-    { "verify-integrated-reader.mjs": 0, "verify-b.mjs": 0 },
-    {
-      jobs: [
-        {
-          recordingId: "rec-empty",
-          updatedAt: 200,
-          data: { progress: 1, status: "partial", outcome: "partial", intervals: [] },
-        },
-        {
-          recordingId: "rec-projected",
-          updatedAt: 300,
-          data: {
-            progress: 1,
-            status: "ready",
-            origin: "projected",
-            intervals: [{ paragraphId: "p1", section: 0, trackId: "t1", start: 0, end: 5, confidence: 1 }],
-          },
-        },
-      ],
-    },
-  );
+test("a check that finds no suitable recording is reported as skipped with its reason, and the deploy exits 0", () => {
+  const reason = "1 aligned recording(s) in the library, none qualifies: rec-a: the saved position is 0 s before the end of the book (needs more than 300 s)";
+  const f = fixture({ "verify-integrated-reader.mjs": { exit: 3, skip: reason }, "verify-b.mjs": 0 });
   try {
     const r = f.run(["--no-marker"]);
     assert.equal(r.status, 0, r.stderr + r.stdout);
-    assert.match(r.stdout, /no recording with a finished EPUB alignment map; skipping reader live check/);
-    assert.deepEqual(f.ran(), ["verify-b.mjs"]);
+    assert.deepEqual(f.ran(), ["verify-integrated-reader.mjs", "verify-b.mjs"]);
+    assert.ok(r.stdout.includes(`live check skipped: scripts/verify-integrated-reader.mjs (no suitable recording: ${reason})`), r.stdout);
+    assert.doesNotMatch(r.stderr, /live check failed|live check\(s\) failed/);
+    assert.match(r.stdout, /deployed [0-9a-f]{7} \(image/);
   } finally {
     rmSync(f.dir, { recursive: true, force: true });
   }
 });
 
-test("pick_reader_recording skips empty finished and projected jobs and prefers status = 'ready' over a newer partial map", () => {
-  const interval = { paragraphId: "p1", section: 0, trackId: "t1", start: 0, end: 5, confidence: 1 };
-  const f = fixture(
-    { "verify-integrated-reader.mjs": 0, "verify-b.mjs": 0 },
-    {
-      jobs: [
-        {
-          recordingId: "rec-ready-oldest",
-          updatedAt: 100,
-          data: { progress: 1, status: "ready", intervals: [interval] },
-        },
-        {
-          recordingId: "rec-ready-newer",
-          updatedAt: 200,
-          data: { progress: 1, status: "ready", intervals: [interval] },
-        },
-        {
-          recordingId: "rec-partial-mapped",
-          updatedAt: 300,
-          data: { progress: 1, status: "partial", intervals: [interval] },
-        },
-        {
-          recordingId: "rec-projected-ready",
-          updatedAt: 400,
-          data: { progress: 1, status: "ready", origin: "projected", intervals: [interval] },
-        },
-        {
-          recordingId: "rec-empty-finished",
-          updatedAt: 500,
-          data: { progress: 1, status: "ready", outcome: "unsynced", intervals: [] },
-        },
-      ],
-    },
-  );
+test("a skipped check does not hide a real failure of another check", () => {
+  const f = fixture({ "verify-integrated-reader.mjs": { exit: 3, skip: "no aligned recording(s) in the library" }, "verify-b.mjs": 1 });
   try {
     const r = f.run(["--no-marker"]);
-    assert.equal(r.status, 0, r.stderr + r.stdout);
-    assert.deepEqual(f.ran(), ["verify-integrated-reader.mjs rec-ready-newer", "verify-b.mjs"]);
+    assert.equal(r.status, 1);
+    assert.match(r.stdout, /live check skipped: scripts\/verify-integrated-reader\.mjs/);
+    assert.match(r.stderr, /1 live check\(s\) failed: scripts\/verify-b\.mjs/);
   } finally {
     rmSync(f.dir, { recursive: true, force: true });
   }
 });
 
-test("pick_reader_recording falls back to a mapped partial job when no ready job has intervals", () => {
+test("exit 3 without a written reason, or a reason with another failing exit, stays a failure", () => {
+  const f = fixture({ "verify-integrated-reader.mjs": 3, "verify-b.mjs": { exit: 1, skip: "written, then failed" } });
+  try {
+    const r = f.run(["--no-marker"]);
+    assert.equal(r.status, 1);
+    assert.doesNotMatch(r.stdout, /live check skipped/);
+    assert.match(r.stderr, /2 live check\(s\) failed: scripts\/verify-integrated-reader\.mjs scripts\/verify-b\.mjs/);
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("live checks run with SONDER_VERIFY_PRODUCTION=1, which the scripts need to reach production", () => {
+  const f = fixture({ "verify-integrated-reader.mjs": { exit: 0, logEnv: ["SONDER_VERIFY_PRODUCTION"] }, "verify-multi-user.mjs": { exit: 0, logEnv: ["SONDER_VERIFY_PRODUCTION"] } });
+  try {
+    const r = f.run(["--no-marker"], { SONDER_VERIFY_PRODUCTION: "" });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.deepEqual(f.ran(), ["verify-integrated-reader.mjs SONDER_VERIFY_PRODUCTION=1", "verify-multi-user.mjs SONDER_VERIFY_PRODUCTION=1"]);
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("the reader check is started without a recording id even when the database has a mapped recording", () => {
   const interval = { paragraphId: "p1", section: 0, trackId: "t1", start: 0, end: 5, confidence: 1 };
   const f = fixture(
     { "verify-integrated-reader.mjs": 0, "verify-b.mjs": 0 },
-    {
-      jobs: [
-        {
-          recordingId: "rec-partial-mapped",
-          updatedAt: 100,
-          data: { progress: 1, status: "partial", intervals: [interval] },
-        },
-        {
-          recordingId: "rec-empty-finished",
-          updatedAt: 200,
-          data: { progress: 1, status: "partial", intervals: [] },
-        },
-      ],
-    },
+    { jobs: [{ recordingId: "rec-ready", updatedAt: 100, data: { progress: 1, status: "ready", intervals: [interval] } }] },
   );
   try {
     const r = f.run(["--no-marker"]);
     assert.equal(r.status, 0, r.stderr + r.stdout);
-    assert.deepEqual(f.ran(), ["verify-integrated-reader.mjs rec-partial-mapped", "verify-b.mjs"]);
+    assert.deepEqual(f.ran(), ["verify-integrated-reader.mjs", "verify-b.mjs"]);
+    assert.match(r.stdout, /live check: scripts\/verify-integrated-reader\.mjs\n/);
   } finally {
     rmSync(f.dir, { recursive: true, force: true });
   }
