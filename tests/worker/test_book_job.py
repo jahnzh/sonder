@@ -14,6 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "worker"))
 from unittest import mock
 import book_job
+import book_report
 import book_session
 import deadline
 from book_job import BOOK_ENGINE, BookJobs, JobConflict, NotReady, UnknownJob, request_digest
@@ -770,6 +771,174 @@ class Jobs(unittest.TestCase):
         self.assertNotEqual(base, request_digest(request(text="Other.")))
         self.assertNotEqual(base, request_digest({**request(), "recordingId": "other"}))
         self.assertEqual(base, request_digest({**request(), "jobId": "renamed"}))
+        # #403: the section titles are part of the result (passages and flags), so of the identity too.
+        self.assertNotEqual(base, request_digest({**request(), "sections": [{"index": 0, "title": "One"}]}))
+
+    def test_a_folder_of_the_earlier_book_generation_starts_over(self):
+        # #403 made book-v2: a retained book-v1 folder (its groups, emissions and result) is not reused.
+        self.assertTrue(BOOK_ENGINE.endswith("-book-v2"))
+        folder = self.root / "job-1"
+        (folder / "groups").mkdir(parents=True)
+        (folder / "emissions").mkdir()
+        (folder / "groups" / "0.json").write_text(json.dumps({"index": 0}))
+        (folder / "emissions" / "0.f16").write_bytes(b"\0" * 58)
+        (folder / "result.json").write_text("{}")
+        (folder / "request.json").write_text(json.dumps(request()))
+        old = BOOK_ENGINE.replace("-book-v2", "-book-v1")
+        (folder / "state.json").write_text(json.dumps({
+            "jobId": "job-1", "engine": old, "digest": request_digest(request()), "state": "aligning",
+            "createdAt": 1.0, "updatedAt": 1.0, "progress": {}, "stageTimings": {}, "error": None, "resumed": 0}))
+        stages = FakeStages()
+        jobs = self.jobs(stages)
+        jobs.resume_all()
+        self.assertTrue(self.done(jobs))
+        self.assertEqual(stages.aligned, [0, 1, 2, 3])  # group 0 of book-v1 aligned again
+        self.assertEqual(jobs.status("job-1")["engine"], BOOK_ENGINE)
+
+
+class DiskPeaks:
+    """Patches Path.replace: before a file under `folder` replaces another (the peak of write_json and of
+    write_reserved: the old file and its temporary copy are both there), records (bytes under the folder,
+    the key's reservation)."""
+
+    def __init__(self, budget, key, folder):
+        self.budget, self.key, self.folder = budget, key, Path(folder)
+        self.peaks = []
+        self.real = Path.replace
+        peaks = self
+
+        def replace(path, target):
+            if peaks.folder in Path(path).parents:
+                peaks.peaks.append((book_session.folder_bytes(peaks.folder), peaks.budget.reserved(peaks.key)))
+            return peaks.real(path, target)
+
+        self.patch = mock.patch.object(Path, "replace", replace)
+
+    def __enter__(self):
+        self.patch.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.patch.stop()
+
+    def over(self):
+        return [(used, held) for used, held in self.peaks if used > held]
+
+
+class ResultStages(FakeStages):
+    """Writes a result of about `size` bytes with write_reserved, as the real stages do, or (`own`) after
+    reserving it itself: the job's folder, the result's temporary copy and room for the state file."""
+
+    def __init__(self, size, own=False):
+        super().__init__()
+        self.size = size
+        self.own = own
+
+    def run(self, job, session, should_stop):
+        self.order.append(job.key)
+        result = {"jobId": job.key, "engine": BOOK_ENGINE, "outcome": "unsynced", "intervals": [],
+                  "unsyncedPassages": [{"section": 0, "title": "x" * self.size}]}
+        if not self.own:
+            book_job.write_reserved(job, session, job.folder / "result.json", result, should_stop, STATE)
+            return
+        text = json.dumps(result, separators=(",", ":"))
+        session.reserve_disk(book_session.folder_bytes(job.folder) + len(text) + STATE)
+        book_job.write_json(job.folder / "result.json", result)
+
+
+class ResultDisk(unittest.TestCase):
+    """#403 review (blocking): every byte of the result, and of its temporary copy, is reserved first."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name) / "book-jobs"
+        self.clock = Clock()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def job(self, budget, sentences):
+        registry = SessionRegistry(DiskBudget(budget), idle=900, clock=self.clock)
+        body = {**request(), "sentences": sentences}
+        folder = self.root / "job-1"
+        folder.mkdir(parents=True)
+        book_job.write_json(folder / "request.json", body)
+        session = registry.open("job-1", folder)
+        job = book_job.Job("job-1", folder, body, request_digest(body),
+                           {"jobId": "job-1", "engine": BOOK_ENGINE, "state": "finishing", "progress": {}})
+        job.save()
+        registry.budget.claim("job-1", book_session.folder_bytes(folder))
+        return registry, session, job
+
+    @staticmethod
+    def long_titled_result(sections=2000, title="é" * 2000):
+        """2,000 sections of two sentences, the first of each mapped: 2,000 passages, each with the section's
+        2,000-character title (align.py's limit), six bytes per character as JSON."""
+        sentences = [{"id": f"p{k}", "section": k // 2, "text": f"Sentence {k}."} for k in range(2 * sections)]
+        titles = {n: title for n in range(sections)}
+        mapped = {s["id"] for k, s in enumerate(sentences) if k % 2 == 0}
+        passages = book_report.unsynced_passages(sentences, mapped, titles)
+        return sentences, {"jobId": "job-1", "engine": BOOK_ENGINE, "outcome": "mapped", "intervals": [],
+                           "unsyncedPassages": passages, "flags": []}
+
+    def test_a_result_with_many_long_titles_is_reserved_from_its_real_size_before_it_is_written(self):
+        sentences, result = self.long_titled_result()
+        self.assertEqual(len(result["unsyncedPassages"]), 2000)
+        text = json.dumps(result, separators=(",", ":"))
+        # The estimate #402 reserved for all of a book's small files does not bound this result.
+        self.assertGreater(len(text), book_session.meta_bytes(len(sentences)))
+        registry, session, job = self.job(10 ** 9, sentences)
+        with DiskPeaks(registry.budget, "job-1", job.folder) as peaks:
+            size = book_job.write_reserved(job, session, job.folder / "result.json", result, lambda: False)
+        self.assertEqual(size, len(text))
+        self.assertEqual((job.folder / "result.json").read_text(), text)  # write_json's exact text
+        self.assertTrue(peaks.peaks)
+        self.assertEqual(peaks.over(), [], "the files never exceeded the reservation")
+        self.assertGreaterEqual(registry.budget.reserved("job-1"), book_session.folder_bytes(job.folder))
+        self.assertEqual(list(job.folder.glob("*.tmp")), [])
+
+    def test_a_result_that_does_not_fit_fails_and_nothing_is_written(self):
+        sentences, result = self.long_titled_result()
+        size = len(json.dumps(result, separators=(",", ":")))
+        registry, session, job = self.job(size, sentences)  # the result alone fills the budget: no room for it
+        with self.assertRaises(BudgetExceeded) as caught:
+            book_job.write_reserved(job, session, job.folder / "result.json", result, lambda: False)
+        self.assertIn(f"result is {size} bytes", str(caught.exception))
+        self.assertIn("was not written", str(caught.exception))
+        self.assertFalse((job.folder / "result.json").exists())
+        self.assertEqual(list(job.folder.glob("*.tmp")), [])
+
+    def test_a_job_whose_result_does_not_fit_fails_with_a_clear_error(self):
+        registry = SessionRegistry(DiskBudget(10_000), idle=900, clock=self.clock)
+        jobs = BookJobs(self.root, ResultStages(20_000), registry, clock=self.clock, state_bytes=STATE)
+        jobs.start(request())
+        self.assertTrue(wait_for(lambda: jobs.status("job-1")["state"] in ("done", "failed")))
+        status = jobs.status("job-1")
+        self.assertEqual(status["state"], "failed")
+        self.assertIn("result is", status["error"])
+        self.assertIn("was not written", status["error"])
+        self.assertFalse((self.root / "job-1" / "result.json").exists())
+
+    def test_the_finished_result_is_not_written_a_second_time(self):
+        # 291bd56 wrote the stages' result.json again when the job finished: a temporary copy of the whole
+        # result next to it, which nothing had reserved.
+        registry = SessionRegistry(DiskBudget(100_000), idle=900, clock=self.clock)
+        jobs = BookJobs(self.root, ResultStages(20_000, own=True), registry, clock=self.clock, state_bytes=STATE)
+        with DiskPeaks(registry.budget, "job-1", self.root / "job-1") as peaks:
+            jobs.start(request())
+            self.assertTrue(wait_for(lambda: jobs.status("job-1")["state"] in ("done", "failed")))
+        self.assertEqual(jobs.status("job-1")["state"], "done")
+        self.assertEqual(peaks.over(), [], "the files never exceeded the reservation")
+        self.assertEqual(len(jobs.result("job-1")["unsyncedPassages"][0]["title"]), 20_000)
+
+    def test_language_not_supported_reserves_its_result(self):
+        registry = SessionRegistry(DiskBudget(10_000), idle=900, clock=self.clock)
+        jobs = BookJobs(self.root, FakeStages(), registry, clock=self.clock, state_bytes=STATE)
+        with DiskPeaks(registry.budget, "job-1", self.root / "job-1") as peaks:
+            jobs.start({**request(), "language": "spa"})
+            self.assertTrue(wait_for(lambda: jobs.status("job-1")["state"] == "done"))
+        self.assertEqual(peaks.over(), [])
+        self.assertEqual(jobs.result("job-1")["outcome"], "language_not_supported")
 
 
 if __name__ == "__main__":

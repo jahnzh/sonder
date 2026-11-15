@@ -297,6 +297,10 @@ class BookTrack(BaseModel):
     audio: str = Field(min_length=1, max_length=4096)
     duration: float = Field(gt=0, le=200000)
 
+class BookSection(BaseModel):
+    index: int = Field(ge=0)
+    title: str = Field(default="", max_length=2000)
+
 class BookJobRequest(BaseModel):
     jobId: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
     recordingId: str = Field(min_length=1, max_length=512)
@@ -304,6 +308,8 @@ class BookJobRequest(BaseModel):
     language: str = "eng"
     sentences: list[BookSentence] = Field(min_length=1, max_length=200000)
     tracks: list[BookTrack] = Field(min_length=1, max_length=2000)
+    # Optional (#403): the sections' titles, for the result's unsynced passages and flags.
+    sections: list[BookSection] | None = Field(default=None, max_length=200000)
 
 # The largest request of the 2026-11-14 set is 7.8 MB (an ebook of the complete works, 71,225 sentences);
 # the 33 h book's is 2.9 MB. 32 MiB is four times the largest, and about the size of a request at the

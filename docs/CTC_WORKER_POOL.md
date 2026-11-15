@@ -422,8 +422,13 @@ ADR 0016's whole-book request. The server calls it only with
 `ALIGNMENT_BOOK_JOBS=1` (#404, off by default; see "The server's whole-book
 runner" below). The window endpoints (`/align`, `/anchor`, `/anchor-batch`) and their
 engine `ctc-wav2vec2-base-960h-torchaudio-2.8-v2` are unchanged. A whole-book
-job is a new engine generation, `ctc-wav2vec2-base-960h-torchaudio-2.8-book-v1`
-(`book_job.BOOK_ENGINE`), with the same model. `/health`'s existing fields
+job is a new engine generation, `ctc-wav2vec2-base-960h-torchaudio-2.8-book-v2`
+(`book_job.BOOK_ENGINE`), with the same model. `book-v1` was #402's; #403 made
+`book-v2` because its maps hold more than v1's could (the leftover pass maps
+chapters read out of the ebook's order, and a wrong book ends as
+`text_mismatch`), so a map's content depends on the generation. A retained job
+folder of `book-v1` starts over, emissions included (their identity carries the
+engine). `/health`'s existing fields
 (`busy`, `busySeconds`, `activeRequests`, `slots`, `stuck`) describe window
 requests only, exactly as before; book work is reported only under
 `bookJobs: {engine, ready, jobs, resuming, slotsHeld, batchSeconds, stuck,
@@ -438,7 +443,9 @@ budget and resume").
 
 Code: `worker/book_job.py` (lifecycle, stages, resume), `book_session.py`
 (per-book session, #391), `book_audio.py` (decode), `book_encode.py`
-(encode and encode queue), `book_align.py` (aligner). `gate_book.py` and
+(encode and encode queue), `book_align.py` (aligner and leftover pass),
+`book_match.py` (text-match check), `book_report.py` (unsynced passages and
+flags). `gate_book.py` and
 `measure_book.py` are measurement scripts. They talk to a worker over this
 interface and are not copied into the image.
 
@@ -477,19 +484,22 @@ is the same model as the window endpoints.
   "language": "eng",                     // anything else: outcome language_not_supported
   "sentences": [{"id": "5:8", "section": 5, "text": "…"}],   // 1..200,000, in reading order
   "tracks": [{"id": "torbox-129969003-1", "audio": "/…/pool-jobs/<job>/tracks/torbox-129969003-1",
-              "duration": 36458.949}]   // in play order; duration = listed seconds (> 0)
+              "duration": 36458.949}],  // in play order; duration = listed seconds (> 0)
+  "sections": [{"index": 5, "title": "Introduction"}]   // optional: titles for passages and flags
 }
 ```
 
 The job's identity is a hash of `recordingId`, `audioFingerprint`,
-`language`, `sentences` and `tracks`. The worker probes each track's container
+`language`, `sentences`, `tracks` and `sections`. `sections` (the server's
+`book.sections[].index` and `.title`) is optional; without it the result's
+unsynced passages have the title `""` and its flags no `title`. The worker probes each track's container
 duration itself (ffprobe) and sizes the decode and the disk reservation from
 that. `duration` is used only for a track whose duration ffprobe cannot read.
 
 ### Progress
 
 ```json
-{"jobId": "m-lhod-1794710439", "engine": "ctc-wav2vec2-base-960h-torchaudio-2.8-book-v1",
+{"jobId": "m-lhod-1794710439", "engine": "ctc-wav2vec2-base-960h-torchaudio-2.8-book-v2",
  "state": "encoding", "recordingId": "lhod", "createdAt": 1794710439.83, "updatedAt": 1794710473.52,
  "progress": {"tracksTotal": 1, "tracksDecoded": 1, "tracksEncoded": 0, "encodeQueuePosition": 0},
  "stageTimings": {"identity": 0.39, "decode": 33.29, "encodeQueue": 0.00004},
@@ -508,35 +518,88 @@ encoding (`0` holds the encoder, `1…` waiting behind it);
 endpoints' gate, `false` once it got it again) with `gateWaitSeconds`, how long
 the current wait has lasted; then `groupsTotal`, `groupsDone` and
 `anchors` (`candidates`, `chain`, `chainRateDropped`, `groups`,
-`anchorSeconds`). `stageTimings` holds seconds per stage (`identity`, `decode`,
-`encodeQueue`, `gateWait`, `encode`, `prepare`, `anchor`, `align`, `finish`).
+`anchorSeconds`); `textMatch` (the check's result, see below) once it ran.
+`stageTimings` holds seconds per stage (`identity`, `decode`,
+`encodeQueue`, `gateWait`, `encode`, `prepare`, `textMatch`, `anchor`, `align`,
+`finish`, `leftover`).
 `resumed` counts the worker restarts the job has continued from. `encode` holds the encode statistics (`encodeSeconds`,
 `audioSeconds`, `realtime`, `batch`, `oomHalvings`, `gpuUtilization`).
 
 ### Result
 
 ```json
-{"jobId": "…", "engine": "ctc-wav2vec2-base-960h-torchaudio-2.8-book-v1", "recordingId": "…",
- "audioFingerprint": "…", "outcome": "mapped", "sentences": 5771, "mapped": 5460,
- "intervals": [{"paragraphId": "5:8", "section": 5, "trackId": "torbox-129969003-1",
-                "start": 715.32, "end": 719.9, "confidence": 0.65}],
- "tracks": [{"id": "torbox-129969003-1", "decodedSeconds": 36458.967, "containerSeconds": 36458.949,
-             "differenceSeconds": 0.018, "durationOk": true, "ranges": 21}],
- "stats": {"groups": 49, "groupStartsSeconds": [0, 960.0], "anchors": {…}, "windows": 0,
-           "recoveries_text": 0, "recoveries_audio": 0, "gap_filled": 0, "orderConflictsDropped": 0,
-           "rawMapped": 0, "kernel": "numba", "device": "cuda"},
+{"jobId": "…", "engine": "ctc-wav2vec2-base-960h-torchaudio-2.8-book-v2", "recordingId": "…",
+ "audioFingerprint": "…", "outcome": "mapped", "sentences": 5665, "mapped": 3455,
+ "intervals": [{"paragraphId": "5:16", "section": 5, "trackId": "torbox-128690185-1",
+                "start": 139.1825, "end": 159.9625, "confidence": 0.65}],
+ "unsyncedPassages": [{"section": 1, "title": "Section 2", "firstParagraphId": "1:0",
+                       "lastParagraphId": "1:12", "sentenceCount": 13, "excerpt": "…"}],
+ "flags": [{"kind": "intro", "trackId": "torbox-128690185-1", "start": 0, "end": 139.1825},
+           {"kind": "extra-audio", "trackId": "torbox-128690185-1", "start": 1878.9425, "end": 2107.5025,
+            "section": 7, "first": 415, "last": 427, "title": "We Need To Talk About Fifty-Five"},
+           {"kind": "extra-audio", "trackId": "torbox-128690185-1", "start": 6111.6625, "end": 6731.4825},
+           {"kind": "unmatched-text", "section": 1, "title": "Section 2"}],
+ "textMatch": {"score": 0.4351, "threshold": 0.1, "matches": true, "samples": 24, "speechSamples": 24,
+               "minimum": 0.0, "maximum": 0.8125, "samplesOver10Percent": 18, "wordHit": 0.9234},
+ "tracks": [{"id": "torbox-128690185-1", "decodedSeconds": 31673.922, "containerSeconds": 31673.9,
+             "differenceSeconds": 0.022, "durationOk": true, "ranges": 18}],
+ "stats": {"chainMapped": 2268, "leftoverMapped": 1187, "groups": 30, "groupStartsSeconds": [0.003, 720.003],
+           "anchors": {…}, "leftover": {"rounds": 3, "gaps": 61, "gapSeconds": 28082.3, "probes": 266,
+           "located": 101, "pieces": 9, "raw": 1407, "seconds": 14.511}, "windows": 1447,
+           "recoveries_text": 412, "recoveries_audio": 414, "gap_filled": 894, "seamTrimmed": 150,
+           "orderConflictsDropped": 0, "rawMapped": 2802, "kernel": "numba", "device": "cuda"},
  "stageTimings": {…}, "encode": {…}}
 ```
 
-`intervals` has the server's `AlignmentInterval` shape. `start` and `end` are
-seconds in the track's own time, on the container timeline. `confidence` follows
-the server's rule: 0.65 for 0.3 to 6 words per second, else 0.2. `outcome` is
-`mapped` when at least one sentence is mapped and `unsynced` when none is.
-For a language other than `eng` it is `language_not_supported`; the server
-judges coverage. `tracks` is the per-track duration check: the decoded length
-against the container duration (ffprobe), `durationOk` within 0.25 s.
-Unsynced passages, extra-audio flags and the text-match check are not built
-yet (next ticket).
+`outcome` is one of:
+
+* `mapped`: at least one sentence is mapped;
+* `unsynced`: the text matched (or no speech was heard) and no sentence is mapped;
+* `text_mismatch` (#403): the text-match check found that the ebook is not the
+  recording's text, before any alignment. `intervals` is empty, `mapped` is 0,
+  `flags` is empty, `unsyncedPassages` covers the whole book and `textMatch`
+  holds the score. The job's `state` is still `done`;
+* `language_not_supported`: `language` is not `eng`. The result is
+  `{jobId, engine, outcome, intervals: [], tracks: []}`, as before #403.
+
+The server judges coverage. `intervals` has the server's `AlignmentInterval`
+shape, sorted by sentence. `start` and `end` are seconds in the track's own
+time, on the container timeline. `confidence` follows the server's rule: 0.65
+for 0.3 to 6 words per second, else 0.2. Sentences the leftover pass maps can
+lie anywhere in the audio, so intervals are not in time order when a recording
+reads chapters out of the ebook's order (production's maps of such books are
+not either).
+
+`unsyncedPassages` is `UnsyncedPassage[]` (`src/reading-types.ts`), exactly
+what `server/alignment-passages.ts` `unsyncedPassages(book, intervals)`
+returns for this map: every maximal run of unmapped sentences within a
+section, `excerpt` the first 120 UTF-16 units of its first sentence. `flags`
+is `AlignmentFlag[]`, the server's `anchoring.flags`, in the key sets
+production holds (`tests/worker/test_book_report.py` copies a sample of
+each from the production database):
+
+* `intro` / `outro` / `extra-audio` `{kind, trackId, start, end}`: narration
+  starts or ends more than 20 s inside a track (`intro` on the first narrated
+  track, `outro` on the last, else `extra-audio`), as `planSegments`; a track
+  with no mapped sentence is one such flag over the whole track;
+* `extra-audio` / `skipped-text` `{kind, trackId, start, end[, section, first,
+  last, title]}`: the audio between two mapped sentences next to each other
+  on a track is more than 1.3 times and 45 s longer (or less than 0.75 times
+  and 45 s shorter) than the unmapped text between them takes at the map's own
+  speaking rate (`mismatch` in `server/alignment-anchors.ts`); `first` and
+  `last` are the unmapped sentences between, by index in the request. Where
+  the map jumps (the text between the two runs backwards, or some of it is
+  mapped elsewhere in the audio) there is no text between them, so only
+  `extra-audio` without `first`/`last` can apply;
+* `unmatched-text` `{kind, section, title}`: a section of at least 40 words
+  with no mapped sentence, as `server/alignment.ts` adds after an anchored run.
+
+`title` is the request's section title, on every flag with a `section`.
+`textMatch` is the check's result (below). `stats.chainMapped` counts the
+sentences the chain mapped and `leftoverMapped` those the leftover pass added;
+`stats.leftover` describes the pass. `tracks` is the per-track duration check:
+the decoded length against the container duration (ffprobe), `durationOk`
+within 0.25 s.
 
 ### What the worker does
 
@@ -620,6 +683,41 @@ yet (next ticket).
   20 s of a non-final group and the first 20 s of a non-first group are dropped,
   the same margin a window keeps uncommitted. A sentence cut by a group end
   therefore comes from the neighbouring group, where it is whole.
+* **Text-match check** (#403, `book_match.py`). After encoding and before
+  anything is aligned, up to 24 evenly spaced 60 s stretches of the job's own
+  emissions are decoded greedily: 24 on a recording of 28 minutes or more, two
+  minutes away from each end; a shorter recording keeps a tenth of its length
+  at each end and gets as many stretches as fit side by side (3 on 4 minutes),
+  so a spoken introduction is never the whole check; under 75 s, the whole
+  recording is one stretch. The score is the median share of their word
+  4-grams found anywhere in the ebook, whose 4-grams run across sentence
+  boundaries as the heard ones do, counting only stretches with at least 20
+  heard words. Below `book_match.MATCH_THRESHOLD` (0.10) the job ends with
+  `text_mismatch`. Measured on the 2026-11-14 set: matching pairings 0.435
+  (*Antimemetics*, a rewritten edition that matches in part) and 0.655 to
+  0.902 (the other 12); mismatches 0.000 (*Snow Crash*'s non-English ebook,
+  *Left Hand*'s text on *Hydrogen Sonata*'s audio), 0.016 (*Matter*: the audio
+  is another book) and 0.031 (DCC 2's text on DCC 1's audio). With no stretch
+  of speech at all (also a recording under 75 s with fewer than 20 heard
+  words) the check does not decide; the alignment then maps nothing
+  (`unsynced`). It takes well under a second; it keeps no text.
+* **Leftover pass** (#403, `book_align.leftover_pass`). After the chain's
+  groups are merged: every unmapped audio stretch of at least 120 s is located
+  every 120 s against unmapped text runs of at least 20 sentences only. Probes
+  in the same run whose sentences do not run backwards form a piece; a piece is
+  aligned with the same long-form pass, its text from 60 sentences before the
+  first located sentence to its run's end, its audio from one probe before it to
+  one probe past the next piece. A sentence is kept only when the chain did not
+  map it, it lies inside the stretch, and no mapped sentence's audio overlaps it.
+  Up to three rounds. The chain's merged map is validated as before and each
+  piece on its own, so the pass can add sentences but never move or drop one
+  the chain mapped. *There Is No Antimemetics Division*, whose recording reads
+  chapters in another order than its ebook: the chain maps 2,268 sentences
+  (40 %); with the pass 3,455 (61 %), production's sections 16, 19 and 24
+  included, and every chain interval is kept exactly; 14.5 s with numba. On
+  the books read in the ebook's order it adds nothing (0.003 to 1.4 s). Like
+  the anchor chain and the validation, it runs in the job's thread, not in the
+  group processes.
 * **Viterbi kernel.** numba when installed (the pool hosts' production
   environments do not have it), otherwise an equivalent numpy kernel.
   `tests/worker/test_book_align.py` checks that the two give identical paths.
@@ -681,7 +779,14 @@ writes, from the probed durations and the files on disk:
   concatenated copy of all emissions;
 * after decoding: the emissions still to be written and the book copy, exactly;
 * before the book copy is written: its size;
-* always: 16 MiB plus 1 KiB per sentence for state, plan, group and result files.
+* before the result is written: its exact size and its temporary copy (the
+  JSON is counted as a stream first, then written); a result that cannot fit
+  fails the job with `error` "The book's result is … bytes of JSON and was not
+  written: …", and nothing is written. Its passages and flags repeat their
+  section's title (as the server stores them), so no per-sentence estimate
+  bounds it. The result is written once;
+* always (until the result): 16 MiB plus 1 KiB per sentence for the state,
+  plan and group files.
 
 `start` reserves the request and state files it writes (the request's exact
 size plus 64 KiB): a request that does not fit next to the other jobs is

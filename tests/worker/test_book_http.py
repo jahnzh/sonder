@@ -152,6 +152,19 @@ class BookRequestOverHttp(unittest.TestCase):
         status, _ = exchange(self.port, post_head(len(broken)), [broken])
         self.assertEqual(status, 422)
 
+    def test_section_titles_are_optional_and_validated(self):
+        # #403: `sections` carries the titles of the result's unsynced passages and flags.
+        request = json.loads(self.body(audio="/etc/passwd"))
+        request["sections"] = [{"index": 0, "title": "Chapter One"}]
+        data = json.dumps(request).encode()
+        status, body = exchange(self.port, post_head(len(data)), [data])
+        self.assertEqual(status, 400, body)  # parsed, then the track path was checked
+        request["sections"] = [{"index": -1, "title": "x"}]
+        data = json.dumps(request).encode()
+        status, body = exchange(self.port, post_head(len(data)), [data])
+        self.assertEqual(status, 422, body)
+        self.assertEqual(json.loads(body)["detail"][0]["loc"][:2], ["body", "sections"])
+
     GET_HEALTH = b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
     # /health's fields as on origin/main: they describe window requests only (#402 round 2, decision A).
     WINDOW_FIELDS = ("ready", "engine", "busy", "stuck", "busySeconds", "lastTimeout", "slots", "activeRequests",

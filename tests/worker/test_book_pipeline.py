@@ -29,6 +29,7 @@ if READY:
     import book_align
     import book_audio
     import book_encode
+    import book_match
     from book_job import BOOK_ENGINE, BookJobs, WorkerStages
     from book_session import DiskBudget, SessionRegistry
 
@@ -272,6 +273,12 @@ class PipelineFixture(unittest.TestCase):
                         "sentences": [{"id": f"p{k}", "section": 0, "text": f"Sentence number {k} here."}
                                       for k in range(20)]}
         self.env = {"ALIGNMENT_BOOK_ALIGN_WORKERS": "1"}
+        # The fake models' random emissions are no book's text: the text-match check (#403) would stop every
+        # job before alignment. These tests are about the stages around it, so it passes here;
+        # test_a_wrong_book_ends_with_the_mismatch_outcome runs the real check.
+        self.match = mock.patch.object(book_match, "check", lambda *a, **k: {"score": None, "matches": True})
+        self.match.start()
+        self.addCleanup(self.match.stop)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -310,6 +317,10 @@ class Pipeline(PipelineFixture):
         result = jobs.result("book-1")
         self.assertEqual(result["engine"], BOOK_ENGINE)
         self.assertEqual(result["outcome"], "unsynced")  # random emissions map nothing
+        self.assertEqual(result["flags"], [])
+        self.assertEqual(len(result["unsyncedPassages"]), 1)
+        self.assertEqual(result["stats"]["chainMapped"], 0)
+        self.assertIn("leftover", result["stats"])
         self.assertEqual([t["id"] for t in result["tracks"]], ["t0", "t1"])
         for row, track in zip(result["tracks"], self.tracks):
             self.assertTrue(row["durationOk"])
@@ -319,6 +330,79 @@ class Pipeline(PipelineFixture):
         folder = self.media / "alignment" / "book-jobs" / "book-1"
         self.assertFalse((folder / "emissions").exists())
         self.assertFalse((folder / "tracks").exists())
+
+    def test_a_wrong_book_ends_with_the_mismatch_outcome(self):
+        self.match.stop()  # the real check: random emissions are not this text
+        self.request["sections"] = [{"index": 0, "title": "Chapter One"}]
+        jobs = self.jobs(FakeModel())
+        planned = []
+        with mock.patch.object(book_align, "plan_groups", lambda *a, **k: planned.append(1)):
+            jobs.start(self.request)
+            status = self.wait(jobs)
+        self.assertEqual(status["state"], "done", status)
+        self.assertEqual(status["outcome"], book_match.TEXT_MISMATCH)
+        self.assertEqual(planned, [])  # no alignment ran
+        self.assertIn("textMatch", status["stageTimings"])
+        result = jobs.result("book-1")
+        self.assertEqual(result["outcome"], "text_mismatch")
+        self.assertEqual((result["intervals"], result["mapped"], result["flags"]), ([], 0, []))
+        self.assertLess(result["textMatch"]["score"], book_match.MATCH_THRESHOLD)
+        self.assertEqual(result["textMatch"]["threshold"], book_match.MATCH_THRESHOLD)
+        self.assertEqual(result["unsyncedPassages"], [
+            {"section": 0, "title": "Chapter One", "firstParagraphId": "p0", "lastParagraphId": "p19",
+             "sentenceCount": 20, "excerpt": "Sentence number 0 here."}])
+        self.assertEqual([t["id"] for t in result["tracks"]], ["t0", "t1"])
+
+    def long_titled_mismatch(self, budget, sentences=2000):
+        """A wrong book of 2,000 one-sentence sections, each with a 2,000-character non-ASCII title (align.py's
+        limit; six bytes a character as JSON): 2,000 unsynced passages, a result of about 24 MB, more than
+        the 16 MiB + 1 KiB a sentence #402 reserved for all of a book's small files (#403 review)."""
+        self.match.stop()  # the real check: random emissions are not this text
+        self.request["sentences"] = [{"id": f"p{k}", "section": k, "text": f"Sentence number {k} here."}
+                                     for k in range(sentences)]
+        self.request["sections"] = [{"index": k, "title": "\u00e9" * 2000} for k in range(sentences)]
+        stages = WorkerStages(self.media / "alignment", lambda: FakeModel(), "cpu", env=self.env)
+        if callable(budget):  # of the request's size: the request holds the titles too
+            budget = budget(len(json.dumps(self.request, separators=(",", ":"))))
+        jobs = BookJobs(self.media / "alignment" / "book-jobs", stages,
+                        SessionRegistry(DiskBudget(budget), idle=900))
+        folder = self.media / "alignment" / "book-jobs" / "book-1"
+        peaks, real = [], Path.replace
+
+        def replace(path, target):  # the peak of a write: the old file and its temporary copy are both there
+            if folder in Path(path).parents:
+                peaks.append((Path(path).name, book_session_folder_bytes(folder), jobs.registry.budget.reserved("book-1")))
+            return real(path, target)
+
+        with mock.patch.object(Path, "replace", replace):
+            jobs.start(self.request)
+            status = self.wait(jobs)
+        return jobs, status, peaks, folder
+
+    def test_a_long_titled_mismatch_result_stays_inside_its_reservation(self):
+        jobs, status, peaks, folder = self.long_titled_mismatch(10 ** 9)
+        self.assertEqual(status["state"], "done", status)
+        self.assertEqual(status["outcome"], book_match.TEXT_MISMATCH)
+        size = (folder / "result.json").stat().st_size
+        from book_session import meta_bytes
+        self.assertGreater(size, meta_bytes(2000))
+        self.assertTrue(any(name == "result.json.tmp" for name, _, _ in peaks))
+        self.assertEqual([p for p in peaks if p[1] > p[2]], [], "the job's files never exceeded its reservation")
+        result = jobs.result("book-1")
+        self.assertEqual(len(result["unsyncedPassages"]), 2000)
+        self.assertEqual(result["unsyncedPassages"][7]["title"], "\u00e9" * 2000)
+
+    def test_a_result_that_does_not_fit_the_budget_fails_the_job_and_is_not_written(self):
+        from book_session import meta_bytes
+        # 3,000 sections: room for the request and every stage before the result (the decode's peak and the
+        # estimate of the small files included), not for the result of 36 MB.
+        jobs, status, peaks, folder = self.long_titled_mismatch(
+            lambda request: request + meta_bytes(3000) + (12 << 20), sentences=3000)
+        self.assertEqual(status["state"], "failed", status)
+        self.assertIn("result is", status["error"])
+        self.assertIn("was not written", status["error"])
+        self.assertFalse((folder / "result.json").exists())
+        self.assertEqual([p for p in peaks if p[1] > p[2]], [])
 
     def test_resume_after_a_restart_reuses_emissions_and_finished_groups(self):
         first_model = FakeModel()
@@ -746,6 +830,47 @@ class StopGroups(PipelineFixture):
         jobs._job("book-1").last_request -= 10_000
         started = time.monotonic()
         self.assertEqual(jobs.sweep(), ["book-1"])
+        self.assert_stopped(pids, started, folder_kept=False)
+        self.assertEqual(jobs.registry.budget.reserved(), 0)
+
+    def leftover_through(self, there):
+        """A job whose leftover pass hands three pieces to the pool, where `there` runs them."""
+        import book_pool_helpers
+        import book_session
+        seen = {}
+
+        def leftover_pass(longform, chain, should_stop=None, run_pieces=None):
+            seen["outputs"] = run_pieces([{"index": n} for n in range(3)])
+            return [], {"pieces": 0}
+
+        patches = [mock.patch.object(book_align, "plan_groups", lambda longform, should_stop=None:
+                                     self.plan(longform.em.shape[0])),
+                   mock.patch.object(book_align, "leftover_pass", leftover_pass),
+                   mock.patch.object(book_align, "pool_piece", getattr(book_pool_helpers, there)),
+                   mock.patch.object(book_session, "TERMINATE_GRACE_S", 0.5, create=True),
+                   mock.patch.dict(os.environ, {"BOOK_TEST_PID_DIR": str(self.pids)})]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        jobs = self.jobs(FakeModel())
+        jobs.start(self.request)
+        return jobs, seen
+
+    def test_leftover_pieces_run_in_the_pool_and_come_back_in_order(self):
+        jobs, seen = self.leftover_through("echo_piece")
+        self.assertEqual(self.wait(jobs)["state"], "done")
+        self.assertEqual(seen["outputs"], [{0: (0, 5)}, {1: (10, 15)}, {2: (20, 25)}])
+        self.assertIsNone(jobs.registry.get("book-1").pool)  # released once its processes exited
+
+    def test_cancel_stops_running_leftover_processes(self):
+        jobs, _ = self.leftover_through("sleep_ignoring_term")
+        deadline = time.monotonic() + 120
+        while len(self.started_pids()) < 2:
+            self.assertLess(time.monotonic(), deadline, jobs.status("book-1"))
+            time.sleep(0.1)
+        pids = self.started_pids()
+        started = time.monotonic()
+        self.assertEqual(jobs.cancel("book-1")["state"], "cancelled")
         self.assert_stopped(pids, started, folder_kept=False)
         self.assertEqual(jobs.registry.budget.reserved(), 0)
 

@@ -37,7 +37,10 @@ RECORD_KEYS = ("jobId", "engine", "digest", "state", "recordingId", "createdAt",
                "resumed", "stopReason")
 
 # A new aligner, so a new engine generation (ADR 0016). The window endpoints keep ctc_acoustic.ENGINE.
-BOOK_ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-book-v1"
+# book-v2 (#403): the leftover pass adds intervals the v1 chain never produced (chapters out of the ebook's
+# order) and a wrong book ends as `text_mismatch` instead of an empty map, so a map's content depends on the
+# generation. Retained folders of book-v1 start over (their emissions carry the engine in their identity).
+BOOK_ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-book-v2"
 # torchaudio WAV2VEC2_ASR_BASE_960H labels (the emissions' 29 classes, blank first).
 LABELS = ("-", "|", "E", "T", "A", "O", "N", "I", "H", "S", "R", "D", "L", "U", "M", "W", "C", "F", "G", "Y",
           "P", "B", "V", "K", "'", "X", "J", "Q", "Z")
@@ -71,7 +74,7 @@ class Stopped(Exception):
 
 
 def request_digest(request):
-    keys = ("recordingId", "audioFingerprint", "language", "sentences", "tracks")
+    keys = ("recordingId", "audioFingerprint", "language", "sentences", "tracks", "sections")
     canonical = json.dumps({k: request.get(k) for k in keys}, sort_keys=True, separators=(",", ":"),
                            ensure_ascii=True)
     return hashlib.sha256(canonical.encode()).hexdigest()
@@ -82,6 +85,41 @@ def write_json(path, value):
     temporary = path.with_name(path.name + ".tmp")
     temporary.write_text(json.dumps(value, separators=(",", ":")))
     temporary.replace(path)
+
+
+def json_chunks(value):
+    """write_json's exact text in pieces, so it can be counted and written without holding it whole.
+    ASCII (`ensure_ascii`): one byte per character."""
+    return json.JSONEncoder(separators=(",", ":")).iterencode(value)
+
+
+def write_reserved(job, session, path, value, should_stop, state_bytes=STATE_BYTES, what="result"):
+    """Write `value` as JSON to `path` only once the bytes it needs are reserved (#402: every byte a book
+    job writes is reserved before it is written; #403 review: a result's passages and flags repeat section
+    titles, so no estimate bounds it). The text is counted first, then the peak of the write is reserved:
+    the job's folder as it is now (an older copy of the file included, which stays until the new one
+    replaces it), the new file's temporary copy beside it, and `state_bytes` for the state file's next
+    writes. A result that can never fit the budget fails the job (BudgetExceeded) and nothing is written.
+    Returns the file's size in bytes."""
+    path = Path(path)
+    size = sum(len(chunk) for chunk in json_chunks(value))
+    need = folder_bytes(job.folder) + size + int(state_bytes)
+    try:
+        session.reserve_disk(need, should_wait=lambda: not should_stop())
+    except BudgetExceeded as error:
+        raise BudgetExceeded(f"The book's {what} is {size} bytes of JSON and was not written: with the job's "
+                             f"other files it needs {need} bytes of disk. {error}") from None
+    job.progress(diskReservedBytes=need)
+    temporary = path.with_name(path.name + ".tmp")
+    try:
+        with temporary.open("w", encoding="ascii") as out:
+            for chunk in json_chunks(value):
+                out.write(chunk)
+        temporary.replace(path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+    return size
 
 
 def read_json(path, default=None):
@@ -503,12 +541,15 @@ class BookJobs:
 
         try:
             if job.request.get("language", "eng") != "eng":
-                self._finish(job, {"jobId": job.key, "engine": BOOK_ENGINE, "outcome": "language_not_supported",
-                                   "intervals": [], "tracks": []})
+                write_reserved(job, session, job.folder / "result.json",
+                               {"jobId": job.key, "engine": BOOK_ENGINE, "outcome": "language_not_supported",
+                                "intervals": [], "tracks": []}, should_stop, self.state_bytes)
+                self._finish(job, read_json(job.folder / "result.json"))
                 return
             self.stages.run(job, session, should_stop)
             if should_stop():
                 raise Stopped()
+            # The stages wrote the result (reserved from its real size); it is not written a second time.
             self._finish(job, read_json(job.folder / "result.json"))
         except (Stopped, SessionEnded) as error:
             reason = job.stop_reason or str(error) or "stopped"
@@ -553,9 +594,9 @@ class BookJobs:
             self.registry.budget.claim(job.key, folder_bytes(job.folder))
 
     def _finish(self, job, result):
+        """`result` is what result.json holds: the job is done."""
         if result is None:
             raise RuntimeError("The job finished without a result.")
-        write_json(job.folder / "result.json", result)
         job.update(state="done", outcome=result.get("outcome"), error=None)
 
 
@@ -597,7 +638,7 @@ class WorkerStages:
     @staticmethod
     def reserve(job, session, should_stop, adds):
         """Reserve what the job's folder holds now plus `adds` bytes the next stage writes at its peak (and
-        room for the small state, plan, group and result files); waits while other books hold the budget."""
+        room for the small state, plan and group files; the result is reserved when it is written); waits while other books hold the budget."""
         need = folder_bytes(job.folder) + int(adds) + meta_bytes(len(job.request["sentences"]))
         session.reserve_disk(need, should_wait=lambda: not should_stop())
         job.progress(diskReservedBytes=need)
@@ -720,6 +761,7 @@ class WorkerStages:
     def align(self, job, session, metas, should_stop):
         import numpy as np
         import book_align
+        import book_match
         from book_encode import CLASSES, emission_paths
         sentences = [s["text"] for s in job.request["sentences"]]
         groups_dir = job.folder / "groups"
@@ -753,6 +795,21 @@ class WorkerStages:
         session.emissions = emissions
         longform = book_align.LongForm(emissions, LABELS, sentences)
         job.timing("prepare", time.monotonic() - started)
+        # The text-match check (#403): before any alignment, on this job's emissions.
+        started = time.monotonic()
+        match = book_match.check(longform.greedy_words, frames_total,
+                                 [book_align.text_words(text) for text in sentences], should_stop)
+        if match is None:
+            raise Stopped()
+        job.timing("textMatch", time.monotonic() - started)
+        job.progress(textMatch=match)
+        if not match["matches"]:
+            result = self.result(job, metas, longform, {}, [], match, outcome=book_match.TEXT_MISMATCH)
+            with job.lock:
+                result["stageTimings"] = dict(job.state.get("stageTimings", {}))
+                result["encode"] = job.state.get("encode")
+            write_reserved(job, session, job.folder / "result.json", result, should_stop)
+            return
         job.update(state="anchoring")
         plan = read_json(groups_dir / "plan.json")
         if plan is None or plan.get("emissionsKey") != key or plan.get("frames") != frames_total:
@@ -787,24 +844,40 @@ class WorkerStages:
             for name, value in group["stats"].items():
                 stats[name] = stats.get(name, 0) + value
         merged, conflicts = book_align.merge_groups(outputs)
-        result = self.result(job, metas, longform, merged)
+        job.timing("finish", time.monotonic() - started)
+        # The leftover pass (#403): unmapped audio against unmapped text; it adds, never changes the chain.
+        started = time.monotonic()
+        def run_pieces(pieces):
+            outputs = {}
+            self._in_pool(session, longform, book_path, sentences, pieces, should_stop,
+                          book_align.run_piece, book_align.pool_piece,
+                          lambda n, task, output: outputs.__setitem__(n, output))
+            return [outputs[n] for n in range(len(pieces))]
+
+        try:
+            pieces, leftover = book_align.leftover_pass(longform, merged, should_stop, run_pieces=run_pieces)
+        except book_align.Cancelled:
+            raise Stopped()
+        job.timing("leftover", time.monotonic() - started)
+        started = time.monotonic()
+        result = self.result(job, metas, longform, merged, pieces, match)
         starts = self.book_seconds(metas)
-        result["stats"] = {**stats, "orderConflictsDropped": conflicts, "groups": len(tasks),
-                           "groupStartsSeconds": [round(starts(t["aStart"]), 3) for t in tasks],
-                           "anchors": plan["anchors"], "kernel": book_align.kernel_name(),
-                           "rawMapped": len(merged), "device": self.device}
+        result["stats"].update({**stats, "orderConflictsDropped": conflicts, "groups": len(tasks),
+                                "groupStartsSeconds": [round(starts(t["aStart"]), 3) for t in tasks],
+                                "anchors": plan["anchors"], "kernel": book_align.kernel_name(),
+                                "rawMapped": len(merged), "device": self.device, "leftover": leftover})
         job.timing("finish", time.monotonic() - started)
         with job.lock:
             result["stageTimings"] = dict(job.state.get("stageTimings", {}))
             result["encode"] = job.state.get("encode")
-        write_json(job.folder / "result.json", result)
+        write_reserved(job, session, job.folder / "result.json", result, should_stop)
 
     def _align_groups(self, job, session, longform, book_path, sentences, todo, groups_dir, done, should_stop,
                       key=None):
         import book_align
-        workers = self.align_workers()
 
-        def save(task, intervals, stats, trimmed):
+        def save(_n, task, output):
+            intervals, stats, trimmed = output
             write_json(groups_dir / f"{task['index']}.json",
                        {"index": task["index"], "emissionsKey": key,
                         "intervals": {str(k): list(v) for k, v in intervals.items()},
@@ -812,26 +885,34 @@ class WorkerStages:
             done.add(task["index"])
             job.progress(groupsDone=len(done))
 
-        if workers <= 1 or len(todo) == 1:
-            for task in todo:
+        self._in_pool(session, longform, book_path, sentences, todo, should_stop, book_align.align_group,
+                      book_align.pool_align, save)
+
+    def _in_pool(self, session, longform, book_path, sentences, tasks, should_stop, here, there, on_done):
+        """Run `tasks` in the session's process pool (`there(task)` in a process) or, with one worker or one
+        task, here (`here(longform, task, should_stop)`); `on_done(n, task, output)` as each finishes."""
+        import book_align
+        workers = self.align_workers()
+        if workers <= 1 or len(tasks) == 1:
+            for n, task in enumerate(tasks):
                 if should_stop():
                     raise Stopped()
                 try:
-                    output = book_align.align_group(longform, task, should_stop)
+                    output = here(longform, task, should_stop)
                 except book_align.Cancelled:
                     raise Stopped()
-                save(task, *output)
+                on_done(n, task, output)
             return
         import concurrent.futures
         import multiprocessing
         pool = concurrent.futures.ProcessPoolExecutor(
-            max_workers=min(workers, len(todo)), mp_context=multiprocessing.get_context("spawn"),
+            max_workers=min(workers, len(tasks)), mp_context=multiprocessing.get_context("spawn"),
             initializer=book_align.pool_init, initargs=(str(book_path), 29, LABELS, sentences, None, os.getpid()))
         futures = {}
         finished_all = False
         try:
             futures = session.start_pool(
-                pool, lambda started: {started.submit(book_align.pool_align, task): task for task in todo})
+                pool, lambda started: {started.submit(there, task): (n, task) for n, task in enumerate(tasks)})
             pending = set(futures)
             while pending:
                 if should_stop():
@@ -845,10 +926,10 @@ class WorkerStages:
                         if should_stop():  # the session ended and stopped the processes
                             raise Stopped()
                         raise
-                    save(futures[future], *output)
+                    on_done(*futures[future], output)
             finished_all = True
         finally:
-            # A stopped or failed job's processes are terminated and waited for, not left to finish their group.
+            # A stopped or failed job's processes are terminated and waited for, not left to finish their task.
             session.release_pool(pool, stop=not finished_all)
 
     @staticmethod
@@ -873,15 +954,21 @@ class WorkerStages:
             return (sample_offsets[t] + book_align.frame_boundary(frame - frame_offsets[t])) / book_align.RATE
         return to_seconds
 
-    def result(self, job, metas, longform, merged):
-        """Validate the merged intervals and express them in each track's own time."""
+    def result(self, job, metas, longform, merged, pieces, match, outcome=None):
+        """Validate the chain's merged intervals and each leftover piece on its own, express them in each
+        track's own time, and describe what is left: unsynced passages and flags (book_report)."""
         import bisect
         import book_align
+        import book_report
         tracks = job.request["tracks"]
         sentences = job.request["sentences"]
         _, sample_offsets = self.offsets(metas)
         to_seconds = self.book_seconds(metas)
-        accepted = book_align.validate(longform, merged, to_seconds)
+        accepted = book_align.validate(longform, merged, to_seconds) if merged else {}
+        chain_mapped = len(accepted)
+        for piece in pieces:
+            for k, value in book_align.validate(longform, piece, to_seconds).items():
+                accepted.setdefault(k, value)  # pieces hold only sentences the chain did not map
         intervals = []
         for k in sorted(accepted):
             start, end = accepted[k]
@@ -901,7 +988,14 @@ class WorkerStages:
                                "containerSeconds": check.get("containerSeconds"),
                                "differenceSeconds": check.get("differenceSeconds"), "durationOk": check.get("ok"),
                                "ranges": (meta.get("decode") or {}).get("ranges")})
+        titles = book_report.section_titles(job.request.get("sections"))
+        mapped_ids = {i["paragraphId"] for i in intervals}
+        flags = book_report.flags(sentences, intervals,
+                                  [{"id": row["id"], "seconds": row["decodedSeconds"]} for row in track_rows], titles)
         return {"jobId": job.key, "engine": BOOK_ENGINE, "recordingId": job.request.get("recordingId"),
                 "audioFingerprint": job.request.get("audioFingerprint"),
-                "outcome": "mapped" if intervals else "unsynced", "sentences": len(sentences),
-                "mapped": len(intervals), "intervals": intervals, "tracks": track_rows}
+                "outcome": outcome or ("mapped" if intervals else "unsynced"), "sentences": len(sentences),
+                "mapped": len(intervals), "intervals": intervals,
+                "unsyncedPassages": book_report.unsynced_passages(sentences, mapped_ids, titles),
+                "flags": flags, "textMatch": match, "tracks": track_rows,
+                "stats": {"chainMapped": chain_mapped, "leftoverMapped": len(intervals) - chain_mapped}}

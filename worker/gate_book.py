@@ -46,7 +46,12 @@ def main():
     indices = {p["index"] for p in predictions}
     metrics["first_kept"] = 0 in indices
     metrics["last_kept"] = len(gold["sentences"]) - 1 in indices
-    metrics["unrelated_unsynced"] = unrelated["outcome"] == "unsynced" and unrelated["intervals"] == []
+    # Unrelated text maps nothing: since #403 the text-match check usually stops it first (text_mismatch).
+    metrics["unrelated_unsynced"] = (unrelated["outcome"] in ("unsynced", "text_mismatch")
+                                     and unrelated["intervals"] == [])
+    metrics["unrelated_outcome"] = unrelated["outcome"]
+    metrics["text_match"] = result.get("textMatch")
+    metrics["unrelated_text_match"] = unrelated.get("textMatch")
     metrics["passed_core"] = metrics["passed"]
     metrics["passed"] = (metrics["passed"] and metrics["first_kept"] and metrics["last_kept"]
                          and metrics["unrelated_unsynced"])
@@ -62,7 +67,7 @@ def main():
     print(f"| Transition midpoints ≤250 ms | {metrics['transition_pass']}/{metrics['transitions_covered']} | 127/127 |")
     print(f"| Maximum endpoint or transition error | {metrics['max_error_ms']:.1f} ms | ≤1000 ms |")
     print(f"| First / last kept | {metrics['first_kept']} / {metrics['last_kept']} | yes |")
-    print(f"| Unrelated text left unsynced | {metrics['unrelated_unsynced']} | yes |")
+    print(f"| Unrelated text left unsynced | {metrics['unrelated_unsynced']} ({metrics['unrelated_outcome']}) | yes |")
     print(f"\nGate: {'PASS' if metrics['passed'] else 'FAIL'}; engine: {result['engine']}; "
           f"wall {wall:.1f} s + {unrelated_wall:.1f} s", flush=True)
     return 0 if metrics["passed"] else 1

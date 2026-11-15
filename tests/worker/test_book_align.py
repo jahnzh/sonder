@@ -223,5 +223,121 @@ class WholeBook(unittest.TestCase):
         self.assertEqual(self.absent & set(self.accepted), set())
 
 
+@unittest.skipIf(np is None, "numpy is not installed")
+class LeftoverHelpers(unittest.TestCase):
+    def test_audio_gaps_and_text_runs(self):
+        intervals = [(100, 200), (150, 400), (900, 1000)]
+        self.assertEqual(book_align.audio_gaps(intervals, 2000, 300), [(400, 900), (1000, 2000)])
+        self.assertEqual(book_align.audio_gaps(intervals, 2000, 100), [(0, 100), (400, 900), (1000, 2000)])
+        self.assertEqual(book_align.text_runs({0, 1, 5, 9}, 30, 3), [(2, 5), (6, 9), (10, 30)])
+        self.assertEqual(book_align.text_runs({0, 1, 5, 9}, 30, 4), [(10, 30)])
+        self.assertEqual(book_align.text_runs(set(), 4, 5), [])
+
+    def test_covered_spans(self):
+        covered = book_align.Covered([(10, 20), (15, 30), (50, 60)])
+        self.assertEqual((covered.starts, covered.ends), ([10, 50], [30, 60]))
+        self.assertTrue(covered.overlaps(25, 35))
+        self.assertTrue(covered.overlaps(0, 11))
+        self.assertTrue(covered.overlaps(40, 51))
+        self.assertFalse(covered.overlaps(30, 50))
+        covered.add(30, 50)
+        self.assertEqual((covered.starts, covered.ends), ([10], [60]))
+        covered.add(70, 80)
+        covered.add(65, 66)
+        self.assertEqual((covered.starts, covered.ends), ([10, 65, 70], [60, 66, 80]))
+
+    def test_pieces_follow_runs_and_audio(self):
+        runs = [(100, 200), (400, 500)]
+        probes = [(1000, 150), (7000, 160), (13000, 420), (19000, 440), (25000, 50), (61000, 120), (67000, 130),
+                  (90000, 450)]
+        pieces = book_align.leftover_pieces(probes, (500, 100000), runs, 6000)
+        # (25000, 50) lies in no run; (90000, 450) is one probe alone. Audio: one probe before the first probe
+        # to one past the last, and at most one probe into the next piece.
+        self.assertEqual([(p["aStart"], p["aEnd"], p["cursor"], p["stop"]) for p in pieces],
+                         [(500, 19000, 100, 200), (7000, 31000, 400, 500), (55000, 79000, 100, 200)])
+        self.assertEqual([p["probes"] for p in pieces], [2, 2, 2])
+        self.assertEqual(book_align.LEFTOVER_MIN_PROBES, 2)
+
+    def test_the_order_pieces_run_in_does_not_change_the_result(self):
+        if not hasattr(Reordered, "chain"):
+            Reordered.setUpClass()
+        longform = Reordered.longform
+
+        def backwards(tasks):  # as a pool would: in any order, results handed back in task order
+            out = {n: book_align.run_piece(longform, tasks[n]) for n in reversed(range(len(tasks)))}
+            return [out[n] for n in range(len(tasks))]
+
+        pieces, info = book_align.leftover_pass(longform, dict(Reordered.chain), run_pieces=backwards)
+        self.assertEqual(pieces, Reordered.pieces)
+        self.assertEqual(info["raw"], Reordered.info["raw"])
+
+
+@unittest.skipIf(np is None, "numpy is not installed")
+class Reordered(unittest.TestCase):
+    """Four sections, the second and third read in the other order: the chain keeps one rising order, the
+    leftover pass maps the section the chain could not, and changes nothing the chain mapped."""
+
+    @classmethod
+    def setUpClass(cls):
+        words = vocabulary(21)
+        cls.texts = sentences(21, 400, words)
+        speaker = Speaker(21)
+        cls.truth = {}
+        cls.sections = [range(0, 100), range(100, 200), range(200, 300), range(300, 400)]
+        for section in (0, 2, 1, 3):
+            speaker.pause(400)
+            for k in cls.sections[section]:
+                speaker.pause(15)
+                cls.truth[k] = speaker.say(cls.texts[k])
+        speaker.pause(200)
+        cls.em = speaker.emissions()
+        cls.longform = book_align.LongForm(cls.em, LABELS, cls.texts)
+        tasks, _ = book_align.plan_groups(cls.longform)
+        outputs = [book_align.align_group(cls.longform, task)[0] for task in tasks]
+        cls.chain, _ = book_align.merge_groups(outputs)
+        cls.before = dict(cls.chain)
+        cls.pieces, cls.info = book_align.leftover_pass(cls.longform, cls.chain)
+        cls.added = {k: v for piece in cls.pieces for k, v in piece.items()}
+
+    def test_the_chain_misses_one_displaced_section(self):
+        mapped = [sum(k in self.chain for k in section) for section in self.sections]
+        self.assertGreaterEqual(min(mapped[0], mapped[3]), 95)
+        self.assertLess(min(mapped[1], mapped[2]), 10)
+
+    def test_the_leftover_pass_maps_it_where_it_was_spoken(self):
+        missing = min((1, 2), key=lambda s: sum(k in self.chain for k in self.sections[s]))
+        found = [k for k in self.sections[missing] if k in self.added]
+        self.assertGreaterEqual(len(found), 90, self.info)
+        for k in found:
+            self.assertLessEqual(abs(self.added[k][0] - self.truth[k][0]), 2, k)
+        self.assertGreaterEqual(self.info["pieces"], 1)
+
+    def test_nothing_the_chain_mapped_moves_or_goes(self):
+        self.assertEqual(self.chain, self.before)  # the chain's map is not changed in place
+        self.assertEqual(set(self.added) & set(self.chain), set())
+        covered = book_align.Covered(self.chain.values())
+        for start, end in self.added.values():
+            self.assertFalse(covered.overlaps(start, end))
+        spans = sorted(self.added.values())
+        self.assertTrue(all(a[1] <= b[0] for a, b in zip(spans, spans[1:])))
+
+    def test_each_piece_rises_and_validates_on_its_own(self):
+        for piece in self.pieces:
+            keys = sorted(piece)
+            starts = [piece[k][0] for k in keys]
+            self.assertEqual(starts, sorted(starts))
+            accepted = book_align.validate(self.longform, piece)
+            self.assertGreaterEqual(len(accepted), 0.9 * len(piece))
+        # The chain's validation is the same with or without the pass: it validates the chain alone.
+        self.assertEqual(book_align.validate(self.longform, self.chain), book_align.validate(self.longform, self.before))
+
+    def test_a_book_in_order_gets_nothing_from_the_pass(self):
+        # WholeBook's minute of extra audio and six missing sentences are below the pass's limits.
+        if not hasattr(WholeBook, "merged"):
+            WholeBook.setUpClass()
+        pieces, info = book_align.leftover_pass(WholeBook.longform, dict(WholeBook.merged))
+        self.assertEqual(pieces, [], info)
+
+
 if __name__ == "__main__":
     unittest.main()
