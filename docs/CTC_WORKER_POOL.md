@@ -60,16 +60,28 @@ server restart its stored staging is staged again.
 The caller releases the lease on every exit, saying how the work ended:
 
 - **finished** (ready, partial, failed for good, cancelled, or the job is gone):
-  the staged tracks are removed from every host the job ever staged them on,
-  under a 30 second deadline (a passage locate's own deadline instead). A job
-  remembers those hosts in its stored assignment (`pool.stagedHosts`) across
-  requeues, Resume, a new plan of the same pair and server restarts, so a run
-  that finishes on another host, or ends without a lease, removes them too;
+  the job has no further use for its staging;
 - **retryable** (paused, waiting in the queue because every host is busy, or
-  the run was interrupted, for example by a server stop): they are kept.
+  the run was interrupted, for example by a server stop): the next run reuses
+  it.
 
 A job runner reads the outcome from the job's stored status when its run ends.
-Probes always release as finished: their folder is their own.
+Neither outcome deletes anything on the hosts: a job's staged audio stays
+there, as it did before leases. Removing it is #421, which runs inside the
+server under leases. Two reviewed attempts at removing it on a finished release
+showed that a remote delete can outlive the claim that protected it and reach
+the folder a later run of the same job has staged into, so this change leaves
+it out.
+
+The lease records what it staged and where: a job's stored assignment keeps
+every host it staged its tracks on and the folder there (`pool.stagedHosts`)
+across requeues, Resume, a new plan of the same pair and server restarts. An
+entry for a host that is not configured at the moment (left out of
+`ALIGNMENT_POOL_HOSTS` for a while, or a retired host in a row of older code) is
+kept. #421 reads this record to find the folders.
+
+Probes always release as finished. A probe's folder is its own and nothing
+reuses it, so its release removes it, as before leases.
 
 Accepted limitations, kept as they are:
 
@@ -77,14 +89,13 @@ Accepted limitations, kept as they are:
   the request (#398, #402).
 - Audio staged for a probe whose deadline fires during scoring stays on the
   host.
-- A removal that fails or times out leaves the folder, and so does cancelling
-  a job that is not running (paused or queued with staging kept).
+- A probe removal that fails or times out leaves the folder.
 
-### Audio staged before worker leases
+### Staged job audio
 
-Before leases, job staging was never removed (32 job folders on WSL on
-2026-11-14). That audio, and what the limitations above leave, stays on the
-hosts until the server removes it under leases (#421). Do not delete folders
+Job staging is not removed: it was not before leases (32 job folders on WSL on
+2026-11-14), and it is not now. That audio, and what the limitations above
+leave, stays on the hosts until the server removes it under leases (#421). Do not delete folders
 under `pool-jobs/` by hand while jobs or probes run: a resumed or rebuilt job
 reuses its folder, and a probe keeps reading its folder for the whole batch.
 
@@ -109,8 +120,7 @@ and `remoteWorkRoot` (default `ALIGNMENT_POOL_REMOTE_ROOT`) are optional. When
 the setting is unset the default is today's two hosts, built from the
 `ALIGNMENT_POOL_WSL_*` and `ALIGNMENT_POOL_LISA_*` settings above, so
 production needs no `.env` change. An invalid value is refused with its reason:
-the image smoke fails the deploy, and a running server logs it and has no pool
-hosts. No code outside the default configuration compares a host id.
+the image smoke fails the deploy, and the server stops at startup. No code outside the default configuration compares a host id.
 
 ## Host roles and capabilities
 
