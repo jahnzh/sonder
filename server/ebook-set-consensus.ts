@@ -16,10 +16,10 @@ import {
   deleteAlignmentJob,
   listAlignmentJobs,
   listServedAlignmentJobs,
-  putProjectedRebuild,
   removeProjectedMapsForWork,
 } from "./alignment.ts";
-import { usableMap } from "./alignment-rebuild.ts";
+import { project, rejectRebuild } from "./alignment-transitions.ts";
+import { alignmentJobInFlight, alignmentMapUsable } from "../src/reading-types.ts";
 import {
   listEbookSetMembers,
   type EbookSetMemberEvidence,
@@ -302,7 +302,7 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
   if (!state || consensusJob.id !== state.consensusJobId) return;
   if (consensusJob.status === "error" && consensusJob.outcome === "rejected")
     return showRejectedConsensus(workId, consensusJob);
-  if (!["partial", "ready"].includes(consensusJob.status)) return;
+  if (!alignmentMapUsable(consensusJob)) return;
   const members = listEbookSetMembers(workId).filter(
     (member) => member.status === "accepted",
   );
@@ -321,7 +321,7 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
         job.origin !== "projected" &&
         job.status !== "cancelled" &&
         job.status !== "error" &&
-        (["queued", "copying", "processing", "paused"].includes(job.rebuild?.status ?? job.status) ||
+        (alignmentJobInFlight(job.rebuild?.status ?? job.status) ||
           job.coverage > 0),
     );
     if (prepared) continue;
@@ -359,31 +359,15 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
     const sectionsDone = [
       ...new Set(intervals.map((interval) => interval.section)),
     ].sort((a, b) => a - b);
-    putProjectedRebuild({
+    project(consensusJob, {
       id: projectedId,
-      generation: consensusJob.generation,
       ebookId: member.ebookId,
-      recordingId: consensusJob.recordingId,
-      status: consensusJob.status,
-      progress: consensusJob.progress,
-      engine: consensusJob.engine,
-      outcome: consensusJob.outcome,
-      stageTimings: consensusJob.stageTimings,
-      error: null,
-      warning: consensusJob.warning,
+      fingerprint: memberBook.fingerprint,
       intervals,
       sectionsDone,
-      elapsedSeconds: consensusJob.elapsedSeconds,
-      fingerprint: memberBook.fingerprint,
-      audioFingerprint: consensusJob.audioFingerprint,
-      createdAt: consensusJob.createdAt,
-      updatedAt: Date.now(),
       // Over the member's own sentences, as for a prepared map: the consensus row count changes with the
       // set's membership, so it is no stable measure of this member's map (#379).
       coverage: intervals.length / Math.max(1, memberSentences),
-      pairings: [],
-      mode: "anchored",
-      origin: "projected",
     }, memberSentenceIds);
   }
 }
@@ -396,12 +380,8 @@ function showRejectedConsensus(workId: string, consensusJob: AlignmentJob) {
   for (const member of listEbookSetMembers(workId).filter((member) => member.status === "accepted")) {
     const id = projectedJobId(workId, member.ebookId, consensusJob.recordingId);
     const existing = listAlignmentJobs().find((job) => job.id === id);
-    if (!existing || !(usableMap(existing) || alignmentKeepsPublishedMap(id))) continue;
-    putProjectedRebuild({
-      ...existing, generation: consensusJob.generation, engine: consensusJob.engine, status: "error",
-      outcome: "rejected", error: consensusJob.error, warning: null, progress: consensusJob.progress,
-      intervals: [], sectionsDone: [], coverage: 0, unsyncedPassages: undefined, updatedAt: Date.now(),
-    });
+    if (!existing || !(alignmentMapUsable(existing) || alignmentKeepsPublishedMap(id))) continue;
+    rejectRebuild(existing, consensusJob);
   }
 }
 

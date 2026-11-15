@@ -114,20 +114,44 @@ export type AlignmentRunConfig = {
   decodeWorkers?: number;
   extractWorkers?: number;
 };
+/** Every status an alignment job can have. Transitions between them live in server/alignment-transitions.ts (ADR 0012). */
+export const ALIGNMENT_STATUSES = [
+  "queued",
+  "copying",
+  "processing",
+  "paused",
+  "cancelled",
+  "ready",
+  "partial",
+  "error",
+] as const;
+export type AlignmentStatus = (typeof ALIGNMENT_STATUSES)[number];
+/** Waiting for or running on a worker. */
+export const ALIGNMENT_ACTIVE_STATUSES = ["queued", "copying", "processing"] as const satisfies readonly AlignmentStatus[];
+/** The job waits for or runs on a worker. Takes any string, as stored rows are read without validation. */
+export const alignmentJobActive = (status: string | null | undefined) =>
+  !!status && (ALIGNMENT_ACTIVE_STATUSES as readonly string[]).includes(status);
+/** Active, or paused: the job still has work to finish. */
+export const alignmentJobInFlight = (status: string | null | undefined) =>
+  alignmentJobActive(status) || status === "paused";
+/** Stopped before it finished (paused, failed or cancelled): the Reading sync card offers to resume or retry it. */
+export const alignmentJobResumable = (status: string | null | undefined) =>
+  status === "paused" || status === "error" || status === "cancelled";
+/** A finished map worth serving, also while its rebuild runs. */
+export const alignmentMapUsable = (job: { status: string }) => job.status === "ready" || job.status === "partial";
+/**
+ * A write of this job state publishes it and drops a kept map: a finished map, or an explicit "language not
+ * supported" outcome. A failed or cancelled rebuild keeps the old map, and so does a finished or unsupported one
+ * that the #379 publish rule refuses (it is stored as rejected before this is asked).
+ */
+export const alignmentMapPublishes = (job: { status: string; outcome?: string | null }) =>
+  alignmentMapUsable(job) || (job.status === "error" && job.outcome === "language_not_supported");
 export type AlignmentJob = {
   id: string;
   generation?: string;
   ebookId: string;
   recordingId: string;
-  status:
-    | "queued"
-    | "copying"
-    | "processing"
-    | "paused"
-    | "cancelled"
-    | "ready"
-    | "partial"
-    | "error";
+  status: AlignmentStatus;
   progress: number;
   engine: string;
   /** Identifies jobs prepared with CTC passage validation. */
