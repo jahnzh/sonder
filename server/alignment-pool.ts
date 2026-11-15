@@ -11,6 +11,7 @@ import type {
   AlignmentJob,
   AlignmentPoolHostId,
   AlignmentPoolHostStatus,
+  AlignmentPoolHostWork,
   AlignmentPoolStatus,
 } from "../src/reading-types.ts";
 import { BOOK_ENGINE, CTC_ENGINE } from "./alignment-engine.ts";
@@ -251,7 +252,7 @@ export function poolDeps(): PoolSshDeps {
   return defaultPoolSshDeps();
 }
 
-function failureDetail(error: unknown) {
+export function failureDetail(error: unknown) {
   const stderr = error && typeof error === "object" && "stderr" in error ? error.stderr : undefined;
   let message = typeof stderr === "string" || Buffer.isBuffer(stderr) ? String(stderr) : "";
   if (!message.trim()) {
@@ -415,6 +416,19 @@ export function checkPoolHostsSetting() {
   }
 }
 
+let disabledHostCheck: ((hostId: PoolHostId) => boolean) | null = null;
+
+/**
+ * Wires the administrator's per-host switch (#357, stored by `server/activity-pause.ts`), so this module stays
+ * free of the database. Unset (a test of the pool alone), no host is disabled.
+ */
+export function setDisabledHostCheck(check: ((hostId: PoolHostId) => boolean) | null) {
+  disabledHostCheck = check;
+}
+
+/** The administrator took this host out of use: it gets no new jobs, probes or whole-book jobs. */
+export const hostDisabled = (hostId: PoolHostId) => disabledHostCheck?.(hostId) ?? false;
+
 // Built on first use, so an invalid setting surfaces through checkPoolHostsSetting at startup, not at import.
 let coordinator: AlignmentPoolCoordinator | null = null;
 
@@ -514,8 +528,36 @@ type CtcHealth = {
   slots?: number;
   ctc: { engine: string; ready: boolean; device: string; precision: string; passageReady?: boolean };
   /** Whole-book jobs (#402); workers without them omit it. */
-  bookJobs?: { engine?: unknown; ready?: unknown };
+  bookJobs?: { engine?: unknown; ready?: unknown; jobs?: unknown; slotsHeld?: unknown; resuming?: unknown; stuck?: unknown };
+  /** Window requests running now; older workers omit it. */
+  activeRequests?: unknown;
+  /** The worker's code revision (#357); older workers omit it. */
+  revision?: unknown;
 };
+
+const count = (value: unknown) => (typeof value === "number" && Number.isInteger(value) && value > 0 ? value : 0);
+
+/** What a worker's `/health` says it runs now (#357), or null when the body is not an object. */
+export function workerWork(value: unknown): AlignmentPoolHostWork | null {
+  const health = value as Partial<CtcHealth> | null | undefined;
+  if (!health || typeof health !== "object") return null;
+  const book = health.bookJobs && typeof health.bookJobs === "object" ? health.bookJobs : {};
+  return {
+    windowRequests: count(health.activeRequests),
+    bookJobs: count(book.jobs),
+    encoding: count(book.slotsHeld) > 0,
+    resuming: book.resuming === true,
+    stuck: (health.stuck === true ? 1 : 0) + (Array.isArray(book.stuck) ? book.stuck.length : 0),
+  };
+}
+
+/** The revision a worker's `/health` reports: a short printable string, or null (unknown). */
+export function workerRevision(value: unknown): string | null {
+  const revision = (value as { revision?: unknown } | null | undefined)?.revision;
+  if (typeof revision !== "string") return null;
+  const clean = revision.replace(/[^A-Za-z0-9._+/@:-]/g, "").slice(0, 64);
+  return clean || null;
+}
 
 /** Why a healthy CTC worker cannot take a whole-book job (#404), or null when it can. */
 export function bookJobsProblem(health: Pick<CtcHealth, "bookJobs">): string | null {
@@ -577,6 +619,15 @@ async function ctcHealth(host: PoolHost, signal?: AbortSignal): Promise<CtcHealt
   if (!validCtcHealth(host, health))
     throw new Error("worker is not ready or has incompatible CTC settings");
   return health;
+}
+
+/** A worker's `/health` body as it answered (#357), whatever it says; throws when it does not answer with JSON. */
+export async function readWorkerHealth(host: PoolHost, signal?: AbortSignal): Promise<unknown> {
+  const guardError = ctcUrlGuardError(host);
+  if (guardError) throw new Error(guardError);
+  const response = await fetch(`${host.workerUrl.replace(/\/$/, "")}/health`, { signal: withDeadline(5000, signal) });
+  if (!response.ok) throw new Error(`worker returned HTTP ${response.status}`);
+  return response.json();
 }
 
 /** The worker's reported media root, for listing what the pool staged there. Throws when it reports none. */
@@ -926,6 +977,14 @@ async function takeHost(
     if (roundOver()) break;
     const id = host.id;
     if (attempted.includes(id)) continue;
+    // A disabled host takes no new work (#357). It is not tried, so it does not use up a job's round, and it is not
+    // a faster host that is busy, so a whole-book job goes on to the CPU fallback. Only a job already started there
+    // (taken back without staging after a server restart) may lease it: that work is running there and finishes.
+    if (hostDisabled(id) && id !== unstagedOn) {
+      diagnostics.poolErrors = { ...diagnostics.poolErrors, [id]: "disabled: the administrator disabled this host" };
+      busy = true;
+      continue;
+    }
     if (fallbackOnly(host) && fasterHostBusy) continue;
     let health: CtcHealth;
     try {
@@ -1044,6 +1103,8 @@ type ProbedHostSnapshot = {
   workerBusy: boolean;
   stuck: boolean;
   probeError: string | null;
+  revision: string | null;
+  work: AlignmentPoolHostWork | null;
 };
 
 type CachedPoolProbe = {
@@ -1087,12 +1148,16 @@ async function probeSinglePoolHost(host: PoolHost): Promise<ProbedHostSnapshot> 
       workerBusy: false,
       stuck: false,
       probeError: formatPoolError("health", guardError),
+      revision: null,
+      work: null,
     };
   }
   let device: string | null = null;
   let precision: string | null = null;
   let workerBusy = false;
   let stuck = false;
+  let revision: string | null = null;
+  let work: AlignmentPoolHostWork | null = null;
   let healthError: string | null = null;
   let sshError: string | null = null;
   await Promise.all([
@@ -1110,6 +1175,8 @@ async function probeSinglePoolHost(host: PoolHost): Promise<ProbedHostSnapshot> 
           workerBusy = raw.busy === true;
           stuck = raw.stuck === true;
           maxConcurrent = ctcWorkerSlots(raw);
+          revision = workerRevision(raw);
+          work = workerWork(raw);
           if (typeof raw.ctc?.device === "string") device = raw.ctc.device;
           if (typeof raw.ctc?.precision === "string") precision = raw.ctc.precision;
         }
@@ -1139,6 +1206,8 @@ async function probeSinglePoolHost(host: PoolHost): Promise<ProbedHostSnapshot> 
     workerBusy,
     stuck,
     probeError,
+    revision,
+    work,
   };
 }
 
@@ -1165,6 +1234,8 @@ async function runPoolProbe(): Promise<CachedPoolProbe> {
         workerBusy: false,
         stuck: false,
         probeError: null,
+        revision: null,
+        work: null,
       })),
     };
   }
@@ -1206,6 +1277,9 @@ function materializePoolStatus(
         activeJobs,
         maxConcurrent: host.maxConcurrent,
         lastError,
+        disabled: hostDisabled(host.id),
+        revision: host.revision,
+        work: host.work,
       };
     }),
   };

@@ -53,6 +53,9 @@ export function AlignmentPoolStatusView({
                   <span className="quiet-tag">
                     {host.reachable ? "Reachable" : "Unreachable"}
                   </span>
+                  {host.disabled && (
+                    <span className="quiet-tag" data-testid="pool-host-disabled">Disabled by you</span>
+                  )}
                   <span className="quiet-tag">
                     {host.device
                       ? host.precision

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
-import { api } from "../lib";
-import type { ActivityItem, ActivityProcess, ActivityResponse } from "../types";
+import { ApiError, api } from "../lib";
+import type { ActivityItem, ActivityProcess, ActivityResponse, ActivityWorkerHost } from "../types";
 
 const POLL_MS = 15_000;
 const ATTENTION_POLL_MS = 60_000;
@@ -62,6 +62,95 @@ function useRowAction(onChanged: () => void) {
   return { busy, failure, run };
 }
 
+/** Refusals a forced restart may override: the host runs work, or its status cannot be read. */
+const FORCEABLE = new Set(["host_busy", "host_unreadable"]);
+
+/** An alignment worker host's status and controls (#357): restart with a confirmation, and the disable switch. */
+function WorkerHostControls({ host, label, onChanged }: { host: ActivityWorkerHost; label: string; onChanged: () => void }) {
+  const [step, setStep] = useState<"idle" | "confirm" | "refused">("idle");
+  const [busy, setBusy] = useState<"" | "restart" | "switch">("");
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const restart = async (force: boolean) => {
+    setBusy("restart");
+    setMessage(null);
+    try {
+      const reply = await api<{ message?: string }>(`/activity/services/alignment-host:${encodeURIComponent(host.hostId)}/restart`, {
+        method: "POST", body: JSON.stringify({ force }),
+      });
+      setStep("idle");
+      setMessage({ ok: true, text: reply.message ?? "Restarted." });
+    } catch (error) {
+      const text = error instanceof Error ? error.message : "The restart did not work.";
+      setStep(!force && error instanceof ApiError && FORCEABLE.has(error.code ?? "") ? "refused" : "idle");
+      setMessage({ ok: false, text });
+    } finally {
+      setBusy("");
+      onChanged();
+    }
+  };
+  const toggle = async () => {
+    setBusy("switch");
+    setMessage(null);
+    try {
+      await api(`/activity/services/alignment-host:${encodeURIComponent(host.hostId)}/disable`, {
+        method: "POST", body: JSON.stringify({ disabled: !host.disabled }),
+      });
+    } catch (error) {
+      setMessage({ ok: false, text: error instanceof Error ? error.message : "That did not work." });
+    } finally {
+      setBusy("");
+      onChanged();
+    }
+  };
+  const last = host.lastRestart;
+  const current = [host.work ?? "", ...host.jobs].filter(Boolean).join(" · ");
+  return (
+    <>
+      <small data-testid="activity-host-status">
+        {[
+          host.online ? "Online" : "Offline",
+          host.device ?? "",
+          `Code version ${host.revision ?? "unknown"}`,
+        ].filter(Boolean).join(" · ")}
+      </small>
+      {host.online && <small data-testid="activity-host-job">{current ? `Current job: ${current}` : "Idle"}</small>}
+      {!message && last && (
+        <small className={last.ok ? undefined : "form-error"} data-testid="activity-host-last-restart">
+          {last.message} ({ago(last.at)})
+        </small>
+      )}
+      <div className="settings-inline-actions">
+        {step === "idle" && (
+          <button type="button" className="button subtle" disabled={!!busy || host.restarting} data-testid="activity-host-restart"
+            aria-label={`Restart ${label}`} onClick={() => setStep("confirm")}>
+            {(busy === "restart" || host.restarting) && <Loader2 className="spin" size={14} />} {host.restarting ? "Restarting" : "Restart"}
+          </button>
+        )}
+        {step !== "idle" && (
+          <span className="settings-inline-actions" role="group" aria-label={`Confirm restart of ${label}`}>
+            <button type="button" className="button subtle" disabled={!!busy} data-testid="activity-host-restart-confirm"
+              onClick={() => void restart(step === "refused")}>
+              {busy === "restart" && <Loader2 className="spin" size={14} />} {step === "refused" ? "Restart anyway" : "Restart now"}
+            </button>
+            <button type="button" className="button subtle" disabled={busy === "restart"} onClick={() => { setStep("idle"); setMessage(null); }}>
+              Cancel
+            </button>
+          </span>
+        )}
+        <button type="button" className="button subtle" disabled={!!busy} data-testid="activity-host-switch"
+          aria-label={`${host.disabled ? "Enable" : "Disable"} ${label}`} onClick={() => void toggle()}>
+          {busy === "switch" && <Loader2 className="spin" size={14} />} {host.disabled ? "Enable" : "Disable"}
+        </button>
+      </div>
+      {message && (
+        <small className={message.ok ? undefined : "form-error"} role={message.ok ? "status" : "alert"} data-testid="activity-host-result">
+          {message.text}
+        </small>
+      )}
+    </>
+  );
+}
+
 function ProcessRow({ process, onChanged }: { process: ActivityProcess; onChanged: () => void }) {
   const action = useRowAction(onChanged);
   const { counts } = process;
@@ -75,8 +164,8 @@ function ProcessRow({ process, onChanged }: { process: ActivityProcess; onChange
       <div className="user-row-name">
         <strong>{process.label}</strong>
         <span className="quiet-tag">{process.type === "service" ? "Service" : "Background loop"}</span>
-        {/* A loop that is held back is not "Running": the Paused or Disabled tag says what it is. */}
-        {!(process.health === "ok" && (process.paused || process.lockedBy)) && (
+        {/* A loop that is held back is not "Running": the Paused or Disabled tag says what it is; so is an offline host you disabled. */}
+        {!(process.health === "ok" && (process.paused || process.lockedBy)) && !(process.host?.disabled && process.health === "unknown") && (
           <span className="quiet-tag" data-testid="activity-process-health">
             {process.notTracked ? "Not tracked yet" : healthLabel[process.health]}
           </span>
@@ -86,8 +175,10 @@ function ProcessRow({ process, onChanged }: { process: ActivityProcess; onChange
         )}
         {process.paused && <span className="quiet-tag" data-testid="activity-process-paused">Paused by you</span>}
         {process.lockedBy === "environment" && <span className="quiet-tag" data-testid="activity-process-locked">Disabled by environment</span>}
+        {process.host?.disabled && <span className="quiet-tag" data-testid="activity-host-disabled">Disabled by you</span>}
       </div>
       {detail && <small>{detail}</small>}
+      {process.host && <WorkerHostControls host={process.host} label={process.label} onChanged={onChanged} />}
       {process.pausable && process.pauseEffect && <small>{process.pauseEffect}</small>}
       {process.pausable && process.lockedBy === null && (
         <div className="settings-inline-actions">

@@ -1,4 +1,4 @@
-import { isPaused } from "./activity-pause.ts";
+import { isHostDisabled, isPaused } from "./activity-pause.ts";
 import { backgroundRunner } from "./background-runner.ts";
 import type { FastifyInstance } from "fastify";
 import { and, eq } from "drizzle-orm";
@@ -40,6 +40,7 @@ import {
   PoolBusyError,
   poolEnabled,
   poolFailureMessage,
+  setDisabledHostCheck,
   shouldDispatchToPool,
   type LeaseRelease,
   type PoolHostId,
@@ -84,6 +85,8 @@ import {
   listServedAlignmentJobs,
   servedAlignmentJob,
 } from "./alignment-transitions.ts";
+// The per-host switch of the Activity page (#357) is stored with the pause switches; every lease honours it.
+setDisabledHostCheck(isHostDisabled);
 export {
   alignmentJob,
   alignmentKeepsPublishedMap,

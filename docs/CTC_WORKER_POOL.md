@@ -396,6 +396,7 @@ returns):
 {
   "ready": true,
   "engine": "ctc-wav2vec2-base-960h-torchaudio-2.8-v2",
+  "revision": "c901429f0e2d3c4b5a69788796a5b4c3d2e1f0a9",
   "busy": false,
   "stuck": false,
   "busySeconds": null,
@@ -415,6 +416,48 @@ returns):
 }
 ```
 For Lisa (CPU), `device` will be `"cpu"` and `precision` will be `"float32"`.
+A worker of this revision also returns `bookJobs` (see "Whole-book jobs").
+
+### 6. Code version, restart and disable from the Activity page (#357)
+
+**Code version.** `/health` reports `revision`, read once at startup from a
+file `REVISION` beside the worker's code (`~/sonder-ctc-worker/worker/REVISION`);
+a missing, empty or unreadable file is reported as `null` and shown as
+"unknown", and never stops the worker. Only the first line is used, cut to 64
+characters of `A-Z a-z 0-9 . _ + / @ : -`. The hosts are updated by hand by
+copying `worker/`; **the copy writes the commit into `REVISION`**, then
+restarts the service. From a checkout of the commit to install, per host:
+
+```sh
+rev=$(git rev-parse HEAD)
+rsync -a --exclude __pycache__ worker/ 192.168.1.119:sonder-ctc-worker/worker/
+ssh 192.168.1.119 "echo $rev > ~/sonder-ctc-worker/worker/REVISION && systemctl --user restart sonder-ctc-worker.service"
+rsync -a -e 'ssh -p 2269' --exclude __pycache__ worker/ jahn@audiobooks.amatox.in:sonder-ctc-worker/worker/
+ssh -p 2269 jahn@audiobooks.amatox.in "echo $rev > ~/sonder-ctc-worker/worker/REVISION && systemctl --user restart sonder-ctc-worker.service"
+curl -s http://192.168.1.119:3012/health | jq -r .revision   # the commit
+```
+
+`worker/REVISION` is git-ignored, so a copy made in a checkout is never committed.
+
+**Restart.** The Activity page restarts a host's worker with one fixed
+command over the pool's SSH connection, `systemctl --user restart
+sonder-ctc-worker.service` (`RESTART_TARGETS` in
+`server/alignment-host-control.ts`, ADR 0002); the request names only the host.
+It is refused while `/health` reports window requests, whole-book jobs, an
+encode or a resume, while the server holds a lease on the host, or when
+`/health` cannot be read, unless the administrator forces it. The server then
+waits up to 120 s for `/health` to answer ready (the same check a lease uses)
+and shows the result on the host's row. The pool key is not restricted to that
+command on the hosts: it also runs the staging commands, so the allowlist is the
+server's fixed list.
+
+**Disable.** A disabled host (settings key `activityHostDisabled:<host id>`)
+is skipped by every lease (`takeHost` in `server/alignment-pool.ts`): no new
+alignment job, probe or whole-book job goes there, it is not counted as a tried
+host, and a whole-book job goes to the CPU host as when the GPU host cannot be
+used. The one exception is the host a whole-book job was started on, taken back
+without staging after a server restart: that job is running there and finishes.
+With every host disabled, new work waits as when every host is busy.
 
 ## Whole-book jobs (#402)
 
@@ -1008,6 +1051,7 @@ The one-off CTC and Whisper probing comparison passed for all eight titles; the 
 | Route CTC to WSL first and lisa as the only fallback; never send it to production. | `tests/alignment-ctc.test.ts`: unreachable, busy or incompatible WSL; legacy assignment; disabled pool; and cross-host retry tests. `tests/alignment-pool.test.ts`: production URL rejection, SSH diagnostics and staging tests. |
 | Hand out worker leases: first healthy host by rank, fallback when down or full, re-staging after a worker or server restart, release on every exit, staged audio removed on a finished release only (#394). | `tests/alignment-worker-lease.test.ts` (in-process fake hosts, `tests/fake-pool-host.ts`); host configuration in `tests/alignment-pool-hosts.test.ts`. |
 | Remove staged job audio under the recording's lease, with a dry run per host; a retired folder name is never staged into again, so a late removal cannot reach a later run (#421). | `tests/alignment-pool-sweep.test.ts` (fake hosts), `tests/alignment-pool-sweep-routes.test.ts` (admin only). |
+| Worker hosts on the Activity page (#357 PR 3): online, current job and code version per host; restart refused while the host runs work or cannot be read unless forced, with the result on the row; per-host disable honoured by every lease and surviving a restart. | `tests/activity-worker-hosts.test.ts` (fake workers, `tests/fake-book-worker.ts`; the restart command is recorded, never run); `tests/worker/test_revision.py`. |
 | Use reported device and busy state for capability and capacity. | `tests/alignment-ctc.test.ts`: incompatible or busy WSL and both workers busy. Real `/health` responses identified WSL as CUDA float16 and lisa as CPU float32 before the gates. |
 | Retry a failure once on the other host, retain a retryable failure, and keep CPU and GPU in the same engine generation with device and precision for diagnostics. | `tests/alignment-ctc.test.ts`: cross-host retry and manual Resume, anchored-window failover, and the CPU and GPU metadata assertions. |
 | Install the lisa environment with the pinned CPU wheels and the anchored planner dependency; document the commands. | The commands above completed on lisa; its environment imported Torch and TorchAudio `2.8.0+cpu`, FastAPI `0.121.3`, Uvicorn `0.38.0`. |

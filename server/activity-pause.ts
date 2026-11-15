@@ -28,3 +28,20 @@ export function pauseState(env: NodeJS.ProcessEnv = process.env) {
     PAUSABLE_PROCESSES.map((id) => [id, { paused: isPaused(id), locked: lockedByEnvironment(id, env) }]),
   ) as Record<PausableProcess, { paused: boolean; locked: boolean }>;
 }
+
+/**
+ * Per-host switch for the alignment pool (#357 decision 14, PR 3): a disabled host gets no new jobs, probes or
+ * whole-book jobs; work already running there finishes. Stored beside the pause switches, so it survives a restart.
+ * The host id is the configured pool host id (ADR 0013); a switch for a host that is no longer configured is kept.
+ */
+const hostKey = (hostId: string) => `activityHostDisabled:${hostId}`;
+
+export function isHostDisabled(hostId: string) {
+  const row = sqlite.prepare("SELECT value FROM settings WHERE key = ?").get(hostKey(hostId)) as { value: string } | undefined;
+  return row?.value === "1";
+}
+
+export function setHostDisabled(hostId: string, disabled: boolean) {
+  if (disabled) sqlite.prepare("INSERT OR REPLACE INTO settings(key, value) VALUES(?, '1')").run(hostKey(hostId));
+  else sqlite.prepare("DELETE FROM settings WHERE key = ?").run(hostKey(hostId));
+}

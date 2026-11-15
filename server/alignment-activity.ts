@@ -3,9 +3,11 @@
  * (`data` JSON); its vocabulary is `AlignmentJob["status"]` in `src/reading-types.ts`, which `server/alignment-transitions.ts`
  * writes. A record without a status is queued; a record that cannot be read is failed with the reason.
  */
-import type { ActivityHealth, ActivityState } from "../src/types.ts";
-import type { AlignmentJob, AlignmentPoolStatus } from "../src/reading-types.ts";
-import { clamp01, defineSource, stateFrom, type ActivityService } from "./activity-source.ts";
+import type { ActivityHealth, ActivityHostRestart, ActivityState } from "../src/types.ts";
+import type { AlignmentJob, AlignmentPoolHostWork, AlignmentPoolStatus } from "../src/reading-types.ts";
+import {
+  activityFailure, clamp01, defineSource, stateFrom, type ActivityActionContext, type ActivityService,
+} from "./activity-source.ts";
 
 const MINUTE = 60_000;
 
@@ -59,19 +61,49 @@ function parseAlignment(data: string): ParsedAlignment {
   }
 }
 
-const hostId = (host: string) => `alignment-host:${host}`;
+const HOST_PREFIX = "alignment-host:";
+const hostId = (host: string) => `${HOST_PREFIX}${host}`;
 
-function poolServices(pool: AlignmentPoolStatus | null, failure: string | null): ActivityService[] {
+/** What the pool probe gives this source: the pool's status and, for the host rows, the restarts from the page. */
+export type AlignmentProbe = AlignmentPoolStatus & {
+  restarts?: Record<string, { restarting: boolean; last: ActivityHostRestart | null }>;
+};
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/** A worker's current work in words ("1 whole-book job, encoding"); null when it runs nothing or was not read. */
+export function workText(work: AlignmentPoolHostWork | null | undefined): string | null {
+  if (!work) return null;
+  const parts = [
+    work.windowRequests ? plural(work.windowRequests, "window request", "window requests") : "",
+    work.bookJobs ? `${plural(work.bookJobs, "whole-book job", "whole-book jobs")}${work.encoding ? ", encoding" : ""}` : "",
+    !work.bookJobs && work.encoding ? "encoding" : "",
+    work.resuming ? "resuming whole-book jobs" : "",
+    work.stuck ? `${work.stuck} stuck` : "",
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : null;
+}
+
+function poolServices(pool: AlignmentProbe | null, failure: string | null, jobsOn: (host: string) => string[]): ActivityService[] {
   const hosts: ActivityService[] = !pool?.enabled ? [] : pool.hosts.map((host) => {
-    const health: ActivityHealth = !host.reachable ? "down" : host.stuck ? "degraded" : "ok";
+    const disabled = host.disabled === true;
+    // A host the administrator disabled is "disabled by you", not down: it does not light the Settings indicator.
+    const health: ActivityHealth = !host.reachable ? (disabled ? "unknown" : "down") : host.stuck ? "degraded" : "ok";
     const reason = !host.reachable ? host.lastError || "The worker cannot be reached." : host.stuck ? host.lastError || "The worker is stuck." : null;
-    return { id: hostId(host.id), label: `Alignment worker (${host.id})`, health, reason };
+    const restart = pool.restarts?.[host.id];
+    return {
+      id: hostId(host.id), label: `Alignment worker (${host.id})`, health, reason,
+      host: {
+        hostId: host.id, device: host.device, online: host.reachable, disabled, revision: host.revision ?? null,
+        work: workText(host.work), jobs: jobsOn(host.id), restarting: restart?.restarting ?? false, lastRestart: restart?.last ?? null,
+      },
+    };
   });
   if (failure) hosts.push({ id: "alignment-pool", label: "Alignment workers", health: "unknown", reason: `The check failed: ${failure}` });
   return hosts;
 }
 
-export const alignmentSource = defineSource<AlignmentRow[], AlignmentPoolStatus>({
+export const alignmentSource = defineSource<AlignmentRow[], AlignmentProbe>({
   kind: "alignment",
   process: { id: "alignment", label: "Alignment processor" },
   stuckAfterMs: 20 * MINUTE,
@@ -81,7 +113,10 @@ export const alignmentSource = defineSource<AlignmentRow[], AlignmentPoolStatus>
          FROM alignment_jobs a LEFT JOIN recordings r ON r.id = a.recording_id
          LEFT JOIN audio_editions e ON e.id = r.edition_id LEFT JOIN works w ON w.id = e.work_id`,
     ).all() as AlignmentRow[],
-  probe: (deps) => deps.poolStatus(),
+  probe: async (deps): Promise<AlignmentProbe> => {
+    const status = await deps.poolStatus();
+    return { ...status, restarts: deps.workerHosts?.restarts() };
+  },
   report(rows, probe) {
     const drafts = rows.map((row) => {
       const job = parseAlignment(row.data);
@@ -95,6 +130,39 @@ export const alignmentSource = defineSource<AlignmentRow[], AlignmentPoolStatus>
         error: unknown ?? job.error, changedAt: row.updated_at, dependsOn: job.hostId ? hostId(job.hostId) : null,
       };
     });
-    return { drafts, services: poolServices(probe.value, probe.failure) };
+    const jobsOn = (host: string) => drafts.filter((draft) => draft.host === host && draft.state === "running").map((draft) => draft.title);
+    return { drafts, services: poolServices(probe.value, probe.failure, jobsOn) };
+  },
+  services: {
+    prefix: HOST_PREFIX,
+    restart: async (serviceId, body, context) => {
+      const { host, controls } = workerHost(serviceId, context);
+      const force = body.force === true;
+      try {
+        const reply = await controls.restart(host, { force });
+        context.log.info({ action: "activity.restart", host, force, outcome: "ready" }, "Alignment worker host restarted");
+        return reply;
+      } catch (error) {
+        const code = (error as { code?: unknown }).code;
+        context.log.warn({ action: "activity.restart", host, force, outcome: typeof code === "string" ? code : "failed",
+          reason: error instanceof Error ? error.message : String(error) }, "Alignment worker host restart did not complete");
+        throw error;
+      }
+    },
+    disable: async (serviceId, body, context) => {
+      const { host, controls } = workerHost(serviceId, context);
+      if (typeof body.disabled !== "boolean") throw activityFailure(400, "Say whether to disable or enable the host.");
+      controls.setDisabled(host, body.disabled);
+      context.log.info({ action: "activity.host-disabled", host, disabled: body.disabled }, "Alignment worker host switch changed");
+      return { ok: true, id: serviceId, disabled: body.disabled };
+    },
   },
 });
+
+/** The configured host a service id names, and the controls; 404 for a host that is not configured. */
+function workerHost(serviceId: string, { deps }: ActivityActionContext) {
+  const host = serviceId.slice(HOST_PREFIX.length);
+  const controls = deps.workerHosts;
+  if (!controls || !controls.ids().includes(host)) throw activityFailure(404, "This alignment worker host is not configured.");
+  return { host, controls };
+}

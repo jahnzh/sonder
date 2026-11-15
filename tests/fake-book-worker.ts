@@ -78,6 +78,15 @@ export type FakeBookHost = FakeHostState & {
   misshapeStatus: number;
   /** Every upload's remote path, in order. */
   uploads: string[];
+  /** `/health`'s `revision` (#357); undefined leaves the field out, as a worker from before it. */
+  revision?: string | null;
+  /** `/health`'s `activeRequests` (window requests running) and `bookJobs.slotsHeld` (an encode batch). */
+  activeRequests: number;
+  slotsHeld: number;
+  /** `/health` requests this host received, answered or dropped. */
+  healthRequests: number;
+  /** The next n `/health` requests drop the connection, as a worker that is starting. */
+  healthDrops: number;
   /** Uploads into a file that a job on this host (running, or cancelled and not stopped yet) reads. */
   uploadsIntoLiveJobs: string[];
 };
@@ -260,12 +269,13 @@ async function answerBookRequest(host: FakeBookHost, method: string, path: strin
 
 function health(host: FakeBookHost) {
   return {
-    ready: true, engine: CTC_ENGINE, busy: host.busy, stuck: host.stuck, busySeconds: null, lastTimeout: null,
-    slots: host.slots ?? 1, activeRequests: 0, mediaRoot: host.root,
+    ready: true, engine: CTC_ENGINE, busy: host.busy || host.activeRequests >= (host.slots ?? 1), stuck: host.stuck,
+    busySeconds: null, lastTimeout: null, ...(host.revision === undefined ? {} : { revision: host.revision }),
+    slots: host.slots ?? 1, activeRequests: host.activeRequests, mediaRoot: host.root,
     ctc: { engine: CTC_ENGINE, ready: true, device: host.device, precision: host.precision,
       anchorReady: true, passageReady: true, anchorBatch: true },
     ...(host.noBookJobs ? {} : {
-      bookJobs: { engine: BOOK_ENGINE, ready: true, jobs: host.jobs.size, resuming: host.resuming > 0, slotsHeld: 0,
+      bookJobs: { engine: BOOK_ENGINE, ready: true, jobs: host.jobs.size, resuming: host.resuming > 0, slotsHeld: host.slotsHeld,
         batchSeconds: null, stuck: [], diskReservedBytes: 0, diskBudgetBytes: 64 * 1024 ** 3 },
     }),
   };
@@ -286,7 +296,7 @@ export async function fakeBookWorkers(
       book: [], starts: [], jobs: new Map(), pollsPerStage: 1, holdAt: null, failAt: null, resuming: 0,
       noBookJobs: false, stuck: false, mapShare: 1, resultEngine: BOOK_ENGINE, answered: [], holdCancel: null, cancelFails: 0,
       loseStartReplies: 0, statusAnswer: null, resultAnswer: null, cutStatus: 0, cutResult: 0, garbleStatus: 0, misshapeStatus: 0,
-      uploads: [], uploadsIntoLiveJobs: [],
+      uploads: [], uploadsIntoLiveJobs: [], activeRequests: 0, slotsHeld: 0, healthRequests: 0, healthDrops: 0,
     }) as FakeBookHost;
     hosts[spec.id] = host;
     const server = createServer((request, response) => {
@@ -295,7 +305,14 @@ export async function fakeBookWorkers(
       void (async () => {
         const url = new URL(request.url ?? "/", "http://worker");
         const raw = await readBody(request);
-        if (url.pathname === "/health") return send(response, 200, health(host));
+        if (url.pathname === "/health") {
+          host.healthRequests++;
+          if (host.healthDrops > 0) {
+            host.healthDrops--;
+            return request.socket.destroy();
+          }
+          return send(response, 200, health(host));
+        }
         if (url.pathname.startsWith("/book-jobs"))
           return answerBook(host, request.method ?? "GET", url.pathname, raw, request.headers.authorization, response);
         host.requests.push(url.pathname);

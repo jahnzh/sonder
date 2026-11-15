@@ -39,6 +39,12 @@ export type FakeHostState = {
   holdCommand?: (command: string) => Promise<void> | void;
   /** Runs after a shell command has run on the host, before its output reaches the caller. */
   afterCommand?: (command: string) => Promise<void> | void;
+  /**
+   * A `systemctl` command (the worker restart, #357) is never run on this machine: it is recorded in `commands`
+   * and this runs instead. `restartFails` makes it fail with that stderr.
+   */
+  onServiceCommand?: (command: string) => Promise<void> | void;
+  restartFails?: string;
 };
 
 export type FakePool = {
@@ -90,6 +96,12 @@ export function fakePoolHosts(
     async exec(target, command) {
       const host = byTarget(target);
       if (host.sshDown) throw Object.assign(new Error("Command failed"), { stderr: "ssh: connect to host: Connection refused" });
+      if (/^\s*systemctl\b/.test(command)) {
+        host.commands.push(command);
+        if (host.restartFails) throw Object.assign(new Error("Command failed"), { stderr: host.restartFails });
+        await host.onServiceCommand?.(command);
+        return { code: 0, stdout: "", stderr: "" };
+      }
       assertInside(host, command);
       host.commands.push(command);
       await host.holdCommand?.(command);
