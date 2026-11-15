@@ -1,4 +1,4 @@
-import type { AlignmentJob } from "./reading-types";
+import { alignmentJobActive, type AlignmentJob } from "./reading-types";
 
 /** Lifecycle of reading-sync (alignment) maps: which cached copy may be shown,
  * when the server must confirm it, and what a failure does to the cache. The
@@ -44,12 +44,6 @@ export const mapCacheKey = (ebookId: string, recordingId: string) =>
 export const intervalCountOf = (job: AlignmentJob) =>
   job.intervalCount ?? job.intervals?.length ?? 0;
 
-const ACTIVE_ALIGNMENT_STATUSES: ReadonlyArray<AlignmentJob["status"]> = [
-  "queued",
-  "copying",
-  "processing",
-];
-
 /**
  * Whether Reading Sync or playback warming should keep polling: the job itself is
  * active, or a background rebuild is (#277). Shared so a regression in either caller
@@ -62,9 +56,7 @@ export function alignmentJobNeedsPolling(
     | undefined,
 ): boolean {
   if (!job) return false;
-  const active = (status: AlignmentJob["status"] | undefined | null) =>
-    !!status && ACTIVE_ALIGNMENT_STATUSES.includes(status);
-  return active(job.status) || active(job.rebuild?.status);
+  return alignmentJobActive(job.status) || alignmentJobActive(job.rebuild?.status);
 }
 
 /** The server refused the map because its sources changed (or it is gone). */

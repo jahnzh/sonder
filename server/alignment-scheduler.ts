@@ -7,6 +7,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { sqlite } from "./db.ts";
+import { ALIGNMENT_ACTIVE_STATUSES, alignmentJobActive } from "../src/reading-types.ts";
 
 /** Books aligned at the same time by default: one per pool host when each worker has one slot. */
 export const ALIGNMENT_ADMITTED_BOOKS = 2;
@@ -28,7 +29,7 @@ export const CLAIM_STALE_MS = 30_000;
 /** A job that could not start (pool busy, audio still copying) waits this long, or until capacity frees. */
 export const ADMISSION_RETRY_MS = 30_000;
 
-const ACTIVE = ["queued", "copying", "processing"];
+const ACTIVE_SQL = ALIGNMENT_ACTIVE_STATUSES.map((status) => `'${status}'`).join(",");
 
 export type RunFence = {
   jobId: string;
@@ -84,7 +85,7 @@ export function assertRunMayWrite(fence: RunFence, nextStatus: string) {
   if ((row.generation ?? "") !== fence.generation) throw new StaleAlignmentRun("the job was rebuilt");
   if (row.claim_owner !== fence.owner || (row.claim_generation ?? "") !== fence.generation)
     throw new StaleAlignmentRun("another run owns the job");
-  if (!ACTIVE.includes(row.status ?? "") && !(row.status === "paused" && nextStatus === "paused"))
+  if (!alignmentJobActive(row.status) && !(row.status === "paused" && nextStatus === "paused"))
     throw new StaleAlignmentRun(`the job is ${row.status}`);
 }
 
@@ -143,7 +144,7 @@ export class AlignmentScheduler {
       .prepare(
         `UPDATE alignment_jobs SET claim_owner=?, claim_generation=?, claimed_at=?
          WHERE id=? AND COALESCE(json_extract(data,'$.generation'),'')=?
-           AND json_extract(data,'$.status') IN ('queued','copying','processing')
+           AND json_extract(data,'$.status') IN (${ACTIVE_SQL})
            AND (claim_owner IS NULL OR claim_owner=? OR COALESCE(claimed_at,0)<?)`,
       )
       .run(this.owner, generation, now, id, generation, this.owner, now - CLAIM_STALE_MS);
@@ -192,7 +193,7 @@ export class AlignmentScheduler {
   private holdsLiveForeignClaim(id: string, _generation: string) {
     const row = readClaim(id);
     if (!row) return false;
-    if (!ACTIVE.includes(row.status ?? "")) return false;
+    if (!alignmentJobActive(row.status)) return false;
     if (!row.claim_owner || row.claim_owner === this.owner) return false;
     return (row.claimed_at ?? 0) >= this.now() - CLAIM_STALE_MS;
   }

@@ -1,6 +1,6 @@
 /**
- * Automatic rebuild of alignment maps made by an older engine (#277). This module holds the rules; the queueing
- * and publication live in alignment.ts, next to the job store.
+ * Automatic rebuild of alignment maps made by an older engine (#277). This module holds the rules; the scan lives
+ * in alignment.ts, and the writes that queue, publish or reject a rebuild in alignment-transitions.ts (ADR 0012).
  *
  * A rebuild runs in the job's own row (the (ebook, recording) pair is unique), so the scheduler, its claims
  * and its write fence apply unchanged. The usable map the row held before is kept in `published_map` and is
@@ -45,16 +45,6 @@ export function engineIsOlder(engine: string, target = currentAlignmentEngine())
 
 /** Finished maps that get a rebuild: usable ones, and failed or cancelled ones too. */
 export const REBUILT_STATUSES: readonly AlignmentJob["status"][] = ["ready", "partial", "error", "cancelled"];
-/** A map worth serving while its rebuild runs. */
-export const usableMap = (job: Pick<AlignmentJob, "status">) => job.status === "ready" || job.status === "partial";
-
-/**
- * A write of this job state publishes it and drops the kept map: a finished map, or an explicit "language not
- * supported" outcome. A failed or cancelled rebuild keeps the old map, and so does a finished or unsupported
- * one that `rebuildRejection` refuses: `store` turns that into a rejected (error) state before this is asked.
- */
-export const publishesMap = (job: Pick<AlignmentJob, "status" | "outcome">) =>
-  usableMap(job) || (job.status === "error" && job.outcome === "language_not_supported");
 
 /**
  * How many points of coverage (0.02 = 2 points of the text mapped) a finished rebuild may lose against the
