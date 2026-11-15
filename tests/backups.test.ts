@@ -188,3 +188,27 @@ test("a daily file without a recorded run still counts as that day's backup", as
   assert.equal(backups.lastSuccessDay(dir), "2026-11-16");
   assert.deepEqual(await backups.runDailyBackup({ now: at("2026-11-16T09:00:00Z"), dir, freeBytes: plenty, mountProblem: noDrive }), { ran: false, reason: "not-due" });
 });
+
+test("a source that fails PRAGMA integrity_check gives no daily backup: the run fails with the reason and removes nothing", async () => {
+  // An index whose root page points at its table's page: readable, but integrity_check reports it.
+  const source = join(temp, "corrupt.db");
+  const db = new Database(source);
+  db.exec("CREATE TABLE t(a INTEGER); CREATE INDEX t_a ON t(a);");
+  const insert = db.prepare("INSERT INTO t(a) VALUES (?)");
+  for (let index = 0; index < 50; index += 1) insert.run(index);
+  const table = (db.prepare("SELECT rootpage FROM sqlite_master WHERE name = 't'").get() as { rootpage: number }).rootpage;
+  db.unsafeMode(true);
+  db.pragma("writable_schema = ON");
+  db.prepare("UPDATE sqlite_master SET rootpage = ? WHERE name = 't_a'").run(table);
+  db.close();
+
+  const old = days(20);
+  const dir = populated(old);
+  const before = readdirSync(dir).sort();
+  const result = await backups.runDailyBackup({ now: at("2026-11-16T03:05:00Z"), dir, source, freeBytes: plenty, mountProblem: noDrive });
+  assert.equal(result.ran && result.status, "failed");
+  // verifyBackup reports either the rows integrity_check returned or the error the pragma raised.
+  assert.match(result.ran ? result.error ?? "" : "", /^Backup failed: (backup failed PRAGMA integrity_check|cannot verify backup): /);
+  assert.deepEqual(readdirSync(dir).sort(), before, "no daily backup appears and nothing is removed");
+  assert.equal(row("2026-11-16")!.status, "failed");
+});
