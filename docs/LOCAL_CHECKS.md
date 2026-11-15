@@ -132,6 +132,8 @@ If the running image could not be tagged (or no rollback image exists), roll bac
 git checkout <previous-commit> && docker compose build sonder && docker compose up -d sonder
 ```
 
+Before rolling back to an image older than ADR 0011 (derived work media state, issue #395), run `node scripts/materialise-media-states.mjs` from the production work tree as the last step before the recreate, because those images read a work's media state from the stored `state` and `acquisition_id` columns of `work_media_states`, which later images no longer keep current, and would otherwise show wrong or missing media states. It uses `data/sonder.db` (or `--db <path>`) and prints how many rows it wrote; `--dry-run` only counts. It opens the database file directly and waits for the write lock, so it works while the server is running and when the server cannot start. Changes made between the script and the recreate are not reflected, so stop the container first (`docker compose stop sonder`) unless the rollback is urgent.
+
 The script prints the exact rollback command on failure and at the end of a successful run. Record every deploy in `artifacts/orca/STATE.md` (commit, backup path, image tag, markers, live-check results).
 
 ## Live verification
