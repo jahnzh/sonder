@@ -32,6 +32,13 @@ export type FakeHostState = {
   requests: string[];
   /** Shell commands run over the fake SSH, in order. */
   commands: string[];
+  /**
+   * Runs before a shell command; the command waits for the promise it returns. The caller's abort signal is
+   * ignored, as a remote command keeps running after the SSH client gives up.
+   */
+  holdCommand?: (command: string) => Promise<void> | void;
+  /** Runs after a shell command has run on the host, before its output reaches the caller. */
+  afterCommand?: (command: string) => Promise<void> | void;
 };
 
 export type FakePool = {
@@ -85,7 +92,9 @@ export function fakePoolHosts(
       if (host.sshDown) throw Object.assign(new Error("Command failed"), { stderr: "ssh: connect to host: Connection refused" });
       assertInside(host, command);
       host.commands.push(command);
+      await host.holdCommand?.(command);
       const { stdout, stderr } = await execFileAsync("sh", ["-c", command], { encoding: "utf8" });
+      await host.afterCommand?.(command);
       return { code: 0, stdout, stderr };
     },
     async uploadFile(local, remote, target) {
