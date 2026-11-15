@@ -181,12 +181,56 @@ class BackgroundSlots(unittest.TestCase):
                     pass
                 self.assertLess(time.monotonic() - started, 0.5, "the next window request is not held up")
 
+    def test_a_status_write_that_never_returns_holds_no_slot(self):
+        # The round-4 review's probe: a book waits behind a window request, the gate frees up, and the
+        # book's "no longer waiting" report (a state.json write) blocks. Before the fix the book held the
+        # slot during that write, so the next window request waited WINDOW_WAIT_MAX_S and got 409 while no
+        # batch had started. Now no report runs while the book holds a slot.
+        gate = Gate(1)
+        release = threading.Event()
+        reports, batches = [], []
+
+        def report(waiting):
+            reports.append((waiting, gate.background_active))
+            if not waiting and len(reports) == 2:
+                release.wait(5)  # the first "no longer waiting" write hangs
+
+        def book():
+            with gate.hold_background(on_wait=report, poll=0.01):
+                batches.append(gate.background_active)
+
+        rules = {**FAST, "WINDOW_GRACE_S": 0.0, "WINDOW_RETRY_S": 0.0, "WINDOW_WAIT_MAX_S": 0.15}
+        with mock.patch.multiple(deadline, create=True, **rules):
+            thread = threading.Thread(target=book)
+            with gate.hold():
+                thread.start()
+                time.sleep(0.1)
+            deadline_at = time.monotonic() + 2
+            while len(reports) < 2 and time.monotonic() < deadline_at:
+                time.sleep(0.01)
+            self.assertEqual([waiting for waiting, _ in reports], [True, False], "the book reports its wait's end")
+            try:
+                with gate.hold():  # the window request that came after: served, not refused
+                    outcome = "served"
+                    self.assertEqual((batches, gate.background_active), ([], 0), "no batch and no slot taken")
+            except WorkerBusy:
+                outcome = "409"
+            finally:
+                release.set()
+            self.assertEqual(outcome, "served")
+            thread.join(2)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(batches, [1], "the batch runs once the window request is done")
+        self.assertEqual([held for _, held in reports], [0] * len(reports), "no report while a slot is held")
+        self.assertEqual(reports[-1][0], False)
+        self.assertEqual(gate.background_active, 0)
+
     def test_the_slot_is_freed_on_every_exit_after_it_was_taken(self):
         gate = Gate(1)
 
         def report(waiting):
-            if not waiting:  # after the slot was taken
-                raise KeyboardInterrupt()  # not an Exception: it reaches the caller, but the slot is freed
+            if not waiting:  # the report of the wait's end (just before the slot is taken)
+                raise KeyboardInterrupt()  # not an Exception: it reaches the caller, and no slot stays held
 
         caught = []
 

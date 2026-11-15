@@ -188,30 +188,38 @@ class Gate:
     def hold_background(self, should_stop=None, poll=0.05, on_wait=None):
         """A slot for one unit of background work, after window requests (see the class). Waits; raises
         GateWaitStopped when `should_stop()` turns true while waiting. `on_wait(True)` is called when the
-        holder starts waiting and `on_wait(False)` when it gets the slot after a wait (or stops waiting).
-        A report that fails is logged and ignored: it never reaches the holder, and the slot is freed on
-        every exit once it was taken, so a failed status write cannot keep window requests out."""
+        holder starts waiting and `on_wait(False)` when the slot is free after a wait (or it stops waiting).
+        `on_wait` is never called while this holder has a slot: `on_wait(False)` runs just before the slot
+        is taken, and when a window request came in meanwhile the holder reports `True` and waits again. So
+        a status write that is slow or never returns delays only this holder, never a window request. A
+        report that fails is logged and ignored: it never reaches the holder, and the slot is freed on every
+        exit once it was taken."""
         token = object()
-        waited = False
+        waiting = False  # what the last report said
         taken = False
         try:
             try:
                 while True:
                     with self._lock:
                         now = self._clock()
-                        if self._background_may_start(now):
+                        free = self._background_may_start(now)
+                        if free and not waiting:
                             self._background[token] = now
                             taken = True
                             break
+                    if free:
+                        waiting = False
+                        _report_wait(on_wait, False)  # outside the gate and before the slot is taken
+                        continue
                     if should_stop is not None and should_stop():
                         raise GateWaitStopped()
-                    if not waited:
-                        waited = True
+                    if not waiting:
+                        waiting = True
                         _report_wait(on_wait, True)
                     time.sleep(poll)
             finally:
-                if waited:
-                    _report_wait(on_wait, False)
+                if waiting:
+                    _report_wait(on_wait, False)  # stopped while waiting: no slot is held
             yield
         finally:
             if taken:
