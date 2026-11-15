@@ -198,7 +198,14 @@ test("the committed WSL host list is valid and does not mask reader regressions"
     for (const entry of loaded.entries) {
         const source = fs.readFileSync(path.join(root, entry.file), "utf8");
         const leaf = entry.title.split(" › ").pop().replace(/\d+px$/, "");
-        assert.ok(source.includes(leaf), `${entry.file} should contain "${leaf}"`);
+        // A title built from a template (`following narration on ${label} ...`) is in the source with its placeholder.
+        const templated = source.split("\n").some((line) => {
+            const match = /test\(`([^`]*\$\{[^`]*)`/.exec(line);
+            if (!match) return false;
+            const pattern = match[1].split(/\$\{[^}]*\}/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".+");
+            return new RegExp(`^${pattern}$`).test(leaf);
+        });
+        assert.ok(source.includes(leaf) || templated, `${entry.file} should contain "${leaf}"`);
     }
 });
 
