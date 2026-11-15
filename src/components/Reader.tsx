@@ -85,6 +85,36 @@ function literataCss() {
     .catch(() => "");
   return literataFaces;
 }
+// The longest a torn-down book waits for epub.js to finish loading it before it is destroyed anyway.
+const RELEASE_LIMIT_MS = 30_000;
+// Tears down a reader's epub.js book and rendition without making epub.js throw later (#427). open()
+// resolves while epub.js is still loading the navigation document and the resource replacements that
+// `opened` waits for, and a rendition's queue runs start() on the next animation frame after `opened`.
+// Those callbacks read book.loading, book.loaded and rendition.book, which destroy() clears, so destroying
+// in that window throws from epub.js's own callbacks, where no try/catch here can reach.
+// The rendition goes at once, its queue emptied first so start() never runs; the book, which shows
+// nothing on its own, is destroyed once its open and those loads settled (or after the limit).
+function releaseEpub(publication: EpubBook | null, view: Rendition | null, opening: Promise<unknown> | null) {
+  if (view) {
+    (view as unknown as { q?: { clear?: () => void } }).q?.clear?.();
+    try { view.destroy(); } catch {}
+  }
+  if (!publication) return;
+  const destroy = () => { try { publication.destroy(); } catch {} };
+  if (!opening) return destroy();
+  void opening
+    .then(
+      () => {
+        let limit: ReturnType<typeof setTimeout> | undefined;
+        return Promise.race([
+          Promise.allSettled([publication.loaded.navigation, publication.opened]),
+          new Promise((resolve) => { limit = setTimeout(resolve, RELEASE_LIMIT_MS); }),
+        ]).finally(() => clearTimeout(limit));
+      },
+      () => {},
+    )
+    .then(destroy);
+}
 const mixHex = (a: string, b: string, amount: number) =>
   "#" + [1, 3, 5].map((i) => Math.round(parseInt(a.slice(i, i + 2), 16) * amount + parseInt(b.slice(i, i + 2), 16) * (1 - amount)).toString(16).padStart(2, "0")).join("");
 // Narration jumps to a long-pressed sentence: listening, then a book, then headphones.
@@ -483,6 +513,8 @@ export function ReaderView({
     if (!book || !viewport.current) return;
     let disposed = false;
     let cleanChapterFonts: (() => void) | null = null;
+    // The book's open(), which the teardown waits out before destroying the book.
+    let opening: Promise<unknown> | null = null;
     const host = viewport.current;
     void (async () => {
       try {
@@ -491,6 +523,8 @@ export function ReaderView({
           import("dompurify"),
         ]);
         const blob = await epubFile(id, book.fingerprint);
+        const data = await blob.arrayBuffer();
+        // From here to open() nothing waits, so a book that exists is always one the teardown releases.
         if (disposed) return;
         const scriptRequirement = readerNeedsScripts();
         file.current = blob;
@@ -587,12 +621,11 @@ export function ReaderView({
           });
           return literataCss().then((css) => { faces.textContent = css; });
         });
-        await publication.open(await blob.arrayBuffer(), "binary");
+        opening = publication.open(data, "binary");
+        await opening;
         const allowScriptedContent = await scriptRequirement;
-        if (disposed) {
-          try { publication.destroy(); } catch {}
-          return;
-        }
+        // The teardown already released the book.
+        if (disposed) return;
         const view = publication.renderTo(host, {
           width: host.clientWidth,
           height: host.clientHeight,
@@ -644,7 +677,7 @@ export function ReaderView({
                 Math.max(1, all.length - 1),
             };
             // A relocation the reader caused pages away and is saved after a pause.
-            if (following.relocated(next, !!latest.current) === "ignored")
+            if (following.relocated(next, !!latest.current, section.index) === "ignored")
               return;
             latest.current = next;
             setLocator(next);
@@ -776,11 +809,11 @@ export function ReaderView({
       cleanChapterFonts = null;
       setRendered(false);
       (rendition.current as any)?.__observer?.disconnect();
-      // epub.js throws when destroyed before its view finished initializing,
-      // and an error thrown here would unmount the whole app. The hidden Now
-      // Playing reader is torn down this way whenever the playing book changes.
-      try { rendition.current?.destroy(); } catch {}
-      try { epub.current?.destroy(); } catch {}
+      // epub.js throws when destroyed before its view finished initializing, so
+      // releaseEpub never throws: an error thrown here would unmount the whole app.
+      // The hidden Now Playing reader is torn down this way whenever the playing
+      // book changes, the standalone reader whenever it closes.
+      releaseEpub(epub.current, rendition.current, opening);
       rendition.current = null;
       epub.current = null;
     };
@@ -832,7 +865,11 @@ export function ReaderView({
       currentFlow.current = flow;
       view.flow(flow);
     }
+    // A place the reader chooses before this is due is displayed with the new theme already; restoring
+    // the place shown before it would undo the choice.
+    const restoreDue = following.restoreLater();
     const timer = setTimeout(() => {
+      if (!restoreDue.due()) return;
       const player=playerRef.current,current=mapRef.current;
       if(following.isFollowing() && current && player.book?.recordingId===current.recordingId && current.intervals.some(interval=>interval.trackId===player.track?.id && interval.start<=player.position && interval.end>player.position))return;
       // A Word mode checkpoint is a sentence without a CFI; go to that sentence.
@@ -871,8 +908,9 @@ export function ReaderView({
   };
   // Contents and page turns replace a follow jump still in flight, and their
   // relocation is saved even while that jump's layout is pending.
-  const navigate = (go: (view: Rendition) => Promise<unknown>) => {
-    following.navigate();
+  // `section`: the section a Contents choice goes to.
+  const navigate = (go: (view: Rendition) => Promise<unknown>, section?: number) => {
+    following.navigate(section);
     const view = rendition.current;
     if (!view) return;
     const ended = following.beginNavigation();
@@ -1459,7 +1497,7 @@ export function ReaderView({
               <button
                 key={section.index}
                 aria-current={section.index === locator?.section ? "location" : undefined}
-                onClick={() => { setManualWord(null); navigate((view) => view.display(section.href)); }}
+                onClick={() => { setManualWord(null); navigate((view) => view.display(section.href), section.index); }}
               >
                 <span>{section.title}</span>
                 {section.index === narratedSection?.index && <Headphones size={16} role="img" aria-label="Narrating" />}
@@ -1658,7 +1696,7 @@ export function ReaderView({
                 aria-current={section.index === locator?.section ? "location" : undefined}
                 onClick={() => {
                   setManualWord(null);
-                  navigate((view) => view.display(section.href));
+                  navigate((view) => view.display(section.href), section.index);
                   setPanel(null);
                 }}
               >

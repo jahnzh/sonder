@@ -29,7 +29,7 @@ import {
 import { requireAdmin } from "./users.ts";
 import { matchSections } from "./alignment-pairings.ts";
 import { unsyncedPassages } from "./alignment-passages.ts";
-import { BOOK_ENGINE, CTC_ENGINE } from "./alignment-engine.ts";
+import { BOOK_ENGINE, CTC_ENGINE, bookJobsEnabled } from "./alignment-engine.ts";
 import { runBookJob } from "./alignment-book-job.ts";
 import { untilAborted } from "./until-aborted.ts";
 // The pool's lease interface (ADR 0013), and its status for the Activity page.
@@ -220,6 +220,8 @@ export async function alignmentOptions(ebookId: string, recordingId: string) {
     pairings,
     sameWork: book.workId === edition.workId,
     languageMatch: !languagesConflict(edition.language, book.language),
+    // The runner a Prepare starts (#405): a whole-book job finds the text itself, so the card offers no chapter matching.
+    bookJobs: bookJobsEnabled(),
   };
 }
 export async function createAlignment(
@@ -292,9 +294,11 @@ async function plannedJob(input: {
   const { book, tracks } = await alignablePair(ebookId, recordingId);
   const options = await alignmentOptions(ebookId, recordingId);
   const chosen = pairings?.length ? pairings : options.pairings;
+  // A whole-book job ignores the pairings (#405): with none matched, a chaptered release is planned as an anchored
+  // job, as "Rebuild without chapter matching" plans it, instead of refused.
   const anchored =
     mode === "anchored" ||
-    (mode !== "chapters" && !chosen.length && options.anchored);
+    (mode !== "chapters" && !chosen.length && (options.anchored || bookJobsEnabled()));
   // An explicit anchored request is allowed on a chaptered release: the chapter
   // pairing can be wrong (for example shifted by one) and then maps nothing.
   if (!anchored && !chosen.length)
