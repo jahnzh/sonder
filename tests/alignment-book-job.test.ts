@@ -450,6 +450,41 @@ test("an ebook-set probe waits for the whole-book job's lease on its recording; 
   assert.equal(slotsHeld(), 0);
 });
 
+test("a probe waiting for its recording's job checks no host until the job releases it, then takes WSL, not lisa", async () => {
+  const created = await heldJob();
+  const trackId = created.recordingId.replace("recording", "track");
+  // The job ends exactly while the waiting probe checks lisa, if the probe checks hosts while the job holds its
+  // recording (it then saw WSL held). Otherwise the job ends while the probe waits.
+  const release = async () => {
+    fake.hosts.wsl.holdAt = null;
+    await until(() => !leaseHeld(created.id), "the job's lease released");
+  };
+  let lisaChecks = 0;
+  setAlignmentPoolDepsForTests({
+    ...fake.deps,
+    async probe(target, options) {
+      if (target === fake.hosts.lisa.sshTarget && lisaChecks++ === 0) await release();
+      return fake.deps.probe(target, options);
+    },
+  });
+  let waits = 0;
+  const session = createCtcProbeSession(created.recordingId, {
+    waitMs: 60_000,
+    sleep: async () => { if (++waits === 1) await release(); },
+  });
+  const [score] = await session.score({ fragmentTexts: sentences.map((sentence) => sentence.text), language: "eng",
+    samples: [{ trackId, time: 0, duration: 30 }] });
+  assert.equal(score.match?.fragment, 0);
+  assert.deepEqual(fake.hosts.lisa.requests, [], "the probe did not take lisa while WSL was free");
+  assert.deepEqual(fake.hosts.wsl.requests, ["/anchor"]);
+  assert.equal(lisaChecks, 0, "no host was checked while the job held the recording");
+  assert.equal(waits, 1, "the probe waited for the job");
+  await session.release();
+  const job = await settled(created.id);
+  assert.equal(job.status, "partial", job.error ?? undefined);
+  assert.equal(slotsHeld(), 0);
+});
+
 test("a result that names another engine is not published: the job moves to the other host", async () => {
   fake.hosts.wsl.resultEngine = CTC_ENGINE;
   const job = await settled((await anchoredJob()).id);

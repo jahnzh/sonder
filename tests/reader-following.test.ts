@@ -772,14 +772,21 @@ test("a deferred back to narration does nothing once the reader chose again, ano
     t.narration.now = true;
     const back = t.following.deferredReturn();
     // Each on its own: following stays as that left it, and nothing the return would drop is dropped.
+    let newer: ReturnType<typeof t.following.deferredReturn> | null = null;
     if (choose === "wordStep") t.following.wordStep(true);
-    else if (choose === "newer") t.following.deferredReturn();
+    else if (choose === "newer") newer = t.following.deferredReturn();
     else if (choose === "backToNarration") t.following.backToNarration(false);
     else t.following[choose]();
     const following = t.following.isFollowing();
     assert.equal(back.run(), null, choose);
     assert.equal(t.following.isFollowing(), following, choose);
     t.clock.advance(MANUAL_SAVE_DELAY_MS);
+    if (newer) {
+      // The newer return waits for its player: the save that came due is held for its decision, here a gap.
+      assert.deepEqual(t.saved, [], choose);
+      t.narration.now = false;
+      newer.run();
+    }
     assert.deepEqual(t.saved, ["chapter"], choose);
   }
   // A late relocation from before (not a choice) does not cancel it, and it runs once.
@@ -1089,4 +1096,158 @@ test("after back to narration a fresh gesture whose relocation arrives while a f
     t.following.gesture();
     assert.equal(t.following.relocated("scrolled again", true), "manual", String(returned));
   }
+});
+
+// #417 flake (flake-b2n-165): a re-theme schedules a display back to the place shown. Contents chosen before
+// that display is due, whose relocation is not reported yet, leaves the place shown as the one before the choice.
+// Displaying it then undid the choice, and its relocation, inside the navigation's window, was saved as the reader's.
+test("a restore of the place shown is not due once the reader chose a place since, so the chosen chapter is saved", () => {
+  const t = setup({ map: null });
+  // The reader shows the opening place, then re-themes: the restore is due 80 ms later.
+  t.following.relocated("chapter zero", false);
+  const restore = t.following.restoreLater();
+  t.following.navigate();
+  const ended = t.following.beginNavigation();
+  t.clock.advance(30);
+  ended();
+  // The restore comes due before the navigation's relocation is reported.
+  assert.equal(restore.due(), false);
+  assert.equal(t.following.relocated("chapter one", true), "manual");
+  t.following.backToNarration();
+  t.clock.advance(MANUAL_SAVE_DELAY_MS);
+  assert.deepEqual(t.saved, ["chapter one"]);
+});
+
+test("a restore of the place shown stays due through our own displays, follow jumps and back to narration", () => {
+  const t = setup();
+  const restore = t.following.restoreLater();
+  t.following.beginOwnDisplay()();
+  t.following.startJump();
+  t.following.backToNarration();
+  t.following.recordingChanged();
+  assert.equal(restore.due(), true);
+  // Each reader's choice makes it stale: a gesture, a Lyrics page turn, a Word step, paging away.
+  for (const choose of [
+    () => t.following.gesture(),
+    () => t.following.manualStep(),
+    () => t.following.wordStep(false),
+    () => t.following.pageAway(),
+  ]) {
+    const later = t.following.restoreLater();
+    choose();
+    assert.equal(later.due(), false);
+  }
+});
+
+// #417 flake (flake-b2n-165), sequence 6 under load: the scrubber was released inside the pause after a Contents
+// choice, but the player took longer than the rest of the pause to reach the place. The decision is made where the
+// scrub ends, so a save that comes due while it waits is held for that decision, not run before it.
+test("sequence 6: a manual save that comes due while a scrubber return waits for the player is held for its decision", () => {
+  // Onto a mapped sentence: dropped once the player is there, although the pause ran out meanwhile.
+  const mapped = setup();
+  mapped.following.navigate();
+  mapped.following.beginNavigation()();
+  assert.equal(mapped.following.relocated("chapter", true), "manual");
+  mapped.clock.advance(400);
+  const ontoMapped = mapped.following.deferredReturn();
+  mapped.clock.advance(MANUAL_SAVE_DELAY_MS);
+  assert.deepEqual(mapped.saved, []);
+  assert.equal(mapped.following.pendingManual(), "chapter");
+  assert.equal(mapped.waiting.at(-1), true);
+  mapped.narration.now = true;
+  ontoMapped.run();
+  mapped.clock.advance(MANUAL_SAVE_DELAY_MS * 4);
+  assert.deepEqual(mapped.saved, []);
+  assert.equal(mapped.waiting.at(-1), false);
+
+  // Into a gap: nothing replaces the chapter, so it is saved as soon as the decision is made.
+  const gap = setup();
+  gap.following.navigate();
+  gap.following.beginNavigation()();
+  gap.following.relocated("chapter", true);
+  const intoGap = gap.following.deferredReturn();
+  gap.clock.advance(MANUAL_SAVE_DELAY_MS);
+  assert.deepEqual(gap.saved, []);
+  gap.narration.now = false;
+  intoGap.run();
+  assert.deepEqual(gap.saved, ["chapter"]);
+  assert.equal(gap.waiting.at(-1), false);
+});
+
+test("a manual save held for a scrubber return is saved once the return no longer runs, and handed back when the reader closes", () => {
+  // The reader chose again before the player got there: the return does nothing, and the held save runs.
+  const chose = setup();
+  chose.following.gesture();
+  chose.following.relocated("chapter", true);
+  const back = chose.following.deferredReturn();
+  chose.clock.advance(MANUAL_SAVE_DELAY_MS);
+  chose.following.pageAway();
+  assert.deepEqual(chose.saved, []);
+  assert.equal(back.run(), null);
+  assert.deepEqual(chose.saved, ["chapter"]);
+  // Paged away, a later save is not held for that return any more.
+  chose.following.gesture();
+  chose.following.relocated("page", true);
+  chose.clock.advance(MANUAL_SAVE_DELAY_MS);
+  assert.deepEqual(chose.saved, ["chapter", "page"]);
+
+  // Another back to narration decides for it: without a narration it is saved at once.
+  const other = setup();
+  other.following.gesture();
+  other.following.relocated("chapter", true);
+  other.following.deferredReturn();
+  other.clock.advance(MANUAL_SAVE_DELAY_MS);
+  other.narration.now = false;
+  other.following.backToNarration();
+  assert.deepEqual(other.saved, ["chapter"]);
+
+  // The reader closes while the return still waits: the held save is handed back to be saved now.
+  const closed = setup();
+  closed.following.gesture();
+  closed.following.relocated("chapter", true);
+  closed.following.deferredReturn();
+  closed.clock.advance(MANUAL_SAVE_DELAY_MS);
+  assert.equal(closed.following.takeManualSave(), "chapter");
+  assert.equal(closed.following.takeManualSave(), null);
+  assert.deepEqual(closed.saved, []);
+});
+
+// #417 flake (flake-b2n-165), sequence 6 under load: while a Contents choice was displaying, epub.js reported the
+// section it was leaving once more, and that report was saved as the reader's move after the pause.
+test("while a Contents choice displays, a report of another section is not its relocation: it pages nothing and arms no save", () => {
+  const t = setup();
+  t.following.relocated("listening place", false, 1);
+  t.following.navigate(0);
+  const ended = t.following.beginNavigation();
+  assert.equal(t.following.relocated("listening place", true, 1), "shown");
+  assert.equal(t.following.pendingManual(), null);
+  t.clock.advance(MANUAL_SAVE_DELAY_MS * 2);
+  assert.deepEqual(t.saved, []);
+  ended();
+  // The chapter chosen is the reader's, as before.
+  assert.equal(t.following.relocated("chapter", true, 0), "manual");
+  t.clock.advance(MANUAL_SAVE_DELAY_MS);
+  assert.deepEqual(t.saved, ["chapter"]);
+});
+
+test("a Contents choice of the section shown, a page turn into another section, and a gesture after a choice are still the reader's", () => {
+  // The chapter shown chosen again (integrated-reader: Contents during a follow jump wins and is saved).
+  const same = setup();
+  same.following.relocated("chapter start", false, 0);
+  same.following.navigate(0);
+  same.following.beginNavigation()();
+  assert.equal(same.following.relocated("chapter start", true, 0), "manual");
+  same.clock.advance(MANUAL_SAVE_DELAY_MS);
+  assert.deepEqual(same.saved, ["chapter start"]);
+  // A page turn has no section to go to: its relocation in the next section is the reader's.
+  const turn = setup();
+  turn.following.navigate();
+  turn.following.beginNavigation()();
+  assert.equal(turn.following.relocated("next chapter", true, 1), "manual");
+  // A swipe after a Contents choice into a neighbouring section is the reader's too.
+  const swipe = setup();
+  swipe.following.navigate(0);
+  swipe.following.beginNavigation()();
+  swipe.following.gesture();
+  assert.equal(swipe.following.relocated("next chapter", true, 1), "manual");
 });
