@@ -28,23 +28,20 @@ import {
 import { requireAdmin } from "./users.ts";
 import { matchSections } from "./alignment-pairings.ts";
 import { unsyncedPassages } from "./alignment-passages.ts";
+import { CTC_ENGINE } from "./alignment-engine.ts";
+import { untilAborted } from "./until-aborted.ts";
+// The pool's lease interface (ADR 0013), and its status for the Activity page.
 import {
-  CTC_ENGINE,
-  PoolBusyError,
-  clearPoolStaging,
-  dispatchFullAlignmentJob,
-  getAlignmentPoolCoordinator,
+  acquireWorkerLease,
   getAlignmentPoolStatus,
-  poolAlignmentFolder,
-  poolAudioPath,
-  poolFailureMessage,
-  poolJobNeedsStaging,
+  keptPoolStaging,
+  PoolBusyError,
   poolEnabled,
-  poolRemoteAlignmentFolder,
-  poolWorkerBase,
+  poolFailureMessage,
   shouldDispatchToPool,
-  untilAborted,
+  type LeaseRelease,
   type PoolHostId,
+  type WorkerLease,
 } from "./alignment-pool.ts";
 import { prefetchSectionCount, upcomingPrefetchWindows } from "./alignment-prefetch.ts";
 import {
@@ -333,6 +330,8 @@ async function plannedJob(input: {
     createdAt: existing?.createdAt || Date.now(),
     updatedAt: Date.now(),
     coverage: 0,
+    // The same id stages into the same folders: the new plan keeps the record of where the old one staged (#421).
+    ...(existing && keptPoolStaging(existing.pool) ? { pool: keptPoolStaging(existing.pool) } : {}),
     pairings: anchored ? [] : chosen,
     ...(origin === "backfill" ? { origin } : {}),
     ...(anchored
@@ -776,7 +775,7 @@ async function workerRequest(
   failure = path === "/anchor"
     ? "Local speech recovery is unavailable. Check that the speech model is installed on the media drive."
     : "Local alignment could not process part of this narration. Retry, or choose a release with chapters.",
-  // Always a pool worker (poolWorkerBase): the production machine runs no alignment worker (#279).
+  // Always a leased pool worker: the production machine runs no alignment worker (#279).
   workerBase: string,
   live: () => boolean = () => true,
 ) {
@@ -830,15 +829,15 @@ async function processAnchored(
   book: Awaited<ReturnType<typeof extractBook>>,
   tracks: ReturnType<typeof recordingContext>["tracks"],
   folder: string,
+  lease: WorkerLease,
 ) {
-  const workerBase = poolWorkerBase(job);
-  const audioPath = (track: (typeof tracks)[number]) =>
-    poolAudioPath(job, track, localAudio);
-  const workFolder = poolAlignmentFolder(job, folder);
-  const remoteWorkFolder = poolRemoteAlignmentFolder(job);
-  const workerOutputPath = (fileName: string) =>
-    remoteWorkFolder ? join(remoteWorkFolder, fileName) : join(workFolder, fileName);
-  try {
+  const workerBase = lease.workerUrl;
+  const staged = lease.stagedAudio;
+  const audioPath = (track: (typeof tracks)[number]) => staged[track.id] ?? null;
+  // Finished windows are cached here, on the server; the worker writes its output files on its host.
+  const workFolder = folder;
+  const remoteWorkFolder = lease.outputDir;
+  const workerOutputPath = (fileName: string) => join(remoteWorkFolder, fileName);
   const generation = job.generation;
   const live = () => {
     const current = alignmentJob(job.id);
@@ -1170,7 +1169,7 @@ async function processAnchored(
       throw new Error("The alignment worker did not use the requested CTC engine.");
     if (result.outcome === "error")
       throw new Error("The alignment worker could not process this passage.");
-    if (remoteWorkFolder && !existsSync(cacheFile))
+    if (!existsSync(cacheFile))
       writeFileSync(cacheFile, JSON.stringify(raw));
     const intervals: AlignmentInterval[] = coreIntervals(
       segment,
@@ -1235,14 +1234,6 @@ async function processAnchored(
     "Timings are estimated from sampled narration. Passages without matching narration are left unsynced.";
   transition.publish(job, "partial");
   await finishConsensus(job);
-  } finally {
-    if (job.pool)
-      getAlignmentPoolCoordinator().release(
-        job.pool.hostId,
-        job.id,
-        job.recordingId,
-      );
-  }
 }
 let stopping = false,
   activeApps = 0;
@@ -1252,29 +1243,71 @@ function ctcDispatchStopped(job: AlignmentJob) {
   return stopping || !current || !alignmentJobActive(current.status) || current.generation !== job.generation;
 }
 
-function acceptCtcDispatch(job: AlignmentJob, pool: Awaited<ReturnType<typeof dispatchFullAlignmentJob>>) {
-  if (ctcDispatchStopped(job)) {
-    getAlignmentPoolCoordinator().release(pool.hostId, job.id, job.recordingId);
+/** A run's worker lease; the run releases it once, on every exit. */
+type RunLease = { lease: WorkerLease | null };
+
+/**
+ * Takes the run's worker lease, or moves it to the next host after a failed request, and stores the assignment
+ * on the job. Returns null when the run must stop: the job waits in the queue (every host is busy), failed (no
+ * host can take it), or was paused, cancelled or superseded meanwhile.
+ */
+async function leaseWorker(job: AlignmentJob, tracks: ReturnType<typeof recordingContext>["tracks"], run: RunLease) {
+  try {
+    if (run.lease) await run.lease.failover();
+    else run.lease = await acquireWorkerLease({
+      id: job.id, recordingId: job.recordingId, mode: job.mode, tracks, localAudio,
+      kind: "job", assignment: job.pool, diagnostics: job,
+    });
+  } catch (error) {
+    if (ctcDispatchStopped(job)) return null;
+    if (error instanceof PoolBusyError) {
+      if (job.pool || error.triedHosts.length) job.pool = error.assignment;
+      transition.requeue(job);
+    } else {
+      const failed = (error as { poolAssignment?: AlignmentJob["pool"] } | null)?.poolAssignment;
+      if (run.lease) job.pool = run.lease.assignment;
+      else if (failed?.stagedHosts) job.pool = failed;
+      transition.fail(job, poolFailureMessage(error));
+    }
     return null;
   }
+  if (ctcDispatchStopped(job)) return null;
   const current = alignmentJob(job.id);
-  current.pool = pool;
-  current.ctcDevice = job.ctcDevice;
-  current.ctcPrecision = job.ctcPrecision;
+  current.pool = run.lease.assignment;
+  current.ctcDevice = run.lease.device;
+  current.ctcPrecision = run.lease.precision;
   current.poolErrors = job.poolErrors;
   markRunLeased();
   return transition.progress(current);
 }
 
-async function runAlignmentJob(pending: AlignmentJob) {
+/**
+ * A finished job (or one that is gone) has no further use for its staged audio; a paused or queued one may. Either
+ * way the audio stays on the hosts (removing it is #421).
+ */
+function leaseOutcome(id: string): LeaseRelease {
   try {
-    await runAlignmentJobSteps(pending);
-  } finally {
-    // Every exit path, including a fenced write that throws, gives the job's worker capacity back.
-    getAlignmentPoolCoordinator().releaseJob(pending.id);
+    const row = sqlite.prepare("SELECT json_extract(data,'$.status') AS status FROM alignment_jobs WHERE id=?")
+      .get(id) as { status: string } | undefined;
+    if (!row) return "finished";
+    return ["ready", "partial", "error", "cancelled"].includes(row.status) ? "finished" : "retryable";
+  } catch (error) {
+    // The database may already be closed during shutdown.
+    console.warn(`alignment: could not read job ${id} to release its worker lease: ${(error as Error).message}`);
+    return "retryable";
   }
 }
-async function runAlignmentJobSteps(pending: AlignmentJob) {
+
+async function runAlignmentJob(pending: AlignmentJob) {
+  const run: RunLease = { lease: null };
+  try {
+    await runAlignmentJobSteps(pending, run);
+  } finally {
+    // Every exit path, including a fenced write that throws, gives the worker back.
+    await run.lease?.release(leaseOutcome(pending.id));
+  }
+}
+async function runAlignmentJobSteps(pending: AlignmentJob, run: RunLease) {
   try {
     let job = alignmentJob(pending.id);
     const book = await extractBook(job.ebookId),
@@ -1339,260 +1372,174 @@ async function runAlignmentJobSteps(pending: AlignmentJob) {
       transition.fail(job, "CTC alignment requires the remote alignment pool. Enable it to retry.", "error");
       return;
     }
-    // A persisted dispatch has no lease after a server restart. Re-probe
-    // and stage it again; older CTC jobs may have used the Steam Deck.
-    if (job.pool?.jobMediaRoot &&
-        !getAlignmentPoolCoordinator().hasJobLease(job.pool.hostId, job.id)) {
-      const triedHosts = job.pool.hostId === "steamdeck"
-        ? [] : job.pool.triedHosts.filter((id) => id === "wsl" || id === "lisa");
-      clearPoolStaging(job, triedHosts);
-      transition.progress(job);
-    }
+    // Every run takes a new lease: staging stored by an earlier run (or server) is staged again, and the hosts
+    // the job already tried are skipped.
+    const leased = await leaseWorker(job, context.tracks, run);
+    if (!leased) return;
+    job = leased;
+    const lease = run.lease!;
+    /** After a failed request: the next host, or null when the run stops; the error stands when no host is left. */
+    const nextHost = async (error: unknown) => {
+      if (error instanceof StaleAlignmentRun) throw error;
+      job = alignmentJob(job.id);
+      if (!alignmentJobActive(job.status) || job.generation !== generation) return null;
+      if (!lease.canFailover) throw error;
+      return leaseWorker(job, context.tracks, run);
+    };
     if (job.mode === "anchored") {
-      if (poolJobNeedsStaging(job)) {
-        try {
-          const pool = await dispatchFullAlignmentJob(
-            job,
-            context.tracks,
-            localAudio,
-          );
-          const current = acceptCtcDispatch(job, pool);
-          if (!current) return;
-          job = current;
-        } catch (error) {
-          if (ctcDispatchStopped(job)) return;
-          if (error instanceof PoolBusyError && error.triedHosts.length)
-            clearPoolStaging(job, error.triedHosts);
-          if (error instanceof PoolBusyError) transition.requeue(job);
-          else transition.fail(job, poolFailureMessage(error));
-          return;
-        }
-      }
-      markRunLeased();
       while (true) {
         try {
-          await processAnchored(job, book, context.tracks, folder);
+          await processAnchored(job, book, context.tracks, folder, lease);
           break;
         } catch (error) {
-          if (error instanceof StaleAlignmentRun) throw error;
-          job = alignmentJob(job.id);
-          if (!alignmentJobActive(job.status) || job.generation !== generation)
-            break;
-          if (
-            !shouldDispatchToPool(job) ||
-            !job.pool ||
-            job.pool.triedHosts.length >= 2
-          )
-            throw error;
-          const triedHosts = job.pool.triedHosts;
-          clearPoolStaging(job, triedHosts);
-          transition.progress(job);
-          try {
-            const pool = await dispatchFullAlignmentJob(
-              job,
-              context.tracks,
-              localAudio,
-              triedHosts,
-            );
-            const current = acceptCtcDispatch(job, pool);
-            if (!current) break;
-            job = current;
-          } catch (dispatchError) {
-            if (ctcDispatchStopped(job)) break;
-            if (dispatchError instanceof PoolBusyError && dispatchError.triedHosts.length)
-              clearPoolStaging(job, dispatchError.triedHosts);
-            if (dispatchError instanceof PoolBusyError) transition.requeue(job);
-            else transition.fail(job, poolFailureMessage(dispatchError));
-            break;
-          }
-          job = alignmentJob(job.id);
+          const moved = await nextHost(error);
+          if (!moved) break;
+          job = moved;
         }
       }
       return;
     }
-    if (poolJobNeedsStaging(job)) {
+    while (true) {
       try {
-        const pool = await dispatchFullAlignmentJob(job, context.tracks, localAudio);
-        const current = acceptCtcDispatch(job, pool);
-        if (!current) return;
-        job = current;
+        for (const [pairIndex, pair] of job.pairings.entries()) {
+          const current = alignmentJob(job.id);
+          if (
+            stopping ||
+            !alignmentJobActive(current.status) ||
+            current.generation !== generation
+          )
+            break;
+          if (job.sectionsDone.includes(pair.section)) continue;
+          const section = book.sections.find(
+            (section) => section.index === pair.section,
+          )!;
+          const track = context.tracks.find(
+            (track) => track.id === pair.trackId,
+          )!;
+          const audio = lease.stagedAudio[track.id];
+          if (!audio) throw new Error("The required audio file is unavailable.");
+          const cacheKey = createHash("sha256")
+            .update(
+              JSON.stringify([
+                job.engine,
+                "sentence-normalization-v1-ctc-evidence-v1",
+                job.fingerprint,
+                job.audioFingerprint,
+                pair,
+              ]),
+            )
+            .digest("hex")
+            .slice(0, 24);
+          const output = join(folder, `section-${pair.section}-${cacheKey}.json`);
+          let raw: unknown;
+          if (existsSync(output))
+            raw = JSON.parse(readFileSync(output, "utf8"));
+          else {
+            raw = await workerRequest(
+              "/align",
+              {
+                audio,
+                output: join(lease.outputDir, `section-${pair.section}-${cacheKey}.json`),
+                fragments: section.paragraphs.map((p) => p.text),
+                language: iso3(book.language),
+                start: pair.start,
+                duration: pair.duration,
+                engine: "ctc", ...ctcMicrobatch(job), recordingId: job.recordingId,
+                audioFingerprint: job.audioFingerprint, trackId: track.id,
+                prefetch: upcomingPrefetchWindows(
+                  job.pairings, pairIndex, prefetchSectionCount(),
+                  (next) => job.sectionsDone.includes(next.section),
+                  (next) => {
+                    const nextTrack = context.tracks.find((candidate) => candidate.id === next.trackId);
+                    return nextTrack ? lease.stagedAudio[nextTrack.id] ?? null : null;
+                  },
+                ),
+              },
+              SECTION_TIMEOUT_MS,
+              "Local alignment could not process this section. Check its chapter pairing and retry.",
+              lease.workerUrl,
+              () => {
+                const current = alignmentJob(job.id);
+                return !stopping && alignmentJobActive(current.status) && current.generation === generation;
+              },
+            );
+          }
+          if (
+            !alignmentJobActive(alignmentJob(job.id).status) ||
+            alignmentJob(job.id).generation !== generation
+          )
+            break;
+          const result = sectionResult.parse(raw);
+          if (result.engine !== CTC_ENGINE)
+            throw new Error("The alignment worker did not use the requested CTC engine.");
+          if (result.outcome === "error")
+            throw new Error("The alignment worker could not process this section.");
+          if (!existsSync(output))
+            writeFileSync(output, JSON.stringify(result));
+          const intervals: AlignmentInterval[] = result.intervals
+            .filter(
+              (interval) =>
+                section.paragraphs[interval.index] &&
+                interval.end > interval.start &&
+                interval.start >= pair.start &&
+                interval.end <= pair.start + pair.duration + 1,
+            )
+            .map((interval) => {
+              const paragraph = section.paragraphs[interval.index],
+                rate =
+                  paragraph.text.split(/\s+/).length /
+                  (interval.end - interval.start);
+              return {
+                paragraphId: paragraph.id,
+                section: pair.section,
+                trackId: pair.trackId,
+                start: interval.start,
+                end: interval.end,
+                confidence: rate > 0.3 && rate < 6 ? 0.65 : 0.2,
+              };
+            });
+          job = alignmentJob(job.id);
+          applyWorkerMetadata(job, result);
+          if (stopForWorkerOutcome(job, result)) break;
+          if (!intervals.length)
+            job.warning =
+              "This section could not be matched reliably. Check its edition and chapter pairing; unmatched text remains unsynced.";
+          job.intervals.push(...intervals);
+          job.sectionsDone.push(pair.section);
+          job.elapsedSeconds += result.elapsedSeconds;
+          job.progress = job.sectionsDone.length / job.pairings.length;
+          job.coverage =
+            job.intervals.length /
+            book.sections.reduce(
+              (count, section) => count + section.paragraphs.length,
+              0,
+            );
+          transition.progress(job);
+        }
+        break;
       } catch (error) {
-        if (ctcDispatchStopped(job)) return;
-        if (error instanceof PoolBusyError && error.triedHosts.length)
-          clearPoolStaging(job, error.triedHosts);
-        if (error instanceof PoolBusyError) transition.requeue(job);
-        else transition.fail(job, poolFailureMessage(error));
-        return;
+        const moved = await nextHost(error);
+        if (!moved) break;
+        job = moved;
       }
     }
-    markRunLeased();
-    try {
-      while (true) {
-        try {
-          for (const [pairIndex, pair] of job.pairings.entries()) {
-            const current = alignmentJob(job.id);
-            if (
-              stopping ||
-              !alignmentJobActive(current.status) ||
-              current.generation !== generation
-            )
-              break;
-            if (job.sectionsDone.includes(pair.section)) continue;
-            const section = book.sections.find(
-              (section) => section.index === pair.section,
-            )!;
-            const track = context.tracks.find(
-              (track) => track.id === pair.trackId,
-            )!;
-            const audio = poolAudioPath(job, track, localAudio);
-            if (!audio) throw new Error("The required audio file is unavailable.");
-            const cacheKey = createHash("sha256")
-              .update(
-                JSON.stringify([
-                  job.engine,
-                  "sentence-normalization-v1-ctc-evidence-v1",
-                  job.fingerprint,
-                  job.audioFingerprint,
-                  pair,
-                ]),
-              )
-              .digest("hex")
-              .slice(0, 24);
-            const output = join(folder, `section-${pair.section}-${cacheKey}.json`);
-            let raw: unknown;
-            if (existsSync(output))
-              raw = JSON.parse(readFileSync(output, "utf8"));
-            else {
-              raw = await workerRequest(
-                "/align",
-                {
-                  audio,
-                  output: poolRemoteAlignmentFolder(job)
-                    ? join(poolRemoteAlignmentFolder(job)!, `section-${pair.section}-${cacheKey}.json`)
-                    : output,
-                  fragments: section.paragraphs.map((p) => p.text),
-                  language: iso3(book.language),
-                  start: pair.start,
-                  duration: pair.duration,
-                  engine: "ctc", ...ctcMicrobatch(job), recordingId: job.recordingId,
-                  audioFingerprint: job.audioFingerprint, trackId: track.id,
-                  prefetch: upcomingPrefetchWindows(
-                    job.pairings, pairIndex, prefetchSectionCount(),
-                    (next) => job.sectionsDone.includes(next.section),
-                    (next) => {
-                      const nextTrack = context.tracks.find((candidate) => candidate.id === next.trackId);
-                      return nextTrack ? poolAudioPath(job, nextTrack, localAudio) : null;
-                    },
-                  ),
-                },
-                SECTION_TIMEOUT_MS,
-                "Local alignment could not process this section. Check its chapter pairing and retry.",
-                poolWorkerBase(job),
-                () => {
-                  const current = alignmentJob(job.id);
-                  return !stopping && alignmentJobActive(current.status) && current.generation === generation;
-                },
-              );
-            }
-            if (
-              !alignmentJobActive(alignmentJob(job.id).status) ||
-              alignmentJob(job.id).generation !== generation
-            )
-              break;
-            const result = sectionResult.parse(raw);
-            if (result.engine !== CTC_ENGINE)
-              throw new Error("The alignment worker did not use the requested CTC engine.");
-            if (result.outcome === "error")
-              throw new Error("The alignment worker could not process this section.");
-            if (job.pool && !existsSync(output))
-              writeFileSync(output, JSON.stringify(result));
-            const intervals: AlignmentInterval[] = result.intervals
-              .filter(
-                (interval) =>
-                  section.paragraphs[interval.index] &&
-                  interval.end > interval.start &&
-                  interval.start >= pair.start &&
-                  interval.end <= pair.start + pair.duration + 1,
-              )
-              .map((interval) => {
-                const paragraph = section.paragraphs[interval.index],
-                  rate =
-                    paragraph.text.split(/\s+/).length /
-                    (interval.end - interval.start);
-                return {
-                  paragraphId: paragraph.id,
-                  section: pair.section,
-                  trackId: pair.trackId,
-                  start: interval.start,
-                  end: interval.end,
-                  confidence: rate > 0.3 && rate < 6 ? 0.65 : 0.2,
-                };
-              });
-            job = alignmentJob(job.id);
-            applyWorkerMetadata(job, result);
-            if (stopForWorkerOutcome(job, result)) break;
-            if (!intervals.length)
-              job.warning =
-                "This section could not be matched reliably. Check its edition and chapter pairing; unmatched text remains unsynced.";
-            job.intervals.push(...intervals);
-            job.sectionsDone.push(pair.section);
-            job.elapsedSeconds += result.elapsedSeconds;
-            job.progress = job.sectionsDone.length / job.pairings.length;
-            job.coverage =
-              job.intervals.length /
-              book.sections.reduce(
-                (count, section) => count + section.paragraphs.length,
-                0,
-              );
-            transition.progress(job);
-          }
-          break;
-        } catch (error) {
-          if (error instanceof StaleAlignmentRun) throw error;
-          job = alignmentJob(job.id);
-          if (!alignmentJobActive(job.status) || job.generation !== generation) break;
-          if (!job.pool || job.pool.triedHosts.length >= 2)
-            throw error;
-          const triedHosts = job.pool.triedHosts;
-          getAlignmentPoolCoordinator().release(job.pool.hostId, job.id, job.recordingId);
-          clearPoolStaging(job, triedHosts);
-          transition.progress(job);
-          try {
-            const pool = await dispatchFullAlignmentJob(job, context.tracks, localAudio, triedHosts);
-            const current = acceptCtcDispatch(job, pool);
-            if (!current) break;
-            job = current;
-          } catch (dispatchError) {
-            if (ctcDispatchStopped(job)) break;
-            if (dispatchError instanceof PoolBusyError && dispatchError.triedHosts.length)
-              clearPoolStaging(job, dispatchError.triedHosts);
-            if (dispatchError instanceof PoolBusyError) transition.requeue(job);
-            else transition.fail(job, poolFailureMessage(dispatchError));
-            break;
-          }
-        }
+    job = alignmentJob(job.id);
+    if (
+      job.sectionsDone.length === job.pairings.length &&
+      job.generation === generation &&
+      alignmentJobActive(job.status)
+    ) {
+      finishWorkerOutcome(job);
+      job.unsyncedPassages = unsyncedPassages(book, job.intervals);
+      job.warning ||=
+        "Timings are estimated from the supplied text. Sections without matching narration are left unsynced.";
+      transition.publish(job, "partial");
+      // publish writes map.json for a published map; a rejected rebuild must not overwrite the kept one.
+      if (alignmentMapUsable(job)) {
+        const path = join(folder, "map.json");
+        writeFileSync(path + ".part", JSON.stringify(job));
+        renameSync(path + ".part", path);
       }
-      job = alignmentJob(job.id);
-      if (
-        job.sectionsDone.length === job.pairings.length &&
-        job.generation === generation &&
-        alignmentJobActive(job.status)
-      ) {
-        finishWorkerOutcome(job);
-        job.unsyncedPassages = unsyncedPassages(book, job.intervals);
-        job.warning ||=
-          "Timings are estimated from the supplied text. Sections without matching narration are left unsynced.";
-        transition.publish(job, "partial");
-        // publish writes map.json for a published map; a rejected rebuild must not overwrite the kept one.
-        if (alignmentMapUsable(job)) {
-          const path = join(folder, "map.json");
-          writeFileSync(path + ".part", JSON.stringify(job));
-          renameSync(path + ".part", path);
-        }
-      }
-    } finally {
-      if (job.pool)
-        getAlignmentPoolCoordinator().release(job.pool.hostId, job.id, job.recordingId);
     }
   } catch (error) {
     if (error instanceof StaleAlignmentRun) return;

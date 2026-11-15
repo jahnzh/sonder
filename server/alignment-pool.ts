@@ -1,6 +1,8 @@
-// SSH pool for full (anchored) alignment jobs: isolated staging, host caps, one cross-host retry.
+// The alignment pool (ADR 0013): it hands out worker leases. A lease is a healthy host with the work's tracks
+// staged on it and the worker's address; health checks, slots, SSH staging, the choice of host, the retry on the
+// next host and the record of where a job staged all happen here. Hosts come from configuration (`ALIGNMENT_POOL_HOSTS`).
+// A job's staged audio stays on the hosts: removing it is #421. Only a probe's own staging is removed, as before leases.
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { cpSync, mkdirSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
@@ -10,12 +12,14 @@ import type {
   AlignmentPoolHostStatus,
   AlignmentPoolStatus,
 } from "../src/reading-types.ts";
+import { CTC_ENGINE } from "./alignment-engine.ts";
+import { untilAborted } from "./until-aborted.ts";
 import type * as schema from "./schema.ts";
 
 const execFileAsync = promisify(execFile);
 
 export type PoolHostId = AlignmentPoolHostId;
-export const CTC_ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-v2";
+export { CTC_ENGINE, untilAborted };
 
 export type AlignmentJobPoolState = {
   hostId: PoolHostId;
@@ -24,14 +28,26 @@ export type AlignmentJobPoolState = {
   workerUrl: string;
   triedHosts: PoolHostId[];
   stagedAudio: Record<string, string>;
+  /**
+   * Every host this job has staged its tracks on, and the folder there, across runs, requeues, Resume and a new
+   * plan, also for a host that is not configured right now. Nothing removes these folders yet; #421 will, under
+   * leases. Rows written before it name only their current staging (`hostId`/`jobMediaRoot`).
+   */
+  stagedHosts?: Record<PoolHostId, string>;
 };
 
+/** One pool host, as the configuration describes it. */
 export type PoolHost = {
   id: PoolHostId;
   sshTarget: string;
+  workerUrl: string;
+  /** The CTC device and precision the worker must report on `/health`. */
+  device: string;
+  precision: string;
+  /** Hosts are tried in rank order, lowest first. */
+  rank: number;
   maxConcurrent: number;
   remoteWorkRoot: string;
-  workerUrl: string;
 };
 
 /** `signal` ends the SSH/SCP child process when a caller's deadline passes. */
@@ -47,37 +63,28 @@ export type PoolSshDeps = {
   probe: (sshTarget: string, options?: PoolSshOptions) => Promise<boolean>;
 };
 
-/** Settles with `work`, or rejects with the signal's reason as soon as it aborts. */
-export function untilAborted<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
-  if (!signal) return work;
-  if (signal.aborted) {
-    work.catch(() => undefined);
-    return Promise.reject(signal.reason);
-  }
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(signal.reason);
-    signal.addEventListener("abort", onAbort, { once: true });
-    work.then(
-      (value) => { signal.removeEventListener("abort", onAbort); resolve(value); },
-      (error) => { signal.removeEventListener("abort", onAbort); reject(error); },
-    );
-  });
-}
-
 function withDeadline(timeoutMs: number, signal?: AbortSignal) {
   const timeout = AbortSignal.timeout(timeoutMs);
   return signal ? AbortSignal.any([timeout, signal]) : timeout;
 }
 
+type Track = typeof schema.tracks.$inferSelect;
+
 export type StageTracksInput = {
   jobId: string;
   host: PoolHost;
-  tracks: (typeof schema.tracks.$inferSelect)[];
-  localAudio: (track: typeof schema.tracks.$inferSelect) => string | null;
+  tracks: Track[];
+  localAudio: (track: Track) => string | null;
 };
 
 const POOL_FAILURE_MESSAGE =
   "Remote alignment failed on all pool hosts. Resume to retry.";
+
+/**
+ * Hosts a job tries per round, however many are configured: the first, then one retry on another host. Resume
+ * starts a new round. Probes are not capped here; their session caps its own retries.
+ */
+const JOB_HOST_ATTEMPTS = 2;
 
 export function poolEnabled() {
   return process.env.ALIGNMENT_POOL_ENABLED === "1";
@@ -97,16 +104,27 @@ function hostNameFromSshTarget(sshTarget: string) {
   return at >= 0 ? sshTarget.slice(at + 1) : sshTarget;
 }
 
+/**
+ * The pool hosts, in rank order. `ALIGNMENT_POOL_HOSTS` (a JSON array of `{id, sshTarget, workerUrl, device,
+ * precision, rank?, maxConcurrent?, remoteWorkRoot?}`) replaces the default, which is today's two hosts: WSL's GPU
+ * first, lisa's CPU second, with their SSH targets and worker URLs from the `ALIGNMENT_POOL_WSL_*` and
+ * `ALIGNMENT_POOL_LISA_*` settings. Throws on a setting that is not a valid host list.
+ */
 export function defaultPoolHosts(): PoolHost[] {
   const workRoot =
     process.env.ALIGNMENT_POOL_REMOTE_ROOT ??
     "~/sonder-replication/alignment-pool";
+  const raw = process.env.ALIGNMENT_POOL_HOSTS?.trim();
+  if (raw) return byRank(parsePoolHosts(raw, workRoot));
   const wslHost = process.env.ALIGNMENT_POOL_WSL_HOST ?? "192.168.1.119";
   const lisaHost = process.env.ALIGNMENT_POOL_LISA_HOST ?? "lisa";
   return [
     {
       id: "wsl",
       sshTarget: wslHost,
+      device: "cuda",
+      precision: "float16",
+      rank: 1,
       maxConcurrent: 3,
       remoteWorkRoot: workRoot,
       workerUrl:
@@ -116,6 +134,9 @@ export function defaultPoolHosts(): PoolHost[] {
     {
       id: "lisa",
       sshTarget: lisaHost,
+      device: "cpu",
+      precision: "float32",
+      rank: 2,
       maxConcurrent: 1,
       remoteWorkRoot: workRoot,
       workerUrl:
@@ -123,6 +144,63 @@ export function defaultPoolHosts(): PoolHost[] {
         `http://${hostNameFromSshTarget(lisaHost)}:3012`,
     },
   ];
+}
+
+const HOST_FIELDS = ["id", "sshTarget", "workerUrl", "device", "precision", "rank", "maxConcurrent", "remoteWorkRoot"];
+
+// Plain checks, no schema library: the deploy's image smoke loads this module on its own.
+function parsePoolHosts(raw: string, workRoot: string): PoolHost[] {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`ALIGNMENT_POOL_HOSTS is not JSON: ${(error as Error).message}`);
+  }
+  if (!Array.isArray(value) || !value.length) throw new Error("ALIGNMENT_POOL_HOSTS must be a non-empty JSON array of hosts.");
+  const hosts = value.map((entry: unknown, index): PoolHost => {
+    const at = `ALIGNMENT_POOL_HOSTS[${index}]`;
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error(`${at} is not an object.`);
+    const host = entry as Record<string, unknown>;
+    const unknown = Object.keys(host).find((key) => !HOST_FIELDS.includes(key));
+    if (unknown) throw new Error(`${at}.${unknown} is not a host setting.`);
+    const text = (key: string, optional = false) => {
+      const field = host[key];
+      if (field === undefined && optional) return undefined;
+      if (typeof field !== "string" || !field.trim()) throw new Error(`${at}.${key} must be a non-empty string.`);
+      return field;
+    };
+    const integer = (key: string, min: number) => {
+      const field = host[key];
+      if (field === undefined) return undefined;
+      if (typeof field !== "number" || !Number.isInteger(field) || field < min)
+        throw new Error(`${at}.${key} must be an integer of at least ${min}.`);
+      return field;
+    };
+    const id = text("id")!;
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(id)) throw new Error(`${at}.id may use only letters, digits, - and _.`);
+    const workerUrl = text("workerUrl")!;
+    if (!URL.canParse(workerUrl)) throw new Error(`${at}.workerUrl is not a URL.`);
+    return {
+      id,
+      sshTarget: text("sshTarget")!,
+      workerUrl,
+      device: text("device")!,
+      precision: text("precision")!,
+      rank: integer("rank", Number.MIN_SAFE_INTEGER) ?? index + 1,
+      maxConcurrent: integer("maxConcurrent", 1) ?? 1,
+      remoteWorkRoot: text("remoteWorkRoot", true) ?? workRoot,
+    };
+  });
+  const ids = hosts.map((host) => host.id);
+  if (new Set(ids).size !== ids.length) throw new Error("ALIGNMENT_POOL_HOSTS: host ids must be unique.");
+  return hosts;
+}
+
+/** Rank order, ties in configuration order. */
+function byRank(hosts: PoolHost[]) {
+  return hosts.map((host, index) => ({ host, index }))
+    .sort((a, b) => a.host.rank - b.host.rank || a.index - b.index)
+    .map(({ host }) => host);
 }
 
 let depsOverride: PoolSshDeps | null = null;
@@ -165,7 +243,7 @@ function defaultPoolSshDeps(): PoolSshDeps {
   };
 }
 
-function poolDeps(): PoolSshDeps {
+export function poolDeps(): PoolSshDeps {
   if (depsOverride) return depsOverride;
   return defaultPoolSshDeps();
 }
@@ -186,21 +264,23 @@ function formatPoolError(step: string, error: unknown) {
   return detail.toLowerCase().startsWith(`${step}:`) ? detail : `${step}: ${detail}`;
 }
 
-function recordPoolError(job: Pick<AlignmentJob, "poolErrors">, hostId: PoolHostId, step: string, error: unknown) {
+type PoolDiagnostics = Pick<AlignmentJob, "poolErrors">;
+
+function recordPoolError(job: PoolDiagnostics, hostId: PoolHostId, step: string, error: unknown) {
   job.poolErrors ??= {};
   const formatted = formatPoolError(step, error);
   job.poolErrors[hostId] = formatted;
   getAlignmentPoolCoordinator().recordHostError(hostId, formatted);
 }
 
-function clearHostError(job: Pick<AlignmentJob, "poolErrors">, hostId: PoolHostId) {
+function clearHostError(job: PoolDiagnostics, hostId: PoolHostId) {
   getAlignmentPoolCoordinator().clearHostError(hostId);
   if (!job.poolErrors) return;
   delete job.poolErrors[hostId];
   if (!Object.keys(job.poolErrors).length) delete job.poolErrors;
 }
 
-async function probeHost(job: Pick<AlignmentJob, "poolErrors">, host: PoolHost, signal?: AbortSignal) {
+async function probeHost(job: PoolDiagnostics, host: PoolHost, signal?: AbortSignal) {
   try {
     if (await untilAborted(poolDeps().probe(host.sshTarget, { signal }), signal)) return true;
     recordPoolError(job, host.id, "ssh", "probe failed");
@@ -212,11 +292,15 @@ async function probeHost(job: Pick<AlignmentJob, "poolErrors">, host: PoolHost, 
 
 type RecordingLease = { jobId: string };
 
+/** Host slots and the one-lease-per-recording rule. Leases are held in this process only. */
 export class AlignmentPoolCoordinator {
   private slots = new Map<PoolHostId, Set<string>>();
   private recordings = new Map<string, RecordingLease>();
   private hostErrors = new Map<PoolHostId, string | null>();
-  constructor(private hosts: PoolHost[] = defaultPoolHosts()) {}
+  private hosts: PoolHost[];
+  constructor(hosts: PoolHost[] = defaultPoolHosts()) {
+    this.hosts = byRank(hosts);
+  }
 
   reset() {
     this.slots.clear();
@@ -224,6 +308,7 @@ export class AlignmentPoolCoordinator {
     this.hostErrors.clear();
   }
 
+  /** The configured hosts in rank order. */
   listHosts() {
     return [...this.hosts];
   }
@@ -285,14 +370,28 @@ export class AlignmentPoolCoordinator {
   }
 }
 
-let coordinator = new AlignmentPoolCoordinator();
+/**
+ * Stops the server at startup on an invalid `ALIGNMENT_POOL_HOSTS` (malformed, an empty list, a host without a
+ * required field, duplicate ids), with the setting and the problem in the message. Unset or empty: the default hosts.
+ */
+export function checkPoolHostsSetting() {
+  try {
+    defaultPoolHosts();
+  } catch (error) {
+    throw new Error(`${(error as Error).message} Fix ALIGNMENT_POOL_HOSTS, or unset it to use the default hosts.`);
+  }
+}
+
+// Built on first use, so an invalid setting surfaces through checkPoolHostsSetting at startup, not at import.
+let coordinator: AlignmentPoolCoordinator | null = null;
 
 export function getAlignmentPoolCoordinator() {
+  coordinator ??= new AlignmentPoolCoordinator();
   return coordinator;
 }
 
 export function resetAlignmentPoolCoordinator(hosts?: PoolHost[]) {
-  coordinator = new AlignmentPoolCoordinator(hosts);
+  coordinator = hosts ? new AlignmentPoolCoordinator(hosts) : null;
   resetAlignmentPoolStatusCache();
 }
 
@@ -300,8 +399,8 @@ export function resetAlignmentPoolCoordinator(hosts?: PoolHost[]) {
 export async function stageTracksLocally(
   baseDir: string,
   jobId: string,
-  tracks: (typeof schema.tracks.$inferSelect)[],
-  localAudio: (track: typeof schema.tracks.$inferSelect) => string | null,
+  tracks: Track[],
+  localAudio: (track: Track) => string | null,
 ) {
   const jobMediaRoot = join(baseDir, "jobs", jobId, "media");
   mkdirSync(join(jobMediaRoot, "alignment", jobId), { recursive: true });
@@ -317,9 +416,59 @@ export async function stageTracksLocally(
   return { jobMediaRoot, stagedAudio };
 }
 
+/**
+ * The assignment a job stores while it has no lease: no current staging, the hosts it tried kept for failover, and
+ * the hosts it has staged on kept (for #421).
+ */
+export function clearPoolStaging(job: AlignmentJob, triedHosts: PoolHostId[]) {
+  job.pool = unstagedAssignment(triedHosts, storedStaging(job.pool));
+}
+
+/**
+ * What a job planned again under its own id (a prepare or rebuild) keeps from `pool`: only the hosts the id has
+ * staged on, so the record of its folders survives the new plan (for #421). Undefined when it staged nowhere.
+ */
+export function keptPoolStaging(pool: AlignmentJobPoolState | undefined): AlignmentJobPoolState | undefined {
+  const staged = storedStaging(pool);
+  if (!pool || !Object.keys(staged).length) return undefined;
+  return { ...unstagedAssignment([], staged), hostId: pool.hostId };
+}
+
+/** Every host a stored assignment says the job staged on, and the folder there; older rows name only the current one. */
+function storedStaging(pool: Partial<AlignmentJobPoolState> | null | undefined): Record<PoolHostId, string> {
+  const staged: Record<PoolHostId, string> = {};
+  const recorded = pool?.stagedHosts;
+  if (recorded && typeof recorded === "object")
+    for (const [hostId, folder] of Object.entries(recorded)) if (typeof folder === "string" && folder) staged[hostId] = folder;
+  if (typeof pool?.hostId === "string" && pool.hostId && typeof pool.jobMediaRoot === "string" && pool.jobMediaRoot)
+    staged[pool.hostId] = pool.jobMediaRoot;
+  return staged;
+}
+
+function unstagedAssignment(triedHosts: PoolHostId[], stagedHosts: Record<PoolHostId, string> = {}): AlignmentJobPoolState {
+  return {
+    // A placeholder: nothing reads the host of an assignment without staging.
+    hostId: getAlignmentPoolCoordinator().listHosts()[0]?.id ?? "",
+    attempt: triedHosts.length,
+    jobMediaRoot: "",
+    workerUrl: "",
+    triedHosts,
+    stagedAudio: {},
+    ...(Object.keys(stagedHosts).length ? { stagedHosts: { ...stagedHosts } } : {}),
+  };
+}
+
+/** Every host that could take the work is held by other CTC work. */
 export class PoolBusyError extends Error {
+  /** The hosts the work had staged on (set by its lease), kept with the job while it waits. */
+  stagedHosts: Record<PoolHostId, string> = {};
   constructor(readonly triedHosts: PoolHostId[] = []) {
     super("The remote alignment workers are busy.");
+  }
+
+  /** What a job stores while it waits in the queue: no current staging, the hosts it tried and staged on kept. */
+  get assignment() {
+    return unstagedAssignment(this.triedHosts, this.stagedHosts);
   }
 }
 
@@ -351,10 +500,10 @@ function ctcUrlGuardError(host: PoolHost): string | null {
 
 /**
  * Why a worker's /health body cannot take CTC work for `host`, or null when it can: ready, the pinned CTC engine with
- * its model loaded, the host's device and precision, an absolute media root and the busy/stuck state. The deploy's
- * image smoke uses the same rule, so a worker the server would refuse fails the deploy.
+ * its model loaded, the host's configured device and precision, an absolute media root and the busy/stuck state. The
+ * deploy's image smoke uses the same rule, so a worker the server would refuse fails the deploy.
  */
-export function ctcHealthProblem(host: Pick<PoolHost, "id">, value: unknown): string | null {
+export function ctcHealthProblem(host: Pick<PoolHost, "device" | "precision">, value: unknown): string | null {
   const health = value as Partial<CtcHealth> | null | undefined;
   if (!health || typeof health !== "object") return "health is not a JSON object";
   if (health.ready !== true) return "worker is not ready";
@@ -363,8 +512,7 @@ export function ctcHealthProblem(host: Pick<PoolHost, "id">, value: unknown): st
   if (!health.ctc || health.ctc.engine !== CTC_ENGINE)
     return `worker runs engine ${String(health.ctc?.engine ?? "none")}, expected ${CTC_ENGINE}`;
   if (health.ctc.ready !== true) return "the CTC model is not ready";
-  const device = host.id === "wsl" ? "cuda" : "cpu";
-  const precision = host.id === "wsl" ? "float16" : "float32";
+  const { device, precision } = host;
   if (health.ctc.device !== device || health.ctc.precision !== precision)
     return `worker runs on ${String(health.ctc.device)}/${String(health.ctc.precision)}, expected ${device}/${precision}`;
   return null;
@@ -387,7 +535,24 @@ async function ctcHealth(host: PoolHost, signal?: AbortSignal): Promise<CtcHealt
   return health;
 }
 
-const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
+/** The worker's reported media root, for listing what the pool staged there. Throws when it reports none. */
+export async function workerMediaRoot(host: PoolHost, signal?: AbortSignal): Promise<string> {
+  const guardError = ctcUrlGuardError(host);
+  if (guardError) throw new Error(guardError);
+  const response = await fetch(`${host.workerUrl.replace(/\/$/, "")}/health`, { signal: withDeadline(5000, signal) });
+  if (!response.ok) throw new Error(`worker returned HTTP ${response.status}`);
+  const health = await response.json() as { mediaRoot?: unknown } | null;
+  if (typeof health?.mediaRoot !== "string" || !isAbsolute(health.mediaRoot))
+    throw new Error("worker reports no absolute media root");
+  return health.mediaRoot;
+}
+
+export const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
+
+/** Where the pool stages the work named `id` inside a worker's media root. */
+export function stagingFolder(workerRoot: string, id: string) {
+  return join(workerRoot, "alignment", "pool-jobs", id);
+}
 
 /**
  * How long removing a probe's partly staged directory may take after staging failed or aborted. It has its own
@@ -416,7 +581,7 @@ async function stageCtcTracks(
 ) {
   // The worker validates outputs against MEDIA_ROOT/alignment. Both the audio
   // and per-job output must therefore be inside its reported root.
-  const jobMediaRoot = join(workerRoot, "alignment", "pool-jobs", input.jobId);
+  const jobMediaRoot = stagingFolder(workerRoot, input.jobId);
   const folder = join(jobMediaRoot, "alignment", input.jobId);
   const deps = poolDeps();
   try {
@@ -438,190 +603,263 @@ async function stageCtcTracks(
   }
 }
 
-/** What CTC dispatch needs of a job; an ebook-set probe supplies the same fields without being a queued alignment job. */
-type CtcDispatchTarget = Pick<AlignmentJob, "id" | "recordingId" | "mode" | "poolErrors" | "ctcDevice" | "ctcPrecision">;
+/**
+ * How a lease ends. "finished": the work has no further use for its staging; for a job that is recorded (its
+ * finished status and `pool.stagedHosts`) for #421, and nothing is deleted. "retryable": the next run of the job
+ * reuses its staging. A probe's staging is its own and never reused: its release removes it either way.
+ */
+export type LeaseRelease = "finished" | "retryable";
 
-async function dispatchCtcJob(
-  job: CtcDispatchTarget,
-  tracks: (typeof schema.tracks.$inferSelect)[],
-  localAudio: StageTracksInput["localAudio"],
-  triedHosts: PoolHostId[],
-  // Probe leases exclude unreachable hosts for their retries; alignment jobs must not,
-  // because PoolBusyError persists triedHosts on the job and a transient outage would
-  // then exclude that host for good.
-  // `signal` ends the dispatch (and its SSH/SCP children) when the caller's deadline passes; no other host is tried.
-  // `probe` marks a probe lease's dispatch: its staging directory is removed when staging fails.
-  opts: { excludeUnhealthy?: boolean; signal?: AbortSignal; probe?: boolean } = {},
-): Promise<AlignmentJobPoolState> {
-  const coord = getAlignmentPoolCoordinator();
-  let busy = false;
-  const exclude = (id: "wsl" | "lisa") => { if (opts.excludeUnhealthy) attempted.push(id); };
-  // Older anchored jobs could carry a Steam Deck attempt; it is not one of
-  // the two eligible CTC hosts and must not consume the CTC retry.
-  const attempted = triedHosts.filter((id) => id === "wsl" || id === "lisa");
-  const signal = opts.signal;
-  for (const id of ["wsl", "lisa"] as const) {
-    signal?.throwIfAborted();
-    if (attempted.includes(id)) continue;
-    const host = coord.hostById(id);
-    if (!host) {
-      recordPoolError(job, id, "configuration", "host is not configured");
-      exclude(id);
-      continue;
+export type WorkerLeaseRequest = {
+  /** The job's id, or a probe's own id: it names the slot and the staging folder on the host. */
+  id: string;
+  recordingId: string;
+  /** Anchored work (every probe, too) needs the worker's passage discovery. */
+  mode: AlignmentJob["mode"];
+  tracks: Track[];
+  localAudio: (track: Track) => string | null;
+  /**
+   * "job": a queued alignment job. Hosts that are down are not counted as tried, because the job stores its tried
+   * hosts and a short outage would exclude that host for good. "probe": hosts that are down stay excluded for the
+   * probe's retries, and a probe's partly staged audio is removed when staging fails.
+   */
+  kind: "job" | "probe";
+  /** The job's stored assignment (`job.pool`): its tried hosts are skipped. */
+  assignment?: AlignmentJobPoolState;
+  /** Hosts already tried by this work; they are skipped. */
+  triedHosts?: PoolHostId[];
+  /** Receives why each host was skipped (`poolErrors`), also when no host is found. */
+  diagnostics?: PoolDiagnostics;
+  /** Ends staging (and its SSH/SCP children); no further host is tried. It also bounds a probe's removal in `release`. */
+  signal?: AbortSignal;
+};
+
+export type WorkerLease = {
+  readonly hostId: PoolHostId;
+  /** Base address of the leased worker. */
+  readonly workerUrl: string;
+  /** Folder on the worker (inside its MEDIA_ROOT/alignment) for the work's output files. */
+  readonly outputDir: string;
+  /** Track id to the staged copy on the host. */
+  readonly stagedAudio: Record<string, string>;
+  readonly device: string;
+  readonly precision: string;
+  /** Hosts considered for this work, including the leased one. */
+  readonly triedHosts: PoolHostId[];
+  /** The assignment a job stores (`job.pool`). */
+  readonly assignment: AlignmentJobPoolState;
+  /** Why hosts were skipped, by host. */
+  readonly poolErrors: AlignmentJob["poolErrors"];
+  /** A configured host is left that this work has not tried, and a job has not used its one retry yet. */
+  readonly canFailover: boolean;
+  /**
+   * Frees this host and takes the next untried one, staging the tracks there again; the audio staged here is kept
+   * until the release. Throws as `acquireWorkerLease` does; the lease then holds no host.
+   */
+  failover(): Promise<void>;
+  /** Frees the host; a job's staged audio stays, a probe's is removed (see LeaseRelease). Safe to call twice. */
+  release(outcome: LeaseRelease): Promise<void>;
+};
+
+type HeldHost = AlignmentJobPoolState & { device: string; precision: string };
+
+class PoolWorkerLease implements WorkerLease {
+  private held: HeldHost | null = null;
+  /** The hosts tried when the lease last lost its host. */
+  private lastTried: PoolHostId[];
+  /**
+   * Every host this work staged on, and the folder there: by this lease, and by the job's earlier runs (its
+   * assignment). An entry for a host that is not configured right now is kept, never dropped.
+   */
+  private staged: Record<PoolHostId, string>;
+  /** What a probe lease staged, removed by its release. */
+  private probeStaging: { host: PoolHost; jobMediaRoot: string }[] = [];
+  private released = false;
+  private tried: PoolHostId[];
+  readonly diagnostics: PoolDiagnostics;
+
+  constructor(private request: WorkerLeaseRequest) {
+    this.diagnostics = request.diagnostics ?? {};
+    this.tried = startingTriedHosts(request);
+    this.lastTried = [...this.tried];
+    this.staged = storedStaging(request.assignment);
+  }
+
+  private stagedHosts(): Record<PoolHostId, string> {
+    return { ...this.staged };
+  }
+
+  private current() {
+    if (!this.held) throw new Error("This worker lease holds no host.");
+    return this.held;
+  }
+
+  get hostId() { return this.current().hostId; }
+  get workerUrl() { return this.current().workerUrl; }
+  get outputDir() { return join(this.current().jobMediaRoot, "alignment", this.request.id); }
+  get stagedAudio() { return this.current().stagedAudio; }
+  get device() { return this.current().device; }
+  get precision() { return this.current().precision; }
+  get triedHosts() { return [...this.tried]; }
+  get poolErrors() { return this.diagnostics.poolErrors; }
+  get assignment(): AlignmentJobPoolState {
+    if (!this.held) return unstagedAssignment([...this.lastTried], this.stagedHosts());
+    const { device: _device, precision: _precision, ...state } = this.held;
+    return { ...state, triedHosts: [...state.triedHosts], stagedAudio: { ...state.stagedAudio },
+      stagedHosts: this.stagedHosts() };
+  }
+  get canFailover() {
+    if (this.request.kind === "job" && this.tried.length >= JOB_HOST_ATTEMPTS) return false;
+    return getAlignmentPoolCoordinator().listHosts().some((host) => !this.tried.includes(host.id));
+  }
+
+  async take() {
+    try {
+      this.held = await takeHost(this.request, this.tried, this.diagnostics,
+        this.request.kind === "job" ? (hostId, jobMediaRoot) => { this.staged[hostId] = jobMediaRoot; } : undefined);
+    } catch (error) {
+      if (error instanceof PoolBusyError) error.stagedHosts = this.stagedHosts();
+      // No lease is handed out when the first take fails: the hosts staging began on travel with the error.
+      else if (error instanceof Error) Object.assign(error, { poolAssignment: this.assignment });
+      throw error;
     }
+    this.tried = [...this.held.triedHosts];
+    this.staged[this.held.hostId] = this.held.jobMediaRoot;
+    const host = getAlignmentPoolCoordinator().hostById(this.held.hostId);
+    if (this.request.kind === "probe" && host) this.probeStaging.push({ host, jobMediaRoot: this.held.jobMediaRoot });
+  }
+
+  async failover() {
+    const held = this.current();
+    getAlignmentPoolCoordinator().release(held.hostId, this.request.id, this.request.recordingId);
+    if (!this.tried.includes(held.hostId)) this.tried.push(held.hostId);
+    this.held = null;
+    try {
+      await this.take();
+    } catch (error) {
+      if (error instanceof PoolBusyError) this.tried = [...error.triedHosts];
+      this.lastTried = [...this.tried];
+      throw error;
+    }
+  }
+
+  async release(_outcome: LeaseRelease) {
+    if (this.released) return;
+    this.released = true;
+    const coord = getAlignmentPoolCoordinator();
+    if (this.held) coord.release(this.held.hostId, this.request.id, this.request.recordingId);
+    coord.releaseJob(this.request.id);
+    this.held = null;
+    // A job's staged audio stays on the hosts, whatever the outcome: removing it is #421, under leases. Two
+    // reviewed attempts showed a delete here can outlive the claim that protected it and reach a later run.
+    if (this.request.kind !== "probe") return;
+    // The staged copy is the whole recording; it is this probe's alone, so remove it.
+    const signal = this.request.signal;
+    await Promise.all(this.probeStaging.map(({ host, jobMediaRoot }) =>
+      jobMediaRoot.includes(`/alignment/pool-jobs/${this.request.id}`)
+        ? untilAborted(
+          poolDeps().exec(host.sshTarget, `rm -rf ${shellQuote(jobMediaRoot)}`, { signal }), signal,
+        ).catch(() => undefined)
+        : undefined));
+  }
+}
+
+/** A job's tried hosts: those of its stored assignment, unless that names a host no longer in the pool. */
+function startingTriedHosts(request: WorkerLeaseRequest): PoolHostId[] {
+  const coord = getAlignmentPoolCoordinator();
+  const stored = request.assignment;
+  // A stored staging on a host that left the pool (the Steam Deck, #279) starts a fresh pair of attempts.
+  const fromAssignment = stored?.jobMediaRoot && !coord.hostById(stored.hostId) ? [] : stored?.triedHosts ?? [];
+  const tried = [...fromAssignment, ...(request.triedHosts ?? [])];
+  return [...new Set(tried)].filter((id) => !!coord.hostById(id));
+}
+
+/** Takes the first healthy untried host with a free slot and stages the tracks on it. */
+async function takeHost(
+  request: WorkerLeaseRequest, triedHosts: PoolHostId[], diagnostics: PoolDiagnostics,
+  onStaging?: (hostId: PoolHostId, jobMediaRoot: string) => void,
+): Promise<HeldHost> {
+  const coord = getAlignmentPoolCoordinator();
+  const probe = request.kind === "probe";
+  const signal = request.signal;
+  const attempted = [...triedHosts];
+  const exclude = (id: PoolHostId) => { if (probe) attempted.push(id); };
+  let busy = false;
+  const roundOver = () => !probe && attempted.length >= JOB_HOST_ATTEMPTS;
+  for (const host of coord.listHosts()) {
+    signal?.throwIfAborted();
+    if (roundOver()) break;
+    const id = host.id;
+    if (attempted.includes(id)) continue;
     let health: CtcHealth;
     try {
       health = await ctcHealth(host, signal);
     } catch (error) {
-      recordPoolError(job, id, "health", error);
-      // Unreachable / unhealthy hosts stay excluded for this dispatch (and probe lease retries).
+      recordPoolError(diagnostics, id, "health", error);
+      // Unreachable / unhealthy hosts stay excluded for this acquire (and a probe's retries).
       exclude(id);
       continue;
     }
-    if (job.mode === "anchored" && health.ctc.passageReady !== true) {
-      recordPoolError(job, id, "health", "passage discovery is not ready");
+    if (request.mode === "anchored" && health.ctc.passageReady !== true) {
+      recordPoolError(diagnostics, id, "health", "passage discovery is not ready");
       exclude(id);
       continue;
     }
     const capacity = ctcWorkerSlots(health);
     // A stuck request keeps its slot, so a worker with every slot taken reports busy.
     if (health.busy || (capacity === 1 && health.stuck) || coord.activeOnHost(id) >= capacity) {
-      recordPoolError(job, id, "health", health.stuck && capacity === 1 ? "worker is stuck" : "worker is busy");
+      recordPoolError(diagnostics, id, "health", health.stuck && capacity === 1 ? "worker is stuck" : "worker is busy");
       busy = true;
       continue;
     }
-    if (!(await probeHost(job, host, signal))) {
+    if (!(await probeHost(diagnostics, host, signal))) {
       exclude(id);
       continue;
     }
-    if (!coord.tryAcquireCtc(id, job.id, job.recordingId, capacity)) {
-      recordPoolError(job, id, "capacity", "worker or recording is busy");
+    if (!coord.tryAcquireCtc(id, request.id, request.recordingId, capacity)) {
+      recordPoolError(diagnostics, id, "capacity", "worker or recording is busy");
       busy = true;
       continue;
     }
     try {
-      const staged = await stageCtcTracks({ jobId: job.id, host, tracks, localAudio }, health.mediaRoot,
-        { signal, removeOnFailure: opts.probe });
-      job.ctcDevice = health.ctc.device;
-      job.ctcPrecision = health.ctc.precision;
-      clearHostError(job, id);
-      return { hostId: id, attempt: attempted.length + 1, ...staged,
-        workerUrl: host.workerUrl, triedHosts: [...attempted, id] };
+      // Recorded before the first byte is sent: an upload that fails half way still leaves audio on the host.
+      onStaging?.(id, stagingFolder(health.mediaRoot, request.id));
+      const staged = await stageCtcTracks(
+        { jobId: request.id, host, tracks: request.tracks, localAudio: request.localAudio },
+        health.mediaRoot, { signal, removeOnFailure: probe });
+      clearHostError(diagnostics, id);
+      return { hostId: id, attempt: attempted.length + 1, ...staged, workerUrl: host.workerUrl,
+        triedHosts: [...attempted, id], device: health.ctc.device, precision: health.ctc.precision };
     } catch (error) {
-      coord.release(id, job.id, job.recordingId);
+      coord.release(id, request.id, request.recordingId);
       if (signal?.aborted) throw signal.reason;
-      recordPoolError(job, id, "staging", error);
+      recordPoolError(diagnostics, id, "staging", error);
       attempted.push(id);
     }
   }
   signal?.throwIfAborted();
-  if (busy) throw new PoolBusyError(attempted);
+  if (busy && !roundOver()) throw new PoolBusyError(attempted);
   throw new Error(POOL_FAILURE_MESSAGE);
 }
 
-export type CtcProbeLease = {
-  hostId: PoolHostId;
-  workerUrl: string;
-  /** Directory on the worker (inside its MEDIA_ROOT/alignment) for the probe's output files. */
-  outputDir: string;
-  stagedAudio: Record<string, string>;
-  /** Hosts dispatch already considered for this lease, including the one that succeeded. */
-  triedHosts: PoolHostId[];
-  /** Frees the host and removes the staged audio. Safe to call twice. */
-  release(): Promise<void>;
-};
-
 /**
- * Leases one pool host (WSL first, lisa as the fallback) for ebook candidate probing and stages the audio it
- * will sample. Throws PoolBusyError when every reachable host is held by other CTC work. The lease holds the
- * worker's single gate, so a probe never overlaps a queued alignment on the same host or recording.
+ * Leases a pool host for `request`: the first healthy host in rank order, not yet tried, with a free slot, and
+ * the tracks staged on it. Throws PoolBusyError when every host that could take the work is held by other CTC
+ * work, and an Error (POOL_FAILURE_MESSAGE) when none can take it. A lease holds the worker's slot and the
+ * recording, so a probe never overlaps a queued alignment on the same host or recording. The caller releases it
+ * on every exit.
  */
-export async function acquireCtcProbeLease(
-  recordingId: string,
-  tracks: (typeof schema.tracks.$inferSelect)[],
-  localAudio: StageTracksInput["localAudio"],
-  triedHosts: PoolHostId[] = [],
-  /** Ends staging and the cleanup in `release` when it aborts; the host slot is freed either way. */
-  signal?: AbortSignal,
-): Promise<CtcProbeLease & { triedHosts: PoolHostId[]; poolErrors: AlignmentJob["poolErrors"] }> {
-  if (!poolEnabled()) throw new Error("CTC alignment requires the remote pool.");
-  const target: CtcDispatchTarget = { id: `ctc-probe-${randomUUID()}`, recordingId, mode: "anchored" };
-  const state = await dispatchCtcJob(target, tracks, localAudio, triedHosts, { excludeUnhealthy: true, signal, probe: true });
-  const coord = getAlignmentPoolCoordinator();
-  const host = coord.hostById(state.hostId);
-  let released = false;
-  return {
-    hostId: state.hostId,
-    workerUrl: state.workerUrl,
-    outputDir: join(state.jobMediaRoot, "alignment", target.id),
-    stagedAudio: state.stagedAudio,
-    triedHosts: state.triedHosts,
-    poolErrors: target.poolErrors,
-    async release() {
-      if (released) return;
-      released = true;
-      coord.release(state.hostId, target.id, recordingId);
-      // The staged copy is the whole recording; it is this probe's alone, so remove it.
-      if (host && state.jobMediaRoot.includes(`/alignment/pool-jobs/${target.id}`))
-        await untilAborted(
-          poolDeps().exec(host.sshTarget, `rm -rf ${shellQuote(state.jobMediaRoot)}`, { signal }), signal,
-        ).catch(() => undefined);
-    },
-  };
-}
-
-export async function dispatchFullAlignmentJob(
-  job: AlignmentJob,
-  tracks: (typeof schema.tracks.$inferSelect)[],
-  localAudio: (track: typeof schema.tracks.$inferSelect) => string | null,
-  triedHosts: PoolHostId[] = job.pool?.triedHosts ?? [],
-): Promise<AlignmentJobPoolState> {
-  return dispatchCtcJob(job, tracks, localAudio, triedHosts);
+export async function acquireWorkerLease(request: WorkerLeaseRequest): Promise<WorkerLease> {
+  // The job runner checks the pool itself, with a message of its own.
+  if (request.kind === "probe" && !poolEnabled()) throw new Error("CTC alignment requires the remote pool.");
+  const lease = new PoolWorkerLease(request);
+  await lease.take();
+  return lease;
 }
 
 export function poolFailureMessage(error: unknown) {
   if (error instanceof Error && error.message) return error.message;
   return POOL_FAILURE_MESSAGE;
-}
-
-export function poolWorkerBase(job: AlignmentJob) {
-  if (!job.pool?.workerUrl || !["wsl", "lisa"].includes(job.pool.hostId))
-    throw new Error("CTC alignment requires a remote pool worker.");
-  return job.pool.workerUrl;
-}
-
-export function poolAudioPath(
-  job: AlignmentJob,
-  track: typeof schema.tracks.$inferSelect,
-  localAudio: (track: typeof schema.tracks.$inferSelect) => string | null,
-) {
-  if (job.pool?.stagedAudio[track.id]) return job.pool.stagedAudio[track.id];
-  return localAudio(track);
-}
-
-/** Local alignment cache directory (never a remote SSH path). */
-export function poolAlignmentFolder(_job: AlignmentJob, localFolder: string) {
-  return localFolder;
-}
-
-export function poolRemoteAlignmentFolder(job: AlignmentJob) {
-  if (!job.pool?.jobMediaRoot) return null;
-  return `${job.pool.jobMediaRoot}/alignment/${job.id}`;
-}
-
-export function poolJobNeedsStaging(job: AlignmentJob) {
-  return shouldDispatchToPool(job) && !job.pool?.jobMediaRoot;
-}
-
-export function clearPoolStaging(job: AlignmentJob, triedHosts: PoolHostId[]) {
-  job.pool = {
-    hostId: "wsl",
-    attempt: triedHosts.length,
-    jobMediaRoot: "",
-    workerUrl: "",
-    triedHosts,
-    stagedAudio: {},
-  };
 }
 
 export function currentPoolEngine(): "ctc" {
@@ -631,7 +869,7 @@ export function currentPoolEngine(): "ctc" {
 export function activePoolHosts(
   hosts: PoolHost[] = getAlignmentPoolCoordinator().listHosts(),
 ) {
-  return hosts.filter((host) => host.id === "wsl" || host.id === "lisa");
+  return byRank(hosts);
 }
 
 function safeWorkerUrl(raw: string) {
