@@ -5,7 +5,8 @@ import { chromium, expect as baseExpect } from "@playwright/test";
 import { defaultAppearance } from "../src/appearance.ts";
 import { createReaderControls, waitForBox } from "./live-reader-controls.mjs";
 import { verifyBaseURL } from "./live-check-target.mjs";
-import { pickPlaybackRecording, NoSuitableRecording, NO_SUITABLE_RECORDING_EXIT } from "./live-check-recording.mjs";
+import { requestFrom, NoSuitableRecording, NO_SUITABLE_RECORDING_EXIT } from "./live-check-recording.mjs";
+import { selectPlaybackRecording, PLAYBACK_MIN_CHAPTER_SECONDS } from "./live-check-playback.mjs";
 const expect=baseExpect.configure({timeout:20000});
 process.loadEnvFile(".env");
 // The recording id is a preference: the check plays it when it qualifies and otherwise picks another (#431).
@@ -18,16 +19,14 @@ const check=(name,details={})=>report.checks.push({name,...details});
 let readAudio;
 try {
   const login=await context.request.post("/api/auth/login",{data:{password:process.env.APP_PASSWORD}});
-  if(!login.ok()) throw new Error("Sign-in failed");
+  if(!login.ok()) throw new Error(`Sign-in failed (POST /api/auth/login answered ${login.status()})`);
   // Playback starts at the owner's saved position, which this check must not move: choose a recording where it can run.
-  const booksResponse=await context.request.get("/api/books");
-  if(!booksResponse.ok()) throw new Error(`GET /api/books answered ${booksResponse.status()}`);
-  const pick=pickPlaybackRecording({books:await booksResponse.json()},{preferred});
-  if(!pick.recordingId) throw new NoSuitableRecording(pick.reason);
-  const book=pick.book;
+  // Only a listing that holds no qualifying recording leads to "no suitable recording"; any failed request fails the check (#431).
+  // A recording chosen here that then fails below stays a failure: the check does not fall through to another one.
+  const pick=await selectPlaybackRecording(requestFrom(context),{preferred});
+  const {book,ebooks,sequence}=pick;
   report.recordingId=pick.recordingId;
-  report.selection={start:pick.start,...(pick.preferred?{preferred:pick.preferred}:{})};
-  const ebooks=await (await context.request.get("/api/ebooks")).json();
+  report.selection={start:sequence.start,timeline:sequence.timeline,...(pick.preferred?{preferred:pick.preferred}:{})};
   const hasEbook=ebooks.some(e=>e.workId===book.workId && e.format==="epub" && e.available);
   await protectBrowserMutations(context,baseURL,report);
   // Playback preferences in this browser stay local and do not alter account defaults.
@@ -81,6 +80,8 @@ try {
   await controls.show(slider,"Seek in chapter slider");
   await expect(slider).toBeVisible();
   const chapterDuration=Number(await slider.getAttribute("max"));
+  // Selection read this timeline with playbackTimeline (scripts/live-check-playback.mjs); the drags below need its length.
+  if(!(chapterDuration>=PLAYBACK_MIN_CHAPTER_SECONDS)) throw new Error(`The chapter slider lasts ${chapterDuration} s (needs at least ${PLAYBACK_MIN_CHAPTER_SECONDS} s); selection expected "${sequence.timeline.title}" of ${Math.round(sequence.timeline.duration)} s`);
   if(chapterDuration>3000 && book.tracks[0].chapters?.length>1)throw new Error("Expected embedded chapter duration, not full M4B");
   await slider.fill("60");
   const start=(await actual()).position;

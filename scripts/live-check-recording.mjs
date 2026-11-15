@@ -1,8 +1,15 @@
-// Which recording a live check plays (#431). Pure functions over the listings the checks already read:
-// GET /api/books (books with their tracks and saved progress), GET /api/ebooks and GET /api/alignments (jobs with intervals).
-// A live check starts playback at the owner's saved position and protects that position, so it cannot move it; a
-// recording whose saved position would end the book, or would load a file the check cannot sample, does not qualify.
-import { pickMappedIntervals } from "./live-reader-samples.mjs";
+// Which recording a live check plays (#431). A live check starts playback at the owner's saved position and protects
+// that position, so it cannot move it; a recording whose saved position would end the book, or whose map cannot carry
+// the check's own sequence, does not qualify.
+//
+// What answers lead to "no suitable recording" (exit 3), and what fails the check (exit 1), before any page opens:
+// - GET /api/books, /api/ebooks, /api/alignments: read successfully and holding no qualifying candidate -> exit 3.
+//   Any other answer (non-2xx, a body that is not JSON, an unexpected shape, a request that throws or times out) -> exit 1.
+// - GET /api/alignments/:id/map: 404 or 410 (the map is gone or stale, server/alignment.ts) excludes that one map.
+//   Any other non-2xx, a body that is not JSON, or a map of another recording -> exit 1.
+// The pure parts (savedStart, readerSequence, readerPairs) are tested in tests/live-check-recording.test.mjs; the
+// request handling through a fake `get` in the same file.
+import { pickMappedIntervals, intervalMiddle } from "./live-reader-samples.mjs";
 
 // Exit code of a live check that found no recording it can run on. deploy.sh reports it as skipped, not failed.
 export const NO_SUITABLE_RECORDING_EXIT = 3;
@@ -10,10 +17,15 @@ export const NO_SUITABLE_RECORDING_EXIT = 3;
 // the last track sends PATCH /api/library/<id> (status finished), which the verification guard blocks as a mutation.
 export const BOOK_END_MARGIN_SECONDS = 300;
 // ...and more than this many seconds before the end of its own file, so the short playback at the start of a check
-// stays on the file it samples instead of moving to the next one.
+// stays on the file it samples instead of moving to the next one. Every position the reader check plays from must be
+// this far from the end of the file as well.
 export const TRACK_END_MARGIN_SECONDS = 60;
-// The playback check drags the chapter slider from 60 s into the current chapter and plays from there.
-export const PLAYBACK_MIN_CHAPTER_SECONDS = 120;
+// The reader check waits this long for the highlighted passage to change once it presses Play...
+export const FOLLOW_WAIT_SECONDS = 20;
+// ...it starts playing this long before a new passage begins...
+export const FOLLOW_LEAD_SECONDS = 5;
+// ...and a new passage must begin at most this long after the follow start; the rest of the wait is for the stream.
+export const FOLLOW_ADVANCE_SECONDS = 10;
 
 const seconds = (value) => `${Math.round(value)} s`;
 
@@ -32,17 +44,8 @@ export function savedStart(book) {
   return { track, position, bookPosition: before + position, bookDuration: total };
 }
 
-// Mirrors listeningChapters/currentChapter in src/chapters.ts (scripts run without the TypeScript loader).
-export function chapterAt(track, position) {
-  const chapters = track.chapters?.length
-    ? track.chapters.map((c, i) => ({ start: c.start, end: c.end ?? track.chapters[i + 1]?.start ?? track.duration }))
-    : [{ start: 0, end: track.duration }];
-  const matching = chapters.filter((c) => c.start <= position);
-  return matching.at(-1) || chapters[0];
-}
-
 // The rules both checks share: the saved position is far enough from the end of the book and of its file.
-function positionReason(start) {
+export function positionReason(start) {
   if (start.reason) return start.reason;
   const toBookEnd = start.bookDuration - start.bookPosition;
   if (!(toBookEnd > BOOK_END_MARGIN_SECONDS))
@@ -53,7 +56,70 @@ function positionReason(start) {
   return null;
 }
 
-// A finished, non-projected EPUB map with intervals: the jobs deploy.sh used to pick from the database.
+// The passage the reader highlights at `time` on a file: the first interval of the map that holds it
+// (currentInterval in src/components/Reader.tsx, which the room's data-current-passage shows).
+export function passageAt(intervals, trackId, time) {
+  return intervals.find((i) => i.trackId === trackId && i.start <= time && i.end > time);
+}
+
+// Where the check presses Play so the narration visibly advances: a moment a passage is highlighted, with a different
+// passage beginning within FOLLOW_ADVANCE_SECONDS, and the whole wait more than TRACK_END_MARGIN_SECONDS before the end
+// of the file. Of those, the one nearest the old target (20 s before the middle sample) is used.
+function followStart(intervals, trackId, middle, playEnd) {
+  const onTrack = intervals.filter((i) => i.trackId === trackId);
+  const target = middle.position - FOLLOW_WAIT_SECONDS;
+  const candidates = [target, ...onTrack.map((i) => i.start - FOLLOW_LEAD_SECONDS), ...onTrack.map((i) => i.end - 0.5)];
+  const starts = [...new Set(onTrack.map((i) => i.start))].sort((a, b) => a - b);
+  let best = null;
+  for (const start of candidates) {
+    if (!(start >= 0) || !(start + FOLLOW_WAIT_SECONDS < playEnd)) continue;
+    const initial = passageAt(intervals, trackId, start);
+    if (!initial) continue;
+    const at = starts.find((s) => s > start && s - start <= FOLLOW_ADVANCE_SECONDS && passageAt(intervals, trackId, s) && passageAt(intervals, trackId, s).paragraphId !== initial.paragraphId);
+    if (at === undefined) continue;
+    const follow = { start, passage: initial.paragraphId, next: passageAt(intervals, trackId, at).paragraphId, nextAt: at };
+    if (!best || Math.abs(start - target) < Math.abs(best.start - target)) best = follow;
+  }
+  return best;
+}
+
+/**
+ * What the reader check does with one map, from the map's intervals and the book's saved position. Selection uses it
+ * to ask "does this map support the check?" and the check uses its positions to seek. Returns
+ * {start: {trackId, position}, trackId, samples: [{section, paragraphId, position, middle}], middle, follow: {start,
+ * passage, next, nextAt}} or {reason}.
+ * - The file that loads is the one holding the saved position; the check seeks only within it.
+ * - Each sample is a mapped passage longer than 4 s (pickMappedIntervals); the check seeks 1 s before its end and
+ *   expects that passage highlighted, then later seeks to its middle.
+ * - The check plays from `follow.start`, where `follow.passage` is highlighted, and expects another passage within
+ *   FOLLOW_WAIT_SECONDS; it plays again from the middle sample. Both are more than 60 s before the end of the file.
+ */
+export function readerSequence(intervals, book) {
+  const start = savedStart(book);
+  const reason = positionReason(start);
+  if (reason) return { reason };
+  const track = start.track;
+  const mapped = pickMappedIntervals(intervals, track.id);
+  if (!mapped.length) return { reason: `the saved position is on file ${track.id}, which has no mapped passage longer than 4 s` };
+  const samples = mapped.map((interval) => ({ section: interval.section, paragraphId: interval.paragraphId, position: Math.floor(interval.end) - 1, middle: intervalMiddle(interval) }));
+  for (const sample of samples) {
+    for (const time of [sample.position, sample.middle]) {
+      const shown = passageAt(intervals, track.id, time);
+      if (shown?.paragraphId !== sample.paragraphId)
+        return { reason: `at ${seconds(time)} on file ${track.id} the reader highlights ${shown ? `passage ${shown.paragraphId}` : "no passage"}, not the sampled passage ${sample.paragraphId}` };
+    }
+  }
+  const middle = samples[Math.floor(samples.length / 2)];
+  const playEnd = track.duration - TRACK_END_MARGIN_SECONDS;
+  if (!(middle.middle < playEnd))
+    return { reason: `the middle sample at ${seconds(middle.middle)} is not more than ${TRACK_END_MARGIN_SECONDS} s before the end of file ${track.id}` };
+  const follow = followStart(intervals, track.id, middle, playEnd);
+  if (!follow)
+    return { reason: `on file ${track.id} no highlighted passage is followed within ${FOLLOW_ADVANCE_SECONDS} s by another, more than ${TRACK_END_MARGIN_SECONDS} s before the end of the file, so the narration cannot be seen to advance` };
+  return { start: { trackId: track.id, position: start.position }, trackId: track.id, samples, middle, follow };
+}
+
+// A finished, non-projected map with intervals for an available EPUB of the book's work.
 function readerJobs(book, ebooks, jobs) {
   const epubs = new Set(ebooks.filter((e) => e.workId === book.workId && e.format === "epub" && e.available).map((e) => e.id));
   return jobs
@@ -66,108 +132,158 @@ function jobOrder(a, b) {
   return Number(b.status === "ready") - Number(a.status === "ready") || (b.updatedAt || 0) - (a.updatedAt || 0);
 }
 
-function readerCandidate(book, ebooks, jobs) {
-  if (!book.inLibrary) return { reason: "the book is not in the library" };
-  const mapped = readerJobs(book, ebooks, jobs);
-  if (!mapped.length) return { reason: "no finished EPUB alignment map" };
-  const start = savedStart(book);
-  const reason = positionReason(start);
-  if (reason) return { reason, aligned: true };
-  // The check samples mapped passages on the file that loads; a position on an unmapped file (an intro, or before the
-  // first mapped interval of the book) gives it nothing to sample.
-  const job = mapped.find((j) => pickMappedIntervals(j.intervals, start.track.id).length);
-  if (!job) return { reason: `the saved position is on file ${start.track.id}, which has no mapped passage longer than 4 s`, aligned: true };
-  return { job, start };
-}
-
-function summary(rejected, what) {
-  if (!rejected.length) return `no ${what}`;
-  return `${rejected.length} ${what}, none qualifies: ${rejected.map((r) => `${r.recordingId}: ${r.reason}`).join("; ")}`;
-}
-
 /**
- * The recording the reader check plays.
+ * The (recording, map) pairs the reader check can try, from the listing alone, in the order it tries them: the
+ * preferred recording first, then a ready map before a partial one, then the most recently updated. A recording with
+ * several maps gives one pair per map whose intervals support readerSequence.
  * listing: {books, ebooks, jobs} as GET /api/books, GET /api/ebooks and GET /api/alignments (its `jobs`) return them.
- * preferred: the recording id named on the command line, used when it qualifies.
- * excluded: [{recordingId, reason}] the caller already ruled out (its map would not load).
- * Returns {recordingId, book, ebookId, jobId, start, preferred?} or {reason, rejected}.
+ * Returns {pairs: [{book, job, ebook}], rejected: [{recordingId, jobId?, reason}], aligned: Set<recordingId>}.
  */
-export function pickReaderRecording({ books, ebooks, jobs }, { preferred = null, excluded = [] } = {}) {
-  const ruledOut = new Map(excluded.map((e) => [e.recordingId, e.reason]));
+export function readerPairs({ books, ebooks, jobs }, { preferred = null } = {}) {
+  const pairs = [];
   const rejected = [];
-  const qualified = [];
-  let preferredReason = null;
+  const aligned = new Set();
   const seen = new Set();
   for (const book of books) {
     if (seen.has(book.recordingId)) continue;
     seen.add(book.recordingId);
-    const result = ruledOut.has(book.recordingId) ? { reason: ruledOut.get(book.recordingId), aligned: true } : readerCandidate(book, ebooks, jobs);
-    if (book.recordingId === preferred && result.reason) preferredReason = result.reason;
-    if (result.reason) {
-      if (result.aligned || book.recordingId === preferred) rejected.push({ recordingId: book.recordingId, reason: result.reason });
-    } else qualified.push({ book, ...result });
+    if (!book.inLibrary) {
+      if (book.recordingId === preferred) rejected.push({ recordingId: book.recordingId, reason: "the book is not in the library" });
+      continue;
+    }
+    const mapped = readerJobs(book, ebooks, jobs);
+    if (!mapped.length) {
+      if (book.recordingId === preferred) rejected.push({ recordingId: book.recordingId, reason: "no finished EPUB alignment map" });
+      continue;
+    }
+    aligned.add(book.recordingId);
+    const reason = positionReason(savedStart(book));
+    if (reason) {
+      rejected.push({ recordingId: book.recordingId, reason });
+      continue;
+    }
+    for (const job of mapped) {
+      const sequence = readerSequence(job.intervals, book);
+      if (sequence.reason) rejected.push({ recordingId: book.recordingId, jobId: job.id, reason: sequence.reason });
+      else pairs.push({ book, job, ebook: ebooks.find((e) => e.id === job.ebookId) });
+    }
   }
-  if (preferred && !seen.has(preferred)) preferredReason = "the recording is not in the book listing";
-  qualified.sort((a, b) => Number(b.book.recordingId === preferred) - Number(a.book.recordingId === preferred) || jobOrder(a.job, b.job));
-  const choice = qualified[0];
-  if (!choice) return { reason: summary(rejected, "aligned recording(s) in the library"), rejected };
-  return {
-    recordingId: choice.book.recordingId,
-    book: choice.book,
-    ebookId: choice.job.ebookId,
-    jobId: choice.job.id,
-    start: { trackId: choice.start.track.id, position: choice.start.position },
-    ...(preferred && preferredReason ? { preferred: { recordingId: preferred, reason: preferredReason } } : {}),
-  };
+  if (preferred && !seen.has(preferred)) rejected.push({ recordingId: preferred, reason: "the recording is not in the book listing" });
+  pairs.sort((a, b) => Number(b.book.recordingId === preferred) - Number(a.book.recordingId === preferred) || jobOrder(a.job, b.job));
+  return { pairs, rejected, aligned };
 }
 
-function playbackCandidate(book) {
-  if (!book.inLibrary) return { reason: "the book is not in the library" };
-  const start = savedStart(book);
-  const reason = positionReason(start);
-  if (reason) return { reason };
-  const chapter = chapterAt(start.track, start.position);
-  if (!(chapter.end - chapter.start >= PLAYBACK_MIN_CHAPTER_SECONDS))
-    return { reason: `the chapter at the saved position lasts ${seconds(chapter.end - chapter.start)} (needs at least ${PLAYBACK_MIN_CHAPTER_SECONDS} s)` };
-  return { start };
+function describe(rejected) {
+  return rejected.map((r) => `${r.recordingId}${r.jobId ? ` (map ${r.jobId})` : ""}: ${r.reason}`).join("; ");
 }
 
-/**
- * The recording the playback check plays: any library recording whose saved position qualifies, the preferred one
- * first, then the most recently listened. listing: {books, ebooks} (GET /api/books, GET /api/ebooks).
- * Returns {recordingId, book, start, preferred?} or {reason, rejected}.
- */
-export function pickPlaybackRecording({ books }, { preferred = null } = {}) {
-  const rejected = [];
-  const qualified = [];
-  let preferredReason = null;
-  const seen = new Set();
-  for (const book of books) {
-    if (seen.has(book.recordingId)) continue;
-    seen.add(book.recordingId);
-    const result = playbackCandidate(book);
-    if (book.recordingId === preferred && result.reason) preferredReason = result.reason;
-    if (result.reason) {
-      if (book.inLibrary || book.recordingId === preferred) rejected.push({ recordingId: book.recordingId, reason: result.reason });
-    } else qualified.push({ book, ...result });
-  }
-  if (preferred && !seen.has(preferred)) preferredReason = "the recording is not in the book listing";
-  qualified.sort((a, b) => Number(b.book.recordingId === preferred) - Number(a.book.recordingId === preferred) ||
-    (b.book.progress?.updatedAt || 0) - (a.book.progress?.updatedAt || 0));
-  const choice = qualified[0];
-  if (!choice) return { reason: summary(rejected, "recording(s) in the library"), rejected };
-  return {
-    recordingId: choice.book.recordingId,
-    book: choice.book,
-    start: { trackId: choice.start.track.id, position: choice.start.position },
-    ...(preferred && preferredReason ? { preferred: { recordingId: preferred, reason: preferredReason } } : {}),
-  };
+export function noneQualifies(count, what, rejected) {
+  if (!count) return `no ${what}`;
+  return `${count} ${what}, none qualifies: ${describe(rejected)}`;
 }
 
-// Thrown by a check that found nothing to run on; its catch turns it into NO_SUITABLE_RECORDING_EXIT.
+function preferredNote(preferred, chosen, rejected) {
+  if (!preferred || chosen === preferred) return {};
+  const own = rejected.filter((r) => r.recordingId === preferred);
+  return { preferred: { recordingId: preferred, reason: own.length ? own.map((r) => (r.jobId ? `map ${r.jobId}: ${r.reason}` : r.reason)).join("; ") : "the recording does not qualify" } };
+}
+
+// Thrown by a check that found nothing to run on; its catch turns it into NO_SUITABLE_RECORDING_EXIT. Only the
+// selection functions below throw it, and only from answers that say so.
 export class NoSuitableRecording extends Error {
   constructor(reason) {
     super(`no suitable recording: ${reason}`);
     this.reason = reason;
   }
+}
+
+// `get(path)` for the selection functions, over a Playwright APIRequestContext: {status, text}. A request that throws
+// (a timeout, a refused connection) is rethrown naming the request.
+export function requestFrom(context) {
+  return async (path) => {
+    try {
+      const response = await context.request.get(path);
+      return { status: response.status(), text: await response.text() };
+    } catch (error) {
+      throw new Error(`GET ${path} failed: ${error?.message || error}`);
+    }
+  };
+}
+
+function parse(path, answer) {
+  try {
+    return JSON.parse(answer.text);
+  } catch {
+    throw new Error(`GET ${path} answered ${answer.status} with a body that is not JSON`);
+  }
+}
+
+const isObject = (value) => !!value && typeof value === "object" && !Array.isArray(value);
+const SHAPES = {
+  list: (what, item) => (body) => (Array.isArray(body) && body.every(item) ? null : `expected a list of ${what}`),
+  book: (b) => isObject(b) && typeof b.recordingId === "string" && Array.isArray(b.tracks),
+  ebook: (e) => isObject(e) && typeof e.id === "string",
+  job: (j) => isObject(j) && typeof j.id === "string" && typeof j.recordingId === "string",
+};
+export const LISTING_SHAPES = {
+  "/api/books": SHAPES.list("books with recordingId and tracks", SHAPES.book),
+  "/api/ebooks": SHAPES.list("ebooks with an id", SHAPES.ebook),
+  "/api/alignments": (body) => (isObject(body) && Array.isArray(body.jobs) && body.jobs.every(SHAPES.job) ? null : "expected {jobs: [...]} with an id and recordingId per job"),
+  "/api/appearance": (body) => (isObject(body) ? null : "expected an object"),
+};
+
+// A GET that must succeed with the expected shape; anything else is an ordinary failure naming the request.
+export async function getJSON(get, path, shape = LISTING_SHAPES[path]) {
+  const answer = await get(path);
+  if (!(answer.status >= 200 && answer.status < 300)) throw new Error(`GET ${path} answered ${answer.status}`);
+  const body = parse(path, answer);
+  const problem = shape?.(body);
+  if (problem) throw new Error(`GET ${path} answered with an unexpected shape: ${problem}`);
+  return body;
+}
+
+// A map answer: 404 or 410 says this map cannot be used ({excluded}); every other failure is thrown.
+export function readMapAnswer(path, answer, job) {
+  if (answer.status === 404 || answer.status === 410) {
+    let code = null;
+    try {
+      code = JSON.parse(answer.text)?.code ?? null;
+    } catch {}
+    return { excluded: `its map answered HTTP ${answer.status}${code ? ` (${code})` : ""}` };
+  }
+  if (!(answer.status >= 200 && answer.status < 300)) throw new Error(`GET ${path} answered ${answer.status}`);
+  const map = parse(path, answer);
+  if (!isObject(map) || !Array.isArray(map.intervals) || map.recordingId !== job.recordingId || (map.ebookId !== undefined && map.ebookId !== job.ebookId))
+    throw new Error(`GET ${path} answered with an unexpected shape: expected the map of recording ${job.recordingId} and EPUB ${job.ebookId} with intervals`);
+  return { map };
+}
+
+/**
+ * The reader check's recording, map and sequence, read through `get(path) -> {status, text}` (requestFrom(context)).
+ * Tries each (recording, map) pair in order; the map's own intervals decide, through readerSequence.
+ * Returns {recordingId, book, ebook, job, map, sequence, listing, preferred?}; throws NoSuitableRecording when no pair
+ * qualifies, and an ordinary Error naming the request for any answer that does not say so.
+ */
+export async function selectReaderRecording(get, { preferred = null } = {}) {
+  const listing = {
+    books: await getJSON(get, "/api/books"),
+    ebooks: await getJSON(get, "/api/ebooks"),
+    jobs: (await getJSON(get, "/api/alignments")).jobs,
+  };
+  const { pairs, rejected, aligned } = readerPairs(listing, { preferred });
+  for (const { book, job, ebook } of pairs) {
+    const path = `/api/alignments/${encodeURIComponent(job.id)}/map`;
+    const answer = readMapAnswer(path, await get(path), job);
+    if (answer.excluded) {
+      rejected.push({ recordingId: book.recordingId, jobId: job.id, reason: answer.excluded });
+      continue;
+    }
+    const sequence = readerSequence(answer.map.intervals, book);
+    if (sequence.reason) {
+      rejected.push({ recordingId: book.recordingId, jobId: job.id, reason: sequence.reason });
+      continue;
+    }
+    return { recordingId: book.recordingId, book, ebook, job, map: answer.map, sequence, listing, ...preferredNote(preferred, book.recordingId, rejected) };
+  }
+  throw new NoSuitableRecording(noneQualifies(aligned.size, "aligned recording(s) in the library", rejected.filter((r) => aligned.has(r.recordingId) || r.recordingId === preferred)));
 }
