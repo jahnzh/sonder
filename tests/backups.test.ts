@@ -390,18 +390,43 @@ test("a backups path that is a file or an unreadable folder is a failed run with
 test("recorded names replaced by symlinks or folders do not fill the 14 kept: no older real backup is deleted", async () => {
   const dir = folder();
   assert.equal((await run(dir, "2026-09-01T03:05:00Z")).ran, true);
-  const later = days(16, "2026-10-01");
+  const later = days(19, "2026-10-01");
   for (const day of later) cloneRun(dir, "2026-09-01", day);
-  // The newest fourteen recorded names stop being regular files: links to real backups, and folders.
+  // The newest recorded names stop being regular files: fourteen links to a real backup (same content), and folders.
   const replaced = later.slice(2);
   for (const [index, day] of replaced.entries()) {
     const path = join(dir, dailyBackupName(day));
     rmSync(path);
-    if (index % 2 === 0) symlinkSync(join(dir, dailyBackupName(later[0])), path);
+    if (index < 14) symlinkSync(join(dir, dailyBackupName(later[0])), path);
     else mkdirSync(path);
   }
   const removed = await backups.pruneDailyBackups(dir);
   assert.deepEqual(removed, [], "three real backups remain, fewer than 14: none goes");
   for (const day of ["2026-09-01", later[0], later[1]]) assert.ok(statSync(join(dir, dailyBackupName(day))).isFile(), `${day} kept`);
   for (const day of replaced) assert.ok(existsSync(join(dir, dailyBackupName(day))), `${day}: the link or folder is left alone`);
+});
+
+test("a run whose stale claim was taken over records nothing afterwards: the new holder's done row stays", async () => {
+  const dir = folder();
+  let release!: () => void;
+  const held = new Promise<void>((done) => (release = done));
+  let started!: () => void;
+  const inBackup = new Promise<void>((done) => (started = done));
+  const slow = run(dir, "2026-11-16T03:05:00Z", {
+    backup: async (source, destination) => {
+      started();
+      await held;
+      const { backupDatabase } = await import("../server/db-backup.mjs");
+      return backupDatabase(source, destination);
+    },
+  });
+  await inBackup;
+  const takeover = await run(dir, "2026-11-16T03:40:00Z");
+  assert.equal(takeover.ran && takeover.status, "done", "35 minutes later the claim is stale and taken over");
+  release();
+  const late = await slow;
+  assert.equal(late.ran && late.status, "failed", "the old run finds the day's file published");
+  assert.equal(row("2026-11-16")!.status, "done", "and does not overwrite the new holder's result");
+  assert.equal(row("2026-11-16")!.error, null);
+  assert.equal(row("2026-11-16")!.attempts, 2);
 });
