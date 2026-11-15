@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   BACKUP_HOUR_UTC, DAILY_BACKUPS_KEPT, MIN_FREE_BYTES,
-  backupDue, backupRefusal, dailyBackupDay, dailyBackupName, expiredDailyBackups, nextBackupAt, scheduledDay,
+  STALE_CLAIM_MS, backupDue, backupPlan, backupRefusal, dailyBackupDay, dailyBackupName, expiredDailyBackups, isScheduleFileName,
+  lastBackupDay, nextBackupAt, scheduledDay,
 } from "../server/backup-schedule.ts";
 
 const at = (iso: string) => Date.parse(iso);
@@ -11,6 +12,25 @@ test("the schedule's constants are the ones the issue states", () => {
   assert.equal(BACKUP_HOUR_UTC, 3);
   assert.equal(DAILY_BACKUPS_KEPT, 14);
   assert.equal(MIN_FREE_BYTES, 1024 ** 3);
+  assert.equal(STALE_CLAIM_MS, 30 * 60_000);
+});
+
+test("the due decision comes from the recorded successful days only; a day later than the latest due one is ignored", () => {
+  const now = at("2026-11-16T09:00:00.000Z");
+  assert.equal(lastBackupDay([], now), null);
+  assert.equal(lastBackupDay(["2026-11-14", "2026-11-15", "garbage"], now), "2026-11-15");
+  assert.equal(lastBackupDay(["2026-11-15", "2099-01-01"], now), "2026-11-15", "a clock that ran ahead and came back");
+  assert.equal(lastBackupDay(["2026-11-16"], at("2026-11-16T02:00:00.000Z")), null, "today's row before today's 03:00 was written ahead");
+  assert.deepEqual(backupPlan(["2026-11-15", "2099-01-01"], now), { lastDay: "2026-11-15", due: true, nextAt: now });
+  assert.deepEqual(backupPlan(["2026-11-16", "2099-01-01"], now), { lastDay: "2026-11-16", due: false, nextAt: at("2026-11-17T03:00:00.000Z") });
+  assert.deepEqual(backupPlan([], now), { lastDay: null, due: true, nextAt: now });
+});
+
+test("retention looks only at the schedule's own name for a run's day", () => {
+  assert.equal(isScheduleFileName("2026-11-16", "daily-2026-11-16.db"), true);
+  for (const file of ["daily-2026-11-15.db", "../daily-2026-11-16.db", "x/daily-2026-11-16.db", "/tmp/daily-2026-11-16.db", "daily-2026-11-16.db/"])
+    assert.equal(isScheduleFileName("2026-11-16", file), false, file);
+  assert.equal(isScheduleFileName("../x", "daily-../x.db"), false);
 });
 
 test("a day's backup is due from 03:00 UTC, once a day", () => {

@@ -19,6 +19,11 @@ export const BACKUP_CHECK_INTERVAL_MS = 10 * MINUTE;
 export const DAILY_BACKUPS_KEPT = 14;
 /** A run is refused when the backup folder's filesystem has less free space than this (about 40 backups). */
 export const MIN_FREE_BYTES = 1024 ** 3;
+/**
+ * A run's claim on its day is live this long after it started: far longer than a backup of the ~25 MB database
+ * takes. An older claim belongs to a server that stopped mid-run; another run may take it over.
+ */
+export const STALE_CLAIM_MS = 30 * MINUTE;
 
 const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const DAILY_NAME = /^daily-(\d{4}-\d{2}-\d{2})\.db$/;
@@ -46,7 +51,31 @@ export function nextBackupAt(lastSuccessDay: string | null, now: number) {
   return dueAt(lastSuccessDay!) + DAY;
 }
 
+/**
+ * The newest day among the successful runs (`done` rows), ignoring a day later than the latest due one: such a
+ * row was written while the clock ran ahead, and must not hold back the backups until the clock catches up.
+ * Names of files in the backups folder never count; only the runs the schedule recorded do.
+ */
+export function lastBackupDay(doneDays: readonly string[], now: number) {
+  const latestDue = scheduledDay(now);
+  let newest: string | null = null;
+  for (const day of doneDays) if (DAY_PATTERN.test(day) && day <= latestDue && (newest === null || day > newest)) newest = day;
+  return newest;
+}
+
+/** The schedule's one decision, from the successful runs: the scheduler runs when `due`, Activity shows `nextAt`. */
+export function backupPlan(doneDays: readonly string[], now: number) {
+  const lastDay = lastBackupDay(doneDays, now);
+  return { lastDay, due: backupDue(lastDay, now), nextAt: nextBackupAt(lastDay, now) };
+}
+
 export const dailyBackupName = (day: string) => `daily-${day}.db`;
+
+/**
+ * Is `file` the name the schedule gives the backup of `day`? Retention looks at nothing else: a recorded name
+ * with a path separator, `..`, or another day's name is never a file of the schedule.
+ */
+export const isScheduleFileName = (day: string, file: string) => DAY_PATTERN.test(day) && file === dailyBackupName(day);
 
 /** The day of a daily backup's file name, or null for every other name (the `before-*` deploy copies too). */
 export function dailyBackupDay(name: string) {

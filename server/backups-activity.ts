@@ -6,7 +6,7 @@
 import type { ActivityState } from "../src/types.ts";
 import type { BackupRunStatus } from "./schema.ts";
 import { defineSource, stateFrom } from "./activity-source.ts";
-import { BACKUP_CHECK_INTERVAL_MS, dueAt, nextBackupAt } from "./backup-schedule.ts";
+import { BACKUP_CHECK_INTERVAL_MS, backupPlan, dueAt } from "./backup-schedule.ts";
 
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
@@ -28,7 +28,8 @@ export type BackupRunRow = {
   updated_at: number;
 };
 
-export type BackupRows = { latest: BackupRunRow | null; lastDone: BackupRunRow | null };
+/** The latest run, and the days of every successful run: the schedule decides from those (`backupPlan`). */
+export type BackupRows = { latest: BackupRunRow | null; doneDays: string[] };
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 /** The schedule is in UTC, so its times are shown in UTC. */
@@ -50,8 +51,8 @@ function lastRunText(row: BackupRunRow | null, state: ActivityState | null) {
 
 function nextRunText(rows: BackupRows, state: ActivityState | null, held: boolean, now: number) {
   if (held) return "Next run when resumed";
-  // A running backup is today's; the next one is due the day after.
-  const next = state === "running" && rows.latest ? dueAt(rows.latest.day) + DAY : nextBackupAt(rows.lastDone?.day ?? null, now);
+  // A running backup is today's; the next one is due the day after. Otherwise the scheduler's own decision.
+  const next = state === "running" && rows.latest ? dueAt(rows.latest.day) + DAY : backupPlan(rows.doneDays, now).nextAt;
   if (next <= now) return `Next run within ${Math.round(BACKUP_CHECK_INTERVAL_MS / MINUTE)} minutes`;
   return `Next run ${utcTime(next)}`;
 }
@@ -64,7 +65,7 @@ export const backupSource = defineSource<BackupRows>({
   stuckAfterMs: 30 * MINUTE,
   load: (sqlite) => ({
     latest: (sqlite.prepare(`${SELECT} ORDER BY updated_at DESC, day DESC LIMIT 1`).get() as BackupRunRow | undefined) ?? null,
-    lastDone: (sqlite.prepare(`${SELECT} WHERE status = 'done' ORDER BY day DESC LIMIT 1`).get() as BackupRunRow | undefined) ?? null,
+    doneDays: (sqlite.prepare("SELECT day FROM backup_runs WHERE status = 'done'").all() as { day: string }[]).map((row) => row.day),
   }),
   report(rows, _probe, { now, held }) {
     const row = rows.latest;

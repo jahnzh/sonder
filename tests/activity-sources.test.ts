@@ -97,7 +97,7 @@ const backupRow = (status: string, over: Partial<BackupRunRow> = {}): BackupRunR
   day: "2026-11-14", file: "daily-2026-11-14.db", status, bytes: status === "done" ? 25_300_000 : null, error: status === "failed" ? "Backup failed: disk I/O error" : null,
   started_at: NOW - 2 * MIN, finished_at: status === "running" ? null : NOW - MIN, updated_at: status === "running" ? NOW - 2 * MIN : NOW - MIN, ...over,
 });
-const backupActivity = (rows: { latest: BackupRunRow | null; lastDone: BackupRunRow | null }, now = NOW, pause: Record<string, { paused: boolean; locked: boolean }> = {}) =>
+const backupActivity = (rows: { latest: BackupRunRow | null; doneDays: string[] }, now = NOW, pause: Record<string, { paused: boolean; locked: boolean }> = {}) =>
   buildActivity({ now, multiplier: 1, tracker: new ChangeTracker(), pause, snapshots: [{ source: backupSource, rows, probe: none }] });
 
 test("daily backups: every status the backup runs store maps to its Activity state (#361)", () => {
@@ -105,12 +105,12 @@ test("daily backups: every status the backup runs store maps to its Activity sta
   assert.deepEqual(Object.keys(expected).sort(), [...BACKUP_RUN_STATUSES].sort(), "the walk covers the whole vocabulary");
   for (const status of BACKUP_RUN_STATUSES) {
     const row = backupRow(status);
-    const item = backupActivity({ latest: row, lastDone: status === "done" ? row : null }).items[0];
+    const item = backupActivity({ latest: row, doneDays: status === "done" ? [row.day] : [] }).items[0];
     assert.equal(item.id, "backup:2026-11-14", status);
     assert.equal(item.processId, "backups", status);
     assert.equal(item.state, expected[status], status);
   }
-  const unknown = backupActivity({ latest: backupRow("exploded"), lastDone: null }).items[0];
+  const unknown = backupActivity({ latest: backupRow("exploded"), doneDays: [] }).items[0];
   assert.equal(unknown.state, "failed");
   assert.equal(unknown.error, `${UNKNOWN_STATUS} "exploded"`);
 });
@@ -118,7 +118,7 @@ test("daily backups: every status the backup runs store maps to its Activity sta
 test("daily backups: the process row shows the last run, its result and size, and the next run (#361)", () => {
   const process = (activity: ReturnType<typeof backupActivity>) => activity.processes.find((entry) => entry.id === "backups")!;
   const done = backupRow("done");
-  const ok = backupActivity({ latest: done, lastDone: done });
+  const ok = backupActivity({ latest: done, doneDays: [done.day] });
   assert.equal(process(ok).notTracked, false);
   assert.equal(process(ok).pausable, true);
   assert.equal(process(ok).health, "ok");
@@ -128,24 +128,24 @@ test("daily backups: the process row shows the last run, its result and size, an
 
   const at = Date.UTC(2026, 10, 15, 3, 10);
   const failedRow = backupRow("failed", { day: "2026-11-15", file: "daily-2026-11-15.db", started_at: at, finished_at: at, updated_at: at });
-  const failed = backupActivity({ latest: failedRow, lastDone: done }, Date.UTC(2026, 10, 15, 4));
+  const failed = backupActivity({ latest: failedRow, doneDays: [done.day] }, Date.UTC(2026, 10, 15, 4));
   assert.equal(process(failed).health, "degraded");
   assert.equal(process(failed).reason, "1 failed · Last run 15 Nov 03:10 UTC: failed · Next run within 10 minutes", "a failed day is retried at the next check");
   assert.equal(failed.items[0].state, "failed");
   assert.equal(failed.items[0].error, "Backup failed: disk I/O error", "the reason is shown on the failed run");
   assert.equal(failed.attention, 1, "a failed backup lights the Settings indicator");
 
-  const none = backupActivity({ latest: null, lastDone: null });
+  const none = backupActivity({ latest: null, doneDays: [] });
   assert.equal(process(none).reason, "No backup yet · Next run within 10 minutes");
   assert.deepEqual(none.items, []);
 
-  const paused = backupActivity({ latest: done, lastDone: done }, NOW, { backups: { paused: true, locked: false } });
+  const paused = backupActivity({ latest: done, doneDays: [done.day] }, NOW, { backups: { paused: true, locked: false } });
   assert.equal(process(paused).paused, true);
   assert.equal(process(paused).reason, "Last run 14 Nov 11:59 UTC: succeeded, 25.3 MB · Next run when resumed");
 
-  const running = backupActivity({ latest: backupRow("running"), lastDone: null });
+  const running = backupActivity({ latest: backupRow("running"), doneDays: [] });
   assert.equal(process(running).reason, "Running since 14 Nov 11:58 UTC · Next run 15 Nov 03:00 UTC");
-  const stuck = backupActivity({ latest: backupRow("running"), lastDone: null }, NOW + 40 * MIN);
+  const stuck = backupActivity({ latest: backupRow("running"), doneDays: [] }, NOW + 40 * MIN);
   assert.equal(stuck.items[0].stuck?.reason, "No change for 42 min", "a backup running for over 30 minutes is stuck");
 });
 
