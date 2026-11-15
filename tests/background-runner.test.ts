@@ -36,7 +36,7 @@ const deferred = () => {
 };
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
-test("a loop starts with its own interval, unref'd, with its start hook first and its immediate run where it has one", async () => {
+test("a loop starts with its own interval, unref'd, with its start hook first and its immediate run where it has one", { timeout: 10_000 }, async () => {
   const clock = fakeTimers();
   const events: string[] = [];
   const runner = new BackgroundRunner({ ...clock, isHeld: () => false });
@@ -49,7 +49,7 @@ test("a loop starts with its own interval, unref'd, with its start hook first an
   assert.deepEqual(events, ["now:start", "now:tick", "later:tick"]);
 });
 
-test("the runner skips a tick while the loop's switch holds it, and a tick already running finishes", async () => {
+test("the runner skips a tick while the loop's switch holds it, and a tick already running finishes", { timeout: 10_000 }, async () => {
   const clock = fakeTimers();
   const held = new Set<PausableProcess>();
   const runner = new BackgroundRunner({ ...clock, isHeld: (id) => held.has(id) });
@@ -71,7 +71,7 @@ test("the runner skips a tick while the loop's switch holds it, and a tick alrea
   assert.equal(ticks, 2);
 });
 
-test("a loop without a pause switch is never held", async () => {
+test("a loop without a pause switch is never held", { timeout: 10_000 }, async () => {
   const runner = new BackgroundRunner({ manual: true, isHeld: () => true });
   let ticks = 0;
   runner.add({ id: "sampler", intervalMs: 60_000, tick: () => { ticks++; } });
@@ -79,7 +79,7 @@ test("a loop without a pause switch is never held", async () => {
   assert.equal(ticks, 1);
 });
 
-test("two ticks of one loop never run at once; the timer skips while one is running", async () => {
+test("two ticks of one loop never run at once; the timer skips while one is running", { timeout: 10_000 }, async () => {
   const clock = fakeTimers();
   const runner = new BackgroundRunner({ ...clock, isHeld: () => false });
   let started = 0;
@@ -96,7 +96,7 @@ test("two ticks of one loop never run at once; the timer skips while one is runn
   assert.equal(started, 2, "the next tick after the first finished runs");
 });
 
-test("a failing tick does not stop its loop", async () => {
+test("a failing tick does not stop its loop", { timeout: 10_000 }, async () => {
   const runner = new BackgroundRunner({ manual: true, isHeld: () => false });
   let ticks = 0;
   runner.add({ id: "flaky", intervalMs: 1_000, tick: async () => { ticks++; throw new Error("boom"); } });
@@ -105,7 +105,7 @@ test("a failing tick does not stop its loop", async () => {
   assert.equal(ticks, 2);
 });
 
-test("closing the app clears every timer and runs the stop hooks in reverse start order", async () => {
+test("closing the app clears every timer and runs the stop hooks in reverse start order", { timeout: 10_000 }, async () => {
   const clock = fakeTimers();
   const app = Fastify();
   const runner = backgroundRunner(app, { ...clock, isHeld: () => false });
@@ -126,7 +126,7 @@ test("closing the app clears every timer and runs the stop hooks in reverse star
   assert.deepEqual(events.filter((event) => event.endsWith(":tick")), [], "no tick after close");
 });
 
-test("tests can switch every loop, or some, to manual ticks; start and stop hooks still run", async () => {
+test("tests can switch every loop, or some, to manual ticks; start and stop hooks still run", { timeout: 10_000 }, async () => {
   const clock = fakeTimers();
   const events: string[] = [];
   const all = new BackgroundRunner({ ...clock, manual: true, isHeld: () => false });

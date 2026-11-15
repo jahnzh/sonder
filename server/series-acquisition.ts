@@ -585,7 +585,7 @@ export const seriesAcquisitionLoop: BackgroundProcess = {
   intervalMs: SERIES_ACQUISITION_TICK_MS,
   runAtStart: true,
   pausedBy: "series-acquisition",
-  start: () => resetStrandedSeriesAcquisitionClaims(),
+  start: resetStrandedSeriesAcquisitionClaims,
   tick: () => tickSeriesAcquisition(defaultAcquire),
 };
 
