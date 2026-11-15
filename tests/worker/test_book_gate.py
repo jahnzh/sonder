@@ -1,6 +1,8 @@
-"""Whole-book encode batches share the window endpoints' gate (#402 review): they count in its busy and
-slot fields, never run beside a window request when the gate has one slot, and window requests come first.
-Standard library only; the encoder itself is faked in test_book_pipeline.py (Gate interleaving with a model).
+"""Whole-book encode batches share the window endpoints' gate (#402 reviews): a batch holds a slot, but the
+gate's window fields (`active`, `busy`, `busy_seconds`, `stuck`, what /health reports) describe window
+requests only, a window request that arrives during a batch waits for that one batch instead of being
+refused, and no batch starts while a window request runs or waits. Standard library only; the encoder
+itself is faked in test_book_pipeline.py (Gate interleaving with a model).
 """
 import sys
 import threading
@@ -13,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "worker"))
 import deadline
 from deadline import Gate, WorkerBusy
 
-FAST = {"WINDOW_GRACE_S": 0.05, "WINDOW_RETRY_S": 1.0}
+FAST = {"WINDOW_GRACE_S": 0.05, "WINDOW_RETRY_S": 1.0, "WINDOW_WAIT_MAX_S": 5.0}
 
 
 def fast_rules():
@@ -43,18 +45,108 @@ class Window:
             time.sleep(self.think)
 
 
+def batch_in_thread(gate, seconds, **kwargs):
+    """One book batch of `seconds` in its own thread; returns (thread, entered event)."""
+    entered = threading.Event()
+
+    def book():
+        with gate.hold_background(**kwargs):
+            entered.set()
+            time.sleep(seconds)
+
+    thread = threading.Thread(target=book)
+    thread.start()
+    return thread, entered
+
+
 class BackgroundSlots(unittest.TestCase):
-    def test_a_book_batch_counts_in_busy_and_active(self):
+    def test_a_book_batch_is_not_in_the_window_fields(self):
         gate = Gate(1)
+        idle = (gate.active, gate.busy, gate.busy_seconds(), gate.stuck)
         with fast_rules(), gate.hold_background():
-            self.assertEqual(gate.active, 1)
-            self.assertTrue(gate.busy)
+            self.assertEqual((gate.active, gate.busy, gate.busy_seconds(), gate.stuck), idle,
+                             "the window fields read the same with a book batch on the device")
             self.assertEqual(gate.background_active, 1)
-            self.assertIsNotNone(gate.busy_seconds())
-            with self.assertRaises(WorkerBusy):  # a window request is refused, exactly as before
+            self.assertIsNotNone(gate.background_seconds())
+        self.assertEqual((gate.active, gate.background_active, gate.busy), (0, 0, False))
+
+    def test_a_window_request_that_arrives_during_a_batch_waits_for_it(self):
+        gate = Gate(1)
+        with fast_rules():
+            thread, entered = batch_in_thread(gate, 0.3)
+            self.assertTrue(entered.wait(2))
+            arrived = time.monotonic()
+            with gate.hold():  # not refused
+                waited = time.monotonic() - arrived
+                self.assertEqual(gate.background_active, 0, "the window request runs after the batch, not beside it")
+                self.assertEqual((gate.active, gate.busy), (1, True))
+            thread.join(2)
+        self.assertGreater(waited, 0.1)
+        self.assertLess(waited, 0.3 + 0.5, "at most one batch")
+
+    def test_window_requests_that_fill_every_slot_are_refused_as_before(self):
+        gate = Gate(1)
+        with fast_rules(), gate.hold():
+            with self.assertRaises(WorkerBusy):
                 with gate.hold():
                     pass
-        self.assertEqual((gate.active, gate.background_active, gate.busy), (0, 0, False))
+
+    def test_no_batch_starts_while_a_window_request_waits(self):
+        gate = Gate(1)
+        batches = []
+
+        def book():
+            for _ in range(3):
+                with gate.hold_background():
+                    start = time.monotonic()
+                    time.sleep(0.2)
+                    batches.append((start, time.monotonic()))
+
+        with fast_rules():
+            thread = threading.Thread(target=book)
+            thread.start()
+            while not batches and gate.background_active == 0:
+                time.sleep(0.005)
+            arrived = time.monotonic()
+            with gate.hold():
+                served = time.monotonic()
+                time.sleep(0.05)
+            ended = time.monotonic()
+            thread.join(5)
+        self.assertLess(served - arrived, 0.2 + 0.3, "served within one batch")
+        self.assertFalse(any(arrived < start < ended for start, _ in batches),
+                         "no batch started while the window request waited or ran")
+
+    def test_a_hung_batch_refuses_a_waiting_window_request_after_the_wait_limit(self):
+        gate = Gate(1)
+        with fast_rules(), mock.patch.object(deadline, "WINDOW_WAIT_MAX_S", 0.2):
+            thread, entered = batch_in_thread(gate, 1.0)
+            self.assertTrue(entered.wait(2))
+            started = time.monotonic()
+            with self.assertRaises(WorkerBusy):
+                with gate.hold():
+                    pass
+            self.assertLess(time.monotonic() - started, 0.8)
+            self.assertEqual(gate.active, 0, "the refused request holds no slot")
+            thread.join(3)
+
+    def test_the_holder_is_told_when_it_waits(self):
+        gate = Gate(1)
+        events = []
+        with fast_rules():
+            with gate.hold():
+                thread, entered = batch_in_thread(gate, 0.0, on_wait=events.append)
+                time.sleep(0.2)
+                self.assertEqual(events, [True])
+            self.assertTrue(entered.wait(2))
+            thread.join(2)
+        self.assertEqual(events, [True, False])
+        with fast_rules():
+            quiet = []
+            time.sleep(0.1)
+            with gate.hold_background(on_wait=quiet.append):
+                pass
+        self.assertEqual(quiet, [], "no report when the slot is free at once")
 
     def test_a_book_batch_waits_while_a_window_request_runs(self):
         gate = Gate(2)  # even with a free slot
@@ -77,13 +169,11 @@ class BackgroundSlots(unittest.TestCase):
 
     def test_a_refused_window_request_gets_in_before_the_next_book_batch(self):
         gate = Gate(1)
-        refused_at = []
         with fast_rules():
-            with gate.hold_background():
+            with gate.hold():  # a window request holds the one slot; a second one is refused
                 with self.assertRaises(WorkerBusy):
                     with gate.hold():
                         pass
-                refused_at.append(time.monotonic())
             entered = threading.Event()
 
             def book():
@@ -101,7 +191,7 @@ class BackgroundSlots(unittest.TestCase):
     def test_a_refused_request_that_never_returns_holds_the_book_up_only_for_a_while(self):
         gate = Gate(1)
         with fast_rules():
-            with gate.hold_background():
+            with gate.hold():
                 with self.assertRaises(WorkerBusy):
                     with gate.hold():
                         pass
@@ -164,12 +254,7 @@ class BackgroundSlots(unittest.TestCase):
             self.run_book(gate, batches, 60)
             window.thread.join(10)
         self.assertEqual([n for n, _ in window.served], list(range(6)), "every window request was served")
-        # A refused request is served at its next attempt: the book does not take the gate in between.
-        for n, refused in window.refusals:
-            self.assertEqual(sum(1 for m, _ in window.refusals if m == n), 1, window.refusals)
-            served = next(t for m, t in window.served if m == n)
-            self.assertFalse(any(refused < start < served for start, _ in batches),
-                             "a book batch started while a refused window request waited to retry")
+        self.assertEqual(window.refusals, [], "a book batch never makes a window request refused")
         # Book batches ran between the window requests and never during one.
         first, last = window.served[0][1], window.served[-1][1]
         self.assertTrue(any(first < start < last for start, _ in batches), "the book interleaved")

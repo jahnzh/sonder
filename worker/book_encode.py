@@ -9,7 +9,8 @@ restart encodes only the tracks that were not finished.
 One encode runs on a device at a time: `EncodeQueue` admits jobs in arrival order and the others wait,
 reporting their place. The window endpoints (`/align`, `/anchor`, `/anchor-batch`) do not use the queue.
 Each batch of the encode also holds one slot of the window endpoints' gate (`admit`, the worker's
-`deadline.Gate.hold_background`), so window requests run between batches, never beside one, and come first.
+`deadline.Gate.hold_background`): a batch starts only when no window request runs or waits, and a window
+request that arrives during a batch waits for it (at most one batch, kept short: see CPU_BATCH).
 """
 import json
 import os
@@ -23,20 +24,27 @@ from deadline import GateWaitStopped
 
 CLASSES = 29
 FRAME_BYTES = CLASSES * 2
+# A window request that finds a batch on the device waits for it (deadline.Gate), so a batch stays short.
+# Measured on WSL (2026-11-15, 30 s windows, results back on the CPU): 8 windows on the RTX 3070 Ti in
+# float16 take 0.13 s; on the CPU in float32 one window takes 0.93 s with 8 threads, 1.3 s with 4 and
+# 4.8 s with 1, and 8 windows 12.9 s with 4. So a CPU batch is one window.
 DEFAULT_BATCH = 8
+CPU_BATCH = 1
 
 
 class EncodeCancelled(Exception):
     pass
 
 
-def encode_batch(env=None):
+def encode_batch(env=None, device="cuda"):
+    """Windows per batch: ALIGNMENT_BOOK_ENCODE_BATCH (1-64), else 8 on a GPU and 1 on the CPU."""
     env = os.environ if env is None else env
+    default = CPU_BATCH if str(device).startswith("cpu") else DEFAULT_BATCH
     try:
-        value = int(env.get("ALIGNMENT_BOOK_ENCODE_BATCH", str(DEFAULT_BATCH)))
+        value = int(env.get("ALIGNMENT_BOOK_ENCODE_BATCH", str(default)))
     except (TypeError, ValueError):
-        return DEFAULT_BATCH
-    return value if 1 <= value <= 64 else DEFAULT_BATCH
+        return default
+    return value if 1 <= value <= 64 else default
 
 
 class EncodeQueue:
@@ -139,7 +147,7 @@ def encode_tracks(model, tracks, folder, identity, batch_size=None, should_stop=
     torch = model.torch
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
-    batch_size = batch_size or encode_batch()
+    batch_size = batch_size or encode_batch(device=getattr(model.device, "type", model.device))
     load_pcm = load_pcm or (lambda track: np.memmap(track["pcm"], dtype="<i2", mode="r"))
     audio = {}
     handles = {}
