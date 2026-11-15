@@ -20,7 +20,7 @@
  *   (`lease.canFailover`), otherwise it fails with the reason.
  */
 import { basename } from "node:path";
-import { alignmentJobActive, type AlignmentInterval, type AlignmentJob, type AlignmentOutcome, type ReaderBook } from "../src/reading-types.ts";
+import { alignmentJobActive, bookWorkerJobId, type AlignmentInterval, type AlignmentJob, type AlignmentOutcome, type BookJobCounts, type ReaderBook } from "../src/reading-types.ts";
 import { wordCount } from "./alignment-anchors.ts";
 import { bookProgress, bookResult, bookWorker, type BookAnswer, type BookProgress, type BookResult, type BookStartRequest } from "./alignment-book-worker.ts";
 import { BOOK_ENGINE } from "./alignment-engine.ts";
@@ -51,12 +51,8 @@ export function setBookJobClockForTests(next: typeof defaultClock | null) {
   clock = next ?? defaultClock;
 }
 
-/** The worker's id for this job's current generation: `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`. */
-export function bookWorkerJobId(job: Pick<AlignmentJob, "id" | "generation">) {
-  const safe = (value: string) => value.replace(/[^A-Za-z0-9._-]/g, "_");
-  const id = `${safe(job.id).slice(0, 110)}-${safe(job.generation ?? "").replace(/[._-]/g, "").slice(0, 12)}`;
-  return /^[A-Za-z0-9]/.test(id) ? id : `j${id.slice(0, 127)}`;
-}
+/** The worker's id for this job's current generation (defined with the job's type, which the card reads too). */
+export { bookWorkerJobId };
 
 /** What the run needs from the window runner's module: the lease, the server's stop flag and a consensus's end. */
 export type BookRun = {
@@ -398,6 +394,24 @@ export function bookJobProgress(progress: Pick<BookProgress, "state" | "progress
   }
 }
 
+const COUNT_FIELDS = ["tracksTotal", "tracksDecoded", "tracksEncoded", "groupsTotal", "groupsDone", "encodeQueuePosition",
+  "resumeQueuePosition"] as const satisfies readonly (keyof BookJobCounts)[];
+
+/**
+ * The counts of the worker's progress the Reading sync card shows, read leniently: a field that is missing or not a
+ * count is left out. `gateWaitSeconds` and the disk reservation are not kept, so a wait does not write every poll.
+ */
+export function bookJobCounts(progress: { progress?: Record<string, unknown> | null }): BookJobCounts {
+  const reported = progress.progress ?? {};
+  const counts: BookJobCounts = {};
+  for (const field of COUNT_FIELDS) {
+    const value = reported[field];
+    if (typeof value === "number" && Number.isInteger(value) && value >= 0) counts[field] = value;
+  }
+  if (typeof reported.waitingForWindowRequests === "boolean") counts.waitingForWindowRequests = reported.waitingForWindowRequests;
+  return counts;
+}
+
 const numbers = (record: Record<string, unknown> | null | undefined) =>
   record ? Object.fromEntries(Object.entries(record).filter(([, value]) => typeof value === "number" && Number.isFinite(value) && value >= 0)) as Record<string, number> : undefined;
 
@@ -407,7 +421,8 @@ function recordProgress(
 ) {
   const share = bookJobProgress(progress);
   const timings = numbers(progress.stageTimings);
-  const key = JSON.stringify([progress.state, share, progress.resumed ?? 0, timings]);
+  const counts = bookJobCounts(progress);
+  const key = JSON.stringify([progress.state, share, progress.resumed ?? 0, timings, counts]);
   if (key === written && !firstAnswer) return written;
   // Read and written with no await between: a pause or cancel since the last check is not overwritten.
   const job = storedJob(id);
@@ -417,6 +432,7 @@ function recordProgress(
   job!.bookJob = {
     id: progress.jobId, hostId, state: progress.state, resumed: progress.resumed ?? 0,
     startedAt: job!.bookJob?.id === progress.jobId && job!.bookJob.hostId === hostId ? job!.bookJob.startedAt : Date.now(),
+    counts,
   };
   job!.error = null;
   transition.progress(job!);

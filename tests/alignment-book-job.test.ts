@@ -316,11 +316,12 @@ test("after a server restart the run polls the worker's job it started there and
 });
 
 test("after a server restart the job goes back to the host it was started on, not the first by rank", async () => {
-  fake.hosts.wsl.busy = true;
+  // A book goes to lisa only while WSL cannot be used.
+  fake.hosts.wsl.down = true;
   const created = await heldJob("encoding", "lisa");
   assert.equal(alignmentJob(created.id).pool?.hostId, "lisa");
   await restartServer(() => {
-    fake.hosts.wsl.busy = false;
+    fake.hosts.wsl.down = false;
     fake.hosts.lisa.holdAt = null;
   });
   const job = await settled(created.id);
@@ -520,21 +521,152 @@ test("the worker's result becomes the stored map in one function: checked interv
     { error: "The alignment worker returned an outcome this server does not know (a_later_outcome).", outcome: "error" });
 });
 
-test("chapter-paired jobs run as whole-book jobs on the pool too: two books on the two hosts at once", async () => {
+test("chapter-paired jobs run as whole-book jobs on the pool too; a second book waits for WSL, not lisa", async () => {
   fake.hosts.wsl.holdAt = "encoding";
-  fake.hosts.lisa.holdAt = "encoding";
   const chapterJob = async () => {
     const { recordingId, trackId } = recording();
     const pairings = book.sections.map((section, i) => ({ section: section.index, trackId, start: 10 + i * 100, duration: 80 }));
     return createAlignment("book-ebook", recordingId, pairings, "chapters");
   };
-  const [one, two] = [await chapterJob(), await chapterJob()];
-  await until(() => [one, two].every((job) => alignmentJob(job.id).bookJob?.state === "encoding"), "both encoding");
-  assert.deepEqual([one, two].map((job) => alignmentJob(job.id).pool?.hostId).sort(), ["lisa", "wsl"]);
+  const one = await chapterJob();
+  await until(() => alignmentJob(one.id).bookJob?.state === "encoding", "first encoding");
+  // WSL is healthy and at its limit (one slot, held by the first book): the second book waits in the queue.
+  const two = await chapterJob();
+  const waiting = await settled(two.id, ["queued"]);
+  assert.equal(waiting.bookJob, undefined);
+  assert.deepEqual(fake.hosts.lisa.book, [], "nothing was started or staged on lisa");
+  assert.deepEqual(fake.stagedFolders("lisa"), []);
+  assert.match(waiting.poolErrors?.wsl ?? "", /busy/);
   fake.hosts.wsl.holdAt = null;
-  fake.hosts.lisa.holdAt = null;
-  for (const job of [one, two]) assert.equal((await settled(job.id)).status, "partial");
+  assert.equal((await settled(one.id)).status, "partial");
+  await processAlignments();
+  const second = await settled(two.id);
+  assert.equal(second.status, "partial", second.error ?? undefined);
+  assert.equal(second.pool?.hostId, "wsl");
+  assert.equal(fake.hosts.wsl.starts.length, 2);
+  assert.deepEqual(fake.hosts.lisa.book, []);
   assert.deepEqual(fake.hosts.wsl.requests, [], "no window request");
+});
+
+test("a whole-book job waits for a busy, healthy WSL and then runs there; with WSL down it runs on lisa", async () => {
+  fake.hosts.wsl.busy = true;
+  const created = await anchoredJob();
+  const waiting = await settled(created.id, ["queued"]);
+  assert.deepEqual(fake.hosts.lisa.book, [], "lisa got no book");
+  assert.deepEqual(fake.stagedFolders("lisa"), []);
+  assert.deepEqual(waiting.pool?.triedHosts ?? [], [], "a busy host is not tried");
+  fake.hosts.wsl.busy = false;
+  await processAlignments();
+  const job = await settled(created.id);
+  assert.equal(job.status, "partial", job.error ?? undefined);
+  assert.equal(job.pool?.hostId, "wsl");
+  assert.deepEqual(fake.hosts.lisa.book, []);
+
+  await install();
+  fake.hosts.wsl.down = true;
+  const fallback = await settled((await anchoredJob()).id);
+  assert.equal(fallback.status, "partial", fallback.error ?? undefined);
+  assert.equal(fallback.pool?.hostId, "lisa");
+});
+
+test("which host a lease gives: CPU hosts are a whole-book job's fallback only; window jobs and probes keep rank order", async () => {
+  const { recordingId, trackId } = recording();
+  const track = db.select().from(schema.tracks).all().find((row) => row.id === trackId)!;
+  let leases = 0;
+  const lease = (request: Partial<Parameters<typeof pool.acquireWorkerLease>[0]>) => pool.acquireWorkerLease({
+    id: `lease-${++leases}`, recordingId, mode: "anchored", tracks: [track], localAudio: (row) => row.source, kind: "job", ...request,
+  });
+  const hostOf = async (request: Partial<Parameters<typeof pool.acquireWorkerLease>[0]>) => {
+    const held = await lease(request);
+    const hostId = held.hostId;
+    await held.release("finished");
+    return hostId;
+  };
+
+  // WSL healthy and busy: a book job is refused as busy (it waits); a window job and a probe take lisa as today.
+  fake.hosts.wsl.busy = true;
+  await assert.rejects(() => lease({ book: true }), pool.PoolBusyError);
+  assert.deepEqual(fake.stagedFolders("lisa"), [], "nothing staged on lisa for the book");
+  assert.equal(await hostOf({}), "lisa", "window job");
+  assert.equal(await hostOf({ kind: "probe" }), "lisa", "probe");
+  // WSL's slot held by another lease of this server: the same.
+  fake.hosts.wsl.busy = false;
+  const other = recording();
+  const otherTrack = db.select().from(schema.tracks).all().find((row) => row.id === other.trackId)!;
+  const holder = await pool.acquireWorkerLease({ id: "holder", recordingId: other.recordingId, mode: "anchored",
+    tracks: [otherTrack], localAudio: (row) => row.source, kind: "job", book: true });
+  assert.equal(holder.hostId, "wsl");
+  await assert.rejects(() => lease({ book: true }), pool.PoolBusyError);
+  await holder.release("finished");
+
+  // WSL cannot be used: down, without whole-book jobs, or it already failed this job. The book goes to lisa.
+  fake.hosts.wsl.down = true;
+  assert.equal(await hostOf({ book: true }), "lisa", "WSL down");
+  fake.hosts.wsl.down = false;
+  fake.hosts.wsl.noBookJobs = true;
+  assert.equal(await hostOf({ book: true }), "lisa", "WSL without the book engine");
+  fake.hosts.wsl.noBookJobs = false;
+  fake.hosts.wsl.busy = true;
+  fake.hosts.wsl.stuck = true;
+  assert.equal(await hostOf({ book: true }), "lisa", "WSL stuck");
+  fake.hosts.wsl.stuck = false;
+  assert.equal(await hostOf({ book: true, triedHosts: ["wsl"] }), "lisa", "WSL failed this job");
+  // The host a book was started on is leased first, also lisa (after a restart the worker's job is there).
+  fake.hosts.wsl.busy = false;
+  assert.equal(await hostOf({ book: true, firstHost: "lisa" }), "lisa", "started on lisa");
+  assert.equal(await hostOf({ book: true }), "wsl", "WSL free");
+  assert.equal(slotsHeld(), 0);
+
+  // WSL's slot taken by another lease between its health answer and the slot claim: the book still waits.
+  const coord = getAlignmentPoolCoordinator();
+  setAlignmentPoolDepsForTests({ ...fake.deps, probe: async (target, options) => {
+    if (target === fake.hosts.wsl.sshTarget) assert.ok(coord.tryAcquireCtc("wsl", "racer", other.recordingId, 1));
+    return fake.deps.probe(target, options);
+  } });
+  const stagedOnLisa = fake.stagedFolders("lisa").length;
+  try {
+    await assert.rejects(() => lease({ book: true }), pool.PoolBusyError);
+    assert.equal(fake.stagedFolders("lisa").length, stagedOnLisa, "nothing staged on lisa for the book");
+  } finally {
+    coord.release("wsl", "racer", other.recordingId);
+    setAlignmentPoolDepsForTests(fake.deps);
+  }
+});
+
+test("the fallback rule follows the configured device and rank, not the host's name", async () => {
+  const { recordingId, trackId } = recording();
+  const track = db.select().from(schema.tracks).all().find((row) => row.id === trackId)!;
+  const hostOf = async (book: boolean) => {
+    const held = await pool.acquireWorkerLease({ id: `device-${++n}`, recordingId, mode: "anchored", tracks: [track],
+      localAudio: (row) => row.source, kind: "job", book });
+    const hostId = held.hostId;
+    await held.release("finished");
+    return hostId;
+  };
+  // lisa ranked first: a book still goes to the GPU host, a window job to lisa as ranked.
+  resetAlignmentPoolCoordinator(fake.poolHosts(["lisa", "wsl"]));
+  assert.equal(await hostOf(true), "wsl");
+  assert.equal(await hostOf(false), "lisa");
+  // Both hosts GPUs: a book takes the second while the first is busy.
+  fake.hosts.lisa.device = "cuda";
+  fake.hosts.lisa.precision = "float16";
+  resetAlignmentPoolCoordinator(fake.poolHosts(["wsl", "lisa"]));
+  fake.hosts.wsl.busy = true;
+  assert.equal(await hostOf(true), "lisa");
+});
+
+test("the stored job keeps the worker's counts for the stage it is in, which the Reading sync card shows", async () => {
+  const { syncProgressLine } = await import("../src/reading-sync-status.ts");
+  const encoding = await heldJob("encoding");
+  assert.deepEqual(alignmentJob(encoding.id).bookJob?.counts, { tracksTotal: 1, tracksDecoded: 1, tracksEncoded: 0, encodeQueuePosition: 0 });
+  assert.equal(syncProgressLine(alignmentJob(encoding.id)), "Encoding audio: 0 of 1 file");
+  fake.hosts.wsl.holdAt = "aligning";
+  await until(() => alignmentJob(encoding.id).bookJob?.state === "aligning", "aligning stored");
+  assert.deepEqual(alignmentJob(encoding.id).bookJob?.counts, { tracksTotal: 1, tracksDecoded: 1, tracksEncoded: 1, groupsTotal: 2, groupsDone: 0 });
+  assert.equal(syncProgressLine(alignmentJob(encoding.id)), "Aligning text: 0 of 2 parts");
+  fake.hosts.wsl.holdAt = null;
+  const done = await settled(encoding.id);
+  assert.equal(syncProgressLine(done), `${Math.round(done.coverage * 100)}% of text mapped`);
 });
 
 test("with the pool off the rebuild scan queues no whole-book rebuild", async () => {
@@ -755,7 +887,8 @@ test("after a server restart on another host the first host's job is cancelled b
   fake.hosts.lisa.onBook = (method) => {
     if (method === "POST" && cancelAnswered === null) cancelAnswered = fake.hosts.wsl.answered.includes(`DELETE /book-jobs/${workerJobId}`);
   };
-  await restartServer(() => { fake.hosts.wsl.busy = true; });
+  // WSL now cannot take whole-book jobs (a busy WSL is waited for instead): the job moves to lisa.
+  await restartServer(() => { fake.hosts.wsl.noBookJobs = true; });
   const job = await settled(created.id);
   assert.equal(job.status, "partial", job.error ?? undefined);
   assert.equal(job.pool?.hostId, "lisa");

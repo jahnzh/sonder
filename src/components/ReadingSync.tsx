@@ -8,6 +8,7 @@ import { alignmentMapDeps } from "../alignment-map-deps";
 import { usePlayer } from "../player";
 import { PoolFailureReasons } from "./PoolFailureReasons";
 import { readingSyncControls, rejectedRebuildReason, runJobAction, shownAfterAction } from "../reading-sync-controls";
+import { pauseLabel, pausedLabel, syncProgressLine } from "../reading-sync-status";
 import type { Book } from "../types";
 import {
   alignmentJobActive,
@@ -38,14 +39,6 @@ function flagText(flag: AlignmentFlag) {
     "unaligned": `Could not align ${range}${where}. Left unsynced.`,
     "unmatched-text": `Not found in the narration: ${flag.title || "untitled section"}`,
   }[flag.kind];
-}
-function progressText(job: AlignmentJob) {
-  const plan = job.anchoring;
-  if (job.mode !== "anchored" || !plan)
-    return `${job.sectionsDone.length} of ${job.pairings.length} sections`;
-  if (plan.stage === "sampling")
-    return `Locating text: ${plan.samples.filter((sample) => sample.done).length} of ${plan.samples.length} narration samples`;
-  return `${plan.anchors.length} anchors · ${plan.segments.filter((segment) => segment.done).length} of ${plan.segments.length} passages aligned`;
 }
 function savedOrChapteredRelease(book: ReaderBook, books: Book[]) {
   const saved = localStorage.getItem(userStorageKey(`reader-recording:${book.id}`));
@@ -461,7 +454,7 @@ export function ReadingSync({
                 queued: "Queued",
                 copying: "Saving audio to your HDD",
                 processing: "Preparing reading sync",
-                paused: "Paused after current section",
+                paused: pausedLabel(job),
                 cancelled: "Cancelled",
                 ready: "Ready · Estimated timings",
                 partial:
@@ -474,8 +467,7 @@ export function ReadingSync({
           </strong>
           <progress max="1" value={job.progress} />
           <p>
-            {progressText(job)} · {Math.round(job.coverage * 100)}% of text
-            mapped
+            {syncProgressLine(job)}
             {job.elapsedSeconds > 0
               ? ` · ${clock(job.elapsedSeconds)} processing`
               : ""}
@@ -531,7 +523,7 @@ export function ReadingSync({
               onClick={() => void action("pause")}
               disabled={busy}
             >
-              Pause after section
+              {pauseLabel(job)}
             </button>
             <button
               className="button subtle"
