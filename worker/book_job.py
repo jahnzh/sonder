@@ -91,12 +91,19 @@ class Job:
         self.stop_reason = None
         self.thread = None
         self.lock = threading.Lock()
+        self.save_lock = threading.Lock()  # taken before self.lock, never after it
         self.last_request = time.monotonic()
 
     def save(self):
-        with self.lock:
-            state = dict(self.state)
-        write_json(self.folder / "state.json", state)
+        # The job thread and request threads (cancel) both save; one at a time, as the temporary name is shared.
+        with self.save_lock:
+            with self.lock:
+                state = dict(self.state)
+            try:
+                write_json(self.folder / "state.json", state)
+            except FileNotFoundError:
+                if not self.stop.is_set():
+                    raise  # the folder is gone only after a cancel or an idle end
 
     def update(self, **changes):
         with self.lock:
@@ -501,7 +508,9 @@ class WorkerStages:
                 stats[name] = stats.get(name, 0) + value
         merged, conflicts = book_align.merge_groups(outputs)
         result = self.result(job, metas, longform, merged)
+        starts = self.book_seconds(metas)
         result["stats"] = {**stats, "orderConflictsDropped": conflicts, "groups": len(tasks),
+                           "groupStartsSeconds": [round(starts(t["aStart"]), 3) for t in tasks],
                            "anchors": plan["anchors"], "kernel": book_align.kernel_name(),
                            "rawMapped": len(merged), "device": self.device}
         job.timing("finish", time.monotonic() - started)
@@ -555,12 +564,8 @@ class WorkerStages:
             pool.shutdown(wait=True, cancel_futures=True)
             session.pool = None
 
-    def result(self, job, metas, longform, merged):
-        """Validate the merged intervals and express them in each track's own time."""
-        import bisect
-        import book_align
-        tracks = job.request["tracks"]
-        sentences = job.request["sentences"]
+    @staticmethod
+    def offsets(metas):
         frame_offsets, sample_offsets = [], []
         frames = samples = 0
         for meta in metas:
@@ -568,11 +573,27 @@ class WorkerStages:
             sample_offsets.append(samples)
             frames += meta["frames"]
             samples += meta["samples"]
+        return frame_offsets, sample_offsets
+
+    def book_seconds(self, metas):
+        """Global frame -> book seconds: the frame's own track grid, after the earlier tracks' decoded audio."""
+        import bisect
+        import book_align
+        frame_offsets, sample_offsets = self.offsets(metas)
 
         def to_seconds(frame):
             t = max(0, bisect.bisect_right(frame_offsets, frame) - 1)
             return (sample_offsets[t] + book_align.frame_boundary(frame - frame_offsets[t])) / book_align.RATE
+        return to_seconds
 
+    def result(self, job, metas, longform, merged):
+        """Validate the merged intervals and express them in each track's own time."""
+        import bisect
+        import book_align
+        tracks = job.request["tracks"]
+        sentences = job.request["sentences"]
+        _, sample_offsets = self.offsets(metas)
+        to_seconds = self.book_seconds(metas)
         accepted = book_align.validate(longform, merged, to_seconds)
         intervals = []
         for k in sorted(accepted):
