@@ -308,8 +308,6 @@ test("audio download failure is retryable independently", async () => {
     })
     .run();
   db.insert(schema.userAcquisitions).values({ userId: 1, acquisitionId }).run();
-  const { syncWorkMediaState } = await import("../server/work-media-state.ts");
-  syncWorkMediaState(1, workId);
   const retry = await app.inject({
     method: "POST",
     url: "/api/series/31/works/201/acquisition/retry",
@@ -527,8 +525,6 @@ test("non-admin cannot retry audio or ebook acquisition", async () => {
     })
     .run();
   db.insert(schema.userAcquisitions).values({ userId: 1, acquisitionId }).run();
-  const { syncWorkMediaState } = await import("../server/work-media-state.ts");
-  syncWorkMediaState(1, workId);
   const audioRetry = await app.inject({
     method: "POST",
     url: "/api/series/31/works/201/acquisition/retry",
@@ -664,8 +660,6 @@ test("audio retry records failure on the job instead of throwing", async () => {
     })
     .run();
   db.insert(schema.userAcquisitions).values({ userId: 1, acquisitionId }).run();
-  const { syncWorkMediaState } = await import("../server/work-media-state.ts");
-  syncWorkMediaState(1, workId);
   assert.equal(getWorkMediaState(1, workId)?.state, "failed");
   assert.ok(getWorkMediaState(1, workId)?.acquisitionId);
   setSeriesAcquisitionDeps({

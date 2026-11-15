@@ -24,7 +24,7 @@ const {
 } = await import("../server/series-membership.ts");
 const {
   getWorkMediaState,
-  syncWorkMediaState,
+  trackWorkMediaState,
   markWorkEmptySearch,
 } = await import("../server/work-media-state.ts");
 const { retryWorkMediaAcquisition } = await import("../server/series-membership.ts");
@@ -191,11 +191,15 @@ test("POST /api/hardcover/series adds one library row per canonical position", a
   assert.equal(body.volumes[1].unreleased, true);
   assert.equal(body.volumes[1].mediaState.state, "missing");
   assert.equal(body.volumes[1].mediaState.holdReason, "unreleased");
+  // A released volume is tracked too: its media state exists without an acquisition.
+  assert.equal(body.volumes[0].mediaState.state, "missing");
+  assert.equal(body.volumes[0].mediaState.holdReason, null);
 
   const library = listBooks(1);
   for (const volume of body.volumes) {
     const row = library.find((b) => b.workId === volume.workId);
     assert.ok(row?.inLibrary, `expected library row for ${volume.workId}`);
+    assert.ok(row?.mediaState, `expected a media state for ${volume.workId}`);
   }
 });
 
@@ -226,7 +230,8 @@ test("media state survives reload and tracks queued, failed, available", async (
   db.insert(schema.userLibrary)
     .values({ userId: 1, bookId: "hc-900", status: "unread", addedAt: Date.now() })
     .run();
-  syncWorkMediaState(1, "work-series-a");
+  // A series flow tracks the work before any acquisition exists.
+  trackWorkMediaState(1, "work-series-a");
   assert.equal(getWorkMediaState(1, "work-series-a")?.state, "missing");
 
   const acquisitionId = randomUUID();
@@ -256,14 +261,12 @@ test("media state survives reload and tracks queued, failed, available", async (
   db.insert(schema.userAcquisitions)
     .values({ userId: 1, acquisitionId })
     .run();
-  syncWorkMediaState(1, "work-series-a");
   assert.equal(getWorkMediaState(1, "work-series-a")?.state, "queued");
 
   db.update(schema.acquisitions)
     .set({ status: "error", error: "failed once", updatedAt: Date.now() })
     .where(eq(schema.acquisitions.id, acquisitionId))
     .run();
-  syncWorkMediaState(1, "work-series-a");
   assert.equal(getWorkMediaState(1, "work-series-a")?.state, "failed");
 
   const reloaded = listBooks(1).find((b) => b.workId === "work-series-a");
@@ -294,7 +297,6 @@ test("media state survives reload and tracks queued, failed, available", async (
       sourceType: "local",
     })
     .run();
-  syncWorkMediaState(1, "work-series-a");
   assert.equal(getWorkMediaState(1, "work-series-a")?.state, "available");
 });
 
@@ -362,7 +364,6 @@ test("retryWorkMediaAcquisition re-queues a failed acquisition", async () => {
   db.insert(schema.userAcquisitions)
     .values({ userId: 1, acquisitionId })
     .run();
-  syncWorkMediaState(1, workId);
   assert.equal(getWorkMediaState(1, workId)?.state, "failed");
 
   let retried = false;

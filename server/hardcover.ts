@@ -22,9 +22,10 @@ import { autoAcquireSeriesVolumes, type SeriesAudioSearchDeps } from "./series-a
 import { acquire as defaultAcquire } from "./acquisitions.ts";
 import { hasServerMedia } from "./downloads.ts";
 import {
-  getWorkMediaState,
+  getWorkMediaStates,
   setWorkMediaHold,
-  syncWorkMediaState,
+  trackWorkMediaState,
+  type WorkMediaState,
 } from "./work-media-state.ts";
 import {
   enqueueSeriesAcquisition,
@@ -753,6 +754,10 @@ export function savedHardcoverSeries(userId: number, id: number, options?: {
       workId: string | null; added: number; introduced: number; seen: number;
     }[];
   const author = series.author || "Unknown author";
+  const mediaStates = getWorkMediaStates(
+    userId,
+    rows.flatMap((work) => (work.added && work.workId ? [work.workId] : [])),
+  );
   const mapped = rows.map((work) => {
     const added = !!work.added;
     const unreleased = !!work.unreleased;
@@ -764,7 +769,7 @@ export function savedHardcoverSeries(userId: number, id: number, options?: {
       legacyIntroduced: !!work.introduced,
     });
     const mediaState =
-      added && stateWorkId ? getWorkMediaState(userId, stateWorkId) : null;
+      added && stateWorkId ? (mediaStates.get(stateWorkId) ?? null) : null;
     const acquisition =
       added && stateWorkId
         ? seriesWorkAcquisitions(
@@ -1476,7 +1481,7 @@ export async function addHardcoverSeries(
     workId: string;
     editionId: string;
     unreleased: boolean;
-    mediaState: Awaited<ReturnType<typeof getWorkMediaState>>;
+    mediaState: WorkMediaState | null;
   }[] = [];
   for (const volume of volumes) {
     const imported = await importHardcoverBook(userId, volume.bookId);
@@ -1488,14 +1493,14 @@ export async function addHardcoverSeries(
     if (!edition) throw new Error("The series volume could not be added.");
     const workId = edition.workId;
     if (volume.unreleased) setWorkMediaHold(userId, workId, "unreleased");
-    else syncWorkMediaState(userId, workId);
+    else trackWorkMediaState(userId, workId);
     added.push({
       position: volume.position,
       hardcoverBookId: volume.bookId,
       workId,
       editionId: imported.bookId,
       unreleased: volume.unreleased,
-      mediaState: getWorkMediaState(userId, workId),
+      mediaState: null,
     });
   }
   const author =
@@ -1527,8 +1532,11 @@ export async function addHardcoverSeries(
     overrides?.seriesAudioDeps,
   );
   }
-  for (const row of added)
-    row.mediaState = getWorkMediaState(userId, row.workId);
+  const mediaStates = getWorkMediaStates(
+    userId,
+    added.map((row) => row.workId),
+  );
+  for (const row of added) row.mediaState = mediaStates.get(row.workId) ?? null;
   return { seriesName, volumes: added };
 }
 export function setHardcoverShelf(

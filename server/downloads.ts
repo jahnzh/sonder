@@ -450,6 +450,14 @@ export async function processServerDownloads() {
 export function stopServerDownloads() {
   for (const ctrl of controllers.values()) ctrl.abort();
 }
+/**
+ * Server copies keep their own status words (`queued`, `downloading`, `paused`, `ready`,
+ * `error`); the download list shows them next to acquisitions, so a queued copy reads
+ * as `preparing` there. This is the only translation between the two vocabularies.
+ */
+export function copyStatusInDownloadList(status: string) {
+  return status === "queued" ? "preparing" : status;
+}
 export function listServerDownloads() {
   return db
     .select()
@@ -473,7 +481,7 @@ export function listServerDownloads() {
         title: work.title,
         author: work.author,
         cover: edition.cover,
-        status: job.status === "queued" ? "preparing" : job.status,
+        status: copyStatusInDownloadList(job.status),
         progress: job.progress,
         error: job.error,
         bookId: job.bookId,
