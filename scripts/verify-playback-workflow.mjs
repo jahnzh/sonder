@@ -3,6 +3,7 @@ import fs from "node:fs";
 import {protectBrowserMutations, closeProtectedBrowser} from "./verification-safety.mjs";
 import { chromium, expect as baseExpect } from "@playwright/test";
 import { defaultAppearance } from "../src/appearance.ts";
+import { createReaderControls, waitForBox } from "./live-reader-controls.mjs";
 const expect=baseExpect.configure({timeout:20000});
 process.loadEnvFile(".env");
 const recordingId=process.argv[2];
@@ -58,14 +59,10 @@ try {
   await expect(page.getByText("Loading ebook…",{exact:true})).toBeHidden();
   const room=page.locator(".inline-reader");
   if(hasEbook) await expect(room.locator(".reader-viewport iframe")).toBeVisible();
-  const showControls=async()=>{
-    if(!await room.count() || await room.locator(".reader-topbar").isVisible()) return;
-    const box=await room.locator(".reader-viewport").boundingBox();
-    await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
-    await expect(room.locator(".reader-topbar")).toBeVisible();
-  };
+  // The reader's controls toggle on a tap and reset when it remounts; every use of them goes through this helper (#413).
+  const controls=createReaderControls({page,room});
   const openSources=async()=>{
-    if(await room.count()){await showControls(); await room.locator(".reader-topbar").getByRole("button",{name:"More",exact:true}).click();}
+    if(await room.count()) await controls.click(room.locator(".reader-topbar").getByRole("button",{name:"More",exact:true}),"More");
     else if(await page.getByRole("button",{name:"Playback options",exact:true}).isVisible()) await page.getByRole("button",{name:"Playback options",exact:true}).click();
     const refreshed=page.waitForResponse(response=>new URL(response.url()).pathname===`/api/recordings/${encodeURIComponent(book.recordingId)}/sources`&&response.request().method()==="GET"&&response.ok());
     await page.getByRole("button",{name:"Versions & sources",exact:true}).click();
@@ -73,14 +70,14 @@ try {
     await expect(page.getByRole("dialog",{name:"Versions & sources",exact:true}).getByRole("combobox",{name:"Playback source choice",exact:true})).toBeEnabled();
     return state;
   };
-  await showControls();
   const slider=page.getByRole("slider",{name:"Seek in chapter",exact:true});
+  await controls.show(slider,"Seek in chapter slider");
   await expect(slider).toBeVisible();
   const chapterDuration=Number(await slider.getAttribute("max"));
   if(chapterDuration>3000 && book.tracks[0].chapters?.length>1)throw new Error("Expected embedded chapter duration, not full M4B");
   await slider.fill("60");
   const start=(await actual()).position;
-  const box=await slider.boundingBox(), width=box.width-18;
+  const box=await waitForBox(slider,{description:"Seek in chapter slider"}), width=box.width-18;
   const x=box.x+9+60/chapterDuration*width,y=box.y+box.height/2;
   await page.mouse.move(x,y);await page.mouse.down();
   await page.mouse.move(x,y-156);await page.mouse.move(x+30,y-156,{steps:5});
@@ -92,7 +89,7 @@ try {
   expect((await actual()).paused).toBe(true);
   check("embedded chapter and precision seek",{chapterDuration,seekDelta:preview-60,mobileWidth:box.width});
   const cdp=await context.newCDPSession(page);
-  const touchBox=await slider.boundingBox();
+  const touchBox=await waitForBox(slider,{description:"Seek in chapter slider"});
   const touchX=touchBox.x+9+preview/chapterDuration*(touchBox.width-18),touchY=touchBox.y+touchBox.height/2;
   const touch=async(type,tx=touchX,ty=touchY)=>cdp.send("Input.dispatchTouchEvent",{type,touchPoints:type==="touchEnd"?[]:[{x:tx,y:ty,id:1}]});
   await touch("touchStart");
@@ -111,7 +108,7 @@ try {
   check("touch release keeps the previewed position",{chapterPosition:touchPreview});
   await page.screenshot({path:"artifacts/live-playback-chapter-mobile.png",fullPage:true});
   await page.setViewportSize({width:1440,height:1000});
-  const desktop=await slider.boundingBox();
+  const desktop=await waitForBox(slider,{description:"Seek in chapter slider (desktop)"});
   expect(desktop.width).toBeGreaterThan(box.width*1.7);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(1440);
   check("desktop timeline expands",{width:desktop.width});
@@ -148,8 +145,8 @@ try {
     await page.locator(".player-dock").getByRole("button",{name:"Pause",exact:true}).click();
     // Return to the same time so both delivery modes are checked against it.
     await page.locator(".dock-book").click();
-    await showControls();
-    await page.getByRole("slider",{name:"Seek in chapter",exact:true}).fill(String(Math.round(preview)));
+    await controls.show(slider,"Seek in chapter slider");
+    await slider.fill(String(Math.round(preview)));
     await openSources();
     check("delivery source plays",{source:mode});
   }
@@ -163,8 +160,7 @@ try {
     await expect(page.getByRole("dialog",{name:"Now playing",exact:true})).toBeVisible();
     await expect(page.locator(".reader-viewport iframe")).toBeVisible();
     check("compact player opens linked EPUB");
-    await showControls();
-    await room.locator(".reader-topbar").getByRole("button",{name:"Close reader",exact:true}).click();
+    await controls.click(room.locator(".reader-topbar").getByRole("button",{name:"Close reader",exact:true}),"Close reader");
   } else check("no linked EPUB available");
   await page.getByRole("button",{name:`Open title page for ${book.title}`,exact:true}).click();
   await expect(detail).toBeVisible();
