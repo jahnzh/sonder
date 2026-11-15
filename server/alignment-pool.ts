@@ -390,84 +390,17 @@ async function ctcHealth(host: PoolHost, signal?: AbortSignal): Promise<CtcHealt
 const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
 
 /**
- * How long removing a staged probe directory may take. It has its own deadline, never the request's: the request's
- * signal has usually aborted already when cleanup runs, and the staged copy is the whole recording.
+ * How long removing a probe's partly staged directory may take after staging failed or aborted. It has its own
+ * deadline, never the request's: that signal has usually aborted already, and the staged copy can be the whole
+ * recording.
  */
 export const PROBE_CLEANUP_TIMEOUT_MS = 30_000;
 let probeCleanupTimeoutMs = PROBE_CLEANUP_TIMEOUT_MS;
-
-/**
- * An abandoned worker request (the client aborted or timed out) keeps running on the worker: /anchor is synchronous
- * and does not notice the disconnect. A probe lease keeps its host slot and recording until the worker's /health
- * proves the request ended, or until the worker's own limit for it has passed.
- */
-export const REMOTE_REQUEST_TIMING = {
-  /** A request reaches the worker's gate this soon after it is sent; /health readings closer than this prove nothing. */
-  slackMs: 5000,
-  pollMs: 2000,
-};
-let remoteRequestTiming = { ...REMOTE_REQUEST_TIMING };
-export function setProbeCleanupTimingForTests(timing: { cleanupMs?: number; slackMs?: number; pollMs?: number } | null) {
-  probeCleanupTimeoutMs = timing?.cleanupMs ?? PROBE_CLEANUP_TIMEOUT_MS;
-  remoteRequestTiming = {
-    slackMs: timing?.slackMs ?? REMOTE_REQUEST_TIMING.slackMs,
-    pollMs: timing?.pollMs ?? REMOTE_REQUEST_TIMING.pollMs,
-  };
+export function setProbeCleanupTimeoutForTests(ms: number | null) {
+  probeCleanupTimeoutMs = ms ?? PROBE_CLEANUP_TIMEOUT_MS;
 }
 
-/**
- * The longest the worker lets one request of `durationSeconds` audio run, from worker/deadline.py: its limit is
- * min(ALIGNMENT_TIMEOUT_MAX_SECONDS, BASE + PER_AUDIO_SECOND * duration) with the settings at the top of their
- * allowed ranges (1700, 1500 and 1), plus the kill path's KILL_WAIT_SECONDS + REAP_SECONDS.
- */
-export function workerRequestLimitMs(durationSeconds: number) {
-  return (Math.min(1700, 1500 + 1 * Math.max(0, durationSeconds)) + 5 + 2) * 1000;
-}
-
-type OpenWorkerRequest = { sentAt: number; limitMs: number };
-
-/** What the worker's /health says about its running requests; null when it cannot be read. */
-async function workerActivity(host: PoolHost): Promise<{ activeRequests?: unknown; busySeconds?: unknown } | null> {
-  try {
-    const response = await fetch(`${host.workerUrl.replace(/\/$/, "")}/health`, { signal: AbortSignal.timeout(5000) });
-    if (!response.ok) return null;
-    return await response.json() as { activeRequests?: unknown; busySeconds?: unknown };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Resolves once none of `open` can still be running on the worker. /health names no request, but `busySeconds` is
- * the age of the oldest running one: when that is younger than our youngest request (less the slack), every one of
- * ours has ended. An idle worker (no active request) proves the same. A worker that cannot be read, or an older one
- * without these fields, proves nothing, so the wait then lasts until the worker's own limit has passed.
- */
-async function untilWorkerRequestsEnd(host: PoolHost, open: OpenWorkerRequest[]) {
-  if (!open.length) return;
-  const youngest = Math.max(...open.map((request) => request.sentAt));
-  const giveUpAt = Math.max(...open.map((request) => request.sentAt + request.limitMs));
-  const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
-  for (;;) {
-    const now = Date.now();
-    if (now >= giveUpAt) return;
-    const age = now - youngest;
-    if (age < remoteRequestTiming.slackMs) {
-      await pause(Math.min(remoteRequestTiming.slackMs - age, giveUpAt - now));
-      continue;
-    }
-    const activity = await workerActivity(host);
-    if (activity) {
-      const { activeRequests, busySeconds } = activity;
-      if (activeRequests === 0 && busySeconds === null) return;
-      if (typeof busySeconds === "number" && busySeconds * 1000 < Date.now() - youngest - remoteRequestTiming.slackMs)
-        return;
-    }
-    await pause(Math.min(remoteRequestTiming.pollMs, giveUpAt - Date.now()));
-  }
-}
-
-/** Removes a probe's staged directory under its own short deadline. Failures are left for the next cleanup. */
+/** Removes a probe's staged directory under its own short deadline. A failure leaves the directory. */
 async function removeProbeStaging(host: PoolHost, jobMediaRoot: string, probeId: string) {
   if (!jobMediaRoot.includes(`/alignment/pool-jobs/${probeId}`)) return;
   const cleanup = AbortSignal.timeout(probeCleanupTimeoutMs);
@@ -594,16 +527,7 @@ export type CtcProbeLease = {
   stagedAudio: Record<string, string>;
   /** Hosts dispatch already considered for this lease, including the one that succeeded. */
   triedHosts: PoolHostId[];
-  /**
-   * Call when a worker request of `durationSeconds` audio is sent; call the returned function once its response
-   * arrives. A request given up on (aborted or timed out) stays open: `release` then keeps the host and recording
-   * until the worker shows it ended.
-   */
-  trackRequest(durationSeconds: number): () => void;
-  /**
-   * Waits until no tracked request can still run on the worker, removes the staged audio (under its own short
-   * deadline), then frees the host and recording. Safe to call twice.
-   */
+  /** Frees the host and removes the staged audio. Safe to call twice. */
   release(): Promise<void>;
 };
 
@@ -617,7 +541,7 @@ export async function acquireCtcProbeLease(
   tracks: (typeof schema.tracks.$inferSelect)[],
   localAudio: StageTracksInput["localAudio"],
   triedHosts: PoolHostId[] = [],
-  /** Ends staging when it aborts. It does not end `release`: cleanup has its own deadline. */
+  /** Ends staging and the cleanup in `release` when it aborts; the host slot is freed either way. */
   signal?: AbortSignal,
 ): Promise<CtcProbeLease & { triedHosts: PoolHostId[]; poolErrors: AlignmentJob["poolErrors"] }> {
   if (!poolEnabled()) throw new Error("CTC alignment requires the remote pool.");
@@ -625,8 +549,7 @@ export async function acquireCtcProbeLease(
   const state = await dispatchCtcJob(target, tracks, localAudio, triedHosts, { excludeUnhealthy: true, signal, probe: true });
   const coord = getAlignmentPoolCoordinator();
   const host = coord.hostById(state.hostId);
-  const open = new Set<OpenWorkerRequest>();
-  let releasing: Promise<void> | null = null;
+  let released = false;
   return {
     hostId: state.hostId,
     workerUrl: state.workerUrl,
@@ -634,24 +557,15 @@ export async function acquireCtcProbeLease(
     stagedAudio: state.stagedAudio,
     triedHosts: state.triedHosts,
     poolErrors: target.poolErrors,
-    trackRequest(durationSeconds) {
-      const request = { sentAt: Date.now(), limitMs: workerRequestLimitMs(durationSeconds) };
-      open.add(request);
-      return () => { open.delete(request); };
-    },
-    release() {
-      releasing ??= (async () => {
-        try {
-          if (host) {
-            await untilWorkerRequestsEnd(host, [...open]);
-            // The staged copy is the whole recording; it is this probe's alone, so remove it.
-            await removeProbeStaging(host, state.jobMediaRoot, target.id);
-          }
-        } finally {
-          coord.release(state.hostId, target.id, recordingId);
-        }
-      })();
-      return releasing;
+    async release() {
+      if (released) return;
+      released = true;
+      coord.release(state.hostId, target.id, recordingId);
+      // The staged copy is the whole recording; it is this probe's alone, so remove it.
+      if (host && state.jobMediaRoot.includes(`/alignment/pool-jobs/${target.id}`))
+        await untilAborted(
+          poolDeps().exec(host.sshTarget, `rm -rf ${shellQuote(state.jobMediaRoot)}`, { signal }), signal,
+        ).catch(() => undefined);
     },
   };
 }

@@ -23,10 +23,8 @@ const { db, sqlite } = await import("../server/db.ts");
 const schema = await import("../server/schema.ts");
 const { evaluateOutlierCheck } = await import("../server/ebook-set-outlier.ts");
 const { planSamples } = await import("../server/alignment-anchors.ts");
-const { getAlignmentPoolCoordinator, resetAlignmentPoolCoordinator, setAlignmentPoolDepsForTests, setProbeCleanupTimingForTests, CTC_ENGINE } =
+const { getAlignmentPoolCoordinator, resetAlignmentPoolCoordinator, setAlignmentPoolDepsForTests, CTC_ENGINE } =
   await import("../server/alignment-pool.ts");
-// An abandoned request's lease waits briefly before trusting /health; keep that short here.
-setProbeCleanupTimingForTests({ slackMs: 50, pollMs: 10 });
 const { groupFragments, sampleFromCtcAnchor } = await import("../server/ebook-set-ctc-probe.ts");
 const {
   evaluateEbookSetMember,
@@ -79,9 +77,6 @@ globalThis.fetch = async (input, init) => {
       ready: true,
       busy: health.busy.includes(host),
       stuck: false,
-      // Idle between requests, as worker/align.py reports it: an abandoned request is proven gone at once.
-      busySeconds: null,
-      activeRequests: 0,
       mediaRoot: join(temp, host),
       ctc: {
         engine: CTC_ENGINE,
@@ -126,7 +121,6 @@ after(async () => {
   stopAlignments();
   await new Promise((resolve) => setTimeout(resolve, 200));
   setAlignmentPoolDepsForTests(null);
-  setProbeCleanupTimingForTests(null);
   resetAlignmentPoolCoordinator();
   resetEbookSetDeps();
   sqlite.close();

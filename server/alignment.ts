@@ -1892,9 +1892,7 @@ export function registerAlignment(app: FastifyInstance) {
     const fragments = book.sections.flatMap((section) => section.paragraphs);
     const { createCtcProbeSession, ProbeUnavailable } = await import("./ebook-set-ctc-session.ts");
     // No waiting for a busy host: the reader asked now and can ask again.
-    // The deadline ends staging and the client side of scoring, with their SSH/SCP children, and the route answers.
-    // The lease is freed in the background: only once the worker has ended an abandoned request and the staged
-    // audio is removed (each bounded on its own).
+    // The deadline ends staging, scoring and cleanup and their SSH/SCP children; the lease is freed either way.
     const deadline = new AbortController();
     const timer = setTimeout(() => deadline.abort(new Error(RECOVER_TIMEOUT_MESSAGE)), recoverDeadlineMs);
     const session = createCtcProbeSession(input.recordingId, { waitMs: 0, signal: deadline.signal });

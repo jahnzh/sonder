@@ -35,11 +35,6 @@ export type CtcProbeTarget = {
   audioFingerprint: string;
   /** Ends a request still running when the caller's deadline passes. */
   signal?: AbortSignal;
-  /**
-   * Called as each request of `durationSeconds` audio is sent; the returned function is called once its response
-   * arrives. A request without a response (aborted, timed out) may still run on the worker.
-   */
-  trackRequest?: (durationSeconds: number) => () => void;
 };
 
 export class ProbeLanguageNotSupported extends Error {
@@ -105,13 +100,9 @@ export function sampleFromCtcAnchor(
 
 const NETWORK_RETRIES = 2;
 
-async function post(
-  target: CtcProbeTarget, path: string, body: { duration: number; [field: string]: unknown }, timeout: number,
-): Promise<unknown> {
+async function post(target: CtcProbeTarget, path: string, body: object, timeout: number): Promise<unknown> {
   for (let attempt = 0; ; attempt++) {
     let response: Response;
-    // The worker has finished a request once its response arrives; until then it may still be running it.
-    const answered = target.trackRequest?.(body.duration);
     try {
       response = await fetch(`${target.workerUrl}${path}`, {
         method: "POST",
@@ -124,7 +115,6 @@ async function post(
       if (error instanceof TypeError && attempt < NETWORK_RETRIES) continue;
       throw error;
     }
-    answered?.();
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
       throw new Error(
