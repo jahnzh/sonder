@@ -253,11 +253,10 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
      */
     deferredReturn(): DeferredReturn {
       const at = ++deferrals, returnsThen = returns, chosenThen = chosen;
-      let done = false;
       return {
+        // Running it is a back to narration, so it runs once.
         run(narration) {
-          if (done || deferrals !== at || returns !== returnsThen || chosen !== chosenThen) return null;
-          done = true;
+          if (deferrals !== at || returns !== returnsThen || chosen !== chosenThen) return null;
           return narration === undefined ? self.backToNarration() : self.backToNarration(narration);
         },
       };

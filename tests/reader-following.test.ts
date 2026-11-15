@@ -771,13 +771,16 @@ test("a deferred back to narration does nothing once the reader chose again, ano
     t.following.relocated("chapter", true);
     t.narration.now = true;
     const back = t.following.deferredReturn();
-    if (choose === "wordStep") t.following.wordStep(false);
+    // Each on its own: following stays as that left it, and nothing the return would drop is dropped.
+    if (choose === "wordStep") t.following.wordStep(true);
     else if (choose === "newer") t.following.deferredReturn();
     else if (choose === "backToNarration") t.following.backToNarration(false);
     else t.following[choose]();
-    t.following.pageAway();
+    const following = t.following.isFollowing();
     assert.equal(back.run(), null, choose);
-    assert.equal(t.following.isFollowing(), false, choose);
+    assert.equal(t.following.isFollowing(), following, choose);
+    t.clock.advance(MANUAL_SAVE_DELAY_MS);
+    assert.deepEqual(t.saved, ["chapter"], choose);
   }
   // A late relocation from before (not a choice) does not cancel it, and it runs once.
   const t = setup();
