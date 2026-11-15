@@ -7,7 +7,7 @@ import { alignmentJobNeedsPolling, createAlignmentMapLifecycle } from "../alignm
 import { alignmentMapDeps } from "../alignment-map-deps";
 import { usePlayer } from "../player";
 import { PoolFailureReasons } from "./PoolFailureReasons";
-import { readingSyncControls, rejectedRebuildReason } from "../reading-sync-controls";
+import { readingSyncControls, rejectedRebuildReason, runJobAction, shownAfterAction } from "../reading-sync-controls";
 import type { Book } from "../types";
 import {
   alignmentJobActive,
@@ -207,22 +207,21 @@ export function ReadingSync({
     };
   }, [book.id, selected, book.workId, loadOptions]);
   const job = jobs.find((job) => job.recordingId === selected);
-  const action = async (value: string) => {
-    if (!job) return;
-    setBusy(true);
-    setError("");
-    try {
-      await api(`/alignments/${job.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ action: value }),
-      });
-      ensurePoll(await refresh());
-    } catch (error) {
-      setError((error as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
+  const action = (value: string) =>
+    runJobAction(job, value, {
+      send: (id, value) =>
+        api<AlignmentJob>(`/alignments/${id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ action: value }),
+        }),
+      show: (answer) =>
+        setJobs((current) =>
+          current.map((listed) => (listed.id === answer.id ? shownAfterAction(listed, answer) : listed)),
+        ),
+      refresh: async () => ensurePoll(await refresh()),
+      busy: setBusy,
+      error: setError,
+    });
   const prepare = (forceAnchored = false) => {
     setBusy(true);
     setError("");
@@ -234,7 +233,11 @@ export function ReadingSync({
         ...(anchoredMode || forceAnchored === true ? { mode: "anchored" } : { pairings }),
       }),
     })
-      .then(async () => ensurePoll(await refresh()))
+      // The buttons are freed when the POST answers, not when the listing does (#324).
+      .then(async () => {
+        setBusy(false);
+        ensurePoll(await refresh());
+      })
       .catch((error) => setError(error.message))
       .finally(() => setBusy(false));
   };
