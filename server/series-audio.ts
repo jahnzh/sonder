@@ -170,6 +170,39 @@ export function btihFromMagnet(magnet: string) {
   return /btih:([a-f0-9]{40}|[A-Z2-7]{32})/i.exec(magnet)?.[1]?.toLowerCase();
 }
 
+/** The message of any rejected value: an Error's message, otherwise its string form. */
+export function caughtMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  try {
+    return String(error);
+  } catch (formatError) {
+    // e.g. an object without a prototype, which has no toString.
+    return `unprintable ${typeof error} (${formatError instanceof Error ? formatError.name : "error"})`;
+  }
+}
+
+/**
+ * Log without letting the logger stop the recovery that follows: a logger that throws is
+ * reported to the console and otherwise ignored.
+ */
+function logSafely(log: ((message: string) => void) | undefined, message: string) {
+  if (!log) return;
+  try {
+    log(message);
+  } catch (logError) {
+    console.error(`series audio: the logger threw while logging "${message}"`, logError);
+  }
+}
+
+/** Log a caught error of any kind, safely (see `logSafely`). */
+function logCaught(
+  log: ((message: string) => void) | undefined,
+  label: string,
+  error: unknown,
+) {
+  logSafely(log, `${label}: ${caughtMessage(error)}`);
+}
+
 export async function withProviderRetry<T>(
   label: string,
   fn: () => Promise<T>,
@@ -182,14 +215,12 @@ export async function withProviderRetry<T>(
       return await fn();
     } catch (error) {
       last = error;
-      log(
-        `${label}: ${(error as Error).message} (attempt ${attempt + 1}/${attempts})`,
-      );
+      logSafely(log, `${label}: ${caughtMessage(error)} (attempt ${attempt + 1}/${attempts})`);
       if (attempt + 1 < attempts)
         await new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1)));
     }
   }
-  if (last instanceof Error) log(`${label}: gave up after ${attempts} attempts`);
+  if (last instanceof Error) logSafely(log, `${label}: gave up after ${attempts} attempts`);
   return null;
 }
 
@@ -317,7 +348,7 @@ export async function searchVolumeAudioCandidates(
     ...new Set(list.flatMap((candidate) => (candidate.hash ? [candidate.hash] : []))),
   ];
   const cached = await deps.cachedHashes(hashes).catch((error) => {
-    log(`TorBox cache check: ${(error as Error).message}`);
+    logCaught(log, "TorBox cache check", error);
     return new Set<string>();
   });
   for (const candidate of list)
@@ -389,7 +420,7 @@ export async function autoAcquireSeriesVolume(
     });
   } catch (error) {
     // An acquire that threw before recording an acquisition still tracks the work.
-    deps.log?.(`acquire: ${(error as Error).message}`);
+    logCaught(deps.log, "acquire", error);
     trackWorkMediaState(userId, input.workId);
   }
   return getWorkMediaState(userId, input.workId);
@@ -403,13 +434,13 @@ async function resolveCandidateMagnet(
     try {
       return await deps.prowlarrMagnetLink(candidate.id);
     } catch (error) {
-      deps.log?.(`prowlarr magnet: ${(error as Error).message}`);
+      logCaught(deps.log, "prowlarr magnet", error);
     }
   }
   try {
     return await deps.abbMagnetLink(candidate.id);
   } catch (error) {
-    deps.log?.(`abb magnet: ${(error as Error).message}`);
+    logCaught(deps.log, "abb magnet", error);
     if (!candidate.hash) return null;
     return `magnet:?xt=urn:btih:${candidate.hash}&dn=${encodeURIComponent(candidate.title)}`;
   }

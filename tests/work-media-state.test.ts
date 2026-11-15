@@ -436,6 +436,48 @@ test("the series audio flow tracks a work whose acquire threw before starting", 
   });
 });
 
+test("an acquire rejecting with undefined is logged and the work is still tracked", async () => {
+  addWork("w-series-undefined");
+  const hash = "cd".repeat(20);
+  const logged: string[] = [];
+  const result = await autoAcquireSeriesVolume(
+    1,
+    volumeInput("w-series-undefined"),
+    () => Promise.reject(undefined),
+    { ...oneCandidateDeps(hash), log: (message) => logged.push(message) },
+  );
+  assert.equal((result as { state?: string } | null)?.state, "missing");
+  assert.equal(getWorkMediaState(1, "w-series-undefined")?.state, "missing");
+  assert.deepEqual(logged, ["acquire: undefined"]);
+});
+
+test("a throwing logger does not stop the series audio flow from tracking the work", async () => {
+  addWork("w-series-bad-log");
+  const hash = "ef".repeat(20);
+  const original = console.error;
+  const reported: unknown[][] = [];
+  console.error = (...args: unknown[]) => void reported.push(args);
+  try {
+    const result = await autoAcquireSeriesVolume(
+      1,
+      volumeInput("w-series-bad-log"),
+      () => Promise.reject(Object.create(null)),
+      {
+        ...oneCandidateDeps(hash),
+        log: () => {
+          throw new Error("logger down");
+        },
+      },
+    );
+    assert.equal((result as { state?: string } | null)?.state, "missing");
+  } finally {
+    console.error = original;
+  }
+  assert.equal(getWorkMediaState(1, "w-series-bad-log")?.state, "missing");
+  assert.equal(reported.length, 1);
+  assert.match(String(reported[0][0]), /logger threw while logging "acquire: unprintable object/);
+});
+
 // --- Presence after removing a work with its saved series ---------------------------------
 
 const { removeSavedHardcoverSeries } = await import("../server/series-removal.ts");
