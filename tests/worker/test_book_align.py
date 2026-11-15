@@ -148,6 +148,28 @@ class Chain(unittest.TestCase):
         self.assertEqual(merged, {1: (10, 20), 2: (30, 40), 4: (50, 60)})
         self.assertEqual(dropped, 1)
 
+    def test_merge_compares_with_the_last_kept_sentence(self):
+        # Review counterexample: starts [100, 90, 95]. 90 is dropped; 95 still starts before 100, the last kept.
+        merged, dropped = book_align.merge_groups([{0: (100, 110), 1: (90, 99), 2: (95, 99)}])
+        self.assertEqual(merged, {0: (100, 110)})
+        self.assertEqual(dropped, 2)
+
+    def test_merged_starts_never_decrease_in_sentence_order(self):
+        import random
+        rng = random.Random(402)
+        for _ in range(500):
+            outputs = []
+            for _group in range(rng.randint(1, 4)):
+                keys = rng.sample(range(40), rng.randint(0, 25))
+                outputs.append({k: (s, s + rng.randint(0, 50)) for k in keys for s in [rng.randint(0, 1000)]})
+            merged, dropped = book_align.merge_groups(outputs)
+            starts = [merged[k][0] for k in sorted(merged)]
+            self.assertEqual(starts, sorted(starts), outputs)
+            self.assertEqual(len(merged) + dropped, len({k for out in outputs for k in out}))
+            # Earlier groups win: every kept interval is the first group's interval for that sentence.
+            for k, value in merged.items():
+                self.assertEqual(value, next(out[k] for out in outputs if k in out))
+
 
 @unittest.skipIf(np is None, "numpy is not installed")
 class WholeBook(unittest.TestCase):

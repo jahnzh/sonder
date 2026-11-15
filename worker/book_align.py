@@ -652,17 +652,21 @@ def trim_seams(raw, task, margin):
 
 
 def merge_groups(outputs):
-    """Earlier groups win where groups overlap; a sentence whose start contradicts its predecessor's is dropped."""
+    """Earlier groups win where groups overlap; a sentence that starts before the last sentence kept ahead
+    of it is dropped, so the kept starts never decrease in sentence order."""
     merged = {}
     for result in outputs:
         for key, value in result.items():
             merged.setdefault(int(key), tuple(value))
-    keys = sorted(merged)
     dropped = 0
-    for previous, key in zip(keys, keys[1:]):
-        if key in merged and previous in merged and merged[key][0] < merged[previous][0]:
+    last = None  # the start of the last sentence kept
+    for key in sorted(merged):
+        start = merged[key][0]
+        if last is not None and start < last:
             del merged[key]
             dropped += 1
+        else:
+            last = start
     return merged, dropped
 
 
