@@ -124,17 +124,13 @@ const key = (hostId: PoolHostId, folder: string) => `${hostId}\0${folder}`;
 function readRecords(): Records {
   const records: Records = { jobs: new Map(), owners: new Map(), orphans: new Map() };
   const rows = sqlite.prepare(
-    "SELECT id, recording_id, json_extract(data,'$.status') AS status, json_extract(data,'$.pool') AS pool FROM alignment_jobs",
+    "SELECT id, recording_id, CASE WHEN json_valid(data) THEN json_extract(data,'$.status') END AS status, CASE WHEN json_valid(data) THEN json_extract(data,'$.pool') END AS pool FROM alignment_jobs",
   ).all() as { id: string; recording_id: string; status: string | null; pool: string | null }[];
   for (const row of rows) {
     const job: JobRecord = { id: row.id, recordingId: row.recording_id, status: row.status ?? "" };
     records.jobs.set(row.id, job);
-    let pool: Partial<AlignmentJobPoolState> | null = null;
-    try {
-      pool = row.pool ? JSON.parse(row.pool) : null;
-    } catch {
-      pool = null;
-    }
+    // json_extract returns valid JSON text or NULL, so this parse cannot fail.
+    const pool: Partial<AlignmentJobPoolState> | null = row.pool ? JSON.parse(row.pool) : null;
     for (const [hostId, folder] of Object.entries(storedStaging(pool))) records.owners.set(key(hostId, folder), job);
   }
   for (const row of sqlite.prepare("SELECT host_id, folder, job_id, recording_id FROM alignment_pool_orphans").all() as
