@@ -242,7 +242,8 @@ export function draftsFrom(input: ActivityInput): Draft[] {
     const consensus = row.ebook_id.startsWith("set-consensus:");
     drafts.push({
       id: `alignment:${row.id}`, kind: "alignment", processId: "alignment", title: row.title || row.recording_id,
-      detail: consensus ? "Ebook set check" : job.rebuild ? "Alignment map rebuild" : "Alignment map", user: null, state,
+      detail: job.outcome === "rejected" ? "Alignment map rebuild rejected, previous map kept"
+        : consensus ? "Ebook set check" : job.rebuild ? "Alignment map rebuild" : "Alignment map", user: null, state,
       progress: state === "done" ? 1 : job.progress, host: job.hostId, startedAt: job.createdAt, updatedAt: row.updated_at,
       error: job.error, changedAt: row.updated_at,
     });
