@@ -798,3 +798,18 @@ test("sequence 5: an automatic Word checkpoint queued while following waited for
   moved.clock.advance(MANUAL_SAVE_DELAY_MS);
   assert.deepEqual(moved.saved, ["narrated"]);
 });
+
+test("a gesture made after a back to narration without a narration still counts once following starts to work", () => {
+  const t = setup();
+  t.following.navigate();
+  t.following.beginNavigation()();
+  t.following.backToNarration();
+  t.clock.advance(100);
+  // A wheel turn after the return, then the map arrives and following works.
+  t.following.gesture();
+  t.narration.now = true;
+  t.following.followTarget("r:p1");
+  assert.equal(t.following.relocated("scrolled", true), "manual");
+  t.clock.advance(MANUAL_SAVE_DELAY_MS);
+  assert.deepEqual(t.saved, ["scrolled"]);
+});

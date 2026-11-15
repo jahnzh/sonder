@@ -138,10 +138,7 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
   let returnedFromNavigation = -1;
 
   const set = (value: boolean) => {
-    if (!value) {
-      away++;
-      armed = null;
-    }
+    if (!value) away++;
     if (following === value) return;
     following = value;
     options.onFollowingChange?.(value);
@@ -354,6 +351,8 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
     /** The narration is on sentence `key`: true when a follow jump to it should start. */
     followTarget(key: string) {
       // Following works now: a back to narration that found nothing to follow drops what it kept.
+      // Paged away since (the reader chose again), following is off and nothing is dropped; it
+      // comes back on only through another back to narration, which starts its own wait.
       if (armed && following) {
         const { gesture } = armed;
         armed = null;
