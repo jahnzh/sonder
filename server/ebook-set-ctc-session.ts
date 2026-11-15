@@ -1,13 +1,14 @@
-// One recording's CTC probing session: leases a pool host (WSL GPU first, lisa CPU as the fallback), stages the
-// audio, and scores a run's candidates on it. Every request carries the recording's cache identity, so five
+// One recording's CTC probing session: takes a worker lease (the first healthy pool host in rank order, with the
+// audio staged on it) and scores a run's candidates on it. Every request carries the recording's cache identity, so five
 // candidates cost about one acoustic pass.
 import { isPaused } from "./activity-pause.ts";
 import { audioFingerprint, recordingContext, trackLocalAudioPath } from "./alignment.ts";
+import { randomUUID } from "node:crypto";
 import {
-  acquireCtcProbeLease,
+  acquireWorkerLease,
   PoolBusyError,
-  type CtcProbeLease,
   type PoolHostId,
+  type WorkerLease,
 } from "./alignment-pool.ts";
 import {
   ProbeLanguageNotSupported,
@@ -40,7 +41,7 @@ export function createCtcProbeSession(
   const signal = options.signal;
   const waitMs = options.waitMs ?? PROBE_HOST_WAIT_MS;
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  let lease: CtcProbeLease | null = null;
+  let lease: WorkerLease | null = null;
   // Latch only when no pool host can be acquired for this run (MEDIUM-3); a per-candidate score failure must not
   // skip the rest of the session.
   let unavailable: ProbeUnavailable | null = null;
@@ -56,7 +57,9 @@ export function createCtcProbeSession(
     const deadline = Date.now() + waitMs;
     for (;;) {
       try {
-        const next = await acquireCtcProbeLease(recordingId, needed, trackLocalAudioPath, tried, signal);
+        // Each lease stages under its own id, so a probe never shares a folder with a job or another probe.
+        const next = await acquireWorkerLease({ id: `ctc-probe-${randomUUID()}`, recordingId, mode: "anchored",
+          tracks: needed, localAudio: trackLocalAudioPath, kind: "probe", triedHosts: tried, signal });
         lease = next;
         // Hosts dispatch already tried (including the one that succeeded) stay excluded on a later retry.
         for (const host of next.triedHosts) if (!tried.includes(host)) tried.push(host);
@@ -77,7 +80,8 @@ export function createCtcProbeSession(
   async function release() {
     const held = lease;
     lease = null;
-    await held?.release();
+    // A probe's staged copy is its own and never reused: always remove it.
+    await held?.release("finished");
   }
 
   async function run(fragmentTexts: string[], language: string, samples: ProbeSample[]) {
@@ -113,10 +117,11 @@ export function createCtcProbeSession(
           await release();
           throw error;
         }
-        // A failed probe retries once on the other host (ADR 0005), then this candidate stays held.
+        // A failed probe retries once on the next host (ADR 0005), then this candidate stays held.
         if (!tried.includes(active.hostId)) tried.push(active.hostId);
+        const hostLeft = active.canFailover;
         await release();
-        if (retried || (tried.includes("wsl") && tried.includes("lisa")))
+        if (retried || !hostLeft)
           throw new ProbeUnavailable(error instanceof Error ? error.message : String(error));
         retried = true;
       }

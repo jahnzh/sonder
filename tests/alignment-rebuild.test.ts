@@ -36,8 +36,8 @@ type AlignmentJob = ReturnType<typeof alignmentJob>;
 const engine = "ctc-wav2vec2-base-960h-torchaudio-2.8-v2";
 const aeneas = "aeneas-1.7.3";
 const hosts = [
-  { id: "wsl" as const, sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test" },
-  { id: "lisa" as const, sshTarget: "lisa", maxConcurrent: 1, remoteWorkRoot: temp, workerUrl: "http://lisa-worker.test" },
+  { id: "wsl" as const, sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test", device: "cuda", precision: "float16", rank: 1 },
+  { id: "lisa" as const, sshTarget: "lisa", maxConcurrent: 1, remoteWorkRoot: temp, workerUrl: "http://lisa-worker.test", device: "cpu", precision: "float32", rank: 2 },
 ];
 resetAlignmentPoolCoordinator(hosts);
 setAlignmentPoolDepsForTests({

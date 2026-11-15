@@ -19,7 +19,7 @@ export function installCtcTestPool(
   if (!process.env.ALIGNMENT_WORKER_URL) process.env.ALIGNMENT_WORKER_URL = "http://production-worker.test";
   if (!process.env.ALIGNMENT_WORKER_TOKEN) process.env.ALIGNMENT_WORKER_TOKEN = "test-token";
   const hosts: PoolHost[] = [
-    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl },
+    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl, device: "cuda", precision: "float16", rank: 1 },
   ];
   if (options.lisa !== false)
     hosts.push({
@@ -28,6 +28,9 @@ export function installCtcTestPool(
       maxConcurrent: 1,
       remoteWorkRoot: temp,
       workerUrl: "http://lisa-worker.test",
+      device: "cpu",
+      precision: "float32",
+      rank: 2,
     });
   resetAlignmentPoolCoordinator(hosts);
   setAlignmentPoolDepsForTests({

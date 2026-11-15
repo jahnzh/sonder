@@ -18,7 +18,8 @@ for diagnosis.
 Set `ALIGNMENT_POOL_ENABLED=1` on the server to enable the pool; reading sync
 is shown as available, and newly linked pairs are queued, only when it is set
 together with `ALIGNMENT_WORKER_TOKEN`. A leftover `ALIGNMENT_WORKER_URL` in
-`.env` is ignored. The SSH
+`.env` is ignored. The pool hosts are configuration (ADR 0013; see "Host
+configuration" below); by default they are WSL and lisa. Their SSH
 targets default to `192.168.1.119` and `lisa`, overridden by
 `ALIGNMENT_POOL_WSL_HOST` and `ALIGNMENT_POOL_LISA_HOST`. Worker HTTP URLs
 default to port 3012 on those hosts; override them with
@@ -41,6 +42,85 @@ The workers on WSL and lisa keep running their current revision (`worker/` of
 `main` before #279), which works with this server: see "Deploying the
 alignment-worker retirement (#279)" in `docs/LOCAL_CHECKS.md`. Updating them is
 #411; do not run the installer below for the #279 deploy.
+
+## Worker leases and staged audio
+
+Code that needs a worker asks the pool for a **worker lease**
+(`acquireWorkerLease` in `server/alignment-pool.ts`, ADR 0013). The pool tries
+the configured hosts in rank order and gives the first one that is healthy,
+has the work's device and precision, answers SSH and has a free slot, with the
+recording's tracks staged under `MEDIA_ROOT/alignment/pool-jobs/<id>` on it.
+Alignment jobs and ebook-set probes (also passage locating) use the same lease.
+After a failed request, `failover` moves the lease to the next host the work has
+not tried and stages the tracks there again. A job tries at most two hosts, the
+first and one retry on another, however many are configured; Resume starts a
+new round. A job takes a new lease on every run, so after a
+server restart its stored staging is staged again.
+
+The caller releases the lease on every exit, saying how the work ended:
+
+- **finished** (ready, partial, failed for good, cancelled, or the job is gone):
+  the job has no further use for its staging;
+- **retryable** (paused, waiting in the queue because every host is busy, or
+  the run was interrupted, for example by a server stop): the next run reuses
+  it.
+
+A job runner reads the outcome from the job's stored status when its run ends.
+Neither outcome deletes anything on the hosts: a job's staged audio stays
+there, as it did before leases. Removing it is #421, which runs inside the
+server under leases. Two reviewed attempts at removing it on a finished release
+showed that a remote delete can outlive the claim that protected it and reach
+the folder a later run of the same job has staged into, so this change leaves
+it out.
+
+The lease records what it staged and where: a job's stored assignment keeps
+every host it staged its tracks on and the folder there (`pool.stagedHosts`)
+across requeues, Resume, a new plan of the same pair and server restarts. An
+entry for a host that is not configured at the moment (left out of
+`ALIGNMENT_POOL_HOSTS` for a while, or a retired host in a row of older code) is
+kept. #421 reads this record to find the folders.
+
+Probes always release as finished. A probe's folder is its own and nothing
+reuses it, so its release removes it, as before leases.
+
+Accepted limitations, kept as they are:
+
+- After a recovery (passage locate) deadline the worker may still be finishing
+  the request (#398, #402).
+- Audio staged for a probe whose deadline fires during scoring stays on the
+  host.
+- A probe removal that fails or times out leaves the folder.
+
+### Staged job audio
+
+Job staging is not removed: it was not before leases (32 job folders on WSL on
+2026-11-14), and it is not now. That audio, and what the limitations above
+leave, stays on the hosts until the server removes it under leases (#421). Do not delete folders
+under `pool-jobs/` by hand while jobs or probes run: a resumed or rebuilt job
+reuses its folder, and a probe keeps reading its folder for the whole batch.
+
+## Host configuration
+
+`ALIGNMENT_POOL_HOSTS` replaces the default hosts with a JSON array, one
+object per host:
+
+```json
+[
+  { "id": "wsl", "sshTarget": "192.168.1.119", "workerUrl": "http://192.168.1.119:3012",
+    "device": "cuda", "precision": "float16", "rank": 1, "maxConcurrent": 3 },
+  { "id": "lisa", "sshTarget": "lisa", "workerUrl": "https://audiobooks.amatox.in/sonder-ctc",
+    "device": "cpu", "precision": "float32", "rank": 2 }
+]
+```
+
+`id`, `sshTarget`, `workerUrl`, `device` and `precision` are required; the
+worker must report that device and precision on `/health`. Lower `rank` is
+tried first (default: the position in the list). `maxConcurrent` (default 1)
+and `remoteWorkRoot` (default `ALIGNMENT_POOL_REMOTE_ROOT`) are optional. When
+the setting is unset the default is today's two hosts, built from the
+`ALIGNMENT_POOL_WSL_*` and `ALIGNMENT_POOL_LISA_*` settings above, so
+production needs no `.env` change. An invalid value is refused with its reason:
+the image smoke fails the deploy, and the server stops at startup. No code outside the default configuration compares a host id.
 
 ## Host roles and capabilities
 
@@ -622,6 +702,7 @@ The one-off CTC and Whisper probing comparison passed for all eight titles; the 
 | Proposal | Evidence |
 | --- | --- |
 | Route CTC to WSL first and lisa as the only fallback; never send it to production. | `tests/alignment-ctc.test.ts`: unreachable, busy or incompatible WSL; legacy assignment; disabled pool; and cross-host retry tests. `tests/alignment-pool.test.ts`: production URL rejection, SSH diagnostics and staging tests. |
+| Hand out worker leases: first healthy host by rank, fallback when down or full, re-staging after a worker or server restart, release on every exit, staged audio removed on a finished release only (#394). | `tests/alignment-worker-lease.test.ts` (in-process fake hosts, `tests/fake-pool-host.ts`); host configuration in `tests/alignment-pool-hosts.test.ts`. |
 | Use reported device and busy state for capability and capacity. | `tests/alignment-ctc.test.ts`: incompatible or busy WSL and both workers busy. Real `/health` responses identified WSL as CUDA float16 and lisa as CPU float32 before the gates. |
 | Retry a failure once on the other host, retain a retryable failure, and keep CPU and GPU in the same engine generation with device and precision for diagnostics. | `tests/alignment-ctc.test.ts`: cross-host retry and manual Resume, anchored-window failover, and the CPU and GPU metadata assertions. |
 | Install the lisa environment with the pinned CPU wheels and the anchored planner dependency; document the commands. | The commands above completed on lisa; its environment imported Torch and TorchAudio `2.8.0+cpu`, FastAPI `0.121.3`, Uvicorn `0.38.0`. |

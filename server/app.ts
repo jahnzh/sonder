@@ -46,7 +46,7 @@ import { registerAccountRequests } from "./account-requests.ts";
 import { registerInvites } from "./invites.ts";
 import { registerReader } from "./reader.ts";
 import { registerAlignment, autoQueueAlignmentsForWork, persistedPoolErrors } from "./alignment.ts";
-import { getAlignmentPoolStatus } from "./alignment-pool.ts";
+import { checkPoolHostsSetting, getAlignmentPoolStatus } from "./alignment-pool.ts";
 import { registerActivity } from "./activity.ts";
 import { pauseState, setPaused } from "./activity-pause.ts";
 import {registerMediaLibrary,faultsFor,chooseMedia,sourceChoice} from "./media-library.ts";
@@ -186,6 +186,7 @@ export function logLevel(value = process.env.LOG_LEVEL) {
   return level && LOG_LEVELS.has(level) ? level : "info";
 }
 export async function createApp(options?: { logger?: FastifyServerOptions["logger"] }) {
+  checkPoolHostsSetting();
   ensureMediaStorage();
   seed();
   sqlite

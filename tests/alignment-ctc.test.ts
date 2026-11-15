@@ -28,8 +28,8 @@ const { resetAlignmentPoolCoordinator, setAlignmentPoolDepsForTests } = await im
 const originalFetch = globalThis.fetch;
 const engine = "ctc-wav2vec2-base-960h-torchaudio-2.8-v2";
 resetAlignmentPoolCoordinator([
-  { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test" },
-  { id: "lisa", sshTarget: "lisa", maxConcurrent: 1, remoteWorkRoot: temp, workerUrl: "http://lisa-worker.test" },
+  { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test", device: "cuda", precision: "float16", rank: 1 },
+  { id: "lisa", sshTarget: "lisa", maxConcurrent: 1, remoteWorkRoot: temp, workerUrl: "http://lisa-worker.test", device: "cpu", precision: "float32", rank: 2 },
 ]);
 const testPoolDeps = {
   async probe() { return true; },
@@ -641,8 +641,8 @@ test("pool failure reasons survive storage and summary responses, and resume sta
 test("anchored CTC sampling uses /anchor-batch when the worker advertises it and records GPU util", async () => {
   resetAnchorBatchSupportForTests();
   resetAlignmentPoolCoordinator([
-    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test" },
-    { id: "lisa", sshTarget: "lisa", maxConcurrent: 1, remoteWorkRoot: temp, workerUrl: "http://lisa-worker.test" },
+    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test", device: "cuda", precision: "float16", rank: 1 },
+    { id: "lisa", sshTarget: "lisa", maxConcurrent: 1, remoteWorkRoot: temp, workerUrl: "http://lisa-worker.test", device: "cpu", precision: "float32", rank: 2 },
   ]);
   setAlignmentPoolDepsForTests(testPoolDeps);
   resetAlignmentRunnerForTests();
@@ -710,8 +710,8 @@ test("anchored CTC sampling uses /anchor-batch when the worker advertises it and
 test("anchored CTC sampling falls back to /anchor when the worker lacks batch support", async () => {
   resetAnchorBatchSupportForTests();
   resetAlignmentPoolCoordinator([
-    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test" },
-    { id: "lisa", sshTarget: "lisa", maxConcurrent: 1, remoteWorkRoot: temp, workerUrl: "http://lisa-worker.test" },
+    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test", device: "cuda", precision: "float16", rank: 1 },
+    { id: "lisa", sshTarget: "lisa", maxConcurrent: 1, remoteWorkRoot: temp, workerUrl: "http://lisa-worker.test", device: "cpu", precision: "float32", rank: 2 },
   ]);
   setAlignmentPoolDepsForTests(testPoolDeps);
   resetAlignmentRunnerForTests();
@@ -766,8 +766,8 @@ test("anchored CTC sampling falls back to /anchor when the worker lacks batch su
 test("anchored CTC sampling chunks /anchor-batch to at most 128 windows per request", async () => {
   resetAnchorBatchSupportForTests();
   resetAlignmentPoolCoordinator([
-    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test" },
-    { id: "lisa", sshTarget: "lisa", maxConcurrent: 1, remoteWorkRoot: temp, workerUrl: "http://lisa-worker.test" },
+    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test", device: "cuda", precision: "float16", rank: 1 },
+    { id: "lisa", sshTarget: "lisa", maxConcurrent: 1, remoteWorkRoot: temp, workerUrl: "http://lisa-worker.test", device: "cpu", precision: "float32", rank: 2 },
   ]);
   setAlignmentPoolDepsForTests(testPoolDeps);
   resetAlignmentRunnerForTests();
@@ -837,8 +837,8 @@ test("anchorBatchSupport negative cache expires after TTL while true stays stick
   let now = 1_000_000;
   setAnchorBatchClockForTests(() => now);
   resetAlignmentPoolCoordinator([
-    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test" },
-    { id: "lisa", sshTarget: "lisa", maxConcurrent: 1, remoteWorkRoot: temp, workerUrl: "http://lisa-worker.test" },
+    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test", device: "cuda", precision: "float16", rank: 1 },
+    { id: "lisa", sshTarget: "lisa", maxConcurrent: 1, remoteWorkRoot: temp, workerUrl: "http://lisa-worker.test", device: "cpu", precision: "float32", rank: 2 },
   ]);
   setAlignmentPoolDepsForTests(testPoolDeps);
   resetAlignmentRunnerForTests();
@@ -900,7 +900,7 @@ test("anchorBatchSupport negative cache expires after TTL while true stays stick
 test("historical Earth Awakens batch samples advance to anchored alignment", async () => {
   resetAnchorBatchSupportForTests();
   resetAlignmentPoolCoordinator([
-    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test" },
+    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test", device: "cuda", precision: "float16", rank: 1 },
   ]);
   setAlignmentPoolDepsForTests(testPoolDeps);
   resetAlignmentRunnerForTests();
@@ -957,7 +957,7 @@ test("file lengths learned after an anchored job starts are used to choose ancho
   // once its server copy finishes, which may be after the job has started.
   resetAnchorBatchSupportForTests();
   resetAlignmentPoolCoordinator([
-    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test" },
+    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test", device: "cuda", precision: "float16", rank: 1 },
   ]);
   setAlignmentPoolDepsForTests(testPoolDeps);
   resetAlignmentRunnerForTests();
@@ -1026,7 +1026,7 @@ test("file lengths learned after an anchored job starts are used to choose ancho
 test("files with no length when an anchored job is created are sampled once their length is known", async () => {
   resetAnchorBatchSupportForTests();
   resetAlignmentPoolCoordinator([
-    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test" },
+    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://ctc-worker.test", device: "cuda", precision: "float16", rank: 1 },
   ]);
   setAlignmentPoolDepsForTests(testPoolDeps);
   resetAlignmentRunnerForTests();

@@ -220,12 +220,15 @@ export type AlignmentJob = {
     workerUrl: string;
     triedHosts: AlignmentPoolHostId[];
     stagedAudio: Record<string, string>;
+    /** Every host the job has staged its tracks on, and the folder there (older rows omit it). */
+    stagedHosts?: Record<AlignmentPoolHostId, string>;
   };
   /** Present on summary list responses; full intervals live on /map. */
   intervalCount?: number;
 };
-// "steamdeck" only appears on jobs stored before the Steam Deck left the pool (#279).
-export type AlignmentPoolHostId = "wsl" | "steamdeck" | "lisa";
+// A pool host's configured id (ADR 0013): "wsl" and "lisa" by default. "steamdeck" only appears on jobs stored
+// before the Steam Deck left the pool (#279).
+export type AlignmentPoolHostId = string;
 export type AlignmentPoolHostStatus = {
   id: AlignmentPoolHostId;
   sshTarget: string;
