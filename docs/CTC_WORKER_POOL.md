@@ -30,8 +30,17 @@ server SSH access to both hosts and configure the same private
 under that root. Pool URLs must address the remote hosts; loopback URLs are
 refused for CTC. A passage-locating request has 180 seconds for staging,
 scoring and cleanup together; past that its SSH/SCP processes are stopped, the
-host is freed and the reader gets an error. Protect the worker HTTP ports
-on the trusted network.
+host is freed and the reader gets an error. A probe directory left by staging
+that failed or ran out of time is removed under its own 30 second deadline. A
+recovery that passes its deadline frees the server's lease while the worker
+may still be finishing the request, the same limitation as #398; the
+whole-book job (#402) removes it. Protect the worker HTTP ports on the
+trusted network.
+
+The workers on WSL and lisa keep running their current revision (`worker/` of
+`main` before #279), which works with this server: see "Deploying the
+alignment-worker retirement (#279)" in `docs/LOCAL_CHECKS.md`. Updating them is
+#411; do not run the installer below for the #279 deploy.
 
 ## Host roles and capabilities
 
@@ -132,13 +141,13 @@ For a CPU host (e.g. Lisa):
 ```
 
 The script performs the following actions:
-1. Refuses (exit 3) while the worker on `--port` reports active requests, unless `--force`; then stops `sonder-ctc-worker.service` before changing any file.
-2. Creates the target directory `$HOME/sonder-ctc-worker` with subdirectories `worker/`, `env/` and the media root (`media/`, or the `MEDIA_ROOT` an existing `worker.env` names), and copies worker source files from `worker/`.
+1. Creates the target directory `$HOME/sonder-ctc-worker` with subdirectories `worker/`, `media/`, and `env/`.
+2. Copies worker source files from `worker/`.
 3. Creates a Python virtual environment at `$HOME/sonder-ctc-worker/env`.
 4. Installs pinned dependencies (`torch==2.8.0`, `torchaudio==2.8.0`, `numpy==1.26.4`, `fastapi==0.121.3`, `uvicorn==0.38.0`).
 5. Downloads the pinned Wav2Vec2 Base CTC checkpoint (`wav2vec2_fairseq_base_ls960_asr_ls960.pth`) into `$MEDIA_ROOT/alignment/models`.
-6. Configures `$HOME/sonder-ctc-worker/worker.env` (`ALIGNMENT_WORKER_TOKEN`, `MEDIA_ROOT`, `ALIGNMENT_CTC_DEVICE`, and `ALIGNMENT_WORKER_SLOTS` with `--slots`). On an update it keeps every other line, and an existing `MEDIA_ROOT`, as they are.
-7. Installs, enables, and starts the systemd user service `sonder-ctc-worker.service`, once, with the final `worker.env`.
+6. Configures `$HOME/sonder-ctc-worker/worker.env` (`ALIGNMENT_WORKER_TOKEN`, `MEDIA_ROOT`, `ALIGNMENT_CTC_DEVICE`).
+7. Installs, enables, and starts the systemd user service `sonder-ctc-worker.service`.
 
 ### 3. Enable user lingering
 

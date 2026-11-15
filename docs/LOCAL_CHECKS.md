@@ -134,7 +134,7 @@ git checkout <previous-commit> && docker compose build sonder && docker compose 
 
 ### Deploying the alignment-worker retirement (#279)
 
-`deploy.sh` builds and recreates only `sonder`; it never touches the alignment workers. The app deploy and the remote-worker update are **separate steps, and the app deploy does not depend on the worker update**: the new server works against the worker revision already running on WSL and lisa (`worker/` of `main` before #279). Every request the new server sends carries `engine: "ctc"`, which that worker's `/align`, `/anchor` and `/anchor-batch` accept with the same fields (`audio`, `output`, `fragments`, `language`, `start`/`duration` or `windows`, `prefetch`, `recordingId`, `audioFingerprint`, `trackId`, `microbatch`) and answer from the same CTC pipeline; and every `/health` field the server reads (`ready`, `busy`, `stuck`, `slots`, `activeRequests`, `busySeconds`, `mediaRoot`, `ctc.engine`, `ctc.ready`, `ctc.device`, `ctc.precision`, `ctc.passageReady`, `ctc.anchorBatch`) is in that worker's answer. Its top-level `engine` still says `aeneas-1.7.3`; the server reads `ctc.engine` only.
+`deploy.sh` builds and recreates only `sonder`; it never touches the alignment workers. **The workers on WSL and lisa keep running their current revision** (`worker/` of `main` before #279), which works with this server. Every request the new server sends carries `engine: "ctc"`, which that worker's `/align`, `/anchor` and `/anchor-batch` accept with the same fields (`audio`, `output`, `fragments`, `language`, `start`/`duration` or `windows`, `prefetch`, `recordingId`, `audioFingerprint`, `trackId`, `microbatch`) and answer from the same CTC pipeline; and every `/health` field the server reads (`ready`, `busy`, `stuck`, `slots`, `mediaRoot`, `ctc.engine`, `ctc.ready`, `ctc.device`, `ctc.precision`, `ctc.passageReady`, `ctc.anchorBatch`) is in that worker's answer. Its top-level `engine` still says `aeneas-1.7.3`; the server reads `ctc.engine` only. WSL's live `/health` on 2026-11-15 was `{"ready":true,"engine":"aeneas-1.7.3",...,"slots":8,...,"ctc":{"engine":"ctc-wav2vec2-base-960h-torchaudio-2.8-v2","ready":true,"device":"cuda","precision":"float16",...,"passageReady":true,"anchorBatch":true}}` (the fixture of `tests/image-smoke.test.mjs`); lisa's was not read. Updating the workers is #411: **do not run `scripts/install-ctc-workers.sh` for this deploy.**
 
 1. **Deploy the app** with `scripts/deploy-prod.sh <commit> --marker <string>` as above. The image smoke (step 5) reads each pool host's `/health` body and fails the deploy unless the worker is ready, runs `ctc.engine` `ctc-wav2vec2-base-960h-torchaudio-2.8-v2` with its model ready, and runs on the host's device (`cuda`/`float16` on WSL, `cpu`/`float32` on lisa). Then **stop the old container**, which the new server never calls:
 
@@ -144,30 +144,19 @@ git checkout <previous-commit> && docker compose build sonder && docker compose 
 
    `compose.yaml` no longer defines it, so nothing recreates it; `docker compose up` reports it as an orphan until it is removed. Until the rollback window has passed, keep the stopped container, the `sonder-alignment:local` image and `ALIGNMENT_WORKER_URL` in `.env` (the new server ignores that value): the rollback below needs all three. After the window: `docker rm sonder-alignment`, and delete the `ALIGNMENT_WORKER_URL` line. The image can stay longer (`worker/Dockerfile.ctc-benchmark` builds on it).
 
-2. **Rollback**, in this order (the old server needs `ALIGNMENT_WORKER_URL` and the old container for reading sync and passage recovery):
+2. **Rollback**, in this order (the old server needs `ALIGNMENT_WORKER_URL` and the old container for reading sync and passage recovery). Each check exits non-zero when it fails, and the `&&` chain stops there, before the old app is recreated:
 
    ```bash
-   grep -q '^ALIGNMENT_WORKER_URL=.' .env || echo 'restore ALIGNMENT_WORKER_URL=http://127.0.0.1:3012 in .env first'
-   docker start sonder-alignment            # or, if it was removed: git show <previous-commit>:compose.yaml > /tmp/compose-prev.yaml && docker compose -f /tmp/compose-prev.yaml --project-directory . up -d --no-build alignment-worker
-   curl -s http://127.0.0.1:3012/health     # ready: true
-   docker tag sonder-audiobooks:<rollback-tag> sonder-audiobooks:local && docker compose up -d --no-build sonder
-   docker exec sonder sh -c 'test -n "$ALIGNMENT_WORKER_URL" && test -n "$ALIGNMENT_WORKER_TOKEN" && echo reading sync configured'
+   grep -q '^ALIGNMENT_WORKER_URL=.' .env \
+     && docker start sonder-alignment \
+     && curl -sf --max-time 10 http://127.0.0.1:3012/health | jq -e '.ready == true' \
+     && docker tag sonder-audiobooks:<rollback-tag> sonder-audiobooks:local \
+     && docker compose up -d --no-build sonder \
+     && docker exec sonder sh -c 'test -n "$ALIGNMENT_WORKER_URL" && test -n "$ALIGNMENT_WORKER_TOKEN"' \
+     && echo 'rollback done: reading sync configured'
    ```
 
-   The last line is the old server's own availability rule (URL and token set). Then open Settings → Reading sync: "Prepare reading sync for all titles" must be enabled, without "The alignment worker is not configured on this server." The remote workers need no rollback for this: the old server sends them the same `engine: "ctc"` requests.
-
-3. **Update the remote workers later, as their own step** (optional for the app; it removes Whisper and aeneas from them). On WSL and on lisa, in a checkout of `<commit>` on that host:
-
-   ```bash
-   curl -s http://127.0.0.1:3012/health     # activeRequests must be 0
-   cp ~/sonder-ctc-worker/worker.env ~/sonder-ctc-worker/worker.env.before-279
-   scripts/install-ctc-workers.sh --device cuda      # WSL
-   scripts/install-ctc-workers.sh --device cpu       # lisa
-   curl -s http://127.0.0.1:3012/health     # ready: true, engine and ctc.engine ctc-wav2vec2-base-960h-torchaudio-2.8-v2, ctc.ready: true
-   diff ~/sonder-ctc-worker/worker.env.before-279 ~/sonder-ctc-worker/worker.env   # only the device line may differ
-   ```
-
-   The installer refuses (exit 3) while the worker reports active requests; wait and rerun rather than pass `--force`, which interrupts them. It keeps every `worker.env` line it does not set — `MEDIA_ROOT` (which also receives the model download), `ALIGNMENT_TIMEOUT_*`, `ALIGNMENT_CTC_CACHE_BYTES`, comments — and updates only the token, the device and, with `--slots`, the slot count in place. It stops `sonder-ctc-worker.service` before copying code and packages and starts it once, after `worker.env` is final, so nothing needs re-adding and no second restart is needed. It copies `worker/` over the old files without deleting any and does not uninstall packages, so the retired files and Whisper stay on disk until removed by hand: `rm -f ~/sonder-ctc-worker/worker/{anchors,align_task,pipeline,gate_whisper_probe}.py`, `~/sonder-ctc-worker/env/bin/pip uninstall -y faster-whisper`, and the old weights under `<MEDIA_ROOT>/alignment/models/whisper`. Roll back a worker by running the installer from a checkout of the previous commit (it keeps `worker.env` the same way); either worker revision serves either app revision.
+   If it stops at the first line, restore `ALIGNMENT_WORKER_URL=http://127.0.0.1:3012` in `.env` and run it again. If the container was already removed, recreate it first from the previous commit's `compose.yaml` (`git show <previous-commit>:compose.yaml > /tmp/compose-prev.yaml && docker compose -f /tmp/compose-prev.yaml --project-directory . up -d --no-build alignment-worker`) and run the block again. The `/health` check waits for nothing: if the old worker is still starting, rerun the block. The last check is the old server's own availability rule (URL and token set). Then open Settings → Reading sync: "Prepare reading sync for all titles" must be enabled, without "The alignment worker is not configured on this server." This deploy does not change the workers on WSL and lisa, so the rollback does not touch them.
 
 The script prints the exact rollback command on failure and at the end of a successful run. Record every deploy in `artifacts/orca/STATE.md` (commit, backup path, image tag, markers, live-check results).
 
