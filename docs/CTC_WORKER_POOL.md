@@ -41,8 +41,9 @@ trusted network.
 Until they are updated, the workers on WSL and lisa run their earlier revision
 (`worker/` of `main` before #279), which works with this server: see "Deploying
 the alignment-worker retirement (#279)" in `docs/LOCAL_CHECKS.md`. Update them
-with "Updating a worker" below (#411); its `--prune` step removes Whisper,
-aeneas and their weights from the hosts.
+with "Updating a worker" below (#411). An updated worker no longer loads
+Whisper or aeneas (it runs a new release in a new environment), but their
+files and weights stay on disk until #435 removes them.
 
 ## Worker leases and staged audio
 
@@ -393,8 +394,9 @@ there, so the host needs no checkout. Do one host at a time, WSL first.
 
    In order, it:
    - takes `~/sonder-ctc-worker/.install.lock` for the whole run (an update,
-     `--verify`, `--rollback` and `--prune` refuse with exit 3 while another
-     holds it);
+     `--verify` and `--rollback` refuse with exit 3 while another holds it);
+   - refuses (exit 3) while the last update is `pending`, `failed` or
+     `rolling-back`, or its status is unknown (see "Rollback state" below);
    - refuses (exit 3) while `/health` shows a running request, a busy or stuck
      worker, whole-book work (`bookJobs.jobs` above 0, `bookJobs.slotsHeld`
      above 0, or `bookJobs.resuming` true; `jobs` counts retained book jobs,
@@ -406,19 +408,30 @@ there, so the host needs no checkout. Do one host at a time, WSL first.
    - copies the code to a new `releases/<revision>--<env>/` and builds or
      reuses `envs/<env>/`, downloads the model into the `MEDIA_ROOT` the
      worker uses (read as systemd reads `worker.env`: quotes, CRLF), without
-     touching the code, packages or settings of the running worker;
+     touching the code, packages or settings of the running worker. A release
+     an earlier run left with the same revision, code and environment is
+     reused; one with other code, or an environment without `.complete` (an
+     interrupted build), is refused (exit 1) before any change, and stays as
+     it is: move or remove it yourself. A release this run stages (in
+     `releases/.<name>.staging.XXXXXX/`) or an environment it creates and does
+     not complete is removed when the run ends early;
    - writes `worker.env` keeping every line it does not set byte for byte (a
      key it sets or changes is removed where it was and written as a new line
      at the top of the file, so no kept line changes, not even an unterminated
      last one); saves the current `worker.env`, unit and release in
      `rollback/` (with `--skip-service` too), and for a file that does not
      exist the explicit record `no-worker-env` or `no-unit`;
-   - switches `worker.env`, `current` and the unit, runs `daemon-reload` and
-     `enable`, reads the unit's `ExecMainStartTimestampMonotonic`, checks
-     `/health` a last time and restarts the service once. If that last check
-     finds a request, it puts the saved `worker.env`, unit and `current` back,
-     reloads, removes `rollback/` and exits 3 without restarting: the old
-     worker never stopped running from its own paths;
+   - reads the unit's `ExecMainStartTimestampMonotonic` (`0` for a unit that
+     never started, a genuine value). When `systemctl --user show` fails or
+     prints anything but a number, it stops (exit 1) before anything is
+     switched: the restart could not be verified;
+   - keeps the `rollback/` of the update before as
+     `rollback.superseded.XXXXXX/`, switches `worker.env`, `current` and the
+     unit, runs `daemon-reload` and `enable`, checks `/health` a last time and
+     restarts the service once. If that last check finds a request, it puts
+     the saved `worker.env`, unit and `current` back, reloads, records the
+     update as `rolled-back` and exits 3 without restarting: the old worker
+     never stopped running from its own paths;
    - verifies, for up to `--verify-timeout` seconds (default 300): the unit is
      `active` and its main process started after the time read before the
      restart (so a restart that did not happen fails even when the old process
@@ -447,13 +460,17 @@ there, so the host needs no checkout. Do one host at a time, WSL first.
    scripts/install-ctc-workers.sh --host 192.168.1.119 --rollback
    ```
 
-   It restores the saved `worker.env`, the unit and the previous code, restarts
-   once and verifies the previous worker like an update does: the unit
+   It reads the unit's start time first (a failed read stops it with exit 1
+   before anything changes), restores the saved `worker.env`, the unit and the
+   previous code, restarts once and verifies the previous worker like an
+   update does: the unit
    restarted, the `/health` fields the server checks for the previous code's
    engine and the saved device, media root and revision (when it had one;
    `unknown` for a worker from before #411), and one authenticated request
    with the saved token. With the record `no-unit` (there was no worker
-   before) it stops and disables the service and removes the unit instead. It
+   before) it stops and disables the service instead. A file the saved state
+   did not have (the update's `worker.env`, unit or `current` on a host with
+   no worker before) is moved to `rollback/set-aside.XXXXXX/`, not deleted. It
    refuses, before changing anything, when the saved state has neither a file
    nor its record. It refuses while the new worker runs requests, like the
    update; `--force` interrupts them. The status is `rolling-back` until the
@@ -469,29 +486,34 @@ there, so the host needs no checkout. Do one host at a time, WSL first.
    `curl -s https://audiobooks.amatox.in/sonder-ctc/health` (only the production
    server may read it). Then resume the alignment processor.
 
-6. **Prune**, once both hosts are verified and you no longer want to roll
-   back. Dry run first:
+6. **What stays on disk.** The installer deletes nothing it did not create in
+   the same run. An updated host keeps the layout from before #411
+   (`worker/` with the retired Whisper and aeneas files, `env/` with
+   `faster-whisper` and aeneas), earlier releases and environments,
+   `MEDIA_ROOT/alignment/models/whisper`, and earlier rollback state
+   (`rollback.superseded.*/`, `rollback/set-aside.*/`). The running worker no
+   longer loads the retired packages, because it runs a new release in a new
+   environment, but they are still on disk. Removing them is #435.
 
-   ```sh
-   scripts/install-ctc-workers.sh --host 192.168.1.119 --prune --dry-run
-   scripts/install-ctc-workers.sh --host 192.168.1.119 --prune
-   ```
+**Rollback state.** `rollback/status` is replaced atomically (a new file in
+`rollback/`, renamed over it), so a run killed at any point leaves the
+previous value or the new one. With `rollback/` present, a status that is
+missing, empty, unreadable or any other value is **unknown**: it may be an
+unfinished update or rollback.
 
-   It removes the layout from before #411 (`worker/` with the retired Whisper
-   and aeneas files, and `env/` with `faster-whisper` and aeneas), older
-   releases and environments, `MEDIA_ROOT/alignment/models/whisper`, and
-   `rollback/`, then reports whether the installed environment has
-   `faster_whisper` or `aeneas` (a new environment has neither). It runs only
-   after a verified update, holds the install lock for its whole run and
-   decides what to remove after it holds it, reads the unit that is installed
-   now and refuses (exit 3, nothing removed) when that unit names any path on
-   its list (itself or below it, `%h` and symlinks resolved), and restarts
-   nothing. `--prune --skip-service` is refused: prune must read the unit.
-   After it, `--rollback` has nothing to restore.
+| Status | Update | `--verify` | `--rollback` |
+| --- | --- | --- | --- |
+| no `rollback/` | runs | verifies, records nothing | refuses (exit 1), nothing to roll back |
+| `pending`, `failed` | refuses (exit 3) | verifies, records `verified` or `failed` | runs |
+| `verified` | runs | verifies, records `verified` or `failed` | runs |
+| `rolling-back` | refuses (exit 3) | refuses (exit 3) | runs again |
+| `rolled-back` | runs | verifies, records `verified` or `failed` | refuses (exit 1), already rolled back |
+| unknown | refuses (exit 3) | refuses (exit 3) | runs from the saved files |
 
-Exit codes: 0 done, 1 error, 2 usage, 3 refused (requests running, `/health`
-unknown, last update not verified, a second run in progress, or `systemctl
---user` unreachable is 1), 4 verification failed.
+Exit codes: 0 done, 1 error (also `systemctl --user` unreachable, or the
+unit's start time unreadable), 2 usage, 3 refused (requests running, `/health`
+unknown, last update not verified or its status unknown, a second run in
+progress), 4 verification failed.
 
 Layout on the host after an update:
 
@@ -503,8 +525,9 @@ Layout on the host after an update:
 ├── releases/<revision>--<env>/env -> ../../envs/<env>
 ├── envs/<device>-<hash>/           # one per dependency set; never changed once complete
 ├── rollback/                       # worker.env or no-worker-env, unit or no-unit, current, previous-revision, revision, status
+├── rollback.superseded.XXXXXX/     # the rollback state of each earlier update, kept
 ├── .install.lock                   # held by the run in progress
-├── worker/, env/                   # the layout from before #411, until --prune
+├── worker/, env/                   # the layout from before #411, kept (removing it is #435)
 └── media/                          # the default MEDIA_ROOT of a new host
 ```
 
@@ -933,7 +956,7 @@ The one-off CTC and Whisper probing comparison passed for all eight titles; the 
 | Install the lisa environment with the pinned CPU wheels and the anchored planner dependency; document the commands. | The commands above completed on lisa; its environment imported Torch and TorchAudio `2.8.0+cpu`, FastAPI `0.121.3`, Uvicorn `0.38.0`. |
 | Run both real-model gates and report their outcomes. | The two tables above show identical passing results. |
 | Reproducible install script (`scripts/install-ctc-workers.sh`), systemd user service unit template (`deploy/ctc-worker.service.tmpl`), Caddy reverse-proxy snippet template (`deploy/ctc-worker.caddy.tmpl`), and documentation runbook. | `tests/install-ctc-workers.test.mjs` verifying installer CLI, help flag, syntax, service template, and Caddy configuration. |
-| Safe update (#411): keep `worker.env`, refuse while busy or unknown, no mixed code, one restart, verification with the revision, rollback, prune of Whisper and aeneas. | `tests/install-ctc-workers-update.test.mjs` (fake host), `tests/ctc-worker-install-helper.test.mjs` (systemd 255 parsing sample), `tests/worker/test_health_revision.py`. |
+| Safe update (#411): keep `worker.env`, refuse while busy or unknown, no mixed code, one restart, verification with the revision, rollback; nothing deleted from the host (removing the retired files is #435). | `tests/install-ctc-workers-update.test.mjs` (fake host), `tests/ctc-worker-install-helper.test.mjs` (systemd 255 parsing sample), `tests/worker/test_health_revision.py`. |
 
 The pool remains off by default. No schema migration is needed. The worker
 ran `npx tsc --noEmit`, the focused alignment tests, `npm test`, and the Python

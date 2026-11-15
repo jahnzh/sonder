@@ -274,10 +274,10 @@ test("an update of a legacy host keeps worker.env byte for byte, quoted MEDIA_RO
   assert.match(unit, new RegExp(`WorkingDirectory=%h/sonder-ctc-worker/${release}/worker\n`));
   assert.match(unit, new RegExp(`ExecStart=/usr/bin/nice -n 10 %h/sonder-ctc-worker/envs/${envName}/bin/python `));
 
-  // Service: a check for running requests, the switch, a last check right before the one restart, and proof that
-  // the unit restarted (its main process started after the time read before the restart).
+  // Service: a check for running requests, the start time read before anything is switched, the switch, a last
+  // check right before the one restart, and proof that the unit restarted (its main process started after that).
   assert.deepEqual(host.systemctlCalls(), [
-    "show-environment", `is-active ${UNIT}`, "daemon-reload", `enable ${UNIT}`, SHOW_START, `is-active ${UNIT}`,
+    "show-environment", `is-active ${UNIT}`, SHOW_START, "daemon-reload", `enable ${UNIT}`, `is-active ${UNIT}`,
     `restart ${UNIT}`, `is-active ${UNIT}`, SHOW_START,
   ]);
   assert.equal(host.worker.restarts, 1);
@@ -387,7 +387,7 @@ test("a stopped service needs no /health; a fresh install creates worker.env 060
   assert.match(unit, /Description=Sonder CTC alignment worker/);
   assert.match(unit, new RegExp(`WorkingDirectory=%h/sonder-ctc-worker/${currentRelease(host)}/worker\n`));
   assert.deepEqual(host.systemctlCalls(), [
-    "show-environment", `is-active ${UNIT}`, "daemon-reload", `enable ${UNIT}`, SHOW_START, `is-active ${UNIT}`,
+    "show-environment", `is-active ${UNIT}`, SHOW_START, "daemon-reload", `enable ${UNIT}`, `is-active ${UNIT}`,
     `restart ${UNIT}`, `is-active ${UNIT}`, SHOW_START,
   ]);
 });
@@ -432,7 +432,7 @@ test("a failed verification is reported with exit 4, blocks the next update, and
   assert.equal(statSync(join(host.dir, "worker.env")).mode & 0o777, 0o600);
   assert.deepEqual(readFileSync(host.unitFile), host.original.unit);
   assert.ok(!existsSync(join(host.dir, "current")), "the legacy layout had no current release");
-  assert.deepEqual(host.systemctlCalls(), ["show-environment", `is-active ${UNIT}`, "daemon-reload", SHOW_START,
+  assert.deepEqual(host.systemctlCalls(), ["show-environment", `is-active ${UNIT}`, SHOW_START, "daemon-reload",
     `restart ${UNIT}`, `is-active ${UNIT}`, SHOW_START]);
   assert.equal(host.worker.snapshots.at(-1).workingDirectory, join(host.dir, "worker"), "the old code runs again");
   assert.equal(host.worker.snapshots.at(-1).revision, "");
@@ -539,58 +539,32 @@ test("--verify rechecks the running worker and records the update as verified", 
   assert.equal(host.worker.restarts, 1, "--verify restarts nothing");
 });
 
-test("--prune after a verified update removes the old layout, older releases and environments and the Whisper weights", async (t) => {
+test("--prune is gone, and updates delete nothing: the layout from before #411, earlier releases, environments, the Whisper weights and earlier rollback state stay on disk", async (t) => {
   const host = await fakeHost(t);
+  const usage = await host.install(["--prune"]);
+  assert.equal(usage.status, 2, usage.stdout + usage.stderr);
+  assert.match(usage.stderr, /unknown argument '--prune'/);
+  const help = await host.install(["--help"]);
+  assert.doesNotMatch(help.stdout, /prune/i);
+  assert.match(help.stdout, /Nothing is deleted from the host/);
+
   assert.equal((await host.install(["--revision", "rev-a1"])).status, 0);
   const firstRelease = currentRelease(host);
-  assert.equal((await host.install(["--revision", "rev-b2"])).status, 0);
-  const release = currentRelease(host);
-  assert.notEqual(release, firstRelease);
-  const envName = readlinkSync(join(host.dir, release, "env")).replace("../../envs/", "");
-  mkdirSync(join(host.dir, "envs", "cpu-000000000000"), { recursive: true });
-
-  const dry = await host.install(["--prune", "--dry-run"]);
-  assert.equal(dry.status, 0, dry.stderr);
-  assert.match(dry.stdout, new RegExp(`\\[dry-run\\] Would remove ${host.dir}/worker\n`));
-  assert.ok(existsSync(join(host.dir, "worker")), "a dry run removes nothing");
-
-  const pruned = await host.install(["--prune"]);
-  assert.equal(pruned.status, 0, pruned.stderr);
-  for (const gone of ["worker", "env", "rollback", firstRelease, "envs/cpu-000000000000"]) {
-    assert.ok(!existsSync(join(host.dir, gone)), `${gone} is removed`);
+  const firstSnapshot = readFileSync(join(host.dir, "rollback", "revision"), "utf8");
+  const second = await host.install(["--revision", "rev-b2", "--python", "python3", "--device", "cpu"]);
+  assert.equal(second.status, 0, second.stdout + second.stderr);
+  assert.match(second.stdout, /Earlier code and environments stay on disk .*deletes none of them \(removing them is #435\)/);
+  for (const kept of ["worker/align.py", "env/lib/python3.12/site-packages/faster_whisper",
+    "env/lib/python3.12/site-packages/aeneas", `${firstRelease}/worker/align.py`]) {
+    assert.ok(existsSync(join(host.dir, kept)), `${kept} stays`);
   }
-  assert.ok(!existsSync(join(host.media, "alignment", "models", "whisper")), "the Whisper weights are removed");
-  assert.ok(existsSync(join(host.media, "alignment", "models", "wav2vec2.pth")), "the CTC model stays");
-  assert.ok(existsSync(join(host.dir, release, "worker", "align.py")));
-  assert.ok(existsSync(join(host.dir, "envs", envName, ".complete")));
-  assert.deepEqual(readdirSync(join(host.dir, "envs")), [envName]);
-  assert.match(pruned.stdout, /The installed environment has none of: faster_whisper aeneas\./);
-  assert.equal(host.worker.restarts, 2, "--prune restarts nothing");
-});
-
-test("--prune refuses while the last update is not verified, and when the unit does not run the installed release", async (t) => {
-  const host = await fakeHost(t);
-  host.worker.afterRestart = { ready: false };
-  assert.equal((await host.install(["--revision", "rev-a1", "--verify-timeout", "0"])).status, 4);
-  const refused = await host.install(["--prune"]);
-  assert.equal(refused.status, 3);
-  assert.match(refused.stderr, /is failed, not verified: --prune would remove the code --rollback needs/);
-  assert.ok(existsSync(join(host.dir, "worker")) && existsSync(join(host.dir, "env")));
-
-  host.worker.afterRestart = { ready: true };
-  assert.equal((await host.install(["--rollback"])).status, 0);
-  const afterRollback = await host.install(["--prune"]);
-  assert.equal(afterRollback.status, 3, afterRollback.stdout + afterRollback.stderr);
-  assert.match(afterRollback.stderr, /is rolled-back, not verified/);
-  assert.ok(existsSync(join(host.dir, "worker")) && existsSync(join(host.dir, "env")), "the running old code stays");
-
-  const edited = await fakeHost(t);
-  assert.equal((await edited.install(["--revision", "rev-a1"])).status, 0);
-  writeFileSync(edited.unitFile, LEGACY_UNIT); // the owner pointed the unit back at the old layout by hand
-  const handEdited = await edited.install(["--prune"]);
-  assert.equal(handEdited.status, 3, handEdited.stdout + handEdited.stderr);
-  assert.match(handEdited.stderr, /names .*\/sonder-ctc-worker\/worker, which --prune would remove; nothing pruned/);
-  assert.ok(existsSync(join(edited.dir, "worker")) && existsSync(join(edited.dir, "env")), "nothing is pruned");
+  assert.equal(readdirSync(join(host.dir, "envs")).filter((name) => !name.startsWith(".")).length, 2, "both environments stay");
+  assert.ok(existsSync(join(host.media, "alignment", "models", "whisper", "model.bin")), "the Whisper weights stay");
+  const superseded = readdirSync(host.dir).filter((name) => name.startsWith("rollback.superseded."));
+  assert.equal(superseded.length, 1, "the rollback state of the first update is kept");
+  assert.equal(readFileSync(join(host.dir, superseded[0], "revision"), "utf8"), firstSnapshot);
+  assert.equal(readFileSync(join(host.dir, superseded[0], "status"), "utf8"), "verified\n");
+  assert.equal(readFileSync(join(host.dir, "rollback", "revision"), "utf8"), "rev-b2\n");
 });
 
 test("a dry run reads the host and changes nothing", async (t) => {
@@ -731,76 +705,19 @@ async function holdLock(t, dir) {
   return () => holder.kill();
 }
 
-async function waitFor(path, ms = 5000) {
-  const deadline = Date.now() + ms;
-  while (!existsSync(path)) {
-    if (Date.now() > deadline) return false;
-    await new Promise((done) => setTimeout(done, 20));
-  }
-  return true;
-}
-
-test("BLOCKING 1: --prune holds the install lock for its whole run, so an update or rollback cannot run beside it", async (t) => {
+test("one run at a time: an update, --verify and --rollback refuse while another run holds the install lock", async (t) => {
   const host = await fakeHost(t);
-  assert.equal((await host.install(["--revision", "rev-a1"])).status, 0);
-  assert.equal((await host.install(["--revision", "rev-b2"])).status, 0);
-
-  // Another run holds the lock: prune refuses and removes nothing.
+  host.worker.afterRestart = { ctcReady: false };
+  assert.equal((await host.install(["--revision", "rev-a1", "--verify-timeout", "0"])).status, 4);
+  const before = listTree(host.dir);
   const release = await holdLock(t, host.dir);
-  const refused = await host.install(["--prune"]);
-  assert.equal(refused.status, 3, refused.stdout + refused.stderr);
-  assert.match(refused.stderr, /another install-ctc-workers\.sh run holds/);
-  assert.ok(existsSync(join(host.dir, "worker")) && existsSync(join(host.dir, "rollback")), "nothing is pruned");
+  for (const args of [["--revision", "rev-b2"], ["--verify"], ["--rollback"]]) {
+    const refused = await host.install(args);
+    assert.equal(refused.status, 3, `${args}: ${refused.stdout}${refused.stderr}`);
+    assert.match(refused.stderr, /another install-ctc-workers\.sh run holds/);
+  }
   release();
-
-  // Prune holds the lock while it deletes: an update started meanwhile refuses.
-  const started = join(host.root, "prune-started");
-  const go = join(host.root, "prune-go");
-  const hooks = join(host.root, "prune-hooks.sh");
-  writeFileSync(hooks, `source ${shellQuote(host.hooks)}
-remove_path() {
-  touch ${shellQuote(started)}
-  while [[ ! -f ${shellQuote(go)} ]]; do sleep 0.02; done
-  rm -rf -- "$1"
-}
-`);
-  const pruning = host.install(["--prune"], { SONDER_CTC_INSTALL_HOOKS: hooks });
-  const reached = await waitFor(started);
-  const during = reached ? await host.install(["--revision", "rev-c3"]) : null;
-  const rollbackDuring = reached ? await host.install(["--rollback"]) : null;
-  writeFileSync(go, "");
-  const pruned = await pruning;
-  assert.ok(reached, `prune never reached a deletion through remove_path: ${pruned.stdout}${pruned.stderr}`);
-  assert.equal(during.status, 3, during.stdout + during.stderr);
-  assert.match(during.stderr, /another install-ctc-workers\.sh run holds/);
-  assert.equal(rollbackDuring.status, 3, rollbackDuring.stdout + rollbackDuring.stderr);
-  assert.equal(pruned.status, 0, pruned.stdout + pruned.stderr);
-  assert.ok(!existsSync(join(host.dir, "releases", "rev-c3--cuda-")), "the update did not stage beside prune");
-});
-
-test("BLOCKING 1: --prune refuses --skip-service, and refuses when the installed unit names a path it would delete", async (t) => {
-  const host = await fakeHost(t);
-  assert.equal((await host.install(["--revision", "rev-a1"])).status, 0);
-  writeFileSync(host.unitFile, LEGACY_UNIT); // the owner pointed the unit back at the old layout by hand
-  const skipped = await host.install(["--prune", "--skip-service"]);
-  assert.equal(skipped.status, 2, skipped.stdout + skipped.stderr);
-  assert.match(skipped.stderr, /--prune cannot be combined with --skip-service/);
-  assert.ok(existsSync(join(host.dir, "worker")) && existsSync(join(host.dir, "env")), "nothing is pruned");
-
-  const named = await host.install(["--prune"]);
-  assert.equal(named.status, 3, named.stdout + named.stderr);
-  assert.match(named.stderr, new RegExp(`${UNIT} names ${host.dir}/worker, which --prune would remove; nothing pruned`));
-  assert.ok(existsSync(join(host.dir, "worker")) && existsSync(join(host.dir, "env")), "nothing is pruned");
-
-  // A unit that runs an older release (not the one `current` names) keeps that release too.
-  const older = currentRelease(host);
-  assert.equal((await host.install(["--revision", "rev-b2"])).status, 0);
-  const unit = readFileSync(host.unitFile, "utf8").replaceAll(currentRelease(host), older);
-  writeFileSync(host.unitFile, unit);
-  const olderNamed = await host.install(["--prune"]);
-  assert.equal(olderNamed.status, 3, olderNamed.stdout + olderNamed.stderr);
-  assert.match(olderNamed.stderr, new RegExp(`names ${host.dir}/${older}, which --prune would remove`));
-  assert.ok(existsSync(join(host.dir, older, "worker", "align.py")));
+  assert.deepEqual(listTree(host.dir), before, "nothing changed");
 });
 
 test("BLOCKING 2: an update with --skip-service saves the unit that exists, so --rollback restores it instead of removing it", async (t) => {
@@ -950,7 +867,11 @@ test("HIGH 3: the last check for running requests comes after every file and the
   assert.deepEqual(readFileSync(join(host.dir, "worker.env")), host.original.env);
   assert.deepEqual(readFileSync(host.unitFile), host.original.unit);
   assert.ok(!existsSync(join(host.dir, "current")));
-  assert.ok(!existsSync(join(host.dir, "rollback")), "nothing is left to roll back");
+  assert.equal(readFileSync(join(host.dir, "rollback", "status"), "utf8"), "rolled-back\n", "nothing is left to roll back");
+  assert.equal((await host.install(["--rollback"])).status, 1, "--rollback has nothing to do");
+  const setAside = readdirSync(join(host.dir, "rollback")).filter((name) => name.startsWith("set-aside."));
+  assert.equal(setAside.length, 1, "the update's current link is set aside, not deleted");
+  assert.match(readlinkSync(join(host.dir, "rollback", setAside[0], "current")), /^releases\/rev-a1--/);
   const calls = host.systemctlCalls();
   const lastCheck = calls.lastIndexOf(`is-active ${UNIT}`);
   assert.ok(lastCheck > calls.indexOf(`enable ${UNIT}`), `the last check follows the switch: ${calls.join(", ")}`);
@@ -962,9 +883,8 @@ test("HIGH 3: the last check for running requests comes after every file and the
   const again = await host.install(["--revision", "rev-a1", "--slots", "4"]);
   assert.equal(again.status, 0, again.stdout + again.stderr);
   const order = host.systemctlCalls().slice(calls.length);
-  assert.deepEqual(order.slice(order.indexOf("daemon-reload")), ["daemon-reload", `enable ${UNIT}`,
-    `show --property=ExecMainStartTimestampMonotonic --value ${UNIT}`, `is-active ${UNIT}`, `restart ${UNIT}`,
-    `is-active ${UNIT}`, `show --property=ExecMainStartTimestampMonotonic --value ${UNIT}`]);
+  assert.deepEqual(order.slice(order.indexOf(SHOW_START)), [SHOW_START, "daemon-reload", `enable ${UNIT}`,
+    `is-active ${UNIT}`, `restart ${UNIT}`, `is-active ${UNIT}`, SHOW_START]);
   assert.match(again.stdout, /pause the alignment processor/i);
 });
 
@@ -1097,4 +1017,225 @@ test("MEDIUM 2: the authentication probe names a new path that cannot exist on e
     assert.equal(probe.audioExisted, false, probe.audio);
     assert.ok(probe.audio.startsWith(`${host.media}/alignment/.install-check-`), probe.audio);
   }
+});
+
+// ------------------------------------------------------------------------------------------------------------
+// Review round 2 of #411 (artifacts/orca/review-411-round2.md), narrowed: --prune is gone (above); the status
+// write, the unreadable start time and the remaining deletions.
+
+/** Hooks on top of the fake host's: `systemctl show` fails while the file `show-fails` exists (`once`: one call). */
+function showFails(host, { once = false } = {}) {
+  const marker = join(host.root, "show-fails");
+  const hooks = join(host.root, "show-hooks.sh");
+  writeFileSync(hooks, `source ${shellQuote(host.hooks)}
+eval "fake_$(declare -f host_systemctl)"
+host_systemctl() {
+  if [[ "$1" == show && -f ${shellQuote(marker)} ]]; then
+    ${once ? `rm -f -- ${shellQuote(marker)}` : ":"}
+    printf 'systemctl %s (failed)\\n' "$*" >> ${shellQuote(join(host.root, "host.log"))}
+    echo "Failed to connect to bus: No medium found" >&2
+    return 1
+  fi
+  fake_host_systemctl "$@"
+}
+`);
+  return { marker, env: { SONDER_CTC_INSTALL_HOOKS: hooks } };
+}
+
+const hostState = (host) => ({
+  env: host.fileSha(join(host.dir, "worker.env")), unit: host.fileSha(host.unitFile),
+  current: existsSync(join(host.dir, "current")) ? currentRelease(host) : null,
+  status: existsSync(join(host.dir, "rollback", "status")) ? readFileSync(join(host.dir, "rollback", "status"), "utf8") : null,
+  tree: listTree(host.dir).filter((line) => line !== ".install.lock"),
+});
+
+test("R2 BLOCKING 1: rollback/status is replaced by a rename, never truncated and rewritten in place", async (t) => {
+  const host = await fakeHost(t);
+  host.worker.afterRestart = { ctcReady: false };
+  assert.equal((await host.install(["--revision", "rev-a1", "--verify-timeout", "0"])).status, 4);
+  const statusFile = join(host.dir, "rollback", "status");
+  const before = statSync(statusFile).ino;
+  host.worker.ctcReady = true;
+  const verified = await host.install(["--verify"]);
+  assert.equal(verified.status, 0, verified.stdout + verified.stderr);
+  assert.equal(readFileSync(statusFile, "utf8"), "verified\n");
+  assert.notEqual(statSync(statusFile).ino, before, "a new file renamed over the old one: a kill leaves either value");
+  assert.deepEqual(readdirSync(join(host.dir, "rollback")).filter((name) => name.startsWith(".status.")), [],
+    "no temporary status file is left");
+});
+
+test("R2 BLOCKING 1: with rollback state, a missing, empty or unknown status is unknown: an update and --verify refuse, --rollback restores the saved files", async (t) => {
+  for (const [label, damage] of [
+    ["empty, as a killed truncating write left it", (file) => writeFileSync(file, "")],
+    ["missing", (file) => rmSync(file)],
+    ["an unknown value", (file) => writeFileSync(file, "fail")],
+  ]) {
+    // The review's sequence: the first legacy update switched, its restart failed, and the status write broke.
+    const host = await fakeHost(t);
+    writeFileSync(join(host.root, "fail"), "restart\n");
+    const failed = await host.install(["--revision", "rev-a1", "--slots", "4"]);
+    assert.equal(failed.status, 4, `${label}: ${failed.stdout}${failed.stderr}`);
+    rmSync(join(host.root, "fail"));
+    damage(join(host.dir, "rollback", "status"));
+    const before = hostState(host);
+
+    for (const args of [["--revision", "rev-b2"], ["--revision", "rev-a1"], ["--verify"]]) {
+      const refused = await host.install(args);
+      assert.equal(refused.status, 3, `${label} ${args}: ${refused.stdout}${refused.stderr}`);
+      assert.match(refused.stderr, /status of the last update is unknown .*run --rollback/, label);
+      assert.deepEqual(hostState(host), before, `${label} ${args}: nothing changed`);
+    }
+    assert.equal(host.worker.restarts, 0, label);
+
+    const rolledBack = await host.install(["--rollback"]);
+    assert.equal(rolledBack.status, 0, `${label}: ${rolledBack.stdout}${rolledBack.stderr}`);
+    assert.match(rolledBack.stderr, /status is missing, empty or unreadable; rolling back from the saved files/, label);
+    assert.deepEqual(readFileSync(join(host.dir, "worker.env")), host.original.env, label);
+    assert.deepEqual(readFileSync(host.unitFile), host.original.unit, label);
+    assert.ok(existsSync(join(host.dir, "worker", "align.py")) && existsSync(join(host.dir, "env")), label);
+    assert.equal(host.worker.snapshots.at(-1).workingDirectory, join(host.dir, "worker"), `${label}: the old code runs`);
+    assert.equal(readFileSync(join(host.dir, "rollback", "status"), "utf8"), "rolled-back\n", label);
+  }
+});
+
+test("R2 HIGH 1: an update whose start time cannot be read before the restart stops before anything is switched", async (t) => {
+  // The review's sequence: a settings-only reinstall, the read before the restart fails, the restart has no effect,
+  // and a later read succeeds with the old process's start time.
+  const host = await fakeHost(t);
+  assert.equal((await host.install(["--revision", "rev-a1"])).status, 0);
+  const { marker, env } = showFails(host, { once: true });
+  writeFileSync(marker, "");
+  writeFileSync(join(host.root, "no-restart"), "");
+  const before = hostState(host);
+  const result = await host.install(["--revision", "rev-a1", "--slots", "4"], env);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stderr, /cannot read when sonder-ctc-worker\.service's main process started .* nothing switched/);
+  assert.deepEqual(hostState(host), before, "worker.env, the unit, current and rollback/ are unchanged");
+  assert.equal(host.worker.restarts, 1, "only the first update restarted");
+  assert.ok(!host.systemctlCalls().slice(-3).some((call) => call.startsWith("restart") || call === "daemon-reload"));
+
+  // Output that is not a number is a failed read too; an empty answer is not "never started".
+  rmSync(join(host.root, "no-restart"));
+  writeFileSync(host.startFile, "\n");
+  const empty = await host.install(["--revision", "rev-a1", "--slots", "4"]);
+  assert.equal(empty.status, 1, empty.stdout + empty.stderr);
+  assert.match(empty.stderr, /cannot read when .* main process started/);
+  assert.deepEqual(hostState(host), before);
+
+  // A genuine 0 (a unit that never started) is a value: a fresh install reads it and verifies against it.
+  const fresh = await fakeHost(t, { legacy: false, workerEnv: null });
+  const installed = await fresh.install(["--revision", "rev-a1", "--device", "cpu"]);
+  assert.equal(installed.status, 0, installed.stdout + installed.stderr);
+  assert.equal(readFileSync(fresh.startFile, "utf8"), "1000\n");
+});
+
+test("R2 HIGH 1: a rollback whose start time cannot be read stops before anything changes, and runs again once it can", async (t) => {
+  const host = await fakeHost(t);
+  host.worker.afterRestart = { ctcReady: false };
+  assert.equal((await host.install(["--revision", "rev-a1", "--verify-timeout", "0"])).status, 4);
+  const { marker, env } = showFails(host);
+  writeFileSync(marker, "");
+  host.worker.afterRestart = {};
+  const before = hostState(host);
+  const restarts = host.worker.restarts;
+  const refused = await host.install(["--rollback"], env);
+  assert.equal(refused.status, 1, refused.stdout + refused.stderr);
+  assert.match(refused.stderr, /cannot read when .* main process started .*nothing changed/);
+  assert.deepEqual(hostState(host), before, "the status stays failed and no file is restored");
+  assert.equal(host.worker.restarts, restarts);
+
+  rmSync(marker);
+  const done = await host.install(["--rollback"], env);
+  assert.equal(done.status, 0, done.stdout + done.stderr);
+  assert.deepEqual(readFileSync(join(host.dir, "worker.env")), host.original.env);
+  assert.equal(readFileSync(join(host.dir, "rollback", "status"), "utf8"), "rolled-back\n");
+});
+
+test("R2 deletions: an existing release is reused when its code is the same and refused otherwise, never replaced", async (t) => {
+  const host = await fakeHost(t);
+  assert.equal((await host.install(["--revision", "rev-a1"])).status, 0);
+  host.worker.ignoreRestart = true; // rev-b2 does not come up; roll back to rev-a1
+  assert.equal((await host.install(["--revision", "rev-b2"])).status, 4);
+  const b2 = currentRelease(host);
+  host.worker.ignoreRestart = false;
+  assert.equal((await host.install(["--rollback"])).status, 0);
+  writeFileSync(join(host.dir, b2, "kept-by-the-owner"), "");
+  const inode = statSync(join(host.dir, b2, "worker", "align.py")).ino;
+
+  const dry = await host.install(["--revision", "rev-b2", "--dry-run"]);
+  assert.match(dry.stdout, /\[dry-run\] Would reuse releases\/rev-b2--/);
+  const again = await host.install(["--revision", "rev-b2"]);
+  assert.equal(again.status, 0, again.stdout + again.stderr);
+  assert.match(again.stdout, /Reusing releases\/rev-b2--.*same code/);
+  assert.equal(currentRelease(host), b2);
+  assert.ok(existsSync(join(host.dir, b2, "kept-by-the-owner")), "the release directory was not replaced");
+  assert.equal(statSync(join(host.dir, b2, "worker", "align.py")).ino, inode);
+
+  // The same name with other code: refused before any change, the directory as it was.
+  host.worker.ignoreRestart = true;
+  assert.equal((await host.install(["--revision", "rev-c3"])).status, 4);
+  host.worker.ignoreRestart = false;
+  assert.equal((await host.install(["--rollback"])).status, 0);
+  const c3 = readdirSync(join(host.dir, "releases")).find((name) => name.startsWith("rev-c3--"));
+  writeFileSync(join(host.dir, "releases", c3, "worker", "align.py"), "# edited by hand\n");
+  const before = hostState(host);
+  const refused = await host.install(["--revision", "rev-c3"]);
+  assert.equal(refused.status, 1, refused.stdout + refused.stderr);
+  assert.match(refused.stderr, /releases\/rev-c3--.* exists from an earlier run with other code .*deletes no release.*nothing changed/);
+  assert.deepEqual(hostState(host), before);
+  assert.equal(readFileSync(join(host.dir, "releases", c3, "worker", "align.py"), "utf8"), "# edited by hand\n");
+});
+
+test("R2 deletions: an environment an earlier run left incomplete is refused and kept; one this run fails to build is removed", async (t) => {
+  const host = await fakeHost(t);
+  const dry = await host.install(["--revision", "rev-a1", "--dry-run"]);
+  const envName = dry.stdout.match(/Would build envs\/(\S+)/)[1];
+  mkdirSync(join(host.dir, "envs", envName, "bin"), { recursive: true });
+  writeFileSync(join(host.dir, "envs", envName, "bin", "python"), "half built");
+  const before = hostState(host);
+  const refused = await host.install(["--revision", "rev-a1"]);
+  assert.equal(refused.status, 1, refused.stdout + refused.stderr);
+  assert.match(refused.stderr, new RegExp(`envs/${envName} exists but is not complete .*deletes no environment: remove .* yourself`));
+  assert.deepEqual(hostState(host), before, "nothing changed, the directory included");
+  rmSync(join(host.dir, "envs", envName), { recursive: true });
+
+  // This run's own build fails half way: its directory and its staging are removed, nothing is switched.
+  const hooks = join(host.root, "failing-build.sh");
+  writeFileSync(hooks, `source ${shellQuote(host.hooks)}
+host_build_env() { mkdir -p "$1/bin"; : > "$1/bin/python"; echo "pip: network unreachable" >&2; return 1; }
+`);
+  const failed = await host.install(["--revision", "rev-a1"], { SONDER_CTC_INSTALL_HOOKS: hooks });
+  assert.notEqual(failed.status, 0, failed.stdout + failed.stderr);
+  assert.ok(!existsSync(join(host.dir, "envs", envName)), "the half-built environment of this run is removed");
+  assert.deepEqual(readdirSync(join(host.dir, "releases")).filter((name) => name.startsWith(".")), [], "no staging left");
+  assert.deepEqual(readFileSync(join(host.dir, "worker.env")), host.original.env);
+  assert.deepEqual(readFileSync(host.unitFile), host.original.unit);
+  assert.ok(!existsSync(join(host.dir, "rollback")) && !existsSync(join(host.dir, "current")));
+  assert.equal((await host.install(["--revision", "rev-a1"])).status, 0, "the next run reuses the release and builds");
+});
+
+test("R2 deletions: a rollback to 'no worker before' sets the update's worker.env and unit aside instead of deleting them", async (t) => {
+  const fresh = await fakeHost(t, { legacy: false, workerEnv: null });
+  fresh.worker.afterRestart = { ctcReady: false };
+  assert.equal((await fresh.install(["--revision", "rev-a1", "--device", "cpu", "--verify-timeout", "0"])).status, 4);
+  const written = { env: readFileSync(join(fresh.dir, "worker.env")), unit: readFileSync(fresh.unitFile) };
+  const undone = await fresh.install(["--rollback"]);
+  assert.equal(undone.status, 0, undone.stdout + undone.stderr);
+  assert.ok(!existsSync(fresh.unitFile) && !existsSync(join(fresh.dir, "worker.env")) && !existsSync(join(fresh.dir, "current")));
+  const [aside] = readdirSync(join(fresh.dir, "rollback")).filter((name) => name.startsWith("set-aside."));
+  assert.ok(aside, "a set-aside directory");
+  assert.deepEqual(readFileSync(join(fresh.dir, "rollback", aside, "worker.env")), written.env);
+  assert.deepEqual(readFileSync(join(fresh.dir, "rollback", aside, UNIT)), written.unit);
+  assert.match(readlinkSync(join(fresh.dir, "rollback", aside, "current")), /^releases\/rev-a1--/);
+});
+
+test("R2 deletions: every rm in the installer goes through remove_own, except the shipped copy on the host", () => {
+  const source = readFileSync(installer, "utf8");
+  const rms = source.split("\n").map((line, index) => [index + 1, line])
+    .filter(([, line]) => /(^|[\s;&|(`"])rm\s/.test(line) && !/^\s*#/.test(line));
+  assert.deepEqual(rms.map(([, line]) => line.trim()).map((line) => line.replace(/^.*?(rm -rf -- \S+).*$/, "$1")),
+    ['rm -rf -- \\"\\$shipped\\"', 'rm -rf -- "$2"'], rms.map(([n, line]) => `${n}: ${line}`).join("\n"));
+  const removeOwn = source.slice(source.indexOf("remove_own() {"), source.indexOf("\n}\n", source.indexOf("remove_own() {")));
+  assert.match(removeOwn, /if ! inside "\$1" "\$2"; then[\s\S]*return 1[\s\S]*rm -rf -- "\$2"/);
+  assert.doesNotMatch(source, /find [^\n]*-exec rm/, "no find deletion");
 });

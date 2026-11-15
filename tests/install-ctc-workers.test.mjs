@@ -212,7 +212,9 @@ test("docs/CTC_WORKER_POOL.md documents required pool details and runbook", () =
   const realRun = update.indexOf("scripts/install-ctc-workers.sh --host 192.168.1.119 --ref origin/main\n");
   assert.ok(dryRun > 0 && realRun > dryRun, "the dry run comes before the update");
   assert.ok(update.indexOf("--rollback --dry-run") < update.indexOf("--rollback\n"), "rollback dry run first");
-  assert.ok(update.indexOf("--prune --dry-run") < update.indexOf("--prune\n"), "prune dry run first");
+  assert.doesNotMatch(content, /--prune/, "the installer has no --prune (#411 round 2)");
+  assert.match(update, /deletes nothing it did not create in\s+the same run/);
+  assert.match(update, /Removing them is #435/);
   assert.match(update, /--host lisa/);
   assert.match(update, /--verify/);
   assert.match(update, /"revision"|`revision`/);

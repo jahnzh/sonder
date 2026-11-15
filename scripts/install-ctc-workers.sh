@@ -13,7 +13,6 @@ main_pid=$$
 CUDA_TORCH=("torch==2.8.0+cu128" "torchaudio==2.8.0+cu128")
 CUDA_INDEX="https://download.pytorch.org/whl/cu128"
 COMMON_PINS=("numpy==1.26.4" "fastapi==0.121.3" "uvicorn==0.38.0")
-RETIRED_PACKAGES=("faster_whisper" "aeneas")
 
 usage() {
   cat <<'EOF'
@@ -25,9 +24,6 @@ Python environment, the pinned model weights and the systemd user service.
 Commands (default: install or update):
   --rollback                Restore the worker.env, service unit and code saved by the last update, restart once
   --verify                  Check the running worker again and record the last update as verified
-  --prune                   After a verified update: remove older releases, environments, the old layout
-                            (worker/, env/), the Whisper weights, and the saved rollback state; never a path
-                            the installed unit names
 
 An update never changes the code or packages of the running worker: each
 revision is copied to releases/<revision>--<env>/ and each dependency set gets
@@ -38,6 +34,11 @@ verifies that the unit restarted, and engine, readiness, device, media root,
 revision and the token. Pause the alignment processor first: the last check
 for running requests comes right before the restart, but a request that
 arrives after it is interrupted. One run at a time holds <dir>/.install.lock.
+
+Nothing is deleted from the host: the layout from before #411 (worker/, env/),
+earlier releases and environments, the Whisper weights and earlier rollback
+state stay on disk (removing them is #435). The installer removes only its own
+temporary files and what the current run half-built.
 
 Options:
   --host <ssh-target>       Run on that host over ssh: ship this checkout's --ref there and run the command
@@ -65,8 +66,8 @@ Options:
   -h, --help                Show this help text and exit 0
 
 Exit codes: 0 done, 1 error, 2 usage, 3 refused (requests running, /health
-unknown, last update not verified, or another run in progress), 4 the worker
-failed verification (run --rollback).
+unknown, last update not verified or its status unknown, or another run in
+progress), 4 the worker failed verification (run --rollback).
 
 Examples:
   # From a checkout on the production server, dry run first:
@@ -134,20 +135,18 @@ curl_post_json() {
 }
 http_post_json() { curl_post_json "$@"; }
 
-# remove_path <path>: --prune's deletion of one path.
-remove_path() { rm -rf -- "$1"; }
-
 # host_ssh <ssh target> <command>: run a shell command on the host, in its home directory; stdin is passed on.
 host_ssh() { ssh -o BatchMode=yes -- "$1" "$2"; }
 
-# host_ship <ssh target> <dir>: copy the installer files of $revision into <dir> (relative to the remote home),
-# replacing what an earlier run shipped.
+# host_ship <ssh target> <dir>: copy the installer files of $revision into <dir> (relative to the remote home, under
+# .cache/sonder-ctc-install/), replacing what an earlier run shipped there. That shipped copy is the only thing the
+# remote command removes, and only once the host's $HOME is a non-empty absolute path.
 host_ship() {
   local quoted
   quoted="$(printf '%q' "$2")"
   git -C "$repo_dir" archive --format=tar "$revision" -- worker deploy scripts/install-ctc-workers.sh \
       scripts/ctc-worker-install-helper.py \
-    | host_ssh "$1" "rm -rf -- \"\$HOME\"/.cache/sonder-ctc-install && mkdir -p -- $quoted && tar -x -C $quoted"
+    | host_ssh "$1" "shipped=\"\$HOME/.cache/sonder-ctc-install\"; case \"\$HOME\" in /?*) ;; *) echo 'error: HOME is not an absolute path on the host' >&2; exit 1 ;; esac; rm -rf -- \"\$shipped\" && mkdir -p -- $quoted && tar -x -C $quoted"
 }
 
 pause() { sleep "$1"; }
@@ -265,7 +264,6 @@ while [[ $# -gt 0 ]]; do
   case "$arg" in
     --rollback) command="rollback"; shift ;;
     --verify) command="verify"; shift ;;
-    --prune) command="prune"; shift ;;
     --device) need_value "$@"; device="$2"; forward+=("$1" "$2"); shift 2 ;;
     --dir) need_value "$@"; target_dir="$2"; forward+=("$1" "$2"); shift 2 ;;
     --slots)
@@ -301,7 +299,7 @@ while [[ $# -gt 0 ]]; do
       exit 2 ;;
   esac
   case "$arg" in
-    --rollback|--verify|--prune|--skip-models|--skip-service|--service-only|--dry-run|--force) forward+=("$arg") ;;
+    --rollback|--verify|--skip-models|--skip-service|--service-only|--dry-run|--force) forward+=("$arg") ;;
   esac
 done
 
@@ -374,6 +372,35 @@ unit_file="${unit_dir}/${UNIT}"
 env_file="${target_dir}/worker.env"
 rollback_dir="${target_dir}/rollback"
 
+# Deletions. The installer removes only its own temporary files and what the current run half-built (a release it
+# staged, an environment it created that did not complete); the shipped copy under ~/.cache/sonder-ctc-install/ is
+# replaced by host_ship. Every such path is a variable checked here before use. Nothing else is ever deleted: older
+# releases, environments, the layout from before #411, the Whisper weights and earlier rollback state stay on disk.
+
+# inside <base> <path>: true when path is non-empty and strictly below the absolute directory base, with no . or ..
+inside() {
+  local base="${1%/}" path="$2" rest
+  [[ -n "$base" && "$base" == /* && -n "$path" && "$path" == "${base}/"?* ]] || return 1
+  rest="/${path#"${base}/"}/"
+  [[ "$rest" != */../* && "$rest" != */./* ]]
+}
+
+# remove_own <base> <path>: remove path, which must be inside base; otherwise remove nothing and return 1.
+remove_own() {
+  if ! inside "$1" "$2"; then
+    echo "error: not removing $(printf '%q' "${2:-}"): it is not inside ${1:-an empty directory}" >&2
+    return 1
+  fi
+  rm -rf -- "$2"
+}
+
+# The installer's own temporary files next to what they replace (rewritten on every run, renamed into place).
+env_next="${env_file}.next"
+unit_next="${unit_file}.next"
+current_next="${target_dir}/current.next"
+inside "$target_dir" "$env_next" && inside "$unit_dir" "$unit_next" && inside "$target_dir" "$current_next" \
+  || die 1 "the temporary paths ${env_next}, ${unit_next} and ${current_next} are not inside ${target_dir} and ${unit_dir}"
+
 env_get() { python3 "$helper" env-get "$@"; }
 
 current_release() {
@@ -399,8 +426,32 @@ if [[ "$print_service" == true ]]; then
   exit 0
 fi
 
-work_tmp="$(mktemp -d)"
-trap 'rm -rf -- "$work_tmp"' EXIT
+# What this run half-built, removed when it ends before finishing it: a staged release not yet renamed into place,
+# a rollback snapshot not yet renamed into place, an environment this run created that has no .complete, and the
+# .next files not yet renamed into place. Only a run that holds the install lock writes (and so removes) them.
+holds_lock=false
+run_staging=""
+run_snapshot=""
+run_new_env=""
+work_tmp="$(mktemp -d --tmpdir sonder-ctc-install.XXXXXX)"
+cleanup() {
+  [[ -z "$run_staging" ]] || remove_own "${target_dir}/releases" "$run_staging" || true
+  [[ -z "$run_snapshot" ]] || remove_own "$target_dir" "$run_snapshot" || true
+  if [[ -n "$run_new_env" && ! -f "${run_new_env}/.complete" ]]; then
+    remove_own "${target_dir}/envs" "$run_new_env" || true
+  fi
+  if [[ "$holds_lock" == true ]]; then
+    local next
+    for next in "$env_next" "$current_next"; do
+      [[ ! -e "$next" && ! -L "$next" ]] || remove_own "$target_dir" "$next" || true
+    done
+    [[ ! -e "$unit_next" ]] || remove_own "$unit_dir" "$unit_next" || true
+  fi
+  if [[ "$work_tmp" == /?*/sonder-ctc-install.?????? && -d "$work_tmp" ]]; then
+    remove_own "$(dirname -- "$work_tmp")" "$work_tmp" || true
+  fi
+}
+trap cleanup EXIT
 
 service_state() {
   if [[ "$skip_service" == true ]]; then
@@ -457,12 +508,13 @@ expected_engine() {
 }
 
 # The monotonic time (µs) the unit's main process started, as systemd records it (systemd 255 `systemctl show`
-# property ExecMainStartTimestampMonotonic; 0 when it never started). Prints nothing when it cannot be read.
+# property ExecMainStartTimestampMonotonic; 0 when it never started, also for a unit that does not exist yet).
+# Returns 1 and prints nothing when it cannot be read: systemctl failed, or printed anything but a number.
 unit_start_time() {
   local value
-  value="$(host_systemctl show --property=ExecMainStartTimestampMonotonic --value "$UNIT" || true)"
-  [[ "$value" =~ ^[0-9]+$ ]] && printf '%s' "$value"
-  return 0
+  value="$(host_systemctl show --property=ExecMainStartTimestampMonotonic --value "$UNIT")" || return 1
+  [[ "$value" =~ ^[0-9]+$ ]] || return 1
+  printf '%s' "$value"
 }
 
 # verify_worker <engine> <device type> <revision|-> <media root> <token> [<start time before the restart>]: waits
@@ -479,7 +531,7 @@ verify_worker() {
       if [[ "$state" != "active" ]]; then
         problem="the service is ${state:-unknown} after the restart"
       else
-        started="$(unit_start_time)"
+        started="$(unit_start_time)" || started=""
         if [[ -z "$started" ]]; then
           problem="cannot read when the service's main process started"
         elif (( started == started_before )); then
@@ -504,7 +556,7 @@ verify_worker() {
   # a new random path, so a matching token gives 400 (or 409 while every slot is taken), a wrong one 401.
   (umask 077; printf '%s' "$worker_token" | python3 "$helper" auth-body "$media_root" > "$work_tmp/auth.json")
   status="$(http_post_json "${worker_url}/anchor-batch" "$work_tmp/auth.json" "$work_tmp/auth-answer.json")"
-  rm -f -- "$work_tmp/auth.json"
+  remove_own "$work_tmp" "$work_tmp/auth.json"
   case "$status" in
     400|409) echo "Authenticated request accepted the token (HTTP ${status})" ;;
     401) echo "Verification failed: the worker refused the token in worker.env (HTTP 401)" >&2; return 1 ;;
@@ -518,11 +570,41 @@ lock_target() {
   mkdir -p -- "$target_dir"
   exec 9>"${target_dir}/.install.lock"
   flock -n 9 || die 3 "another install-ctc-workers.sh run holds ${target_dir}/.install.lock"
+  holds_lock=true
 }
 
-rollback_status() { cat -- "${rollback_dir}/status" 2>/dev/null || true; }
+# The state of the last update, from rollback/status: none (there is no rollback/), pending, failed, verified,
+# rolling-back or rolled-back; unknown when rollback/ exists but its status is missing, empty, unreadable or any
+# other value. Unknown may be any of the others, an unfinished rollback included: an update and --verify refuse
+# it, and --rollback proceeds from the saved files.
+rollback_status() {
+  if [[ ! -e "$rollback_dir" && ! -L "$rollback_dir" ]]; then
+    echo none
+    return 0
+  fi
+  local value=""
+  if [[ -f "${rollback_dir}/status" ]]; then
+    IFS= read -r value < "${rollback_dir}/status" 2>/dev/null || true
+  fi
+  case "$value" in
+    pending|failed|verified|rolling-back|rolled-back) echo "$value" ;;
+    *) echo unknown ;;
+  esac
+}
 
-set_rollback_status() { printf '%s\n' "$1" > "${rollback_dir}/status"; }
+unknown_status() {
+  echo "the status of the last update is unknown (${rollback_dir}/status is missing, empty or unreadable): it may be an unfinished update or rollback; run --rollback, which restores the saved files"
+}
+
+# set_rollback_status <value>: replaces rollback/status atomically (a new file in the same directory, renamed over
+# it), so a run killed at any point leaves the previous value or the new one, never an empty or partial file.
+set_rollback_status() {
+  local next
+  next="$(mktemp -- "${rollback_dir}/.status.XXXXXX")"
+  printf '%s\n' "$1" > "$next"
+  sync -- "$next" 2>/dev/null || true
+  mv -fT -- "$next" "${rollback_dir}/status"
+}
 
 # Settings the worker runs with, from worker.env as systemd reads it.
 read_settings() {
@@ -548,29 +630,39 @@ check_saved() {
   fi
 }
 
+# set_aside <dir> <path>: a file the saved state did not have (worker.env, the unit or `current` of the update) is
+# moved into <dir>/set-aside.XXXXXX/, one new directory per run, and kept there; nothing is deleted.
+set_aside_dir=""
+set_aside() {
+  [[ -e "$2" || -L "$2" ]] || return 0
+  [[ -n "$set_aside_dir" ]] || set_aside_dir="$(mktemp -d -- "${1}/set-aside.XXXXXX")"
+  mv -T -- "$2" "${set_aside_dir}/$(basename -- "$2")"
+  echo "Moved ${2}, which the saved state did not have, to ${set_aside_dir}/"
+}
+
 # restore_saved <dir>: put worker.env, the unit and `current` back as check_saved found them. Every step can run
 # again, so an interrupted restore is finished by running it again.
 restore_saved() {
   local dir="$1"
   if [[ -f "${dir}/worker.env" ]]; then
-    cp -p -- "${dir}/worker.env" "${env_file}.next"
-    chmod 600 "${env_file}.next"
-    mv -fT -- "${env_file}.next" "$env_file"
+    cp -p -- "${dir}/worker.env" "$env_next"
+    chmod 600 "$env_next"
+    mv -fT -- "$env_next" "$env_file"
   else
-    rm -f -- "$env_file"
+    set_aside "$dir" "$env_file"
   fi
   if [[ -f "${dir}/unit" ]]; then
     mkdir -p -- "$unit_dir"
-    cp -- "${dir}/unit" "${unit_file}.next"
-    mv -fT -- "${unit_file}.next" "$unit_file"
+    cp -- "${dir}/unit" "$unit_next"
+    mv -fT -- "$unit_next" "$unit_file"
   else
-    rm -f -- "$unit_file"
+    set_aside "$dir" "$unit_file"
   fi
   if [[ -n "$previous_release" ]]; then
-    ln -sfn -- "$previous_release" "${target_dir}/current.next"
-    mv -fT -- "${target_dir}/current.next" "${target_dir}/current"
+    ln -sfn -- "$previous_release" "$current_next"
+    mv -fT -- "$current_next" "${target_dir}/current"
   else
-    rm -f -- "${target_dir}/current"
+    set_aside "$dir" "${target_dir}/current"
   fi
 }
 
@@ -578,7 +670,10 @@ restore_saved() {
 cmd_verify() {
   lock_target
   [[ -f "$env_file" ]] || die 1 "no ${env_file}"
-  [[ "$(rollback_status)" != "rolling-back" ]] || die 3 "a rollback is unfinished: run --rollback again"
+  case "$(rollback_status)" in
+    rolling-back) die 3 "a rollback is unfinished: run --rollback again" ;;
+    unknown) die 3 "$(unknown_status)" ;;
+  esac
   local release
   release="$(current_release)"
   [[ -n "$release" ]] || die 1 "no installed release under ${target_dir}/current"
@@ -611,6 +706,9 @@ cmd_rollback() {
   local status previous_release="" previous_revision
   status="$(rollback_status)"
   [[ "$status" != "rolled-back" ]] || die 1 "the last update was already rolled back"
+  if [[ "$status" == "unknown" ]]; then
+    echo "warning: ${rollback_dir}/status is missing, empty or unreadable; rolling back from the saved files" >&2
+  fi
   previous_revision="$(cat -- "${rollback_dir}/previous-revision" 2>/dev/null || echo unknown)"
   check_saved "$rollback_dir"
 
@@ -640,6 +738,12 @@ cmd_rollback() {
   fi
   require_service_manager
   require_idle "before rollback"
+  # When the main process started, read before anything changes: unreadable, the restart could not be verified.
+  local started_before=""
+  if [[ "$had_unit" == true && "$skip_service" == false ]]; then
+    started_before="$(unit_start_time)" \
+      || die 1 "cannot read when ${UNIT}'s main process started (systemctl --user show failed or printed no number), so the restart could not be verified; nothing changed"
+  fi
 
   set_rollback_status rolling-back
   if [[ "$had_unit" == false && "$skip_service" == false ]]; then
@@ -661,8 +765,6 @@ cmd_rollback() {
     echo "There was no worker before the update: stopped and disabled ${UNIT}."
     return 0
   fi
-  local started_before
-  started_before="$(unit_start_time)"
   if ! host_systemctl restart "$UNIT"; then
     echo "error: systemctl restart failed; the rollback is unfinished: run --rollback again" >&2
     exit 4
@@ -670,7 +772,7 @@ cmd_rollback() {
   echo "Restarted ${UNIT} once with the restored settings and code."
   local revision_check="$previous_revision"
   [[ "$revision_check" != "unknown" ]] || revision_check="-"
-  if verify_worker "$engine" "${saved_device%%:*}" "$revision_check" "$saved_media" "$saved_token" "${started_before:-0}"; then
+  if verify_worker "$engine" "${saved_device%%:*}" "$revision_check" "$saved_media" "$saved_token" "$started_before"; then
     set_rollback_status rolled-back
     echo "The worker is ready again on revision ${previous_revision}."
     return 0
@@ -679,65 +781,13 @@ cmd_rollback() {
   exit 4
 }
 
-# ===============================================================================================================
-cmd_prune() {
-  [[ "$skip_service" == false ]] \
-    || die 2 "--prune cannot be combined with --skip-service: it reads the installed unit so that it never removes what the unit runs"
-  [[ -d "$target_dir" ]] || die 1 "no ${target_dir}"
-  # Everything below is decided while holding the lock, so an update or rollback cannot change it meanwhile.
-  [[ "$dry_run" == true ]] || lock_target
-  local status release env_name
-  status="$(rollback_status)"
-  case "$status" in
-    verified|"") ;;
-    *) die 3 "the last update is ${status}, not verified: --prune would remove the code --rollback needs" ;;
-  esac
-  release="$(current_release)"
-  [[ -n "$release" ]] || die 1 "no installed release under ${target_dir}/current"
-  env_name="$(release_env "$release")"
-  [[ -n "$env_name" ]] || die 1 "the installed release has no environment link"
-  [[ -f "$unit_file" ]] || die 3 "no ${unit_file}: --prune reads the installed unit before it removes anything; nothing pruned"
-  read_settings
-  local remove=() path named
-  for path in "${target_dir}"/releases/* "${target_dir}"/envs/*; do
-    [[ -e "$path" || -L "$path" ]] || continue
-    case "$path" in
-      "${target_dir}/releases/${release}"|"${target_dir}/envs/${env_name}") ;;
-      *) remove+=("$path") ;;
-    esac
-  done
-  for path in "${target_dir}/worker" "${target_dir}/env" "${rollback_dir}" "${target_dir}/current.next" \
-      "${env_file}.next"; do
-    [[ -e "$path" || -L "$path" ]] && remove+=("$path")
-  done
-  if [[ -n "$media_root" && -d "${media_root}/alignment/models/whisper" ]]; then
-    remove+=("${media_root}/alignment/models/whisper")
-  fi
-  # The unit installed now, not the one this installer would render: never remove a path it runs.
-  named="$(python3 "$helper" unit-names "$unit_file" "$HOME" ${remove[@]+"${remove[@]}"})" \
-    || die 1 "cannot read ${unit_file}; nothing pruned"
-  [[ -z "$named" ]] || die 3 "${UNIT} names ${named}, which --prune would remove; nothing pruned"
-  if [[ ${#remove[@]} -eq 0 ]]; then
-    echo "Nothing to prune."
-  fi
-  for path in ${remove[@]+"${remove[@]}"}; do
-    if [[ "$dry_run" == true ]]; then
-      echo "[dry-run] Would remove ${path}"
-    else
-      remove_path "$path"
-      echo "Removed ${path}"
-    fi
-  done
-  local package found=false
-  for package in "${RETIRED_PACKAGES[@]}"; do
-    for path in "${target_dir}/envs/${env_name}"/lib/python*/site-packages/"${package}"; do
-      if [[ -e "$path" ]]; then
-        echo "warning: the installed environment still has ${package} (${path})" >&2
-        found=true
-      fi
-    done
-  done
-  [[ "$found" == true ]] || echo "The installed environment has none of: ${RETIRED_PACKAGES[*]}."
+# same_release <release dir> <worker source> <env name>: true when an existing release holds this revision, the same
+# code (compiled caches aside) and the link to that environment, so it can be used as it is.
+same_release() {
+  [[ -d "$1/worker" && ! -L "$1" ]] || return 1
+  [[ "$(cat -- "$1/worker/REVISION" 2>/dev/null)" == "$revision" ]] || return 1
+  [[ "$(readlink -- "$1/env" 2>/dev/null)" == "../../envs/$3" ]] || return 1
+  diff -rq -x __pycache__ -x REVISION -- "$2" "$1/worker" > /dev/null 2>&1
 }
 
 # ===============================================================================================================
@@ -759,10 +809,12 @@ cmd_install() {
   local status
   status="$(rollback_status)"
   case "$status" in
+    none|verified|rolled-back) ;;
     pending|failed)
       die 3 "the last update (revision $(cat -- "${rollback_dir}/revision" 2>/dev/null)) is ${status}, not verified: run --verify or --rollback first" ;;
     rolling-back)
       die 3 "a rollback of revision $(cat -- "${rollback_dir}/revision" 2>/dev/null) is unfinished: run --rollback again first" ;;
+    *) die 3 "$(unknown_status)" ;;
   esac
 
   # --- What the worker runs with now, as systemd reads worker.env. ---
@@ -832,6 +884,20 @@ cmd_install() {
   engine="$(expected_engine "$worker_src")"
   [[ -n "$engine" ]] || die 1 "cannot read ENGINE from ${worker_src}/ctc_acoustic.py"
 
+  # A release or environment that already exists is never replaced: a complete release with the same code and
+  # environment is reused, anything else refuses before a change.
+  local release_action=copy
+  if [[ "$installed_release" == "$release" ]]; then
+    release_action=keep
+  elif [[ -e "$release_dir" || -L "$release_dir" ]]; then
+    same_release "$release_dir" "$worker_src" "$env_name" \
+      || die 1 "releases/${release} exists from an earlier run with other code or another environment; this installer deletes no release: move it away yourself, or install another --revision; nothing changed"
+    release_action=reuse
+  fi
+  if [[ "$service_only" == false && ! -f "${env_dir}/.complete" ]] && [[ -e "$env_dir" || -L "$env_dir" ]]; then
+    die 1 "envs/${env_name} exists but is not complete (an earlier build was interrupted); this installer deletes no environment: remove ${env_dir} yourself, then run again; nothing changed"
+  fi
+
   echo "Installing Sonder CTC worker:"
   echo "  Target directory: $target_dir"
   echo "  Revision:         $revision (installed: $previous_revision)"
@@ -845,11 +911,11 @@ cmd_install() {
   if [[ "$dry_run" == true ]]; then
     require_service_manager
     require_idle "dry run"
-    if [[ "$installed_release" == "$release" ]]; then
-      echo "[dry-run] Would keep releases/$release, which is installed (settings only)"
-    else
-      echo "[dry-run] Would copy worker/ of $revision to releases/$release"
-    fi
+    case "$release_action" in
+      keep) echo "[dry-run] Would keep releases/$release, which is installed (settings only)" ;;
+      reuse) echo "[dry-run] Would reuse releases/$release, which an earlier run left with the same code" ;;
+      *) echo "[dry-run] Would copy worker/ of $revision to releases/$release" ;;
+    esac
     if [[ -f "${env_dir}/.complete" ]]; then
       echo "[dry-run] Would reuse envs/$env_name"
     else
@@ -877,20 +943,21 @@ cmd_install() {
   require_idle "before the update"
 
   # --- Stage: nothing below touches the code, packages or settings the running worker uses. ---
-  if [[ "$installed_release" == "$release" ]]; then
-    echo "releases/$release is installed; updating settings only"
-  else
-    mkdir -p -- "${target_dir}/releases"
-    rm -rf -- "${release_dir}.partial"
-    mkdir -p -- "${release_dir}.partial/worker"
-    cp -R -- "$worker_src/." "${release_dir}.partial/worker/"
-    find "${release_dir}.partial/worker" -name __pycache__ -type d -prune -exec rm -rf -- {} +
-    printf '%s\n' "$revision" > "${release_dir}.partial/worker/REVISION"
-    ln -s -- "../../envs/${env_name}" "${release_dir}.partial/env"
-    rm -rf -- "$release_dir"
-    mv -T -- "${release_dir}.partial" "$release_dir"
-    echo "Copied worker/ of $revision to releases/$release"
-  fi
+  case "$release_action" in
+    keep) echo "releases/$release is installed; updating settings only" ;;
+    reuse) echo "Reusing releases/$release, which an earlier run left with the same code" ;;
+    *)
+      # Staged in a new directory of this run's own; a run that ends before the rename removes it (cleanup).
+      mkdir -p -- "${target_dir}/releases"
+      run_staging="$(mktemp -d -- "${target_dir}/releases/.${release}.staging.XXXXXX")"
+      mkdir -- "${run_staging}/worker"
+      tar -C "$worker_src" --exclude=__pycache__ -cf - . | tar -C "${run_staging}/worker" -xf -
+      printf '%s\n' "$revision" > "${run_staging}/worker/REVISION"
+      ln -s -- "../../envs/${env_name}" "${run_staging}/env"
+      mv -T -- "$run_staging" "$release_dir"
+      run_staging=""
+      echo "Copied worker/ of $revision to releases/$release" ;;
+  esac
 
   if [[ "$service_only" == false ]]; then
     if [[ -f "${env_dir}/.complete" ]]; then
@@ -898,9 +965,11 @@ cmd_install() {
     else
       echo "Building environment envs/$env_name (device: $device_type)..."
       mkdir -p -- "${target_dir}/envs"
-      rm -rf -- "$env_dir"
+      # A new directory (an existing one refused above); a run that ends before .complete removes it (cleanup).
+      run_new_env="$env_dir"
       host_build_env "$env_dir" "$device_type" "${release_dir}/worker"
       touch -- "${env_dir}/.complete"
+      run_new_env=""
     fi
     if [[ "$skip_models" == false ]]; then
       [[ "$fresh_media" == true ]] && mkdir -p -- "$media_root"
@@ -912,51 +981,62 @@ cmd_install() {
 
   CTC_SET_ALIGNMENT_WORKER_TOKEN="$token_set" CTC_SET_ALIGNMENT_CTC_DEVICE="$device_set" \
     CTC_SET_ALIGNMENT_WORKER_SLOTS="$slots" CTC_DEFAULT_MEDIA_ROOT="$([[ "$fresh_media" == true ]] && echo "$media_root")" \
-    python3 "$helper" env-merge "$env_file" "${env_file}.next" | sed 's/^/worker.env: /'
+    python3 "$helper" env-merge "$env_file" "$env_next" | sed 's/^/worker.env: /'
+  local started_before=""
   if [[ "$skip_service" == false ]]; then
     mkdir -p -- "$unit_dir"
-    render_service "$target_dir" "$port" "$release" "$env_name" > "${unit_file}.next"
+    render_service "$target_dir" "$port" "$release" "$env_name" > "$unit_next"
+    # When the main process started (0: never), read before anything is switched: the check after the restart
+    # needs it, so a failed read stops the update here.
+    started_before="$(unit_start_time)" \
+      || die 1 "cannot read when ${UNIT}'s main process started (systemctl --user show failed or printed no number), so the restart could not be verified; nothing switched (releases/${release} stays staged)"
   fi
 
   # --- Save what runs now, for --rollback: each file, or an explicit record that there was none. The unit is
-  # saved with --skip-service too: the unit that exists is what a rollback must put back. ---
-  rm -rf -- "${rollback_dir}.partial"
-  (umask 077; mkdir -- "${rollback_dir}.partial")
-  if [[ -f "$env_file" ]]; then cp -p -- "$env_file" "${rollback_dir}.partial/worker.env"; else : > "${rollback_dir}.partial/no-worker-env"; fi
-  if [[ -f "$unit_file" ]]; then cp -p -- "$unit_file" "${rollback_dir}.partial/unit"; else : > "${rollback_dir}.partial/no-unit"; fi
-  printf '%s' "${installed_release:+releases/${installed_release}}" > "${rollback_dir}.partial/current"
-  printf '%s\n' "$previous_revision" > "${rollback_dir}.partial/previous-revision"
-  printf '%s\n' "$revision" > "${rollback_dir}.partial/revision"
-  printf '%s\n' pending > "${rollback_dir}.partial/status"
+  # saved with --skip-service too: the unit that exists is what a rollback must put back. Written in a new
+  # directory of this run's own (mode 0700), renamed into place once complete. ---
+  run_snapshot="$(mktemp -d -- "${target_dir}/.rollback.staging.XXXXXX")"
+  if [[ -f "$env_file" ]]; then cp -p -- "$env_file" "${run_snapshot}/worker.env"; else : > "${run_snapshot}/no-worker-env"; fi
+  if [[ -f "$unit_file" ]]; then cp -p -- "$unit_file" "${run_snapshot}/unit"; else : > "${run_snapshot}/no-unit"; fi
+  printf '%s' "${installed_release:+releases/${installed_release}}" > "${run_snapshot}/current"
+  printf '%s\n' "$previous_revision" > "${run_snapshot}/previous-revision"
+  printf '%s\n' "$revision" > "${run_snapshot}/revision"
+  printf '%s\n' pending > "${run_snapshot}/status"
 
-  # --- Switch every file, then a last check for running requests right before the one restart. ---
-  rm -rf -- "$rollback_dir"
-  mv -T -- "${rollback_dir}.partial" "$rollback_dir"
-  mv -fT -- "${env_file}.next" "$env_file"
+  # --- Switch every file, then a last check for running requests right before the one restart. The rollback
+  # state of the update before is kept, renamed to rollback.superseded.XXXXXX/. ---
+  if [[ -e "$rollback_dir" || -L "$rollback_dir" ]]; then
+    local superseded
+    superseded="$(mktemp -d -- "${target_dir}/rollback.superseded.XXXXXX")"
+    mv -T -- "$rollback_dir" "$superseded"
+    echo "Kept the rollback state of the update before in ${superseded}/"
+  fi
+  mv -T -- "$run_snapshot" "$rollback_dir"
+  run_snapshot=""
+  mv -fT -- "$env_next" "$env_file"
   chmod 600 "$env_file"
-  ln -sfn -- "releases/${release}" "${target_dir}/current.next"
-  mv -fT -- "${target_dir}/current.next" "${target_dir}/current"
+  ln -sfn -- "releases/${release}" "$current_next"
+  mv -fT -- "$current_next" "${target_dir}/current"
   echo "Configured ${env_file}"
 
   if [[ "$skip_service" == true ]]; then
     echo "Installed revision $revision. Restart the worker yourself, then run --verify."
   else
-    mv -fT -- "${unit_file}.next" "$unit_file"
+    mv -fT -- "$unit_next" "$unit_file"
     echo "Wrote service unit to ${unit_file}"
     if ! { host_systemctl daemon-reload && host_systemctl enable "$UNIT"; }; then
       set_rollback_status failed
       echo "error: systemctl failed after the switch. Restore the previous worker with: scripts/install-ctc-workers.sh --rollback (with the same --host or --dir)" >&2
       exit 4
     fi
-    local started_before
-    started_before="$(unit_start_time)"
     if ! idle_check "before the restart"; then
-      # The old worker still runs from its own paths; put its files back so disk and process agree again.
+      # The old worker still runs from its own paths; put its files back so disk and process agree again. The
+      # update is then undone: rollback/ records it as rolled-back, so the next update may run.
       local previous_release
       check_saved "$rollback_dir"
       restore_saved "$rollback_dir"
       host_systemctl daemon-reload || echo "warning: systemctl daemon-reload failed after restoring ${unit_file}" >&2
-      rm -rf -- "$rollback_dir"
+      set_rollback_status rolled-back
       die 3 "${idle_refusal}; restored the previous worker.env, unit and code; nothing was restarted"
     fi
     if ! host_systemctl restart "$UNIT"; then
@@ -966,7 +1046,7 @@ cmd_install() {
     fi
     echo "Restarted ${UNIT} once"
     host_linger_check
-    if verify_worker "$engine" "$device_type" "$revision" "$media_root" "$token" "${started_before:-0}"; then
+    if verify_worker "$engine" "$device_type" "$revision" "$media_root" "$token" "$started_before"; then
       set_rollback_status verified
     else
       set_rollback_status failed
@@ -988,7 +1068,7 @@ cmd_install() {
     echo "Ensure the matching token is configured as ALIGNMENT_WORKER_TOKEN in production .env (${repo_dir}/.env or server deployment .env)."
   fi
   if [[ -d "${target_dir}/worker" || -d "${target_dir}/env" ]] || [[ "$(ls -1 "${target_dir}/releases" | wc -l)" -gt 1 ]]; then
-    echo "Older code is kept for --rollback; remove it (and the Whisper weights) with --prune once you are satisfied."
+    echo "Earlier code and environments stay on disk (the worker no longer loads them); this installer deletes none of them (removing them is #435)."
   fi
 }
 
@@ -996,5 +1076,4 @@ case "$command" in
   install) cmd_install ;;
   rollback) cmd_rollback ;;
   verify) cmd_verify ;;
-  prune) cmd_prune ;;
 esac

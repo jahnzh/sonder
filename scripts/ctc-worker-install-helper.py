@@ -9,9 +9,6 @@
                               exit 0 when the answer is one the server accepts for that engine and device, with that
                               revision ("-": not checked) and media root; otherwise print the first difference, exit 1
   auth-body MEDIA_ROOT        read the token on stdin; print an /anchor-batch request that fails after the token check
-  unit-names UNIT HOME PATH...
-                              print the first PATH the unit file names (itself or below it, %h read as HOME, symlinks
-                              resolved); print nothing when it names none
 
 Values go through the environment or stdin, never argv, so the token is not visible in process listings.
 """
@@ -297,37 +294,6 @@ def health_check(status, path, engine, device, revision, media_root):
     return None
 
 
-def unit_names(unit_file, home, paths):
-    """The first of paths that the unit names, as a value of any setting (itself or a path below it)."""
-    with open(unit_file, encoding="utf-8") as handle:
-        lines = handle.read().splitlines()
-    words = []
-    for line in lines:
-        line = line.strip()
-        if not line or line[0] in "#;[" or "=" not in line:
-            continue
-        for word in line.split("=", 1)[1].split():
-            word = word.lstrip("-@+!:").replace("%h", home)
-            if word.startswith("/"):
-                # The word itself, and each of its ancestors with symlinks resolved: a path through `current` or
-                # a release's `env` link names what the link points at (a venv's bin/python itself is a link out).
-                words.append(word)
-                ancestor = word
-                while ancestor not in ("/", ""):
-                    words.append(os.path.realpath(ancestor))
-                    ancestor = os.path.dirname(ancestor)
-
-    def under(word, path):
-        return word == path or word.startswith(path.rstrip("/") + "/")
-
-    for path in paths:
-        # A path that is itself a symlink is removed as a link, so only its parent is resolved.
-        forms = {path, os.path.join(os.path.realpath(os.path.dirname(path)), os.path.basename(path))}
-        if any(under(word, form) for word in words for form in forms):
-            return path
-    return None
-
-
 def main(argv):
     if len(argv) < 2:
         print(__doc__, file=sys.stderr)
@@ -375,11 +341,6 @@ def main(argv):
         print(json.dumps({"token": token, "audio": os.path.join(alignment, name + ".wav"),
                           "output": os.path.join(alignment, name + ".json"), "fragments": ["check"],
                           "windows": [{"start": 0, "duration": 1}], "engine": "ctc"}))
-        return 0
-    if command == "unit-names" and len(args) >= 2:
-        named = unit_names(args[0], args[1], args[2:])
-        if named:
-            print(named)
         return 0
     print(__doc__, file=sys.stderr)
     return 2

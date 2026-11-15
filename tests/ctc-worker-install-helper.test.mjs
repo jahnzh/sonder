@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -266,33 +266,4 @@ test("env-merge (MEDIUM 3): a changed or added key never alters an unrelated las
     assert.equal(result.status, 0, `${label}: ${result.stderr}`);
     assert.equal(readFileSync(out, "utf8"), expected, label);
   }
-});
-
-test("unit-names (BLOCKING 1): the first deletion path a unit names, through %h and symlinks", (t) => {
-  const dir = scratch(t);
-  const home = join(dir, "home");
-  const target = join(home, "w");
-  mkdirSync(join(target, "releases", "r1", "worker"), { recursive: true });
-  mkdirSync(join(target, "envs", "e1", "bin"), { recursive: true });
-  mkdirSync(join(target, "worker"), { recursive: true });
-  symlinkSync("../../envs/e1", join(target, "releases", "r1", "env"));
-  symlinkSync("releases/r1", join(target, "current"));
-  const unit = join(dir, "unit");
-  const names = (text, paths) => {
-    writeFileSync(unit, text);
-    const result = helperRun(["unit-names", unit, home, ...paths]);
-    assert.equal(result.status, 0, result.stderr);
-    return result.stdout.trim();
-  };
-  const legacy = "[Service]\nWorkingDirectory=%h/w/worker\nEnvironmentFile=-%h/w/worker.env\nExecStart=/usr/bin/nice -n 10 %h/w/env/bin/python -m x\n";
-  assert.equal(names(legacy, [join(target, "releases", "r0"), join(target, "worker"), join(target, "env")]), join(target, "worker"));
-  assert.equal(names(legacy, [join(target, "env")]), join(target, "env"));
-  assert.equal(names(legacy, [join(target, "work")]), "", "a name prefix is not a path prefix");
-  // Through the release's env link and through `current`, the unit names envs/e1 and releases/r1.
-  const viaLinks = "[Service]\nWorkingDirectory=%h/w/current/worker\nExecStart=%h/w/releases/r1/env/bin/python\n";
-  assert.equal(names(viaLinks, [join(target, "envs", "e1")]), join(target, "envs", "e1"));
-  assert.equal(names(viaLinks, [join(target, "releases", "r1")]), join(target, "releases", "r1"));
-  // A symlink on the deletion list is removed as a link: its target is not what it names.
-  assert.equal(names("[Service]\nWorkingDirectory=%h/w/releases/r1/worker\n", [join(target, "current")]), "");
-  assert.equal(names("# WorkingDirectory=%h/w/worker\n[Service]\n", [join(target, "worker")]), "", "comments name nothing");
 });
