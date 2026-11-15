@@ -149,7 +149,9 @@ test("leases use whatever hosts are configured: first by rank, then the next one
     assert.equal(lease.device, "rocm");
     assert.equal(lease.canFailover, false);
     await lease.release("finished");
-    assert.deepEqual([...fake.stagedFolders("cpu-c"), ...fake.stagedFolders("gpu-b")], []);
+    // A job's staged audio stays on both hosts (removing it is #421); nothing is deleted.
+    assert.deepEqual([...fake.stagedFolders("cpu-c"), ...fake.stagedFolders("gpu-b")], ["configured", "configured"]);
+    assert.deepEqual(Object.values(fake.hosts).flatMap((host) => host.commands.filter((command) => /\brm\b/.test(command))), []);
   } finally {
     delete process.env.ALIGNMENT_POOL_ENABLED;
     rmSync(temp, { recursive: true, force: true });
