@@ -126,7 +126,7 @@ test("recovery aborted in staging removes the partly staged probe directory unde
     async probe() { return true; },
     async exec(_target, command, options) {
       if (command.startsWith("mkdir")) mkdir = command;
-      if (command.includes("rm -rf")) removals.push({ command, abortedWhenSent: options?.signal?.aborted });
+      if (command.startsWith("rm -rf")) removals.push({ command, abortedWhenSent: options?.signal?.aborted });
       return { code: 0, stdout: "", stderr: "" };
     },
     uploadFile(_local, _remote, target, options) {
@@ -141,11 +141,7 @@ test("recovery aborted in staging removes the partly staged probe directory unde
   assert.deepEqual(killed, ["scp wsl"]);
   const probeDir = mkdir.match(/'([^']*\/alignment\/pool-jobs\/ctc-probe-[^/']+)\/tracks'/)?.[1];
   assert.ok(probeDir, `staging made no probe directory: ${mkdir}`);
-  assert.equal(removals.length, 1);
-  const removing = removals[0].command.match(/^mv -T -- '([^']+)' '([^']+)' 2>\/dev\/null; rm -rf -- '([^']+)'$/);
-  assert.ok(removing, removals[0].command);
-  assert.equal(removing[1], probeDir);
-  assert.ok(removing[2].startsWith(`${probeDir}.removing-`) && removing[3] === removing[2], removals[0].command);
+  assert.deepEqual(removals.map((removal) => removal.command), [`rm -rf '${probeDir}'`]);
   // The removal is not tied to the request's deadline, which had already aborted.
   assert.equal(removals[0].abortedWhenSent, false);
 });
@@ -155,7 +151,7 @@ test("a stalled removal of an aborted probe's staging gives up at its own deadli
   setAlignmentPoolDepsForTests({
     async probe() { return true; },
     exec(_target, command, options) {
-      if (command.includes("rm -rf")) return stalledChild(options?.signal, killed, "rm");
+      if (command.startsWith("rm -rf")) return stalledChild(options?.signal, killed, "rm");
       return Promise.resolve({ code: 0, stdout: "", stderr: "" });
     },
     uploadFile(_local, _remote, target, options) {
@@ -195,7 +191,7 @@ test("recovery stalled in remote cleanup answers at its deadline, kills the clea
     async probe() { return true; },
     async exec(_target, command, options) {
       commands.push(command.split(" ")[0]);
-      if (command.includes("rm -rf")) return stalledChild(options?.signal, killed, "rm");
+      if (command.startsWith("rm -rf")) return stalledChild(options?.signal, killed, "rm");
       return { code: 0, stdout: "", stderr: "" };
     },
     async uploadFile(local, remote) {
@@ -211,8 +207,7 @@ test("recovery stalled in remote cleanup answers at its deadline, kills the clea
     });
   });
   assertTimedOut(await recover());
-  // The removal renames the folder, then deletes it: one command.
-  assert.deepEqual(commands, ["mkdir", "mv"]);
+  assert.deepEqual(commands, ["mkdir", "rm"]);
   assert.deepEqual(killed, ["rm"]);
   await leaseFreed();
 });

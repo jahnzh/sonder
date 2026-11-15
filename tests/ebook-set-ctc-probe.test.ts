@@ -263,7 +263,7 @@ test("candidates re-evaluated together share one staging, one host lease and one
   assert.deepEqual(results.map((r) => r.status).sort(), ["accepted", "rejected", "rejected"]);
   assert.equal(probeUploads().length, 1, "the recording is copied to the host once");
   assert.equal(probes().length, 3 * planSamples([{ id: "t", duration: 3600 }]).length);
-  const removals = commands.filter((c) => c.command.includes("rm -rf"));
+  const removals = commands.filter((c) => c.command.startsWith("rm -rf"));
   assert.equal(removals.length, 1);
   assert.match(removals[0].command, /pool-jobs\/ctc-probe-/);
   assert.equal(getAlignmentPoolCoordinator().activeOnHost("wsl"), 0, "the host is free again");
@@ -294,7 +294,7 @@ test("a top-k run downloads first then probes every candidate on one staging (ME
   assert.deepEqual(result.downloaded.map((d) => d.status), ["accepted", "rejected"]);
   assert.ok(heldWhileDownloading.every((n) => n === 0), "no lease is held while candidates download");
   assert.equal(probeUploads().length, 1, "k candidates share one staging of the recording");
-  assert.equal(commands.filter((c) => c.command.includes("rm -rf")).length, 1);
+  assert.equal(commands.filter((c) => c.command.startsWith("rm -rf")).length, 1);
   assert.equal(getAlignmentPoolCoordinator().activeOnHost("wsl"), 0);
 });
 

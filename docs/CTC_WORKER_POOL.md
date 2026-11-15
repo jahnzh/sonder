@@ -77,13 +77,8 @@ Accepted limitations, kept as they are:
   the request (#398, #402).
 - Audio staged for a probe whose deadline fires during scoring stays on the
   host.
-- A removal that fails or times out leaves the folder (or its renamed copy,
-  `<id>.removing-<uuid>`), and so does cancelling a job that is not running
-  (paused or queued with staging kept).
-
-A removal first renames the folder and then deletes the renamed copy, so a
-deletion that is still running on the host after its deadline cannot reach a
-later run of the same job, which stages into the same `pool-jobs/<id>` folder.
+- A removal that fails or times out leaves the folder, and so does cancelling
+  a job that is not running (paused or queued with staging kept).
 
 ### Audio staged before worker leases
 
