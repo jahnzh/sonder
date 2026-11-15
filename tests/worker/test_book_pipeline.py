@@ -103,6 +103,46 @@ class Decode(unittest.TestCase):
         np.testing.assert_array_equal(decoded, samples)
         self.assertEqual(sorted(p.name for p in (self.dir / "out").iterdir()), ["0.pcm"])
 
+    def test_a_track_longer_than_its_container_says_is_stopped_at_its_cap(self):
+        # The container claims 10 s; the file holds 60 s. The decoder must not write the 60 s.
+        write_wav(self.dir / "a.wav", 60.0)
+        sizes = []
+        real = book_audio.run_process
+
+        def measured(command, should_stop=None, poll=0.25):
+            result = real(command, should_stop, poll)
+            sizes.append(Path(command[-1]).stat().st_size)
+            return result
+
+        with mock.patch.object(book_audio, "probe_duration", lambda *a, **k: 10.0), \
+                mock.patch.object(book_audio, "run_process", measured):
+            with self.assertRaises(book_audio.DecodeFailed):
+                book_audio.decode_tracks([{"index": 0, "audio": self.dir / "a.wav", "duration": 10.0}],
+                                         self.dir / "out", workers=1)
+        allowed = (10.0 * 1.10 + 1.0) * 16000 * 2 + (1 << 20)  # ffmpeg's -fs runs past its cap by < 1 MiB
+        self.assertTrue(sizes and max(sizes) <= allowed, (sizes, allowed))
+        self.assertEqual(list((self.dir / "out").iterdir()), [], "nothing of the failed decode stays")
+
+    def test_the_join_holds_one_range_twice_at_most(self):
+        samples = write_wav(self.dir / "a.wav", 40.0)
+        pcm = len(samples) * 2
+        out = self.dir / "out"
+        seen = []
+        real_unlink = Path.unlink
+
+        def unlink(path, missing_ok=False):
+            if ".part" in path.name and path.exists():  # the moment a joined range is let go
+                seen.append(sum(f.stat().st_size for f in out.iterdir()))
+            return real_unlink(path, missing_ok=missing_ok)
+
+        with mock.patch.object(Path, "unlink", unlink):
+            metas, _ = book_audio.decode_tracks([{"index": 0, "audio": self.dir / "a.wav"}], out, workers=4,
+                                                range_seconds=10)
+        self.assertEqual(metas[0]["ranges"], 4)
+        self.assertTrue(seen)
+        self.assertLessEqual(max(seen), pcm + 10 * 16000 * 2 + 1024, "a join held a second copy of the track")
+        np.testing.assert_array_equal(np.fromfile(out / "0.pcm", dtype="<i2"), samples)
+
     def test_duration_check_per_track(self):
         write_wav(self.dir / "a.wav", 12.0)
         write_wav(self.dir / "b.wav", 30.0, rate=44100)
@@ -350,6 +390,40 @@ class Pipeline(PipelineFixture):
         self.assertGreater(second.windows, 0)
         self.assertLess(second.windows, model.windows, "only the changed track is encoded again")
 
+    def test_the_reservation_covers_tracks_longer_than_declared(self):
+        # The request says 1 s per track; the files hold 40 s and 25 s. The reservation must follow the files.
+        request = {**self.request, "tracks": [{**t, "duration": 1.0} for t in self.tracks]}
+        jobs = self.jobs(FakeModel())
+        budget = jobs.registry.budget
+        folder = self.media / "alignment" / "book-jobs" / "book-1"
+        samples, stop = [], threading.Event()
+
+        def sample():
+            while not stop.is_set():
+                before = budget.reserved("book-1")
+                used = book_session_folder_bytes(folder)
+                after = budget.reserved("book-1")
+                samples.append((used, max(before, after)))
+                time.sleep(0.002)
+
+        sampler = threading.Thread(target=sample)
+        sampler.start()
+        reserved = []
+        real_reserve = budget.reserve
+        budget.reserve = lambda key, nbytes: reserved.append(nbytes) or real_reserve(key, nbytes)
+        try:
+            with mock.patch.object(book_align, "plan_groups", lambda longform, should_stop=None:
+                                   self.plan(longform.em.shape[0])):
+                jobs.start(request)
+                self.assertEqual(self.wait(jobs)["state"], "done")
+        finally:
+            stop.set()
+            sampler.join(10)
+        pcm = (40 + 25) * 16000 * 2
+        self.assertGreater(max(reserved), pcm, "reserved from the probed durations, not the request's")
+        over = [(used, held) for used, held in samples if used > held]
+        self.assertEqual(over, [], "the job's files never exceeded its reservation")
+
     def test_a_track_replaced_while_stopped_gives_a_result_from_the_new_audio(self):
         # Review round 1: the same request, track 1 replaced by different audio of the same duration while the
         # worker is stopped after group 1. The concatenated emissions, the plan and groups 0 and 1 are stale.
@@ -418,6 +492,17 @@ class Pipeline(PipelineFixture):
         self.assertEqual(jobs.registry.budget.reserved(), 0)
         self.assertFalse((self.media / "alignment" / "book-jobs" / "book-1").exists())
         self.assertIsNone(book_encode.encode_queue("cpu").holder)
+
+
+def book_session_folder_bytes(folder):
+    total = 0
+    for directory, _dirs, files in os.walk(folder):
+        for name in files:
+            try:
+                total += os.stat(os.path.join(directory, name)).st_size
+            except OSError:
+                pass
+    return total
 
 
 def running(pid):

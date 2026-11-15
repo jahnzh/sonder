@@ -13,14 +13,17 @@ Ending a session stops its pool's processes (SIGTERM, SIGKILL after TERMINATE_GR
 they have exited, then drops its handles, deletes the decoded audio and the emissions (except on worker
 stop) and only then releases its disk reservation.
 
-Lock order: `SessionRegistry._lock` -> `BookSession._lock` -> `DiskBudget._lock`. A lock is never taken
+Lock order: (`book_job.BookJobs._lock` ->) `SessionRegistry._lock` -> `BookSession._lock` -> `DiskBudget._lock`. A lock is never taken
 while a later one in that order is held, and none is held while waiting for the encode queue, for a
 process to exit or for disk I/O on book data. The one exception is `start_pool`: it starts the pool's
 processes under `BookSession._lock`, so that a session ending at the same time stops every one of them.
 
 Disk budget: one budget per worker for decoded audio and emissions together (ALIGNMENT_BOOK_DISK_BYTES).
-A session reserves its book's estimate before it decodes; a book that does not fit next to the other
-sessions waits, and a book larger than the whole budget fails at once.
+A session's reservation is what its folder holds plus the most the next stage adds at its peak; it is
+set again before each stage that writes (decode, encode, the book's concatenated emissions) from the
+probed durations and the files really on disk, never from the request. A book that does not fit next to
+the other sessions waits; a book larger than the whole budget fails at once. At worker start the files
+of retained jobs are claimed before any job runs, so a restart cannot admit more than the disk holds.
 """
 import os
 import shutil
@@ -58,6 +61,28 @@ def idle_seconds(env=None):
 def estimate_bytes(audio_seconds):
     """Peak disk of one book: all decoded PCM plus its emissions (+5 % for decoder slack)."""
     return int(audio_seconds * (PCM_BYTES_PER_SECOND + EMISSION_BYTES_PER_SECOND) * 1.05) + (1 << 20)
+
+
+def emission_bytes(samples):
+    """The most bytes one track's emissions take: one 29-label float16 frame per 320 samples."""
+    return (int(samples) // 320 + 2) * 29 * 2
+
+
+def meta_bytes(sentences):
+    """State, plan, group and result files of a book: generous for the 71,225 sentences of the largest."""
+    return (16 << 20) + 1024 * int(sentences)
+
+
+def folder_bytes(folder):
+    """Bytes of every file under `folder` (0 when it does not exist)."""
+    total = 0
+    for directory, _dirs, files in os.walk(folder):
+        for name in files:
+            try:
+                total += os.stat(os.path.join(directory, name)).st_size
+            except OSError:
+                pass
+    return total
 
 
 def stop_pool(pool, grace=None):
@@ -118,6 +143,11 @@ class DiskBudget:
             self._reserved[key] = nbytes
             return True
 
+    def claim(self, key, nbytes):
+        """Record bytes that are already on disk (retained at a restart), whether or not they fit."""
+        with self._lock:
+            self._reserved[key] = int(nbytes)
+
     def release(self, key):
         with self._lock:
             return self._reserved.pop(key, 0)
@@ -166,6 +196,10 @@ class BookSession:
             if should_wait is not None and not should_wait():
                 raise SessionEnded("cancelled")
             time.sleep(poll)
+
+    def claim_disk(self, nbytes):
+        """The files this session's folder already holds, counted before anything else is admitted."""
+        self.budget.claim(self.key, nbytes)
 
     def set_pool(self, pool):
         with self._lock:

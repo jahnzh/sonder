@@ -10,6 +10,11 @@
 * Parallel decode: a track longer than RANGE_SECONDS is cut into time ranges decoded by separate ffmpeg
   processes (input seeking is by timestamp, so each range starts on the container timeline). Each range
   is cut or padded to its exact sample count, so the joined track has no gap or overlap.
+* Bounded writes: the ranges are planned from the probed container duration (never from the request),
+  and every ffmpeg process gets a byte cap (`-fs`). A range that reaches its cap fails the decode, so the
+  bytes on disk never pass `peak_bytes(plans)`, which the job reserves before decoding. The ranges are
+  joined in place (appended to the first and deleted one by one), so a join holds one extra range, not a
+  second copy of the track.
 
 Standard library only; the PCM is raw 16 kHz mono s16le, one file per track.
 """
@@ -17,6 +22,7 @@ import concurrent.futures
 import json
 import math
 import os
+import shutil
 import subprocess
 import threading
 import time
@@ -29,6 +35,12 @@ DURATION_TOLERANCE_S = 0.25
 RANGE_SECONDS = 1800.0
 # A range may come back a little short or long at a seek point; more than this is a decode failure.
 RANGE_SLACK_S = 1.0
+# The last range of a track may decode to this share more than its container duration says (plus
+# RANGE_SLACK_S) before it is a failure: the 2026-11-14 recordings differ by at most 0.02 s.
+OVER_FRACTION = 0.10
+# ffmpeg's -fs stops writing some way past the cap: measured on WSL (ffmpeg 6.1) with WAV, AAC and MP3
+# sources and caps from 0.1 to 200 MB, at most 225 KB past it. 1 MiB is allowed per range.
+FS_SLACK_BYTES = 1 << 20
 
 
 class DecodeFailed(Exception):
@@ -98,14 +110,56 @@ def plan_ranges(duration, range_seconds=RANGE_SECONDS):
     return [(edges[i], edges[i + 1] if i + 1 < count else None) for i in range(count)]
 
 
-def decode_command(source, out, start_sample=0, end_sample=None, ffmpeg="ffmpeg"):
+def range_cap_bytes(start_sample, end_sample, container_seconds):
+    """Most bytes one range may decode to before it counts as a failure."""
+    slack = int(RANGE_SLACK_S * SAMPLE_RATE)
+    if end_sample is not None:
+        samples = end_sample - start_sample + 2 * slack  # fit_range refuses more than `slack` anyway
+    else:
+        expected = max(0, round(container_seconds * SAMPLE_RATE) - start_sample)
+        samples = math.ceil(expected * (1 + OVER_FRACTION)) + slack
+    return samples * BYTES_PER_SAMPLE
+
+
+def plan_tracks(tracks, ffprobe="ffprobe", should_stop=None, range_seconds=RANGE_SECONDS):
+    """Probe every track and plan its ranges and byte caps, before anything is written.
+
+    The request's duration is used only when ffprobe cannot read the container's."""
+    plans = []
+    for track in tracks:
+        container = probe_duration(track["audio"], ffprobe, should_stop)
+        if container is None and track.get("duration"):
+            container = float(track["duration"])
+        if container is None:
+            raise DecodeFailed(f"The duration of track {track['index']} could not be read.")
+        ranges = plan_ranges(container, range_seconds)
+        plans.append({"track": track, "container": container, "ranges": ranges,
+                      "caps": [range_cap_bytes(start, end, container) for start, end in ranges]})
+    return plans
+
+
+def peak_bytes(plans):
+    """The most bytes `decode_tracks(plans)` has on disk at once: every range at its cap, plus one range
+    being appended during a join."""
+    parts = [cap + FS_SLACK_BYTES for plan in plans for cap in plan["caps"]]
+    return sum(parts) + max(parts, default=0)
+
+
+def decoded_samples_bound(plan):
+    """The most samples a planned track decodes to."""
+    return sum(plan["caps"]) // BYTES_PER_SAMPLE
+
+
+def decode_command(source, out, start_sample=0, end_sample=None, ffmpeg="ffmpeg", max_bytes=None):
     command = [ffmpeg, "-nostdin", "-v", "error", "-threads", "1"]
     if start_sample:
         command += ["-ss", f"{start_sample / SAMPLE_RATE:.6f}"]
     if end_sample is not None:
         command += ["-t", f"{(end_sample - start_sample) / SAMPLE_RATE:.6f}"]
-    return command + ["-i", str(source), "-af", CONTAINER_FILTER, "-ac", "1", "-ar", str(SAMPLE_RATE),
-                      "-f", "s16le", "-y", str(out)]
+    command += ["-i", str(source), "-af", CONTAINER_FILTER, "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "s16le"]
+    if max_bytes is not None:
+        command += ["-fs", str(int(max_bytes))]
+    return command + ["-y", str(out)]
 
 
 def fit_range(path, samples):
@@ -131,9 +185,10 @@ def duration_check(decoded_seconds, container_seconds, tolerance=DURATION_TOLERA
 
 
 def decode_tracks(tracks, folder, workers=None, should_stop=None, on_track=None, ffmpeg="ffmpeg",
-                  ffprobe="ffprobe", range_seconds=RANGE_SECONDS):
+                  ffprobe="ffprobe", range_seconds=RANGE_SECONDS, plans=None):
     """Decode `tracks` ([{"index", "audio", "duration"?}]) to `folder/<index>.pcm`.
 
+    `plans` are `plan_tracks(tracks)` when the caller has probed them already (to reserve disk first).
     Ranges of all tracks share one pool of `workers` ffmpeg processes. `on_track(meta)` is called when a
     track is complete. Returns the per-track metadata in track order.
     """
@@ -147,50 +202,48 @@ def decode_tracks(tracks, folder, workers=None, should_stop=None, on_track=None,
         return failed.is_set() or (outer_stop is not None and outer_stop())
 
     started = time.monotonic()
-    plans = []
-    for track in tracks:
-        container = probe_duration(track["audio"], ffprobe, should_stop)
-        if container is None and track.get("duration"):
-            container = float(track["duration"])
-        plans.append((track, container, plan_ranges(container, range_seconds)))
-    parts = [(t, r) for t, (_, _, ranges) in enumerate(plans) for r in range(len(ranges))]
-    remaining = {t: len(ranges) for t, (_, _, ranges) in enumerate(plans)}
+    if plans is None:
+        plans = plan_tracks(tracks, ffprobe, should_stop, range_seconds)
+    parts = [(t, r) for t, plan in enumerate(plans) for r in range(len(plan["ranges"]))]
+    remaining = {t: len(plan["ranges"]) for t, plan in enumerate(plans)}
     results = [None] * len(plans)
 
     def part_path(t, r):
-        return folder / f"{plans[t][0]['index']}.part{r}.pcm"
+        return folder / f"{plans[t]['track']['index']}.part{r}.pcm"
 
     def decode_part(item):
         t, r = item
-        track, _, ranges = plans[t]
-        start, end = ranges[r]
+        plan = plans[t]
+        start, end = plan["ranges"][r]
+        cap = plan["caps"][r]
         out = part_path(t, r)
-        code, _, error = run_process(decode_command(track["audio"], out, start, end, ffmpeg), should_stop)
+        code, _, error = run_process(decode_command(plan["track"]["audio"], out, start, end, ffmpeg, cap), should_stop)
         if code:
             raise DecodeFailed((error or f"ffmpeg exited with {code}").strip()[-500:])
+        if out.stat().st_size >= cap:
+            raise DecodeFailed(f"Track {plan['track']['index']} decodes to more audio than its container's "
+                               f"{plan['container']:.2f} s allow; it was stopped at {cap} bytes.")
         if end is not None:
             fit_range(out, end - start)
         return item
 
     def finish(t):
-        track, container, ranges = plans[t]
+        plan = plans[t]
+        track = plan["track"]
         target = folder / f"{track['index']}.pcm"
         temporary = folder / f"{track['index']}.join.pcm"
-        with temporary.open("wb") as out:
-            for r in range(len(ranges)):
-                with part_path(t, r).open("rb") as source:
-                    while True:
-                        block = source.read(1 << 20)
-                        if not block:
-                            break
-                        out.write(block)
-        for r in range(len(ranges)):
-            part_path(t, r).unlink(missing_ok=True)
+        part_path(t, 0).replace(temporary)
+        with temporary.open("ab") as out:
+            for r in range(1, len(plan["ranges"])):
+                part = part_path(t, r)
+                with part.open("rb") as source:
+                    shutil.copyfileobj(source, out, 1 << 20)
+                part.unlink()  # one range is held twice at most, never the whole track
         temporary.replace(target)
         samples = target.stat().st_size // BYTES_PER_SAMPLE
         meta = {"index": track["index"], "id": track.get("id"), "pcm": target.name, "samples": samples,
-                "ranges": len(ranges), "method": "container-time",
-                "durationCheck": duration_check(samples / SAMPLE_RATE, container)}
+                "ranges": len(plan["ranges"]), "method": "container-time",
+                "durationCheck": duration_check(samples / SAMPLE_RATE, plan["container"])}
         results[t] = meta
         if on_track is not None:
             on_track(meta)
@@ -210,8 +263,8 @@ def decode_tracks(tracks, folder, workers=None, should_stop=None, on_track=None,
                     future.cancel()
                 raise
     finally:
-        for t, (_, _, ranges) in enumerate(plans):
-            for r in range(len(ranges)):
+        for t, plan in enumerate(plans):
+            for r in range(len(plan["ranges"])):
                 part_path(t, r).unlink(missing_ok=True)
-            (folder / f"{plans[t][0]['index']}.join.pcm").unlink(missing_ok=True)
+            (folder / f"{plan['track']['index']}.join.pcm").unlink(missing_ok=True)
     return results, time.monotonic() - started

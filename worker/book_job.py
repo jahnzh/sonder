@@ -27,7 +27,8 @@ import time
 import traceback
 from pathlib import Path
 
-from book_session import BudgetExceeded, SessionEnded, SessionRegistry, estimate_bytes
+from book_session import (BudgetExceeded, SessionEnded, SessionRegistry, emission_bytes, folder_bytes,
+                          meta_bytes)
 
 # A new aligner, so a new engine generation (ADR 0016). The window endpoints keep ctc_acoustic.ENGINE.
 BOOK_ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-book-v1"
@@ -36,6 +37,8 @@ LABELS = ("-", "|", "E", "T", "A", "O", "N", "I", "H", "S", "R", "D", "L", "U", 
           "P", "B", "V", "K", "'", "X", "J", "Q", "Z")
 JOB_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 TERMINAL = ("done", "failed", "cancelled")
+# Room for state.json (and its temporary copy) next to the request.
+STATE_BYTES = 64 * 1024
 STATES = ("queued", "decoding", "encoding", "anchoring", "aligning", "finishing") + TERMINAL
 
 
@@ -159,6 +162,10 @@ class BookJobs:
                 stored = read_json(folder / "request.json")
                 if stored is not None and request_digest(stored) != digest:
                     raise JobConflict("This job id belongs to another request.")
+                # The request and state files are written now, before the job reserves its first stage:
+                # counted first (the body is at most align.BOOK_REQUEST_MAX_BYTES).
+                self.registry.open(key, folder).claim_disk(
+                    folder_bytes(folder) + len(json.dumps(request, separators=(",", ":"))) + STATE_BYTES)
                 job = self._load_or_create(key, folder, request, digest)
                 self._jobs[key] = job
             elif job.digest != digest:
@@ -210,13 +217,18 @@ class BookJobs:
     # ------------------------------------------------------------ lifecycle
 
     def resume_all(self):
-        """Worker start: pick up every job folder; unfinished jobs continue where they stopped."""
+        """Worker start: pick up every job folder; unfinished jobs continue where they stopped.
+
+        Every retained folder's files are claimed in the disk budget before any job is launched, so the
+        jobs that resume (and new ones) are admitted against what the disk really holds."""
         if not self.root.is_dir():
             return []
-        resumed = []
+        loaded = []
         for folder in sorted(p for p in self.root.iterdir() if p.is_dir()):
             request = read_json(folder / "request.json")
             if request is None or not JOB_ID.match(folder.name) or request.get("jobId") != folder.name:
+                # Not a job of this worker: its files still take space; they are never deleted here.
+                self.registry.budget.claim(f"untracked/{folder.name}", folder_bytes(folder))
                 continue
             with self._lock:
                 if folder.name in self._jobs:
@@ -224,10 +236,15 @@ class BookJobs:
                 job = self._load_or_create(folder.name, folder, request, request_digest(request))
                 self._jobs[folder.name] = job
                 job.last_request = self._clock()
+            self.registry.open(job.key, folder).claim_disk(folder_bytes(folder))
+            loaded.append(job)
+        resumed = []
+        with self._lock:
+            for job in loaded:
                 if job.state["state"] not in TERMINAL:
                     job.update(resumed=job.state.get("resumed", 0) + 1)
                     self._launch(job)
-                    resumed.append(folder.name)
+                    resumed.append(job.key)
         return resumed
 
     def sweep(self):
@@ -374,14 +391,19 @@ class WorkerStages:
 
     # The order of the stages and what each keeps on disk; the work itself is in the modules.
     def run(self, job, session, should_stop):
-        tracks = job.request["tracks"]
-        audio_seconds = sum(float(t.get("duration") or 0) for t in tracks)
         job.update(state="queued")
-        session.reserve_disk(estimate_bytes(audio_seconds or 3600.0), should_wait=lambda: not should_stop())
         metas = self.decode_and_encode(job, session, should_stop)
         if should_stop():
             raise Stopped()
         self.align(job, session, metas, should_stop)
+
+    @staticmethod
+    def reserve(job, session, should_stop, adds):
+        """Reserve what the job's folder holds now plus `adds` bytes the next stage writes at its peak (and
+        room for the small state, plan, group and result files); waits while other books hold the budget."""
+        need = folder_bytes(job.folder) + int(adds) + meta_bytes(len(job.request["sentences"]))
+        session.reserve_disk(need, should_wait=lambda: not should_stop())
+        job.progress(diskReservedBytes=need)
 
     def track_identity(self, session, index, track):
         from ctc_cache import audio_digest
@@ -392,7 +414,7 @@ class WorkerStages:
         return {"engine": BOOK_ENGINE, "sha256": digest}
 
     def decode_and_encode(self, job, session, should_stop):
-        from book_audio import DecodeCancelled, decode_tracks
+        from book_audio import DecodeCancelled, decode_tracks, decoded_samples_bound, peak_bytes, plan_tracks
         from book_encode import EncodeCancelled, complete_emissions, emission_paths, encode_queue, encode_tracks
         tracks = job.request["tracks"]
         decoded_dir = job.folder / "tracks"
@@ -409,7 +431,24 @@ class WorkerStages:
         job.progress(tracksTotal=len(tracks), tracksEncoded=len(tracks) - len(missing),
                      tracksDecoded=len(tracks) - len(missing))
         job.timing("identity", time.monotonic() - started)
+        # PCM is never reused (a track without emissions is decoded again), and unfinished files of a stopped
+        # run are worthless: both go before the folder is measured for the budget.
+        shutil.rmtree(decoded_dir, ignore_errors=True)
+        for part in emissions_dir.glob("*.part"):
+            part.unlink(missing_ok=True)
+        complete_frames = sum(complete_emissions(emissions_dir, i, identities[i]) for i in range(len(tracks))
+                              if i not in missing)
         if missing:
+            try:
+                plans = plan_tracks([{"index": i, "audio": tracks[i]["audio"], "duration": tracks[i].get("duration")}
+                                     for i in missing], should_stop=should_stop)
+            except DecodeCancelled:
+                raise Stopped()
+            # Decode at its peak, then the missing emissions and the book's concatenated copy of all emissions,
+            # all bounded by the probed durations (the request's are not trusted).
+            new_emissions = sum(emission_bytes(decoded_samples_bound(plan)) for plan in plans)
+            self.reserve(job, session, should_stop,
+                         peak_bytes(plans) + new_emissions + complete_frames * 58 + new_emissions)
             job.update(state="decoding")
             decoded = {}
 
@@ -420,11 +459,14 @@ class WorkerStages:
 
             started = time.monotonic()
             try:
-                decode_tracks([{"index": i, "audio": tracks[i]["audio"], "duration": tracks[i].get("duration")}
-                               for i in missing], decoded_dir, should_stop=should_stop, on_track=on_track)
+                decode_tracks([plan["track"] for plan in plans], decoded_dir, should_stop=should_stop,
+                              on_track=on_track, plans=plans)
             except DecodeCancelled:
                 raise Stopped()
             job.timing("decode", time.monotonic() - started)
+            # The decoded audio is on disk now: the emissions still to come, exactly.
+            new_emissions = sum(emission_bytes(decoded[i]["samples"]) for i in missing)
+            self.reserve(job, session, should_stop, new_emissions + complete_frames * 58 + new_emissions)
             job.update(state="encoding")
             work = [{"index": i, "pcm": str(decoded_dir / decoded[i]["pcm"]), "samples": decoded[i]["samples"],
                      "decode": decoded[i], "identity": identities[i]} for i in missing]
@@ -484,6 +526,7 @@ class WorkerStages:
             book_path.unlink(missing_ok=True)
             for stale in groups_dir.glob("*.json"):
                 stale.unlink()
+            self.reserve(job, session, should_stop, frames_total * CLASSES * 2)
             temporary = emissions_dir / "book.f16.part"
             with temporary.open("wb") as out:
                 for meta in metas:
@@ -492,6 +535,8 @@ class WorkerStages:
                         shutil.copyfileobj(source, out, 1 << 20)
             temporary.replace(book_path)
             write_json(book_meta, {"emissionsKey": key, "frames": frames_total})
+        else:
+            self.reserve(job, session, should_stop, 0)
         emissions = np.memmap(book_path, dtype=np.float16, mode="r").reshape(-1, CLASSES)
         session.emissions = emissions
         longform = book_align.LongForm(emissions, LABELS, sentences)

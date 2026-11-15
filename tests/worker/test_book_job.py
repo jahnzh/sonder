@@ -20,12 +20,15 @@ import ctc_acoustic
 class FakeStages:
     """Groups 0..groups-1, each written to groups/<n>.json; `gate` can hold a group until released."""
 
-    def __init__(self, groups=4, fail_at=None):
+    def __init__(self, groups=4, fail_at=None, reserve=1000, before_reserve=None):
         self.groups = groups
         self.fail_at = fail_at
+        self.reserve = reserve
+        self.before_reserve = before_reserve  # an Event the job waits for before it reserves
         self.aligned = []
         self.gates = {}
         self.started = threading.Event()
+        self.entered = threading.Event()
         self.reached = {}
 
     def encode_position(self, key):
@@ -36,7 +39,12 @@ class FakeStages:
         self.reached[group] = threading.Event()
 
     def run(self, job, session, should_stop):
-        session.reserve_disk(1000)
+        self.entered.set()
+        if self.before_reserve is not None:
+            while not self.before_reserve.wait(0.01):
+                if should_stop():
+                    return
+        session.reserve_disk(self.reserve, should_wait=lambda: not should_stop(), poll=0.01)
         self.started.set()
         folder = job.folder / "groups"
         folder.mkdir(exist_ok=True)
@@ -228,6 +236,42 @@ class Jobs(unittest.TestCase):
         self.assertEqual(status["state"], "done")
         self.assertEqual(status["resumed"], 1)
         self.assertEqual(restarted.result("job-1")["outcome"], "mapped")
+
+    def stopped_with_retained_files(self, nbytes):
+        """job-1 stopped by the worker in group 2, with `nbytes` of emissions left in its folder."""
+        first = FakeStages()
+        first.hold(2)
+        jobs = self.jobs(first)
+        jobs.start(request())
+        self.assertTrue(first.reached[2].wait(5))
+        jobs.shutdown()
+        (self.root / "job-1" / "emissions" / "1.f16").write_bytes(b"\0" * nbytes)
+        return sum(f.stat().st_size for f in (self.root / "job-1").rglob("*") if f.is_file())
+
+    def test_a_restart_claims_the_retained_files_before_any_job_runs(self):
+        on_disk = self.stopped_with_retained_files(6000)
+        hold = threading.Event()  # the resumed job has not reached its own reservation yet
+        restarted = self.jobs(FakeStages(before_reserve=hold))
+        self.assertEqual(restarted.resume_all(), ["job-1"])
+        self.assertEqual(restarted.registry.budget.reserved("job-1"), on_disk)
+        hold.set()
+        self.assertTrue(self.done(restarted))
+
+    def test_a_new_job_waits_while_retained_files_fill_the_budget(self):
+        self.stopped_with_retained_files(6000)
+        hold = threading.Event()
+        resumed = FakeStages(before_reserve=hold)
+        restarted = self.jobs(resumed)
+        restarted.resume_all()
+        self.assertTrue(resumed.entered.wait(5))
+        newcomer = FakeStages(reserve=5000)
+        restarted.stages = newcomer  # the second job's stages
+        restarted.start(request("job-2"))
+        self.assertFalse(newcomer.started.wait(0.3), "6,000 retained bytes and 5,000 more exceed 10,000")
+        restarted.cancel("job-1")  # its files go, and with them its claim
+        self.assertTrue(newcomer.started.wait(5))
+        self.assertTrue(self.done(restarted, "job-2"))
+        hold.set()
 
     def test_restart_keeps_a_finished_result_and_skips_foreign_folders(self):
         jobs = self.jobs(FakeStages())
