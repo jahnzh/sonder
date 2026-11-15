@@ -165,32 +165,43 @@ test("a centre tap while a follow jump swaps the page shows or hides the control
   expect(lost, `${lost.length} of ${measured} taps during a follow jump were lost`).toEqual([]);
 });
 
+// Playwright's own mouse must not move while a button is held over the pages: its drag handling then stalls
+// over the EPUB frames for about two minutes (also on main). A press is released where it began, or moved by
+// raw input events.
 test("an edge tap or a long press while a follow jump swaps the page turns no page and moves no narration", async ({ page }) => {
   const { room } = await openNarratedReader(page, "Edge tap during jump");
   const topbar = room.locator(".reader-topbar");
   const box = (await room.locator(".reader-viewport").boundingBox())!;
+  const back = room.getByRole("button", { name: "Back to narration", exact: true });
+  const undo = page.getByRole("button", { name: "Undo", exact: true });
   let edges = 0, presses = 0;
-  for (let attempt = 0; (edges < 4 || presses < 2) && attempt < 30; attempt++) {
+  for (let attempt = 0; (edges < 4 || presses < 2) && attempt < 40; attempt++) {
     const position = target(attempt);
     const shown = await topbar.isVisible();
     const jump = await startSectionJump(page, position);
     const press = edges >= 4;
-    // An edge tap on the right turns to the next page when a page is shown; a long press in the middle starts
-    // Listen from here at its sentence.
-    const x = box.x + box.width * (press ? 0.5 : 0.9), y = box.y + box.height / 2;
-    await page.mouse.move(x, y);
-    await page.mouse.down();
-    let during = await stillJumping(page, jump);
-    // A long press is held past the reader's 550 ms long-press time; the hold is the input, not a wait for the page.
-    if (press && during) await page.waitForTimeout(800);
-    // A press that began after the jump: moving the finger cancels it, so it is not a long press on the shown page.
-    else if (press) await page.mouse.move(x, y + 20);
-    await page.mouse.up();
-    if (!press) during = during && await stillJumping(page, jump);
+    let during: boolean;
+    if (!press) {
+      // An edge tap on the right: on a shown page it turns to the next one.
+      await page.mouse.click(box.x + box.width * 0.9, box.y + box.height / 2);
+      during = await stillJumping(page, jump);
+    } else {
+      // A long press in the middle: on a shown page it starts Listen from here at its sentence.
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      during = await stillJumping(page, jump);
+      // Held past the reader's 550 ms long-press time; the hold is the input, not a wait for the page.
+      if (during) await page.waitForTimeout(800);
+      await page.mouse.up();
+    }
     await jumpEnded(page, jump);
     if (!during) {
-      // The jump ended first, so the tap acted on the shown page as usual. Follow the narration again.
-      const back = room.getByRole("button", { name: "Back to narration", exact: true });
+      // The jump ended first, so the input acted on the shown page as usual. Undo a Listen from here and follow the
+      // narration again.
+      if (await undo.isVisible()) {
+        await undo.click();
+        await expect(undo).toBeHidden();
+      }
       if (await back.isEnabled()) await back.evaluate((el: HTMLButtonElement) => el.click());
       await expect(room).toHaveAttribute("data-current-passage", /.+/);
       continue;
@@ -200,29 +211,36 @@ test("an edge tap or a long press while a follow jump swaps the page turns no pa
     // Following is still on and shows the narrated sentence: no page turn, no Listen from here.
     await expect(room).toHaveAttribute("data-current-passage", /.+/);
     expect(await audioPosition(page)).toBeCloseTo(position, 3);
-    await expect(page.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
+    await expect(undo).toHaveCount(0);
     await expect(topbar).toBeVisible({ visible: shown });
   }
   expect(edges, "edge taps that landed while the pages were hidden").toBe(4);
   expect(presses, "long presses that started while the pages were hidden").toBe(2);
-  // A press that began during a jump and ends off the pages leaves them working: a tap on the shown page
-  // afterwards shows or hides the controls.
+});
+
+test("a press that began during a follow jump and ends off the pages leaves them working", async ({ page }) => {
+  const { room } = await openNarratedReader(page, "Press off the pages");
+  const box = (await room.locator(".reader-viewport").boundingBox())!;
+  const x = box.x + box.width / 2, y = box.y + box.height / 2;
+  const input = await page.context().newCDPSession(page);
+  const mouse = (type: string, x: number, y: number) =>
+    input.send("Input.dispatchMouseEvent", { type: type as "mousePressed", x, y, button: "left", buttons: type === "mouseReleased" ? 0 : 1, clickCount: 1 });
   let off = false;
-  for (let attempt = 0; !off && attempt < 10; attempt++) {
-    // Into the section the narration is not in.
-    const jump = await startSectionJump(page, (await audioPosition(page)) > 100 ? 30.25 : 170.25);
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await page.mouse.down();
+  for (let attempt = 0; !off && attempt < 20; attempt++) {
+    const jump = await startSectionJump(page, target(attempt));
+    await mouse("mousePressed", x, y);
     off = await stillJumping(page, jump);
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height + 40);
-    await page.mouse.up();
+    // Out of the viewport, below the pages, and released there.
+    await mouse("mouseMoved", x, box.y + box.height + 40);
+    await mouse("mouseReleased", x, box.y + box.height + 40);
     await jumpEnded(page, jump);
     const back = room.getByRole("button", { name: "Back to narration", exact: true });
     if (await back.isEnabled()) await back.evaluate((el: HTMLButtonElement) => el.click());
     await expect(room).toHaveAttribute("data-current-passage", /.+/);
   }
   expect(off, "a press that started while the pages were hidden").toBe(true);
-  const shown = await topbar.isVisible();
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await expect(topbar).toBeVisible({ visible: !shown });
+  // The pages take input again: an edge tap turns the shown page, which pages away from the narration.
+  await page.mouse.click(box.x + box.width * 0.9, y);
+  await expect(room.getByRole("button", { name: "Back to narration", exact: true })).toBeEnabled();
+  await expect(room).not.toHaveAttribute("data-current-passage", /.+/);
 });
