@@ -98,14 +98,31 @@ after, is removed by the administrator's sweep inside the server
 (`server/alignment-pool-sweep.ts`). Run the dry run first:
 
 - `GET /api/alignments/pool/staging` (admin only; `?host=<id>` for one host)
-  lists, per configured host, the worker's media root, every entry under
+  lists, per configured host, the worker's media root and the real paths of
+  that root and of its `alignment/pool-jobs` folder (`realRoot`,
+  `realPoolJobs`: symlinks resolved on the host), every entry under
   `alignment/pool-jobs` with its size (`du -sk`, KiB), the job and status the
-  server records for it, and what a run would do: **remove** (its
+  server records for it, and what a run would do now: **remove** (its
   job is finished, ready, partial, failed or cancelled, or the job was
   deleted, or the name was retired by an earlier run), **keep** (the job is
-  queued, copying, processing or paused, or a lease holds it) or **unknown**
-  (the server has no record of it). Each host also reports `removableKiB`. A
-  host that cannot be reached reports its error and lists nothing.
+  queued, copying, processing or paused, a lease holds the folder, the
+  recording's lease is held by any job or probe, or a run of the job is in
+  flight between its leases: the same checks the run makes) or **unknown**
+  (the server has no record of it). Each host also reports `removableKiB`,
+  the size of the folders marked remove. A host that cannot be reached
+  reports its error and lists nothing. Every configured host is listed, also
+  for `?host=`, because of the refusal below.
+- **Refusal.** A run removes nothing on any host unless every configured host
+  was listed without an error in that run and no host's real media root or
+  real pool-jobs folder lies strictly inside another host's (or its own) real
+  pool-jobs folder: `rm -rf` of a job folder on one host would otherwise
+  remove what a worker whose root is inside it stages. Two hosts with the same
+  real pool-jobs folder are allowed (different machines often use the same
+  path; one shared folder is covered by the global retired names). The dry
+  run and the run report the reason as `refused` on every host, and a
+  refused dry run marks nothing remove and counts nothing removable. Fix the
+  host (bring it up) or the configuration (`ALIGNMENT_POOL_HOSTS`, the
+  workers' `MEDIA_ROOT`) and run the dry run again.
 - `POST /api/alignments/pool/staging/remove` (admin only; an empty body, or
   `{"host": "<id>"}`) lists again and removes each folder marked remove, one at
   a time per host. One run at a time; a second gets 409. Each folder's result
@@ -123,6 +140,14 @@ uses a retired name, so a later run of the same job stages under `<id>.r1`, and
 a removal that is still running after its deadline, after a server restart or
 on a slow host can only reach a folder nothing stages into again.
 
+What the real paths cannot see: a worker root that is physically inside
+another host's pool-jobs folder without the resolved paths showing it, such
+as a bind mount, or one network share mounted at unrelated paths on two
+machines (or reached as two host entries). Configure each worker's
+`MEDIA_ROOT` on its own disk or folder, never inside or mounted from another
+worker's `alignment/pool-jobs` (`scripts/install-ctc-workers.sh` sets each
+worker's `MEDIA_ROOT` to `<its install directory>/media` on its own host).
+
 Unknown folders are never removed by this version: folders whose job row no
 longer records them (staged before `pool.stagedHosts` existed and since
 cleared, or of a job deleted before #421), probe folders of probes that ended in
@@ -130,6 +155,19 @@ an earlier server process (nothing records probes), files, symlinks and names
 the pool does not make. Do not delete folders under `pool-jobs/` by hand while
 jobs or probes run: a resumed or rebuilt job reuses its folder, and a probe
 keeps reading its folder for the whole batch.
+
+**Leftover probe folders (a known limit).** A probe interrupted before its own
+cleanup (a server restart, a failed removal) leaves a `ctc-probe-<uuid>`
+folder that the sweep lists as unknown for good: nothing durable records
+probe stagings, and this version does not add such a record. A probe folder
+is listed as keep while its probe runs in this server; probe ids are random
+and never reused, so a `ctc-probe-<uuid>` folder the dry run lists as
+**unknown** belongs to a probe that has ended and nothing stages into it
+again. The administrator removes such a folder by hand on its host, by the
+path the dry run prints (`rm -rf -- '<path>'`), right after a dry run that
+shows it unknown and reports no `refused` on any host, while one server
+process uses the pool. Do not do this for other unknown folders: a job
+folder without a record may still belong to a job.
 
 ## Host configuration
 
