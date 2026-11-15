@@ -29,7 +29,7 @@ export function setEngineGenerationsForTests(list: readonly string[] | null) {
 
 /** The engine new jobs are created with; rebuilds target it. */
 export function currentAlignmentEngine() {
-  return process.env.ALIGNMENT_CHAPTER_ENGINE !== "aeneas" ? CTC_ENGINE : "aeneas-1.7.3";
+  return CTC_ENGINE;
 }
 
 /** Position in ENGINE_GENERATIONS, or -1 for an identity this server does not know. */

@@ -200,6 +200,7 @@ export type AlignmentJob = {
   /** Present on summary list responses; full intervals live on /map. */
   intervalCount?: number;
 };
+// "steamdeck" only appears on jobs stored before the Steam Deck left the pool (#279).
 export type AlignmentPoolHostId = "wsl" | "steamdeck" | "lisa";
 export type AlignmentPoolHostStatus = {
   id: AlignmentPoolHostId;
@@ -216,7 +217,7 @@ export type AlignmentPoolHostStatus = {
 };
 export type AlignmentPoolStatus = {
   enabled: boolean;
-  engine: "ctc" | "aeneas";
+  engine: "ctc";
   checkedAt: number;
   hosts: AlignmentPoolHostStatus[];
 };

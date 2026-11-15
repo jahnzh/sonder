@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-// The worker's deadline logic is plain Python so it can be tested without fastapi or aeneas.
+// The worker's deadline logic is plain Python so it can be tested without fastapi.
 const available = spawnSync("python3", ["--version"]).status === 0;
 test("worker deadline tests pass", { skip: !available && "python3 is not installed", timeout: 120000 }, () => {
   const run = spawnSync(

@@ -34,8 +34,10 @@ export class ProbeUnavailable extends Error {}
 
 export function createCtcProbeSession(
   recordingId: string,
-  options: { waitMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+  /** `signal` ends staging, scoring and cleanup (and their child processes) when the caller's deadline passes. */
+  options: { waitMs?: number; sleep?: (ms: number) => Promise<void>; signal?: AbortSignal } = {},
 ): ProbeSession {
+  const signal = options.signal;
   const waitMs = options.waitMs ?? PROBE_HOST_WAIT_MS;
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   let lease: CtcProbeLease | null = null;
@@ -54,13 +56,13 @@ export function createCtcProbeSession(
     const deadline = Date.now() + waitMs;
     for (;;) {
       try {
-        const next = await acquireCtcProbeLease(recordingId, needed, trackLocalAudioPath, tried);
+        const next = await acquireCtcProbeLease(recordingId, needed, trackLocalAudioPath, tried, signal);
         lease = next;
         // Hosts dispatch already tried (including the one that succeeded) stay excluded on a later retry.
         for (const host of next.triedHosts) if (!tried.includes(host)) tried.push(host);
         return next;
       } catch (error) {
-        if (error instanceof PoolBusyError && Date.now() < deadline) {
+        if (error instanceof PoolBusyError && Date.now() < deadline && !signal?.aborted) {
           await sleep(PROBE_RETRY_MS);
           continue;
         }
@@ -100,11 +102,17 @@ export function createCtcProbeSession(
             outputDir: active.outputDir,
             recordingId,
             audioFingerprint: fingerprint,
+            signal,
           },
           { fragmentTexts, language, windows },
         );
       } catch (error) {
         if (error instanceof ProbeLanguageNotSupported) throw error;
+        // Past the caller's deadline nothing is retried; the lease is freed and the error goes up.
+        if (signal?.aborted) {
+          await release();
+          throw error;
+        }
         // A failed probe retries once on the other host (ADR 0005), then this candidate stays held.
         if (!tried.includes(active.hostId)) tried.push(active.hostId);
         await release();

@@ -33,6 +33,8 @@ export type CtcProbeTarget = {
   /** Identity of the recording's acoustic cache; the same values a full alignment of it sends. */
   recordingId: string;
   audioFingerprint: string;
+  /** Ends a request still running when the caller's deadline passes. */
+  signal?: AbortSignal;
 };
 
 export class ProbeLanguageNotSupported extends Error {
@@ -96,19 +98,6 @@ export function sampleFromCtcAnchor(
   };
 }
 
-/** The Whisper prober's answer (`/anchor` without an engine) in the same shape. */
-export function sampleFromWhisperAnchor(
-  result: { text?: string; start?: number; match?: { index: number; score: number } | null },
-  fallbackStart: number,
-): AnchorSampleScore {
-  return {
-    spokenWords: result.text ? wordCount(result.text) : 0,
-    match: result.match
-      ? { fragment: result.match.index, score: result.match.score, start: result.start ?? fallbackStart }
-      : null,
-  };
-}
-
 const NETWORK_RETRIES = 2;
 
 async function post(target: CtcProbeTarget, path: string, body: object, timeout: number): Promise<unknown> {
@@ -119,7 +108,7 @@ async function post(target: CtcProbeTarget, path: string, body: object, timeout:
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token: target.token, ...body }),
-        signal: AbortSignal.timeout(timeout),
+        signal: target.signal ? AbortSignal.any([AbortSignal.timeout(timeout), target.signal]) : AbortSignal.timeout(timeout),
       });
     } catch (error) {
       // A kept-alive connection the worker just closed fails the next request; scoring a sample is idempotent.
