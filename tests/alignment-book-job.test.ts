@@ -446,3 +446,66 @@ test("an ebook-set probe waits for the whole-book job's lease on its recording; 
   assert.deepEqual(fake.stagedFolders("wsl"), [created.id], "the probe's staging is removed; the job's stays");
   assert.equal(slotsHeld(), 0);
 });
+
+test("a result that names another engine is not published: the job moves to the other host", async () => {
+  fake.hosts.wsl.resultEngine = CTC_ENGINE;
+  const job = await settled((await anchoredJob()).id);
+  assert.equal(job.status, "partial", job.error ?? undefined);
+  assert.equal(job.engine, BOOK_ENGINE);
+  assert.equal(job.pool?.hostId, "lisa");
+});
+
+test("the worker's result becomes the stored map in one function: checked intervals, outcome, passages and flags", () => {
+  const { applyBookResult } = bookJob;
+  const [first, second, third] = sentences;
+  const trackIds = new Set(["track-a"]);
+  const base = (): Parameters<typeof applyBookResult>[0] => ({
+    id: "unit", ebookId: "book-ebook", recordingId: "unit-recording", status: "processing", progress: 0.5, engine: BOOK_ENGINE,
+    error: "an earlier host failed", warning: null, intervals: [], sectionsDone: [], elapsedSeconds: 0, fingerprint: "f",
+    audioFingerprint: "a", createdAt: 1, updatedAt: 1, coverage: 0, pairings: [], mode: "anchored",
+    anchoring: { stage: "sampling", refinements: 0, samples: [{ trackId: "track-a", time: 0, duration: 30 }], anchors: [], segments: [], rate: 0, flags: [] },
+  });
+  const interval = (paragraphId: string, start: number, extra: object = {}) =>
+    ({ paragraphId, section: 99, trackId: "track-a", start, end: start + 1, confidence: 0.65, ...extra });
+  const result = (outcome: string, intervals: object[]) => ({
+    jobId: "unit-x", engine: BOOK_ENGINE, outcome, intervals,
+    stageTimings: { decode: 1.5, encode: 2, note: "text" }, encode: { gpuUtilization: null },
+  }) as Parameters<typeof applyBookResult>[3];
+
+  const job = base();
+  const mapped = applyBookResult(job, book, trackIds, result("mapped", [
+    interval(third.id, 9), interval(first.id, 1),
+    interval(first.id, 50), // a second interval for one sentence: the first one counts
+    interval("not-a-sentence", 3), interval(second.id, 5, { trackId: "another-recording" }), interval(second.id, 7, { end: 7 }),
+  ]));
+  assert.deepEqual(mapped, { status: "partial" });
+  assert.deepEqual(job.intervals, [
+    { paragraphId: first.id, section: first.section, trackId: "track-a", start: 1, end: 2, confidence: 0.65 },
+    { paragraphId: third.id, section: third.section, trackId: "track-a", start: 9, end: 10, confidence: 0.65 },
+  ]);
+  assert.equal(job.coverage, 2 / sentences.length);
+  assert.equal(job.outcome, "partial");
+  assert.deepEqual(job.unsyncedPassages?.map((passage) => passage.firstParagraphId), [second.id, sentences[3].id]);
+  assert.deepEqual(job.stageTimings, { decode: 1.5, encode: 2 });
+  assert.equal(job.elapsedSeconds, 3.5);
+  assert.equal(job.gpuUtilization, null);
+  assert.equal(job.progress, 1);
+  assert.equal(job.error, null);
+  assert.match(job.warning ?? "", /estimated/);
+  assert.equal(job.anchoring?.stage, "done");
+  assert.deepEqual(job.anchoring?.samples, []);
+
+  const unsynced = base();
+  assert.deepEqual(applyBookResult(unsynced, book, trackIds, result("unsynced", [])), { status: "partial" });
+  assert.equal(unsynced.outcome, "unsynced");
+  assert.equal(unsynced.coverage, 0);
+  assert.match(unsynced.warning ?? "", /could not be matched/);
+
+  const language = base();
+  assert.deepEqual(applyBookResult(language, book, trackIds, result("language_not_supported", [])),
+    { error: "The alignment worker does not support this language.", outcome: "language_not_supported" });
+  assert.deepEqual(language.intervals, []);
+
+  assert.deepEqual(applyBookResult(base(), book, trackIds, result("text_mismatch", [])),
+    { error: "The alignment worker returned an outcome this server does not know (text_mismatch).", outcome: "error" });
+});

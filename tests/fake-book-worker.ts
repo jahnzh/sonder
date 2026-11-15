@@ -49,6 +49,8 @@ export type FakeBookHost = FakeHostState & {
   noBookJobs: boolean;
   /** The share of the sentences the result maps (the first ones), 1 by default. */
   mapShare: number;
+  /** The engine the result names: the whole-book engine by default. */
+  resultEngine: string;
   /** Runs before a whole-book request is answered. */
   onBook?: (method: string, path: string) => void | Promise<void>;
 };
@@ -113,7 +115,7 @@ function result(host: FakeBookHost, job: FakeBookJob) {
       stageTimings: job.stageTimings, encode: null };
   const mapped = request.sentences.slice(0, Math.ceil(request.sentences.length * host.mapShare));
   return {
-    jobId: job.jobId, engine: BOOK_ENGINE, recordingId: request.recordingId, audioFingerprint: request.audioFingerprint,
+    jobId: job.jobId, engine: host.resultEngine, recordingId: request.recordingId, audioFingerprint: request.audioFingerprint,
     outcome: mapped.length ? "mapped" : "unsynced", sentences: request.sentences.length, mapped: mapped.length,
     intervals: mapped.map((sentence: any, index: number) => ({
       paragraphId: sentence.id, section: sentence.section, trackId: request.tracks[0].id,
@@ -215,7 +217,7 @@ export async function fakeBookWorkers(
   for (const spec of specs) {
     const host = Object.assign(ssh.hosts[spec.id], {
       book: [], starts: [], jobs: new Map(), pollsPerStage: 1, holdAt: null, failAt: null, resuming: 0,
-      noBookJobs: false, mapShare: 1,
+      noBookJobs: false, mapShare: 1, resultEngine: BOOK_ENGINE,
     }) as FakeBookHost;
     hosts[spec.id] = host;
     const server = createServer((request, response) => {
