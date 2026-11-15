@@ -98,7 +98,7 @@ test("a due run makes a verified daily backup, records it, and is not due again 
   const dir = folder();
   const now = at("2026-11-16T03:05:00Z");
   const result = await backups.runDailyBackup({ now, dir, freeBytes: plenty, mountProblem: noDrive });
-  assert.deepEqual(result, { ran: true, day: "2026-11-16", status: "done", error: null, removed: [] });
+  assert.deepEqual(result, { ran: true, day: "2026-11-16", status: "done", error: null, removed: [], cleanupError: null });
   const path = join(dir, "daily-2026-11-16.db");
   assert.deepEqual(readdirSync(dir), ["daily-2026-11-16.db"], "no temporary file is left");
   const copy = new Database(path, { readonly: true });
@@ -333,7 +333,7 @@ test("a second server process neither runs nor interrupts the first one's backup
     const { backupDatabase } = await import(${JSON.stringify(join(repo, "server", "db-backup.mjs"))});
     const result = await backups.runDailyBackup({
       now: ${at("2026-11-16T03:05:00Z")}, dir: ${JSON.stringify(dir)}, freeBytes: () => ${10 * MIN_FREE_BYTES}, mountProblem: () => null,
-      backup: async (source, destination) => { await new Promise((done) => setTimeout(done, 1500)); return backupDatabase(source, destination); },
+      backup: async (source, destination, options) => { await new Promise((done) => setTimeout(done, 1500)); return backupDatabase(source, destination, options); },
     });
     process.stdout.write(JSON.stringify(result));
   `;
@@ -400,8 +400,8 @@ test("recorded names replaced by symlinks or folders do not fill the 14 kept: no
     if (index < 14) symlinkSync(join(dir, dailyBackupName(later[0])), path);
     else mkdirSync(path);
   }
-  const removed = await backups.pruneDailyBackups(dir);
-  assert.deepEqual(removed, [], "three real backups remain, fewer than 14: none goes");
+  const cleanup = await backups.pruneDailyBackups(dir);
+  assert.deepEqual(cleanup, { removed: [], error: null }, "three real backups remain, fewer than 14: none goes");
   for (const day of ["2026-09-01", later[0], later[1]]) assert.ok(statSync(join(dir, dailyBackupName(day))).isFile(), `${day} kept`);
   for (const day of replaced) assert.ok(existsSync(join(dir, dailyBackupName(day))), `${day}: the link or folder is left alone`);
 });
@@ -413,11 +413,11 @@ test("a run whose stale claim was taken over records nothing afterwards: the new
   let started!: () => void;
   const inBackup = new Promise<void>((done) => (started = done));
   const slow = run(dir, "2026-11-16T03:05:00Z", {
-    backup: async (source, destination) => {
+    backup: async (source, destination, options) => {
       started();
       await held;
       const { backupDatabase } = await import("../server/db-backup.mjs");
-      return backupDatabase(source, destination);
+      return backupDatabase(source, destination, options);
     },
   });
   await inBackup;

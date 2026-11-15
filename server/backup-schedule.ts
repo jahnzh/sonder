@@ -20,10 +20,13 @@ export const DAILY_BACKUPS_KEPT = 14;
 /** A run is refused when the backup folder's filesystem has less free space than this (about 40 backups). */
 export const MIN_FREE_BYTES = 1024 ** 3;
 /**
- * A run's claim on its day is live this long after it started: far longer than a backup of the ~25 MB database
- * takes. An older claim belongs to a server that stopped mid-run; another run may take it over.
+ * A run's claim on its day is live this long after the run last renewed it. A working run renews it at each stage
+ * and every `CLAIM_RENEW_MS`, so only a run whose server stopped (or hung) for this long loses its day; another run
+ * may then take it over.
  */
 export const STALE_CLAIM_MS = 30 * MINUTE;
+/** A working run renews its claim this often. */
+export const CLAIM_RENEW_MS = MINUTE;
 
 const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const DAILY_NAME = /^daily-(\d{4}-\d{2}-\d{2})\.db$/;

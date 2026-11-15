@@ -26,6 +26,9 @@ export type BackupRunRow = {
   started_at: number;
   finished_at: number | null;
   updated_at: number;
+  /** The retention after a successful run: `failed` with `cleanup_error`; absent in rows from before #361 round 2. */
+  cleanup?: string | null;
+  cleanup_error?: string | null;
 };
 
 /** The latest run, and the days of every successful run: the schedule decides from those (`backupPlan`). */
@@ -41,11 +44,14 @@ export function utcTime(ms: number) {
 
 export const backupSize = (bytes: number) => `${(bytes / 1e6).toFixed(1)} MB`;
 
+/** A successful backup whose retention failed: the backup is made, the old ones were not removed, and why. */
+const cleanupText = (row: BackupRunRow) => (row.cleanup === "failed" ? `; ${row.cleanup_error || "Old backups not removed."}` : "");
+
 function lastRunText(row: BackupRunRow | null, state: ActivityState | null) {
   if (!row || !state) return "No backup yet";
   if (state === "running") return `Running since ${utcTime(row.started_at)}`;
   const when = utcTime(row.finished_at ?? row.updated_at);
-  if (state === "done") return `Last run ${when}: succeeded${row.bytes !== null ? `, ${backupSize(row.bytes)}` : ""}`;
+  if (state === "done") return `Last run ${when}: succeeded${row.bytes !== null ? `, ${backupSize(row.bytes)}` : ""}${cleanupText(row)}`;
   return `Last run ${when}: failed`;
 }
 
@@ -57,7 +63,7 @@ function nextRunText(rows: BackupRows, state: ActivityState | null, held: boolea
   return `Next run ${utcTime(next)}`;
 }
 
-const SELECT = "SELECT day, file, status, bytes, error, started_at, finished_at, updated_at FROM backup_runs";
+const SELECT = "SELECT day, file, status, bytes, error, started_at, finished_at, updated_at, cleanup, cleanup_error FROM backup_runs";
 
 export const backupSource = defineSource<BackupRows>({
   kind: "backup",
@@ -77,10 +83,10 @@ export const backupSource = defineSource<BackupRows>({
     return {
       drafts: [{
         id: `backup:${row.day}`, kind: "backup" as const, processId: "backups", title: "Daily database backup",
-        detail: `${row.file}${size}`, user: null, state: mapped.state, progress: null, host: null,
+        detail: `${row.file}${size}${state === "done" ? cleanupText(row) : ""}`, user: null, state: mapped.state, progress: null, host: null,
         startedAt: row.started_at, updatedAt: row.finished_at ?? row.updated_at,
         error: mapped.unknown ?? (row.error || null),
-        // A backup reports no progress: a running one is stuck when it has run for longer than the threshold.
+        // A backup reports no progress: a running one is stuck when its claim was not renewed for longer than the threshold.
         changedAt: row.updated_at,
       }],
       summary,
