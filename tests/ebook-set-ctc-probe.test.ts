@@ -98,8 +98,8 @@ const probes = () => requests.filter((r) => String(r.body.output ?? "").includes
 
 function resetPool() {
   resetAlignmentPoolCoordinator([
-    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://wsl-worker.test" },
-    { id: "lisa", sshTarget: "lisa", maxConcurrent: 1, remoteWorkRoot: temp, workerUrl: "http://lisa-worker.test" },
+    { id: "wsl", sshTarget: "wsl", maxConcurrent: 3, remoteWorkRoot: temp, workerUrl: "http://wsl-worker.test", device: "cuda", precision: "float16", rank: 1 },
+    { id: "lisa", sshTarget: "lisa", maxConcurrent: 1, remoteWorkRoot: temp, workerUrl: "http://lisa-worker.test", device: "cpu", precision: "float32", rank: 2 },
   ]);
 }
 

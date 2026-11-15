@@ -46,7 +46,7 @@ import { registerAccountRequests } from "./account-requests.ts";
 import { registerInvites } from "./invites.ts";
 import { registerReader } from "./reader.ts";
 import { registerAlignment, autoQueueAlignmentsForWork, persistedPoolErrors } from "./alignment.ts";
-import { getAlignmentPoolStatus } from "./alignment-pool.ts";
+import { checkPoolHostsSetting, getAlignmentPoolStatus } from "./alignment-pool.ts";
 import { activitySamplerLoop, registerActivity } from "./activity.ts";
 import { backgroundRunner, type BackgroundOptions } from "./background-runner.ts";
 import { pauseState, setPaused } from "./activity-pause.ts";
@@ -190,6 +190,7 @@ export async function createApp(options?: {
   /** Tests: run the background loops by hand (see `server/background-runner.ts`). */
   background?: BackgroundOptions;
 }) {
+  checkPoolHostsSetting();
   ensureMediaStorage();
   seed();
   sqlite

@@ -29,7 +29,9 @@ function fixture({ missing, failSsh } = {}) {
   mkdirSync(bin);
   mkdirSync(temp);
   copyFileSync(join(repoRoot, "scripts", "image-smoke.mjs"), join(repo, "scripts", "image-smoke.mjs"));
-  copyFileSync(join(repoRoot, "server", "alignment-pool.ts"), join(repo, "server", "alignment-pool.ts"));
+  // The pool module and the server modules it imports, as the image has them.
+  for (const name of ["alignment-pool.ts", "alignment-engine.ts", "until-aborted.ts"])
+    copyFileSync(join(repoRoot, "server", name), join(repo, "server", name));
   writeFileSync(join(repo, "package.json"), '{"type":"module"}');
   writeFileSync(join(repo, "server", "app.ts"), "export function createApp() {}\n");
   writeFileSync(join(repo, "server", "ebook-set-consensus-runner.ts"), `
@@ -139,6 +141,31 @@ test("image smoke checks health and ssh true for every configured CTC pool host"
     assert.match(result.stdout, /alignment pool health and SSH/);
     assert.deepEqual(health.requests, ctcHosts.map((host) => `/${host}/health`));
     assert.deepEqual(f.sshCalls(), ctcTargets.map((target) => `-o BatchMode=yes -o ConnectTimeout=5 ${target} true`));
+  } finally { await health.close(); f.cleanup(); }
+});
+
+test("image smoke checks the hosts ALIGNMENT_POOL_HOSTS configures, in rank order, against their configured device", async () => {
+  const f = fixture();
+  const health = await healthServer();
+  const base = new URL(health.env.ALIGNMENT_POOL_LISA_WORKER_URL).origin;
+  try {
+    const hosts = [
+      { id: "gpu-b", sshTarget: "worker@gpu-b.example", workerUrl: `${base}/wsl`, device: "cuda", precision: "float16", rank: 5 },
+      { id: "cpu-c", sshTarget: "worker@cpu-c.example", workerUrl: `${base}/lisa`, device: "cpu", precision: "float32", rank: 1 },
+    ];
+    const result = await f.run({ ...health.env, ALIGNMENT_POOL_HOSTS: JSON.stringify(hosts) });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(health.requests, ["/lisa/health", "/wsl/health"]);
+    assert.deepEqual(f.sshCalls(), ["worker@cpu-c.example", "worker@gpu-b.example"]
+      .map((target) => `-o BatchMode=yes -o ConnectTimeout=5 ${target} true`));
+
+    // A host whose worker runs another device than configured fails the deploy, and so does a broken setting.
+    const wrong = await f.run({ ...health.env, ALIGNMENT_POOL_HOSTS: JSON.stringify([{ ...hosts[0], device: "cpu" }]) });
+    assert.notEqual(wrong.status, 0);
+    assert.match(wrong.stderr, /gpu-b \(worker@gpu-b\.example\).*expected cpu\/float16/);
+    const broken = await f.run({ ...health.env, ALIGNMENT_POOL_HOSTS: "[{\"id\": \"x\"}]" });
+    assert.notEqual(broken.status, 0);
+    assert.match(broken.stderr, /Error: ALIGNMENT_POOL_HOSTS\[0\]\.\w+ must be a non-empty string/);
   } finally { await health.close(); f.cleanup(); }
 });
 

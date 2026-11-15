@@ -357,6 +357,9 @@ test("GET /api/alignments/pool requires admin and exposes per-host pool state an
       maxConcurrent: 3,
       remoteWorkRoot: temp,
       workerUrl: "http://wsl-pool.test:3012",
+      device: "cuda",
+      precision: "float16",
+      rank: 1,
     },
     {
       id: "lisa",
@@ -364,6 +367,9 @@ test("GET /api/alignments/pool requires admin and exposes per-host pool state an
       maxConcurrent: 1,
       remoteWorkRoot: temp,
       workerUrl: "http://lisa-pool.test:3012",
+      device: "cpu",
+      precision: "float32",
+      rank: 2,
     },
   ]);
   setAlignmentPoolDepsForTests({

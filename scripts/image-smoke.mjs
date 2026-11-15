@@ -24,11 +24,10 @@ function isOnPath(command) {
   });
 }
 
-const CTC_HOST_IDS = new Set(["wsl", "lisa"]);
-
 async function checkAlignmentPool() {
   const { ctcHealthProblem, defaultPoolHosts } = await import(serverModule("alignment-pool.ts"));
-  const hosts = defaultPoolHosts().filter((host) => CTC_HOST_IDS.has(host.id));
+  // Every configured pool host (ALIGNMENT_POOL_HOSTS, or the default WSL and lisa).
+  const hosts = defaultPoolHosts();
   const names = hosts.map((host) => `${host.id} (${host.sshTarget})`).join(", ");
   for (const command of ["ssh", "scp"]) {
     if (!isOnPath(command)) {
@@ -48,7 +47,7 @@ async function checkAlignmentPool() {
       } catch {
         throw new Error("the answer is not JSON");
       }
-      // The server's own dispatch rule: ready, the pinned CTC engine with its model, this host's device.
+      // The server's own dispatch rule: ready, the pinned CTC engine with its model, this host's configured device.
       const problem = ctcHealthProblem(host, body);
       if (problem) throw new Error(problem);
     } catch (error) {
