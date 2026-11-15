@@ -1,5 +1,5 @@
 import type { Book, Track } from "./types";
-import { timeAtSpeed } from "./playback-speed";
+import { formatSpeed, timeAtSpeed } from "./playback-speed";
 export type ListeningChapter = {
   track: Track;
   title: string;
@@ -38,6 +38,27 @@ export function chapterTimeLeft(
       ? chapter.start
       : Math.min(chapter.end, Math.max(chapter.start, position));
   return timeAtSpeed(chapter.end - from, speed);
+}
+/**
+ * What a chapter row shows: other chapters keep their real length, and only the
+ * current chapter's time left is at the speed the book plays at.
+ */
+export function chapterRowTime(
+  chapter: Pick<ListeningChapter, "start" | "end">,
+  position: number | null,
+  speed: number,
+) {
+  if (position === null)
+    return {
+      seconds: Math.max(0, chapter.end - chapter.start),
+      left: false,
+      title: "Chapter length",
+    };
+  return {
+    seconds: chapterTimeLeft(chapter, position, speed),
+    left: true,
+    title: `Left in chapter${speed !== 1 ? ` at ${formatSpeed(speed)}×` : ""}`,
+  };
 }
 export function absoluteSeekTarget(
   tracks: Pick<Track, "id" | "duration">[],
