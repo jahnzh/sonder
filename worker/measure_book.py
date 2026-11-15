@@ -123,6 +123,17 @@ def compare(args):
             other_track += 1
             continue
         diffs.append(abs(mine[key][1] - reference[key][1]))
+    # #403: the reference's intervals kept exactly (same track, start and end), and coverage per section.
+    exact_mine = {i["paragraphId"]: (i["trackId"], i["start"], i["end"]) for i in mine_file["intervals"]}
+    same = sum(exact_mine.get(i["paragraphId"]) == (i["trackId"], i["start"], i["end"])
+               for i in reference_file["intervals"])
+    sections = {}
+    for name, rows in (("reference", reference_file["intervals"]), ("mine", mine_file["intervals"])):
+        for i in rows:
+            sections.setdefault(str(i.get("section", i["paragraphId"].split(":")[0])), {"reference": 0, "mine": 0, "both": 0})[name] += 1
+    for i in reference_file["intervals"]:
+        if i["paragraphId"] in mine:
+            sections[str(i.get("section", i["paragraphId"].split(":")[0]))]["both"] += 1
     diffs.sort()
     sentences = mine_file.get("sentences") or reference_file.get("sentences")
     result = {"reference": str(args.reference), "referenceMapped": len(reference), "mineMapped": len(mine),
@@ -133,6 +144,7 @@ def compare(args):
               "within250ms": sum(d <= 0.25 for d in diffs) / max(1, len(diffs)),
               "within1s": sum(d <= 1.0 for d in diffs) / max(1, len(diffs)),
               "over10s": sum(d > 10 for d in diffs),
+              "referenceIntervalsKeptExactly": same, "sections": sections,
               "mineFractionOfBook": len(mine) / sentences if sentences else None,
               "referenceFractionOfBook": len(reference) / sentences if sentences else None}
     # Where the two maps differ: how many of the one-sided sentences lie near a group cut (90 s).

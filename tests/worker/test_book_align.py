@@ -229,7 +229,8 @@ class LeftoverHelpers(unittest.TestCase):
         intervals = [(100, 200), (150, 400), (900, 1000)]
         self.assertEqual(book_align.audio_gaps(intervals, 2000, 300), [(400, 900), (1000, 2000)])
         self.assertEqual(book_align.audio_gaps(intervals, 2000, 100), [(0, 100), (400, 900), (1000, 2000)])
-        self.assertEqual(book_align.text_runs({0, 1, 5, 9}, 30, 3), [(2, 5), (10, 30)])
+        self.assertEqual(book_align.text_runs({0, 1, 5, 9}, 30, 3), [(2, 5), (6, 9), (10, 30)])
+        self.assertEqual(book_align.text_runs({0, 1, 5, 9}, 30, 4), [(10, 30)])
         self.assertEqual(book_align.text_runs(set(), 4, 5), [])
 
     def test_covered_spans(self):
