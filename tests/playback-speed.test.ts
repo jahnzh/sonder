@@ -18,7 +18,7 @@ import {
   stepSpeed,
   timeAtSpeed,
 } from "../src/playback-speed.ts";
-import { chapterTimeLeft } from "../src/chapters.ts";
+import { chapterRowTime, chapterTimeLeft } from "../src/chapters.ts";
 import {
   appearanceSchema,
   appearanceToSave,
@@ -187,6 +187,9 @@ function preferences(rows = new Map<string, unknown>()) {
     put: async ({ key, value }: { key: string; value: unknown }) => {
       rows.set(key, value);
     },
+    delete: async (key: string) => {
+      rows.delete(key);
+    },
   };
 }
 test("two recordings keep separate speeds after changes and a reload, and others follow the default", async () => {
@@ -244,10 +247,78 @@ test("a speed chosen while a recording's saved speed is still loading is not ove
             release = () => resolve({ key, value: 0.9 });
           }),
     put: async () => {},
+    delete: async () => {},
   });
   const pending = memory.speedOf("recording-a", undefined);
   await memory.remember("recording-a", 1.65);
   release();
   assert.equal(await pending, 1.65);
   assert.equal(await memory.speedOf("recording-a", undefined), 1.65);
+});
+test("chapter rows keep real lengths and show only the current chapter's time left at the book's speed", () => {
+  const chapter = { start: 30, end: 240 };
+  assert.deepEqual(chapterRowTime(chapter, null, 1.5), {
+    seconds: 210,
+    left: false,
+    title: "Chapter length",
+  });
+  assert.deepEqual(chapterRowTime(chapter, null, 1), {
+    seconds: 210,
+    left: false,
+    title: "Chapter length",
+  });
+  assert.deepEqual(chapterRowTime(chapter, 90, 1.5), {
+    seconds: 100,
+    left: true,
+    title: "Left in chapter at 1.5×",
+  });
+  assert.deepEqual(chapterRowTime(chapter, 90, 1), {
+    seconds: 150,
+    left: true,
+    title: "Left in chapter",
+  });
+});
+test("Use default removes a recording's own speed so it follows the default again, also after a reload", async () => {
+  const storage = preferences();
+  const memory = speedMemory(storage);
+  assert.equal(await memory.own("recording-a"), null);
+  await memory.remember("recording-a", 1.65);
+  assert.equal(await memory.own("recording-a"), 1.65);
+  assert.equal(await memory.speedOf("recording-a", 1.2), 1.65);
+  await memory.forget("recording-a");
+  assert.equal(await memory.own("recording-a"), null);
+  assert.equal(await memory.speedOf("recording-a", 1.2), 1.2);
+  assert.equal(storage.rows.has(recordingSpeedKey("recording-a")), false);
+  const reloaded = speedMemory(storage);
+  assert.equal(await reloaded.own("recording-a"), null);
+  assert.equal(await reloaded.speedOf("recording-a", 1.3), 1.3);
+  await memory.remember("recording-a", 2);
+  assert.equal(
+    await speedMemory(storage).speedOf("recording-a", 1.3),
+    2,
+    "changing the speed again gives the recording its own speed again",
+  );
+});
+test("Use default on a device with only the old device-wide speed falls back to that speed", async () => {
+  const storage = preferences(
+    new Map<string, unknown>([
+      [LEGACY_SPEED_KEY, 1.4],
+      [recordingSpeedKey("recording-a"), 2.2],
+    ]),
+  );
+  const memory = speedMemory(storage);
+  assert.equal(await memory.speedOf("recording-a", undefined), 2.2);
+  await memory.forget("recording-a");
+  assert.equal(await memory.speedOf("recording-a", undefined), 1.4);
+  assert.equal(storage.rows.get(LEGACY_SPEED_KEY), 1.4, "the device-wide speed is kept");
+});
+test("a device with only the old device-wide speed plays every recording at it, as before", async () => {
+  const storage = preferences(new Map<string, unknown>([[LEGACY_SPEED_KEY, 1.35]]));
+  const memory = speedMemory(storage);
+  await memory.deviceLoaded;
+  assert.equal(memory.device(), 1.35);
+  for (const id of ["recording-a", "recording-b", undefined])
+    assert.equal(await memory.speedOf(id, undefined), 1.35);
+  assert.equal(await memory.own("recording-a"), null);
+  assert.deepEqual([...storage.rows.keys()], [LEGACY_SPEED_KEY], "reading writes nothing");
 });

@@ -1,9 +1,8 @@
 import { Download, Volume2 } from "lucide-react";
 import type { Book, Download as DownloadRecord } from "../types";
 import { useBookSpeed, usePlayer } from "../player";
-import { listeningChapters, currentChapter, chapterTimeLeft } from "../chapters";
+import { listeningChapters, currentChapter, chapterRowTime } from "../chapters";
 import { clock } from "../lib";
-import { formatSpeed } from "../playback-speed";
 export function Chapters({
   book,
   downloads = [],
@@ -25,6 +24,7 @@ export function Chapters({
       {listeningChapters(book).map((c, index) => {
         const active =
           selected?.track.id === c.track.id && selected?.start === c.start;
+        const time = chapterRowTime(c, active ? p.position : null, speed);
         return (
           <button
             key={`${c.track.id}-${c.start}`}
@@ -42,15 +42,9 @@ export function Chapters({
             {downloads.some((d) => d.trackId === c.track.id) && (
               <Download size={12} />
             )}
-            <small
-              title={
-                active || speed !== 1
-                  ? `${active ? "Left in chapter" : "Chapter length"}${speed !== 1 ? ` at ${formatSpeed(speed)}×` : ""}`
-                  : undefined
-              }
-            >
-              {active && "−"}
-              {clock(chapterTimeLeft(c, active ? p.position : null, speed))}
+            <small title={time.title}>
+              {time.left && "−"}
+              {clock(time.seconds)}
             </small>
           </button>
         );
