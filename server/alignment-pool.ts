@@ -349,20 +349,29 @@ function ctcUrlGuardError(host: PoolHost): string | null {
   return null;
 }
 
+/**
+ * Why a worker's /health body cannot take CTC work for `host`, or null when it can: ready, the pinned CTC engine with
+ * its model loaded, the host's device and precision, an absolute media root and the busy/stuck state. The deploy's
+ * image smoke uses the same rule, so a worker the server would refuse fails the deploy.
+ */
+export function ctcHealthProblem(host: Pick<PoolHost, "id">, value: unknown): string | null {
+  const health = value as Partial<CtcHealth> | null | undefined;
+  if (!health || typeof health !== "object") return "health is not a JSON object";
+  if (health.ready !== true) return "worker is not ready";
+  if (typeof health.mediaRoot !== "string" || !isAbsolute(health.mediaRoot)) return "worker reports no absolute media root";
+  if (typeof health.busy !== "boolean" || typeof health.stuck !== "boolean") return "worker reports no busy/stuck state";
+  if (!health.ctc || health.ctc.engine !== CTC_ENGINE)
+    return `worker runs engine ${String(health.ctc?.engine ?? "none")}, expected ${CTC_ENGINE}`;
+  if (health.ctc.ready !== true) return "the CTC model is not ready";
+  const device = host.id === "wsl" ? "cuda" : "cpu";
+  const precision = host.id === "wsl" ? "float16" : "float32";
+  if (health.ctc.device !== device || health.ctc.precision !== precision)
+    return `worker runs on ${String(health.ctc.device)}/${String(health.ctc.precision)}, expected ${device}/${precision}`;
+  return null;
+}
+
 function validCtcHealth(host: PoolHost, health: Partial<CtcHealth> | null | undefined): health is CtcHealth {
-  return Boolean(
-    health &&
-      health.ready === true &&
-      typeof health.mediaRoot === "string" &&
-      isAbsolute(health.mediaRoot) &&
-      typeof health.busy === "boolean" &&
-      typeof health.stuck === "boolean" &&
-      health.ctc &&
-      health.ctc.engine === CTC_ENGINE &&
-      health.ctc.ready === true &&
-      health.ctc.device === (host.id === "wsl" ? "cuda" : "cpu") &&
-      health.ctc.precision === (host.id === "wsl" ? "float16" : "float32"),
-  );
+  return ctcHealthProblem(host, health) === null;
 }
 
 async function ctcHealth(host: PoolHost, signal?: AbortSignal): Promise<CtcHealth> {

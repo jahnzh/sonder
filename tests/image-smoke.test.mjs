@@ -79,13 +79,29 @@ function fixture({ missing, failSsh } = {}) {
   return { run, sshCalls, cleanup };
 }
 
-async function healthServer({ failPath, disconnectPath } = {}) {
+const CTC_ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-v2";
+
+// The /health body of the worker deployed on WSL (`curl http://192.168.1.119:3012/health`, 2026-11-15); lisa's
+// differs in device and precision.
+function liveHealth(host) {
+  const lisa = host === "lisa";
+  return {
+    ready: true, engine: "aeneas-1.7.3", busy: false, stuck: false, busySeconds: null, lastTimeout: null,
+    slots: lisa ? 3 : 8, activeRequests: 0, mediaRoot: "/home/jahn/sonder-ctc-worker/media",
+    ctc: { engine: CTC_ENGINE, ready: true, device: lisa ? "cpu" : "cuda", precision: lisa ? "float32" : "float16",
+      anchorReady: true, passageReady: true, anchorBatch: true },
+  };
+}
+
+async function healthServer({ failPath, disconnectPath, bodies = {} } = {}) {
   const requests = [];
   const server = createServer((req, res) => {
     requests.push(req.url);
     if (req.url === disconnectPath) return req.socket.destroy();
-    res.writeHead(req.url === failPath ? 503 : 200);
-    res.end("ok");
+    res.writeHead(req.url === failPath ? 503 : 200, { "content-type": "application/json" });
+    const host = req.url.split("/")[1];
+    const body = bodies[req.url] ?? liveHealth(host);
+    res.end(typeof body === "string" ? body : JSON.stringify(body));
   });
   await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -177,5 +193,39 @@ test("image smoke ignores an unreachable steamdeck host when CTC hosts are healt
     assert.match(result.stdout, /alignment pool health and SSH/);
     assert.deepEqual(health.requests, ctcHosts.map((host) => `/${host}/health`));
     assert.deepEqual(f.sshCalls(), ctcTargets.map((target) => `-o BatchMode=yes -o ConnectTimeout=5 ${target} true`));
+  } finally { await health.close(); f.cleanup(); }
+});
+
+const unusable = [
+  ["a worker that is not ready", { ...liveHealth("lisa"), ready: false }, /worker is not ready/],
+  ["a worker whose CTC model is not ready", { ...liveHealth("lisa"), ctc: { ...liveHealth("lisa").ctc, ready: false } },
+    /the CTC model is not ready/],
+  ["a worker with another engine", { ...liveHealth("lisa"), ctc: { ...liveHealth("lisa").ctc, engine: "aeneas-1.7.3" } },
+    new RegExp(`worker runs engine aeneas-1\\.7\\.3, expected ${CTC_ENGINE.replaceAll(".", "\\.")}`)],
+  ["a worker on the wrong device", { ...liveHealth("lisa"), ctc: { ...liveHealth("lisa").ctc, device: "cuda", precision: "float16" } },
+    /worker runs on cuda\/float16, expected cpu\/float32/],
+  ["an answer that is not health JSON", "ok", /the answer is not JSON/],
+];
+for (const [name, body, message] of unusable) {
+  test(`image smoke fails the deploy on ${name} (#279 round 2)`, async () => {
+    const f = fixture();
+    const health = await healthServer({ bodies: { "/lisa/health": body } });
+    try {
+      const result = await f.run(health.env);
+      assert.notEqual(result.status, 0, result.stdout);
+      assert.match(result.stderr, /alignment pool host lisa \(worker@lisa\.example\): health check .*\/lisa\/health failed/);
+      assert.match(result.stderr, message);
+      assert.doesNotMatch(result.stdout, /alignment pool health/);
+    } finally { await health.close(); f.cleanup(); }
+  });
+}
+
+test("image smoke accepts the deployed worker revision, whose top-level engine is still aeneas", async () => {
+  const f = fixture();
+  const health = await healthServer();
+  try {
+    const result = await f.run(health.env);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /alignment pool health and SSH/);
   } finally { await health.close(); f.cleanup(); }
 });

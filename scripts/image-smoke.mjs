@@ -27,7 +27,7 @@ function isOnPath(command) {
 const CTC_HOST_IDS = new Set(["wsl", "lisa"]);
 
 async function checkAlignmentPool() {
-  const { defaultPoolHosts } = await import(serverModule("alignment-pool.ts"));
+  const { ctcHealthProblem, defaultPoolHosts } = await import(serverModule("alignment-pool.ts"));
   const hosts = defaultPoolHosts().filter((host) => CTC_HOST_IDS.has(host.id));
   const names = hosts.map((host) => `${host.id} (${host.sshTarget})`).join(", ");
   for (const command of ["ssh", "scp"]) {
@@ -41,7 +41,16 @@ async function checkAlignmentPool() {
     try {
       const response = await fetch(healthUrl, { signal: AbortSignal.timeout(5000) });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      await response.body?.cancel();
+      const text = await response.text();
+      let body;
+      try {
+        body = JSON.parse(text);
+      } catch {
+        throw new Error("the answer is not JSON");
+      }
+      // The server's own dispatch rule: ready, the pinned CTC engine with its model, this host's device.
+      const problem = ctcHealthProblem(host, body);
+      if (problem) throw new Error(problem);
     } catch (error) {
       throw new Error(`alignment pool host ${name}: health check ${healthUrl} failed: ${error.message}`);
     }
