@@ -913,11 +913,20 @@ async function takeHost(
   const roundOver = () => !probe && attempted.length >= JOB_HOST_ATTEMPTS;
   const hosts = coord.listHosts();
   const first = hosts.filter((host) => host.id === request.firstHost);
-  for (const host of [...first, ...hosts.filter((host) => !first.includes(host))]) {
+  const rest = hosts.filter((host) => !first.includes(host));
+  // A whole-book job takes hours on a CPU host and minutes on a GPU host: CPU hosts come after the others, by rank,
+  // and take it only when no other host can be used for it (down, unhealthy, stuck, without whole-book jobs, or
+  // already tried by this job). One that is healthy and only busy is waited for. The host the job was started on
+  // (`firstHost`) is tried before any other, so it is never held back.
+  const bookJob = request.book === true && !probe;
+  const fallbackOnly = (host: PoolHost) => bookJob && host.device === "cpu";
+  let fasterHostBusy = false;
+  for (const host of [...first, ...rest.filter((host) => !fallbackOnly(host)), ...rest.filter(fallbackOnly)]) {
     signal?.throwIfAborted();
     if (roundOver()) break;
     const id = host.id;
     if (attempted.includes(id)) continue;
+    if (fallbackOnly(host) && fasterHostBusy) continue;
     let health: CtcHealth;
     try {
       health = await ctcHealth(host, signal);
@@ -943,6 +952,7 @@ async function takeHost(
     if (health.busy || (capacity === 1 && health.stuck) || coord.activeOnHost(id) >= capacity) {
       recordPoolError(diagnostics, id, "health", health.stuck && capacity === 1 ? "worker is stuck" : "worker is busy");
       busy = true;
+      if (!fallbackOnly(host) && !health.stuck) fasterHostBusy = true;
       continue;
     }
     if (!(await probeHost(diagnostics, host, signal))) {
@@ -952,6 +962,7 @@ async function takeHost(
     if (!coord.tryAcquireCtc(id, request.id, request.recordingId, capacity)) {
       recordPoolError(diagnostics, id, "capacity", "worker or recording is busy");
       busy = true;
+      if (!fallbackOnly(host)) fasterHostBusy = true;
       continue;
     }
     const held = { hostId: id, attempt: attempted.length + 1, workerUrl: host.workerUrl, triedHosts: [...attempted, id],

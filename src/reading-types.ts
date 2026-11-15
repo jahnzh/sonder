@@ -126,6 +126,21 @@ export const ALIGNMENT_STATUSES = [
   "error",
 ] as const;
 export type AlignmentStatus = (typeof ALIGNMENT_STATUSES)[number];
+/**
+ * The whole-book engine generation (ADR 0016; book-v2 since #403): a job planned under it runs as one whole-book
+ * job on a pool worker (#404). Defined here so the Reading sync card can tell such a job from a window-runner job;
+ * the server reads it through `server/alignment-engine.ts`.
+ */
+export const BOOK_ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-book-v2";
+/**
+ * The pool worker's id for a whole-book job's current generation (#404): `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`. A
+ * stored `bookJob` with another id belongs to an earlier generation.
+ */
+export function bookWorkerJobId(job: { id: string; generation?: string }) {
+  const safe = (value: string) => value.replace(/[^A-Za-z0-9._-]/g, "_");
+  const id = `${safe(job.id).slice(0, 110)}-${safe(job.generation ?? "").replace(/[._-]/g, "").slice(0, 12)}`;
+  return /^[A-Za-z0-9]/.test(id) ? id : `j${id.slice(0, 127)}`;
+}
 /** Waiting for or running on a worker. */
 export const ALIGNMENT_ACTIVE_STATUSES = ["queued", "copying", "processing"] as const satisfies readonly AlignmentStatus[];
 /** The job waits for or runs on a worker. Takes any string, as stored rows are read without validation. */
@@ -234,9 +249,28 @@ export type AlignmentJob = {
     /** Worker restarts the job has continued from. */
     resumed?: number;
     startedAt: number;
+    /** The worker's counts for the stage it is in, as last read (#404; older rows omit it). */
+    counts?: BookJobCounts;
   };
   /** Present on summary list responses; full intervals live on /map. */
   intervalCount?: number;
+};
+/**
+ * The counts of a whole-book job's progress answer the Reading sync card shows (docs/CTC_WORKER_POOL.md
+ * "Progress"); each is present only while the worker reports it.
+ */
+export type BookJobCounts = {
+  tracksTotal?: number;
+  tracksDecoded?: number;
+  tracksEncoded?: number;
+  groupsTotal?: number;
+  groupsDone?: number;
+  /** While encoding: 0 holds the encoder, 1… waiting behind it. */
+  encodeQueuePosition?: number;
+  /** While a retained job waits for its turn after a worker restart: 1… */
+  resumeQueuePosition?: number;
+  /** The encode waits for the worker's window requests. */
+  waitingForWindowRequests?: boolean;
 };
 // A pool host's configured id (ADR 0013): "wsl" and "lisa" by default. "steamdeck" only appears on jobs stored
 // before the Steam Deck left the pool (#279).

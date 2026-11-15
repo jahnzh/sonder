@@ -49,6 +49,8 @@ export type FakeBookHost = FakeHostState & {
   resuming: number;
   /** `/health` reports no `bookJobs`, as a worker from before #402. */
   noBookJobs: boolean;
+  /** `/health` reports a stuck request. */
+  stuck: boolean;
   /** The share of the sentences the result maps (the first ones), 1 by default. */
   mapShare: number;
   /** The engine the result names: the whole-book engine by default. */
@@ -258,7 +260,7 @@ async function answerBookRequest(host: FakeBookHost, method: string, path: strin
 
 function health(host: FakeBookHost) {
   return {
-    ready: true, engine: CTC_ENGINE, busy: host.busy, stuck: false, busySeconds: null, lastTimeout: null,
+    ready: true, engine: CTC_ENGINE, busy: host.busy, stuck: host.stuck, busySeconds: null, lastTimeout: null,
     slots: host.slots ?? 1, activeRequests: 0, mediaRoot: host.root,
     ctc: { engine: CTC_ENGINE, ready: true, device: host.device, precision: host.precision,
       anchorReady: true, passageReady: true, anchorBatch: true },
@@ -282,7 +284,7 @@ export async function fakeBookWorkers(
   for (const spec of specs) {
     const host = Object.assign(ssh.hosts[spec.id], {
       book: [], starts: [], jobs: new Map(), pollsPerStage: 1, holdAt: null, failAt: null, resuming: 0,
-      noBookJobs: false, mapShare: 1, resultEngine: BOOK_ENGINE, answered: [], holdCancel: null, cancelFails: 0,
+      noBookJobs: false, stuck: false, mapShare: 1, resultEngine: BOOK_ENGINE, answered: [], holdCancel: null, cancelFails: 0,
       loseStartReplies: 0, statusAnswer: null, resultAnswer: null, cutStatus: 0, cutResult: 0, garbleStatus: 0, misshapeStatus: 0,
       uploads: [], uploadsIntoLiveJobs: [],
     }) as FakeBookHost;
