@@ -386,11 +386,14 @@ yet (next ticket).
   (`ALIGNMENT_BOOK_ALIGN_WORKERS`, default CPUs − 2, at most 8). A recovery jump
   stays inside its group. The worker's `accepted_intervals` then validates the
   merged map.
-* **Seam fix.** A group's audio runs 60 s (v2: 30 s) past the next group's start.
-  Before merging, the last 20 s of a non-final group and the first 20 s of a
-  non-first group are dropped: the same margin a window keeps uncommitted. A
-  sentence cut by a group end therefore comes from the neighbouring group,
-  where it is whole.
+* **Seam fix.** v2 lost 6 to 15 sentences per book at group cuts. The next
+  group's text starts 10 sentences before its located sentence, which can be
+  heard up to 120 s after the cut, while the earlier group stopped 30 s past
+  the cut. A group's audio now runs 150 s past the next group's start (the
+  120 s locate window, the 20 s margin and 10 s slack). Before merging, the last
+  20 s of a non-final group and the first 20 s of a non-first group are dropped,
+  the same margin a window keeps uncommitted. A sentence cut by a group end
+  therefore comes from the neighbouring group, where it is whole.
 * **Viterbi kernel.** numba when installed (the pool hosts' production
   environments do not have it), otherwise an equivalent numpy kernel.
   `tests/worker/test_book_align.py` checks that the two give identical paths.

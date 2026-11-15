@@ -10,9 +10,10 @@ Built from the #389 prototype (`scripts/arch-proto/longform.py` on `jahnzh/ctc-a
 * The anchor chain: the text is located every SPACING_S of audio over the whole text, the longest chain of
   locations rising in audio and text is kept, slow links are dropped and the rest thinned to group starts.
 * Groups are aligned independently (in a process pool) and a recovery jump stays inside its group's text.
-* Seam fix: a group's audio runs SEAM_OVERLAP_S past the next group's start; the last MARGIN_S of a
-  non-final group and the first MARGIN_S of a non-first group are dropped before merging (the same rule
-  that keeps a window's uncommitted tail), so a sentence cut by a group end is taken from the neighbour.
+* Seam fix: a group's audio runs SEAM_OVERLAP_S (150 s) past the next group's start, beyond the point
+  where the next group's text begins; the last MARGIN_S of a non-final group and the first MARGIN_S of a
+  non-first group are dropped before merging (the rule that keeps a window's uncommitted tail), so a
+  sentence cut by a group end is taken from the neighbour.
 
 Everything here is numpy (and numba when it is installed); torch is not needed.
 """
@@ -39,13 +40,16 @@ RELOCATE_HORIZON = 4000
 SPACING_S = 240
 MIN_GROUP_S = 600
 RATE_FLOOR = 0.25
-# v2 ran with 30 s of overlap; the seam fix needs the overlap to outlast the trimmed margins (2 x 20 s).
-SEAM_OVERLAP_S = 60
 LOCATE_SECONDS = 120
 LOCATE_CLUSTER = 20
 SLACK_BEFORE = 10
 SLACK_AFTER = 60
 GAP_FILL_MAX_S = 60
+# Seam fix. A group's text starts SLACK_BEFORE sentences before its located sentence, which is heard
+# somewhere in the LOCATE_SECONDS after the group's first frame. The previous group must therefore keep
+# everything up to that point: its audio runs past the cut by the locate window plus the trimmed margin
+# (v2 ran 30 s past, and lost the sentences between the cut + 30 s and the next group's first sentence).
+SEAM_OVERLAP_S = LOCATE_SECONDS + MARGIN_S + 10
 VALIDATION_REGION_S = 600
 
 
