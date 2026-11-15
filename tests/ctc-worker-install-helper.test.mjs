@@ -54,6 +54,13 @@ test("env-get reads every value as systemd 255 does: quotes, CRLF, escapes, cont
     assert.equal(helperRun(["env-get", file, key]).status, 1, `${key} is not set for systemd either`);
   }
   assert.equal(helperRun(["env-get", join(dir, "absent.env"), "A_PLAIN"]).status, 1);
+
+  // A bare CR ends a line too: systemd 255 gave CR_A=1, CR_B=two words, CR_C=3 for this file.
+  const crOnly = join(dir, "cr.env");
+  writeFileSync(crOnly, "CR_A=1\rCR_B=\"two words\"\rCR_C=3");
+  for (const [key, value] of [["CR_A", "1"], ["CR_B", "two words"], ["CR_C", "3"]]) {
+    assert.equal(helperRun(["env-get", crOnly, key]).stdout, value, key);
+  }
 });
 
 test("env-merge keeps a file it does not need to change byte for byte, missing final newline included", (t) => {

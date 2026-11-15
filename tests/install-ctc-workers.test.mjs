@@ -204,6 +204,18 @@ test("docs/CTC_WORKER_POOL.md documents required pool details and runbook", () =
   assert.match(content, /scripts\/install-ctc-workers\.sh --device cpu/);
   assert.match(content, /loginctl enable-linger/);
   assert.match(content, /GET \/health|curl -s http:\/\/127\.0\.0\.1:3012\/health/);
+
+  // Update and rollback procedure as the owner runs it, dry run first (#411)
+  const update = content.slice(content.indexOf("## Updating a worker (#411)"));
+  assert.ok(update.length > 0 && content.includes("## Updating a worker (#411)"));
+  const dryRun = update.indexOf("--host 192.168.1.119 --ref origin/main --dry-run");
+  const realRun = update.indexOf("scripts/install-ctc-workers.sh --host 192.168.1.119 --ref origin/main\n");
+  assert.ok(dryRun > 0 && realRun > dryRun, "the dry run comes before the update");
+  assert.ok(update.indexOf("--rollback --dry-run") < update.indexOf("--rollback\n"), "rollback dry run first");
+  assert.ok(update.indexOf("--prune --dry-run") < update.indexOf("--prune\n"), "prune dry run first");
+  assert.match(update, /--host lisa/);
+  assert.match(update, /--verify/);
+  assert.match(update, /"revision"|`revision`/);
 });
 
 test("docs/agents/worker-spec.md contains exact orchestration line from issue #336", () => {

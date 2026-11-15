@@ -38,10 +38,11 @@ may still be finishing the request, the same limitation as #398; the
 whole-book job (#402) removes it. Protect the worker HTTP ports on the
 trusted network.
 
-The workers on WSL and lisa keep running their current revision (`worker/` of
-`main` before #279), which works with this server: see "Deploying the
-alignment-worker retirement (#279)" in `docs/LOCAL_CHECKS.md`. Updating them is
-#411; do not run the installer below for the #279 deploy.
+Until they are updated, the workers on WSL and lisa run their earlier revision
+(`worker/` of `main` before #279), which works with this server: see "Deploying
+the alignment-worker retirement (#279)" in `docs/LOCAL_CHECKS.md`. Update them
+with "Updating a worker" below (#411); its `--prune` step removes Whisper,
+aeneas and their weights from the hosts.
 
 ## Worker leases and staged audio
 
@@ -208,7 +209,10 @@ Follow these steps to set up a new CTC worker host from scratch.
 
 ### 2. Run the installer script
 
-From a checkout of the repository, execute `scripts/install-ctc-workers.sh`:
+From a checkout of the repository on the production server, run
+`scripts/install-ctc-workers.sh --host <ssh-target>`; it ships the committed
+revision there (see "Updating a worker" below). On the host itself, from a
+clean checkout:
 
 For a GPU host (CUDA, e.g. WSL):
 ```sh
@@ -220,14 +224,12 @@ For a CPU host (e.g. Lisa):
 ./scripts/install-ctc-workers.sh --device cpu
 ```
 
-The script performs the following actions:
-1. Creates the target directory `$HOME/sonder-ctc-worker` with subdirectories `worker/`, `media/`, and `env/`.
-2. Copies worker source files from `worker/`.
-3. Creates a Python virtual environment at `$HOME/sonder-ctc-worker/env`.
-4. Installs pinned dependencies (`torch==2.8.0`, `torchaudio==2.8.0`, `numpy==1.26.4`, `fastapi==0.121.3`, `uvicorn==0.38.0`).
-5. Downloads the pinned Wav2Vec2 Base CTC checkpoint (`wav2vec2_fairseq_base_ls960_asr_ls960.pth`) into `$MEDIA_ROOT/alignment/models`.
-6. Configures `$HOME/sonder-ctc-worker/worker.env` (`ALIGNMENT_WORKER_TOKEN`, `MEDIA_ROOT`, `ALIGNMENT_CTC_DEVICE`).
-7. Installs, enables, and starts the systemd user service `sonder-ctc-worker.service`.
+The script performs the following actions in `$HOME/sonder-ctc-worker`:
+1. Copies `worker/` of the revision to `releases/<revision>--<env>/worker/` and writes the revision beside it (`REVISION`, reported as `revision` by `/health`).
+2. Creates a Python virtual environment `envs/<device>-<hash>/` for the pinned dependency set (`torch==2.8.0`, `torchaudio==2.8.0`, `numpy==1.26.4`, `fastapi==0.121.3`, `uvicorn==0.38.0`); a later revision with the same set reuses it.
+3. Downloads the pinned Wav2Vec2 Base CTC checkpoint (`wav2vec2_fairseq_base_ls960_asr_ls960.pth`) into `$MEDIA_ROOT/alignment/models` (`media/` for a new host).
+4. Writes `worker.env` (`ALIGNMENT_WORKER_TOKEN`, `MEDIA_ROOT`, `ALIGNMENT_CTC_DEVICE`, and `ALIGNMENT_WORKER_SLOTS` with `--slots`), mode 0600.
+5. Installs, enables and starts the systemd user service `sonder-ctc-worker.service`, then verifies it (see below).
 
 ### 3. Enable user lingering
 
@@ -321,7 +323,8 @@ curl -s http://127.0.0.1:3012/health | jq .
 ```
 
 Expected JSON response structure (WSL; the fields a worker of this revision
-returns):
+returns; `revision` is `null` when the code has no `REVISION` file, for example
+the workers installed before #411):
 ```json
 {
   "ready": true,
@@ -333,6 +336,7 @@ returns):
   "slots": 1,
   "activeRequests": 0,
   "mediaRoot": "/home/jahn/sonder-ctc-worker/media",
+  "revision": "58e6dba1ff82586456beeb5416edf8fa8696ee1e",
   "ctc": {
     "engine": "ctc-wav2vec2-base-960h-torchaudio-2.8-v2",
     "ready": true,
@@ -345,6 +349,136 @@ returns):
 }
 ```
 For Lisa (CPU), `device` will be `"cpu"` and `precision` will be `"float32"`.
+
+## Updating a worker (#411)
+
+Run everything from a checkout on the production server, as the owner (your
+own SSH access to `192.168.1.119` and `lisa`, not the container's pool key).
+`--host` ships the committed revision (`git archive` of `--ref`) to
+`~/.cache/sonder-ctc-install/<revision>/` on the host and runs the installer
+there, so the host needs no checkout. Do one host at a time, WSL first.
+
+1. **Stop new work.** On the Activity page, pause the alignment processor and
+   wait until no request runs (`activeRequests` 0, `busy` and `stuck` false):
+
+   ```sh
+   curl -s http://192.168.1.119:3012/health | jq '{activeRequests, busy, stuck, revision}'
+   ```
+
+2. **Dry run.** It reads the host and prints the plan; it changes nothing on
+   the host except the shipped copy in `~/.cache/sonder-ctc-install/`:
+
+   ```sh
+   git fetch origin
+   scripts/install-ctc-workers.sh --host 192.168.1.119 --ref origin/main --dry-run
+   ```
+
+   Check that it says "The worker runs no request", names the revision it will
+   install and the installed one (`unknown` for a worker from before #411),
+   whether it builds a new environment (the first update on WSL downloads the
+   CUDA wheels, about 3 GB), and lists every `worker.env` key as `kept` (only
+   the keys you change with `--device`, `--slots` or a new token show
+   `changed`). The unit diff shows the switch to `releases/` and `envs/`.
+
+3. **Update.** The same command without `--dry-run`:
+
+   ```sh
+   scripts/install-ctc-workers.sh --host 192.168.1.119 --ref origin/main
+   ```
+
+   In order, it:
+   - refuses (exit 3) while `/health` shows a running request, a busy or stuck
+     worker, or cannot be read or understood; `--force` is the only way past,
+     and interrupts whatever runs;
+   - copies the code to a new `releases/<revision>--<env>/` and builds or
+     reuses `envs/<env>/`, downloads the model into the `MEDIA_ROOT` the
+     worker uses (read as systemd reads `worker.env`: quotes, CRLF), without
+     touching the code, packages or settings of the running worker;
+   - writes `worker.env` keeping every line it does not set, saves the current
+     `worker.env`, unit and release in `rollback/`, checks `/health` once
+     more, switches unit, `worker.env` and `current`, and restarts the service
+     once;
+   - verifies, for up to `--verify-timeout` seconds (default 300): `ready`,
+     `ctc.engine` of this revision, `ctc.ready`, the device, `mediaRoot`, and
+     `revision` equal to the installed revision, then sends one authenticated
+     request (an `/anchor-batch` for audio that does not exist: the worker's
+     token check must pass, so it answers 400, not 401).
+
+   Exit 0 means verified. Check it from here too:
+
+   ```sh
+   curl -s http://192.168.1.119:3012/health | jq '{revision, engine, ctc}'
+   ```
+
+4. **If it exits 4** (verification failed, or systemctl failed after the
+   switch), roll back:
+
+   ```sh
+   scripts/install-ctc-workers.sh --host 192.168.1.119 --rollback --dry-run
+   scripts/install-ctc-workers.sh --host 192.168.1.119 --rollback
+   ```
+
+   It restores the saved `worker.env`, the unit and the previous code, restarts
+   once and waits until the previous worker reports ready (and its revision,
+   when it had one). It refuses while the new worker runs requests, like the
+   update; `--force` interrupts them. Until you roll back or verify, a new
+   update refuses: when the worker only needed longer to load, run `--verify`,
+   which checks again and restarts nothing. `journalctl --user -u
+   sonder-ctc-worker.service` on the host shows why a worker did not start.
+
+5. **lisa**: steps 1 to 4 with `--host lisa` and
+   `curl -s https://audiobooks.amatox.in/sonder-ctc/health` (only the production
+   server may read it). Then resume the alignment processor.
+
+6. **Prune**, once both hosts are verified and you no longer want to roll
+   back. Dry run first:
+
+   ```sh
+   scripts/install-ctc-workers.sh --host 192.168.1.119 --prune --dry-run
+   scripts/install-ctc-workers.sh --host 192.168.1.119 --prune
+   ```
+
+   It removes the layout from before #411 (`worker/` with the retired Whisper
+   and aeneas files, and `env/` with `faster-whisper` and aeneas), older
+   releases and environments, `MEDIA_ROOT/alignment/models/whisper`, and
+   `rollback/`, then reports whether the installed environment has
+   `faster_whisper` or `aeneas` (a new environment has neither). It runs only
+   after a verified update and when the unit runs the installed release, and
+   restarts nothing. After it, `--rollback` has nothing to restore.
+
+Exit codes: 0 done, 1 error, 2 usage, 3 refused (requests running, `/health`
+unknown, last update not verified, a second run in progress, or `systemctl
+--user` unreachable is 1), 4 verification failed.
+
+Layout on the host after an update:
+
+```text
+~/sonder-ctc-worker/
+├── worker.env                      # settings, mode 0600
+├── current -> releases/<revision>--<env>
+├── releases/<revision>--<env>/worker/   # code, with REVISION
+├── releases/<revision>--<env>/env -> ../../envs/<env>
+├── envs/<device>-<hash>/           # one per dependency set; never changed once complete
+├── rollback/                       # worker.env, unit, current, previous-revision, revision, status
+├── worker/, env/                   # the layout from before #411, until --prune
+└── media/                          # the default MEDIA_ROOT of a new host
+```
+
+The unit names the release and environment by their real paths, so switching
+`current` or adding a release never changes what a running worker imports.
+Accepted limitations: between the last `/health` check and the restart there
+is a window of milliseconds in which the server can send a request; a job the
+server is still staging when the worker restarts fails like any request to a
+restarting worker and runs again on the other host or waits (pausing the
+alignment processor first avoids both). With `--skip-service` nothing is
+restarted or verified: restart the worker yourself, then run `--verify`.
+
+The tests run the whole procedure against a fake host (temporary directories,
+host steps replaced, a fake worker on a free local port):
+`tests/install-ctc-workers-update.test.mjs` and
+`tests/ctc-worker-install-helper.test.mjs`. In that test mode the installer
+has no default directory or worker URL, and a host step a test did not replace
+refuses instead of reaching a host.
 
 ## Overlapped audio extraction (#346)
 
@@ -436,6 +570,7 @@ The one-off CTC and Whisper probing comparison passed for all eight titles; the 
 | Install the lisa environment with the pinned CPU wheels and the anchored planner dependency; document the commands. | The commands above completed on lisa; its environment imported Torch and TorchAudio `2.8.0+cpu`, FastAPI `0.121.3`, Uvicorn `0.38.0`. |
 | Run both real-model gates and report their outcomes. | The two tables above show identical passing results. |
 | Reproducible install script (`scripts/install-ctc-workers.sh`), systemd user service unit template (`deploy/ctc-worker.service.tmpl`), Caddy reverse-proxy snippet template (`deploy/ctc-worker.caddy.tmpl`), and documentation runbook. | `tests/install-ctc-workers.test.mjs` verifying installer CLI, help flag, syntax, service template, and Caddy configuration. |
+| Safe update (#411): keep `worker.env`, refuse while busy or unknown, no mixed code, one restart, verification with the revision, rollback, prune of Whisper and aeneas. | `tests/install-ctc-workers-update.test.mjs` (fake host), `tests/ctc-worker-install-helper.test.mjs` (systemd 255 parsing sample), `tests/worker/test_health_revision.py`. |
 
 The pool remains off by default. No schema migration is needed. The worker
 ran `npx tsc --noEmit`, the focused alignment tests, `npm test`, and the Python
