@@ -438,6 +438,8 @@ class WorkerStages:
         shutil.rmtree(decoded_dir, ignore_errors=True)
         for part in emissions_dir.glob("*.part"):
             part.unlink(missing_ok=True)
+        # Down to what is left, so a resumed job's claim on files it just deleted holds up no other book.
+        session.claim_disk(folder_bytes(job.folder) + STATE_BYTES)
         complete_frames = sum(complete_emissions(emissions_dir, i, identities[i]) for i in range(len(tracks))
                               if i not in missing)
         if missing:

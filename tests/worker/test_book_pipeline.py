@@ -424,6 +424,31 @@ class Pipeline(PipelineFixture):
         over = [(used, held) for used, held in samples if used > held]
         self.assertEqual(over, [], "the job's files never exceeded its reservation")
 
+    def test_two_resumed_jobs_with_stale_audio_do_not_wait_for_each_other(self):
+        # Two unfinished jobs, each with 50 MiB of PCM left from before a restart, and a 60 MiB budget: their
+        # startup claims (100 MiB) exceed it, but the PCM is deleted on resume and what is left fits.
+        plan = mock.patch.object(book_align, "plan_groups", lambda longform, should_stop=None:
+                                 self.plan(longform.em.shape[0]))
+        root = self.media / "alignment" / "book-jobs"
+        with plan:
+            jobs = self.jobs(FakeModel())
+            for key in ("book-1", "book-2"):
+                jobs.start({**self.request, "jobId": key})
+                self.assertEqual(self.wait(jobs, key)["state"], "done")
+            jobs.shutdown()
+            for key in ("book-1", "book-2"):
+                state = json.loads((root / key / "state.json").read_text())
+                (root / key / "state.json").write_text(json.dumps({**state, "state": "aligning"}))
+                (root / key / "result.json").unlink()
+                (root / key / "tracks").mkdir(exist_ok=True)
+                (root / key / "tracks" / "0.pcm").write_bytes(b"\0" * (50 << 20))
+            stages = WorkerStages(self.media / "alignment", lambda: FakeModel(), "cpu", env=self.env)
+            restarted = BookJobs(root, stages, SessionRegistry(DiskBudget(60 << 20), idle=900))
+            self.assertEqual(sorted(restarted.resume_all()), ["book-1", "book-2"])
+            for key in ("book-1", "book-2"):
+                self.assertEqual(self.wait(restarted, key)["state"], "done")
+        restarted.shutdown()
+
     def test_a_track_replaced_while_stopped_gives_a_result_from_the_new_audio(self):
         # Review round 1: the same request, track 1 replaced by different audio of the same duration while the
         # worker is stopped after group 1. The concatenated emissions, the plan and groups 0 and 1 are stale.
