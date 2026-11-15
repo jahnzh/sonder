@@ -2,12 +2,14 @@
 import os
 import secrets
 import sys
+import threading
 import time
 import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from deadline import AlignmentTimeout, Gate, WorkerBusy, worker_slots
 from ctc_acoustic import ENGINE as CTC_ENGINE, checkpoint_path
@@ -15,8 +17,30 @@ from ctc_pipeline import align_ctc_batch_locate, align_ctc_section, shutdown_loc
 from ctc_decode import evict_decoded
 from ctc_gpu import GpuMonitor
 import ctc_prefetch
+from book_job import BOOK_ENGINE, BookJobs, JobConflict, NotReady, UnknownJob, WorkerStages
+from book_session import BudgetExceeded
 
 root = Path(os.environ.get("MEDIA_ROOT", "/mnt/usb_4t_1/sonder")).resolve()
+
+
+def _book_model():
+    from ctc_acoustic import resident_model
+    return resident_model(root / "alignment")
+
+
+# Whole-book jobs (#402): one per book, in their own folder under the alignment cache.
+book_jobs = BookJobs(root / "alignment" / "book-jobs",
+                     WorkerStages(root / "alignment", _book_model, os.environ.get("ALIGNMENT_CTC_DEVICE", "cpu"),
+                                  gpu_monitor=GpuMonitor))
+_book_sweeper_stop = threading.Event()
+
+
+def _sweep_book_jobs():
+    while not _book_sweeper_stop.wait(30):
+        try:
+            book_jobs.sweep()
+        except Exception as error:  # noqa: BLE001 - the sweeper must keep running
+            print(f"[book-jobs] sweep failed: {error!r}", file=sys.stderr, flush=True)
 
 
 @asynccontextmanager
@@ -26,12 +50,21 @@ async def lifespan(_app: FastAPI):
         evict_decoded(root / "alignment")
     except OSError:
         pass
+    # Unfinished whole-book jobs continue where they stopped (finished tracks and groups are kept).
+    try:
+        book_jobs.resume_all()
+    except OSError as error:
+        print(f"[book-jobs] resume failed: {error!r}", file=sys.stderr, flush=True)
+    sweeper = threading.Thread(target=_sweep_book_jobs, name="book-job-sweeper", daemon=True)
+    sweeper.start()
     try:
         yield
     finally:
         # Persistent WSL/lisa workers must not retain book-sized locate indexes after stop.
         shutdown_locate_pool()
         ctc_prefetch.shutdown()
+        _book_sweeper_stop.set()
+        book_jobs.shutdown()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -194,7 +227,8 @@ def health():
             "slots": gate.slots, "activeRequests": gate.active,
             "mediaRoot": str(root), "ctc": {"engine": CTC_ENGINE, "ready": ctc_ready,
             "device": device, "precision": "float16" if device == "cuda" else "float32",
-            "anchorReady": ctc_ready, "passageReady": True, "anchorBatch": True}}
+            "anchorReady": ctc_ready, "passageReady": True, "anchorBatch": True},
+            "bookJobs": {"engine": BOOK_ENGINE, "ready": ctc_ready, "jobs": len(book_jobs.keys())}}
 
 @app.post("/align")
 def align(request: AlignRequest):
@@ -238,3 +272,78 @@ def align(request: AlignRequest):
         print(f"[align] failed: {error!r}", file=sys.stderr, flush=True)
         traceback.print_exc(file=sys.stderr)
         raise HTTPException(422, error_detail("Local alignment could not match this section. Check the edition and chapter pairing.", started, engine))
+
+
+# ------------------------------------------------------------------ whole-book jobs (#402, ADR 0016)
+# Request, progress and result shapes: docs/CTC_WORKER_POOL.md ("Whole-book jobs").
+
+class BookSentence(BaseModel):
+    id: str = Field(min_length=1, max_length=512)
+    section: int = Field(default=0, ge=0)
+    text: str = Field(max_length=20000)
+
+class BookTrack(BaseModel):
+    id: str = Field(min_length=1, max_length=512)
+    audio: str = Field(min_length=1, max_length=4096)
+    duration: float = Field(gt=0, le=200000)
+
+class BookJobRequest(BaseModel):
+    jobId: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+    recordingId: str = Field(min_length=1, max_length=512)
+    audioFingerprint: str | None = Field(default=None, max_length=512)
+    language: str = "eng"
+    sentences: list[BookSentence] = Field(min_length=1, max_length=200000)
+    tracks: list[BookTrack] = Field(min_length=1, max_length=2000)
+
+def _book_auth(authorization):
+    token = os.environ.get("ALIGNMENT_WORKER_TOKEN", "")
+    supplied = (authorization or "").removeprefix("Bearer ").strip()
+    if not token or not secrets.compare_digest(supplied, token):
+        raise HTTPException(401, "Worker authentication required.")
+
+def _media_ready():
+    expected = os.environ.get("MEDIA_VOLUME_ID")
+    marker = root / ".media-volume"
+    if expected and (not marker.is_file() or marker.read_text().strip() != expected):
+        raise HTTPException(503, "The media drive is unavailable.")
+
+@app.post("/book-jobs", status_code=202)
+def start_book_job(request: BookJobRequest, authorization: str | None = Header(default=None)):
+    _book_auth(authorization)
+    _media_ready()
+    body = request.model_dump()
+    for track in body["tracks"]:
+        track["audio"] = str(checked_path(track["audio"], True))
+    try:
+        return book_jobs.start(body)
+    except JobConflict as error:
+        raise HTTPException(409, str(error))
+    except BudgetExceeded as error:
+        raise HTTPException(507, str(error))
+
+@app.get("/book-jobs/{job_id}")
+def book_job_status(job_id: str, authorization: str | None = Header(default=None)):
+    _book_auth(authorization)
+    try:
+        return book_jobs.status(job_id)
+    except UnknownJob:
+        raise HTTPException(404, "Unknown book job.")
+
+@app.delete("/book-jobs/{job_id}")
+def cancel_book_job(job_id: str, authorization: str | None = Header(default=None)):
+    _book_auth(authorization)
+    try:
+        return book_jobs.cancel(job_id)
+    except UnknownJob:
+        raise HTTPException(404, "Unknown book job.")
+
+@app.get("/book-jobs/{job_id}/result")
+def book_job_result(job_id: str, authorization: str | None = Header(default=None)):
+    _book_auth(authorization)
+    try:
+        return book_jobs.result(job_id)
+    except UnknownJob:
+        raise HTTPException(404, "Unknown book job.")
+    except NotReady as error:
+        return JSONResponse(status_code=409, content={"jobId": job_id, "engine": BOOK_ENGINE,
+                                                      "state": str(error), "message": "The job has not finished."})
