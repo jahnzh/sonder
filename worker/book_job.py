@@ -370,12 +370,14 @@ class WorkerStages:
     """Decode, encode, anchor, align and finish with the resident model. `model_loader()` returns a
     `ctc_acoustic.AcousticModel`; `encode_queue(device)` returns the device's `book_encode.EncodeQueue`."""
 
-    def __init__(self, media_folder, model_loader, device="cpu", env=None, gpu_monitor=None):
+    def __init__(self, media_folder, model_loader, device="cpu", env=None, gpu_monitor=None, admission=None):
         self.media_folder = Path(media_folder)
         self.model_loader = model_loader
         self.device = device
         self.env = os.environ if env is None else env
         self.gpu_monitor = gpu_monitor
+        # The window endpoints' deadline.Gate: each encode batch holds one of its slots (window requests first).
+        self.admission = admission
 
     def encode_position(self, key):
         from book_encode import encode_queue
@@ -487,8 +489,10 @@ class WorkerStages:
                     if monitor is not None:
                         monitor.start()
                     try:
-                            stats = encode_tracks(model, work, emissions_dir, None, should_stop=should_stop,
-                                              on_track=on_encoded)
+                        gate = self.admission
+                        stats = encode_tracks(model, work, emissions_dir, None, should_stop=should_stop,
+                                              on_track=on_encoded,
+                                              admit=None if gate is None else lambda: gate.hold_background(should_stop))
                     finally:
                         if monitor is not None:
                             monitor.stop()

@@ -152,6 +152,19 @@ class BookRequestOverHttp(unittest.TestCase):
         status, _ = exchange(self.port, post_head(len(broken)), [broken])
         self.assertEqual(status, 422)
 
+    def test_health_shows_a_book_batch_in_its_busy_and_slot_fields(self):
+        get = b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+        idle = json.loads(exchange(self.port, get)[1])
+        self.assertEqual((idle["busy"], idle["activeRequests"], idle["bookJobs"]["slotsHeld"]), (False, 0, 0))
+        with mock.patch.multiple("deadline", WINDOW_GRACE_S=0, WINDOW_RETRY_S=0), \
+                self.align.gate.hold_background():  # what a book job holds during one encode batch
+            busy = json.loads(exchange(self.port, get)[1])
+        self.assertEqual(busy["activeRequests"], 1)
+        self.assertEqual(busy["busy"], self.align.gate.slots == 1)
+        self.assertIsNotNone(busy["busySeconds"])
+        self.assertEqual(busy["bookJobs"]["slotsHeld"], 1)
+        self.assertIs(self.align.book_jobs.stages.admission, self.align.gate, "book encodes use the window gate")
+
 
 if __name__ == "__main__":
     unittest.main()

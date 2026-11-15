@@ -71,6 +71,8 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 gate = Gate(worker_slots())
+# Whole-book encode batches hold this gate's slots too, after the window requests (deadline.Gate).
+book_jobs.stages.admission = gate
 
 class PrefetchWindow(BaseModel):
     audio: str
@@ -230,7 +232,8 @@ def health():
             "mediaRoot": str(root), "ctc": {"engine": CTC_ENGINE, "ready": ctc_ready,
             "device": device, "precision": "float16" if device == "cuda" else "float32",
             "anchorReady": ctc_ready, "passageReady": True, "anchorBatch": True},
-            "bookJobs": {"engine": BOOK_ENGINE, "ready": ctc_ready, "jobs": len(book_jobs.keys())}}
+            "bookJobs": {"engine": BOOK_ENGINE, "ready": ctc_ready, "jobs": len(book_jobs.keys()),
+                         "slotsHeld": gate.background_active}}
 
 @app.post("/align")
 def align(request: AlignRequest):

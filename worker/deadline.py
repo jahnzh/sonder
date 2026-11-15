@@ -45,6 +45,16 @@ class AlignmentFailed(Exception):
 class WorkerBusy(Exception):
     pass
 
+class GateWaitStopped(Exception):
+    """A background holder stopped waiting for the gate (its job was cancelled)."""
+
+# Background work (whole-book encode batches) yields to the window endpoints: it takes a free slot only
+# when no window request runs, none ended in the last WINDOW_GRACE_S (a window job's next request
+# follows within it), and no refused window request is still due to retry (the server retries a 409
+# after 3 s; WINDOW_RETRY_S bounds the wait for one that never comes back).
+WINDOW_GRACE_S = 2.0
+WINDOW_RETRY_S = 5.0
+
 def _setting(env, name):
     default = DEFAULTS[name]
     raw = env.get(name)
@@ -89,13 +99,27 @@ class Gate:
     """The worker's job slots: up to `slots` requests at a time, with the oldest one's age and the last timeout visible.
 
     A job whose child survived the kill keeps its slot until that process is gone, so the next job never runs
-    next to a runaway one; /health shows it as stuck."""
-    def __init__(self, slots=1):
+    next to a runaway one; /health shows it as stuck.
+
+    Window requests take a slot with `hold()` and are refused when none is free. Background work (a whole
+    book's encode, one batch at a time) takes one with `hold_background()`, which waits and gives window
+    requests priority; its slots count in `active`, `busy` and `busy_seconds` like any other."""
+    def __init__(self, slots=1, clock=time.monotonic):
         self.slots = max(1, int(slots))
+        self._clock = clock
         self._lock = threading.Lock()
         self._started = {}
         self._stuck = set()
+        self._background = set()
         self.last_timeout = None
+        self._window_admitted = None
+        self._window_ended = None
+        self._window_refused = None
+
+    @property
+    def background_active(self):
+        with self._lock:
+            return len(self._background)
 
     @property
     def active(self):
@@ -115,12 +139,47 @@ class Gate:
     def busy_seconds(self):
         with self._lock:
             oldest = min(self._started.values(), default=None)
-        return round(time.monotonic() - oldest, 1) if oldest is not None else None
+        return round(self._clock() - oldest, 1) if oldest is not None else None
 
     def _free(self, token):
         with self._lock:
             self._started.pop(token, None)
             self._stuck.discard(token)
+            if token in self._background:
+                self._background.discard(token)
+            else:
+                self._window_ended = self._clock()
+
+    def _background_may_start(self, now):
+        if len(self._started) >= self.slots or len(self._started) > len(self._background):
+            return False  # no free slot, or a window request is running
+        if self._window_ended is not None and now - self._window_ended < WINDOW_GRACE_S:
+            return False
+        refused = self._window_refused
+        if refused is not None and now - refused < WINDOW_RETRY_S and (
+                self._window_admitted is None or self._window_admitted < refused):
+            return False  # a refused window request has not come back yet
+        return True
+
+    @contextmanager
+    def hold_background(self, should_stop=None, poll=0.05):
+        """A slot for one unit of background work, after window requests (see the class). Waits; raises
+        GateWaitStopped when `should_stop()` turns true while waiting."""
+        token = object()
+        while True:
+            with self._lock:
+                now = self._clock()
+                if self._background_may_start(now):
+                    self._started[token] = now
+                    self._background.add(token)
+                    break
+            if should_stop is not None and should_stop():
+                raise GateWaitStopped()
+            time.sleep(poll)
+        try:
+            yield
+        finally:
+            self._free(token)
 
     def _release_when_gone(self, process, token):
         try:
@@ -133,8 +192,9 @@ class Gate:
         token = object()
         with self._lock:
             if len(self._started) >= self.slots:
+                self._window_refused = self._clock()
                 raise WorkerBusy()
-            self._started[token] = time.monotonic()
+            self._started[token] = self._window_admitted = self._clock()
         survivor = None
         try:
             yield

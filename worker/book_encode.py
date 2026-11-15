@@ -8,15 +8,18 @@ restart encodes only the tracks that were not finished.
 
 One encode runs on a device at a time: `EncodeQueue` admits jobs in arrival order and the others wait,
 reporting their place. The window endpoints (`/align`, `/anchor`, `/anchor-batch`) do not use the queue.
+Each batch of the encode also holds one slot of the window endpoints' gate (`admit`, the worker's
+`deadline.Gate.hold_background`), so window requests run between batches, never beside one, and come first.
 """
 import json
 import os
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 from ctc_acoustic import chunks, core_frames, is_out_of_memory
+from deadline import GateWaitStopped
 
 CLASSES = 29
 FRAME_BYTES = CLASSES * 2
@@ -126,10 +129,11 @@ def batches(items, size):
 
 
 def encode_tracks(model, tracks, folder, identity, batch_size=None, should_stop=None, on_track=None,
-                  on_progress=None, load_pcm=None):
+                  on_progress=None, load_pcm=None, admit=None):
     """Encode `tracks` ([{"index", "pcm", "samples"}]) into `folder/<index>.f16` with `<index>.json`.
 
-    `model` is a `ctc_acoustic.AcousticModel` (its `.model`, `.torch`, `.device`, `.dtype`). Returns stats.
+    `model` is a `ctc_acoustic.AcousticModel` (its `.model`, `.torch`, `.device`, `.dtype`). `admit()`, when
+    given, returns the context held around each batch's inference (one gate slot). Returns stats.
     """
     import numpy as np
     torch = model.torch
@@ -182,7 +186,8 @@ def encode_tracks(model, tracks, folder, identity, batch_size=None, should_stop=
             waves = np.stack([np.asarray(audio[p][lo:hi], dtype=np.float32) / 32768.0
                               for p, _s, _e, lo, hi in group])
             try:
-                with torch.inference_mode():
+                # The batch's results are on the CPU before the slot is given back.
+                with (admit() if admit is not None else nullcontext()), torch.inference_mode():
                     wave = torch.from_numpy(waves).to(device=model.device, dtype=model.dtype)
                     logits, _ = model.model(wave)
                     out = logits.float().log_softmax(-1)
@@ -191,6 +196,8 @@ def encode_tracks(model, tracks, folder, identity, batch_size=None, should_stop=
                     for row, (p, start, end, lo, _hi) in enumerate(group):
                         first, last = core_frames(start, end, lo, valid)
                         parts.append((p, out[row, first:last].to(torch.float16).cpu().numpy()))
+            except GateWaitStopped:
+                raise EncodeCancelled()
             except Exception as error:
                 if not is_out_of_memory(error) or len(group) == 1:
                     raise

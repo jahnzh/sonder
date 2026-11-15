@@ -467,6 +467,53 @@ class Pipeline(PipelineFixture):
                          "every group of the resumed job was aligned on the new audio's emissions")
         self.assertEqual(resumed["stats"]["groups"], 3)
 
+    def test_encode_batches_share_the_window_gate_and_windows_come_first(self):
+        import deadline
+        gate = deadline.Gate(1)
+        model = FakeModel()
+        inner = model.model
+        seen = []
+
+        def batch(wave):  # the fake encoder: what the gate showed while a batch was on the device
+            seen.append((gate.active, gate.busy, getattr(gate, "background_active", 0), time.monotonic()))
+            time.sleep(0.1)
+            return inner(wave)
+
+        model.model = batch
+        jobs = self.jobs(model)
+        jobs.stages.admission = gate
+        windows, refusals, stop = [], [], threading.Event()
+
+        def window_client():  # the server's window requests: retry a 409 after a pause
+            while not stop.is_set():
+                try:
+                    with gate.hold():
+                        windows.append((time.monotonic(), model.calls))
+                        time.sleep(0.01)
+                except deadline.WorkerBusy:
+                    refusals.append(time.monotonic())
+                    time.sleep(0.1)
+                    continue
+                time.sleep(0.15)
+
+        client = threading.Thread(target=window_client)
+        with mock.patch.multiple(deadline, create=True, WINDOW_GRACE_S=0.05, WINDOW_RETRY_S=1.0), \
+                mock.patch.dict(os.environ, {"ALIGNMENT_BOOK_ENCODE_BATCH": "1"}), \
+                mock.patch.object(book_align, "plan_groups", lambda longform, should_stop=None:
+                                  self.plan(longform.em.shape[0])):
+            client.start()
+            jobs.start(self.request)
+            status = self.wait(jobs)
+            stop.set()
+            client.join(10)
+        self.assertEqual(status["state"], "done", status)
+        self.assertGreater(len(seen), 3)
+        self.assertEqual({(a, b, c) for a, b, c, _ in seen}, {(1, True, 1)},
+                         "each batch held the gate's one slot, and /health's busy fields show it")
+        during = [calls for _, calls in windows if 0 < calls < len(seen)]
+        self.assertTrue(during, "window requests ran between the book's batches")
+        self.assertEqual(gate.active, 0)
+
     def test_cancel_during_the_encode_releases_everything(self):
         model = FakeModel()
         gate = threading.Event()
