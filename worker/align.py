@@ -19,6 +19,17 @@ import ctc_prefetch
 root = Path(os.environ.get("MEDIA_ROOT", "/mnt/usb_4t_1/sonder")).resolve()
 
 
+def installed_revision():
+    # scripts/install-ctc-workers.sh writes the code revision beside the code; absent means unknown.
+    try:
+        return (Path(__file__).resolve().parent / "REVISION").read_text().strip() or None
+    except OSError:
+        return None
+
+
+revision = installed_revision()
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     # Cap decoded WAVs left by prior runs before accepting work.
@@ -192,7 +203,7 @@ def health():
     return {"ready": True, "engine": CTC_ENGINE, "busy": gate.busy, "stuck": gate.stuck,
             "busySeconds": gate.busy_seconds(), "lastTimeout": gate.last_timeout,
             "slots": gate.slots, "activeRequests": gate.active,
-            "mediaRoot": str(root), "ctc": {"engine": CTC_ENGINE, "ready": ctc_ready,
+            "mediaRoot": str(root), "revision": revision, "ctc": {"engine": CTC_ENGINE, "ready": ctc_ready,
             "device": device, "precision": "float16" if device == "cuda" else "float32",
             "anchorReady": ctc_ready, "passageReady": True, "anchorBatch": True}}
 
