@@ -1,9 +1,12 @@
 /**
  * The JSON of `GET /api/activity` for one fixed set of rows (#392): every status each feature writes, a few
  * values outside every vocabulary, finished and old rows, probes that answer and probes that fail.
- * `tests/fixtures/activity-golden.json` was recorded from the Activity module before it was split into
- * per-feature sources; a refactor must leave it unchanged. Rewrite it only for an intended change, with
- * `SONDER_UPDATE_ACTIVITY_GOLDEN=1 npx tsx --test tests/activity-golden.test.ts`, and review the diff.
+ *
+ * - `tests/fixtures/activity-golden-before-sources.json` was recorded from the Activity module before it was split
+ *   into per-feature sources, for the rows without an intended change (statuses outside a vocabulary, and failed
+ *   series acquisitions, #397). The JSON text must stay identical, key order included. Never rewrite it.
+ * - `tests/fixtures/activity-golden.json` is the current output for all rows. Rewrite it only for an intended change,
+ *   with `SONDER_UPDATE_ACTIVITY_GOLDEN=1 npx tsx --test tests/activity-golden.test.ts`, and review the diff.
  */
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
@@ -23,6 +26,7 @@ const { collectActivity } = await import("../server/activity.ts");
 after(() => rmSync(temp, { recursive: true, force: true }));
 
 const GOLDEN = new URL("./fixtures/activity-golden.json", import.meta.url);
+const BEFORE_SOURCES = new URL("./fixtures/activity-golden-before-sources.json", import.meta.url);
 const MIN = 60_000;
 const DAY = 24 * 60 * MIN;
 const NOW = Date.UTC(2026, 10, 14, 12, 0, 0);
@@ -147,15 +151,29 @@ const deps = (over: Record<string, unknown>) => ({
   ...over,
 }) as any;
 
+const snapshots = async () => ({
+  probesAnswer: await collectActivity(deps({})),
+  probesFail: await collectActivity(deps({
+    torrentHealth: async () => { throw new Error("ECONNREFUSED"); },
+    poolStatus: () => { throw new Error("ssh timed out"); },
+  })),
+  noProbes: await collectActivity(deps({}), { probes: false }),
+});
+
+/** Rows whose Activity state changes on purpose with #392: statuses outside a vocabulary, failed series jobs. */
+function deleteIntendedChanges() {
+  run("DELETE FROM acquisitions WHERE status NOT IN ('checking','preparing','downloading','paused','ready','error')");
+  run("DELETE FROM server_downloads WHERE status NOT IN ('queued','downloading','paused','ready','error')");
+  run("DELETE FROM series_acquisition_jobs WHERE status = 'failed'");
+  run("DELETE FROM alignment_jobs WHERE id = 'align-unknown'");
+}
+
 test("GET /api/activity returns the recorded JSON for the same rows", async () => {
-  const actual = {
-    probesAnswer: await collectActivity(deps({})),
-    probesFail: await collectActivity(deps({
-      torrentHealth: async () => { throw new Error("ECONNREFUSED"); },
-      poolStatus: () => { throw new Error("ssh timed out"); },
-    })),
-    noProbes: await collectActivity(deps({}), { probes: false }),
-  };
-  if (process.env.SONDER_UPDATE_ACTIVITY_GOLDEN === "1") writeFileSync(GOLDEN, `${JSON.stringify(actual, null, 2)}\n`);
-  assert.deepEqual(actual, JSON.parse(readFileSync(GOLDEN, "utf8")));
+  const all = await snapshots();
+  if (process.env.SONDER_UPDATE_ACTIVITY_GOLDEN === "1") writeFileSync(GOLDEN, `${JSON.stringify(all, null, 2)}\n`);
+  assert.deepEqual(all, JSON.parse(readFileSync(GOLDEN, "utf8")));
+
+  deleteIntendedChanges();
+  const unchanged = `${JSON.stringify(await snapshots(), null, 2)}\n`;
+  assert.equal(unchanged, readFileSync(BEFORE_SOURCES, "utf8"), "same rows, same JSON text as before the split into sources");
 });
