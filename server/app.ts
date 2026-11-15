@@ -46,11 +46,12 @@ import { registerAccountRequests } from "./account-requests.ts";
 import { registerInvites } from "./invites.ts";
 import { registerReader } from "./reader.ts";
 import { registerAlignment, autoQueueAlignmentsForWork, persistedPoolErrors } from "./alignment.ts";
-import { checkPoolHostsSetting, getAlignmentPoolStatus } from "./alignment-pool.ts";
+import { checkPoolHostsSetting, getAlignmentPoolCoordinator, getAlignmentPoolStatus } from "./alignment-pool.ts";
+import { hostRestartStates, restartPoolHost } from "./alignment-host-control.ts";
 import { activitySamplerLoop, registerActivity } from "./activity.ts";
 import { backgroundRunner, type BackgroundOptions } from "./background-runner.ts";
 import { databaseBackupLoop } from "./backups.ts";
-import { pauseState, setPaused } from "./activity-pause.ts";
+import { pauseState, setHostDisabled, setPaused } from "./activity-pause.ts";
 import {registerMediaLibrary,faultsFor,chooseMedia,sourceChoice} from "./media-library.ts";
 import { audioFileMime } from "./media-response.ts";
 import { parseRange } from "./range.ts";
@@ -362,6 +363,12 @@ export async function createApp(options?: {
     retryEbookSetMember,
     pauseState,
     setPaused,
+    workerHosts: {
+      ids: () => getAlignmentPoolCoordinator().listHosts().map((host) => host.id),
+      restart: (hostId: string, options: { force: boolean }) => restartPoolHost(hostId, options),
+      setDisabled: setHostDisabled,
+      restarts: hostRestartStates,
+    },
   };
   registerActivity(app, activityDeps);
   background.add(activitySamplerLoop(app, activityDeps));

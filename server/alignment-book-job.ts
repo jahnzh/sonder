@@ -18,6 +18,9 @@
  *   read, or a `done` whose result cannot be fetched) is waited for up to `BOOK_WORKER_RESTART_WAIT_MS`; then its
  *   host has failed for this job, as has a host whose job failed. The job moves to the next host once
  *   (`lease.canFailover`), otherwise it fails with the reason.
+ * - A host the administrator disabled (#357) keeps polling a worker's job it holds, to its end. A job it does not
+ *   hold (404, or a start that never arrived) is not started there again: the run moves to another host, without
+ *   counting the disabled one as tried, or waits in the queue with the reason in `poolErrors`.
  */
 import { basename } from "node:path";
 import { alignmentJobActive, bookWorkerJobId, type AlignmentInterval, type AlignmentJob, type AlignmentOutcome, type BookJobCounts, type ReaderBook } from "../src/reading-types.ts";
@@ -25,7 +28,7 @@ import { wordCount } from "./alignment-anchors.ts";
 import { bookProgress, bookResult, bookWorker, type BookAnswer, type BookProgress, type BookResult, type BookStartRequest } from "./alignment-book-worker.ts";
 import { BOOK_ENGINE } from "./alignment-engine.ts";
 import { unsyncedPassages } from "./alignment-passages.ts";
-import { getAlignmentPoolCoordinator, storedStaging, type AlignmentJobPoolState, type PoolHostId, type WorkerLease } from "./alignment-pool.ts";
+import { getAlignmentPoolCoordinator, hostDisabled, storedStaging, type AlignmentJobPoolState, type PoolHostId, type WorkerLease } from "./alignment-pool.ts";
 import { retireStagingName } from "./alignment-pool-sweep.ts";
 import * as transition from "./alignment-transitions.ts";
 import { sqlite } from "./db.ts";
@@ -60,7 +63,7 @@ export type BookRun = {
    * Takes the run's lease, or after a failed host the next one, and stores the assignment on the job. Null when
    * the run must stop (the job was requeued, failed, paused, cancelled or replanned meanwhile).
    */
-  lease(job: AlignmentJob, options: { firstHost?: PoolHostId; unstagedFirstHost?: boolean }): Promise<AlignmentJob | null>;
+  lease(job: AlignmentJob, options: { firstHost?: PoolHostId; unstagedFirstHost?: boolean; heldHostDisabled?: boolean }): Promise<AlignmentJob | null>;
   current(): WorkerLease | null;
   stopping(): boolean;
   /** A finished or failed consensus job regenerates its members' projections. */
@@ -99,6 +102,15 @@ export async function runBookJob(started: AlignmentJob, book: BookText, tracks: 
     if (end.kind === "stopped" || end.kind === "done") return;
     job = transition.alignmentJob(id);
     if (!wanted(job, generation) || run.stopping()) return;
+    if (end.kind === "hostDisabled") {
+      delete job.bookJob;
+      job.poolErrors = { ...job.poolErrors, [lease.hostId]: end.reason };
+      transition.progress(job);
+      const moved = await run.lease(job, { heldHostDisabled: true });
+      if (!moved) return;
+      job = moved;
+      continue;
+    }
     if (end.kind === "failed" || !lease.canFailover) {
       transition.fail(job, end.error, "error");
       return run.finished(job);
@@ -187,7 +199,9 @@ type HostEnd =
   /** The host cannot run this job: the next host may. */
   | { kind: "hostFailed"; error: string }
   /** No host can: the request itself was refused. */
-  | { kind: "failed"; error: string };
+  | { kind: "failed"; error: string }
+  /** The host was disabled and holds no job to finish: it is not started there (#357). Not a failure of the host. */
+  | { kind: "hostDisabled"; reason: string };
 
 type HostRun = {
   id: string;
@@ -254,6 +268,9 @@ async function driveOnHost(host: HostRun): Promise<HostEnd> {
     let answer: BookAnswer;
     if (started) answer = await bookWorker.status(url, workerJobId);
     else {
+      // A disabled host finishes the worker's job it holds; one it does not hold is not started (again) there.
+      if (hostDisabled(lease.hostId))
+        return ending({ kind: "hostDisabled", reason: "disabled: the administrator disabled this host; the job is not started there again" });
       if (!lease.tracksStaged) {
         // Leased without staging after a restart, and the worker has no job for the id: stage the tracks now.
         try {

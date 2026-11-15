@@ -287,6 +287,24 @@ export type AlignmentPoolHostStatus = {
   activeJobs: number;
   maxConcurrent: number;
   lastError: string | null;
+  /** The administrator took the host out of use (#357): it gets no new work; older servers omit it. */
+  disabled?: boolean;
+  /** The worker's code revision from its `/health`, null when it reports none or cannot be read (#357). */
+  revision?: string | null;
+  /** What the worker runs now, from its `/health`; null when it could not be read (#357). */
+  work?: AlignmentPoolHostWork | null;
+};
+/** A worker's current work as its `/health` reports it (#357). */
+export type AlignmentPoolHostWork = {
+  /** Window requests (alignment sections, probes, passage locating) running now. */
+  windowRequests: number;
+  /** Whole-book jobs the worker holds, and whether one of them is encoding (holds an encode slot). */
+  bookJobs: number;
+  encoding: boolean;
+  /** The worker is picking up its retained whole-book jobs after a start. */
+  resuming: boolean;
+  /** Stuck requests or whole-book sessions. */
+  stuck: number;
 };
 export type AlignmentPoolStatus = {
   enabled: boolean;

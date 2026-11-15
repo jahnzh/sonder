@@ -263,6 +263,26 @@ export type ActivityProcess = {
   /** What pausing does and does not stop, in plain words. */
   pauseEffect: string | null;
   counts: { running: number; queued: number; failed: number; stuck: number };
+  /** An alignment worker host's row (#357): status, code version, current job, restart and the disable switch. */
+  host?: ActivityWorkerHost;
+};
+/** The last restart of a worker host from the page, as the server remembers it until it restarts itself. */
+export type ActivityHostRestart = { at: number; ok: boolean; forced: boolean; message: string };
+export type ActivityWorkerHost = {
+  hostId: string;
+  device: string | null;
+  /** The worker answers `/health` and SSH. */
+  online: boolean;
+  /** Disabled by the administrator: the pool gives it no new work; work running there finishes. */
+  disabled: boolean;
+  /** The worker's code revision; null when it reports none (shown as unknown). */
+  revision: string | null;
+  /** What the worker runs now, from its `/health` ("1 whole-book job, encoding"); null when idle or not read. */
+  work: string | null;
+  /** Titles of the alignment jobs Sonder runs on it now. */
+  jobs: string[];
+  restarting: boolean;
+  lastRestart: ActivityHostRestart | null;
 };
 export type ActivityResponse = {
   checkedAt: number;
