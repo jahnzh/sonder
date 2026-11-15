@@ -3,9 +3,9 @@ Description=Sonder CTC alignment worker
 After=network-online.target
 
 [Service]
-WorkingDirectory={{TARGET_DIR}}/worker
+WorkingDirectory={{TARGET_DIR}}/releases/{{RELEASE}}/worker
 EnvironmentFile={{TARGET_DIR}}/worker.env
-ExecStart=/usr/bin/nice -n 10 {{TARGET_DIR}}/env/bin/python -m uvicorn align:app --host 0.0.0.0 --port {{PORT}}
+ExecStart=/usr/bin/nice -n 10 {{TARGET_DIR}}/envs/{{ENV}}/bin/python -m uvicorn align:app --host 0.0.0.0 --port {{PORT}}
 Restart=always
 RestartSec=5
 

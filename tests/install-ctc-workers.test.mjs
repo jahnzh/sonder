@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -90,7 +90,9 @@ test("install-ctc-workers.sh --print-service matches rendered service template",
   const templateContent = readFileSync(serviceTmpl, "utf8");
   const expectedDefault = templateContent
     .replaceAll("{{TARGET_DIR}}", "%h/sonder-ctc-worker")
-    .replaceAll("{{PORT}}", "3012");
+    .replaceAll("{{PORT}}", "3012")
+    .replaceAll("{{RELEASE}}", "<release>")
+    .replaceAll("{{ENV}}", "<env>");
   assert.equal(runDefault.stdout, expectedDefault);
 
   const runCustom = spawnSync(installer, ["--print-service", "--dir", "/opt/ctc", "--port", "3015"], {
@@ -100,7 +102,9 @@ test("install-ctc-workers.sh --print-service matches rendered service template",
   assert.equal(runCustom.status, 0, runCustom.stderr);
   const expectedCustom = templateContent
     .replaceAll("{{TARGET_DIR}}", "/opt/ctc")
-    .replaceAll("{{PORT}}", "3015");
+    .replaceAll("{{PORT}}", "3015")
+    .replaceAll("{{RELEASE}}", "<release>")
+    .replaceAll("{{ENV}}", "<env>");
   assert.equal(runCustom.stdout, expectedCustom);
 });
 
@@ -132,159 +136,17 @@ test("install-ctc-workers.sh --print-caddy requires --caddy-domain and --prod-ip
 });
 
 test("install-ctc-workers.sh warns when --token passed on CLI", () => {
-  const tempDir = realpathSync(mkdtempSync(join(tmpdir(), "sonder-ctc-token-warn-")));
-  try {
-    const run = spawnSync(installer, [
-      "--token", "secret123",
-      "--dir", tempDir,
-      "--dry-run",
-    ], { encoding: "utf8" });
-    assert.equal(run.status, 0, run.stderr);
-    assert.match(run.stderr, /warning: --token on the command line is visible in process listings; prefer passing ALIGNMENT_WORKER_TOKEN in the environment/);
-  } finally {
-    rmSync(tempDir, { recursive: true, force: true });
-  }
+  // --print-service exits before any host step, so this reaches no service or worker.
+  const run = spawnSync(installer, ["--token", "secret123", "--print-service"], {
+    encoding: "utf8",
+    env: { ...process.env, HOME: "/home/testuser" },
+  });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stderr, /warning: --token on the command line is visible in process listings; prefer passing ALIGNMENT_WORKER_TOKEN in the environment/);
 });
 
-test("install-ctc-workers.sh scaffolds directories, worker.env with 0600 under umask 0000", () => {
-  const tempDir = realpathSync(mkdtempSync(join(tmpdir(), "sonder-ctc-install-test-")));
-  const fakeHome = join(tempDir, "home");
-  const fakeBin = join(tempDir, "bin");
-  const targetDir = join(fakeHome, "sonder-ctc-worker");
-  const xdgConfig = join(fakeHome, ".config");
-  const systemctlLog = join(tempDir, "systemctl.log");
-
-  mkdirSync(fakeHome, { recursive: true });
-  mkdirSync(fakeBin, { recursive: true });
-
-  // Stub systemctl and loginctl
-  writeFileSync(join(fakeBin, "systemctl"), `#!/bin/sh\necho "$@" >> "${systemctlLog}"\n`);
-  chmodSync(join(fakeBin, "systemctl"), 0o755);
-  writeFileSync(join(fakeBin, "loginctl"), `#!/bin/sh\necho "Linger=yes"\n`);
-  chmodSync(join(fakeBin, "loginctl"), 0o755);
-
-  try {
-    // Run under umask 0000 to verify umask 077 inside script enforces 0600 on creation
-    const run = spawnSync("bash", [
-      "-c",
-      `umask 0000 && "${installer}" --device cuda --dir "${targetDir}" --service-only`,
-    ], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        HOME: fakeHome,
-        XDG_CONFIG_HOME: xdgConfig,
-        PATH: `${fakeBin}:${process.env.PATH}`,
-        ALIGNMENT_WORKER_TOKEN: "env-secret-token-54321",
-      },
-    });
-
-    assert.equal(run.status, 0, `Run failed: ${run.stderr}`);
-
-    // Verify directory layout
-    assert.ok(existsSync(join(targetDir, "worker")), "worker dir must be created");
-    assert.ok(existsSync(join(targetDir, "media")), "media dir must be created");
-    assert.ok(existsSync(join(targetDir, "worker", "align.py")), "align.py must be copied");
-
-    // Verify worker.env
-    const envFile = join(targetDir, "worker.env");
-    assert.ok(existsSync(envFile), "worker.env must exist");
-    const envStat = statSync(envFile);
-    assert.equal(envStat.mode & 0o777, 0o600, "worker.env must have 0600 permissions even under umask 0000");
-
-    const envContent = readFileSync(envFile, "utf8");
-    assert.match(envContent, /ALIGNMENT_WORKER_TOKEN=env-secret-token-54321/);
-    assert.match(envContent, new RegExp(`MEDIA_ROOT=${targetDir}/media`));
-    assert.match(envContent, /ALIGNMENT_CTC_DEVICE=cuda/);
-
-    // Verify output mentions production .env instruction without leaking token
-    assert.match(run.stdout, /Ensure the matching token is configured as ALIGNMENT_WORKER_TOKEN in production \.env/);
-    assert.ok(!run.stdout.includes("Generated new alignment worker token"), "Should not claim generated when env token was provided");
-
-    // Verify systemd user service unit installed matches template substitution
-    const unitFile = join(xdgConfig, "systemd", "user", "sonder-ctc-worker.service");
-    assert.ok(existsSync(unitFile), "service unit file must be installed");
-    const unitContent = readFileSync(unitFile, "utf8");
-    assert.match(unitContent, /Description=Sonder CTC alignment worker/);
-    assert.match(unitContent, new RegExp(`WorkingDirectory=%h/sonder-ctc-worker/worker`));
-
-    // Verify systemctl calls
-    assert.ok(existsSync(systemctlLog), "systemctl commands must be recorded");
-    const systemctlCommands = readFileSync(systemctlLog, "utf8").trim().split("\n");
-    assert.deepEqual(systemctlCommands, [
-      "--user daemon-reload",
-      "--user enable sonder-ctc-worker.service",
-      "--user restart sonder-ctc-worker.service",
-    ]);
-  } finally {
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
-test("install-ctc-workers.sh generates token once and informs owner; reuses existing token safely", () => {
-  const tempDir = realpathSync(mkdtempSync(join(tmpdir(), "sonder-ctc-token-flow-")));
-  const fakeHome = join(tempDir, "home");
-  const fakeBin = join(tempDir, "bin");
-  const targetDir = join(fakeHome, "sonder-ctc-worker");
-  const xdgConfig = join(fakeHome, ".config");
-
-  mkdirSync(fakeHome, { recursive: true });
-  mkdirSync(fakeBin, { recursive: true });
-
-  try {
-    // 1. First run: generates new token
-    const run1 = spawnSync(installer, [
-      "--device", "cpu",
-      "--dir", targetDir,
-      "--service-only",
-      "--skip-service",
-    ], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        HOME: fakeHome,
-        XDG_CONFIG_HOME: xdgConfig,
-        ALIGNMENT_WORKER_TOKEN: "",
-      },
-    });
-
-    assert.equal(run1.status, 0, run1.stderr);
-    assert.match(run1.stdout, /Generated new alignment worker token: ([a-f0-9]+)/);
-    const generatedToken = run1.stdout.match(/Generated new alignment worker token: ([a-f0-9]+)/)[1];
-    assert.ok(generatedToken.length >= 16);
-    assert.match(run1.stdout, /Set the SAME value as ALIGNMENT_WORKER_TOKEN in production \.env/);
-
-    const envContent1 = readFileSync(join(targetDir, "worker.env"), "utf8");
-    assert.match(envContent1, new RegExp(`ALIGNMENT_WORKER_TOKEN=${generatedToken}`));
-
-    // 2. Second run: reuses existing token without printing it
-    const run2 = spawnSync(installer, [
-      "--device", "cpu",
-      "--dir", targetDir,
-      "--service-only",
-      "--skip-service",
-    ], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        HOME: fakeHome,
-        XDG_CONFIG_HOME: xdgConfig,
-        ALIGNMENT_WORKER_TOKEN: "",
-      },
-    });
-
-    assert.equal(run2.status, 0, run2.stderr);
-    assert.match(run2.stdout, /Reused existing alignment worker token from .*worker\.env/);
-    assert.match(run2.stdout, /Ensure the matching token is configured as ALIGNMENT_WORKER_TOKEN in production \.env/);
-    // Crucial: output does NOT display the secret token
-    assert.ok(!run2.stdout.includes(generatedToken), "Second run must not print the secret token in stdout");
-
-    const envContent2 = readFileSync(join(targetDir, "worker.env"), "utf8");
-    assert.match(envContent2, new RegExp(`ALIGNMENT_WORKER_TOKEN=${generatedToken}`));
-  } finally {
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-});
+// Installs, updates, the token flow and the 0600 worker.env run against a fake host in
+// tests/install-ctc-workers-update.test.mjs.
 
 test("mutation proof: subshell umask 077 prevents world-readable file creation under umask 0000", () => {
   // Test that running ( umask 077; touch file ) vs ( touch file ) under umask 0000
