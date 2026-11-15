@@ -1,12 +1,30 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { defaultAppearance } from "../../src/appearance";
 import { readerFixture } from "../reader-fixture";
 import { installReaderWaitBudget, READER_WAIT_MS, timedWait } from "./timing";
 
 // Per-step expect ceilings are up to 45 s; leave room around history restores.
 installReaderWaitBudget(test);
 
-async function importRecording(page: Page, title: string, tracks = 1) {
+// One server serves every repeat of a run (the check repeats a changed spec file). What a test leaves on the server
+// must not reach the next one: each test starts from the default reader settings, imports its books under titles of
+// its own repeat, and removes them from the library when it ends.
+const imported: string[] = [];
+
+test.beforeEach(async ({ page }) => {
+  const current = await (await page.request.get("/api/appearance")).json();
+  const reset = await page.request.put("/api/appearance", { data: { ...current, reader: defaultAppearance.reader } });
+  expect(reset.ok()).toBe(true);
+});
+
+test.afterEach(async ({ page }) => {
+  for (const id of imported.splice(0)) expect((await page.request.delete(`/api/library/${id}`)).ok()).toBe(true);
+});
+
+/** The book's title is `name` plus the repeat index, so a later repeat in the same server shows one card for it. */
+async function importRecording(page: Page, name: string, tracks = 1) {
+  const title = `${name} ${test.info().repeatEachIndex}`;
   const audio = readFileSync("server/demo/alice-01.mp3");
   const files = Object.fromEntries(Array.from({ length: tracks }, (_, i) => [
     `file${i}`, { name: `Track ${i + 1}.mp3`, mimeType: "audio/mpeg", buffer: audio },
@@ -16,6 +34,7 @@ async function importRecording(page: Page, title: string, tracks = 1) {
   });
   expect(response.ok()).toBe(true);
   const { id } = await response.json();
+  imported.push(id);
   return (await (await page.request.get("/api/books")).json()).find((book: any) => book.id === id);
 }
 
@@ -101,10 +120,16 @@ async function importWithEbook(page: Page, title: string, tracks = 1) {
   return book;
 }
 
+// The pages are shown: no follow jump is swapping them (`data-jumping`), when a tap or press on them would not act (#445).
+async function pagesShown(page: Page) {
+  await expect(page.locator(".inline-reader .reader-viewport:not([data-jumping])")).toHaveCount(1);
+}
+
 async function revealReaderControls(page: Page) {
   await closePlaybackOptions(page);
   const room = page.locator(".inline-reader");
   await expect(room.locator(".reader-viewport iframe")).toBeVisible();
+  await pagesShown(page);
   const topbar = room.locator(".reader-topbar");
   if (await topbar.isHidden()) {
     const box = (await room.locator(".reader-viewport").boundingBox())!;
@@ -538,6 +563,8 @@ test("a toast Undo for Listen from here takes back what it recorded and is not r
   const room = page.locator(".inline-reader");
   await setPosition(page, 170.25);
   await expect(room).toHaveAttribute("data-current-passage", /.+/);
+  // A long press while a follow jump swaps the page does not start Listen from here (#445).
+  await pagesShown(page);
   const paragraphs = page.frameLocator(".inline-reader .reader-viewport iframe").locator("p");
   await paragraphs.first().waitFor();
   const view = (await room.locator(".reader-viewport").boundingBox())!;

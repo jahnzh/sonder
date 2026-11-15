@@ -346,6 +346,8 @@ export function ReaderView({
     mapRef = useRef<AlignmentJob | null>(null),
     // Follow jumps in flight with the pages hidden.
     hiddenJumps = useRef(0),
+    // How often a follow jump hid the pages, so a press in a frame from before then is not acted on.
+    pageHides = useRef(0),
     highlight = useRef<string | null>(null);
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
@@ -713,6 +715,10 @@ export function ReaderView({
           let start: {x:number; y:number; time:number} | null = null;
           let hold: ReturnType<typeof setTimeout> | null = null;
           let held = false;
+          // A follow jump hid the pages since the press began: this page is being replaced, so the
+          // press neither turns it nor starts a long press on it (#445).
+          let hides = 0;
+          const replaced = () => hides !== pageHides.current || hiddenJumps.current > 0;
           const gesture = () => following.gesture();
           for (const type of ["wheel", "keydown", "touchmove"])
             content.document.addEventListener(type, gesture, { passive: true });
@@ -721,8 +727,8 @@ export function ReaderView({
             // Links may navigate without a page turn; a tap on the page itself
             // is only a potential gesture until it moves or turns the page.
             if ((event.target as Element)?.closest("a")) { gesture(); return; }
-            start = { x: event.clientX, y: event.clientY, time: Date.now() }; held = false;
-            hold = setTimeout(() => { held = true; pageAction.current("sentence", content, event); }, 550);
+            start = { x: event.clientX, y: event.clientY, time: Date.now() }; held = false; hides = pageHides.current;
+            hold = setTimeout(() => { held = true; if (!replaced()) pageAction.current("sentence", content, event); }, 550);
           });
           content.document.addEventListener("pointermove", (event: PointerEvent) => {
             if (start && (Math.abs(event.clientX-start.x)>12 || Math.abs(event.clientY-start.y)>12)) {
@@ -733,7 +739,7 @@ export function ReaderView({
           content.document.addEventListener("pointercancel", () => { if (hold) clearTimeout(hold); start=null; });
           content.document.addEventListener("pointerup", (event: PointerEvent) => {
             if (hold) clearTimeout(hold); hold=null;
-            if (!start || held) { start=null; return; }
+            if (!start || held || replaced()) { start=null; return; }
             const dx=event.clientX-start.x, dy=event.clientY-start.y;
             if (Math.abs(dx)>50 && Math.abs(dx)>Math.abs(dy)) pageAction.current(dx>0 ? "previous" : "next");
             else if (start.y<40 && dy>80 && Math.abs(dy)>Math.abs(dx)) pageAction.current("close");
@@ -903,9 +909,51 @@ export function ReaderView({
     }
   };
   const hidePages = (change: number) => {
+    if (change > 0 && hiddenJumps.current === 0) pageHides.current++;
     hiddenJumps.current += change;
     viewport.current?.toggleAttribute("data-jumping", hiddenJumps.current > 0);
   };
+  // A press that starts while a follow jump hides the pages (#445). epub.js is replacing the section's
+  // frame then, so the hidden pages take no pointer input (reader.css) and the press lands here on the
+  // viewport, which stays in place, not in a frame that goes away or has no listeners yet. Only a tap in
+  // the middle acts, showing or hiding the controls: a turn or a long press would act on a page that is
+  // being replaced. The viewport's own pointerdown listener counts the press as a gesture, as before.
+  useEffect(() => {
+    const host = viewport.current;
+    if (!host) return;
+    let press: { id: number; x: number; y: number; time: number } | null = null;
+    const end = () => {
+      press = null;
+      // The frames take input again once the press that began during the jump is over.
+      host.removeAttribute("data-jump-press");
+    };
+    const down = (event: PointerEvent) => {
+      if (event.button !== 0 || hiddenJumps.current === 0) return;
+      press = { id: event.pointerId, x: event.clientX, y: event.clientY, time: Date.now() };
+      host.setAttribute("data-jump-press", "");
+      // Its release comes here even off the viewport, so the frames do not stay without input.
+      try { host.setPointerCapture(event.pointerId); } catch {}
+    };
+    const up = (event: PointerEvent) => {
+      if (!press || event.pointerId !== press.id) return;
+      const { x, y, time } = press;
+      end();
+      const bounds = host.getBoundingClientRect();
+      const fraction = (event.clientX - bounds.left) / Math.max(1, bounds.width);
+      if (Math.abs(event.clientX - x) < 12 && Math.abs(event.clientY - y) < 12 && Date.now() - time < 550 && fraction >= 0.3 && fraction <= 0.7)
+        pageAction.current("controls");
+    };
+    host.addEventListener("pointerdown", down);
+    host.addEventListener("pointerup", up);
+    host.addEventListener("pointercancel", end);
+    host.addEventListener("lostpointercapture", end);
+    return () => {
+      host.removeEventListener("pointerdown", down);
+      host.removeEventListener("pointerup", up);
+      host.removeEventListener("pointercancel", end);
+      host.removeEventListener("lostpointercapture", end);
+    };
+  }, []);
   // Contents and page turns replace a follow jump still in flight, and their
   // relocation is saved even while that jump's layout is pending.
   // `section`: the section a Contents choice goes to.

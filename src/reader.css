@@ -75,6 +75,12 @@
 .reader-viewport[data-jumping] .epub-container {
   opacity: 0;
 }
+/* While a follow jump swaps the section's frame, a press lands on the viewport instead (#445);
+   one that began then keeps doing so until it ends. */
+.reader-viewport[data-jumping] .epub-container,
+.reader-viewport[data-jump-press] .epub-container {
+  pointer-events: none;
+}
 .reader-navigation {
   display: flex;
   align-items: center;

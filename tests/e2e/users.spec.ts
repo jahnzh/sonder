@@ -1,7 +1,8 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, request, type APIRequestContext, type Page } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
+import { defaultAppearance } from "../../src/appearance";
 import { readerFixture } from "../reader-fixture";
 
 // Ask the OS for a free port so this spec never collides with the shared run or another shard.
@@ -18,6 +19,10 @@ async function freePort(): Promise<number> {
 
 let server: ChildProcess;
 let base = "";
+// The administrator's API session, signed in once per server: sign-ins are rate limited per address.
+let admin: APIRequestContext;
+// Books a test imported, removed from the administrator's library when it ends.
+const importedBooks: string[] = [];
 // The port can be taken between freePort() closing its probe and the server binding it, so retry on a new port.
 test.beforeAll(async () => {
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -25,14 +30,29 @@ test.beforeAll(async () => {
     base = `http://127.0.0.1:${port}`;
     server = spawn(process.execPath, ["--import", "tsx", "tests/browser-server.ts"], { env: { ...process.env, PLAYWRIGHT_AUTH: "1", APP_PASSWORD: "admin-password", PLAYWRIGHT_PORT: String(port) }, stdio: "ignore" });
     for (let i = 0; i < 100 && server.exitCode === null; i++) {
-      try { if ((await fetch(`${base}/api/health`)).ok) return; } catch {}
+      try {
+        if ((await fetch(`${base}/api/health`)).ok) {
+          admin = await request.newContext({ baseURL: base });
+          expect((await admin.post("/api/auth/login", { data: { password: "admin-password" } })).ok()).toBe(true);
+          return;
+        }
+      } catch {}
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     server.kill();
   }
   throw new Error("Authenticated browser server did not start");
 });
-test.afterAll(() => { server?.kill(); });
+test.afterAll(async () => { await admin?.dispose(); server?.kill(); });
+// Each repeat of this file gets a server of its own (above), but a test still leaves nothing behind for the next:
+// the administrator's reader settings start from the defaults, and books it imports leave the library at its end.
+test.beforeEach(async () => {
+  const current = await (await admin.get("/api/appearance")).json();
+  expect((await admin.put("/api/appearance", { data: { ...current, reader: defaultAppearance.reader } })).ok()).toBe(true);
+});
+test.afterEach(async () => {
+  for (const id of importedBooks.splice(0)) expect((await admin.delete(`/api/library/${id}`)).ok()).toBe(true);
+});
 test("accounts keep libraries and offline queues separate", async ({ page }) => {
   mkdirSync("artifacts", { recursive: true });
   await page.addInitScript(() => sessionStorage.setItem("test-load-count", String(Number(sessionStorage.getItem("test-load-count") || 0) + 1)));
@@ -171,6 +191,8 @@ async function openReaderPlayer(page: Page) {
 async function revealReaderControls(page: Page) {
   const room = page.locator(".inline-reader");
   await expect(room.locator(".reader-viewport iframe")).toBeVisible();
+  // No follow jump is swapping the pages (#445).
+  await expect(room.locator(".reader-viewport:not([data-jumping])")).toHaveCount(1);
   const topbar = room.locator(".reader-topbar");
   if (await topbar.isHidden()) {
     const box = (await room.locator(".reader-viewport").boundingBox())!;
@@ -263,13 +285,14 @@ test("one account's position history is not shown to or undoable by another", as
   const audio = readFileSync("server/demo/alice-01.mp3");
   const imported = await page.request.post(`${base}/api/import`, {
     multipart: {
-      title: "Historian isolation",
+      title: `Historian isolation ${test.info().repeatEachIndex}`,
       author: "Jump history QA",
       file0: { name: "Track 1.mp3", mimeType: "audio/mpeg", buffer: audio },
     },
   });
   expect(imported.ok()).toBe(true);
   const { id } = await imported.json();
+  importedBooks.push(id);
   const book = (await (await page.request.get(`${base}/api/books`)).json()).find((b: { id: string }) => b.id === id);
   expect(book).toBeTruthy();
   const uploaded = await page.request.post(`${base}/api/ebooks/import?workId=${book.workId}`, {
