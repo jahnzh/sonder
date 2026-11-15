@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
-import { torrentContainerIsCurrent } from "./torrent-container.mjs";
+import { torrentContainerAction } from "./torrent-container.mjs";
 const root = resolve(process.env.MEDIA_ROOT || "/mnt/usb_4t_1/sonder");
 if (statSync("/mnt/usb_4t_1").dev === statSync("/").dev)
   throw new Error("The 4 TB media drive is not mounted.");
@@ -70,7 +70,8 @@ try {
     }),
   )[0];
 } catch {}
-if (existing && !torrentContainerIsCurrent(existing, vpn, volumeId)) {
+const action = existing ? torrentContainerAction(existing, vpn, volumeId) : "create";
+if (action === "recreate") {
   execFileSync("docker", ["stop", "sonder-torrents"], { stdio: "ignore" });
   execFileSync("docker", ["rm", "sonder-torrents"], { stdio: "ignore" });
   existing = null;
@@ -138,8 +139,13 @@ if (!existing) {
     throw new Error(
       "The existing Sonder torrent container uses a different media drive. Inspect it before continuing.",
     );
-  if (!existing.State.Running)
+  if (action === "start")
     execFileSync("docker", ["start", "sonder-torrents"], { stdio: "ignore" });
+  // The VPN restarted after this container joined its network, which left it in the old, unrouted namespace.
+  if (action === "restart") {
+    console.log("transmission-openvpn restarted after sonder-torrents started: restarting sonder-torrents to rejoin its network.");
+    execFileSync("docker", ["restart", "sonder-torrents"], { stdio: "ignore" });
+  }
 }
 console.log(
   `Sonder torrent queue is configured. Media: ${root}. VPN: transmission-openvpn. Credentials saved privately in .env.`,

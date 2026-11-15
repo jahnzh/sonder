@@ -152,6 +152,10 @@ test("unreachable RPC reports unreachable", async () => {
   assert.equal(health.status, "unreachable");
   assert.equal(health.session, false);
   assert.equal(health.network, "unknown");
+  // #123: the message names the likely cause and the one command that fixes it.
+  assert.match(health.message, /cannot be reached/);
+  assert.match(health.message, /VPN container probably restarted/);
+  assert.match(health.message, /docker restart sonder-torrents/);
 });
 
 test("rejected credentials report auth", async () => {
