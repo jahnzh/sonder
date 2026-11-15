@@ -12,13 +12,13 @@
 #      --marker-file path exists in the image (docker run --rm --entrypoint test <image> -f <path>)
 #   6. smoke-test the built image with the service's environment, network and mounts
 #   7. docker compose up -d sonder, wait for the health check, curl /api/health
-#   8. run the live verification scripts (reader + multi-user) unless --skip-live-checks;
-#      the reader check picks the most recent recording with a finished EPUB alignment map
+#   8. run the live verification scripts (reader + multi-user) unless --skip-live-checks; a check picks its own
+#      recording, and one that exits 3 found no recording it can run on and is reported as skipped, not failed (#431)
 # Prints the rollback command (retag the old image as :local, then up -d --no-build) and reminds to
 # record the deploy in artifacts/orca/STATE.md.
 # At least one --marker or --marker-file is required; --no-marker explicitly skips image verification (non-app changes)
 # and cannot be combined with either.
-# Exit codes: 0 deploy succeeded, 1 a step failed, 2 bad usage.
+# Exit codes: 0 deploy succeeded (skipped live checks included), 1 a step failed, 2 bad usage.
 set -u
 
 usage() {
@@ -73,32 +73,6 @@ restore_local_from_rollback() {
   if ! $docker tag "sonder-audiobooks:${rollback_tag}" "sonder-audiobooks:local"; then
     echo "failed to retag :local to the rollback image; fix manually: docker tag sonder-audiobooks:${rollback_tag} sonder-audiobooks:local" >&2
   fi
-}
-
-# The reader live check needs a recording id: the most recent recording with a finished,
-# non-projected EPUB alignment map that has intervals, preferring status = 'ready'
-# (alignment_jobs -> recordings -> audio_editions -> ebook_editions).
-# The heredoc is quoted so bash leaves the SQL '$.progress' path expression untouched.
-pick_reader_recording() {
-  SONDER_DEPLOY_DB="$db" node --input-type=module <<'PICKER'
-import Database from "better-sqlite3";
-const db = new Database(process.env.SONDER_DEPLOY_DB, { readonly: true });
-const row = db.prepare(`
-  select r.id
-  from alignment_jobs aj
-  join recordings r on r.id = aj.recording_id
-  join audio_editions ae on ae.id = r.edition_id
-  join ebook_editions ee on ee.id = aj.ebook_id and ee.format = 'epub'
-  where ee.work_id = ae.work_id
-    and json_extract(aj.data, '$.progress') = 1
-    and json_array_length(json_extract(aj.data, '$.intervals')) > 0
-    and coalesce(json_extract(aj.data, '$.origin'), '') != 'projected'
-  order by case when json_extract(aj.data, '$.status') = 'ready' then 1 else 0 end desc,
-    aj.updated_at desc
-  limit 1
-`).get();
-if (row) console.log(row.id);
-PICKER
 }
 
 # 1. Commit, checkout and container.
@@ -245,31 +219,27 @@ if ! curl -fsS "http://127.0.0.1:${port}/api/health" >/dev/null; then
   exit 1
 fi
 
-# 8. Live checks. The reader check needs a recording with a finished EPUB alignment map.
+# 8. Live checks. Each check picks its own recording (scripts/live-check-recording.mjs). Exit 3 means it found no
+# recording it can run on without moving the owner's saved position: with the reason the check wrote to
+# SONDER_LIVE_CHECK_SKIP_FILE it is reported as skipped and not counted as a failure (#431). SONDER_VERIFY_PRODUCTION=1
+# lets the checks run against production, which they refuse without it (scripts/live-check-target.mjs).
+no_suitable_exit=3
 failed_checks=()
 if [ "$skip_live" -eq 0 ]; then
   for script in $live_checks; do
-    arg=""
     status=0
-    case $script in
-      *verify-integrated-reader*)
-        arg=$(pick_reader_recording)
-        if [ -z "$arg" ]; then
-          echo "no recording with a finished EPUB alignment map; skipping reader live check ($script)"
-          continue
-        fi
-        ;;
-    esac
-    echo "live check: $script${arg:+ $arg}"
-    if [ -n "$arg" ]; then
-      node "$script" "$arg" || status=$?
-    else
-      node "$script" || status=$?
-    fi
-    if [ "${status:-0}" -ne 0 ]; then
+    skip_file=$(mktemp) || { echo "cannot create a temporary file for $script" >&2; failed_checks+=("$script"); continue; }
+    echo "live check: $script"
+    SONDER_VERIFY_PRODUCTION=1 SONDER_LIVE_CHECK_SKIP_FILE="$skip_file" node "$script" || status=$?
+    # Exit 3 counts as skipped only together with a written reason: any other exit 3 stays a failure.
+    if [ "$status" -eq "$no_suitable_exit" ] && [ -s "$skip_file" ]; then
+      reason=$(head -c 2000 "$skip_file" | tr '\n' ' ')
+      echo "live check skipped: $script (no suitable recording: $reason)"
+    elif [ "$status" -ne 0 ]; then
       echo "live check failed: $script" >&2
       failed_checks+=("$script")
     fi
+    rm -f "$skip_file"
   done
 fi
 

@@ -2,30 +2,29 @@
 import fs from 'node:fs';
 import {protectBrowserMutations, closeProtectedBrowser} from './verification-safety.mjs';
 import {chromium,expect as baseExpect} from '@playwright/test';
-import {pickMappedIntervals,intervalMiddle} from './live-reader-samples.mjs';
 import {createReaderControls,waitForBox} from './live-reader-controls.mjs';
+import {verifyBaseURL} from './live-check-target.mjs';
+import {selectReaderRecording,requestFrom,getJSON,NoSuitableRecording,NO_SUITABLE_RECORDING_EXIT,FOLLOW_WAIT_SECONDS} from './live-check-recording.mjs';
 const expect=baseExpect.configure({timeout:25000});
 process.loadEnvFile('.env');
-const recordingId=process.argv[2];
-if(!recordingId)throw Error('Usage: node scripts/verify-integrated-reader.mjs recording-id');
+// The recording id is a preference: the check plays it when it qualifies and otherwise picks another (#431).
+const preferred=process.argv[2]||null;
+const baseURL=verifyBaseURL();
 const browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || '/home/jahn/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome'});
-const baseURL=process.env.SONDER_VERIFY_URL || 'https://sonder.pecori.no';
 const context=await browser.newContext({baseURL,viewport:{width:390,height:844},serviceWorkers:'block'});
-const report={recordingId,protectedWrites:0,checks:[],errors:[]};
+const report={recordingId:null,preferred,protectedWrites:0,checks:[],errors:[]};
 fs.mkdirSync('artifacts',{recursive:true});
 let page;
 try {
- const login=await context.request.post('/api/auth/login',{data:{password:process.env.APP_PASSWORD}});if(!login.ok())throw Error('Sign-in failed');
- const books=await(await context.request.get('/api/books')).json(),book=books.find(b=>b.recordingId===recordingId);if(!book)throw Error('Recording not found');
- const ebooks=(await(await context.request.get('/api/ebooks')).json()).filter(e=>e.workId===book.workId&&e.format==='epub'&&e.available);
- let ebook,map;
- for(const item of ebooks){
-  const jobs=await(await context.request.get('/api/alignments?ebookId='+encodeURIComponent(item.id))).json();
-  const job=jobs.jobs.find(j=>j.recordingId===recordingId&&j.progress===1&&j.intervals.length);
-  if(job){const response=await context.request.get(`/api/alignments/${job.id}/map`);if(response.ok()){ebook=item;map=await response.json();break;}}
- }
- if(!map)throw Error('Prepare a reading-sync map for this recording first');
- const appearance=await(await context.request.get('/api/appearance')).json();
+ const login=await context.request.post('/api/auth/login',{data:{password:process.env.APP_PASSWORD}});if(!login.ok())throw Error(`Sign-in failed (POST /api/auth/login answered ${login.status()})`);
+ // Choose the recording and map from the listing: playback starts at the owner's saved position, which this check must not move.
+ // Only an empty listing or a 404/410 map can lead to "no suitable recording"; any other failed request fails the check (#431).
+ // A recording chosen here that then fails below stays a failure: the check does not fall through to another one.
+ const get=requestFrom(context);
+ const pick=await selectReaderRecording(get,{preferred});
+ const {book,ebook,sequence}=pick;
+ report.recordingId=pick.recordingId;report.selection={ebookId:ebook.id,jobId:pick.job.id,start:sequence.start,follow:sequence.follow,...(pick.preferred?{preferred:pick.preferred}:{})};
+ const appearance=await getJSON(get,'/api/appearance');
  await context.addInitScript(({appearance,ebook,workId})=>{
   localStorage.setItem('sonder-appearance-device','true');localStorage.setItem('sonder-appearance',JSON.stringify({...appearance,playback:{progressScope:'book'},reader:{...appearance.reader,display:'book',segmentWords:30}}));
   localStorage.setItem(`reader-ebook:${workId}`,ebook);
@@ -74,34 +73,35 @@ try {
  report.checks.push({name:'EPUB fills Now Playing; More holds playback and reader options',ebookId:ebook.id});
  // Sample the audio element directly and check that Page mode follows.
  const seek=position=>page.evaluate(position=>{const a=window.__audio.find(a=>a.src);a.currentTime=position;},position);
- // Seeking the audio element stays within the loaded file, so sample that file's passages.
+ // Seeking the audio element stays within the loaded file: the file of the saved position, whose passages the sequence samples.
  const src=await page.evaluate(()=>window.__audio.find(a=>a.src).src);
  const loaded=book.tracks.find(t=>src.includes(encodeURIComponent(t.id))||src.includes(t.id));
  if(!loaded)throw Error('Could not tell which audio file is loaded');
+ if(loaded.id!==sequence.trackId)throw Error(`The loaded audio file is ${loaded.id}, not ${sequence.trackId} of the saved position`);
+ // Where to seek and play comes from readerSequence (scripts/live-check-recording.mjs), which also chose this map.
  const samples=[];
- for(const interval of pickMappedIntervals(map.intervals,loaded.id)){
-  const position=Math.floor(interval.end)-1;
-  await seek(position);
-  await expect(room).toHaveAttribute('data-current-passage',interval.paragraphId);
+ for(const sample of sequence.samples){
+  await seek(sample.position);
+  await expect(room).toHaveAttribute('data-current-passage',sample.paragraphId);
   await expect(page.locator('.inline-reader .reader-viewport .sonder-follow').first()).toBeVisible();
-  await expect.poll(async()=>(await actual()).position).toBeCloseTo(position,0);
+  await expect.poll(async()=>(await actual()).position).toBeCloseTo(sample.position,0);
   if(!(await actual()).paused)throw Error('Seeking must preserve pause');
   await expect(page.locator('.toast')).toHaveCount(0);
-  samples.push({section:interval.section,paragraphId:interval.paragraphId,position,middle:intervalMiddle(interval)});
+  samples.push(sample);
  }
  if(!samples.length)throw Error('No mapped passage on the loaded audio file');
  report.checks.push({name:'Paused audio seeks move the highlighted passage',samples});
  await page.screenshot({path:'artifacts/live-integrated-reader-mobile.png'});
- // Play from the middle sample: the last one runs into unmapped closing credits.
- const middle=samples[Math.floor(samples.length/2)];
- await seek(middle.position-20);
- await expect(room).toHaveAttribute('data-current-passage',/.+/);
+ // Play from a highlighted passage shortly before another begins, away from the end of the file.
+ const middle=sequence.middle,follow=sequence.follow;
+ await seek(follow.start);
+ await expect(room).toHaveAttribute('data-current-passage',follow.passage);
  // Look for Play/Pause inside the player bar only: in Lyrics mode every sentence of the book is a button, and a role query over
  // the whole reader took seconds per read in a long book (#413).
  const player=room.locator('.reader-player'),play=player.getByRole('button',{name:'Play narration',exact:true}),pause=player.getByRole('button',{name:'Pause narration',exact:true});
  const initial=await room.getAttribute('data-current-passage');
  await controls.click(play,'Play narration');
- await expect.poll(()=>room.getAttribute('data-current-passage'),{timeout:20000}).not.toBe(initial);
+ await expect.poll(()=>room.getAttribute('data-current-passage'),{timeout:FOLLOW_WAIT_SECONDS*1000,message:`the highlighted passage stayed ${initial} after playing from ${follow.start.toFixed(1)} s (next passage ${follow.next} at ${follow.nextAt.toFixed(1)} s)`}).not.toBe(initial);
  await controls.click(pause,'Pause narration');
  report.checks.push({name:'Real audio advances the highlighted passage automatically'});
  // Pausing can stop inside an unsynced gap, where no sentence is highlighted by design (partially mapped books, #349).
@@ -166,6 +166,9 @@ try {
  await page.screenshot({path:'artifacts/live-integrated-reader-desktop.png'});
  report.checks.push({name:'Reader and player bar fit narrow mobile and desktop'});
  expect(report.errors).toEqual([]);report.ok=true;
-} catch(error){report.ok=false;report.failure=error.message;process.exitCode=1;await page?.screenshot({path:'artifacts/live-integrated-reader-failure.png'}).catch(()=>{});report.state=await page?.evaluate(()=>({passage:document.querySelector('.inline-reader')?.getAttribute('data-current-passage'),follow:document.querySelectorAll('.inline-reader .sonder-follow').length,backToNarration:!!document.querySelector('.reader-back-narration')})).catch(()=>null);}
+} catch(error){
+ // Nothing to run on is a result of its own, not a failure: no page was opened, so nothing could write (#431).
+ if(error instanceof NoSuitableRecording){report.ok=null;report.skipped=error.reason;process.exitCode=NO_SUITABLE_RECORDING_EXIT;console.log(error.message);if(process.env.SONDER_LIVE_CHECK_SKIP_FILE)fs.writeFileSync(process.env.SONDER_LIVE_CHECK_SKIP_FILE,error.reason);}
+ else{report.ok=false;report.failure=error.message;process.exitCode=1;await page?.screenshot({path:'artifacts/live-integrated-reader-failure.png'}).catch(()=>{});report.state=await page?.evaluate(()=>({passage:document.querySelector('.inline-reader')?.getAttribute('data-current-passage'),follow:document.querySelectorAll('.inline-reader .sonder-follow').length,backToNarration:!!document.querySelector('.reader-back-narration')})).catch(()=>null);}}
 finally{// Close the page while its writes are still intercepted: unrouting first would let a queued progress save reach the server.
 await closeProtectedBrowser(context,browser,report);fs.mkdirSync('artifacts',{recursive:true});fs.writeFileSync('artifacts/integrated-reader-verification.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));}
