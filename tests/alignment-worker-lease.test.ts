@@ -3,6 +3,7 @@
 import { after, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readerFixture } from "./reader-fixture.ts";
@@ -272,7 +273,7 @@ test("a finished job removes its staged tracks from every host it staged on", as
   assert.deepEqual(moved.pool?.triedHosts, ["wsl", "lisa"]);
   assert.deepEqual(fake.stagedFolders("wsl"), []);
   assert.deepEqual(fake.stagedFolders("lisa"), []);
-  assert.ok(fake.hosts.wsl.commands.some((command) => command.startsWith("rm -rf ") && command.includes(moved.id)));
+  assert.ok(fake.hosts.wsl.commands.some((command) => command.includes("rm -rf ") && command.includes(moved.id)));
 
   // Failed for good on both hosts, and cancelled mid-request.
   install();
@@ -461,7 +462,7 @@ test("failover takes the next untried host and stages again; past the last host 
 test("a release as finished gives up on a removal that hangs at its own deadline and keeps the slot freed", async () => {
   pool.setProbeCleanupTimeoutForTests(30);
   const exec = fake.deps.exec;
-  fake.deps.exec = async (target, command, options) => command.startsWith("rm -rf ")
+  fake.deps.exec = async (target, command, options) => command.includes("rm -rf ")
     ? new Promise(() => undefined) : exec(target, command, options);
   try {
     const { recordingId, trackId } = recording();
@@ -473,6 +474,39 @@ test("a release as finished gives up on a removal that hangs at its own deadline
     assert.ok(Date.now() - started < 2000);
     assert.equal(slotsHeld(), 0);
     assert.deepEqual(fake.stagedFolders("wsl"), ["lease-hang"], "a failed removal leaves the folder (#421 removes it later)");
+  } finally {
+    fake.deps.exec = exec;
+    pool.setProbeCleanupTimeoutForTests(null);
+  }
+});
+
+test("a removal that outlives its deadline on the host never deletes the next run's staging of the same job", async () => {
+  pool.setProbeCleanupTimeoutForTests(30);
+  const exec = fake.deps.exec;
+  const late: Promise<unknown>[] = [];
+  // The host renames at once but deletes slowly: each "rm -rf" lands 200 ms later, long after the client gave up.
+  fake.deps.exec = async (target, command, options) => {
+    const at = command.indexOf("rm -rf ");
+    if (at < 0) return exec(target, command, options);
+    const now = command.slice(0, at).replace(/[;&\s]+$/, "");
+    if (now) execFileSync("sh", ["-c", now]);
+    late.push(new Promise((resolve) => setTimeout(resolve, 200)).then(() => exec(target, command.slice(at))));
+    return new Promise(() => undefined);
+  };
+  try {
+    const { recordingId, trackId } = recording();
+    const track = db.select().from(schema.tracks).all().find((row) => row.id === trackId)!;
+    const request = { id: "lease-reused", recordingId, mode: "chapters" as const, tracks: [track],
+      localAudio: (row: Track) => row.source, kind: "job" as const };
+    const first = await acquireWorkerLease(request);
+    await first.release("finished");
+    // The job runs again under the same id (Resume, a new plan) and stages into the same folder on the same host.
+    const next = await acquireWorkerLease(request);
+    assert.equal(next.hostId, "wsl");
+    await Promise.all(late);
+    assert.ok(existsSync(next.stagedAudio[trackId]), "the next run's staged audio is still there");
+    assert.deepEqual(fake.stagedFolders("wsl"), ["lease-reused"]);
+    await next.release("retryable");
   } finally {
     fake.deps.exec = exec;
     pool.setProbeCleanupTimeoutForTests(null);

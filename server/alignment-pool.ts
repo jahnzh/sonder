@@ -2,6 +2,7 @@
 // staged on it and the worker's address; health checks, slots, SSH staging, the choice of host, the retry on the
 // next host and the removal of staged audio all happen here. Hosts come from configuration (`ALIGNMENT_POOL_HOSTS`).
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { cpSync, mkdirSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
@@ -576,11 +577,17 @@ export function setProbeCleanupTimeoutForTests(ms: number | null) {
   probeCleanupTimeoutMs = ms ?? PROBE_CLEANUP_TIMEOUT_MS;
 }
 
-/** Removes one staging folder of `id` under `signal`. A failure leaves the folder (removed later under leases, #421). */
+/**
+ * Removes one staging folder of `id` under `signal`. The folder is first renamed to a name of its own, at once,
+ * and only that is deleted: a deletion that outlives `signal` on the host can never reach a later run of the same
+ * job that stages into `id`'s folder again. A failure leaves the folder, or its renamed copy
+ * (`<id>.removing-<uuid>`), for #421.
+ */
 async function removeStaging(host: PoolHost, jobMediaRoot: string, id: string, signal: AbortSignal) {
   if (!jobMediaRoot.endsWith(`/alignment/pool-jobs/${id}`)) return;
-  await untilAborted(
-    poolDeps().exec(host.sshTarget, `rm -rf ${shellQuote(jobMediaRoot)}`, { signal }), signal,
+  const removing = shellQuote(`${jobMediaRoot}.removing-${randomUUID()}`);
+  await untilAborted(poolDeps().exec(host.sshTarget,
+    `mv -T -- ${shellQuote(jobMediaRoot)} ${removing} 2>/dev/null; rm -rf -- ${removing}`, { signal }), signal,
   ).catch(() => undefined);
 }
 
