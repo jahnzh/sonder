@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { dirname, join, resolve } from "node:path";
@@ -87,8 +87,25 @@ test("admin-curl.sh logs in with the password from the env file, sends the reque
 
 test("update-ctc-workers.sh skips a host already at the commit and, in a dry run, copies nothing to one that is not", () => {
   const dir = tempDir("sonder-ctc-update-test-");
+  // The check runs this suite in a copy without git history, so the script gets a repository of its own.
+  const repo = join(dir, "repo");
+  mkdirSync(join(repo, "scripts"), { recursive: true });
+  mkdirSync(join(repo, "worker"));
+  copyFileSync(script("update-ctc-workers.sh"), join(repo, "scripts", "update-ctc-workers.sh"));
+  writeFileSync(join(repo, "worker", "align.py"), "# worker\n");
+  // Git exports its own paths to hooks; none of that may reach this repository.
+  const gitEnv = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")));
+  const git = (...args: string[]) => {
+    const result = spawnSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.invalid", ...args], { cwd: repo, env: gitEnv, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  git("init", "-q");
+  git("add", "-A");
+  git("commit", "-q", "-m", "fixture");
+  const head = git("rev-parse", "HEAD");
+
   const calls = join(dir, "calls.log");
-  const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).stdout.trim();
   const ssh = join(dir, "ssh");
   // The fake host "current" reports HEAD as its revision; "behind" reports an older one.
   writeFileSync(
@@ -98,16 +115,18 @@ test("update-ctc-workers.sh skips a host already at the commit and, in a dry run
   const rsync = join(dir, "rsync");
   writeFileSync(rsync, `#!/usr/bin/env bash\necho "rsync $*" >> "${calls}"\n`);
   for (const file of [ssh, rsync]) chmodSync(file, 0o755);
-  const result = run(script("update-ctc-workers.sh"), ["HEAD", "--dry-run", "--host", "current", "--host", "behind"], {
-    SONDER_CTC_SSH: ssh,
-    SONDER_CTC_RSYNC: rsync,
-    TMPDIR: dir,
+  const stage = join(dir, "stage");
+  mkdirSync(stage);
+  const result = spawnSync("bash", [join(repo, "scripts", "update-ctc-workers.sh"), "HEAD", "--dry-run", "--host", "current", "--host", "behind"], {
+    cwd: repo,
+    env: { ...gitEnv, SONDER_CTC_SSH: ssh, SONDER_CTC_RSYNC: rsync, TMPDIR: stage },
+    encoding: "utf8",
+    timeout: 60_000,
   });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, new RegExp(`== current\\nalready at ${head.slice(0, 7)}\\n== behind\\nruns 000000000000, wants ${head.slice(0, 7)}\\ndry run:`));
   const log = readFileSync(calls, "utf8");
   assert.ok(!log.includes("rsync"), "a dry run copies nothing");
   assert.equal(log.trim().split("\n").length, 2, "one health read per host and nothing else");
-  assert.equal(existsSync(join(dir, "calls.log")), true);
-  assert.deepEqual(readdirSync(dir).filter((name) => name.startsWith("sonder-ctc-update-")), [], "the staged copy is removed");
+  assert.deepEqual(readdirSync(stage), [], "the staged copy is removed");
 });
