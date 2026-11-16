@@ -16,6 +16,8 @@ import {
   canShardArgs,
   mergePlaywrightReports,
   mergeShardOutputs,
+  browserTempsInUse,
+  removeStaleBrowserTemps,
 } from "../scripts/test-browser.mjs";
 
 function withTempDir(fn) {
@@ -328,4 +330,33 @@ test("a signalled shard makes the sharded run resolve null", () =>
       createBrowserTemp: () => fs.mkdtempSync(path.join(dir, "temp-")),
     });
     assert.equal(code, null);
+  }));
+
+test("removeStaleBrowserTemps removes old unowned sonder-browser dirs and keeps fresh, in-use and other dirs", () =>
+  withTempDir((dir) => {
+    const now = Date.now();
+    const old = new Date(now - 2 * 60 * 60 * 1000);
+    for (const name of ["sonder-browser-old", "sonder-browser-inuse", "sonder-browser-fresh", "sonder-other-old"]) {
+      fs.mkdirSync(path.join(dir, name));
+      fs.writeFileSync(path.join(dir, name, "file"), "x");
+    }
+    for (const name of ["sonder-browser-old", "sonder-browser-inuse", "sonder-other-old"])
+      fs.utimesSync(path.join(dir, name), old, old);
+    const removed = removeStaleBrowserTemps({
+      tmpRoot: dir,
+      now,
+      inUse: new Set([path.resolve(dir, "sonder-browser-inuse")]),
+    });
+    assert.deepEqual(removed, ["sonder-browser-old"]);
+    assert.deepEqual(fs.readdirSync(dir).sort(), ["sonder-browser-fresh", "sonder-browser-inuse", "sonder-other-old"]);
+  }));
+
+test("browserTempsInUse reads the owned temp from each process environment and skips unreadable ones", () =>
+  withTempDir((proc) => {
+    fs.mkdirSync(path.join(proc, "101"));
+    fs.writeFileSync(path.join(proc, "101", "environ"), `PATH=/bin\0${BROWSER_TEMP_ENV}=/tmp/sonder-browser-a\0HOME=/x\0`);
+    fs.mkdirSync(path.join(proc, "102"));
+    fs.mkdirSync(path.join(proc, "self"));
+    fs.writeFileSync(path.join(proc, "self", "environ"), `${BROWSER_TEMP_ENV}=/tmp/sonder-browser-b\0`);
+    assert.deepEqual([...browserTempsInUse(proc)], ["/tmp/sonder-browser-a"]);
   }));
