@@ -333,13 +333,20 @@ test("removing the last track takes the state back to the acquisition's", () => 
   });
 });
 
+// A placeholder is an edition none of whose recordings has a track, whatever its id (#483).
 test("Hardcover placeholder editions and empty recordings do not count as audio", () => {
   addWork("w-hc");
-  addEdition("w-hc", "hc-123", [{ id: "r-hc", tracks: 1 }]);
+  addEdition("w-hc", "hc-123", [{ id: "r-hc", tracks: 0 }]);
   addEdition("w-hc", "e-empty", [{ id: "r-empty", tracks: 0 }]);
   setWorkMediaHold(1, "w-hc", "unreleased");
   assert.equal(media.workHasPlayableAudio("w-hc"), false);
   assert.equal(getWorkMediaState(1, "w-hc")?.state, "missing");
+});
+
+test("an edition with a track counts as audio whatever its id", () => {
+  addWork("w-hc-audio");
+  addEdition("w-hc-audio", "hc-124", [{ id: "r-hc-audio", tracks: 1 }]);
+  assert.equal(media.workHasPlayableAudio("w-hc-audio"), true);
 });
 
 test("only an edition's first recording is checked for tracks", () => {
