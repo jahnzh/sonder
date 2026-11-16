@@ -51,6 +51,14 @@ _Avoid_: Ebook file
 Where a recording's bytes come from on this play: device copy, server copy, or the original stream.
 _Avoid_: Source (alone), copy
 
+**Get**:
+The administrator's action of bringing a missing file to a work: a recording from AudioBookBay, Prowlarr, a magnet link or audio files from the device, or an ebook edition from Library Genesis or a file from the device. It always happens in the Get sheet of that work, and the file joins that work.
+_Avoid_: Find another release, Find ebook, acquire (on screen), download (for the action)
+
+**Release**:
+A listing a source offers before Sonder has it: a torrent of a recording on AudioBookBay or an indexer behind Prowlarr, or a file of an edition on Library Genesis. Getting one makes it a recording or an ebook edition of the work. A release TorBox already holds plays at once ("Plays now"). On screen a release is called a recording or an edition.
+_Avoid_: Result, torrent (alone), version
+
 **Device save**:
 Copying a work's files onto one device, done by that device's browser while Sonder is open there. The server knows what the device should keep but does not see the save, so it is not an activity.
 _Avoid_: Download (alone), offline download
@@ -109,6 +117,14 @@ _Avoid_: Modal, dialog, popup
 A short list of choices that opens over a page from its bottom edge, such as the Library's Sort and view or a book's Hardcover shelf. It has no address: a choice applies at once, Done or a tap outside closes it, and Back leaves the page under it, as for a tooltip.
 _Avoid_: Dropdown, menu, popover, select
 
+**Old name**:
+An address from before the redesign, such as `#downloads` or `#reader/<ebook id>`, that keeps working for good by opening the page that took its place and replacing itself in the history.
+_Avoid_: Legacy route, alias, deprecated address
+
+**Token**:
+A named value of the design language that every screen takes its spacing, corners, heights, text styles and colours from. A stylesheet sets a corner or spacing only through a token; a value the boards draw that no token gives is marked as an exception where it is written (ADR 0023).
+_Avoid_: Magic number, design variable, theme value
+
 **Offline line**:
 The one line the shell shows above the player while the device has no connection, on every place and page that does not say so itself.
 _Avoid_: Offline banner, offline toast
@@ -118,6 +134,18 @@ _Avoid_: Offline banner, offline toast
 **Face**:
 One of the two sides of the screen for the work in use: Listen, the player, or Read, the reader. A device reopens a work on the face last used there. A work without a recording has no Listen face, and a work without an EPUB has no Read face.
 _Avoid_: View, tab, mode (which is pages or scroll)
+
+**Head**:
+The band at the top of the reader's page, 44 high plus the phone's safe area. At rest it names the book and chapter; a tap on the text shows the reader's controls in it. It keeps its height either way, so the text never moves.
+_Avoid_: Top bar, toolbar, header
+
+**Foot**:
+The band at the bottom of the reader's page, 72 high plus the phone's safe area. At rest it holds the progress line, the time left and Pause; with the controls shown, the timeline and the transport. Speed, the sleep timer and every message while reading take its lower row.
+_Avoid_: Player bar, bottom bar, footer, toast
+
+**Text band**:
+The part of the reader's page between the head and the foot, or a docked panel, where the book's text is laid out. It changes size only with the window or when Appearance docks or closes, never on a tap.
+_Avoid_: Viewport, page area, reading area
 
 **Pages mode**:
 The reader showing the ebook as turnable pages.

@@ -3,14 +3,17 @@
  * activity source next to its own status vocabulary; `server/activity.ts` only aggregates the sources, marks
  * stuck and blocked items, applies the pause switches and dispatches actions. Nothing here knows a feature.
  *
- * Imports only types (and the pure pause model), so the Activity module stays free of the database at import.
+ * Imports only types (and the pure pause model and the cover rule, which take the database handle they are given),
+ * so the Activity module stays free of the database at import.
  */
 import type { FastifyBaseLogger } from "fastify";
 import type {
-  ActivityHealth, ActivityHostRestart, ActivityItem, ActivityKind, ActivityState, ActivityWorkerHost, TorrentHealth,
+  ActivityHealth, ActivityHostRestart, ActivityItem, ActivityItemAction, ActivityKind, ActivityState, ActivityWorkerHost,
+  TorrentHealth,
 } from "../src/types.ts";
 import type { AlignmentPoolStatus } from "../src/reading-types.ts";
 import type { PausableProcess } from "./activity-pause-model.ts";
+import { workCovers } from "./work-cover.ts";
 
 const MINUTE = 60_000;
 
@@ -20,10 +23,19 @@ export type ActivityDeps = {
   torrentHealth: () => Promise<TorrentHealth>;
   poolStatus: () => Promise<AlignmentPoolStatus>;
   requireAdmin: (req: any) => unknown;
+  /** The user who made the request; the covers of the items are read from their library (#514). */
+  userId?: (req: any) => number;
   /** Run a Hardcover sync for one user now (the "Retry" action on a queued change). */
   syncHardcover: (userId: number) => Promise<unknown>;
   /** Evaluate one ebook-set member again in the background (the "Retry" action on an ebook-set check). */
   retryEbookSetMember: (workId: string, ebookId: string) => Promise<unknown>;
+  /**
+   * Retry a failed download or resume a paused one, as the Downloads page's control does
+   * (`POST /api/acquisitions/<id>/control`, #515). `userId` is the administrator who asked.
+   */
+  controlAcquisition: (id: string, action: "retry" | "resume", userId: number) => Promise<unknown>;
+  /** Resume or retry a reading sync, as the `resume` of `PATCH /api/alignments/<id>` does (#515); answers the job. */
+  resumeAlignment: (id: string) => Promise<unknown>;
   /** Pause state per loop: the settings table plus the environment lock. */
   pauseState: () => Record<string, { paused: boolean; locked: boolean }>;
   setPaused: (id: PausableProcess, paused: boolean) => void;
@@ -60,8 +72,8 @@ export class ChangeTracker {
   }
 }
 
-/** An item as a source reports it; Activity adds whether it is stuck or blocked. */
-export type ActivityDraft = Omit<ActivityItem, "stuck" | "blockedBy" | "permanent" | "actions"> & {
+/** An item as a source reports it; Activity adds whether it is stuck, blocked or needs attention. */
+export type ActivityDraft = Omit<ActivityItem, "stuck" | "blockedBy" | "permanent" | "actions" | "attention"> & {
   permanent?: boolean;
   /** When the item last changed, for the "no change for" rule. */
   changedAt: number;
@@ -94,7 +106,36 @@ export type ReportContext = {
   held: boolean;
 };
 
-export type ActivityActionContext = { deps: ActivityDeps; log: FastifyBaseLogger };
+/** What a source's `load` is asked for besides the database: whose library the covers are read from (#514). */
+export type LoadContext = { userId: number };
+
+/** The book an item concerns, read with its row: the work, its audio edition (never a placeholder's) and cover. */
+export type ItemWork = { workId: string; bookId: string | null; cover: string };
+
+/**
+ * `rows` with the work each concerns (`workOf` gives its id, or null for a row with none), read by the cover rule of
+ * the library by work for `userId`. A work that no longer exists is no work. One query per rule step for all rows.
+ */
+export function withWorks<Row>(
+  sqlite: ActivityDeps["sqlite"], userId: number, rows: Row[], workOf: (row: Row) => string | null,
+): Array<Row & { work: ItemWork | null }> {
+  const covers = workCovers(sqlite, userId, rows.flatMap((row) => workOf(row) ?? []));
+  return rows.map((row) => {
+    const workId = workOf(row);
+    const found = workId ? covers.get(workId) : undefined;
+    return { ...row, work: workId && found ? { workId, ...found } : null };
+  });
+}
+
+/** The `workId`, `bookId` and `cover` of an item: its work's, or `ownCover` when it has no work, else none. */
+export const itemWork = (work: ItemWork | null | undefined, ownCover: string | null = null) =>
+  ({ workId: work?.workId ?? null, bookId: work?.bookId ?? null, cover: work ? work.cover : ownCover });
+
+export type ActivityActionContext = {
+  deps: ActivityDeps; log: FastifyBaseLogger;
+  /** The administrator who asked (#515); the first administrator where the request names none. */
+  userId: number;
+};
 export type ActivityAction = (id: string, context: ActivityActionContext) => Promise<Record<string, unknown>>;
 /** An action on a service the source reports (a worker host's restart or switch), with the request body. */
 export type ServiceAction = (
@@ -108,8 +149,8 @@ export type ActivitySource<Rows = unknown, Probe = never> = {
   process: { id: PausableProcess; label: string };
   /** A running item is stuck when nothing about it changed for this long (scaled by the settings multiplier). */
   stuckAfterMs: number;
-  /** Read the feature's rows. */
-  load(sqlite: ActivityDeps["sqlite"]): Rows;
+  /** Read the feature's rows, with the work of each item (`withWorks`). */
+  load(sqlite: ActivityDeps["sqlite"], context: LoadContext): Rows;
   /** Ask a service this work depends on; Activity runs it with a time limit and only when probes are wanted. */
   probe?(deps: ActivityDeps): Promise<Probe>;
   /** Turn rows into items, and the probe into services. Pure. */
@@ -118,6 +159,8 @@ export type ActivitySource<Rows = unknown, Probe = never> = {
   stuck?(item: ActivityDraft, now: number, thresholdMs: number): ActivityItem["stuck"];
   retry?: ActivityAction;
   discard?: ActivityAction;
+  /** Resume a paused item (#515). */
+  resume?: ActivityAction;
   /** Actions on the services this source reports, whose ids start with `prefix`. */
   services?: { prefix: string; restart?: ServiceAction; disable?: ServiceAction };
 };
@@ -150,5 +193,19 @@ export function formatAge(ms: number) {
   if (hours < 48) return `${hours} h`;
   return `${Math.round(hours / 24)} days`;
 }
+
+/**
+ * The action `name` of an item whose stored status is `status`, by the source's table of actions per status: refused
+ * with `reason` (409) when that status does not offer it, so an Activity page older than the row cannot act on it.
+ */
+export function assertOffered<Status extends string>(
+  table: Record<Status, readonly ActivityItemAction[]>, status: string, name: ActivityItemAction, reason: string,
+) {
+  if (!offeredActions(table, status).includes(name)) throw activityFailure(409, reason);
+}
+
+/** The actions a stored status offers by the source's table; none for a status outside the vocabulary. */
+export const offeredActions = <Status extends string>(table: Record<Status, readonly ActivityItemAction[]>, status: string): ActivityItemAction[] =>
+  Object.hasOwn(table, status) ? [...table[status as Status]] : [];
 
 export const activityFailure = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });

@@ -138,6 +138,26 @@ export type ReadingSyncSummary = Omit<
   | "stageTimings"
   | "elapsedSeconds"
 > & { intervalCount: number };
+/**
+ * One of Discover's works on the server (`GET /api/works`, #573): enough for a result row, which opens
+ * the work's Book page (`GET /api/works/<workId>`).
+ */
+export type WorkResult = {
+  workId: string;
+  title: string;
+  author: string;
+  year: number;
+  /** As `LibraryWork.cover`: the chosen recording's, otherwise the placeholder's or first audio edition's; "" for none. */
+  cover: string;
+  /** One of the work's audio editions is in the user's library. */
+  inLibrary: boolean;
+  /** One of the work's recordings has a track. */
+  hasAudiobook: boolean;
+  /** The work has an ebook edition; the consensus text of an ebook set is not counted. */
+  hasEbook: boolean;
+  /** The Hardcover book the work is matched to, if any. */
+  hardcoverId: number | null;
+};
 export type WorkSeries = { id: number | null; name: string; position: number | null; saved: boolean };
 export type WorkMediaState = {
   state: "missing" | "queued" | "failed" | "available";
@@ -333,6 +353,8 @@ export type ActivityKind =
   | "ebook-set"
   | "backup";
 export type ActivityState = "running" | "queued" | "paused" | "failed" | "done";
+/** An item's action, sent to `/api/activity/items/<action>`: Retry after a failure, Resume after a pause, Discard. */
+export type ActivityItemAction = "retry" | "discard" | "resume";
 export type ActivityItem = {
   id: string;
   kind: ActivityKind;
@@ -350,12 +372,57 @@ export type ActivityItem = {
   error: string | null;
   /** A failed item that cannot succeed on retry: it is offered Discard, not Retry. */
   permanent: boolean;
-  /** What the administrator can do with this item now. */
-  actions: Array<"retry" | "discard">;
+  /** What the administrator can do with this item now. An older client ignores an action it does not know (#515). */
+  actions: ActivityItemAction[];
   stuck: { reason: string } | null;
   /** The background process this item cannot move without, while that process is down. */
   blockedBy: string | null;
+  /** The work the item concerns; null for an acquisition with no work yet, a Hardcover queue and a backup (#514). */
+  workId: string | null;
+  /** The audio edition of the work's chosen recording; null when it has none, and never a placeholder's (#514). */
+  bookId: string | null;
+  /**
+   * The work's cover by the rule of the library by work: the chosen recording's, otherwise the placeholder's. An
+   * acquisition with no work yet has its own; a Hardcover queue and a backup have none (#514).
+   */
+  cover: string | null;
+  /** What the item's status line is written from, by kind (#514). */
+  facts: ActivityFacts;
+  /**
+   * The item failed in the last seven days, is stuck or is blocked. The one place this is decided for server work
+   * (`buildActivity`); `ActivityResponse.attention` counts these plus the processes that are down (#514).
+   */
+  attention: boolean;
 };
+/**
+ * The facts of an item's status line (#514), one shape per kind: the feature's own status word as it is stored (a
+ * word outside the vocabulary is possible for an old row or a newer server; its line is then null) and, where the
+ * kind has them, the rest of what the line is written from. `kind` is the item's.
+ */
+export type ActivityFacts =
+  /** A download: where it is fetched (`local`, `torbox`, `copy`; null when the row has none). */
+  | { kind: "acquisition"; status: string; backend: string | null }
+  | { kind: "server-copy"; status: string }
+  /** A series search for the audiobook or for the ebook of a work. */
+  | { kind: "series-acquisition"; status: string; search: "audiobook" | "ebook" }
+  | {
+      kind: "alignment";
+      status: string;
+      /** The job's outcome (`mapped`, `partial`, `unsynced`, `rejected`, …); null while it has none. */
+      outcome: string | null;
+      /** 0 to 1: the share of the ebook's sentences found in the narration; null when the record has none. */
+      coverage: number | null;
+      /** A whole-book job, which reports a stage; false for a job of the older engine. */
+      wholeBook: boolean;
+      /** The worker's stage of this run (`decoding`, `encoding`, …); null until the worker has reported one. */
+      stage: string | null;
+      /** The worker's file counts for a stage that counts files (decoding, encoding); null otherwise. */
+      files: { done: number; total: number } | null;
+    }
+  | { kind: "hardcover"; status: "waiting" | "failing"; queue: "status" | "listening" | "reading" }
+  /** An ebook's check against the narration: the member's status, with the reason it is held when it is. */
+  | { kind: "ebook-set"; status: string; holdReason: string | null }
+  | { kind: "backup"; status: string };
 export type ActivityHealth = "ok" | "degraded" | "down" | "unknown";
 export type ActivityProcess = {
   id: string;
@@ -401,6 +468,6 @@ export type ActivityResponse = {
   stuckMultiplier: number;
   processes: ActivityProcess[];
   items: ActivityItem[];
-  /** Number of failed, stuck or blocked items plus down processes: drives the indicator on Settings. */
+  /** Number of items with `attention` plus down processes: drives the indicator on Settings. */
   attention: number;
 };

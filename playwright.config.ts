@@ -6,7 +6,7 @@ const installed =
 // Phone-profile projects are opt-in so `npm run test:browser` and `npm run check` keep their runtime.
 // SONDER_MOBILE=1 adds them to the default projects; SONDER_MOBILE=only (npm run test:mobile) runs just them.
 const mobileMode = process.env.SONDER_MOBILE;
-const mobileSpecs = /(^|\/)(now-playing-layout|device-reset|app|playback-workflow|integrated-reader|playback-speed|navigation)\.spec\.ts$/;
+const mobileSpecs = /(^|\/)(now-playing-layout|device-reset|app|playback-workflow|integrated-reader|playback-speed|navigation|gallery|gallery-controls)\.spec\.ts$/;
 const { isMobile: _isMobile, defaultBrowserType: _browser, ...pixelWithoutIsMobile } = devices["Pixel 7"];
 const mobileProjects = [
   // Pixel 7 in Chromium: touch input, mobile user agent, device pixel ratio and isMobile viewport handling.
@@ -25,7 +25,7 @@ const desktopProjects = [
   { name: "chromium" },
   // Layout checks also run in Firefox/WebKit when those browsers are installed.
   // Only now-playing-layout, device-reset and reader-frame specs run on them, plus the page stack
-  // (navigation) in Firefox, a browser the owner uses; other spec files are skipped for these
+  // (navigation) and the parts gallery (gallery) in Firefox, a browser the owner uses; other spec files are skipped for these
   // projects without an error in a multi-project run.
   ...[firefox, webkit]
     .filter((browser) => existsSync(browser.executablePath()))
@@ -33,7 +33,7 @@ const desktopProjects = [
       name: browser.name(),
       testMatch:
         browser === firefox
-          ? /(now-playing-layout|device-reset|reader-frame|navigation)\.spec\.ts/
+          ? /(now-playing-layout|device-reset|reader-frame|navigation|gallery|gallery-controls)\.spec\.ts/
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: {} },
     })),

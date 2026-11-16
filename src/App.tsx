@@ -83,6 +83,7 @@ import { ActivityPage } from "./pages/activity-page";
 import { SettingsPage } from "./pages/settings-page";
 import { firstPage, writeAddress, type Place, type Route } from "./routes";
 import { onPageLeftByHistory, startNavigation, useAddress } from "./navigation";
+import { Gallery, isGalleryRoute } from "./gallery/Gallery";
 type Notice = { text: string; error?: boolean };
 const nav = [
   { id: "library", label: "My library", icon: Library },
@@ -148,8 +149,18 @@ function App() {
     );
   if (!auth) return <SignIn needsPassword={needsPassword} onLogin={(account) => { setUser(account); setAuth(true); }} />;
   return (
-    <LibraryApp user={user || { id: 1, username: "admin", role: "admin" }} needsPassword={needsPassword} onLogout={() => setAuth(false)} />
+    <SignedIn user={user || { id: 1, username: "admin", role: "admin" }} needsPassword={needsPassword} onLogout={() => setAuth(false)} />
   );
+}
+/**
+ * The address (src/routes.ts) and the history (src/navigation.ts), read once the user is known, so an
+ * administrator's address survives the sign-in. The parts gallery is shown in place of the shell.
+ */
+function SignedIn(props: { user: Account; needsPassword: boolean; onLogout: () => void }) {
+  useState(() => startNavigation({ admin: props.user.role === "admin" }));
+  const { route } = useAddress();
+  if (isGalleryRoute(route.name)) return <Gallery />;
+  return <LibraryApp {...props} />;
 }
 const routeOf = (p: Page): Route => firstPage(p);
 /** The page the shell shows for a route. The reader covers the page it was opened over (the Library after a link). */
@@ -169,10 +180,8 @@ function LibraryApp({
 }) {
   const [books, setBooks] = useState<Book[]>([]);
   const [ebookTarget, setEbookTarget] = useState<Book | null>(null);
-  // The address (src/routes.ts) and the history (src/navigation.ts): read once
-  // the user is known, so an administrator's address survives the sign-in. The
-  // page modules in src/pages never read or write it themselves.
-  useState(() => startNavigation({ admin: user.role === "admin" }));
+  // The address, read by SignedIn once the user is known. The page modules in
+  // src/pages never read or write it themselves.
   const address = useAddress();
   const page = shownPage(address.route, useRef<Page>("library"));
   const [loading, setLoading] = useState(true);
@@ -368,9 +377,24 @@ function LibraryApp({
   const mutateLibrary = async (
     b: Book,
     action: "add" | "remove" | "finished" | "unread",
+    options: { byWork?: boolean } = {},
   ) => {
     try {
-      if (action === "add")
+      // The book dialog adds and removes the whole work (#527); the cards keep the routes by edition.
+      if (options.byWork && (action === "add" || action === "remove")) {
+        await api(`/works/${encodeURIComponent(b.workId)}/library`, {
+          method: action === "add" ? "PUT" : "DELETE",
+        });
+        if (action === "remove")
+          await localDB.positionHistory.bulkDelete([
+            ...new Set([
+              b.recordingId,
+              ...books
+                .filter((entry) => entry.workId === b.workId)
+                .map((entry) => entry.recordingId),
+            ]),
+          ]);
+      } else if (action === "add")
         await api("/library", {
           method: "POST",
           body: JSON.stringify({ bookId: b.id }),
@@ -904,8 +928,8 @@ function LibraryApp({
           onDownload={() => detail && void startDownload(detail)}
           favorite={detail ? favorites.includes(detail.id) : false}
           onFavorite={() => detail && toggleFavorite(detail.id)}
-          onAdd={() => detail && void mutateLibrary(detail, "add")}
-          onRemove={() => detail && void mutateLibrary(detail, "remove")}
+          onAdd={() => detail && void mutateLibrary(detail, "add", { byWork: true })}
+          onRemove={() => detail && void mutateLibrary(detail, "remove", { byWork: true })}
           downloads={downloads}
         />
         <SeriesDialog target={seriesTarget} onClose={() => setSeriesTarget(null)} downloads={downloads} savedEbooks={savedEbooks}

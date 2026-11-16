@@ -7,7 +7,7 @@
  */
 import type { ActivityState } from "../src/types.ts";
 import type { EbookSetHoldReason, EbookSetMemberStatus } from "./ebook-set.ts";
-import { activityFailure, defineSource, stateFrom, type ActivityAction } from "./activity-source.ts";
+import { activityFailure, defineSource, itemWork, stateFrom, withWorks, type ActivityAction, type ItemWork } from "./activity-source.ts";
 
 const MINUTE = 60_000;
 
@@ -68,6 +68,7 @@ export type EbookSetMemberRow = {
   updated_at: number;
   /** When the check of a pending member started in this process; null while it waits for its turn. */
   started_at: number | null;
+  work?: ItemWork | null;
 };
 
 function evidenceError(evidence: string) {
@@ -99,14 +100,18 @@ export const ebookSetSource = defineSource<EbookSetMemberRow[]>({
   process: { id: "ebook-set", label: "Ebook checks" },
   // The reported evaluation of a whole book took 50 minutes (#325).
   stuckAfterMs: 90 * MINUTE,
-  load: (sqlite) =>
-    (
-      sqlite.prepare(
-        `SELECT m.work_id, m.ebook_id, w.title, m.source_title, m.status, m.hold_reason, m.evidence, m.updated_at
-           FROM work_ebook_set_members m LEFT JOIN works w ON w.id = m.work_id
-          WHERE NOT (m.status = 'held' AND m.hold_reason IN (${EBOOK_SET_IDLE_HOLDS.map(() => "?").join(",")}))`,
-      ).all(...EBOOK_SET_IDLE_HOLDS) as Omit<EbookSetMemberRow, "started_at">[]
-    ).map((row) => ({ ...row, started_at: ebookSetCheckStartedAt(row.work_id, row.ebook_id) })),
+  load: (sqlite, { userId }) =>
+    withWorks(
+      sqlite, userId,
+      (
+        sqlite.prepare(
+          `SELECT m.work_id, m.ebook_id, w.title, m.source_title, m.status, m.hold_reason, m.evidence, m.updated_at
+             FROM work_ebook_set_members m LEFT JOIN works w ON w.id = m.work_id
+            WHERE NOT (m.status = 'held' AND m.hold_reason IN (${EBOOK_SET_IDLE_HOLDS.map(() => "?").join(",")}))`,
+        ).all(...EBOOK_SET_IDLE_HOLDS) as Omit<EbookSetMemberRow, "started_at" | "work">[]
+      ).map((row) => ({ ...row, started_at: ebookSetCheckStartedAt(row.work_id, row.ebook_id) })),
+      (row) => row.work_id,
+    ),
   report(rows) {
     const drafts = rows.map((row) => {
       const status = ebookSetCheckStatus(row.status, row.hold_reason);
@@ -120,6 +125,7 @@ export const ebookSetSource = defineSource<EbookSetMemberRow[]>({
         id: ebookSetItemId(row.work_id, row.ebook_id), kind: "ebook-set" as const, processId: "ebook-set",
         title: row.title || row.work_id, detail: `${detail}: ${row.source_title || row.ebook_id}`, user: null, state,
         progress: null, host: null, startedAt, updatedAt: row.updated_at,
+        ...itemWork(row.work), facts: { kind: "ebook-set" as const, status: row.status, holdReason: row.hold_reason },
         error: unknown ?? (state === "failed" ? evidenceError(row.evidence) : null), changedAt: startedAt ?? row.updated_at,
         // Retry for a check that failed or waits for a worker; a status outside the vocabulary has nothing to retry.
         actions:
