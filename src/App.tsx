@@ -614,10 +614,14 @@ function LibraryApp({
             <button
               className={`settings-nav ${page === "settings" || page === "activity" ? "selected" : ""}`}
               onClick={() => switchPlace("settings")}
+              // The tab keeps its name while work needs attention (voice control and "Settings" by name); the dot
+              // describes it instead of renaming it.
+              aria-label="Settings"
+              aria-describedby={activityAttention > 0 ? "settings-attention-sidebar" : undefined}
             >
               <Settings size={19} />
               <span>Settings</span>
-              {activityAttention > 0 && <span className="attention-dot" role="img" aria-label="Background work needs attention" data-testid="activity-indicator" />}
+              {activityAttention > 0 && <span id="settings-attention-sidebar" className="attention-dot" role="img" aria-label="Background work needs attention" data-testid="activity-indicator" />}
             </button>
             <div className="sidebar-footer">
               <span className={`status-dot ${online ? "" : "offline"}`} />
@@ -803,10 +807,12 @@ function LibraryApp({
                 key={n.id}
                 className={page === n.id ? "selected" : ""}
                 onClick={() => switchPlace(n.id as Place)}
+                aria-label={n.label}
+                aria-describedby={n.id === "settings" && activityAttention > 0 ? "settings-attention-mobile" : undefined}
               >
                 <n.icon size={20} />
                 <span>{n.label}</span>
-                {n.id === "settings" && activityAttention > 0 && <span className="attention-dot" role="img" aria-label="Background work needs attention" />}
+                {n.id === "settings" && activityAttention > 0 && <span id="settings-attention-mobile" className="attention-dot" role="img" aria-label="Background work needs attention" />}
               </button>
             ),
           )}
