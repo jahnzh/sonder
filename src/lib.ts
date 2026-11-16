@@ -301,13 +301,7 @@ export function clock(seconds: number) {
     s = Math.floor(seconds % 60);
   return `${h ? `${h}:` : ""}${h ? String(m).padStart(2, "0") : m}:${String(s).padStart(2, "0")}`;
 }
-export function bytes(n: number) {
-  return n >= 1e9
-    ? `${(n / 1e9).toFixed(1)} GB`
-    : n >= 1e6
-      ? `${(n / 1e6).toFixed(1)} MB`
-      : `${Math.round(n / 1e3)} KB`;
-}
+export { bytes } from "./size-format";
 export function percent(book: Book) {
   if (book.status === "finished") return 100;
   if (!book.progress || !book.duration) return 0;

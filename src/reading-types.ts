@@ -46,7 +46,9 @@ export type AlignmentInterval = {
   end: number;
   confidence: number;
 };
-export type AlignmentOutcome = "mapped" | "partial" | "unsynced" | "language_not_supported" | "error" | "rejected";
+/** Every outcome an alignment job can carry. */
+export const ALIGNMENT_OUTCOMES = ["mapped", "partial", "unsynced", "language_not_supported", "error", "rejected"] as const;
+export type AlignmentOutcome = (typeof ALIGNMENT_OUTCOMES)[number];
 export type UnsyncedPassage = {
   section: number;
   title: string;

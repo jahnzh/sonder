@@ -58,6 +58,14 @@ _Avoid_: Download status, availability
 Why Sonder is not trying to acquire a missing work for now: it is unreleased, or the last search found nothing. It stays until an acquisition for the work is ready or the user retries.
 _Avoid_: Block, skip reason
 
+**Hardcover match**:
+The link between a work and its book on Hardcover, through which a user's shelf, lists and progress sync. It is the same for every user of the server, so only the administrator makes or changes it.
+_Avoid_: Hardcover link, linked book
+
+**Hardcover edition**:
+The audio edition on Hardcover that a user's place in one recording is sent to. It is automatic (the edition of the user's current read there, or the one with the same narrator) until the user chooses one.
+_Avoid_: Recording edition, Hardcover audio edition
+
 ## Screens
 
 **Place**:
@@ -99,12 +107,16 @@ Part of an ebook edition that has no place in the alignment map, because the nar
 _Avoid_: Gap, missing timings
 
 **Rebuild**:
-Automatically generating a fresh alignment map when the existing one was made by an older engine, replacing the old map entirely when it finishes.
+Automatically generating a fresh alignment map when the existing one was made by an older engine. The existing map stays the map in use until the new one is ready; the new one replaces it entirely, unless it maps none of the text, clearly less of it, or ends with the language not supported, and then it is not used.
 _Avoid_: Re-sync, repair, migrate
 
 **Prepare again**:
-Generating a fresh alignment map because the user asked for it. As with a rebuild, the existing map stays in use until the new one is ready.
+Generating a fresh alignment map because the user asked for it. As with a rebuild, the existing map stays the map in use until the new one is ready, and a new one that is clearly worse is not used.
 _Avoid_: Rebuild (for the manual action), re-sync
+
+**Map in use**:
+The alignment map the reader follows for one recording and one ebook edition. While a rebuild or Prepare again runs, it is the earlier map. A map made for files that have changed since is never in use.
+_Avoid_: Published map, kept map, old map
 
 **Narrated sentence**:
 The sentence the narration is speaking, or the last one it spoke until the next one begins, located through the alignment map.
@@ -185,6 +197,10 @@ _Avoid_: Stop, disable
 **Stuck**:
 A running activity whose progress and last update have not changed for longer than is normal for its kind.
 _Avoid_: Hung, frozen
+
+**Needs attention**:
+What the user has to look at: for the administrator, an activity that failed in the last seven days, is stuck or is blocked, and a background process that is down; for anyone, a device save on the device in hand whose last attempt failed. It lights the attention dot on Activity, and Activity's Now lists exactly these under that name. A paused process and a worker that is not in use need no attention.
+_Avoid_: Error, alert, problem (for the state)
 
 **Activity source**:
 A feature's own description of its background process and its current activities, which the Activity page collects.
