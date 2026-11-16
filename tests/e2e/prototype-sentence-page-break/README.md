@@ -8,13 +8,13 @@ Can the reader find, from what epub.js has rendered, the first word of the narra
 
 ## Answer
 
-**The exact break.** It can be read from the page, in Chromium and in Firefox, and it costs about 1 to 2 ms per sentence that crosses a page.
+**The exact break.** It can be read from the page, in Chromium, Firefox and WebKit, and it costs about 1 to 2 ms per sentence that crosses a page.
 
-- Over 3,600 crossing sentences were compared (a fixture and all of one real book, several sizes and windows). A binary search over the word boxes gave the same break as checking every word, every time.
+- Over 5,500 crossing sentences were compared (a fixture and all of one real book, several sizes and windows, three browsers). A binary search over the word boxes gave the same break as checking every word, every time.
 - The midpoint would be a poor stand-in: in the real book the exact break lies a median 1.3 to 1.7 s from the sentence's midpoint, and more than 4.3 to 4.7 s for one crossing sentence in ten.
 - One condition: the reader's present lookup from a sentence offset to a place in the page (`rangeAt` in `src/components/Reader.tsx`) is too slow for this and needs the faster form shown here.
 
-WebKit was not measured: it cannot start on the server this ran on (missing system libraries).
+WebKit was added in a second run, after its system libraries were installed on the server. It is Playwright's WebKit on Linux in an iPhone-sized window; no real iPhone was used.
 
 ## How to run
 
@@ -58,7 +58,10 @@ Fixture: 171 generated sentences in two chapters, with headings, emphasis, soft 
 | Firefox, fixture, sizes 14, 19, 24, 30 | 27, 48, 80, 120 | 1, 1, 1, 7 | 10, 15, 24, 40 | 0 | 0 |
 | Firefox, fixture, resized, landscape, desktop | 38, 133, 23 | 1, 17, 0 | 10, 42, 7 | 0 | 0 |
 | Firefox, real book, sizes 19, 24 | 532, 905 | 0, 1 | 11, 13 | 0 | 0 |
-| Both, a picture in the middle of a sentence, four sizes | 5 and 6 | 0 | 0 | 0 | 2 and 2 |
+| WebKit, fixture, sizes 14, 19, 24, 30 | 25, 52, 80, 119 | 1, 1, 1, 6 | 6, 17, 24, 31 | 0 | 0 |
+| WebKit, fixture, resized, landscape, desktop | 38, 136, 19 | 1, 20, 0 | 11, 45, 4 | 0 | 0 |
+| WebKit, real book, sizes 19, 24 | 531, 903 | 0, 1 | 11, 13 | 0 | 0 |
+| All three, a picture in the middle of a sentence, four sizes | 5, 6 and 6 | 0 | 0 | 0 | 2 each |
 
 - The resize was made while the reader was open; the measurement after it agrees as before.
 - **The picture is the one place the hit-test fails.** The line that holds the picture is as tall as the picture, the words before it sit at its bottom, and the hit-test lands on the picture's box. The word boxes are right; see `shots/picture-page1.png` and `shots/picture-page2.png`. A build should use the word boxes and not hit-testing.
@@ -76,6 +79,8 @@ Per sentence, in milliseconds.
 | Chromium, fixture, processor slowed 6 times | 1.3 | 5.9, 59 | 142, 2,863 |
 | Firefox, fixture | 0.30 to 0.41 | 1.3 to 1.8, 39 | 24 to 47, 1,769 |
 | Firefox, real book | 0.23 to 0.24 | 0.9 to 1.0, 8 | 25 to 27, 615 |
+| WebKit, fixture | 0.20 to 0.25 | 0.8 to 1.1, 19 | 15 to 26, 979 |
+| WebKit, real book | 0.18 to 0.19 | 0.7 to 0.8, 8 | 17, 399 |
 
 The worst cases are the 480-word sentence. `rangeAt` tries every character of a text node and normalises the whole prefix each time, so its cost grows with the square of the paragraph's length.
 
@@ -89,6 +94,8 @@ Real book, crossing sentences that have times (median length 8.1 s, one in ten o
 | Chromium, size 24 | 844 | 1.42 s | 4.55 s | 17.88 s |
 | Firefox, size 19 | 526 | 1.32 s | 4.26 s | 10.65 s |
 | Firefox, size 24 | 895 | 1.41 s | 4.74 s | 17.88 s |
+| WebKit, size 19 | 525 | 1.30 s | 4.26 s | 10.65 s |
+| WebKit, size 24 | 893 | 1.46 s | 4.58 s | 17.88 s |
 
 About one sentence in twelve crosses a page at the default size (478 of 5,771), one in seven at size 24.
 
@@ -102,7 +109,7 @@ About one sentence in twelve crosses a page at the default size (478 of 5,771), 
 
 ## Not covered
 
-- WebKit, and so iPhone. The build's check on a real phone has to cover it.
+- A real iPhone. Playwright's WebKit on Linux is the same engine family, but iOS itself is not emulated.
 - A real phone's speed. The 6 times slowed processor is a stand-in.
 - Pictures that load late and move the page breaks. Measuring when each sentence begins limits a stale break to one sentence.
 - One or two sentences of the real book per run failed the prototype's own sanity check on the first word's text; their breaks agreed all the same. Not looked into.
@@ -114,4 +121,4 @@ About one sentence in twelve crosses a page at the default size (478 of 5,771), 
 - `page-break.prototype.ts`: the fixture, the runs and the screenshots.
 - `playwright.config.ts`: its own config, so the suite never runs it.
 - `results/`: the numbers of the runs above. The real book's text is left out.
-- `shots/`: page pairs from the fixture with the sentence shaded and the break word outlined.
+- `shots/`: page pairs from the fixture with the sentence shaded and the break word outlined (`picture-webkit-*` is WebKit at three times the pixel density).
