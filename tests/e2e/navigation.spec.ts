@@ -262,10 +262,12 @@ test("Now playing has an entry: Back closes it and leaves the page where it was,
   await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
   const dock = page.locator(".player-dock");
   await expect(dock.locator(".dock-book")).toContainText(title);
-  const target = await page.evaluate(() => Math.min(300, document.documentElement.scrollHeight - innerHeight));
-  expect(target).toBeGreaterThan(100);
-  await page.evaluate((y) => window.scrollTo(0, y), target);
-  await expect.poll(() => page.evaluate(() => scrollY)).toBe(target);
+  const wanted = await page.evaluate(() => Math.min(300, document.documentElement.scrollHeight - innerHeight));
+  expect(wanted).toBeGreaterThan(100);
+  await page.evaluate((y) => window.scrollTo(0, y), wanted);
+  // The position the browser reports (Firefox may land a fraction of a pixel off at some interface scales).
+  await expect.poll(async () => Math.abs((await page.evaluate(() => scrollY)) - wanted)).toBeLessThan(1);
+  const target = await page.evaluate(() => scrollY);
   const playing = await audio(page);
   const nowPlaying = page.getByRole("dialog", { name: "Now playing", exact: true });
   const length = await page.evaluate(() => history.length);
@@ -344,6 +346,15 @@ test.describe("with answers from the test", () => {
     expect(target).toBeGreaterThan(300);
     await page.evaluate((y) => window.scrollTo(0, y), target);
     await expect.poll(() => page.evaluate(() => scrollY)).toBe(target);
+    // The books on screen and where they stand, to compare with what Back shows.
+    const onScreen = () =>
+      page.evaluate(() =>
+        [...document.querySelectorAll<HTMLElement>(".book-card")]
+          .map((card) => ({ card: card.innerText.split("\n")[0], top: Math.round(card.getBoundingClientRect().top) }))
+          .filter(({ top }) => top >= 0 && top < innerHeight),
+      );
+    const seen = await onScreen();
+    expect(seen.length).toBeGreaterThan(0);
     const before = { ...answered };
     await tab(page, "Discover").click();
     await expect(shown(page)).toHaveText("Discover");
@@ -352,10 +363,14 @@ test.describe("with answers from the test", () => {
     await page.goBack();
     await expect(shown(page)).toHaveText("Library");
     await expect.poll(() => page.evaluate(() => scrollY)).toBe(target);
+    // At once, before the slow answers: the same books where they stood (nothing above or among them is waiting
+    // to grow).
+    expect(await onScreen()).toEqual(seen);
     // The Library asks again for what sits above the list; when the answers land, the list must not move.
     await expect.poll(() => answered.hardcover > before.hardcover && answered.series > before.series).toBe(true);
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     expect(await page.evaluate(() => scrollY)).toBe(target);
+    expect(await onScreen()).toEqual(seen);
   });
 
   /** The Library, with Discover behind it, so Back leaves the page. */

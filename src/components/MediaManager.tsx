@@ -80,10 +80,6 @@ export function MediaManager({
     [note, setNote] = useState(""),
     [removal, setRemoval] = useState<"device" | "server" | null>(null),
     [offer, setOffer] = useState<{ recordingId: string; value: SourceSwitchOffer } | null>(null);
-  // The removal confirmation is a dialog of its own beside the manager: it closes with the manager, confirming nothing.
-  useEffect(() => {
-    if (!book) setRemoval(null);
-  }, [book]);
   const versions = books.filter(
     (version) => version.workId === book?.workId && version.tracks.length,
   );
