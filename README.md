@@ -44,6 +44,10 @@ Sonder has one administrator (`admin`, password `APP_PASSWORD`) and any number o
 
 The first start after upgrading copies all existing per-user rows to the admin and leaves the old single-user tables untouched, so the previous version can still run against the same database.
 
+## Addresses and Back
+
+Every page has an address behind the `#` (ADR 0020; the table is in issue #480, "Addresses and the page stack"). `src/routes.ts` is the only code that reads or writes one; `src/navigation.ts` keeps the browser's history as the page stack. Switching place with the tab bar or the rail adds a step for Back, and tapping the tab of the place you are in returns to its first page without adding one. A reload shows the same page and keeps what lies behind it. An address that names nothing, a page not built yet, or Activity for someone who is not the administrator shows the place's first page, and the address is replaced by it. After signing in you land on the address you opened. Back returns a list to where it was scrolled. The installed app starts on the Library. The old names keep working: `#downloads` opens Downloads and `#reader/<ebook id>` opens the reader; closing the reader goes back, so Back afterwards does not reopen it.
+
 ## Listening workflow
 
 1. Browse the included public-domain recordings, search AudioBookBay, import your audio files, or add a magnet link. AudioBookBay search has a release picker with language (English by default), format, size, bitrate, narrator details and pagination. Confirm **Use this release** before anything is queued. **Find another release** on a book keeps the new recording linked to the same work; available recordings can be switched in the book dialog and retain independent progress. Filename order is natural, so chapter 2 precedes chapter 10.

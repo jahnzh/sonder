@@ -81,6 +81,8 @@ import { DiscoverPage } from "./pages/discover-page";
 import { DownloadsPage } from "./pages/downloads-page";
 import { ActivityPage } from "./pages/activity-page";
 import { SettingsPage } from "./pages/settings-page";
+import { firstPage, writeAddress, type Place, type Route } from "./routes";
+import { startNavigation, useAddress } from "./navigation";
 type Notice = { text: string; error?: boolean };
 const nav = [
   { id: "library", label: "My library", icon: Library },
@@ -133,7 +135,7 @@ function App() {
           setAuth(true);
           // Claiming leaves the invite URL behind: the app's home is "/", and
           // the library hash makes the bookshelf the landing page.
-          history.replaceState(null, "", "/#library");
+          history.replaceState(null, "", `/${writeAddress({ name: "library" })}`);
         }}
       />
     );
@@ -149,6 +151,13 @@ function App() {
     <LibraryApp user={user || { id: 1, username: "admin", role: "admin" }} needsPassword={needsPassword} onLogout={() => setAuth(false)} />
   );
 }
+const routeOf = (p: Page): Route => firstPage(p);
+/** The page the shell shows for a route. The reader covers the page it was opened over (the Library after a link). */
+function shownPage(route: Route, under: { current: Page }): Page {
+  if (route.name === "library" || route.name === "discover" || route.name === "downloads" || route.name === "settings" || route.name === "activity")
+    under.current = route.name;
+  return under.current;
+}
 function LibraryApp({
   user,
   needsPassword,
@@ -160,15 +169,12 @@ function LibraryApp({
 }) {
   const [books, setBooks] = useState<Book[]>([]);
   const [ebookTarget, setEbookTarget] = useState<Book | null>(null);
-  // The address: read here and in the hashchange listener below, written by
-  // navigate() and by the Activity link the Settings page asks for. The page
-  // modules in src/pages never read or write it themselves.
-  const [page, setPage] = useState<Page>(() => {
-    const hash = location.hash.slice(1);
-    return ["library", "discover", "downloads", "settings"].includes(hash) || (hash === "activity" && user.role === "admin")
-      ? (hash as Page)
-      : "library";
-  });
+  // The address (src/routes.ts) and the history (src/navigation.ts): read once
+  // the user is known, so an administrator's address survives the sign-in. The
+  // page modules in src/pages never read or write it themselves.
+  useState(() => startNavigation({ admin: user.role === "admin" }));
+  const address = useAddress();
+  const page = shownPage(address.route, useRef<Page>("library"));
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const activityAttention = useActivityAttention(user.role === "admin");
@@ -276,18 +282,12 @@ function LibraryApp({
         void refreshSavedEbooks();
       }
     };
-    const hash = () => {
-      const p = location.hash.slice(1);
-      if (["library", "discover", "downloads", "settings"].includes(p) || (p === "activity" && user.role === "admin"))
-        setPage(p as Page);
-    };
     const install = (e: Event) => {
       e.preventDefault();
       setInstallPrompt(e as Event & { prompt: () => Promise<void> });
     };
     window.addEventListener("online", status);
     window.addEventListener("offline", status);
-    window.addEventListener("hashchange", hash);
     window.addEventListener("sonder:library-changed", changed);
     window.addEventListener("sonder:hardcover-changed", changed);
     window.addEventListener("sonder:downloads-changed", downloadsChanged);
@@ -296,7 +296,6 @@ function LibraryApp({
     return () => {
       window.removeEventListener("online", status);
       window.removeEventListener("offline", status);
-      window.removeEventListener("hashchange", hash);
       window.removeEventListener("sonder:library-changed", changed);
       window.removeEventListener("sonder:hardcover-changed", changed);
       window.removeEventListener("sonder:downloads-changed", downloadsChanged);
@@ -309,16 +308,24 @@ function LibraryApp({
     const timer = setTimeout(() => setNotice(null), 5000);
     return () => clearTimeout(timer);
   }, [notice]);
-  const navigate = (p: Page) => {
+  const leavePage = (p: Page) => {
     setEbookTarget(null);
     setAudioTarget(null);
     setHardcoverFilter({ shelf: "all", list: "all" });
-    setPage(p);
-    location.hash = p;
     setQuery("");
     setSidebarOpen(false);
     setShowFavorites(false);
     if (p === "library" || p === "discover") void refresh();
+  };
+  // Opening a page from a flow (a link, a finished task): adds an entry.
+  const navigate = (p: Page) => {
+    leavePage(p);
+    address.navigate(routeOf(p));
+  };
+  // The tab bar and the rail: another place adds an entry, the current one returns to its first page.
+  const switchPlace = (p: Place) => {
+    leavePage(p);
+    address.goPlace(p);
   };
   const onProgress = useCallback(
     (p: Progress) =>
@@ -512,7 +519,7 @@ function LibraryApp({
         <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
           <button
             className="brand"
-            onClick={() => navigate("library")}
+            onClick={() => switchPlace("library")}
             aria-label="Sonder home"
           >
             <Mark />
@@ -524,7 +531,7 @@ function LibraryApp({
                 key={n.id}
                 className={page === n.id ? "selected" : ""}
                 onClick={() => {
-                  navigate(n.id);
+                  switchPlace(n.id);
                   setFilter("All books");
                 }}
               >
@@ -545,7 +552,7 @@ function LibraryApp({
             <button
               className={showFavorites ? "selected" : ""}
               onClick={() => {
-                navigate("library");
+                switchPlace("library");
                 setShowFavorites(true);
                 setFilter("All books");
               }}
@@ -561,7 +568,7 @@ function LibraryApp({
                 page === "library" && filter === "Finished" ? "selected" : ""
               }
               onClick={() => {
-                navigate("library");
+                switchPlace("library");
                 setFilter("Finished");
               }}
             >
@@ -578,7 +585,7 @@ function LibraryApp({
           <div className="sidebar-bottom">
             <button
               className={`settings-nav ${page === "settings" || page === "activity" ? "selected" : ""}`}
-              onClick={() => navigate("settings")}
+              onClick={() => switchPlace("settings")}
             >
               <Settings size={19} />
               <span>Settings</span>
@@ -756,9 +763,7 @@ function LibraryApp({
                       .prompt()
                       .then(() => setInstallPrompt(null));
                 }}
-                onOpenActivity={() => {
-                  location.hash = "activity";
-                }}
+                onOpenActivity={() => address.navigate(firstPage("activity"))}
               />
             )}
           </main>
@@ -769,7 +774,7 @@ function LibraryApp({
               <button
                 key={n.id}
                 className={page === n.id ? "selected" : ""}
-                onClick={() => navigate(n.id as Page)}
+                onClick={() => switchPlace(n.id as Place)}
               >
                 <n.icon size={20} />
                 <span>{n.label}</span>
