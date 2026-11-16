@@ -103,6 +103,10 @@ test("update-ctc-workers.sh skips a host at the commit or at one with the same w
   git("init", "-q");
   git("add", "-A");
   git("commit", "-q", "-m", "fixture");
+  const older = git("rev-parse", "HEAD");
+  writeFileSync(join(repo, "worker", "align.py"), "# worker, changed\n");
+  git("add", "-A");
+  git("commit", "-q", "-m", "worker");
   const first = git("rev-parse", "HEAD");
   // A later commit that does not touch worker/: a host at the first commit already runs this worker code.
   writeFileSync(join(repo, "README.md"), "docs only\n");
@@ -112,26 +116,26 @@ test("update-ctc-workers.sh skips a host at the commit or at one with the same w
 
   const calls = join(dir, "calls.log");
   const ssh = join(dir, "ssh");
-  // The fake host "current" reports HEAD as its revision, "same" the first commit, "behind" one this repository lacks.
-  writeFileSync(
-    ssh,
-    `#!/usr/bin/env bash\necho "ssh $*" >> "${calls}"\nif [ "$1" = current ]; then echo '{"ready":true,"revision":"${head}"}'; elif [ "$1" = same ]; then echo '{"ready":true,"revision":"${first}"}'; else echo '{"ready":true,"revision":"0000000000000000000000000000000000000000"}'; fi\n`,
-  );
+  // What each fake host reports as its revision: HEAD, a commit with the same worker/, one with another worker/,
+  // and a commit this repository lacks.
+  const revisions = { current: head, same: first, older, behind: "0".repeat(40) };
+  const cases = Object.entries(revisions).map(([host, revision]) => `${host}) echo '{"ready":true,"revision":"${revision}"}' ;;`).join("\n");
+  writeFileSync(ssh, `#!/usr/bin/env bash\necho "ssh $*" >> "${calls}"\ncase $1 in\n${cases}\nesac\n`);
   const rsync = join(dir, "rsync");
   writeFileSync(rsync, `#!/usr/bin/env bash\necho "rsync $*" >> "${calls}"\n`);
   for (const file of [ssh, rsync]) chmodSync(file, 0o755);
   const stage = join(dir, "stage");
   mkdirSync(stage);
-  const result = spawnSync("bash", [join(repo, "scripts", "update-ctc-workers.sh"), "HEAD", "--dry-run", "--host", "current", "--host", "same", "--host", "behind"], {
+  const result = spawnSync("bash", [join(repo, "scripts", "update-ctc-workers.sh"), "HEAD", "--dry-run", ...Object.keys(revisions).flatMap((host) => ["--host", host])], {
     cwd: repo,
     env: { ...gitEnv, SONDER_CTC_SSH: ssh, SONDER_CTC_RSYNC: rsync, TMPDIR: stage },
     encoding: "utf8",
     timeout: 60_000,
   });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, new RegExp(`== current\\nalready at ${head.slice(0, 7)}\\n== same\\nruns ${first.slice(0, 7)}: worker/ is the same at ${head.slice(0, 7)}\\n== behind\\nruns 000000000000, wants ${head.slice(0, 7)}\\ndry run:`));
+  assert.match(result.stdout, new RegExp(`== current\\nalready at ${head.slice(0, 7)}\\n== same\\nruns ${first.slice(0, 7)}: worker/ is the same at ${head.slice(0, 7)}\\n== older\\nruns ${older.slice(0, 12)}, wants ${head.slice(0, 7)}\\ndry run: [^\\n]*\\n== behind\\nruns 000000000000, wants ${head.slice(0, 7)}\\ndry run:`));
   const log = readFileSync(calls, "utf8");
   assert.ok(!log.includes("rsync"), "a dry run copies nothing");
-  assert.equal(log.trim().split("\n").length, 3, "one health read per host and nothing else");
+  assert.equal(log.trim().split("\n").length, 4, "one health read per host and nothing else");
   assert.deepEqual(readdirSync(stage), [], "the staged copy is removed");
 });
