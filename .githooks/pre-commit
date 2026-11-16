@@ -1,9 +1,32 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Typecheck a commit, unless it stages only documentation (#504).
+
 if [[ "${SONDER_SKIP_PRECOMMIT:-}" == "1" ]]; then
   echo "Pre-commit hook skipped (SONDER_SKIP_PRECOMMIT=1)."
   exit 0
+fi
+
+# shellcheck source=.githooks/lib.sh
+source "$(dirname "$0")/lib.sh"
+
+# The staged files, a moved file under both its names, each name as it is. When nothing is staged or
+# the list cannot be read, the typecheck runs.
+staged="$(git -c core.quotepath=off diff --cached --no-renames --name-only 2>/dev/null || true)"
+if [[ -n "$staged" ]]; then
+  only_documentation=1
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
+    if ! is_documentation "$file"; then
+      only_documentation=0
+      break
+    fi
+  done <<<"$staged"
+  if [[ $only_documentation -eq 1 ]]; then
+    echo "Pre-commit hook: only documentation is staged (docs/ or markdown); the typecheck is not run."
+    exit 0
+  fi
 fi
 
 if ! npx tsc --noEmit; then

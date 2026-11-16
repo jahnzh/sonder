@@ -159,6 +159,7 @@ const NO_BROWSER_IMPACT = [
   /^tests\/worker\//,
   /^deploy\//,
   /^\.github\//,
+  /^\.githooks\//,
   /^\.claude\//,
   /^artifacts\//,
   /^(Dockerfile|compose\.yaml|\.dockerignore|\.gitignore)$/,

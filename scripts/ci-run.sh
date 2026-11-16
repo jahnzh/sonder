@@ -4,7 +4,8 @@
 # Usage: scripts/ci-run.sh [--dispatch <id>] <commit-sha>
 #        scripts/ci-run.sh --status
 #
-# Every committed check starts here (npm run ci:run, scripts/ci-push.sh);
+# Every committed check starts here (npm run ci:run, scripts/ci-push.sh, and the
+# pre-push hook for a plain `git push`, #504);
 # scripts/ci-ssh.sh and scripts/ci-deck.sh are the low-level runners this
 # script calls. The central dispatcher (scripts/ci-dispatch.mjs) keeps one FIFO
 # queue and one table of running checks in a shared state dir, probes WSL and
