@@ -9,8 +9,6 @@ export type PlaybackKeyInput = {
   dialogOpen?: boolean;
   canPlay?: boolean;
   canSeek?: boolean;
-  /** The Word reader is open and uses Space and the arrow keys itself. */
-  wordReaderKeys?: boolean;
 };
 export type PlaybackKeyAction =
   | { type: "toggle" }
@@ -60,36 +58,6 @@ export function keyEventContext(event: KeyboardEvent) {
     dialogOpen: !!document.querySelector(BLOCKING_DIALOG_SELECTOR),
   };
 }
-/** An open Word reader that is not hidden behind a closed Now Playing dialog and is taking keys. */
-export function wordReaderOwnsKeys() {
-  return Array.from(
-    document.querySelectorAll('.word-reader[data-keys="true"]'),
-  ).some((element) => !element.closest('[data-state="closed"]'));
-}
-export type WordKeyInput = PlaybackKeyInput & {
-  shiftKey?: boolean;
-  repeat?: boolean;
-  /** A reader panel is open or the reader is hidden. */
-  ignored?: boolean;
-};
-export type WordKeyAction =
-  | { type: "toggle" }
-  | { type: "step"; direction: -1 | 1 }
-  | { type: "sentence"; direction: -1 | 1 }
-  /** The Word reader's key, held down: handled, but it does nothing again. */
-  | { type: "hold" }
-  | null;
-/** Space and the arrow keys in Word mode; ignores the same situations as the player. */
-export function wordKeyAction(input: WordKeyInput): WordKeyAction {
-  if (input.ignored || keyIgnored(input)) return null;
-  const { key, shiftKey = false, repeat = false } = input;
-  const direction: -1 | 1 | null =
-    key === "ArrowLeft" ? -1 : key === "ArrowRight" ? 1 : null;
-  if (key !== " " && direction === null) return null;
-  if (repeat) return { type: "hold" };
-  if (direction === null) return { type: "toggle" };
-  return { type: shiftKey ? "sentence" : "step", direction };
-}
 export function playbackKeyAction({
   key,
   ctrlKey = false,
@@ -101,10 +69,8 @@ export function playbackKeyAction({
   dialogOpen = false,
   canPlay = true,
   canSeek = canPlay,
-  wordReaderKeys = false,
 }: PlaybackKeyInput): PlaybackKeyAction {
   if (
-    wordReaderKeys ||
     keyIgnored({
       key,
       defaultPrevented,
@@ -124,20 +90,10 @@ export function playbackKeyAction({
     return canSeek ? { type: "skip", seconds: 30 } : null;
   return null;
 }
-/** One row per key; `word` is what the key does instead while the Word reader is open. */
-export const KEYBOARD_SHORTCUTS: { keys: string[]; action: string; word?: string }[] = [
-  {
-    keys: ["Space"],
-    action: "Play or pause",
-    word: "Word mode without narration: start or stop the words",
-  },
-  {
-    keys: ["←", "→"],
-    action: "Skip 30 seconds back or forward",
-    word: "Word mode: step one word",
-  },
+/** One row per key. */
+export const KEYBOARD_SHORTCUTS: { keys: string[]; action: string }[] = [
+  { keys: ["Space"], action: "Play or pause" },
+  { keys: ["←", "→"], action: "Skip 30 seconds back or forward" },
   { keys: ["/"], action: "Search" },
   { keys: ["f"], action: "Follow the audio in the reader" },
-  { keys: ["p"], action: "Switch the reader to Page view" },
-  { keys: ["Shift+←", "Shift+→"], action: "Step one sentence", word: "Word mode only" },
 ];

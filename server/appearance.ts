@@ -3,7 +3,6 @@ import {
   appearanceSchema,
   defaultAppearance,
   keepPlaybackSpeed,
-  keepWordWpm,
 } from "../src/appearance.ts";
 import { currentUserId, getUserSetting, setUserSetting } from "./users.ts";
 function storedAppearance(userId: number) {
@@ -20,11 +19,7 @@ export function registerAppearance(app: FastifyInstance) {
   app.put("/api/appearance", (req) => {
     const userId = currentUserId(req);
     const stored = storedAppearance(userId);
-    const input = keepWordWpm(
-      keepPlaybackSpeed(appearanceSchema.parse(req.body), stored),
-      stored,
-      req.body,
-    );
+    const input = keepPlaybackSpeed(appearanceSchema.parse(req.body), stored);
     setUserSetting(userId, "appearance", JSON.stringify(input));
     return input;
   });
