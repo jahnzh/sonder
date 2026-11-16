@@ -508,11 +508,11 @@ REMOTE
 
 cleanup_stale_remote_dirs() {
   log "Cleaning stale temporary directories on ${SONDER_CI_HOST}"
-  remote_bash_capped cleanup_stale "$REMOTE_BASE" "${REMOTE_TMPDIR:-}" "${SONDER_CI_REMOTE_TMP:-/tmp}" "${SONDER_CI_CLEANUP_MIN_AGE_MINUTES:-1440}" <<'REMOTE'
+  remote_bash_capped cleanup_stale "$REMOTE_BASE" "${REMOTE_TMPDIR:-}" "${SONDER_CI_REMOTE_TMP:-/tmp}" "${SONDER_CI_CLEANUP_MIN_AGE_MINUTES:-120}" <<'REMOTE'
 base=$2
 tmpdir=$3
 remote_tmp=${4:-/tmp}
-min_age_minutes=${5:-1440}
+min_age_minutes=${5:-120}
 user_id=$(id -u)
 
 bases=()
@@ -554,7 +554,7 @@ for b in "${bases[@]}"; do
     fi
 
     rm -rf "$d" 2>/dev/null || true
-  done < <(find "$real_b" -mindepth 1 -maxdepth 1 -user "$user_id" -type d -name "sonder-*" -mmin "+${min_age_minutes}" -print0 2>/dev/null)
+  done < <(find "$real_b" -mindepth 1 -maxdepth 1 -user "$user_id" -type d -name "sonder-*" ! -name "sonder-port-leases" -mmin "+${min_age_minutes}" -print0 2>/dev/null)
 done
 exit 0
 REMOTE

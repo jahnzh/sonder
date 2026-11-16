@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { registerTempDir } from "./register-temp-dir.ts";
+import { tempDir } from "./temp-dir.ts";
 
 const script = path.resolve("scripts/test-android-emulator.sh");
 
@@ -100,7 +101,7 @@ const allocatePorts = portAllocator(MAX_FIXTURES);
 
 function fixture(t?: TestContext, { built = true }: { built?: boolean } = {}) {
   const ports = allocatePorts();
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-test-android-"));
+  const base = tempDir("sonder-test-android-");
   if (t) registerTempDir(t, base);
   const repo = path.join(base, "repo");
   const bin = path.join(base, "bin");

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const HELPERS = ["watchdog.sh", "watch-inbox.sh", "check-workers.sh"] as const;
+const HELPERS = ["watchdog.sh", "watch-inbox.sh", "check-workers.sh", "heartbeat.sh"] as const;
 
 // A scratch directory with `orca` and `node` shims that only record that they were called. A helper that
 // refuses the missing run id must never reach either of them, so no real Orca runtime is involved.

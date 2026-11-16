@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { registerTempDir } from "./register-temp-dir.ts";
+import { tempDir } from "./temp-dir.ts";
 
 const script = path.resolve("scripts/ci-ssh.sh");
 const stopScript = path.resolve("scripts/ci-stop.sh");
@@ -83,7 +84,7 @@ function cleanEnv() {
 }
 
 function fixture(t?: TestContext) {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-ci-ssh-"));
+  const base = tempDir("sonder-ci-ssh-");
   if (t) registerTempDir(t, base);
   const repo = path.join(base, "repo");
   const bin = path.join(base, "bin");

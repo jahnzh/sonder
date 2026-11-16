@@ -85,6 +85,56 @@ export function removeOwnedBrowserTemp(dir) {
   }
 }
 
+const STALE_BROWSER_TEMP_MS = 60 * 60 * 1000;
+
+/** Browser-server temp dirs that a live process names in its environment (the wrapper sets BROWSER_TEMP_ENV for its children). */
+export function browserTempsInUse(procRoot = "/proc") {
+  const inUse = new Set();
+  let pids;
+  try {
+    pids = fs.readdirSync(procRoot).filter((name) => /^\d+$/.test(name));
+  } catch {
+    return inUse;
+  }
+  for (const pid of pids) {
+    let environ;
+    try {
+      environ = fs.readFileSync(path.join(procRoot, pid, "environ"), "utf8");
+    } catch {
+      continue;
+    }
+    for (const entry of environ.split("\0")) {
+      if (entry.startsWith(`${BROWSER_TEMP_ENV}=`)) inUse.add(path.resolve(entry.slice(BROWSER_TEMP_ENV.length + 1)));
+    }
+  }
+  return inUse;
+}
+
+/**
+ * Removes browser-server temp dirs that a killed run left behind: older than `maxAgeMs` and not named
+ * by any live process. Returns the names removed. A run that ends normally removes its own dir.
+ */
+export function removeStaleBrowserTemps({
+  tmpRoot = os.tmpdir(),
+  maxAgeMs = STALE_BROWSER_TEMP_MS,
+  now = Date.now(),
+  inUse = browserTempsInUse(),
+} = {}) {
+  const removed = [];
+  for (const name of listBrowserServerTemps(tmpRoot)) {
+    const dir = path.join(tmpRoot, name);
+    if (inUse.has(path.resolve(dir))) continue;
+    try {
+      if (now - fs.statSync(dir).mtimeMs < maxAgeMs) continue;
+      fs.rmSync(dir, { recursive: true, force: true });
+      removed.push(name);
+    } catch {
+      // ignore
+    }
+  }
+  return removed;
+}
+
 const MAX_SHARDS = 16;
 
 /** Number of parallel browser shards: SONDER_BROWSER_SHARDS when valid, else from the CPU count. */
@@ -276,6 +326,7 @@ if (isDirectCli) {
   process.on("SIGINT", forward("SIGINT"));
   process.on("SIGTERM", forward("SIGTERM"));
 
+  removeStaleBrowserTemps();
   runTestBrowser({ args: process.argv.slice(2), track: (child) => children.add(child) })
     .then((code) => {
       const finalCode = interruptedBy ? (EXIT_BY_SIGNAL[interruptedBy] ?? 1) : code ?? 1;

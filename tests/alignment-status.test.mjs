@@ -5,9 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { buildReport, checkHealth, formatReport, main, openReadOnly, parseArgs } from "../scripts/alignment-status.mjs";
+import { tempDir } from "./temp-dir.ts";
 
 function makeDb() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "alignment-status-"));
+  const dir = tempDir("alignment-status-");
   const file = path.join(dir, "sonder.db");
   const db = new Database(file);
   db.exec(`
@@ -98,7 +99,7 @@ test("unknown id is handled gracefully with exit code 1", async () => {
 
 test("missing database and missing tables fail or degrade without throwing stack traces", async () => {
   assert.throws(() => openReadOnly(path.join(os.tmpdir(), "does-not-exist-alignment.db")), /Database not found/);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "alignment-status-empty-"));
+  const dir = tempDir("alignment-status-empty-");
   const file = path.join(dir, "sonder.db");
   new Database(file).close();
   const db = openReadOnly(file);

@@ -11,3 +11,8 @@ The Activity page (#357) restarts a background process (an alignment worker on W
 - Each restart target needs a host-side entry; a new kind of target is a deliberate change on that host.
 - Nothing restarts automatically: the page flags a down process and offers the button (owner decision, 2026-11-09), because the VPN container already restarts often and automatic restarts could hide a real fault.
 - Updating worker code stays a script, not a button.
+
+## Status on 2026-11-15
+- Built for the alignment workers (#357, PR #452): the server holds the allowlist, one constant command (`systemctl --user restart sonder-ctc-worker.service`), and sends it over the alignment pool's SSH connection with an argument list.
+- Not built: the host-side entry. The pool key has no forced command in `authorized_keys` on WSL or lisa, so "an unknown name is refused on the host" does not hold yet; the refusal is in the server only. A compromise of the web app could run other commands as that user on the pool hosts, as it could before this ADR.
+- Not built: a restart for the local torrent client.

@@ -20,11 +20,11 @@ Every change moves through `/grill-with-docs` → `/to-spec` → `/to-tickets` �
 | `/to-spec` | The spec, published as a GitHub issue | The spec issue exists |
 | `/to-tickets` | Tracer-bullet tickets as GitHub issues with native blocking links, labelled `needs-triage` and listed on roadmap #11 | `/triage` has set a ticket to `ready-for-agent` |
 | `/implement` | One worktree and branch per ticket, built by a worker chosen under "Spawning subagents" | `npm run check -- --ref <commit>` passes on the committed revision |
-| `/code-review` | Standards and spec findings for the branch | No finding is open |
+| `/code-review` | Standards and spec findings for the branch | Every finding is fixed or answered |
 | `/retro` | Improvements filed as `needs-triage` issues | — |
 
 - A change small enough to build at once goes straight to `/implement`. It still has an issue, still passes the check, and still gets `/code-review`.
-- Merge a branch and open its PR only after `/code-review` has no open finding. The standards axis reads the "Style and Testing" section below.
+- Merge a branch and open its PR only after every `/code-review` finding is fixed or answered. Fix a finding that can happen in the setup under "Style and Testing"; answer any other in one line in the PR with why it cannot happen there, without another fix-and-review round. The standards axis reads that section.
 - An effort too large for one session starts with `/wayfinder`.
 - A PR closes its issue only when it does every bullet of the issue's Proposal. Otherwise write `Refs #N`, keep the issue open and say what remains.
 - Look at every running CI check yourself: a hung check never reports its own end. See `docs/agents/coordinator-checks.md`.
@@ -57,6 +57,11 @@ If SSH is unreachable, run the same committed revision locally with `npm run che
 ## Style and Testing
 
 Follow nearby TypeScript and React conventions: two-space indentation, `PascalCase` components, `camelCase` functions, and descriptive kebab-case module names. There is no configured linter; `npm run build` performs typechecking. Name unit tests `*.test.ts` or `*.test.mjs` and Playwright tests `*.spec.ts`. Add focused regression coverage for behavior changes; no coverage threshold is configured.
+
+The setup that severity is judged against: one owner using the app on a phone and a desktop, two alignment hosts with a known layout (WSL with a GPU, lisa on CPU; `docs/CTC_WORKER_POOL.md`), and full-length audiobooks from his own library. A reviewer rates a finding by whether it can happen there.
+
+- A new or changed browser test passes `scripts/stress-spec.sh <spec> --load` before it lands; see "Stress a browser test" in `docs/LOCAL_CHECKS.md`.
+- A test that needs a temp folder takes it from `tempDir()` in `tests/temp-dir.ts`, which removes it; `tests/temp-leftovers.test.mjs` guards this.
 
 ## Changes and Safety
 
@@ -91,12 +96,13 @@ Agent skills setup follows the main flow from https://www.aihero.dev/skills-setu
 - Before reading or interpreting Codex usage (`node scripts/codex-usage.mjs`), read `docs/agents/codex-usage.md`.
 - Before installing, checking or recovering the usage collector (`scripts/orca-usage.mjs`), or judging `usage` in a recommendation, read `docs/agents/usage-collector.md`.
 - Before reading or writing a multi-provider dispatch evaluation (`docs/agents/dispatch-evaluation.md`, `scripts/orca-dispatch-eval.mjs`), read that doc first. It never starts workers or sends history to Jev.
-- Before waiting on a CI check or a deploy, leaving a run unattended, or closing an issue, read `docs/agents/coordinator-checks.md`.
+- Before coordinating workers (a heartbeat, a worker's report, a check, a landing, a deploy, host work, stopping a run, closing an issue, reporting to the owner), read `docs/agents/coordinator-checks.md`.
 - Install the pre-push hook once per clone with `scripts/install-hooks.sh`.
+- Update the alignment workers on the pool hosts with `scripts/update-ctc-workers.sh <commit>`; `scripts/install-ctc-workers.sh` is for a new host.
 
 ## Coordinator shell helpers (Orca)
 
-Tracked under `scripts/orca/` (commit `send-agent.sh`, `check-workers.sh`, `watch-inbox.sh`, `watchdog.sh`, `tick.sh`, `note.sh`); `check-workers.sh`, `watch-inbox.sh` and `watchdog.sh` take the run id as their first argument (`bash scripts/orca/check-workers.sh <run_id>`) and print a usage line and exit 2 without it: there is no default run. Thin wrappers at `artifacts/orca/*.sh` exec those paths so existing coordinator commands keep working. `watch-inbox.sh` uses `${XDG_RUNTIME_DIR:-/tmp}/sonder-watch-inbox-<run>.lock` (exclusive `flock`), `.pid` (holder PID for a second instance, exiting 0 with 'already running' if live), and `.log` (append-only record of consumed messages).
+Tracked under `scripts/orca/` (commit `send-agent.sh`, `check-workers.sh`, `watch-inbox.sh`, `watchdog.sh`, `tick.sh`, `note.sh`, `heartbeat.sh`, `worker-done.sh`); `check-workers.sh`, `watch-inbox.sh` and `watchdog.sh` take the run id as their first argument (`bash scripts/orca/check-workers.sh <run_id>`) and print a usage line and exit 2 without it: there is no default run. Thin wrappers at `artifacts/orca/*.sh` exec those paths so existing coordinator commands keep working. `watch-inbox.sh` uses `${XDG_RUNTIME_DIR:-/tmp}/sonder-watch-inbox-<run>.lock` (exclusive `flock`), `.pid` (holder PID for a second instance, exiting 0 with 'already running' if live), and `.log` (append-only record of consumed messages).
 
 ## Spawning subagents
 
