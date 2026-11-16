@@ -330,7 +330,8 @@ test("Appearance docked under the text keeps the narrated sentence in view", asy
       const band = host.getBoundingClientRect();
       const container = host.querySelector(".epub-container") as HTMLElement;
       for (const frame of host.querySelectorAll("iframe")) {
-        const doc = frame.contentDocument!, f = frame.getBoundingClientRect();
+        const doc = frame.contentDocument, f = frame.getBoundingClientRect();
+        if (!doc?.body) continue; // a section epub.js is tearing down after the new layout
         const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
         for (let node = walker.nextNode(); node; node = walker.nextNode()) {
           const at = node.textContent!.indexOf(words);
