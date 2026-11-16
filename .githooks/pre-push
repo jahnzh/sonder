@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Git sends ref updates on stdin; discard them so the push does not hang.
-while IFS= read -r _; do
-  :
+# What a push carries decides what runs here (#498):
+#   only documentation (docs/ or a markdown file)   nothing
+#   anything else, or when it cannot be told          npm run build
+# The unit and browser suites are not run here. The committed check runs them on the pushed
+# commit itself (npm run ci:run <sha>; npm run ci:push dispatches it).
+
+# Git sends one line per ref update on stdin: <local ref> <local sha> <remote ref> <remote sha>.
+# Read them all first, so the push does not hang.
+updates=()
+while IFS= read -r line; do
+  updates+=("$line")
 done
 
 if [[ "${SONDER_SKIP_PREPUSH:-}" == "1" ]]; then
@@ -11,34 +19,54 @@ if [[ "${SONDER_SKIP_PREPUSH:-}" == "1" ]]; then
   exit 0
 fi
 
+# An all-zero id stands for "no commit": a branch that is deleted, or one the remote does not have yet.
+is_zero() { [[ "$1" =~ ^0+$ ]]; }
+
+pushed=0   # a ref update carries commits
+unknown=0  # what a ref update changes could not be listed
+code=0     # a changed file is not documentation
+
+for line in ${updates[@]+"${updates[@]}"}; do
+  read -r _local_ref local_sha _remote_ref remote_sha <<<"$line" || true
+  [[ -n "${local_sha:-}" ]] || continue
+  # Deleting a branch pushes nothing.
+  if is_zero "$local_sha"; then continue; fi
+  pushed=1
+  if [[ -z "${remote_sha:-}" ]] || is_zero "$remote_sha"; then
+    # A new branch: compare with where it left main.
+    base="$(git merge-base "$local_sha" refs/remotes/origin/main 2>/dev/null || true)"
+  else
+    base="$remote_sha"
+  fi
+  if [[ -z "$base" ]] || ! files="$(git diff --name-only "$base" "$local_sha" -- 2>/dev/null)"; then
+    unknown=1
+    continue
+  fi
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
+    case "$file" in
+      docs/* | *.md) ;;
+      *) code=1 ;;
+    esac
+  done <<<"$files"
+done
+
+if [[ $pushed -eq 0 ]]; then
+  echo "Pre-push hook: no commits are pushed; nothing to check."
+  exit 0
+fi
+
+if [[ $code -eq 0 && $unknown -eq 0 ]]; then
+  echo "Pre-push hook: only documentation is pushed (docs/ or markdown); the build is not run."
+  exit 0
+fi
+
+if [[ $code -eq 0 ]]; then
+  echo "Pre-push hook: could not list what is pushed; running the build."
+fi
+
 if ! npm run build; then
   echo "Pre-push blocked: npm run build failed." >&2
-  echo "Skip once with SONDER_SKIP_PREPUSH=1 git push" >&2
-  exit 1
-fi
-
-# Git exports repository and index paths to hooks. Test fixtures create their own
-# repositories, so none of that context may reach the test process or its children.
-unset_git_env=()
-while IFS= read -r -d '' entry; do
-  case $entry in
-    GIT_*=*) unset_git_env+=(-u "${entry%%=*}") ;;
-  esac
-done < <(env -0)
-
-test_timeout="${SONDER_PREPUSH_TEST_TIMEOUT_SEC:-600}"
-set +e
-env "${unset_git_env[@]}" timeout -k 10 "$test_timeout" npm test
-test_status=$?
-set -e
-
-if [[ $test_status -eq 124 ]]; then
-  echo "Pre-push blocked: npm test timed out after ${test_timeout}s." >&2
-  echo "Skip once with SONDER_SKIP_PREPUSH=1 git push" >&2
-  exit 1
-fi
-if [[ $test_status -ne 0 ]]; then
-  echo "Pre-push blocked: npm test failed." >&2
   echo "Skip once with SONDER_SKIP_PREPUSH=1 git push" >&2
   exit 1
 fi
