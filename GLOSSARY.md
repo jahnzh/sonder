@@ -109,6 +109,14 @@ _Avoid_: Modal, dialog, popup
 A short list of choices that opens over a page from its bottom edge, such as the Library's Sort and view or a book's Hardcover shelf. It has no address: a choice applies at once, Done or a tap outside closes it, and Back leaves the page under it, as for a tooltip.
 _Avoid_: Dropdown, menu, popover, select
 
+**Old name**:
+An address from before the redesign, such as `#downloads` or `#reader/<ebook id>`, that keeps working for good by opening the page that took its place and replacing itself in the history.
+_Avoid_: Legacy route, alias, deprecated address
+
+**Token**:
+A named value of the design language that every screen takes its spacing, corners, heights, text styles and colours from. A stylesheet sets a corner or spacing only through a token; a value the boards draw that no token gives is marked as an exception where it is written (ADR 0023).
+_Avoid_: Magic number, design variable, theme value
+
 **Offline line**:
 The one line the shell shows above the player while the device has no connection, on every place and page that does not say so itself.
 _Avoid_: Offline banner, offline toast
