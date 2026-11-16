@@ -12,6 +12,9 @@ test("only files the browser tests cannot see skip the browser stage", () => {
   assert.equal(scope("deploy/ctc-worker.service.tmpl", "Dockerfile", "compose.yaml"), "skip");
   assert.equal(scope("scripts/deploy.sh", "scripts/alignment-status.mjs", "scripts/orca/note.sh"), "skip");
   assert.equal(scope("tests/image-smoke.test.mjs", "tests/deploy.test.mjs"), "skip");
+  // A git hook runs on the pushing machine; no browser test can see it (#504).
+  assert.equal(scope(".githooks/pre-push", ".githooks/lib.sh", "tests/pre-push-hook.test.ts", "AGENTS.md"), "skip");
+  assert.equal(scope(".githooks/pre-push", "src/App.tsx"), "full");
 });
 
 test("server-only changes run Chromium only", () => {
