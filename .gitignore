@@ -20,3 +20,6 @@ artifacts/orca/*
 .codegraph
 __pycache__/
 worker/REVISION
+
+# Redesign boards: build and check output
+docs/design/redesign/tools/out/

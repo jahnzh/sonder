@@ -1,0 +1,85 @@
+{
+  "sonder-1-book-and-files": {
+    "title": "A book and its files",
+    "boards": [
+      "Book.dc.html",
+      "BookMore.dc.html",
+      "BookGetting.dc.html",
+      "Audiobook.dc.html",
+      "Ebook.dc.html",
+      "GetAudiobook.dc.html",
+      "GetEbook.dc.html"
+    ]
+  },
+  "sonder-2-reading-sync": {
+    "title": "Reading sync",
+    "boards": [
+      "ReadingSync.dc.html",
+      "ReadingSyncReady.dc.html",
+      "ReadingSyncStopped.dc.html"
+    ],
+    "width": 1060
+  },
+  "sonder-3-activity": {
+    "title": "Activity",
+    "boards": [
+      "Activity.dc.html",
+      "ActivityDevice.dc.html",
+      "ActivityServer.dc.html",
+      "Worker.dc.html"
+    ]
+  },
+  "sonder-4-activity-desktop": {
+    "title": "Activity on desktop",
+    "boards": [
+      "DesktopActivity.dc.html",
+      "DesktopActivityServer.dc.html"
+    ],
+    "width": 1320
+  },
+  "sonder-5-series": {
+    "title": "Series",
+    "boards": [
+      "BookSeries.dc.html",
+      "Series.dc.html",
+      "SeriesAdd.dc.html",
+      "LibrarySeries.dc.html",
+      "DesktopSeries.dc.html"
+    ]
+  },
+  "sonder-6-earlier-boards": {
+    "title": "Earlier boards",
+    "boards": [
+      "Library.dc.html",
+      "Settings.dc.html",
+      "SettingsPlayback.dc.html",
+      "DesktopLibrary.dc.html",
+      "DesktopSettings.dc.html"
+    ]
+  },
+  "sonder-7-language": {
+    "title": "Design language",
+    "boards": [
+      "LanguageReader.dc.html",
+      "Tooltips.dc.html",
+      "LanguageFiles.dc.html",
+      "Main.dc.html"
+    ],
+    "width": 1320
+  },
+  "sonder-8-listening-and-reading": {
+    "title": "Listening and reading",
+    "boards": [
+      "NowPlaying.dc.html",
+      "Reader.dc.html",
+      "ReaderControls.dc.html",
+      "ReaderSpeed.dc.html",
+      "ReaderScroll.dc.html",
+      "ReaderAppearance.dc.html",
+      "ReaderWrapA.dc.html",
+      "ReaderWrapB.dc.html",
+      "Chapters.dc.html",
+      "DesktopReader.dc.html"
+    ]
+  }
+}
