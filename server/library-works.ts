@@ -25,7 +25,7 @@ import { z } from "zod";
 import { currentUserId, setUserSetting, userIsAdmin } from "./users.ts";
 import { hardcoverForWorks, hiddenHardcoverPlaceholders } from "./hardcover.ts";
 import { deliveredTracks } from "./media-library.ts";
-import { placeholderEditionSql } from "./placeholder-edition.ts";
+import { choiceKey, chosenRecordingId, fallbackCovers, idList, listedRecordings, storedChoices } from "./work-cover.ts";
 import { readerPlaces, workCompletions } from "./work-completion.ts";
 import { ebookFile } from "./ebooks.ts";
 import { listEbookSetMembers } from "./ebook-set.ts";
@@ -45,61 +45,6 @@ import type {
   WorkSeries,
 } from "../src/types.ts";
 
-const idList = (ids: Iterable<string>) => JSON.stringify([...new Set(ids)]);
-
-/** What a step of the rule may use besides the recordings: the user's stored choice for the work, if any. */
-type ChoiceContext = { stored: string | null };
-/** One step of the rule for the chosen recording: a recording id, or null to leave it to the next step. */
-type ChoiceStep = (recordings: WorkRecording[], context: ChoiceContext) => string | null;
-
-/** The user's stored choice for a work (#488): one key per work in `user_settings`, holding a recording id. */
-const choiceKey = (workId: string) => `chosenRecording:${workId}`;
-
-/** The rule for the chosen recording (GLOSSARY.md, "Chosen recording"), step by step. */
-const chosenRecordingSteps: ChoiceStep[] = [
-  // The user's stored choice, while it is still one of their recordings of the work.
-  (recordings, { stored }) => (recordings.some((recording) => recording.recordingId === stored) ? stored : null),
-  // Otherwise the recording with the user's newest saved place.
-  (recordings) => {
-    let newest: WorkRecording | null = null;
-    for (const recording of recordings)
-      if (recording.progress && (!newest?.progress || recording.progress.updatedAt > newest.progress.updatedAt))
-        newest = recording;
-    return newest?.recordingId ?? null;
-  },
-  // Otherwise the one added first: recordings are listed in that order.
-  (recordings) => recordings[0]?.recordingId ?? null,
-];
-
-function chosenRecordingId(recordings: WorkRecording[], context: ChoiceContext) {
-  for (const step of chosenRecordingSteps) {
-    const id = step(recordings, context);
-    if (id) return id;
-  }
-  return null;
-}
-
-/** The user's stored choices for `workIds`, by work. */
-function storedChoices(userId: number, workIds: string[]) {
-  const rows = sqlite
-    .prepare(
-      `SELECT key,value FROM user_settings
-       WHERE user_id=? AND key IN (SELECT ? || value FROM json_each(?))`,
-    )
-    .all(userId, choiceKey(""), idList(workIds)) as { key: string; value: string }[];
-  return new Map(rows.map((row) => [row.key.slice(choiceKey("").length), row.value]));
-}
-
-type RecordingRow = {
-  workId: string;
-  editionId: string;
-  recordingId: string;
-  narrator: string;
-  language: string | null;
-  releaseTitle: string | null;
-  sourceLabel: string;
-  cover: string;
-};
 type TrackRow = typeof s.tracks.$inferSelect;
 
 /**
@@ -158,28 +103,12 @@ function faultsByRecording(recordingIds: string[]) {
   return faults;
 }
 
-/** The user's recordings of `workIds`, the one added first first: audio editions in their library that are not placeholders. */
-function listedRecordings(userId: number, workIds: string[]) {
-  return sqlite
-    .prepare(
-      `SELECT e.work_id AS workId,e.id AS editionId,r.id AS recordingId,e.narrator,e.language,
-         e.release_title AS releaseTitle,e.source_label AS sourceLabel,e.cover
-       FROM user_library u
-       JOIN audio_editions e ON e.id=u.book_id
-       JOIN recordings r ON r.edition_id=e.id
-       WHERE u.user_id=? AND e.work_id IN (SELECT value FROM json_each(?))
-         AND NOT ${placeholderEditionSql("e.id")}
-       ORDER BY u.added_at,e.rowid,r.rowid`,
-    )
-    .all(userId, idList(workIds)) as RecordingRow[];
-}
-
 /**
  * The user's recordings of `workIds` (`listedRecordings`) in the `WorkRecording` shape. Each file
  * check made is added to `files`.
  */
 function recordingsByWork(userId: number, workIds: string[], files: FileCheck[]) {
-  const rows = listedRecordings(userId, workIds);
+  const rows = listedRecordings(sqlite, userId, workIds);
   const byWork = new Map<string, WorkRecording[]>();
   if (!rows.length) return byWork;
   const recordingIds = rows.map((row) => row.recordingId);
@@ -259,25 +188,6 @@ function recordingsByWork(userId: number, workIds: string[], files: FileCheck[])
     byWork.set(row.workId, [...(byWork.get(row.workId) ?? []), recording]);
   }
   return byWork;
-}
-
-/**
- * The cover of a work without recordings: its placeholder's, preferring one in the user's library;
- * for a work outside the library that has no placeholder, its first audio edition's.
- */
-function fallbackCovers(userId: number, workIds: string[], hidden: Set<string>) {
-  const rows = sqlite
-    .prepare(
-      `SELECT e.work_id AS workId,e.id,e.cover FROM audio_editions e
-       WHERE e.work_id IN (SELECT value FROM json_each(?))
-       ORDER BY EXISTS(SELECT 1 FROM user_library u WHERE u.user_id=? AND u.book_id=e.id) DESC,
-         ${placeholderEditionSql("e.id")} DESC,e.rowid`,
-    )
-    .all(idList(workIds), userId) as { workId: string; id: string; cover: string }[];
-  const covers = new Map<string, string>();
-  for (const row of rows)
-    if (!hidden.has(row.id) && !covers.has(row.workId)) covers.set(row.workId, row.cover);
-  return covers;
 }
 
 /**
@@ -452,8 +362,8 @@ function buildWorks(userId: number, workIds: string[], hidden: Set<string>, file
   );
   const added = libraryRows(userId, workIds);
   const recordings = recordingsByWork(userId, workIds, files);
-  const choices = storedChoices(userId, workIds);
-  const covers = fallbackCovers(userId, workIds, hidden);
+  const choices = storedChoices(sqlite, userId, workIds);
+  const covers = fallbackCovers(sqlite, userId, workIds, hidden);
   const completions = workCompletions(userId, workIds);
   const ebooks = ebooksByWork(userId, workIds, files);
   const readingSync = readingSyncByWork(recordings, ebooks.byWork);
@@ -475,7 +385,7 @@ function buildWorks(userId: number, workIds: string[], hidden: Set<string>, file
         description: work.description,
         genre: work.genre,
         year: work.year,
-        cover: listed.find((recording) => recording.recordingId === chosen)?.cover ?? covers.get(workId) ?? "",
+        cover: listed.find((recording) => recording.recordingId === chosen)?.cover ?? covers.get(workId)?.cover ?? "",
         inLibrary: added.has(workId),
         addedAt: added.get(workId) ?? null,
         finished: completion?.finished ?? false,
@@ -587,7 +497,7 @@ export function registerLibraryWorks(app: FastifyInstance) {
     const { recordingId } = z.object({ recordingId: z.string().min(1).max(300) }).parse(req.body ?? {});
     if (!db.select({ id: s.works.id }).from(s.works).where(eq(s.works.id, workId)).get())
       return reply.code(404).send({ error: "This book could not be found." });
-    if (!listedRecordings(userId, [workId]).some((row) => row.recordingId === recordingId))
+    if (!listedRecordings(sqlite, userId, [workId]).some((row) => row.recordingId === recordingId))
       return reply.code(400).send({ error: "Choose one of the recordings of this book in your library." });
     setUserSetting(userId, choiceKey(workId), recordingId);
     return libraryWork(userId, workId);

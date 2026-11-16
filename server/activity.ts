@@ -21,7 +21,7 @@ const DAY = 24 * HOUR;
 
 /** Finished items stay visible this long; failed items stay until someone acts on them. */
 export const FINISHED_VISIBLE_MS = DAY;
-/** Until Retry and Discard exist, a failure older than this stays listed but stops lighting the Settings indicator. */
+/** A failure older than this stays listed but no longer needs attention (`ActivityItem.attention`). */
 export const ATTENTION_FAILURE_MS = 7 * DAY;
 
 /** Work Activity lists although nothing reports it yet (#362). */
@@ -36,6 +36,9 @@ export function stuckMultiplier(raw: string | undefined | null) {
 
 /** One source with the rows it read and what its probe returned. */
 export type SourceSnapshot = { source: ActivitySource<unknown, unknown>; rows: unknown; probe: ProbeResult<unknown> };
+
+/** The user whose library the covers of the items are read from: the first administrator, as `ADMIN_USER_ID`. */
+export const DEFAULT_ACTIVITY_USER_ID = 1;
 
 export type ActivityInput = {
   now: number;
@@ -73,7 +76,9 @@ export function buildActivity(input: ActivityInput): ActivityResponse {
     if (blockedBy) stuck = { reason: `Blocked by ${downService.get(blockedBy)}` };
     else if (source.stuck) stuck = source.stuck(draft, now, threshold);
     else if (item.state === "running" && now - changedAt > threshold) stuck = { reason: `No change for ${formatAge(now - changedAt)}` };
-    items.push({ ...item, permanent: !!permanent, actions: actions ?? [], stuck, blockedBy });
+    // The one place the rule is decided for server work (#514): failed in the last seven days, stuck or blocked.
+    const attention = (item.state === "failed" && now - item.updatedAt <= ATTENTION_FAILURE_MS) || !!stuck || !!blockedBy;
+    items.push({ ...item, permanent: !!permanent, actions: actions ?? [], stuck, blockedBy, attention });
   }
 
   const rank = (item: ActivityItem) =>
@@ -120,9 +125,7 @@ export function buildActivity(input: ActivityInput): ActivityResponse {
     return { ...process, ...pauseFields, health, reason, since, counts };
   });
 
-  const attentionItems = items.filter(
-    (item) => (item.state === "failed" && now - item.updatedAt <= ATTENTION_FAILURE_MS) || item.stuck || item.blockedBy,
-  ).length;
+  const attentionItems = items.filter((item) => item.attention).length;
   const attention = attentionItems + processes.filter((process) => process.health === "down" && !process.notTracked).length;
   return { checkedAt: now, stuckMultiplier: multiplier, processes, items, attention };
 }
@@ -150,10 +153,10 @@ async function within<T>(probe: () => Promise<T>, ms: number): Promise<ProbeResu
 
 export async function collectActivity(
   deps: ActivityDeps,
-  options: { probes: boolean } = { probes: true },
+  options: { probes: boolean; /** Whose library the covers come from; the administrator who asked. */ userId?: number } = { probes: true },
   sources: ReadonlyArray<ActivitySource<unknown, unknown>> = ACTIVITY_SOURCES,
 ) {
-  const rows = sources.map((source) => source.load(deps.sqlite));
+  const rows = sources.map((source) => source.load(deps.sqlite, { userId: options.userId ?? DEFAULT_ACTIVITY_USER_ID }));
   const none: ProbeResult<unknown> = { value: null, failure: null };
   const probes = await Promise.all(sources.map((source) => {
     const probe = source.probe;
@@ -171,7 +174,7 @@ export async function collectActivity(
 export function registerActivity(app: FastifyInstance, deps: ActivityDeps, sources: ReadonlyArray<ActivitySource<unknown, unknown>> = ACTIVITY_SOURCES) {
   app.get("/api/activity", async (req) => {
     deps.requireAdmin(req);
-    return collectActivity(deps, { probes: true }, sources);
+    return collectActivity(deps, { probes: true, userId: deps.userId?.(req) }, sources);
   });
   app.post("/api/activity/processes/:id/pause", async (req) => {
     deps.requireAdmin(req);

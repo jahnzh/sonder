@@ -5,7 +5,7 @@
  */
 import type { ActivityState } from "../src/types.ts";
 import type { ServerCopyStatus } from "./schema.ts";
-import { clamp01, defineSource, stateFrom } from "./activity-source.ts";
+import { clamp01, defineSource, itemWork, stateFrom, withWorks, type ItemWork } from "./activity-source.ts";
 
 const MINUTE = 60_000;
 
@@ -25,17 +25,22 @@ export type CopyRow = {
   error: string | null;
   created_at: number;
   updated_at: number;
+  work?: ItemWork | null;
 };
 
 export const serverCopySource = defineSource<CopyRow[]>({
   kind: "server-copy",
   process: { id: "server-copies", label: "Copies to server" },
   stuckAfterMs: 5 * MINUTE,
-  load: (sqlite) =>
-    sqlite.prepare(
-      `SELECT d.recording_id, w.title, d.status, d.progress, d.error, d.created_at, d.updated_at
-         FROM server_downloads d LEFT JOIN audio_editions e ON e.id = d.book_id LEFT JOIN works w ON w.id = e.work_id`,
-    ).all() as CopyRow[],
+  load: (sqlite, { userId }) =>
+    withWorks(
+      sqlite, userId,
+      sqlite.prepare(
+        `SELECT d.recording_id, w.title, d.status, d.progress, d.error, d.created_at, d.updated_at, w.id AS work_id
+           FROM server_downloads d LEFT JOIN audio_editions e ON e.id = d.book_id LEFT JOIN works w ON w.id = e.work_id`,
+      ).all() as Array<Omit<CopyRow, "work"> & { work_id: string | null }>,
+      (row) => row.work_id,
+    ),
   report(rows, _probe, { now, tracker }) {
     const drafts = rows.map((row) => {
       const { state, unknown } = stateFrom(SERVER_COPY_ACTIVITY_STATES, row.status);
@@ -43,6 +48,7 @@ export const serverCopySource = defineSource<CopyRow[]>({
       return {
         id, kind: "server-copy" as const, processId: "server-copies", title: row.title || row.recording_id, detail: "Copy to the server", user: null,
         state, progress: clamp01(row.progress), host: null, startedAt: row.created_at, updatedAt: row.updated_at,
+        ...itemWork(row.work), facts: { kind: "server-copy" as const, status: row.status },
         error: unknown ?? (row.error || null),
         changedAt: state === "running" ? tracker.observe(id, `${row.status}|${row.progress}`, now) : row.updated_at,
       };

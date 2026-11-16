@@ -36,8 +36,9 @@ const run = (sql: string, ...args: unknown[]) => sqlite.prepare(sql).run(...args
 run("INSERT OR IGNORE INTO users(id,username,password_hash,role,created_at) VALUES(2,'sam',NULL,'user',?)", NOW);
 run("INSERT INTO works(id,title,author,description,genre,year) VALUES('w1','Speaker for the Dead','Card','','',1986)");
 run("INSERT INTO works(id,title,author,description,genre,year) VALUES('w2','Xenocide','Card','','',1991)");
-run("INSERT INTO audio_editions(id,work_id,cover,narrator,rating,source_label) VALUES('ed1','w1','','',0,'')");
-run("INSERT INTO audio_editions(id,work_id,cover,narrator,rating,source_label) VALUES('ed2','w2','','',0,'')");
+// Neither edition has a track, so both are placeholders: a work lends its cover, and no edition id is sent (#514).
+run("INSERT INTO audio_editions(id,work_id,cover,narrator,rating,source_label) VALUES('ed1','w1','/covers/ed1.jpg','',0,'')");
+run("INSERT INTO audio_editions(id,work_id,cover,narrator,rating,source_label) VALUES('ed2','w2','/covers/ed2.jpg','',0,'')");
 run("INSERT INTO series_catalogue(id,name,author,book_count) VALUES(7,'Ender','Card',4)");
 
 // Acquisitions: every status `server/acquisitions.ts`, `server/app.ts` and `server/series-removal.ts` write,
@@ -61,6 +62,12 @@ const acquisitions: Array<[string, string, string, number, string | null, number
 for (const [id, backend, status, progress, error, updated] of acquisitions)
   run("INSERT INTO acquisitions(id,hash,magnet,backend,title,author,cover,status,progress,error,created_at,updated_at) VALUES(?,?,?,?,?,?,'',?,?,?,?,?)",
     `acq-${id}`, `hash-${id}`, `magnet:?xt=urn:btih:${id}`, backend, `Book ${id}`, id === "unknown" ? "" : "Card", status, progress, error, NOW - DAY / 2, updated);
+
+// Two downloads of a work (#514): by its `work_id`, and by its audio edition when it has no `work_id`. The ready one
+// has no work yet and keeps its own cover.
+run("UPDATE acquisitions SET work_id = 'w1' WHERE id = 'acq-downloading'");
+run("UPDATE acquisitions SET book_id = 'ed2' WHERE id = 'acq-paused'");
+run("UPDATE acquisitions SET cover = '/covers/torbox.jpg' WHERE id = 'acq-ready'");
 
 // Copies to the server: every status `server/downloads.ts` writes, the old extra word, one nobody writes.
 const copies: Array<[string, string, string, number, string | null, number]> = [
@@ -216,6 +223,17 @@ function withBackupsUntracked(all: Record<string, { processes: Array<{ id: strin
   return all;
 }
 
+/**
+ * The items gained their book, cover, status facts and `attention` on purpose with #514. Take them off again, so the
+ * comparison with the record from before the split still proves that nothing else moved. Never rewrite that record.
+ */
+function withoutBookAndFacts<All extends Record<string, { items: object[] }>>(all: All): All {
+  for (const snapshot of Object.values(all))
+    for (const item of snapshot.items as Array<Record<string, unknown>>)
+      for (const field of ["workId", "bookId", "cover", "facts", "attention"]) delete item[field];
+  return all;
+}
+
 /** The worker host rows gained their status and controls on purpose with #357 PR 3 (`host`); the rest is unchanged. */
 function withoutHostDetail(all: Record<string, { processes: Array<{ id: string; host?: unknown }> }>) {
   for (const snapshot of Object.values(all)) for (const process of snapshot.processes) delete process.host;
@@ -285,6 +303,6 @@ test("GET /api/activity returns the recorded JSON for the same rows", async () =
   assert.deepEqual(all, JSON.parse(readFileSync(GOLDEN, "utf8")));
 
   deleteIntendedChanges();
-  const unchanged = withNamesBefore495(`${JSON.stringify(withBackupsUntracked(withoutHostDetail(await snapshots(sourcesAtSplit))), null, 2)}\n`);
+  const unchanged = withNamesBefore495(`${JSON.stringify(withBackupsUntracked(withoutHostDetail(withoutBookAndFacts(await snapshots(sourcesAtSplit)))), null, 2)}\n`);
   assert.equal(unchanged, readFileSync(BEFORE_SOURCES, "utf8"), "same rows, same JSON text as before the split into sources");
 });

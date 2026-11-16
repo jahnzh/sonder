@@ -84,6 +84,8 @@ export const backupSource = defineSource<BackupRows>({
       drafts: [{
         id: `backup:${row.day}`, kind: "backup" as const, processId: "backups", title: "Daily database backup",
         detail: `${row.file}${size}${state === "done" ? cleanupText(row) : ""}`, user: null, state: mapped.state, progress: null, host: null,
+        // A backup concerns no book.
+        workId: null, bookId: null, cover: null, facts: { kind: "backup" as const, status: row.status },
         startedAt: row.started_at, updatedAt: row.finished_at ?? row.updated_at,
         error: mapped.unknown ?? (row.error || null),
         // A backup reports no progress: a running one is stuck when its claim was not renewed for longer than the threshold.

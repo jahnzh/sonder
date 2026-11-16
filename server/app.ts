@@ -349,6 +349,7 @@ export async function createApp(options?: {
     torrentHealth: () => getTorrentHealth(),
     poolStatus: () => getAlignmentPoolStatus({ persistedErrors: persistedPoolErrors() }),
     requireAdmin,
+    userId: currentUserId,
     syncHardcover,
     retryEbookSetMember,
     pauseState,
