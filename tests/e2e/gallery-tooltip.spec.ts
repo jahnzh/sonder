@@ -246,8 +246,13 @@ test("on a desktop it opens on hover and closes when the pointer leaves", async 
 test("on a desktop it opens on keyboard focus, and closes on Escape and when focus moves on", async ({ page, browserName }) => {
   await openWith(page);
   const tab = browserName === "webkit" ? "Alt+Tab" : "Tab";
-  // From the last control before the section, Tab reaches the marks in order.
-  await page.getByRole("button", { name: "Child page", exact: true }).focus();
+  const backTab = browserName === "webkit" ? "Alt+Shift+Tab" : "Shift+Tab";
+  // Whatever precedes the section in the Tab order: focus the first mark by its name, step back off it (which closes
+  // it), and Tab forward onto it again. The marks are reached in order without counting controls or sections.
+  await mark(page, "Protected storage").focus();
+  await page.keyboard.press(backTab);
+  await expect(tip(page)).toHaveCount(0);
+  await expect(mark(page, "Protected storage")).not.toBeFocused();
   await page.keyboard.press(tab);
   await expect(mark(page, "Protected storage")).toBeFocused();
   await expect(tip(page)).toHaveText(texts.storage);
@@ -264,10 +269,10 @@ test("on a desktop it opens on keyboard focus, and closes on Escape and when foc
   await page.keyboard.press("Enter");
   await expect(tip(page)).toHaveCount(0);
   // Shift+Tab back to the first mark opens that one.
-  await page.keyboard.press(browserName === "webkit" ? "Alt+Shift+Tab" : "Shift+Tab");
+  await page.keyboard.press(backTab);
   await expect(tip(page)).toHaveText(texts.storage);
   // Focus leaving the marks closes it.
-  await page.getByRole("button", { name: "Child page", exact: true }).focus();
+  await page.evaluate(() => (document.activeElement as HTMLElement).blur());
   await expect(tip(page)).toHaveCount(0);
 });
 
