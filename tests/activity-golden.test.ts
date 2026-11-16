@@ -234,6 +234,16 @@ function withoutBookAndFacts<All extends Record<string, { items: object[] }>>(al
   return all;
 }
 
+/**
+ * Downloads and reading syncs gained Retry and Resume on purpose with #515; before, they offered no action. Take them
+ * off again for the comparison with the record from before the split. Never rewrite that record.
+ */
+function withoutActionsOf515<All extends Record<string, { items: Array<{ kind: string; actions: string[] }> }>>(all: All): All {
+  for (const snapshot of Object.values(all))
+    for (const item of snapshot.items) if (item.kind === "acquisition" || item.kind === "alignment") item.actions = [];
+  return all;
+}
+
 /** The worker host rows gained their status and controls on purpose with #357 PR 3 (`host`); the rest is unchanged. */
 function withoutHostDetail(all: Record<string, { processes: Array<{ id: string; host?: unknown }> }>) {
   for (const snapshot of Object.values(all)) for (const process of snapshot.processes) delete process.host;
@@ -303,6 +313,6 @@ test("GET /api/activity returns the recorded JSON for the same rows", async () =
   assert.deepEqual(all, JSON.parse(readFileSync(GOLDEN, "utf8")));
 
   deleteIntendedChanges();
-  const unchanged = withNamesBefore495(`${JSON.stringify(withBackupsUntracked(withoutHostDetail(withoutBookAndFacts(await snapshots(sourcesAtSplit)))), null, 2)}\n`);
+  const unchanged = withNamesBefore495(`${JSON.stringify(withBackupsUntracked(withoutHostDetail(withoutBookAndFacts(withoutActionsOf515(await snapshots(sourcesAtSplit))))), null, 2)}\n`);
   assert.equal(unchanged, readFileSync(BEFORE_SOURCES, "utf8"), "same rows, same JSON text as before the split into sources");
 });
