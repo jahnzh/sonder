@@ -1,6 +1,6 @@
 # Coordinator checks
 
-How a coordinator watches CI, stays reachable when unattended, and closes issues. Each rule came from a failure: an overnight stall, a hung check nobody noticed, and an issue closed by a partial PR.
+How a coordinator watches CI, stays reachable when unattended, handles its workers, lands and closes issues, and reports to the owner. Each rule came from a failure: an overnight stall, a hung check nobody noticed, and an issue closed by a partial PR.
 
 ## Watch a running check yourself
 
@@ -18,13 +18,50 @@ Run new or changed tests on a many-core host (WSL, lisa) before trusting a green
 Arm all four, then confirm each from evidence (a log line, a timestamp), not from having started it:
 
 - an inbox Monitor on the run (`bash scripts/orca/watch-inbox.sh <run_id>` is single-shot; a Monitor loop over `node scripts/orca-check.mjs --run <run>` delivers every message and ends after 30 minutes);
-- a recurring heartbeat (CronCreate, every 10 minutes) whose first action appends a UTC line to `artifacts/orca/HEARTBEAT.log`, and which re-arms the Monitors and restarts the watchdog;
+- a recurring heartbeat (CronCreate, every 10 minutes) that runs `bash scripts/orca/heartbeat.sh <run_id>` (it appends the UTC line to `artifacts/orca/HEARTBEAT.log`), re-arms the Monitors and restarts the watchdog;
 - the independent watchdog: `nohup bash scripts/orca/watchdog.sh <run_id> &` writes `artifacts/orca/WATCHDOG.log` every minute (heartbeat age, unread inbox, running checks) and flags `STALE-HEARTBEAT` after 25 minutes;
 - PID-based waits for deploys and checks: save `$!` when launching and loop on `kill -0 "$PID"`. Never wait with a `ps | grep` of a process name: the launcher's shell matches it and the wait never ends.
 
 `watch-inbox.sh`, `watchdog.sh` and `check-workers.sh` (also through the `artifacts/orca/` wrappers, which pass their arguments on) take the run id as their first argument and exit 2 with a usage line (`usage: <script> <run_id>`) when it is missing or empty. None has a default run, so an unread count or worker list can never silently belong to an old run. Check the live workers of the run with `bash scripts/orca/check-workers.sh <run_id>`.
 
 Say "running" only with that evidence, and say what you did not verify.
+
+## At every heartbeat
+
+Run `bash scripts/orca/heartbeat.sh <run_id>`. It appends the time to `HEARTBEAT.log` and prints the unread inbox, running checks and the newest results, whether the watchdog runs, one line per worker read from its screen, memory, disk and production health, and removes stale browser-test temp folders. Then act on what it shows:
+
+- A worker that is not `busy`, or has an `ALERT`, has stopped without sending a message (a provider's "High Load", a usage limit, a prompt waiting for an answer). Read its screen and get it going again, or move its work to a model with quota. A count of changed files says nothing: a stalled worker still has them.
+- Keep three workers running whenever there is work that does not touch the same files. Waiting for one check or one answer is no reason to leave the other slots empty (the owner asked why only one worker was running twice on 2026-11-15).
+- New terminals that exit with status 1 within about 10 ms mean the Orca terminal daemon is wedged. Restarting the service does not help; the daemon itself must be restarted, which ends every session, so finish or save what is running first.
+
+## When a worker reports done
+
+Run `bash scripts/orca/worker-done.sh <run_id> <msg_id> <worktree path>`. It prints the report, acknowledges the delivery, stops the worker's leftover processes and copies its report files to `artifacts/orca/reports/<worktree>/`. The copy comes before anything else because a removed worktree takes its reports with it (lost once, on #411). Then:
+
+- Merge `origin/main` into the branch by hand, conflict by conflict, and run the tests before committing the merge. A scripted conflict resolution once cut a file short and the damage was committed.
+- Start the check on the merged tip. A check on a tip that cannot be merged proves nothing about what lands.
+- A failed check is never run again to get a pass: `scripts/ci-run.sh` refuses a commit that already failed. Find out why it failed. Three tests written off as unreliable on 2026-11-15 were defects in the app; reproduce with `scripts/stress-spec.sh` (see "Stress a browser test" in `docs/LOCAL_CHECKS.md`).
+- Review as `AGENTS.md` "Main flow" says: fix what can happen in the owner's setup, answer the rest in one line.
+
+## Landing
+
+`scripts/orca-land.sh` removes the worktree and deletes branches that share the landed tip. When a running worker's branch starts from that tip (a follow-up built on the branch being landed), land with `gh pr merge <n> --merge` instead and remove the worktree later.
+
+## The alignment hosts
+
+The coordinator does host work itself and does not leave it for the owner: `scripts/update-ctc-workers.sh <commit>` copies the worker code to WSL and lisa, tests it there, swaps it in only while the worker is idle, restarts it and keeps the two previous copies. Workers the coordinator spawns stay out of `~/sonder-ctc-worker/` and off port 3012; their specs say so.
+
+## Disk
+
+`scripts/orca-spawn.sh` refuses to start a worker under 15 GB free. What fills the disk between runs: old rollback images (`docker images sonder-audiobooks`; keep the three newest `before-*` tags), the build cache (`docker builder prune -f`), `artifacts/ci/` (keep the newest few), finished worktrees, and temp folders of killed browser runs (the heartbeat removes those). Tests remove their own temp folders (`tests/temp-leftovers.test.mjs`).
+
+## Stopping a run
+
+When the owner stops a run: stop each worker with `scripts/orca-reap.sh <worktree>`, commit unfinished work on its branch as a commit marked WIP, push every branch, write where each branch stands into `STATE.md` and roadmap #11, and only then stop the heartbeat, the Monitors and the watchdog. Nothing unfinished is landed.
+
+## Reporting to the owner
+
+Say what happened in plain words, outcome first: what works now, what does not, what you need from him. Name an issue only when he needs it to find something. Do not report counts of findings or rounds of review; say whether a real defect was found and fixed.
 
 ## Closing an issue
 
