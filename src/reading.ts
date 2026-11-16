@@ -2,6 +2,7 @@ import { userStorageKey } from "./lib";
 import { alignmentJobNeedsPolling, warmMap } from "./alignment-map-lifecycle";
 import { alignmentMapDeps } from "./alignment-map-deps";
 import { api, localDB, authDB, userId } from "./lib";
+import { navigate } from "./navigation";
 import type {
   AlignmentJob,
   ReaderBook,
@@ -393,7 +394,7 @@ export function openReader(id: string, fromAudio = false) {
   window.dispatchEvent(
     new CustomEvent("sonder:open-reader", { detail: { id, fromAudio } }),
   );
-  location.hash = `reader/${encodeURIComponent(id)}`;
+  navigate({ name: "reader", ebookId: id });
 }
 
 let cachedEbooksList: SavedEbook[] | null = null;

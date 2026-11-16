@@ -26,6 +26,7 @@ import {
 import { usePlayer } from "../player";
 import { clock, localDB } from "../lib";
 import { Dialog } from "./ui/dialog";
+import { useSheet } from "../navigation";
 import { Chapters } from "./Chapters";
 import { PlaybackReader } from "./PlaybackReader";
 import { PlaybackSource } from "./PlaybackSource";
@@ -68,7 +69,8 @@ export function PlayerDock({
 }) {
   const p = usePlayer();
   const { appearance, saveReader } = useAppearance();
-  const [expanded, setExpanded] = useState(false);
+  // Now playing has an entry in the history (no address of its own yet): Back closes it, as its own control does.
+  const { open: expanded, setOpen: setExpanded } = useSheet("now-playing");
   const b = p.book || fallback;
   const [hasReader, setHasReader] = useState(() => hasKnownReader(b?.workId));
   const [chaptersOpen,setChaptersOpen] = useState(false);
@@ -112,7 +114,7 @@ export function PlayerDock({
       cancel?.();
     };
   }, [b?.workId, b?.recordingId]);
-  useEffect(()=>{if(!expanded)setOptionsOpen(false);},[expanded]);
+  useEffect(()=>{if(!expanded){setOptionsOpen(false);setHistoryOpen(false);}},[expanded]);
   useEffect(()=>{
     if(expanded && b && !p.book)void p.prepare(b);
   },[expanded,b?.id,p.book?.id]);

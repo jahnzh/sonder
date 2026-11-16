@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api } from "../lib";
+import { api, userId } from "../lib";
 import type { Download, SavedEbook, SeriesWorkAcquisition } from "../types";
 import { normalizeSeriesLanguage, selectSeriesDefaults, type SeriesCandidate } from "../series-selection";
 import { Dialog } from "./ui/dialog";
@@ -79,10 +79,12 @@ export function SeriesDiscovery({ configured, onConnect, onOpen }: { configured:
   </section>;
 }
 
+/** The saved series last read, for the account they were read for: the Library shown again starts with them (see useHardcover). */
+let lastSeries: { user: number; items: SeriesSummary[] } | null = null;
 export function SeriesLibrary({ onOpen, revision }: { onOpen: (id: number) => void; revision: number }) {
-  const [items, setItems] = useState<SeriesSummary[]>([]);
+  const [items, setItems] = useState<SeriesSummary[]>(() => (lastSeries?.user === userId() ? lastSeries.items : []));
   const [error, setError] = useState("");
-  useEffect(() => { let active = true; api<SeriesSummary[]>("/series").then((value) => { if (active) setItems(value); }).catch((reason) => { if (active) setError(reason.message); }); return () => { active = false; }; }, [revision]);
+  useEffect(() => { let active = true; api<SeriesSummary[]>("/series").then((value) => { lastSeries = { user: userId(), items: value }; if (active) setItems(value); }).catch((reason) => { if (active) setError(reason.message); }); return () => { active = false; }; }, [revision]);
   return <section className="library-section series-library"><div className="section-heading"><h2>Series</h2></div>
     {error ? <p className="inline-error">{error}</p> : !items.length ? <p>No saved series yet. Search for a series in Discover.</p> :
       <div className="series-results">{items.map((item) => <article className="series-result" key={item.id}>
@@ -122,6 +124,8 @@ export function SeriesDialog({ target, onClose, onSaved, downloads, savedEbooks,
     setSeries(await api<Series>(`/series/${target.id}`));
   }, [target, mode]);
   useEffect(() => {
+    // A confirmation belongs to the series it was opened for: it does not outlive the dialog or come back with it.
+    setRemoveOpen(false);
     if (!target) return;
     setSeries(null); setError(""); setMode(target.mode); setSavedNotice(false); setSelected([]);
     setSearchAudio(false); setSearchEbooks(false); setManualSelection({});

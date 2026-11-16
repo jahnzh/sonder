@@ -408,7 +408,9 @@ test("keyboard shortcut sheet opens from Now Playing and Settings", async ({ pag
   await sheet.getByRole("button", { name: "Close dialog" }).click();
   await expect(sheet).toBeHidden();
   await page.goto("/#settings");
-  await page.getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
+  // The new address closes Now playing (it has a history entry of its own, #484); its button may still be on
+  // screen while it closes, so this is the Settings page's own.
+  await page.getByRole("region", { name: "Keyboard" }).getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Keyboard shortcuts", exact: true }).getByText("Play or pause")).toBeVisible();
 });
 test("a form dialog focuses its first text field when it opens", async ({ page }) => {
