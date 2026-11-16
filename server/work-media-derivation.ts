@@ -1,4 +1,5 @@
 import { isActiveAcquisitionStatus } from "./acquisition-vocabulary.ts";
+import { placeholderEditionSql } from "./placeholder-edition.ts";
 
 /*
  * Derivation of a work's media state from a database handle (ADR 0011). This file opens no
@@ -30,8 +31,8 @@ type LatestAcquisition = { workId: string; id: string; status: string; updatedAt
 const ids = (workIds: Iterable<string>) => JSON.stringify([...new Set(workIds)]);
 
 /**
- * Works with playable audio: a non-placeholder edition (`hc-` ids are Hardcover
- * placeholders) whose first recording has a track.
+ * Works with playable audio: an edition that is not a placeholder (`placeholder-edition.ts`)
+ * and whose first recording has a track.
  */
 export function playableWorks(database: Database, workIds: Iterable<string>) {
   const rows = database
@@ -40,7 +41,7 @@ export function playableWorks(database: Database, workIds: Iterable<string>) {
        JOIN recordings r
          ON r.rowid=(SELECT MIN(r2.rowid) FROM recordings r2 WHERE r2.edition_id=e.id)
        WHERE e.work_id IN (SELECT value FROM json_each(?))
-         AND substr(e.id,1,3)<>'hc-'
+         AND NOT ${placeholderEditionSql("e.id")}
          AND EXISTS(SELECT 1 FROM tracks t WHERE t.recording_id=r.id)`,
     )
     .all(ids(workIds)) as { workId: string }[];
