@@ -107,23 +107,13 @@ import {
   EbookDiscovery,
   SourceSettings,
 } from "./components/SourceWorkflow";
-type Page = "library" | "discover" | "downloads" | "settings" | "activity";
+import { type Page, Mark, ListenButton, Empty } from "./pages/shared";
 type Notice = { text: string; error?: boolean };
 const nav = [
   { id: "library", label: "My library", icon: Library },
   { id: "discover", label: "Discover", icon: Compass },
   { id: "downloads", label: "Downloads", icon: Download },
 ] as const;
-function Mark() {
-  return (
-    <span className="brand-mark" aria-hidden="true">
-      <i />
-      <i />
-      <i />
-      <i />
-    </span>
-  );
-}
 function App() {
   const [user, setUser] = useState<Account | null>(null);
   const [auth, setAuth] = useState<boolean | null>(null);
@@ -1240,47 +1230,6 @@ function LibraryApp({
     </PlayerProvider>
   );
 }
-function ListenButton({
-  onFindAudio,
-  book,
-  compact = false,
-}: {
-  book: Book;
-  compact?: boolean;
-  onFindAudio?: () => void;
-}) {
-  const p = usePlayer();
-  const active = p.book?.id === book.id;
-  if (!book.tracks.length && !isAdmin()) return null;
-  if (!book.tracks.length)
-    return (
-      <button
-        className={`button ${compact ? "subtle" : "primary"}`}
-        onClick={onFindAudio}
-      >
-        <Search size={15} /> Find audio
-      </button>
-    );
-  return (
-    <button
-      className={`button ${compact ? "subtle" : "primary"}`}
-      onClick={() => (active ? p.toggle() : void p.play(book))}
-    >
-      {active && p.loading ? (
-        <Loader2 size={16} className="spin" />
-      ) : active && p.playing ? (
-        <Pause size={16} fill="currentColor" />
-      ) : (
-        <Play size={15} fill="currentColor" />
-      )}
-      {active && p.playing
-        ? "Pause"
-        : book.progress
-          ? "Continue listening"
-          : "Start listening"}
-    </button>
-  );
-}
 function Feature({
   book,
   onDetail,
@@ -1780,28 +1729,6 @@ function BookDetail({
         </>
       )}
     </Dialog>
-  );
-}
-function Empty({
-  icon: Icon,
-  title,
-  text,
-  action,
-}: {
-  icon: typeof Library;
-  title: string;
-  text: string;
-  action?: React.ReactNode;
-}) {
-  return (
-    <div className="empty-state">
-      <span className="empty-icon">
-        <Icon size={27} strokeWidth={1.5} />
-      </span>
-      <h3>{title}</h3>
-      <p>{text}</p>
-      {action}
-    </div>
   );
 }
 function LoadingBooks() {
