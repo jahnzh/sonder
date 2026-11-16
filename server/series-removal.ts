@@ -480,7 +480,7 @@ function hardcoverBookIdForWork(workId: string) {
     .get()?.bookId;
 }
 
-function ensureHardcoverSyncSuppressed(userId: number, workId: string) {
+export function ensureHardcoverSyncSuppressed(userId: number, workId: string) {
   const bookId = hardcoverBookIdForWork(workId);
   let representativeId: string | null = null;
   if (bookId != null) {
