@@ -22,7 +22,6 @@ const SEEK = "tests/e2e/playback-workflow.spec.ts";
 const WSL_HOST_REQUIRED_ENTRIES = [
     {project: "chromium", file: "tests/e2e/playback-workflow.spec.ts", title: "touch seeking › releasing a fine-seek gesture keeps the exact previewed destination"},
     {project: "chromium", file: "tests/e2e/reader-theme.spec.ts", title: "a 409 with no server checkpoint rebases to revision 0 and saves instead of looping"},
-    {project: "chromium", file: "tests/e2e/reader-follow-highlight.spec.ts", title: "lyrics mode shows the narrated sentence as the current line in the same chapters"},
     {project: "chromium", file: "tests/e2e/reader-frame.spec.ts", title: "a failed event probe enables scripts while the content defences still block them"},
 ];
 

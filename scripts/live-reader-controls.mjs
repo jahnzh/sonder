@@ -81,15 +81,9 @@ export function createReaderControls({ page, room, timeout = 25000, settle = 150
   let taps = 0;
 
   const tap = async () => {
-    const lyrics = room.locator(".lyrics-reader");
-    if (await lyrics.count()) {
-      // The Lyrics surface toggles the controls on a click that is not on a button.
-      await lyrics.evaluate((el) => el.click());
-    } else {
-      const box = await waitForBox(room.locator(".reader-viewport"), { timeout, description: "reader viewport", ...timing });
-      const fraction = fractions[taps % fractions.length];
-      await page.mouse.click(box.x + box.width * fraction, box.y + box.height / 2);
-    }
+    const box = await waitForBox(room.locator(".reader-viewport"), { timeout, description: "reader viewport", ...timing });
+    const fraction = fractions[taps % fractions.length];
+    await page.mouse.click(box.x + box.width * fraction, box.y + box.height / 2);
     taps += 1;
   };
 

@@ -99,7 +99,7 @@ A step that takes more than **10 s** (`SLOW_STEP_MS`) still passes against the 4
 ```bash
 npm run build
 SONDER_E2E_TIMING=1 SONDER_E2E_TIMING_FILE=test-results/e2e-timing-wsl.jsonl \
-  npx playwright test tests/e2e/word-reader.spec.ts tests/e2e/reader-follow-highlight.spec.ts \
+  npx playwright test tests/e2e/reader-follow-highlight.spec.ts \
   tests/e2e/position-history.spec.ts
 ```
 

@@ -54,7 +54,7 @@ export type ReaderSpecTest = {
 
 /**
  * Shared beforeEach that raises the Playwright test timeout for the three
- * instrumented reader specs (word-reader, follow-highlight, position-history).
+ * instrumented reader specs (follow-highlight, position-history).
  */
 export function installReaderWaitBudget(testApi: ReaderSpecTest): void {
   testApi.beforeEach(() => {
