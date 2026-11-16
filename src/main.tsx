@@ -8,6 +8,7 @@ import "./styles.css";
 import "./appearance.css";
 import "./reader.css";
 import "./player.css";
+import "./parts/tokens.css";
 applyAppearance(cachedAppearance());
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

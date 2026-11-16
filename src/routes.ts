@@ -24,6 +24,10 @@ export type Route =
   | { name: "read"; workId: string }
   /** Old name: the reader for one ebook edition, until it opens the Read face of that ebook's book. */
   | { name: "reader"; ebookId: string }
+  /** The parts gallery (#486): an address of its own that no navigation links to, for the browser tests and builders. */
+  | { name: "gallery" }
+  /** The gallery's one child page, so the Page header's back button can be tried. */
+  | { name: "gallery-child" }
   /** An address that names nothing; it shows the first page of the place it points into. */
   | { name: "unknown"; place: Place };
 
@@ -87,6 +91,9 @@ export function readAddress(hash: string): Route {
       const workId = rest.length === 1 ? decode(rest[0]) : null;
       return workId ? { name: head, workId } : nothing("library");
     }
+    case "gallery":
+      if (!rest.length) return { name: "gallery" };
+      return rest.length === 1 && rest[0] === "child" ? { name: "gallery-child" } : nothing("library");
     case "reader": {
       // Today's reader read everything after "reader/" as the id, so an id with a slash keeps working.
       const ebookId = rest.length ? decode(rest.join("/")) : null;
@@ -128,6 +135,10 @@ export function writeAddress(route: Route): string {
       return `#${route.name}/${part(route.workId)}`;
     case "reader":
       return `#reader/${part(route.ebookId)}`;
+    case "gallery":
+      return "#gallery";
+    case "gallery-child":
+      return "#gallery/child";
     case "unknown":
       return writeAddress(firstPage(route.place));
   }
@@ -178,6 +189,8 @@ export function parentOf(route: Route): Route | null {
       return { name: "activity", part: "server" };
     case "settings-page":
       return { name: "settings" };
+    case "gallery-child":
+      return { name: "gallery" };
     default:
       return null;
   }
@@ -222,6 +235,8 @@ function built(route: Route): boolean {
     case "downloads":
     case "settings":
     case "reader":
+    case "gallery":
+    case "gallery-child":
       return true;
     case "activity":
       return route.part === "now";

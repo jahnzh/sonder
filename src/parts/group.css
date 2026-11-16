@@ -1,0 +1,31 @@
+/* Group (src/parts/Group.tsx). */
+.part-group-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.part-group-caption {
+  margin: 0;
+  padding: 0 var(--space-16);
+  color: var(--muted);
+}
+.part-group {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-radius: var(--corner-group);
+  background: var(--surface);
+  overflow: hidden;
+}
+/* The line between rows, outside each row's 52. */
+.part-group > * + * {
+  border-top: 1px solid var(--border);
+}
+.part-group-note {
+  margin: 0;
+  padding: 0 var(--space-16);
+  font-family: var(--font-body);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted);
+}

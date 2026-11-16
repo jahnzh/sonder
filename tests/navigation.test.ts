@@ -462,3 +462,51 @@ test("a scroll restoration that waits stops when the app moves to another page",
   await settle();
   assert.equal(browser.scrollY, 0);
 });
+
+test("the back button is told where it goes: the entry behind when the app made it, else the page's parent", async () => {
+  const browser = new FakeBrowser("/#gallery");
+  let nav = await load(browser);
+  nav.navigate({ name: "gallery-child" });
+  assert.deepEqual(nav.backTarget(), { name: "gallery" });
+  // Opened from Discover, a page goes back to Discover, not to its parent.
+  nav.goPlace("discover");
+  nav.navigate({ name: "gallery-child" });
+  assert.deepEqual(nav.backTarget(), { name: "discover" });
+  // A replacing move keeps the entry behind.
+  nav.navigate({ name: "gallery" }, { replace: true });
+  assert.deepEqual(nav.backTarget(), { name: "discover" });
+  // A reload keeps it, from the entry's state.
+  nav = await load(browser);
+  assert.deepEqual(nav.backTarget(), { name: "discover" });
+  // After Back, the entry reached names its own one behind: the child page Discover was opened from.
+  nav.goBack();
+  await until(() => browser.url.hash === "#discover", "#discover");
+  assert.deepEqual(nav.backTarget(), { name: "gallery-child" });
+});
+
+test("a page opened by a link names its parent, and its back button lands there in place", async () => {
+  const browser = new FakeBrowser("/#gallery/child");
+  const nav = await load(browser);
+  assert.deepEqual(nav.backTarget(), { name: "gallery" });
+  nav.goBack();
+  await settle();
+  assert.deepEqual(browser.hashes, ["#gallery"]);
+  // A link the browser added on top counts the page it was followed from as the one behind.
+  browser.followHash("#gallery/child");
+  await settle();
+  assert.deepEqual(nav.backTarget(), { name: "gallery" });
+  nav.goPlace("discover");
+  browser.followHash("#gallery/child");
+  await settle();
+  assert.deepEqual(nav.backTarget(), { name: "discover" });
+});
+
+test("an older build's entry behind names no address: the back button names the page's parent", async () => {
+  const browser = new FakeBrowser("/#discover", { sonderDepth: 0, sonderRoot: 0, sonderKey: "old0" });
+  browser.entries.push({ url: "/#gallery/child", state: { sonderDepth: 1, sonderRoot: null, sonderKey: "old1" } });
+  browser.index = 1;
+  const nav = await load(browser);
+  assert.deepEqual(nav.backTarget(), { name: "gallery" });
+  nav.goBack();
+  await until(() => browser.url.hash === "#discover", "#discover");
+});
