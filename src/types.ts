@@ -1,3 +1,4 @@
+import type { AlignmentJob } from "./reading-types.ts";
 export type Track = {
   serverAvailable?: boolean;
   deliverySource?: "server" | "torbox" | "remote";
@@ -60,10 +61,8 @@ export type Book = {
 };
 /**
  * One work as the read by work returns it: `GET /api/library` (every work in the user's library)
- * and `GET /api/works/<workId>` (one work, in the library or not), #485. Never holds a placeholder
- * audio edition: a work whose only audio edition is one has no recordings.
- * Later tickets add fields to this shape (ebook editions, reading sync, series, media state,
- * completion and the Hardcover block in #487).
+ * and `GET /api/works/<workId>` (one work, in the library or not), #485, #487, #488. Never holds a
+ * placeholder audio edition: a work whose only audio edition is one has no recordings.
  */
 export type LibraryWork = {
   workId: string;
@@ -77,6 +76,10 @@ export type LibraryWork = {
   inLibrary: boolean;
   /** The earliest of the user's library rows for the work; null when it is not in the library. */
   addedAt: number | null;
+  /** Derived as the series read derives it (ADR 0002); the override, when set, decides. */
+  finished: boolean;
+  /** The user's override of `finished` (`PATCH /api/works/<workId>/completion`), if any. */
+  completionOverride: "finished" | "unread" | null;
   /**
    * See "Chosen recording" in GLOSSARY.md: the user's stored choice (`PUT /api/works/<workId>/recording`)
    * while it is one of `recordings`, otherwise the one with the newest place, otherwise the one added
@@ -85,6 +88,65 @@ export type LibraryWork = {
   chosenRecordingId: string | null;
   /** The work's audio editions in the user's library that are not placeholders, the one added first first. */
   recordings: WorkRecording[];
+  /** The shared default ebook edition of ADR 0004 (`GET /api/works/<workId>/ebook-set`), when it is one of `ebooks`. */
+  chosenEbookId: string | null;
+  /** The work's ebook editions, without the consensus text of its ebook set, the one added first first. */
+  ebooks: WorkEbook[];
+  /**
+   * One entry per pair of one of `recordings` and one of `ebooks` that has a reading sync job, in
+   * the summary form of `GET /api/alignments?summary=1` without steps, workers and stage times
+   * (those stay on the alignment routes). A running rebuild's state is under `rebuild`.
+   */
+  readingSync: ReadingSyncSummary[];
+  /** Every series of the work (its Hardcover book's), the ones the user saved first, then in Hardcover's order. */
+  series: WorkSeries[];
+  /** The media state of ADR 0011, as `Book.mediaState`; null when the work has none for the user. */
+  mediaState: WorkMediaState | null;
+  /** As `Book.hardcover` in `GET /api/books`; null when the work has no Hardcover book. */
+  hardcover: NonNullable<Book["hardcover"]> | null;
+};
+export type WorkEbook = {
+  id: string;
+  format: string;
+  /** In bytes, 0 when the file is not there (as `GET /api/ebooks`). */
+  size: number;
+  /** The file is there. */
+  available: boolean;
+  /** Its check against the narration: its ebook-set member's status and hold reason; null when it is not a member. */
+  check: {
+    status: "pending" | "held" | "accepted" | "rejected";
+    holdReason: "awaiting_audio" | "awaiting_worker" | "language_not_supported" | "evaluation_failed" | null;
+  } | null;
+  /** The user's place, from their reader checkpoint; `origin` is null for one saved before origins were stored. */
+  place: { progression: number | null; origin: "reading" | "listening" | null; updatedAt: number } | null;
+};
+export type ReadingSyncSummary = Omit<
+  AlignmentJob,
+  | "intervals"
+  | "intervalCount"
+  | "anchoring"
+  | "pairings"
+  | "sectionsDone"
+  | "pool"
+  | "poolErrors"
+  | "bookJob"
+  | "runConfig"
+  | "ctcDevice"
+  | "ctcPrecision"
+  | "gpuUtilization"
+  | "gpuUtilizationSamples"
+  | "stageTimings"
+  | "elapsedSeconds"
+> & { intervalCount: number };
+export type WorkSeries = { id: number | null; name: string; position: number | null; saved: boolean };
+export type WorkMediaState = {
+  state: "missing" | "queued" | "failed" | "available";
+  holdReason: "unreleased" | "empty_search" | null;
+  /**
+   * The acquisition behind a queued or failed state. Its status, progress and error are shown to
+   * the administrator only, as `/api/acquisitions` is; for anyone else they are null.
+   */
+  acquisition: { id: string; status: string | null; progress: number | null; error: string | null } | null;
 };
 export type WorkRecording = {
   recordingId: string;

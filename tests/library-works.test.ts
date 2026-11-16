@@ -93,8 +93,16 @@ test("a work with only a placeholder has no recordings and the placeholder's cov
     cover: "https://assets.hardcover.app/only.jpg",
     inLibrary: true,
     addedAt: T0 + 1 * DAY,
+    finished: false,
+    completionOverride: null,
     chosenRecordingId: null,
     recordings: [],
+    chosenEbookId: null,
+    ebooks: [],
+    readingSync: [],
+    series: [],
+    mediaState: { state: "missing", holdReason: "unreleased", acquisition: null },
+    hardcover: null,
   });
   assert.deepEqual(await work(OWNER_TOKEN, "w-only"), only);
 });
@@ -239,8 +247,16 @@ test("a work outside the library comes through the one-work read", async () => {
     cover: "/covers/outside.jpg",
     inLibrary: false,
     addedAt: null,
+    finished: false,
+    completionOverride: null,
     chosenRecordingId: null,
     recordings: [],
+    chosenEbookId: null,
+    ebooks: [],
+    readingSync: [],
+    series: [],
+    mediaState: null,
+    hardcover: null,
   });
 });
 

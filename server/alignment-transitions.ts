@@ -146,6 +146,80 @@ export function listServedAlignmentJobs() {
       .all() as ServedRow[]
   ).map(servedJob);
 }
+/** The summary form of a listed job (`GET /api/alignments?summary=1`): no intervals, their count instead. */
+export const slimAlignmentJob = (job: AlignmentJob, intervalCount = job.intervals.length) => ({
+  ...job,
+  intervalCount,
+  intervals: [],
+});
+type AlignmentSummary = ReturnType<typeof slimAlignmentJob>;
+/**
+ * The last summary made of each job, with the version of its row it was made from. A row's version
+ * is its small columns and the byte lengths of its job and kept map, which SQLite gives without
+ * parsing them. Every write of a job's data goes through `persist`, which stamps `updated_at` with
+ * the time of the write; a summary is kept only when it was read after the millisecond of its row's
+ * last write, so any later write gives the row another version.
+ */
+const summaries = new Map<string, { version: string; summary: AlignmentSummary }>();
+type SummaryVersionRow = {
+  id: string;
+  updatedAt: number;
+  dataBytes: number;
+  keptBytes: number | null;
+  engine: string;
+  outcome: string | null;
+  stageTimings: string | null;
+};
+const summaryVersion = (row: SummaryVersionRow) =>
+  JSON.stringify([row.updatedAt, row.dataBytes, row.keptBytes, row.engine, row.outcome, row.stageTimings]);
+/**
+ * The served jobs of `recordingIds` in the summary form (`slimAlignmentJob`), newest first as the
+ * listing orders them. A job is read again only when its row changed (`summaries`); SQLite drops
+ * its intervals in the query, so a long map is never turned into JavaScript objects here.
+ */
+export function listServedAlignmentSummaries(recordingIds: string[]) {
+  return sqlite.transaction(() => {
+    const versions = sqlite
+      .prepare(
+        `SELECT id,updated_at AS updatedAt,octet_length(data) AS dataBytes,octet_length(published_map) AS keptBytes,
+           engine,outcome,stage_timings AS stageTimings
+         FROM alignment_jobs WHERE recording_id IN (SELECT value FROM json_each(?)) ORDER BY updated_at DESC`,
+      )
+      .all(JSON.stringify([...new Set(recordingIds)])) as SummaryVersionRow[];
+    const readAt = Date.now();
+    const changed = versions.filter((row) => summaries.get(row.id)?.version !== summaryVersion(row));
+    const fresh = new Map<string, AlignmentSummary>();
+    if (changed.length) {
+      const rows = sqlite
+        .prepare(
+          `SELECT id,json_set(data,'$.intervals',json('[]')) AS data,engine,outcome,stage_timings,
+             json_array_length(data,'$.intervals') AS interval_count,
+             CASE WHEN published_map IS NULL THEN NULL ELSE json_set(published_map,'$.intervals',json('[]')) END AS published_map,
+             json_array_length(published_map,'$.intervals') AS published_interval_count
+           FROM alignment_jobs WHERE id IN (SELECT value FROM json_each(?))`,
+        )
+        .all(JSON.stringify(changed.map((row) => row.id))) as (ServedRow & {
+        id: string;
+        interval_count: number | null;
+        published_interval_count: number | null;
+      })[];
+      for (const row of rows)
+        fresh.set(
+          row.id,
+          slimAlignmentJob(servedJob(row), (row.published_map ? row.published_interval_count : row.interval_count) ?? 0),
+        );
+      if (summaries.size >= 10_000) summaries.clear();
+      for (const row of changed) {
+        const summary = fresh.get(row.id);
+        if (summary && readAt > row.updatedAt) summaries.set(row.id, { version: summaryVersion(row), summary });
+      }
+    }
+    return versions.flatMap((row) => {
+      const summary = fresh.get(row.id) ?? summaries.get(row.id)?.summary;
+      return summary ? [summary] : [];
+    });
+  })();
+}
 /** True while a rebuild (or its failed/cancelled result) still holds a map for serving (#277). */
 export function alignmentKeepsPublishedMap(id: string) {
   return !!(

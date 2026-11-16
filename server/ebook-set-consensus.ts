@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { cancelPendingConsensus, ConsensusSupersededError, runConsensusBuild } from "./ebook-set-consensus-runner.ts";
 import { eq } from "drizzle-orm";
-import { db } from "./db.ts";
+import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
 import { extractBook } from "./reader.ts";
 import { normalizeReaderText } from "../src/reading-types.ts";
@@ -269,6 +269,20 @@ export function getEbookSetPresentation(workId: string) {
         }
       : null,
   };
+}
+
+/**
+ * The shared default ebook edition (`defaultEbookId` of `getEbookSetPresentation`) of each of
+ * `workIds` that has one, without reading the consensus text.
+ */
+export function defaultEbookIds(workIds: string[]) {
+  const rows = sqlite
+    .prepare(
+      `SELECT work_id AS workId,default_ebook_id AS ebookId FROM work_ebook_set
+       WHERE default_ebook_id IS NOT NULL AND work_id IN (SELECT value FROM json_each(?))`,
+    )
+    .all(JSON.stringify([...new Set(workIds)])) as { workId: string; ebookId: string }[];
+  return new Map(rows.map((row) => [row.workId, row.ebookId]));
 }
 
 export function setDefaultEbookOverride(workId: string, ebookId: string | null) {

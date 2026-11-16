@@ -4,12 +4,17 @@
 // "not modified", one after the remembered file checks expired, and one after an unrelated database
 // write. Evidence for a report, not a test.
 //
-//   npx tsx scripts/bench-library-read.ts [rounds]
+// With --parts (#487) every real work also has two ebook editions on disk (one with the reader's
+// place, both in its ebook set), a reading sync job whose map has 12,000 intervals and a Hardcover
+// book in two series (one saved); 20 placeholder works have an acquisition in progress.
+//
+//   npx tsx scripts/bench-library-read.ts [rounds] [--parts]
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const rounds = Number(process.argv[2] || 20);
+const rounds = Number(process.argv.slice(2).find((arg) => /^\d+$/.test(arg)) || 20);
+const parts = process.argv.includes("--parts");
 const temp = mkdtempSync(join(tmpdir(), "sonder-bench-library-"));
 process.on("exit", () => rmSync(temp, { recursive: true, force: true }));
 process.env.DATA_DIR = join(temp, "db");
@@ -58,6 +63,39 @@ sqlite.transaction(() => {
     }
     run("INSERT INTO user_progress(user_id,recording_id,track_id,position,duration,updated_at) VALUES(1,?,?,?,?,?)", recordingId, `t-${w}-0`, 10, 600, T0);
   }
+  if (!parts) return;
+  run("INSERT INTO series_catalogue(id,name,author,book_count) VALUES(1,'Saved','A',40),(2,'Other','A',40)");
+  run("INSERT INTO user_saved_series(user_id,series_id,saved_at) VALUES(1,1,?)", T0);
+  const intervals = JSON.stringify(Array.from({ length: 12_000 }, (_, i) => ({ start: i * 4, end: i * 4 + 4, fragment: `0:${i}` })));
+  for (let w = 0; w < 100; w++) {
+    const workId = `work-hc-${1000 + w}`;
+    if (w >= 40) {
+      if (w >= 60) continue;
+      run(
+        `INSERT INTO acquisitions(id,hash,magnet,backend,title,author,cover,status,progress,error,created_at,updated_at,work_id)
+         VALUES(?,?,'m','local','T','A','','downloading',0.5,NULL,?,?,?)`,
+        `acq-${w}`, `hash-${w}`, T0, T0, workId,
+      );
+      run("INSERT INTO user_acquisitions(user_id,acquisition_id) VALUES(1,?)", `acq-${w}`);
+      continue;
+    }
+    run("INSERT INTO hardcover_links(work_id,book_id,slug,series) VALUES(?,?,?,?)", workId, 5000 + w, `book-${w}`,
+      JSON.stringify([{ id: 2, name: "Other", position: w }, { id: 1, name: "Saved", position: w }]));
+    for (const n of [0, 1]) {
+      const ebookId = `eb-${w}-${n}`;
+      const path = join(media, `${ebookId}.epub`);
+      writeFileSync(path, "x".repeat(1024));
+      run("INSERT INTO ebook_editions(id,work_id,format,source) VALUES(?,?,'epub',?)", ebookId, workId, path);
+      run("INSERT INTO work_ebook_set_members(work_id,ebook_id,status,hold_reason,evidence,updated_at) VALUES(?,?,'accepted',NULL,'{}',?)", workId, ebookId, T0);
+    }
+    run("INSERT INTO work_ebook_set(work_id,consensus_sentences,projections,default_ebook_id,updated_at) VALUES(?,'[]','{}',?,?)", workId, `eb-${w}-0`, T0);
+    run("INSERT INTO user_reader_checkpoints(user_id,edition_id,data) VALUES(1,?,?)", `eb-${w}-0`,
+      JSON.stringify({ locator: { section: 0, paragraphId: "0:0", progression: 0.3 }, revision: 1, eventId: `e${w}`, deviceId: "d", updatedAt: T0, origin: "reading" }));
+    const job = { id: `job-${w}`, ebookId: `eb-${w}-0`, recordingId: `recording-ed-${w}`, status: "ready", progress: 1, engine: "e", error: null,
+      warning: null, intervals: [], sectionsDone: [], elapsedSeconds: 0, fingerprint: "f", audioFingerprint: "a", updatedAt: T0, createdAt: T0, coverage: 1, pairings: [] };
+    run("INSERT INTO alignment_jobs(id,ebook_id,recording_id,data,updated_at) VALUES(?,?,?,json_set(?,'$.intervals',json(?)),?)",
+      job.id, job.ebookId, job.recordingId, JSON.stringify(job), intervals, T0);
+  }
 })();
 
 const { createApp } = await import("../server/app.ts");
@@ -100,7 +138,7 @@ for (let i = 0; i < rounds; i++) {
   if (response.statusCode !== 304) throw new Error(`read after an unrelated write: ${response.statusCode}`);
   afterWrite.push(ms);
 }
-console.log(`works=100 recordings=40 tracks=2000 body=${first.response.body.length} bytes tag=${tag} rounds=${rounds}`);
+console.log(`works=100 recordings=40 tracks=2000${parts ? " ebooks=80 alignment-jobs=40x12000 hardcover=40 acquisitions=20" : ""} body=${first.response.body.length} bytes tag=${tag} rounds=${rounds}`);
 console.log(`first read (200):                       ${fmt(first.ms)}`);
 console.log(`unchanged read (304), median / max:     ${fmt(median(unchanged))} / ${fmt(Math.max(...unchanged))}`);
 console.log(`file checks expired (304), median / max:  ${fmt(median(expired))} / ${fmt(Math.max(...expired))}`);

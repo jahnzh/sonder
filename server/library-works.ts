@@ -7,6 +7,13 @@
  * Placeholder audio editions (`placeholder-edition.ts`) never leave this module: a recording is
  * listed only when its audio edition is in the user's library and is not a placeholder, and a
  * placeholder only lends its cover to a work without recordings.
+ *
+ * Each part is built by the code that builds it for its own route (#487): completion as the series
+ * read (`work-completion.ts`), ebook files as `GET /api/ebooks`, reading sync in the summary form of
+ * `GET /api/alignments`, media states as `GET /api/books`, the Hardcover block as `GET /api/books`.
+ * Every field is the requesting user's, or one every user of the work sees through such a route;
+ * what only the administrator sees elsewhere (a copy to the server, an acquisition's status,
+ * progress and error) is left out for anyone else.
  */
 import type { FastifyInstance } from "fastify";
 import { createHash } from "node:crypto";
@@ -16,10 +23,26 @@ import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
 import { z } from "zod";
 import { currentUserId, setUserSetting, userIsAdmin } from "./users.ts";
-import { hiddenHardcoverPlaceholders } from "./hardcover.ts";
+import { hardcoverForWorks, hiddenHardcoverPlaceholders } from "./hardcover.ts";
 import { deliveredTracks } from "./media-library.ts";
 import { placeholderEditionSql } from "./placeholder-edition.ts";
-import type { Book, LibraryWork, MediaFault, Progress, WorkRecording } from "../src/types.ts";
+import { readerPlaces, workCompletions } from "./work-completion.ts";
+import { ebookFile } from "./ebooks.ts";
+import { listEbookSetMembers } from "./ebook-set.ts";
+import { consensusEbookId, defaultEbookIds } from "./ebook-set-consensus.ts";
+import { listServedAlignmentSummaries, type slimAlignmentJob } from "./alignment-transitions.ts";
+import { getWorkMediaStates } from "./work-media-state.ts";
+import type {
+  Book,
+  LibraryWork,
+  MediaFault,
+  Progress,
+  ReadingSyncSummary,
+  WorkEbook,
+  WorkMediaState,
+  WorkRecording,
+  WorkSeries,
+} from "../src/types.ts";
 
 const idList = (ids: Iterable<string>) => JSON.stringify([...new Set(ids)]);
 
@@ -79,39 +102,45 @@ type RecordingRow = {
 type TrackRow = typeof s.tracks.$inferSelect;
 
 /**
- * Whether a file is on the server is remembered for `ttlMs`, keyed by the path and size in the row
- * that names it (a local track's source, a `media_copies` row). The server writes such a row only
- * once its file is in place (`downloads.ts` renames the copy, then writes its row; an upload or a
- * finished torrent writes its tracks after the files) and removes the file only with its row or
- * after it (`media-library.ts` removes a copy and its row together, `series-removal.ts` deletes the
- * rows first), so a change made through the server never meets a wrong answer here. A file added or
- * removed outside the server shows within `ttlMs`. `now` is replaced by tests.
+ * A file's size on the server (null: not there) is remembered for `ttlMs`, keyed by its path: a
+ * local track's source, a `media_copies` row's path, an ebook edition's source. The server writes
+ * such a row only once its file is in place (`downloads.ts` renames the copy, then writes its row;
+ * an upload or a finished torrent writes its tracks after the files; an ebook is written before
+ * its edition row) and removes the file only with its row or after it (`media-library.ts` removes
+ * a copy and its row together, `series-removal.ts` deletes the rows first), so a change made
+ * through the server never meets a wrong answer here. A file added, removed or resized outside the
+ * server shows within `ttlMs`. `now` is replaced by tests.
  */
 export const filePresence = { ttlMs: 5_000, now: () => Date.now() };
-const presence = new Map<string, { present: boolean; checkedAt: number }>();
-/** One file check behind a response: a path, the size it must have (null: any), and the answer. */
-type FileCheck = { path: string; size: number | null; present: boolean };
+const sizes = new Map<string, { size: number | null; checkedAt: number }>();
+/** One file check behind a response: a path and the size seen (null: not there). */
+type FileCheck = { path: string; size: number | null };
 
-/** The checks of `hasServerMedia` (`downloads.ts`): the file exists, with `size` when given. */
-function fileOnServer(path: string, size: number | null) {
-  const key = `${size ?? ""}\n${path}`;
+/** The file's size, or null when it is not there or cannot be read (as `existsSync`). */
+function fileSize(path: string) {
   const now = filePresence.now();
-  const known = presence.get(key);
-  if (known && now - known.checkedAt < filePresence.ttlMs) return known.present;
-  let present = false;
+  const known = sizes.get(path);
+  if (known && now - known.checkedAt < filePresence.ttlMs) return known.size;
+  let size: number | null = null;
   try {
-    const stat = statSync(path, { throwIfNoEntry: false });
-    present = !!stat && (size === null || stat.size === size);
+    size = statSync(path, { throwIfNoEntry: false })?.size ?? null;
   } catch (error) {
     // As `existsSync`: a path that cannot be read counts as absent. An unexpected reason gets a line in the log.
     const code = (error as NodeJS.ErrnoException).code;
     if (code !== "ENOENT" && code !== "ENOTDIR" && code !== "EACCES")
       console.warn(`library read: could not check a media file (${code ?? String(error)})`);
-    present = false;
+    size = null;
   }
-  if (presence.size >= 100_000) presence.clear();
-  presence.set(key, { present, checkedAt: now });
-  return present;
+  if (sizes.size >= 100_000) sizes.clear();
+  sizes.set(path, { size, checkedAt: now });
+  return size;
+}
+
+/** `fileSize`, with each check added to `files` so a later read can tell whether it still holds. */
+function checkedFileSize(files: FileCheck[], path: string) {
+  const size = fileSize(path);
+  files.push({ path, size });
+  return size;
 }
 
 /** `faultsFor` (`media-library.ts`) for many recordings in one query. */
@@ -166,16 +195,12 @@ function recordingsByWork(userId: number, workIds: string[], files: FileCheck[])
         .all(idList(recordingIds)) as { trackId: string; path: string; size: number }[]
     ).map((copy) => [copy.trackId, copy]),
   );
-  const check = (path: string, size: number | null) => {
-    const present = fileOnServer(path, size);
-    files.push({ path, size, present });
-    return present;
-  };
-  // `hasServerMedia` without a query per track.
+  // `hasServerMedia` (`downloads.ts`) without a query per track: a local track's file is there, or
+  // a copy's file is there with the copy's size.
   const onServer = (track: TrackRow) => {
-    if (track.sourceType === "local" && check(track.source, null)) return true;
+    if (track.sourceType === "local" && checkedFileSize(files, track.source) !== null) return true;
     const copy = copies.get(track.id);
-    return !!copy && check(copy.path, copy.size);
+    return !!copy && checkedFileSize(files, copy.path) === copy.size;
   };
   const places = new Map(
     db
@@ -254,6 +279,137 @@ function fallbackCovers(userId: number, workIds: string[], hidden: Set<string>) 
   return covers;
 }
 
+/**
+ * The ebook editions of `workIds` (without the consensus text of an ebook set) with their files,
+ * their checks against the narration and the user's places, and the shared default of each work.
+ * Each file check made is added to `files`.
+ */
+function ebooksByWork(userId: number, workIds: string[], files: FileCheck[]) {
+  const rows = (
+    sqlite
+      .prepare(
+        `SELECT work_id AS workId,id,format,source FROM ebook_editions
+         WHERE work_id IN (SELECT value FROM json_each(?)) ORDER BY rowid`,
+      )
+      .all(idList(workIds)) as { workId: string; id: string; format: string; source: string }[]
+  ).filter((row) => row.id !== consensusEbookId(row.workId));
+  const byWork = new Map<string, WorkEbook[]>();
+  const chosen = new Map<string, string>();
+  if (!rows.length) return { byWork, chosen };
+  const places = readerPlaces(userId, workIds);
+  const checks = new Map<string, WorkEbook["check"]>();
+  for (const workId of new Set(rows.map((row) => row.workId)))
+    for (const member of listEbookSetMembers(workId))
+      checks.set(member.ebookId, { status: member.status, holdReason: member.holdReason });
+  for (const row of rows) {
+    const place = places.get(row.id);
+    const ebook: WorkEbook = {
+      id: row.id,
+      format: row.format,
+      ...ebookFile(row.source, (path) => checkedFileSize(files, path)),
+      check: checks.get(row.id) ?? null,
+      place: place ? { progression: place.progression, origin: place.origin, updatedAt: place.updatedAt } : null,
+    };
+    byWork.set(row.workId, [...(byWork.get(row.workId) ?? []), ebook]);
+  }
+  for (const [workId, ebookId] of defaultEbookIds([...byWork.keys()]))
+    if (byWork.get(workId)?.some((ebook) => ebook.id === ebookId)) chosen.set(workId, ebookId);
+  return { byWork, chosen };
+}
+
+/** The alignment list's summary form without steps, workers and stage times: those stay on the alignment routes. */
+function readingSyncSummary(job: ReturnType<typeof slimAlignmentJob>): ReadingSyncSummary {
+  const {
+    anchoring: _anchoring,
+    pairings: _pairings,
+    sectionsDone: _sectionsDone,
+    pool: _pool,
+    poolErrors: _poolErrors,
+    bookJob: _bookJob,
+    runConfig: _runConfig,
+    ctcDevice: _ctcDevice,
+    ctcPrecision: _ctcPrecision,
+    gpuUtilization: _gpuUtilization,
+    gpuUtilizationSamples: _gpuUtilizationSamples,
+    stageTimings: _stageTimings,
+    elapsedSeconds: _elapsedSeconds,
+    ...summary
+  } = job;
+  return summary;
+}
+
+/**
+ * For each work, one reading sync entry per pair of one of its listed recordings and one of its
+ * listed ebook editions that has a job (`alignment_jobs` holds one per pair), ordered by recording,
+ * then edition.
+ */
+function readingSyncByWork(recordings: Map<string, WorkRecording[]>, ebooks: Map<string, WorkEbook[]>) {
+  const byWork = new Map<string, ReadingSyncSummary[]>();
+  const recordingIds = [...recordings.entries()].flatMap(([workId, list]) =>
+    ebooks.has(workId) ? list.map((recording) => recording.recordingId) : [],
+  );
+  if (!recordingIds.length) return byWork;
+  const jobs = new Map(listServedAlignmentSummaries(recordingIds).map((job) => [`${job.recordingId}\n${job.ebookId}`, job]));
+  for (const [workId, list] of recordings)
+    for (const recording of list)
+      for (const ebook of ebooks.get(workId) ?? []) {
+        const job = jobs.get(`${recording.recordingId}\n${ebook.id}`);
+        if (job) byWork.set(workId, [...(byWork.get(workId) ?? []), readingSyncSummary(job)]);
+      }
+  return byWork;
+}
+
+/** The Hardcover series of a work, the ones in `saved` (the user's saved series) first, then in Hardcover's order. */
+function workSeries(hardcover: LibraryWork["hardcover"], saved: Set<number>): WorkSeries[] {
+  const series = (hardcover?.series ?? []).map((entry) => ({
+    id: entry.id ?? null,
+    name: entry.name,
+    position: entry.position ?? null,
+    saved: entry.id !== undefined && saved.has(entry.id),
+  }));
+  return [...series.filter((entry) => entry.saved), ...series.filter((entry) => !entry.saved)];
+}
+
+/**
+ * The media states of `workIds` for the user (ADR 0011, `getWorkMediaStates`) with their
+ * acquisitions. An acquisition's status, progress and error are the administrator's, as
+ * `/api/acquisitions` and `/api/activity` are: anyone else gets its id only.
+ */
+function mediaStates(userId: number, workIds: string[]) {
+  const states = getWorkMediaStates(userId, workIds);
+  const acquisitionIds = [...states.values()].flatMap((state) => (state.acquisitionId ? [state.acquisitionId] : []));
+  const acquisitions = new Map(
+    acquisitionIds.length && userIsAdmin(userId)
+      ? (
+          sqlite
+            .prepare(
+              `SELECT id,status,progress,error FROM acquisitions WHERE id IN (SELECT value FROM json_each(?))`,
+            )
+            .all(idList(acquisitionIds)) as { id: string; status: string; progress: number; error: string | null }[]
+        ).map((row) => [row.id, row])
+      : [],
+  );
+  const byWork = new Map<string, WorkMediaState>();
+  for (const [workId, state] of states) {
+    const job = state.acquisitionId ? acquisitions.get(state.acquisitionId) : undefined;
+    byWork.set(workId, {
+      state: state.state,
+      holdReason: state.holdReason,
+      acquisition: state.acquisitionId
+        ? { id: state.acquisitionId, status: job?.status ?? null, progress: job?.progress ?? null, error: job?.error ?? null }
+        : null,
+    });
+  }
+  return byWork;
+}
+
+const savedSeries = (userId: number) =>
+  new Set(
+    (sqlite.prepare("SELECT series_id AS id FROM user_saved_series WHERE user_id=?").all(userId) as { id: number }[]).map(
+      (row) => row.id,
+    ),
+  );
+
 /** The user's earliest library row per work, for the works in their library. */
 function libraryRows(userId: number, workIds?: string[]) {
   const rows = sqlite
@@ -286,11 +442,19 @@ function buildWorks(userId: number, workIds: string[], hidden: Set<string>, file
   const recordings = recordingsByWork(userId, workIds, files);
   const choices = storedChoices(userId, workIds);
   const covers = fallbackCovers(userId, workIds, hidden);
+  const completions = workCompletions(userId, workIds);
+  const ebooks = ebooksByWork(userId, workIds, files);
+  const readingSync = readingSyncByWork(recordings, ebooks.byWork);
+  const states = mediaStates(userId, workIds);
+  const saved = savedSeries(userId);
+  const hardcoverBlocks = hardcoverForWorks(userId, workIds);
   return workIds.flatMap((workId) => {
     const work = works.get(workId);
     if (!work) return [];
     const listed = recordings.get(workId) ?? [];
     const chosen = chosenRecordingId(listed, { stored: choices.get(workId) ?? null });
+    const hardcover = hardcoverBlocks.get(workId) ?? null;
+    const completion = completions.get(workId);
     return [
       {
         workId,
@@ -302,8 +466,16 @@ function buildWorks(userId: number, workIds: string[], hidden: Set<string>, file
         cover: listed.find((recording) => recording.recordingId === chosen)?.cover ?? covers.get(workId) ?? "",
         inLibrary: added.has(workId),
         addedAt: added.get(workId) ?? null,
+        finished: completion?.finished ?? false,
+        completionOverride: completion?.completionOverride ?? null,
         chosenRecordingId: chosen,
         recordings: listed,
+        chosenEbookId: ebooks.chosen.get(workId) ?? null,
+        ebooks: ebooks.byWork.get(workId) ?? [],
+        readingSync: readingSync.get(workId) ?? [],
+        series: workSeries(hardcover, saved),
+        mediaState: states.get(workId) ?? null,
+        hardcover,
       },
     ];
   });
@@ -351,7 +523,7 @@ const libraryReads = new Map<number, LibraryRead>();
 function libraryRead(userId: number): LibraryRead {
   const database = databaseVersion();
   const last = libraryReads.get(userId);
-  if (last && last.database === database && last.files.every((file) => fileOnServer(file.path, file.size) === file.present))
+  if (last && last.database === database && last.files.every((file) => fileSize(file.path) === file.size))
     return last;
   const files: FileCheck[] = [];
   const body = JSON.stringify(libraryWorks(userId, files));
