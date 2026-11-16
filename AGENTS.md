@@ -65,7 +65,7 @@ The setup that severity is judged against: one owner using the app on a phone an
 
 ## Changes and Safety
 
-Use concise, imperative commit subjects; history also uses scopes such as `fix(ci):` and issue references. PR descriptions should explain the change, link the issue, list checks and include screenshots for visual changes. Keep `.env`, `data/` and `artifacts/` private. Database schema changes must remain additive and update both `server/db.ts` and `server/schema.ts`. Read `docs/LOCAL_CHECKS.md` before backups or live verification. `git push` runs the pre-push hook: `npm run build` (under a minute) when the push carries more than documentation, nothing for a push of only `docs/` or markdown files, and never the test suites (#498). Verify the push landed with `git status -sb`; `SONDER_SKIP_PREPUSH=1 git push` skips the hook once for an already-checked revision.
+Use concise, imperative commit subjects; history also uses scopes such as `fix(ci):` and issue references. PR descriptions should explain the change, link the issue, list checks and include screenshots for visual changes. Keep `.env`, `data/` and `artifacts/` private. Database schema changes must remain additive and update both `server/db.ts` and `server/schema.ts`. Read `docs/LOCAL_CHECKS.md` before backups or live verification. `git push` runs the pre-push hook: `npm run build` (under a minute) when the push carries more than documentation, nothing for a push of only `docs/` or markdown files, and never the test suites, which the committed check runs on the pushed commit (`npm run ci:run <sha>`, #498). Verify the push landed with `git status -sb`; `SONDER_SKIP_PREPUSH=1 git push` skips the hook once for an already-checked revision.
 
 ## Agent skills
 
@@ -97,7 +97,7 @@ Agent skills setup follows the main flow from https://www.aihero.dev/skills-setu
 - Before installing, checking or recovering the usage collector (`scripts/orca-usage.mjs`), or judging `usage` in a recommendation, read `docs/agents/usage-collector.md`.
 - Before reading or writing a multi-provider dispatch evaluation (`docs/agents/dispatch-evaluation.md`, `scripts/orca-dispatch-eval.mjs`), read that doc first. It never starts workers or sends history to Jev.
 - Before coordinating workers (a heartbeat, a worker's report, a check, a landing, a deploy, host work, stopping a run, closing an issue, reporting to the owner), read `docs/agents/coordinator-checks.md`.
-- Install the git hooks once per clone with `scripts/install-hooks.sh`. The pre-commit hook typechecks. The pre-push hook runs `npm run build` when a push carries more than documentation (`docs/` or markdown) and nothing otherwise; it does not run the test suites, which the committed check runs on the pushed commit (`npm run ci:run <sha>`).
+- Install the git hooks once per clone with `scripts/install-hooks.sh`. What the pre-push hook runs is described under "Changes and Safety".
 - Update the alignment workers on the pool hosts with `scripts/update-ctc-workers.sh <commit>`; `scripts/install-ctc-workers.sh` is for a new host.
 
 ## Coordinator shell helpers (Orca)

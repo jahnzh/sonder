@@ -15,21 +15,28 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { tempDir } from "./temp-dir.ts";
+
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-function gitIn(cwd: string, ...args: string[]) {
+/** The caller's environment without its GIT_ variables and git configuration: git in `home` answers for `home` alone. */
+function isolatedGitEnv(home: string) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
+  return { ...env, HOME: home, XDG_CONFIG_HOME: home, GIT_CONFIG_NOSYSTEM: "1" };
+}
+
+function gitIn(cwd: string, ...args: string[]) {
   const result = spawnSync("git", args, {
     cwd,
     encoding: "utf8",
-    env: { ...env, HOME: cwd, XDG_CONFIG_HOME: cwd, GIT_CONFIG_NOSYSTEM: "1" },
+    env: isolatedGitEnv(cwd),
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   return result.stdout.trim();
 }
 
 function makeTempRepo() {
-  const root = mkdtempSync(join(tmpdir(), "sonder-git-hooks-"));
+  const root = tempDir("sonder-git-hooks-");
   mkdirSync(join(root, ".githooks"), { recursive: true });
   for (const hook of ["pre-push", "pre-commit"]) {
     cpSync(join(repoRoot, ".githooks", hook), join(root, ".githooks", hook));
@@ -71,10 +78,7 @@ function runHook(
     input: stdin,
     env: {
       // The hook asks git what is pushed; a GIT_ variable of the caller (a hook that runs these tests) must not answer for it.
-      ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_"))),
-      HOME: root,
-      XDG_CONFIG_HOME: root,
-      GIT_CONFIG_NOSYSTEM: "1",
+      ...isolatedGitEnv(root),
       // A skip variable set in the caller's shell must not decide these tests.
       SONDER_SKIP_PREPUSH: undefined,
       ...env,
@@ -146,14 +150,11 @@ function runPreCommit(
   });
 }
 
+/** A seeded repository with the hook and a stub npm; its folder is removed when this file's process ends. */
 function withRepo(run: (context: { root: string; base: string; binDir: string; logPath: string }) => void) {
   const root = makeTempRepo();
-  try {
-    const base = seedRepo(root);
-    run({ root, base, ...writeStubNpm(root) });
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+  const base = seedRepo(root);
+  run({ root, base, ...writeStubNpm(root) });
 }
 
 test("pre-push hook runs the build, and not the unit suite, when code is pushed", () => {
@@ -192,19 +193,68 @@ test("pre-push hook runs the build when documentation and code are pushed togeth
 });
 
 test("pre-push hook compares a new branch with where it left main", () => {
-  withRepo(({ root, base, binDir, logPath }) => {
-    // The remote does not have the branch yet: its id is all zeros.
+  withRepo(({ root, binDir, logPath }) => {
+    // Main moves on with code after the branch left it. Compared with main's tip the branch would
+    // seem to change that code too; compared with where it left main it changes documentation only.
+    gitIn(root, "checkout", "-q", "-b", "work");
     const docs = commitFiles(root, { "docs/plan.md": "plan\n" });
+    gitIn(root, "checkout", "-q", "main");
+    const mainTip = commitFiles(root, { "src/app.ts": "export const one = 100;\n" }, "main moves on");
+    gitIn(root, "update-ref", "refs/remotes/origin/main", mainTip);
+    gitIn(root, "checkout", "-q", "work");
+
+    // The remote does not have the branch yet: its id is all zeros.
     const onlyDocs = runHook(root, binDir, {}, update(docs, ZERO));
     assert.equal(onlyDocs.status, 0, onlyDocs.stderr || onlyDocs.stdout);
     assert.match(onlyDocs.stdout, /only documentation is pushed/);
     assert.deepEqual(npmCalls(logPath), []);
 
-    const code = commitFiles(root, { "src/app.ts": "export const one = 3;\n" });
+    const code = commitFiles(root, { "server/app.ts": "export {};\n" });
     const withCode = runHook(root, binDir, {}, update(code, ZERO));
     assert.equal(withCode.status, 0, withCode.stderr || withCode.stdout);
     assert.deepEqual(npmCalls(logPath), ["run build"]);
-    assert.notEqual(base, code);
+  });
+});
+
+test("pre-push hook runs the build when a code file is moved into docs or renamed to markdown", () => {
+  withRepo(({ root, base, binDir, logPath }) => {
+    // Git lists a rename under its new name only, unless it is told not to follow renames.
+    mkdirSync(join(root, "docs"), { recursive: true });
+    gitIn(root, "mv", "src/app.ts", "docs/app.ts");
+    gitIn(root, "commit", "-qm", "move code into docs");
+    const moved = gitIn(root, "rev-parse", "HEAD");
+    const result = runHook(root, binDir, {}, update(moved, base));
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.deepEqual(npmCalls(logPath), ["run build"]);
+  });
+});
+
+test("pre-push hook treats a documentation file with other than ASCII letters in its name as documentation", () => {
+  withRepo(({ root, base, binDir, logPath }) => {
+    const head = commitFiles(root, { "docs/læsevejledning.md": "tekst\n", "docs/two words.md": "text\n" });
+    const result = runHook(root, binDir, {}, update(head, base));
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /only documentation is pushed/);
+    assert.deepEqual(npmCalls(logPath), []);
+  });
+});
+
+test("pre-push hook reads a ref update that does not end with a newline", () => {
+  withRepo(({ root, base, binDir, logPath }) => {
+    const head = commitFiles(root, { "src/app.ts": "export const one = 7;\n" });
+    const result = runHook(root, binDir, {}, update(head, base).trimEnd());
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.deepEqual(npmCalls(logPath), ["run build"]);
+  });
+});
+
+test("pre-push hook says so when the pushed commits change no file", () => {
+  withRepo(({ root, base, binDir, logPath }) => {
+    // A new branch that points at a commit main already has.
+    const result = runHook(root, binDir, {}, update(base, ZERO));
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /change no file/);
+    assert.deepEqual(npmCalls(logPath), []);
   });
 });
 

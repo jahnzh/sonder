@@ -8,9 +8,9 @@ set -euo pipefail
 # commit itself (npm run ci:run <sha>; npm run ci:push dispatches it).
 
 # Git sends one line per ref update on stdin: <local ref> <local sha> <remote ref> <remote sha>.
-# Read them all first, so the push does not hang.
+# Read them all first, so the push does not hang. The last line counts also without a newline.
 updates=()
-while IFS= read -r line; do
+while IFS= read -r line || [[ -n "$line" ]]; do
   updates+=("$line")
 done
 
@@ -22,9 +22,10 @@ fi
 # An all-zero id stands for "no commit": a branch that is deleted, or one the remote does not have yet.
 is_zero() { [[ "$1" =~ ^0+$ ]]; }
 
-pushed=0   # a ref update carries commits
-unknown=0  # what a ref update changes could not be listed
-code=0     # a changed file is not documentation
+pushed=0    # a ref update carries commits
+unknown=0   # what a ref update changes could not be listed
+changed=0   # the pushed commits change a file
+has_code=0  # a changed file is not documentation
 
 for line in ${updates[@]+"${updates[@]}"}; do
   read -r _local_ref local_sha _remote_ref remote_sha <<<"$line" || true
@@ -38,15 +39,19 @@ for line in ${updates[@]+"${updates[@]}"}; do
   else
     base="$remote_sha"
   fi
-  if [[ -z "$base" ]] || ! files="$(git diff --name-only "$base" "$local_sha" -- 2>/dev/null)"; then
+  # --no-renames: a file moved into docs/ is also a file removed from where it was. Without it git
+  # lists only the new name, and moving code into docs/ would pass as documentation.
+  # core.quotepath=off: a name with other than ASCII letters is listed as it is, not quoted.
+  if [[ -z "$base" ]] || ! files="$(git -c core.quotepath=off diff --no-renames --name-only "$base" "$local_sha" -- 2>/dev/null)"; then
     unknown=1
     continue
   fi
   while IFS= read -r file; do
     [[ -n "$file" ]] || continue
+    changed=1
     case "$file" in
       docs/* | *.md) ;;
-      *) code=1 ;;
+      *) has_code=1 ;;
     esac
   done <<<"$files"
 done
@@ -56,12 +61,16 @@ if [[ $pushed -eq 0 ]]; then
   exit 0
 fi
 
-if [[ $code -eq 0 && $unknown -eq 0 ]]; then
-  echo "Pre-push hook: only documentation is pushed (docs/ or markdown); the build is not run."
+if [[ $has_code -eq 0 && $unknown -eq 0 ]]; then
+  if [[ $changed -eq 0 ]]; then
+    echo "Pre-push hook: the pushed commits change no file; the build is not run."
+  else
+    echo "Pre-push hook: only documentation is pushed (docs/ or markdown); the build is not run."
+  fi
   exit 0
 fi
 
-if [[ $code -eq 0 ]]; then
+if [[ $has_code -eq 0 ]]; then
   echo "Pre-push hook: could not list what is pushed; running the build."
 fi
 
