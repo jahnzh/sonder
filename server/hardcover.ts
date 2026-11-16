@@ -502,10 +502,17 @@ export async function hardcoverSeriesSearch(userId: number, query: string) {
       book_series: z.array(z.object({ book: z.object({ cached_image: image }).nullable() })).default([]),
     })) }),
   );
+  // `saved`: the user saved the series (#573); another user's saved series are not theirs.
+  const saved = new Set(
+    (sqlite.prepare("SELECT series_id AS id FROM user_saved_series WHERE user_id=?").all(userId) as { id: number }[]).map(
+      (row) => row.id,
+    ),
+  );
   return result.series.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id)).map((item) => ({
     id: item.id, name: item.name, author: item.author?.name ?? null,
     count: item.books_count ?? null,
     cover: item.book_series.find((entry) => entry.book?.cached_image?.url)?.book?.cached_image?.url ?? null,
+    saved: saved.has(item.id),
   }));
 }
 const SERIES_REFRESH_MAX_AGE_MS = 60_000;
