@@ -473,8 +473,10 @@ test("a second user's places, overrides and saved series are not visible", async
     "INSERT INTO user_work_completion(user_id,work_id,status) VALUES(?,'w-two','finished') ON CONFLICT DO UPDATE SET status='finished'",
     OWNER,
   );
-  // w-epub's only audio edition is a placeholder: Sam sees the work once it is in Sam's library too.
-  assert.equal((await get("/api/works/w-epub", SAM_TOKEN)).statusCode, 404);
+  // w-epub's only audio edition is a placeholder Sam may not see, but it has ebook editions, which
+  // every user is shown (`GET /api/ebooks`), so Sam sees the work (#573: the rule `GET /api/works`
+  // shares with this read). Sam has it in the library too below.
+  assert.equal((await get("/api/works/w-epub", SAM_TOKEN)).statusCode, 200);
   run("INSERT INTO user_library(user_id,book_id,status,added_at) VALUES(?,'hc-201','unread',?)", SAM, T0 + 25 * DAY);
   const samEpub = await bothReads(SAM_TOKEN, "w-epub");
   assert.deepEqual(samEpub.ebooks.map((e) => e.id), ["eb-epub", "eb-pdf"]);
