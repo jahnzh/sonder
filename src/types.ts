@@ -58,6 +58,52 @@ export type Book = {
     acquisitionId?: string | null;
   } | null;
 };
+/**
+ * One work as the read by work returns it: `GET /api/library` (every work in the user's library)
+ * and `GET /api/works/<workId>` (one work, in the library or not), #485. Never holds a placeholder
+ * audio edition: a work whose only audio edition is one has no recordings.
+ * Later tickets add fields to this shape (ebook editions, reading sync, series, media state,
+ * completion and the Hardcover block in #487; the stored choice in #488).
+ */
+export type LibraryWork = {
+  workId: string;
+  title: string;
+  author: string;
+  description: string;
+  genre: string;
+  year: number;
+  /** The chosen recording's cover; without one, the placeholder's. */
+  cover: string;
+  inLibrary: boolean;
+  /** The earliest of the user's library rows for the work; null when it is not in the library. */
+  addedAt: number | null;
+  /** See "Chosen recording" in GLOSSARY.md; null without recordings. */
+  chosenRecordingId: string | null;
+  /** The work's audio editions in the user's library that are not placeholders, the one added first first. */
+  recordings: WorkRecording[];
+};
+export type WorkRecording = {
+  recordingId: string;
+  editionId: string;
+  narrator: string;
+  language: string | null;
+  releaseTitle: string | null;
+  sourceLabel: string;
+  cover: string;
+  duration: number;
+  /** With chapters and where each is available from, as in `Book.tracks`. */
+  tracks: Track[];
+  /** Every track is on the server. */
+  serverStored: boolean;
+  faults: NonNullable<Book["faults"]>;
+  /** The user's place. */
+  progress: Progress | null;
+  /**
+   * A copy to the server that has not finished. Always null for a reader who is not the
+   * administrator: the copy queue is the administrator's (`/api/acquisitions`, `/api/activity`).
+   */
+  serverCopy: { status: "queued" | "downloading" | "paused" | "error"; progress: number; error: string | null } | null;
+};
 export type MediaFault={reason:"wrong-language"|"wrong-book"|"bad-audio"|"incomplete"|"other";note:string;updatedAt:number};
 export type PlaybackSourceChoice="auto"|"device"|"server"|"original";
 export type RecordingSources={recordingId:string;faults:NonNullable<Book['faults']>;managedCopies:number;serverFiles:number;originalFiles:number;tracks:{id:string;server:boolean;original:boolean}[]};

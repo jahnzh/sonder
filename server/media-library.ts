@@ -9,6 +9,34 @@ import { mediaRoot, ensureMediaStorage } from "./storage.ts";
 import { hasServerMedia, pauseServerDownload } from "./downloads.ts";
 import type { Book, MediaFault, RecordingSources } from "../src/types.ts";
 type Track = typeof s.tracks.$inferSelect;
+/**
+ * A recording's tracks as clients read them (`GET /api/books`, the read by work): in order, without
+ * their file path, with where each is available from. `onServer` is asked once per track; the read
+ * by work passes one that needs no query per track.
+ */
+export function deliveredTracks(
+  rows: Track[],
+  faults: NonNullable<Book["faults"]>,
+  onServer: (track: Track) => boolean = hasServerMedia,
+) {
+  const tracks = [...rows]
+    .sort((a, b) => a.index - b.index)
+    .map((t) => {
+      const serverAvailable = onServer(t);
+      return {
+        ...t,
+        source: "",
+        sourceType: t.sourceType as "local" | "remote" | "torbox",
+        serverAvailable,
+        deliverySource: serverAvailable && !faults.server
+          ? ("server" as const)
+          : t.sourceType === "torbox"
+            ? ("torbox" as const)
+            : ("remote" as const),
+      };
+    });
+  return { tracks, serverStored: tracks.length > 0 && tracks.every((t) => t.serverAvailable) };
+}
 export const sourceChoice = z.enum(["auto", "server", "original"]);
 export function faultsFor(recordingId: string): NonNullable<Book["faults"]> {
   const rows = sqlite
