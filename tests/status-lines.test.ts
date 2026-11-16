@@ -93,7 +93,7 @@ test("while a reading sync is rebuilt or prepared again, the line is that of the
 test("a save to this device: every line of the table, with its figures", () => {
   assert.equal(deviceSaveLine({ keep: true, saving: true, filesTotal: 12, filesSaved: 3, size: 0 }), "Saving · 3 of 12 files");
   assert.equal(deviceSaveLine({ keep: false, saving: true, filesTotal: 12, filesSaved: 3, size: 0 }), "Saving · 3 of 12 files");
-  assert.equal(deviceSaveLine({ keep: true, saving: false, filesTotal: 12, filesSaved: 12, size: 414_000_000 }), "On this device · 414.0 MB");
+  assert.equal(deviceSaveLine({ keep: true, saving: false, filesTotal: 12, filesSaved: 12, size: 414_000_000 }), "On this device · 414 MB");
   assert.equal(deviceSaveLine({ keep: false, saving: false, filesTotal: 2, filesSaved: 2, size: 1_500_000_000 }), "On this device · 1.5 GB");
   assert.equal(deviceSaveLine({ keep: true, saving: false, filesTotal: 12, filesSaved: 8, size: 300_000_000 }), "Not complete · 8 of 12 files");
   assert.equal(deviceSaveLine({ keep: true, saving: false, filesTotal: 0, filesSaved: 0, size: 0 }), "Nothing to save yet");
@@ -177,4 +177,16 @@ test("the server imports nothing from the status lines, and only files the produ
   assert.ok(imported.size >= 3, "the scan finds the server's imports of src/");
   assert.equal(imported.has("status-lines.ts"), false);
   assert.deepEqual([...imported].filter((file) => !copied.has(file)), [], "every file of src/ the server imports is in the image");
+});
+
+test("a size reads as the boards write it: one decimal below ten, none from ten up, no .0", async () => {
+  const { bytes } = await import("../src/size-format.ts");
+  assert.equal(bytes(414_000_000), "414 MB");
+  assert.equal(bytes(600_000), "600 KB");
+  assert.equal(bytes(1_600_000), "1.6 MB");
+  assert.equal(bytes(2_100_000_000), "2.1 GB");
+  assert.equal(bytes(12_000_000_000), "12 GB");
+  assert.equal(bytes(1_000_000_000), "1 GB");
+  assert.equal(bytes(9_960_000), "10 MB");
+  assert.equal(bytes(0), "0 KB");
 });
