@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sonder design language</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Manrope:wght@600;700&family=Literata:wght@400&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#dd8966}a:hover{color:#f0a586}
+</style>
+</helmet>
+<div style="width: 1280px; height: 1000px; box-sizing: border-box; padding: 48px; background: #101510; color: #e6eadf; font-family: 'DM Sans', system-ui, sans-serif; display: flex; flex-direction: column; gap: 32px">
+<div style="display: flex; align-items: baseline; justify-content: space-between; gap: 24px">
+<h1 style="margin: 0; font-family: 'Manrope', sans-serif; font-weight: 700; font-size: 28px; line-height: 34px">Sonder design language</h1>
+<p style="margin: 0; font-size: 14px; line-height: 20px; color: #a9b59d">One grid, one row, one control height, three corner sizes, five text styles.</p>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 32px">
+
+<div style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0 0 4px; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Colour</h2>
+<div style="display: flex; align-items: center; gap: 12px"><div style="width: 44px; height: 44px; border-radius: 8px; background: #101510; border: 1px solid #3c4934"></div><div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Ground</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">#101510 · page</div></div></div>
+<div style="display: flex; align-items: center; gap: 12px"><div style="width: 44px; height: 44px; border-radius: 8px; background: #182117; border: 1px solid #3c4934"></div><div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Surface</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">#182117 · groups, bars</div></div></div>
+<div style="display: flex; align-items: center; gap: 12px"><div style="width: 44px; height: 44px; border-radius: 8px; background: #26331f"></div><div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Raised</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">#26331f · controls, selected</div></div></div>
+<div style="display: flex; align-items: center; gap: 12px"><div style="width: 44px; height: 44px; border-radius: 8px; background: #3c4934"></div><div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Line</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">#3c4934 · dividers only</div></div></div>
+<div style="display: flex; align-items: center; gap: 12px"><div style="width: 44px; height: 44px; border-radius: 8px; background: #e6eadf"></div><div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Text</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">#e6eadf · titles, values</div></div></div>
+<div style="display: flex; align-items: center; gap: 12px"><div style="width: 44px; height: 44px; border-radius: 8px; background: #a9b59d"></div><div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Muted</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">#a9b59d · secondary text, icons</div></div></div>
+<div style="display: flex; align-items: center; gap: 12px"><div style="width: 44px; height: 44px; border-radius: 8px; background: {{accent}}"></div><div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Accent</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">One per screen: play, the main action</div></div></div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 16px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Type</h2>
+<div><div style="font-family: 'Manrope', sans-serif; font-weight: 700; font-size: 28px; line-height: 34px">Library</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Title · Manrope 700 · 28/34 · one per screen</div></div>
+<div><div style="font-family: 'Manrope', sans-serif; font-weight: 700; font-size: 20px; line-height: 26px">Continue listening</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Heading · Manrope 700 · 20/26</div></div>
+<div><div style="font-size: 16px; line-height: 22px">Default speed</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Body · DM Sans 400 · 16/22 · rows, text</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Server copy</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Label · DM Sans 500 · 14/20 · values, buttons</div></div>
+<div><div style="font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">This device</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Caption · DM Sans 600 · 12/16 · group names</div></div>
+<div><div style="font-family: 'Literata', Georgia, serif; font-size: 19px; line-height: 32px">The reader keeps Literata.</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Book text only</div></div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 16px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Space and shape</h2>
+<div style="display: flex; align-items: flex-end; gap: 12px">
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><div style="width: 4px; height: 4px; background: {{accent}}"></div><span style="font-size: 12px; line-height: 16px; color: #a9b59d">4</span></div>
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><div style="width: 8px; height: 8px; background: {{accent}}"></div><span style="font-size: 12px; line-height: 16px; color: #a9b59d">8</span></div>
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><div style="width: 12px; height: 12px; background: {{accent}}"></div><span style="font-size: 12px; line-height: 16px; color: #a9b59d">12</span></div>
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><div style="width: 16px; height: 16px; background: {{accent}}"></div><span style="font-size: 12px; line-height: 16px; color: #a9b59d">16</span></div>
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><div style="width: 24px; height: 24px; background: {{accent}}"></div><span style="font-size: 12px; line-height: 16px; color: #a9b59d">24</span></div>
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><div style="width: 32px; height: 32px; background: {{accent}}"></div><span style="font-size: 12px; line-height: 16px; color: #a9b59d">32</span></div>
+</div>
+<p style="margin: 0; font-size: 12px; line-height: 16px; color: #a9b59d">Every gap and padding is one of these six. Screen edge: 16 on a phone, 32 on a desktop.</p>
+<div style="display: flex; gap: 12px">
+<div style="display: flex; flex-direction: column; gap: 6px"><div style="width: 56px; height: 56px; border-radius: 8px; background: #26331f"></div><span style="font-size: 12px; line-height: 16px; color: #a9b59d">8 · controls, covers</span></div>
+<div style="display: flex; flex-direction: column; gap: 6px"><div style="width: 56px; height: 56px; border-radius: 14px; background: #26331f"></div><span style="font-size: 12px; line-height: 16px; color: #a9b59d">14 · groups, sheets</span></div>
+<div style="display: flex; flex-direction: column; gap: 6px"><div style="width: 56px; height: 56px; border-radius: 999px; background: #26331f"></div><span style="font-size: 12px; line-height: 16px; color: #a9b59d">Round · chips, play</span></div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="height: 44px; border-radius: 8px; background: #26331f; display: flex; align-items: center; padding: 0 12px; font-size: 14px; line-height: 20px; font-weight: 500">Control · 44 high</div>
+<div style="height: 52px; border-radius: 14px; background: #182117; display: flex; align-items: center; padding: 0 16px; font-size: 14px; line-height: 20px; font-weight: 500">Row · 52 high · 16 inset</div>
+<div style="height: 64px; border-radius: 14px; background: #182117; display: flex; align-items: center; padding: 0 16px; font-size: 14px; line-height: 20px; font-weight: 500">Bar · 64 high · player, tabs</div>
+</div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 16px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Controls</h2>
+<div style="display: flex; gap: 8px; flex-wrap: wrap">
+<button type="button" style="height: 44px; padding: 0 16px; border: 0; border-radius: 8px; background: {{accent}}; color: #101510; font: 600 14px/20px 'DM Sans', sans-serif">Listen</button>
+<button type="button" style="height: 44px; padding: 0 16px; border: 0; border-radius: 8px; background: #26331f; color: #e6eadf; font: 500 14px/20px 'DM Sans', sans-serif">Read</button>
+<button type="button" style="height: 44px; padding: 0 12px; border: 0; border-radius: 8px; background: transparent; color: #e6eadf; font: 500 14px/20px 'DM Sans', sans-serif">Cancel</button>
+</div>
+<div style="display: flex; gap: 8px">
+<button type="button" aria-pressed="true" style="height: 44px; padding: 0 16px; border: 0; border-radius: 999px; background: #e6eadf; color: #101510; font: 600 14px/20px 'DM Sans', sans-serif">All</button>
+<button type="button" aria-pressed="false" style="height: 44px; padding: 0 16px; border: 0; border-radius: 999px; background: #26331f; color: #e6eadf; font: 500 14px/20px 'DM Sans', sans-serif">Listening</button>
+</div>
+<div style="display: flex; padding: 4px; border-radius: 8px; background: #26331f; height: 44px; box-sizing: border-box">
+<button type="button" aria-pressed="true" style="flex: 1; border: 0; border-radius: 6px; background: #101510; color: #e6eadf; font: 600 14px/20px 'DM Sans', sans-serif">Whole book</button>
+<button type="button" aria-pressed="false" style="flex: 1; border: 0; border-radius: 6px; background: transparent; color: #a9b59d; font: 500 14px/20px 'DM Sans', sans-serif">Chapter</button>
+</div>
+<div style="border-radius: 14px; background: #182117; overflow: hidden">
+<div style="height: 52px; padding: 0 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #3c4934"><span style="font-size: 16px; line-height: 22px">Plays from</span><span style="display: flex; align-items: center; gap: 8px; font-size: 14px; line-height: 20px; font-weight: 500; color: #a9b59d">Server copy<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span></div>
+<div style="height: 52px; padding: 0 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #3c4934"><span style="font-size: 16px; line-height: 22px">Keep on this device</span><button type="button" aria-pressed="true" aria-label="Keep on this device" style="width: 52px; height: 32px; border: 0; border-radius: 999px; background: {{accent}}; padding: 4px; display: flex; justify-content: flex-end"><span style="width: 24px; height: 24px; border-radius: 999px; background: #101510"></span></button></div>
+<div style="height: 52px; padding: 0 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px"><span style="font-size: 16px; line-height: 22px">Speed</span><span style="display: flex; align-items: center; gap: 4px"><button type="button" aria-label="Slower" style="width: 44px; height: 36px; border: 0; border-radius: 8px; background: #26331f; color: #e6eadf; font: 500 18px/20px 'DM Sans', sans-serif">−</button><span style="width: 48px; text-align: center; font-size: 14px; line-height: 20px; font-weight: 500">1.2×</span><button type="button" aria-label="Faster" style="width: 44px; height: 36px; border: 0; border-radius: 8px; background: #26331f; color: #e6eadf; font: 500 18px/20px 'DM Sans', sans-serif">+</button></span></div>
+</div>
+<p style="margin: 0; font-size: 12px; line-height: 16px; color: #a9b59d">A row's label sits on the left edge and its value or control on the right edge, on every screen.</p>
+</div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Where things live</h2>
+<div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 16px">
+<div style="border-radius: 14px; background: #182117; padding: 16px; display: flex; flex-direction: column; gap: 8px"><div style="font-family: 'Manrope', sans-serif; font-weight: 700; font-size: 20px; line-height: 26px">Library</div><div style="font-size: 14px; line-height: 20px; color: #a9b59d">Every book, in either format, and your series. Filters replace the shelves list: Series, In progress, Not started, Finished, On device, Favorites.</div></div>
+<div style="border-radius: 14px; background: #182117; padding: 16px; display: flex; flex-direction: column; gap: 8px"><div style="font-family: 'Manrope', sans-serif; font-weight: 700; font-size: 20px; line-height: 26px">Discover</div><div style="font-size: 14px; line-height: 20px; color: #a9b59d">Finds books. A result opens its Book page, and its files are found with Get.</div></div>
+<div style="border-radius: 14px; background: #182117; padding: 16px; display: flex; flex-direction: column; gap: 8px"><div style="font-family: 'Manrope', sans-serif; font-weight: 700; font-size: 20px; line-height: 26px">Activity</div><div style="font-size: 14px; line-height: 20px; color: #a9b59d">Downloads, device copies and reading sync: Now, This device, Server. Replaces the Downloads page.</div></div>
+<div style="border-radius: 14px; background: #182117; padding: 16px; display: flex; flex-direction: column; gap: 8px"><div style="font-family: 'Manrope', sans-serif; font-weight: 700; font-size: 20px; line-height: 26px">Settings</div><div style="font-size: 14px; line-height: 20px; color: #a9b59d">One list in three groups. Users and connections are rows here, not separate places.</div></div>
+<div style="border-radius: 14px; background: #182117; padding: 16px; display: flex; flex-direction: column; gap: 8px"><div style="font-family: 'Manrope', sans-serif; font-weight: 700; font-size: 20px; line-height: 26px">Book</div><div style="font-size: 14px; line-height: 20px; color: #a9b59d">One page for both formats. Its Files rows replace the card menu, the release picker and the versions dialog.</div></div>
+<div style="border-radius: 14px; background: #182117; padding: 16px; display: flex; flex-direction: column; gap: 8px"><div style="font-family: 'Manrope', sans-serif; font-weight: 700; font-size: 20px; line-height: 26px">Now playing</div><div style="font-size: 14px; line-height: 20px; color: #a9b59d">One screen with two faces, Listen and Read, and the same transport in both. Replaces three sheets and the Lyrics and Word views.</div></div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#dd8966","options":["#dd8966","#e0b060","#8fb8a0","#9db4e8"]},"$preview":{"width":1280,"height":1000}}'>
+class Component extends DCLogic {
+renderVals() {
+return { accent: this.props.accent ?? '#dd8966' };
+}
+}
+</script>
+</body>
+</html>

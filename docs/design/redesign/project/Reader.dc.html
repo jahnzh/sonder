@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Reader: pages</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Manrope:wght@600;700&family=Literata:ital,wght@0,400;1,400&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#dd8966}a:hover{color:#f0a586}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; background: #101510; color: #e6eadf; font-family: 'DM Sans', system-ui, sans-serif; display: flex; flex-direction: column">
+<header style="height: 44px; flex: none; display: flex; align-items: center; justify-content: center"><span style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Frankenstein · Letter 1</span></header>
+<main style="flex: 1; min-height: 0; box-sizing: border-box; padding: 14px 24px 18px">
+<div data-clip="page" style="height: 696px; overflow: hidden"><div style="margin-top: 0px; font-family: 'Literata', Georgia, serif; font-size: 18px; line-height: 29px">
+<h2 style="margin: 0; padding: 29px 0; font-family: 'Literata', Georgia, serif; font-weight: 400; font-size: 26px; line-height: 29px">Letter 1</h2>
+<p style="margin: 0 0 29px; font-style: italic">To Mrs. Saville, England.<br>St. Petersburgh, Dec. 11th, 17—.</p>
+<p style="margin: 0">You will rejoice to hear that no disaster has accompanied the commencement of an enterprise which you have regarded with such evil forebodings. <span style="background: color-mix(in srgb, {{accent}} 28%, transparent); border-radius: 4px; padding: 1px 0; -webkit-box-decoration-break: clone; box-decoration-break: clone">I arrived here yesterday, and my first task is to assure my dear sister of my welfare and increasing confidence in the success of my undertaking.</span></p>
+<p style="margin: 0; text-indent: 1.4em">I am already far north of London, and as I walk in the streets of Petersburgh, I feel a cold northern breeze play upon my cheeks, which braces my nerves and fills me with delight. Do you understand this feeling? This breeze, which has travelled from the regions towards which I am advancing, gives me a foretaste of those icy climes. Inspirited by this wind of promise, my daydreams become more fervent and vivid. I try in vain to be persuaded that the pole is the seat of frost and desolation; it ever presents itself to my imagination as the region of beauty and delight. There, Margaret, the sun is for ever visible, its broad disk just skirting the horizon and diffusing a perpetual splendour. There—for with your leave, my sister, I will put some trust in preceding navigators—there snow and frost are banished; and, sailing over a calm sea, we may be wafted to a land surpassing in wonders and in beauty every region hitherto discovered on the habitable globe. Its productions and features may be without example, as the phenomena of the heavenly bodies undoubtedly are in those undiscovered solitudes. What may not be expected in a country of eternal light? I may there discover the wondrous power which attracts the needle and may regulate a thousand celestial observations that require only this voyage to render their seeming eccentricities consistent for ever.</p>
+</div></div>
+</main>
+<footer style="height: 72px; flex: none; box-sizing: border-box; padding: 8px 16px 0; display: flex; flex-direction: column; gap: 4px">
+<span aria-hidden="true" style="height: 2px; border-radius: 999px; background: #3c4934; display: block"><span style="display: block; width: 35%; height: 2px; border-radius: 999px; background: {{accent}}"></span></span>
+<div style="height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 12px"><span style="font-size: 12px; line-height: 16px; font-weight: 500; color: #a9b59d">Letter 1 · 4 min left</span><button type="button" aria-label="Pause" style="width: 44px; height: 44px; flex: none; border: 0; border-radius: 8px; background: transparent; color: #a9b59d; font: 600 14px/20px 'DM Sans', sans-serif; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5v14M15 5v14"/></svg></button></div>
+</footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#dd8966","options":["#dd8966","#e0b060","#8fb8a0","#9db4e8"]},"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+renderVals() {
+return { accent: this.props.accent ?? '#dd8966' };
+}
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Design language: reading</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Manrope:wght@600;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#dd8966}a:hover{color:#f0a586}
+</style>
+</helmet>
+<div style="width: 1280px; height: 832px; box-sizing: border-box; padding: 48px; background: #101510; color: #e6eadf; font-family: 'DM Sans', system-ui, sans-serif; display: flex; flex-direction: column; gap: 32px">
+<div style="display: flex; align-items: baseline; justify-content: space-between; gap: 24px">
+<h1 style="margin: 0; font-family: 'Manrope', sans-serif; font-weight: 700; font-size: 28px; line-height: 34px">Reading</h1>
+<p style="margin: 0; font-size: 14px; line-height: 20px; color: #a9b59d">One view in two reading modes. Controls stay out of the text, and the narrated sentence stays highlighted.</p>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px">
+
+<div style="display: flex; flex-direction: column; gap: 24px">
+<div style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Where the controls go</h2>
+<div style="width: 180px; border-radius: 14px; background: #182117; padding: 8px; display: flex; flex-direction: column; gap: 4px">
+<div style="height: 28px; border-radius: 6px; background: #26331f; color: #a9b59d; font-size: 12px; line-height: 16px; font-weight: 500; display: flex; align-items: center; justify-content: center">Head · 44</div>
+<div style="height: 196px; border-radius: 6px; background: #101510; color: #e6eadf; font-size: 12px; line-height: 16px; font-weight: 500; display: flex; align-items: center; justify-content: center">Text</div>
+<div style="height: 44px; border-radius: 6px; background: #26331f; color: #a9b59d; font-size: 12px; line-height: 16px; font-weight: 500; display: flex; align-items: center; justify-content: center">Foot · 72</div>
+</div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Head and foot</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Controls appear in the head and the foot. Both keep their height when the controls are hidden, so the text block never moves and nothing is drawn over it.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">At rest</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">The head shows the book and chapter. The foot shows the time left, a thin progress line and Pause. A tap on the text shows the controls, and the next tap hides them.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Under the text</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Appearance docks under the text, which is laid out again in what is left.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">In the foot</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Speed and the sleep timer take the place of the transport, with Done. Messages such as Undo appear there too. The text does not move.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">A panel that takes you elsewhere</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Chapters, bookmarks and search are pages of their own.</div></div>
+</div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 24px">
+<div style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">The highlight stays until the next sentence starts</h2>
+<div style="border-radius: 14px; background: #182117; padding: 16px; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; align-items: center; gap: 12px"><span style="width: 72px; flex: none; font-size: 12px; line-height: 16px; color: #a9b59d">Narration</span><div style="flex: 1; min-width: 0; display: flex; gap: 2px"><div style="flex: 5; min-width: 0; height: 28px; border-radius: 6px; background: #a9b59d; color: #101510; font-size: 12px; line-height: 16px; font-weight: 600; display: flex; align-items: center; justify-content: center">1</div><div style="flex: 2; height: 28px"></div><div style="flex: 4; min-width: 0; height: 28px; border-radius: 6px; background: #a9b59d; color: #101510; font-size: 12px; line-height: 16px; font-weight: 600; display: flex; align-items: center; justify-content: center">2</div><div style="flex: 3; height: 28px"></div><div style="flex: 5; min-width: 0; height: 28px; border-radius: 6px; background: #a9b59d; color: #101510; font-size: 12px; line-height: 16px; font-weight: 600; display: flex; align-items: center; justify-content: center">3</div></div></div>
+<div style="display: flex; align-items: center; gap: 12px"><span style="width: 72px; flex: none; font-size: 12px; line-height: 16px; color: #a9b59d">Highlighted</span><div style="flex: 1; min-width: 0; display: flex; gap: 2px"><div style="flex: 7; min-width: 0; height: 28px; border-radius: 6px; background: {{accent}}; color: #101510; font-size: 12px; line-height: 16px; font-weight: 600; display: flex; align-items: center; justify-content: center">Sentence 1</div><div style="flex: 7; min-width: 0; height: 28px; border-radius: 6px; background: {{accent}}; color: #101510; font-size: 12px; line-height: 16px; font-weight: 600; display: flex; align-items: center; justify-content: center">Sentence 2</div><div style="flex: 5; min-width: 0; height: 28px; border-radius: 6px; background: {{accent}}; color: #101510; font-size: 12px; line-height: 16px; font-weight: 600; display: flex; align-items: center; justify-content: center">Sentence 3</div></div></div>
+</div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">In a silence</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">A sentence stays highlighted after its last word, through a pause, music or a passage the ebook does not have, until the next sentence starts.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">After a jump</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">The highlighted sentence is the last one that started before the new position.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">The highlight</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">The accent at about a quarter strength behind the sentence, from its first to its last character.</div></div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Pages or scroll</h2>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">One view</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">The book as its own text. The Lyrics and Word views are gone, and with them Words per minute.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Two reading modes</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Pages turns page by page, with whole lines only. Scroll is one column that moves. Reading mode is the first row of Appearance; switching keeps the place and the highlight.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Scroll while following</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">The highlighted sentence is kept in the upper half. A touch on the text stops the following; Back to narration resumes it.</div></div>
+</div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 24px">
+<div style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">A sentence across two pages</h2>
+<div style="display: flex; gap: 12px">
+<div style="flex: 1; min-width: 0; border-radius: 8px; background: #182117; padding: 12px; display: flex; flex-direction: column; gap: 6px">
+<span aria-hidden="true" style="height: 6px; border-radius: 3px; background: #3c4934; width: 100%; display: block"></span>
+<span aria-hidden="true" style="height: 6px; border-radius: 3px; background: #3c4934; width: 100%; display: block"></span>
+<span aria-hidden="true" style="height: 6px; border-radius: 3px; background: #3c4934; width: 100%; display: block"></span>
+<span aria-hidden="true" style="height: 6px; border-radius: 3px; background: #3c4934; width: 100%; display: block"></span>
+<span aria-hidden="true" style="height: 6px; border-radius: 3px; background: #3c4934; width: 100%; display: block"></span>
+<span aria-hidden="true" style="height: 6px; border-radius: 3px; background: {{accent}}; width: 100%; display: block"></span>
+<span aria-hidden="true" style="height: 6px; border-radius: 3px; background: {{accent}}; width: 100%; display: block"></span>
+<span style="margin-top: 4px; font-size: 12px; line-height: 16px; color: #a9b59d">Page 12</span>
+</div>
+<div style="flex: 1; min-width: 0; border-radius: 8px; background: #182117; padding: 12px; display: flex; flex-direction: column; gap: 6px">
+<span aria-hidden="true" style="height: 6px; border-radius: 3px; background: {{accent}}; width: 100%; display: block"></span>
+<span aria-hidden="true" style="height: 6px; border-radius: 3px; background: {{accent}}; width: 60%; display: block"></span>
+<span aria-hidden="true" style="height: 6px; border-radius: 3px; background: #3c4934; width: 100%; display: block"></span>
+<span aria-hidden="true" style="height: 6px; border-radius: 3px; background: #3c4934; width: 100%; display: block"></span>
+<span aria-hidden="true" style="height: 6px; border-radius: 3px; background: #3c4934; width: 100%; display: block"></span>
+<span aria-hidden="true" style="height: 6px; border-radius: 3px; background: #3c4934; width: 100%; display: block"></span>
+<span aria-hidden="true" style="height: 6px; border-radius: 3px; background: #3c4934; width: 100%; display: block"></span>
+<span style="margin-top: 4px; font-size: 12px; line-height: 16px; color: #a9b59d">Page 13</span>
+</div>
+</div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Both parts are highlighted</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">The sentence is one highlight that happens to sit on two pages.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">When the page turns</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">When the narration reaches the first word on the next page. The sentence’s time is spread over its words to find that moment, so it is an estimate: about a second early or late.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Not at either end</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">The page does not turn at the start of the sentence, and it does not wait for the next sentence while the narrator reads words you cannot see.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Paused or paged away</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">A pause keeps the page. If you turned the page yourself, nothing turns until Back to narration.</div></div>
+</div>
+</div>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#dd8966","options":["#dd8966","#e0b060","#8fb8a0","#9db4e8"]},"$preview":{"width":1280,"height":832}}'>
+class Component extends DCLogic {
+renderVals() {
+return { accent: this.props.accent ?? '#dd8966' };
+}
+}
+</script>
+</body>
+</html>
