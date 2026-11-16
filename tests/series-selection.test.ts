@@ -123,3 +123,8 @@ test("series books: a work linked or owned by someone else does not move the cho
   const works = [book(1, 1, { language: "en" }), book(2, 1, { language: "fr", workId: "theirs", owned: true })];
   assert.deepEqual(atNumbers(seriesBooks(works, new Set(), "en")), [[1, 1]]);
 });
+
+test("series books: a work waiting for the administrator does not stand at its number over a released one", () => {
+  const works = [book(1, 1, { needsAdmin: true, language: "en", popularity: 99 }), book(2, 1, { language: "fr" })];
+  assert.deepEqual(atNumbers(seriesBooks(works, new Set(), "en")), [[1, 2]]);
+});
