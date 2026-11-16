@@ -34,6 +34,8 @@ type Entry = {
   /** Names the entry for its scroll position. */
   key: string;
   sheet: Sheet | null;
+  /** The route of the app's entry right behind this one, when the app knows it; Back goes there. */
+  from: Route | null;
 };
 type EntryState = {
   sonderDepth: number;
@@ -41,6 +43,8 @@ type EntryState = {
   sonderKey: string;
   sonderScroll?: number;
   sonderSheet?: Sheet;
+  /** The address of the app's entry right behind, written by this build; older entries have none. */
+  sonderFrom?: string;
 };
 
 /** How long a Back the app asked for may take to land before the app takes it as one the browser could not make. */
@@ -79,11 +83,16 @@ function stateOf(entry: Entry, scroll?: number): EntryState {
     sonderKey: entry.key,
     ...(scroll === undefined ? {} : { sonderScroll: scroll }),
     ...(entry.sheet ? { sonderSheet: entry.sheet } : {}),
+    ...(entry.from ? { sonderFrom: writeAddress(entry.from) } : {}),
   };
 }
 function entryState(state: unknown): EntryState | null {
   const s = state as Partial<EntryState> | null;
   return s && typeof s.sonderDepth === "number" && typeof s.sonderKey === "string" ? (s as EntryState) : null;
+}
+/** The route behind, as an entry's state names it; null when it names none. */
+function fromState(saved: EntryState | null): Route | null {
+  return typeof saved?.sonderFrom === "string" ? resolve(readAddress(saved.sonderFrom), { admin }) : null;
 }
 function rootAfter(from: Entry | null, to: Route, depth: number, kind: "push" | "replace"): number | null {
   if (isFirstPage(to)) return depth;
@@ -165,7 +174,7 @@ function afterPending(run: () => void): boolean {
 }
 /** What lies behind turned out to be nothing of the app's: the entry shows `route` and counts from 0. */
 function replaceAtStart(route: Route) {
-  const entry: Entry = { route, depth: 0, root: isFirstPage(route) ? 0 : null, key: newKey(), sheet: null };
+  const entry: Entry = { route, depth: 0, root: isFirstPage(route) ? 0 : null, key: newKey(), sheet: null, from: null };
   const before = shownPage;
   show(entry);
   history.replaceState(stateOf(entry), "", urlOf(route));
@@ -188,13 +197,14 @@ function onPopState(event: PopStateEvent) {
   const added = history.length > lengthSeen;
   const depth = saved ? saved.sonderDepth : added ? current.depth + 1 : 0;
   const entry: Entry = saved
-    ? { route, depth, root: saved.sonderRoot, key: saved.sonderKey, sheet: saved.sonderSheet ?? null }
+    ? { route, depth, root: saved.sonderRoot, key: saved.sonderKey, sheet: saved.sonderSheet ?? null, from: fromState(saved) }
     : {
         route,
         depth,
         root: added ? rootAfter(current, route, depth, "push") : isFirstPage(route) ? 0 : null,
         key: newKey(),
         sheet: null,
+        from: added ? current.route : null,
       };
   const before = shownPage;
   show(entry);
@@ -233,6 +243,7 @@ export function startNavigation(options: { admin: boolean }) {
     root: isFirstPage(route) ? depth : saved ? saved.sonderRoot : null,
     key: saved?.sonderKey ?? newKey(),
     sheet: null,
+    from: fromState(saved),
   };
   const first = !current;
   show(entry);
@@ -272,24 +283,53 @@ export function navigate(to: Route, options: { replace?: boolean } = {}) {
     scrolls.set(from.key, window.scrollY);
     history.replaceState(stateOf(from, window.scrollY), "");
     const depth = from.depth + 1;
-    const entry: Entry = { route, depth, root: rootAfter(from, route, depth, "push"), key: newKey(), sheet: null };
+    const entry: Entry = {
+      route,
+      depth,
+      root: rootAfter(from, route, depth, "push"),
+      key: newKey(),
+      sheet: null,
+      from: from.route,
+    };
     const before = shownPage;
     show(entry);
     history.pushState(stateOf(entry), "", urlOf(route));
     lengthSeen = history.length;
     if (!covers(entry) && !(before && sameRoute(before, route))) window.scrollTo(0, 0);
   } else {
-    show({ route, depth: from.depth, root: rootAfter(from, route, from.depth, "replace"), key: newKey(), sheet: null });
+    show({
+      route,
+      depth: from.depth,
+      root: rootAfter(from, route, from.depth, "replace"),
+      key: newKey(),
+      sheet: null,
+      from: from.from,
+    });
     history.replaceState(stateOf(current!), "", urlOf(route));
   }
   emit();
+}
+
+/** Where a page's own back button lands without a traversal: the fallback, the page's parent or its place. */
+function parentFor(entry: Entry, fallback?: Route): Route {
+  return fallback ?? parentOf(entry.route) ?? firstPage(placeOf(entry.route));
+}
+/**
+ * Where a page's own back button goes, for its name: the app's entry behind when there is one and its address is
+ * known, otherwise the page's parent (or `fallback`). An entry of an older build behind names no address: its
+ * parent is named, which is where the button lands when that entry turns out not to be the app's.
+ */
+export function backTarget(fallback?: Route): Route {
+  const entry = ensure();
+  // An entry is told what lies behind only when the app put it there, so it never has one at depth 0.
+  return entry.from ?? parentFor(entry, fallback);
 }
 
 /** A page's own back button: back in history, or to the page's parent when no entry of the app lies behind. */
 export function goBack(fallback?: Route) {
   const entry = ensure();
   if (pending) return;
-  const parent = () => fallback ?? parentOf(entry.route) ?? firstPage(placeOf(entry.route));
+  const parent = () => parentFor(entry, fallback);
   if (entry.depth > 0) traverse(-1, () => replaceAtStart(parent()));
   else navigate(parent(), { replace: true });
 }
@@ -317,7 +357,7 @@ export function openSheet(sheet: Sheet) {
   stopRestore();
   scrolls.set(from.key, window.scrollY);
   history.replaceState(stateOf(from, window.scrollY), "");
-  const entry: Entry = { route: from.route, depth: from.depth + 1, root: from.root, key: newKey(), sheet };
+  const entry: Entry = { route: from.route, depth: from.depth + 1, root: from.root, key: newKey(), sheet, from: from.route };
   show(entry);
   history.pushState(stateOf(entry), "", urlOf(entry.route));
   lengthSeen = history.length;
@@ -340,7 +380,7 @@ const snapshot = () => ensure();
 /** The current address for a screen, and the ways to move. */
 export function useAddress() {
   const entry = useSyncExternalStore(subscribe, snapshot);
-  return { route: entry.route, canGoBack: entry.depth > 0, navigate, goBack, goPlace };
+  return { route: entry.route, canGoBack: entry.depth > 0, backTarget, navigate, goBack, goPlace };
 }
 /** The sheet the current entry shows, for code outside React. */
 export function shownSheet(): Sheet | null {

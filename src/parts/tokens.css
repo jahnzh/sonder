@@ -1,0 +1,60 @@
+/* The redesign's tokens (spec #480, "Tokens"). Same values as src/parts/tokens.ts; tests/parts-tokens.test.ts
+   keeps them equal. Only new names: no existing variable or style is changed here. The colours stay the existing
+   variables of appearance.css, so every preset and the custom palette colour the parts. */
+:root {
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+
+  --corner-control: 8px;
+  --corner-group: 14px;
+  --corner-round: 999px;
+
+  --height-control: 44px;
+  --height-row: 52px;
+  --height-bar: 64px;
+
+  --edge: 16px;
+}
+@media (min-width: 760px) {
+  :root {
+    --edge: 32px;
+  }
+}
+
+/* The five text styles. A part sets one of them and nothing else about its type. */
+.type-title {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 28px;
+  line-height: 34px;
+}
+.type-heading {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 20px;
+  line-height: 26px;
+}
+.type-body {
+  font-family: var(--font-body);
+  font-weight: 400;
+  font-size: 16px;
+  line-height: 22px;
+}
+.type-label {
+  font-family: var(--font-body);
+  font-weight: 500;
+  font-size: 14px;
+  line-height: 20px;
+}
+.type-caption {
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
