@@ -6,11 +6,7 @@ const installed =
 // Phone-profile projects are opt-in so `npm run test:browser` and `npm run check` keep their runtime.
 // SONDER_MOBILE=1 adds them to the default projects; SONDER_MOBILE=only (npm run test:mobile) runs just them.
 const mobileMode = process.env.SONDER_MOBILE;
-<<<<<<< HEAD
-const mobileSpecs = /(^|\/)(now-playing-layout|device-reset|app|playback-workflow|integrated-reader|playback-speed|navigation|gallery|gallery-sheet)\.spec\.ts$/;
-=======
-const mobileSpecs = /(^|\/)(now-playing-layout|device-reset|app|playback-workflow|integrated-reader|playback-speed|navigation|gallery|gallery-controls)\.spec\.ts$/;
->>>>>>> origin/main
+const mobileSpecs = /(^|\/)(now-playing-layout|device-reset|app|playback-workflow|integrated-reader|playback-speed|navigation|gallery|gallery-controls|gallery-sheet)\.spec\.ts$/;
 const { isMobile: _isMobile, defaultBrowserType: _browser, ...pixelWithoutIsMobile } = devices["Pixel 7"];
 const mobileProjects = [
   // Pixel 7 in Chromium: touch input, mobile user agent, device pixel ratio and isMobile viewport handling.
