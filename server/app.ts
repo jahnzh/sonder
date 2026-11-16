@@ -207,6 +207,9 @@ export async function createApp(options?: {
         ((request.method === "DELETE" &&
           (/^\/api\/library\/[^/?]+(?:\?.*)?$/.test(request.url) ||
             /^\/api\/series\/[^/?]+(?:\?.*)?$/.test(request.url))) ||
+          // Add to library and Remove from library by work (#527) take no body.
+          (["PUT", "DELETE"].includes(request.method) &&
+            /^\/api\/works\/[^/?]+\/library(?:\?.*)?$/.test(request.url)) ||
           (request.method === "POST" &&
             /^\/api\/books\/[^/?]+\/keep(?:\?.*)?$/.test(request.url)))
       )
