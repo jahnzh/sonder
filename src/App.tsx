@@ -160,6 +160,9 @@ function LibraryApp({
 }) {
   const [books, setBooks] = useState<Book[]>([]);
   const [ebookTarget, setEbookTarget] = useState<Book | null>(null);
+  // The address: read here and in the hashchange listener below, written by
+  // navigate() and by the Activity link the Settings page asks for. The page
+  // modules in src/pages never read or write it themselves.
   const [page, setPage] = useState<Page>(() => {
     const hash = location.hash.slice(1);
     return ["library", "discover", "downloads", "settings"].includes(hash) || (hash === "activity" && user.role === "admin")
@@ -752,6 +755,9 @@ function LibraryApp({
                     void installPrompt
                       .prompt()
                       .then(() => setInstallPrompt(null));
+                }}
+                onOpenActivity={() => {
+                  location.hash = "activity";
                 }}
               />
             )}

@@ -169,6 +169,7 @@ export function SettingsPage({
   onLogout,
   installPrompt,
   onInstall,
+  onOpenActivity,
 }: {
   user: Account;
   settings: SettingsData | null;
@@ -178,6 +179,7 @@ export function SettingsPage({
   onLogout: () => void;
   installPrompt: Event | null;
   onInstall: () => void;
+  onOpenActivity: () => void;
 }) {
   const [name, setName] = useState("");
   const [torbox, setTorbox] = useState("");
@@ -436,7 +438,7 @@ export function SettingsPage({
         configured={!!settings?.hardcoverConfigured}
         notify={notify}
       />
-      {user.role === "admin" && <><h3 className="requests-heading">Background work</h3><div className="settings-inline-actions"><button type="button" className="button subtle" data-testid="open-activity" onClick={() => { location.hash = "activity"; }}>Open Activity</button></div><SourceSettings settings={settings} onSaved={onSaved} notify={notify} /><ProwlarrSettings settings={settings} onSaved={onSaved} notify={notify} /><ReadingSyncSettings notify={notify} /></>}
+      {user.role === "admin" && <><h3 className="requests-heading">Background work</h3><div className="settings-inline-actions"><button type="button" className="button subtle" data-testid="open-activity" onClick={onOpenActivity}>Open Activity</button></div><SourceSettings settings={settings} onSaved={onSaved} notify={notify} /><ProwlarrSettings settings={settings} onSaved={onSaved} notify={notify} /><ReadingSyncSettings notify={notify} /></>}
       <section className="install-card">
         <div className="install-brand">
           <Mark />
