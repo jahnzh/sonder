@@ -1,16 +1,16 @@
 // scripts/compare-placeholder-rule.mjs (issue #483): on a database file, names the editions
 // the old `hc-` prefix and the placeholder rule name, read-only, and exits 1 when they differ.
-import { test, after } from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
+import { tempDir } from "./temp-dir.ts";
 
-const temp = mkdtempSync(join(tmpdir(), "sonder-compare-placeholder-"));
+const temp = tempDir("sonder-compare-placeholder-");
 process.env.DATA_DIR = join(temp, "db");
 process.env.MEDIA_ROOT = join(temp, "media");
 process.env.REQUIRE_MEDIA_MOUNT = "false";
@@ -21,8 +21,6 @@ const { sqlite } = await import("../server/db.ts");
 sqlite.close();
 const file = join(process.env.DATA_DIR, "sonder.db");
 const script = resolve(dirname(fileURLToPath(import.meta.url)), "../scripts/compare-placeholder-rule.mjs");
-
-after(() => rmSync(temp, { recursive: true, force: true }));
 
 function write(change: (database: Database.Database) => void) {
   const database = new Database(file);

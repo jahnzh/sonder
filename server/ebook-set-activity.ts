@@ -51,7 +51,7 @@ export const ebookSetCheckStatus = (status: string, holdReason: string | null) =
 
 const DETAIL: Record<EbookSetCheckStatus, string> = {
   pending: "Ebook set check against the narration",
-  awaiting_worker: "Ebook set check waiting for an alignment worker",
+  awaiting_worker: "Ebook set check waiting for a worker",
   evaluation_failed: "Ebook set check failed",
   accepted: "Accepted into the ebook set",
   rejected: "Rejected from the ebook set",
@@ -96,7 +96,7 @@ const retry: ActivityAction = async (id, { deps, log }) => {
 
 export const ebookSetSource = defineSource<EbookSetMemberRow[]>({
   kind: "ebook-set",
-  process: { id: "ebook-set", label: "Ebook set checks" },
+  process: { id: "ebook-set", label: "Ebook checks" },
   // The reported evaluation of a whole book took 50 minutes (#325).
   stuckAfterMs: 90 * MINUTE,
   load: (sqlite) =>

@@ -45,6 +45,7 @@ import { registerAppearance } from "./appearance.ts";
 import { registerAccountRequests } from "./account-requests.ts";
 import { registerInvites } from "./invites.ts";
 import { registerReader } from "./reader.ts";
+import { registerLibraryWorks } from "./library-works.ts";
 import { registerAlignment, autoQueueAlignmentsForWork, persistedPoolErrors } from "./alignment.ts";
 import { checkPoolHostsSetting, getAlignmentPoolCoordinator, getAlignmentPoolStatus } from "./alignment-pool.ts";
 import { hostRestartStates, restartPoolHost } from "./alignment-host-control.ts";
@@ -52,7 +53,7 @@ import { activitySamplerLoop, registerActivity } from "./activity.ts";
 import { backgroundRunner, type BackgroundOptions } from "./background-runner.ts";
 import { databaseBackupLoop } from "./backups.ts";
 import { pauseState, setHostDisabled, setPaused } from "./activity-pause.ts";
-import {registerMediaLibrary,faultsFor,chooseMedia,sourceChoice} from "./media-library.ts";
+import {registerMediaLibrary,faultsFor,chooseMedia,sourceChoice,deliveredTracks} from "./media-library.ts";
 import { audioFileMime } from "./media-response.ts";
 import { parseRange } from "./range.ts";
 import {
@@ -73,7 +74,6 @@ import { searchEbooks, saveEbook, listEbooks, importEbook } from "./ebooks.ts";
 import { reevaluateEbookSetForWork } from "./ebook-set.ts";
 import { ebookSetEvaluationLoop, registerUploadedEbookSetMember, retryEbookSetMember } from "./ebook-set-evaluation.ts";
 import {
-  hasServerMedia,
   requestServerDownload,
   serverCopiesLoop,
   pauseServerDownload,
@@ -125,26 +125,12 @@ export function listBooks(userId = 1): Book[] {
     .map(({ work, edition, recording }) => {
       const saved = lib.find((l) => l.bookId === edition.id);
       const faults=faultsFor(recording.id);
-      const tracks = allTracks
-        .filter((t) => t.recordingId === recording.id)
-        .sort((a, b) => a.index - b.index)
-        .map((t) => ({
-          ...t,
-          source: "",
-          sourceType: t.sourceType as "local" | "remote" | "torbox",
-          serverAvailable:hasServerMedia(t),
-          deliverySource: hasServerMedia(t) && !faults.server
-            ? ("server" as const)
-            : t.sourceType === "torbox"
-              ? ("torbox" as const)
-              : ("remote" as const),
-        }));
+      const { tracks, serverStored } = deliveredTracks(
+        allTracks.filter((t) => t.recordingId === recording.id),
+        faults,
+      );
       return {
-        serverStored:
-          tracks.length > 0 &&
-          allTracks
-            .filter((t) => t.recordingId === recording.id)
-            .every(hasServerMedia),
+        serverStored,
         faults,
         hardcover: hardcoverForWork(userId, work.id),
         id: edition.id,
@@ -343,6 +329,7 @@ export async function createApp(options?: {
     return { ok: true };
   });
   app.get("/api/books", async (req) => listBooks(currentUserId(req)));
+  registerLibraryWorks(app);
   registerUsers(app);
   registerAccountRequests(app);
   registerInvites(app);
@@ -1265,7 +1252,7 @@ export async function createApp(options?: {
       const actual = testMediaPath(rel);
       return { exists: actual ? existsSync(actual) : false };
     });
-    app.post("/api/test/seed-local-audio", (req) => {
+    app.post("/api/test/seed-local-audio", (req, reply) => {
       const input = z
         .object({
           relPath: z.string().min(1),
@@ -1276,48 +1263,64 @@ export async function createApp(options?: {
           releaseTitle: z.string().optional(),
         })
         .parse(req.body);
+      // A track id that is already in use fails the request and writes nothing.
+      const trackTaken = db.select({ id: s.tracks.id }).from(s.tracks).where(eq(s.tracks.id, input.trackId)).get();
+      if (trackTaken) return reply.code(409).send({ error: `Track ${input.trackId} already exists.` });
+      // So does a recording id of another edition: the new edition would be left without a recording.
+      const recording = db
+        .select({ editionId: s.recordings.editionId })
+        .from(s.recordings)
+        .where(eq(s.recordings.id, input.recordingId))
+        .get();
+      if (recording && recording.editionId !== input.editionId)
+        return reply
+          .code(409)
+          .send({ error: `Recording ${input.recordingId} belongs to edition ${recording.editionId}.` });
       const full = resolve(mediaRoot, input.relPath);
       mkdirSync(resolve(full, ".."), { recursive: true });
       if (!existsSync(full)) writeFileSync(full, "audio");
-      db.insert(s.editions)
-        .values({
-          id: input.editionId,
-          workId: input.workId,
-          cover: "",
-          narrator: "N",
-          language: null,
-          releaseTitle: input.releaseTitle ?? "Test audio",
-          rating: 0,
-          sourceLabel: "Test",
-        })
-        .onConflictDoNothing()
-        .run();
-      db.insert(s.recordings)
-        .values({ id: input.recordingId, editionId: input.editionId })
-        .onConflictDoNothing()
-        .run();
-      db.insert(s.tracks)
-        .values({
-          id: input.trackId,
-          recordingId: input.recordingId,
-          title: "Ch 1",
-          index: 0,
-          duration: 10,
-          chapters: [],
-          source: full,
-          sourceType: "local",
-        })
-        .onConflictDoNothing()
-        .run();
-      db.insert(s.userLibrary)
-        .values({
-          userId: 1,
-          bookId: input.editionId,
-          status: "unread",
-          addedAt: Date.now(),
-        })
-        .onConflictDoNothing()
-        .run();
+      // One transaction: an edition left without its track would be taken for a placeholder
+      // (#483).
+      sqlite.transaction(() => {
+        db.insert(s.editions)
+          .values({
+            id: input.editionId,
+            workId: input.workId,
+            cover: "",
+            narrator: "N",
+            language: null,
+            releaseTitle: input.releaseTitle ?? "Test audio",
+            rating: 0,
+            sourceLabel: "Test",
+          })
+          .onConflictDoNothing()
+          .run();
+        db.insert(s.recordings)
+          .values({ id: input.recordingId, editionId: input.editionId })
+          .onConflictDoNothing()
+          .run();
+        db.insert(s.tracks)
+          .values({
+            id: input.trackId,
+            recordingId: input.recordingId,
+            title: "Ch 1",
+            index: 0,
+            duration: 10,
+            chapters: [],
+            source: full,
+            sourceType: "local",
+          })
+          .run();
+        db.insert(s.userLibrary)
+          .values({
+            userId: 1,
+            bookId: input.editionId,
+            status: "unread",
+            addedAt: Date.now(),
+          })
+          .onConflictDoNothing()
+          .run();
+      })();
       return { ok: true as const, relPath: input.relPath };
     });
   }

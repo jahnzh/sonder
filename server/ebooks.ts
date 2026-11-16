@@ -418,12 +418,18 @@ export function listEbooks() {
         .from(s.ebookEditions)
         .where(eq(s.ebookEditions.id, b.id))
         .get()!;
-      return {
-        ...b,
-        size: existsSync(row.source) ? statSync(row.source).size : 0,
-        available: existsSync(row.source),
-      };
+      return { ...b, ...ebookFile(row.source) };
     });
+}
+/** A file's size, or null when it is not there. */
+const sizeOnDisk = (path: string) => (existsSync(path) ? statSync(path).size : null);
+/**
+ * An ebook edition's file as `GET /api/ebooks` gives it: its size (0 when it is not there) and
+ * whether it is there. `sizeOf` replaces the look at the disk (the read by work remembers it).
+ */
+export function ebookFile(source: string, sizeOf: (path: string) => number | null = sizeOnDisk) {
+  const size = sizeOf(source);
+  return { size: size ?? 0, available: size !== null };
 }
 
 // Free source downloads can be brought back through the same persistent shelf.

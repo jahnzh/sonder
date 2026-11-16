@@ -73,6 +73,13 @@ Before version 11 the canvas had a version 10 that nobody here published. Its `c
 | Reading sync: preparing | `ReadingSync.dc.html` | 390×844 | 2 |
 | Reading sync: ready | `ReadingSyncReady.dc.html` | 390×844 | 2 |
 | Reading sync: stopped | `ReadingSyncStopped.dc.html` | 390×844 | 2 |
+| Reading sync: paused | `ReadingSyncPaused.dc.html` | 390×844 | #461 |
+| Reading sync: cancelled | `ReadingSyncCancelled.dc.html` | 390×844 | #461 |
+| Reading sync: partly ready | `ReadingSyncPartial.dc.html` | 390×844 | #461 |
+| Reading sync: no text matched | `ReadingSyncNoMatch.dc.html` | 390×844 | #461 |
+| Reading sync: not available | `ReadingSyncLanguage.dc.html` | 390×844 | #461 |
+| Reading sync: preparing again | `ReadingSyncAgain.dc.html` | 390×844 | #461 |
+| Reading sync: prepared again, not used | `ReadingSyncKept.dc.html` | 390×844 | #461 |
 | Activity: now | `Activity.dc.html` | 390×844 | 2 |
 | Activity: this device | `ActivityDevice.dc.html` | 390×844 | 2 |
 | Activity: server | `ActivityServer.dc.html` | 390×844 | 2 |
@@ -91,11 +98,27 @@ Before version 11 the canvas had a version 10 that nobody here published. Its `c
 | Activity: server, paused | `ActivityServerPaused.dc.html` | 390×844 | #458 |
 | Worker: not in use | `WorkerNotInUse.dc.html` | 390×844 | #458 |
 | Desktop: Activity, this device | `DesktopActivityDevice.dc.html` | 1280×880, fluid | #458 |
+| Keep: turning it off | `KeepOff.dc.html` | 390×844 | #466 |
+| Keep: not complete | `KeepNotComplete.dc.html` | 390×844 | #466 |
+| Keep: nothing to save yet | `KeepNothing.dc.html` | 390×844 | #466 |
+| Keep: an earlier recording's copy | `KeepEarlier.dc.html` | 390×844 | #466 |
+| This device: storage full | `KeepFull.dc.html` | 390×844 | #466 |
+| This device: cleared by the browser | `KeepCleared.dc.html` | 390×844 | #466 |
+| Hardcover | `Hardcover.dc.html` | 390×844 | #460 |
+| Hardcover: not matched | `HardcoverMatch.dc.html` | 390×844 | #460 |
+| Book: not in the library | `BookNotInLibrary.dc.html` | 390×844 | #460 |
+| Book: nothing yet | `BookNothing.dc.html` | 390×844 | #460 |
+| Book: only a PDF | `BookPdf.dc.html` | 390×844 | #460 |
 | Book: in a series | `BookSeries.dc.html` | 390×844 | 3 |
 | Series | `Series.dc.html` | 390×844 | 3 |
 | Series: add books (sheet) | `SeriesAdd.dc.html` | 390×844 | 3 |
 | Library: series | `LibrarySeries.dc.html` | 390×844 | 3 |
 | Desktop: Series | `DesktopSeries.dc.html` | 1280×940, fluid | 3 |
+| Series: not saved | `SeriesNotSaved.dc.html` | 390×844 | #463 |
+| Series: save (sheet) | `SeriesSave.dc.html` | 390×844 | #463 |
+| Series: new from Hardcover | `SeriesNew.dc.html` | 390×844 | #463 |
+| Series: further down | `SeriesMore.dc.html` | 390×844 | #463 |
+| Series: remove | `SeriesRemove.dc.html` | 390×844 | #463 |
 | Reader: pages | `Reader.dc.html` | 390×844 | 4 |
 | Reader: controls shown | `ReaderControls.dc.html` | 390×844 | 4 |
 | Reader: speed | `ReaderSpeed.dc.html` | 390×844 | 5 |
@@ -105,6 +128,24 @@ Before version 11 the canvas had a version 10 that nobody here published. Its `c
 | Reader: across pages, after | `ReaderWrapB.dc.html` | 390×844 | 4 |
 | Chapters | `Chapters.dc.html` | 390×844 | 4 |
 | Desktop: Reader | `DesktopReader.dc.html` | 1280×800, fluid | 4 |
+| Discover | `Discover.dc.html` | 390×844 | #470 |
+| Discover: results | `DiscoverResults.dc.html` | 390×844 | #470 |
+| Discover: nothing found | `DiscoverNothing.dc.html` | 390×844 | #470 |
+| Discover: series | `DiscoverSeries.dc.html` | 390×844 | #470 |
+| Get: a recording for a new book | `GetRecording.dc.html` | 390×844 | #470 |
+| Library: sort and view | `LibrarySort.dc.html` | 390×844 | #471 |
+| Library: a Hardcover shelf | `LibraryShelf.dc.html` | 390×844 | #471 |
+| Library: list | `LibraryList.dc.html` | 390×844 | #471 |
+| Library: no connection | `LibraryOffline.dc.html` | 390×844 | #471 |
+| Settings: Account | `SettingsAccount.dc.html` | 390×844 | #472 |
+| Settings: Appearance | `SettingsAppearance.dc.html` | 390×844 | #472 |
+| Settings: Users | `SettingsUsers.dc.html` | 390×844 | #472 |
+| Settings: Library and storage | `SettingsLibrary.dc.html` | 390×844 | #472 |
+| Settings: App | `SettingsApp.dc.html` | 390×844 | #472 |
+| Sign in | `SignIn.dc.html` | 390×844 | #473 |
+| Request an account | `SignInRequest.dc.html` | 390×844 | #473 |
+| Join | `Join.dc.html` | 390×844 | #473 |
+| Join: link not valid | `JoinExpired.dc.html` | 390×844 | #473 |
 
 All boards are static mock-ups. They link to each other (tab bar, rail, rows, back buttons, the Activity segments) so Play mode can walk through them. Every board has one tweak, the accent colour.
 
@@ -243,20 +284,15 @@ Everything else on the boards gives a new home or a new name to something the ap
 ## Not drawn yet
 
 - In the reader: the Search and Bookmarks pages; the sleep timer in the foot (speed is drawn); messages in the foot ("Listening from here · Undo", an error, another session saved a different place, an update is ready); a book with only an ebook (no Listen face, its foot holds the place and a position slider, no transport); Listen on a desktop; the other three reader themes.
-- The Book page for a book that is not in the library yet (Add to library), with nothing yet, or with only a PDF; the Hardcover page (shelf, lists, matching, the Hardcover edition, Use Hardcover position).
-- Keep on this device: turning it off (one question with the total size), "Not complete · 8 of 12 files" with Retry, "Nothing to save yet", an earlier recording's copy, storage full.
-- Reading sync: paused, cancelled, partly ready, language not supported; Prepare again while the current map stays in use.
-- Series: finding one in Discover (it would open the same Series page, not yet saved); the works without a number ("Related works"); the New mark on a work Hardcover added later and dismissing it; removing a series; the refresh error and the note that a work needs an administrator to link it.
-- Tooltips on the pages that are not drawn yet (Appearance, Account, Users, Library and storage, the reader).
-- Discover, which now finds books: results are works, a result opens its Book page, and the last row is "Search for a recording of '…'".
-- The Library's sort-and-view control with the Hardcover shelf and Hardcover list filters.
+- Series: finding one in Discover (it opens the Series page, not yet saved: `SeriesNotSaved.dc.html`); the refresh error and the note that a work needs an administrator to link it.
+- Tooltips on the reader's pages that are not drawn yet.
 - Choosing where to resume when switching recordings; the sheet of one copy (size, Save to server, Remove, Report a problem); the Plays from picker; the fault report form.
 - Prepare for all books (its counts and button); the Details page of a reading sync (engine, GPU use, stage times). Correcting one sentence's timing leaves the interface.
 - The chapter matcher of the older engine. Production runs whole-book jobs (`ALIGNMENT_BOOK_JOBS=1`), which have no matching step.
 - The rest of Activity › Server on the phone: the board shows the top of the list; Series search, Ebook checks, Hardcover sync, Database backups and Imports follow in the same row and are on the desktop board.
 - The series view with the new status lines.
-- Appearance, Reading, Account, Users, Library and storage and App detail pages.
-- Sign-in and join screens; empty, loading, offline and error states; toasts and confirmations (Restart, Remove, turning Keep off).
+- The Connections page on a phone (the desktop board shows it beside the list).
+- Empty, loading and error states; toasts and confirmations (Restart, Remove, turning Keep off).
 - The other theme presets and the compact density. Tablet width.
 
 ## Decided by the owner (2026-11-16)

@@ -14,7 +14,7 @@ const counts = (over: Partial<ActivityResponse["processes"][number]["counts"]> =
 const outage: ActivityResponse = {
   checkedAt: now, stuckMultiplier: 1, attention: 4,
   processes: [
-    { id: "acquisitions", label: "Download queue", type: "loop", health: "degraded", reason: "2 stuck", since: now - 3_000_000, notTracked: false, ...noPause, pausable: true, pauseEffect: "Sonder stops checking downloads, so finished torrents are not imported. The torrents keep downloading in the torrent client.", counts: counts({ running: 2, stuck: 2 }) },
+    { id: "acquisitions", label: "Download queue", type: "loop", health: "degraded", reason: "2 stuck", since: now - 3_000_000, notTracked: false, ...noPause, pausable: true, pauseEffect: "Off: Sonder stops checking downloads, so finished ones do not join the library. They keep downloading in the torrent client.", counts: counts({ running: 2, stuck: 2 }) },
     { id: "torrent-client", label: "Torrent client", type: "service", health: "down", reason: "The local torrent client cannot be reached.", since: null, notTracked: false, ...noPause, counts: counts() },
     { id: "imports", label: "Imports", type: "loop", health: "unknown", reason: "Not tracked yet.", since: null, notTracked: true, ...noPause, counts: counts() },
   ],
@@ -87,8 +87,8 @@ test("a failing Activity request shows an error and a working Refresh", async ({
 });
 
 const pausableProcess = (over: Partial<ActivityResponse["processes"][number]> = {}): ActivityResponse["processes"][number] => ({
-  id: "alignment", label: "Alignment processor", type: "loop", health: "ok", reason: null, since: null, notTracked: false,
-  pausable: true, paused: false, lockedBy: null, pauseEffect: "No new alignment job starts. A job already running finishes.",
+  id: "alignment", label: "Reading sync queue", type: "loop", health: "ok", reason: null, since: null, notTracked: false,
+  pausable: true, paused: false, lockedBy: null, pauseEffect: "Off: no new reading sync starts. One that is running finishes.",
   counts: counts(), ...over,
 });
 const withProcesses = (processes: ActivityResponse["processes"], items: ActivityResponse["items"] = []): ActivityResponse =>
@@ -105,14 +105,14 @@ test("Pause stops a loop, says what it does, and Resume undoes it", async ({ pag
   });
   await page.goto("/#activity");
   const row = page.getByTestId("activity-process-alignment");
-  await expect(row).toContainText("No new alignment job starts. A job already running finishes.");
+  await expect(row).toContainText("Off: no new reading sync starts. One that is running finishes.");
   await expect(page.getByTestId("activity-process-paused")).toHaveCount(0);
   await expect(row.getByTestId("activity-process-health")).toHaveText("Running");
-  await page.getByRole("button", { name: "Pause Alignment processor" }).click();
+  await page.getByRole("button", { name: "Pause Reading sync queue" }).click();
   await expect(page.getByTestId("activity-process-paused")).toBeVisible();
   await expect(row.getByTestId("activity-process-health")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Resume Alignment processor" })).toBeVisible();
-  await page.getByRole("button", { name: "Resume Alignment processor" }).click();
+  await expect(page.getByRole("button", { name: "Resume Reading sync queue" })).toBeVisible();
+  await page.getByRole("button", { name: "Resume Reading sync queue" }).click();
   await expect(page.getByTestId("activity-process-paused")).toHaveCount(0);
   expect(requests).toEqual([{ paused: true }, { paused: false }]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -120,19 +120,19 @@ test("Pause stops a loop, says what it does, and Resume undoes it", async ({ pag
 
 test("a loop disabled by the environment shows why and has no switch", async ({ page }) => {
   await page.route("**/api/activity", (route) => route.fulfill({
-    json: withProcesses([pausableProcess({ id: "series-acquisition", label: "Series acquisition", lockedBy: "environment", pauseEffect: "No new series search or download starts." })]),
+    json: withProcesses([pausableProcess({ id: "series-acquisition", label: "Series search", lockedBy: "environment", pauseEffect: "Off: no new search or download for a series starts." })]),
   }));
   await page.goto("/#activity");
   await expect(page.getByTestId("activity-process-locked")).toContainText("Disabled by environment");
   await expect(page.getByTestId("activity-process-series-acquisition").getByTestId("activity-process-health")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /Pause Series acquisition|Resume Series acquisition/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Pause Series search|Resume Series search/ })).toHaveCount(0);
 });
 
 test("a failed Pause request shows the reason on the row", async ({ page }) => {
   await page.route("**/api/activity", (route) => route.fulfill({ json: withProcesses([pausableProcess()]) }));
   await page.route("**/api/activity/processes/alignment/pause", (route) => route.fulfill({ status: 409, json: { error: "An environment setting disables this process, so it cannot be changed here." } }));
   await page.goto("/#activity");
-  await page.getByRole("button", { name: "Pause Alignment processor" }).click();
+  await page.getByRole("button", { name: "Pause Reading sync queue" }).click();
   await expect(page.getByTestId("activity-process-alignment").getByRole("alert")).toContainText("environment setting");
 });
 
@@ -200,7 +200,7 @@ test("the database backups row lists the schedule, and its switch pauses and res
   // A backup may be running at this moment (the test server starts one when due): the row then says so.
   await expect(row).toContainText(/No backup yet|Running since|Last run \d+ \w{3} \d{2}:\d{2} UTC: (succeeded, \d+\.\d MB|failed)/);
   await expect(row).toContainText(/Next run (within 10 minutes|\d+ \w{3} 03:00 UTC)|Running since/);
-  await expect(row).toContainText("No new daily database backup starts. A backup already running finishes.");
+  await expect(row).toContainText("Off: no new daily backup starts. One that is running finishes.");
 
   await page.getByRole("button", { name: "Pause Database backups" }).click();
   await expect(row.getByTestId("activity-process-paused")).toBeVisible();
@@ -212,7 +212,7 @@ test("the database backups row lists the schedule, and its switch pauses and res
 });
 
 const hostRow = (over: Partial<NonNullable<ActivityResponse["processes"][number]["host"]>> = {}): ActivityResponse["processes"][number] => ({
-  id: "alignment-host:wsl", label: "Alignment worker (wsl)", type: "service", health: "ok", reason: null, since: null, notTracked: false,
+  id: "alignment-host:wsl", label: "Reading sync worker (wsl)", type: "service", health: "ok", reason: null, since: null, notTracked: false,
   ...noPause, counts: counts(),
   host: {
     hostId: "wsl", device: "cuda", online: true, disabled: false, revision: "c901429", work: "1 whole-book job, encoding",
@@ -242,10 +242,10 @@ test("a worker host row shows its status, version and job; restart asks first, c
   await expect(row.getByTestId("activity-host-status")).toHaveText("Online · cuda · Code version c901429");
   await expect(row.getByTestId("activity-host-job")).toHaveText("Current job: 1 whole-book job, encoding · Speaker for the Dead");
 
-  await page.getByRole("button", { name: "Restart Alignment worker (wsl)" }).click();
+  await page.getByRole("button", { name: "Restart Reading sync worker (wsl)" }).click();
   expect(restarts).toEqual([]);
   await row.getByRole("button", { name: "Cancel" }).click();
-  await page.getByRole("button", { name: "Restart Alignment worker (wsl)" }).click();
+  await page.getByRole("button", { name: "Restart Reading sync worker (wsl)" }).click();
   await row.getByTestId("activity-host-restart-confirm").click();
   await expect(row.getByRole("alert")).toContainText("The host is running 1 whole-book job.");
   await expect(row.getByTestId("activity-host-restart-confirm")).toHaveText("Restart anyway");
@@ -253,9 +253,9 @@ test("a worker host row shows its status, version and job; restart asks first, c
   await expect(row.getByTestId("activity-host-result")).toHaveText("Restarted and ready again after 4 s.");
   expect(restarts).toEqual([{ force: false }, { force: true }]);
 
-  await page.getByRole("button", { name: "Disable Alignment worker (wsl)" }).click();
+  await page.getByRole("button", { name: "Disable Reading sync worker (wsl)" }).click();
   await expect(row.getByTestId("activity-host-disabled")).toHaveText("Disabled by you");
-  await page.getByRole("button", { name: "Enable Alignment worker (wsl)" }).click();
+  await page.getByRole("button", { name: "Enable Reading sync worker (wsl)" }).click();
   await expect(row.getByTestId("activity-host-disabled")).toHaveCount(0);
   expect(switches).toEqual([{ disabled: true }, { disabled: false }]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

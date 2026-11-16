@@ -16,6 +16,11 @@ export const T = {
   ebookFrom: 'Where this edition is kept: on this device, where it opens without a connection, and on your server.',
   exportFile: 'Downloads the file out of Sonder, for example to read it in another app.',
 
+  // Hardcover (the Book page's Hardcover row, #460)
+  hardcoverPosition: 'Plays this recording from the place saved on Hardcover. The place you leave is kept under Earlier positions.',
+  hardcoverEdition: 'The audio edition on Hardcover that your place in this recording is sent to. Automatic uses the edition of your current read there, or the one with the same narrator.',
+  hardcoverMatch: 'Links this book to its book on Hardcover, so its shelf, lists and progress sync. The match is the same for everyone on this server.',
+
   // Get sheets
   getRecordings: 'Plays now: TorBox already has it, so it plays at once. The others are downloaded to your server first. More seeders means a faster download; with none it may never finish.',
   getEditions: 'An EPUB opens in the reader and can follow the narration. A PDF is kept for other apps.',
@@ -79,6 +84,12 @@ export const T = {
   torbox: 'Asked first for every recording. What TorBox already has plays at once; the rest is downloaded.',
   hardcoverProgress: 'On: your listening and reading progress is also sent to Hardcover. Off: Sonder only reads your shelves, lists and positions from it.',
   prowlarr: 'Adds the indexers of your Prowlarr to the recording search. Sonder only reads from it.',
+
+  // Settings, the detail pages (#472)
+  density: 'Compact puts less space around rows and groups, so more fits on the screen.',
+  readerTheme: 'The colours of the book’s pages in the reader. App uses the colours of the app.',
+  mediaDrive: 'The drive on your server that holds the audiobooks and ebooks. While it is not connected, nothing is saved to it.',
+  resetDevice: 'Reloads the app’s files and clears what it keeps for streaming. Books kept on this device, your places and your settings stay.',
 };
 
 /** Screen, then its entries in the order they appear: [the entry's name, its tooltip]. */
@@ -86,6 +97,7 @@ export const tipGroups = [
   ['Book', [['Reading sync', T.readingSync], ['Keep on this device', T.keep]]],
   ['Audiobook', [['Recordings', T.recordings], ['Available from', T.audioFrom], ['Plays from', T.playsFrom], ['Report a problem', T.problem]]],
   ['Ebook', [['Editions', T.editions], ['Available from', T.ebookFrom], ['Export the file', T.exportFile]]],
+  ['Hardcover', [['Use Hardcover position', T.hardcoverPosition], ['Hardcover edition', T.hardcoverEdition], ['Match on Hardcover', T.hardcoverMatch]]],
   ['Get audiobook, Get ebook', [['Recordings', T.getRecordings], ['Editions', T.getEditions]]],
   ['Reading sync', [['Reading sync (the title)', T.syncTitle], ['Preparing', T.preparing], ['Ready', T.ready], ['Text mapped', T.mapped], ['Unsynced passages', T.unsynced], ['Prepare again', T.prepareAgain], ['Stopped', T.stopped]]],
   ['Series', [['Books', T.seriesBooks], ['Get the audiobooks', T.seriesAudio], ['Get the ebooks', T.seriesEbooks]]],
@@ -97,4 +109,7 @@ export const tipGroups = [
   ['Reader', [['Reading mode', T.readingMode], ['Follow the narration', T.follow]]],
   ['Settings, Playback', [['Default speed', T.defaultSpeed], ['Progress bar shows', T.progressBar]]],
   ['Settings, Connections', [['TorBox', T.torbox], ['Sync listening and reading progress', T.hardcoverProgress], ['Prowlarr', T.prowlarr]]],
+  ['Settings, Appearance', [['Density', T.density], ['Reader theme', T.readerTheme]]],
+  ['Settings, Library and storage', [['Media drive', T.mediaDrive]]],
+  ['Settings, App', [['Reset this device', T.resetDevice]]],
 ];
