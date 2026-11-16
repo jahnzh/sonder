@@ -43,6 +43,16 @@ Remove an entry once its cause is fixed. A `listedPassed` entry that is `environ
 
 This command performs local validation. CI triggers, staging and image promotion remain follow-up work on issue #23; production deployment is covered by `scripts/deploy.sh` (see [Production deployment](#production-deployment)).
 
+## Stress a browser test
+
+A browser test that passes once can still fail in the full suite on a loaded host. On 2026-11-15 four new tests landed that way, and three tests written off as unreliable turned out to be defects in the app. Before a new or changed browser test lands, run it repeatedly under load:
+
+```bash
+scripts/stress-spec.sh tests/e2e/<file>.spec.ts -g "<title>" --runs 20 --load
+```
+
+Each run gets a fresh server, so the spec file does not have to be repeat-safe. `--load` keeps every CPU busy beside the runs. The script builds first (the browser tests serve `dist/`), prints the passed and failed counts, and keeps the logs of failed runs. When a run fails, decide with its trace whether a user doing the same thing at the same speed would get the wrong result (fix the app) or the test acts before the app is ready (fix the test, waiting on what a user would see).
+
 ## Mobile device projects
 
 ### Sharded browser stage (#34)
