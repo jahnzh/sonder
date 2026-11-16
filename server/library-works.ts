@@ -33,6 +33,7 @@ import { consensusEbookId, defaultEbookIds } from "./ebook-set-consensus.ts";
 import { listServedAlignmentSummaries, type slimAlignmentJob } from "./alignment-transitions.ts";
 import { getWorkMediaStates } from "./work-media-state.ts";
 import { addWorkToLibrary, removeWorkFromLibrary, workVisibleTo } from "./work-library.ts";
+import { keepOffOnEveryDevice } from "./device-keep.ts";
 import type {
   Book,
   LibraryWork,
@@ -520,6 +521,8 @@ export function registerLibraryWorks(app: FastifyInstance) {
     const { workId } = req.params as { workId: string };
     if (!workVisibleTo(userId, workId)) return reply.code(404).send({ error: "This book could not be found." });
     removeWorkFromLibrary(userId, workId);
+    // Keep on this device goes off for the work on every device of the user (#549).
+    keepOffOnEveryDevice(userId, workId);
     return { ok: true };
   });
 }
