@@ -77,7 +77,7 @@ const run = (dir: string, iso: string, extra: Parameters<typeof backups.runDaily
 function activity(now: number) {
   const built = buildActivity({
     now, multiplier: 1, tracker: new ChangeTracker(), pause: {},
-    snapshots: [{ source: backupSource, rows: backupSource.load(sqlite), probe: { value: null, failure: null } }],
+    snapshots: [{ source: backupSource, rows: backupSource.load(sqlite, { userId: 1 }), probe: { value: null, failure: null } }],
   });
   return { reason: built.processes.find((entry) => entry.id === "backups")!.reason, item: built.items[0] };
 }

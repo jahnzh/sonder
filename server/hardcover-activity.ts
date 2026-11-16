@@ -88,6 +88,9 @@ export const hardcoverSource = defineSource<HardcoverQueueRow[]>({
         id: `hardcover:${row.queue}:${row.userId}`, kind: "hardcover" as const, processId: "hardcover-sync",
         title: HARDCOVER_QUEUE_TITLES[row.queue], detail: `${row.count} waiting to be sent`, user: row.user,
         state, progress: null, host: null, startedAt: row.oldest, updatedAt: row.newest,
+        // A queue concerns no book.
+        workId: null, bookId: null, cover: null,
+        facts: { kind: "hardcover" as const, status: hardcoverQueueStatus(row.error), queue: row.queue },
         error: row.error, permanent, changedAt: row.newest,
         // Discard for a change that cannot succeed, Retry for the rest.
         actions: state === "done" ? [] : permanent ? ["discard" as const] : ["retry" as const],

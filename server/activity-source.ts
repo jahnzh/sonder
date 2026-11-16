@@ -3,7 +3,8 @@
  * activity source next to its own status vocabulary; `server/activity.ts` only aggregates the sources, marks
  * stuck and blocked items, applies the pause switches and dispatches actions. Nothing here knows a feature.
  *
- * Imports only types (and the pure pause model), so the Activity module stays free of the database at import.
+ * Imports only types (and the pure pause model and the cover rule, which take the database handle they are given),
+ * so the Activity module stays free of the database at import.
  */
 import type { FastifyBaseLogger } from "fastify";
 import type {
@@ -11,6 +12,7 @@ import type {
 } from "../src/types.ts";
 import type { AlignmentPoolStatus } from "../src/reading-types.ts";
 import type { PausableProcess } from "./activity-pause-model.ts";
+import { workCovers } from "./work-cover.ts";
 
 const MINUTE = 60_000;
 
@@ -20,6 +22,8 @@ export type ActivityDeps = {
   torrentHealth: () => Promise<TorrentHealth>;
   poolStatus: () => Promise<AlignmentPoolStatus>;
   requireAdmin: (req: any) => unknown;
+  /** The user who made the request; the covers of the items are read from their library (#514). */
+  userId?: (req: any) => number;
   /** Run a Hardcover sync for one user now (the "Retry" action on a queued change). */
   syncHardcover: (userId: number) => Promise<unknown>;
   /** Evaluate one ebook-set member again in the background (the "Retry" action on an ebook-set check). */
@@ -60,8 +64,8 @@ export class ChangeTracker {
   }
 }
 
-/** An item as a source reports it; Activity adds whether it is stuck or blocked. */
-export type ActivityDraft = Omit<ActivityItem, "stuck" | "blockedBy" | "permanent" | "actions"> & {
+/** An item as a source reports it; Activity adds whether it is stuck, blocked or needs attention. */
+export type ActivityDraft = Omit<ActivityItem, "stuck" | "blockedBy" | "permanent" | "actions" | "attention"> & {
   permanent?: boolean;
   /** When the item last changed, for the "no change for" rule. */
   changedAt: number;
@@ -94,6 +98,31 @@ export type ReportContext = {
   held: boolean;
 };
 
+/** What a source's `load` is asked for besides the database: whose library the covers are read from (#514). */
+export type LoadContext = { userId: number };
+
+/** The book an item concerns, read with its row: the work, its audio edition (never a placeholder's) and cover. */
+export type ItemWork = { workId: string; bookId: string | null; cover: string };
+
+/**
+ * `rows` with the work each concerns (`workOf` gives its id, or null for a row with none), read by the cover rule of
+ * the library by work for `userId`. A work that no longer exists is no work. One query per rule step for all rows.
+ */
+export function withWorks<Row>(
+  sqlite: ActivityDeps["sqlite"], userId: number, rows: Row[], workOf: (row: Row) => string | null,
+): Array<Row & { work: ItemWork | null }> {
+  const covers = workCovers(sqlite, userId, rows.flatMap((row) => workOf(row) ?? []));
+  return rows.map((row) => {
+    const workId = workOf(row);
+    const found = workId ? covers.get(workId) : undefined;
+    return { ...row, work: workId && found ? { workId, ...found } : null };
+  });
+}
+
+/** The `workId`, `bookId` and `cover` of an item: its work's, or `ownCover` when it has no work, else none. */
+export const itemWork = (work: ItemWork | null | undefined, ownCover: string | null = null) =>
+  ({ workId: work?.workId ?? null, bookId: work?.bookId ?? null, cover: work ? work.cover : ownCover });
+
 export type ActivityActionContext = { deps: ActivityDeps; log: FastifyBaseLogger };
 export type ActivityAction = (id: string, context: ActivityActionContext) => Promise<Record<string, unknown>>;
 /** An action on a service the source reports (a worker host's restart or switch), with the request body. */
@@ -108,8 +137,8 @@ export type ActivitySource<Rows = unknown, Probe = never> = {
   process: { id: PausableProcess; label: string };
   /** A running item is stuck when nothing about it changed for this long (scaled by the settings multiplier). */
   stuckAfterMs: number;
-  /** Read the feature's rows. */
-  load(sqlite: ActivityDeps["sqlite"]): Rows;
+  /** Read the feature's rows, with the work of each item (`withWorks`). */
+  load(sqlite: ActivityDeps["sqlite"], context: LoadContext): Rows;
   /** Ask a service this work depends on; Activity runs it with a time limit and only when probes are wanted. */
   probe?(deps: ActivityDeps): Promise<Probe>;
   /** Turn rows into items, and the probe into services. Pure. */
