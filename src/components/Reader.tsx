@@ -345,7 +345,10 @@ export function ReaderView({
     hiddenJumps = useRef(0),
     highlight = useRef<string | null>(null);
   const mountedRef = useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   // Whether the open ebook's map has a sentence at this place of this recording.
   const narrationAt = (recordingId: string | undefined, trackId: string | undefined, position: number) => {
     const current = mapRef.current;
@@ -459,8 +462,10 @@ export function ReaderView({
       setOffline(!!(await cachedEpub(id, value.fingerprint)));
     } catch (error) {
       // Only a confirmed "not found" means gone; offline, with no copy here, keeps the reader's message.
-      if (error instanceof ApiError && error.status === 404 && onGone) onGone();
-      else setError((error as Error).message);
+      // A reader closed before the answer came leaves the page shown now alone.
+      if (error instanceof ApiError && error.status === 404 && onGone) {
+        if (mountedRef.current) onGone();
+      } else setError((error as Error).message);
     } finally {
       setLoading(false);
     }
@@ -794,7 +799,11 @@ export function ReaderView({
           host.addEventListener(type, () => following.gesture(), { passive: true });
         (view as any).__observer = observer;
       } catch (error) {
-        if (!disposed)
+        // Details kept on this device for an ebook whose file the server confirms is gone: gone, as above.
+        if (disposed) return;
+        if (error instanceof ApiError && error.status === 404 && onGone) {
+          if (mountedRef.current) onGone();
+        } else
           setError(
             (error as Error).message || "This EPUB could not be rendered.",
           );

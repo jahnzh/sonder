@@ -9,6 +9,10 @@ class FakeBrowser {
   entries: Entry[];
   index = 0;
   scrollY = 0;
+  /** How long a traversal takes to land; a slow browser's can take longer than the app waits for it. */
+  delay = 0;
+  /** The address each traversal landed on, in turn. */
+  landed: string[] = [];
   scrollHeight = 5000;
   innerHeight = 800;
   listeners = new Map<string, ((event: { state: unknown }) => void)[]>();
@@ -27,8 +31,9 @@ class FakeBrowser {
       const target = this.index + delta;
       if (live !== this || target < 0 || target >= this.entries.length) return;
       this.index = target;
+      this.landed.push(this.url.hash);
       this.dispatch("popstate", { state: this.entries[this.index].state });
-    }, 0);
+    }, this.delay);
   }
   /** A link or a typed address: the browser adds an entry with no state and fires popstate. */
   followHash(hash: string) {
@@ -461,4 +466,105 @@ test("a scroll restoration that waits stops when the app moves to another page",
   await settle();
   await settle();
   assert.equal(browser.scrollY, 0);
+});
+
+test("a Back that lands after its fallback ran does not move the page a second time", async () => {
+  const browser = new FakeBrowser("/#discover");
+  const nav = await load(browser);
+  const { BACK_WAIT_MS } = nav;
+  nav.navigate({ name: "reader", ebookId: "e1" });
+  const heard: string[] = [];
+  nav.onPageLeftByHistory((page) => heard.push(page.name));
+  // The browser takes longer than the app waits: the fallback shows the reader's parent, the Library.
+  browser.delay = BACK_WAIT_MS + 200;
+  nav.goBack();
+  await until(() => browser.url.hash === "#library", "the fallback's #library");
+  assert.deepEqual(browser.hashes, ["#discover", "#library"]);
+  // Then the Back lands on Discover after all; the app returns to the entry it shows.
+  browser.delay = 0;
+  await until(() => browser.landed.length === 2, "the late Back, and the way back");
+  await settle();
+  assert.deepEqual(browser.landed, ["#discover", "#library"]);
+  assert.equal(browser.url.hash, "#library");
+  assert.deepEqual(browser.hashes, ["#discover", "#library"]);
+  assert.deepEqual(heard, [], "the page did not move again");
+  // The phone's Back from there is the user's own and moves the page.
+  browser.traverse(-1);
+  await until(() => heard.length === 1, "the user's Back");
+  assert.deepEqual(heard, ["discover"]);
+  assert.equal(browser.url.hash, "#discover");
+});
+
+test("a move queued behind a late Back runs once, and the late Back moves nothing afterwards", async () => {
+  const browser = new FakeBrowser("/#discover");
+  const nav = await load(browser);
+  const { BACK_WAIT_MS } = nav;
+  nav.navigate({ name: "reader", ebookId: "e1" });
+  browser.delay = BACK_WAIT_MS + 200;
+  nav.goBack();
+  // A move asked for while the Back is on its way waits for it, and runs after the fallback.
+  nav.goPlace("settings");
+  assert.deepEqual(browser.hashes, ["#discover", "#reader/e1"]);
+  await until(() => browser.url.hash === "#settings", "the queued #settings");
+  assert.deepEqual(browser.hashes, ["#discover", "#library", "#settings"]);
+  browser.delay = 0;
+  // The late Back lands on the Library, one entry behind Settings; the app returns to Settings.
+  await until(() => browser.landed.length === 2, "the late Back, and the way back");
+  assert.deepEqual(browser.landed, ["#library", "#settings"]);
+  await new Promise((resolve) => setTimeout(resolve, BACK_WAIT_MS + 100));
+  assert.deepEqual(browser.hashes, ["#discover", "#library", "#settings"], "the queued move ran once");
+  assert.equal(browser.index, 2);
+  assert.equal(browser.url.hash, "#settings");
+});
+
+test("a Back long after a fallback ran is the user's own, and moves the page", async () => {
+  const browser = new FakeBrowser("/#discover");
+  const nav = await load(browser);
+  const { BACK_WAIT_MS, LATE_BACK_MS } = nav;
+  nav.navigate({ name: "reader", ebookId: "e1" });
+  // A Back the browser never makes: the traversal is lost, the fallback shows the Library.
+  const go = history.go;
+  history.go = () => {};
+  nav.goBack();
+  await until(() => browser.url.hash === "#library", "the fallback's #library");
+  history.go = go;
+  await new Promise((resolve) => setTimeout(resolve, LATE_BACK_MS + 50));
+  const heard: string[] = [];
+  nav.onPageLeftByHistory((page) => heard.push(page.name));
+  browser.traverse(-1);
+  await until(() => browser.index === 0, "the user's Back");
+  await new Promise((resolve) => setTimeout(resolve, BACK_WAIT_MS / 4));
+  assert.equal(browser.index, 0);
+  assert.deepEqual(heard, ["discover"]);
+});
+
+test("when the way back from a late Back is late too, the entry the browser stands on shows the page, and nothing bounces", async () => {
+  const browser = new FakeBrowser("/#discover");
+  const nav = await load(browser);
+  const { BACK_WAIT_MS } = nav;
+  nav.navigate({ name: "reader", ebookId: "e1" });
+  const heard: string[] = [];
+  nav.onPageLeftByHistory((page) => heard.push(page.name));
+  // Every traversal takes longer than the app waits.
+  browser.delay = BACK_WAIT_MS + 200;
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  // Traversals that kept bouncing would outlive the test: the fake stops when it ends.
+  try {
+    nav.goBack();
+    // t = 1000: the fallback shows the Library; t = 1200: the Back lands on Discover, and the app asks to go forward.
+    await wait(BACK_WAIT_MS + 300);
+    assert.deepEqual(browser.landed, ["#discover"]);
+    assert.equal(browser.url.hash, "#discover");
+    // t = 2200: the way back is late too, and its fallback writes the shown page into the entry the browser stands on.
+    await wait(BACK_WAIT_MS);
+    assert.equal(browser.url.hash, "#library");
+    // t = 2400: it lands, on an entry that shows the same page; it is not taken as a late Back to undo.
+    await until(() => browser.landed.length === 2, "the late way back");
+    await new Promise((resolve) => setTimeout(resolve, BACK_WAIT_MS + 400));
+    assert.deepEqual(browser.landed, ["#discover", "#library"]);
+    assert.equal(browser.url.hash, "#library");
+    assert.deepEqual(heard, []);
+  } finally {
+    live = null;
+  }
 });
