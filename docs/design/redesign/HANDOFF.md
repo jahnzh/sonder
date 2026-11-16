@@ -73,6 +73,13 @@ Before version 11 the canvas had a version 10 that nobody here published. Its `c
 | Reading sync: preparing | `ReadingSync.dc.html` | 390×844 | 2 |
 | Reading sync: ready | `ReadingSyncReady.dc.html` | 390×844 | 2 |
 | Reading sync: stopped | `ReadingSyncStopped.dc.html` | 390×844 | 2 |
+| Reading sync: paused | `ReadingSyncPaused.dc.html` | 390×844 | #461 |
+| Reading sync: cancelled | `ReadingSyncCancelled.dc.html` | 390×844 | #461 |
+| Reading sync: partly ready | `ReadingSyncPartial.dc.html` | 390×844 | #461 |
+| Reading sync: no text matched | `ReadingSyncNoMatch.dc.html` | 390×844 | #461 |
+| Reading sync: not available | `ReadingSyncLanguage.dc.html` | 390×844 | #461 |
+| Reading sync: preparing again | `ReadingSyncAgain.dc.html` | 390×844 | #461 |
+| Reading sync: prepared again, not used | `ReadingSyncKept.dc.html` | 390×844 | #461 |
 | Activity: now | `Activity.dc.html` | 390×844 | 2 |
 | Activity: this device | `ActivityDevice.dc.html` | 390×844 | 2 |
 | Activity: server | `ActivityServer.dc.html` | 390×844 | 2 |
@@ -249,7 +256,6 @@ Everything else on the boards gives a new home or a new name to something the ap
 
 - In the reader: the Search and Bookmarks pages; the sleep timer in the foot (speed is drawn); messages in the foot ("Listening from here · Undo", an error, another session saved a different place, an update is ready); a book with only an ebook (no Listen face, its foot holds the place and a position slider, no transport); Listen on a desktop; the other three reader themes.
 - Keep on this device: turning it off (one question with the total size), "Not complete · 8 of 12 files" with Retry, "Nothing to save yet", an earlier recording's copy, storage full.
-- Reading sync: paused, cancelled, partly ready, language not supported; Prepare again while the current map stays in use.
 - Series: finding one in Discover (it would open the same Series page, not yet saved); the works without a number ("Related works"); the New mark on a work Hardcover added later and dismissing it; removing a series; the refresh error and the note that a work needs an administrator to link it.
 - Tooltips on the pages that are not drawn yet (Appearance, Account, Users, Library and storage, the reader).
 - Discover, which now finds books: results are works, a result opens its Book page, and the last row is "Search for a recording of '…'".

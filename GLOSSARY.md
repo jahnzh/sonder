@@ -107,12 +107,16 @@ Part of an ebook edition that has no place in the alignment map, because the nar
 _Avoid_: Gap, missing timings
 
 **Rebuild**:
-Automatically generating a fresh alignment map when the existing one was made by an older engine, replacing the old map entirely when it finishes.
+Automatically generating a fresh alignment map when the existing one was made by an older engine. The existing map stays the map in use until the new one is ready; the new one replaces it entirely, unless it maps none of the text, clearly less of it, or ends with the language not supported, and then it is not used.
 _Avoid_: Re-sync, repair, migrate
 
 **Prepare again**:
-Generating a fresh alignment map because the user asked for it. As with a rebuild, the existing map stays in use until the new one is ready.
+Generating a fresh alignment map because the user asked for it. As with a rebuild, the existing map stays the map in use until the new one is ready, and a new one that is clearly worse is not used.
 _Avoid_: Rebuild (for the manual action), re-sync
+
+**Map in use**:
+The alignment map the reader follows for one recording and one ebook edition. While a rebuild or Prepare again runs, it is the earlier map. A map made for files that have changed since is never in use.
+_Avoid_: Published map, kept map, old map
 
 **Narrated sentence**:
 The sentence the narration is speaking, or the last one it spoke until the next one begins, located through the alignment map.
