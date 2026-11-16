@@ -1,6 +1,6 @@
 // `POST /api/test/seed-local-audio` (test builds only): its edition, recording and track are written
-// together, and a track id already in use fails the request and writes nothing. An edition left
-// without its track would be taken for a placeholder (#483).
+// together, and a track id already in use, or a recording id of another edition, fails the request
+// and writes nothing. An edition left without its track would be taken for a placeholder (#483).
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
@@ -47,4 +47,25 @@ test("a track id already in use fails the request and leaves no edition without 
     (sqlite.prepare("SELECT recording_id AS id FROM tracks WHERE id='seeded-track'").get() as { id: string }).id,
     "rec-seeded-first",
   );
+});
+
+test("a recording id of another edition fails the request and writes nothing", async () => {
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/test/seed-local-audio",
+    payload: {
+      relPath: "seeded-third.mp3",
+      editionId: "seeded-third",
+      recordingId: "rec-seeded-first",
+      trackId: "seeded-track-third",
+      workId: "work-alice",
+    },
+  });
+  assert.equal(response.statusCode, 409, response.body);
+  const count = (table: string, column: string, id: string) =>
+    (sqlite.prepare(`SELECT count(*) AS n FROM ${table} WHERE ${column}=?`).get(id) as { n: number }).n;
+  assert.equal(count("audio_editions", "id", "seeded-third"), 0);
+  assert.equal(count("tracks", "id", "seeded-track-third"), 0);
+  assert.equal(count("user_library", "book_id", "seeded-third"), 0);
+  assert.equal(count("tracks", "recording_id", "rec-seeded-first"), 1);
 });

@@ -10,14 +10,15 @@
  */
 import type { FastifyInstance } from "fastify";
 import { createHash } from "node:crypto";
+import { statSync } from "node:fs";
 import { and, eq, inArray } from "drizzle-orm";
 import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
-import { currentUserId } from "./users.ts";
+import { currentUserId, userIsAdmin } from "./users.ts";
 import { hiddenHardcoverPlaceholders } from "./hardcover.ts";
-import { deliveredTracks, faultsFor } from "./media-library.ts";
+import { deliveredTracks } from "./media-library.ts";
 import { placeholderEditionSql } from "./placeholder-edition.ts";
-import type { LibraryWork, Progress, WorkRecording } from "../src/types.ts";
+import type { Book, LibraryWork, MediaFault, Progress, WorkRecording } from "../src/types.ts";
 
 type ChoiceContext = { userId: number; workId: string };
 /** One step of the rule for the chosen recording: a recording id, or null to leave it to the next step. */
@@ -60,9 +61,59 @@ type RecordingRow = {
   sourceLabel: string;
   cover: string;
 };
+type TrackRow = typeof s.tracks.$inferSelect;
 
-/** The user's recordings of `workIds`: audio editions in their library that are not placeholders. */
-function recordingsByWork(userId: number, workIds: string[]) {
+/**
+ * Whether a file is on the server is remembered for `ttlMs`, keyed by the path and size in the row
+ * that names it (a local track's source, a `media_copies` row). The server writes such a row only
+ * once its file is in place (`downloads.ts` renames the copy, then writes its row; an upload or a
+ * finished torrent writes its tracks after the files) and removes the file only with its row or
+ * after it (`media-library.ts` removes a copy and its row together, `series-removal.ts` deletes the
+ * rows first), so a change made through the server never meets a wrong answer here. A file added or
+ * removed outside the server shows within `ttlMs`. `now` is replaced by tests.
+ */
+export const filePresence = { ttlMs: 5_000, now: () => Date.now() };
+const presence = new Map<string, { present: boolean; checkedAt: number }>();
+/** One file check behind a response: a path, the size it must have (null: any), and the answer. */
+type FileCheck = { path: string; size: number | null; present: boolean };
+
+/** The checks of `hasServerMedia` (`downloads.ts`): the file exists, with `size` when given. */
+function fileOnServer(path: string, size: number | null) {
+  const key = `${size ?? ""}\n${path}`;
+  const now = filePresence.now();
+  const known = presence.get(key);
+  if (known && now - known.checkedAt < filePresence.ttlMs) return known.present;
+  let present = false;
+  try {
+    const stat = statSync(path, { throwIfNoEntry: false });
+    present = !!stat && (size === null || stat.size === size);
+  } catch {
+    present = false;
+  }
+  if (presence.size >= 100_000) presence.clear();
+  presence.set(key, { present, checkedAt: now });
+  return present;
+}
+
+/** `faultsFor` (`media-library.ts`) for many recordings in one query. */
+function faultsByRecording(recordingIds: string[]) {
+  const rows = sqlite
+    .prepare(
+      `SELECT recording_id AS recordingId,scope,reason,note,updated_at AS updatedAt FROM media_faults
+       WHERE recording_id IN (SELECT value FROM json_each(?)) ORDER BY recording_id,scope`,
+    )
+    .all(idList(recordingIds)) as ({ recordingId: string; scope: "recording" | "server" | "original" } & MediaFault)[];
+  const faults = new Map<string, NonNullable<Book["faults"]>>();
+  for (const { recordingId, scope, reason, note, updatedAt } of rows)
+    faults.set(recordingId, { ...faults.get(recordingId), [scope]: { reason, note, updatedAt } });
+  return faults;
+}
+
+/**
+ * The user's recordings of `workIds`: audio editions in their library that are not placeholders.
+ * Each file check made is added to `files`.
+ */
+function recordingsByWork(userId: number, workIds: string[], files: FileCheck[]) {
   const rows = sqlite
     .prepare(
       `SELECT e.work_id AS workId,e.id AS editionId,r.id AS recordingId,e.narrator,e.language,
@@ -75,29 +126,59 @@ function recordingsByWork(userId: number, workIds: string[]) {
        ORDER BY u.added_at,e.rowid,r.rowid`,
     )
     .all(userId, idList(workIds)) as RecordingRow[];
-  const recordingIds = rows.map((row) => row.recordingId);
-  const tracks = recordingIds.length
-    ? db.select().from(s.tracks).where(inArray(s.tracks.recordingId, recordingIds)).all()
-    : [];
-  const places = recordingIds.length
-    ? db
-        .select()
-        .from(s.userProgress)
-        .where(and(eq(s.userProgress.userId, userId), inArray(s.userProgress.recordingId, recordingIds)))
-        .all()
-    : [];
-  const copies = recordingIds.length
-    ? db.select().from(s.serverDownloads).where(inArray(s.serverDownloads.recordingId, recordingIds)).all()
-    : [];
   const byWork = new Map<string, WorkRecording[]>();
+  if (!rows.length) return byWork;
+  const recordingIds = rows.map((row) => row.recordingId);
+  const tracks = new Map<string, TrackRow[]>();
+  for (const track of db.select().from(s.tracks).where(inArray(s.tracks.recordingId, recordingIds)).all())
+    tracks.set(track.recordingId, [...(tracks.get(track.recordingId) ?? []), track]);
+  const copies = new Map(
+    (
+      sqlite
+        .prepare(
+          `SELECT c.track_id AS trackId,c.path,c.size FROM media_copies c JOIN tracks t ON t.id=c.track_id
+           WHERE t.recording_id IN (SELECT value FROM json_each(?))`,
+        )
+        .all(idList(recordingIds)) as { trackId: string; path: string; size: number }[]
+    ).map((copy) => [copy.trackId, copy]),
+  );
+  const check = (path: string, size: number | null) => {
+    const present = fileOnServer(path, size);
+    files.push({ path, size, present });
+    return present;
+  };
+  // `hasServerMedia` without a query per track.
+  const onServer = (track: TrackRow) => {
+    if (track.sourceType === "local" && check(track.source, null)) return true;
+    const copy = copies.get(track.id);
+    return !!copy && check(copy.path, copy.size);
+  };
+  const places = new Map(
+    db
+      .select()
+      .from(s.userProgress)
+      .where(and(eq(s.userProgress.userId, userId), inArray(s.userProgress.recordingId, recordingIds)))
+      .all()
+      .map((place) => [place.recordingId, place]),
+  );
+  // The copy queue is the administrator's, as `/api/acquisitions` and `/api/activity` are: a copy's
+  // status, progress and error (which can name server paths) are not shown to anyone else.
+  const serverCopies = userIsAdmin(userId)
+    ? new Map(
+        db
+          .select()
+          .from(s.serverDownloads)
+          .where(inArray(s.serverDownloads.recordingId, recordingIds))
+          .all()
+          .map((copy) => [copy.recordingId, copy]),
+      )
+    : new Map<string, typeof s.serverDownloads.$inferSelect>();
+  const faultsOf = faultsByRecording(recordingIds);
   for (const row of rows) {
-    const faults = faultsFor(row.recordingId);
-    const delivered = deliveredTracks(
-      tracks.filter((track) => track.recordingId === row.recordingId),
-      faults,
-    );
-    const place = places.find((p) => p.recordingId === row.recordingId);
-    const copy = copies.find((c) => c.recordingId === row.recordingId);
+    const faults = faultsOf.get(row.recordingId) ?? {};
+    const delivered = deliveredTracks(tracks.get(row.recordingId) ?? [], faults, onServer);
+    const place = places.get(row.recordingId);
+    const copy = serverCopies.get(row.recordingId);
     const progress: Progress | null = place
       ? {
           recordingId: place.recordingId,
@@ -163,8 +244,11 @@ function libraryRows(userId: number, workIds?: string[]) {
   return new Map(rows.map((row) => [row.workId, row.addedAt]));
 }
 
-/** `workIds` in the `LibraryWork` shape for `userId`, in the order given; unknown ids are left out. */
-function buildWorks(userId: number, workIds: string[], hidden: Set<string>): LibraryWork[] {
+/**
+ * `workIds` in the `LibraryWork` shape for `userId`, in the order given; unknown ids are left out.
+ * Each file check made is added to `files`.
+ */
+function buildWorks(userId: number, workIds: string[], hidden: Set<string>, files: FileCheck[] = []): LibraryWork[] {
   if (!workIds.length) return [];
   const works = new Map(
     db
@@ -175,7 +259,7 @@ function buildWorks(userId: number, workIds: string[], hidden: Set<string>): Lib
       .map((work) => [work.id, work]),
   );
   const added = libraryRows(userId, workIds);
-  const recordings = recordingsByWork(userId, workIds);
+  const recordings = recordingsByWork(userId, workIds, files);
   const covers = fallbackCovers(userId, workIds, hidden);
   return workIds.flatMap((workId) => {
     const work = works.get(workId);
@@ -201,15 +285,15 @@ function buildWorks(userId: number, workIds: string[], hidden: Set<string>): Lib
 }
 
 /** Every work in the user's library, the earliest added first. */
-export function libraryWorks(userId: number): LibraryWork[] {
-  return buildWorks(userId, [...libraryRows(userId).keys()], hiddenHardcoverPlaceholders(userId));
+function libraryWorks(userId: number, files: FileCheck[]): LibraryWork[] {
+  return buildWorks(userId, [...libraryRows(userId).keys()], hiddenHardcoverPlaceholders(userId), files);
 }
 
 /**
  * One work for `userId`, in the library or not; null when it does not exist or when every audio
  * edition it has is a placeholder the user may not see (`hiddenHardcoverPlaceholders`).
  */
-export function libraryWork(userId: number, workId: string): LibraryWork | null {
+function libraryWork(userId: number, workId: string): LibraryWork | null {
   const hidden = hiddenHardcoverPlaceholders(userId);
   const editions = db
     .select({ id: s.editions.id })
@@ -218,6 +302,37 @@ export function libraryWork(userId: number, workId: string): LibraryWork | null 
     .all();
   if (editions.length && editions.every((edition) => hidden.has(edition.id))) return null;
   return buildWorks(userId, [workId], hidden)[0] ?? null;
+}
+
+let totalChanges: import("better-sqlite3").Statement<[], number> | null = null;
+/**
+ * Changes whenever a row of the database changes: through the server's connection
+ * (`total_changes()`, which never goes down) or through another one (`data_version`).
+ */
+function databaseVersion() {
+  totalChanges ??= sqlite.prepare("SELECT total_changes()").pluck() as import("better-sqlite3").Statement<[], number>;
+  return `${sqlite.pragma("data_version", { simple: true })}:${totalChanges.get()}`;
+}
+
+/** The last library read per user: its body and tag hold while neither the database nor a file it checked changed. */
+type LibraryRead = { database: string; files: FileCheck[]; body: string; tag: string };
+const libraryReads = new Map<number, LibraryRead>();
+
+/**
+ * The user's library as a response body and entity tag. A poll of an unchanged library costs a
+ * look at the database's change counters and the remembered file checks (`filePresence`); any
+ * change rebuilds the body, and the tag is the body's, so it changes exactly when the body does.
+ */
+function libraryRead(userId: number): LibraryRead {
+  const database = databaseVersion();
+  const last = libraryReads.get(userId);
+  if (last && last.database === database && last.files.every((file) => fileOnServer(file.path, file.size) === file.present))
+    return last;
+  const files: FileCheck[] = [];
+  const body = JSON.stringify(libraryWorks(userId, files));
+  const read = { database, files, body, tag: entityTag(userId, body) };
+  libraryReads.set(userId, read);
+  return read;
 }
 
 /** Per user: two users with the same library get different tags. */
@@ -241,9 +356,7 @@ function matchesTag(header: string | string[] | undefined, tag: string) {
 
 export function registerLibraryWorks(app: FastifyInstance) {
   app.get("/api/library", async (req, reply) => {
-    const userId = currentUserId(req);
-    const body = JSON.stringify(libraryWorks(userId));
-    const tag = entityTag(userId, body);
+    const { body, tag } = libraryRead(currentUserId(req));
     reply.header("ETag", tag).header("Cache-Control", "private, no-cache");
     if (matchesTag(req.headers["if-none-match"], tag)) return reply.code(304).send();
     return reply.type("application/json; charset=utf-8").send(body);

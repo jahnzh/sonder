@@ -2,6 +2,7 @@
 // `tests/library-works-fixture.ts`, read as the owner (the administrator) and as Sam (a user).
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
+import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Book, LibraryWork } from "../src/types.ts";
 import { tempDir } from "./temp-dir.ts";
@@ -24,10 +25,27 @@ process.env.APP_PASSWORD = "admin-password";
 
 const { sqlite } = await import("../server/db.ts");
 const { hashToken } = await import("../server/security.ts");
+const { placeholderEditionSql } = await import("../server/placeholder-edition.ts");
 writeLibraryFixture(sqlite, process.env.MEDIA_ROOT, hashToken);
+// A placeholder named as the Hardcover import names one (`hardcover.ts`): edition hc-<n> in work
+// work-hc-<n>. Written here, not in the shared fixture, so the `GET /api/books` pin stays as recorded.
+sqlite
+  .prepare("INSERT INTO works(id,title,author,description,genre,year) VALUES(?,?,?,?,?,?)")
+  .run("work-hc-842", "From Hardcover", "Hardcover Author", "A book from your Hardcover library.", "From Hardcover", 2020);
+sqlite
+  .prepare(
+    "INSERT INTO audio_editions(id,work_id,cover,narrator,language,release_title,rating,source_label) VALUES(?,?,?,?,?,?,?,?)",
+  )
+  .run("hc-842", "work-hc-842", "https://assets.hardcover.app/842.jpg", "Audio not added", null, null, 0, "Hardcover library");
+sqlite.prepare("INSERT INTO recordings(id,edition_id) VALUES(?,?)").run("recording-hc-842", "hc-842");
+sqlite.prepare("INSERT INTO user_library(user_id,book_id,status,added_at) VALUES(1,?,'unread',?)").run("hc-842", T0 + 13 * DAY);
 const { createApp } = await import("../server/app.ts");
+const { filePresence } = await import("../server/library-works.ts");
 const app = await createApp({ background: { manual: true } });
 await removeRecording((options) => app.inject(options));
+// The clock of the remembered file checks, moved by the tests.
+let clock = Date.now();
+filePresence.now = () => clock;
 
 after(async () => {
   await app.close();
@@ -58,7 +76,7 @@ test("the library lists each of the owner's works once, the earliest added first
   const works = await library(OWNER_TOKEN);
   assert.deepEqual(
     works.map((w) => w.workId),
-    ["w-only", "w-beside", "w-two", "w-unplayed", "w-removed"],
+    ["w-only", "w-beside", "w-two", "w-unplayed", "w-removed", "work-hc-842"],
   );
   assert.ok(works.every((w) => w.inLibrary));
 });
@@ -237,13 +255,77 @@ test("an unknown work is not found", async () => {
   assert.deepEqual(response.json(), { error: "This book could not be found." });
 });
 
-test("no response of the two reads contains a placeholder's id", async () => {
-  const workIds = ["w-only", "w-beside", "w-two", "w-unplayed", "w-removed", "w-outside", "w-sam"];
+/** Every string value in a JSON value, at any depth. */
+function stringValues(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(stringValues);
+  if (value && typeof value === "object") return Object.values(value).flatMap(stringValues);
+  return [];
+}
+
+test("no value in the two reads is a placeholder edition's id or one of its recordings' ids", async () => {
+  // A work's own id may contain a placeholder's (work-hc-842 holds hc-842); the contract is that no
+  // field's value IS a placeholder edition's or recording's id.
+  const placeholders = sqlite
+    .prepare(
+      `SELECT e.id AS editionId,r.id AS recordingId FROM audio_editions e LEFT JOIN recordings r ON r.edition_id=e.id
+       WHERE ${placeholderEditionSql("e.id")}`,
+    )
+    .all() as { editionId: string; recordingId: string | null }[];
+  const ids = new Set(placeholders.flatMap((p) => [p.editionId, ...(p.recordingId ? [p.recordingId] : [])]));
+  for (const id of [...PLACEHOLDER_IDS, "hc-842", "recording-hc-101", "recording-hc-842"]) assert.ok(ids.has(id), id);
+  const workIds = ["w-only", "w-beside", "w-two", "w-unplayed", "w-removed", "w-outside", "w-sam", "work-hc-842"];
   for (const token of [OWNER_TOKEN, SAM_TOKEN]) {
-    const bodies = [(await get("/api/library", token)).body];
-    for (const workId of workIds) bodies.push((await get(`/api/works/${workId}`, token)).body);
-    for (const body of bodies)
-      for (const id of PLACEHOLDER_IDS) assert.ok(!body.includes(id), `${id} in ${body.slice(0, 200)}`);
+    const bodies = [(await get("/api/library", token)).json()];
+    for (const workId of workIds) bodies.push((await get(`/api/works/${workId}`, token)).json());
+    for (const value of stringValues(bodies)) assert.ok(!ids.has(value), `${value} is a placeholder's id`);
+  }
+  const hardcover = find(await library(OWNER_TOKEN), "work-hc-842");
+  assert.deepEqual([hardcover.recordings, hardcover.chosenRecordingId], [[], null]);
+  assert.equal((await work(OWNER_TOKEN, "work-hc-842")).workId, "work-hc-842");
+});
+
+test("a copy to the server is shown to the administrator only, on both reads", async () => {
+  // rec-two-a is in the owner's library and in Sam's; Sam is not the administrator.
+  const copy = (status: string, progress: number, error: string | null) =>
+    sqlite
+      .prepare(
+        `INSERT INTO server_downloads(recording_id,book_id,status,progress,error,created_at,updated_at)
+         VALUES('rec-two-a','ed-two-a',?,?,?,?,?) ON CONFLICT(recording_id) DO UPDATE SET
+         status=excluded.status,progress=excluded.progress,error=excluded.error,updated_at=excluded.updated_at`,
+      )
+      .run(status, progress, error, T0, Date.now());
+  const copies = async (token: string) => {
+    const shown = [find(await library(token), "w-two"), await work(token, "w-two")].map(
+      (w) => w.recordings.find((r) => r.recordingId === "rec-two-a")?.serverCopy,
+    );
+    return shown;
+  };
+  const tagOf = async (token: string) => String((await get("/api/library", token)).headers.etag);
+  const unchangedFor = async (token: string, tag: string) =>
+    (await get("/api/library", token, { "if-none-match": tag })).statusCode;
+  try {
+    copy("downloading", 0.23, null);
+    const moving = { status: "downloading", progress: 0.23, error: null };
+    assert.deepEqual(await copies(OWNER_TOKEN), [moving, moving]);
+    assert.deepEqual(await copies(SAM_TOKEN), [null, null]);
+    const ownerTag = await tagOf(OWNER_TOKEN);
+    const samTag = await tagOf(SAM_TOKEN);
+
+    copy("downloading", 0.5, null);
+    assert.equal(await unchangedFor(OWNER_TOKEN, ownerTag), 200, "the administrator sees the copy move");
+    assert.equal(await unchangedFor(SAM_TOKEN, samTag), 304, "Sam's tag does not follow the copy");
+
+    const error = "ENOENT: no such file or directory, open '/srv/media/saved/rec-two-a-0.mp3.part'";
+    copy("error", 0.5, error);
+    const failed = { status: "error", progress: 0.5, error };
+    assert.deepEqual(await copies(OWNER_TOKEN), [failed, failed]);
+    assert.deepEqual(await copies(SAM_TOKEN), [null, null]);
+    for (const url of ["/api/library", "/api/works/w-two"])
+      assert.ok(!(await get(url, SAM_TOKEN)).body.includes("/srv/media"), url);
+    assert.equal(await unchangedFor(SAM_TOKEN, samTag), 304, "Sam's tag does not follow a failed copy");
+  } finally {
+    sqlite.prepare("DELETE FROM server_downloads WHERE recording_id='rec-two-a'").run();
   }
 });
 
@@ -325,4 +407,119 @@ test("two users with the same library get different entity tags", async () => {
   assert.equal(lee.body, "[]");
   assert.notEqual(kim.headers.etag, lee.headers.etag);
   assert.equal((await get("/api/library", "lee-token", { "if-none-match": String(kim.headers.etag) })).statusCode, 200);
+});
+
+/**
+ * Reads the library as `token`, makes `change`, and reads it again with the first tag: the second
+ * read must be a new body with a new tag. Returns that body.
+ */
+async function afterChange(what: string, change: () => unknown, token = OWNER_TOKEN) {
+  const tag = String((await get("/api/library", token)).headers.etag);
+  assert.equal((await get("/api/library", token, { "if-none-match": tag })).statusCode, 304, `${what}: unchanged before`);
+  await change();
+  const changed = await get("/api/library", token, { "if-none-match": tag });
+  assert.equal(changed.statusCode, 200, what);
+  assert.notEqual(changed.headers.etag, tag, what);
+  return changed.json() as LibraryWork[];
+}
+const track = (works: LibraryWork[], workId: string, trackId: string) => {
+  const found = find(works, workId)
+    .recordings.flatMap((r) => r.tracks)
+    .find((t) => t.id === trackId);
+  assert.ok(found, trackId);
+  return found;
+};
+
+test("the entity tag follows a work joining the library", async () => {
+  const works = await afterChange(
+    "a new library row",
+    () =>
+      sqlite
+        .prepare("INSERT INTO user_library(user_id,book_id,status,added_at) VALUES(?,?,'unread',?)")
+        .run(2, "ed-beside", T0 + 30 * DAY),
+    SAM_TOKEN,
+  );
+  assert.deepEqual(recordingIds(find(works, "w-beside")), ["rec-beside"]);
+});
+
+test("the entity tag follows a work's own fields", async () => {
+  const works = await afterChange("a new title", () =>
+    sqlite.prepare("UPDATE works SET title='Renamed' WHERE id='w-unplayed'").run(),
+  );
+  assert.equal(find(works, "w-unplayed").title, "Renamed");
+});
+
+test("the entity tag follows a fault", async () => {
+  const works = await afterChange("a server fault", async () => {
+    const marked = await app.inject({
+      method: "PUT",
+      url: "/api/recordings/rec-beside/faults/server",
+      cookies: { sonder_session: OWNER_TOKEN },
+      payload: { reason: "bad-audio", note: "Skips" },
+    });
+    assert.equal(marked.statusCode, 200, marked.body);
+  });
+  assert.equal(find(works, "w-beside").recordings[0].faults.server?.note, "Skips");
+  assert.equal(track(works, "w-beside", "t-beside-0").deliverySource, "remote");
+});
+
+test("the entity tag follows a track's source", async () => {
+  const works = await afterChange("a TorBox source", () =>
+    sqlite.prepare("UPDATE tracks SET source_type='torbox' WHERE id='t-two-b-0'").run(),
+  );
+  assert.equal(track(works, "w-two", "t-two-b-0").deliverySource, "torbox");
+});
+
+test("the entity tag follows a copy to the server arriving and being removed through the server", async () => {
+  const saved = join(process.env.MEDIA_ROOT!, "saved");
+  mkdirSync(saved, { recursive: true });
+  const path = join(saved, "t-two-b-0.mp3");
+  // What the copy to the server does when a file is complete (`downloads.ts`): the file, then its row.
+  const arrived = await afterChange("a server copy", () => {
+    writeFileSync(path, "copied");
+    sqlite
+      .prepare("INSERT INTO media_copies(track_id,path,size,mime) VALUES(?,?,?,?)")
+      .run("t-two-b-0", path, "copied".length, "audio/mpeg");
+  });
+  assert.equal(track(arrived, "w-two", "t-two-b-0").serverAvailable, true);
+  const removed = await afterChange("a removed server copy", async () => {
+    const response = await app.inject({
+      method: "DELETE",
+      url: "/api/recordings/rec-two-b/server-copy",
+      cookies: { sonder_session: OWNER_TOKEN },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+  });
+  assert.equal(track(removed, "w-two", "t-two-b-0").serverAvailable, false);
+});
+
+test("a file removed or added outside the server shows within the file checks' time to live", async () => {
+  const path = join(process.env.MEDIA_ROOT!, "fixture", "t-unplayed-a-0.mp3");
+  // A server copy of a remote track, too.
+  const copy = join(process.env.MEDIA_ROOT!, "saved", "t-removed-keep-0.mp3");
+  writeFileSync(copy, "copied");
+  sqlite
+    .prepare("INSERT INTO media_copies(track_id,path,size,mime) VALUES(?,?,?,?)")
+    .run("t-removed-keep-0", copy, "copied".length, "audio/mpeg");
+  const tag = String((await get("/api/library", OWNER_TOKEN)).headers.etag);
+  assert.equal(track((await get("/api/library", OWNER_TOKEN)).json(), "w-removed", "t-removed-keep-0").serverAvailable, true);
+  unlinkSync(path);
+  unlinkSync(copy);
+  // Remembered: the next poll costs no file checks.
+  assert.equal((await get("/api/library", OWNER_TOKEN, { "if-none-match": tag })).statusCode, 304);
+  clock += filePresence.ttlMs;
+  const gone = await get("/api/library", OWNER_TOKEN, { "if-none-match": tag });
+  assert.equal(gone.statusCode, 200, "a file gone from the server");
+  const goneTag = String(gone.headers.etag);
+  assert.notEqual(goneTag, tag);
+  assert.equal(track(gone.json(), "w-unplayed", "t-unplayed-a-0").serverAvailable, false);
+  assert.equal(track(gone.json(), "w-removed", "t-removed-keep-0").serverAvailable, false);
+
+  writeFileSync(path, "audio");
+  writeFileSync(copy, "copied");
+  clock += filePresence.ttlMs;
+  const back = await get("/api/library", OWNER_TOKEN, { "if-none-match": goneTag });
+  assert.equal(back.statusCode, 200, "a file back on the server");
+  assert.equal(back.headers.etag, tag);
+  assert.equal(track(back.json(), "w-unplayed", "t-unplayed-a-0").serverAvailable, true);
 });

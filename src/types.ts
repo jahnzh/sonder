@@ -98,7 +98,10 @@ export type WorkRecording = {
   faults: NonNullable<Book["faults"]>;
   /** The user's place. */
   progress: Progress | null;
-  /** A copy to the server that has not finished. */
+  /**
+   * A copy to the server that has not finished. Always null for a reader who is not the
+   * administrator: the copy queue is the administrator's (`/api/acquisitions`, `/api/activity`).
+   */
   serverCopy: { status: "queued" | "downloading" | "paused" | "error"; progress: number; error: string | null } | null;
 };
 export type MediaFault={reason:"wrong-language"|"wrong-book"|"bad-audio"|"incomplete"|"other";note:string;updatedAt:number};

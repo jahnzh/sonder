@@ -1266,6 +1266,16 @@ export async function createApp(options?: {
       // A track id that is already in use fails the request and writes nothing.
       const trackTaken = db.select({ id: s.tracks.id }).from(s.tracks).where(eq(s.tracks.id, input.trackId)).get();
       if (trackTaken) return reply.code(409).send({ error: `Track ${input.trackId} already exists.` });
+      // So does a recording id of another edition: the new edition would be left without a recording.
+      const recording = db
+        .select({ editionId: s.recordings.editionId })
+        .from(s.recordings)
+        .where(eq(s.recordings.id, input.recordingId))
+        .get();
+      if (recording && recording.editionId !== input.editionId)
+        return reply
+          .code(409)
+          .send({ error: `Recording ${input.recordingId} belongs to edition ${recording.editionId}.` });
       const full = resolve(mediaRoot, input.relPath);
       mkdirSync(resolve(full, ".."), { recursive: true });
       if (!existsSync(full)) writeFileSync(full, "audio");
