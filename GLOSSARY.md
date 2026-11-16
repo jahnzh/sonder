@@ -22,6 +22,10 @@ _Avoid_: Audiobook, release (for the edition itself)
 One concrete release of an audio edition (a set of tracks from one source). Progress belongs to a recording.
 _Avoid_: Version, file
 
+**Chosen recording**:
+The recording of a work that a user listens to when the work has more than one. The choice is the user's and is the same on all their devices. Until they choose, it is the recording with their newest saved place, otherwise the one added first.
+_Avoid_: Default recording, selected release, active version
+
 **Ebook edition**:
 An EPUB or PDF of a work.
 _Avoid_: Ebook file
@@ -53,6 +57,20 @@ _Avoid_: Download status, availability
 **Hold reason**:
 Why Sonder is not trying to acquire a missing work for now: it is unreleased, or the last search found nothing. It stays until an acquisition for the work is ready or the user retries.
 _Avoid_: Block, skip reason
+
+## Screens
+
+**Place**:
+One of the four top-level areas of the app: Library, Discover, Activity and Settings.
+_Avoid_: Tab, section
+
+**Page**:
+A full screen with its own address, opened from a place or from another page, such as a book, a series or a worker.
+_Avoid_: Screen, view, dialog
+
+**Sheet**:
+A full-screen task opened over a page, such as Get. Going back closes it and returns to the page.
+_Avoid_: Modal, dialog, popup
 
 ## Reading along
 

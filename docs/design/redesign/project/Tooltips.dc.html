@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Design language: tooltips</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Manrope:wght@600;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#dd8966}a:hover{color:#f0a586}
+</style>
+</helmet>
+<div style="width: 1280px; height: 1580px; box-sizing: border-box; padding: 48px; background: #101510; color: #e6eadf; font-family: 'DM Sans', system-ui, sans-serif; display: flex; flex-direction: column; gap: 32px">
+<div style="display: flex; align-items: baseline; justify-content: space-between; gap: 24px">
+<h1 style="margin: 0; font-family: 'Manrope', sans-serif; font-weight: 700; font-size: 28px; line-height: 34px">Tooltips</h1>
+<p style="margin: 0; font-size: 14px; line-height: 20px; color: #a9b59d">An entry that needs explaining carries an info mark. Its explanation opens on demand.</p>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 32px">
+<div style="display: flex; flex-direction: column; gap: 32px">
+<div style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">The tooltip</h2>
+<div style="border-radius: 14px; background: #182117">
+<div style="position: relative; min-height: 52px; box-sizing: border-box; padding: 0 16px; color: #e6eadf; font-size: 16px; line-height: 22px; display: flex; align-items: center; gap: 12px"><div style="flex: 1; min-width: 0; display: flex; flex-direction: column"><div style="min-width: 0; display: flex; align-items: center; gap: 4px"><span style="min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Protected storage</span><details name="tip" style="width: 20px; height: 22px; flex: none"><summary aria-label="About Protected storage" style="width: 44px; height: 44px; margin: -11px -12px; list-style: none; color: #a9b59d; cursor: pointer; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></summary><span aria-hidden="true" style="position: absolute; z-index: 3; top: calc(100% + -10px); margin-left: 4px; width: 12px; height: 12px; border-radius: 2px; background: #e6eadf; transform: rotate(45deg); display: block"></span><span role="tooltip" style="position: absolute; z-index: 3; top: calc(100% + -4px); left: 16px; width: 300px; max-width: calc(100% - 32px); box-sizing: border-box; padding: 12px; border-radius: 8px; background: #e6eadf; color: #101510; font-size: 14px; line-height: 20px; font-weight: 400; letter-spacing: 0; text-transform: none; white-space: normal; display: block">On: the browser keeps these files when the device runs low on space. Off: it may clear them, and the books would have to be saved again.</span></details></div></div><div style="flex: none; align-self: stretch; display: flex; align-items: center; gap: 8px"><span style="font-size: 14px; line-height: 20px; font-weight: 500; color: #a9b59d; white-space: nowrap">On</span></div></div>
+</div>
+<div style="border-radius: 14px; background: #182117; margin-bottom: 132px">
+<div style="position: relative; min-height: 52px; box-sizing: border-box; padding: 0 16px; color: #e6eadf; font-size: 16px; line-height: 22px; display: flex; align-items: center; gap: 12px"><div style="flex: 1; min-width: 0; display: flex; flex-direction: column"><div style="min-width: 0; display: flex; align-items: center; gap: 4px"><span style="min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Protected storage</span><details name="tip" open="open" style="width: 20px; height: 22px; flex: none"><summary aria-label="About Protected storage" style="width: 44px; height: 44px; margin: -11px -12px; list-style: none; color: #a9b59d; cursor: pointer; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></summary><span aria-hidden="true" style="position: absolute; z-index: 3; top: calc(100% + -10px); margin-left: 4px; width: 12px; height: 12px; border-radius: 2px; background: #e6eadf; transform: rotate(45deg); display: block"></span><span role="tooltip" style="position: absolute; z-index: 3; top: calc(100% + -4px); left: 16px; width: 300px; max-width: calc(100% - 32px); box-sizing: border-box; padding: 12px; border-radius: 8px; background: #e6eadf; color: #101510; font-size: 14px; line-height: 20px; font-weight: 400; letter-spacing: 0; text-transform: none; white-space: normal; display: block">On: the browser keeps these files when the device runs low on space. Off: it may clear them, and the books would have to be saved again.</span></details></div></div><div style="flex: none; align-self: stretch; display: flex; align-items: center; gap: 8px"><span style="font-size: 14px; line-height: 20px; font-weight: 500; color: #a9b59d; white-space: nowrap">On</span></div></div>
+</div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Where</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">After the name of a row, a group caption or a page title.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">When</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">A word of the app, a switch whose effect its label does not say, or a figure that needs reading.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">When not</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">A name that says it all. And anything to read before acting: that stays on the page.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Text</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">One to three sentences: what it is, then what it does. A switch says what Off does.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Shape</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Light fill, dark text, 14/20, corner 8, up to 300 wide, with a pointer to its mark.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Opens</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">With a tap on the mark; a tap elsewhere closes it. On a desktop also on hover and on keyboard focus. One at a time.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Name tooltip</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">An icon without a label shows its name on hover: 12/16, one line.</div></div>
+<div style="display: flex; align-items: center; gap: 8px"><button type="button" aria-label="Remove from this device" style="width: 44px; height: 44px; flex: none; border-radius: 8px; background: transparent; color: #a9b59d; display: flex; align-items: center; justify-content: center; border: 0"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/></svg></button><span role="tooltip" style="padding: 6px 8px; border-radius: 8px; background: #e6eadf; color: #101510; font-size: 12px; line-height: 16px; font-weight: 600; white-space: nowrap">Remove from this device</span></div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Book</h2>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Reading sync</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">The ebook follows the narration: the sentence being read aloud is highlighted, and any sentence can start the audio from its place. It needs an audiobook and an EPUB of the same book.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Keep on this device</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">On: this device keeps the audiobook, the ebook and the reading sync, and saves what arrives later, so the book works without a connection. Off removes them from this device only, after asking. Your place is kept.</div></div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Audiobook</h2>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Recordings</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Each recording keeps its own place. When you choose another one, Sonder asks where to resume.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Available from</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Where this recording can be played from: a copy on this device, which works offline, a copy on your server, or the stream it was added from.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Plays from</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Automatic uses the device copy when there is one, then the server copy, then the original stream. Changing it keeps your place.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Report a problem</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Marks this recording, or one copy of it, as faulty and says why. A faulty copy is not played until the mark is cleared.</div></div>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 32px">
+<div style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Ebook</h2>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Editions</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Each EPUB is compared with the narration before reading sync uses it. One with other text, such as another translation, does not match and is left out. A PDF is kept for other apps.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Available from</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Where this edition is kept: on this device, where it opens without a connection, and on your server.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Export the file</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Downloads the file out of Sonder, for example to read it in another app.</div></div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Get audiobook, Get ebook</h2>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Recordings</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Plays now: TorBox already has it, so it plays at once. The others are downloaded to your server first. More seeders means a faster download; with none it may never finish.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Editions</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">An EPUB opens in the reader and can follow the narration. A PDF is kept for other apps.</div></div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Reading sync</h2>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Reading sync (the title)</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">The ebook follows the narration. It is prepared for one recording and one edition; another recording or edition needs its own.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Preparing</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">A worker listens to the whole audiobook, finds where the text of the ebook is spoken and gives every sentence a time. It runs on your own machines and takes a while for a long book.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Ready</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Every sentence has a start and an end time worked out from the narration. They are estimates: a sentence can be highlighted a little early or late.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Text mapped</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">The share of the ebook’s sentences that were found in the narration. The rest is listed under Unsynced passages.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Unsynced passages</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Parts of the ebook with no place in the audio: pages the narrator does not read, or passages that could not be matched. The reader does not follow the narration there.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Prepare again</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Prepares the reading sync again from the start. The one you have stays in use until the new one is ready.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Stopped</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">No worker finished this book. The reason is listed for each worker.</div></div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Series</h2>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Books</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">The reading order, from Hardcover. A book you add joins your library; Sonder looks for its files if you asked for that.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Get the audiobooks</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">For every book you add, Sonder looks for a recording and downloads the best match to your server. Activity shows it.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Get the ebooks</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">For every book you add, Sonder looks for an EPUB and saves it on your server.</div></div>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 32px">
+<div style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Activity, Now</h2>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Needs attention</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Work that failed, or that has not moved for longer than is normal for its kind.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">In progress</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Work on the server keeps going when Sonder is closed. Saving to this device needs Sonder open.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Waiting</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Queued behind other work, paused, or waiting for something it needs, such as a free worker.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Finished today</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Finished work stays listed for 24 hours.</div></div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Activity, Server</h2>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Reading sync queue</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Off: no new reading sync starts. One that is running finishes.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Prepare for all books</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Queues reading sync for every book that has an EPUB and an audiobook on the server and is not prepared yet.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Workers</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">The machines that prepare reading sync and check ebooks against the narration. One with a GPU is used first; one with a CPU is the fallback.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Download queue</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Off: Sonder stops checking downloads, so finished ones do not join the library. They keep downloading in the torrent client.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Torrent client</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">The program on your server that downloads what TorBox does not have.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Copies to server</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Off: no new copy to the server starts. One that is running finishes.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Series search</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Off: no new search or download for a series starts.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Ebook checks</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Off: no new check of an ebook against the narration starts. One that is running finishes. Turning the reading sync queue off holds these checks too.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Hardcover sync</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Off: your changes are still saved, but nothing is sent to Hardcover until it is on again. Sync now still works.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Database backups</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Off: no new daily backup starts. One that is running finishes. A deploy still makes its own backup.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Imports</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Imports run, but their progress is not shown here yet.</div></div>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 32px">
+<div style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Activity, This device</h2>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Used by Sonder</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Space taken by the books kept on this device, out of what the browser lets Sonder use.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Protected storage</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">On: the browser keeps these files when the device runs low on space. Off: it may clear them, and the books would have to be saved again.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Kept on this device</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Books whose files are saved here. Removing one frees the space; the book and your place stay.</div></div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Worker</h2>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Code version</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">The version of the worker program on this machine. Every worker should show the same one.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Use this worker</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Off: this worker gets no new work. Work that is running there finishes.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Restart</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Restarts the worker program on this machine. Sonder asks first and gives it no new work meanwhile. While it is busy, it offers Restart anyway.</div></div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Now playing</h2>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Speed</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Remembered for this recording on this device. Other recordings use the default from Settings.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Earlier positions</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Where you were before a jump. Kept on this device for 24 hours, up to 20 places for each recording.</div></div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Reader</h2>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Reading mode</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Pages turns page by page. Scroll is one column that moves. Switching keeps your place and the highlighted sentence.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Follow the narration</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">On: the reader keeps the sentence being read aloud in view and highlights it. Off: the page stays where you put it and nothing is highlighted.</div></div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Settings, Playback</h2>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Default speed</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Used by every recording that has no speed of its own.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Progress bar shows</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Whole audiobook spans all its files. Current chapter follows the chapters inside the files.</div></div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Settings, Connections</h2>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">TorBox</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Asked first for every recording. What TorBox already has plays at once; the rest is downloaded.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Sync listening and reading progress</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">On: your listening and reading progress is also sent to Hardcover. Off: Sonder only reads your shelves, lists and positions from it.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Prowlarr</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Adds the indexers of your Prowlarr to the recording search. Sonder only reads from it.</div></div>
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#dd8966","options":["#dd8966","#e0b060","#8fb8a0","#9db4e8"]},"$preview":{"width":1280,"height":1580}}'>
+class Component extends DCLogic {
+renderVals() {
+return { accent: this.props.accent ?? '#dd8966' };
+}
+}
+</script>
+</body>
+</html>
