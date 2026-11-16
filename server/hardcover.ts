@@ -12,7 +12,7 @@ import {
 import { z } from "zod";
 import { selectSeriesDefaults } from "../src/series-selection.ts";
 import { existsSync } from "node:fs";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db, sqlite } from "./db.ts";
 import { isPlaceholderEdition, placeholderEditionSql } from "./placeholder-edition.ts";
 import * as s from "./schema.ts";
@@ -42,6 +42,7 @@ import {
   removalDefaultSelected,
   setWorkCompletionOverride,
 } from "./library-origin.ts";
+import { workCompletions } from "./work-completion.ts";
 export { setWorkCompletionOverride };
 export type ShelfStatus = 1 | 2 | 3 | 4 | 5;
 export type SyncMode = "off" | "import" | "two-way";
@@ -843,34 +844,18 @@ function seriesWorkState(
 ) {
   const editions = workId ? db.select().from(s.editions).where(eq(s.editions.workId, workId)).all() : [];
   const library = editions.flatMap((edition) => libraryEntry(userId, edition.id) ? [edition] : []);
-  const override = workId ? db.select().from(s.userWorkCompletion)
-    .where(and(eq(s.userWorkCompletion.userId, userId), eq(s.userWorkCompletion.workId, workId))).get()?.status : null;
-  let audioFinished = false;
+  const { finished, completionOverride } = (workId ? workCompletions(userId, [workId]).get(workId) : undefined) ??
+    { finished: false, completionOverride: null };
   const recordings = editions.flatMap((edition) => db.select().from(s.recordings).where(eq(s.recordings.editionId, edition.id)).all())
     .map((recording) => {
       const tracks = db.select().from(s.tracks).where(eq(s.tracks.recordingId, recording.id)).all().sort((a, b) => a.index - b.index);
-      const progress = localProgress(userId, recording.id);
-      const total = tracks.reduce((sum, track) => sum + track.duration, 0);
-      const index = tracks.findIndex((track) => track.id === progress?.trackId);
-      if (progress && index >= 0 && tracks.every((track) => track.duration > 0) && total > 0 &&
-        (tracks.slice(0, index).reduce((sum, track) => sum + track.duration, 0) + progress.position) / total >= 0.999)
-        audioFinished = true;
       return { id: recording.id, tracks: tracks.map((track) => track.id),
         server: tracks.length > 0 && tracks.every(hasServerMedia),
         stream: tracks.length > 0 && tracks.every((track) => track.sourceType !== "local") };
     });
   const ebooks = workId ? db.select().from(s.ebookEditions).where(eq(s.ebookEditions.workId, workId)).all()
     .filter((ebook) => !ebook.id.startsWith("set-consensus:")) : [];
-  const ebookFinished = ebooks.some((ebook) => {
-    const row = db.select().from(s.userReaderCheckpoints).where(and(eq(s.userReaderCheckpoints.userId, userId),
-      eq(s.userReaderCheckpoints.editionId, ebook.id))).get();
-    if (!row) return false;
-    try { const checkpoint = JSON.parse(row.data); return checkpoint.origin === "reading" && checkpoint.locator?.progression >= 0.999; }
-    catch { return false; }
-  });
-  const finished = override === "finished" ? true : override === "unread" ? false :
-    library.some((edition) => libraryEntry(userId, edition.id)?.status === "finished") || audioFinished || ebookFinished;
-  const base = { editionId: library[0]?.id ?? null, finished, completionOverride: override ?? null,
+  const base = { editionId: library[0]?.id ?? null, finished, completionOverride,
     availability: { audio: { server: workId ? recordings.some((recording) => recording.server) : null, recordings },
       ebook: { server: workId ? ebooks.some((ebook) => existsSync(ebook.source)) : null,
         editionIds: ebooks.map((ebook) => ebook.id), device: null } } };
@@ -1281,34 +1266,57 @@ function importCatalogBook(
   return { bookId: representative.id, matched, imported };
 }
 export function hardcoverForWork(userId: number, workId: string) {
-  const link = db
-    .select()
-    .from(s.hardcoverLinks)
-    .where(eq(s.hardcoverLinks.workId, workId))
-    .get();
-  if (!link) return undefined;
-  const pending = statusJob(userId, link.bookId);
-  const queued = progressJob(userId, link.bookId);
-  return {
-    id: link.bookId,
-    slug: link.slug,
-    series: link.series,
-    statusId: pending?.statusId ?? userLink(userId, link.bookId)?.statusId ?? null,
-    pending: !!pending,
-    progressFraction: queued
-      ? queued.position / queued.duration
-      : (lastRead(userId, link.bookId)?.fraction ?? null),
-    progressPending: !!queued,
-    syncError: pending?.error || queued?.error || null,
-    listIds: db
-      .select()
-      .from(T.lists)
-      .where(eq(T.lists.userId, userId))
-      .all()
-      .filter((l) => l.members.some((m) => m.bookId === link.bookId))
-      .map((l) => l.id),
-  };
+  return hardcoverForWorks(userId, [workId]).get(workId);
 }
+/** The Hardcover block of `GET /api/books` (`hardcoverForWork`) for many works, one query per table. */
+export function hardcoverForWorks(userId: number, workIds: string[]) {
+  const blocks = new Map<string, HardcoverBlock>();
+  const links = db.select().from(s.hardcoverLinks).where(inArray(s.hardcoverLinks.workId, workIds)).all();
+  if (!links.length) return blocks;
+  const bookIds = [...new Set(links.map((link) => link.bookId))];
+  const byBook = <Row extends { bookId: number }>(rows: Row[]) => {
+    const found = new Map<number, Row>();
+    for (const row of rows) if (!found.has(row.bookId)) found.set(row.bookId, row);
+    return found;
+  };
+  const pending = byBook(db.select().from(T.outbox).where(and(eq(T.outbox.userId, userId), inArray(T.outbox.bookId, bookIds))).all());
+  const queued = byBook(db.select().from(T.progress).where(and(eq(T.progress.userId, userId), inArray(T.progress.bookId, bookIds))).all());
+  const shelves = byBook(db.select().from(T.links).where(and(eq(T.links.userId, userId), inArray(T.links.bookId, bookIds))).all());
+  const reads = byBook(
+    db.select({ bookId: T.reads.bookId, fraction: T.reads.fraction }).from(T.reads)
+      .where(and(eq(T.reads.userId, userId), inArray(T.reads.bookId, bookIds))).all(),
+  );
+  const lists = db.select().from(T.lists).where(eq(T.lists.userId, userId)).all();
+  for (const link of links) {
+    const job = pending.get(link.bookId);
+    const progress = queued.get(link.bookId);
+    blocks.set(link.workId, {
+      id: link.bookId,
+      slug: link.slug,
+      series: link.series,
+      statusId: job?.statusId ?? shelves.get(link.bookId)?.statusId ?? null,
+      pending: !!job,
+      progressFraction: progress
+        ? progress.position / progress.duration
+        : (reads.get(link.bookId)?.fraction ?? null),
+      progressPending: !!progress,
+      syncError: job?.error || progress?.error || null,
+      listIds: lists.filter((l) => l.members.some((m) => m.bookId === link.bookId)).map((l) => l.id),
+    });
+  }
+  return blocks;
+}
+type HardcoverBlock = {
+  id: number;
+  slug: string | null;
+  series: { id?: number; name: string; position: number | null }[];
+  statusId: number | null;
+  pending: boolean;
+  progressFraction: number | null;
+  progressPending: boolean;
+  syncError: string | null;
+  listIds: number[];
+};
 // Metadata-only placeholders come from one user's Hardcover shelves and lists, so
 // they're only listed for users who have that book themselves, and for admins (r6#1).
 // Returns the placeholder edition ids `userId` must not see in the catalogue.
