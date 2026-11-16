@@ -37,7 +37,7 @@ import {
 } from "lucide-react";
 import { PlayerProvider, usePlayer } from "./player";
 import { SeriesDialog, type SeriesTarget } from "./components/Series";
-import { ActivityPage, useActivityAttention } from "./components/Activity";
+import { useActivityAttention } from "./components/Activity";
 import { MediaManager } from "./components/MediaManager";
 import {ReaderShortcut} from "./components/ReaderShortcut";
 import { ReaderHost } from "./components/Reader";
@@ -79,6 +79,7 @@ import { type Page, Mark, ListenButton, Empty } from "./pages/shared";
 import { LibraryPage } from "./pages/library-page";
 import { DiscoverPage } from "./pages/discover-page";
 import { DownloadsPage } from "./pages/downloads-page";
+import { ActivityPage } from "./pages/activity-page";
 import { SettingsPage } from "./pages/settings-page";
 type Notice = { text: string; error?: boolean };
 const nav = [
