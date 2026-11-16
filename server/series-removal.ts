@@ -8,6 +8,7 @@ import {
   serverDownloadIsActive,
   waitUntilServerDownloadIdle,
 } from "./downloads.ts";
+import { isPlaceholderEdition } from "./placeholder-edition.ts";
 import { mediaRoot } from "./storage.ts";
 import { removeAlignmentJobsForRecording } from "./alignment-transitions.ts";
 import { transmission } from "./transmission.ts";
@@ -188,28 +189,13 @@ function userActiveDownloads(userId: number, workId: string) {
     .map((job) => ({ id: job.id, title: job.title, status: job.status }));
 }
 
-function editionHasAudio(editionId: string) {
-  return db
-    .select()
-    .from(s.recordings)
-    .where(eq(s.recordings.editionId, editionId))
-    .all()
-    .some((recording) =>
-      db
-        .select()
-        .from(s.tracks)
-        .where(eq(s.tracks.recordingId, recording.id))
-        .get(),
-    );
-}
-
 function audioEditionsForRemoval(userId: number, workId: string) {
   return db
     .select()
     .from(s.editions)
     .where(eq(s.editions.workId, workId))
     .all()
-    .filter((edition) => !edition.id.startsWith("hc-") && editionHasAudio(edition.id))
+    .filter((edition) => !isPlaceholderEdition(sqlite, edition.id))
     .map((edition) => {
       const retainReason = blockReasonForEdition(edition.id, userId);
       return {
@@ -512,9 +498,7 @@ export function ensureHardcoverSyncSuppressed(userId: number, workId: string) {
       .where(eq(s.editions.workId, workId))
       .all();
     representativeId =
-      editions.find((edition) => edition.id.startsWith("hc-"))?.id ??
-      editions.find((edition) => !editionHasAudio(edition.id))?.id ??
-      null;
+      editions.find((edition) => isPlaceholderEdition(sqlite, edition.id))?.id ?? null;
   }
   if (representativeId) {
     db.insert(s.userHiddenLibrary)
@@ -603,7 +587,7 @@ function removeUserWorkAudio(
     .from(s.editions)
     .where(eq(s.editions.workId, workId))
     .all()
-    .filter((row) => !row.id.startsWith("hc-") && editionHasAudio(row.id))) {
+    .filter((row) => !isPlaceholderEdition(sqlite, row.id))) {
     results.push(
       deleteEditionIfExclusive(
         userId,
