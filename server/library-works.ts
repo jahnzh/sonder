@@ -14,22 +14,28 @@ import { statSync } from "node:fs";
 import { and, eq, inArray } from "drizzle-orm";
 import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
-import { currentUserId, userIsAdmin } from "./users.ts";
+import { z } from "zod";
+import { currentUserId, setUserSetting, userIsAdmin } from "./users.ts";
 import { hiddenHardcoverPlaceholders } from "./hardcover.ts";
 import { deliveredTracks } from "./media-library.ts";
 import { placeholderEditionSql } from "./placeholder-edition.ts";
 import type { Book, LibraryWork, MediaFault, Progress, WorkRecording } from "../src/types.ts";
 
-type ChoiceContext = { userId: number; workId: string };
+const idList = (ids: Iterable<string>) => JSON.stringify([...new Set(ids)]);
+
+/** What a step of the rule may use besides the recordings: the user's stored choice for the work, if any. */
+type ChoiceContext = { stored: string | null };
 /** One step of the rule for the chosen recording: a recording id, or null to leave it to the next step. */
 type ChoiceStep = (recordings: WorkRecording[], context: ChoiceContext) => string | null;
 
-/**
- * The rule for the chosen recording (GLOSSARY.md, "Chosen recording"), step by step. The user's
- * stored choice (#488) goes in front of these.
- */
+/** The user's stored choice for a work (#488): one key per work in `user_settings`, holding a recording id. */
+const choiceKey = (workId: string) => `chosenRecording:${workId}`;
+
+/** The rule for the chosen recording (GLOSSARY.md, "Chosen recording"), step by step. */
 const chosenRecordingSteps: ChoiceStep[] = [
-  // The recording with the user's newest saved place.
+  // The user's stored choice, while it is still one of their recordings of the work.
+  (recordings, { stored }) => (recordings.some((recording) => recording.recordingId === stored) ? stored : null),
+  // Otherwise the recording with the user's newest saved place.
   (recordings) => {
     let newest: WorkRecording | null = null;
     for (const recording of recordings)
@@ -49,7 +55,16 @@ function chosenRecordingId(recordings: WorkRecording[], context: ChoiceContext) 
   return null;
 }
 
-const idList = (ids: Iterable<string>) => JSON.stringify([...new Set(ids)]);
+/** The user's stored choices for `workIds`, by work. */
+function storedChoices(userId: number, workIds: string[]) {
+  const rows = sqlite
+    .prepare(
+      `SELECT key,value FROM user_settings
+       WHERE user_id=? AND key IN (SELECT ? || value FROM json_each(?))`,
+    )
+    .all(userId, choiceKey(""), idList(workIds)) as { key: string; value: string }[];
+  return new Map(rows.map((row) => [row.key.slice(choiceKey("").length), row.value]));
+}
 
 type RecordingRow = {
   workId: string;
@@ -113,12 +128,9 @@ function faultsByRecording(recordingIds: string[]) {
   return faults;
 }
 
-/**
- * The user's recordings of `workIds`: audio editions in their library that are not placeholders.
- * Each file check made is added to `files`.
- */
-function recordingsByWork(userId: number, workIds: string[], files: FileCheck[]) {
-  const rows = sqlite
+/** The user's recordings of `workIds`, the one added first first: audio editions in their library that are not placeholders. */
+function listedRecordings(userId: number, workIds: string[]) {
+  return sqlite
     .prepare(
       `SELECT e.work_id AS workId,e.id AS editionId,r.id AS recordingId,e.narrator,e.language,
          e.release_title AS releaseTitle,e.source_label AS sourceLabel,e.cover
@@ -130,6 +142,14 @@ function recordingsByWork(userId: number, workIds: string[], files: FileCheck[])
        ORDER BY u.added_at,e.rowid,r.rowid`,
     )
     .all(userId, idList(workIds)) as RecordingRow[];
+}
+
+/**
+ * The user's recordings of `workIds` (`listedRecordings`) in the `WorkRecording` shape. Each file
+ * check made is added to `files`.
+ */
+function recordingsByWork(userId: number, workIds: string[], files: FileCheck[]) {
+  const rows = listedRecordings(userId, workIds);
   const byWork = new Map<string, WorkRecording[]>();
   if (!rows.length) return byWork;
   const recordingIds = rows.map((row) => row.recordingId);
@@ -264,12 +284,13 @@ function buildWorks(userId: number, workIds: string[], hidden: Set<string>, file
   );
   const added = libraryRows(userId, workIds);
   const recordings = recordingsByWork(userId, workIds, files);
+  const choices = storedChoices(userId, workIds);
   const covers = fallbackCovers(userId, workIds, hidden);
   return workIds.flatMap((workId) => {
     const work = works.get(workId);
     if (!work) return [];
     const listed = recordings.get(workId) ?? [];
-    const chosen = chosenRecordingId(listed, { userId, workId });
+    const chosen = chosenRecordingId(listed, { stored: choices.get(workId) ?? null });
     return [
       {
         workId,
@@ -370,5 +391,21 @@ export function registerLibraryWorks(app: FastifyInstance) {
     const work = libraryWork(currentUserId(req), workId);
     if (!work) return reply.code(404).send({ error: "This book could not be found." });
     return work;
+  });
+  /**
+   * The user's chosen recording of a work (#488), the same on all their devices. Only one of the
+   * user's recordings of that work (`listedRecordings`) can be chosen. Answers the work as the
+   * one-work read does.
+   */
+  app.put("/api/works/:workId/recording", async (req, reply) => {
+    const userId = currentUserId(req);
+    const { workId } = req.params as { workId: string };
+    const { recordingId } = z.object({ recordingId: z.string().min(1).max(300) }).parse(req.body ?? {});
+    if (!db.select({ id: s.works.id }).from(s.works).where(eq(s.works.id, workId)).get())
+      return reply.code(404).send({ error: "This book could not be found." });
+    if (!listedRecordings(userId, [workId]).some((row) => row.recordingId === recordingId))
+      return reply.code(400).send({ error: "Choose one of the recordings of this book in your library." });
+    setUserSetting(userId, choiceKey(workId), recordingId);
+    return libraryWork(userId, workId);
   });
 }

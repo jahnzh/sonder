@@ -63,7 +63,7 @@ export type Book = {
  * and `GET /api/works/<workId>` (one work, in the library or not), #485. Never holds a placeholder
  * audio edition: a work whose only audio edition is one has no recordings.
  * Later tickets add fields to this shape (ebook editions, reading sync, series, media state,
- * completion and the Hardcover block in #487; the stored choice in #488).
+ * completion and the Hardcover block in #487).
  */
 export type LibraryWork = {
   workId: string;
@@ -77,7 +77,11 @@ export type LibraryWork = {
   inLibrary: boolean;
   /** The earliest of the user's library rows for the work; null when it is not in the library. */
   addedAt: number | null;
-  /** See "Chosen recording" in GLOSSARY.md; null without recordings. */
+  /**
+   * See "Chosen recording" in GLOSSARY.md: the user's stored choice (`PUT /api/works/<workId>/recording`)
+   * while it is one of `recordings`, otherwise the one with the newest place, otherwise the one added
+   * first; null without recordings.
+   */
   chosenRecordingId: string | null;
   /** The work's audio editions in the user's library that are not placeholders, the one added first first. */
   recordings: WorkRecording[];
