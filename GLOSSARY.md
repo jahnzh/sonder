@@ -58,6 +58,14 @@ _Avoid_: Download status, availability
 Why Sonder is not trying to acquire a missing work for now: it is unreleased, or the last search found nothing. It stays until an acquisition for the work is ready or the user retries.
 _Avoid_: Block, skip reason
 
+**Hardcover match**:
+The link between a work and its book on Hardcover, through which a user's shelf, lists and progress sync. It is the same for every user of the server, so only the administrator makes or changes it.
+_Avoid_: Hardcover link, linked book
+
+**Hardcover edition**:
+The audio edition on Hardcover that a user's place in one recording is sent to. It is automatic (the edition of the user's current read there, or the one with the same narrator) until the user chooses one.
+_Avoid_: Recording edition, Hardcover audio edition
+
 ## Screens
 
 **Place**:
@@ -185,6 +193,10 @@ _Avoid_: Stop, disable
 **Stuck**:
 A running activity whose progress and last update have not changed for longer than is normal for its kind.
 _Avoid_: Hung, frozen
+
+**Needs attention**:
+What the user has to look at: for the administrator, an activity that failed in the last seven days, is stuck or is blocked, and a background process that is down; for anyone, a device save on the device in hand whose last attempt failed. It lights the attention dot on Activity, and Activity's Now lists exactly these under that name. A paused process and a worker that is not in use need no attention.
+_Avoid_: Error, alert, problem (for the state)
 
 **Activity source**:
 A feature's own description of its background process and its current activities, which the Activity page collects.
