@@ -3,7 +3,7 @@
 #   scripts/update-ctc-workers.sh <commit> [--dry-run] [--host <ssh name>]...
 # Hosts default to SONDER_CTC_HOSTS, else "192.168.1.119 lisa" (WSL's GPU, lisa's CPU). On each host, in
 # ~/sonder-ctc-worker (SONDER_CTC_DIR overrides):
-#   1. skip it when /health already reports this commit as its revision;
+#   1. skip it when /health already reports this commit as its revision, or a commit with the same worker/;
 #   2. copy worker/ of the commit to worker.new and write the commit into worker.new/REVISION;
 #   3. import the new code with the host's own environment (worker.env), so a broken copy never goes live;
 #   4. refuse when /health shows a request or a whole-book job running;
@@ -55,6 +55,12 @@ for host in "${hosts[@]}"; do
     });')
   if [[ $current == "$revision" ]]; then
     echo "already at ${revision:0:7}"
+    continue
+  fi
+  # A commit that leaves worker/ as it is needs no copy and no restart; the host keeps reporting its older commit.
+  if [[ $current =~ ^[0-9a-f]{40}$ ]] && git -C "$repo" cat-file -e "$current^{commit}" 2>/dev/null &&
+    git -C "$repo" diff --quiet "$current" "$revision" -- worker; then
+    echo "runs ${current:0:7}: worker/ is the same at ${revision:0:7}"
     continue
   fi
   echo "runs ${current:0:12}, wants ${revision:0:7}"

@@ -26,7 +26,7 @@ after(() => rmSync(temp, { recursive: true, force: true }));
 const { default: Database } = (await import("better-sqlite3")) as typeof import("better-sqlite3") & { default: typeof import("better-sqlite3") };
 const { sqlite } = await import("../server/db.ts");
 const backups = await import("../server/backups.ts");
-const { DAILY_BACKUPS_KEPT, MIN_FREE_BYTES, dailyBackupName } = await import("../server/backup-schedule.ts");
+const { DAILY_BACKUPS_KEPT, MIN_FREE_BYTES, dailyBackupName, scheduledDay } = await import("../server/backup-schedule.ts");
 const { backupSource } = await import("../server/backups-activity.ts");
 const { ChangeTracker, buildActivity } = await import("../server/activity.ts");
 
@@ -330,12 +330,15 @@ test("two runs started together back up the day once; the second does nothing an
 
 test("a second server process neither runs nor interrupts the first one's backup, and never overwrites its done row", { timeout: 30_000 }, async () => {
   const dir = folder();
+  // Starting a server compares the claim with the real clock, so this run is made now, not on a fixed date.
+  const now = Date.now();
+  const day = scheduledDay(now);
   const repo = resolve(fileURLToPath(new URL("..", import.meta.url)));
   const script = `
     const backups = await import(${JSON.stringify(join(repo, "server", "backups.ts"))});
     const { backupDatabase } = await import(${JSON.stringify(join(repo, "server", "db-backup.mjs"))});
     const result = await backups.runDailyBackup({
-      now: ${at("2026-11-16T03:05:00Z")}, dir: ${JSON.stringify(dir)}, freeBytes: () => ${10 * MIN_FREE_BYTES}, mountProblem: () => null,
+      now: ${now}, dir: ${JSON.stringify(dir)}, freeBytes: () => ${10 * MIN_FREE_BYTES}, mountProblem: () => null,
       backup: async (source, destination, options) => { await new Promise((done) => setTimeout(done, 1500)); return backupDatabase(source, destination, options); },
     });
     process.stdout.write(JSON.stringify(result));
@@ -347,21 +350,21 @@ test("a second server process neither runs nor interrupts the first one's backup
   child.stderr.on("data", (chunk) => (stderr += chunk));
   const exited = new Promise<number | null>((done) => child.on("close", done));
   const deadline = Date.now() + 20_000;
-  while (row("2026-11-16")?.status !== "running") {
+  while (row(day)?.status !== "running") {
     assert.ok(Date.now() < deadline, `the other server never started its run: ${stderr}`);
     await new Promise((done) => setTimeout(done, 25));
   }
 
   backups.databaseBackupLoop().start?.();
-  assert.equal(row("2026-11-16")!.status, "running", "starting this server leaves the other server's live run alone");
-  assert.deepEqual(await run(dir, "2026-11-16T03:06:00Z"), { ran: false, reason: "claimed" });
-  assert.equal(row("2026-11-16")!.status, "running");
+  assert.equal(row(day)!.status, "running", "starting this server leaves the other server's live run alone");
+  assert.deepEqual(await backups.runDailyBackup({ now, dir, freeBytes: plenty, mountProblem: noDrive }), { ran: false, reason: "claimed" });
+  assert.equal(row(day)!.status, "running");
 
   assert.equal(await exited, 0, stderr);
   assert.equal(JSON.parse(stdout).status, "done", stdout);
-  assert.equal(row("2026-11-16")!.status, "done");
-  assert.equal(row("2026-11-16")!.attempts, 1);
-  assert.deepEqual(readdirSync(dir), ["daily-2026-11-16.db"]);
+  assert.equal(row(day)!.status, "done");
+  assert.equal(row(day)!.attempts, 1);
+  assert.deepEqual(readdirSync(dir), [dailyBackupName(day)]);
 });
 
 test("a backups path that is a file or an unreadable folder is a failed run with its reason on Activity, not an escaped error", async () => {
