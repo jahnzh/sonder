@@ -37,7 +37,7 @@ cd "$(git rev-parse --show-toplevel)"
 # The browser tests serve dist/, so a stale build would test the previous code.
 if [[ $build -eq 1 ]]; then
   echo "[stress-spec] npm run build"
-  npm run build >/dev/null
+  npm run build >/dev/null 2>&1
 fi
 
 port=${PLAYWRIGHT_PORT:-$(node -e 'const s=require("node:net").createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')}
