@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Design language: files and processes</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Manrope:wght@600;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#dd8966}a:hover{color:#f0a586}
+</style>
+</helmet>
+<div style="width: 1280px; height: 1000px; box-sizing: border-box; padding: 48px; background: #101510; color: #e6eadf; font-family: 'DM Sans', system-ui, sans-serif; display: flex; flex-direction: column; gap: 32px">
+<div style="display: flex; align-items: baseline; justify-content: space-between; gap: 24px">
+<h1 style="margin: 0; font-family: 'Manrope', sans-serif; font-weight: 700; font-size: 28px; line-height: 34px">Files and processes</h1>
+<p style="margin: 0; font-size: 14px; line-height: 20px; color: #a9b59d">One row for a file, one list for work in progress, one set of words for both.</p>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px">
+
+<div style="display: flex; flex-direction: column; gap: 24px">
+<div style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Words</h2>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Server</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Replaces HDD, 4 TB media drive, home server and Host server.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">This device</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Replaces device cache, offline and saved here.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Recording</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">One narration of a book. Replaces version and release.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Edition</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">One EPUB or PDF of a book.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Reading sync</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">The ebook following the narration. Replaces alignment in Activity.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Get</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Find a recording or an edition and add it. Replaces Find another release and Find ebook.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Keep on this device</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Replaces Save offline, Save on device and Save ebook offline.</div></div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Where they live</h2>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Book, Files</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Audiobook, Ebook and Reading sync, in that order. Replaces Versions &amp; sources, the release picker and the reader&#39;s Reading sync panel.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Get</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">One sheet for a recording or an edition. Replaces the release dialog and the ebook search in Discover.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Activity, Now</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Books with work in progress. Replaces the Downloads queue and the Activity item list.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Activity, This device</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">What is kept here. Replaces Downloads, On this device.</div></div>
+<div><div style="font-size: 14px; line-height: 20px; font-weight: 500">Activity, Server</div><div style="font-size: 12px; line-height: 16px; color: #a9b59d">Queues and workers. Replaces Settings, Reading sync and the process list.</div></div>
+</div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 16px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Status lines</h2>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<h3 style="margin: 0; font-size: 12px; line-height: 16px; color: #a9b59d; font-weight: 500">An audiobook or an ebook</h3>
+<div style="border-radius: 14px; background: #182117; padding: 12px 16px; display: flex; flex-direction: column">
+<span style="font-size: 14px; line-height: 20px; color: #e6eadf">Not added</span>
+<span style="font-size: 14px; line-height: 20px; color: #e6eadf">Finding a source</span>
+<span style="font-size: 14px; line-height: 20px; color: #e6eadf">Downloading to server · 43%</span>
+<span style="font-size: 14px; line-height: 20px; color: #e6eadf">Paused · 43%</span>
+<span style="font-size: 14px; line-height: 20px; color: #e6eadf">On server</span>
+<span style="font-size: 14px; line-height: 20px; color: #f2a79a">Download failed</span>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<h3 style="margin: 0; font-size: 12px; line-height: 16px; color: #a9b59d; font-weight: 500">An ebook against the narration</h3>
+<div style="border-radius: 14px; background: #182117; padding: 12px 16px; display: flex; flex-direction: column">
+<span style="font-size: 14px; line-height: 20px; color: #e6eadf">Checking against the narration</span>
+<span style="font-size: 14px; line-height: 20px; color: #e6eadf">Matches the narration</span>
+<span style="font-size: 14px; line-height: 20px; color: #e6eadf">Does not match the narration</span>
+<span style="font-size: 14px; line-height: 20px; color: #e6eadf">Waiting for the audiobook</span>
+<span style="font-size: 14px; line-height: 20px; color: #e6eadf">Waiting for a worker</span>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<h3 style="margin: 0; font-size: 12px; line-height: 16px; color: #a9b59d; font-weight: 500">Reading sync</h3>
+<div style="border-radius: 14px; background: #182117; padding: 12px 16px; display: flex; flex-direction: column">
+<span style="font-size: 14px; line-height: 20px; color: #e6eadf">Needs an ebook</span>
+<span style="font-size: 14px; line-height: 20px; color: #e6eadf">Waiting for a worker</span>
+<span style="font-size: 14px; line-height: 20px; color: #e6eadf">Encoding audio · 24 of 43 files</span>
+<span style="font-size: 14px; line-height: 20px; color: #e6eadf">Ready · estimated timings</span>
+<span style="font-size: 14px; line-height: 20px; color: #e6eadf">Partly ready · 61% of the text</span>
+<span style="font-size: 14px; line-height: 20px; color: #f2a79a">Stopped</span>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<h3 style="margin: 0; font-size: 12px; line-height: 16px; color: #a9b59d; font-weight: 500">This device</h3>
+<div style="border-radius: 14px; background: #182117; padding: 12px 16px; display: flex; flex-direction: column">
+<span style="font-size: 14px; line-height: 20px; color: #e6eadf">Saving · 3 of 12 files</span>
+<span style="font-size: 14px; line-height: 20px; color: #e6eadf">On this device · 414 MB</span>
+<span style="font-size: 14px; line-height: 20px; color: #f2a79a">Not complete · 8 of 12 files</span>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<h3 style="margin: 0; font-size: 12px; line-height: 16px; color: #a9b59d; font-weight: 500">A queue or a worker</h3>
+<div style="border-radius: 14px; background: #182117; padding: 12px 16px; display: flex; flex-direction: column">
+<span style="font-size: 14px; line-height: 20px; color: #e6eadf">1 preparing · 1 waiting</span>
+<span style="font-size: 14px; line-height: 20px; color: #e6eadf">Paused</span>
+<span style="font-size: 14px; line-height: 20px; color: #e6eadf">Online · GPU</span>
+<span style="font-size: 14px; line-height: 20px; color: #e6eadf">Not in use</span>
+<span style="font-size: 14px; line-height: 20px; color: #f2a79a">Offline since 14:02</span>
+</div>
+</div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d">Rows</h2>
+<div style="border-radius: 14px; background: #182117; overflow: hidden">
+<div style="min-height: 64px; box-sizing: border-box; padding: 10px 16px; border-bottom: 1px solid #3c4934; background: transparent; color: #e6eadf; font-size: 16px; line-height: 22px; display: flex; align-items: center; gap: 12px"><span style="width: 20px; height: 20px; flex: none; color: #a9b59d; display: flex"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><path d="M4 14h3v6H6a2 2 0 0 1-2-2zM20 14h-3v6h1a2 2 0 0 0 2-2z"/></svg></span><span style="flex: 1; min-width: 0; display: flex; flex-direction: column"><span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Audiobook</span><span style="font-size: 14px; line-height: 20px; color: #a9b59d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Downloading to server · 43%</span><span style="display: block; padding-top: 6px"><span aria-hidden="true" style="display: block; height: 4px; border-radius: 999px; background: #3c4934"><span style="display: block; width: 43%; height: 4px; border-radius: 999px; background: {{accent}}"></span></span></span></span><span style="flex: none; display: flex; align-items: center; gap: 8px"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a9b59d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span></div>
+<div style="min-height: 64px; box-sizing: border-box; padding: 10px 16px; background: transparent; color: #e6eadf; font-size: 16px; line-height: 22px; display: flex; align-items: center; gap: 12px"><span style="width: 20px; height: 20px; flex: none; color: #a9b59d; display: flex"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6v14M12 6C10 4.500 7 4 4 4v14c3 0 6 .5 8 2M12 6c2-1.500 5-2 8-2v14c-3 0-6 .5-8 2"/></svg></span><span style="flex: 1; min-width: 0; display: flex; flex-direction: column"><span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Ebook</span><span style="font-size: 14px; line-height: 20px; color: #a9b59d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Not added</span></span><span style="flex: none; display: flex; align-items: center; gap: 8px"><button type="button" aria-label="Get an ebook" style="height: 44px; flex: none; box-sizing: border-box; padding: 0 16px; border-radius: 8px; background: #26331f; color: #e6eadf; border: 0; font: 500 14px/20px 'DM Sans', sans-serif; display: flex; align-items: center; justify-content: center; gap: 8px">Get</button></span></div>
+</div>
+<p style="margin: 0; font-size: 12px; line-height: 16px; color: #a9b59d">File row: icon, name, one status line, 64 high. A bar while it moves.</p>
+<div style="border-radius: 14px; background: #182117; overflow: hidden">
+<a href="ReadingSync.dc.html" style="min-height: 64px; box-sizing: border-box; padding: 12px 16px; background: transparent; color: #e6eadf; text-decoration: none; display: flex; align-items: center; gap: 12px"><span style="width: 40px; height: 40px; flex: none; border-radius: 8px; background: #5f5230; display: block"></span><span style="flex: 1; min-width: 0; display: flex; flex-direction: column"><span style="font-size: 16px; line-height: 22px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Feral Gods</span><span style="display: flex; align-items: center; gap: 6px; font-size: 14px; line-height: 20px; color: #a9b59d"><svg role="img" aria-label="Reading sync" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14a4 4 0 0 0 5.700 0l3-3a4 4 0 0 0-5.700-5.700l-1 1"/><path d="M14 10a4 4 0 0 0-5.700 0l-3 3a4 4 0 0 0 5.700 5.700l1-1"/></svg><span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Encoding audio · 24 of 43 files</span></span><span style="display: block; padding: 6px 0 2px"><span aria-hidden="true" style="display: block; height: 4px; border-radius: 999px; background: #3c4934"><span style="display: block; width: 56%; height: 4px; border-radius: 999px; background: {{accent}}"></span></span></span></span><span style="flex: none; display: flex; align-items: center; gap: 8px"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a9b59d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span></a>
+</div>
+<p style="margin: 0; font-size: 12px; line-height: 16px; color: #a9b59d">Book row: cover, title, the same status line. Used in Activity.</p>
+<div style="border-radius: 14px; background: #182117; overflow: hidden">
+<button type="button" aria-pressed="true" style="width: 100%; min-height: 64px; box-sizing: border-box; padding: 10px 16px; border: 0; border-bottom: 1px solid #3c4934; background: #26331f; color: #e6eadf; font: 400 16px/22px 'DM Sans', sans-serif; text-align: left; display: flex; align-items: center; gap: 12px"><span style="flex: 1; min-width: 0; display: flex; flex-direction: column"><span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">[NARRATOR]</span><span style="font-size: 14px; line-height: 20px; color: #a9b59d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">English · 9 h 12 min · M4B</span></span><span style="flex: none; display: flex; align-items: center; gap: 8px"><svg role="img" aria-label="Selected" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="{{accent}}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg></span></button>
+<button type="button" aria-pressed="false" style="width: 100%; min-height: 64px; box-sizing: border-box; padding: 10px 16px; border: 0; background: transparent; color: #e6eadf; font: 400 16px/22px 'DM Sans', sans-serif; text-align: left; display: flex; align-items: center; gap: 12px"><span style="flex: 1; min-width: 0; display: flex; flex-direction: column"><span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">[NARRATOR 2]</span><span style="font-size: 14px; line-height: 20px; color: #a9b59d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">English · 9 h 40 min · MP3</span></span></button>
+</div>
+<p style="margin: 0; font-size: 12px; line-height: 16px; color: #a9b59d">Choice row: two lines, raised when chosen, tick on the right edge.</p>
+<div style="border-radius: 14px; background: #182117; overflow: hidden">
+<div style="padding: 4px 0">
+<div style="min-height: 36px; box-sizing: border-box; padding: 0 16px; color: #e6eadf; font-size: 16px; line-height: 22px; display: flex; align-items: center; gap: 12px"><span style="width: 20px; height: 20px; flex: none; display: flex; align-items: center; justify-content: center"><svg role="img" aria-label="Done" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#a9d6a0" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg></span><span style="flex: 1; min-width: 0; display: flex; flex-direction: column"><span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Decoding audio</span></span><span style="flex: none; font-size: 14px; line-height: 20px; font-weight: 500; color: #a9b59d; white-space: nowrap">43 of 43 files</span></div>
+<div style="min-height: 36px; box-sizing: border-box; padding: 8px 16px; color: #e6eadf; font-size: 16px; line-height: 22px; display: flex; align-items: center; gap: 12px"><span role="img" aria-label="Running" style="width: 20px; height: 20px; flex: none; display: flex; align-items: center; justify-content: center"><span style="width: 10px; height: 10px; border-radius: 999px; background: {{accent}}; display: block"></span></span><span style="flex: 1; min-width: 0; display: flex; flex-direction: column"><span style="font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Encoding audio</span><span style="display: block; padding-top: 6px"><span aria-hidden="true" style="display: block; height: 4px; border-radius: 999px; background: #3c4934"><span style="display: block; width: 56%; height: 4px; border-radius: 999px; background: {{accent}}"></span></span></span></span><span style="flex: none; font-size: 14px; line-height: 20px; font-weight: 500; color: #e6eadf; white-space: nowrap">24 of 43 files</span></div>
+<div style="min-height: 36px; box-sizing: border-box; padding: 0 16px; color: #a9b59d; font-size: 16px; line-height: 22px; display: flex; align-items: center; gap: 12px"><span role="img" aria-label="Not started" style="width: 20px; height: 20px; flex: none; display: flex; align-items: center; justify-content: center"><span style="width: 10px; height: 10px; box-sizing: border-box; border: 2px solid #a9b59d; border-radius: 999px; display: block"></span></span><span style="flex: 1; min-width: 0; display: flex; flex-direction: column"><span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Aligning text</span></span></div>
+</div>
+</div>
+<p style="margin: 0; font-size: 12px; line-height: 16px; color: #a9b59d">Steps: done, running, not started. 36 high, no dividers.</p>
+</div>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#dd8966","options":["#dd8966","#e0b060","#8fb8a0","#9db4e8"]},"$preview":{"width":1280,"height":1000}}'>
+class Component extends DCLogic {
+renderVals() {
+return { accent: this.props.accent ?? '#dd8966' };
+}
+}
+</script>
+</body>
+</html>
