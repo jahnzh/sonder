@@ -51,6 +51,14 @@ _Avoid_: Ebook file
 Where a recording's bytes come from on this play: device copy, server copy, or the original stream.
 _Avoid_: Source (alone), copy
 
+**Get**:
+The administrator's action of bringing a missing file to a work: a recording from AudioBookBay, Prowlarr, a magnet link or audio files from the device, or an ebook edition from Library Genesis or a file from the device. It always happens in the Get sheet of that work, and the file joins that work.
+_Avoid_: Find another release, Find ebook, acquire (on screen), download (for the action)
+
+**Release**:
+A listing a source offers before Sonder has it: a torrent of a recording on AudioBookBay or an indexer behind Prowlarr, or a file of an edition on Library Genesis. Getting one makes it a recording or an ebook edition of the work. A release TorBox already holds plays at once ("Plays now"). On screen a release is called a recording or an edition.
+_Avoid_: Result, torrent (alone), version
+
 **Device save**:
 Copying a work's files onto one device, done by that device's browser while Sonder is open there. The server knows what the device should keep but does not see the save, so it is not an activity.
 _Avoid_: Download (alone), offline download
