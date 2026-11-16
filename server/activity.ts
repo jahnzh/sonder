@@ -195,18 +195,19 @@ export function registerActivity(app: FastifyInstance, deps: ActivityDeps, sourc
       const action = sources.find((source) => source.services && id.startsWith(source.services.prefix))?.services?.[name];
       if (!action) throw activityFailure(404, `This process has no ${name === "restart" ? "restart" : "switch"}.`);
       const body = req.body && typeof req.body === "object" && !Array.isArray(req.body) ? req.body as Record<string, unknown> : {};
-      return action(id, body, { deps, log: app.log });
+      return action(id, body, { deps, log: app.log, userId: deps.userId?.(req) ?? DEFAULT_ACTIVITY_USER_ID });
     });
   }
-  // An item's action goes to the source whose kind prefixes the item id.
-  for (const name of ["retry", "discard"] as const) {
+  // An item's action goes to the source whose kind prefixes the item id. A source refuses an action its item's
+  // status does not offer (#515).
+  for (const name of ["retry", "discard", "resume"] as const) {
     app.post(`/api/activity/items/${name}`, async (req) => {
       deps.requireAdmin(req);
       const { id } = (req.body ?? {}) as { id?: string };
       const itemId = String(id ?? "");
       const action = sources.find((source) => itemId.startsWith(`${source.kind}:`))?.[name];
-      if (!action) throw activityFailure(400, "This item has no retry or discard yet.");
-      return action(itemId, { deps, log: app.log });
+      if (!action) throw activityFailure(400, name === "resume" ? "This item cannot be resumed." : "This item has no retry or discard yet.");
+      return action(itemId, { deps, log: app.log, userId: deps.userId?.(req) ?? DEFAULT_ACTIVITY_USER_ID });
     });
   }
 }

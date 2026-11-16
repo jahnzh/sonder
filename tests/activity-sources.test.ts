@@ -9,7 +9,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Fastify from "fastify";
-import type { ActivityKind, ActivityState } from "../src/types.ts";
+import type { ActivityItemAction, ActivityKind, ActivityState } from "../src/types.ts";
 import type { AlignmentJob } from "../src/reading-types.ts";
 import {
   ACQUISITION_STATUSES, BACKUP_RUN_STATUSES, SERVER_COPY_STATUSES, type AcquisitionJobStatus, type BackupRunStatus, type ServerCopyStatus,
@@ -58,13 +58,19 @@ test("acquisitions: every status the writers use maps to its Activity state", ()
   const expected = {
     checking: "running", preparing: "running", downloading: "running", paused: "paused", ready: "done", error: "failed",
   } satisfies Record<AcquisitionJobStatus, ActivityState>;
+  // Retry when it failed, Resume when it is paused, through the Downloads page's control (#515).
+  const actions = {
+    checking: [], preparing: [], downloading: [], paused: ["resume"], ready: [], error: ["retry"],
+  } satisfies Record<AcquisitionJobStatus, ActivityItemAction[]>;
   assert.deepEqual(Object.keys(expected).sort(), [...ACQUISITION_STATUSES].sort(), "the walk covers the whole vocabulary");
   for (const status of ACQUISITION_STATUSES) {
     const item = itemFor(acquisitionSource, acquisitionRow(status));
     assert.equal(item.state, expected[status], status);
     assert.equal(item.error, null, status);
     assert.deepEqual(item.facts, { kind: "acquisition", status, backend: "local" }, `${status}: the status word the writers store, and where it is fetched`);
+    assert.deepEqual(item.actions, actions[status], `${status}: the actions it offers`);
   }
+  assert.deepEqual(itemFor(acquisitionSource, acquisitionRow("exploded")).actions, [], "a status outside the vocabulary offers nothing");
 });
 
 test("copies to the server: every status the writers use maps to its Activity state", () => {
@@ -77,6 +83,7 @@ test("copies to the server: every status the writers use maps to its Activity st
     assert.equal(item.state, expected[status], status);
     assert.equal(item.error, null, status);
     assert.deepEqual(item.facts, { kind: "server-copy", status }, `${status}: the status word the writers store`);
+    assert.deepEqual(item.actions, [], `${status}: a copy offers no action on Activity`);
   }
 });
 
@@ -85,15 +92,30 @@ test("alignment: every status of the job record maps to its Activity state", () 
     queued: "queued", copying: "running", processing: "running", paused: "paused",
     cancelled: "done", ready: "done", partial: "done", error: "failed",
   } satisfies Record<AlignmentJob["status"], ActivityState>;
+  // Retry when it stopped, Resume when it is paused, through the reading sync route's resume (#515). A cancelled
+  // one is finished.
+  const actions = {
+    queued: [], copying: [], processing: [], paused: ["resume"], cancelled: [], ready: [], partial: [], error: ["retry"],
+  } satisfies Record<AlignmentJob["status"], ActivityItemAction[]>;
   for (const status of Object.keys(expected) as Array<AlignmentJob["status"]>) {
     const item = itemFor(alignmentSource, alignmentRow(status));
     assert.equal(item.state, expected[status], status);
     assert.equal(item.facts.kind, "alignment", status);
     assert.equal(item.facts.status, status, `${status}: the status word of the job record`);
+    assert.deepEqual(item.actions, actions[status], `${status}: the actions it offers`);
   }
   const missing = itemFor(alignmentSource, { ...alignmentRow("x"), data: JSON.stringify({ progress: 0.5 }) });
   assert.equal(missing.state, "queued", "a record without a status has not started");
   assert.equal(missing.facts.status, "queued", "a record without a status reports the word it is read as");
+  assert.deepEqual(missing.actions, []);
+  const job = (data: Record<string, unknown> | string) =>
+    itemFor(alignmentSource, { ...alignmentRow("x"), data: typeof data === "string" ? data : JSON.stringify(data) });
+  assert.deepEqual(job({ status: "error", outcome: "rejected" }).actions, ["retry"], "a rejected rebuild is retried");
+  assert.deepEqual(job({ status: "error", origin: "projected" }).actions, [], "a projected ebook-set map is rebuilt with its set, not alone");
+  assert.deepEqual(job({ status: "paused", origin: "projected" }).actions, []);
+  assert.deepEqual(job({ status: "error", outcome: "language_not_supported" }).actions, [], "a retry would fail the same way");
+  assert.deepEqual(job("{not json").actions, [], "a record that cannot be read has no job to resume");
+  assert.deepEqual(job({ status: "exploded" }).actions, [], "a status outside the vocabulary offers nothing");
 });
 
 test("Hardcover queues: waiting is queued and failing is failed", () => {
@@ -104,6 +126,10 @@ test("Hardcover queues: waiting is queued and failing is failed", () => {
   assert.equal(itemFor(hardcoverSource, hardcoverRow("socket hang up")).state, expected.failing);
   assert.deepEqual(itemFor(hardcoverSource, hardcoverRow(null)).facts, { kind: "hardcover", status: "waiting", queue: "status" });
   assert.deepEqual(itemFor(hardcoverSource, hardcoverRow("socket hang up")).facts, { kind: "hardcover", status: "failing", queue: "status" });
+  assert.deepEqual(itemFor(hardcoverSource, hardcoverRow(null)).actions, ["retry"], "waiting: Sync now");
+  assert.deepEqual(itemFor(hardcoverSource, hardcoverRow("socket hang up")).actions, ["retry"], "failing: Retry");
+  assert.deepEqual(itemFor(hardcoverSource, hardcoverRow("We weren't able to find that book. Was it deleted?")).actions, ["discard"],
+    "failing for good: Discard");
 });
 
 test("ebook-set checks: every member status and every hold the loop works on maps to its Activity state (#325)", () => {
@@ -121,6 +147,7 @@ test("ebook-set checks: every member status and every hold the loop works on map
     const item = itemFor(ebookSetSource, ebookSetRow(status));
     assert.equal(item.state, expected[status as EbookSetCheckStatus], status);
     assert.deepEqual(item.facts, { kind: "ebook-set", status, holdReason: null }, `${status}: the member's status word`);
+    assert.deepEqual(item.actions, [], `${status}: nothing to retry`);
   }
   for (const hold of ["awaiting_worker", "evaluation_failed"] as const) {
     const item = itemFor(ebookSetSource, ebookSetRow("held", hold));
@@ -155,6 +182,7 @@ test("daily backups: every status the backup runs store maps to its Activity sta
     assert.equal(item.processId, "backups", status);
     assert.equal(item.state, expected[status], status);
     assert.deepEqual(item.facts, { kind: "backup", status }, `${status}: the status word of the run`);
+    assert.deepEqual(item.actions, [], `${status}: a backup offers no action on Activity`);
   }
   const unknown = backupActivity({ latest: backupRow("exploded"), doneDays: [] }).items[0];
   assert.equal(unknown.state, "failed");
@@ -220,13 +248,14 @@ test("every loop has exactly one source and every kind is reported", () => {
   assert.deepEqual(ACTIVITY_SOURCES.map((source) => source.process.id).sort(), [...PAUSABLE_PROCESSES].sort());
 });
 
-test("Retry and Discard go to the source whose kind prefixes the item id", async () => {
+test("Retry, Discard and Resume go to the source whose kind prefixes the item id", async () => {
   const calls: string[] = [];
   const fake = (kind: ActivityKind, withActions: boolean) => defineSource<never[]>({
     kind, process: { id: "alignment", label: kind }, stuckAfterMs: MIN, load: () => [], report: () => ({ drafts: [] }),
     ...(withActions ? {
       retry: async (id) => { calls.push(`${kind} retry ${id}`); return { ok: true }; },
       discard: async (id) => { calls.push(`${kind} discard ${id}`); return { ok: true, discarded: 0 }; },
+      resume: async (id, context) => { calls.push(`${kind} resume ${id} by ${context.userId}`); return { ok: true }; },
     } : {}),
   });
   const app = Fastify();
@@ -238,7 +267,12 @@ test("Retry and Discard go to the source whose kind prefixes the item id", async
   assert.equal(refused.statusCode, 400, "a source without the action refuses it");
   assert.equal(refused.json().message, "This item has no retry or discard yet.");
   assert.equal((await post("/api/activity/items/retry", "hardcover:status:1")).statusCode, 400, "no source of that kind");
-  assert.deepEqual(calls, ["alignment retry alignment:job-1", "alignment discard alignment:job-2"]);
+  const resumeRefused = await post("/api/activity/items/resume", "acquisition:a");
+  assert.equal(resumeRefused.statusCode, 400, "a source without Resume refuses it (#515)");
+  assert.equal(resumeRefused.json().message, "This item cannot be resumed.");
+  assert.equal((await post("/api/activity/items/resume", "alignment:job-3")).statusCode, 200);
+  assert.deepEqual(calls, ["alignment retry alignment:job-1", "alignment discard alignment:job-2", "alignment resume alignment:job-3 by 1"],
+    "without a user on the request, the action is the first administrator's");
   await app.close();
 });
 
@@ -300,6 +334,7 @@ test("series acquisition: every status the CHECK constraint allows maps to its A
   for (const status of allowed) {
     assert.equal(byStatus[status].state, expected[status as SeriesAcquisitionJobStatus], status);
     assert.deepEqual(byStatus[status].facts, { kind: "series-acquisition", status, search: "audiobook" }, `${status}: the job's status word and kind`);
+    assert.deepEqual(byStatus[status].actions, [], `${status}: a series search offers no action on Activity`);
   }
   assert.equal(byStatus.failed.error, "No release found", "the job's error text is shown");
   assert.equal(byStatus.failed.stuck, null, "an hour after it failed, a failed job is not stuck");

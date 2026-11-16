@@ -47,7 +47,7 @@ import { registerInvites } from "./invites.ts";
 import { registerReader } from "./reader.ts";
 import { registerLibraryWorks, withHitWorks } from "./library-works.ts";
 import { registerDeviceKeep } from "./device-keep.ts";
-import { registerAlignment, autoQueueAlignmentsForWork, persistedPoolErrors } from "./alignment.ts";
+import { registerAlignment, autoQueueAlignmentsForWork, persistedPoolErrors, resumeAlignmentJob } from "./alignment.ts";
 import { checkPoolHostsSetting, getAlignmentPoolCoordinator, getAlignmentPoolStatus } from "./alignment-pool.ts";
 import { hostRestartStates, restartPoolHost } from "./alignment-host-control.ts";
 import { activitySamplerLoop, registerActivity } from "./activity.ts";
@@ -357,6 +357,8 @@ export async function createApp(options?: {
     userId: currentUserId,
     syncHardcover,
     retryEbookSetMember,
+    controlAcquisition: (id: string, action: "retry" | "resume", userId: number) => controlAcquisition(id, action, userId),
+    resumeAlignment: resumeAlignmentJob,
     pauseState,
     setPaused,
     workerHosts: {

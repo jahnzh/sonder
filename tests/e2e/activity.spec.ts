@@ -191,6 +191,73 @@ test("Retry now sends the item's id and shows a failure on the row", async ({ pa
   expect(requests).toEqual([{ id: "hardcover:listening:2" }]);
 });
 
+const downloadItem = (state: "paused" | "running" | "failed"): ActivityResponse["items"][number] => ({
+  id: "acquisition:acq-1", kind: "acquisition", processId: "acquisitions", title: "Ender in Exile", detail: "Card", user: null,
+  state, progress: 0.4, host: "local", startedAt: now - 3_600_000, updatedAt: now - 60_000,
+  error: state === "failed" ? "No seeders" : null, permanent: false,
+  actions: state === "paused" ? ["resume"] : state === "failed" ? ["retry"] : [], stuck: null, blockedBy: null,
+  ...noWork, facts: { kind: "acquisition", status: state === "paused" ? "paused" : state === "failed" ? "error" : "downloading", backend: "local" },
+  attention: state === "failed",
+});
+const readingSyncItem: ActivityResponse["items"][number] = {
+  id: "alignment:job-1", kind: "alignment", processId: "alignment", title: "Speaker for the Dead", detail: "Reading sync", user: null,
+  state: "failed", progress: 0.4, host: null, startedAt: now - 3_600_000, updatedAt: now - 60_000, error: "The worker stopped.",
+  permanent: false, actions: ["retry"], stuck: null, blockedBy: null, workId: "w1", bookId: null, cover: "/covers/time.svg",
+  facts: { kind: "alignment", status: "error", outcome: null, coverage: null, wholeBook: true, stage: null, files: null }, attention: true,
+};
+
+test("Resume on a paused download sends its id, and the row then shows it running (#515)", async ({ page }) => {
+  let state: "paused" | "running" = "paused";
+  const resumes: unknown[] = [];
+  const retries: unknown[] = [];
+  await page.route("**/api/activity", (route) => route.fulfill({
+    json: withProcesses([pausableProcess({ id: "acquisitions", label: "Download queue" }), pausableProcess()], [downloadItem(state), readingSyncItem]),
+  }));
+  await page.route("**/api/activity/items/resume", (route) => {
+    resumes.push(route.request().postDataJSON());
+    state = "running";
+    return route.fulfill({ json: { ok: true, result: { ok: true } } });
+  });
+  await page.route("**/api/activity/items/retry", (route) => {
+    retries.push(route.request().postDataJSON());
+    return route.fulfill({ status: 409, json: { error: "Only a reading sync that stopped can be retried." } });
+  });
+  await page.goto("/#activity");
+  const download = page.getByTestId("activity-item-acquisition:acq-1");
+  await expect(download).toHaveAttribute("data-state", "paused");
+  await expect(download.getByTestId("activity-retry")).toHaveCount(0);
+  await expect(download.getByTestId("activity-resume")).toHaveText("Resume");
+  // A reading sync that stopped offers Retry, not Resume.
+  const sync = page.getByTestId("activity-item-alignment:job-1");
+  await expect(sync.getByTestId("activity-retry")).toBeVisible();
+  await expect(sync.getByTestId("activity-resume")).toHaveCount(0);
+
+  await download.getByTestId("activity-resume").click();
+  await expect(download).toHaveAttribute("data-state", "running");
+  await expect(download.getByTestId("activity-resume")).toHaveCount(0);
+  expect(resumes).toEqual([{ id: "acquisition:acq-1" }]);
+
+  await sync.getByTestId("activity-retry").click();
+  await expect(sync.getByRole("alert")).toContainText("Only a reading sync that stopped can be retried.");
+  expect(retries).toEqual([{ id: "alignment:job-1" }]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test("a failed download offers Retry now beside no Resume, and a refused Resume shows its reason (#515)", async ({ page }) => {
+  await page.route("**/api/activity", (route) => route.fulfill({
+    json: withProcesses([pausableProcess({ id: "acquisitions", label: "Download queue" })], [downloadItem("failed"), { ...downloadItem("paused"), id: "acquisition:acq-2" }]),
+  }));
+  await page.route("**/api/activity/items/resume", (route) =>
+    route.fulfill({ status: 409, json: { error: "Only a paused download can be resumed." } }));
+  await page.goto("/#activity");
+  const failed = page.getByTestId("activity-item-acquisition:acq-1");
+  await expect(failed.getByTestId("activity-retry")).toBeVisible();
+  await expect(failed.getByTestId("activity-resume")).toHaveCount(0);
+  const paused = page.getByTestId("activity-item-acquisition:acq-2");
+  await paused.getByTestId("activity-resume").click();
+  await expect(paused.getByRole("alert")).toContainText("Only a paused download can be resumed.");
+});
+
 // The real server, no mocked response: the daily backups report their schedule and use the real pause switch (#361).
 test("the database backups row lists the schedule, and its switch pauses and resumes it", async ({ page }) => {
   await page.goto("/#activity");
