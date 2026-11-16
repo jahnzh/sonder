@@ -26,7 +26,7 @@ import {
   type AlignmentJob,
   type AlignmentInterval,
 } from "../src/reading-types.ts";
-import { requireAdmin } from "./users.ts";
+import { currentUser, requireAdmin } from "./users.ts";
 import { matchSections } from "./alignment-pairings.ts";
 import { unsyncedPassages } from "./alignment-passages.ts";
 import { BOOK_ENGINE, CTC_ENGINE, bookJobsEnabled } from "./alignment-engine.ts";
@@ -55,6 +55,7 @@ import {
   currentAlignmentEngine,
   engineIsOlder,
   rebuildAdmissionOrder,
+  rebuildForViewer,
 } from "./alignment-rebuild.ts";
 import {
   admittedBooks,
@@ -81,6 +82,7 @@ import * as transition from "./alignment-transitions.ts";
 import {
   alignmentJob,
   alignmentKeepsPublishedMap,
+  findServedAlignmentJob,
   listAlignmentJobs,
   listServedAlignmentJobs,
   slimAlignmentJob,
@@ -265,9 +267,27 @@ export async function createAlignment(
   const copying = tracks.some((track) => !hasServerMedia(track));
   const job = await plannedJob({ ebookId, recordingId, pairings, mode, origin, existing });
   if (copying) requestServerDownload(edition.id);
-  transition.queue(job, { copying });
+  // Read after planning and written without an await between, so the decision sees the row the queue writes over.
+  const keepMapInUse = manualPrepare && mapInUseIsCurrent(job);
+  transition.queue(job, { copying, keepMapInUse });
   void processAlignments();
   return job;
+}
+/**
+ * Prepare again keeps the map in use (#538, decided in #462): true when the pair's row serves a map with
+ * intervals, the one it already keeps or its own finished job, made from the ebook and audio files the new job
+ * is planned from. Nothing is kept on a first prepare, over a stopped, cancelled, no-text or not-available job,
+ * or over a map whose files changed.
+ */
+function mapInUseIsCurrent(planned: AlignmentJob) {
+  const served = findServedAlignmentJob(planned.id);
+  return (
+    !!served &&
+    alignmentMapUsable(served) &&
+    served.intervals.length > 0 &&
+    served.fingerprint === planned.fingerprint &&
+    served.audioFingerprint === planned.audioFingerprint
+  );
 }
 async function alignablePair(ebookId: string, recordingId: string) {
   const book = await extractBook(ebookId),
@@ -1842,9 +1862,11 @@ export function registerAlignment(app: FastifyInstance) {
     // Prefer real prepares over ebook-set projections so callers that take
     // jobs[0] (reader e2e fixtures, older clients) see sectionsDone progress.
     // A row whose rebuild runs lists the map it keeps serving, with the rebuild's state under `rebuild`.
+    const admin = currentUser(req).role === "admin";
     const listed = servedJobs()
       .filter((job) => !ebookId || job.ebookId === ebookId)
-      .sort((a, b) => Number(a.origin === "projected") - Number(b.origin === "projected"));
+      .sort((a, b) => Number(a.origin === "projected") - Number(b.origin === "projected"))
+      .map((job) => rebuildForViewer(job, admin));
     return {
       available: workerConfigured(),
       localOnly: true,
@@ -1916,7 +1938,7 @@ export function registerAlignment(app: FastifyInstance) {
     reply.header("Cache-Control", "private, no-store");
     const { id } = req.params as { id: string };
     // The old map stays usable until its rebuild publishes (#277).
-    const job = servedAlignmentJob(id),
+    const job = rebuildForViewer(servedAlignmentJob(id), currentUser(req).role === "admin"),
       book = await extractBook(job.ebookId);
     if (job.status === "cancelled")
       throw Object.assign(

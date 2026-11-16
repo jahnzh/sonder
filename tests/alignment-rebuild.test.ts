@@ -524,6 +524,35 @@ test("projections left on an older engine are regenerated from a consensus that 
   assert.ok(allJobs().filter((job) => job.origin === "projected").every((job) => job.engine === engine));
 });
 
+test("Prepare again over a projected map keeps it in use, and the consensus does not project over the running job (#538)", async () => {
+  // Runs after the consensus tests: set-1 serves a projection of the published consensus.
+  const workId = "work-set";
+  const projectedRow = allJobs().find((job) => job.origin === "projected" && job.ebookId === "set-1");
+  assert.ok(projectedRow, "runs after the consensus test");
+  const consensusId = allJobs().find((job) => job.ebookId === consensusEbookId(workId))!.id;
+  setPaused("alignment", true);
+  const response = await app.inject({ method: "POST", url: "/api/alignments", payload: { ebookId: "set-1", recordingId: "rec-set" } });
+  assert.equal(response.statusCode, 200, response.body);
+  const prepared = response.json() as AlignmentJob;
+  assert.equal(prepared.id, projectedRow.id);
+  assert.equal(JSON.parse(keptMap(prepared.id)!).generation, projectedRow.generation, "the projection is the map in use");
+  const served = () => listServedAlignmentJobs().find((job) => job.id === prepared.id)!;
+  assert.equal(served().origin, "projected");
+  assert.equal(served().rebuild?.status, "queued");
+
+  // The consensus publishing again leaves the running Prepare again and the map in use alone.
+  await publishProjectedMaps(workId, alignmentJob(consensusId));
+  assert.equal(alignmentJob(prepared.id).generation, prepared.generation);
+  assert.equal(alignmentJob(prepared.id).status, "queued");
+  assert.equal(JSON.parse(keptMap(prepared.id)!).generation, projectedRow.generation);
+
+  // Once it is cancelled, the projection follows its consensus as before.
+  assert.equal((await app.inject({ method: "PATCH", url: `/api/alignments/${prepared.id}`, payload: { action: "cancel" } })).statusCode, 200);
+  await publishProjectedMaps(workId, alignmentJob(consensusId));
+  assert.equal(alignmentJob(prepared.id).origin, "projected");
+  assert.equal(keptMap(prepared.id), null);
+});
+
 test("a new edition or manual prepare supersedes a queued rebuild with a fresh generation", async () => {
   await reset();
   const old = await oldMap("a", aeneas, "ready");
@@ -539,7 +568,8 @@ test("a new edition or manual prepare supersedes a queued rebuild with a fresh g
   assert.equal(manual.rebuildOf, undefined);
   assert.equal(manual.mode, "anchored");
   assert.equal(manual.status, "queued");
-  assert.equal(keptMap(old.id), null, "a manual prepare replaces the served map at once");
+  // Prepare again keeps the map in use (#538): the map the rebuild kept stays served until the new job publishes.
+  assert.equal(JSON.parse(keptMap(old.id)!).generation, old.generation, "a manual prepare keeps the map in use");
 
   // Re-queue a rebuild, then a backfill with a new fingerprint (new ebook-set consensus edition).
   putAlignmentJob({ ...alignmentJob(old.id), status: "partial", engine: aeneas, progress: 1, coverage: 1,
@@ -1506,4 +1536,278 @@ test("the rebuild scan queues no rebuild for an ebook whose ebook-set member is 
     sqlite.prepare("DELETE FROM work_ebook_set_members WHERE work_id='work-c'").run();
     setPaused("ebook-set", false);
   }
+});
+
+// ---- Prepare again (#538): a manual prepare keeps the map in use, under the rebuild's own rules ----
+
+/** A finished map of `name` made by the current engine: what Prepare again is pressed over. */
+const inUse = (name: string, overrides: Partial<AlignmentJob> = {}) =>
+  oldMap(name, engine, "partial", `ebook-${name}`, { outcome: "mapped", ...overrides });
+const prepareAgain = async (name: string, body: Record<string, unknown> = {}) => {
+  const response = await app.inject({ method: "POST", url: "/api/alignments",
+    payload: { ebookId: `ebook-${name}`, recordingId: `rec-${name}`, ...body } });
+  assert.equal(response.statusCode, 200, response.body);
+  return response.json() as AlignmentJob;
+};
+/** The chapter plan older clients send (`pairings`, mode "chapters"): the coverage cases are counted on it. */
+const chapterPlan = async (name: string) => ({ pairings: await pairings(`ebook-${name}`, `track-${name}`), mode: "chapters" });
+/** What `cookie`'s account is served for job `id`: its full and summary listing entries and its /map answer. */
+async function servedTo(id: string, ebookId: string, cookie?: string) {
+  const cookies = cookie ? { sonder_session: cookie } : undefined;
+  const entry = async (query: string) =>
+    (await app.inject({ url: `/api/alignments?ebookId=${ebookId}${query}`, cookies })).json().jobs.find((job: AlignmentJob) => job.id === id);
+  const map = await app.inject({ url: `/api/alignments/${id}/map`, cookies });
+  assert.equal(map.statusCode, 200, map.body);
+  return { full: await entry(""), summary: await entry("&summary=1"), map: map.json() };
+}
+/** `kept` is the map in use: the listing and /map serve its intervals, with the new job under `rebuild`. */
+async function assertMapInUse(kept: AlignmentJob, newJobStatus: AlignmentJob["status"]) {
+  assert.equal(JSON.parse(keptMap(kept.id)!).generation, kept.generation, "the row keeps the map in use");
+  const served = await servedTo(kept.id, kept.ebookId);
+  for (const job of [served.full, served.map]) {
+    assert.equal(job.generation, kept.generation);
+    assert.equal(job.status, kept.status);
+    assert.equal(job.intervals.length, kept.intervals.length);
+    assert.equal(job.rebuild?.status, newJobStatus);
+  }
+  assert.equal(served.summary.intervalCount, kept.intervals.length);
+  assert.equal(served.summary.rebuild?.status, newJobStatus);
+  return served;
+}
+/** Lets the scheduler run the pair's new job to its end, answering the workers with `answer`. */
+async function runToEnd(id: string, answer: (entry: Held) => Response) {
+  autoAnswer = answer;
+  setPaused("alignment", false);
+  void processAlignments();
+  await until(() => !active(id), "the new job to finish", 10_000);
+  await until(() => !alignmentSchedulerForTests().running().includes(id), "run to end");
+}
+/** A map in use of `name` with `coverage`, prepared again through the route and answered with `answer`. */
+async function prepareAgainAgainst(name: string, coverage: number, answer: (entry: Held) => Response) {
+  const old = await inUse(name, { coverage });
+  const job = await prepareAgain(name, await chapterPlan(name));
+  await assertMapInUse(old, "queued");
+  await runToEnd(old.id, answer);
+  return { old, job };
+}
+/** The new job finished but was not used: stored as rejected, the map in use stays, the listing says why. */
+async function assertNotUsed(old: AlignmentJob, reason: RegExp) {
+  const done = alignmentJob(old.id);
+  assert.equal(done.status, "error");
+  assert.equal(done.outcome, "rejected");
+  assert.match(done.error ?? "", reason);
+  const served = await assertMapInUse(old, "error");
+  for (const job of [served.full, served.summary, served.map]) {
+    assert.equal(job.rebuild.outcome, "rejected");
+    assert.equal(job.rebuild.coverage, done.coverage, "the page words 'Not used: it matched N%' from this");
+  }
+}
+const emptyMap = () => Response.json({ engine, outcome: "mapped", elapsedSeconds: 1, stageTimings: {}, intervals: [] });
+
+test("Prepare again over a ready map serves it through the listing and /map with the new job under rebuild (#538)", async () => {
+  await reset();
+  const old = await inUse("a");
+  const job = await prepareAgain("a");
+  assert.equal(job.id, old.id);
+  assert.notEqual(job.generation, old.generation);
+  assert.equal(job.status, "queued");
+  await assertMapInUse(old, "queued");
+
+  // The new job as a whole-book worker reports it: its step and counts, a worker that gave up, what it mapped.
+  const bookJob = { id: `${old.id}-worker`, hostId: "wsl", state: "encoding", startedAt: Date.now() - 1_000,
+    counts: { tracksTotal: 43, tracksEncoded: 24, encodeQueuePosition: 0 } };
+  const poolErrors = { lisa: "The alignment worker on lisa did not answer." };
+  const running = putAlignmentJob({ ...alignmentJob(old.id), progress: 0.4, bookJob, poolErrors, coverage: 0.25, elapsedSeconds: 120 });
+  const served = await assertMapInUse(old, "queued");
+  const expected = {
+    status: "queued", progress: 0.4, engine: running.engine, error: null, updatedAt: running.updatedAt,
+    generation: job.generation, bookJob, poolErrors, coverage: 0.25, elapsedSeconds: 120, createdAt: job.createdAt,
+  };
+  for (const listed of [served.full, served.summary, served.map]) assert.deepEqual(listed.rebuild, expected);
+});
+
+test("someone who is not the administrator gets the new job's state and counts, not its worker or the workers' failures (#538)", async () => {
+  await reset();
+  const old = await inUse("a");
+  await prepareAgain("a");
+  const bookJob = { id: `${old.id}-worker`, hostId: "wsl", state: "decoding", startedAt: Date.now() - 1_000,
+    counts: { tracksTotal: 43, tracksDecoded: 12 } };
+  putAlignmentJob({ ...alignmentJob(old.id), bookJob, poolErrors: { lisa: "The alignment worker on lisa did not answer." } });
+  process.env.APP_PASSWORD = "admin-password-538";
+  try {
+    const login = async (payload: Record<string, string>) => {
+      const response = await app.inject({ method: "POST", url: "/api/auth/login", payload });
+      assert.equal(response.statusCode, 200, response.body);
+      return response.cookies[0].value;
+    };
+    const admin = await login({ password: "admin-password-538" });
+    const created = await app.inject({ method: "POST", url: "/api/users", cookies: { sonder_session: admin },
+      payload: { username: "second-538", password: "password1" } });
+    assert.equal(created.statusCode, 200, created.body);
+    const second = await login({ username: "second-538", password: "password1" });
+    const asAdmin = await servedTo(old.id, old.ebookId, admin);
+    const asSecond = await servedTo(old.id, old.ebookId, second);
+    assert.equal(asAdmin.full.rebuild.bookJob.hostId, "wsl");
+    assert.ok(asAdmin.full.rebuild.poolErrors.lisa);
+    const { hostId: _hostId, ...shownBookJob } = bookJob;
+    for (const view of ["full", "summary", "map"] as const) {
+      const { poolErrors: _poolErrors, bookJob: _bookJob, ...state } = asAdmin[view].rebuild;
+      assert.deepEqual(asSecond[view].rebuild, { ...state, bookJob: shownBookJob }, view);
+      // The rest of the entry is the same for both accounts: nothing in it is the second account's own.
+      assert.deepEqual({ ...asSecond[view], rebuild: null }, { ...asAdmin[view], rebuild: null }, view);
+    }
+    // The work's reading sync lists the new job's state only, for either account (its steps are the page's).
+    for (const cookie of [admin, second]) {
+      const book = (await app.inject({ url: "/api/books", cookies: { sonder_session: cookie } })).json()
+        .find((entry: { recordingId: string }) => entry.recordingId === "rec-a");
+      const added = await app.inject({ method: "POST", url: "/api/library", cookies: { sonder_session: cookie }, payload: { bookId: book.id } });
+      assert.equal(added.statusCode, 200, added.body);
+      const work = await app.inject({ url: "/api/works/work-a", cookies: { sonder_session: cookie } });
+      assert.equal(work.statusCode, 200, work.body);
+      const sync = work.json().readingSync.find((entry: AlignmentJob) => entry.id === old.id);
+      assert.deepEqual(Object.keys(sync.rebuild).sort(), ["engine", "error", "progress", "status", "updatedAt"]);
+    }
+  } finally {
+    delete process.env.APP_PASSWORD;
+  }
+});
+
+test("Prepare again publishes over the map in use when it finishes (#538)", async () => {
+  await reset();
+  const old = await inUse("a", { coverage: 0.5 });
+  const job = await prepareAgain("a", await chapterPlan("a"));
+  await assertMapInUse(old, "queued");
+  await runToEnd(old.id, (entry) => mapped(entry.request));
+  const done = alignmentJob(old.id);
+  assert.equal(done.status, "partial", done.error ?? undefined);
+  assert.equal(done.generation, job.generation);
+  assert.equal(keptMap(old.id), null, "the new map is the map in use");
+  const served = await servedTo(old.id, old.ebookId);
+  for (const listed of [served.full, served.summary, served.map]) {
+    assert.equal(listed.generation, job.generation);
+    assert.equal(listed.rebuild, undefined);
+  }
+});
+
+test("a Prepare again that maps nothing, 3 points less or ends 'language not supported' is not used; exactly 2 points less is (#538)", async () => {
+  await reset();
+  const empty = await prepareAgainAgainst("a", 1, emptyMap);
+  await assertNotUsed(empty.old, /mapped none of the text/);
+
+  await reset();
+  const worse = await prepareAgainAgainst("a", 0.78, fiveOfSix());
+  await assertNotUsed(worse.old, /mapped 75% of the text, more than 2 points less/);
+
+  await reset();
+  const unsupported = await prepareAgainAgainst("a", 1, () =>
+    Response.json({ engine, outcome: "language_not_supported", elapsedSeconds: 1, stageTimings: {}, intervals: [] }));
+  await assertNotUsed(unsupported.old, /does not support this language/);
+
+  await reset();
+  const within = await prepareAgainAgainst("a", 0.77, fiveOfSix());
+  const done = alignmentJob(within.old.id);
+  assert.equal(done.status, "partial", `exactly 2 points less publishes: ${done.error}`);
+  assert.equal(done.coverage, 0.75);
+  assert.equal(keptMap(within.old.id), null);
+  assert.equal((await servedTo(within.old.id, within.old.ebookId)).map.generation, within.job.generation);
+});
+
+test("Pause, Cancel and a failure of Prepare again keep the map in use (#538)", async () => {
+  await reset();
+  const old = await inUse("a");
+  const patch = async (action: string) => {
+    const response = await app.inject({ method: "PATCH", url: `/api/alignments/${old.id}`, payload: { action } });
+    assert.equal(response.statusCode, 200, response.body);
+  };
+  await prepareAgain("a");
+  await patch("pause");
+  await assertMapInUse(old, "paused");
+  await patch("cancel");
+  await assertMapInUse(old, "cancelled");
+
+  // Prepared again after the cancel (the row still keeps the map), and every window fails on the worker.
+  await prepareAgain("a", await chapterPlan("a"));
+  await assertMapInUse(old, "queued");
+  await runToEnd(old.id, () => Response.json({ engine, outcome: "error", elapsedSeconds: 1, stageTimings: {}, intervals: [] }));
+  assert.equal(alignmentJob(old.id).status, "error");
+  assert.notEqual(alignmentJob(old.id).outcome, "rejected", "a failure, not a rejection");
+  await assertMapInUse(old, "error");
+});
+
+test("Resume of a rejected Prepare again plans it again and keeps the map; a second prepare supersedes a running one and keeps it (#538)", async () => {
+  await reset();
+  const { old, job: first } = await prepareAgainAgainst("a", 1, emptyMap);
+  await assertNotUsed(old, /mapped none of the text/);
+  autoAnswer = null;
+  const resumed = await app.inject({ method: "PATCH", url: `/api/alignments/${old.id}`, payload: { action: "resume" } });
+  assert.equal(resumed.statusCode, 200, resumed.body);
+  const retry = resumed.json() as AlignmentJob;
+  assert.equal(retry.status, "queued");
+  assert.notEqual(retry.generation, first.generation);
+  assert.deepEqual(retry.sectionsDone, [], "planned again from the start");
+  assert.equal(retry.rebuildOf, undefined);
+  await until(() => held.length === 1, "the retry on a worker");
+  await assertMapInUse(old, "processing");
+
+  // A second Prepare again while the retry runs supersedes it and keeps the map in use.
+  const second = await prepareAgain("a", await chapterPlan("a"));
+  assert.notEqual(second.generation, retry.generation);
+  const served = await assertMapInUse(old, "queued");
+  assert.equal(served.full.rebuild.generation, second.generation);
+
+  // The superseded run's answer does not land; the second job publishes over the map in use.
+  await drive([old.id], (entry) => mapped(entry.request));
+  const done = alignmentJob(old.id);
+  assert.equal(done.status, "partial", done.error ?? undefined);
+  assert.equal(done.generation, second.generation);
+  assert.equal(keptMap(old.id), null);
+});
+
+test("Prepare again keeps nothing over changed files, a stopped, cancelled, no-text or not-available job, or on a first prepare (#538)", async () => {
+  const cases: [string, () => Promise<unknown>][] = [
+    ["ebook changed", () => inUse("a", { fingerprint: "an-earlier-ebook" })],
+    ["audio changed", () => inUse("a", { audioFingerprint: "audio-v2:an-earlier-recording" })],
+    ["stopped", () => oldMap("a", engine, "error")],
+    ["cancelled", () => oldMap("a", engine, "cancelled")],
+    ["no text matched", () => inUse("a", { outcome: "unsynced", intervals: [], coverage: 0 })],
+    ["not available", () => oldMap("a", engine, "error", "ebook-a", { outcome: "language_not_supported" })],
+    ["first prepare", async () => null],
+  ];
+  for (const [label, seed] of cases) {
+    await reset();
+    await seed();
+    const job = await prepareAgain("a");
+    assert.equal(keptMap(job.id), null, label);
+    const listed = (await app.inject(`/api/alignments?ebookId=ebook-a`)).json().jobs.find((entry: AlignmentJob) => entry.id === job.id);
+    assert.equal(listed.generation, job.generation, label);
+    assert.equal(listed.rebuild, undefined, label);
+  }
+
+  // A map an automatic rebuild keeps is kept by Prepare again, unless its files changed since.
+  await reset();
+  const kept = await oldMap("a", aeneas, "partial");
+  assert.equal((await queueEngineRebuilds()).queued, 1);
+  await prepareAgain("a");
+  await assertMapInUse(kept, "queued");
+  sqlite.prepare("UPDATE alignment_jobs SET published_map=json_set(published_map,'$.fingerprint','an-earlier-ebook') WHERE id=?").run(kept.id);
+  await prepareAgain("a");
+  assert.equal(keptMap(kept.id), null, "a kept map of changed files is not kept");
+});
+
+test("Prepare again carries no rebuildOf and is admitted ahead of queued automatic rebuilds (#538)", async () => {
+  await reset();
+  const rebuilds = [await oldMap("b", aeneas, "partial"), await oldMap("c", aeneas, "partial")];
+  assert.equal((await queueEngineRebuilds()).queued, 2);
+  const old = await inUse("a");
+  const job = await prepareAgain("a", await chapterPlan("a"));
+  assert.equal(job.rebuildOf, undefined);
+  assert.equal(alignmentJob(old.id).rebuildOf, undefined);
+  setPaused("alignment", false);
+  void processAlignments();
+  // Two books are admitted at a time: the Prepare again and one rebuild; the other rebuild waits.
+  await until(() => held.length === 2, "two books on workers");
+  assert.ok(held.some((entry) => entry.recordingId === "rec-a"), "the Prepare again is admitted");
+  assert.equal(rebuilds.filter((map) => alignmentJob(map.id).status === "queued").length, 1, "one rebuild waits");
+  // The runs end here, before the file closes the database.
+  await reset();
 });
