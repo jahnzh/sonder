@@ -440,6 +440,11 @@ curl -s http://192.168.1.119:3012/health | jq -r .revision   # the commit
 
 `worker/REVISION` is git-ignored, so a copy made in a checkout is never committed.
 
+`scripts/update-ctc-workers.sh <commit>` does the same copy as one command. It skips a host
+whose commit has the same `worker/` as the wanted one, so after a merge that leaves
+`worker/` alone the hosts keep reporting the older commit: `revision` is the commit the
+worker code was last copied from, not always the newest commit on `main`.
+
 **Restart.** The Activity page restarts a host's worker with one fixed
 command over the pool's SSH connection, `systemctl --user restart
 sonder-ctc-worker.service` (`RESTART_TARGETS` in
