@@ -1688,6 +1688,19 @@ export function persistedPoolErrors(): Partial<Record<PoolHostId, string>> {
   }
   return errors;
 }
+/**
+ * Resume or retry of a reading sync job, for `PATCH /api/alignments/<id>` and Activity's Retry and Resume (#515). A
+ * rejected rebuild (#379) finished all its work: a retry plans it again from the start, and the kept map stays served
+ * until the new run publishes. Every other job runs again in its row, so a map in use stays in use.
+ */
+export async function resumeAlignmentJob(id: string) {
+  let job = alignmentJob(id);
+  if (job.outcome === "rejected" && job.origin !== "projected") job = transition.retryRejectedRebuild(job, await rebuildPlan(job));
+  else transition.resume(job);
+  void processAlignments();
+  return job;
+}
+
 export function registerAlignment(app: FastifyInstance) {
   activeApps++;
   stopping = false;
@@ -1914,21 +1927,20 @@ export function registerAlignment(app: FastifyInstance) {
       .object({ action: z.enum(["pause", "resume", "cancel", "review"]) })
       .parse(req.body);
     writeMeta.set(req, { action });
-    let job = alignmentJob(id);
+    if (action === "resume") {
+      const job = await resumeAlignmentJob(id);
+      writeMeta.set(req, { action, jobId: job.id, jobStatus: job.status });
+      return job;
+    }
+    const job = alignmentJob(id);
     // Older client builds can still send review; maps remain estimated.
     if (action === "review") {
       writeMeta.set(req, { action, jobId: job.id, jobStatus: job.status });
       return job;
     }
-    // A rejected rebuild (#379) finished all its work: a retry plans it again from the start, and the kept map
-    // stays served until the new run publishes.
-    if (action === "resume" && job.outcome === "rejected" && job.origin !== "projected")
-      job = transition.retryRejectedRebuild(job, await rebuildPlan(job));
-    else if (action === "pause") transition.pause(job);
-    else if (action === "cancel") transition.cancel(job);
-    else transition.resume(job);
+    if (action === "pause") transition.pause(job);
+    else transition.cancel(job);
     writeMeta.set(req, { action, jobId: job.id, jobStatus: job.status });
-    if (action === "resume") void processAlignments();
     return job;
   });
   app.get("/api/alignments/:id/map", async (req, reply) => {

@@ -46,7 +46,8 @@ import { registerAccountRequests } from "./account-requests.ts";
 import { registerInvites } from "./invites.ts";
 import { registerReader } from "./reader.ts";
 import { registerLibraryWorks, withHitWorks } from "./library-works.ts";
-import { registerAlignment, autoQueueAlignmentsForWork, persistedPoolErrors } from "./alignment.ts";
+import { registerDeviceKeep } from "./device-keep.ts";
+import { registerAlignment, autoQueueAlignmentsForWork, persistedPoolErrors, resumeAlignmentJob } from "./alignment.ts";
 import { checkPoolHostsSetting, getAlignmentPoolCoordinator, getAlignmentPoolStatus } from "./alignment-pool.ts";
 import { hostRestartStates, restartPoolHost } from "./alignment-host-control.ts";
 import { activitySamplerLoop, registerActivity } from "./activity.ts";
@@ -210,6 +211,9 @@ export async function createApp(options?: {
           // Add to library and Remove from library by work (#527) take no body.
           (["PUT", "DELETE"].includes(request.method) &&
             /^\/api\/works\/[^/?]+\/library(?:\?.*)?$/.test(request.url)) ||
+          // Keep on this device (#549) takes no body, or an optional one.
+          (["PUT", "DELETE"].includes(request.method) &&
+            /^\/api\/works\/[^/?]+\/keep(?:\?.*)?$/.test(request.url)) ||
           (request.method === "POST" &&
             /^\/api\/books\/[^/?]+\/keep(?:\?.*)?$/.test(request.url)))
       )
@@ -333,6 +337,7 @@ export async function createApp(options?: {
   });
   app.get("/api/books", async (req) => listBooks(currentUserId(req)));
   registerLibraryWorks(app);
+  registerDeviceKeep(app);
   registerUsers(app);
   registerAccountRequests(app);
   registerInvites(app);
@@ -352,6 +357,8 @@ export async function createApp(options?: {
     userId: currentUserId,
     syncHardcover,
     retryEbookSetMember,
+    controlAcquisition: (id: string, action: "retry" | "resume", userId: number) => controlAcquisition(id, action, userId),
+    resumeAlignment: resumeAlignmentJob,
     pauseState,
     setPaused,
     workerHosts: {
