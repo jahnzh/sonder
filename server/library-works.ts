@@ -87,7 +87,11 @@ function fileOnServer(path: string, size: number | null) {
   try {
     const stat = statSync(path, { throwIfNoEntry: false });
     present = !!stat && (size === null || stat.size === size);
-  } catch {
+  } catch (error) {
+    // As `existsSync`: a path that cannot be read counts as absent. An unexpected reason gets a line in the log.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "ENOTDIR" && code !== "EACCES")
+      console.warn(`library read: could not check a media file (${code ?? String(error)})`);
     present = false;
   }
   if (presence.size >= 100_000) presence.clear();
