@@ -275,17 +275,19 @@ test("Now playing has an entry: Back closes it and leaves the page where it was,
   await expect(nowPlaying).toBeVisible();
   expect(await page.evaluate(() => history.length)).toBe(length + 1);
   expect(await hash(page)).toBe("#library");
+  // The page stays where it was (within a pixel: Firefox may keep a fraction after the dialog's scroll lock).
+  const near = async () => Math.abs((await page.evaluate(() => scrollY)) - target);
   await page.goBack();
   await expect(nowPlaying).toBeHidden();
   await expect(shown(page)).toHaveText("Library");
-  expect(await page.evaluate(() => scrollY)).toBe(target);
+  expect(await near()).toBeLessThan(1);
 
   // Its own control goes back too, so Back afterwards does not open it again: it leaves the Library.
   await dock.locator(".dock-book").click();
   await expect(nowPlaying).toBeVisible();
   await nowPlaying.getByRole("button", { name: "Close dialog", exact: true }).click();
   await expect(nowPlaying).toBeHidden();
-  expect(await page.evaluate(() => scrollY)).toBe(target);
+  expect(await near()).toBeLessThan(1);
   await page.goBack();
   await expect(shown(page)).toHaveText("Discover");
   await expect(nowPlaying).toBeHidden();
