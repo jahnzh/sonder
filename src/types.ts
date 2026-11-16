@@ -333,6 +333,8 @@ export type ActivityKind =
   | "ebook-set"
   | "backup";
 export type ActivityState = "running" | "queued" | "paused" | "failed" | "done";
+/** An item's action, sent to `/api/activity/items/<action>`: Retry after a failure, Resume after a pause, Discard. */
+export type ActivityItemAction = "retry" | "discard" | "resume";
 export type ActivityItem = {
   id: string;
   kind: ActivityKind;
@@ -350,8 +352,8 @@ export type ActivityItem = {
   error: string | null;
   /** A failed item that cannot succeed on retry: it is offered Discard, not Retry. */
   permanent: boolean;
-  /** What the administrator can do with this item now. */
-  actions: Array<"retry" | "discard">;
+  /** What the administrator can do with this item now. An older client ignores an action it does not know (#515). */
+  actions: ActivityItemAction[];
   stuck: { reason: string } | null;
   /** The background process this item cannot move without, while that process is down. */
   blockedBy: string | null;

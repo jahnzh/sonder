@@ -185,6 +185,13 @@ function ItemRow({ item, labels, onChanged }: { item: ActivityItem; labels: Map<
         {action.busy && <Loader2 className="spin" size={14} />} Retry now
       </button>,
     );
+  if (item.actions.includes("resume"))
+    buttons.push(
+      <button key="resume" type="button" className="button subtle" disabled={action.busy} data-testid="activity-resume"
+        onClick={() => void action.run("/activity/items/resume", { id: item.id })}>
+        {action.busy && <Loader2 className="spin" size={14} />} Resume
+      </button>,
+    );
   if (item.actions.includes("discard"))
     buttons.push(
       confirming ? (
