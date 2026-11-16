@@ -89,12 +89,12 @@
         "lockedBy": null,
         "pauseEffect": "Off: no new reading sync starts. One that is running finishes.",
         "health": "degraded",
-        "reason": "3 failed, 2 stuck",
+        "reason": "4 failed, 2 stuck",
         "since": 1794656100000,
         "counts": {
           "running": 2,
           "queued": 2,
-          "failed": 3,
+          "failed": 4,
           "stuck": 2
         }
       },
@@ -644,6 +644,39 @@
         "attention": true
       },
       {
+        "id": "alignment:align-rejected",
+        "kind": "alignment",
+        "processId": "alignment",
+        "title": "Speaker for the Dead",
+        "detail": "Reading sync rebuild rejected, the earlier one is kept",
+        "user": null,
+        "state": "failed",
+        "progress": 1,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794657120000,
+        "workId": "w1",
+        "bookId": null,
+        "cover": "/covers/ed1.jpg",
+        "facts": {
+          "kind": "alignment",
+          "status": "error",
+          "outcome": "rejected",
+          "coverage": 0,
+          "wholeBook": false,
+          "stage": null,
+          "files": null
+        },
+        "error": "The rebuild was rejected: it mapped none of the text. The previous map (82% of the text mapped) stays published.",
+        "permanent": false,
+        "actions": [
+          "retry"
+        ],
+        "stuck": null,
+        "blockedBy": null,
+        "attention": true
+      },
+      {
         "id": "acquisition:acq-legacy-complete",
         "kind": "acquisition",
         "processId": "acquisitions",
@@ -1612,7 +1645,7 @@
         "attention": false
       }
     ],
-    "attention": 26
+    "attention": 27
   },
   "probesFail": {
     "checkedAt": 1794657600000,
@@ -1704,12 +1737,12 @@
         "lockedBy": null,
         "pauseEffect": "Off: no new reading sync starts. One that is running finishes.",
         "health": "degraded",
-        "reason": "3 failed, 1 stuck",
+        "reason": "4 failed, 1 stuck",
         "since": 1794656100000,
         "counts": {
           "running": 2,
           "queued": 2,
-          "failed": 3,
+          "failed": 4,
           "stuck": 1
         }
       },
@@ -2094,6 +2127,39 @@
         "attention": true
       },
       {
+        "id": "alignment:align-rejected",
+        "kind": "alignment",
+        "processId": "alignment",
+        "title": "Speaker for the Dead",
+        "detail": "Reading sync rebuild rejected, the earlier one is kept",
+        "user": null,
+        "state": "failed",
+        "progress": 1,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794657120000,
+        "workId": "w1",
+        "bookId": null,
+        "cover": "/covers/ed1.jpg",
+        "facts": {
+          "kind": "alignment",
+          "status": "error",
+          "outcome": "rejected",
+          "coverage": 0,
+          "wholeBook": false,
+          "stage": null,
+          "files": null
+        },
+        "error": "The rebuild was rejected: it mapped none of the text. The previous map (82% of the text mapped) stays published.",
+        "permanent": false,
+        "actions": [
+          "retry"
+        ],
+        "stuck": null,
+        "blockedBy": null,
+        "attention": true
+      },
+      {
         "id": "acquisition:acq-legacy-complete",
         "kind": "acquisition",
         "processId": "acquisitions",
@@ -3174,7 +3240,7 @@
         "attention": false
       }
     ],
-    "attention": 20
+    "attention": 21
   },
   "noProbes": {
     "checkedAt": 1794657600000,
@@ -3266,12 +3332,12 @@
         "lockedBy": null,
         "pauseEffect": "Off: no new reading sync starts. One that is running finishes.",
         "health": "degraded",
-        "reason": "3 failed, 1 stuck",
+        "reason": "4 failed, 1 stuck",
         "since": 1794656100000,
         "counts": {
           "running": 2,
           "queued": 2,
-          "failed": 3,
+          "failed": 4,
           "stuck": 1
         }
       },
@@ -3637,6 +3703,39 @@
         "attention": true
       },
       {
+        "id": "alignment:align-rejected",
+        "kind": "alignment",
+        "processId": "alignment",
+        "title": "Speaker for the Dead",
+        "detail": "Reading sync rebuild rejected, the earlier one is kept",
+        "user": null,
+        "state": "failed",
+        "progress": 1,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794657120000,
+        "workId": "w1",
+        "bookId": null,
+        "cover": "/covers/ed1.jpg",
+        "facts": {
+          "kind": "alignment",
+          "status": "error",
+          "outcome": "rejected",
+          "coverage": 0,
+          "wholeBook": false,
+          "stage": null,
+          "files": null
+        },
+        "error": "The rebuild was rejected: it mapped none of the text. The previous map (82% of the text mapped) stays published.",
+        "permanent": false,
+        "actions": [
+          "retry"
+        ],
+        "stuck": null,
+        "blockedBy": null,
+        "attention": true
+      },
+      {
         "id": "acquisition:acq-legacy-complete",
         "kind": "acquisition",
         "processId": "acquisitions",
@@ -4717,6 +4816,6 @@
         "attention": false
       }
     ],
-    "attention": 20
+    "attention": 21
   }
 }
