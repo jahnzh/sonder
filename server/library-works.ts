@@ -335,7 +335,18 @@ function readingSyncSummary(job: ReturnType<typeof slimAlignmentJob>): ReadingSy
     elapsedSeconds: _elapsedSeconds,
     ...summary
   } = job;
-  return summary;
+  if (!summary.rebuild) return summary;
+  // The new job's steps, run and workers (#538) are for the Reading sync page: the work lists its state only.
+  const {
+    generation: _generation,
+    bookJob: _rebuildBookJob,
+    poolErrors: _rebuildPoolErrors,
+    coverage: _coverage,
+    elapsedSeconds: _rebuildElapsedSeconds,
+    createdAt: _createdAt,
+    ...rebuild
+  } = summary.rebuild;
+  return { ...summary, rebuild };
 }
 
 /**

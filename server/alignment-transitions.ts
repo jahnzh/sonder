@@ -228,12 +228,17 @@ export function alignmentKeepsPublishedMap(id: string) {
       | undefined
   )?.published_map;
 }
-export function servedAlignmentJob(id: string) {
+/** What the listing and /map serve for the row `id`, or null when there is no such row. */
+export function findServedAlignmentJob(id: string) {
   const row = sqlite
     .prepare("SELECT data,engine,outcome,stage_timings,published_map FROM alignment_jobs WHERE id=?")
     .get(id) as ServedRow | undefined;
-  if (!row) throw new Error("This reading-sync job could not be found.");
-  return servedJob(row);
+  return row ? servedJob(row) : null;
+}
+export function servedAlignmentJob(id: string) {
+  const job = findServedAlignmentJob(id);
+  if (!job) throw new Error("This reading-sync job could not be found.");
+  return job;
 }
 export function alignmentJob(id: string) {
   const row = sqlite
@@ -327,16 +332,25 @@ export function putAlignmentJob(job: AlignmentJob) {
   return persist(job);
 }
 
-/** A prepare plans the pair's job; only a backfill that supersedes a rebuild keeps serving its kept map (#277). */
-export function queue(job: AlignmentJob, options: { copying: boolean }) {
+/**
+ * A prepare plans the pair's job. With `keepMapInUse` (a Prepare again over a map made from the files as they
+ * are now, #538) the row keeps serving its map in use until the new job publishes: the map it already keeps, or
+ * else its own usable job as it stood before this write. A backfill that supersedes a rebuild keeps serving the
+ * rebuild's kept map (#277). Any other prepare replaces the row at once.
+ */
+export function queue(job: AlignmentJob, options: { copying: boolean; keepMapInUse?: boolean }) {
   job.status = options.copying ? "copying" : "queued";
-  write("queue", job);
-  // A new prepare replaces the row at once; only a rebuild keeps serving the previous map.
-  // A backfill that supersedes while a kept map is still served (first rebuild, or another
-  // consensus fingerprint change before the replacement publishes) retains published_map
-  // until the replacement run publishes — keyed off the row, not rebuildOf (#277).
-  if (!(job.origin === "backfill" && alignmentKeepsPublishedMap(job.id))) dropKeptMap(job.id);
-  return job;
+  return sqlite.transaction(() => {
+    const kept = alignmentKeepsPublishedMap(job.id);
+    const own = options.keepMapInUse && !kept && storedStatus(job.id) !== NO_JOB ? alignmentJob(job.id) : null;
+    write("queue", job);
+    if (own && alignmentMapUsable(own)) keepMap(job.id, own);
+    // A backfill that supersedes while a kept map is still served (first rebuild, or another
+    // consensus fingerprint change before the replacement publishes) retains published_map
+    // until the replacement run publishes — keyed off the row, not rebuildOf (#277).
+    else if (!(kept && (options.keepMapInUse || job.origin === "backfill"))) dropKeptMap(job.id);
+    return job;
+  }).immediate();
 }
 export function start(job: AlignmentJob) {
   job.status = "processing";

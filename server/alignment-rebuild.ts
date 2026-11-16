@@ -9,7 +9,7 @@
  */
 import { CTC_ENGINE } from "./alignment-pool.ts";
 import { BOOK_ENGINE, bookJobsEnabled } from "./alignment-engine.ts";
-import type { AlignmentJob } from "../src/reading-types.ts";
+import { rebuildState, type AlignmentJob } from "../src/reading-types.ts";
 
 /**
  * Engine generations, oldest first. Append a new engine identity here when it ships; never reorder or remove
@@ -104,17 +104,24 @@ export function rebuildAdmissionOrder<T extends Pick<AlignmentJob, "rebuildOf">>
     .map(({ job }) => job);
 }
 
-/** The job as listed while a rebuild runs in its row: the kept map, plus where the rebuild is. */
+/**
+ * The job as listed while a rebuild or a Prepare again runs in its row: the kept map, plus where the new job is,
+ * with its steps, run and result for the Reading sync page (#538).
+ */
 export function servedDuringRebuild(published: AlignmentJob, working: AlignmentJob): AlignmentJob {
-  return {
-    ...published,
-    rebuild: {
-      status: working.status,
-      progress: working.progress,
-      engine: working.engine,
-      error: working.error,
-      ...(working.outcome ? { outcome: working.outcome } : {}),
-      updatedAt: working.updatedAt,
-    },
-  };
+  return { ...published, rebuild: rebuildState(working) };
+}
+
+/**
+ * What someone who is not the administrator sees of a served job's new job: its state and counts, without the
+ * worker it runs on or the workers' failures (#538). The job itself is returned unchanged when it has no `rebuild`.
+ */
+export function rebuildForViewer<T extends Pick<AlignmentJob, "rebuild">>(job: T, admin: boolean): T {
+  if (admin || !job.rebuild) return job;
+  const { poolErrors: _poolErrors, bookJob, ...rebuild } = job.rebuild;
+  if (bookJob) {
+    const { hostId: _hostId, ...shown } = bookJob;
+    return { ...job, rebuild: { ...rebuild, bookJob: shown } };
+  }
+  return { ...job, rebuild };
 }
