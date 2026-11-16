@@ -82,8 +82,10 @@ test("F does nothing behind Playback options, a dialog above the reader or with 
  // turn, and outside them.
  for(const key of ["Control+f","Alt+f","Meta+f","Control+Shift+F"])await page.keyboard.press(key);
  await stillAway(page);
- await page.evaluate(()=>(document.activeElement as HTMLElement|null)?.blur());
- expect(await page.evaluate(()=>document.activeElement===document.body)).toBe(true);
+ // Outside them: on the player's Back to narration button (Firefox keeps the focus in the frame after a blur).
+ const backButton=room.getByRole("button",{name:"Back to narration",exact:true});
+ await backButton.focus();
+ expect(await backButton.evaluate(button=>document.activeElement===button)).toBe(true);
  for(const key of ["Control+f","Alt+f","Meta+f","Control+Shift+F"])await page.keyboard.press(key);
  await stillAway(page);
  const options=page.getByRole("region",{name:"Playback options"});
