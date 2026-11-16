@@ -65,7 +65,7 @@ Each run gets a fresh server, so the spec file does not have to be repeat-safe. 
 
 | Changed files | Browser stage |
 | --- | --- |
-| Only docs, markdown, the Python worker and its tests, `deploy/`, Docker files, unit-test files (`tests/*.test.*`), or scripts other than the build, the check, the CI runners and the test runner | skipped, reason recorded |
+| Only docs, markdown, the Python worker and its tests, `deploy/`, Docker files, the git hooks (`.githooks/`), unit-test files (`tests/*.test.*`), or scripts other than the build, the check, the CI runners and the test runner | skipped, reason recorded |
 | The above plus `server/` | Chromium project only (Firefox and WebKit run layout specs a server change cannot move) |
 | Anything else: `src/`, `public/`, `tests/e2e/`, browser-test support, config and package files, `scripts/build-sw.mjs`, `scripts/test-browser.mjs`, `scripts/check-local*`, `scripts/ci-*`, `scripts/lib/`, or any file no rule lists | the whole suite |
 
