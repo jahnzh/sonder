@@ -1,0 +1,1971 @@
+[
+ {
+  "label": "chromium real book size 19",
+  "summary": {
+   "sections": 26,
+   "errors": 0,
+   "pages": 708,
+   "sentences": 5771,
+   "crossing": 478,
+   "breaks": 478,
+   "threePlus": 0,
+   "splitWordBreaks": 11,
+   "hyphenatedWords": 49,
+   "missingBlocks": 0,
+   "unrendered": 0,
+   "textMismatch": 2,
+   "linearVsBinary": 0,
+   "linearVsFast": 0,
+   "linearVsCaret": 0,
+   "caretNull": 0,
+   "msPerSentenceCheck": 4.328,
+   "msPerCrossingLinear": 97.781,
+   "msPerCrossingBinary": 23.517,
+   "msPerCrossingCaret": 3.663,
+   "maxBinaryMs": 442.8,
+   "msPerSentenceFastCheck": 0.178,
+   "msPerCrossingFast": 0.836,
+   "maxFastMs": 8.7,
+   "fractionFromMiddle": {
+    "median": 0.228,
+    "p90": 0.413
+   },
+   "secondsFromMidpoint": {
+    "n": 474,
+    "median": 1.72,
+    "p90": 4.57,
+    "max": 8.85
+   },
+   "sentenceSeconds": {
+    "median": 8.12,
+    "p90": 15.94
+   },
+   "geometry": {
+    "delta": 390,
+    "columnWidth": 390,
+    "gap": 32,
+    "divisor": 1,
+    "width": 390,
+    "height": 777,
+    "fontSize": "20px",
+    "lineHeight": "32px",
+    "fontFamily": "\"Literata Variable\", Georgia, \"Times New",
+    "fontsLoaded": "loaded"
+   }
+  },
+  "disagreements": [],
+  "samples": [
+   {
+    "section": 5,
+    "id": "5:8",
+    "words": 30,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     9
+    ],
+    "binary": [
+     9
+    ],
+    "fast": [
+     9
+    ],
+    "caret": [
+     9
+    ],
+    "split": false,
+    "fraction": [
+     0.3387978142076502
+    ],
+    "offMidpoint": -2.253606557377053,
+    "duration": 13.980000000000018,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 5,
+    "id": "5:40",
+    "words": 31,
+    "pages": [
+     5,
+     6
+    ],
+    "linear": [
+     5
+    ],
+    "binary": [
+     5
+    ],
+    "fast": [
+     5
+    ],
+    "caret": [
+     5
+    ],
+    "split": true,
+    "fraction": [
+     0.2774869109947644
+    ],
+    "offMidpoint": -3.6225130890052295,
+    "duration": 16.279999999999973,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 6,
+    "id": "6:6",
+    "words": 12,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     5
+    ],
+    "binary": [
+     5
+    ],
+    "fast": [
+     5
+    ],
+    "caret": [
+     5
+    ],
+    "split": false,
+    "fraction": [
+     0.3382352941176471
+    ],
+    "offMidpoint": -0.6082352941176455,
+    "duration": 3.759999999999991,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 7,
+    "id": "7:6",
+    "words": 21,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     6
+    ],
+    "binary": [
+     6
+    ],
+    "fast": [
+     6
+    ],
+    "caret": [
+     6
+    ],
+    "split": false,
+    "fraction": [
+     0.26881720430107525
+    ],
+    "offMidpoint": -1.3501075268817542,
+    "duration": 5.8400000000001455,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 8,
+    "id": "8:7",
+    "words": 23,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     19
+    ],
+    "binary": [
+     19
+    ],
+    "fast": [
+     19
+    ],
+    "caret": [
+     19
+    ],
+    "split": false,
+    "fraction": [
+     0.728155339805825
+    ],
+    "offMidpoint": 1.5925242718445591,
+    "duration": 6.979999999999563,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 9,
+    "id": "9:17",
+    "words": 61,
+    "pages": [
+     1,
+     2
+    ],
+    "linear": [
+     10
+    ],
+    "binary": [
+     10
+    ],
+    "fast": [
+     10
+    ],
+    "caret": [
+     10
+    ],
+    "split": false,
+    "fraction": [
+     0.1696113074204947
+    ],
+    "offMidpoint": -7.9425441696112955,
+    "duration": 24.039999999999964,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 10,
+    "id": "10:6",
+    "words": 17,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     9
+    ],
+    "binary": [
+     9
+    ],
+    "fast": [
+     9
+    ],
+    "caret": [
+     9
+    ],
+    "split": false,
+    "fraction": [
+     0.64
+    ],
+    "offMidpoint": 0.7643999999998778,
+    "duration": 5.459999999999127,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 10,
+    "id": "10:70",
+    "words": 47,
+    "pages": [
+     10,
+     11
+    ],
+    "linear": [
+     17
+    ],
+    "binary": [
+     17
+    ],
+    "fast": [
+     17
+    ],
+    "caret": [
+     17
+    ],
+    "split": true,
+    "fraction": [
+     0.3794466403162055
+    ],
+    "offMidpoint": -1.9770750988142956,
+    "duration": 16.400000000000546,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 10,
+    "id": "10:279",
+    "words": 20,
+    "pages": [
+     38,
+     39
+    ],
+    "linear": [
+     10
+    ],
+    "binary": [
+     10
+    ],
+    "fast": [
+     10
+    ],
+    "caret": [
+     10
+    ],
+    "split": true,
+    "fraction": [
+     0.5920000000000001
+    ],
+    "offMidpoint": 0.770959999999927,
+    "duration": 8.3799999999992,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 11,
+    "id": "11:5",
+    "words": 52,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     16
+    ],
+    "binary": [
+     16
+    ],
+    "fast": [
+     16
+    ],
+    "caret": [
+     16
+    ],
+    "split": false,
+    "fraction": [
+     0.2692307692307693
+    ],
+    "offMidpoint": -3.498461538461504,
+    "duration": 15.159999999999854,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 12,
+    "id": "12:8",
+    "words": 30,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     27
+    ],
+    "binary": [
+     27
+    ],
+    "fast": [
+     27
+    ],
+    "caret": [
+     27
+    ],
+    "split": false,
+    "fraction": [
+     0.8457446808510638
+    ],
+    "offMidpoint": 4.570744680850837,
+    "duration": 13.219999999999345,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 13,
+    "id": "13:6",
+    "words": 10,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     8
+    ],
+    "binary": [
+     8
+    ],
+    "fast": [
+     8
+    ],
+    "caret": [
+     8
+    ],
+    "split": false,
+    "fraction": [
+     0.7636363636363637
+    ],
+    "offMidpoint": 0.8278181818180285,
+    "duration": 3.139999999999418,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 13,
+    "id": "13:281",
+    "words": 48,
+    "pages": [
+     37,
+     38
+    ],
+    "linear": [
+     39
+    ],
+    "binary": [
+     39
+    ],
+    "fast": [
+     39
+    ],
+    "caret": [
+     39
+    ],
+    "split": true,
+    "fraction": [
+     0.788104089219331
+    ],
+    "offMidpoint": 5.34721189591116,
+    "duration": 18.56000000000131,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 14,
+    "id": "14:6",
+    "words": 32,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     19
+    ],
+    "binary": [
+     19
+    ],
+    "fast": [
+     19
+    ],
+    "caret": [
+     19
+    ],
+    "split": false,
+    "fraction": [
+     0.5306122448979592
+    ],
+    "offMidpoint": 0.3587755102041177,
+    "duration": 11.720000000001164,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 15,
+    "id": "15:8",
+    "words": 45,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     27
+    ],
+    "binary": [
+     27
+    ],
+    "fast": [
+     27
+    ],
+    "caret": [
+     27
+    ],
+    "split": false,
+    "fraction": [
+     0.6214953271028036
+    ],
+    "offMidpoint": 1.8054205607477327,
+    "duration": 14.860000000000582,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 16,
+    "id": "16:9",
+    "words": 32,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     20
+    ],
+    "binary": [
+     20
+    ],
+    "fast": [
+     20
+    ],
+    "caret": [
+     20
+    ],
+    "split": false,
+    "fraction": [
+     0.6303030303030304
+    ],
+    "offMidpoint": 1.3838181818180497,
+    "duration": 10.619999999998981,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 16,
+    "id": "16:193",
+    "words": 25,
+    "pages": [
+     21,
+     22
+    ],
+    "linear": [
+     16
+    ],
+    "binary": [
+     16
+    ],
+    "fast": [
+     16
+    ],
+    "caret": [
+     16
+    ],
+    "split": true,
+    "fraction": [
+     0.6218487394957983
+    ],
+    "offMidpoint": 1.0162184873949758,
+    "duration": 8.340000000000146,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 17,
+    "id": "17:8",
+    "words": 7,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     1
+    ],
+    "binary": [
+     1
+    ],
+    "fast": [
+     1
+    ],
+    "caret": [
+     1
+    ],
+    "split": false,
+    "fraction": [
+     0.08695652173913043
+    ],
+    "offMidpoint": -0.6691304347821879,
+    "duration": 1.6199999999989814,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 18,
+    "id": "18:6",
+    "words": 12,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     2
+    ],
+    "binary": [
+     2
+    ],
+    "fast": [
+     2
+    ],
+    "caret": [
+     2
+    ],
+    "split": false,
+    "fraction": [
+     0.16923076923076924
+    ],
+    "offMidpoint": -1.2172307692308655,
+    "duration": 3.680000000000291,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 18,
+    "id": "18:252",
+    "words": 10,
+    "pages": [
+     36,
+     37
+    ],
+    "linear": [
+     7
+    ],
+    "binary": [
+     7
+    ],
+    "fast": [
+     7
+    ],
+    "caret": [
+     7
+    ],
+    "split": true,
+    "fraction": [
+     0.6607142857142856
+    ],
+    "offMidpoint": 0.443571428571171,
+    "duration": 2.7599999999983993,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 19,
+    "id": "19:6",
+    "words": 81,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     59
+    ],
+    "binary": [
+     59
+    ],
+    "fast": [
+     59
+    ],
+    "caret": [
+     59
+    ],
+    "split": false,
+    "fraction": [
+     0.716253443526171
+    ],
+    "offMidpoint": 5.6917906336087585,
+    "duration": 26.31999999999971,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 20,
+    "id": "20:9",
+    "words": 29,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     21
+    ],
+    "binary": [
+     21
+    ],
+    "fast": [
+     21
+    ],
+    "caret": [
+     21
+    ],
+    "split": false,
+    "fraction": [
+     0.7625
+    ],
+    "offMidpoint": 3.129000000000496,
+    "duration": 11.920000000001892,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 20,
+    "id": "20:431",
+    "words": 40,
+    "pages": [
+     47,
+     48
+    ],
+    "linear": [
+     14
+    ],
+    "binary": [
+     14
+    ],
+    "fast": [
+     14
+    ],
+    "caret": [
+     14
+    ],
+    "split": true,
+    "fraction": [
+     0.37280701754385964
+    ],
+    "offMidpoint": -2.040175438596602,
+    "duration": 16.040000000000873,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 21,
+    "id": "21:7",
+    "words": 52,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     42
+    ],
+    "binary": [
+     42
+    ],
+    "fast": [
+     42
+    ],
+    "caret": [
+     42
+    ],
+    "split": false,
+    "fraction": [
+     0.7165991902834008
+    ],
+    "offMidpoint": 4.145708502024165,
+    "duration": 19.139999999999418,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 22,
+    "id": "22:9",
+    "words": 7,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     4
+    ],
+    "binary": [
+     4
+    ],
+    "fast": [
+     4
+    ],
+    "caret": [
+     4
+    ],
+    "split": false,
+    "fraction": [
+     0.5365853658536586
+    ],
+    "offMidpoint": 0.10097560975603909,
+    "duration": 2.7599999999983993,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 23,
+    "id": "23:17",
+    "words": 54,
+    "pages": [
+     1,
+     2
+    ],
+    "linear": [
+     12
+    ],
+    "binary": [
+     12
+    ],
+    "fast": [
+     12
+    ],
+    "caret": [
+     12
+    ],
+    "split": false,
+    "fraction": [
+     0.20512820512820515
+    ],
+    "offMidpoint": -5.755897435897563,
+    "duration": 19.520000000000437,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 23,
+    "id": "23:137",
+    "words": 45,
+    "pages": [
+     20,
+     21
+    ],
+    "linear": [
+     21
+    ],
+    "binary": [
+     21
+    ],
+    "fast": [
+     21
+    ],
+    "caret": [
+     21
+    ],
+    "split": true,
+    "fraction": [
+     0.47430830039525695
+    ],
+    "offMidpoint": -0.43316205533598273,
+    "duration": 16.860000000000582,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 23,
+    "id": "23:178",
+    "words": 13,
+    "pages": [
+     24,
+     25
+    ],
+    "linear": [
+     8
+    ],
+    "binary": [
+     8
+    ],
+    "fast": [
+     8
+    ],
+    "caret": [
+     8
+    ],
+    "split": true,
+    "fraction": [
+     0.5714285714285714
+    ],
+    "offMidpoint": 0.4328571428572362,
+    "duration": 6.06000000000131,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 24,
+    "id": "24:7",
+    "words": 17,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     13
+    ],
+    "binary": [
+     13
+    ],
+    "fast": [
+     13
+    ],
+    "caret": [
+     13
+    ],
+    "split": false,
+    "fraction": [
+     0.7721518987341772
+    ],
+    "offMidpoint": 1.279113924050831,
+    "duration": 4.700000000000728,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 25,
+    "id": "25:8",
+    "words": 26,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     1
+    ],
+    "binary": [
+     1
+    ],
+    "fast": [
+     1
+    ],
+    "caret": [
+     1
+    ],
+    "split": false,
+    "fraction": [
+     0.015748031496062992
+    ],
+    "offMidpoint": -4.900629921261111,
+    "duration": 10.12000000000262,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 25,
+    "id": "25:82",
+    "words": 20,
+    "pages": [
+     9,
+     10
+    ],
+    "linear": [
+     16
+    ],
+    "binary": [
+     16
+    ],
+    "fast": [
+     16
+    ],
+    "caret": [
+     16
+    ],
+    "split": true,
+    "fraction": [
+     0.7241379310344827
+    ],
+    "offMidpoint": 1.1341379310339603,
+    "duration": 5.059999999997672,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 26,
+    "id": "26:6",
+    "words": 19,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     11
+    ],
+    "binary": [
+     11
+    ],
+    "fast": [
+     11
+    ],
+    "caret": [
+     11
+    ],
+    "split": true,
+    "fraction": [
+     0.6666666666666666
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "(text of the book left out)"
+   }
+  ]
+ },
+ {
+  "label": "chromium real book size 24",
+  "summary": {
+   "sections": 26,
+   "errors": 0,
+   "pages": 1111,
+   "sentences": 5771,
+   "crossing": 852,
+   "breaks": 853,
+   "threePlus": 1,
+   "splitWordBreaks": 10,
+   "hyphenatedWords": 86,
+   "missingBlocks": 0,
+   "unrendered": 0,
+   "textMismatch": 0,
+   "linearVsBinary": 0,
+   "linearVsFast": 0,
+   "linearVsCaret": 0,
+   "caretNull": 0,
+   "msPerSentenceCheck": 5.964,
+   "msPerCrossingLinear": 124.459,
+   "msPerCrossingBinary": 29.064,
+   "msPerCrossingCaret": 4.364,
+   "maxBinaryMs": 773.4,
+   "msPerSentenceFastCheck": 0.24,
+   "msPerCrossingFast": 1.076,
+   "maxFastMs": 10.5,
+   "fractionFromMiddle": {
+    "median": 0.216,
+    "p90": 0.423
+   },
+   "secondsFromMidpoint": {
+    "n": 844,
+    "median": 1.42,
+    "p90": 4.55,
+    "max": 17.88
+   },
+   "sentenceSeconds": {
+    "median": 8.18,
+    "p90": 15.5
+   },
+   "geometry": {
+    "delta": 390,
+    "columnWidth": 390,
+    "gap": 32,
+    "divisor": 1,
+    "width": 390,
+    "height": 777,
+    "fontSize": "25px",
+    "lineHeight": "40px",
+    "fontFamily": "\"Literata Variable\", Georgia, \"Times New",
+    "fontsLoaded": "loaded"
+   }
+  },
+  "disagreements": [],
+  "samples": [
+   {
+    "section": 1,
+    "id": "1:7",
+    "words": 25,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     15
+    ],
+    "binary": [
+     15
+    ],
+    "fast": [
+     15
+    ],
+    "caret": [
+     15
+    ],
+    "split": false,
+    "fraction": [
+     0.6433566433566433
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 5,
+    "id": "5:5",
+    "words": 41,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     17
+    ],
+    "binary": [
+     17
+    ],
+    "fast": [
+     17
+    ],
+    "caret": [
+     17
+    ],
+    "split": false,
+    "fraction": [
+     0.4074074074074074
+    ],
+    "offMidpoint": -1.4685185185185097,
+    "duration": 15.8599999999999,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 6,
+    "id": "6:4",
+    "words": 28,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     21
+    ],
+    "binary": [
+     21
+    ],
+    "fast": [
+     21
+    ],
+    "caret": [
+     21
+    ],
+    "split": false,
+    "fraction": [
+     0.6822429906542056
+    ],
+    "offMidpoint": 1.257476635514035,
+    "duration": 6.900000000000091,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 6,
+    "id": "6:96",
+    "words": 18,
+    "pages": [
+     23,
+     24
+    ],
+    "linear": [
+     7
+    ],
+    "binary": [
+     7
+    ],
+    "fast": [
+     7
+    ],
+    "caret": [
+     7
+    ],
+    "split": true,
+    "fraction": [
+     0.37254901960784315
+    ],
+    "offMidpoint": -0.8462745098039053,
+    "duration": 6.639999999999873,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 6,
+    "id": "6:300",
+    "words": 29,
+    "pages": [
+     62,
+     63
+    ],
+    "linear": [
+     17
+    ],
+    "binary": [
+     17
+    ],
+    "fast": [
+     17
+    ],
+    "caret": [
+     17
+    ],
+    "split": true,
+    "fraction": [
+     0.6384615384615385
+    ],
+    "offMidpoint": 1.348615384615418,
+    "duration": 9.740000000000236,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 7,
+    "id": "7:4",
+    "words": 37,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     1
+    ],
+    "binary": [
+     1
+    ],
+    "fast": [
+     1
+    ],
+    "caret": [
+     1
+    ],
+    "split": false,
+    "fraction": [
+     0.011299435028248588
+    ],
+    "offMidpoint": -6.353107344632768,
+    "duration": 13,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 8,
+    "id": "8:4",
+    "words": 23,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     3
+    ],
+    "binary": [
+     3
+    ],
+    "fast": [
+     3
+    ],
+    "caret": [
+     3
+    ],
+    "split": false,
+    "fraction": [
+     0.10280373831775699
+    ],
+    "offMidpoint": -2.7485981308411502,
+    "duration": 6.920000000000073,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 8,
+    "id": "8:33",
+    "words": 118,
+    "pages": [
+     9,
+     11
+    ],
+    "linear": [
+     16,
+     97
+    ],
+    "binary": [
+     16,
+     97
+    ],
+    "fast": [
+     16,
+     97
+    ],
+    "caret": [
+     16,
+     97
+    ],
+    "split": false,
+    "fraction": [
+     0.11669658886894076,
+     0.8348294434470376
+    ],
+    "offMidpoint": -17.87727109515273,
+    "duration": 46.64000000000033,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 9,
+    "id": "9:5",
+    "words": 18,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     7
+    ],
+    "binary": [
+     7
+    ],
+    "fast": [
+     7
+    ],
+    "caret": [
+     7
+    ],
+    "split": false,
+    "fraction": [
+     0.3417721518987342
+    ],
+    "offMidpoint": -1.1360759493671344,
+    "duration": 7.180000000000291,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 10,
+    "id": "10:5",
+    "words": 68,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     18
+    ],
+    "binary": [
+     18
+    ],
+    "fast": [
+     18
+    ],
+    "caret": [
+     18
+    ],
+    "split": false,
+    "fraction": [
+     0.2910958904109589
+    ],
+    "offMidpoint": -4.449657534246613,
+    "duration": 21.300000000000182,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 10,
+    "id": "10:101",
+    "words": 12,
+    "pages": [
+     24,
+     25
+    ],
+    "linear": [
+     9
+    ],
+    "binary": [
+     9
+    ],
+    "fast": [
+     9
+    ],
+    "caret": [
+     9
+    ],
+    "split": true,
+    "fraction": [
+     0.6847826086956521
+    ],
+    "offMidpoint": 1.0310869565217253,
+    "duration": 5.579999999999927,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 11,
+    "id": "11:3",
+    "words": 42,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     33
+    ],
+    "binary": [
+     33
+    ],
+    "fast": [
+     33
+    ],
+    "caret": [
+     33
+    ],
+    "split": false,
+    "fraction": [
+     0.7845303867403315
+    ],
+    "offMidpoint": 3.9891160220995716,
+    "duration": 14.020000000000437,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 12,
+    "id": "12:7",
+    "words": 35,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     20
+    ],
+    "binary": [
+     20
+    ],
+    "fast": [
+     20
+    ],
+    "caret": [
+     20
+    ],
+    "split": false,
+    "fraction": [
+     0.5133689839572193
+    ],
+    "offMidpoint": 0.16229946524063457,
+    "duration": 12.139999999999418,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 13,
+    "id": "13:3",
+    "words": 34,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     16
+    ],
+    "binary": [
+     16
+    ],
+    "fast": [
+     16
+    ],
+    "caret": [
+     16
+    ],
+    "split": false,
+    "fraction": [
+     0.4923076923076924
+    ],
+    "offMidpoint": -0.06630769230769774,
+    "duration": 8.6200000000008,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 13,
+    "id": "13:36",
+    "words": 22,
+    "pages": [
+     6,
+     7
+    ],
+    "linear": [
+     10
+    ],
+    "binary": [
+     10
+    ],
+    "fast": [
+     10
+    ],
+    "caret": [
+     10
+    ],
+    "split": true,
+    "fraction": [
+     0.4369747899159664
+    ],
+    "offMidpoint": -0.4613445378151077,
+    "duration": 7.319999999999709,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 13,
+    "id": "13:107",
+    "words": 17,
+    "pages": [
+     23,
+     24
+    ],
+    "linear": [
+     5
+    ],
+    "binary": [
+     5
+    ],
+    "fast": [
+     5
+    ],
+    "caret": [
+     5
+    ],
+    "split": true,
+    "fraction": [
+     0.46226415094339623
+    ],
+    "offMidpoint": -0.24679245283022158,
+    "duration": 6.540000000000873,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 14,
+    "id": "14:4",
+    "words": 31,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     20
+    ],
+    "binary": [
+     20
+    ],
+    "fast": [
+     20
+    ],
+    "caret": [
+     20
+    ],
+    "split": false,
+    "fraction": [
+     0.6739130434782609
+    ],
+    "offMidpoint": 2.1600000000000126,
+    "duration": 12.420000000000073,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 15,
+    "id": "15:7",
+    "words": 13,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     5
+    ],
+    "binary": [
+     5
+    ],
+    "fast": [
+     5
+    ],
+    "caret": [
+     5
+    ],
+    "split": false,
+    "fraction": [
+     0.21333333333333335
+    ],
+    "offMidpoint": -1.2498666666668334,
+    "duration": 4.360000000000582,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 15,
+    "id": "15:116",
+    "words": 15,
+    "pages": [
+     23,
+     24
+    ],
+    "linear": [
+     6
+    ],
+    "binary": [
+     6
+    ],
+    "fast": [
+     6
+    ],
+    "caret": [
+     6
+    ],
+    "split": true,
+    "fraction": [
+     0.4044943820224719
+    ],
+    "offMidpoint": -0.6074157303371344,
+    "duration": 6.360000000000582,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 16,
+    "id": "16:7",
+    "words": 25,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     17
+    ],
+    "binary": [
+     17
+    ],
+    "fast": [
+     17
+    ],
+    "caret": [
+     17
+    ],
+    "split": false,
+    "fraction": [
+     0.6640625
+    ],
+    "offMidpoint": 1.4699999999998568,
+    "duration": 8.959999999999127,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 17,
+    "id": "17:4",
+    "words": 41,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     35
+    ],
+    "binary": [
+     35
+    ],
+    "fast": [
+     35
+    ],
+    "caret": [
+     35
+    ],
+    "split": false,
+    "fraction": [
+     0.8612716763005781
+    ],
+    "offMidpoint": 4.971098265895376,
+    "duration": 13.7599999999984,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 18,
+    "id": "18:2",
+    "words": 58,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     57
+    ],
+    "binary": [
+     57
+    ],
+    "fast": [
+     57
+    ],
+    "caret": [
+     57
+    ],
+    "split": false,
+    "fraction": [
+     0.9702970297029702
+    ],
+    "offMidpoint": 9.735148514851824,
+    "duration": 20.700000000000728,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 19,
+    "id": "19:6",
+    "words": 81,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     1
+    ],
+    "binary": [
+     1
+    ],
+    "fast": [
+     1
+    ],
+    "caret": [
+     1
+    ],
+    "split": false,
+    "fraction": [
+     0.0027548209366391185
+    ],
+    "offMidpoint": -13.087493112947513,
+    "duration": 26.31999999999971,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 20,
+    "id": "20:6",
+    "words": 17,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     7
+    ],
+    "binary": [
+     7
+    ],
+    "fast": [
+     7
+    ],
+    "caret": [
+     7
+    ],
+    "split": false,
+    "fraction": [
+     0.4523809523809524
+    ],
+    "offMidpoint": -0.26571428571419564,
+    "duration": 5.579999999998108,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 20,
+    "id": "20:167",
+    "words": 39,
+    "pages": [
+     28,
+     29
+    ],
+    "linear": [
+     18
+    ],
+    "binary": [
+     18
+    ],
+    "fast": [
+     18
+    ],
+    "caret": [
+     18
+    ],
+    "split": true,
+    "fraction": [
+     0.48128342245989303
+    ],
+    "offMidpoint": -0.23770053475937214,
+    "duration": 12.700000000000728,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 20,
+    "id": "20:320",
+    "words": 19,
+    "pages": [
+     55,
+     56
+    ],
+    "linear": [
+     2
+    ],
+    "binary": [
+     2
+    ],
+    "fast": [
+     2
+    ],
+    "caret": [
+     2
+    ],
+    "split": true,
+    "fraction": [
+     0.17857142857142855
+    ],
+    "offMidpoint": -2.1085714285706803,
+    "duration": 6.559999999997672,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 21,
+    "id": "21:12",
+    "words": 9,
+    "pages": [
+     1,
+     2
+    ],
+    "linear": [
+     1
+    ],
+    "binary": [
+     1
+    ],
+    "fast": [
+     1
+    ],
+    "caret": [
+     1
+    ],
+    "split": false,
+    "fraction": [
+     0.13725490196078433
+    ],
+    "offMidpoint": -0.9213725490199245,
+    "duration": 2.540000000000873,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 22,
+    "id": "22:5",
+    "words": 13,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     9
+    ],
+    "binary": [
+     9
+    ],
+    "fast": [
+     9
+    ],
+    "caret": [
+     9
+    ],
+    "split": false,
+    "fraction": [
+     0.6551724137931034
+    ],
+    "offMidpoint": 0.543103448275862,
+    "duration": 3.5,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 23,
+    "id": "23:6",
+    "words": 22,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     5
+    ],
+    "binary": [
+     5
+    ],
+    "fast": [
+     5
+    ],
+    "caret": [
+     5
+    ],
+    "split": false,
+    "fraction": [
+     0.20588235294117646
+    ],
+    "offMidpoint": -3.0352941176469734,
+    "duration": 10.319999999999709,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 24,
+    "id": "24:8",
+    "words": 70,
+    "pages": [
+     1,
+     2
+    ],
+    "linear": [
+     40
+    ],
+    "binary": [
+     40
+    ],
+    "fast": [
+     40
+    ],
+    "caret": [
+     40
+    ],
+    "split": false,
+    "fraction": [
+     0.5482954545454546
+    ],
+    "offMidpoint": 1.2189772727271753,
+    "duration": 25.239999999997963,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 25,
+    "id": "25:10",
+    "words": 17,
+    "pages": [
+     1,
+     2
+    ],
+    "linear": [
+     13
+    ],
+    "binary": [
+     13
+    ],
+    "fast": [
+     13
+    ],
+    "caret": [
+     13
+    ],
+    "split": false,
+    "fraction": [
+     0.7647058823529411
+    ],
+    "offMidpoint": 1.5723529411770867,
+    "duration": 5.940000000002328,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 25,
+    "id": "25:281",
+    "words": 55,
+    "pages": [
+     49,
+     50
+    ],
+    "linear": [
+     8
+    ],
+    "binary": [
+     8
+    ],
+    "fast": [
+     8
+    ],
+    "caret": [
+     8
+    ],
+    "split": true,
+    "fraction": [
+     0.17557251908396948
+    ],
+    "offMidpoint": -5.437404580150972,
+    "duration": 16.75999999999476,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 26,
+    "id": "26:7",
+    "words": 25,
+    "pages": [
+     1,
+     2
+    ],
+    "linear": [
+     12
+    ],
+    "binary": [
+     12
+    ],
+    "fast": [
+     12
+    ],
+    "caret": [
+     12
+    ],
+    "split": false,
+    "fraction": [
+     0.4464285714285714
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "(text of the book left out)"
+   },
+   {
+    "section": 26,
+    "id": "26:64",
+    "words": 58,
+    "pages": [
+     9,
+     10
+    ],
+    "linear": [
+     17
+    ],
+    "binary": [
+     17
+    ],
+    "fast": [
+     17
+    ],
+    "caret": [
+     17
+    ],
+    "split": true,
+    "fraction": [
+     0.33125
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "(text of the book left out)"
+   }
+  ]
+ }
+]

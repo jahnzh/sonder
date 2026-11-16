@@ -1,0 +1,128 @@
+[
+ {
+  "size": 14,
+  "id": "0:54",
+  "words": 60,
+  "pages": [
+   9,
+   10
+  ],
+  "linear": [
+   24
+  ],
+  "fast": [
+   24
+  ],
+  "caret": [
+   24
+  ],
+  "fastAgrees": true,
+  "caretAgrees": true,
+  "around": "only it your ‖ after if, this"
+ },
+ {
+  "size": 19,
+  "id": "0:54",
+  "words": 60,
+  "pages": [
+   17,
+   18
+  ],
+  "linear": [
+   30
+  ],
+  "fast": [
+   30
+  ],
+  "caret": [
+   30
+  ],
+  "fastAgrees": true,
+  "caretAgrees": true,
+  "around": "him more way ‖ now may very"
+ },
+ {
+  "size": 24,
+  "id": "0:54",
+  "words": 60,
+  "pages": [
+   27,
+   28
+  ],
+  "linear": [
+   28
+  ],
+  "fast": [
+   28
+  ],
+  "caret": [
+   30
+  ],
+  "fastAgrees": true,
+  "caretAgrees": false,
+  "around": "if, this him ‖ more way now"
+ },
+ {
+  "size": 30,
+  "id": "0:53",
+  "words": 30,
+  "pages": [
+   42,
+   43
+  ],
+  "linear": [
+   14
+  ],
+  "fast": [
+   14
+  ],
+  "caret": [
+   14
+  ],
+  "fastAgrees": true,
+  "caretAgrees": true,
+  "around": "do its who ‖ at them, with"
+ },
+ {
+  "size": 30,
+  "id": "0:54",
+  "words": 60,
+  "pages": [
+   43,
+   44
+  ],
+  "linear": [
+   29
+  ],
+  "fast": [
+   29
+  ],
+  "caret": [
+   30
+  ],
+  "fastAgrees": true,
+  "caretAgrees": false,
+  "around": "this him more ‖ way now may"
+ },
+ {
+  "size": 30,
+  "id": "0:55",
+  "words": 30,
+  "pages": [
+   44,
+   45
+  ],
+  "linear": [
+   12
+  ],
+  "fast": [
+   12
+  ],
+  "caret": [
+   12
+  ],
+  "fastAgrees": true,
+  "caretAgrees": true,
+  "around": "could now than ‖ could has other"
+ }
+]

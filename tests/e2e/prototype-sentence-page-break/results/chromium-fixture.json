@@ -1,0 +1,3406 @@
+[
+ {
+  "label": "chromium fixture size 14",
+  "summary": {
+   "sections": 2,
+   "errors": 0,
+   "pages": 35,
+   "sentences": 171,
+   "crossing": 25,
+   "breaks": 26,
+   "threePlus": 1,
+   "splitWordBreaks": 7,
+   "hyphenatedWords": 45,
+   "missingBlocks": 0,
+   "unrendered": 0,
+   "textMismatch": 0,
+   "linearVsBinary": 0,
+   "linearVsFast": 0,
+   "linearVsCaret": 0,
+   "caretNull": 0,
+   "msPerSentenceCheck": 3.421,
+   "msPerCrossingLinear": 410.268,
+   "msPerCrossingBinary": 30.516,
+   "msPerCrossingCaret": 2.988,
+   "maxBinaryMs": 450.2,
+   "msPerSentenceFastCheck": 0.204,
+   "msPerCrossingFast": 1.012,
+   "maxFastMs": 6.5,
+   "fractionFromMiddle": {
+    "median": 0.186,
+    "p90": 0.441
+   },
+   "secondsFromMidpoint": {
+    "n": 0,
+    "median": null,
+    "p90": null,
+    "max": null
+   },
+   "sentenceSeconds": {
+    "median": null,
+    "p90": null
+   },
+   "geometry": {
+    "delta": 390,
+    "columnWidth": 390,
+    "gap": 32,
+    "divisor": 1,
+    "width": 390,
+    "height": 777,
+    "fontSize": "15px",
+    "lineHeight": "24px",
+    "fontFamily": "\"Literata Variable\", Georgia, \"Times New",
+    "fontsLoaded": "loaded"
+   }
+  },
+  "disagreements": [],
+  "samples": [
+   {
+    "section": 0,
+    "id": "0:6",
+    "words": 50,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     19
+    ],
+    "binary": [
+     19
+    ],
+    "fast": [
+     19
+    ],
+    "caret": [
+     19
+    ],
+    "split": false,
+    "fraction": [
+     0.37373737373737376
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "do more the ‖ them the made"
+   },
+   {
+    "section": 0,
+    "id": "0:25",
+    "words": 64,
+    "pages": [
+     3,
+     4
+    ],
+    "linear": [
+     22
+    ],
+    "binary": [
+     22
+    ],
+    "fast": [
+     22
+    ],
+    "caret": [
+     22
+    ],
+    "split": false,
+    "fraction": [
+     0.313953488372093
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "an by, be ‖ when long been"
+   },
+   {
+    "section": 0,
+    "id": "0:28",
+    "words": 480,
+    "pages": [
+     4,
+     6
+    ],
+    "linear": [
+     159,
+     464
+    ],
+    "binary": [
+     159,
+     464
+    ],
+    "fast": [
+     159,
+     464
+    ],
+    "caret": [
+     159,
+     464
+    ],
+    "split": false,
+    "fraction": [
+     0.3315761729045866,
+     0.965735371639427
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "two have him ‖ called if but"
+   },
+   {
+    "section": 1,
+    "id": "1:4",
+    "words": 27,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     17
+    ],
+    "binary": [
+     17
+    ],
+    "fast": [
+     17
+    ],
+    "caret": [
+     17
+    ],
+    "split": true,
+    "fraction": [
+     0.6547231270358307
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "have this un­char­ac­ter­is­ti­cal­ly ‖ an and un­char­ac­ter­is­ti­cal­ly"
+   },
+   {
+    "section": 1,
+    "id": "1:12",
+    "words": 31,
+    "pages": [
+     2,
+     3
+    ],
+    "linear": [
+     25
+    ],
+    "binary": [
+     25
+    ],
+    "fast": [
+     25
+    ],
+    "caret": [
+     25
+    ],
+    "split": false,
+    "fraction": [
+     0.7606837606837609
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "coun­ter­rev­o­lu­tion­ar­ies your to ‖ coun­ter­rev­o­lu­tion­ar­ies time, words"
+   },
+   {
+    "section": 1,
+    "id": "1:16",
+    "words": 37,
+    "pages": [
+     3,
+     4
+    ],
+    "linear": [
+     26
+    ],
+    "binary": [
+     26
+    ],
+    "fast": [
+     26
+    ],
+    "caret": [
+     26
+    ],
+    "split": false,
+    "fraction": [
+     0.7470449172576833
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "not people in­com­pre­hen­si­bil­i­ties, ‖ not in inter­nation­al­isa­tion"
+   },
+   {
+    "section": 1,
+    "id": "1:29",
+    "words": 34,
+    "pages": [
+     6,
+     7
+    ],
+    "linear": [
+     5
+    ],
+    "binary": [
+     5
+    ],
+    "fast": [
+     5
+    ],
+    "caret": [
+     5
+    ],
+    "split": true,
+    "fraction": [
+     0.16112531969309463
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "had as dis­pro­por­tion­ate­ness ‖ first made, coun­ter­rev­o­lu­tion­ar­ies"
+   },
+   {
+    "section": 1,
+    "id": "1:37",
+    "words": 35,
+    "pages": [
+     8,
+     9
+    ],
+    "linear": [
+     23
+    ],
+    "binary": [
+     23
+    ],
+    "fast": [
+     23
+    ],
+    "caret": [
+     23
+    ],
+    "split": true,
+    "fraction": [
+     0.6398104265402845
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "use some inter­nation­al­isa­tion ‖ of two, elec­tro­en­ceph­a­lo­graph­ic"
+   },
+   {
+    "section": 1,
+    "id": "1:42",
+    "words": 27,
+    "pages": [
+     9,
+     10
+    ],
+    "linear": [
+     17
+    ],
+    "binary": [
+     17
+    ],
+    "fast": [
+     17
+    ],
+    "caret": [
+     17
+    ],
+    "split": true,
+    "fraction": [
+     0.641337386018237
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "they after coun­ter­rev­o­lu­tion­ar­ies ‖ its for, un­char­ac­ter­is­ti­cal­ly"
+   },
+   {
+    "section": 1,
+    "id": "1:46",
+    "words": 28,
+    "pages": [
+     10,
+     11
+    ],
+    "linear": [
+     26
+    ],
+    "binary": [
+     26
+    ],
+    "fast": [
+     26
+    ],
+    "caret": [
+     26
+    ],
+    "split": true,
+    "fraction": [
+     0.9647435897435896
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "to use un­char­ac­ter­is­ti­cal­ly, ‖ for that."
+   },
+   {
+    "section": 1,
+    "id": "1:50",
+    "words": 25,
+    "pages": [
+     11,
+     12
+    ],
+    "linear": [
+     17
+    ],
+    "binary": [
+     17
+    ],
+    "fast": [
+     17
+    ],
+    "caret": [
+     17
+    ],
+    "split": true,
+    "fraction": [
+     0.7248322147651005
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "my which, elec­tro­en­ceph­a­lo­graph­ic ‖ and this inter­nation­al­isa­tion"
+   },
+   {
+    "section": 1,
+    "id": "1:58",
+    "words": 38,
+    "pages": [
+     13,
+     14
+    ],
+    "linear": [
+     23
+    ],
+    "binary": [
+     23
+    ],
+    "fast": [
+     23
+    ],
+    "caret": [
+     23
+    ],
+    "split": true,
+    "fraction": [
+     0.6103896103896103
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "has first dis­pro­por­tion­ate­ness ‖ one as in­com­pre­hen­si­bil­i­ties"
+   }
+  ]
+ },
+ {
+  "label": "chromium fixture size 19",
+  "summary": {
+   "sections": 2,
+   "errors": 0,
+   "pages": 60,
+   "sentences": 171,
+   "crossing": 48,
+   "breaks": 50,
+   "threePlus": 1,
+   "splitWordBreaks": 15,
+   "hyphenatedWords": 136,
+   "missingBlocks": 0,
+   "unrendered": 0,
+   "textMismatch": 0,
+   "linearVsBinary": 0,
+   "linearVsFast": 0,
+   "linearVsCaret": 0,
+   "caretNull": 0,
+   "msPerSentenceCheck": 3.235,
+   "msPerCrossingLinear": 242.121,
+   "msPerCrossingBinary": 21.794,
+   "msPerCrossingCaret": 2.452,
+   "maxBinaryMs": 441.3,
+   "msPerSentenceFastCheck": 0.195,
+   "msPerCrossingFast": 0.894,
+   "maxFastMs": 8.8,
+   "fractionFromMiddle": {
+    "median": 0.277,
+    "p90": 0.411
+   },
+   "secondsFromMidpoint": {
+    "n": 0,
+    "median": null,
+    "p90": null,
+    "max": null
+   },
+   "sentenceSeconds": {
+    "median": null,
+    "p90": null
+   },
+   "geometry": {
+    "delta": 390,
+    "columnWidth": 390,
+    "gap": 32,
+    "divisor": 1,
+    "width": 390,
+    "height": 777,
+    "fontSize": "20px",
+    "lineHeight": "32px",
+    "fontFamily": "\"Literata Variable\", Georgia, \"Times New",
+    "fontsLoaded": "loaded"
+   }
+  },
+  "disagreements": [],
+  "samples": [
+   {
+    "section": 0,
+    "id": "0:10",
+    "words": 67,
+    "pages": [
+     2,
+     3
+    ],
+    "linear": [
+     51
+    ],
+    "binary": [
+     51
+    ],
+    "fast": [
+     51
+    ],
+    "caret": [
+     51
+    ],
+    "split": false,
+    "fraction": [
+     0.7689530685920574
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "made your than ‖ them, had had"
+   },
+   {
+    "section": 0,
+    "id": "0:14",
+    "words": 41,
+    "pages": [
+     3,
+     4
+    ],
+    "linear": [
+     25
+    ],
+    "binary": [
+     25
+    ],
+    "fast": [
+     25
+    ],
+    "caret": [
+     25
+    ],
+    "split": false,
+    "fraction": [
+     0.6136363636363634
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "called where do ‖ not and in,"
+   },
+   {
+    "section": 0,
+    "id": "0:18",
+    "words": 35,
+    "pages": [
+     4,
+     5
+    ],
+    "linear": [
+     20
+    ],
+    "binary": [
+     20
+    ],
+    "fast": [
+     20
+    ],
+    "caret": [
+     20
+    ],
+    "split": false,
+    "fraction": [
+     0.5588235294117647
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "but then him ‖ been, be of"
+   },
+   {
+    "section": 0,
+    "id": "0:28",
+    "words": 480,
+    "pages": [
+     7,
+     10
+    ],
+    "linear": [
+     39,
+     214,
+     385
+    ],
+    "binary": [
+     39,
+     214,
+     385
+    ],
+    "fast": [
+     39,
+     214,
+     385
+    ],
+    "caret": [
+     39,
+     214,
+     385
+    ],
+    "split": false,
+    "fraction": [
+     0.08065366367949399,
+     0.44333157617290514,
+     0.7975751186083271
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "long his make ‖ most time know"
+   },
+   {
+    "section": 1,
+    "id": "1:2",
+    "words": 34,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     26
+    ],
+    "binary": [
+     26
+    ],
+    "fast": [
+     26
+    ],
+    "caret": [
+     26
+    ],
+    "split": true,
+    "fraction": [
+     0.7912371134020616
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "up all dis­pro­por­tion­ate­ness ‖ of make coun­ter­rev­o­lu­tion­ar­ies,"
+   },
+   {
+    "section": 1,
+    "id": "1:5",
+    "words": 31,
+    "pages": [
+     1,
+     2
+    ],
+    "linear": [
+     5
+    ],
+    "binary": [
+     5
+    ],
+    "fast": [
+     5
+    ],
+    "caret": [
+     5
+    ],
+    "split": false,
+    "fraction": [
+     0.17119565217391303
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "is from in­com­pre­hen­si­bil­i­ties ‖ about would, dis­pro­por­tion­ate­ness"
+   },
+   {
+    "section": 1,
+    "id": "1:7",
+    "words": 36,
+    "pages": [
+     2,
+     3
+    ],
+    "linear": [
+     5
+    ],
+    "binary": [
+     5
+    ],
+    "fast": [
+     5
+    ],
+    "caret": [
+     5
+    ],
+    "split": false,
+    "fraction": [
+     0.14549653579676675
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "can did in­com­pre­hen­si­bil­i­ties ‖ who at, coun­ter­rev­o­lu­tion­ar­ies"
+   },
+   {
+    "section": 1,
+    "id": "1:9",
+    "words": 21,
+    "pages": [
+     3,
+     4
+    ],
+    "linear": [
+     11
+    ],
+    "binary": [
+     11
+    ],
+    "fast": [
+     11
+    ],
+    "caret": [
+     11
+    ],
+    "split": true,
+    "fraction": [
+     0.5306122448979592
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "now who in­com­pre­hen­si­bil­i­ties ‖ two water, inter­nation­al­isa­tion"
+   },
+   {
+    "section": 1,
+    "id": "1:12",
+    "words": 31,
+    "pages": [
+     4,
+     5
+    ],
+    "linear": [
+     8
+    ],
+    "binary": [
+     8
+    ],
+    "fast": [
+     8
+    ],
+    "caret": [
+     8
+    ],
+    "split": true,
+    "fraction": [
+     0.27920227920227925
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "so will, elec­tro­en­ceph­a­lo­graph­ic ‖ two this inter­nation­al­isa­tion"
+   },
+   {
+    "section": 1,
+    "id": "1:14",
+    "words": 40,
+    "pages": [
+     5,
+     6
+    ],
+    "linear": [
+     20
+    ],
+    "binary": [
+     20
+    ],
+    "fast": [
+     20
+    ],
+    "caret": [
+     20
+    ],
+    "split": true,
+    "fraction": [
+     0.51875
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "was long elec­tro­en­ceph­a­lo­graph­ic ‖ your may elec­tro­en­ceph­a­lo­graph­ic"
+   },
+   {
+    "section": 1,
+    "id": "1:18",
+    "words": 32,
+    "pages": [
+     7,
+     8
+    ],
+    "linear": [
+     29
+    ],
+    "binary": [
+     29
+    ],
+    "fast": [
+     29
+    ],
+    "caret": [
+     29
+    ],
+    "split": true,
+    "fraction": [
+     0.8928571428571429
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "they that dis­pro­por­tion­ate­ness ‖ then, up in­com­pre­hen­si­bil­i­ties."
+   },
+   {
+    "section": 1,
+    "id": "1:21",
+    "words": 40,
+    "pages": [
+     8,
+     9
+    ],
+    "linear": [
+     8
+    ],
+    "binary": [
+     8
+    ],
+    "fast": [
+     8
+    ],
+    "caret": [
+     8
+    ],
+    "split": true,
+    "fraction": [
+     0.21524663677130046
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "way it, dis­pro­por­tion­ate­ness ‖ find be dis­pro­por­tion­ate­ness"
+   },
+   {
+    "section": 1,
+    "id": "1:30",
+    "words": 38,
+    "pages": [
+     12,
+     13
+    ],
+    "linear": [
+     14
+    ],
+    "binary": [
+     14
+    ],
+    "fast": [
+     14
+    ],
+    "caret": [
+     14
+    ],
+    "split": true,
+    "fraction": [
+     0.38377192982456143
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "know which coun­ter­rev­o­lu­tion­ar­ies ‖ her one in­com­pre­hen­si­bil­i­ties"
+   }
+  ]
+ },
+ {
+  "label": "chromium fixture size 24",
+  "summary": {
+   "sections": 2,
+   "errors": 0,
+   "pages": 93,
+   "sentences": 171,
+   "crossing": 79,
+   "breaks": 82,
+   "threePlus": 1,
+   "splitWordBreaks": 22,
+   "hyphenatedWords": 238,
+   "missingBlocks": 0,
+   "unrendered": 0,
+   "textMismatch": 0,
+   "linearVsBinary": 0,
+   "linearVsFast": 0,
+   "linearVsCaret": 0,
+   "caretNull": 0,
+   "msPerSentenceCheck": 3.487,
+   "msPerCrossingLinear": 164.863,
+   "msPerCrossingBinary": 19.296,
+   "msPerCrossingCaret": 1.966,
+   "maxBinaryMs": 643,
+   "msPerSentenceFastCheck": 0.205,
+   "msPerCrossingFast": 0.816,
+   "maxFastMs": 11.6,
+   "fractionFromMiddle": {
+    "median": 0.258,
+    "p90": 0.401
+   },
+   "secondsFromMidpoint": {
+    "n": 0,
+    "median": null,
+    "p90": null,
+    "max": null
+   },
+   "sentenceSeconds": {
+    "median": null,
+    "p90": null
+   },
+   "geometry": {
+    "delta": 390,
+    "columnWidth": 390,
+    "gap": 32,
+    "divisor": 1,
+    "width": 390,
+    "height": 777,
+    "fontSize": "25px",
+    "lineHeight": "40px",
+    "fontFamily": "\"Literata Variable\", Georgia, \"Times New",
+    "fontsLoaded": "loaded"
+   }
+  },
+  "disagreements": [],
+  "samples": [
+   {
+    "section": 0,
+    "id": "0:2",
+    "words": 58,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     49
+    ],
+    "binary": [
+     49
+    ],
+    "fast": [
+     49
+    ],
+    "caret": [
+     49
+    ],
+    "split": false,
+    "fraction": [
+     0.8325791855203619
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "there, and was ‖ called see we,"
+   },
+   {
+    "section": 0,
+    "id": "0:5",
+    "words": 66,
+    "pages": [
+     1,
+     2
+    ],
+    "linear": [
+     1
+    ],
+    "binary": [
+     1
+    ],
+    "fast": [
+     1
+    ],
+    "caret": [
+     1
+    ],
+    "split": false,
+    "fraction": [
+     0.007722007722007722
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "At ‖ which my there"
+   },
+   {
+    "section": 0,
+    "id": "0:6",
+    "words": 50,
+    "pages": [
+     2,
+     3
+    ],
+    "linear": [
+     39
+    ],
+    "binary": [
+     39
+    ],
+    "fast": [
+     39
+    ],
+    "caret": [
+     39
+    ],
+    "split": false,
+    "fraction": [
+     0.7626262626262627
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "most other down ‖ other we with"
+   },
+   {
+    "section": 0,
+    "id": "0:28",
+    "words": 480,
+    "pages": [
+     12,
+     16
+    ],
+    "linear": [
+     93,
+     198,
+     301,
+     407
+    ],
+    "binary": [
+     93,
+     198,
+     301,
+     407
+    ],
+    "fast": [
+     93,
+     198,
+     301,
+     407
+    ],
+    "caret": [
+     93,
+     198,
+     301,
+     407
+    ],
+    "split": false,
+    "fraction": [
+     0.19240906694781254,
+     0.4069583552978392,
+     0.6283605693199784,
+     0.8413284132841305
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "one up it, ‖ her would out"
+   },
+   {
+    "section": 1,
+    "id": "1:1",
+    "words": 36,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     32
+    ],
+    "binary": [
+     32
+    ],
+    "fast": [
+     32
+    ],
+    "caret": [
+     32
+    ],
+    "split": true,
+    "fraction": [
+     0.9030732860520095
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "after than un­char­ac­ter­is­ti­cal­ly ‖ know into inter­nation­al­isa­tion"
+   },
+   {
+    "section": 1,
+    "id": "1:3",
+    "words": 30,
+    "pages": [
+     1,
+     2
+    ],
+    "linear": [
+     8
+    ],
+    "binary": [
+     8
+    ],
+    "fast": [
+     8
+    ],
+    "caret": [
+     8
+    ],
+    "split": true,
+    "fraction": [
+     0.2845303867403315
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "they people, un­char­ac­ter­is­ti­cal­ly ‖ their they un­char­ac­ter­is­ti­cal­ly"
+   },
+   {
+    "section": 1,
+    "id": "1:4",
+    "words": 27,
+    "pages": [
+     2,
+     3
+    ],
+    "linear": [
+     25
+    ],
+    "binary": [
+     25
+    ],
+    "fast": [
+     25
+    ],
+    "caret": [
+     25
+    ],
+    "split": false,
+    "fraction": [
+     0.8859934853420197
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "in­com­pre­hen­si­bil­i­ties after a ‖ un­char­ac­ter­is­ti­cal­ly have."
+   },
+   {
+    "section": 1,
+    "id": "1:6",
+    "words": 38,
+    "pages": [
+     3,
+     4
+    ],
+    "linear": [
+     11
+    ],
+    "binary": [
+     11
+    ],
+    "fast": [
+     11
+    ],
+    "caret": [
+     11
+    ],
+    "split": true,
+    "fraction": [
+     0.296137339055794
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "little has in­com­pre­hen­si­bil­i­ties ‖ two was coun­ter­rev­o­lu­tion­ar­ies"
+   },
+   {
+    "section": 1,
+    "id": "1:7",
+    "words": 36,
+    "pages": [
+     4,
+     5
+    ],
+    "linear": [
+     17
+    ],
+    "binary": [
+     17
+    ],
+    "fast": [
+     17
+    ],
+    "caret": [
+     17
+    ],
+    "split": true,
+    "fraction": [
+     0.4942263279445727
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "down called coun­ter­rev­o­lu­tion­ar­ies, ‖ little her inter­nation­al­isa­tion"
+   },
+   {
+    "section": 1,
+    "id": "1:12",
+    "words": 31,
+    "pages": [
+     7,
+     8
+    ],
+    "linear": [
+     11
+    ],
+    "binary": [
+     11
+    ],
+    "fast": [
+     11
+    ],
+    "caret": [
+     11
+    ],
+    "split": true,
+    "fraction": [
+     0.36752136752136755
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "two this inter­nation­al­isa­tion ‖ make is un­char­ac­ter­is­ti­cal­ly,"
+   },
+   {
+    "section": 1,
+    "id": "1:13",
+    "words": 26,
+    "pages": [
+     8,
+     9
+    ],
+    "linear": [
+     23
+    ],
+    "binary": [
+     23
+    ],
+    "fast": [
+     23
+    ],
+    "caret": [
+     23
+    ],
+    "split": true,
+    "fraction": [
+     0.8836477987421383
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "when than inter­nation­al­isa­tion ‖ has how un­char­ac­ter­is­ti­cal­ly."
+   },
+   {
+    "section": 1,
+    "id": "1:17",
+    "words": 36,
+    "pages": [
+     11,
+     12
+    ],
+    "linear": [
+     29
+    ],
+    "binary": [
+     29
+    ],
+    "fast": [
+     29
+    ],
+    "caret": [
+     29
+    ],
+    "split": true,
+    "fraction": [
+     0.8183962264150945
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "would had elec­tro­en­ceph­a­lo­graph­ic ‖ an said un­char­ac­ter­is­ti­cal­ly"
+   },
+   {
+    "section": 1,
+    "id": "1:22",
+    "words": 36,
+    "pages": [
+     14,
+     15
+    ],
+    "linear": [
+     2
+    ],
+    "binary": [
+     2
+    ],
+    "fast": [
+     2
+    ],
+    "caret": [
+     2
+    ],
+    "split": true,
+    "fraction": [
+     0.07936507936507936
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "Called coun­ter­rev­o­lu­tion­ar­ies ‖ said there in­com­pre­hen­si­bil­i­ties"
+   }
+  ]
+ },
+ {
+  "label": "chromium fixture size 30",
+  "summary": {
+   "sections": 2,
+   "errors": 0,
+   "pages": 147,
+   "sentences": 171,
+   "crossing": 117,
+   "breaks": 126,
+   "threePlus": 4,
+   "splitWordBreaks": 35,
+   "hyphenatedWords": 495,
+   "missingBlocks": 0,
+   "unrendered": 0,
+   "textMismatch": 0,
+   "linearVsBinary": 0,
+   "linearVsFast": 0,
+   "linearVsCaret": 0,
+   "caretNull": 0,
+   "msPerSentenceCheck": 2.887,
+   "msPerCrossingLinear": 132.308,
+   "msPerCrossingBinary": 21.381,
+   "msPerCrossingCaret": 1.894,
+   "maxBinaryMs": 1244.5,
+   "msPerSentenceFastCheck": 0.176,
+   "msPerCrossingFast": 0.818,
+   "maxFastMs": 19.4,
+   "fractionFromMiddle": {
+    "median": 0.222,
+    "p90": 0.4
+   },
+   "secondsFromMidpoint": {
+    "n": 0,
+    "median": null,
+    "p90": null,
+    "max": null
+   },
+   "sentenceSeconds": {
+    "median": null,
+    "p90": null
+   },
+   "geometry": {
+    "delta": 390,
+    "columnWidth": 390,
+    "gap": 32,
+    "divisor": 1,
+    "width": 390,
+    "height": 777,
+    "fontSize": "31px",
+    "lineHeight": "49.6px",
+    "fontFamily": "\"Literata Variable\", Georgia, \"Times New",
+    "fontsLoaded": "loaded"
+   }
+  },
+  "disagreements": [],
+  "samples": [
+   {
+    "section": 0,
+    "id": "0:2",
+    "words": 58,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     10
+    ],
+    "binary": [
+     10
+    ],
+    "fast": [
+     10
+    ],
+    "caret": [
+     10
+    ],
+    "split": false,
+    "fraction": [
+     0.15837104072398192
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "his make a ‖ use an she,"
+   },
+   {
+    "section": 0,
+    "id": "0:3",
+    "words": 52,
+    "pages": [
+     1,
+     2
+    ],
+    "linear": [
+     22
+    ],
+    "binary": [
+     22
+    ],
+    "fast": [
+     22
+    ],
+    "caret": [
+     22
+    ],
+    "split": false,
+    "fraction": [
+     0.4009661835748791
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "will then each ‖ and, my her"
+   },
+   {
+    "section": 0,
+    "id": "0:4",
+    "words": 41,
+    "pages": [
+     2,
+     3
+    ],
+    "linear": [
+     33
+    ],
+    "binary": [
+     33
+    ],
+    "fast": [
+     33
+    ],
+    "caret": [
+     33
+    ],
+    "split": false,
+    "fraction": [
+     0.8323353293413172
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "about, as just ‖ way two his"
+   },
+   {
+    "section": 0,
+    "id": "0:28",
+    "words": 480,
+    "pages": [
+     19,
+     26
+    ],
+    "linear": [
+     68,
+     137,
+     209,
+     274,
+     341,
+     411,
+     469
+    ],
+    "binary": [
+     68,
+     137,
+     209,
+     274,
+     341,
+     411,
+     469
+    ],
+    "fast": [
+     68,
+     137,
+     209,
+     274,
+     341,
+     411,
+     469
+    ],
+    "caret": [
+     68,
+     137,
+     209,
+     274,
+     341,
+     411,
+     469
+    ],
+    "split": false,
+    "fraction": [
+     0.13916710595677398,
+     0.2867685819715343,
+     0.43278861360042226,
+     0.5730100158144439,
+     0.7116499736425926,
+     0.8518713758566133,
+     0.9773326304691581
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "have like the ‖ some find after"
+   },
+   {
+    "section": 0,
+    "id": "0:30",
+    "words": 70,
+    "pages": [
+     26,
+     28
+    ],
+    "linear": [
+     3,
+     62
+    ],
+    "binary": [
+     3,
+     62
+    ],
+    "fast": [
+     3,
+     62
+    ],
+    "caret": [
+     3,
+     62
+    ],
+    "split": false,
+    "fraction": [
+     0.04081632653061224,
+     0.8673469387755108
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "Over like have ‖ them water did"
+   },
+   {
+    "section": 1,
+    "id": "1:1",
+    "words": 36,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     17
+    ],
+    "binary": [
+     17
+    ],
+    "fast": [
+     17
+    ],
+    "caret": [
+     17
+    ],
+    "split": true,
+    "fraction": [
+     0.4869976359338062
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "two my elec­tro­en­ceph­a­lo­graph­ic ‖ have made, dis­pro­por­tion­ate­ness"
+   },
+   {
+    "section": 1,
+    "id": "1:2",
+    "words": 34,
+    "pages": [
+     1,
+     2
+    ],
+    "linear": [
+     11
+    ],
+    "binary": [
+     11
+    ],
+    "fast": [
+     11
+    ],
+    "caret": [
+     11
+    ],
+    "split": true,
+    "fraction": [
+     0.3427835051546392
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "a would in­com­pre­hen­si­bil­i­ties ‖ many use, un­char­ac­ter­is­ti­cal­ly"
+   },
+   {
+    "section": 1,
+    "id": "1:3",
+    "words": 30,
+    "pages": [
+     2,
+     3
+    ],
+    "linear": [
+     5
+    ],
+    "binary": [
+     5
+    ],
+    "fast": [
+     5
+    ],
+    "caret": [
+     5
+    ],
+    "split": true,
+    "fraction": [
+     0.1712707182320442
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "not where un­char­ac­ter­is­ti­cal­ly ‖ they people, un­char­ac­ter­is­ti­cal­ly"
+   },
+   {
+    "section": 1,
+    "id": "1:4",
+    "words": 27,
+    "pages": [
+     3,
+     4
+    ],
+    "linear": [
+     2
+    ],
+    "binary": [
+     2
+    ],
+    "fast": [
+     2
+    ],
+    "caret": [
+     2
+    ],
+    "split": true,
+    "fraction": [
+     0.09446254071661238
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "With dis­pro­por­tion­ate­ness ‖ these only coun­ter­rev­o­lu­tion­ar­ies"
+   },
+   {
+    "section": 1,
+    "id": "1:6",
+    "words": 38,
+    "pages": [
+     6,
+     7
+    ],
+    "linear": [
+     29
+    ],
+    "binary": [
+     29
+    ],
+    "fast": [
+     29
+    ],
+    "caret": [
+     29
+    ],
+    "split": true,
+    "fraction": [
+     0.7682403433476395
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "in have elec­tro­en­ceph­a­lo­graph­ic, ‖ in its elec­tro­en­ceph­a­lo­graph­ic"
+   },
+   {
+    "section": 1,
+    "id": "1:7",
+    "words": 36,
+    "pages": [
+     7,
+     8
+    ],
+    "linear": [
+     20
+    ],
+    "binary": [
+     20
+    ],
+    "fast": [
+     20
+    ],
+    "caret": [
+     20
+    ],
+    "split": true,
+    "fraction": [
+     0.5704387990762124
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "little her inter­nation­al­isa­tion ‖ not called dis­pro­por­tion­ate­ness,"
+   },
+   {
+    "section": 1,
+    "id": "1:8",
+    "words": 26,
+    "pages": [
+     8,
+     9
+    ],
+    "linear": [
+     11
+    ],
+    "binary": [
+     11
+    ],
+    "fast": [
+     11
+    ],
+    "caret": [
+     11
+    ],
+    "split": true,
+    "fraction": [
+     0.44299674267100975
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "it where dis­pro­por­tion­ate­ness ‖ many make inter­nation­al­isa­tion,"
+   },
+   {
+    "section": 1,
+    "id": "1:9",
+    "words": 21,
+    "pages": [
+     9,
+     10
+    ],
+    "linear": [
+     14
+    ],
+    "binary": [
+     14
+    ],
+    "fast": [
+     14
+    ],
+    "caret": [
+     14
+    ],
+    "split": true,
+    "fraction": [
+     0.6775510204081633
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "two water, inter­nation­al­isa­tion ‖ all other inter­nation­al­isa­tion"
+   },
+   {
+    "section": 1,
+    "id": "1:10",
+    "words": 23,
+    "pages": [
+     10,
+     11
+    ],
+    "linear": [
+     20
+    ],
+    "binary": [
+     20
+    ],
+    "fast": [
+     20
+    ],
+    "caret": [
+     20
+    ],
+    "split": true,
+    "fraction": [
+     0.8754448398576512
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "two by, dis­pro­por­tion­ate­ness ‖ only has inter­nation­al­isa­tion."
+   }
+  ]
+ },
+ {
+  "label": "chromium fixture size 19 after resize to 430x932",
+  "summary": {
+   "sections": 2,
+   "errors": 0,
+   "pages": 48,
+   "sentences": 171,
+   "crossing": 33,
+   "breaks": 34,
+   "threePlus": 1,
+   "splitWordBreaks": 7,
+   "hyphenatedWords": 80,
+   "missingBlocks": 0,
+   "unrendered": 0,
+   "textMismatch": 0,
+   "linearVsBinary": 0,
+   "linearVsFast": 0,
+   "linearVsCaret": 0,
+   "caretNull": 0,
+   "msPerSentenceCheck": 3.193,
+   "msPerCrossingLinear": 340.9,
+   "msPerCrossingBinary": 26.467,
+   "msPerCrossingCaret": 2.645,
+   "maxBinaryMs": 478.7,
+   "msPerSentenceFastCheck": 0.189,
+   "msPerCrossingFast": 0.933,
+   "maxFastMs": 7.7,
+   "fractionFromMiddle": {
+    "median": 0.154,
+    "p90": 0.42
+   },
+   "secondsFromMidpoint": {
+    "n": 0,
+    "median": null,
+    "p90": null,
+    "max": null
+   },
+   "sentenceSeconds": {
+    "median": null,
+    "p90": null
+   },
+   "geometry": {
+    "delta": 430,
+    "columnWidth": 430,
+    "gap": 34,
+    "divisor": 1,
+    "width": 430,
+    "height": 865,
+    "fontSize": "20px",
+    "lineHeight": "32px",
+    "fontFamily": "\"Literata Variable\", Georgia, \"Times New",
+    "fontsLoaded": "loaded"
+   }
+  },
+  "disagreements": [],
+  "samples": [
+   {
+    "section": 0,
+    "id": "0:4",
+    "words": 41,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     25
+    ],
+    "binary": [
+     25
+    ],
+    "fast": [
+     25
+    ],
+    "caret": [
+     25
+    ],
+    "split": false,
+    "fraction": [
+     0.6287425149700598
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "like each down ‖ they many it"
+   },
+   {
+    "section": 0,
+    "id": "0:13",
+    "words": 66,
+    "pages": [
+     2,
+     3
+    ],
+    "linear": [
+     42
+    ],
+    "binary": [
+     42
+    ],
+    "fast": [
+     42
+    ],
+    "caret": [
+     42
+    ],
+    "split": false,
+    "fraction": [
+     0.6566037735849056
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "with after make, ‖ to where more"
+   },
+   {
+    "section": 0,
+    "id": "0:18",
+    "words": 35,
+    "pages": [
+     3,
+     4
+    ],
+    "linear": [
+     9
+    ],
+    "binary": [
+     9
+    ],
+    "fast": [
+     9
+    ],
+    "caret": [
+     9
+    ],
+    "split": false,
+    "fraction": [
+     0.2720588235294118
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "an, your on ‖ has this a,"
+   },
+   {
+    "section": 0,
+    "id": "0:28",
+    "words": 480,
+    "pages": [
+     6,
+     8
+    ],
+    "linear": [
+     158,
+     375
+    ],
+    "binary": [
+     158,
+     375
+    ],
+    "fast": [
+     158,
+     375
+    ],
+    "caret": [
+     158,
+     375
+    ],
+    "split": false,
+    "fraction": [
+     0.32999472851871414,
+     0.7796520822351064
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "your, two have ‖ him called if"
+   },
+   {
+    "section": 1,
+    "id": "1:8",
+    "words": 26,
+    "pages": [
+     2,
+     3
+    ],
+    "linear": [
+     11
+    ],
+    "binary": [
+     11
+    ],
+    "fast": [
+     11
+    ],
+    "caret": [
+     11
+    ],
+    "split": true,
+    "fraction": [
+     0.44299674267100975
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "it where dis­pro­por­tion­ate­ness ‖ many make inter­nation­al­isa­tion,"
+   },
+   {
+    "section": 1,
+    "id": "1:11",
+    "words": 30,
+    "pages": [
+     3,
+     4
+    ],
+    "linear": [
+     26
+    ],
+    "binary": [
+     26
+    ],
+    "fast": [
+     26
+    ],
+    "caret": [
+     26
+    ],
+    "split": true,
+    "fraction": [
+     0.8888888888888888
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "use from in­com­pre­hen­si­bil­i­ties, ‖ be these dis­pro­por­tion­ate­ness"
+   },
+   {
+    "section": 1,
+    "id": "1:14",
+    "words": 40,
+    "pages": [
+     4,
+     5
+    ],
+    "linear": [
+     19
+    ],
+    "binary": [
+     19
+    ],
+    "fast": [
+     19
+    ],
+    "caret": [
+     19
+    ],
+    "split": false,
+    "fraction": [
+     0.45625000000000004
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "inter­nation­al­isa­tion was long ‖ elec­tro­en­ceph­a­lo­graph­ic your may"
+   },
+   {
+    "section": 1,
+    "id": "1:17",
+    "words": 36,
+    "pages": [
+     5,
+     6
+    ],
+    "linear": [
+     8
+    ],
+    "binary": [
+     8
+    ],
+    "fast": [
+     8
+    ],
+    "caret": [
+     8
+    ],
+    "split": true,
+    "fraction": [
+     0.25471698113207547
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "how into, inter­nation­al­isa­tion ‖ the where dis­pro­por­tion­ate­ness"
+   },
+   {
+    "section": 1,
+    "id": "1:25",
+    "words": 32,
+    "pages": [
+     8,
+     9
+    ],
+    "linear": [
+     11
+    ],
+    "binary": [
+     11
+    ],
+    "fast": [
+     11
+    ],
+    "caret": [
+     11
+    ],
+    "split": true,
+    "fraction": [
+     0.35696202531645577
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "their on elec­tro­en­ceph­a­lo­graph­ic ‖ we two un­char­ac­ter­is­ti­cal­ly"
+   },
+   {
+    "section": 1,
+    "id": "1:31",
+    "words": 26,
+    "pages": [
+     10,
+     11
+    ],
+    "linear": [
+     14
+    ],
+    "binary": [
+     14
+    ],
+    "fast": [
+     14
+    ],
+    "caret": [
+     14
+    ],
+    "split": true,
+    "fraction": [
+     0.5566037735849056
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "would, who elec­tro­en­ceph­a­lo­graph­ic ‖ than the in­com­pre­hen­si­bil­i­ties"
+   },
+   {
+    "section": 1,
+    "id": "1:44",
+    "words": 30,
+    "pages": [
+     14,
+     15
+    ],
+    "linear": [
+     11
+    ],
+    "binary": [
+     11
+    ],
+    "fast": [
+     11
+    ],
+    "caret": [
+     11
+    ],
+    "split": true,
+    "fraction": [
+     0.3787465940054496
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "their make dis­pro­por­tion­ate­ness ‖ could him elec­tro­en­ceph­a­lo­graph­ic"
+   },
+   {
+    "section": 1,
+    "id": "1:63",
+    "words": 30,
+    "pages": [
+     21,
+     22
+    ],
+    "linear": [
+     29
+    ],
+    "binary": [
+     29
+    ],
+    "fast": [
+     29
+    ],
+    "caret": [
+     29
+    ],
+    "split": true,
+    "fraction": [
+     0.9833333333333332
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "to, into elec­tro­en­ceph­a­lo­graph­ic ‖ no."
+   }
+  ]
+ },
+ {
+  "label": "chromium fixture size 19 landscape 932x430",
+  "summary": {
+   "sections": 2,
+   "errors": 0,
+   "pages": 180,
+   "sentences": 171,
+   "crossing": 128,
+   "breaks": 146,
+   "threePlus": 12,
+   "splitWordBreaks": 40,
+   "hyphenatedWords": 290,
+   "missingBlocks": 0,
+   "unrendered": 0,
+   "textMismatch": 0,
+   "linearVsBinary": 0,
+   "linearVsFast": 0,
+   "linearVsCaret": 0,
+   "caretNull": 0,
+   "msPerSentenceCheck": 3.498,
+   "msPerCrossingLinear": 128.78,
+   "msPerCrossingBinary": 23.352,
+   "msPerCrossingCaret": 2.142,
+   "maxBinaryMs": 1237.6,
+   "msPerSentenceFastCheck": 0.205,
+   "msPerCrossingFast": 0.991,
+   "maxFastMs": 23.4,
+   "fractionFromMiddle": {
+    "median": 0.182,
+    "p90": 0.397
+   },
+   "secondsFromMidpoint": {
+    "n": 0,
+    "median": null,
+    "p90": null,
+    "max": null
+   },
+   "sentenceSeconds": {
+    "median": null,
+    "p90": null
+   },
+   "geometry": {
+    "delta": 460,
+    "columnWidth": 460,
+    "gap": 38,
+    "divisor": 1,
+    "width": 460,
+    "height": 278,
+    "fontSize": "20px",
+    "lineHeight": "32px",
+    "fontFamily": "\"Literata Variable\", Georgia, \"Times New",
+    "fontsLoaded": "loaded"
+   }
+  },
+  "disagreements": [],
+  "samples": [
+   {
+    "section": 0,
+    "id": "0:2",
+    "words": 58,
+    "pages": [
+     1,
+     2
+    ],
+    "linear": [
+     37
+    ],
+    "binary": [
+     37
+    ],
+    "fast": [
+     37
+    ],
+    "caret": [
+     37
+    ],
+    "split": false,
+    "fraction": [
+     0.6334841628959278
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "down, would many ‖ where him we"
+   },
+   {
+    "section": 0,
+    "id": "0:3",
+    "words": 52,
+    "pages": [
+     2,
+     3
+    ],
+    "linear": [
+     36
+    ],
+    "binary": [
+     36
+    ],
+    "fast": [
+     36
+    ],
+    "caret": [
+     36
+    ],
+    "split": false,
+    "fraction": [
+     0.6570048309178741
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "all than long ‖ who them, most"
+   },
+   {
+    "section": 0,
+    "id": "0:4",
+    "words": 41,
+    "pages": [
+     3,
+     4
+    ],
+    "linear": [
+     36
+    ],
+    "binary": [
+     36
+    ],
+    "fast": [
+     36
+    ],
+    "caret": [
+     36
+    ],
+    "split": false,
+    "fraction": [
+     0.8862275449101795
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "way two his ‖ way did use"
+   },
+   {
+    "section": 0,
+    "id": "0:23",
+    "words": 68,
+    "pages": [
+     18,
+     20
+    ],
+    "linear": [
+     10,
+     66
+    ],
+    "binary": [
+     10,
+     66
+    ],
+    "fast": [
+     10,
+     66
+    ],
+    "caret": [
+     10,
+     66
+    ],
+    "split": false,
+    "fraction": [
+     0.13011152416356875,
+     0.9591078066914505
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "an by there ‖ they how have"
+   },
+   {
+    "section": 0,
+    "id": "0:28",
+    "words": 480,
+    "pages": [
+     24,
+     32
+    ],
+    "linear": [
+     38,
+     94,
+     147,
+     206,
+     260,
+     316,
+     375,
+     433
+    ],
+    "binary": [
+     38,
+     94,
+     147,
+     206,
+     260,
+     316,
+     375,
+     433
+    ],
+    "fast": [
+     38,
+     94,
+     147,
+     206,
+     260,
+     316,
+     375,
+     433
+    ],
+    "caret": [
+     38,
+     94,
+     147,
+     206,
+     260,
+     316,
+     375,
+     433
+    ],
+    "split": false,
+    "fraction": [
+     0.07854507116499741,
+     0.19399051133368497,
+     0.3078545071165001,
+     0.42540853979968424,
+     0.5419082762256197,
+     0.6631523458091717,
+     0.7796520822351064,
+     0.8977332630469131
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "of long his ‖ make most time"
+   },
+   {
+    "section": 0,
+    "id": "0:30",
+    "words": 70,
+    "pages": [
+     33,
+     35
+    ],
+    "linear": [
+     2,
+     55
+    ],
+    "binary": [
+     2,
+     55
+    ],
+    "fast": [
+     2,
+     55
+    ],
+    "caret": [
+     2,
+     55
+    ],
+    "split": false,
+    "fraction": [
+     0.027210884353741496,
+     0.7653061224489801
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "Over like ‖ have them water"
+   },
+   {
+    "section": 1,
+    "id": "1:1",
+    "words": 36,
+    "pages": [
+     0,
+     2
+    ],
+    "linear": [
+     11,
+     35
+    ],
+    "binary": [
+     11,
+     35
+    ],
+    "fast": [
+     11,
+     35
+    ],
+    "caret": [
+     11,
+     35
+    ],
+    "split": true,
+    "fraction": [
+     0.32387706855791965,
+     0.9787234042553192
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "we we elec­tro­en­ceph­a­lo­graph­ic ‖ make how un­char­ac­ter­is­ti­cal­ly"
+   },
+   {
+    "section": 1,
+    "id": "1:2",
+    "words": 34,
+    "pages": [
+     2,
+     3
+    ],
+    "linear": [
+     26
+    ],
+    "binary": [
+     26
+    ],
+    "fast": [
+     26
+    ],
+    "caret": [
+     26
+    ],
+    "split": true,
+    "fraction": [
+     0.7912371134020616
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "up all dis­pro­por­tion­ate­ness ‖ of make coun­ter­rev­o­lu­tion­ar­ies,"
+   },
+   {
+    "section": 1,
+    "id": "1:3",
+    "words": 30,
+    "pages": [
+     3,
+     4
+    ],
+    "linear": [
+     17
+    ],
+    "binary": [
+     17
+    ],
+    "fast": [
+     17
+    ],
+    "caret": [
+     17
+    ],
+    "split": true,
+    "fraction": [
+     0.5994475138121548
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "for words in­com­pre­hen­si­bil­i­ties ‖ how its un­char­ac­ter­is­ti­cal­ly"
+   },
+   {
+    "section": 1,
+    "id": "1:4",
+    "words": 27,
+    "pages": [
+     4,
+     5
+    ],
+    "linear": [
+     11
+    ],
+    "binary": [
+     11
+    ],
+    "fast": [
+     11
+    ],
+    "caret": [
+     11
+    ],
+    "split": true,
+    "fraction": [
+     0.4267100977198697
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "be two dis­pro­por­tion­ate­ness ‖ many who, inter­nation­al­isa­tion"
+   },
+   {
+    "section": 1,
+    "id": "1:6",
+    "words": 38,
+    "pages": [
+     7,
+     8
+    ],
+    "linear": [
+     26
+    ],
+    "binary": [
+     26
+    ],
+    "fast": [
+     26
+    ],
+    "caret": [
+     26
+    ],
+    "split": true,
+    "fraction": [
+     0.6824034334763949
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "who now un­char­ac­ter­is­ti­cal­ly ‖ in have elec­tro­en­ceph­a­lo­graph­ic,"
+   },
+   {
+    "section": 1,
+    "id": "1:7",
+    "words": 36,
+    "pages": [
+     8,
+     10
+    ],
+    "linear": [
+     11,
+     30
+    ],
+    "binary": [
+     11,
+     30
+    ],
+    "fast": [
+     11,
+     30
+    ],
+    "caret": [
+     11,
+     30
+    ],
+    "split": true,
+    "fraction": [
+     0.3163972286374134,
+     0.8175519630484986
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "after for in­com­pre­hen­si­bil­i­ties ‖ than her un­char­ac­ter­is­ti­cal­ly"
+   },
+   {
+    "section": 1,
+    "id": "1:9",
+    "words": 21,
+    "pages": [
+     11,
+     12
+    ],
+    "linear": [
+     14
+    ],
+    "binary": [
+     14
+    ],
+    "fast": [
+     14
+    ],
+    "caret": [
+     14
+    ],
+    "split": true,
+    "fraction": [
+     0.6775510204081633
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "two water, inter­nation­al­isa­tion ‖ all other inter­nation­al­isa­tion"
+   },
+   {
+    "section": 1,
+    "id": "1:12",
+    "words": 31,
+    "pages": [
+     15,
+     16
+    ],
+    "linear": [
+     26
+    ],
+    "binary": [
+     26
+    ],
+    "fast": [
+     26
+    ],
+    "caret": [
+     26
+    ],
+    "split": true,
+    "fraction": [
+     0.8433048433048435
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "your to coun­ter­rev­o­lu­tion­ar­ies ‖ time, words coun­ter­rev­o­lu­tion­ar­ies"
+   },
+   {
+    "section": 1,
+    "id": "1:14",
+    "words": 40,
+    "pages": [
+     17,
+     19
+    ],
+    "linear": [
+     11,
+     35
+    ],
+    "binary": [
+     11,
+     35
+    ],
+    "fast": [
+     11,
+     35
+    ],
+    "caret": [
+     11,
+     35
+    ],
+    "split": true,
+    "fraction": [
+     0.29375,
+     0.8999999999999999
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "made people un­char­ac­ter­is­ti­cal­ly ‖ they use, coun­ter­rev­o­lu­tion­ar­ies"
+   }
+  ]
+ },
+ {
+  "label": "chromium fixture size 19 desktop 1440x900",
+  "summary": {
+   "sections": 2,
+   "errors": 0,
+   "pages": 29,
+   "sentences": 171,
+   "crossing": 19,
+   "breaks": 19,
+   "threePlus": 0,
+   "splitWordBreaks": 4,
+   "hyphenatedWords": 39,
+   "missingBlocks": 0,
+   "unrendered": 0,
+   "textMismatch": 0,
+   "linearVsBinary": 0,
+   "linearVsFast": 0,
+   "linearVsCaret": 0,
+   "caretNull": 0,
+   "msPerSentenceCheck": 3.458,
+   "msPerCrossingLinear": 541.068,
+   "msPerCrossingBinary": 21.589,
+   "msPerCrossingCaret": 3.905,
+   "maxBinaryMs": 142.6,
+   "msPerSentenceFastCheck": 0.235,
+   "msPerCrossingFast": 0.853,
+   "maxFastMs": 3.4,
+   "fractionFromMiddle": {
+    "median": 0.196,
+    "p90": 0.353
+   },
+   "secondsFromMidpoint": {
+    "n": 0,
+    "median": null,
+    "p90": null,
+    "max": null
+   },
+   "sentenceSeconds": {
+    "median": null,
+    "p90": null
+   },
+   "geometry": {
+    "delta": 968,
+    "columnWidth": 404,
+    "gap": 80,
+    "divisor": 2,
+    "width": 968,
+    "height": 748,
+    "fontSize": "20px",
+    "lineHeight": "32px",
+    "fontFamily": "\"Literata Variable\", Georgia, \"Times New",
+    "fontsLoaded": "loaded"
+   }
+  },
+  "disagreements": [],
+  "samples": [
+   {
+    "section": 0,
+    "id": "0:7",
+    "words": 53,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     20
+    ],
+    "binary": [
+     20
+    ],
+    "fast": [
+     20
+    ],
+    "caret": [
+     20
+    ],
+    "split": false,
+    "fraction": [
+     0.33649289099526064
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "in that for ‖ were, than called"
+   },
+   {
+    "section": 0,
+    "id": "0:23",
+    "words": 68,
+    "pages": [
+     2,
+     3
+    ],
+    "linear": [
+     61
+    ],
+    "binary": [
+     61
+    ],
+    "fast": [
+     61
+    ],
+    "caret": [
+     61
+    ],
+    "split": false,
+    "fraction": [
+     0.8736059479553908
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "who were most ‖ this, out each"
+   },
+   {
+    "section": 0,
+    "id": "0:28",
+    "words": 480,
+    "pages": [
+     3,
+     4
+    ],
+    "linear": [
+     116
+    ],
+    "binary": [
+     116
+    ],
+    "fast": [
+     116
+    ],
+    "caret": [
+     116
+    ],
+    "split": false,
+    "fraction": [
+     0.2409066947812338
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "of just after ‖ some, called your"
+   },
+   {
+    "section": 1,
+    "id": "1:5",
+    "words": 31,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     13
+    ],
+    "binary": [
+     13
+    ],
+    "fast": [
+     13
+    ],
+    "caret": [
+     13
+    ],
+    "split": false,
+    "fraction": [
+     0.38858695652173914
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "in­com­pre­hen­si­bil­i­ties has they ‖ dis­pro­por­tion­ate­ness with would"
+   },
+   {
+    "section": 1,
+    "id": "1:10",
+    "words": 23,
+    "pages": [
+     1,
+     2
+    ],
+    "linear": [
+     8
+    ],
+    "binary": [
+     8
+    ],
+    "fast": [
+     8
+    ],
+    "caret": [
+     8
+    ],
+    "split": true,
+    "fraction": [
+     0.3736654804270463
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "had one, in­com­pre­hen­si­bil­i­ties ‖ did said in­com­pre­hen­si­bil­i­ties"
+   },
+   {
+    "section": 1,
+    "id": "1:15",
+    "words": 23,
+    "pages": [
+     2,
+     3
+    ],
+    "linear": [
+     5
+    ],
+    "binary": [
+     5
+    ],
+    "fast": [
+     5
+    ],
+    "caret": [
+     5
+    ],
+    "split": true,
+    "fraction": [
+     0.24390243902439024
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "were first coun­ter­rev­o­lu­tion­ar­ies ‖ an her, un­char­ac­ter­is­ti­cal­ly"
+   },
+   {
+    "section": 1,
+    "id": "1:24",
+    "words": 34,
+    "pages": [
+     4,
+     5
+    ],
+    "linear": [
+     26
+    ],
+    "binary": [
+     26
+    ],
+    "fast": [
+     26
+    ],
+    "caret": [
+     26
+    ],
+    "split": true,
+    "fraction": [
+     0.7738693467336683
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "people, no inter­nation­al­isa­tion ‖ down by elec­tro­en­ceph­a­lo­graph­ic"
+   },
+   {
+    "section": 1,
+    "id": "1:46",
+    "words": 28,
+    "pages": [
+     8,
+     9
+    ],
+    "linear": [
+     8
+    ],
+    "binary": [
+     8
+    ],
+    "fast": [
+     8
+    ],
+    "caret": [
+     8
+    ],
+    "split": true,
+    "fraction": [
+     0.3044871794871795
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "people two, dis­pro­por­tion­ate­ness ‖ not to in­com­pre­hen­si­bil­i­ties"
+   }
+  ]
+ },
+ {
+  "label": "chromium fixture size 19, CPU slowed 6x",
+  "summary": {
+   "sections": 2,
+   "errors": 0,
+   "pages": 60,
+   "sentences": 171,
+   "crossing": 48,
+   "breaks": 50,
+   "threePlus": 1,
+   "splitWordBreaks": 15,
+   "hyphenatedWords": 136,
+   "missingBlocks": 0,
+   "unrendered": 0,
+   "textMismatch": 0,
+   "linearVsBinary": 0,
+   "linearVsFast": 0,
+   "linearVsCaret": 0,
+   "caretNull": 0,
+   "msPerSentenceCheck": 21.679,
+   "msPerCrossingLinear": 1528.192,
+   "msPerCrossingBinary": 142.144,
+   "msPerCrossingCaret": 16.581,
+   "maxBinaryMs": 2863.1,
+   "msPerSentenceFastCheck": 1.286,
+   "msPerCrossingFast": 5.946,
+   "maxFastMs": 58.9,
+   "fractionFromMiddle": {
+    "median": 0.277,
+    "p90": 0.411
+   },
+   "secondsFromMidpoint": {
+    "n": 0,
+    "median": null,
+    "p90": null,
+    "max": null
+   },
+   "sentenceSeconds": {
+    "median": null,
+    "p90": null
+   },
+   "geometry": {
+    "delta": 390,
+    "columnWidth": 390,
+    "gap": 32,
+    "divisor": 1,
+    "width": 390,
+    "height": 777,
+    "fontSize": "20px",
+    "lineHeight": "32px",
+    "fontFamily": "\"Literata Variable\", Georgia, \"Times New",
+    "fontsLoaded": "loaded"
+   }
+  },
+  "disagreements": [],
+  "samples": [
+   {
+    "section": 0,
+    "id": "0:10",
+    "words": 67,
+    "pages": [
+     2,
+     3
+    ],
+    "linear": [
+     51
+    ],
+    "binary": [
+     51
+    ],
+    "fast": [
+     51
+    ],
+    "caret": [
+     51
+    ],
+    "split": false,
+    "fraction": [
+     0.7689530685920574
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "made your than ‖ them, had had"
+   },
+   {
+    "section": 0,
+    "id": "0:14",
+    "words": 41,
+    "pages": [
+     3,
+     4
+    ],
+    "linear": [
+     25
+    ],
+    "binary": [
+     25
+    ],
+    "fast": [
+     25
+    ],
+    "caret": [
+     25
+    ],
+    "split": false,
+    "fraction": [
+     0.6136363636363634
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "called where do ‖ not and in,"
+   },
+   {
+    "section": 0,
+    "id": "0:18",
+    "words": 35,
+    "pages": [
+     4,
+     5
+    ],
+    "linear": [
+     20
+    ],
+    "binary": [
+     20
+    ],
+    "fast": [
+     20
+    ],
+    "caret": [
+     20
+    ],
+    "split": false,
+    "fraction": [
+     0.5588235294117647
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "but then him ‖ been, be of"
+   },
+   {
+    "section": 0,
+    "id": "0:28",
+    "words": 480,
+    "pages": [
+     7,
+     10
+    ],
+    "linear": [
+     39,
+     214,
+     385
+    ],
+    "binary": [
+     39,
+     214,
+     385
+    ],
+    "fast": [
+     39,
+     214,
+     385
+    ],
+    "caret": [
+     39,
+     214,
+     385
+    ],
+    "split": false,
+    "fraction": [
+     0.08065366367949399,
+     0.44333157617290514,
+     0.7975751186083271
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "long his make ‖ most time know"
+   },
+   {
+    "section": 1,
+    "id": "1:2",
+    "words": 34,
+    "pages": [
+     0,
+     1
+    ],
+    "linear": [
+     26
+    ],
+    "binary": [
+     26
+    ],
+    "fast": [
+     26
+    ],
+    "caret": [
+     26
+    ],
+    "split": true,
+    "fraction": [
+     0.7912371134020616
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "up all dis­pro­por­tion­ate­ness ‖ of make coun­ter­rev­o­lu­tion­ar­ies,"
+   },
+   {
+    "section": 1,
+    "id": "1:5",
+    "words": 31,
+    "pages": [
+     1,
+     2
+    ],
+    "linear": [
+     5
+    ],
+    "binary": [
+     5
+    ],
+    "fast": [
+     5
+    ],
+    "caret": [
+     5
+    ],
+    "split": false,
+    "fraction": [
+     0.17119565217391303
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "is from in­com­pre­hen­si­bil­i­ties ‖ about would, dis­pro­por­tion­ate­ness"
+   },
+   {
+    "section": 1,
+    "id": "1:7",
+    "words": 36,
+    "pages": [
+     2,
+     3
+    ],
+    "linear": [
+     5
+    ],
+    "binary": [
+     5
+    ],
+    "fast": [
+     5
+    ],
+    "caret": [
+     5
+    ],
+    "split": false,
+    "fraction": [
+     0.14549653579676675
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "can did in­com­pre­hen­si­bil­i­ties ‖ who at, coun­ter­rev­o­lu­tion­ar­ies"
+   },
+   {
+    "section": 1,
+    "id": "1:9",
+    "words": 21,
+    "pages": [
+     3,
+     4
+    ],
+    "linear": [
+     11
+    ],
+    "binary": [
+     11
+    ],
+    "fast": [
+     11
+    ],
+    "caret": [
+     11
+    ],
+    "split": true,
+    "fraction": [
+     0.5306122448979592
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "now who in­com­pre­hen­si­bil­i­ties ‖ two water, inter­nation­al­isa­tion"
+   },
+   {
+    "section": 1,
+    "id": "1:12",
+    "words": 31,
+    "pages": [
+     4,
+     5
+    ],
+    "linear": [
+     8
+    ],
+    "binary": [
+     8
+    ],
+    "fast": [
+     8
+    ],
+    "caret": [
+     8
+    ],
+    "split": true,
+    "fraction": [
+     0.27920227920227925
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "so will, elec­tro­en­ceph­a­lo­graph­ic ‖ two this inter­nation­al­isa­tion"
+   },
+   {
+    "section": 1,
+    "id": "1:14",
+    "words": 40,
+    "pages": [
+     5,
+     6
+    ],
+    "linear": [
+     20
+    ],
+    "binary": [
+     20
+    ],
+    "fast": [
+     20
+    ],
+    "caret": [
+     20
+    ],
+    "split": true,
+    "fraction": [
+     0.51875
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "was long elec­tro­en­ceph­a­lo­graph­ic ‖ your may elec­tro­en­ceph­a­lo­graph­ic"
+   },
+   {
+    "section": 1,
+    "id": "1:18",
+    "words": 32,
+    "pages": [
+     7,
+     8
+    ],
+    "linear": [
+     29
+    ],
+    "binary": [
+     29
+    ],
+    "fast": [
+     29
+    ],
+    "caret": [
+     29
+    ],
+    "split": true,
+    "fraction": [
+     0.8928571428571429
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "they that dis­pro­por­tion­ate­ness ‖ then, up in­com­pre­hen­si­bil­i­ties."
+   },
+   {
+    "section": 1,
+    "id": "1:21",
+    "words": 40,
+    "pages": [
+     8,
+     9
+    ],
+    "linear": [
+     8
+    ],
+    "binary": [
+     8
+    ],
+    "fast": [
+     8
+    ],
+    "caret": [
+     8
+    ],
+    "split": true,
+    "fraction": [
+     0.21524663677130046
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "way it, dis­pro­por­tion­ate­ness ‖ find be dis­pro­por­tion­ate­ness"
+   },
+   {
+    "section": 1,
+    "id": "1:30",
+    "words": 38,
+    "pages": [
+     12,
+     13
+    ],
+    "linear": [
+     14
+    ],
+    "binary": [
+     14
+    ],
+    "fast": [
+     14
+    ],
+    "caret": [
+     14
+    ],
+    "split": true,
+    "fraction": [
+     0.38377192982456143
+    ],
+    "offMidpoint": null,
+    "duration": null,
+    "around": "know which coun­ter­rev­o­lu­tion­ar­ies ‖ her one in­com­pre­hen­si­bil­i­ties"
+   }
+  ]
+ }
+]
