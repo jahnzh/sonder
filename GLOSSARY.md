@@ -11,11 +11,11 @@ An ordered group of related works.
 A series a user has added to their library for ongoing reference, independently of the individual works they have added.
 
 **Work**:
-A book as an abstract title, independent of any edition, recording or file.
+A book as an abstract title, independent of any edition, recording or file. A user's library is made of works, whether a work has an audio edition, an ebook edition, both or neither yet.
 _Avoid_: Title, book (when the abstract work is meant)
 
 **Audio edition**:
-A published audiobook of a work; what a library row points at.
+A published audiobook of a work.
 _Avoid_: Audiobook, release (for the edition itself)
 
 **Recording**:
@@ -30,6 +30,22 @@ _Avoid_: Ebook file
 Where a recording's bytes come from on this play: device copy, server copy, or the original stream.
 _Avoid_: Source (alone), copy
 
+**Device save**:
+Copying a work's files onto one device, done by that device's browser. The server does not see it, so it is not an activity.
+_Avoid_: Download (alone), offline download
+
+**Keep on this device**:
+A user's standing choice, for one work on one device, that the device holds the chosen recording, the chosen ebook edition when it is an EPUB, and their alignment map. It can be made before any of them exists. Device saves follow from it whenever one of the three is missing there, and nothing leaves the device unless the user asks.
+_Avoid_: Save offline, offline copy, pin
+
+**In progress**:
+A work the user has started and not finished: it has a saved place in a recording or an ebook edition that is not the end.
+_Avoid_: Listening (for the state of a work), reading
+
+**Finished**:
+A work the user has completed: one of its recordings or ebook editions reached the end, or the user marked it so.
+_Avoid_: Done, read, completed
+
 **Media state**:
 Whether a user can listen to a work: missing, queued, failed or available. It is worked out from the work's tracks and the user's latest acquisition when it is read.
 _Avoid_: Download status, availability
@@ -40,17 +56,25 @@ _Avoid_: Block, skip reason
 
 ## Reading along
 
-**Page mode**:
-The reader showing the ebook as turnable pages.
-_Avoid_: Book view, paginated mode
+**Face**:
+One of the two sides of the screen for the work in use: Listen, the player, or Read, the reader. A device reopens a work on the face last used there. A work without a recording has no Listen face, and a work without an EPUB has no Read face.
+_Avoid_: View, tab, mode (which is pages or scroll)
 
-**Lyrics mode**:
-The reader showing one sentence per line, scrolling with the narration.
-_Avoid_: Karaoke, line mode
+**Pages mode**:
+The reader showing the ebook as turnable pages.
+_Avoid_: Page mode, book view, paginated mode
+
+**Scroll mode**:
+The reader showing the ebook as one continuous column that moves.
+_Avoid_: Scrolled mode, continuous mode
 
 **Alignment map**:
 The sentence-to-time mapping between one recording and one ebook edition. Always generated and always estimated; nobody reviews or corrects it.
 _Avoid_: Sync map, timings, reviewed map
+
+**Reading sync**:
+What a user sees of an alignment map: the ebook following the narration, and whether that is ready, being prepared or stopped. It is the only name for it on screen.
+_Avoid_: Alignment (on screen), read-along
 
 **Unsynced passage**:
 Part of an ebook edition that has no place in the alignment map, because the narration could not be matched or the language is not supported.
@@ -60,9 +84,17 @@ _Avoid_: Gap, missing timings
 Automatically generating a fresh alignment map when the existing one was made by an older engine, replacing the old map entirely when it finishes.
 _Avoid_: Re-sync, repair, migrate
 
+**Prepare again**:
+Generating a fresh alignment map because the user asked for it. As with a rebuild, the existing map stays in use until the new one is ready.
+_Avoid_: Rebuild (for the manual action), re-sync
+
 **Narrated sentence**:
-The sentence the narration is currently speaking, located through the alignment map.
+The sentence the narration is speaking, or the last one it spoke until the next one begins, located through the alignment map.
 _Avoid_: Current passage, highlight
+
+**Narration highlight**:
+The mark on the narrated sentence in the reader. It stays through a silence or narration the ebook does not have, and moves only when the next sentence begins.
+_Avoid_: Mark, current highlight
 
 **Following**:
 The state where the reader keeps the narrated sentence in view on its own.
