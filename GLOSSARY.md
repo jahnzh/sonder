@@ -18,6 +18,10 @@ _Avoid_: Title, book (when the abstract work is meant)
 A published audiobook of a work.
 _Avoid_: Audiobook, release (for the edition itself)
 
+**Placeholder**:
+An audio edition with no tracks, through which a work without audio is in a user's library. Each work has at most one; it never leaves the server, and real audio arriving takes its place in every library that holds it.
+_Avoid_: Fake edition, stub, shelf book
+
 **Recording**:
 One concrete release of an audio edition (a set of tracks from one source). Progress belongs to a recording.
 _Avoid_: Version, file
@@ -35,12 +39,16 @@ Where a recording's bytes come from on this play: device copy, server copy, or t
 _Avoid_: Source (alone), copy
 
 **Device save**:
-Copying a work's files onto one device, done by that device's browser. The server does not see it, so it is not an activity.
+Copying a work's files onto one device, done by that device's browser while Sonder is open there. The server knows what the device should keep but does not see the save, so it is not an activity.
 _Avoid_: Download (alone), offline download
 
 **Keep on this device**:
-A user's standing choice, for one work on one device, that the device holds the chosen recording, the chosen ebook edition when it is an EPUB, and their alignment map. It can be made before any of them exists. Device saves follow from it whenever one of the three is missing there, and nothing leaves the device unless the user asks.
+A user's standing choice, for one work on one device, that the device holds the chosen recording, the chosen ebook edition when it is an EPUB, and their alignment map. It can be made before any of them exists. It is recorded on the server for each device, so a device whose browser cleared its storage learns it again. Device saves follow from it whenever one of the three is missing there, and nothing leaves the device unless the user asks.
 _Avoid_: Save offline, offline copy, pin
+
+**Earlier copy**:
+The files of a recording that a device kept while it was the chosen recording, after the user chose another. They stay on the device, listed with their size, until the user removes them or turns Keep on this device off.
+_Avoid_: Old download, previous version
 
 **In progress**:
 A work the user has started and not finished: it has a saved place in a recording or an ebook edition that is not the end.
