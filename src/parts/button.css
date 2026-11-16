@@ -1,0 +1,60 @@
+/* Button (src/parts/Button.tsx). */
+.part-button {
+  box-sizing: border-box;
+  height: var(--height-control);
+  min-width: var(--height-control);
+  padding: 0 var(--space-16);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-8);
+  flex: none;
+  border: 0;
+  border-radius: var(--corner-control);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.part-button[data-kind="primary"] {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+.part-button[data-kind="secondary"] {
+  background: var(--raised);
+  color: var(--text);
+}
+.part-button[data-kind="quiet"] {
+  padding: 0 var(--space-12);
+  background: transparent;
+  color: var(--text);
+}
+.part-button[data-icon-only] {
+  width: var(--height-control);
+  padding: 0;
+}
+.part-button[data-kind="primary"]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 85%, var(--text));
+}
+.part-button[data-kind="secondary"]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--raised) 80%, var(--text));
+}
+.part-button[data-kind="quiet"]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--raised) 55%, transparent);
+}
+.part-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.part-button:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+.part-button-icon {
+  display: flex;
+  width: 20px;
+  height: 20px;
+}
+.part-button-icon > svg {
+  width: 20px;
+  height: 20px;
+}
