@@ -521,7 +521,9 @@
         },
         "error": "No seeders",
         "permanent": false,
-        "actions": [],
+        "actions": [
+          "retry"
+        ],
         "stuck": null,
         "blockedBy": null,
         "attention": true
@@ -578,7 +580,9 @@
         },
         "error": "The worker stopped.",
         "permanent": false,
-        "actions": [],
+        "actions": [
+          "retry"
+        ],
         "stuck": null,
         "blockedBy": null,
         "attention": true
@@ -951,7 +955,9 @@
         },
         "error": "Removed with series.",
         "permanent": false,
-        "actions": [],
+        "actions": [
+          "retry"
+        ],
         "stuck": null,
         "blockedBy": null,
         "attention": false
@@ -1315,7 +1321,9 @@
         },
         "error": null,
         "permanent": false,
-        "actions": [],
+        "actions": [
+          "resume"
+        ],
         "stuck": null,
         "blockedBy": null,
         "attention": false
@@ -1342,7 +1350,9 @@
         },
         "error": null,
         "permanent": false,
-        "actions": [],
+        "actions": [
+          "resume"
+        ],
         "stuck": null,
         "blockedBy": null,
         "attention": false
@@ -1961,7 +1971,9 @@
         },
         "error": "No seeders",
         "permanent": false,
-        "actions": [],
+        "actions": [
+          "retry"
+        ],
         "stuck": null,
         "blockedBy": null,
         "attention": true
@@ -2018,7 +2030,9 @@
         },
         "error": "The worker stopped.",
         "permanent": false,
-        "actions": [],
+        "actions": [
+          "retry"
+        ],
         "stuck": null,
         "blockedBy": null,
         "attention": true
@@ -2391,7 +2405,9 @@
         },
         "error": "Removed with series.",
         "permanent": false,
-        "actions": [],
+        "actions": [
+          "retry"
+        ],
         "stuck": null,
         "blockedBy": null,
         "attention": false
@@ -2867,7 +2883,9 @@
         },
         "error": null,
         "permanent": false,
-        "actions": [],
+        "actions": [
+          "resume"
+        ],
         "stuck": null,
         "blockedBy": null,
         "attention": false
@@ -2894,7 +2912,9 @@
         },
         "error": null,
         "permanent": false,
-        "actions": [],
+        "actions": [
+          "resume"
+        ],
         "stuck": null,
         "blockedBy": null,
         "attention": false
@@ -3494,7 +3514,9 @@
         },
         "error": "No seeders",
         "permanent": false,
-        "actions": [],
+        "actions": [
+          "retry"
+        ],
         "stuck": null,
         "blockedBy": null,
         "attention": true
@@ -3551,7 +3573,9 @@
         },
         "error": "The worker stopped.",
         "permanent": false,
-        "actions": [],
+        "actions": [
+          "retry"
+        ],
         "stuck": null,
         "blockedBy": null,
         "attention": true
@@ -3924,7 +3948,9 @@
         },
         "error": "Removed with series.",
         "permanent": false,
-        "actions": [],
+        "actions": [
+          "retry"
+        ],
         "stuck": null,
         "blockedBy": null,
         "attention": false
@@ -4400,7 +4426,9 @@
         },
         "error": null,
         "permanent": false,
-        "actions": [],
+        "actions": [
+          "resume"
+        ],
         "stuck": null,
         "blockedBy": null,
         "attention": false
@@ -4427,7 +4455,9 @@
         },
         "error": null,
         "permanent": false,
-        "actions": [],
+        "actions": [
+          "resume"
+        ],
         "stuck": null,
         "blockedBy": null,
         "attention": false

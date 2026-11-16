@@ -114,7 +114,9 @@ export function PlayerDock({
       cancel?.();
     };
   }, [b?.workId, b?.recordingId]);
-  useEffect(()=>{if(!expanded){setOptionsOpen(false);setHistoryOpen(false);}},[expanded]);
+  // Dialogs opened from Now playing close with its entry: Back, or its own close.
+  const [keysOpen,setKeysOpen]=useState(false);
+  useEffect(()=>{if(!expanded){setOptionsOpen(false);setHistoryOpen(false);setKeysOpen(false);}},[expanded]);
   useEffect(()=>{
     if(expanded && b && !p.book)void p.prepare(b);
   },[expanded,b?.id,p.book?.id]);
@@ -335,7 +337,7 @@ export function PlayerDock({
               >
                 <Layers size={16} /> Versions & sources
               </button>
-              <KeyboardHelpButton />
+              <KeyboardHelpButton open={keysOpen} onOpenChange={setKeysOpen} />
             </div>
             </PlaybackExtra>
             {!hasReader && <div className="now-playing-art">

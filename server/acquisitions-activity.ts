@@ -3,9 +3,12 @@
  * `server/schema.ts`: the table has no CHECK constraint, and the statuses are the ones `server/acquisitions.ts`,
  * `server/app.ts` (pause, resume, retry) and `server/series-removal.ts` write.
  */
-import type { ActivityHealth, ActivityState, TorrentHealth } from "../src/types.ts";
+import type { ActivityHealth, ActivityItemAction, ActivityState, TorrentHealth } from "../src/types.ts";
 import type { AcquisitionJobStatus } from "./schema.ts";
-import { clamp01, defineSource, itemWork, stateFrom, withWorks, type ItemWork } from "./activity-source.ts";
+import {
+  activityFailure, assertOffered, clamp01, defineSource, itemWork, offeredActions, stateFrom, withWorks,
+  type ActivityAction, type ItemWork,
+} from "./activity-source.ts";
 
 const MINUTE = 60_000;
 
@@ -16,6 +19,32 @@ export const ACQUISITION_ACTIVITY_STATES: Record<AcquisitionJobStatus, ActivityS
   paused: "paused",
   ready: "done",
   error: "failed",
+};
+
+/**
+ * What Activity offers for a download in each status (#515), through the Downloads page's control: Retry when it
+ * failed, Resume when it is paused (only a local download can be paused, and the control refuses any other).
+ */
+export const ACQUISITION_ACTIONS: Record<AcquisitionJobStatus, readonly ActivityItemAction[]> = {
+  checking: [],
+  preparing: [],
+  downloading: [],
+  paused: ["resume"],
+  ready: [],
+  error: ["retry"],
+};
+
+const ITEM_PREFIX = "acquisition:";
+
+/** Retry or Resume of a download: refused unless its stored status offers it, then the Downloads page's control. */
+const control = (name: "retry" | "resume"): ActivityAction => async (id, { deps, log, userId }) => {
+  const rowId = id.slice(ITEM_PREFIX.length);
+  const row = deps.sqlite.prepare("SELECT status FROM acquisitions WHERE id = ?").get(rowId) as { status: string } | undefined;
+  if (!row) throw activityFailure(404, "This download could not be found.");
+  assertOffered(ACQUISITION_ACTIONS, row.status, name,
+    name === "retry" ? "Only a download that failed can be retried." : "Only a paused download can be resumed.");
+  log.info({ action: `activity.${name}`, acquisitionId: rowId }, name === "retry" ? "Download started again" : "Download resumed");
+  return { ok: true, result: await deps.controlAcquisition(rowId, name, userId) };
 };
 
 export type AcquisitionRow = {
@@ -78,8 +107,11 @@ export const acquisitionSource = defineSource<AcquisitionRow[], TorrentHealth>({
         error: unknown ?? (row.error || null),
         changedAt: state === "running" ? tracker.observe(id, `${row.status}|${row.progress}`, now) : row.updated_at,
         dependsOn: usesLocalTorrentClient(row.backend || null) ? TORRENT_CLIENT.id : null,
+        actions: offeredActions(ACQUISITION_ACTIONS, row.status),
       };
     });
     return { drafts, services: [{ ...TORRENT_CLIENT, ...torrentProcessHealth(probe.value, probe.failure) }] };
   },
+  retry: control("retry"),
+  resume: control("resume"),
 });
