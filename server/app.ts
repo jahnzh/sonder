@@ -45,6 +45,7 @@ import { registerAppearance } from "./appearance.ts";
 import { registerAccountRequests } from "./account-requests.ts";
 import { registerInvites } from "./invites.ts";
 import { registerReader } from "./reader.ts";
+import { registerLibraryWorks } from "./library-works.ts";
 import { registerAlignment, autoQueueAlignmentsForWork, persistedPoolErrors } from "./alignment.ts";
 import { checkPoolHostsSetting, getAlignmentPoolCoordinator, getAlignmentPoolStatus } from "./alignment-pool.ts";
 import { hostRestartStates, restartPoolHost } from "./alignment-host-control.ts";
@@ -52,7 +53,7 @@ import { activitySamplerLoop, registerActivity } from "./activity.ts";
 import { backgroundRunner, type BackgroundOptions } from "./background-runner.ts";
 import { databaseBackupLoop } from "./backups.ts";
 import { pauseState, setHostDisabled, setPaused } from "./activity-pause.ts";
-import {registerMediaLibrary,faultsFor,chooseMedia,sourceChoice} from "./media-library.ts";
+import {registerMediaLibrary,faultsFor,chooseMedia,sourceChoice,deliveredTracks} from "./media-library.ts";
 import { audioFileMime } from "./media-response.ts";
 import { parseRange } from "./range.ts";
 import {
@@ -73,7 +74,6 @@ import { searchEbooks, saveEbook, listEbooks, importEbook } from "./ebooks.ts";
 import { reevaluateEbookSetForWork } from "./ebook-set.ts";
 import { ebookSetEvaluationLoop, registerUploadedEbookSetMember, retryEbookSetMember } from "./ebook-set-evaluation.ts";
 import {
-  hasServerMedia,
   requestServerDownload,
   serverCopiesLoop,
   pauseServerDownload,
@@ -125,26 +125,12 @@ export function listBooks(userId = 1): Book[] {
     .map(({ work, edition, recording }) => {
       const saved = lib.find((l) => l.bookId === edition.id);
       const faults=faultsFor(recording.id);
-      const tracks = allTracks
-        .filter((t) => t.recordingId === recording.id)
-        .sort((a, b) => a.index - b.index)
-        .map((t) => ({
-          ...t,
-          source: "",
-          sourceType: t.sourceType as "local" | "remote" | "torbox",
-          serverAvailable:hasServerMedia(t),
-          deliverySource: hasServerMedia(t) && !faults.server
-            ? ("server" as const)
-            : t.sourceType === "torbox"
-              ? ("torbox" as const)
-              : ("remote" as const),
-        }));
+      const { tracks, serverStored } = deliveredTracks(
+        allTracks.filter((t) => t.recordingId === recording.id),
+        faults,
+      );
       return {
-        serverStored:
-          tracks.length > 0 &&
-          allTracks
-            .filter((t) => t.recordingId === recording.id)
-            .every(hasServerMedia),
+        serverStored,
         faults,
         hardcover: hardcoverForWork(userId, work.id),
         id: edition.id,
@@ -343,6 +329,7 @@ export async function createApp(options?: {
     return { ok: true };
   });
   app.get("/api/books", async (req) => listBooks(currentUserId(req)));
+  registerLibraryWorks(app);
   registerUsers(app);
   registerAccountRequests(app);
   registerInvites(app);

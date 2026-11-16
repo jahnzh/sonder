@@ -24,7 +24,7 @@ const { sqlite } = await import("../server/db.ts");
 const { hashToken } = await import("../server/security.ts");
 writeLibraryFixture(sqlite, process.env.MEDIA_ROOT, hashToken);
 const { createApp } = await import("../server/app.ts");
-const app = await createApp({ background: { manual: ["series-acquisition"] } });
+const app = await createApp({ background: { manual: true } });
 await removeRecording((options) => app.inject(options));
 
 after(async () => {
