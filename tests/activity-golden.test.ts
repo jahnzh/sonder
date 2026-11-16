@@ -222,12 +222,69 @@ function withoutHostDetail(all: Record<string, { processes: Array<{ id: string; 
   return all;
 }
 
+/**
+ * The names the server sends changed on purpose with #495 ("Reading sync" is the only name for it, the queues take the
+ * names on the boards, the pause sentences are the design's tooltips). Put the old words back, so the comparison with
+ * the record from before the split still proves that nothing else moved. Never rewrite that record.
+ */
+const NAMES_BEFORE_495: Array<[string, string]> = [
+  ['"label": "Reading sync queue"', '"label": "Alignment processor"'],
+  ['"label": "Reading sync workers"', '"label": "Alignment workers"'],
+  ['"label": "Reading sync worker (', '"label": "Alignment worker ('],
+  ["Blocked by Reading sync worker (", "Blocked by Alignment worker ("],
+  ['"label": "Series search"', '"label": "Series acquisition"'],
+  ['"label": "Ebook checks"', '"label": "Ebook set checks"'],
+  ['"detail": "Reading sync rebuild rejected, the earlier one is kept"', '"detail": "Alignment map rebuild rejected, previous map kept"'],
+  ['"detail": "Reading sync rebuild"', '"detail": "Alignment map rebuild"'],
+  ['"detail": "Reading sync"', '"detail": "Alignment map"'],
+  ["Ebook set check waiting for a worker", "Ebook set check waiting for an alignment worker"],
+  ["Off: Sonder stops checking downloads, so finished ones do not join the library. They keep downloading in the torrent client.",
+    "Sonder stops checking downloads, so finished torrents are not imported. The torrents keep downloading in the torrent client."],
+  ["Off: no new copy to the server starts. One that is running finishes.", "No new copy to the server starts. A copy already running finishes."],
+  ["Off: no new search or download for a series starts.", "No new series search or download starts."],
+  ["Off: your changes are still saved, but nothing is sent to Hardcover until it is on again. Sync now still works.",
+    "Your changes keep being saved, but nothing is sent to Hardcover until you resume. Sync now still works."],
+  ["Off: no new reading sync starts. One that is running finishes.", "No new alignment job starts. A job already running finishes."],
+  ["Off: no new check of an ebook against the narration starts. One that is running finishes. Turning the reading sync queue off holds these checks too.",
+    "No new ebook-set check starts. A check already running finishes. Pausing alignment also holds the checks."],
+  ["Off: no new daily backup starts. One that is running finishes. A deploy still makes its own backup.",
+    "No new daily database backup starts. A backup already running finishes. Deploys still make their own backups."],
+];
+// The record from before the split has no ebook-set source, so some of the pairs match nothing in it.
+const withNamesBefore495 = (text: string) => NAMES_BEFORE_495.reduce((out, [now, before]) => out.split(now).join(before), text);
+
+test("no process name or item detail the server sends says alignment, and the ids stay (#495)", async () => {
+  const all = await snapshots();
+  const names: string[] = [];
+  for (const snapshot of Object.values(all)) {
+    for (const process of snapshot.processes) names.push(process.label);
+    for (const item of snapshot.items) names.push(item.detail ?? "");
+  }
+  assert.ok(names.length > 40, "the rows cover every kind of process and item");
+  assert.deepEqual(names.filter((name) => /alignment/i.test(name)), []);
+  assert.deepEqual(all.probesAnswer.processes.map((process) => process.id), [
+    "acquisitions", "server-copies", "series-acquisition", "hardcover-sync", "alignment", "ebook-set", "backups", "torrent-client",
+    "alignment-host:wsl", "alignment-host:lisa", "imports",
+  ]);
+  assert.deepEqual(all.probesFail.processes.map((process) => process.id).filter((id) => id.startsWith("alignment")), ["alignment", "alignment-pool"]);
+  const labels = Object.fromEntries(all.probesAnswer.processes.map((process) => [process.id, process.label]));
+  assert.equal(labels.alignment, "Reading sync queue");
+  assert.equal(labels["alignment-host:wsl"], "Reading sync worker (wsl)");
+  assert.equal(labels["series-acquisition"], "Series search");
+  assert.equal(labels["ebook-set"], "Ebook checks");
+  assert.equal(all.probesFail.processes.find((process) => process.id === "alignment-pool")?.label, "Reading sync workers");
+  for (const id of ["acquisitions", "server-copies", "hardcover-sync", "backups", "torrent-client", "imports"]) {
+    assert.equal(labels[id], { acquisitions: "Download queue", "server-copies": "Copies to server", "hardcover-sync": "Hardcover sync", backups: "Database backups", "torrent-client": "Torrent client", imports: "Imports" }[id], id);
+  }
+  assert.equal(new Set(all.probesAnswer.items.map((item) => item.detail)).has("Reading sync rebuild"), true);
+});
+
 test("GET /api/activity returns the recorded JSON for the same rows", async () => {
   const all = await snapshots();
   if (process.env.SONDER_UPDATE_ACTIVITY_GOLDEN === "1") writeFileSync(GOLDEN, `${JSON.stringify(all, null, 2)}\n`);
   assert.deepEqual(all, JSON.parse(readFileSync(GOLDEN, "utf8")));
 
   deleteIntendedChanges();
-  const unchanged = `${JSON.stringify(withBackupsUntracked(withoutHostDetail(await snapshots(sourcesAtSplit))), null, 2)}\n`;
+  const unchanged = withNamesBefore495(`${JSON.stringify(withBackupsUntracked(withoutHostDetail(await snapshots(sourcesAtSplit))), null, 2)}\n`);
   assert.equal(unchanged, readFileSync(BEFORE_SOURCES, "utf8"), "same rows, same JSON text as before the split into sources");
 });

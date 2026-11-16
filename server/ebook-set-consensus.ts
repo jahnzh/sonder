@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { cancelPendingConsensus, ConsensusSupersededError, runConsensusBuild } from "./ebook-set-consensus-runner.ts";
 import { eq } from "drizzle-orm";
-import { db } from "./db.ts";
+import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
 import { extractBook } from "./reader.ts";
 import { normalizeReaderText } from "../src/reading-types.ts";
@@ -271,6 +271,20 @@ export function getEbookSetPresentation(workId: string) {
   };
 }
 
+/**
+ * The shared default ebook edition (`defaultEbookId` of `getEbookSetPresentation`) of each of
+ * `workIds` that has one, without reading the consensus text.
+ */
+export function defaultEbookIds(workIds: string[]) {
+  const rows = sqlite
+    .prepare(
+      `SELECT work_id AS workId,default_ebook_id AS ebookId FROM work_ebook_set
+       WHERE default_ebook_id IS NOT NULL AND work_id IN (SELECT value FROM json_each(?))`,
+    )
+    .all(JSON.stringify([...new Set(workIds)])) as { workId: string; ebookId: string }[];
+  return new Map(rows.map((row) => [row.workId, row.ebookId]));
+}
+
 export function setDefaultEbookOverride(workId: string, ebookId: string | null) {
   const members = listEbookSetMembers(workId);
   if (
@@ -314,15 +328,17 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
     // rebuild that still serves its kept published_map (#277). A finished map
     // with no mapped text (for example from a wrong chapter pairing) must not
     // shadow it.
+    // A Prepare again over a projected map keeps that map in use while it runs (#538): the projection waits for it.
     const prepared = listServedAlignmentJobs().find(
       (job) =>
         job.ebookId === member.ebookId &&
         job.recordingId === consensusJob.recordingId &&
-        job.origin !== "projected" &&
-        job.status !== "cancelled" &&
-        job.status !== "error" &&
-        (alignmentJobInFlight(job.rebuild?.status ?? job.status) ||
-          job.coverage > 0),
+        (job.origin === "projected"
+          ? !!job.rebuild && alignmentJobInFlight(job.rebuild.status)
+          : job.status !== "cancelled" &&
+            job.status !== "error" &&
+            (alignmentJobInFlight(job.rebuild?.status ?? job.status) ||
+              job.coverage > 0)),
     );
     if (prepared) continue;
     const memberBook = await extractBook(member.ebookId);

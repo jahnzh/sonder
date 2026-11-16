@@ -125,7 +125,7 @@ test("alignment: blocked by a down worker host, stuck by age, consensus labelled
     pool: pool([{ id: "wsl", reachable: false, lastError: "ssh: no route to host" }]),
   }));
   assert.equal(down.items[0].blockedBy, "alignment-host:wsl");
-  assert.equal(down.items[0].stuck?.reason, "Blocked by Alignment worker (wsl)");
+  assert.equal(down.items[0].stuck?.reason, "Blocked by Reading sync worker (wsl)");
   assert.equal(down.processes.find((process) => process.id === "alignment-host:wsl")!.reason, "ssh: no route to host");
 
   const old = buildActivity(base({
@@ -157,7 +157,7 @@ test("a rejected alignment rebuild is listed as failed with the reason and says 
       data: alignmentData({ status: "error", outcome: "rejected", error: reason, rebuildOf: { engine: "aeneas-1.7.3" }, pool: undefined }) }],
   }));
   assert.equal(result.items[0].state, "failed");
-  assert.equal(result.items[0].detail, "Alignment map rebuild rejected, previous map kept");
+  assert.equal(result.items[0].detail, "Reading sync rebuild rejected, the earlier one is kept");
   assert.equal(result.items[0].error, reason);
 });
 
@@ -232,7 +232,7 @@ test("only the loops can be paused, and each shows its switch state, lock and wh
   assert.equal(byId.alignment.pausable, true);
   assert.equal(byId.alignment.paused, true);
   assert.equal(byId.alignment.lockedBy, null);
-  assert.match(byId.alignment.pauseEffect ?? "", /No new alignment job starts/);
+  assert.match(byId.alignment.pauseEffect ?? "", /^Off: no new reading sync starts/);
   assert.equal(byId["series-acquisition"].lockedBy, "environment");
   assert.equal(byId["series-acquisition"].paused, false);
   assert.match(byId["hardcover-sync"].pauseEffect ?? "", /Sync now still works/);

@@ -40,7 +40,7 @@ export type SeriesJobRow = {
 
 export const seriesAcquisitionSource = defineSource<SeriesJobRow[]>({
   kind: "series-acquisition",
-  process: { id: "series-acquisition", label: "Series acquisition" },
+  process: { id: "series-acquisition", label: "Series search" },
   stuckAfterMs: 10 * MINUTE,
   load: (sqlite) =>
     sqlite.prepare(

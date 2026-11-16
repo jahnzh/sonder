@@ -146,6 +146,80 @@ export function listServedAlignmentJobs() {
       .all() as ServedRow[]
   ).map(servedJob);
 }
+/** The summary form of a listed job (`GET /api/alignments?summary=1`): no intervals, their count instead. */
+export const slimAlignmentJob = (job: AlignmentJob, intervalCount = job.intervals.length) => ({
+  ...job,
+  intervalCount,
+  intervals: [],
+});
+type AlignmentSummary = ReturnType<typeof slimAlignmentJob>;
+/**
+ * The last summary made of each job, with the version of its row it was made from. A row's version
+ * is its small columns and the byte lengths of its job and kept map, which SQLite gives without
+ * parsing them. Every write of a job's data goes through `persist`, which stamps `updated_at` with
+ * the time of the write; a summary is kept only when it was read after the millisecond of its row's
+ * last write, so any later write gives the row another version.
+ */
+const summaries = new Map<string, { version: string; summary: AlignmentSummary }>();
+type SummaryVersionRow = {
+  id: string;
+  updatedAt: number;
+  dataBytes: number;
+  keptBytes: number | null;
+  engine: string;
+  outcome: string | null;
+  stageTimings: string | null;
+};
+const summaryVersion = (row: SummaryVersionRow) =>
+  JSON.stringify([row.updatedAt, row.dataBytes, row.keptBytes, row.engine, row.outcome, row.stageTimings]);
+/**
+ * The served jobs of `recordingIds` in the summary form (`slimAlignmentJob`), newest first as the
+ * listing orders them. A job is read again only when its row changed (`summaries`); SQLite drops
+ * its intervals in the query, so a long map is never turned into JavaScript objects here.
+ */
+export function listServedAlignmentSummaries(recordingIds: string[]) {
+  return sqlite.transaction(() => {
+    const versions = sqlite
+      .prepare(
+        `SELECT id,updated_at AS updatedAt,octet_length(data) AS dataBytes,octet_length(published_map) AS keptBytes,
+           engine,outcome,stage_timings AS stageTimings
+         FROM alignment_jobs WHERE recording_id IN (SELECT value FROM json_each(?)) ORDER BY updated_at DESC`,
+      )
+      .all(JSON.stringify([...new Set(recordingIds)])) as SummaryVersionRow[];
+    const readAt = Date.now();
+    const changed = versions.filter((row) => summaries.get(row.id)?.version !== summaryVersion(row));
+    const fresh = new Map<string, AlignmentSummary>();
+    if (changed.length) {
+      const rows = sqlite
+        .prepare(
+          `SELECT id,json_set(data,'$.intervals',json('[]')) AS data,engine,outcome,stage_timings,
+             json_array_length(data,'$.intervals') AS interval_count,
+             CASE WHEN published_map IS NULL THEN NULL ELSE json_set(published_map,'$.intervals',json('[]')) END AS published_map,
+             json_array_length(published_map,'$.intervals') AS published_interval_count
+           FROM alignment_jobs WHERE id IN (SELECT value FROM json_each(?))`,
+        )
+        .all(JSON.stringify(changed.map((row) => row.id))) as (ServedRow & {
+        id: string;
+        interval_count: number | null;
+        published_interval_count: number | null;
+      })[];
+      for (const row of rows)
+        fresh.set(
+          row.id,
+          slimAlignmentJob(servedJob(row), (row.published_map ? row.published_interval_count : row.interval_count) ?? 0),
+        );
+      if (summaries.size >= 10_000) summaries.clear();
+      for (const row of changed) {
+        const summary = fresh.get(row.id);
+        if (summary && readAt > row.updatedAt) summaries.set(row.id, { version: summaryVersion(row), summary });
+      }
+    }
+    return versions.flatMap((row) => {
+      const summary = fresh.get(row.id) ?? summaries.get(row.id)?.summary;
+      return summary ? [summary] : [];
+    });
+  })();
+}
 /** True while a rebuild (or its failed/cancelled result) still holds a map for serving (#277). */
 export function alignmentKeepsPublishedMap(id: string) {
   return !!(
@@ -154,12 +228,17 @@ export function alignmentKeepsPublishedMap(id: string) {
       | undefined
   )?.published_map;
 }
-export function servedAlignmentJob(id: string) {
+/** What the listing and /map serve for the row `id`, or null when there is no such row. */
+export function findServedAlignmentJob(id: string) {
   const row = sqlite
     .prepare("SELECT data,engine,outcome,stage_timings,published_map FROM alignment_jobs WHERE id=?")
     .get(id) as ServedRow | undefined;
-  if (!row) throw new Error("This reading-sync job could not be found.");
-  return servedJob(row);
+  return row ? servedJob(row) : null;
+}
+export function servedAlignmentJob(id: string) {
+  const job = findServedAlignmentJob(id);
+  if (!job) throw new Error("This reading-sync job could not be found.");
+  return job;
 }
 export function alignmentJob(id: string) {
   const row = sqlite
@@ -253,16 +332,25 @@ export function putAlignmentJob(job: AlignmentJob) {
   return persist(job);
 }
 
-/** A prepare plans the pair's job; only a backfill that supersedes a rebuild keeps serving its kept map (#277). */
-export function queue(job: AlignmentJob, options: { copying: boolean }) {
+/**
+ * A prepare plans the pair's job. With `keepMapInUse` (a Prepare again over a map made from the files as they
+ * are now, #538) the row keeps serving its map in use until the new job publishes: the map it already keeps, or
+ * else its own usable job as it stood before this write. A backfill that supersedes a rebuild keeps serving the
+ * rebuild's kept map (#277). Any other prepare replaces the row at once.
+ */
+export function queue(job: AlignmentJob, options: { copying: boolean; keepMapInUse?: boolean }) {
   job.status = options.copying ? "copying" : "queued";
-  write("queue", job);
-  // A new prepare replaces the row at once; only a rebuild keeps serving the previous map.
-  // A backfill that supersedes while a kept map is still served (first rebuild, or another
-  // consensus fingerprint change before the replacement publishes) retains published_map
-  // until the replacement run publishes — keyed off the row, not rebuildOf (#277).
-  if (!(job.origin === "backfill" && alignmentKeepsPublishedMap(job.id))) dropKeptMap(job.id);
-  return job;
+  return sqlite.transaction(() => {
+    const kept = alignmentKeepsPublishedMap(job.id);
+    const own = options.keepMapInUse && !kept && storedStatus(job.id) !== NO_JOB ? alignmentJob(job.id) : null;
+    write("queue", job);
+    if (own && alignmentMapUsable(own)) keepMap(job.id, own);
+    // A backfill that supersedes while a kept map is still served (first rebuild, or another
+    // consensus fingerprint change before the replacement publishes) retains published_map
+    // until the replacement run publishes — keyed off the row, not rebuildOf (#277).
+    else if (!(kept && (options.keepMapInUse || job.origin === "backfill"))) dropKeptMap(job.id);
+    return job;
+  }).immediate();
 }
 export function start(job: AlignmentJob) {
   job.status = "processing";

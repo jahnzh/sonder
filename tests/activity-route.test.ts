@@ -95,7 +95,7 @@ test("the pause switch is admin only, validated, stored, and shown with what it 
   assert.equal(alignment.pausable, true);
   assert.equal(alignment.paused, true);
   assert.equal(alignment.lockedBy, null);
-  assert.match(alignment.pauseEffect, /No new alignment job starts/);
+  assert.match(alignment.pauseEffect, /^Off: no new reading sync starts/);
   const hardcover = (await getActivity(admin)).processes.find((process: any) => process.id === "hardcover-sync");
   assert.equal(hardcover.paused, false);
   const torrent = (await getActivity(admin)).processes.find((process: any) => process.id === "torrent-client");

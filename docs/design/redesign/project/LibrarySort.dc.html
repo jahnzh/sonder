@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Library: sort and view</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Manrope:wght@600;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#dd8966}a:hover{color:#f0a586}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; background: #101510; color: #e6eadf; font-family: 'DM Sans', system-ui, sans-serif; display: flex; flex-direction: column">
+<div aria-hidden="true" style="flex: 1; min-height: 0; overflow: hidden; padding: 16px 16px 0; display: flex; flex-direction: column; gap: 16px; opacity: 0.35">
+<div style="display: flex; align-items: center; justify-content: space-between; height: 44px; flex: none"><span style="font-family: 'Manrope', sans-serif; font-weight: 700; font-size: 28px; line-height: 34px">Library</span></div>
+<div style="display: flex; gap: 8px; flex: none"><span style="height: 44px; padding: 0 16px; border-radius: 999px; background: #e6eadf; color: #101510; font-size: 14px; line-height: 20px; font-weight: 600; display: flex; align-items: center">All</span><span style="height: 44px; padding: 0 16px; border-radius: 999px; background: #26331f; font-size: 14px; line-height: 20px; display: flex; align-items: center">Series</span><span style="height: 44px; padding: 0 16px; border-radius: 999px; background: #26331f; font-size: 14px; line-height: 20px; display: flex; align-items: center">In progress</span></div>
+</div>
+
+<section role="dialog" aria-modal="true" aria-labelledby="sort-title" style="flex: none; box-sizing: border-box; padding: 16px 16px 24px; border-radius: 14px 14px 0 0; background: #182117; border-top: 1px solid #3c4934; display: flex; flex-direction: column; gap: 16px">
+<header style="height: 44px; flex: none; display: flex; align-items: center; justify-content: space-between">
+<h1 id="sort-title" style="margin: 0; font-family: 'Manrope', sans-serif; font-weight: 700; font-size: 20px; line-height: 26px">Sort and view</h1>
+<a href="Library.dc.html" style="height: 44px; box-sizing: border-box; padding: 0 16px; border: 0; border-radius: 8px; font-family: 'DM Sans', sans-serif; font-size: 14px; line-height: 20px; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 8px; flex: none; background: #26331f; color: #e6eadf; font-weight: 500">Done</a>
+</header>
+
+<div style="flex: none; display: flex; flex-direction: column; gap: 8px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d; padding: 0 16px">Sort</h2>
+<div style="border-radius: 14px; background: #101510; overflow: hidden">
+<button type="button" aria-pressed="true" style="width: 100%; min-height: 52px; box-sizing: border-box; padding: 0 16px; border: 0; border-bottom: 1px solid #3c4934; background: #26331f; color: #e6eadf; font: 400 16px/22px 'DM Sans', sans-serif; text-align: left; display: flex; align-items: center; gap: 12px"><span style="flex: 1; min-width: 0; display: flex; flex-direction: column"><span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Recently added</span></span><span style="flex: none; display: flex; align-items: center; gap: 8px"><svg role="img" aria-label="Selected" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="{{accent}}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg></span></button>
+<button type="button" aria-pressed="false" style="width: 100%; min-height: 52px; box-sizing: border-box; padding: 0 16px; border: 0; border-bottom: 1px solid #3c4934; background: transparent; color: #e6eadf; font: 400 16px/22px 'DM Sans', sans-serif; text-align: left; display: flex; align-items: center; gap: 12px"><span style="flex: 1; min-width: 0; display: flex; flex-direction: column"><span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Title</span></span><span style="flex: none; display: flex; align-items: center; gap: 8px"></span></button>
+<button type="button" aria-pressed="false" style="width: 100%; min-height: 52px; box-sizing: border-box; padding: 0 16px; border: 0; border-bottom: 1px solid #3c4934; background: transparent; color: #e6eadf; font: 400 16px/22px 'DM Sans', sans-serif; text-align: left; display: flex; align-items: center; gap: 12px"><span style="flex: 1; min-width: 0; display: flex; flex-direction: column"><span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Author</span></span><span style="flex: none; display: flex; align-items: center; gap: 8px"></span></button>
+<button type="button" aria-pressed="false" style="width: 100%; min-height: 52px; box-sizing: border-box; padding: 0 16px; border: 0; background: transparent; color: #e6eadf; font: 400 16px/22px 'DM Sans', sans-serif; text-align: left; display: flex; align-items: center; gap: 12px"><span style="flex: 1; min-width: 0; display: flex; flex-direction: column"><span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Progress</span></span><span style="flex: none; display: flex; align-items: center; gap: 8px"></span></button>
+</div>
+</div>
+
+<div style="flex: none; display: flex; flex-direction: column; gap: 8px">
+<h2 id="view-label" style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d; padding: 0 16px">View</h2>
+<div role="group" aria-labelledby="view-label" style="display: flex; padding: 4px; border-radius: 8px; background: #26331f; height: 44px; box-sizing: border-box; flex: none">
+<button type="button" aria-pressed="true" style="flex: 1; border: 0; border-radius: 6px; background: #101510; color: #e6eadf; font: 600 14px/20px 'DM Sans', sans-serif">Grid</button>
+<button type="button" aria-pressed="false" style="flex: 1; border: 0; border-radius: 6px; background: transparent; color: #a9b59d; font: 500 14px/20px 'DM Sans', sans-serif">List</button>
+</div>
+</div>
+
+<div style="flex: none; display: flex; flex-direction: column; gap: 8px">
+<h2 style="margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #a9b59d; padding: 0 16px">Hardcover</h2>
+<div style="border-radius: 14px; background: #101510; overflow: hidden">
+<button type="button" aria-label="Shelf: All shelves" style="width: 100%; min-height: 52px; box-sizing: border-box; padding: 0 16px; border: 0; border-bottom: 1px solid #3c4934; background: transparent; color: #e6eadf; font: 400 16px/22px 'DM Sans', sans-serif; text-align: left; display: flex; align-items: center; gap: 12px"><span style="flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Shelf</span><span style="flex: none; display: flex; align-items: center; gap: 8px; font-size: 14px; line-height: 20px; font-weight: 500; color: #a9b59d">All shelves<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a9b59d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span></button>
+<button type="button" aria-label="List: All lists" style="width: 100%; min-height: 52px; box-sizing: border-box; padding: 0 16px; border: 0; background: transparent; color: #e6eadf; font: 400 16px/22px 'DM Sans', sans-serif; text-align: left; display: flex; align-items: center; gap: 12px"><span style="flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">List</span><span style="flex: none; display: flex; align-items: center; gap: 8px; font-size: 14px; line-height: 20px; font-weight: 500; color: #a9b59d">All lists<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a9b59d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span></button>
+</div>
+</div>
+</section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#dd8966","options":["#dd8966","#e0b060","#8fb8a0","#9db4e8"]},"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+renderVals() {
+return { accent: this.props.accent ?? '#dd8966' };
+}
+}
+</script>
+</body>
+</html>

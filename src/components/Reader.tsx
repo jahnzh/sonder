@@ -26,6 +26,7 @@ import {
 import literataNormal from "@fontsource-variable/literata/files/literata-latin-wght-normal.woff2?url";
 import literataItalic from "@fontsource-variable/literata/files/literata-latin-wght-italic.woff2?url";
 import { Dialog } from "./ui/dialog";
+import { useAddress } from "../navigation";
 import { useAppearance } from "./Appearance";
 import { fontFamilies, paletteFor } from "../appearance";
 import { ReadingSync } from "./ReadingSync";
@@ -39,7 +40,7 @@ import { createReaderFollowing, type DeferredReturn, type NarrationReturn } from
 import { mapIdentityOf } from "../alignment-map-lifecycle";
 import { currentChapter, playbackTimeline } from "../chapters";
 import { usePlayer, type SeekTarget } from "../player";
-import { api, forgetPositionHistory, localDB } from "../lib";
+import { ApiError, api, forgetPositionHistory, localDB } from "../lib";
 import {
   loadReader,
   epubFile,
@@ -229,37 +230,24 @@ export function ReaderHost({
   books: Book[];
   notify: (text: string, error?: boolean) => void;
 }) {
-  const hashId = () =>
-    location.hash.startsWith("#reader/")
-      ? decodeURIComponent(location.hash.slice(8))
-      : null;
-  const [id, setId] = useState<string | null>(hashId),
-    [fromAudio, setFromAudio] = useState(false);
-  const back = useRef("#discover");
+  // The reader is open while the address names it (`#reader/<ebook id>`, an old name kept for good).
+  // Closing goes back, so Back afterwards does not reopen it.
+  const { route, goBack } = useAddress();
+  const id = route.name === "reader" ? route.ebookId : null;
+  const [fromAudio, setFromAudio] = useState(false);
   useEffect(() => {
-    const open = (event: Event) => {
-      const detail = (event as CustomEvent).detail;
-      if (!location.hash.startsWith("#reader/"))
-        back.current = location.hash || "#library";
-      setId(detail.id);
-      setFromAudio(!!detail.fromAudio);
-    };
-    const hash = () => setId(hashId());
+    const open = (event: Event) => setFromAudio(!!(event as CustomEvent).detail?.fromAudio);
     window.addEventListener("sonder:open-reader", open);
-    window.addEventListener("hashchange", hash);
-    return () => {
-      window.removeEventListener("sonder:open-reader", open);
-      window.removeEventListener("hashchange", hash);
-    };
+    return () => window.removeEventListener("sonder:open-reader", open);
   }, []);
+  const close = () => {
+    if (route.name === "reader") goBack();
+  };
   return (
     <Dialog
       open={!!id}
       onOpenChange={(open) => {
-        if (!open) {
-          setId(null);
-          location.hash = back.current;
-        }
+        if (!open) close();
       }}
       title="Reader"
       className="reader-dialog"
@@ -271,7 +259,13 @@ export function ReaderHost({
           fromAudio={fromAudio}
           books={books}
           notify={notify}
-          onClose={() => { setId(null); location.hash = back.current; }}
+          onClose={close}
+          onGone={() => {
+            // An old link or bookmark to an ebook that is gone: the Library, in the reader's place (or the page
+            // the reader was opened over), rather than an empty reader.
+            notify("That ebook is no longer in your library.", true);
+            close();
+          }}
         />
       )}
     </Dialog>
@@ -285,12 +279,15 @@ export function ReaderView({
   books,
   notify,
   onClose,
+  onGone,
 }: {
   id: string;
   fromAudio: boolean;
   inline?: boolean;
   recordingId?: string;
   onClose?: () => void;
+  /** The server says the ebook is gone and no copy of it is on this device. */
+  onGone?: () => void;
   books: Book[];
   notify: (text: string, error?: boolean) => void;
 }) {
@@ -440,7 +437,9 @@ export function ReaderView({
       setConflict(state?.conflict || null);
       setOffline(!!(await cachedEpub(id, value.fingerprint)));
     } catch (error) {
-      setError((error as Error).message);
+      // Only a confirmed "not found" means gone; offline, with no copy here, keeps the reader's message.
+      if (error instanceof ApiError && error.status === 404 && onGone) onGone();
+      else setError((error as Error).message);
     } finally {
       setLoading(false);
     }
