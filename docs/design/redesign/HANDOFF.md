@@ -91,6 +91,11 @@ Before version 11 the canvas had a version 10 that nobody here published. Its `c
 | Activity: server, paused | `ActivityServerPaused.dc.html` | 390×844 | #458 |
 | Worker: not in use | `WorkerNotInUse.dc.html` | 390×844 | #458 |
 | Desktop: Activity, this device | `DesktopActivityDevice.dc.html` | 1280×880, fluid | #458 |
+| Hardcover | `Hardcover.dc.html` | 390×844 | #460 |
+| Hardcover: not matched | `HardcoverMatch.dc.html` | 390×844 | #460 |
+| Book: not in the library | `BookNotInLibrary.dc.html` | 390×844 | #460 |
+| Book: nothing yet | `BookNothing.dc.html` | 390×844 | #460 |
+| Book: only a PDF | `BookPdf.dc.html` | 390×844 | #460 |
 | Book: in a series | `BookSeries.dc.html` | 390×844 | 3 |
 | Series | `Series.dc.html` | 390×844 | 3 |
 | Series: add books (sheet) | `SeriesAdd.dc.html` | 390×844 | 3 |
@@ -243,7 +248,6 @@ Everything else on the boards gives a new home or a new name to something the ap
 ## Not drawn yet
 
 - In the reader: the Search and Bookmarks pages; the sleep timer in the foot (speed is drawn); messages in the foot ("Listening from here · Undo", an error, another session saved a different place, an update is ready); a book with only an ebook (no Listen face, its foot holds the place and a position slider, no transport); Listen on a desktop; the other three reader themes.
-- The Book page for a book that is not in the library yet (Add to library), with nothing yet, or with only a PDF; the Hardcover page (shelf, lists, matching, the Hardcover edition, Use Hardcover position).
 - Keep on this device: turning it off (one question with the total size), "Not complete · 8 of 12 files" with Retry, "Nothing to save yet", an earlier recording's copy, storage full.
 - Reading sync: paused, cancelled, partly ready, language not supported; Prepare again while the current map stays in use.
 - Series: finding one in Discover (it would open the same Series page, not yet saved); the works without a number ("Related works"); the New mark on a work Hardcover added later and dismissing it; removing a series; the refresh error and the note that a work needs an administrator to link it.
