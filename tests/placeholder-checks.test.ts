@@ -6,12 +6,12 @@
 // placeholder has no track, every other audio edition has one.
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
+import { tempDir } from "./temp-dir.ts";
 
-const temp = mkdtempSync(join(tmpdir(), "sonder-placeholder-checks-"));
+const temp = tempDir("sonder-placeholder-checks-");
 process.env.DATA_DIR = join(temp, "db");
 process.env.MEDIA_ROOT = join(temp, "media");
 mkdirSync(join(temp, "media"), { recursive: true });
@@ -72,7 +72,6 @@ after(async () => {
   globalThis.fetch = realFetch;
   await app.close();
   sqlite.close();
-  rmSync(temp, { recursive: true, force: true });
 });
 
 let adminSession: string | undefined;
