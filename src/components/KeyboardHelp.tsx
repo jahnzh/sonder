@@ -34,8 +34,19 @@ export function KeyboardHelpDialog({
     </Dialog>
   );
 }
-export function KeyboardHelpButton({ className = "button subtle" }: { className?: string }) {
-  const [open, setOpen] = useState(false);
+/** The button and its dialog. Pass `open` and `onOpenChange` where the dialog must close with what holds it. */
+export function KeyboardHelpButton({
+  className = "button subtle",
+  open: shown,
+  onOpenChange,
+}: {
+  className?: string;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}) {
+  const [own, setOwn] = useState(false);
+  const open = shown ?? own;
+  const setOpen = onOpenChange ?? setOwn;
   return (
     <>
       <button type="button" className={className} onClick={() => setOpen(true)}>
