@@ -233,6 +233,7 @@ function allowed(route: Route, admin: boolean): boolean {
 export function resolve(route: Route, { admin }: { admin: boolean }): Route {
   if (route.name !== "unknown" && built(route) && allowed(route, admin)) return route;
   const first = firstPage(placeOf(route));
-  if (built(first) && allowed(first, admin)) return first;
+  // Every place's first page is built; only Activity's is the administrator's.
+  if (allowed(first, admin)) return first;
   return { name: "library" };
 }

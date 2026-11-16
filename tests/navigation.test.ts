@@ -22,10 +22,10 @@ class FakeBrowser {
     for (const listener of this.listeners.get(type) ?? []) listener(event);
   }
   traverse(delta: number) {
-    const target = this.index + delta;
-    if (target < 0 || target >= this.entries.length) return;
+    // Traversals queue and apply in turn, each from where the one before left the history.
     setTimeout(() => {
-      if (live !== this) return;
+      const target = this.index + delta;
+      if (live !== this || target < 0 || target >= this.entries.length) return;
       this.index = target;
       this.dispatch("popstate", { state: this.entries[this.index].state });
     }, 0);
