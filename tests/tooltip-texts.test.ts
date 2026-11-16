@@ -15,7 +15,7 @@ const design = T as Record<string, string>;
 
 test("the module holds the design's names and texts, word for word", () => {
   assert.ok(Object.keys(design).length > 0);
-  assert.deepEqual(Object.keys(TIPS).sort(), Object.keys(design).sort(), "the same names");
+  assert.deepEqual(Object.keys(TIPS).sort(), Object.keys(design).sort(), "the same names (after a board change: node scripts/sync-tooltip-texts.mjs)");
   for (const [name, text] of Object.entries(design)) {
     assert.equal((TIPS as Record<string, string>)[name], text, name);
     assert.equal(tip(name as keyof typeof TIPS), text, `tip(${name})`);
