@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { KEYBOARD_SHORTCUTS, playbackKeyAction } from "../src/keyboard.ts";
+import { KEYBOARD_SHORTCUTS, playbackKeyAction, readerKeyAction } from "../src/keyboard.ts";
 test("Space toggles playback and arrow keys seek 30 seconds when playback is available", () => {
   assert.deepEqual(playbackKeyAction({ key: " " }), { type: "toggle" });
   assert.deepEqual(playbackKeyAction({ key: "ArrowLeft" }), {
@@ -74,4 +74,32 @@ test("each key is listed once, with its meaning, and the reader has no key for a
   assert.equal(KEYBOARD_SHORTCUTS.find((entry) => entry.keys.includes("f"))?.action, "Follow the audio in the reader");
   // The Lyrics and Word views are gone, and with them `p` and the sentence steps (ADR 0017).
   for (const key of ["p", "Shift+←", "Shift+→"]) assert.equal(keys.includes(key), false, key);
+});
+
+// #501 review: `F` returns to the narration only when the reader itself has the keyboard.
+test("F goes back to the narration only while the reader has the keyboard and a narration is loaded", () => {
+  const back = { type: "back-to-narration" };
+  assert.deepEqual(readerKeyAction({ key: "f", narration: true }), back);
+  assert.deepEqual(readerKeyAction({ key: "F", narration: true }), back);
+  // A focused button does not take F: after a page button or a player control, F still works.
+  for (const targetTag of ["BUTTON", "SUMMARY", "A", "DIV", null])
+    assert.deepEqual(readerKeyAction({ key: "f", narration: true, targetTag }), back, String(targetTag));
+  assert.equal(readerKeyAction({ key: "f", narration: false }), null);
+  for (const targetTag of ["INPUT", "input", "TEXTAREA", "SELECT"])
+    assert.equal(readerKeyAction({ key: "f", narration: true, targetTag }), null, targetTag);
+  assert.equal(readerKeyAction({ key: "f", narration: true, contentEditable: true }), null);
+  for (const blocked of [{ dialogOpen: true }, { sheetOpen: true }, { panelOpen: true }, { readerHidden: true }])
+    assert.equal(readerKeyAction({ key: "f", narration: true, ...blocked }), null, JSON.stringify(blocked));
+  for (const modifier of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }, { defaultPrevented: true }])
+    assert.equal(readerKeyAction({ key: "f", narration: true, ...modifier }), null, JSON.stringify(modifier));
+  assert.equal(readerKeyAction({ key: "p", narration: true }), null);
+});
+test("the arrows turn the reader's pages only with no book in the player and nothing focused that owns them", () => {
+  assert.deepEqual(readerKeyAction({ key: "ArrowLeft" }), { type: "page", direction: "previous" });
+  assert.deepEqual(readerKeyAction({ key: "ArrowRight" }), { type: "page", direction: "next" });
+  assert.equal(readerKeyAction({ key: "ArrowRight", playerHasBook: true }), null);
+  for (const targetTag of ["INPUT", "TEXTAREA", "SELECT", "BUTTON", "SUMMARY", "A"])
+    assert.equal(readerKeyAction({ key: "ArrowRight", targetTag }), null, targetTag);
+  for (const blocked of [{ dialogOpen: true }, { sheetOpen: true }, { panelOpen: true }, { readerHidden: true }, { contentEditable: true }, { altKey: true }])
+    assert.equal(readerKeyAction({ key: "ArrowLeft", ...blocked }), null, JSON.stringify(blocked));
 });

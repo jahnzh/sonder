@@ -34,7 +34,8 @@ import { PlaybackOptions } from "./PlaybackOptions";
 import { PlaybackTimeline } from "./PlaybackTimeline";
 import {PlaybackExtra,usePlaybackMenu} from "./PlaybackMenu";
 import { readerNeedsScripts } from "../reader-sandbox";
-import { createReaderFollowing, type DeferredReturn, type NarrationReturn, type SaveOrigin } from "../reader-following";
+import { keyEventContext, OPEN_SHEET_SELECTOR, readerKeyAction, typingInField } from "../keyboard";
+import { createReaderFollowing, type DeferredReturn, type NarrationReturn } from "../reader-following";
 import { mapIdentityOf } from "../alignment-map-lifecycle";
 import { currentChapter, playbackTimeline } from "../chapters";
 import { usePlayer, type SeekTarget } from "../player";
@@ -352,7 +353,7 @@ export function ReaderView({
   const [followRevision,setFollowRevision]=useState(0);
   // Following the narration or paged away, and which input wins (ADR 0014).
   const followingEvents = useRef({
-    manualSave: (_locator: TextLocator, _origin: SaveOrigin) => {},
+    manualSave: (_locator: TextLocator) => {},
     narrationToFollow: (): boolean => false,
     retry: () => {},
     clearFollowError: () => {},
@@ -361,9 +362,9 @@ export function ReaderView({
   // tests, with data-save-waiting while one still waits: together they show a delayed save had its chance.
   const manualSaves = useRef(0);
   followingEvents.current = {
-    manualSave: (locator, origin) => {
+    manualSave: (locator) => {
       viewport.current?.setAttribute("data-manual-saves", String(++manualSaves.current));
-      void saveReading(id, locator, origin, mapRef.current?.recordingId).catch(() => {});
+      void saveReading(id, locator, "reading", mapRef.current?.recordingId).catch(() => {});
     },
     // A map for this ebook that matches the recording in the player, with a sentence at its position.
     narrationToFollow: () => {
@@ -374,7 +375,7 @@ export function ReaderView({
     clearFollowError: () => setError(""),
   };
   const [following] = useState(() => createReaderFollowing<TextLocator>({
-    onManualSave: (locator, origin) => followingEvents.current.manualSave(locator, origin),
+    onManualSave: (locator) => followingEvents.current.manualSave(locator),
     narrationToFollow: () => followingEvents.current.narrationToFollow(),
     onRetry: () => followingEvents.current.retry(),
     onClearFollowError: () => followingEvents.current.clearFollowError(),
@@ -724,7 +725,9 @@ export function ReaderView({
             start=null;
           });
           content.document.addEventListener("keydown", (event: KeyboardEvent) => {
-            if (event.ctrlKey || event.metaKey || event.altKey) return;
+            if (event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented) return;
+            // A field in the book keeps every key: what is typed goes into it, not to a shortcut.
+            if (typingInField(keyEventContext(event))) return;
             // `F` with the focus in the pages is the reader's key, as outside them.
             if (event.key === " " || event.key.toLowerCase() === "f" || ((event.key === "ArrowLeft" || event.key === "ArrowRight") && playerRef.current.book)) {
               event.preventDefault();
@@ -1178,15 +1181,30 @@ export function ReaderView({
   };
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
-      // The Now Playing reader stays mounted while its dialog is closed.
-      // A key forwarded from the pages is dispatched on the window, which is not an element.
-      const target = event.target instanceof Element ? event.target : null;
-      if (event.ctrlKey || event.metaKey || event.altKey || target?.closest("input,select,textarea,button") || panel || viewport.current?.closest('[data-state="closed"]')) return;
-      if (event.key.toLowerCase() === "f") { event.preventDefault(); following.backToNarration(); }
-      else if (!p.book && (event.key === "ArrowLeft" || event.key === "ArrowRight")) { event.preventDefault(); pageAction.current(event.key === "ArrowLeft" ? "previous" : "next"); }
+      // A key forwarded from the pages is dispatched on the window, which is not an element: the
+      // pages already kept a key typed into one of their fields.
+      const player = playerRef.current;
+      const action = readerKeyAction({
+        key: event.key,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        altKey: event.altKey,
+        defaultPrevented: event.defaultPrevented,
+        ...keyEventContext(event),
+        sheetOpen: !!document.querySelector(OPEN_SHEET_SELECTOR),
+        panelOpen: !!panel,
+        // The Now Playing reader stays mounted while its dialog is closed.
+        readerHidden: !!viewport.current?.closest('[data-state="closed"]'),
+        narration: !!player.book && !!player.track && player.book.workId === bookRef.current?.workId,
+        playerHasBook: !!player.book,
+      });
+      if (!action) return;
+      event.preventDefault();
+      if (action.type === "back-to-narration") following.backToNarration();
+      else pageAction.current(action.direction);
     };
     window.addEventListener("keydown",key); return () => window.removeEventListener("keydown",key);
-  }, [panel,p.book]);
+  }, [panel]);
   const searchResults =
     book && query.trim().length > 1
       ? book.sections

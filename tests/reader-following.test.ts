@@ -46,7 +46,6 @@ function fakeClock() {
 function setup({ map = "map", confirmed = true }: { map?: string | null; confirmed?: boolean } = {}) {
   const clock = fakeClock();
   const saved: string[] = [];
-  const origins: string[] = [];
   let retries = 0;
   let cleared = 0;
   // Whether the player is on a mapped sentence of the open ebook's map: set by each test.
@@ -55,14 +54,14 @@ function setup({ map = "map", confirmed = true }: { map?: string | null; confirm
   const waiting: boolean[] = [];
   const following = createReaderFollowing<string>({
     clock,
-    onManualSave: (locator, origin) => { saved.push(locator); origins.push(origin); },
+    onManualSave: (locator) => { saved.push(locator); },
     narrationToFollow: () => narration.now,
     onRetry: () => { retries++; },
     onClearFollowError: () => { cleared++; },
     onSaveWaiting: (value) => { waiting.push(value); },
   });
   following.mapShown(map, confirmed);
-  return { clock, saved, origins, narration, following, waiting, retries: () => retries, cleared: () => cleared };
+  return { clock, saved, narration, following, waiting, retries: () => retries, cleared: () => cleared };
 }
 
 test("a relocation with no gesture and no layout of ours is shown and keeps following", () => {

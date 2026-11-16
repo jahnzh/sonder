@@ -47,9 +47,6 @@ export interface FollowJump {
 /** How a follow jump to `key` ended. */
 export type FollowOutcome = "shown" | "stale" | "retrying" | "failed";
 
-/** Where a saved reading place came from: chosen while reading, or the narrated sentence. */
-export type SaveOrigin = "reading" | "listening";
-
 /** A place the reader chose by hand whose display is still in flight (a search result, the scrubber). */
 export interface ManualPlace<L> {
   /** The display ended: save `locator` unless back to narration dropped this place meanwhile; null saves nothing. */
@@ -66,8 +63,11 @@ export interface NarrationReturn {
 
 export interface ReaderFollowingOptions<L> {
   clock?: FollowingClock;
-  /** Save a manual position once its pause has passed. */
-  onManualSave: (locator: L, origin: SaveOrigin) => void;
+  /**
+   * Save a manual position once its pause has passed. Every place the module saves was chosen while reading;
+   * the narrated sentence is saved as a listening place by the reader itself (`showFragment`), not here.
+   */
+  onManualSave: (locator: L) => void;
   /**
    * Whether there is a narration to follow now: a map for the open ebook that matches
    * the recording in the player, with an interval at the player's position.
@@ -197,7 +197,7 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
     const locator = pendingManual;
     pendingManual = null;
     report();
-    if (locator !== null) options.onManualSave(locator, "reading");
+    if (locator !== null) options.onManualSave(locator);
   };
 
   const self = {
@@ -400,7 +400,7 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
         pendingManual = null;
         navigatedUntil = 0;
         report();
-        options.onManualSave(locator, "reading");
+        options.onManualSave(locator);
       }, MANUAL_SAVE_DELAY_MS);
       report();
       return beforeReturn ? "shown" : "manual";
@@ -414,7 +414,7 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
         save(locator) {
           if (place.dropped || !places.delete(place)) return;
           report();
-          if (locator !== null) options.onManualSave(locator, "reading");
+          if (locator !== null) options.onManualSave(locator);
         },
       };
     },

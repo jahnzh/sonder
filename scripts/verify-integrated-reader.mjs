@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import {protectBrowserMutations, closeProtectedBrowser} from './verification-safety.mjs';
 import {chromium,expect as baseExpect} from '@playwright/test';
-import {createReaderControls,waitForBox} from './live-reader-controls.mjs';
+import {createReaderControls,narratedOnPage,waitForBox} from './live-reader-controls.mjs';
 import {verifyBaseURL} from './live-check-target.mjs';
 import {selectReaderRecording,requestFrom,getJSON,NoSuitableRecording,NO_SUITABLE_RECORDING_EXIT,FOLLOW_WAIT_SECONDS} from './live-check-recording.mjs';
 const expect=baseExpect.configure({timeout:25000});
@@ -126,21 +126,22 @@ try {
  await expect.poll(async()=>Math.abs((await actual()).position-before),{timeout:20000}).toBeLessThan(3);
  await controls.click(pause,'Pause narration');
  report.checks.push({name:'Long-press listens from that sentence and Undo returns'});
- // F returns to the narration: paged away by switching off "Follow the narration" (which saves nothing), then F.
- await more();
- await options.getByRole('button',{name:'Reading sync',exact:true}).click();
- const followSwitch=room.getByRole('checkbox',{name:'Follow the narration'});
- await followSwitch.uncheck();
- await expect(room).not.toHaveAttribute('data-current-passage',/.+/);
- await room.locator('.reader-panel-heading').getByRole('button',{name:'Close reader options',exact:true}).click();
- await expect(room.locator('.reader-panel')).toHaveCount(0);
+ // F returns to the narration from a page that does not show it (#501 review): page forward until the narrated
+ // sentence is off the page, then F. The page turns save a reading place, which is intercepted like every write.
  // Undo may have played on a little before the pause; put the narration back on the proven-mapped sentence.
  await seek(middle.middle);
  await expect.poll(async()=>(await actual()).position).toBeCloseTo(middle.middle,0);
+ await expect(room).toHaveAttribute('data-current-passage',middle.paragraphId);
+ await expect.poll(()=>narratedOnPage(room),{message:`the narrated sentence ${middle.paragraphId} is not on the page before paging away`}).toBe(true);
+ await controls.hide();
+ // A long sentence can run on to the next page: turn until none of it is on the page, at most three times.
+ for(let turns=0;turns<3&&await narratedOnPage(room);turns++){await controls.turn('next');await page.waitForTimeout(600);}
+ await expect(room).not.toHaveAttribute('data-current-passage',/.+/);
+ await expect.poll(()=>narratedOnPage(room),{message:`the narrated sentence ${middle.paragraphId} is still on the page after three page turns`}).toBe(false);
  await page.keyboard.press('f');
  await expect(room).toHaveAttribute('data-current-passage',middle.paragraphId);
- await expect(page.locator('.inline-reader .reader-viewport .sonder-follow').first()).toBeVisible();
- report.checks.push({name:'F returns to the narration'});
+ await expect.poll(()=>narratedOnPage(room),{message:`F did not bring the page of the narrated sentence ${middle.paragraphId} back`}).toBe(true);
+ report.checks.push({name:'F brings the narrated sentence back on the page after paging away'});
  await page.setViewportSize({width:320,height:740});
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(320);
  expect((await waitForBox(play,{description:'Play narration button'})).y+44).toBeLessThanOrEqual(740);
@@ -153,7 +154,8 @@ try {
   if(await room.getAttribute('data-current-passage')===middle.paragraphId&&await narrated.count()>0)return true;
   await seek(middle.middle);return false;
  },{timeout:25000,intervals:[500,1000,2000],message:`no narrated-sentence highlight after seeking to the mapped sample ${middle.paragraphId} at ${middle.middle.toFixed(1)} s on file ${loaded.id}`}).toBe(true);
- await expect(narrated.first()).toBeVisible();
+ // On the page the reader shows, not only rendered somewhere in the chapter's columns.
+ await expect.poll(()=>narratedOnPage(room),{message:`the narrated sentence ${middle.paragraphId} is not on the page after the desktop resize`}).toBe(true);
  await expect(page.getByLabel('Contents sidebar')).toBeVisible();
  await expect(room.getByRole('slider',{name:/^Seek in /})).toBeVisible();
  await page.screenshot({path:'artifacts/live-integrated-reader-desktop.png'});

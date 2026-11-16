@@ -401,10 +401,14 @@ test("keyboard shortcut sheet opens from Now Playing and Settings", async ({ pag
   await page.getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
   const sheet = page.getByRole("dialog", { name: "Keyboard shortcuts", exact: true });
   await expect(sheet).toBeVisible();
-  for (const action of ["Play or pause", "Skip 30 seconds back or forward", "Search", "Follow the audio in the reader", "Switch the reader to Page view"])
+  for (const action of ["Play or pause", "Skip 30 seconds back or forward", "Search", "Follow the audio in the reader"])
     await expect(sheet.getByText(action, { exact: true })).toBeVisible();
-  for (const key of ["Space", "←", "→", "/", "f", "p"])
+  for (const key of ["Space", "←", "→", "/", "f"])
     await expect(sheet.locator("kbd", { hasText: new RegExp(`^${key === "/" ? "\\/" : key}$`) })).toBeVisible();
+  // The reader has one view (ADR 0017): no view switch and no `p` key are listed.
+  await expect(sheet.getByText(/Page view|Lyrics|Word view/)).toHaveCount(0);
+  await expect(sheet.locator("kbd", { hasText: /^p$/i })).toHaveCount(0);
+  await expect(sheet.locator("kbd")).toHaveCount(5);
   await sheet.getByRole("button", { name: "Close dialog" }).click();
   await expect(sheet).toBeHidden();
   await page.goto("/#settings");

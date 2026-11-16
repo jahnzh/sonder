@@ -90,6 +90,46 @@ export function playbackKeyAction({
     return canSeek ? { type: "skip", seconds: 30 } : null;
   return null;
 }
+/** An open sheet that is not a dialog: Now Playing's Playback options, which sits above the reader. */
+export const OPEN_SHEET_SELECTOR = '.playback-options-panel:not([hidden])';
+const TEXT_ENTRY_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
+/** The key goes to a field the reader is typing in: it must reach the field, not a shortcut. */
+export function typingInField({ targetTag = null, contentEditable = false }: Pick<PlaybackKeyInput, "targetTag" | "contentEditable">) {
+  return contentEditable || (!!targetTag && TEXT_ENTRY_TAGS.has(targetTag.toUpperCase()));
+}
+export type ReaderKeyInput = PlaybackKeyInput & {
+  /** A sheet above the reader is open (see OPEN_SHEET_SELECTOR). */
+  sheetOpen?: boolean;
+  /** One of the reader's own panels (contents, search, appearance, More…) is open. */
+  panelOpen?: boolean;
+  /** The reader is mounted but not shown: Now Playing's dialog is closed. */
+  readerHidden?: boolean;
+  /** The player holds the narration of the open book. */
+  narration?: boolean;
+  /** The player holds a book, so the arrow keys seek it instead of turning pages. */
+  playerHasBook?: boolean;
+};
+export type ReaderKeyAction =
+  | { type: "back-to-narration" }
+  | { type: "page"; direction: "previous" | "next" }
+  | null;
+/**
+ * The reader's own keys: `F` (back to narration) and, with no book in the player, the arrows (page turns).
+ * The reader has the keyboard only while nothing is above it and nobody is typing. A focused button
+ * does not take `F`, so `F` still works right after a page button or the player's controls were used.
+ */
+export function readerKeyAction(input: ReaderKeyInput): ReaderKeyAction {
+  const { key, sheetOpen = false, panelOpen = false, readerHidden = false, narration = false, playerHasBook = false } = input;
+  if (
+    input.defaultPrevented || input.ctrlKey || input.metaKey || input.altKey ||
+    input.dialogOpen || sheetOpen || panelOpen || readerHidden || typingInField(input)
+  )
+    return null;
+  if (key.toLowerCase() === "f") return narration ? { type: "back-to-narration" } : null;
+  if ((key === "ArrowLeft" || key === "ArrowRight") && !playerHasBook && !keyIgnored(input))
+    return { type: "page", direction: key === "ArrowLeft" ? "previous" : "next" };
+  return null;
+}
 /** One row per key. */
 export const KEYBOARD_SHORTCUTS: { keys: string[]; action: string }[] = [
   { keys: ["Space"], action: "Play or pause" },

@@ -2,6 +2,7 @@ import {test,expect,type Page} from "@playwright/test";
 import {readFileSync} from "node:fs";
 import {readerFixture} from "../reader-fixture";
 import {skipOnMobile} from "./mobile";
+import {highlightShown} from "./reader-view";
 test.afterEach(async({page})=>{await page.unrouteAll({behavior:"wait"});});
 async function fixture(page:Page,title:string,language="en-US"){
  const response=await page.request.post("/api/import",{multipart:{title,author:"Reader QA",file:{name:"Narration.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
@@ -137,16 +138,17 @@ test("page controls follow the prepared narration",async({page})=>{
  await expect(backToNarration).toBeEnabled();
  await backToNarration.click();
  await expect(backToNarration).toBeDisabled();
- await expect(room.locator(".reader-viewport .sonder-follow").first()).toBeVisible();
- // The narrated passage stays highlighted after resizes.
+ // On the page the reader shows: the highlight is rendered on every page of the chapter's columns.
+ await expect.poll(()=>highlightShown(room)).toBe(true);
+ // The narrated passage stays highlighted on the page after resizes.
  await page.setViewportSize({width:320,height:740});
  await page.setViewportSize({width:1440,height:900});
- await expect(room.locator(".reader-viewport .sonder-follow").first()).toBeVisible();
+ await expect.poll(()=>highlightShown(room)).toBe(true);
  await page.setViewportSize({width:390,height:844});
  await expect(room.locator(".reader-viewport iframe")).toBeVisible();
- await expect(room.locator(".reader-viewport .sonder-follow").first()).toBeVisible();
+ await expect.poll(()=>highlightShown(room)).toBe(true);
  await page.setViewportSize({width:1440,height:900});
- await expect(room.locator(".reader-viewport .sonder-follow").first()).toBeVisible();
+ await expect.poll(()=>highlightShown(room)).toBe(true);
  await expect(page.getByLabel("Contents sidebar")).toBeVisible();
  await expect(room.getByRole("button",{name:"Previous page",exact:true})).toBeVisible();
 });

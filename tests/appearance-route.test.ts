@@ -1,13 +1,13 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appearanceSchema, defaultAppearance } from "../src/appearance.ts";
+import { tempDir } from "./temp-dir.ts";
 
 // The Lyrics and Word views are gone (ADR 0017), but an older open client still sends their fields:
 // the view choice (`display`), the words per line (`segmentWords`) and the words per minute (`wordWpm`).
-const temp = mkdtempSync(join(tmpdir(), "sonder-appearance-"));
+// tempDir removes the folder at exit, also when the server below fails to start.
+const temp = tempDir("sonder-appearance-");
 process.env.DATA_DIR = join(temp, "db");
 process.env.MEDIA_ROOT = join(temp, "media");
 process.env.REQUIRE_MEDIA_MOUNT = "false";
@@ -19,7 +19,6 @@ const app = await createApp();
 after(async () => {
   await app.close();
   sqlite.close();
-  rmSync(temp, { recursive: true, force: true });
 });
 
 const put = (payload: unknown) =>

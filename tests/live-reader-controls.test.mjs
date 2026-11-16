@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createReaderControls, waitForBox } from "../scripts/live-reader-controls.mjs";
+import { createReaderControls, narratedOnPage, waitForBox } from "../scripts/live-reader-controls.mjs";
 
 const scripts = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts");
 
@@ -136,6 +136,36 @@ const controlsFor = (options) => {
   return { ...fake, time, controls: createReaderControls({ page: fake.page, room: fake.room, ...time }) };
 };
 
+test("turn taps the right edge for the next page and the left edge for the previous one, not the controls band", async () => {
+  const { controls, state } = controlsFor({});
+  await controls.turn("next");
+  assert.deepEqual(state.lastTap, { x: 351, y: 350 });
+  await controls.turn("previous");
+  assert.deepEqual(state.lastTap, { x: 39, y: 350 });
+  assert.equal(state.visible, false);
+});
+
+// A reader viewport at x 0–390 whose highlight rectangles are at the given left edges, 100 px wide.
+function pages(...lefts) {
+  const rect = (left, top = 100, width = 100, height = 20) => ({ left, right: left + width, top, bottom: top + height });
+  const host = {
+    getBoundingClientRect: () => rect(0, 0, 390, 700),
+    querySelectorAll: (selector) => (selector === ".sonder-follow" ? [{ querySelectorAll: () => lefts.map((left) => ({ getBoundingClientRect: () => rect(left) })) }] : []),
+  };
+  return { locator: (selector) => ({ evaluate: async (fn) => (selector === ".reader-viewport" ? fn(host) : undefined) }) };
+}
+
+test("narratedOnPage says whether a highlight rectangle is on the page, not merely rendered beside it (#501 review)", async () => {
+  assert.equal(await narratedOnPage(pages(40)), true);
+  // The sentence is on the next page of the chapter's columns, or ends at the page's edge.
+  assert.equal(await narratedOnPage(pages(390, 780)), false);
+  assert.equal(await narratedOnPage(pages(-100)), false);
+  assert.equal(await narratedOnPage(pages(389)), false);
+  // A sentence that wraps from the previous page onto this one is on the page.
+  assert.equal(await narratedOnPage(pages(-380, 10)), true);
+  assert.equal(await narratedOnPage(pages()), false);
+});
+
 test("show does not tap when the bar is already shown (a tap would hide it)", async () => {
   const { controls, state } = controlsFor({ visible: true });
   await controls.show();
@@ -252,6 +282,19 @@ test("the integrated reader check looks for Play and Pause narration in the play
   const source = read("verify-integrated-reader.mjs");
   assert.match(source, /player=room\.locator\('\.reader-player'\),play=player\.getByRole\('button',\{name:'Play narration',exact:true\}\),pause=player\.getByRole\('button',\{name:'Pause narration',exact:true\}\)/);
   assert.doesNotMatch(source, /(?:room|page)\.getByRole\('button',\{name:'(?:Play|Pause) narration'/);
+});
+
+// #501 review: unchecking Follow left the narrated sentence on the page, so F could pass without moving anything.
+test("the integrated reader check pages the narrated sentence off the page before F and measures it back on the page", () => {
+  const source = read("verify-integrated-reader.mjs");
+  const f = source.slice(source.indexOf("// F returns to the narration"), source.indexOf("report.checks.push({name:'F brings"));
+  assert.match(f, /controls\.turn\('next'\)/);
+  assert.match(f, /narratedOnPage\(room\),\{message:`the narrated sentence \$\{middle\.paragraphId\} is still on the page[^`]*`\}\)\.toBe\(false\);\s*await page\.keyboard\.press\('f'\);/);
+  assert.match(f.slice(f.indexOf("press('f')")), /narratedOnPage\(room\)[^\n]*\.toBe\(true\)/);
+  assert.doesNotMatch(f, /followSwitch|uncheck\(/);
+  // After the desktop resize the highlight is measured on the page, not only for being rendered.
+  assert.match(source, /narratedOnPage\(room\),\{message:`[^`]*after the desktop resize`\}\)\.toBe\(true\)/);
+  assert.doesNotMatch(source, /narrated\.first\(\)\)\.toBeVisible\(\)/);
 });
 
 test("the integrated reader check waits for the narrated highlight after the desktop resize and does not scroll the pages", () => {

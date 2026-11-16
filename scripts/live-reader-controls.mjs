@@ -111,6 +111,12 @@ export function createReaderControls({ page, room, timeout = 25000, settle = 150
   /** Hide the top bar again (the long-press check needs the page clear of it). */
   const hide = () => setBar(false);
 
+  /** Turn the page with a tap on its right (next) or left (previous) edge, outside the band that toggles the controls. */
+  const turn = async (direction = "next") => {
+    const box = await waitForBox(room.locator(".reader-viewport"), { timeout, description: "reader viewport", ...timing });
+    await page.mouse.click(box.x + box.width * (direction === "next" ? 0.9 : 0.1), box.y + box.height / 2);
+  };
+
   /**
    * Reveal the controls, wait for `control` to be stable and click it. A click that fails because the
    * controls hid or the layout moved in between is repeated from the reveal.
@@ -129,5 +135,25 @@ export function createReaderControls({ page, room, timeout = 25000, settle = 150
     throw new Error(`${description}: ${last?.message ?? last}`);
   };
 
-  return { show, hide, click, topbar };
+  return { show, hide, click, turn, topbar };
+}
+
+/**
+ * Whether the narrated-sentence highlight is drawn on the page the reader shows (`room` is a `.reader-room`).
+ * The EPUB frame is as wide as its chapter's columns and the reader's viewport clips it to one page, so the
+ * highlight is rendered (Playwright's toBeVisible holds) on any page of the chapter: this measures each of its
+ * rectangles against the viewport instead (#501 review). The browser specs use the same measure.
+ */
+export function narratedOnPage(room) {
+  return room.locator(".reader-viewport").evaluate((host) => {
+    const bounds = host.getBoundingClientRect();
+    for (const mark of host.querySelectorAll(".sonder-follow")) {
+      for (const rect of [...mark.querySelectorAll("rect")].map((r) => r.getBoundingClientRect())) {
+        const width = Math.min(bounds.right, rect.right) - Math.max(bounds.left, rect.left);
+        const height = Math.min(bounds.bottom, rect.bottom) - Math.max(bounds.top, rect.top);
+        if (width > 2 && height > 2) return true;
+      }
+    }
+    return false;
+  });
 }
