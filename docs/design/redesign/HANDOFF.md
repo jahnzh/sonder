@@ -79,6 +79,18 @@ Before version 11 the canvas had a version 10 that nobody here published. Its `c
 | Worker | `Worker.dc.html` | 390×844 | 2 |
 | Desktop: Activity | `DesktopActivity.dc.html` | 1280×880, fluid | 2 |
 | Desktop: Activity, server | `DesktopActivityServer.dc.html` | 1280×880, fluid | 2 |
+| Activity: now, empty | `ActivityEmpty.dc.html` | 390×844 | #458 |
+| Activity: this device, empty | `ActivityDeviceEmpty.dc.html` | 390×844 | #458 |
+| Activity: server, nothing running | `ActivityServerEmpty.dc.html` | 390×844 | #458 |
+| Activity: now, no connection | `ActivityOffline.dc.html` | 390×844 | #458 |
+| Activity: this device, no connection | `ActivityDeviceOffline.dc.html` | 390×844 | #458 |
+| Activity: server, no connection | `ActivityServerOffline.dc.html` | 390×844 | #458 |
+| Activity: now, not the administrator | `ActivityMember.dc.html` | 390×844 | #458 |
+| Activity: this device, not the administrator | `ActivityDeviceMember.dc.html` | 390×844 | #458 |
+| Activity: a save failed | `ActivityFailedSave.dc.html` | 390×844 | #458 |
+| Activity: server, paused | `ActivityServerPaused.dc.html` | 390×844 | #458 |
+| Worker: not in use | `WorkerNotInUse.dc.html` | 390×844 | #458 |
+| Desktop: Activity, this device | `DesktopActivityDevice.dc.html` | 1280×880, fluid | #458 |
 | Book: in a series | `BookSeries.dc.html` | 390×844 | 3 |
 | Series | `Series.dc.html` | 390×844 | 3 |
 | Series: add books (sheet) | `SeriesAdd.dc.html` | 390×844 | 3 |
@@ -233,7 +245,6 @@ Everything else on the boards gives a new home or a new name to something the ap
 - In the reader: the Search and Bookmarks pages; the sleep timer in the foot (speed is drawn); messages in the foot ("Listening from here · Undo", an error, another session saved a different place, an update is ready); a book with only an ebook (no Listen face, its foot holds the place and a position slider, no transport); Listen on a desktop; the other three reader themes.
 - The Book page for a book that is not in the library yet (Add to library), with nothing yet, or with only a PDF; the Hardcover page (shelf, lists, matching, the Hardcover edition, Use Hardcover position).
 - Keep on this device: turning it off (one question with the total size), "Not complete · 8 of 12 files" with Retry, "Nothing to save yet", an earlier recording's copy, storage full.
-- Activity: empty and offline states; what someone who is not an administrator sees; a failed save on this device under Needs attention.
 - Reading sync: paused, cancelled, partly ready, language not supported; Prepare again while the current map stays in use.
 - Series: finding one in Discover (it would open the same Series page, not yet saved); the works without a number ("Related works"); the New mark on a work Hardcover added later and dismissing it; removing a series; the refresh error and the note that a work needs an administrator to link it.
 - Tooltips on the pages that are not drawn yet (Appearance, Account, Users, Library and storage, the reader).
@@ -246,7 +257,7 @@ Everything else on the boards gives a new home or a new name to something the ap
 - The series view with the new status lines.
 - Appearance, Reading, Account, Users, Library and storage and App detail pages.
 - Sign-in and join screens; empty, loading, offline and error states; toasts and confirmations (Restart, Remove, turning Keep off).
-- The other theme presets and the compact density. Tablet width. Activity › This device on the desktop.
+- The other theme presets and the compact density. Tablet width.
 
 ## Decided by the owner (2026-11-16)
 
