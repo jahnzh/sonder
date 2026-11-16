@@ -194,6 +194,10 @@ _Avoid_: Stop, disable
 A running activity whose progress and last update have not changed for longer than is normal for its kind.
 _Avoid_: Hung, frozen
 
+**Needs attention**:
+What the user has to look at: for the administrator, an activity that failed in the last seven days, is stuck or is blocked, and a background process that is down; for anyone, a device save on the device in hand whose last attempt failed. It lights the attention dot on Activity, and Activity's Now lists exactly these under that name. A paused process and a worker that is not in use need no attention.
+_Avoid_: Error, alert, problem (for the state)
+
 **Activity source**:
 A feature's own description of its background process and its current activities, which the Activity page collects.
 _Avoid_: Adapter, provider
