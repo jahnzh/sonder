@@ -332,11 +332,14 @@ test("reading sync: one entry per pair with a job, in the alignment list's summa
     assert.ok(listed, entry.id);
     for (const key of omitted) assert.equal(key in entry, false, `${key} stays on the alignment routes`);
     assert.ok("pool" in listed && "stageTimings" in listed && "anchoring" in listed, "the alignment list still has them");
-    assert.deepEqual(
-      entry,
-      Object.fromEntries(Object.entries(listed).filter(([key]) => !omitted.includes(key))),
-      `${entry.id} is the list's summary`,
-    );
+    // The list's `rebuild` also carries the new job's run, steps and result for the Reading sync page (#538): the
+    // work lists its state only.
+    const summary = Object.fromEntries(Object.entries(listed).filter(([key]) => !omitted.includes(key)));
+    if (listed.rebuild) {
+      const { generation: _g, bookJob: _b, poolErrors: _p, coverage: _c, elapsedSeconds: _e, createdAt: _a, ...state } = listed.rebuild;
+      summary.rebuild = state;
+    }
+    assert.deepEqual(entry, summary, `${entry.id} is the list's summary`);
   }
   // Sam has only ed-two-a (rec-two-a): only that pair.
   const samTwo = await bothReads(SAM_TOKEN, "w-two");

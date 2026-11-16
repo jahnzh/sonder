@@ -146,6 +146,16 @@ Before version 11 the canvas had a version 10 that nobody here published. Its `c
 | Request an account | `SignInRequest.dc.html` | 390×844 | #473 |
 | Join | `Join.dc.html` | 390×844 | #473 |
 | Join: link not valid | `JoinExpired.dc.html` | 390×844 | #473 |
+| Search | `ReaderSearch.dc.html` | 390×844 | #468 |
+| Bookmarks | `ReaderBookmarks.dc.html` | 390×844 | #468 |
+| Reader: sleep timer | `ReaderSleep.dc.html` | 390×844 | #468 |
+| Reader: listening from here | `ReaderUndo.dc.html` | 390×844 | #468 |
+| Reader: an error | `ReaderError.dc.html` | 390×844 | #468 |
+| Reader: a place saved elsewhere | `ReaderConflict.dc.html` | 390×844 | #468 |
+| Reader: an update is ready | `ReaderUpdate.dc.html` | 390×844 | #468 |
+| Reader: bookmark removed | `ReaderConfirm.dc.html` | 390×844 | #468 |
+| Reader: only an ebook | `ReaderEbookOnly.dc.html` | 390×844 | #468 |
+| Desktop: Listen | `DesktopNowPlaying.dc.html` | 1280×800, fluid | #468 |
 
 All boards are static mock-ups. They link to each other (tab bar, rail, rows, back buttons, the Activity segments) so Play mode can walk through them. Every board has one tweak, the accent colour.
 
@@ -283,9 +293,8 @@ Everything else on the boards gives a new home or a new name to something the ap
 
 ## Not drawn yet
 
-- In the reader: the Search and Bookmarks pages; the sleep timer in the foot (speed is drawn); messages in the foot ("Listening from here · Undo", an error, another session saved a different place, an update is ready); a book with only an ebook (no Listen face, its foot holds the place and a position slider, no transport); Listen on a desktop; the other three reader themes.
+- In the reader: the other three reader themes.
 - Series: finding one in Discover (it opens the Series page, not yet saved: `SeriesNotSaved.dc.html`); the refresh error and the note that a work needs an administrator to link it.
-- Tooltips on the reader's pages that are not drawn yet.
 - Choosing where to resume when switching recordings; the sheet of one copy (size, Save to server, Remove, Report a problem); the Plays from picker; the fault report form.
 - Prepare for all books (its counts and button); the Details page of a reading sync (engine, GPU use, stage times). Correcting one sentence's timing leaves the interface.
 - The chapter matcher of the older engine. Production runs whole-book jobs (`ALIGNMENT_BOOK_JOBS=1`), which have no matching step.

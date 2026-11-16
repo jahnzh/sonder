@@ -119,6 +119,18 @@ _Avoid_: Offline banner, offline toast
 One of the two sides of the screen for the work in use: Listen, the player, or Read, the reader. A device reopens a work on the face last used there. A work without a recording has no Listen face, and a work without an EPUB has no Read face.
 _Avoid_: View, tab, mode (which is pages or scroll)
 
+**Head**:
+The band at the top of the reader's page, 44 high plus the phone's safe area. At rest it names the book and chapter; a tap on the text shows the reader's controls in it. It keeps its height either way, so the text never moves.
+_Avoid_: Top bar, toolbar, header
+
+**Foot**:
+The band at the bottom of the reader's page, 72 high plus the phone's safe area. At rest it holds the progress line, the time left and Pause; with the controls shown, the timeline and the transport. Speed, the sleep timer and every message while reading take its lower row.
+_Avoid_: Player bar, bottom bar, footer, toast
+
+**Text band**:
+The part of the reader's page between the head and the foot, or a docked panel, where the book's text is laid out. It changes size only with the window or when Appearance docks or closes, never on a tap.
+_Avoid_: Viewport, page area, reading area
+
 **Pages mode**:
 The reader showing the ebook as turnable pages.
 _Avoid_: Page mode, book view, paginated mode

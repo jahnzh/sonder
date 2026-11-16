@@ -1,4 +1,4 @@
-import { alignmentJobActive, alignmentJobResumable, type AlignmentJob } from "./reading-types";
+import { alignmentJobActive, alignmentJobResumable, rebuildState, type AlignmentJob } from "./reading-types";
 
 type ShownJob = Pick<AlignmentJob, "status" | "origin" | "rebuild">;
 
@@ -32,17 +32,7 @@ export const JOB_NOT_LISTED = "This reading-sync job is no longer listed. Reload
  */
 export function shownAfterAction(shown: AlignmentJob, answer: AlignmentJob): AlignmentJob {
   if (!shown.rebuild) return answer;
-  return {
-    ...shown,
-    rebuild: {
-      status: answer.status,
-      progress: answer.progress,
-      engine: answer.engine,
-      error: answer.error,
-      ...(answer.outcome ? { outcome: answer.outcome } : {}),
-      updatedAt: answer.updatedAt,
-    },
-  };
+  return { ...shown, rebuild: rebuildState(answer) };
 }
 
 type JobActionDeps = {
