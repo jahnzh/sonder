@@ -338,9 +338,24 @@ function LibraryApp({
   const mutateLibrary = async (
     b: Book,
     action: "add" | "remove" | "finished" | "unread",
+    options: { byWork?: boolean } = {},
   ) => {
     try {
-      if (action === "add")
+      // The book dialog adds and removes the whole work (#527); the cards keep the routes by edition.
+      if (options.byWork && (action === "add" || action === "remove")) {
+        await api(`/works/${encodeURIComponent(b.workId)}/library`, {
+          method: action === "add" ? "PUT" : "DELETE",
+        });
+        if (action === "remove")
+          await localDB.positionHistory.bulkDelete([
+            ...new Set([
+              b.recordingId,
+              ...books
+                .filter((entry) => entry.workId === b.workId)
+                .map((entry) => entry.recordingId),
+            ]),
+          ]);
+      } else if (action === "add")
         await api("/library", {
           method: "POST",
           body: JSON.stringify({ bookId: b.id }),
@@ -864,8 +879,8 @@ function LibraryApp({
           onDownload={() => detail && void startDownload(detail)}
           favorite={detail ? favorites.includes(detail.id) : false}
           onFavorite={() => detail && toggleFavorite(detail.id)}
-          onAdd={() => detail && void mutateLibrary(detail, "add")}
-          onRemove={() => detail && void mutateLibrary(detail, "remove")}
+          onAdd={() => detail && void mutateLibrary(detail, "add", { byWork: true })}
+          onRemove={() => detail && void mutateLibrary(detail, "remove", { byWork: true })}
           downloads={downloads}
         />
         <SeriesDialog target={seriesTarget} onClose={() => setSeriesTarget(null)} downloads={downloads} savedEbooks={savedEbooks}

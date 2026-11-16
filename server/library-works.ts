@@ -32,6 +32,7 @@ import { listEbookSetMembers } from "./ebook-set.ts";
 import { consensusEbookId, defaultEbookIds } from "./ebook-set-consensus.ts";
 import { listServedAlignmentSummaries, type slimAlignmentJob } from "./alignment-transitions.ts";
 import { getWorkMediaStates } from "./work-media-state.ts";
+import { addWorkToLibrary, removeWorkFromLibrary, workVisibleTo } from "./work-library.ts";
 import type {
   Book,
   LibraryWork,
@@ -579,5 +580,25 @@ export function registerLibraryWorks(app: FastifyInstance) {
       return reply.code(400).send({ error: "Choose one of the recordings of this book in your library." });
     setUserSetting(userId, choiceKey(workId), recordingId);
     return libraryWork(userId, workId);
+  });
+  /**
+   * Add to library and Remove from library by work (#527, `work-library.ts`). Both take no body
+   * (an empty JSON body is accepted too) and answer `{ ok: true }`; a work the user may not see
+   * answers 404 as `GET /api/works/<workId>` does.
+   */
+  app.put("/api/works/:workId/library", async (req, reply) => {
+    const userId = currentUserId(req);
+    const { workId } = req.params as { workId: string };
+    if (!workVisibleTo(userId, workId)) return reply.code(404).send({ error: "This book could not be found." });
+    if (addWorkToLibrary(userId, workId) === "no-audio")
+      return reply.code(409).send({ error: "This book has no audiobook to add yet." });
+    return { ok: true };
+  });
+  app.delete("/api/works/:workId/library", async (req, reply) => {
+    const userId = currentUserId(req);
+    const { workId } = req.params as { workId: string };
+    if (!workVisibleTo(userId, workId)) return reply.code(404).send({ error: "This book could not be found." });
+    removeWorkFromLibrary(userId, workId);
+    return { ok: true };
   });
 }
