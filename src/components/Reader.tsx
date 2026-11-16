@@ -785,6 +785,8 @@ export function ReaderView({
             if(host.clientWidth===lastWidth && host.clientHeight===lastHeight)return;
             lastWidth=host.clientWidth;lastHeight=host.clientHeight;
             settleAfterLayout(view);
+            // Prototype #469: how often the view was laid out again after it opened.
+            host.dataset.resizes = String(Number(host.dataset.resizes || 0) + 1);
             view.resize(host.clientWidth, host.clientHeight);
             redrawHighlight();
           }
@@ -1444,7 +1446,7 @@ export function ReaderView({
     </div>
   );
   return (
-    <div className={`reader-room ${inline ? "inline-reader" : ""}`} data-controls-visible={controls} data-contents={showContents} data-current-passage={follow ? currentInterval?.paragraphId : undefined}>
+    <div className={`reader-room ${inline ? "inline-reader" : ""}`} data-dock={panel === "appearance" ? "appearance" : undefined} data-controls-visible={controls} data-contents={showContents} data-current-passage={follow ? currentInterval?.paragraphId : undefined}>
       {inline && <PlaybackExtra>{moreItems}</PlaybackExtra>}
       {error && (
         <p className="inline-error" role="alert">
@@ -1456,7 +1458,7 @@ export function ReaderView({
           <Loader2 className="spin" /> Opening your book…
         </p>
       )}
-      <header className="reader-topbar" hidden={!controls}>
+      <header className="reader-topbar" hidden={inline && !controls} data-at-rest={!controls ? "" : undefined}>
         {onClose && <button className="icon-button" aria-label="Close reader" onClick={() => { setControlsVisible(false); setPanel(null); onClose(); }}><ChevronDown size={22} /></button>}
         {desktop && preferences.display === "book" && (
           <button

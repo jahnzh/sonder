@@ -1039,3 +1039,60 @@
     top: 76px;
   }
 }
+
+
+/* Prototype #469 (branch prototype/reader-text-band, never merged): the reader's page as three bands.
+   The head (44) and the foot (72) keep their height whether the controls show or not, plus the safe
+   areas of a phone, so the text band is sized once. --sonder-safe-top/-bottom stand in for env() in
+   the browsers whose test drivers cannot emulate a notch (Firefox, WebKit). */
+.reader-room {
+  --reader-safe-top: var(--sonder-safe-top, env(safe-area-inset-top, 0px));
+  --reader-safe-bottom: var(--sonder-safe-bottom, env(safe-area-inset-bottom, 0px));
+}
+@media (max-width: 759px) {
+  .reader-room:not(.inline-reader) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: calc(44px + var(--reader-safe-top)) minmax(0, 1fr) auto calc(72px + var(--reader-safe-bottom));
+    grid-template-areas: "head" "text" "dock" "foot";
+  }
+  .reader-room:not(.inline-reader) > .reader-topbar {
+    grid-area: head;
+    position: static;
+    height: auto;
+    box-sizing: border-box;
+    padding-top: var(--reader-safe-top);
+    border: 0;
+  }
+  .reader-room:not(.inline-reader) > .reader-topbar[data-at-rest] > * { visibility: hidden; }
+  .reader-room:not(.inline-reader) > .reader-body { grid-area: text; padding-bottom: 0; }
+  .reader-room:not(.inline-reader) > .reader-player {
+    grid-area: foot;
+    position: static;
+    box-sizing: border-box;
+    height: auto;
+    padding-bottom: var(--reader-safe-bottom);
+    overflow: hidden;
+    border-top: 0;
+  }
+  .reader-room:not(.inline-reader) > .reader-player .reader-player-info { display: none; }
+  .reader-room:not(.inline-reader)[data-dock="appearance"] > .reader-panel {
+    grid-area: dock;
+    position: static;
+    width: auto;
+    max-height: 40dvh;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}
+/* Appearance docked under the text in the inline reader too: the text is laid out again in what is left. */
+.reader-room.inline-reader[data-dock="appearance"] > .reader-body { padding-bottom: 0; }
+.reader-room.inline-reader[data-dock="appearance"] > .reader-panel {
+  position: static;
+  flex: none;
+  width: auto;
+  max-height: 40%;
+  margin-bottom: var(--reader-bar);
+  border-radius: 0;
+  box-shadow: none;
+}
