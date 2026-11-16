@@ -108,6 +108,11 @@ Before version 11 the canvas had a version 10 that nobody here published. Its `c
 | Series: add books (sheet) | `SeriesAdd.dc.html` | 390×844 | 3 |
 | Library: series | `LibrarySeries.dc.html` | 390×844 | 3 |
 | Desktop: Series | `DesktopSeries.dc.html` | 1280×940, fluid | 3 |
+| Series: not saved | `SeriesNotSaved.dc.html` | 390×844 | #463 |
+| Series: save (sheet) | `SeriesSave.dc.html` | 390×844 | #463 |
+| Series: new from Hardcover | `SeriesNew.dc.html` | 390×844 | #463 |
+| Series: further down | `SeriesMore.dc.html` | 390×844 | #463 |
+| Series: remove | `SeriesRemove.dc.html` | 390×844 | #463 |
 | Reader: pages | `Reader.dc.html` | 390×844 | 4 |
 | Reader: controls shown | `ReaderControls.dc.html` | 390×844 | 4 |
 | Reader: speed | `ReaderSpeed.dc.html` | 390×844 | 5 |
@@ -256,7 +261,7 @@ Everything else on the boards gives a new home or a new name to something the ap
 
 - In the reader: the Search and Bookmarks pages; the sleep timer in the foot (speed is drawn); messages in the foot ("Listening from here · Undo", an error, another session saved a different place, an update is ready); a book with only an ebook (no Listen face, its foot holds the place and a position slider, no transport); Listen on a desktop; the other three reader themes.
 - Keep on this device: turning it off (one question with the total size), "Not complete · 8 of 12 files" with Retry, "Nothing to save yet", an earlier recording's copy, storage full.
-- Series: finding one in Discover (it would open the same Series page, not yet saved); the works without a number ("Related works"); the New mark on a work Hardcover added later and dismissing it; removing a series; the refresh error and the note that a work needs an administrator to link it.
+- Series: finding one in Discover (it opens the Series page, not yet saved: `SeriesNotSaved.dc.html`); the refresh error and the note that a work needs an administrator to link it.
 - Tooltips on the pages that are not drawn yet (Appearance, Account, Users, Library and storage, the reader).
 - Discover, which now finds books: results are works, a result opens its Book page, and the last row is "Search for a recording of '…'".
 - The Library's sort-and-view control with the Hardcover shelf and Hardcover list filters.
