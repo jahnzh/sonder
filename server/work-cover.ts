@@ -115,10 +115,10 @@ export type WorkCover = {
 /**
  * The cover and audio edition of each of `workIds` for `userId` by the rule of the library by work: the chosen
  * recording's, otherwise the one of the fallback edition (a placeholder's by preference), otherwise none (an empty
- * cover). A work that does not exist has no entry. The administrator sees every placeholder, so none is hidden here: only the administrator
- * reads the Activity list.
+ * cover). A work that does not exist has no entry. The administrator sees every placeholder, so by default none is hidden: only the administrator
+ * reads the Activity list. `GET /api/works` (#573) passes the placeholders hidden from the user (`hiddenHardcoverPlaceholders`).
  */
-export function workCovers(database: Database, userId: number, workIds: Iterable<string>) {
+export function workCovers(database: Database, userId: number, workIds: Iterable<string>, hidden = new Set<string>()) {
   const ids = [...new Set(workIds)];
   const covers = new Map<string, WorkCover>();
   if (!ids.length) return covers;
@@ -137,7 +137,7 @@ export function workCovers(database: Database, userId: number, workIds: Iterable
   for (const row of listed)
     byWork.set(row.workId, [...(byWork.get(row.workId) ?? []), { ...row, progress: places.get(row.recordingId) ?? null }]);
   const choices = storedChoices(database, userId, ids);
-  const fallbacks = fallbackCovers(database, userId, ids, new Set());
+  const fallbacks = fallbackCovers(database, userId, ids, hidden);
   const existing = new Set(
     (database.prepare("SELECT id FROM works WHERE id IN (SELECT value FROM json_each(?))").all(idList(ids)) as { id: string }[]).map((row) => row.id),
   );
