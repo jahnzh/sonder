@@ -45,7 +45,7 @@ import { registerAppearance } from "./appearance.ts";
 import { registerAccountRequests } from "./account-requests.ts";
 import { registerInvites } from "./invites.ts";
 import { registerReader } from "./reader.ts";
-import { registerLibraryWorks } from "./library-works.ts";
+import { registerLibraryWorks, withHitWorks } from "./library-works.ts";
 import { registerAlignment, autoQueueAlignmentsForWork, persistedPoolErrors } from "./alignment.ts";
 import { checkPoolHostsSetting, getAlignmentPoolCoordinator, getAlignmentPoolStatus } from "./alignment-pool.ts";
 import { hostRestartStates, restartPoolHost } from "./alignment-host-control.ts";
@@ -907,7 +907,9 @@ export async function createApp(options?: {
     background.add(loop);
   app.get("/api/discover/hardcover", async (req) => {
     const { q } = z.object({ q: z.string().min(2).max(150) }).parse(req.query);
-    return hardcoverSearch(currentUserId(req), q);
+    const userId = currentUserId(req);
+    // Each hit gains the work it opens and whether that work is on the server (#573).
+    return withHitWorks(userId, await hardcoverSearch(userId, q));
   });
   app.post("/api/import", async (req) => {
     ensureMediaStorage();
