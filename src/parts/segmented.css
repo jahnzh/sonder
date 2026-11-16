@@ -1,0 +1,65 @@
+/* Segmented control (src/parts/Segmented.tsx). The track is 44 high; each segment fills its height, so it is 44
+   where it is tapped, and draws its chosen fill 4 inside the track's edge. */
+.part-segmented {
+  box-sizing: border-box;
+  height: var(--height-control);
+  padding: 0 var(--space-4);
+  display: flex;
+  border-radius: var(--corner-control);
+  background: var(--raised);
+}
+.part-segment {
+  box-sizing: border-box;
+  flex: 1 1 0;
+  min-width: var(--height-control);
+  height: var(--height-control);
+  padding: var(--space-4) 0;
+  display: flex;
+  border: 0;
+  border-radius: var(--corner-control);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.part-segment-face {
+  flex: 1;
+  min-width: 0;
+  padding: 0 var(--space-8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* The chosen fill sits 4 inside the track's corner 8. */
+  border-radius: calc(var(--corner-control) - var(--space-4) / 2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.part-segment[data-chosen] {
+  color: var(--text);
+  font-weight: 600;
+}
+.part-segment[data-chosen] .part-segment-face {
+  background: var(--background);
+}
+.part-segment:hover:not(:disabled):not([data-chosen]) {
+  color: var(--text);
+}
+.part-segment:focus-visible {
+  outline: none;
+}
+.part-segment:focus-visible .part-segment-face {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+.part-segment:disabled {
+  cursor: default;
+}
+.part-segmented[data-disabled] {
+  opacity: 0.48;
+}
+.part-segment:disabled:not([data-chosen]) {
+  opacity: 0.48;
+}
+.part-segmented[data-disabled] .part-segment:disabled {
+  opacity: 1;
+}

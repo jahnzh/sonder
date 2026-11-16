@@ -249,8 +249,9 @@ test("every part has a name and a role, and every control is at least 44 where i
 
 test("every part is reachable by keyboard, in order, and acts on Enter and Space", async ({ page, browserName }) => {
   await openWith(page, defaultAppearance);
+  // The parts of #486, which stand first on the gallery; later parts' sections test their own keyboard use.
   const expected = await page.evaluate(() =>
-    [...document.querySelectorAll("main button:not(:disabled)")].map((element) => element.getAttribute("aria-label") ?? (element as HTMLElement).innerText.replace(/\s+/g, " ").trim()),
+    [...document.querySelectorAll(["row", "group", "button", "page-header"].map((id) => `[data-gallery-section="${id}"] button:not(:disabled)`).join(", "))].map((element) => element.getAttribute("aria-label") ?? (element as HTMLElement).innerText.replace(/\s+/g, " ").trim()),
   );
   expect(expected.length).toBe(17);
   await page.locator("main").click({ position: { x: 2, y: 2 } });
