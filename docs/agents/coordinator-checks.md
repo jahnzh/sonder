@@ -4,7 +4,7 @@ How a coordinator watches CI, stays reachable when unattended, handles its worke
 
 ## Watch a running check yourself
 
-A completion watcher (`kill -0 $PID` loop, `npm run ci:run` / runner exit) never fires for a hung check, so a hang looks like "still running". Look at every live check, not at its notification. Start checks with `npm run ci:run <sha>` (or `npm run ci:run -- --status` to list the queue and each host's last probe); do not start `ci:ssh` / `ci:deck` directly.
+A completion watcher (`kill -0 $PID` loop, `npm run ci:run` / runner exit) never fires for a hung check, so a hang looks like "still running". Look at every live check, not at its notification. Start checks with `npm run ci:run <sha>` (or `npm run ci:run -- --status` to list the queue and each host's last probe); do not start `ci:ssh` / `ci:deck` directly. A plain `git push` of a branch starts its check by itself once the push has landed (#504): look at `--status` before starting one by hand for a commit you have just pushed. A push through `scripts/orca-ship.sh` starts none.
 
 1. Note the start time and the expected totals. Sharded browser stage: complete check about 10 minutes on WSL and 12 on lisa; install 10 s, build 10 to 40 s, unit 90 to 150 s, browser about 5 minutes. A serial browser stage (`SONDER_BROWSER_SHARDS=1`, filtered runs, hosts under 8 CPUs) takes 12 to 25 minutes.
 2. At every heartbeat read, for each check: `ps -o etimes= -p <pid>` (age), `cut -d' ' -f1 /proc/loadavg` on the host over ssh, and `tail check.log` in the run directory (`/tmp/sonder-ci-*` on WSL, `~/sonder-ci-tmp/sonder-ci-*` on lisa).
@@ -57,7 +57,7 @@ The coordinator does host work itself and does not leave it for the owner: `scri
 
 ## Stopping a run
 
-When the owner stops a run: stop each worker with `scripts/orca-reap.sh <worktree>`, commit unfinished work on its branch as a commit marked WIP, push every branch, write where each branch stands into `STATE.md` and roadmap #11, and only then stop the heartbeat, the Monitors and the watchdog. Nothing unfinished is landed.
+When the owner stops a run: stop each worker with `scripts/orca-reap.sh <worktree>`, commit unfinished work on its branch as a commit marked WIP, push every branch with `SONDER_SKIP_PUSH_CI=1` (a WIP commit needs no committed check), write where each branch stands into `STATE.md` and roadmap #11, and only then stop the heartbeat, the Monitors and the watchdog. Nothing unfinished is landed.
 
 ## Reporting to the owner
 

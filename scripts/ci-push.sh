@@ -23,7 +23,8 @@
 # background checks later report (that goes to the commit status and the
 # result files).
 #
-# The pre-push hook starts the committed check for a plain `git push` (#504). A
+# The pre-push hook arranges the committed check for a plain `git push` (#504):
+# it leaves a job behind that starts the check when the push has landed. A
 # push made through this wrapper carries SONDER_PUSH_CI_WRAPPER=1, so the hook
 # leaves the dispatch to the wrapper, which knows what changed on the remote.
 #

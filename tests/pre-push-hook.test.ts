@@ -73,15 +73,23 @@ function runHook(
   env: Record<string, string | undefined> = {},
   stdin = "refs/heads/main abc refs/heads/main def\n",
 ) {
-  return spawnSync(join(root, ".githooks", "pre-push"), [], {
+  // Git calls the hook with the remote's name and address.
+  return spawnSync(join(root, ".githooks", "pre-push"), ["origin", join(root, "remote.git")], {
     cwd: root,
     encoding: "utf8",
     input: stdin,
     env: {
       // The hook asks git what is pushed; a GIT_ variable of the caller (a hook that runs these tests) must not answer for it.
       ...isolatedGitEnv(root),
-      // A skip variable set in the caller's shell must not decide these tests.
+      // What the caller's shell has set must not decide these tests.
       SONDER_SKIP_PREPUSH: undefined,
+      SONDER_SKIP_PUSH_CI: undefined,
+      SONDER_PUSH_CI_WRAPPER: undefined,
+      SONDER_PUSH_CI_RUNNER: undefined,
+      SONDER_PUSH_CI_ARTIFACTS: undefined,
+      // How often and how long the job the hook leaves behind looks for the pushed commit on the remote.
+      SONDER_PUSH_CI_LAND_INTERVAL: "0.1",
+      SONDER_PUSH_CI_LAND_TIMEOUT: "10",
       ...env,
       PATH: `${binDir}:${process.env.PATH ?? ""}`,
     },
@@ -327,10 +335,13 @@ test("pre-push hook skips checks when SONDER_SKIP_PREPUSH=1", () => {
 });
 
 /**
- * Gives the repository what a real checkout has for starting a committed check: the shared start
- * code and a runner. The runner is a stub that records its argument and the GIT_ variables it sees.
+ * Gives the repository what a real checkout has for starting a committed check: a remote, the
+ * shared start code and a runner. The runner is a stub that records its argument and the GIT_
+ * variables it sees, and can be told to take its time.
  */
 function installRunner(root: string) {
+  gitIn(root, "init", "-q", "--bare", join(root, "remote.git"));
+  gitIn(root, "remote", "add", "origin", join(root, "remote.git"));
   mkdirSync(join(root, "scripts", "lib"), { recursive: true });
   cpSync(join(repoRoot, "scripts", "lib", "push-dispatch.sh"), join(root, "scripts", "lib", "push-dispatch.sh"));
   const runnerLog = join(root, "runner.log");
@@ -340,29 +351,37 @@ function installRunner(root: string) {
 git_names=$(env | grep -o '^GIT_[^=]*' | sort | tr '\\n' ',' || true)
 echo "sha=$1 git=[$git_names]" >> ${JSON.stringify(runnerLog)}
 echo "stub runner for $1"
+if [[ -n \${STUB_RUNNER_SLEEP:-} ]]; then sleep "$STUB_RUNNER_SLEEP"; fi
 `,
     { mode: 0o755 },
   );
   return { runnerLog, artifacts: join(root, "artifacts", "ci") };
 }
+/** The push itself: what git does after the hook has let it through. */
+const land = (root: string, sha: string, branch = "work") => gitIn(root, "push", "-q", "origin", `${sha}:refs/heads/${branch}`);
 const runnerCalls = (runnerLog: string) => (existsSync(runnerLog) ? readFileSync(runnerLog, "utf8").trim().split("\n") : []);
 const dispatched = (stdout: string) => stdout.split("\n").filter((line) => line.startsWith("dispatching "));
+const logOf = (line: string) => line.split("log=")[1];
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// A started check runs on after the hook has returned; wait for it.
-async function waitFor(condition: () => boolean, ms = 5000) {
+// The job the hook leaves behind works on after the hook has returned; wait for what it does.
+async function waitFor(condition: () => boolean, ms = 8000) {
   const end = Date.now() + ms;
   while (Date.now() < end) {
     if (condition()) return true;
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await pause(50);
   }
   return condition();
 }
 
-test("pre-push hook starts the committed check for a pushed branch that carries code", async () => {
+function withRunner() {
   const root = makeTempRepo();
   const base = seedRepo(root);
-  const { binDir, logPath } = writeStubNpm(root);
-  const { runnerLog, artifacts } = installRunner(root);
+  return { root, base, ...writeStubNpm(root), ...installRunner(root) };
+}
+
+test("pre-push hook starts the committed check once the pushed commit is on the remote", async () => {
+  const { root, base, binDir, logPath, runnerLog, artifacts } = withRunner();
   const head = commitFiles(root, { "src/app.ts": "export const one = 2;\n" });
   const result = runHook(
     root,
@@ -375,67 +394,129 @@ test("pre-push hook starts the committed check for a pushed branch that carries 
   assert.deepEqual(npmCalls(logPath), ["run build"]);
   const lines = dispatched(result.stdout);
   assert.equal(lines.length, 1, result.stdout);
-  assert.match(lines[0], new RegExp(`^dispatching ${head} work log=${artifacts}/${head}/push-dispatch-`));
-  assert.ok(await waitFor(() => runnerCalls(runnerLog).length === 1), "the runner must have been started");
+  assert.match(lines[0], new RegExp(`^dispatching ${head} work when the push has landed log=${artifacts}/${head}/push-dispatch-`));
+
+  // Nothing starts while the commit is not on the remote.
+  await pause(400);
+  assert.deepEqual(runnerCalls(runnerLog), []);
+
+  land(root, head);
+  assert.ok(await waitFor(() => runnerCalls(runnerLog).length === 1), "the runner must start once the push has landed");
   assert.deepEqual(runnerCalls(runnerLog), [`sha=${head} git=[]`]);
   // The runner's output goes to the log the hook named, not to the push.
-  const log = lines[0].split("log=")[1];
-  assert.ok(await waitFor(() => existsSync(log) && readFileSync(log, "utf8").includes(`stub runner for ${head}`)));
+  assert.ok(await waitFor(() => readFileSync(logOf(lines[0]), "utf8").includes(`stub runner for ${head}`)));
   assert.doesNotMatch(result.stdout, /stub runner/);
 });
 
-test("pre-push hook starts no committed check for documentation, a failed build, a tag or a deleted branch", async () => {
-  const root = makeTempRepo();
-  const base = seedRepo(root);
-  const { binDir } = writeStubNpm(root);
-  const { runnerLog } = installRunner(root);
-  const docs = commitFiles(root, { "docs/plan.md": "plan\n" });
-  const code = commitFiles(root, { "src/app.ts": "export const one = 3;\n" });
-
-  const onlyDocs = runHook(root, binDir, {}, update(docs, base));
-  const failedBuild = runHook(root, binDir, { SONDER_STUB_BUILD_EXIT: "1" }, update(code, base));
-  const tag = runHook(root, binDir, {}, update(code, ZERO, "refs/tags/v1"));
-  const deleted = runHook(root, binDir, {}, update(ZERO, base));
-  assert.equal(onlyDocs.status, 0);
-  assert.notEqual(failedBuild.status, 0);
-  assert.equal(tag.status, 0, tag.stderr || tag.stdout);
-  assert.equal(deleted.status, 0);
-  for (const result of [onlyDocs, failedBuild, tag, deleted]) assert.deepEqual(dispatched(result.stdout), []);
-  // Give a wrongly started check time to show up.
-  await new Promise((resolve) => setTimeout(resolve, 300));
+test("pre-push hook starts no committed check for a push that does not land", async () => {
+  // A dry run and a rejected push both run the hook and then send nothing.
+  const { root, base, binDir, runnerLog, artifacts } = withRunner();
+  const head = commitFiles(root, { "src/app.ts": "export const one = 3;\n" });
+  const result = runHook(root, binDir, { SONDER_PUSH_CI_LAND_TIMEOUT: "1" }, update(head, base));
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const lines = dispatched(result.stdout);
+  assert.equal(lines.length, 1, result.stdout);
+  assert.ok(await waitFor(() => readFileSync(logOf(lines[0]), "utf8").includes("no committed check started")));
   assert.deepEqual(runnerCalls(runnerLog), []);
+  // The job has gone, so a later push of the same commit is free to start one.
+  assert.equal(existsSync(join(artifacts, head, "push-dispatch.pid")), false);
 });
 
-test("pre-push hook leaves the committed check to ci:push, and to nobody with SONDER_SKIP_PUSH_CI=1", async () => {
-  const root = makeTempRepo();
-  const base = seedRepo(root);
-  const { binDir, logPath } = writeStubNpm(root);
-  const { runnerLog } = installRunner(root);
+test("pre-push hook returns at once and leaves the waiting to a job of its own", async () => {
+  const { root, base, binDir, runnerLog } = withRunner();
   const head = commitFiles(root, { "src/app.ts": "export const one = 4;\n" });
+  const startedAt = Date.now();
+  const result = runHook(root, binDir, { STUB_RUNNER_SLEEP: "3" }, update(head, base));
+  const hookMs = Date.now() - startedAt;
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  // The job waits up to 10 s for the push and the runner then sleeps 3 s; the hook waited for neither.
+  assert.ok(hookMs < 2500, `the hook took ${hookMs} ms`);
+  land(root, head);
+  assert.ok(await waitFor(() => runnerCalls(runnerLog).length === 1));
+});
 
+test("pre-push hook starts one committed check when the same commit is pushed again while the first waits or runs", async () => {
+  const { root, base, binDir, runnerLog } = withRunner();
+  const head = commitFiles(root, { "src/app.ts": "export const one = 5;\n" });
+  const first = runHook(root, binDir, { STUB_RUNNER_SLEEP: "2" }, update(head, base));
+  assert.equal(dispatched(first.stdout).length, 1, first.stdout);
+  // The job writes its process id as it starts.
+  await pause(300);
+  const whileWaiting = runHook(root, binDir, {}, update(head, base));
+  assert.equal(whileWaiting.status, 0, whileWaiting.stderr || whileWaiting.stdout);
+  assert.deepEqual(dispatched(whileWaiting.stdout), []);
+  assert.match(whileWaiting.stdout, new RegExp(`skipped ${head} work \\(its check is already starting or running\\)`));
+
+  land(root, head);
+  assert.ok(await waitFor(() => runnerCalls(runnerLog).length === 1));
+  const whileRunning = runHook(root, binDir, {}, update(head, base));
+  assert.match(whileRunning.stdout, /its check is already starting or running/);
+  await pause(400);
+  assert.equal(runnerCalls(runnerLog).length, 1);
+});
+
+test("pre-push hook starts the committed check for a documentation-only push without running the build", async () => {
+  // The build cannot be affected by documentation, but the unit suite reads some of it.
+  const { root, base, binDir, logPath, runnerLog } = withRunner();
+  const head = commitFiles(root, { "docs/plan.md": "plan\n" });
+  const result = runHook(root, binDir, {}, update(head, base));
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /only documentation is pushed/);
+  assert.deepEqual(npmCalls(logPath), []);
+  assert.equal(dispatched(result.stdout).length, 1, result.stdout);
+  land(root, head);
+  assert.ok(await waitFor(() => runnerCalls(runnerLog).length === 1));
+});
+
+test("pre-push hook starts a committed check only for the pushed branches that change a file", async () => {
+  const { root, base, binDir, runnerLog } = withRunner();
+  const head = commitFiles(root, { "src/app.ts": "export const one = 6;\n" });
+  // "same" is a new branch at a commit main already has; "v1" is a tag; "gone" is deleted.
+  const result = runHook(
+    root,
+    binDir,
+    {},
+    update(base, ZERO, "refs/heads/same") + update(head, base, "refs/heads/work") + update(head, ZERO, "refs/tags/v1") + update(ZERO, base, "refs/heads/gone"),
+  );
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const lines = dispatched(result.stdout);
+  assert.equal(lines.length, 1, result.stdout);
+  assert.match(lines[0], new RegExp(`^dispatching ${head} work `));
+  land(root, head);
+  assert.ok(await waitFor(() => runnerCalls(runnerLog).length === 1));
+  await pause(300);
+  assert.deepEqual(runnerCalls(runnerLog), [`sha=${head} git=[]`]);
+});
+
+test("pre-push hook starts no committed check after a failed build, through ci:push, or with SONDER_SKIP_PUSH_CI=1", async () => {
+  const { root, base, binDir, logPath, runnerLog } = withRunner();
+  const head = commitFiles(root, { "src/app.ts": "export const one = 7;\n" });
+
+  const failedBuild = runHook(root, binDir, { SONDER_STUB_BUILD_EXIT: "1" }, update(head, base));
   const throughWrapper = runHook(root, binDir, { SONDER_PUSH_CI_WRAPPER: "1" }, update(head, base));
   const skipped = runHook(root, binDir, { SONDER_SKIP_PUSH_CI: "1" }, update(head, base));
+  assert.notEqual(failedBuild.status, 0);
   assert.equal(throughWrapper.status, 0, throughWrapper.stderr || throughWrapper.stdout);
   assert.equal(skipped.status, 0, skipped.stderr || skipped.stdout);
   assert.match(skipped.stdout, /committed check is not started \(SONDER_SKIP_PUSH_CI=1\)/);
-  // The build still ran both times.
-  assert.deepEqual(npmCalls(logPath), ["run build", "run build"]);
-  for (const result of [throughWrapper, skipped]) assert.deepEqual(dispatched(result.stdout), []);
-  await new Promise((resolve) => setTimeout(resolve, 300));
+  // The build ran each time.
+  assert.deepEqual(npmCalls(logPath), ["run build", "run build", "run build"]);
+  for (const result of [failedBuild, throughWrapper, skipped]) assert.deepEqual(dispatched(result.stdout), []);
+  // Had a job been left behind, it would start the runner now.
+  land(root, head);
+  await pause(600);
   assert.deepEqual(runnerCalls(runnerLog), []);
 });
 
 test("pre-push hook starts one check for a commit pushed to two branches, and none for a commit already checked", async () => {
-  const root = makeTempRepo();
-  const base = seedRepo(root);
-  const { binDir } = writeStubNpm(root);
-  const { runnerLog, artifacts } = installRunner(root);
-  const head = commitFiles(root, { "src/app.ts": "export const one = 5;\n" });
+  const { root, base, binDir, runnerLog, artifacts } = withRunner();
+  const head = commitFiles(root, { "src/app.ts": "export const one = 8;\n" });
 
   const twice = runHook(root, binDir, {}, update(head, base, "refs/heads/one") + update(head, base, "refs/heads/two"));
   assert.equal(twice.status, 0, twice.stderr || twice.stdout);
   assert.equal(dispatched(twice.stdout).length, 1, twice.stdout);
   assert.match(twice.stdout, new RegExp(`skipped ${head} two \\(same commit as one\\)`));
+  land(root, head, "one");
   assert.ok(await waitFor(() => runnerCalls(runnerLog).length === 1));
 
   // A finished run of the commit, as the runners leave it.
@@ -443,7 +524,7 @@ test("pre-push hook starts one check for a commit pushed to two branches, and no
   const again = runHook(root, binDir, {}, update(head, base, "refs/heads/one"));
   assert.equal(again.status, 0, again.stderr || again.stdout);
   assert.match(again.stdout, new RegExp(`skipped ${head} one \\(already checked\\)`));
-  await new Promise((resolve) => setTimeout(resolve, 300));
+  await pause(400);
   assert.equal(runnerCalls(runnerLog).length, 1);
 });
 
@@ -451,9 +532,9 @@ test("pre-push hook lets the push through when the committed check cannot be sta
   const root = makeTempRepo();
   const base = seedRepo(root);
   const { binDir } = writeStubNpm(root);
-  const head = commitFiles(root, { "src/app.ts": "export const one = 6;\n" });
+  const head = commitFiles(root, { "src/app.ts": "export const one = 9;\n" });
 
-  // A checkout without the runner (a bare copy of the hooks, as in the tests above).
+  // A checkout without the runner (a bare copy of the hooks, as in the first tests of this file).
   const noRunner = runHook(root, binDir, {}, update(head, base));
   assert.equal(noRunner.status, 0, noRunner.stderr || noRunner.stdout);
   assert.match(noRunner.stdout, /committed check is not started \(this checkout has no runner\); run: npm run ci:run <sha>/);
@@ -464,6 +545,44 @@ test("pre-push hook lets the push through when the committed check cannot be sta
   const noLog = runHook(root, binDir, { SONDER_PUSH_CI_ARTIFACTS: join(root, "not-a-folder", "ci") }, update(head, base));
   assert.equal(noLog.status, 0, noLog.stderr || noLog.stdout);
   assert.match(noLog.stderr, /not dispatched/);
+});
+
+test("the hooks run from a real commit and a real push, and a rejected push starts no check", async () => {
+  const { root, binDir, runnerLog } = withRunner();
+  writeStubNpx(root);
+  gitIn(root, "config", "core.hooksPath", ".githooks");
+  const git = (...args: string[]) =>
+    spawnSync("git", args, {
+      cwd: root,
+      encoding: "utf8",
+      env: { ...isolatedGitEnv(root), PATH: `${binDir}:${process.env.PATH ?? ""}`, SONDER_PUSH_CI_LAND_INTERVAL: "0.1", SONDER_PUSH_CI_LAND_TIMEOUT: "2" },
+    });
+  const npxLog = join(root, "npx.log");
+
+  // A commit of documentation only: no typecheck. One with code, staged by -a: a typecheck.
+  writeFileSync(join(root, "NOTES.md"), "notes\n");
+  gitIn(root, "add", "NOTES.md");
+  const docsCommit = git("commit", "-m", "notes");
+  assert.equal(docsCommit.status, 0, docsCommit.stderr);
+  assert.equal(existsSync(npxLog), false);
+  writeFileSync(join(root, "src", "app.ts"), "export const one = 10;\n");
+  const codeCommit = git("commit", "-am", "code");
+  assert.equal(codeCommit.status, 0, codeCommit.stderr);
+  assert.deepEqual(readFileSync(npxLog, "utf8").trim().split("\n"), ["tsc --noEmit"]);
+  const head = gitIn(root, "rev-parse", "HEAD");
+
+  // A dry run goes through the hook and sends nothing: no check.
+  const dryRun = git("push", "--dry-run", "origin", "HEAD:refs/heads/work");
+  assert.equal(dryRun.status, 0, dryRun.stderr);
+  assert.match(dryRun.stdout + dryRun.stderr, /when the push has landed/);
+  await pause(2600);
+  assert.deepEqual(runnerCalls(runnerLog), []);
+
+  // The real push: one check, for the commit that landed.
+  const push = git("push", "origin", "HEAD:refs/heads/work");
+  assert.equal(push.status, 0, push.stderr);
+  assert.ok(await waitFor(() => runnerCalls(runnerLog).length === 1));
+  assert.deepEqual(runnerCalls(runnerLog), [`sha=${head} git=[]`]);
 });
 
 test("pre-commit hook runs no typecheck when only documentation is staged", () => {
