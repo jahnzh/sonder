@@ -8,6 +8,7 @@ import {
   coversPage,
   firstPage,
   isFirstPage,
+  keepsScroll,
   parentOf,
   placeOf,
   readAddress,
@@ -17,16 +18,35 @@ import {
   writeAddress,
 } from "./routes";
 
+/**
+ * Something shown over the page that has an entry of its own but no address yet: Now playing (with its reader).
+ * Its entry keeps the page's address and names the sheet in its state; `#listen/<work>` and `#read/<work>` come
+ * with their slice.
+ */
+export type Sheet = "now-playing";
+
 type Entry = {
   route: Route;
-  /** How many of the app's own entries lie behind this one. */
+  /** How many of the app's own entries lie behind this one; 0 when that is not known. */
   depth: number;
   /** Depth of the current place's first page, when it lies behind with only this place's pages after it. */
   root: number | null;
   /** Names the entry for its scroll position. */
   key: string;
+  sheet: Sheet | null;
 };
-type EntryState = { sonderDepth: number; sonderRoot: number | null; sonderKey: string; sonderScroll?: number };
+type EntryState = {
+  sonderDepth: number;
+  sonderRoot: number | null;
+  sonderKey: string;
+  sonderScroll?: number;
+  sonderSheet?: Sheet;
+};
+
+/** How long a Back the app asked for may take to land before the app takes it as one the browser could not make. */
+export const BACK_WAIT_MS = 1000;
+/** How long a returning list may take to grow tall enough for its position; after that nothing is restored. */
+export const RESTORE_WAIT_MS = 5000;
 
 let current: Entry | null = null;
 let admin = false;
@@ -34,15 +54,32 @@ let listening = false;
 const listeners = new Set<() => void>();
 /** Scroll positions of entries left by Back or Forward, whose own state can no longer be written. */
 const scrolls = new Map<string, number>();
-let restoring = 0;
-/** Set while a Back the app asked for is on its way, so a second close before it lands does not go back twice. */
-let leaving: ReturnType<typeof setTimeout> | null = null;
+/** The page shown under any reader or sheet: Back to it leaves its scroll alone, since it was never left. */
+let shownPage: Route | null = null;
+/** history.length as last seen, to tell an entry the browser added on top from an old one reached by Back. */
+let lengthSeen = 0;
+/**
+ * A traversal the app asked for (Back, or back to a place's first page) that has not landed yet. Moves asked for
+ * meanwhile wait for it, so a close followed by a move does not move first and then lose the move to the Back.
+ */
+let pending: { timer: ReturnType<typeof setTimeout>; fallback: () => void; queue: (() => void)[] } | null = null;
+/** Set while the listeners hear of a traversal (Back, Forward, a typed address), not of a move the app made. */
+let traversing = false;
+/** Stops the scroll restoration that is waiting, if any. */
+let stopRestoring: (() => void) | null = null;
 
 const newKey = () => Math.random().toString(36).slice(2, 10);
 const urlOf = (route: Route) => `${location.pathname}${location.search}${writeAddress(route)}`;
+const covers = (entry: Entry) => coversPage(entry.route) || entry.sheet !== null;
 
 function stateOf(entry: Entry, scroll?: number): EntryState {
-  return { sonderDepth: entry.depth, sonderRoot: entry.root, sonderKey: entry.key, ...(scroll === undefined ? {} : { sonderScroll: scroll }) };
+  return {
+    sonderDepth: entry.depth,
+    sonderRoot: entry.root,
+    sonderKey: entry.key,
+    ...(scroll === undefined ? {} : { sonderScroll: scroll }),
+    ...(entry.sheet ? { sonderSheet: entry.sheet } : {}),
+  };
 }
 function entryState(state: unknown): EntryState | null {
   const s = state as Partial<EntryState> | null;
@@ -57,44 +94,133 @@ function rootAfter(from: Entry | null, to: Route, depth: number, kind: "push" | 
 function emit() {
   for (const listener of listeners) listener();
 }
+function show(entry: Entry) {
+  current = entry;
+  if (!covers(entry)) shownPage = entry.route;
+}
+
+function stopRestore() {
+  const stop = stopRestoring;
+  stopRestoring = null;
+  stop?.();
+}
+/**
+ * Returns the page to a saved position once it is tall enough to hold it. Anything the user does meanwhile (a
+ * wheel, a touch, a key, a click) or any other move ends the wait, so it never pulls the page from under them; a
+ * page that does not grow tall enough in time is left alone, since its list is not the one that was left.
+ */
 function restoreScroll(y: number) {
-  const token = ++restoring;
-  const deadline = performance.now() + 2000;
+  stopRestore();
+  if (y <= 0) {
+    window.scrollTo(0, 0);
+    return;
+  }
+  const inputs = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+  const deadline = performance.now() + RESTORE_WAIT_MS;
+  const stop = () => {
+    for (const type of inputs) window.removeEventListener(type, stopRestore, true);
+  };
+  stopRestoring = stop;
+  for (const type of inputs) window.addEventListener(type, stopRestore, { capture: true, passive: true });
   const tick = () => {
-    if (token !== restoring) return;
+    if (stopRestoring !== stop) return;
     const max = document.documentElement.scrollHeight - window.innerHeight;
     // The page under the address renders after the change; wait until it is tall enough to hold the position.
-    if (max >= y || performance.now() > deadline) window.scrollTo(0, Math.max(0, Math.min(y, max)));
+    if (max >= y) {
+      stopRestore();
+      window.scrollTo(0, y);
+    } else if (performance.now() > deadline) stopRestore();
     else requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
 }
+/** After moving to an entry: a page that was left gets its position back; one that stayed under a cover keeps it. */
+function placeScroll(entry: Entry, before: Route | null, saved: number | undefined) {
+  if (covers(entry)) return stopRestore();
+  if (before && sameRoute(before, entry.route)) return stopRestore();
+  if (keepsScroll(entry.route)) restoreScroll(saved ?? 0);
+  else restoreScroll(0);
+}
+
+/** Asks the browser to go `delta` entries; `fallback` runs when it cannot (nothing there), so no button is dead. */
+function traverse(delta: number, fallback: () => void) {
+  const navigation = (globalThis as { navigation?: { canGoBack?: boolean } }).navigation;
+  // Where the browser says so outright (the Navigation API), do not wait for a traversal that cannot happen.
+  if (navigation && navigation.canGoBack === false) return fallback();
+  const timer = setTimeout(() => {
+    const waiting = pending;
+    pending = null;
+    if (!waiting) return;
+    waiting.fallback();
+    for (const run of waiting.queue) run();
+  }, BACK_WAIT_MS);
+  pending = { timer, fallback, queue: [] };
+  history.go(delta);
+}
+/** Runs a move after the traversal on its way; true when it was put off. */
+function afterPending(run: () => void): boolean {
+  if (!pending) return false;
+  pending.queue.push(run);
+  return true;
+}
+/** What lies behind turned out to be nothing of the app's: the entry shows `route` and counts from 0. */
+function replaceAtStart(route: Route) {
+  const entry: Entry = { route, depth: 0, root: isFirstPage(route) ? 0 : null, key: newKey(), sheet: null };
+  const before = shownPage;
+  show(entry);
+  history.replaceState(stateOf(entry), "", urlOf(route));
+  emit();
+  if (!covers(entry) && !(before && sameRoute(before, route))) restoreScroll(0);
+}
 
 function onPopState(event: PopStateEvent) {
-  if (leaving) clearTimeout(leaving);
-  leaving = null;
+  const waiting = pending;
+  if (waiting) clearTimeout(waiting.timer);
+  pending = null;
   if (!current) return;
   // Scroll restoration is manual, so the page still stands where the entry being left had it.
   scrolls.set(current.key, window.scrollY);
   const route = resolve(readAddress(location.hash), { admin });
   const saved = entryState(event.state);
+  // An entry without the app's state: one the browser added on top (a link, a typed address) makes the history
+  // longer. Otherwise it is an old one reached by Back or Forward (an older build's, a typed one): what lies behind
+  // it is not known, so its back button goes to its parent rather than out of the app or nowhere.
+  const added = history.length > lengthSeen;
+  const depth = saved ? saved.sonderDepth : added ? current.depth + 1 : 0;
   const entry: Entry = saved
-    ? { route, depth: saved.sonderDepth, root: saved.sonderRoot, key: saved.sonderKey }
-    : // An address the app did not write (a link, a typed address): the browser added an entry on top.
-      { route, depth: current.depth + 1, root: rootAfter(current, route, current.depth + 1, "push"), key: newKey() };
-  current = entry;
+    ? { route, depth, root: saved.sonderRoot, key: saved.sonderKey, sheet: saved.sonderSheet ?? null }
+    : {
+        route,
+        depth,
+        root: added ? rootAfter(current, route, depth, "push") : isFirstPage(route) ? 0 : null,
+        key: newKey(),
+        sheet: null,
+      };
+  const before = shownPage;
+  show(entry);
   if (!saved || writeAddress(route) !== location.hash) history.replaceState(stateOf(entry), "", urlOf(route));
-  emit();
-  if (!coversPage(route)) restoreScroll(scrolls.get(entry.key) ?? saved?.sonderScroll ?? 0);
+  lengthSeen = history.length;
+  traversing = true;
+  try {
+    emit();
+  } finally {
+    traversing = false;
+  }
+  placeScroll(entry, before, scrolls.get(entry.key) ?? saved?.sonderScroll);
+  if (waiting) for (const run of waiting.queue) run();
 }
 function onPageHide() {
+  // A Back the app asked for that left the document: if the page comes back from the cache, nothing is waiting.
+  if (pending) clearTimeout(pending.timer);
+  pending = null;
   if (current) history.replaceState(stateOf(current, window.scrollY), "");
 }
 
 /**
  * Reads the address the page was opened on, for a signed-in user: called by the shell before it renders a page.
  * An address that names nothing, a page not built yet or another user's administrator page is replaced by
- * what it shows. A reload keeps its entry's depth, so the back button still knows what lies behind.
+ * what it shows. A reload keeps its entry's depth, so the back button still knows what lies behind; a reload
+ * with Now playing open shows the page without it, back on the page's own entry.
  */
 export function startNavigation(options: { admin: boolean }) {
   admin = options.admin;
@@ -106,17 +232,24 @@ export function startNavigation(options: { admin: boolean }) {
     depth,
     root: isFirstPage(route) ? depth : saved ? saved.sonderRoot : null,
     key: saved?.sonderKey ?? newKey(),
+    sheet: null,
   };
   const first = !current;
-  current = entry;
+  show(entry);
   if (!saved || writeAddress(route) !== location.hash) history.replaceState(stateOf(entry), "", urlOf(route));
+  lengthSeen = history.length;
   if (!listening) {
     listening = true;
     history.scrollRestoration = "manual";
     window.addEventListener("popstate", onPopState);
     window.addEventListener("pagehide", onPageHide);
   }
-  if (first && saved?.sonderScroll) restoreScroll(saved.sonderScroll);
+  if (saved?.sonderSheet) {
+    // The sheet's entry lies on the page's own: go back to that one, so Back afterwards does not show this page
+    // again. The sheet's entry stays ahead, for Forward.
+    if (depth > 0) traverse(-1, () => replaceAtStart(route));
+    else history.replaceState(stateOf(entry), "");
+  } else if (first && saved?.sonderScroll && keepsScroll(route) && !covers(entry)) restoreScroll(saved.sonderScroll);
   emit();
 }
 function ensure(): Entry {
@@ -126,22 +259,28 @@ function ensure(): Entry {
 
 /** Moves to a route: adds an entry or replaces the current one as routes.step says, or as asked. */
 export function navigate(to: Route, options: { replace?: boolean } = {}) {
+  if (afterPending(() => navigate(to, options))) return;
   const from = ensure();
   const route = resolve(to, { admin });
+  // Over a sheet, the page the sheet covers is already there: closing the sheet is the move.
+  if (from.sheet && sameRoute(from.route, route) && !options.replace) return closeSheet(from.sheet);
   const kind = options.replace ? "replace" : step(from.route, route);
   if (kind === "none") return;
+  stopRestore();
   if (kind === "push") {
     // The entry being left keeps its scroll position for Back, in its own state so a reload keeps it too.
     scrolls.set(from.key, window.scrollY);
     history.replaceState(stateOf(from, window.scrollY), "");
     const depth = from.depth + 1;
-    current = { route, depth, root: rootAfter(from, route, depth, "push"), key: newKey() };
-    history.pushState(stateOf(current), "", urlOf(route));
-    restoring++;
-    if (!coversPage(route)) window.scrollTo(0, 0);
+    const entry: Entry = { route, depth, root: rootAfter(from, route, depth, "push"), key: newKey(), sheet: null };
+    const before = shownPage;
+    show(entry);
+    history.pushState(stateOf(entry), "", urlOf(route));
+    lengthSeen = history.length;
+    if (!covers(entry) && !(before && sameRoute(before, route))) window.scrollTo(0, 0);
   } else {
-    current = { route, depth: from.depth, root: rootAfter(from, route, from.depth, "replace"), key: newKey() };
-    history.replaceState(stateOf(current), "", urlOf(route));
+    show({ route, depth: from.depth, root: rootAfter(from, route, from.depth, "replace"), key: newKey(), sheet: null });
+    history.replaceState(stateOf(current!), "", urlOf(route));
   }
   emit();
 }
@@ -149,11 +288,10 @@ export function navigate(to: Route, options: { replace?: boolean } = {}) {
 /** A page's own back button: back in history, or to the page's parent when no entry of the app lies behind. */
 export function goBack(fallback?: Route) {
   const entry = ensure();
-  if (leaving) return;
-  if (entry.depth > 0) {
-    leaving = setTimeout(() => (leaving = null), 1000);
-    history.back();
-  } else navigate(fallback ?? parentOf(entry.route) ?? firstPage(placeOf(entry.route)), { replace: true });
+  if (pending) return;
+  const parent = () => fallback ?? parentOf(entry.route) ?? firstPage(placeOf(entry.route));
+  if (entry.depth > 0) traverse(-1, () => replaceAtStart(parent()));
+  else navigate(parent(), { replace: true });
 }
 
 /**
@@ -161,13 +299,36 @@ export function goBack(fallback?: Route) {
  * back to it when it lies behind, otherwise by moving there.
  */
 export function goPlace(place: Place) {
+  if (afterPending(() => goPlace(place))) return;
   const entry = ensure();
   const first = firstPage(place);
   if (placeOf(entry.route) === place && !sameRoute(entry.route, first) && entry.root !== null && entry.root < entry.depth) {
-    history.go(entry.root - entry.depth);
+    traverse(entry.root - entry.depth, () => replaceAtStart(first));
     return;
   }
   navigate(first);
+}
+
+/** Opens a sheet over the current page with an entry of its own, so Back closes it. */
+export function openSheet(sheet: Sheet) {
+  if (afterPending(() => openSheet(sheet))) return;
+  const from = ensure();
+  if (from.sheet === sheet) return;
+  stopRestore();
+  scrolls.set(from.key, window.scrollY);
+  history.replaceState(stateOf(from, window.scrollY), "");
+  const entry: Entry = { route: from.route, depth: from.depth + 1, root: from.root, key: newKey(), sheet };
+  show(entry);
+  history.pushState(stateOf(entry), "", urlOf(entry.route));
+  lengthSeen = history.length;
+  emit();
+}
+/** Closes a sheet with its own control: back to the page's entry, or in place when none of the app's lies behind. */
+export function closeSheet(sheet: Sheet) {
+  const entry = ensure();
+  if (pending || entry.sheet !== sheet) return;
+  if (entry.depth > 0) traverse(-1, () => replaceAtStart(entry.route));
+  else replaceAtStart(entry.route);
 }
 
 function subscribe(listener: () => void) {
@@ -180,4 +341,33 @@ const snapshot = () => ensure();
 export function useAddress() {
   const entry = useSyncExternalStore(subscribe, snapshot);
   return { route: entry.route, canGoBack: entry.depth > 0, navigate, goBack, goPlace };
+}
+/** The sheet the current entry shows, for code outside React. */
+export function shownSheet(): Sheet | null {
+  return ensure().sheet;
+}
+/** Whether a sheet is open, and opening or closing it through the history. */
+export function useSheet(sheet: Sheet) {
+  const entry = useSyncExternalStore(subscribe, snapshot);
+  return {
+    open: entry.sheet === sheet,
+    setOpen: (open: boolean) => (open ? openSheet(sheet) : closeSheet(sheet)),
+  };
+}
+/**
+ * Calls `listener` after Back, Forward or any other traversal of the history changed the page under any cover,
+ * with the page now shown. The shell closes its dialogs then: they belonged to the page that was left.
+ */
+export function onPageLeftByHistory(listener: (page: Route) => void) {
+  let last = shownPage;
+  const check = () => {
+    const now = shownPage;
+    const changed = now && last && !sameRoute(now, last);
+    last = now;
+    if (changed && traversing) listener(now);
+  };
+  listeners.add(check);
+  return () => {
+    listeners.delete(check);
+  };
 }

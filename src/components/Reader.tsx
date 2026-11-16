@@ -43,7 +43,7 @@ import { createReaderFollowing, type DeferredReturn, type NarrationReturn, type 
 import { mapIdentityOf } from "../alignment-map-lifecycle";
 import { currentChapter, playbackTimeline } from "../chapters";
 import { usePlayer, type SeekTarget } from "../player";
-import { api, forgetPositionHistory, localDB } from "../lib";
+import { ApiError, api, forgetPositionHistory, localDB } from "../lib";
 import {
   loadReader,
   epubFile,
@@ -263,6 +263,12 @@ export function ReaderHost({
           books={books}
           notify={notify}
           onClose={close}
+          onGone={() => {
+            // An old link or bookmark to an ebook that is gone: the Library, in the reader's place (or the page
+            // the reader was opened over), rather than an empty reader.
+            notify("That ebook is no longer in your library.", true);
+            close();
+          }}
         />
       )}
     </Dialog>
@@ -276,12 +282,15 @@ export function ReaderView({
   books,
   notify,
   onClose,
+  onGone,
 }: {
   id: string;
   fromAudio: boolean;
   inline?: boolean;
   recordingId?: string;
   onClose?: () => void;
+  /** The server says the ebook is gone and no copy of it is on this device. */
+  onGone?: () => void;
   books: Book[];
   notify: (text: string, error?: boolean) => void;
 }) {
@@ -449,7 +458,9 @@ export function ReaderView({
       setConflict(state?.conflict || null);
       setOffline(!!(await cachedEpub(id, value.fingerprint)));
     } catch (error) {
-      setError((error as Error).message);
+      // Only a confirmed "not found" means gone; offline, with no copy here, keeps the reader's message.
+      if (error instanceof ApiError && error.status === 404 && onGone) onGone();
+      else setError((error as Error).message);
     } finally {
       setLoading(false);
     }

@@ -82,7 +82,7 @@ import { DownloadsPage } from "./pages/downloads-page";
 import { ActivityPage } from "./pages/activity-page";
 import { SettingsPage } from "./pages/settings-page";
 import { firstPage, writeAddress, type Place, type Route } from "./routes";
-import { startNavigation, useAddress } from "./navigation";
+import { onPageLeftByHistory, startNavigation, useAddress } from "./navigation";
 type Notice = { text: string; error?: boolean };
 const nav = [
   { id: "library", label: "My library", icon: Library },
@@ -178,7 +178,13 @@ function LibraryApp({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const activityAttention = useActivityAttention(user.role === "admin");
-  const [query, setQuery] = useState("");
+  // The search field searches the page it is on. The Library's search is one of its filters and is remembered
+  // with them (#455); Discover's goes with its results when the page is left.
+  const [queries, setQueries] = useState({ library: "", discover: "", other: "" });
+  const queryOf = page === "library" || page === "discover" ? page : "other";
+  const query = queries[queryOf];
+  const setQuery = (value: string) => setQueries((q) => ({ ...q, [queryOf]: value }));
+  const setDiscoverQuery = (value: string) => setQueries((q) => ({ ...q, discover: value }));
   const [filter, setFilter] = useState("All books");
   const [hardcoverFilter, setHardcoverFilter] = useState<HardcoverFilter>({
     shelf: "all",
@@ -308,15 +314,32 @@ function LibraryApp({
     const timer = setTimeout(() => setNotice(null), 5000);
     return () => clearTimeout(timer);
   }, [notice]);
+  // The Library's shelf, list, Favorites, status filter and search are remembered when it is left (#455), so the
+  // list Back returns to is the one its scroll position belongs to.
   const leavePage = (p: Page) => {
     setEbookTarget(null);
     setAudioTarget(null);
-    setHardcoverFilter({ shelf: "all", list: "all" });
-    setQuery("");
+    setQueries((q) => ({ library: q.library, discover: "", other: "" }));
     setSidebarOpen(false);
-    setShowFavorites(false);
     if (p === "library" || p === "discover") void refresh();
   };
+  // Back (or any traversal) that changes the page closes the shell's dialogs and confirms nothing: they belonged
+  // to the page that was left. A task they started that ends later does not move the user from the page now shown.
+  const leftByHistory = useRef(0);
+  const importOpenNow = useRef(importOpen);
+  importOpenNow.current = importOpen;
+  useEffect(
+    () =>
+      onPageLeftByHistory(() => {
+        leftByHistory.current++;
+        setDetail(null);
+        setMediaTarget(null);
+        setSeriesTarget(null);
+        setImportOpen(false);
+        setSidebarOpen(false);
+      }),
+    [],
+  );
   // Opening a page from a flow (a link, a finished task): adds an entry.
   const navigate = (p: Page) => {
     leavePage(p);
@@ -452,7 +475,7 @@ function LibraryApp({
     b.tracks.length > 0 &&
     b.tracks.every((t) => downloads.some((d) => d.trackId === t.id));
   let visible = (page === "discover" ? books : libraryBooks)
-    .filter((b) => !showFavorites || favorites.includes(b.id))
+    .filter((b) => page !== "library" || !showFavorites || favorites.includes(b.id))
     .filter(
       (b) =>
         !query ||
@@ -483,7 +506,7 @@ function LibraryApp({
     setDetail(null);
     navigate("discover");
     setAudioTarget(b);
-    setQuery(b.title);
+    setDiscoverQuery(b.title);
   };
   visible.sort((a, b) =>
     sort === "title"
@@ -531,8 +554,12 @@ function LibraryApp({
                 key={n.id}
                 className={page === n.id ? "selected" : ""}
                 onClick={() => {
+                  // Like the tab of the current place: on the Library, its own item shows every book again.
+                  if (n.id === "library" && page === "library") {
+                    setShowFavorites(false);
+                    setFilter("All books");
+                  }
                   switchPlace(n.id);
-                  setFilter("All books");
                 }}
               >
                 <n.icon size={20} strokeWidth={1.65} />
@@ -569,6 +596,7 @@ function LibraryApp({
               }
               onClick={() => {
                 switchPlace("library");
+                setShowFavorites(false);
                 setFilter("Finished");
               }}
             >
@@ -842,12 +870,13 @@ function LibraryApp({
           }}
           notify={notify}
           onKeepServer={() => {
+            const left = leftByHistory.current;
             if (detail)
               void api(`/books/${detail.id}/keep`, { method: "POST" })
                 .then(() => {
                   notify("Saving the audio to your server’s HDD.");
                   setDetail(null);
-                  navigate("downloads");
+                  if (left === leftByHistory.current) navigate("downloads");
                 })
                 .catch((e) => notify(e.message, true));
           }}
@@ -857,7 +886,7 @@ function LibraryApp({
               setDetail(null);
               navigate("discover");
               setEbookTarget(target);
-              setQuery(`${target.title} ${target.author}`);
+              setDiscoverQuery(`${target.title} ${target.author}`);
             }
           }}
           book={
@@ -879,9 +908,10 @@ function LibraryApp({
           onSaved={() => { setSeriesRevision((value) => value + 1); void refresh(); notify("Series saved."); }} />
         <ImportDialog
           onQueued={() => {
+            const shown = importOpenNow.current;
             setImportOpen(false);
             void refresh();
-            navigate("downloads");
+            if (shown) navigate("downloads");
           }}
           open={importOpen}
           onClose={() => setImportOpen(false)}

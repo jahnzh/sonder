@@ -188,6 +188,15 @@ export function coversPage(route: Route): boolean {
   return ["get", "series-add", "listen", "read", "reader"].includes(route.name);
 }
 
+/**
+ * Whether Back may return this page to where it was scrolled: its list is shown again as it was left. Discover's
+ * search results live in the page and are gone once it is left (they come back with the Discover slice), so an
+ * old offset would point into another list: it starts at its top instead.
+ */
+export function keepsScroll(route: Route): boolean {
+  return route.name !== "discover";
+}
+
 export function sameRoute(a: Route, b: Route): boolean {
   return writeAddress(a) === writeAddress(b);
 }

@@ -69,6 +69,9 @@ class FakeBrowser {
       addEventListener: (type: string, listener: (event: { state: unknown }) => void) => {
         self.listeners.set(type, [...(self.listeners.get(type) ?? []), listener]);
       },
+      removeEventListener: (type: string, listener: (event: { state: unknown }) => void) => {
+        self.listeners.set(type, (self.listeners.get(type) ?? []).filter((each) => each !== listener));
+      },
     };
     g.document = { documentElement: { get scrollHeight() { return self.scrollHeight; } } };
     g.requestAnimationFrame = (callback: () => void) => setTimeout(() => live === self && callback(), 0);
@@ -246,4 +249,198 @@ test("closing twice before the first Back lands goes back one step", async () =>
   await settle();
   assert.equal(browser.url.hash, "#library");
   assert.equal(browser.index, 1);
+});
+
+/** A browser whose history already holds these entries, standing on the last one (as after a reload or an upgrade). */
+function browserWith(entries: Entry[], index = entries.length - 1) {
+  const browser = new FakeBrowser(entries[0].url, entries[0].state);
+  browser.entries = entries.map((entry) => ({ ...entry }));
+  browser.index = index;
+  return browser;
+}
+const state = (depth: number, key: string, extra: Record<string, unknown> = {}) => ({ sonderDepth: depth, sonderRoot: null, sonderKey: key, ...extra });
+
+test("an old entry without the app's state reached by Back is not taken as one on top: its back button goes to its parent", async () => {
+  // An older build: a reader opened by a link (another site behind it), closed forward to Discover; this build loads there.
+  const browser = browserWith([{ url: "/#reader/e1", state: null }, { url: "/#discover", state: null }]);
+  const nav = await load(browser);
+  browser.traverse(-1);
+  await until(() => browser.index === 0 && browser.url.hash === "#reader/e1", "the old reader entry");
+  await settle();
+  assert.equal((browser.entries[0].state as { sonderDepth: number }).sonderDepth, 0);
+  // Nothing of the app is known to lie behind it: Close shows the Library in its place instead of leaving the app.
+  nav.goBack();
+  await settle();
+  assert.deepEqual(browser.hashes, ["#library", "#discover"]);
+  assert.equal(browser.index, 0);
+});
+
+test("a back button whose Back lands nowhere goes to the page's parent, and counts from there", async () => {
+  // The entries behind this reader were thrown away (Firefox keeps 50), but its state still says two lie behind.
+  const browser = browserWith([{ url: "/#reader/e1", state: state(2, "r") }]);
+  const nav = await load(browser);
+  nav.goBack();
+  await settle();
+  assert.equal(browser.url.hash, "#reader/e1", "it waits for the Back first");
+  const hash = () => browser.url.hash;
+  for (let i = 0; i < 100 && hash() !== "#library"; i++) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(browser.url.hash, "#library");
+  assert.equal(browser.entries.length, 1);
+  assert.equal((browser.entries[0].state as { sonderDepth: number }).sonderDepth, 0);
+});
+
+test("where the browser says there is nothing behind (the Navigation API), the back button goes to the parent at once", async () => {
+  const browser = browserWith([{ url: "/#reader/e1", state: state(3, "r") }]);
+  const nav = await load(browser);
+  const g = globalThis as Record<string, unknown>;
+  g.navigation = { canGoBack: false };
+  try {
+    nav.goBack();
+    assert.equal(browser.url.hash, "#library");
+  } finally {
+    delete g.navigation;
+  }
+});
+
+test("a scroll restoration that waits stops when the user scrolls, touches or types", async () => {
+  for (const input of ["wheel", "touchstart", "pointerdown", "keydown"]) {
+    const browser = new FakeBrowser("/#library");
+    const nav = await load(browser);
+    browser.scrollY = 3000;
+    nav.goPlace("settings");
+    browser.scrollHeight = 1000;
+    nav.goBack();
+    await until(() => browser.url.hash === "#library", "#library");
+    await settle();
+    browser.scrollY = 100;
+    browser.dispatch(input, { state: null });
+    browser.scrollHeight = 5000;
+    await settle();
+    await settle();
+    assert.equal(browser.scrollY, 100, `${input} ends the wait`);
+  }
+});
+
+test("a scroll restoration that waits never runs on a reader reached by Forward", async () => {
+  const browser = browserWith([
+    { url: "/#library", state: state(0, "l", { sonderRoot: 0, sonderScroll: 1200 }) },
+    { url: "/#reader/e1", state: state(1, "r", { sonderRoot: 0 }) },
+  ]);
+  await load(browser);
+  browser.scrollHeight = 1000;
+  browser.traverse(-1);
+  await until(() => browser.url.hash === "#library", "#library");
+  await settle();
+  browser.traverse(1);
+  await until(() => browser.url.hash === "#reader/e1", "#reader/e1");
+  browser.scrollHeight = 5000;
+  await settle();
+  await settle();
+  assert.equal(browser.scrollY, 0);
+});
+
+test("a list that does not grow back in time is left alone rather than set to a wrong offset", async () => {
+  const browser = new FakeBrowser("/#library");
+  const nav = await load(browser);
+  browser.scrollY = 3000;
+  nav.goPlace("settings");
+  browser.scrollHeight = 1000;
+  nav.goBack();
+  await until(() => browser.url.hash === "#library", "#library");
+  const restore = await import("../src/navigation.ts");
+  await new Promise((resolve) => setTimeout(resolve, restore.RESTORE_WAIT_MS + 100));
+  assert.equal(browser.scrollY, 0);
+  browser.scrollHeight = 5000;
+  await settle();
+  assert.equal(browser.scrollY, 0);
+});
+
+test("Discover starts at its top after Back: its results are gone, so an old offset would point into another list", async () => {
+  const browser = new FakeBrowser("/#discover");
+  const nav = await load(browser);
+  browser.scrollY = 900;
+  nav.goPlace("library");
+  browser.scrollY = 400;
+  nav.goBack();
+  await until(() => browser.url.hash === "#discover", "#discover");
+  await settle();
+  assert.equal(browser.scrollY, 0);
+});
+
+test("Now playing has an entry of its own: Back closes it and leaves the page where it was", async () => {
+  const browser = new FakeBrowser("/#library");
+  const nav = await load(browser);
+  browser.scrollY = 900;
+  nav.openSheet("now-playing");
+  assert.equal(nav.shownSheet(), "now-playing");
+  // It keeps the page's address and names itself in its state.
+  assert.deepEqual(browser.hashes, ["#library", "#library"]);
+  assert.equal((browser.entries[1].state as { sonderSheet?: string }).sonderSheet, "now-playing");
+  assert.equal(browser.scrollY, 900);
+  nav.openSheet("now-playing");
+  assert.equal(browser.entries.length, 2, "opening it again adds nothing");
+  browser.traverse(-1);
+  await until(() => browser.index === 0, "the page's entry");
+  await settle();
+  assert.equal(nav.shownSheet(), null);
+  assert.equal(browser.scrollY, 900);
+  // Forward opens it again.
+  browser.traverse(1);
+  await until(() => nav.shownSheet() === "now-playing", "Forward");
+});
+
+test("closing Now playing with its own control goes back, and a move asked for right after waits for that Back", async () => {
+  const browser = new FakeBrowser("/#library");
+  const nav = await load(browser);
+  nav.openSheet("now-playing");
+  nav.closeSheet("now-playing");
+  // "Manage device downloads": close, then open Downloads in the same moment.
+  nav.navigate({ name: "downloads" });
+  await until(() => browser.url.hash === "#downloads", "#downloads");
+  await settle();
+  assert.deepEqual(browser.hashes, ["#library", "#downloads"]);
+  assert.equal(nav.shownSheet(), null);
+  nav.goBack();
+  await until(() => browser.url.hash === "#library" && browser.index === 0, "#library");
+});
+
+test("a reload with Now playing open shows the page without it, on the page's own entry", async () => {
+  const browser = new FakeBrowser("/#library");
+  let nav = await load(browser);
+  nav.goPlace("discover");
+  nav.openSheet("now-playing");
+  nav = await load(browser);
+  assert.equal(nav.shownSheet(), null);
+  await until(() => browser.index === 1, "the page's entry");
+  assert.equal(browser.url.hash, "#discover");
+  nav.goBack();
+  await until(() => browser.url.hash === "#library", "#library");
+});
+
+test("a sheet opened on the first entry closes back to that entry", async () => {
+  const browser = browserWith([{ url: "/#library", state: state(0, "l", { sonderRoot: 0 }) }]);
+  const nav = await load(browser);
+  // Its entry is pushed, so it always has the page's entry behind it; closing it there goes back to it.
+  nav.openSheet("now-playing");
+  nav.closeSheet("now-playing");
+  await until(() => browser.index === 0, "the page's entry");
+  assert.equal(nav.shownSheet(), null);
+});
+
+test("the shell hears of a page left by Back or Forward, not of its own moves or of a reader closing", async () => {
+  const browser = new FakeBrowser("/#library");
+  const nav = await load(browser);
+  const heard: string[] = [];
+  nav.onPageLeftByHistory((page) => heard.push(page.name));
+  nav.goPlace("discover");
+  nav.navigate({ name: "reader", ebookId: "e1" });
+  assert.deepEqual(heard, []);
+  nav.goBack();
+  await until(() => browser.url.hash === "#discover", "#discover");
+  await settle();
+  assert.deepEqual(heard, [], "the reader covered Discover, which stayed");
+  browser.traverse(-1);
+  await until(() => browser.url.hash === "#library", "#library");
+  await settle();
+  assert.deepEqual(heard, ["library"]);
 });
