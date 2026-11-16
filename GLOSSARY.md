@@ -8,7 +8,20 @@ A self-hosted audiobook player with a built-in ebook reader that follows the nar
 An ordered group of related works.
 
 **Saved series**:
-A series a user has added to their library for ongoing reference, independently of the individual works they have added.
+A series a user has added to their library for ongoing reference, independently of the individual works they have added. Its list follows Hardcover: a work Hardcover adds later is marked new. Removing it keeps its works in the library unless the administrator also removes the works it added.
+_Avoid_: Followed series, series selection
+
+**Related work**:
+A work Hardcover lists in a series without a number, such as a companion or a collection. It is shown after the numbered works and does not count towards how many of the series are finished.
+_Avoid_: Unnumbered work, extra
+
+**New in a series**:
+A work Hardcover added to a saved series after the user last reviewed it. It stays marked until the user dismisses the marks or adds a work from the series.
+_Avoid_: Unseen work
+
+**Added with a series**:
+A work that came into a user's library when they saved a series or added a work from it, as opposed to one added on its own or from Hardcover's shelves. Only these are offered for removal together with the series.
+_Avoid_: Introduced
 
 **Work**:
 A book as an abstract title, independent of any edition, recording or file. A user's library is made of works, whether a work has an audio edition, an ebook edition, both or neither yet.
