@@ -15,21 +15,28 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { tempDir } from "./temp-dir.ts";
+
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-function gitIn(cwd: string, ...args: string[]) {
+/** The caller's environment without its GIT_ variables and git configuration: git in `home` answers for `home` alone. */
+function isolatedGitEnv(home: string) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
+  return { ...env, HOME: home, XDG_CONFIG_HOME: home, GIT_CONFIG_NOSYSTEM: "1" };
+}
+
+function gitIn(cwd: string, ...args: string[]) {
   const result = spawnSync("git", args, {
     cwd,
     encoding: "utf8",
-    env: { ...env, HOME: cwd, XDG_CONFIG_HOME: cwd, GIT_CONFIG_NOSYSTEM: "1" },
+    env: isolatedGitEnv(cwd),
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   return result.stdout.trim();
 }
 
 function makeTempRepo() {
-  const root = mkdtempSync(join(tmpdir(), "sonder-git-hooks-"));
+  const root = tempDir("sonder-git-hooks-");
   mkdirSync(join(root, ".githooks"), { recursive: true });
   for (const hook of ["pre-push", "pre-commit"]) {
     cpSync(join(repoRoot, ".githooks", hook), join(root, ".githooks", hook));
@@ -51,29 +58,12 @@ echo "$*" >> ${JSON.stringify(logPath)}
 if [[ "$1" == "run" && "$2" == "build" ]]; then
   exit "\${SONDER_STUB_BUILD_EXIT:-0}"
 fi
-if [[ "$1" == "test" ]]; then
-  if [[ -n "\${SONDER_STUB_TEST_HANG:-}" ]]; then
-    sleep 86400 &
-    echo $! > "\${SONDER_STUB_TEST_HANG_PID_FILE:?SONDER_STUB_TEST_HANG_PID_FILE must be set}"
-    wait
-  fi
-  exit "\${SONDER_STUB_TEST_EXIT:-0}"
-fi
 echo "unexpected npm invocation: $*" >&2
 exit 1
 `,
     { mode: 0o755 },
   );
   return { binDir, logPath };
-}
-
-function isProcessAlive(pid: number) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function runHook(
@@ -87,13 +77,39 @@ function runHook(
     encoding: "utf8",
     input: stdin,
     env: {
-      ...process.env,
+      // The hook asks git what is pushed; a GIT_ variable of the caller (a hook that runs these tests) must not answer for it.
+      ...isolatedGitEnv(root),
       // A skip variable set in the caller's shell must not decide these tests.
       SONDER_SKIP_PREPUSH: undefined,
       ...env,
       PATH: `${binDir}:${process.env.PATH ?? ""}`,
     },
   });
+}
+
+const ZERO = "0".repeat(40);
+/** One ref update as git sends it to the hook. */
+const update = (local: string, remote: string, ref = "refs/heads/work") => `${ref} ${local} ${ref} ${remote}\n`;
+const npmCalls = (logPath: string) => (existsSync(logPath) ? readFileSync(logPath, "utf8").trim().split("\n") : []);
+
+/** One commit on main, which the remote has too. Returns that commit. */
+function seedRepo(root: string) {
+  gitIn(root, "symbolic-ref", "HEAD", "refs/heads/main");
+  gitIn(root, "config", "user.name", "Test");
+  gitIn(root, "config", "user.email", "test@example.test");
+  const base = commitFiles(root, { "src/app.ts": "export const one = 1;\n" }, "base");
+  gitIn(root, "update-ref", "refs/remotes/origin/main", base);
+  return base;
+}
+
+function commitFiles(root: string, files: Record<string, string>, message = "change") {
+  for (const [path, content] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), content);
+    gitIn(root, "add", path);
+  }
+  gitIn(root, "commit", "-qm", message);
+  return gitIn(root, "rev-parse", "HEAD");
 }
 
 function writeStubNpx(root: string) {
@@ -134,173 +150,178 @@ function runPreCommit(
   });
 }
 
-test("pre-push hook allows push when build and unit tests pass", () => {
+/** A seeded repository with the hook and a stub npm; its folder is removed when this file's process ends. */
+function withRepo(run: (context: { root: string; base: string; binDir: string; logPath: string }) => void) {
   const root = makeTempRepo();
-  try {
-    const { binDir, logPath } = writeStubNpm(root);
-    const result = runHook(root, binDir, {
-      SONDER_STUB_BUILD_EXIT: "0",
-      SONDER_STUB_TEST_EXIT: "0",
-    });
+  const base = seedRepo(root);
+  run({ root, base, ...writeStubNpm(root) });
+}
+
+test("pre-push hook runs the build, and not the unit suite, when code is pushed", () => {
+  withRepo(({ root, base, binDir, logPath }) => {
+    const head = commitFiles(root, { "src/app.ts": "export const one = 2;\n" });
+    const result = runHook(root, binDir, {}, update(head, base));
     assert.equal(result.status, 0, result.stderr || result.stdout);
-    // Both commands must have run, in this order.
-    assert.deepEqual(readFileSync(logPath, "utf8").trim().split("\n"), ["run build", "test"]);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+    // The stub fails on "npm test", so a hook that still ran the unit suite would be blocked here.
+    assert.deepEqual(npmCalls(logPath), ["run build"]);
+  });
 });
 
-test("pre-push isolates a git fixture from the pushing repository and every GIT_ variable", () => {
-  const root = makeTempRepo();
-  try {
-    const pushingRepo = join(root, "pushing-repo");
-    const fixtureRepo = join(root, "fixture-repo");
-    const binDir = join(root, "bin");
-    const envFile = join(root, "test-env.json");
-    for (const dir of [pushingRepo, fixtureRepo, binDir]) mkdirSync(dir);
-
-    gitIn(pushingRepo, "init");
-    gitIn(pushingRepo, "config", "user.name", "Original User");
-    gitIn(pushingRepo, "config", "user.email", "original@example.test");
-    writeFileSync(join(pushingRepo, "original.txt"), "original content\n");
-    gitIn(pushingRepo, "add", "original.txt");
-    gitIn(pushingRepo, "commit", "-m", "original");
-    const before = {
-      head: gitIn(pushingRepo, "rev-parse", "HEAD"),
-      status: gitIn(pushingRepo, "status", "--porcelain"),
-      config: readFileSync(join(pushingRepo, ".git", "config")),
-      index: readFileSync(join(pushingRepo, ".git", "index")),
-      content: readFileSync(join(pushingRepo, "original.txt"), "utf8"),
-    };
-
-    writeFileSync(join(binDir, "npm"), `#!/usr/bin/env bash
-set -eu
-if [[ "$1" == "run" && "$2" == "build" ]]; then exit 0; fi
-[[ "$1" == "test" ]]
-node -e 'require("fs").writeFileSync(process.env.TEST_ENV_FILE, JSON.stringify({ git: Object.keys(process.env).filter((key) => key.startsWith("GIT_")), keep: process.env.TEST_KEEP }))'
-cd "$TEST_FIXTURE_REPO"
-git init
-git config user.name Fixture
-git config user.email fixture@example.test
-printf 'fixture content\\n' > fixture.txt
-git add fixture.txt
-git commit -m fixture
-`, { mode: 0o755 });
-
-    const result = runHook(root, binDir, {
-      HOME: root,
-      XDG_CONFIG_HOME: root,
-      GIT_DIR: join(pushingRepo, ".git"),
-      GIT_WORK_TREE: pushingRepo,
-      GIT_INDEX_FILE: join(pushingRepo, ".git", "index"),
-      GIT_CONFIG_COUNT: "1",
-      GIT_CONFIG_KEY_0: "user.name",
-      GIT_CONFIG_VALUE_0: "Injected Name",
-      GIT_FUTURE_TEST_VARIABLE: "must disappear",
-      "GIT_FUTURE.TEST_VARIABLE": "must also disappear",
-      TEST_ENV_FILE: envFile,
-      TEST_FIXTURE_REPO: fixtureRepo,
-      TEST_KEEP: "preserved\nGIT_DECOY=part of a value",
+test("pre-push hook runs nothing when only documentation is pushed", () => {
+  withRepo(({ root, base, binDir, logPath }) => {
+    const head = commitFiles(root, {
+      "docs/adr/0001-a-decision.md": "# A decision\n",
+      "docs/agents/policy.json": "{}\n",
+      "README.md": "# Readme\n",
+      "tests/e2e/prototype/README.md": "# Notes\n",
     });
+    const result = runHook(root, binDir, {}, update(head, base));
     assert.equal(result.status, 0, result.stderr || result.stdout);
-    assert.deepEqual(JSON.parse(readFileSync(envFile, "utf8")), {
-      git: [], keep: "preserved\nGIT_DECOY=part of a value",
-    });
-    assert.equal(gitIn(fixtureRepo, "log", "-1", "--format=%s"), "fixture");
-    assert.equal(gitIn(pushingRepo, "rev-parse", "HEAD"), before.head);
-    assert.equal(gitIn(pushingRepo, "status", "--porcelain"), before.status);
-    assert.deepEqual(readFileSync(join(pushingRepo, ".git", "config")), before.config);
-    assert.deepEqual(readFileSync(join(pushingRepo, ".git", "index")), before.index);
-    assert.equal(readFileSync(join(pushingRepo, "original.txt"), "utf8"), before.content);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+    assert.match(result.stdout, /only documentation is pushed/);
+    assert.deepEqual(npmCalls(logPath), []);
+  });
+});
+
+test("pre-push hook runs the build when documentation and code are pushed together", () => {
+  withRepo(({ root, base, binDir, logPath }) => {
+    commitFiles(root, { "docs/notes.md": "notes\n" });
+    const head = commitFiles(root, { "server/app.ts": "export {};\n" });
+    const result = runHook(root, binDir, {}, update(head, base));
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.deepEqual(npmCalls(logPath), ["run build"]);
+  });
+});
+
+test("pre-push hook compares a new branch with where it left main", () => {
+  withRepo(({ root, binDir, logPath }) => {
+    // Main moves on with code after the branch left it. Compared with main's tip the branch would
+    // seem to change that code too; compared with where it left main it changes documentation only.
+    gitIn(root, "checkout", "-q", "-b", "work");
+    const docs = commitFiles(root, { "docs/plan.md": "plan\n" });
+    gitIn(root, "checkout", "-q", "main");
+    const mainTip = commitFiles(root, { "src/app.ts": "export const one = 100;\n" }, "main moves on");
+    gitIn(root, "update-ref", "refs/remotes/origin/main", mainTip);
+    gitIn(root, "checkout", "-q", "work");
+
+    // The remote does not have the branch yet: its id is all zeros.
+    const onlyDocs = runHook(root, binDir, {}, update(docs, ZERO));
+    assert.equal(onlyDocs.status, 0, onlyDocs.stderr || onlyDocs.stdout);
+    assert.match(onlyDocs.stdout, /only documentation is pushed/);
+    assert.deepEqual(npmCalls(logPath), []);
+
+    const code = commitFiles(root, { "server/app.ts": "export {};\n" });
+    const withCode = runHook(root, binDir, {}, update(code, ZERO));
+    assert.equal(withCode.status, 0, withCode.stderr || withCode.stdout);
+    assert.deepEqual(npmCalls(logPath), ["run build"]);
+  });
+});
+
+test("pre-push hook runs the build when a code file is moved into docs or renamed to markdown", () => {
+  withRepo(({ root, base, binDir, logPath }) => {
+    // Git lists a rename under its new name only, unless it is told not to follow renames.
+    mkdirSync(join(root, "docs"), { recursive: true });
+    gitIn(root, "mv", "src/app.ts", "docs/app.ts");
+    gitIn(root, "commit", "-qm", "move code into docs");
+    const moved = gitIn(root, "rev-parse", "HEAD");
+    const result = runHook(root, binDir, {}, update(moved, base));
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.deepEqual(npmCalls(logPath), ["run build"]);
+  });
+});
+
+test("pre-push hook treats a documentation file with other than ASCII letters in its name as documentation", () => {
+  withRepo(({ root, base, binDir, logPath }) => {
+    const head = commitFiles(root, { "docs/læsevejledning.md": "tekst\n", "docs/two words.md": "text\n" });
+    const result = runHook(root, binDir, {}, update(head, base));
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /only documentation is pushed/);
+    assert.deepEqual(npmCalls(logPath), []);
+  });
+});
+
+test("pre-push hook reads a ref update that does not end with a newline", () => {
+  withRepo(({ root, base, binDir, logPath }) => {
+    const head = commitFiles(root, { "src/app.ts": "export const one = 7;\n" });
+    const result = runHook(root, binDir, {}, update(head, base).trimEnd());
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.deepEqual(npmCalls(logPath), ["run build"]);
+  });
+});
+
+test("pre-push hook says so when the pushed commits change no file", () => {
+  withRepo(({ root, base, binDir, logPath }) => {
+    // A new branch that points at a commit main already has.
+    const result = runHook(root, binDir, {}, update(base, ZERO));
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /change no file/);
+    assert.deepEqual(npmCalls(logPath), []);
+  });
+});
+
+test("pre-push hook runs the build when it cannot tell what is pushed", () => {
+  withRepo(({ root, binDir, logPath }) => {
+    const head = commitFiles(root, { "docs/plan.md": "plan\n" });
+    // A commit of the remote that this repository does not have.
+    const unknownRemote = runHook(root, binDir, {}, update(head, "1".repeat(40)));
+    assert.equal(unknownRemote.status, 0, unknownRemote.stderr || unknownRemote.stdout);
+    assert.match(unknownRemote.stdout, /could not list what is pushed/);
+    // A new branch in a repository that does not know the remote's main.
+    gitIn(root, "update-ref", "-d", "refs/remotes/origin/main");
+    const noMain = runHook(root, binDir, {}, update(head, ZERO));
+    assert.equal(noMain.status, 0, noMain.stderr || noMain.stdout);
+    // Ids that are no commits at all.
+    const nonsense = runHook(root, binDir);
+    assert.equal(nonsense.status, 0, nonsense.stderr || nonsense.stdout);
+    assert.deepEqual(npmCalls(logPath), ["run build", "run build", "run build"]);
+  });
+});
+
+test("pre-push hook runs nothing when a branch is deleted or nothing is pushed", () => {
+  withRepo(({ root, base, binDir, logPath }) => {
+    const deleted = runHook(root, binDir, {}, update(ZERO, base));
+    assert.equal(deleted.status, 0, deleted.stderr || deleted.stdout);
+    assert.match(deleted.stdout, /no commits are pushed/);
+    const empty = runHook(root, binDir, {}, "");
+    assert.equal(empty.status, 0, empty.stderr || empty.stdout);
+    assert.match(empty.stdout, /no commits are pushed/);
+    assert.deepEqual(npmCalls(logPath), []);
+  });
+});
+
+test("pre-push hook runs the build when one of several pushed branches carries code", () => {
+  withRepo(({ root, base, binDir, logPath }) => {
+    const docs = commitFiles(root, { "docs/plan.md": "plan\n" });
+    const code = commitFiles(root, { "src/app.ts": "export const one = 4;\n" });
+    const result = runHook(
+      root,
+      binDir,
+      {},
+      update(docs, base, "refs/heads/docs") + update(ZERO, base, "refs/heads/gone") + update(code, docs, "refs/heads/code"),
+    );
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.deepEqual(npmCalls(logPath), ["run build"]);
+  });
 });
 
 test("pre-push hook blocks push when npm run build fails", () => {
-  const root = makeTempRepo();
-  try {
-    const { binDir } = writeStubNpm(root);
-    const result = runHook(root, binDir, {
-      SONDER_STUB_BUILD_EXIT: "1",
-      SONDER_STUB_TEST_EXIT: "0",
-    });
+  withRepo(({ root, base, binDir }) => {
+    const head = commitFiles(root, { "src/app.ts": "export const one = 5;\n" });
+    const result = runHook(root, binDir, { SONDER_STUB_BUILD_EXIT: "1" }, update(head, base));
     assert.notEqual(result.status, 0);
     const err = `${result.stderr}${result.stdout}`;
     assert.match(err, /build/i);
     assert.match(err, /Skip once with SONDER_SKIP_PREPUSH=1 git push/);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("pre-push hook blocks push when npm test fails", () => {
-  const root = makeTempRepo();
-  try {
-    const { binDir } = writeStubNpm(root);
-    const result = runHook(root, binDir, {
-      SONDER_STUB_BUILD_EXIT: "0",
-      SONDER_STUB_TEST_EXIT: "1",
-    });
-    assert.notEqual(result.status, 0);
-    const err = `${result.stderr}${result.stdout}`;
-    assert.match(err, /npm test/i);
-    assert.match(err, /Skip once with SONDER_SKIP_PREPUSH=1 git push/);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("pre-push hook times out a hung npm test in bounded time and keeps HEAD on the pushing branch", () => {
-  const root = makeTempRepo();
-  try {
-    gitIn(root, "checkout", "-q", "-b", "feature/push");
-    gitIn(root, "config", "user.name", "Test");
-    gitIn(root, "config", "user.email", "test@example.test");
-    writeFileSync(join(root, "tracked.txt"), "content\n");
-    gitIn(root, "add", "tracked.txt");
-    gitIn(root, "commit", "-qm", "tracked");
-    const before = {
-      head: gitIn(root, "rev-parse", "HEAD"),
-      branch: gitIn(root, "symbolic-ref", "--short", "HEAD"),
-    };
-    const hangPidFile = join(root, "hang.pid");
-    const { binDir } = writeStubNpm(root);
-    const startedAt = Date.now();
-    const result = runHook(root, binDir, {
-      SONDER_STUB_BUILD_EXIT: "0",
-      SONDER_STUB_TEST_HANG: "1",
-      SONDER_STUB_TEST_HANG_PID_FILE: hangPidFile,
-      SONDER_PREPUSH_TEST_TIMEOUT_SEC: "2",
-    });
-    const elapsedMs = Date.now() - startedAt;
-    assert.notEqual(result.status, 0);
-    const err = `${result.stderr}${result.stdout}`;
-    assert.match(err, /npm test timed out after 2s/i);
-    assert.match(err, /Skip once with SONDER_SKIP_PREPUSH=1 git push/);
-    assert.ok(elapsedMs < 15_000, `hook should fail closed quickly (took ${elapsedMs}ms)`);
-    assert.equal(gitIn(root, "rev-parse", "HEAD"), before.head);
-    assert.equal(gitIn(root, "symbolic-ref", "--short", "HEAD"), before.branch);
-    assert.ok(existsSync(hangPidFile), "stub must record the hung child pid");
-    const hangPid = Number.parseInt(readFileSync(hangPidFile, "utf8").trim(), 10);
-    assert.ok(Number.isFinite(hangPid) && hangPid > 1, "stub must write a valid hung child pid");
-    assert.ok(!isProcessAlive(hangPid), "timeout must kill the hung npm test child process");
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+  });
 });
 
 test("pre-push hook skips checks when SONDER_SKIP_PREPUSH=1", () => {
-  const root = makeTempRepo();
-  try {
-    const { binDir, logPath } = writeStubNpm(root);
-    const result = runHook(root, binDir, { SONDER_SKIP_PREPUSH: "1" });
+  withRepo(({ root, base, binDir, logPath }) => {
+    const head = commitFiles(root, { "src/app.ts": "export const one = 6;\n" });
+    const result = runHook(root, binDir, { SONDER_SKIP_PREPUSH: "1", SONDER_STUB_BUILD_EXIT: "1" }, update(head, base));
     assert.equal(result.status, 0, result.stderr || result.stdout);
     assert.match(result.stdout, /skipped/i);
     assert.equal(existsSync(logPath), false);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+  });
 });
 
 test("pre-commit hook allows commit when npx tsc --noEmit passes", () => {
