@@ -444,3 +444,21 @@ test("the shell hears of a page left by Back or Forward, not of its own moves or
   await settle();
   assert.deepEqual(heard, ["library"]);
 });
+
+test("a scroll restoration that waits stops when the app moves to another page", async () => {
+  const browser = new FakeBrowser("/#library");
+  const nav = await load(browser);
+  browser.scrollY = 3000;
+  nav.goPlace("settings");
+  browser.scrollHeight = 1000;
+  nav.goBack();
+  await until(() => browser.url.hash === "#library", "#library");
+  await settle();
+  // The Library is still short, so its position waits; the user opens Discover meanwhile.
+  nav.goPlace("discover");
+  assert.equal(browser.scrollY, 0);
+  browser.scrollHeight = 5000;
+  await settle();
+  await settle();
+  assert.equal(browser.scrollY, 0);
+});
