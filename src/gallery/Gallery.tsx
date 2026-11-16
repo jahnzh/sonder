@@ -8,7 +8,7 @@ import { sections } from "./sections";
 import "./gallery.css";
 
 export function isGalleryRoute(name: string) {
-  return name === "gallery" || name === "gallery-child";
+  return name === "gallery" || name === "gallery-child" || name === "gallery-sheet";
 }
 
 function GalleryIndex() {

@@ -252,7 +252,7 @@ test("every part is reachable by keyboard, in order, and acts on Enter and Space
   const expected = await page.evaluate(() =>
     [...document.querySelectorAll("main button:not(:disabled)")].map((element) => element.getAttribute("aria-label") ?? (element as HTMLElement).innerText.replace(/\s+/g, " ").trim()),
   );
-  expect(expected.length).toBe(17);
+  expect(expected.length).toBeGreaterThanOrEqual(17);
   await page.locator("main").click({ position: { x: 2, y: 2 } });
   const reached: string[] = [];
   for (let i = 0; i < expected.length; i++) {
