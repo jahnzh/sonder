@@ -1265,7 +1265,7 @@ export async function createApp(options?: {
       const actual = testMediaPath(rel);
       return { exists: actual ? existsSync(actual) : false };
     });
-    app.post("/api/test/seed-local-audio", (req) => {
+    app.post("/api/test/seed-local-audio", (req, reply) => {
       const input = z
         .object({
           relPath: z.string().min(1),
@@ -1276,48 +1276,54 @@ export async function createApp(options?: {
           releaseTitle: z.string().optional(),
         })
         .parse(req.body);
+      // A track id that is already in use fails the request and writes nothing.
+      const trackTaken = db.select({ id: s.tracks.id }).from(s.tracks).where(eq(s.tracks.id, input.trackId)).get();
+      if (trackTaken) return reply.code(409).send({ error: `Track ${input.trackId} already exists.` });
       const full = resolve(mediaRoot, input.relPath);
       mkdirSync(resolve(full, ".."), { recursive: true });
       if (!existsSync(full)) writeFileSync(full, "audio");
-      db.insert(s.editions)
-        .values({
-          id: input.editionId,
-          workId: input.workId,
-          cover: "",
-          narrator: "N",
-          language: null,
-          releaseTitle: input.releaseTitle ?? "Test audio",
-          rating: 0,
-          sourceLabel: "Test",
-        })
-        .onConflictDoNothing()
-        .run();
-      db.insert(s.recordings)
-        .values({ id: input.recordingId, editionId: input.editionId })
-        .onConflictDoNothing()
-        .run();
-      db.insert(s.tracks)
-        .values({
-          id: input.trackId,
-          recordingId: input.recordingId,
-          title: "Ch 1",
-          index: 0,
-          duration: 10,
-          chapters: [],
-          source: full,
-          sourceType: "local",
-        })
-        .onConflictDoNothing()
-        .run();
-      db.insert(s.userLibrary)
-        .values({
-          userId: 1,
-          bookId: input.editionId,
-          status: "unread",
-          addedAt: Date.now(),
-        })
-        .onConflictDoNothing()
-        .run();
+      // One transaction: an edition left without its track would be taken for a placeholder
+      // (#483).
+      sqlite.transaction(() => {
+        db.insert(s.editions)
+          .values({
+            id: input.editionId,
+            workId: input.workId,
+            cover: "",
+            narrator: "N",
+            language: null,
+            releaseTitle: input.releaseTitle ?? "Test audio",
+            rating: 0,
+            sourceLabel: "Test",
+          })
+          .onConflictDoNothing()
+          .run();
+        db.insert(s.recordings)
+          .values({ id: input.recordingId, editionId: input.editionId })
+          .onConflictDoNothing()
+          .run();
+        db.insert(s.tracks)
+          .values({
+            id: input.trackId,
+            recordingId: input.recordingId,
+            title: "Ch 1",
+            index: 0,
+            duration: 10,
+            chapters: [],
+            source: full,
+            sourceType: "local",
+          })
+          .run();
+        db.insert(s.userLibrary)
+          .values({
+            userId: 1,
+            bookId: input.editionId,
+            status: "unread",
+            addedAt: Date.now(),
+          })
+          .onConflictDoNothing()
+          .run();
+      })();
       return { ok: true as const, relPath: input.relPath };
     });
   }
