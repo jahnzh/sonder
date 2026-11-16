@@ -23,8 +23,13 @@
 # background checks later report (that goes to the commit status and the
 # result files).
 #
+# The pre-push hook starts the committed check for a plain `git push` (#504). A
+# push made through this wrapper carries SONDER_PUSH_CI_WRAPPER=1, so the hook
+# leaves the dispatch to the wrapper, which knows what changed on the remote.
+#
 # Environment:
-#   SONDER_SKIP_PUSH_CI=1      plain `git push`, no snapshot, no dispatch
+#   SONDER_SKIP_PUSH_CI=1      plain `git push`, no snapshot, no dispatch, here
+#                              and in the pre-push hook
 #                              (mirrors SONDER_SKIP_PREPUSH=1)
 #   SONDER_PUSH_CI_REMOTE      remote to snapshot (default origin)
 #   SONDER_PUSH_CI_GIT         git binary for ls-remote and push (default git)
@@ -42,6 +47,8 @@ GIT=${SONDER_PUSH_CI_GIT:-git}
 REMOTE=${SONDER_PUSH_CI_REMOTE:-origin}
 RUNNER=${SONDER_PUSH_CI_RUNNER:-$ROOT/scripts/ci-run.sh}
 ARTIFACTS=${SONDER_PUSH_CI_ARTIFACTS:-$ROOT/artifacts/ci}
+# shellcheck source=scripts/lib/push-dispatch.sh
+source "$ROOT/scripts/lib/push-dispatch.sh"
 
 if [[ ${SONDER_SKIP_PUSH_CI:-} == 1 ]]; then
   "$GIT" push "$@"
@@ -55,7 +62,7 @@ if ! BEFORE=$("$GIT" ls-remote --heads "$REMOTE"); then
   echo "ci-push: cannot list remote '$REMOTE' before the push; pushing without dispatching a check" >&2
 fi
 
-"$GIT" push "$@"
+SONDER_PUSH_CI_WRAPPER=1 "$GIT" push "$@"
 PUSH_STATUS=$?
 [[ $PUSH_STATUS -eq 0 ]] || exit "$PUSH_STATUS"
 [[ $SNAPSHOT_OK -eq 1 ]] || exit 0
@@ -80,15 +87,6 @@ while IFS=$'\t' read -r sha ref; do
 done <<<"$AFTER"
 CHANGED=$(printf '%s' "$CHANGED" | LC_ALL=C sort)
 
-finished_run() {
-  local dir=$ARTIFACTS/$1 f
-  for f in "$dir"/ci-ssh-result.txt "$dir"/ci-deck-result.txt \
-    "$dir"/*/ci-ssh-result.txt "$dir"/*/ci-deck-result.txt; do
-    [[ -f $f ]] && grep -q '^result=' "$f" && return 0
-  done
-  return 1
-}
-
 declare -A SEEN=()
 while IFS=$'\t' read -r branch sha; do
   [[ -n ${sha:-} ]] || continue
@@ -97,19 +95,6 @@ while IFS=$'\t' read -r branch sha; do
     continue
   fi
   SEEN[$sha]=$branch
-  if finished_run "$sha"; then
-    echo "skipped $sha $branch (already checked)"
-    continue
-  fi
-  RUN_DIR=$ARTIFACTS/$sha
-  mkdir -p "$RUN_DIR" || { echo "ci-push: cannot create $RUN_DIR; $sha not dispatched" >&2; continue; }
-  LOG=$RUN_DIR/push-dispatch-$(date -u +%Y%m%dT%H%M%SZ).log
-  if command -v setsid >/dev/null 2>&1; then
-    setsid bash "$RUNNER" "$sha" </dev/null >>"$LOG" 2>&1 &
-  else
-    nohup bash "$RUNNER" "$sha" </dev/null >>"$LOG" 2>&1 &
-  fi
-  disown 2>/dev/null
-  echo "dispatching $sha $branch log=$LOG"
+  push_dispatch_start "$RUNNER" "$ARTIFACTS" "$sha" "$branch"
 done <<<"$CHANGED"
 exit 0
