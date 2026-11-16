@@ -433,3 +433,71 @@ test("the series removal hides the work's placeholder through ensurePlaceholder,
   assert.deepEqual(editionsOf("w-series").map((edition) => [edition.id, edition.narrator]), [["hc-4271", "Audio not added"]]);
   assert.deepEqual(hiddenRows(KIM, "w-series"), ["hc-4271"]);
 });
+
+/** One second of a 440 Hz tone as a WAV file. */
+function wave() {
+  const n = 8000;
+  const b = Buffer.alloc(44 + n * 2);
+  b.write("RIFF");
+  b.writeUInt32LE(b.length - 8, 4);
+  b.write("WAVEfmt ", 8);
+  b.writeUInt32LE(16, 16);
+  b.writeUInt16LE(1, 20);
+  b.writeUInt16LE(1, 22);
+  b.writeUInt32LE(8000, 24);
+  b.writeUInt32LE(16000, 28);
+  b.writeUInt16LE(2, 32);
+  b.writeUInt16LE(16, 34);
+  b.write("data", 36);
+  b.writeUInt32LE(n * 2, 40);
+  for (let i = 0; i < n; i++) b.writeInt16LE(Math.round(Math.sin((i * 440 * Math.PI * 2) / 8000) * 2000), 44 + i * 2);
+  return b;
+}
+
+test("an upload of audio for an ebook-only work claims its placeholder rows", async () => {
+  // The upload finds a work by its Hardcover match (title and author), as before.
+  run("INSERT INTO works(id,title,author,description,genre,year) VALUES('w-upload','Uploaded Book','Ana Writer','About it.','Fiction',2001)");
+  run("INSERT INTO hardcover_links(work_id,book_id,slug,series) VALUES('w-upload',4280,'uploaded-book','[]')");
+  run("INSERT INTO ebook_editions(id,work_id,format,source) VALUES('eb-upload','w-upload','epub','/books/upload.epub')");
+  assert.equal((await app.inject({ method: "PUT", url: "/api/works/w-upload/library", cookies: as(SAM) })).statusCode, 200);
+  run("UPDATE user_library SET status='listening' WHERE user_id=? AND book_id='hc-4280'", SAM);
+  const boundary = "sonder-upload";
+  const uploaded = await app.inject({
+    method: "POST",
+    url: "/api/import",
+    cookies: as(OWNER),
+    headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+    payload: Buffer.concat([
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="title"\r\n\r\nUploaded Book\r\n--${boundary}\r\nContent-Disposition: form-data; name="author"\r\n\r\nAna Writer\r\n--${boundary}\r\nContent-Disposition: form-data; name="files"; filename="part.wav"\r\nContent-Type: audio/wav\r\n\r\n`,
+      ),
+      wave(),
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]),
+  });
+  assert.equal(uploaded.statusCode, 200, uploaded.body);
+  const id = uploaded.json().id as string;
+  assert.deepEqual(libraryRows(SAM, "w-upload"), [{ id, status: "listening" }]);
+  assert.deepEqual(libraryRows(OWNER, "w-upload"), [{ id, status: "unread" }]);
+});
+
+test("the Hardcover import makes its placeholder through ensurePlaceholder with Hardcover's cover", async () => {
+  const { applyHardcoverCatalogBook } = await import("../server/hardcover.ts");
+  applyHardcoverCatalogBook(KIM, {
+    id: 4290,
+    title: "Shelved On Hardcover",
+    slug: "shelved-on-hardcover",
+    pages: 100,
+    description: "About it.",
+    release_year: 2001,
+    cached_image: { url: "https://assets.hardcover.app/4290.jpg" },
+    contributions: [{ contribution: "author", author: { name: "Someone" } }],
+    book_series: [],
+    default_audio_edition: null,
+    editions: [],
+  } as never);
+  assert.deepEqual(editionsOf("work-hc-4290"), [
+    { id: "hc-4290", narrator: "Audio not added", cover: "https://assets.hardcover.app/4290.jpg", recordings: "recording-hc-4290" },
+  ]);
+  assert.deepEqual(libraryRows(KIM, "work-hc-4290"), [{ id: "hc-4290", status: "unread" }]);
+});
