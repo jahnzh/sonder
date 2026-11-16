@@ -1,0 +1,1542 @@
+{
+  "owner GET /api/series": [
+    {
+      "id": 51,
+      "name": "The Tides",
+      "author": "Mara Coast",
+      "count": 7
+    }
+  ],
+  "owner GET /api/series/51": {
+    "id": 51,
+    "name": "The Tides",
+    "author": "Mara Coast",
+    "count": 7,
+    "works": [
+      {
+        "id": 201,
+        "title": "The First Tide",
+        "position": 1,
+        "cover": "https://covers.test/201.jpg",
+        "unreleased": false,
+        "workId": "work-hc-201",
+        "added": true,
+        "introduced": true,
+        "needsAdmin": false,
+        "editionId": "hc-201",
+        "finished": true,
+        "completionOverride": "finished",
+        "availability": {
+          "audio": {
+            "server": false,
+            "recordings": [
+              {
+                "id": "recording-hc-201",
+                "tracks": [],
+                "server": false,
+                "stream": false
+              }
+            ]
+          },
+          "ebook": {
+            "server": false,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "libraryOrigin": {
+          "source": "series",
+          "seriesId": 51,
+          "addedAt": "<time>"
+        },
+        "libraryOriginLabel": "Added through this series",
+        "removalDefaultSelected": true,
+        "mediaState": null,
+        "acquisition": {
+          "audio": null,
+          "ebook": null
+        },
+        "ebookSet": {
+          "held": 0,
+          "accepted": 0,
+          "rejected": 0,
+          "pending": 0
+        },
+        "new": false,
+        "selected": false
+      },
+      {
+        "id": 211,
+        "title": "La Première Marée",
+        "position": 1,
+        "cover": "https://covers.test/211.jpg",
+        "unreleased": false,
+        "workId": null,
+        "added": false,
+        "introduced": false,
+        "needsAdmin": false,
+        "editionId": null,
+        "finished": false,
+        "completionOverride": null,
+        "availability": {
+          "audio": {
+            "server": null,
+            "recordings": []
+          },
+          "ebook": {
+            "server": null,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "mediaState": null,
+        "acquisition": null,
+        "ebookSet": null,
+        "new": false,
+        "selected": false
+      },
+      {
+        "id": 202,
+        "title": "The Second Tide",
+        "position": 2,
+        "cover": "https://covers.test/202.jpg",
+        "unreleased": false,
+        "workId": null,
+        "added": false,
+        "introduced": false,
+        "needsAdmin": false,
+        "editionId": null,
+        "finished": false,
+        "completionOverride": null,
+        "availability": {
+          "audio": {
+            "server": null,
+            "recordings": []
+          },
+          "ebook": {
+            "server": null,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "mediaState": null,
+        "acquisition": null,
+        "ebookSet": null,
+        "new": false,
+        "selected": false
+      },
+      {
+        "id": 212,
+        "title": "La Deuxième Marée",
+        "position": 2,
+        "cover": "https://covers.test/212.jpg",
+        "unreleased": false,
+        "workId": "work-hc-212",
+        "added": true,
+        "introduced": true,
+        "needsAdmin": false,
+        "editionId": "hc-212",
+        "finished": false,
+        "completionOverride": null,
+        "availability": {
+          "audio": {
+            "server": false,
+            "recordings": [
+              {
+                "id": "recording-hc-212",
+                "tracks": [],
+                "server": false,
+                "stream": false
+              }
+            ]
+          },
+          "ebook": {
+            "server": false,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "libraryOrigin": {
+          "source": "series",
+          "seriesId": 51,
+          "addedAt": "<time>"
+        },
+        "libraryOriginLabel": "Added through this series",
+        "removalDefaultSelected": true,
+        "mediaState": null,
+        "acquisition": {
+          "audio": null,
+          "ebook": null
+        },
+        "ebookSet": {
+          "held": 0,
+          "accepted": 0,
+          "rejected": 0,
+          "pending": 0
+        },
+        "new": false,
+        "selected": false
+      },
+      {
+        "id": 203,
+        "title": "The Third Tide",
+        "position": 3,
+        "cover": "https://covers.test/203.jpg",
+        "unreleased": false,
+        "workId": "work-hc-203",
+        "added": false,
+        "introduced": false,
+        "needsAdmin": false,
+        "editionId": null,
+        "finished": false,
+        "completionOverride": null,
+        "availability": {
+          "audio": {
+            "server": null,
+            "recordings": []
+          },
+          "ebook": {
+            "server": null,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "mediaState": null,
+        "acquisition": null,
+        "ebookSet": null,
+        "new": false,
+        "selected": false
+      },
+      {
+        "id": 204,
+        "title": "The Last Tide",
+        "position": 4,
+        "cover": "https://covers.test/204.jpg",
+        "unreleased": true,
+        "workId": null,
+        "added": false,
+        "introduced": false,
+        "needsAdmin": false,
+        "editionId": null,
+        "finished": false,
+        "completionOverride": null,
+        "availability": {
+          "audio": {
+            "server": null,
+            "recordings": []
+          },
+          "ebook": {
+            "server": null,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "mediaState": null,
+        "acquisition": null,
+        "ebookSet": null,
+        "new": false,
+        "selected": false
+      },
+      {
+        "id": 205,
+        "title": "Tide Charts",
+        "position": null,
+        "cover": "https://covers.test/205.jpg",
+        "unreleased": false,
+        "workId": "work-hc-205",
+        "added": true,
+        "introduced": true,
+        "needsAdmin": false,
+        "editionId": "hc-205",
+        "finished": true,
+        "completionOverride": "finished",
+        "availability": {
+          "audio": {
+            "server": false,
+            "recordings": [
+              {
+                "id": "recording-hc-205",
+                "tracks": [],
+                "server": false,
+                "stream": false
+              }
+            ]
+          },
+          "ebook": {
+            "server": false,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "libraryOrigin": {
+          "source": "series",
+          "seriesId": 51,
+          "addedAt": "<time>"
+        },
+        "libraryOriginLabel": "Added through this series",
+        "removalDefaultSelected": true,
+        "mediaState": null,
+        "acquisition": {
+          "audio": null,
+          "ebook": null
+        },
+        "ebookSet": {
+          "held": 0,
+          "accepted": 0,
+          "rejected": 0,
+          "pending": 0
+        },
+        "new": false,
+        "selected": false
+      }
+    ],
+    "needsAdmin": [],
+    "completion": {
+      "finished": 2,
+      "total": 6,
+      "nextBookId": 211
+    }
+  },
+  "owner GET /api/series/51?language=fr": {
+    "id": 51,
+    "name": "The Tides",
+    "author": "Mara Coast",
+    "count": 7,
+    "works": [
+      {
+        "id": 201,
+        "title": "The First Tide",
+        "position": 1,
+        "cover": "https://covers.test/201.jpg",
+        "unreleased": false,
+        "workId": "work-hc-201",
+        "added": true,
+        "introduced": true,
+        "needsAdmin": false,
+        "editionId": "hc-201",
+        "finished": true,
+        "completionOverride": "finished",
+        "availability": {
+          "audio": {
+            "server": false,
+            "recordings": [
+              {
+                "id": "recording-hc-201",
+                "tracks": [],
+                "server": false,
+                "stream": false
+              }
+            ]
+          },
+          "ebook": {
+            "server": false,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "libraryOrigin": {
+          "source": "series",
+          "seriesId": 51,
+          "addedAt": "<time>"
+        },
+        "libraryOriginLabel": "Added through this series",
+        "removalDefaultSelected": true,
+        "mediaState": null,
+        "acquisition": {
+          "audio": null,
+          "ebook": null
+        },
+        "ebookSet": {
+          "held": 0,
+          "accepted": 0,
+          "rejected": 0,
+          "pending": 0
+        },
+        "new": false,
+        "selected": false
+      },
+      {
+        "id": 211,
+        "title": "La Première Marée",
+        "position": 1,
+        "cover": "https://covers.test/211.jpg",
+        "unreleased": false,
+        "workId": null,
+        "added": false,
+        "introduced": false,
+        "needsAdmin": false,
+        "editionId": null,
+        "finished": false,
+        "completionOverride": null,
+        "availability": {
+          "audio": {
+            "server": null,
+            "recordings": []
+          },
+          "ebook": {
+            "server": null,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "mediaState": null,
+        "acquisition": null,
+        "ebookSet": null,
+        "new": false,
+        "selected": false
+      },
+      {
+        "id": 202,
+        "title": "The Second Tide",
+        "position": 2,
+        "cover": "https://covers.test/202.jpg",
+        "unreleased": false,
+        "workId": null,
+        "added": false,
+        "introduced": false,
+        "needsAdmin": false,
+        "editionId": null,
+        "finished": false,
+        "completionOverride": null,
+        "availability": {
+          "audio": {
+            "server": null,
+            "recordings": []
+          },
+          "ebook": {
+            "server": null,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "mediaState": null,
+        "acquisition": null,
+        "ebookSet": null,
+        "new": false,
+        "selected": false
+      },
+      {
+        "id": 212,
+        "title": "La Deuxième Marée",
+        "position": 2,
+        "cover": "https://covers.test/212.jpg",
+        "unreleased": false,
+        "workId": "work-hc-212",
+        "added": true,
+        "introduced": true,
+        "needsAdmin": false,
+        "editionId": "hc-212",
+        "finished": false,
+        "completionOverride": null,
+        "availability": {
+          "audio": {
+            "server": false,
+            "recordings": [
+              {
+                "id": "recording-hc-212",
+                "tracks": [],
+                "server": false,
+                "stream": false
+              }
+            ]
+          },
+          "ebook": {
+            "server": false,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "libraryOrigin": {
+          "source": "series",
+          "seriesId": 51,
+          "addedAt": "<time>"
+        },
+        "libraryOriginLabel": "Added through this series",
+        "removalDefaultSelected": true,
+        "mediaState": null,
+        "acquisition": {
+          "audio": null,
+          "ebook": null
+        },
+        "ebookSet": {
+          "held": 0,
+          "accepted": 0,
+          "rejected": 0,
+          "pending": 0
+        },
+        "new": false,
+        "selected": false
+      },
+      {
+        "id": 203,
+        "title": "The Third Tide",
+        "position": 3,
+        "cover": "https://covers.test/203.jpg",
+        "unreleased": false,
+        "workId": "work-hc-203",
+        "added": false,
+        "introduced": false,
+        "needsAdmin": false,
+        "editionId": null,
+        "finished": false,
+        "completionOverride": null,
+        "availability": {
+          "audio": {
+            "server": null,
+            "recordings": []
+          },
+          "ebook": {
+            "server": null,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "mediaState": null,
+        "acquisition": null,
+        "ebookSet": null,
+        "new": false,
+        "selected": false
+      },
+      {
+        "id": 204,
+        "title": "The Last Tide",
+        "position": 4,
+        "cover": "https://covers.test/204.jpg",
+        "unreleased": true,
+        "workId": null,
+        "added": false,
+        "introduced": false,
+        "needsAdmin": false,
+        "editionId": null,
+        "finished": false,
+        "completionOverride": null,
+        "availability": {
+          "audio": {
+            "server": null,
+            "recordings": []
+          },
+          "ebook": {
+            "server": null,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "mediaState": null,
+        "acquisition": null,
+        "ebookSet": null,
+        "new": false,
+        "selected": false
+      },
+      {
+        "id": 205,
+        "title": "Tide Charts",
+        "position": null,
+        "cover": "https://covers.test/205.jpg",
+        "unreleased": false,
+        "workId": "work-hc-205",
+        "added": true,
+        "introduced": true,
+        "needsAdmin": false,
+        "editionId": "hc-205",
+        "finished": true,
+        "completionOverride": "finished",
+        "availability": {
+          "audio": {
+            "server": false,
+            "recordings": [
+              {
+                "id": "recording-hc-205",
+                "tracks": [],
+                "server": false,
+                "stream": false
+              }
+            ]
+          },
+          "ebook": {
+            "server": false,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "libraryOrigin": {
+          "source": "series",
+          "seriesId": 51,
+          "addedAt": "<time>"
+        },
+        "libraryOriginLabel": "Added through this series",
+        "removalDefaultSelected": true,
+        "mediaState": null,
+        "acquisition": {
+          "audio": null,
+          "ebook": null
+        },
+        "ebookSet": {
+          "held": 0,
+          "accepted": 0,
+          "rejected": 0,
+          "pending": 0
+        },
+        "new": false,
+        "selected": false
+      }
+    ],
+    "needsAdmin": [],
+    "completion": {
+      "finished": 2,
+      "total": 6,
+      "nextBookId": 211
+    }
+  },
+  "owner GET /api/hardcover/series/51": {
+    "id": 51,
+    "name": "The Tides",
+    "author": "Mara Coast",
+    "count": 7,
+    "works": [
+      {
+        "id": 201,
+        "title": "The First Tide",
+        "position": 1,
+        "cover": "https://covers.test/201.jpg",
+        "workId": "work-hc-201",
+        "owned": true,
+        "unreleased": false,
+        "needsAdmin": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2001-01-01",
+        "selected": true
+      },
+      {
+        "id": 211,
+        "title": "La Première Marée",
+        "position": 1,
+        "cover": "https://covers.test/211.jpg",
+        "workId": null,
+        "owned": false,
+        "unreleased": false,
+        "needsAdmin": false,
+        "language": "fr",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2003-01-01",
+        "selected": false
+      },
+      {
+        "id": 202,
+        "title": "The Second Tide",
+        "position": 2,
+        "cover": "https://covers.test/202.jpg",
+        "workId": null,
+        "owned": false,
+        "unreleased": false,
+        "needsAdmin": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2002-01-01",
+        "selected": false
+      },
+      {
+        "id": 212,
+        "title": "La Deuxième Marée",
+        "position": 2,
+        "cover": "https://covers.test/212.jpg",
+        "workId": "work-hc-212",
+        "owned": true,
+        "unreleased": false,
+        "needsAdmin": false,
+        "language": "fr",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2004-01-01",
+        "selected": true
+      },
+      {
+        "id": 203,
+        "title": "The Third Tide",
+        "position": 3,
+        "cover": "https://covers.test/203.jpg",
+        "workId": "work-hc-203",
+        "owned": false,
+        "unreleased": false,
+        "needsAdmin": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2005-01-01",
+        "selected": true
+      },
+      {
+        "id": 204,
+        "title": "The Last Tide",
+        "position": 4,
+        "cover": "https://covers.test/204.jpg",
+        "workId": null,
+        "owned": false,
+        "unreleased": true,
+        "needsAdmin": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2999-01-01",
+        "selected": false
+      },
+      {
+        "id": 205,
+        "title": "Tide Charts",
+        "position": null,
+        "cover": "https://covers.test/205.jpg",
+        "workId": "work-hc-205",
+        "owned": true,
+        "unreleased": false,
+        "needsAdmin": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2006-01-01",
+        "selected": false
+      }
+    ]
+  },
+  "owner GET /api/hardcover/series/51?language=fr": {
+    "id": 51,
+    "name": "The Tides",
+    "author": "Mara Coast",
+    "count": 7,
+    "works": [
+      {
+        "id": 201,
+        "title": "The First Tide",
+        "position": 1,
+        "cover": "https://covers.test/201.jpg",
+        "workId": "work-hc-201",
+        "owned": true,
+        "unreleased": false,
+        "needsAdmin": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2001-01-01",
+        "selected": true
+      },
+      {
+        "id": 211,
+        "title": "La Première Marée",
+        "position": 1,
+        "cover": "https://covers.test/211.jpg",
+        "workId": null,
+        "owned": false,
+        "unreleased": false,
+        "needsAdmin": false,
+        "language": "fr",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2003-01-01",
+        "selected": false
+      },
+      {
+        "id": 202,
+        "title": "The Second Tide",
+        "position": 2,
+        "cover": "https://covers.test/202.jpg",
+        "workId": null,
+        "owned": false,
+        "unreleased": false,
+        "needsAdmin": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2002-01-01",
+        "selected": false
+      },
+      {
+        "id": 212,
+        "title": "La Deuxième Marée",
+        "position": 2,
+        "cover": "https://covers.test/212.jpg",
+        "workId": "work-hc-212",
+        "owned": true,
+        "unreleased": false,
+        "needsAdmin": false,
+        "language": "fr",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2004-01-01",
+        "selected": true
+      },
+      {
+        "id": 203,
+        "title": "The Third Tide",
+        "position": 3,
+        "cover": "https://covers.test/203.jpg",
+        "workId": "work-hc-203",
+        "owned": false,
+        "unreleased": false,
+        "needsAdmin": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2005-01-01",
+        "selected": true
+      },
+      {
+        "id": 204,
+        "title": "The Last Tide",
+        "position": 4,
+        "cover": "https://covers.test/204.jpg",
+        "workId": null,
+        "owned": false,
+        "unreleased": true,
+        "needsAdmin": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2999-01-01",
+        "selected": false
+      },
+      {
+        "id": 205,
+        "title": "Tide Charts",
+        "position": null,
+        "cover": "https://covers.test/205.jpg",
+        "workId": "work-hc-205",
+        "owned": true,
+        "unreleased": false,
+        "needsAdmin": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2006-01-01",
+        "selected": false
+      }
+    ]
+  },
+  "sam GET /api/series": [
+    {
+      "id": 51,
+      "name": "The Tides",
+      "author": "Mara Coast",
+      "count": 7
+    }
+  ],
+  "sam GET /api/series/51": {
+    "id": 51,
+    "name": "The Tides",
+    "author": "Mara Coast",
+    "count": 7,
+    "works": [
+      {
+        "id": 201,
+        "title": "The First Tide",
+        "position": 1,
+        "cover": "https://covers.test/201.jpg",
+        "unreleased": false,
+        "workId": "work-hc-201",
+        "added": false,
+        "introduced": false,
+        "needsAdmin": false,
+        "editionId": null,
+        "finished": false,
+        "completionOverride": null,
+        "availability": {
+          "audio": {
+            "server": null,
+            "recordings": []
+          },
+          "ebook": {
+            "server": null,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "mediaState": null,
+        "acquisition": null,
+        "ebookSet": null,
+        "new": false,
+        "selected": false
+      },
+      {
+        "id": 211,
+        "title": "La Première Marée",
+        "position": 1,
+        "cover": "https://covers.test/211.jpg",
+        "unreleased": false,
+        "workId": null,
+        "added": false,
+        "introduced": false,
+        "needsAdmin": false,
+        "editionId": null,
+        "finished": false,
+        "completionOverride": null,
+        "availability": {
+          "audio": {
+            "server": null,
+            "recordings": []
+          },
+          "ebook": {
+            "server": null,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "mediaState": null,
+        "acquisition": null,
+        "ebookSet": null,
+        "new": false,
+        "selected": false
+      },
+      {
+        "id": 202,
+        "title": "The Second Tide",
+        "position": 2,
+        "cover": "https://covers.test/202.jpg",
+        "unreleased": false,
+        "workId": null,
+        "added": false,
+        "introduced": false,
+        "needsAdmin": false,
+        "editionId": null,
+        "finished": false,
+        "completionOverride": null,
+        "availability": {
+          "audio": {
+            "server": null,
+            "recordings": []
+          },
+          "ebook": {
+            "server": null,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "mediaState": null,
+        "acquisition": null,
+        "ebookSet": null,
+        "new": false,
+        "selected": false
+      },
+      {
+        "id": 212,
+        "title": "La Deuxième Marée",
+        "position": 2,
+        "cover": "https://covers.test/212.jpg",
+        "unreleased": false,
+        "workId": "work-hc-212",
+        "added": false,
+        "introduced": false,
+        "needsAdmin": false,
+        "editionId": null,
+        "finished": false,
+        "completionOverride": null,
+        "availability": {
+          "audio": {
+            "server": null,
+            "recordings": []
+          },
+          "ebook": {
+            "server": null,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "mediaState": null,
+        "acquisition": null,
+        "ebookSet": null,
+        "new": false,
+        "selected": false
+      },
+      {
+        "id": 203,
+        "title": "The Third Tide",
+        "position": 3,
+        "cover": "https://covers.test/203.jpg",
+        "unreleased": false,
+        "workId": "work-hc-203",
+        "added": true,
+        "introduced": true,
+        "needsAdmin": false,
+        "editionId": "hc-203",
+        "finished": true,
+        "completionOverride": "finished",
+        "availability": {
+          "audio": {
+            "server": false,
+            "recordings": [
+              {
+                "id": "recording-hc-203",
+                "tracks": [],
+                "server": false,
+                "stream": false
+              }
+            ]
+          },
+          "ebook": {
+            "server": false,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "libraryOrigin": {
+          "source": "series",
+          "seriesId": 51,
+          "addedAt": "<time>"
+        },
+        "libraryOriginLabel": "Added through this series",
+        "removalDefaultSelected": true,
+        "mediaState": null,
+        "acquisition": {
+          "audio": null,
+          "ebook": null
+        },
+        "ebookSet": {
+          "held": 0,
+          "accepted": 0,
+          "rejected": 0,
+          "pending": 0
+        },
+        "new": false,
+        "selected": false
+      },
+      {
+        "id": 204,
+        "title": "The Last Tide",
+        "position": 4,
+        "cover": "https://covers.test/204.jpg",
+        "unreleased": true,
+        "workId": null,
+        "added": false,
+        "introduced": false,
+        "needsAdmin": false,
+        "editionId": null,
+        "finished": false,
+        "completionOverride": null,
+        "availability": {
+          "audio": {
+            "server": null,
+            "recordings": []
+          },
+          "ebook": {
+            "server": null,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "mediaState": null,
+        "acquisition": null,
+        "ebookSet": null,
+        "new": false,
+        "selected": false
+      },
+      {
+        "id": 205,
+        "title": "Tide Charts",
+        "position": null,
+        "cover": "https://covers.test/205.jpg",
+        "unreleased": false,
+        "workId": "work-hc-205",
+        "added": false,
+        "introduced": false,
+        "needsAdmin": false,
+        "editionId": null,
+        "finished": false,
+        "completionOverride": null,
+        "availability": {
+          "audio": {
+            "server": null,
+            "recordings": []
+          },
+          "ebook": {
+            "server": null,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "mediaState": null,
+        "acquisition": null,
+        "ebookSet": null,
+        "new": false,
+        "selected": false
+      }
+    ],
+    "needsAdmin": [],
+    "completion": {
+      "finished": 1,
+      "total": 6,
+      "nextBookId": 201
+    }
+  },
+  "sam GET /api/series/51?language=fr": {
+    "id": 51,
+    "name": "The Tides",
+    "author": "Mara Coast",
+    "count": 7,
+    "works": [
+      {
+        "id": 201,
+        "title": "The First Tide",
+        "position": 1,
+        "cover": "https://covers.test/201.jpg",
+        "unreleased": false,
+        "workId": "work-hc-201",
+        "added": false,
+        "introduced": false,
+        "needsAdmin": false,
+        "editionId": null,
+        "finished": false,
+        "completionOverride": null,
+        "availability": {
+          "audio": {
+            "server": null,
+            "recordings": []
+          },
+          "ebook": {
+            "server": null,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "mediaState": null,
+        "acquisition": null,
+        "ebookSet": null,
+        "new": false,
+        "selected": false
+      },
+      {
+        "id": 211,
+        "title": "La Première Marée",
+        "position": 1,
+        "cover": "https://covers.test/211.jpg",
+        "unreleased": false,
+        "workId": null,
+        "added": false,
+        "introduced": false,
+        "needsAdmin": false,
+        "editionId": null,
+        "finished": false,
+        "completionOverride": null,
+        "availability": {
+          "audio": {
+            "server": null,
+            "recordings": []
+          },
+          "ebook": {
+            "server": null,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "mediaState": null,
+        "acquisition": null,
+        "ebookSet": null,
+        "new": false,
+        "selected": false
+      },
+      {
+        "id": 202,
+        "title": "The Second Tide",
+        "position": 2,
+        "cover": "https://covers.test/202.jpg",
+        "unreleased": false,
+        "workId": null,
+        "added": false,
+        "introduced": false,
+        "needsAdmin": false,
+        "editionId": null,
+        "finished": false,
+        "completionOverride": null,
+        "availability": {
+          "audio": {
+            "server": null,
+            "recordings": []
+          },
+          "ebook": {
+            "server": null,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "mediaState": null,
+        "acquisition": null,
+        "ebookSet": null,
+        "new": false,
+        "selected": false
+      },
+      {
+        "id": 212,
+        "title": "La Deuxième Marée",
+        "position": 2,
+        "cover": "https://covers.test/212.jpg",
+        "unreleased": false,
+        "workId": "work-hc-212",
+        "added": false,
+        "introduced": false,
+        "needsAdmin": false,
+        "editionId": null,
+        "finished": false,
+        "completionOverride": null,
+        "availability": {
+          "audio": {
+            "server": null,
+            "recordings": []
+          },
+          "ebook": {
+            "server": null,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "mediaState": null,
+        "acquisition": null,
+        "ebookSet": null,
+        "new": false,
+        "selected": false
+      },
+      {
+        "id": 203,
+        "title": "The Third Tide",
+        "position": 3,
+        "cover": "https://covers.test/203.jpg",
+        "unreleased": false,
+        "workId": "work-hc-203",
+        "added": true,
+        "introduced": true,
+        "needsAdmin": false,
+        "editionId": "hc-203",
+        "finished": true,
+        "completionOverride": "finished",
+        "availability": {
+          "audio": {
+            "server": false,
+            "recordings": [
+              {
+                "id": "recording-hc-203",
+                "tracks": [],
+                "server": false,
+                "stream": false
+              }
+            ]
+          },
+          "ebook": {
+            "server": false,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "libraryOrigin": {
+          "source": "series",
+          "seriesId": 51,
+          "addedAt": "<time>"
+        },
+        "libraryOriginLabel": "Added through this series",
+        "removalDefaultSelected": true,
+        "mediaState": null,
+        "acquisition": {
+          "audio": null,
+          "ebook": null
+        },
+        "ebookSet": {
+          "held": 0,
+          "accepted": 0,
+          "rejected": 0,
+          "pending": 0
+        },
+        "new": false,
+        "selected": false
+      },
+      {
+        "id": 204,
+        "title": "The Last Tide",
+        "position": 4,
+        "cover": "https://covers.test/204.jpg",
+        "unreleased": true,
+        "workId": null,
+        "added": false,
+        "introduced": false,
+        "needsAdmin": false,
+        "editionId": null,
+        "finished": false,
+        "completionOverride": null,
+        "availability": {
+          "audio": {
+            "server": null,
+            "recordings": []
+          },
+          "ebook": {
+            "server": null,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "mediaState": null,
+        "acquisition": null,
+        "ebookSet": null,
+        "new": false,
+        "selected": false
+      },
+      {
+        "id": 205,
+        "title": "Tide Charts",
+        "position": null,
+        "cover": "https://covers.test/205.jpg",
+        "unreleased": false,
+        "workId": "work-hc-205",
+        "added": false,
+        "introduced": false,
+        "needsAdmin": false,
+        "editionId": null,
+        "finished": false,
+        "completionOverride": null,
+        "availability": {
+          "audio": {
+            "server": null,
+            "recordings": []
+          },
+          "ebook": {
+            "server": null,
+            "editionIds": [],
+            "device": null
+          }
+        },
+        "mediaState": null,
+        "acquisition": null,
+        "ebookSet": null,
+        "new": false,
+        "selected": false
+      }
+    ],
+    "needsAdmin": [],
+    "completion": {
+      "finished": 1,
+      "total": 6,
+      "nextBookId": 201
+    }
+  },
+  "sam GET /api/hardcover/series/51": {
+    "id": 51,
+    "name": "The Tides",
+    "author": "Mara Coast",
+    "count": 7,
+    "works": [
+      {
+        "id": 201,
+        "title": "The First Tide",
+        "position": 1,
+        "cover": "https://covers.test/201.jpg",
+        "workId": "work-hc-201",
+        "owned": false,
+        "unreleased": false,
+        "needsAdmin": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2001-01-01",
+        "selected": true
+      },
+      {
+        "id": 211,
+        "title": "La Première Marée",
+        "position": 1,
+        "cover": "https://covers.test/211.jpg",
+        "workId": null,
+        "owned": false,
+        "unreleased": false,
+        "needsAdmin": false,
+        "language": "fr",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2003-01-01",
+        "selected": false
+      },
+      {
+        "id": 202,
+        "title": "The Second Tide",
+        "position": 2,
+        "cover": "https://covers.test/202.jpg",
+        "workId": null,
+        "owned": false,
+        "unreleased": false,
+        "needsAdmin": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2002-01-01",
+        "selected": false
+      },
+      {
+        "id": 212,
+        "title": "La Deuxième Marée",
+        "position": 2,
+        "cover": "https://covers.test/212.jpg",
+        "workId": "work-hc-212",
+        "owned": false,
+        "unreleased": false,
+        "needsAdmin": false,
+        "language": "fr",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2004-01-01",
+        "selected": true
+      },
+      {
+        "id": 203,
+        "title": "The Third Tide",
+        "position": 3,
+        "cover": "https://covers.test/203.jpg",
+        "workId": "work-hc-203",
+        "owned": true,
+        "unreleased": false,
+        "needsAdmin": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2005-01-01",
+        "selected": true
+      },
+      {
+        "id": 204,
+        "title": "The Last Tide",
+        "position": 4,
+        "cover": "https://covers.test/204.jpg",
+        "workId": null,
+        "owned": false,
+        "unreleased": true,
+        "needsAdmin": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2999-01-01",
+        "selected": false
+      },
+      {
+        "id": 205,
+        "title": "Tide Charts",
+        "position": null,
+        "cover": "https://covers.test/205.jpg",
+        "workId": "work-hc-205",
+        "owned": false,
+        "unreleased": false,
+        "needsAdmin": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2006-01-01",
+        "selected": false
+      }
+    ]
+  },
+  "sam GET /api/hardcover/series/51?language=fr": {
+    "id": 51,
+    "name": "The Tides",
+    "author": "Mara Coast",
+    "count": 7,
+    "works": [
+      {
+        "id": 201,
+        "title": "The First Tide",
+        "position": 1,
+        "cover": "https://covers.test/201.jpg",
+        "workId": "work-hc-201",
+        "owned": false,
+        "unreleased": false,
+        "needsAdmin": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2001-01-01",
+        "selected": true
+      },
+      {
+        "id": 211,
+        "title": "La Première Marée",
+        "position": 1,
+        "cover": "https://covers.test/211.jpg",
+        "workId": null,
+        "owned": false,
+        "unreleased": false,
+        "needsAdmin": false,
+        "language": "fr",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2003-01-01",
+        "selected": false
+      },
+      {
+        "id": 202,
+        "title": "The Second Tide",
+        "position": 2,
+        "cover": "https://covers.test/202.jpg",
+        "workId": null,
+        "owned": false,
+        "unreleased": false,
+        "needsAdmin": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2002-01-01",
+        "selected": false
+      },
+      {
+        "id": 212,
+        "title": "La Deuxième Marée",
+        "position": 2,
+        "cover": "https://covers.test/212.jpg",
+        "workId": "work-hc-212",
+        "owned": false,
+        "unreleased": false,
+        "needsAdmin": false,
+        "language": "fr",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2004-01-01",
+        "selected": true
+      },
+      {
+        "id": 203,
+        "title": "The Third Tide",
+        "position": 3,
+        "cover": "https://covers.test/203.jpg",
+        "workId": "work-hc-203",
+        "owned": true,
+        "unreleased": false,
+        "needsAdmin": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2005-01-01",
+        "selected": true
+      },
+      {
+        "id": 204,
+        "title": "The Last Tide",
+        "position": 4,
+        "cover": "https://covers.test/204.jpg",
+        "workId": null,
+        "owned": false,
+        "unreleased": true,
+        "needsAdmin": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2999-01-01",
+        "selected": false
+      },
+      {
+        "id": 205,
+        "title": "Tide Charts",
+        "position": null,
+        "cover": "https://covers.test/205.jpg",
+        "workId": "work-hc-205",
+        "owned": false,
+        "unreleased": false,
+        "needsAdmin": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2006-01-01",
+        "selected": false
+      }
+    ]
+  }
+}

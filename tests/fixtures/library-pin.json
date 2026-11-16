@@ -1,0 +1,1219 @@
+{
+  "owner": {
+    "/api/library": {
+      "status": 200,
+      "body": [
+        {
+          "workId": "w-only",
+          "title": "Only a Placeholder",
+          "author": "Author of Only a Placeholder",
+          "description": "About Only a Placeholder.",
+          "genre": "Fiction",
+          "year": 2001,
+          "cover": "https://assets.hardcover.app/only.jpg",
+          "inLibrary": true,
+          "addedAt": 1767312000000,
+          "finished": false,
+          "completionOverride": null,
+          "chosenRecordingId": null,
+          "recordings": [],
+          "chosenEbookId": null,
+          "ebooks": [],
+          "readingSync": [],
+          "series": [],
+          "mediaState": {
+            "state": "missing",
+            "holdReason": "unreleased",
+            "acquisition": null
+          },
+          "hardcover": null
+        },
+        {
+          "workId": "w-beside",
+          "title": "Placeholder Beside Audio",
+          "author": "Author of Placeholder Beside Audio",
+          "description": "About Placeholder Beside Audio.",
+          "genre": "Fiction",
+          "year": 2001,
+          "cover": "/covers/beside.jpg",
+          "inLibrary": true,
+          "addedAt": 1767398400000,
+          "finished": false,
+          "completionOverride": null,
+          "chosenRecordingId": "rec-beside",
+          "recordings": [
+            {
+              "recordingId": "rec-beside",
+              "editionId": "ed-beside",
+              "narrator": "Beside Narrator",
+              "language": "en",
+              "releaseTitle": "Release ed-beside",
+              "sourceLabel": "Test source",
+              "cover": "/covers/beside.jpg",
+              "duration": 600,
+              "tracks": [
+                {
+                  "chapters": [
+                    {
+                      "title": "Chapter 1",
+                      "start": 0,
+                      "end": 600
+                    }
+                  ],
+                  "id": "t-beside-0",
+                  "recordingId": "rec-beside",
+                  "title": "Part 1",
+                  "index": 0,
+                  "duration": 600,
+                  "source": "",
+                  "sourceType": "local",
+                  "serverAvailable": true,
+                  "deliverySource": "server"
+                }
+              ],
+              "serverStored": true,
+              "faults": {},
+              "progress": null,
+              "serverCopy": null
+            }
+          ],
+          "chosenEbookId": null,
+          "ebooks": [],
+          "readingSync": [],
+          "series": [],
+          "mediaState": null,
+          "hardcover": null
+        },
+        {
+          "workId": "w-two",
+          "title": "Two Recordings",
+          "author": "Author of Two Recordings",
+          "description": "About Two Recordings.",
+          "genre": "Fiction",
+          "year": 1969,
+          "cover": "/covers/two-b.jpg",
+          "inLibrary": true,
+          "addedAt": 1767571200000,
+          "finished": false,
+          "completionOverride": null,
+          "chosenRecordingId": "rec-two-b",
+          "recordings": [
+            {
+              "recordingId": "rec-two-a",
+              "editionId": "ed-two-a",
+              "narrator": "Narrator A",
+              "language": "en",
+              "releaseTitle": "Release ed-two-a",
+              "sourceLabel": "Test source",
+              "cover": "/covers/two-a.jpg",
+              "duration": 1500,
+              "tracks": [
+                {
+                  "chapters": [
+                    {
+                      "title": "Chapter 1",
+                      "start": 0,
+                      "end": 600
+                    }
+                  ],
+                  "id": "t-two-a-0",
+                  "recordingId": "rec-two-a",
+                  "title": "Part 1",
+                  "index": 0,
+                  "duration": 600,
+                  "source": "",
+                  "sourceType": "local",
+                  "serverAvailable": true,
+                  "deliverySource": "server"
+                },
+                {
+                  "chapters": [
+                    {
+                      "title": "Chapter 2",
+                      "start": 0,
+                      "end": 900
+                    }
+                  ],
+                  "id": "t-two-a-1",
+                  "recordingId": "rec-two-a",
+                  "title": "Part 2",
+                  "index": 1,
+                  "duration": 900,
+                  "source": "",
+                  "sourceType": "remote",
+                  "serverAvailable": false,
+                  "deliverySource": "remote"
+                }
+              ],
+              "serverStored": false,
+              "faults": {},
+              "progress": {
+                "recordingId": "rec-two-a",
+                "trackId": "t-two-a-0",
+                "position": 120,
+                "duration": 600,
+                "updatedAt": 1768089600000
+              },
+              "serverCopy": null
+            },
+            {
+              "recordingId": "rec-two-b",
+              "editionId": "ed-two-b",
+              "narrator": "Narrator B",
+              "language": "de",
+              "releaseTitle": "Release ed-two-b",
+              "sourceLabel": "Test source",
+              "cover": "/covers/two-b.jpg",
+              "duration": 600,
+              "tracks": [
+                {
+                  "chapters": [
+                    {
+                      "title": "Chapter 1",
+                      "start": 0,
+                      "end": 600
+                    }
+                  ],
+                  "id": "t-two-b-0",
+                  "recordingId": "rec-two-b",
+                  "title": "Part 1",
+                  "index": 0,
+                  "duration": 600,
+                  "source": "",
+                  "sourceType": "remote",
+                  "serverAvailable": false,
+                  "deliverySource": "remote"
+                }
+              ],
+              "serverStored": false,
+              "faults": {},
+              "progress": {
+                "recordingId": "rec-two-b",
+                "trackId": "t-two-b-0",
+                "position": 60,
+                "duration": 600,
+                "updatedAt": 1768176000000
+              },
+              "serverCopy": null
+            }
+          ],
+          "chosenEbookId": null,
+          "ebooks": [],
+          "readingSync": [],
+          "series": [
+            {
+              "id": 77,
+              "name": "Pair Saga",
+              "position": 1,
+              "saved": false
+            }
+          ],
+          "mediaState": null,
+          "hardcover": {
+            "id": 9001,
+            "slug": "two-recordings",
+            "series": [
+              {
+                "id": 77,
+                "name": "Pair Saga",
+                "position": 1
+              }
+            ],
+            "statusId": null,
+            "pending": false,
+            "progressFraction": null,
+            "progressPending": false,
+            "syncError": null,
+            "listIds": []
+          }
+        },
+        {
+          "workId": "w-unplayed",
+          "title": "Never Played",
+          "author": "Author of Never Played",
+          "description": "About Never Played.",
+          "genre": "Fiction",
+          "year": 2001,
+          "cover": "/covers/unplayed-b.jpg",
+          "inLibrary": true,
+          "addedAt": 1767830400000,
+          "finished": false,
+          "completionOverride": null,
+          "chosenRecordingId": "rec-unplayed-b",
+          "recordings": [
+            {
+              "recordingId": "rec-unplayed-b",
+              "editionId": "ed-unplayed-b",
+              "narrator": "Narrator D",
+              "language": "en",
+              "releaseTitle": "Release ed-unplayed-b",
+              "sourceLabel": "Test source",
+              "cover": "/covers/unplayed-b.jpg",
+              "duration": 600,
+              "tracks": [
+                {
+                  "chapters": [
+                    {
+                      "title": "Chapter 1",
+                      "start": 0,
+                      "end": 600
+                    }
+                  ],
+                  "id": "t-unplayed-b-0",
+                  "recordingId": "rec-unplayed-b",
+                  "title": "Part 1",
+                  "index": 0,
+                  "duration": 600,
+                  "source": "",
+                  "sourceType": "local",
+                  "serverAvailable": true,
+                  "deliverySource": "server"
+                }
+              ],
+              "serverStored": true,
+              "faults": {},
+              "progress": null,
+              "serverCopy": null
+            },
+            {
+              "recordingId": "rec-unplayed-a",
+              "editionId": "ed-unplayed-a",
+              "narrator": "Narrator C",
+              "language": "en",
+              "releaseTitle": "Release ed-unplayed-a",
+              "sourceLabel": "Test source",
+              "cover": "/covers/unplayed-a.jpg",
+              "duration": 600,
+              "tracks": [
+                {
+                  "chapters": [
+                    {
+                      "title": "Chapter 1",
+                      "start": 0,
+                      "end": 600
+                    }
+                  ],
+                  "id": "t-unplayed-a-0",
+                  "recordingId": "rec-unplayed-a",
+                  "title": "Part 1",
+                  "index": 0,
+                  "duration": 600,
+                  "source": "",
+                  "sourceType": "local",
+                  "serverAvailable": true,
+                  "deliverySource": "server"
+                }
+              ],
+              "serverStored": true,
+              "faults": {},
+              "progress": null,
+              "serverCopy": null
+            }
+          ],
+          "chosenEbookId": null,
+          "ebooks": [],
+          "readingSync": [],
+          "series": [],
+          "mediaState": null,
+          "hardcover": null
+        },
+        {
+          "workId": "w-removed",
+          "title": "One Removed",
+          "author": "Author of One Removed",
+          "description": "About One Removed.",
+          "genre": "Fiction",
+          "year": 2001,
+          "cover": "/covers/removed-keep.jpg",
+          "inLibrary": true,
+          "addedAt": 1768003200000,
+          "finished": false,
+          "completionOverride": null,
+          "chosenRecordingId": "rec-removed-keep",
+          "recordings": [
+            {
+              "recordingId": "rec-removed-keep",
+              "editionId": "ed-removed-keep",
+              "narrator": "Kept Narrator",
+              "language": "en",
+              "releaseTitle": "Release ed-removed-keep",
+              "sourceLabel": "Test source",
+              "cover": "/covers/removed-keep.jpg",
+              "duration": 600,
+              "tracks": [
+                {
+                  "chapters": [
+                    {
+                      "title": "Chapter 1",
+                      "start": 0,
+                      "end": 600
+                    }
+                  ],
+                  "id": "t-removed-keep-0",
+                  "recordingId": "rec-removed-keep",
+                  "title": "Part 1",
+                  "index": 0,
+                  "duration": 600,
+                  "source": "",
+                  "sourceType": "remote",
+                  "serverAvailable": false,
+                  "deliverySource": "remote"
+                }
+              ],
+              "serverStored": false,
+              "faults": {
+                "original": {
+                  "reason": "bad-audio",
+                  "note": "Crackles in part 1",
+                  "updatedAt": 1768003200000
+                }
+              },
+              "progress": null,
+              "serverCopy": {
+                "status": "downloading",
+                "progress": 0.4,
+                "error": null
+              }
+            }
+          ],
+          "chosenEbookId": null,
+          "ebooks": [],
+          "readingSync": [],
+          "series": [],
+          "mediaState": null,
+          "hardcover": null
+        }
+      ]
+    },
+    "/api/works/w-only": {
+      "status": 200,
+      "body": {
+        "workId": "w-only",
+        "title": "Only a Placeholder",
+        "author": "Author of Only a Placeholder",
+        "description": "About Only a Placeholder.",
+        "genre": "Fiction",
+        "year": 2001,
+        "cover": "https://assets.hardcover.app/only.jpg",
+        "inLibrary": true,
+        "addedAt": 1767312000000,
+        "finished": false,
+        "completionOverride": null,
+        "chosenRecordingId": null,
+        "recordings": [],
+        "chosenEbookId": null,
+        "ebooks": [],
+        "readingSync": [],
+        "series": [],
+        "mediaState": {
+          "state": "missing",
+          "holdReason": "unreleased",
+          "acquisition": null
+        },
+        "hardcover": null
+      }
+    },
+    "/api/works/w-beside": {
+      "status": 200,
+      "body": {
+        "workId": "w-beside",
+        "title": "Placeholder Beside Audio",
+        "author": "Author of Placeholder Beside Audio",
+        "description": "About Placeholder Beside Audio.",
+        "genre": "Fiction",
+        "year": 2001,
+        "cover": "/covers/beside.jpg",
+        "inLibrary": true,
+        "addedAt": 1767398400000,
+        "finished": false,
+        "completionOverride": null,
+        "chosenRecordingId": "rec-beside",
+        "recordings": [
+          {
+            "recordingId": "rec-beside",
+            "editionId": "ed-beside",
+            "narrator": "Beside Narrator",
+            "language": "en",
+            "releaseTitle": "Release ed-beside",
+            "sourceLabel": "Test source",
+            "cover": "/covers/beside.jpg",
+            "duration": 600,
+            "tracks": [
+              {
+                "chapters": [
+                  {
+                    "title": "Chapter 1",
+                    "start": 0,
+                    "end": 600
+                  }
+                ],
+                "id": "t-beside-0",
+                "recordingId": "rec-beside",
+                "title": "Part 1",
+                "index": 0,
+                "duration": 600,
+                "source": "",
+                "sourceType": "local",
+                "serverAvailable": true,
+                "deliverySource": "server"
+              }
+            ],
+            "serverStored": true,
+            "faults": {},
+            "progress": null,
+            "serverCopy": null
+          }
+        ],
+        "chosenEbookId": null,
+        "ebooks": [],
+        "readingSync": [],
+        "series": [],
+        "mediaState": null,
+        "hardcover": null
+      }
+    },
+    "/api/works/w-two": {
+      "status": 200,
+      "body": {
+        "workId": "w-two",
+        "title": "Two Recordings",
+        "author": "Author of Two Recordings",
+        "description": "About Two Recordings.",
+        "genre": "Fiction",
+        "year": 1969,
+        "cover": "/covers/two-b.jpg",
+        "inLibrary": true,
+        "addedAt": 1767571200000,
+        "finished": false,
+        "completionOverride": null,
+        "chosenRecordingId": "rec-two-b",
+        "recordings": [
+          {
+            "recordingId": "rec-two-a",
+            "editionId": "ed-two-a",
+            "narrator": "Narrator A",
+            "language": "en",
+            "releaseTitle": "Release ed-two-a",
+            "sourceLabel": "Test source",
+            "cover": "/covers/two-a.jpg",
+            "duration": 1500,
+            "tracks": [
+              {
+                "chapters": [
+                  {
+                    "title": "Chapter 1",
+                    "start": 0,
+                    "end": 600
+                  }
+                ],
+                "id": "t-two-a-0",
+                "recordingId": "rec-two-a",
+                "title": "Part 1",
+                "index": 0,
+                "duration": 600,
+                "source": "",
+                "sourceType": "local",
+                "serverAvailable": true,
+                "deliverySource": "server"
+              },
+              {
+                "chapters": [
+                  {
+                    "title": "Chapter 2",
+                    "start": 0,
+                    "end": 900
+                  }
+                ],
+                "id": "t-two-a-1",
+                "recordingId": "rec-two-a",
+                "title": "Part 2",
+                "index": 1,
+                "duration": 900,
+                "source": "",
+                "sourceType": "remote",
+                "serverAvailable": false,
+                "deliverySource": "remote"
+              }
+            ],
+            "serverStored": false,
+            "faults": {},
+            "progress": {
+              "recordingId": "rec-two-a",
+              "trackId": "t-two-a-0",
+              "position": 120,
+              "duration": 600,
+              "updatedAt": 1768089600000
+            },
+            "serverCopy": null
+          },
+          {
+            "recordingId": "rec-two-b",
+            "editionId": "ed-two-b",
+            "narrator": "Narrator B",
+            "language": "de",
+            "releaseTitle": "Release ed-two-b",
+            "sourceLabel": "Test source",
+            "cover": "/covers/two-b.jpg",
+            "duration": 600,
+            "tracks": [
+              {
+                "chapters": [
+                  {
+                    "title": "Chapter 1",
+                    "start": 0,
+                    "end": 600
+                  }
+                ],
+                "id": "t-two-b-0",
+                "recordingId": "rec-two-b",
+                "title": "Part 1",
+                "index": 0,
+                "duration": 600,
+                "source": "",
+                "sourceType": "remote",
+                "serverAvailable": false,
+                "deliverySource": "remote"
+              }
+            ],
+            "serverStored": false,
+            "faults": {},
+            "progress": {
+              "recordingId": "rec-two-b",
+              "trackId": "t-two-b-0",
+              "position": 60,
+              "duration": 600,
+              "updatedAt": 1768176000000
+            },
+            "serverCopy": null
+          }
+        ],
+        "chosenEbookId": null,
+        "ebooks": [],
+        "readingSync": [],
+        "series": [
+          {
+            "id": 77,
+            "name": "Pair Saga",
+            "position": 1,
+            "saved": false
+          }
+        ],
+        "mediaState": null,
+        "hardcover": {
+          "id": 9001,
+          "slug": "two-recordings",
+          "series": [
+            {
+              "id": 77,
+              "name": "Pair Saga",
+              "position": 1
+            }
+          ],
+          "statusId": null,
+          "pending": false,
+          "progressFraction": null,
+          "progressPending": false,
+          "syncError": null,
+          "listIds": []
+        }
+      }
+    },
+    "/api/works/w-unplayed": {
+      "status": 200,
+      "body": {
+        "workId": "w-unplayed",
+        "title": "Never Played",
+        "author": "Author of Never Played",
+        "description": "About Never Played.",
+        "genre": "Fiction",
+        "year": 2001,
+        "cover": "/covers/unplayed-b.jpg",
+        "inLibrary": true,
+        "addedAt": 1767830400000,
+        "finished": false,
+        "completionOverride": null,
+        "chosenRecordingId": "rec-unplayed-b",
+        "recordings": [
+          {
+            "recordingId": "rec-unplayed-b",
+            "editionId": "ed-unplayed-b",
+            "narrator": "Narrator D",
+            "language": "en",
+            "releaseTitle": "Release ed-unplayed-b",
+            "sourceLabel": "Test source",
+            "cover": "/covers/unplayed-b.jpg",
+            "duration": 600,
+            "tracks": [
+              {
+                "chapters": [
+                  {
+                    "title": "Chapter 1",
+                    "start": 0,
+                    "end": 600
+                  }
+                ],
+                "id": "t-unplayed-b-0",
+                "recordingId": "rec-unplayed-b",
+                "title": "Part 1",
+                "index": 0,
+                "duration": 600,
+                "source": "",
+                "sourceType": "local",
+                "serverAvailable": true,
+                "deliverySource": "server"
+              }
+            ],
+            "serverStored": true,
+            "faults": {},
+            "progress": null,
+            "serverCopy": null
+          },
+          {
+            "recordingId": "rec-unplayed-a",
+            "editionId": "ed-unplayed-a",
+            "narrator": "Narrator C",
+            "language": "en",
+            "releaseTitle": "Release ed-unplayed-a",
+            "sourceLabel": "Test source",
+            "cover": "/covers/unplayed-a.jpg",
+            "duration": 600,
+            "tracks": [
+              {
+                "chapters": [
+                  {
+                    "title": "Chapter 1",
+                    "start": 0,
+                    "end": 600
+                  }
+                ],
+                "id": "t-unplayed-a-0",
+                "recordingId": "rec-unplayed-a",
+                "title": "Part 1",
+                "index": 0,
+                "duration": 600,
+                "source": "",
+                "sourceType": "local",
+                "serverAvailable": true,
+                "deliverySource": "server"
+              }
+            ],
+            "serverStored": true,
+            "faults": {},
+            "progress": null,
+            "serverCopy": null
+          }
+        ],
+        "chosenEbookId": null,
+        "ebooks": [],
+        "readingSync": [],
+        "series": [],
+        "mediaState": null,
+        "hardcover": null
+      }
+    },
+    "/api/works/w-removed": {
+      "status": 200,
+      "body": {
+        "workId": "w-removed",
+        "title": "One Removed",
+        "author": "Author of One Removed",
+        "description": "About One Removed.",
+        "genre": "Fiction",
+        "year": 2001,
+        "cover": "/covers/removed-keep.jpg",
+        "inLibrary": true,
+        "addedAt": 1768003200000,
+        "finished": false,
+        "completionOverride": null,
+        "chosenRecordingId": "rec-removed-keep",
+        "recordings": [
+          {
+            "recordingId": "rec-removed-keep",
+            "editionId": "ed-removed-keep",
+            "narrator": "Kept Narrator",
+            "language": "en",
+            "releaseTitle": "Release ed-removed-keep",
+            "sourceLabel": "Test source",
+            "cover": "/covers/removed-keep.jpg",
+            "duration": 600,
+            "tracks": [
+              {
+                "chapters": [
+                  {
+                    "title": "Chapter 1",
+                    "start": 0,
+                    "end": 600
+                  }
+                ],
+                "id": "t-removed-keep-0",
+                "recordingId": "rec-removed-keep",
+                "title": "Part 1",
+                "index": 0,
+                "duration": 600,
+                "source": "",
+                "sourceType": "remote",
+                "serverAvailable": false,
+                "deliverySource": "remote"
+              }
+            ],
+            "serverStored": false,
+            "faults": {
+              "original": {
+                "reason": "bad-audio",
+                "note": "Crackles in part 1",
+                "updatedAt": 1768003200000
+              }
+            },
+            "progress": null,
+            "serverCopy": {
+              "status": "downloading",
+              "progress": 0.4,
+              "error": null
+            }
+          }
+        ],
+        "chosenEbookId": null,
+        "ebooks": [],
+        "readingSync": [],
+        "series": [],
+        "mediaState": null,
+        "hardcover": null
+      }
+    },
+    "/api/works/w-outside": {
+      "status": 200,
+      "body": {
+        "workId": "w-outside",
+        "title": "Outside the Library",
+        "author": "Author of Outside the Library",
+        "description": "About Outside the Library.",
+        "genre": "Fiction",
+        "year": 2001,
+        "cover": "/covers/outside.jpg",
+        "inLibrary": false,
+        "addedAt": null,
+        "finished": false,
+        "completionOverride": null,
+        "chosenRecordingId": null,
+        "recordings": [],
+        "chosenEbookId": null,
+        "ebooks": [],
+        "readingSync": [],
+        "series": [],
+        "mediaState": null,
+        "hardcover": null
+      }
+    },
+    "/api/works/w-sam": {
+      "status": 200,
+      "body": {
+        "workId": "w-sam",
+        "title": "Sam's Placeholder",
+        "author": "Author of Sam's Placeholder",
+        "description": "About Sam's Placeholder.",
+        "genre": "Fiction",
+        "year": 2001,
+        "cover": "https://assets.hardcover.app/sam.jpg",
+        "inLibrary": false,
+        "addedAt": null,
+        "finished": false,
+        "completionOverride": null,
+        "chosenRecordingId": null,
+        "recordings": [],
+        "chosenEbookId": null,
+        "ebooks": [],
+        "readingSync": [],
+        "series": [],
+        "mediaState": null,
+        "hardcover": null
+      }
+    },
+    "/api/works/work-hc-9001": {
+      "status": 404,
+      "body": {
+        "error": "This book could not be found."
+      }
+    },
+    "/api/works/w-none": {
+      "status": 404,
+      "body": {
+        "error": "This book could not be found."
+      }
+    }
+  },
+  "sam": {
+    "/api/library": {
+      "status": 200,
+      "body": [
+        {
+          "workId": "w-two",
+          "title": "Two Recordings",
+          "author": "Author of Two Recordings",
+          "description": "About Two Recordings.",
+          "genre": "Fiction",
+          "year": 1969,
+          "cover": "/covers/two-a.jpg",
+          "inLibrary": true,
+          "addedAt": 1767744000000,
+          "finished": false,
+          "completionOverride": null,
+          "chosenRecordingId": "rec-two-a",
+          "recordings": [
+            {
+              "recordingId": "rec-two-a",
+              "editionId": "ed-two-a",
+              "narrator": "Narrator A",
+              "language": "en",
+              "releaseTitle": "Release ed-two-a",
+              "sourceLabel": "Test source",
+              "cover": "/covers/two-a.jpg",
+              "duration": 1500,
+              "tracks": [
+                {
+                  "chapters": [
+                    {
+                      "title": "Chapter 1",
+                      "start": 0,
+                      "end": 600
+                    }
+                  ],
+                  "id": "t-two-a-0",
+                  "recordingId": "rec-two-a",
+                  "title": "Part 1",
+                  "index": 0,
+                  "duration": 600,
+                  "source": "",
+                  "sourceType": "local",
+                  "serverAvailable": true,
+                  "deliverySource": "server"
+                },
+                {
+                  "chapters": [
+                    {
+                      "title": "Chapter 2",
+                      "start": 0,
+                      "end": 900
+                    }
+                  ],
+                  "id": "t-two-a-1",
+                  "recordingId": "rec-two-a",
+                  "title": "Part 2",
+                  "index": 1,
+                  "duration": 900,
+                  "source": "",
+                  "sourceType": "remote",
+                  "serverAvailable": false,
+                  "deliverySource": "remote"
+                }
+              ],
+              "serverStored": false,
+              "faults": {},
+              "progress": {
+                "recordingId": "rec-two-a",
+                "trackId": "t-two-a-1",
+                "position": 300,
+                "duration": 600,
+                "updatedAt": 1768953600000
+              },
+              "serverCopy": null
+            }
+          ],
+          "chosenEbookId": null,
+          "ebooks": [],
+          "readingSync": [],
+          "series": [
+            {
+              "id": 77,
+              "name": "Pair Saga",
+              "position": 1,
+              "saved": false
+            }
+          ],
+          "mediaState": null,
+          "hardcover": {
+            "id": 9001,
+            "slug": "two-recordings",
+            "series": [
+              {
+                "id": 77,
+                "name": "Pair Saga",
+                "position": 1
+              }
+            ],
+            "statusId": null,
+            "pending": false,
+            "progressFraction": null,
+            "progressPending": false,
+            "syncError": null,
+            "listIds": []
+          }
+        },
+        {
+          "workId": "w-sam",
+          "title": "Sam's Placeholder",
+          "author": "Author of Sam's Placeholder",
+          "description": "About Sam's Placeholder.",
+          "genre": "Fiction",
+          "year": 2001,
+          "cover": "https://assets.hardcover.app/sam.jpg",
+          "inLibrary": true,
+          "addedAt": 1768262400000,
+          "finished": false,
+          "completionOverride": null,
+          "chosenRecordingId": null,
+          "recordings": [],
+          "chosenEbookId": null,
+          "ebooks": [],
+          "readingSync": [],
+          "series": [],
+          "mediaState": null,
+          "hardcover": null
+        }
+      ]
+    },
+    "/api/works/w-only": {
+      "status": 404,
+      "body": {
+        "error": "This book could not be found."
+      }
+    },
+    "/api/works/w-beside": {
+      "status": 200,
+      "body": {
+        "workId": "w-beside",
+        "title": "Placeholder Beside Audio",
+        "author": "Author of Placeholder Beside Audio",
+        "description": "About Placeholder Beside Audio.",
+        "genre": "Fiction",
+        "year": 2001,
+        "cover": "/covers/beside.jpg",
+        "inLibrary": false,
+        "addedAt": null,
+        "finished": false,
+        "completionOverride": null,
+        "chosenRecordingId": null,
+        "recordings": [],
+        "chosenEbookId": null,
+        "ebooks": [],
+        "readingSync": [],
+        "series": [],
+        "mediaState": null,
+        "hardcover": null
+      }
+    },
+    "/api/works/w-two": {
+      "status": 200,
+      "body": {
+        "workId": "w-two",
+        "title": "Two Recordings",
+        "author": "Author of Two Recordings",
+        "description": "About Two Recordings.",
+        "genre": "Fiction",
+        "year": 1969,
+        "cover": "/covers/two-a.jpg",
+        "inLibrary": true,
+        "addedAt": 1767744000000,
+        "finished": false,
+        "completionOverride": null,
+        "chosenRecordingId": "rec-two-a",
+        "recordings": [
+          {
+            "recordingId": "rec-two-a",
+            "editionId": "ed-two-a",
+            "narrator": "Narrator A",
+            "language": "en",
+            "releaseTitle": "Release ed-two-a",
+            "sourceLabel": "Test source",
+            "cover": "/covers/two-a.jpg",
+            "duration": 1500,
+            "tracks": [
+              {
+                "chapters": [
+                  {
+                    "title": "Chapter 1",
+                    "start": 0,
+                    "end": 600
+                  }
+                ],
+                "id": "t-two-a-0",
+                "recordingId": "rec-two-a",
+                "title": "Part 1",
+                "index": 0,
+                "duration": 600,
+                "source": "",
+                "sourceType": "local",
+                "serverAvailable": true,
+                "deliverySource": "server"
+              },
+              {
+                "chapters": [
+                  {
+                    "title": "Chapter 2",
+                    "start": 0,
+                    "end": 900
+                  }
+                ],
+                "id": "t-two-a-1",
+                "recordingId": "rec-two-a",
+                "title": "Part 2",
+                "index": 1,
+                "duration": 900,
+                "source": "",
+                "sourceType": "remote",
+                "serverAvailable": false,
+                "deliverySource": "remote"
+              }
+            ],
+            "serverStored": false,
+            "faults": {},
+            "progress": {
+              "recordingId": "rec-two-a",
+              "trackId": "t-two-a-1",
+              "position": 300,
+              "duration": 600,
+              "updatedAt": 1768953600000
+            },
+            "serverCopy": null
+          }
+        ],
+        "chosenEbookId": null,
+        "ebooks": [],
+        "readingSync": [],
+        "series": [
+          {
+            "id": 77,
+            "name": "Pair Saga",
+            "position": 1,
+            "saved": false
+          }
+        ],
+        "mediaState": null,
+        "hardcover": {
+          "id": 9001,
+          "slug": "two-recordings",
+          "series": [
+            {
+              "id": 77,
+              "name": "Pair Saga",
+              "position": 1
+            }
+          ],
+          "statusId": null,
+          "pending": false,
+          "progressFraction": null,
+          "progressPending": false,
+          "syncError": null,
+          "listIds": []
+        }
+      }
+    },
+    "/api/works/w-unplayed": {
+      "status": 200,
+      "body": {
+        "workId": "w-unplayed",
+        "title": "Never Played",
+        "author": "Author of Never Played",
+        "description": "About Never Played.",
+        "genre": "Fiction",
+        "year": 2001,
+        "cover": "/covers/unplayed-a.jpg",
+        "inLibrary": false,
+        "addedAt": null,
+        "finished": false,
+        "completionOverride": null,
+        "chosenRecordingId": null,
+        "recordings": [],
+        "chosenEbookId": null,
+        "ebooks": [],
+        "readingSync": [],
+        "series": [],
+        "mediaState": null,
+        "hardcover": null
+      }
+    },
+    "/api/works/w-removed": {
+      "status": 200,
+      "body": {
+        "workId": "w-removed",
+        "title": "One Removed",
+        "author": "Author of One Removed",
+        "description": "About One Removed.",
+        "genre": "Fiction",
+        "year": 2001,
+        "cover": "/covers/removed-keep.jpg",
+        "inLibrary": false,
+        "addedAt": null,
+        "finished": false,
+        "completionOverride": null,
+        "chosenRecordingId": null,
+        "recordings": [],
+        "chosenEbookId": null,
+        "ebooks": [],
+        "readingSync": [],
+        "series": [],
+        "mediaState": null,
+        "hardcover": null
+      }
+    },
+    "/api/works/w-outside": {
+      "status": 200,
+      "body": {
+        "workId": "w-outside",
+        "title": "Outside the Library",
+        "author": "Author of Outside the Library",
+        "description": "About Outside the Library.",
+        "genre": "Fiction",
+        "year": 2001,
+        "cover": "/covers/outside.jpg",
+        "inLibrary": false,
+        "addedAt": null,
+        "finished": false,
+        "completionOverride": null,
+        "chosenRecordingId": null,
+        "recordings": [],
+        "chosenEbookId": null,
+        "ebooks": [],
+        "readingSync": [],
+        "series": [],
+        "mediaState": null,
+        "hardcover": null
+      }
+    },
+    "/api/works/w-sam": {
+      "status": 200,
+      "body": {
+        "workId": "w-sam",
+        "title": "Sam's Placeholder",
+        "author": "Author of Sam's Placeholder",
+        "description": "About Sam's Placeholder.",
+        "genre": "Fiction",
+        "year": 2001,
+        "cover": "https://assets.hardcover.app/sam.jpg",
+        "inLibrary": true,
+        "addedAt": 1768262400000,
+        "finished": false,
+        "completionOverride": null,
+        "chosenRecordingId": null,
+        "recordings": [],
+        "chosenEbookId": null,
+        "ebooks": [],
+        "readingSync": [],
+        "series": [],
+        "mediaState": null,
+        "hardcover": null
+      }
+    },
+    "/api/works/work-hc-9001": {
+      "status": 404,
+      "body": {
+        "error": "This book could not be found."
+      }
+    },
+    "/api/works/w-none": {
+      "status": 404,
+      "body": {
+        "error": "This book could not be found."
+      }
+    }
+  }
+}

@@ -142,6 +142,7 @@ Before version 11 the canvas had a version 10 that nobody here published. Its `c
 | Settings: Users | `SettingsUsers.dc.html` | 390×844 | #472 |
 | Settings: Library and storage | `SettingsLibrary.dc.html` | 390×844 | #472 |
 | Settings: App | `SettingsApp.dc.html` | 390×844 | #472 |
+| Settings: Keyboard shortcuts | `SettingsKeys.dc.html` | 390×844 | Remove what is left (S14) |
 | Sign in | `SignIn.dc.html` | 390×844 | #473 |
 | Request an account | `SignInRequest.dc.html` | 390×844 | #473 |
 | Join | `Join.dc.html` | 390×844 | #473 |
