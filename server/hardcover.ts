@@ -14,6 +14,7 @@ import { selectSeriesDefaults } from "../src/series-selection.ts";
 import { existsSync } from "node:fs";
 import { and, eq } from "drizzle-orm";
 import { db, sqlite } from "./db.ts";
+import { isPlaceholderEdition, placeholderEditionSql } from "./placeholder-edition.ts";
 import * as s from "./schema.ts";
 import {
   isUnreleasedHardcoverBook,
@@ -1275,8 +1276,7 @@ function importCatalogBook(
         .from(s.editions)
         .where(eq(s.editions.workId, link.workId))
         .all())
-        if (e.id.startsWith("hc-") && !audio.some((a) => a.id === e.id))
-          removeUserLibraryRow(userId, e.id);
+        if (isPlaceholderEdition(sqlite, e.id)) removeUserLibraryRow(userId, e.id);
   }
   return { bookId: representative.id, matched, imported };
 }
@@ -1309,7 +1309,7 @@ export function hardcoverForWork(userId: number, workId: string) {
       .map((l) => l.id),
   };
 }
-// Metadata-only `hc-*` placeholders come from one user's Hardcover shelves and lists, so
+// Metadata-only placeholders come from one user's Hardcover shelves and lists, so
 // they're only listed for users who have that book themselves, and for admins (r6#1).
 // Returns the placeholder edition ids `userId` must not see in the catalogue.
 export function hiddenHardcoverPlaceholders(userId: number): Set<string> {
@@ -1318,8 +1318,7 @@ export function hiddenHardcoverPlaceholders(userId: number): Set<string> {
     .prepare(
       `SELECT e.id, l.book_id AS bookId FROM audio_editions e
        LEFT JOIN hardcover_links l ON l.work_id=e.work_id
-       WHERE e.id LIKE 'hc-%' AND NOT EXISTS (
-         SELECT 1 FROM recordings r JOIN tracks t ON t.recording_id=r.id WHERE r.edition_id=e.id)`,
+       WHERE ${placeholderEditionSql("e.id")}`,
     )
     .all() as { id: string; bookId: number | null }[];
   if (!placeholders.length) return new Set();
@@ -1947,7 +1946,7 @@ export function claimHardcoverAudio(workId: string, editionId: string) {
     .from(s.editions)
     .where(eq(s.editions.workId, workId))
     .all()
-    .filter((e) => e.id.startsWith("hc-") && e.id !== editionId);
+    .filter((e) => e.id !== editionId && isPlaceholderEdition(sqlite, e.id));
   const recording = db
     .select()
     .from(s.recordings)
