@@ -328,15 +328,17 @@ export async function publishProjectedMaps(workId: string, consensusJob: Alignme
     // rebuild that still serves its kept published_map (#277). A finished map
     // with no mapped text (for example from a wrong chapter pairing) must not
     // shadow it.
+    // A Prepare again over a projected map keeps that map in use while it runs (#538): the projection waits for it.
     const prepared = listServedAlignmentJobs().find(
       (job) =>
         job.ebookId === member.ebookId &&
         job.recordingId === consensusJob.recordingId &&
-        job.origin !== "projected" &&
-        job.status !== "cancelled" &&
-        job.status !== "error" &&
-        (alignmentJobInFlight(job.rebuild?.status ?? job.status) ||
-          job.coverage > 0),
+        (job.origin === "projected"
+          ? !!job.rebuild && alignmentJobInFlight(job.rebuild.status)
+          : job.status !== "cancelled" &&
+            job.status !== "error" &&
+            (alignmentJobInFlight(job.rebuild?.status ?? job.status) ||
+              job.coverage > 0)),
     );
     if (prepared) continue;
     const memberBook = await extractBook(member.ebookId);

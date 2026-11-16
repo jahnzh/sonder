@@ -4,9 +4,10 @@
  * writes. A record without a status is queued; a record that cannot be read is failed with the reason.
  */
 import type { ActivityHealth, ActivityHostRestart, ActivityState } from "../src/types.ts";
-import type { AlignmentJob, AlignmentPoolHostWork, AlignmentPoolStatus } from "../src/reading-types.ts";
+import { BOOK_ENGINE, bookWorkerJobId, type AlignmentJob, type AlignmentPoolHostWork, type AlignmentPoolStatus } from "../src/reading-types.ts";
 import {
-  activityFailure, clamp01, defineSource, stateFrom, type ActivityActionContext, type ActivityService,
+  activityFailure, clamp01, defineSource, itemWork, stateFrom, withWorks, type ActivityActionContext, type ActivityService,
+  type ItemWork,
 } from "./activity-source.ts";
 
 const MINUTE = 60_000;
@@ -29,6 +30,7 @@ export type AlignmentRow = {
   title: string | null;
   data: string;
   updated_at: number;
+  work?: ItemWork | null;
 };
 
 type ParsedAlignment = {
@@ -40,11 +42,37 @@ type ParsedAlignment = {
   outcome: string | null;
   /** Queued automatically to replace a map of an older engine (#277). */
   rebuild: boolean;
+  coverage: number | null;
+  /** The job runs as one whole-book job on a pool worker (#404), which reports a stage. */
+  wholeBook: boolean;
+  /** The worker's stage of this run, with its file counts where it counts files (#514). */
+  stage: string | null;
+  files: { done: number; total: number } | null;
 };
-function parseAlignment(data: string): ParsedAlignment {
+
+/**
+ * The stage the whole-book worker reports for this run, and the file counts of a stage that counts files. Only a
+ * job that is processing has one: the worker's last state stays on the record of a finished, paused or stopped job.
+ * A worker job of an earlier generation (before a Resume) is not this run's, and one still starting has not reported
+ * a stage.
+ */
+function workerStage(job: Record<string, any>, rowId: string): Pick<ParsedAlignment, "stage" | "files"> {
+  const worker = job.status === "processing" ? job.bookJob : null;
+  const own = worker && typeof worker === "object" && typeof worker.state === "string"
+    && worker.id === bookWorkerJobId({ id: typeof job.id === "string" ? job.id : rowId, generation: typeof job.generation === "string" ? job.generation : undefined });
+  if (!own || worker.state === "starting") return { stage: null, files: null };
+  const counts = (worker.counts && typeof worker.counts === "object" ? worker.counts : {}) as Record<string, unknown>;
+  const count = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0);
+  const done = worker.state === "decoding" ? count(counts.tracksDecoded) : worker.state === "encoding" ? count(counts.tracksEncoded) : null;
+  const total = count(counts.tracksTotal);
+  return { stage: worker.state, files: done !== null && total > 0 ? { done: Math.min(done, total), total } : null };
+}
+
+function parseAlignment(data: string, rowId: string): ParsedAlignment {
   try {
     const job = JSON.parse(data) as Record<string, any>;
     return {
+      coverage: clamp01(job.coverage), wholeBook: job.engine === BOOK_ENGINE, ...workerStage(job, rowId),
       status: typeof job.status === "string" ? job.status : "queued",
       progress: clamp01(job.progress),
       error: typeof job.error === "string" && job.error ? job.error : null,
@@ -56,6 +84,7 @@ function parseAlignment(data: string): ParsedAlignment {
   } catch (error) {
     return {
       status: "error", progress: null, createdAt: null, hostId: null, outcome: null, rebuild: false,
+      coverage: null, wholeBook: false, stage: null, files: null,
       error: `The job record could not be read: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
@@ -107,19 +136,23 @@ export const alignmentSource = defineSource<AlignmentRow[], AlignmentProbe>({
   kind: "alignment",
   process: { id: "alignment", label: "Reading sync queue" },
   stuckAfterMs: 20 * MINUTE,
-  load: (sqlite) =>
-    sqlite.prepare(
-      `SELECT a.id, a.ebook_id, a.recording_id, w.title, a.data, a.updated_at
-         FROM alignment_jobs a LEFT JOIN recordings r ON r.id = a.recording_id
-         LEFT JOIN audio_editions e ON e.id = r.edition_id LEFT JOIN works w ON w.id = e.work_id`,
-    ).all() as AlignmentRow[],
+  load: (sqlite, { userId }) =>
+    withWorks(
+      sqlite, userId,
+      sqlite.prepare(
+        `SELECT a.id, a.ebook_id, a.recording_id, w.title, a.data, a.updated_at, w.id AS work_id
+           FROM alignment_jobs a LEFT JOIN recordings r ON r.id = a.recording_id
+           LEFT JOIN audio_editions e ON e.id = r.edition_id LEFT JOIN works w ON w.id = e.work_id`,
+      ).all() as Array<Omit<AlignmentRow, "work"> & { work_id: string | null }>,
+      (row) => row.work_id,
+    ),
   probe: async (deps): Promise<AlignmentProbe> => {
     const status = await deps.poolStatus();
     return { ...status, restarts: deps.workerHosts?.restarts() };
   },
   report(rows, probe) {
     const drafts = rows.map((row) => {
-      const job = parseAlignment(row.data);
+      const job = parseAlignment(row.data, row.id);
       const { state, unknown } = stateFrom(ALIGNMENT_ACTIVITY_STATES, job.status);
       const consensus = row.ebook_id.startsWith("set-consensus:");
       return {
@@ -127,6 +160,11 @@ export const alignmentSource = defineSource<AlignmentRow[], AlignmentProbe>({
         detail: job.outcome === "rejected" ? "Reading sync rebuild rejected, the earlier one is kept"
           : consensus ? "Ebook set check" : job.rebuild ? "Reading sync rebuild" : "Reading sync", user: null, state,
         progress: state === "done" ? 1 : job.progress, host: job.hostId, startedAt: job.createdAt, updatedAt: row.updated_at,
+        ...itemWork(row.work),
+        facts: {
+          kind: "alignment" as const, status: job.status, outcome: job.outcome, coverage: job.coverage, wholeBook: job.wholeBook,
+          stage: job.stage, files: job.files,
+        },
         error: unknown ?? job.error, changedAt: row.updated_at, dependsOn: job.hostId ? hostId(job.hostId) : null,
       };
     });

@@ -163,6 +163,26 @@ export const alignmentMapUsable = (job: { status: string }) => job.status === "r
  */
 export const alignmentMapPublishes = (job: { status: string; outcome?: string | null }) =>
   alignmentMapUsable(job) || (job.status === "error" && job.outcome === "language_not_supported");
+/**
+ * The new job's state as a served job lists it under `rebuild` while the row keeps its map in use (#277, #538):
+ * the server's listing and the Reading sync card's merge of an action's answer both build it here.
+ */
+export function rebuildState(working: AlignmentJob): NonNullable<AlignmentJob["rebuild"]> {
+  return {
+    status: working.status,
+    progress: working.progress,
+    engine: working.engine,
+    error: working.error,
+    ...(working.outcome ? { outcome: working.outcome } : {}),
+    updatedAt: working.updatedAt,
+    ...(working.generation ? { generation: working.generation } : {}),
+    ...(working.bookJob ? { bookJob: working.bookJob } : {}),
+    ...(working.poolErrors ? { poolErrors: working.poolErrors } : {}),
+    coverage: working.coverage,
+    elapsedSeconds: working.elapsedSeconds,
+    createdAt: working.createdAt,
+  };
+}
 export type AlignmentJob = {
   id: string;
   generation?: string;
@@ -216,8 +236,8 @@ export type AlignmentJob = {
   /** Set on a job queued automatically to replace a map made by an older engine (#277). */
   rebuildOf?: { engine: string; status: AlignmentJob["status"]; requestedAt: number };
   /**
-   * Listed and /map responses only: the job serves its previous map while this rebuild runs, and the
-   * rebuild replaces it when it publishes.
+   * Listed and /map responses only: the job serves its previous map (the map in use) while this new job runs, a
+   * rebuild or a Prepare again (#538), and the new job replaces it when it publishes.
    */
   rebuild?: {
     status: AlignmentJob["status"];
@@ -226,6 +246,16 @@ export type AlignmentJob = {
     error: string | null;
     outcome?: AlignmentOutcome;
     updatedAt: number;
+    /**
+     * The new job's run, steps and result for the Reading sync page (#538). Older servers omit them; someone who
+     * is not the administrator gets `bookJob` without its `hostId` and no `poolErrors`.
+     */
+    generation?: string;
+    bookJob?: Omit<NonNullable<AlignmentJob["bookJob"]>, "hostId"> & { hostId?: AlignmentPoolHostId };
+    poolErrors?: AlignmentJob["poolErrors"];
+    coverage?: number;
+    elapsedSeconds?: number;
+    createdAt?: number;
   };
   /** Most recent dispatch failure per remote host, if any. */
   poolErrors?: Partial<Record<AlignmentPoolHostId, string>>;

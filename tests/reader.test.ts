@@ -29,8 +29,17 @@ const {
   createAlignment,
   processAlignments,
   alignmentJob,
+  deleteAlignmentJob,
   resetAnchorBatchSupportForTests,
 } = await import("../server/alignment.ts");
+/**
+ * Makes the next prepare of the pair a first one: Prepare again would keep the pair's earlier map in use and not
+ * use an empty new one (#538), and these tests look at the new job itself.
+ */
+function forgetPair(ebookId: string, recordingId: string) {
+  const row = sqlite.prepare("SELECT id FROM alignment_jobs WHERE ebook_id=? AND recording_id=?").get(ebookId, recordingId) as { id: string } | undefined;
+  if (row) deleteAlignmentJob(row.id);
+}
 const { defaultAppearance } = await import("../src/appearance.ts");
 const app = await createApp();
 const original = fetch;
@@ -701,6 +710,7 @@ test("a single file without chapter markers is located by narration samples and 
       });
     return Response.json(empty);
   });
+  forgetPair(id, "recording-single");
   const rebuilt = await createAlignment(id, "recording-single", undefined, "anchored");
   let refused: any;
   for (let i = 0; i < 200; i++) {
@@ -839,6 +849,7 @@ test("r5: pausing or cancelling during the last narration sample is not replaced
         text: "word ".repeat(40),
       });
     });
+    forgetPair(id, "recording-single");
     const job = await createAlignment(id, "recording-single", undefined, "anchored");
     await held;
     const beforeLast = sampling();

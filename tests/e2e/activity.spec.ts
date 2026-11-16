@@ -3,11 +3,14 @@ import type { ActivityResponse } from "../../src/types";
 
 // The 2026-11-06 outage: the torrent client was unreachable and six downloads still said "downloading".
 const now = Date.now();
+// The fields the server added in #514; the page of today ignores them.
+const noWork = { workId: null, bookId: null, cover: null };
 const blocked = (id: string, title: string, progress: number) => ({
   id: `acquisition:${id}`, kind: "acquisition" as const, processId: "acquisitions", title, detail: "Card", user: null,
   state: "running" as const, progress, host: "local", startedAt: now - 3_600_000, updatedAt: now - 1000,
   error: "The local torrent client cannot be reached.", permanent: false, actions: [] as Array<"retry" | "discard">,
   stuck: { reason: "Blocked by Torrent client" }, blockedBy: "torrent-client",
+  ...noWork, facts: { kind: "acquisition" as const, status: "downloading", backend: "local" }, attention: true,
 });
 const noPause = { pausable: false, paused: false, lockedBy: null, pauseEffect: null };
 const counts = (over: Partial<ActivityResponse["processes"][number]["counts"]> = {}) => ({ running: 0, queued: 0, failed: 0, stuck: 0, ...over });
@@ -25,10 +28,12 @@ const outage: ActivityResponse = {
       id: "hardcover:status:1", kind: "hardcover", processId: "hardcover-sync", title: "Hardcover listening changes", detail: "1 waiting to be sent",
       user: "admin", state: "failed", progress: null, host: null, startedAt: now - 5 * 86_400_000, updatedAt: now - 5 * 86_400_000,
       error: "We weren't able to find that book. Was it deleted?", permanent: true, actions: ["discard" as const], stuck: { reason: "This change cannot succeed" }, blockedBy: null,
+      ...noWork, facts: { kind: "hardcover", status: "failing", queue: "listening" }, attention: true,
     },
     {
       id: "server-copy:r1", kind: "server-copy", processId: "server-copies", title: "Speaker for the Dead", detail: "Copy to the server", user: null,
       state: "done", progress: 1, host: null, startedAt: now - 7_200_000, updatedAt: now - 3_600_000, error: null, permanent: false, actions: [], stuck: null, blockedBy: null,
+      ...noWork, facts: { kind: "server-copy", status: "ready" }, attention: false,
     },
   ],
 };
@@ -141,6 +146,7 @@ const hardcoverItem = (id: string, actions: Array<"retry" | "discard">, permanen
   state: "failed", progress: null, host: null, startedAt: now - 86_400_000, updatedAt: now - 86_400_000,
   error: permanent ? "We weren't able to find that book. Was it deleted?" : "socket hang up", permanent, actions,
   stuck: permanent ? { reason: "This change cannot succeed" } : null, blockedBy: null,
+  ...noWork, facts: { kind: "hardcover", status: "failing", queue: "status" }, attention: true,
 });
 
 test("Discard asks twice, can be cancelled, and removes the item", async ({ page }) => {
