@@ -10,7 +10,7 @@ import {
   onUserDeleted,
 } from "./users.ts";
 import { z } from "zod";
-import { selectSeriesDefaults } from "../src/series-selection.ts";
+import { selectSeriesDefaults, seriesBooks } from "../src/series-selection.ts";
 import { existsSync } from "node:fs";
 import { and, eq, inArray } from "drizzle-orm";
 import { db, sqlite } from "./db.ts";
@@ -698,8 +698,50 @@ export async function saveHardcoverSeries(
   return { ...savedHardcoverSeries(userId, id), needsAdmin };
 }
 export function listSavedHardcoverSeries(userId: number) {
-  return sqlite.prepare(`SELECT c.id,c.name,c.author,c.book_count AS count FROM series_catalogue c
-    JOIN user_saved_series u ON u.series_id=c.id WHERE u.user_id=? ORDER BY c.name,c.id`).all(userId);
+  const list = sqlite.prepare(`SELECT c.id,c.name,c.author,c.book_count AS count FROM series_catalogue c
+    JOIN user_saved_series u ON u.series_id=c.id WHERE u.user_id=? ORDER BY c.name,c.id`).all(userId) as
+    { id: number; name: string; author: string | null; count: number | null }[];
+  return list.map((series) => ({ ...series, ...savedSeriesCounts(userId, series.id, series.author || "Unknown author") }));
+}
+/**
+ * The Library's counts for one saved series (#561): the book-per-number rule of `seriesBooks`
+ * over the same works `savedHardcoverSeries` returns, with the user's library and English.
+ */
+function savedSeriesCounts(userId: number, id: number, author: string) {
+  const rows = sqlite.prepare(`SELECT c.book_id AS id,c.title,c.position,c.cover,c.unreleased,
+    COALESCE(u.work_id,c.work_id) AS workId,u.book_id IS NOT NULL AS added
+    FROM series_catalogue_works c LEFT JOIN user_saved_series_works u
+      ON u.series_id=c.series_id AND u.book_id=c.book_id AND u.user_id=?
+    WHERE c.series_id=?`).all(userId, id) as {
+      id: number; title: string; position: number | null; cover: string | null; unreleased: number;
+      workId: string | null; added: number;
+    }[];
+  const works = uniqueSeriesWorks(rows.map((row) => ({ ...row, added: !!row.added, unreleased: !!row.unreleased })));
+  const library = new Set(works.filter((work) => ownsWork(userId, work.workId)).map((work) => work.id));
+  const completions = workCompletions(userId, works.flatMap((work) => library.has(work.id) && work.workId ? [work.workId] : []));
+  const heldPositions = new Set(works.filter((work) => library.has(work.id)).map((work) => work.position));
+  const candidates = works.map((work) => ({
+    id: work.id, position: work.position, workId: work.workId, cover: work.cover, unreleased: work.unreleased,
+    finished: library.has(work.id) && !!completions.get(work.workId!)?.finished,
+    // Only a number without a library book can be decided by `needsAdmin`; skip the scan elsewhere.
+    needsAdmin: !work.added && work.position !== null && !heldPositions.has(work.position)
+      && seriesWorkAdminMatch(userId, work.title, author, work.id).needsAdmin,
+  }));
+  const { numbers, finished, total } = seriesBooks(candidates, library, "en");
+  return { finished, total, covers: numbers.slice(0, 3).map((number) => number.book.cover) };
+}
+/** One row per local work (an added row wins when a work sits under several Hardcover ids), in reading order. */
+function uniqueSeriesWorks<T extends { id: number; position: number | null; workId: string | null; added: boolean }>(works: T[]) {
+  const preferred = new Map<string, T>();
+  for (const work of works) {
+    const key = work.workId ? `w:${work.workId}` : `b:${work.id}`;
+    const current = preferred.get(key);
+    if (!current || (!current.added && work.added) || (current.added === work.added && work.id < current.id))
+      preferred.set(key, work);
+  }
+  return [...preferred.values()]
+    .sort((a, b) => a.position === null ? (b.position === null ? a.id - b.id : 1)
+      : b.position === null ? -1 : a.position - b.position || a.id - b.id);
 }
 // The catalogue intentionally has no language columns. Keep the recent response in
 // memory so revisits can select defaults without another Hardcover request.
@@ -818,16 +860,7 @@ export function savedHardcoverSeries(userId: number, id: number, options?: {
     };
   });
   // Prefer an added row when the same local work appears under more than one Hardcover book id.
-  const preferred = new Map<string, (typeof mapped)[number]>();
-  for (const work of mapped) {
-    const key = work.workId ? `w:${work.workId}` : `b:${work.id}`;
-    const current = preferred.get(key);
-    if (!current || (!current.added && work.added) || (current.added === work.added && work.id < current.id))
-      preferred.set(key, work);
-  }
-  const unique = [...preferred.values()]
-    .sort((a, b) => a.position === null ? (b.position === null ? a.id - b.id : 1)
-      : b.position === null ? -1 : a.position - b.position || a.id - b.id)
+  const unique = uniqueSeriesWorks(mapped)
     .map((work) => {
       const { seen, ...rest } = work;
       return { ...rest, new: !work.added && !seen };
