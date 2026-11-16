@@ -166,8 +166,8 @@ export function IconName({ name, children }: IconNameProps) {
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Anchor
         asChild
-        onPointerEnter={(event: PointerEvent) => {
-          if (event.pointerType !== "mouse") return;
+        // A finger's pointerenter is followed at once by its pointerdown, which cancels the wait: a tap shows no name.
+        onPointerEnter={() => {
           cancel();
           timer.current = window.setTimeout(() => setOpen(true), NAME_DELAY_MS);
         }}

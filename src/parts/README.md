@@ -14,6 +14,12 @@ screens do not use them yet; each screen's slice moves it over.
 - **Every part** has a name and a role, is reached with Tab when it does something, and is at least 44 by 44 where
   it is tapped.
 
+- **Tooltip** (`Tooltip.tsx`, on `@radix-ui/react-popover`): `InfoMark` is the circled i after a name; pass it as
+  `info` to a `Row` that shows a value or a control, to a `Group` with a caption, or to a `PageHeader`. One
+  explanation is open at a time; it opens on a tap, and on a desktop on hover and keyboard focus, and is never in the
+  address. `IconName` wraps an icon-only `Button` so it shows its name on hover. Measured by
+  `tests/e2e/gallery-tooltip.spec.ts`.
+
 ## Adding a part to the gallery
 
 The gallery is `#gallery` (no navigation links to it), with a child page at `#gallery/child`. Add one file,

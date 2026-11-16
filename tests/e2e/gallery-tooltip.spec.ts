@@ -220,9 +220,15 @@ test("on a desktop it opens on hover and closes when the pointer leaves", async 
   await expect(tip(page)).toHaveText(texts.recordings);
   // The pointer can move onto the explanation without closing it.
   const box = (await tip(page).boundingBox())!;
+  const from = (await mark(page, "Recordings").boundingBox())!;
+  // Through the gap between the mark and the explanation, resting there a moment, as a hand does.
+  await page.mouse.move(from.x + 4, (from.y + from.height + box.y) / 2, { steps: 2 });
+  await page.waitForTimeout(60);
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 4 });
   await page.waitForTimeout(300);
-  await expect(tip(page)).toBeVisible();
+  // Still this mark's explanation (the marks under it lie beneath the explanation and stay closed).
+  await expect(tip(page)).toHaveCount(1);
+  await expect(tip(page)).toHaveText(texts.recordings);
   // Leaving both closes it.
   await page.mouse.move(2, 2);
   await expect(tip(page)).toHaveCount(0);
