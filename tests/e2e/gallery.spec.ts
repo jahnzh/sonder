@@ -250,7 +250,8 @@ test("every part has a name and a role, and every control is at least 44 where i
 test("every part is reachable by keyboard, in order, and acts on Enter and Space", async ({ page, browserName }) => {
   await openWith(page, defaultAppearance);
   const expected = await page.evaluate(() =>
-    [...document.querySelectorAll("main button:not(:disabled)")].map((element) => element.getAttribute("aria-label") ?? (element as HTMLElement).innerText.replace(/\s+/g, " ").trim()),
+    // The Tooltip section (#491, tests/e2e/gallery-tooltip.spec.ts) stands last and is walked by its own spec.
+    [...document.querySelectorAll("main button:not(:disabled)")].filter((element) => !element.closest('[data-gallery-section="tooltip"]')).map((element) => element.getAttribute("aria-label") ?? (element as HTMLElement).innerText.replace(/\s+/g, " ").trim()),
   );
   expect(expected.length).toBe(17);
   await page.locator("main").click({ position: { x: 2, y: 2 } });

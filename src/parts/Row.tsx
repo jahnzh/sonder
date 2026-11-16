@@ -19,10 +19,13 @@ export type RowProps = Common &
         opens?: boolean;
         disabled?: boolean;
         control?: never;
+        info?: never;
       }
     | {
         /** A control of its own on the right edge (a Button, later a Switch or a Stepper), named by itself. */
         control?: ReactNode;
+        /** An info mark (Tooltip's InfoMark) after the label. Not on a row that is a button: a mark is a button. */
+        info?: ReactNode;
         onClick?: never;
         opens?: never;
         disabled?: never;
@@ -58,9 +61,18 @@ export function Row(props: RowProps) {
   return (
     <li className="part-row-item" aria-labelledby={value ? `${id}-label ${id}-value` : `${id}-label`}>
       <div className="part-row">
-        <span id={`${id}-label`} className="part-row-label type-body">
-          {label}
-        </span>
+        {props.info ? (
+          <span className="part-row-name">
+            <span id={`${id}-label`} className="part-row-label type-body">
+              {label}
+            </span>
+            {props.info}
+          </span>
+        ) : (
+          <span id={`${id}-label`} className="part-row-label type-body">
+            {label}
+          </span>
+        )}
         {value && (
           <span id={`${id}-value`} className="part-row-value type-label">
             {value}

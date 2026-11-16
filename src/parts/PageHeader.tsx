@@ -2,6 +2,7 @@
 // button goes back in history, and to the page's parent when no entry of the app lies behind (the page was opened
 // by a link): src/navigation.ts decides, and names the place it lands on.
 import { useAddress } from "../navigation";
+import type { ReactNode } from "react";
 import type { Route } from "../routes";
 import { Button } from "./Button";
 import { backName } from "./back-name";
@@ -14,6 +15,8 @@ export type PageHeaderProps = {
   back?: boolean;
   /** Where the button goes when no entry of the app lies behind; the page's parent by default. */
   parent?: Route;
+  /** An info mark (Tooltip's InfoMark) after the Title. */
+  info?: ReactNode;
   /** A name for a page the generic names do not cover (a book's title, a series' name). */
   named?: (route: Route) => string | null | undefined;
 };
@@ -26,7 +29,7 @@ function BackIcon() {
   );
 }
 
-export function PageHeader({ title, back = false, parent, named }: PageHeaderProps) {
+export function PageHeader({ title, back = false, parent, named, info }: PageHeaderProps) {
   const address = useAddress();
   return (
     <header className="part-page-header">
@@ -34,6 +37,7 @@ export function PageHeader({ title, back = false, parent, named }: PageHeaderPro
         <Button kind="secondary" icon={<BackIcon />} label={backName(address.backTarget(parent), named)} onClick={() => address.goBack(parent)} />
       )}
       <h1 className="part-page-title type-title">{title}</h1>
+      {info}
     </header>
   );
 }
