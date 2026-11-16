@@ -58,6 +58,14 @@ _Avoid_: Download status, availability
 Why Sonder is not trying to acquire a missing work for now: it is unreleased, or the last search found nothing. It stays until an acquisition for the work is ready or the user retries.
 _Avoid_: Block, skip reason
 
+**Hardcover match**:
+The link between a work and its book on Hardcover, through which a user's shelf, lists and progress sync. It is the same for every user of the server, so only the administrator makes or changes it.
+_Avoid_: Hardcover link, linked book
+
+**Hardcover edition**:
+The audio edition on Hardcover that a user's place in one recording is sent to. It is automatic (the edition of the user's current read there, or the one with the same narrator) until the user chooses one.
+_Avoid_: Recording edition, Hardcover audio edition
+
 ## Screens
 
 **Place**:
