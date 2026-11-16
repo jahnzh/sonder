@@ -92,20 +92,20 @@ function poolServices(pool: AlignmentProbe | null, failure: string | null, jobsO
     const reason = !host.reachable ? host.lastError || "The worker cannot be reached." : host.stuck ? host.lastError || "The worker is stuck." : null;
     const restart = pool.restarts?.[host.id];
     return {
-      id: hostId(host.id), label: `Alignment worker (${host.id})`, health, reason,
+      id: hostId(host.id), label: `Reading sync worker (${host.id})`, health, reason,
       host: {
         hostId: host.id, device: host.device, online: host.reachable, disabled, revision: host.revision ?? null,
         work: workText(host.work), jobs: jobsOn(host.id), restarting: restart?.restarting ?? false, lastRestart: restart?.last ?? null,
       },
     };
   });
-  if (failure) hosts.push({ id: "alignment-pool", label: "Alignment workers", health: "unknown", reason: `The check failed: ${failure}` });
+  if (failure) hosts.push({ id: "alignment-pool", label: "Reading sync workers", health: "unknown", reason: `The check failed: ${failure}` });
   return hosts;
 }
 
 export const alignmentSource = defineSource<AlignmentRow[], AlignmentProbe>({
   kind: "alignment",
-  process: { id: "alignment", label: "Alignment processor" },
+  process: { id: "alignment", label: "Reading sync queue" },
   stuckAfterMs: 20 * MINUTE,
   load: (sqlite) =>
     sqlite.prepare(
@@ -124,8 +124,8 @@ export const alignmentSource = defineSource<AlignmentRow[], AlignmentProbe>({
       const consensus = row.ebook_id.startsWith("set-consensus:");
       return {
         id: `alignment:${row.id}`, kind: "alignment" as const, processId: "alignment", title: row.title || row.recording_id,
-        detail: job.outcome === "rejected" ? "Alignment map rebuild rejected, previous map kept"
-          : consensus ? "Ebook set check" : job.rebuild ? "Alignment map rebuild" : "Alignment map", user: null, state,
+        detail: job.outcome === "rejected" ? "Reading sync rebuild rejected, the earlier one is kept"
+          : consensus ? "Ebook set check" : job.rebuild ? "Reading sync rebuild" : "Reading sync", user: null, state,
         progress: state === "done" ? 1 : job.progress, host: job.hostId, startedAt: job.createdAt, updatedAt: row.updated_at,
         error: unknown ?? job.error, changedAt: row.updated_at, dependsOn: job.hostId ? hostId(job.hostId) : null,
       };

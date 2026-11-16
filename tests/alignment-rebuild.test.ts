@@ -247,7 +247,7 @@ test("maps of an older engine are queued for rebuild once, also after a restart,
   const activity = await app.inject("/api/activity");
   assert.equal(activity.statusCode, 200, activity.body);
   const items = JSON.stringify(activity.json());
-  assert.match(items, new RegExp(`"id":"alignment:${ready.id}"[^}]*"detail":"Alignment map rebuild"`));
+  assert.match(items, new RegExp(`"id":"alignment:${ready.id}"[^}]*"detail":"Reading sync rebuild"`));
 
   const generations = () => [ready, partial, failed, cancelled].map((old) => alignmentJob(old.id).generation);
   const queued = generations();
