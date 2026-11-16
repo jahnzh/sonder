@@ -90,7 +90,7 @@ Start checks with `npm run ci:run -- <sha>` (see below). Killing the `npm` or `s
 
 ## Reader e2e timing (issue #115)
 
-When measuring whether reader waits are slow on a host or the specs are too strict, run the three instrumented specs with timing on.
+When measuring whether reader waits are slow on a host or the specs are too strict, run the two instrumented specs with timing on.
 
 The named wait ceiling is `READER_WAIT_MS` in `tests/e2e/timing.ts`: **45 s** per instrumented step (`sentenceChange`, `followHighlight`, `historyRestore`, `checkpointRestore`). Idle-machine maxima were much lower (about 103 ms–2.6 s); the 45 s ceiling covers CPU contention on slow hosts (Deck, WSL) while still failing if the condition never arrives. Assertions stay on the real condition (sentence changed, highlight updated, …); only the clock limit grew from the old 10 s Playwright defaults.
 

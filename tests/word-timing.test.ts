@@ -27,6 +27,8 @@ test("interpolateWordTimes weights by characters and punctuation and fills the s
   // More than the one extra character the mark itself adds.
   assert.ok(wordWeight("there,") > wordWeight("there") + 1);
   assert.ok(wordWeight("friend.") > wordWeight("friend") + 1);
+  // Each mark weighs three letters on top of its own character.
+  assert.equal(wordWeight("there,"), wordWeight("there") + 4);
 });
 
 test("interpolateWordTimes with one word spans the whole interval", () => {
