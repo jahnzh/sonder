@@ -83,6 +83,7 @@ import {
   alignmentKeepsPublishedMap,
   listAlignmentJobs,
   listServedAlignmentJobs,
+  slimAlignmentJob,
   servedAlignmentJob,
 } from "./alignment-transitions.ts";
 // The per-host switch of the Activity page (#357) is stored with the pause switches; every lease honours it.
@@ -362,11 +363,7 @@ async function plannedJob(input: {
       : {}),
   };
 }
-const slimJob = (job: AlignmentJob) => ({
-  ...job,
-  intervalCount: job.intervals.length,
-  intervals: [],
-});
+const slimJob = (job: AlignmentJob) => slimAlignmentJob(job);
 // All alignment runs on the remote pool (#279); a leftover ALIGNMENT_WORKER_URL is ignored.
 const workerConfigured = () =>
   poolEnabled() && !!process.env.ALIGNMENT_WORKER_TOKEN;
