@@ -471,8 +471,16 @@ export function stoppedWhileLine(step: SyncStep | null): string {
   return `Stopped while ${words.charAt(0).toLowerCase()}${words.slice(1)}`;
 }
 
-/** A Prepare again whose map was not used over the map in use, with the share it matched (board ReadingSyncKept). */
-export function notUsedLine(coverage: number | null | undefined): string {
+/** Why a new map was not used over the map in use (#379): it matched less, none of the text, or the language is not supported. */
+export type NotUsedReason = "less" | "none" | "language";
+
+/**
+ * A Prepare again whose map was not used over the map in use (board ReadingSyncKept, #542): "Not used: it matched
+ * 40% of the text", "Not used: it matched none of the text", "Not used: the language is not supported".
+ */
+export function notUsedLine(coverage: number | null | undefined, reason: NotUsedReason = "less"): string {
+  if (reason === "language") return "Not used: the language is not supported";
+  if (reason === "none") return "Not used: it matched none of the text";
   return `Not used: it matched ${percentOf(coverage)} of the text`;
 }
 
