@@ -86,6 +86,11 @@ button.part-book-row:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The word in front of the status line (the Series page's New, board SeriesMore.dc.html): the accent, 600. */
+.part-book-row-lead {
+  color: var(--accent);
+  font-weight: 600;
+}
 .part-book-row-end {
   flex: none;
   display: flex;

@@ -269,6 +269,8 @@ function built(route: Route): boolean {
     case "book":
     // The Series page of a saved series (#562).
     case "series":
+    // Its Add sheet (#563).
+    case "series-add":
     case "library":
     case "discover":
     case "settings":

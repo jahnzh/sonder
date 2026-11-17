@@ -107,12 +107,20 @@ const desktopProjects = [
               /(^|\/)reading-sync-page\.spec\.ts$/,
               // The Book page for a book without files or not in the library (#533).
               /(^|\/)book-page-states\.spec\.ts$/,
+              // Keep on this device saves the chosen recording and resumes by itself (#550).
+              /(^|\/)keep-saver\.spec\.ts$/,
               // The Get audiobook sheet, and the specs that used today's release picker for a book (#601).
               /(^|\/)(get-audiobook|releases|prowlarr|reliability)\.spec\.ts$/,
               // The Series page of a saved series (#562).
               /(^|\/)series-page\.spec\.ts$/,
               // The Reading sync page's buttons (#541).
               /(^|\/)reading-sync-(actions|resume|book-jobs)\.spec\.ts$/,
+              // The Get audiobook sheet's language and Load more (#602).
+              /(^|\/)get-audiobook-language\.spec\.ts$/,
+              // The Add sheet of a saved series (#563).
+              /(^|\/)series-add\.spec\.ts$/,
+              // The New mark on a series and Dismiss (#565).
+              /(^|\/)series-new\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },

@@ -93,3 +93,44 @@ export function ChoiceGroup<T extends string>({ label, options, value, onChange 
     </div>
   );
 }
+
+export type ChoiceListProps = {
+  /** The list's name, read out with each row. */
+  label: string;
+  options: (Omit<Choice<string>, "value"> & { value: string; chosen: boolean })[];
+  onToggle: (value: string, chosen: boolean) => void;
+};
+
+/**
+ * Choice rows of which several may be chosen (board SeriesAdd.dc.html): each row is a checkbox, reached with Tab;
+ * a tap, Space or Enter chooses or unchooses it. The same rows and card as the one-of group.
+ */
+export function ChoiceList({ label, options, onToggle }: ChoiceListProps) {
+  const id = useId();
+  return (
+    <div className="part-choice-group part-choice-list" role="group" aria-label={label}>
+      {options.map((option, index) => (
+        <button
+          key={option.value}
+          type="button"
+          role="checkbox"
+          aria-checked={option.chosen}
+          aria-labelledby={`${id}-${index}-label ${id}-${index}-detail`}
+          className="part-choice-row"
+          data-chosen={option.chosen ? "" : undefined}
+          onClick={() => onToggle(option.value, !option.chosen)}
+        >
+          <span className="part-choice-row-text">
+            <span id={`${id}-${index}-label`} className="part-choice-row-label type-body">
+              {option.label}
+            </span>
+            <span id={`${id}-${index}-detail`} className="part-choice-row-detail type-label">
+              {option.detail}
+            </span>
+          </span>
+          {option.chosen && <Tick className="part-choice-row-tick" />}
+        </button>
+      ))}
+    </div>
+  );
+}

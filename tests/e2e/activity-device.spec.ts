@@ -36,6 +36,19 @@ async function twoFiles(page: Page) {
       throw error;
     }
   });
+  // Keep's saver saves the tracks the library by work lists (#550): the same two.
+  await page.route("**/api/library", async (route) => {
+    try {
+      const headers = { ...route.request().headers() };
+      delete headers["if-none-match"];
+      const works = await (await route.fetch({ headers })).json();
+      for (const work of works) for (const recording of work.recordings) recording.tracks = recording.tracks.slice(0, 2);
+      await route.fulfill({ status: 200, contentType: "application/json", json: works });
+    } catch (error) {
+      if (page.isClosed() || /disposed|closed|cancel/i.test(String(error))) return;
+      throw error;
+    }
+  });
 }
 
 function serve(route: Route) {

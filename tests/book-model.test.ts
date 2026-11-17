@@ -154,7 +154,7 @@ test("a book with nothing: the Audiobook row's Get is the main action, for the a
   assert.deepEqual(admin.ebook, { line: "Not added", opens: false, action: "get" });
   assert.deepEqual(admin.sync, { line: "Needs an audiobook", muted: true, opens: false });
   assert.equal(admin.listen, false);
-  assert.equal(admin.device, false, "nothing to keep on this device");
+  assert.equal(admin.device, true, "This device shows for every book in the library, also with nothing to keep yet");
   const member = bookModel(work(), { admin: false });
   assert.equal(member.main, null);
   assert.equal(member.audiobook.action, null);
@@ -176,7 +176,7 @@ test("a PDF-only book: Read off, the PDF line, Needs an EPUB once there is a rec
   assert.equal(pdfOnly.readEbookId, null);
   assert.deepEqual(pdfOnly.ebook, { line: "PDF · opens in another app", opens: true, action: null });
   assert.equal(pdfOnly.sync.line, "Needs an audiobook");
-  assert.equal(pdfOnly.device, false);
+  assert.equal(pdfOnly.device, true);
   const withAudio = bookModel(work({ recordings: [recording("r1")], ebooks: [ebook("p1", "pdf")] }), { admin: true });
   assert.deepEqual(withAudio.sync, { line: NEEDS_EPUB_LINE, muted: true, opens: false });
   assert.equal(withAudio.listen, true);
@@ -237,26 +237,32 @@ const part = (recordingId: string, index: number, loaded: number): DownloadPart 
   version: null,
 });
 
-test("the This device switch: on when the chosen recording is completely or partly here, with what is kept and its size", () => {
+test("the This device switch is the Keep record; its line says what is kept, saving or missing", () => {
   const r = recording("r1");
   const none = deviceHold(r, [], []);
   assert.equal(none.audio, "none");
-  assert.deepEqual(keepState({ hold: none, saving: null, ebookSize: null, hasRecording: true }), { on: false, line: null, resumable: false });
+  // Off: nothing here, nothing said.
+  assert.deepEqual(keepState({ keep: false, hold: none, saving: null, ebookSize: null, hasRecording: true }), { on: false, line: null, resumable: false });
   // Another recording's files do not count.
   assert.equal(deviceHold(r, [file("r2", 1)], []).audio, "none");
   const complete = deviceHold(r, [file("r1", 1), file("r1", 2), file("r1", 3)], []);
-  assert.deepEqual(keepState({ hold: complete, saving: null, ebookSize: 1_000_000, hasRecording: true }), { on: true, line: "Audiobook and ebook · 4 MB", resumable: false });
-  assert.deepEqual(keepState({ hold: complete, saving: null, ebookSize: null, hasRecording: true }).line, "Audiobook · 3 MB");
+  assert.deepEqual(keepState({ keep: true, hold: complete, saving: null, ebookSize: 1_000_000, hasRecording: true }), { on: true, line: "Audiobook and ebook · 4 MB", resumable: false });
+  assert.deepEqual(keepState({ keep: true, hold: complete, saving: null, ebookSize: null, hasRecording: true }).line, "Audiobook · 3 MB");
+  // Files on the device do not turn the switch on: the record does.
+  assert.deepEqual(keepState({ keep: false, hold: complete, saving: null, ebookSize: null, hasRecording: true }), { on: false, line: "Audiobook · 3 MB", resumable: false });
   const partly = deviceHold(r, [file("r1", 1)], [part("r1", 2, 5)]);
-  assert.deepEqual(keepState({ hold: partly, saving: null, ebookSize: null, hasRecording: true }), { on: true, line: "Not complete · 1 of 3 files", resumable: true });
+  assert.deepEqual(keepState({ keep: true, hold: partly, saving: null, ebookSize: null, hasRecording: true }), { on: true, line: "Not complete · 1 of 3 files", resumable: true });
+  // Kept with nothing saved yet (offline, or before the first run): not complete.
+  assert.deepEqual(keepState({ keep: true, hold: none, saving: null, ebookSize: null, hasRecording: true }), { on: true, line: "Not complete · 0 of 3 files", resumable: true });
   // Some saved bytes of one file make it partly here.
   assert.equal(deviceHold(r, [], [part("r1", 1, 4)]).audio, "partial");
   assert.equal(deviceHold(r, [], [part("r1", 1, 0)]).audio, "none");
   // A save that runs: "Saving · 3 of 12 files".
-  assert.deepEqual(keepState({ hold: none, saving: { filesSaved: 3, filesTotal: 12 }, ebookSize: null, hasRecording: true }), { on: true, line: "Saving · 3 of 12 files", resumable: false });
-  // A book without a recording: on when its EPUB is here.
-  assert.deepEqual(keepState({ hold: deviceHold(null, [], []), saving: null, ebookSize: 600_000, hasRecording: false }), { on: true, line: "Ebook · 600 KB", resumable: false });
-  assert.equal(keepState({ hold: deviceHold(null, [], []), saving: null, ebookSize: null, hasRecording: false }).on, false);
+  assert.deepEqual(keepState({ keep: true, hold: none, saving: { filesSaved: 3, filesTotal: 12 }, ebookSize: null, hasRecording: true }), { on: true, line: "Saving · 3 of 12 files", resumable: false });
+  // A book without a recording: "Nothing to save yet"; its kept EPUB is named.
+  assert.deepEqual(keepState({ keep: true, hold: deviceHold(null, [], []), saving: null, ebookSize: null, hasRecording: false }), { on: true, line: "Nothing to save yet", resumable: false });
+  assert.deepEqual(keepState({ keep: true, hold: deviceHold(null, [], []), saving: null, ebookSize: 600_000, hasRecording: false }), { on: true, line: "Ebook · 600 KB", resumable: false });
+  assert.equal(keepState({ keep: false, hold: deviceHold(null, [], []), saving: null, ebookSize: null, hasRecording: false }).on, false);
 });
 
 test("the heart: pressed when any entry of the work is a favourite, toggling all of them", () => {
@@ -325,7 +331,8 @@ test("#533 nothing yet: Listen and Read off; the Audiobook row's Get is the main
       audiobook: [line, "get"],
       ebook: ["Not added", "get", false],
       sync: "Needs an audiobook",
-      device: false,
+      // This device shows for every book in the library (#550): Keep reads "Nothing to save yet".
+      device: true,
     });
   // A failed media state: "Download failed" with Retry, which is not the main action, and no Get.
   const failed = bookModel(work({ mediaState: { state: "failed", holdReason: null, acquisition: null } }), { admin: true });
@@ -349,7 +356,7 @@ test("#533 only a PDF: Read off, the PDF line opening the Ebook page; the Readin
     audiobook: ["Not added", "get"],
     ebook: ["PDF · opens in another app", null, true],
     sync: "Needs an audiobook",
-    device: false,
+    device: true,
   });
   // With a recording: "Needs an EPUB"; with a recording and no ebook: "Needs an ebook"; a PDF beside an EPUB is no PDF-only book.
   assert.equal(bookModel(work({ recordings: [recording("r1")], ebooks: [ebook("p1", "pdf")] }), { admin: true }).sync.line, "Needs an EPUB");
