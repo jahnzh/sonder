@@ -136,7 +136,7 @@ test("an address that names nothing, or a page not built yet, shows its place's 
     ["#nowhere", "#library", "Library"],
     ["#book/no-such-work", "#library", "Library"],
     ["#series/42/add", "#library", "Library"],
-    ["#settings/appearance", "#settings", "Settings"],
+    ["#settings/reading", "#settings", "Settings"],
     ["#activity/server/wsl", "#activity", "Activity"],
     ["#discover/extra", "#discover", "Discover"],
   ] as const) {

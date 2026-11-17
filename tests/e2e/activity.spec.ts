@@ -42,7 +42,7 @@ test("Settings shows an attention indicator and opens the Activity page with the
   await page.route("**/api/activity", (route) => route.fulfill({ json: outage }));
   await page.goto("/#settings");
   await expect(page.getByRole("img", { name: "Background work needs attention" }).first()).toBeAttached();
-  await page.getByTestId("open-activity").click();
+  await page.getByRole("button", { name: "Background work", exact: true }).click();
   await expect(page).toHaveURL(/#activity$/);
   await expect(page.getByRole("heading", { name: "Activity", level: 1 })).toBeVisible();
 

@@ -33,6 +33,11 @@ test.beforeAll(async () => {
   throw new Error("Authenticated browser server did not start");
 });
 test.afterAll(() => { server?.kill(); });
+// Settings is a list whose rows open pages (#579): the Settings tab, then the row.
+async function openSettingsPage(page: Page, row: string) {
+  await page.getByRole("button", { name: "Settings", exact: true }).last().click();
+  await page.getByRole("navigation", { name: "Settings", exact: true }).getByRole("button", { name: new RegExp(`^${row}\\b`) }).click();
+}
 test("accounts keep libraries and offline queues separate", async ({ page }) => {
   mkdirSync("artifacts", { recursive: true });
   await page.addInitScript(() => sessionStorage.setItem("test-load-count", String(Number(sessionStorage.getItem("test-load-count") || 0) + 1)));
@@ -46,10 +51,10 @@ test("accounts keep libraries and offline queues separate", async ({ page }) => 
   await page.screenshot({ path: "artifacts/users-sign-in.png" });
   await page.getByLabel("Password", { exact: true }).fill("admin-password");
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.getByRole("button", { name: "Settings", exact: true }).last().click();
-  await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
+  await openSettingsPage(page, "Users");
+  await expect(page.getByRole("heading", { name: "Users", level: 1 })).toBeVisible();
   await expect.poll(() => bookHeaders).toContain("1");
-  const users = page.locator("section").filter({ has: page.getByRole("heading", { name: "Users" }) });
+  const users = page.locator("section").filter({ has: page.getByRole("heading", { name: "Accounts" }) });
   await expect(users.getByLabel("Role")).toHaveCount(0);
   await users.getByLabel("Username").fill("reader");
   await users.getByLabel("Password", { exact: true }).fill("reader-password");
@@ -81,6 +86,7 @@ test("accounts keep libraries and offline queues separate", async ({ page }) => 
   // Sign out clears the session then reloads. Wait for that load before filling
   // credentials so we do not type into the still-mounted Settings "Add user"
   // form or race the in-flight reload (which left Settings unreachable).
+  await openSettingsPage(page, "Account");
   await Promise.all([
     page.waitForEvent("load"),
     page.getByRole("button", { name: "Sign out" }).click(),
@@ -91,8 +97,11 @@ test("accounts keep libraries and offline queues separate", async ({ page }) => 
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("button", { name: "Settings", exact: true }).last()).toBeVisible();
   await page.getByRole("button", { name: "Settings", exact: true }).last().click();
-  await expect(page.getByRole("heading", { name: "Account" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Users" })).toHaveCount(0);
+  const list = page.getByRole("navigation", { name: "Settings", exact: true });
+  await expect(list.getByRole("button", { name: /^Account\b/ })).toBeVisible();
+  await expect(list.getByRole("button", { name: /^Users\b/ })).toHaveCount(0);
+  await list.getByRole("button", { name: /^Connections\b/ }).click();
+  await expect(page.getByRole("heading", { name: "Hardcover", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "TorBox" })).toHaveCount(0);
   await page.screenshot({ path: "artifacts/users-reader-settings.png" });
   const readerBooks = await (await page.request.get(`${base}/api/books`)).json();
@@ -222,8 +231,8 @@ test("one account's position history is not shown to or undoable by another", as
   await page.goto(base);
   await page.getByLabel("Password", { exact: true }).fill("admin-password");
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.getByRole("button", { name: "Settings", exact: true }).last().click();
-  const users = page.locator("section").filter({ has: page.getByRole("heading", { name: "Users" }) });
+  await openSettingsPage(page, "Users");
+  const users = page.locator("section").filter({ has: page.getByRole("heading", { name: "Accounts" }) });
   await users.getByLabel("Username").fill("historian");
   await users.getByLabel("Password", { exact: true }).fill("historian-password");
   await users.getByRole("button", { name: "Add user" }).click();
@@ -261,7 +270,7 @@ test("one account's position history is not shown to or undoable by another", as
   // With the reader open, the dialog close control sits under the reader chrome.
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
-  await page.getByRole("button", { name: "Settings", exact: true }).last().click();
+  await openSettingsPage(page, "Account");
   await Promise.all([page.waitForEvent("load"), page.getByRole("button", { name: "Sign out" }).click()]);
   await page.getByLabel("Username").fill("historian");
   await page.getByLabel("Password", { exact: true }).fill("historian-password");

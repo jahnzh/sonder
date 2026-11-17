@@ -1,463 +1,143 @@
-import { useState, useEffect, type FormEvent } from "react";
-import {
-  Download,
-  Compass,
-  ArrowUpRight,
-  Headphones,
-  Check,
-  Plus,
-  Cloud,
-  Wifi,
-  ShieldCheck,
-  BookOpen,
-  Trash2,
-  Loader2,
-  LogOut,
-  CircleUserRound,
-  KeyRound,
-  UsersRound,
-  Copy,
-} from "lucide-react";
-import { ProwlarrSettings } from "../components/ProwlarrSettings";
-import { ReadingSyncSettings } from "../components/ReadingSyncSettings";
-import { AppearanceSettings } from "../components/Appearance";
-import { KeyboardHelpButton } from "../components/KeyboardHelp";
-import { PlaybackSettings } from "../components/PlaybackSettings";
-import { DeviceReset } from "../components/DeviceReset";
-import { HardcoverSyncSettings, hardcoverChanged } from "../components/Hardcover";
-import { SourceSettings } from "../components/SourceWorkflow";
-import { Dialog } from "../components/ui/dialog";
-import type { Account, AccountRequest } from "../components/SignIn";
-import { api, authDB } from "../lib";
+// Settings (spec #572 "Settings"; boards Settings.dc.html, DesktopSettings.dc.html): a list whose rows open pages.
+// On a phone `#settings` is the list and `#settings/<page>` a Page with "Back to Settings"; on a desktop the list
+// stays on the left with the chosen page beside it (Account at `#settings`), and choosing another row replaces the
+// history entry.
+import { useEffect, useState, useSyncExternalStore } from "react";
+import type { Account } from "../components/SignIn";
+import { useAppearance } from "../components/Appearance";
+import { api } from "../lib";
+import { useAddress } from "../navigation";
+import { Group } from "../parts/Group";
+import { PageHeader } from "../parts/PageHeader";
+import { Row } from "../parts/Row";
+import { isSettingsPage, type SettingsPage as PageName } from "../routes";
+import { PAGE_TITLES, settingsList } from "../settings-list";
 import type { Settings as SettingsData } from "../types";
-import { Mark } from "./shared";
-function relativeTime(timestamp: number): string {
-  const minutes = Math.round((Date.now() - timestamp) / 60000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
-  const days = Math.round(hours / 24);
-  if (days < 7) return `${days} day${days === 1 ? "" : "s"} ago`;
-  return new Date(timestamp).toLocaleDateString();
+import { AccountPage } from "./settings/account";
+import { AppPage, runsInstalled } from "./settings/app";
+import { AppearancePage } from "./settings/appearance";
+import { PlaybackPage, useDefaultSpeed } from "./settings/playback";
+import { ConnectionsPage, LibraryStoragePage, UsersPage } from "./settings/server";
+import "./settings/settings.css";
+
+/** The width from which the chosen page is shown beside the list (the rail's, spec #572 "The shell"). */
+export const SIDE_BY_SIDE = "(min-width: 760px)";
+
+function useSideBySide(): boolean {
+  return useSyncExternalStore(
+    (listener) => {
+      const media = matchMedia(SIDE_BY_SIDE);
+      media.addEventListener("change", listener);
+      return () => media.removeEventListener("change", listener);
+    },
+    () => matchMedia(SIDE_BY_SIDE).matches,
+  );
 }
-function AccountSettings({ user, needsPassword, onLogout, notify }: { user: Account; needsPassword: boolean; onLogout: () => void; notify: (s: string, error?: boolean) => void }) {
-  const [users, setUsers] = useState<Account[]>([]);
-  const [requests, setRequests] = useState<AccountRequest[]>([]);
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [resetting, setResetting] = useState<Account | null>(null);
-  const [resetPassword, setResetPassword] = useState("");
-  const [removing, setRemoving] = useState<Account | null>(null);
-  const [actingRequestId, setActingRequestId] = useState<number | null>(null);
-  const [approval, setApproval] = useState<{ username: string; link: string; delivered: boolean } | null>(null);
-  const refresh = () => api<Account[]>("/users").then(setUsers).catch((e) => notify(e.message, true));
-  const refreshRequests = () => api<AccountRequest[]>("/account-requests").then(setRequests).catch((e) => notify(e.message, true));
-  useEffect(() => { if (user.role === "admin") { void refresh(); void refreshRequests(); } }, [user.id]);
-  const action = async (fn: () => Promise<unknown>) => { try { await fn(); notify("Saved."); if (user.role === "admin") await refresh(); } catch (e) { notify((e as Error).message, true); } };
-  const reviewRequest = async (request: AccountRequest, decision: "approve" | "decline") => {
-    setActingRequestId(request.id);
-    try {
-      if (decision === "decline") {
-        await api(`/account-requests/${request.id}/decline`, { method: "POST" });
-        setApproval(null);
-        await refreshRequests();
-        return;
-      }
-      const result = await api<{ ok: boolean; inviteLink: string; emailDelivered: boolean }>(`/account-requests/${request.id}/approve`, { method: "POST" });
-      setApproval({ username: request.username, link: result.inviteLink, delivered: result.emailDelivered });
-      await refreshRequests();
-    } catch (e) {
-      notify((e as Error).message, true);
-    } finally {
-      setActingRequestId(null);
-    }
-  };
-  const copyApprovalLink = async () => {
-    if (!approval) return;
-    try {
-      await navigator.clipboard.writeText(approval.link);
-      notify("Invite link copied.");
-    } catch {
-      notify("Could not copy the link.", true);
-    }
-  };
-  const roleLabel = (account: Account) => account.role === "admin" ? "Admin" : "User";
-  return <>
-    <section className="settings-section account-section">
-      <div className="settings-section-heading">
-        <span className="settings-section-icon"><CircleUserRound size={20} /></span>
-        <div><h2>Account</h2><p>{user.username} · {roleLabel(user)}</p></div>
-      </div>
-      {needsPassword && <button className="button subtle" onClick={() => void action(async () => { await api("/auth/logout", { method: "POST" }); await authDB.preferences.put({ key: "auth", value: { required: true, authenticated: false } }); navigator.serviceWorker?.controller?.postMessage("clear-stream-cache"); onLogout(); window.location.reload(); })}><LogOut size={16} /> Sign out</button>}
-    </section>
-    {user.id !== 1 && <section className="settings-section account-section">
-      <div className="settings-section-heading">
-        <span className="settings-section-icon"><KeyRound size={20} /></span>
-        <div><h2>Change password</h2></div>
-      </div>
-      <form className="account-form" onSubmit={(e) => { e.preventDefault(); void action(async () => { await api("/auth/password", { method: "POST", body: JSON.stringify({ currentPassword, newPassword }) }); setCurrentPassword(""); setNewPassword(""); }); }}>
-        <label>Current password<input type="password" autoComplete="current-password" required value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} /></label>
-        <label>New password<input type="password" autoComplete="new-password" required value={newPassword} onChange={e => setNewPassword(e.target.value)} /></label>
-        <button className="button subtle">Change password</button>
-      </form>
-    </section>}
-    {user.role === "admin" && <section className="settings-section account-section">
-      <div className="settings-section-heading">
-        <span className="settings-section-icon"><UsersRound size={20} /></span>
-        <div><h2>Users</h2></div>
-      </div>
-      <ul className="user-list">
-        {users.map(account => <li key={account.id} className="user-row">
-          <div className="user-row-name"><strong>{account.username}</strong><span className="quiet-tag">{roleLabel(account)}</span></div>
-          {account.id !== 1 && <div className="user-row-actions">
-            <button type="button" className="button subtle" onClick={() => { setResetPassword(""); setResetting(account); }}><KeyRound size={15} /> Reset password</button>
-            <button type="button" className="button subtle user-remove" onClick={() => setRemoving(account)}><Trash2 size={15} /> Remove user</button>
-          </div>}
-        </li>)}
-      </ul>
-      <h3 className="requests-heading">Pending account requests</h3>
-      {requests.length ? <ul className="user-list">
-        {requests.map(request => <li key={request.id} className="user-row request-row">
-          <div className="user-row-name"><strong>{request.username}</strong><span className="quiet-tag">{relativeTime(request.createdAt)}</span></div>
-          <div className="request-meta"><span>{request.email}</span>{request.note && <span className="request-note">{request.note}</span>}</div>
-          <div className="user-row-actions">
-            <button type="button" className="button subtle" disabled={actingRequestId !== null} onClick={() => void reviewRequest(request, "decline")}>Decline</button>
-            <button type="button" className="button primary" disabled={actingRequestId !== null} onClick={() => void reviewRequest(request, "approve")}><Check size={15} /> Approve</button>
-          </div>
-        </li>)}
-      </ul> : <p className="requests-empty">No pending account requests.</p>}
-      {approval && <div className="request-approval" role="status">
-        <p>{approval.delivered
-          ? `Approved ${approval.username}. The invite email was sent.`
-          : `Approved ${approval.username}. The invite email was not sent. Copy the link and share it directly.`}</p>
-        <code className="request-approval-link">{approval.link}</code>
-        <button type="button" className="button subtle" onClick={() => void copyApprovalLink()}><Copy size={15} /> Copy link</button>
-      </div>}
-      <form className="account-form user-add" onSubmit={e => { e.preventDefault(); void action(async () => { await api("/users", { method: "POST", body: JSON.stringify({ username, password, role: "user" }) }); setUsername(""); setPassword(""); }); }}>
-        <h3>Add user</h3>
-        <label>Username<input required value={username} onChange={e => setUsername(e.target.value)} /></label>
-        <label>Password<input type="password" autoComplete="new-password" required value={password} onChange={e => setPassword(e.target.value)} /></label>
-        <button className="button primary"><Plus size={16} /> Add user</button>
-      </form>
-      <Dialog open={!!resetting} onOpenChange={(open) => { if (!open) setResetting(null); }} title={`Reset password for ${resetting?.username ?? ""}`} className="account-dialog">
-        <form className="account-form" onSubmit={e => { e.preventDefault(); const account = resetting!; setResetting(null); void action(() => api(`/users/${account.id}`, { method: "PATCH", body: JSON.stringify({ password: resetPassword }) })); }}>
-          <label>New password<input type="password" autoComplete="new-password" required autoFocus value={resetPassword} onChange={e => setResetPassword(e.target.value)} /></label>
-          <div className="account-dialog-actions">
-            <button type="button" className="button subtle" onClick={() => setResetting(null)}>Cancel</button>
-            <button className="button primary">Reset password</button>
-          </div>
-        </form>
-      </Dialog>
-      <Dialog open={!!removing} onOpenChange={(open) => { if (!open) setRemoving(null); }} title={`Remove ${removing?.username ?? ""}?`} className="account-dialog">
-        <div className="account-dialog-actions">
-          <button type="button" className="button subtle" onClick={() => setRemoving(null)}>Cancel</button>
-          <button type="button" className="button subtle user-remove" onClick={() => { const account = removing!; setRemoving(null); void action(() => api(`/users/${account.id}`, { method: "DELETE" })); }}><Trash2 size={15} /> Remove user</button>
-        </div>
-      </Dialog>
-    </section>}
-  </>;
-}
-export function SettingsPage({
-  user,
-  settings,
-  onSaved,
-  notify,
-  needsPassword,
-  onLogout,
-  installPrompt,
-  onInstall,
-  onOpenActivity,
-}: {
+
+type Props = {
   user: Account;
   settings: SettingsData | null;
   onSaved: () => void;
-  notify: (s: string, error?: boolean) => void;
+  notify: (text: string, error?: boolean) => void;
   needsPassword: boolean;
   onLogout: () => void;
   installPrompt: Event | null;
   onInstall: () => void;
   onOpenActivity: () => void;
-}) {
-  const [name, setName] = useState("");
-  const [torbox, setTorbox] = useState("");
-  const [hardcover, setHardcover] = useState("");
-  const [abbUrl, setAbbUrl] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [testing, setTesting] = useState(false);
-  useEffect(() => {
-    if (settings) {
-      setName(settings.name);
-      setAbbUrl(settings.abbUrl);
-    }
-  }, [settings]);
-  const save = async (e: FormEvent) => {
-    e.preventDefault();
-    setBusy(true);
-    try {
-      await api("/settings", {
-        method: "PATCH",
-        body: JSON.stringify(user.role === "admin" ? { name, abbUrl, ...(torbox ? { torbox } : {}), ...(hardcover ? { hardcover } : {}) } : (hardcover ? { hardcover } : {})),
-      });
-      setTorbox("");
-      setHardcover("");
-      onSaved();
-      hardcoverChanged();
-    } catch (e) {
-      notify((e as Error).message, true);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const disconnect = async (key: "torbox" | "hardcover") => {
-    try {
-      await api("/settings", {
-        method: "PATCH",
-        body: JSON.stringify({ [key]: "" }),
-      });
-      onSaved();
-      notify("Connection removed.");
-      if (key === "hardcover") hardcoverChanged();
-    } catch (e) {
-      notify((e as Error).message, true);
-    }
-  };
-  const test = async () => {
-    setTesting(true);
-    try {
-      await api("/torbox/test", { method: "POST" });
-      notify("TorBox is connected and ready to play.");
-    } catch (e) {
-      notify((e as Error).message, true);
-    } finally {
-      setTesting(false);
-    }
-  };
-  return (
-    <>
-      <div className="page-heading">
-        <div>
-          <h1>Settings</h1>
-        </div>
-      </div>
-      <AccountSettings user={user} needsPassword={needsPassword} onLogout={onLogout} notify={notify} />
-      <AppearanceSettings notify={notify} />
-      <PlaybackSettings notify={notify} />
-      <section className="settings-section" aria-label="Keyboard">
-        <KeyboardHelpButton />
-      </section>
-      <DeviceReset notify={notify} />
-      <form className="settings-form" onSubmit={(e) => void save(e)}>
-        {user.role === "admin" && (
-        <section className="settings-section">
-          <div className="settings-section-heading">
-            <span className="settings-section-icon">
-              <Headphones size={20} />
-            </span>
-            <div>
-              <h2>Library</h2>
-            </div>
-          </div>
-          <label>
-            Library name
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-              maxLength={60}
-              placeholder="Library name"
-            />
-          </label>
-        </section>
-        )}
-        {user.role === "admin" && (
-        <section className="settings-section">
-          <div className="settings-section-heading">
-            <span className="settings-section-icon green">
-              <Cloud size={20} />
-            </span>
-            <div>
-              <h2>TorBox</h2>
-            </div>
-            <span
-              className={`connection-tag ${settings?.torboxConfigured ? "connected" : ""}`}
-            >
-              <span />
-              {settings?.torboxConfigured ? "Connected" : "Not connected"}
-            </span>
-          </div>
-          <label>
-            API key
-            <input
-              type="password"
-              autoComplete="off"
-              value={torbox}
-              onChange={(e) => setTorbox(e.target.value)}
-              placeholder={
-                settings?.torboxConfigured
-                  ? "••••••••••••••••  ·  Saved securely"
-                  : "Paste your TorBox API key"
-              }
-            />
-            <small>
-              Find your key in{" "}
-              <a
-                href="https://torbox.app/settings"
-                target="_blank"
-                rel="noreferrer"
-              >
-                TorBox → Settings → API <ArrowUpRight size={12} />
-              </a>
-              . Save changes before testing.
-            </small>
-          </label>
-          {settings?.torboxConfigured && (
-            <div className="settings-inline-actions">
-              <button
-                type="button"
-                className="button subtle"
-                disabled={testing}
-                onClick={() => void test()}
-              >
-                {testing ? (
-                  <Loader2 className="spin" size={14} />
-                ) : (
-                  <Wifi size={14} />
-                )}{" "}
-                Test connection
-              </button>
-              <button
-                type="button"
-                className="text-danger"
-                onClick={() => void disconnect("torbox")}
-              >
-                Disconnect
-              </button>
-            </div>
-          )}
-        </section>
-        )}
-        <section className="settings-section">
-          <div className="settings-section-heading">
-            <span className="settings-section-icon lilac">
-              <BookOpen size={20} />
-            </span>
-            <div>
-              <h2>
-                Hardcover <span className="optional-label">Optional</span>
-              </h2>
-              <p>
-                Book metadata, reading shelves, lists, and reading progress.
-              </p>
-            </div>
-            {settings?.hardcoverConfigured && (
-              <span className="connection-tag connected">
-                <span /> Connected
-              </span>
-            )}
-          </div>
-          <label>
-            API token
-            <input
-              type="password"
-              autoComplete="off"
-              value={hardcover}
-              onChange={(e) => setHardcover(e.target.value)}
-              placeholder={
-                settings?.hardcoverConfigured
-                  ? "••••••••••••••••  ·  Saved securely"
-                  : "Paste your Hardcover API token"
-              }
-            />
-            <small>
-              Get your token from{" "}
-              <a
-                href="https://hardcover.app/account/api"
-                target="_blank"
-                rel="noreferrer"
-              >
-                Hardcover API settings <ArrowUpRight size={12} />
-              </a>
-              .
-            </small>
-          </label>
-          {settings?.hardcoverConfigured && (
-            <button
-              className="text-danger"
-              type="button"
-              onClick={() => void disconnect("hardcover")}
-            >
-              Disconnect Hardcover
-            </button>
-          )}
-        </section>
-        {user.role === "admin" && (
-        <section className="settings-section">
-          <div className="settings-section-heading">
-            <span className="settings-section-icon">
-              <Compass size={20} />
-            </span>
-            <div>
-              <h2>Discovery</h2>
-            </div>
-          </div>
-          <label>
-            AudioBookBay mirror
-            <input
-              type="url"
-              value={abbUrl}
-              onChange={(e) => setAbbUrl(e.target.value)}
-              required
-              placeholder="https://audiobookbay.lu"
-            />
-            <small>
-              Use an HTTPS AudioBookBay mirror that is accessible from your
-              server.
-            </small>
-          </label>
-        </section>
-        )}
-        <div className="settings-save">
-          <span>
-            <ShieldCheck size={15} /> Connection keys are encrypted on your
-            server.
-          </span>
-          <button className="button primary" disabled={busy}>
-            {busy ? (
-              <Loader2 className="spin" size={16} />
-            ) : (
-              <Check size={16} />
-            )}{" "}
-            Save changes
-          </button>
-        </div>
-      </form>
-      <HardcoverSyncSettings
-        configured={!!settings?.hardcoverConfigured}
-        notify={notify}
-      />
-      {user.role === "admin" && <><h3 className="requests-heading">Background work</h3><div className="settings-inline-actions"><button type="button" className="button subtle" data-testid="open-activity" onClick={onOpenActivity}>Open Activity</button></div><SourceSettings settings={settings} onSaved={onSaved} notify={notify} /><ProwlarrSettings settings={settings} onSaved={onSaved} notify={notify} /><ReadingSyncSettings notify={notify} /></>}
-      <section className="install-card">
-        <div className="install-brand">
-          <Mark />
-        </div>
-        <div>
-          <h3>Install Sonder</h3>
-          <p>
-            {installPrompt
-              ? "Install Sonder on this device."
-              : "Use your browser’s “Install app” or “Add to Home Screen” menu. Installation and offline playback require HTTPS, or localhost."}
-          </p>
-        </div>
-        {installPrompt && (
-          <button className="button subtle" onClick={onInstall}>
-            <Download size={16} /> Install Sonder
-          </button>
-        )}
-      </section>
+};
 
-    </>
+export function SettingsPage(props: Props) {
+  const { user, settings, notify } = props;
+  const admin = user.role === "admin";
+  const address = useAddress();
+  const sideBySide = useSideBySide();
+  const { appearance } = useAppearance();
+  const speed = useDefaultSpeed();
+  const [accounts, setAccounts] = useState<number | null>(null);
+  const countAccounts = () => {
+    if (!admin) return;
+    void api<unknown[]>("/users")
+      .then((list) => setAccounts(list.length))
+      .catch(() => {});
+  };
+  useEffect(countAccounts, [admin, user.id]);
+  const route = address.route;
+  const asked = route.name === "settings-page" && isSettingsPage(route.page) ? route.page : null;
+  // The address resolves an administrator's page for someone else to Settings already; on a desktop the page beside
+  // the list at `#settings` is Account.
+  const shown: PageName | null = asked ?? (sideBySide ? "account" : null);
+  const open = (page: PageName) => {
+    if (page === shown) return;
+    address.navigate({ name: "settings-page", page }, { replace: sideBySide });
+  };
+  const groups = settingsList({ user, settings, appearance, speed, accounts, installed: runsInstalled() });
+  const list = (
+    <nav className="settings-list" aria-label="Settings">
+      {groups.map((group) => (
+        <Group key={group.caption} caption={group.caption}>
+          {group.rows.map((row) => (
+            <Row key={row.page} label={row.label} value={row.value} opens onClick={() => open(row.page)} />
+          ))}
+          {/* Activity opens from here until it has its own tab (#516). */}
+          {group.caption === "Server" && <Row label="Background work" opens onClick={props.onOpenActivity} />}
+        </Group>
+      ))}
+    </nav>
   );
+  const page = shown && (
+    <PageBody
+      page={shown}
+      {...props}
+      onUsersChanged={countAccounts}
+    />
+  );
+  if (sideBySide)
+    return (
+      <div className="settings-split">
+        <div className="settings-split-list">
+          <PageHeader title="Settings" />
+          {list}
+        </div>
+        {page && (
+          <section className="settings-split-page" aria-labelledby="settings-page-title" data-page={shown}>
+            <h2 id="settings-page-title" className="type-title settings-page-title">
+              {PAGE_TITLES[shown!]}
+            </h2>
+            <div className="settings-page-body">{page}</div>
+          </section>
+        )}
+      </div>
+    );
+  if (!shown)
+    return (
+      <div className="settings-phone">
+        <PageHeader title="Settings" />
+        {list}
+      </div>
+    );
+  return (
+    <div className="settings-phone" data-page={shown}>
+      <PageHeader title={PAGE_TITLES[shown]} back parent={{ name: "settings" }} />
+      <div className="settings-page-body">{page}</div>
+    </div>
+  );
+}
+
+function PageBody({ page, onUsersChanged, ...props }: Props & { page: PageName; onUsersChanged: () => void }) {
+  switch (page) {
+    case "account":
+      return <AccountPage user={props.user} needsPassword={props.needsPassword} onLogout={props.onLogout} notify={props.notify} />;
+    case "appearance":
+      return <AppearancePage notify={props.notify} />;
+    case "playback":
+      return <PlaybackPage notify={props.notify} />;
+    case "connections":
+      return <ConnectionsPage user={props.user} settings={props.settings} onSaved={props.onSaved} notify={props.notify} />;
+    case "users":
+      return <UsersPage user={props.user} notify={props.notify} onChanged={onUsersChanged} />;
+    case "library":
+      return <LibraryStoragePage settings={props.settings} onSaved={props.onSaved} notify={props.notify} />;
+    case "app":
+      return <AppPage installable={!!props.installPrompt} onInstall={props.onInstall} notify={props.notify} />;
+  }
 }

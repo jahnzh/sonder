@@ -222,6 +222,8 @@ export type Settings = {
   storageLabel: string;
   prowlarrUrl?: string;
   prowlarrConfigured?: boolean;
+  /** The media drive, for the administrator (spec #572, "Server storage"); absent from servers that predate it. */
+  storage?: { connected: boolean; usedBytes: number | null; totalBytes: number | null } | null;
 };
 
 export type Acquisition = {

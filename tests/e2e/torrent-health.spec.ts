@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 test("settings shows local torrent status from the real health endpoint", async ({
   page,
 }) => {
-  await page.goto("/#settings");
+  await page.goto("/#settings/connections");
   const line = page.getByTestId("torrent-health");
   await expect(line).toHaveAttribute("data-status", "unconfigured");
   await expect(line).toContainText("Local torrents are not configured.");
@@ -27,7 +27,7 @@ test("downloads warns and settings flags the VPN when local torrents are offline
   await expect(page.getByTestId("torrent-health-warning")).toContainText(
     "no internet connection through the VPN",
   );
-  await page.goto("/#settings");
+  await page.goto("/#settings/connections");
   await expect(page.getByTestId("torrent-health")).toHaveAttribute(
     "data-status",
     "offline",

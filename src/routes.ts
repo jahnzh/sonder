@@ -5,6 +5,14 @@
 export type Place = "library" | "discover" | "downloads" | "activity" | "settings";
 export type BookPage = "audiobook" | "ebook" | "sync" | "hardcover" | "chapters" | "bookmarks" | "search";
 export type ActivityPart = "now" | "device" | "server";
+/** The pages of Settings (spec #572, "Settings"): `#settings/<page>`. */
+export type SettingsPage = "account" | "appearance" | "playback" | "connections" | "users" | "library" | "app";
+export const SETTINGS_PAGES: readonly SettingsPage[] = ["account", "appearance", "playback", "connections", "users", "library", "app"];
+/** The Settings pages only the administrator has. */
+export const ADMIN_SETTINGS_PAGES: readonly SettingsPage[] = ["users", "library"];
+export function isSettingsPage(page: string): page is SettingsPage {
+  return (SETTINGS_PAGES as readonly string[]).includes(page);
+}
 
 export type Route =
   | { name: "library" }
@@ -245,6 +253,8 @@ function built(route: Route): boolean {
     case "gallery-child":
     case "gallery-sheet":
       return true;
+    case "settings-page":
+      return isSettingsPage(route.page);
     case "activity":
       return route.part === "now";
     default:
@@ -252,9 +262,11 @@ function built(route: Route): boolean {
   }
 }
 
-/** Activity is the administrator's today, its Server part and workers for good. */
+/** Activity is the administrator's today, its Server part and workers for good; so are Users and Library and storage. */
 function allowed(route: Route, admin: boolean): boolean {
-  return admin || placeOf(route) !== "activity";
+  if (admin) return true;
+  if (route.name === "settings-page") return !(ADMIN_SETTINGS_PAGES as readonly string[]).includes(route.page);
+  return placeOf(route) !== "activity";
 }
 
 /**
