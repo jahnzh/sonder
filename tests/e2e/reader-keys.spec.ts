@@ -5,6 +5,7 @@ import {randomUUID} from "node:crypto";
 import {readerFixture} from "../reader-fixture";
 import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
 import {highlightShown,textShown} from "./reader-view";
+import {appearancePanel,openAppearance} from "./reader-appearance";
 // `F` returns to the narration only when the reader has the keyboard (#501 review): not behind a sheet or a dialog
 // above the reader, not while typing in a field (also one inside the book's pages), not with a modifier and not
 // without the book's narration in the player. A focused button does not take it.
@@ -197,7 +198,7 @@ test("F does nothing in the reader without the book's narration in the player",a
  // F would switch following on and arm a return for a narration that is not there.
  const box=(await room.locator(".reader-viewport").boundingBox())!;
  await page.mouse.click(box.x+box.width/2,box.y+box.height*0.75);
- await room.locator(".reader-topbar").getByRole("button",{name:"More",exact:true}).click();
- await reader.locator(".reader-more").getByRole("button",{name:"Reading sync",exact:true}).click();
- await expect(room.getByRole("checkbox",{name:"Follow the narration"})).not.toBeChecked();
+ // Follow the narration is a switch in Appearance docked under the text (#588).
+ await openAppearance(page,room);
+ await expect(appearancePanel(room).getByRole("switch",{name:"Follow the narration"})).toHaveAttribute("aria-checked","false");
 });

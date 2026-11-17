@@ -1138,6 +1138,24 @@
     flex-shrink: 0;
   }
 }
+
+/* Appearance docked under the text (#588, spec #586 "Appearance docked under the text"): on a phone the panel takes
+   the dock row in place of the foot, so the text band is what is left between the head and the panel; closing it
+   brings the foot back. On a desktop it docks under the text, above the player, until the desktop's ticket. */
+@media (max-width: 899.98px) {
+  .reader-room[data-appearance="docked"] {
+    grid-template-rows: var(--reader-head) minmax(0, 1fr) auto;
+  }
+  .reader-room[data-appearance="docked"] > .reader-player {
+    display: none;
+  }
+}
+@media (min-width: 900px) {
+  .reader-room[data-appearance="docked"] > .reader-dock {
+    order: 0;
+  }
+}
+
 /* The reader on its own stays mounted under its pages (#590): closed, it keeps its layout but is neither seen,
    tapped nor read, as Now playing does. */
 .reader-dialog[data-state="closed"],
