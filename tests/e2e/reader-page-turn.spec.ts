@@ -19,6 +19,22 @@ test.beforeEach(async({page})=>{
   const audio:HTMLAudioElement[]=[];(window as any).__turnAudio=audio;
   const NativeAudio=window.Audio;
   window.Audio=class extends NativeAudio{constructor(src?:string){super(src);audio.push(this);}};
+  // The fonts of the document each section frame shows now, before its words are read (#588). A frame epub.js has
+  // just made for a new layout (a resize, Appearance docked or closed) first holds an empty about:blank document that
+  // the section then replaces. Under load Firefox left that replaced document's fonts.ready pending (seen with the
+  // frame at no width, no font faces, status "loaded"), so a wait on it hung the poll that asked until its timeout.
+  // The wait follows the frame to the document it shows instead.
+  (window as any).__sectionFontsReady=async(host:Element)=>{
+   for(const frame of host.querySelectorAll("iframe")){
+    for(let doc=frame.contentDocument;doc;){
+     let timer=0;
+     const replaced=new Promise<void>(resolve=>{const check=()=>frame.contentDocument!==doc?resolve():void(timer=window.setTimeout(check,50));check();});
+     const settled=await Promise.race([doc.fonts.ready.then(()=>true),replaced.then(()=>false)]);
+     window.clearTimeout(timer);
+     doc=settled?null:frame.contentDocument;
+    }
+   }
+  };
  });
 });
 test.afterEach(async({page})=>{
@@ -84,7 +100,7 @@ async function narrateAt(page:Page,position:number){
 async function wordState(room:Locator,sentence:string,word:number){
  return room.locator(".reader-viewport").evaluate(async(host,{sentence,word})=>{
   // The section's fonts first: a layout measured with a fallback font breaks elsewhere (WebKit loads them late).
-  for(const frame of host.querySelectorAll("iframe"))await frame.contentDocument?.fonts?.ready;
+  await (window as any).__sectionFontsReady(host);
   const bounds=host.getBoundingClientRect();
   for(const frame of host.querySelectorAll("iframe")){
    const doc=frame.contentDocument,box=frame.getBoundingClientRect();
@@ -281,7 +297,7 @@ type LaidWord={text:string;page:number;x:number;shown:boolean;highlighted:boolea
 async function layoutOf(room:Locator,sentence:string){
  return room.locator(".reader-viewport").evaluate(async(host,sentence)=>{
   // The section's fonts first: a layout measured with a fallback font breaks elsewhere (WebKit loads them late).
-  for(const frame of host.querySelectorAll("iframe"))await frame.contentDocument?.fonts?.ready;
+  await (window as any).__sectionFontsReady(host);
   const bounds=host.getBoundingClientRect(),step=host.clientWidth;
   const overlap=(r:Box,b:Box)=>Math.min(r.right,b.right)-Math.max(r.left,b.left)>0.5&&Math.min(r.bottom,b.bottom)-Math.max(r.top,b.top)>0.5;
   const marks=[...host.querySelectorAll(".sonder-follow rect")].map(r=>r.getBoundingClientRect());
