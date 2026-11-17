@@ -15,7 +15,7 @@ export function PlaybackSettings({
 }: {
   notify: (text: string, error?: boolean) => void;
 }) {
-  const { appearance, update, savePlayback, saveReader } = useAppearance(),
+  const { appearance, update, savePlayback } = useAppearance(),
     [busy, setBusy] = useState(false);
   const { deviceSpeed } = usePlayer();
   const defaultSpeed = resolveSpeed({
@@ -33,7 +33,7 @@ export function PlaybackSettings({
         </span>
         <div>
           <h2>Playback</h2>
-          <p>Choose the default speed, what the progress bar shows and how linked ebooks open.</p>
+          <p>Choose the default speed and what the progress bar shows.</p>
         </div>
       </div>
       <label>
@@ -86,26 +86,6 @@ export function PlaybackSettings({
         Used for books without their own speed once saved. A speed chosen in the
         player is kept for that recording on this device.
       </p>
-      <label>
-        Ebook view
-        <select
-          aria-label="Ebook view"
-          value={appearance.reader.display}
-          onChange={(event) =>
-            update({
-              ...appearance,
-              reader: {
-                ...appearance.reader,
-                display: event.target.value as "book" | "segment" | "word",
-              },
-            })
-          }
-        >
-          <option value="book">Page</option>
-          <option value="segment">Lyrics</option>
-          <option value="word">Word</option>
-        </select>
-      </label>
       <p className="muted">
         For precise seeking, hold the progress bar and drag farther above or
         below it to slow down. Release to seek.
@@ -116,7 +96,6 @@ export function PlaybackSettings({
         onClick={() => {
           setBusy(true);
           void savePlayback()
-            .then(() => saveReader({ display: appearance.reader.display }))
             .then(() => notify("Playback settings saved."))
             .catch((error) => notify(error.message, true))
             .finally(() => setBusy(false));

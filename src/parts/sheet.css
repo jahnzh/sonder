@@ -1,0 +1,71 @@
+/* Sheet (src/parts/Sheet.tsx). The whole screen, in the ground colour, at the screen edge; the boards
+   (GetAudiobook.dc.html, SeriesAdd.dc.html) draw a 44 head, 16 between blocks and the foot at the bottom. On a
+   desktop the screen edge is 32 and the task keeps one column, centred. */
+.part-sheet {
+  position: fixed;
+  inset: 0;
+  /* Over the player and the tab bar (60, 61), under dialogs and toasts opened from it (90 and up). */
+  z-index: 80;
+  box-sizing: border-box;
+  padding: max(var(--edge), env(safe-area-inset-top)) max(var(--edge), env(safe-area-inset-right))
+    max(var(--edge), env(safe-area-inset-bottom)) max(var(--edge), env(safe-area-inset-left));
+  display: flex;
+  justify-content: center;
+  background: var(--background);
+  color: var(--text);
+  font-family: var(--font-body);
+  overflow: hidden;
+  outline: none;
+}
+.part-sheet-column {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 640px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+.part-sheet-head {
+  box-sizing: border-box;
+  height: var(--height-control);
+  flex: none;
+  display: grid;
+  grid-template-columns: var(--height-control) minmax(0, 1fr) var(--height-control);
+  align-items: center;
+  gap: var(--space-8);
+}
+.part-sheet-title {
+  margin: 0;
+  min-width: 0;
+  color: var(--muted);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.part-sheet-balance {
+  width: var(--height-control);
+  height: var(--height-control);
+}
+/* The body scrolls on its own; a focus ring at its edge stays inside it. */
+.part-sheet-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: calc(-1 * var(--space-4));
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.part-sheet-foot {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.part-sheet-foot > .part-button {
+  width: 100%;
+}

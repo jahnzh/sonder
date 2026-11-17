@@ -1,5 +1,5 @@
 import { isAdmin } from "../lib";
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type EpubBook from "epubjs/types/book";
 import type Rendition from "epubjs/types/rendition";
 import type Contents from "epubjs/types/contents";
@@ -30,16 +30,13 @@ import { useAddress } from "../navigation";
 import { useAppearance } from "./Appearance";
 import { fontFamilies, paletteFor } from "../appearance";
 import { ReadingSync } from "./ReadingSync";
-import { LyricsReader } from "./LyricsReader";
-import { WordReader } from "./WordReader";
-import { audioMove, seekInside } from "../word-timing";
 import { PlaybackSource } from "./PlaybackSource";
 import { PlaybackOptions } from "./PlaybackOptions";
 import { PlaybackTimeline } from "./PlaybackTimeline";
 import {PlaybackExtra,usePlaybackMenu} from "./PlaybackMenu";
-import { readerWords, readerSegment } from "../reader-segments";
 import { readerNeedsScripts } from "../reader-sandbox";
-import { createReaderFollowing, type DeferredReturn, type NarrationReturn, type SaveOrigin } from "../reader-following";
+import { keyEventContext, OPEN_SHEET_SELECTOR, readerKeyAction, typingInField } from "../keyboard";
+import { createReaderFollowing, type DeferredReturn, type NarrationReturn } from "../reader-following";
 import { mapIdentityOf } from "../alignment-map-lifecycle";
 import { currentChapter, playbackTimeline } from "../chapters";
 import { usePlayer, type SeekTarget } from "../player";
@@ -311,7 +308,6 @@ export function ReaderView({
     [recovering, setRecovering] = useState(false),
     [conflict, setConflict] = useState<ReadingCheckpoint | null>(null),
     [follow, setFollow] = useState(true),
-    [manualWord, setManualWord] = useState<number | null>(null),
     [recoveryStatus, setRecoveryStatus] = useState(""),
     [controlsVisible, setControlsVisible] = useState(false),
     [desktop, setDesktop] = useState(() => window.matchMedia("(min-width: 900px)").matches),
@@ -329,7 +325,6 @@ export function ReaderView({
   }, []);
   const pageAction = useRef<(action: string, content?: Contents, event?: PointerEvent) => void>(() => {});
   const viewport = useRef<HTMLDivElement>(null),
-    segmentHost = useRef<HTMLElement>(null),
     epub = useRef<EpubBook | null>(null),
     rendition = useRef<Rendition | null>(null),
     file = useRef<Blob | null>(null),
@@ -358,7 +353,7 @@ export function ReaderView({
   const [followRevision,setFollowRevision]=useState(0);
   // Following the narration or paged away, and which input wins (ADR 0014).
   const followingEvents = useRef({
-    manualSave: (_locator: TextLocator, _origin: SaveOrigin) => {},
+    manualSave: (_locator: TextLocator) => {},
     narrationToFollow: (): boolean => false,
     retry: () => {},
     clearFollowError: () => {},
@@ -367,9 +362,9 @@ export function ReaderView({
   // tests, with data-save-waiting while one still waits: together they show a delayed save had its chance.
   const manualSaves = useRef(0);
   followingEvents.current = {
-    manualSave: (locator, origin) => {
+    manualSave: (locator) => {
       viewport.current?.setAttribute("data-manual-saves", String(++manualSaves.current));
-      void saveReading(id, locator, origin, mapRef.current?.recordingId).catch(() => {});
+      void saveReading(id, locator, "reading", mapRef.current?.recordingId).catch(() => {});
     },
     // A map for this ebook that matches the recording in the player, with a sentence at its position.
     narrationToFollow: () => {
@@ -380,7 +375,7 @@ export function ReaderView({
     clearFollowError: () => setError(""),
   };
   const [following] = useState(() => createReaderFollowing<TextLocator>({
-    onManualSave: (locator, origin) => followingEvents.current.manualSave(locator, origin),
+    onManualSave: (locator) => followingEvents.current.manualSave(locator),
     narrationToFollow: () => followingEvents.current.narrationToFollow(),
     onRetry: () => followingEvents.current.retry(),
     onClearFollowError: () => followingEvents.current.clearFollowError(),
@@ -428,28 +423,12 @@ export function ReaderView({
   playerRef.current = p;
   const { appearance, saveReader } = useAppearance();
   const preferences = appearance.reader;
-  // Switching Page/Lyrics/Word doesn't change how the EPUB is styled; re-theming
-  // would re-paginate the whole book for nothing.
+  // The removed views' fields (ADR 0017) do not change how the EPUB is styled; an older client that
+  // still saves them must not re-theme, which would re-paginate the whole book for nothing.
   const themeKey = JSON.stringify({ ...appearance, reader: { ...appearance.reader, display: undefined, segmentWords: undefined, wordWpm: undefined } });
-  const words = useMemo(() => book ? readerWords(book) : [], [book?.fingerprint]);
   const currentInterval = map?.recordingId === p.book?.recordingId
     ? map?.intervals.find(interval => interval.trackId === p.track?.id && interval.start <= p.position && interval.end > p.position)
     : undefined;
-  const segment = readerSegment(
-    words,
-    follow && currentInterval ? currentInterval.paragraphId : locator?.paragraphId,
-    preferences.segmentWords,
-    follow && currentInterval ? (p.position-currentInterval.start)/Math.max(0.001,currentInterval.end-currentInterval.start) : 0,
-    follow ? null : manualWord,
-  );
-  useEffect(() => {
-    if (!follow || preferences.display !== "segment") return;
-    const host=segmentHost.current, word=host?.querySelector<HTMLElement>("[data-active-word]");
-    if(!host || !word)return;
-    const box=host.getBoundingClientRect(), target=word.getBoundingClientRect();
-    if(target.bottom>box.bottom-12)host.scrollTop+=target.bottom-box.bottom+12;
-    else if(target.top<box.top+12)host.scrollTop+=target.top-box.top-12;
-  },[segment.cursor,segment.start,follow,preferences.display,preferences.segmentWords,preferences.size]);
   const refresh = async () => {
     try {
       const value = await loadReader(id);
@@ -750,8 +729,11 @@ export function ReaderView({
             start=null;
           });
           content.document.addEventListener("keydown", (event: KeyboardEvent) => {
-            if (event.ctrlKey || event.metaKey || event.altKey) return;
-            if (event.key === " " || ((event.key === "ArrowLeft" || event.key === "ArrowRight") && playerRef.current.book)) {
+            if (event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented) return;
+            // A field in the book keeps every key: what is typed goes into it, not to a shortcut.
+            if (typingInField(keyEventContext(event))) return;
+            // `F` with the focus in the pages is the reader's key, as outside them.
+            if (event.key === " " || event.key.toLowerCase() === "f" || ((event.key === "ArrowLeft" || event.key === "ArrowRight") && playerRef.current.book)) {
               event.preventDefault();
               window.dispatchEvent(new KeyboardEvent("keydown", { key: event.key, code: event.code, bubbles: true, cancelable: true }));
             } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
@@ -880,7 +862,7 @@ export function ReaderView({
       if (!restoreDue.due()) return;
       const player=playerRef.current,current=mapRef.current;
       if(following.isFollowing() && current && player.book?.recordingId===current.recordingId && current.intervals.some(interval=>interval.trackId===player.track?.id && interval.start<=player.position && interval.end>player.position))return;
-      // A Word mode checkpoint is a sentence without a CFI; go to that sentence.
+      // A checkpoint without a CFI (the listening place, or one an older client saved) is a sentence; go to it.
       if (latest.current && !latest.current.cfi) {
         void jumpRef.current(latest.current.paragraphId, false).catch(() => false);
         return;
@@ -966,8 +948,6 @@ export function ReaderView({
       if (opening) hidePages(-1);
     }
     if (!jump.current() || rendition.current !== view) return false;
-    // Reported as shown: a Word mode step superseded it, so there is nothing to retry.
-    if (jump.stepped()) return true;
     const all = current.sections.flatMap((section) => section.paragraphs);
     const value: TextLocator = {
       cfi,
@@ -1183,21 +1163,7 @@ export function ReaderView({
   const editReader = (patch: Partial<typeof preferences>) => {
     void saveReader(patch).catch(() => {});
   };
-  const turn = (direction: number) => {
-    if (preferences.display === "segment") {
-      following.manualStep();
-      const cursor = Math.max(0, Math.min(words.length - 1, segment.start + direction * preferences.segmentWords));
-      setManualWord(cursor);
-      const word = words[cursor];
-      if (word) {
-        const place = following.manualPlace();
-        void showFragment(word.paragraphId, false).then(
-          () => place.save(latest.current),
-          () => place.save(null),
-        );
-      }
-    } else navigate(view => direction < 0 ? view.prev() : view.next());
-  };
+  const turn = (direction: number) => navigate(view => direction < 0 ? view.prev() : view.next());
   pageAction.current = (action, content, event) => {
     if (action === "previous") turn(-1);
     else if (action === "next") turn(1);
@@ -1223,15 +1189,30 @@ export function ReaderView({
   };
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
-      // The Now Playing reader stays mounted while its dialog is closed.
-      if (event.ctrlKey || event.metaKey || event.altKey || (event.target as HTMLElement)?.closest("input,select,textarea,button") || panel || viewport.current?.closest('[data-state="closed"]')) return;
-      const overlay = preferences.display === "segment" || preferences.display === "word";
-      if (overlay && event.key.toLowerCase() === "f") { event.preventDefault(); following.backToNarration(); }
-      else if (overlay && event.key.toLowerCase() === "p") { event.preventDefault(); editReader({display:"book"}); }
-      else if (!p.book && preferences.display === "book" && (event.key === "ArrowLeft" || event.key === "ArrowRight")) { event.preventDefault(); pageAction.current(event.key === "ArrowLeft" ? "previous" : "next"); }
+      // A key forwarded from the pages is dispatched on the window, which is not an element: the
+      // pages already kept a key typed into one of their fields.
+      const player = playerRef.current;
+      const action = readerKeyAction({
+        key: event.key,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        altKey: event.altKey,
+        defaultPrevented: event.defaultPrevented,
+        ...keyEventContext(event),
+        sheetOpen: !!document.querySelector(OPEN_SHEET_SELECTOR),
+        panelOpen: !!panel,
+        // The Now Playing reader stays mounted while its dialog is closed.
+        readerHidden: !!viewport.current?.closest('[data-state="closed"]'),
+        narration: !!player.book && !!player.track && player.book.workId === bookRef.current?.workId,
+        playerHasBook: !!player.book,
+      });
+      if (!action) return;
+      event.preventDefault();
+      if (action.type === "back-to-narration") following.backToNarration();
+      else pageAction.current(action.direction);
     };
     window.addEventListener("keydown",key); return () => window.removeEventListener("keydown",key);
-  }, [panel,preferences.display,p.book,appearance]);
+  }, [panel]);
   const searchResults =
     book && query.trim().length > 1
       ? book.sections
@@ -1271,7 +1252,6 @@ export function ReaderView({
     setScrub(null);
     if (!fragment) return;
     following.pageAway();
-    setManualWord(null);
     const place = following.manualPlace();
     void showFragment(fragment.id, false).then(
       () => place.save(latest.current),
@@ -1319,82 +1299,7 @@ export function ReaderView({
   }, [p.book?.recordingId, p.track?.id, p.position, p.error, scrubEnded]);
   const controls = controlsVisible || desktop;
   const timing = currentInterval ? " · estimated timings" : "";
-  const overlayDisplay = preferences.display === "segment" || preferences.display === "word";
-  const showContents = desktop && preferences.display === "book" && !contentsHidden;
-  // The sentence locator alone: the pages do not move in Word mode, so the CFI
-  // of the page last shown would not belong to this sentence.
-  const locateParagraph = (paragraphId: string) => {
-    const all = sections.flatMap((section) => section.paragraphs);
-    const section = sections.find((entry) =>
-      entry.paragraphs.some((fragment) => fragment.id === paragraphId),
-    );
-    const fragment = section?.paragraphs.find((entry) => entry.id === paragraphId);
-    if (!section || !fragment) return null;
-    return {
-      section: section.index,
-      paragraphId,
-      quote: fragment.text.slice(0, 300),
-      progression:
-        all.findIndex((entry) => entry.id === paragraphId) /
-        Math.max(1, all.length - 1),
-    };
-  };
-  // A paused book stays paused: another file would have to start playing to be shown.
-  const moveAudioTo = (paragraphId: string, time?: number) => {
-    const mapped = map?.intervals.find((item) => item.paragraphId === paragraphId);
-    const audioBook = books.find((item) => item.recordingId === map?.recordingId);
-    const track = audioBook?.tracks.find((item) => item.id === mapped?.trackId);
-    if (!mapped || !audioBook || !track) return false;
-    const at = time ?? seekInside(mapped.start, mapped.end);
-    const move = audioMove({
-      mapped: true,
-      sameFile: p.book?.recordingId === audioBook.recordingId && p.track?.id === track.id,
-      playing: p.playing,
-    });
-    if (move === "none") return false;
-    following.forgetFollowed();
-    if (move === "seek") p.seek(at);
-    else void p.play(audioBook, track, at);
-    return true;
-  };
-  // Word mode saves like page turns do: after a pause, and not for every sentence it reads by
-  // itself. Its checkpoint waits in the following module, which back to narration can drop.
-  useEffect(() => {
-    const hidden = () => {
-      if (document.hidden) following.flushWordCheckpoint();
-    };
-    const flush = () => following.flushWordCheckpoint();
-    window.addEventListener("pagehide", flush);
-    document.addEventListener("visibilitychange", hidden);
-    return () => {
-      window.removeEventListener("pagehide", flush);
-      document.removeEventListener("visibilitychange", hidden);
-      following.flushWordCheckpoint();
-    };
-  }, [following]);
-  // Whatever way the display changes to Page, the page goes to the sentence Word mode was on.
-  const previousDisplay = useRef(preferences.display);
-  useEffect(() => {
-    const was = previousDisplay.current;
-    previousDisplay.current = preferences.display;
-    if (was !== "word" || preferences.display === "word") return;
-    following.flushWordCheckpoint();
-    if (preferences.display === "book" && latest.current?.paragraphId)
-      void jumpRef.current(latest.current.paragraphId, false);
-  }, [preferences.display]);
-  const wordSentenceStep = (direction: -1 | 1) => {
-    const paragraphs = sections.flatMap((section) => section.paragraphs);
-    const at = paragraphs.findIndex((fragment) => fragment.id === latest.current?.paragraphId);
-    const next = paragraphs[Math.max(0, Math.min(paragraphs.length - 1, (at < 0 ? 0 : at) + direction))];
-    if (!next) return;
-    const value = locateParagraph(next.id);
-    if (!value) return;
-    const moved = follow && moveAudioTo(next.id);
-    following.wordStep(moved);
-    latest.current = value;
-    setLocator(value);
-    following.wordCheckpoint(value, moved ? "listening" : "reading");
-  };
+  const showContents = desktop && !contentsHidden;
   const openMore = () => {
     setPanel(null);
     if (playbackMenu) playbackMenu.open();
@@ -1418,17 +1323,6 @@ export function ReaderView({
   };
   const moreItems = (
     <div className="reader-more">
-      <div className="reader-mode-switch" role="group" aria-label="Reading mode">
-        {(["book", "segment", "word"] as const).map((value) => (
-          <button
-            key={value}
-            aria-pressed={preferences.display === value}
-            onClick={fromMenu(() => editReader({ display: value }))}
-          >
-            {value === "book" ? "Page" : value === "segment" ? "Lyrics" : "Word"}
-          </button>
-        ))}
-      </div>
       <button className="reader-more-item" onClick={fromMenu(listen)}>
         <Headphones size={19} /> Listen from here
       </button>
@@ -1466,7 +1360,7 @@ export function ReaderView({
       )}
       <header className="reader-topbar" hidden={!controls}>
         {onClose && <button className="icon-button" aria-label="Close reader" onClick={() => { setControlsVisible(false); setPanel(null); onClose(); }}><ChevronDown size={22} /></button>}
-        {desktop && preferences.display === "book" && (
+        {desktop && (
           <button
             className="icon-button"
             aria-label="Hide contents"
@@ -1505,7 +1399,7 @@ export function ReaderView({
               <button
                 key={section.index}
                 aria-current={section.index === locator?.section ? "location" : undefined}
-                onClick={() => { setManualWord(null); navigate((view) => view.display(section.href), section.index); }}
+                onClick={() => navigate((view) => view.display(section.href), section.index)}
               >
                 <span>{section.title}</span>
                 {section.index === narratedSection?.index && <Headphones size={16} role="img" aria-label="Narrating" />}
@@ -1515,70 +1409,14 @@ export function ReaderView({
         )}
         <div className="reader-page-area">
           <div
-            className={`reader-viewport ${overlayDisplay ? "segment-underlay" : ""}`}
+            className="reader-viewport"
             ref={viewport}
             aria-label="Ebook pages"
-            aria-hidden={overlayDisplay}
           />
-          {preferences.display === "segment" && book && <LyricsReader
-            book={book} interval={currentInterval} position={p.position} hasMap={!!map?.intervals.length} follow={follow} size={preferences.size} selectedParagraph={locator?.paragraphId} ignoreKeys={!!panel}
-            onToggleControls={() => setControlsVisible(value=>!value)} onClose={() => onClose?.()}
-            onManualScroll={() => following.pageAway()} onPrepareSync={() => setPanel("sync")}
-            onSeek={(paragraphId, fraction) => {
-              const interval=map?.intervals.find(item=>item.paragraphId===paragraphId);
-              const audio=books.find(item=>item.recordingId===map?.recordingId);
-              const track=audio?.tracks.find(item=>item.id===interval?.trackId);
-              if (!interval || !audio || !track) {setPanel("sync");return;}
-              // The narration moves to a mapped sentence of this map's recording.
-              following.backToNarration(true);
-              void p.play(audio,track,interval.start+fraction*(interval.end-interval.start));
-            }}
-          />}
-          {preferences.display === "word" && book && <WordReader
-            book={book}
-            interval={currentInterval}
-            intervals={map?.intervals || []}
-            recordingActive={!!map && map.recordingId === p.book?.recordingId}
-            position={p.position}
-            playing={p.playing}
-            speed={p.speed || 1}
-            follow={follow}
-            size={preferences.size}
-            wpm={preferences.wordWpm}
-            selectedParagraph={locator?.paragraphId}
-            ignoreKeys={!!panel}
-            controlsVisible={controls}
-            showControlsButton={!desktop}
-            onWpm={(wordWpm) => editReader({ wordWpm })}
-            onToggleControls={() => setControlsVisible((value) => !value)}
-            onTogglePlay={() => p.toggle()}
-            onStepSentence={wordSentenceStep}
-            onWord={(word) => {
-              const value = locateParagraph(word.paragraphId);
-              if (!value) return;
-              if (latest.current?.paragraphId === value.paragraphId) return;
-              latest.current = value;
-              setLocator(value);
-            }}
-            onSeek={(word, _index, { time, auto }) => {
-              const value = locateParagraph(word.paragraphId);
-              if (!value) return;
-              const moved = !auto && follow && time != null && moveAudioTo(word.paragraphId, time);
-              // A sentence without timing, or audio that stays where it is, ends the narration follow.
-              if (!auto) following.wordStep(moved);
-              const paragraphChanged = latest.current?.paragraphId !== value.paragraphId;
-              latest.current = value;
-              setLocator(value);
-              if (paragraphChanged)
-                following.wordCheckpoint(value, moved ? "listening" : "reading", auto);
-            }}
-          />}
-          {desktop && preferences.display === "book" && <>
+          {desktop && <>
             <button className="reader-edge reader-edge-previous" aria-label="Previous page" onClick={()=>turn(-1)}><ArrowLeft size={22}/></button>
             <button className="reader-edge reader-edge-next" aria-label="Next page" onClick={()=>turn(1)}><ArrowRight size={22}/></button>
           </>}
-          {desktop && book && preferences.display === "segment" && <aside className="reader-lyrics-info" aria-label="Lyrics information"><strong>{book.title}</strong><span>{book.author}</span><span>{currentInterval ? "Estimated sentence timings" : "Reading sync"}</span><p>Keyboard shortcuts</p><span>Space · play or pause</span><span>← / → · skip 30 seconds</span><span>↑ / ↓ · previous or next line</span><span>F · back to narration</span><span>P · page mode</span></aside>}
-          {desktop && book && preferences.display === "word" && <aside className="reader-lyrics-info" aria-label="Word information"><strong>{book.title}</strong><span>{book.author}</span><span>{currentInterval ? "Estimated word timings" : "Words per minute"}</span><p>Keyboard shortcuts</p><span>Space · play or pause</span><span>← / → · previous or next word</span><span>Shift+← / → · previous or next sentence</span><span>F · back to narration</span><span>P · page mode</span></aside>}
           <div className="reader-floating">
             {toast && (
               <div className="reader-toast" role="status">
@@ -1703,7 +1541,6 @@ export function ReaderView({
                 key={section.index}
                 aria-current={section.index === locator?.section ? "location" : undefined}
                 onClick={() => {
-                  setManualWord(null);
                   navigate((view) => view.display(section.href), section.index);
                   setPanel(null);
                 }}
@@ -1727,7 +1564,6 @@ export function ReaderView({
                   key={fragment.id}
                   onClick={() => {
                     following.pageAway();
-                    setManualWord(null);
                     const place = following.manualPlace();
                     void showFragment(fragment.id, false).then(
                       () => place.save(latest.current),
@@ -1750,7 +1586,6 @@ export function ReaderView({
                     className="reader-list-item"
                     onClick={() => {
                       following.pageAway();
-                      setManualWord(null);
                       void showFragment(entry.locator.paragraphId, false);
                       setPanel(null);
                     }}
@@ -1880,7 +1715,6 @@ export function ReaderView({
             books={books}
             onMap={showMap}
             onLinked={() => void refresh()}
-            locator={locator}
             recordingId={recordingId}
             loadOptions={panel === "sync"}
           />

@@ -17,7 +17,7 @@ export function KeyboardHelpDialog({
       className="keyboard-help-dialog"
     >
       <dl className="keyboard-shortcuts">
-        {KEYBOARD_SHORTCUTS.map(({ keys, action, word }) => (
+        {KEYBOARD_SHORTCUTS.map(({ keys, action }) => (
           <div key={action}>
             <dt>
               {keys.map((key) => (
@@ -26,7 +26,6 @@ export function KeyboardHelpDialog({
             </dt>
             <dd>
               <span>{action}</span>
-              {word ? <small className="muted">{word}</small> : null}
             </dd>
           </div>
         ))}

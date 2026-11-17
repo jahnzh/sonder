@@ -148,6 +148,9 @@ globalThis.fetch = async (input, init) => {
   return Response.json({ errors: [{ message: "Unexpected Hardcover query" }] });
 };
 
+// The fixture is a library after the one-off start step (#555) ran: its ebook-only works outside the
+// owner's library stay outside it, so the step is marked done before the server starts.
+sqlite.prepare("INSERT INTO user_settings(user_id,key,value) VALUES(1,'shelfEbooksJoined','1')").run();
 const { createApp } = await import("../server/app.ts");
 const app = await createApp({ background: { manual: true } });
 

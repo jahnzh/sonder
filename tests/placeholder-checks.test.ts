@@ -23,6 +23,7 @@ const { createApp } = await import("../server/app.ts");
 const { sqlite, db } = await import("../server/db.ts");
 const s = await import("../server/schema.ts");
 const hc = await import("../server/hardcover.ts");
+const { claimWorkAudio } = await import("../server/work-library.ts");
 const removal = await import("../server/series-removal.ts");
 const { deriveWorkMediaStates, playableWorks } = await import(
   "../server/work-media-derivation.ts"
@@ -335,7 +336,7 @@ test("new audio for a linked work takes the place of placeholders on every shelf
   shelve(audio.id, "real-7301a");
   addEdition("work-7301", "real-7301b", 1);
 
-  hc.claimHardcoverAudio("work-7301", "real-7301b");
+  claimWorkAudio("work-7301", "real-7301b");
   const ids = ["hc-7301", "real-7301a", "real-7301b"];
   assert.deepEqual(shelvedIds(shelf.id, ids), ["real-7301b"]);
   assert.equal(
