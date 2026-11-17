@@ -39,6 +39,8 @@ const desktopProjects = [
               /(^|\/)(sign-in|account-requests)\.spec\.ts$/,
               // The page turn inside a sentence that crosses a page (#508).
               /(^|\/)reader-page-turn\.spec\.ts$/,
+              // Activity › Server (#519).
+              /(^|\/)activity-server\.spec\.ts$/,
               // The attention dot from Now's builder (#521).
               /(^|\/)activity-dot\.spec\.ts$/,
               // Settings as a list with pages (#579).

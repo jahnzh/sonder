@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  ChangeTracker, buildActivity, formatAge, stuckMultiplier,
+  ChangeTracker, ServiceClock, buildActivity, formatAge, stuckMultiplier,
   ATTENTION_FAILURE_MS, FINISHED_VISIBLE_MS,
   type ActivityInput,
 } from "../server/activity.ts";
@@ -315,4 +315,28 @@ test("the tracker forgets items that are gone, and ages read naturally", () => {
   assert.equal(formatAge(5 * 60 * MIN), "5 h");
   assert.equal(formatAge(3 * 24 * 60 * MIN), "3 days");
   assert.ok(ATTENTION_FAILURE_MS > 0);
+});
+
+test("a worker that went offline is dated from when the server first saw it so, and again after it came back (#519)", () => {
+  const clock = new ServiceClock();
+  const lisa = (result: ReturnType<typeof buildActivity>) => result.processes.find((process) => process.id === "alignment-host:lisa")!;
+  const wsl = (result: ReturnType<typeof buildActivity>) => result.processes.find((process) => process.id === "alignment-host:wsl")!;
+  const read = (at: number, lisaReachable: boolean) =>
+    buildActivity(base({ now: at, serviceClock: clock, pool: pool([{ id: "wsl", reachable: true }, { id: "lisa", reachable: lisaReachable }]) }));
+  const online = read(NOW, true);
+  assert.equal(lisa(online).since, null);
+  const down = read(NOW + 2 * MIN, false);
+  assert.equal(lisa(down).health, "down");
+  assert.equal(lisa(down).since, NOW + 2 * MIN);
+  // A later read while it stays offline keeps the first time.
+  assert.equal(lisa(read(NOW + 9 * MIN, false)).since, NOW + 2 * MIN);
+  assert.equal(wsl(read(NOW + 9 * MIN, false)).since, null);
+  // Back online: no time; offline again: the new time.
+  assert.equal(lisa(read(NOW + 10 * MIN, true)).since, null);
+  assert.equal(lisa(read(NOW + 12 * MIN, false)).since, NOW + 12 * MIN);
+  // A down torrent client is dated the same way.
+  const client = buildActivity(base({ now: NOW + 13 * MIN, serviceClock: clock, torrent: torrent({ status: "offline", message: "No VPN" }) }));
+  assert.equal(client.processes.find((process) => process.id === "torrent-client")!.since, NOW + 13 * MIN);
+  // Without a clock (a read whose probes did not run) a service stays undated, as before.
+  assert.equal(lisa(buildActivity(base({ now: NOW + 14 * MIN, pool: pool([{ id: "lisa", reachable: false }]) }))).since, null);
 });

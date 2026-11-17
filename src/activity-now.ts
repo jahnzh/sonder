@@ -251,9 +251,13 @@ function serverEntry(item: ActivityItem, now: number): Entry | null {
   };
 }
 
-/** A background process that is down, as a row that is not a book. A worker switched off is never down. */
+/** Whether a background process needs attention (and lights the dot): it is down. A worker switched off is never down. */
+export const processNeedsAttention = (process: ActivityProcess): boolean =>
+  process.health === "down" && !process.notTracked && !process.host?.disabled;
+
+/** A background process that is down, as a row that is not a book. */
 function processEntry(process: ActivityProcess, checkedAt: number): Entry | null {
-  if (process.health !== "down" || process.notTracked || process.host?.disabled) return null;
+  if (!processNeedsAttention(process)) return null;
   return {
     group: "attention",
     book: false,

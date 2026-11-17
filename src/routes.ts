@@ -255,6 +255,9 @@ function built(route: Route): boolean {
     case "activity":
       // This device comes with its own ticket.
       return route.part === "now" || route.part === "server";
+    // A worker's address shows Server, with the worker's controls of today, until its page lands (#519, #520).
+    case "worker":
+      return true;
     default:
       return false;
   }
