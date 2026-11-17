@@ -19,7 +19,6 @@ import type { Book, Settings as SettingsData } from "../types";
 import { Empty } from "./shared";
 export function DiscoverPage({
   admin,
-  audioTarget,
   settings,
   ebookTarget,
   onQueued,
@@ -35,7 +34,6 @@ export function DiscoverPage({
   refresh,
 }: {
   admin: boolean;
-  audioTarget: Book | null;
   settings: SettingsData | null;
   ebookTarget: Book | null;
   onQueued: () => void;
@@ -69,8 +67,7 @@ export function DiscoverPage({
   const [error, setError] = useState("");
   useEffect(() => {
     if (ebookTarget) setSource("ebooks");
-    else if (audioTarget) setSource("abb");
-  }, [ebookTarget, audioTarget]);
+  }, [ebookTarget]);
   const search = async (e: FormEvent) => {
     e.preventDefault();
     if (query.trim().length < 2) {
@@ -213,7 +210,6 @@ export function DiscoverPage({
         <ReleasePicker
           query={query}
           onQuery={onQuery}
-          target={audioTarget}
           prowlarrConfigured={!!settings?.prowlarrConfigured}
           onQueued={onQueued}
           refresh={refresh}

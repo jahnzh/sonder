@@ -55,7 +55,7 @@ type Props = {
   onSave: (book: Book) => void;
   /** Stops a running save of a recording. */
   onPauseSave: (recordingId: string) => void;
-  /** Today's release picker for the book (Get audiobook, until slice "Get"). */
+  /** Get audiobook (#601): opens the sheet at `#book/<workId>/get/audiobook`. */
   onFindAudio: (book: Book) => void;
   /** Today's ebook search for the book (Get ebook, until slice "Get"). */
   onFindEbook: (book: Book) => void;
@@ -403,8 +403,12 @@ export function BookPage(props: Props) {
             }
           />
         )}
-        {/* Not a link until the Reading sync page (S9); the reader's More sheet keeps today's card. */}
-        <FileRow kind="sync" name="Reading sync" status={model.sync.line} info={syncInfo} muted={model.sync.muted} />
+        {/* With both files the row opens the Reading sync page (#540); the reader's More sheet keeps today's card. */}
+        {model.sync.opens ? (
+          <FileRow kind="sync" name="Reading sync" status={model.sync.line} info={syncInfo} onClick={() => address.navigate({ name: "book-page", workId, page: "sync" })} />
+        ) : (
+          <FileRow kind="sync" name="Reading sync" status={model.sync.line} info={syncInfo} muted={model.sync.muted} />
+        )}
       </Group>
 
       {model.device && (

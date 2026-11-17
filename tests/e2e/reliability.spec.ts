@@ -74,16 +74,15 @@ test("a library book without media offers a working Get for its audiobook and no
   await expect(
     book.getByRole("button", { name: "Save to server", exact: true }),
   ).toHaveCount(0);
+  // Get opens the Get audiobook sheet (#601), searching the title and the author.
   await get.click();
+  await expect(page).toHaveURL(/\/get\/audiobook$/);
+  const sheet = page.getByRole("dialog", { name: "Get audiobook", exact: true });
   await expect(
-    page.getByRole("textbox", {
-      name: "Search audiobook releases",
-      exact: true,
-    }),
-  ).toHaveValue("Ancillary Justice");
-  await expect(
-    page.getByRole("heading", { name: /Choose a release of/ }),
-  ).toBeVisible();
+    sheet.getByRole("searchbox", { name: "Search for a recording", exact: true }),
+  ).toHaveValue(/^Ancillary Justice /);
+  await expect(sheet.getByRole("heading", { level: 1 })).toHaveText("Ancillary Justice");
+  await expect(sheet.getByText("No recordings found.", { exact: false })).toBeVisible();
 });
 test("an older open tab gets an update notice without interrupting playback", async ({
   page,

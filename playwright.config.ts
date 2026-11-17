@@ -103,10 +103,14 @@ const desktopProjects = [
               /(^|\/)reader-foot-setting\.spec\.ts$/,
               // Every message while reading in the reader's foot (#591).
               /(^|\/)reader-messages\.spec\.ts$/,
+              // The Reading sync page and its Details (#540).
+              /(^|\/)reading-sync-page\.spec\.ts$/,
               // The Book page for a book without files or not in the library (#533).
               /(^|\/)book-page-states\.spec\.ts$/,
               // Keep on this device saves the chosen recording and resumes by itself (#550).
               /(^|\/)keep-saver\.spec\.ts$/,
+              // The Get audiobook sheet, and the specs that used today's release picker for a book (#601).
+              /(^|\/)(get-audiobook|releases|prowlarr|reliability)\.spec\.ts$/,
               // The Series page of a saved series (#562).
               /(^|\/)series-page\.spec\.ts$/,
             ]

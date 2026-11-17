@@ -131,10 +131,9 @@ test("a book with both files and a ready reading sync, as the boards draw it, at
   await expect(files(page).getByRole("button", { name: /^Audiobook Book page QA · \d+ min · On server$/ })).toBeVisible();
   await expect(files(page).getByRole("button", { name: /^Ebook EPUB · [\d.]+ (KB|MB) · On server/ })).toBeVisible();
   const sync = files(page).getByRole("listitem").nth(2);
-  await expect(sync).toHaveAccessibleName("Reading sync Ready · estimated timings");
   await expect(sync.getByRole("button", { name: "About Reading sync", exact: true })).toBeVisible();
-  // Reading sync is not a link until the Reading sync page exists.
-  await expect(sync.getByRole("button", { name: /^Reading sync/ })).toHaveCount(0);
+  // With both files Reading sync opens its page (#540): the name is the link, the info mark a button beside it.
+  await expect(sync.getByRole("button", { name: "Reading sync Ready · estimated timings", exact: true })).toBeVisible();
   await expect(keep(page)).toHaveAttribute("aria-checked", "false");
   await expect(shown.getByRole("button", { name: "About Keep on this device", exact: true })).toBeVisible();
   const about = shown.getByRole("button", { name: "Show the whole description", exact: true });
