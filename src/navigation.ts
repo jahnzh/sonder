@@ -49,6 +49,11 @@ type EntryState = {
 
 /** How long a Back the app asked for may take to land before the app takes it as one the browser could not make. */
 export const BACK_WAIT_MS = 1000;
+/**
+ * How long after its fallback ran a traversal the app asked for may still land and be taken as that late traversal,
+ * which then must not move the page a second time.
+ */
+export const LATE_BACK_MS = 3000;
 /** How long a returning list may take to grow tall enough for its position; after that nothing is restored. */
 export const RESTORE_WAIT_MS = 5000;
 
@@ -67,6 +72,8 @@ let lengthSeen = 0;
  * meanwhile wait for it, so a close followed by a move does not move first and then lose the move to the Back.
  */
 let pending: { timer: ReturnType<typeof setTimeout>; fallback: () => void; queue: (() => void)[] } | null = null;
+/** A traversal whose fallback ran because it had not landed in time: if it lands after all, the app undoes it. */
+let overdue: { delta: number; until: number } | null = null;
 /** Set while the listeners hear of a traversal (Back, Forward, a typed address), not of a move the app made. */
 let traversing = false;
 /** Stops the scroll restoration that is waiting, if any. */
@@ -151,8 +158,11 @@ function placeScroll(entry: Entry, before: Route | null, saved: number | undefin
   else restoreScroll(0);
 }
 
-/** Asks the browser to go `delta` entries; `fallback` runs when it cannot (nothing there), so no button is dead. */
-function traverse(delta: number, fallback: () => void) {
+/**
+ * Asks the browser to go `delta` entries; `fallback` runs when it cannot (nothing there), so no button is dead.
+ * A traversal that lands after its fallback ran is undone, unless it was itself such an undoing (`undoing`).
+ */
+function traverse(delta: number, fallback: () => void, undoing = false) {
   const navigation = (globalThis as { navigation?: { canGoBack?: boolean } }).navigation;
   // Where the browser says so outright (the Navigation API), do not wait for a traversal that cannot happen.
   if (navigation && navigation.canGoBack === false) return fallback();
@@ -160,6 +170,7 @@ function traverse(delta: number, fallback: () => void) {
     const waiting = pending;
     pending = null;
     if (!waiting) return;
+    overdue = undoing ? null : { delta, until: performance.now() + LATE_BACK_MS };
     waiting.fallback();
     for (const run of waiting.queue) run();
   }, BACK_WAIT_MS);
@@ -186,7 +197,18 @@ function onPopState(event: PopStateEvent) {
   const waiting = pending;
   if (waiting) clearTimeout(waiting.timer);
   pending = null;
+  const late = overdue;
+  overdue = null;
   if (!current) return;
+  if (late && !waiting && performance.now() <= late.until) {
+    // The traversal whose fallback already moved the page (and ran the moves queued behind it) landed after all:
+    // go back to the entry the app shows instead of moving the page a second time. Should that not land either,
+    // the entry the browser stands on takes the shown page's place.
+    lengthSeen = history.length;
+    const shown = current;
+    traverse(-late.delta, () => history.replaceState(stateOf(shown), "", urlOf(shown.route)), true);
+    return;
+  }
   // Scroll restoration is manual, so the page still stands where the entry being left had it.
   scrolls.set(current.key, window.scrollY);
   const route = resolve(readAddress(location.hash), { admin });
@@ -223,6 +245,7 @@ function onPageHide() {
   // A Back the app asked for that left the document: if the page comes back from the cache, nothing is waiting.
   if (pending) clearTimeout(pending.timer);
   pending = null;
+  overdue = null;
   if (current) history.replaceState(stateOf(current, window.scrollY), "");
 }
 

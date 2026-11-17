@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createReaderControls, waitForBox } from "../scripts/live-reader-controls.mjs";
+import { createReaderControls, narratedOnPage, waitForBox } from "../scripts/live-reader-controls.mjs";
 
 const scripts = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts");
 
@@ -109,8 +109,8 @@ test("a control that is hidden between two good reads is read again until it is 
 });
 
 // A reader room: the top bar toggles on a tap, as in Reader.tsx. `swallow` taps are lost, `delay` is how long a tap takes to show the bar.
-function reader({ visible = false, swallow = 0, delay = 0, lyrics = false, hasRoom = true, time }) {
-  const state = { visible, taps: [], evaluated: 0, pending: [] };
+function reader({ visible = false, swallow = 0, delay = 0, hasRoom = true, time }) {
+  const state = { visible, taps: [], pending: [] };
   const apply = () => {
     for (const item of state.pending.filter((entry) => entry.at <= time.clock())) { state.visible = !state.visible; state.pending.splice(state.pending.indexOf(item), 1); }
   };
@@ -122,10 +122,9 @@ function reader({ visible = false, swallow = 0, delay = 0, lyrics = false, hasRo
   state.swallowed = 0;
   const topbar = { isVisible: async () => { apply(); return state.visible; } };
   const viewport = { boundingBox: async () => box(0, 0, 390, 700) };
-  const lyricsSurface = { count: async () => (lyrics ? 1 : 0), evaluate: async (fn) => { state.evaluated += 1; press(); } };
   const room = {
     count: async () => (hasRoom ? 1 : 0),
-    locator: (selector) => ({ ".reader-topbar": topbar, ".reader-viewport": viewport, ".lyrics-reader": lyricsSurface }[selector]),
+    locator: (selector) => ({ ".reader-topbar": topbar, ".reader-viewport": viewport }[selector]),
   };
   const page = { mouse: { click: async (x, y) => { state.lastTap = { x, y }; press(); } } };
   return { state, room, page };
@@ -136,6 +135,36 @@ const controlsFor = (options) => {
   const fake = reader({ ...options, time });
   return { ...fake, time, controls: createReaderControls({ page: fake.page, room: fake.room, ...time }) };
 };
+
+test("turn taps the right edge for the next page and the left edge for the previous one, not the controls band", async () => {
+  const { controls, state } = controlsFor({});
+  await controls.turn("next");
+  assert.deepEqual(state.lastTap, { x: 351, y: 350 });
+  await controls.turn("previous");
+  assert.deepEqual(state.lastTap, { x: 39, y: 350 });
+  assert.equal(state.visible, false);
+});
+
+// A reader viewport at x 0–390 whose highlight rectangles are at the given left edges, 100 px wide.
+function pages(...lefts) {
+  const rect = (left, top = 100, width = 100, height = 20) => ({ left, right: left + width, top, bottom: top + height });
+  const host = {
+    getBoundingClientRect: () => rect(0, 0, 390, 700),
+    querySelectorAll: (selector) => (selector === ".sonder-follow" ? [{ querySelectorAll: () => lefts.map((left) => ({ getBoundingClientRect: () => rect(left) })) }] : []),
+  };
+  return { locator: (selector) => ({ evaluate: async (fn) => (selector === ".reader-viewport" ? fn(host) : undefined) }) };
+}
+
+test("narratedOnPage says whether a highlight rectangle is on the page, not merely rendered beside it (#501 review)", async () => {
+  assert.equal(await narratedOnPage(pages(40)), true);
+  // The sentence is on the next page of the chapter's columns, or ends at the page's edge.
+  assert.equal(await narratedOnPage(pages(390, 780)), false);
+  assert.equal(await narratedOnPage(pages(-100)), false);
+  assert.equal(await narratedOnPage(pages(389)), false);
+  // A sentence that wraps from the previous page onto this one is on the page.
+  assert.equal(await narratedOnPage(pages(-380, 10)), true);
+  assert.equal(await narratedOnPage(pages()), false);
+});
 
 test("show does not tap when the bar is already shown (a tap would hide it)", async () => {
   const { controls, state } = controlsFor({ visible: true });
@@ -170,14 +199,6 @@ test("show fails when the bar never appears, saying how many taps it made", asyn
   const { controls, state } = controlsFor({ swallow: 1000 });
   await assert.rejects(controls.show(), /Reader controls did not appear after \d+ tap\(s\)/);
   assert.ok(state.taps.length >= 2);
-});
-
-test("show uses the Lyrics surface click instead of the mouse in Lyrics mode", async () => {
-  const { controls, state } = controlsFor({ lyrics: true });
-  await controls.show();
-  assert.equal(state.evaluated, 1);
-  assert.equal(state.lastTap, undefined);
-  assert.equal(state.visible, true);
 });
 
 test("show without a reader room only waits for the control", async () => {
@@ -263,10 +284,30 @@ test("the integrated reader check looks for Play and Pause narration in the play
   assert.doesNotMatch(source, /(?:room|page)\.getByRole\('button',\{name:'(?:Play|Pause) narration'/);
 });
 
-test("the integrated reader check waits for the current Lyrics line to exist and does not scroll it", () => {
+// #501 review: unchecking Follow left the narrated sentence on the page, so F could pass without moving anything.
+test("the integrated reader check pages the narrated sentence off the page before F and measures it back on the page", () => {
   const source = read("verify-integrated-reader.mjs");
-  assert.match(source, /currentLine\.count\(\)===1/);
+  const f = source.slice(source.indexOf("// F returns to the narration"), source.indexOf("report.checks.push({name:'F brings"));
+  assert.match(f, /controls\.turn\('next'\)/);
+  assert.match(f, /narratedOnPage\(room\),\{message:`the narrated sentence \$\{middle\.paragraphId\} is still on the page[^`]*`\}\)\.toBe\(false\);\s*await page\.keyboard\.press\('f'\);/);
+  assert.match(f.slice(f.indexOf("press('f')")), /narratedOnPage\(room\)[^\n]*\.toBe\(true\)/);
+  assert.doesNotMatch(f, /followSwitch|uncheck\(/);
+  // After the desktop resize the highlight is measured on the page, not only for being rendered.
+  assert.match(source, /narratedOnPage\(room\),\{message:`[^`]*after the desktop resize`\}\)\.toBe\(true\)/);
+  assert.doesNotMatch(source, /narrated\.first\(\)\)\.toBeVisible\(\)/);
+});
+
+test("the integrated reader check waits for the narrated highlight after the desktop resize and does not scroll the pages", () => {
+  const source = read("verify-integrated-reader.mjs");
+  assert.match(source, /narrated\.count\(\)>0\)return true;\s*await seek\(middle\.middle\);return false;/);
   assert.doesNotMatch(source, /scrollIntoView|scrollTo|mouse\.wheel/);
+});
+
+// The reader has one view (ADR 0017): the live check no longer opens Lyrics, and checks that no view switch is offered.
+test("the integrated reader check clicks no removed view and checks that none is offered", () => {
+  const source = read("verify-integrated-reader.mjs");
+  assert.doesNotMatch(source, /lyrics-line|lyrics-reader|getByRole\('button',\{name:'(?:Lyrics|Word)',exact:true\}\)\.click|display:'book'/);
+  assert.match(source, /getByRole\('group',\{name:'Reading mode',exact:true\}\)\)\.toHaveCount\(0\)/);
 });
 
 test("the live scripts keep the browser-write guard", () => {

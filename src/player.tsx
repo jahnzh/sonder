@@ -43,7 +43,7 @@ import {
   stallHandler,
   stallWatchdog,
 } from "./device-fallback";
-import { keyEventContext, playbackKeyAction, wordReaderOwnsKeys } from "./keyboard";
+import { keyEventContext, playbackKeyAction } from "./keyboard";
 import { useAppearance } from "./components/Appearance";
 import {
   applySpeed,
@@ -950,7 +950,6 @@ export function PlayerProvider({
         ...keyEventContext(event),
         canPlay: !!(state.current.book && state.current.track),
         canSeek: !!(state.current.book && state.current.track),
-        wordReaderKeys: wordReaderOwnsKeys(),
       });
       if (!action) return;
       event.preventDefault();

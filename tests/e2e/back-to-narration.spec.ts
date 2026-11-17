@@ -121,7 +121,7 @@ async function bookmarkChapter(page:Page,ebook:string,manifest:any,section:numbe
  }
  expect((await(await page.request.get(`/api/reader/${ebook}`)).json()).bookmarks).toHaveLength(manifest.sections[section].paragraphs.length);
 }
-// In Lyrics mode: Contents in the player bar, chapter `index`, and as soon as the bookmark toggle shows the chapter
+// Contents in the player bar, chapter `index`, and as soon as the bookmark toggle shows the chapter
 // is the reader's position (its save waits out the half-second pause), `act` in the same frame. Answers the time
 // from the relocation showing to `act`.
 async function contentsThen(page:Page,index:number,act:"F"|"Read from audio"){
@@ -152,15 +152,14 @@ async function contentsThen(page:Page,index:number,act:"F"|"Read from audio"){
   choose();
  }),{index,act});
 }
-async function openLyricsWithoutMap(page:Page,book:any,ebook:string){
+async function openWithoutMap(page:Page,book:any,ebook:string){
  await openAt(page,book,5);
  const room=page.locator(".inline-reader");
- await expect(room.getByLabel("Lyrics reader")).toBeVisible();
  await expect(room.locator(".reader-bookmark-toggle")).toHaveAttribute("aria-pressed","false");
  expect(await checkpointOf(page,ebook)).toBeNull();
  return room;
 }
-// Closes the Now playing dialog; the Lyrics reader covers its own close button while the controls are hidden.
+// Closes the Now playing dialog; its close button is hidden with the reader's controls.
 async function closeNowPlaying(page:Page){
  await page.keyboard.press("Escape");
  await expect(page.getByRole("dialog",{name:"Now playing",exact:true})).toBeHidden();
@@ -171,8 +170,8 @@ test("sequence 1: F without a narration map, inside the pause after Contents, ke
  const run=testInfo.repeatEachIndex;
  const {ebook,manifest,book}=await fixture(page,`No map then F ${run}`,{map:false});
  await bookmarkChapter(page,ebook,manifest,1,run);
- await withAppearance(page,{reader:{display:"segment"}},async()=>{
-  await openLyricsWithoutMap(page,book,ebook);
+ await withAppearance(page,{reader:{mode:"paginated"}},async()=>{
+  await openWithoutMap(page,book,ebook);
   expect(await contentsThen(page,1,"F")).toBeLessThan(400);
   await closeNowPlaying(page);
   await expectSaved(page,ebook,{origin:"reading",section:1});
@@ -187,8 +186,8 @@ test("sequence 1: Read from audio without a narration map, inside the pause afte
  await bookmarkChapter(page,ebook,manifest,1,run);
  let asked=0;
  await page.route("**/api/alignments/recover",route=>{asked++;return route.fulfill({status:400,contentType:"application/json",body:JSON.stringify({error:"Locating text needs the remote alignment pool. Enable it to retry."})});});
- await withAppearance(page,{reader:{display:"segment"}},async()=>{
-  await openLyricsWithoutMap(page,book,ebook);
+ await withAppearance(page,{reader:{mode:"paginated"}},async()=>{
+  await openWithoutMap(page,book,ebook);
   expect(await contentsThen(page,1,"Read from audio")).toBeLessThan(400);
   await expect.poll(()=>asked).toBe(1);
   await expectSaved(page,ebook,{origin:"reading",section:1});
@@ -200,7 +199,7 @@ test("sequence 1: switching on Follow the narration without a narration map keep
  const run=testInfo.repeatEachIndex;
  const {ebook,book}=await fixture(page,`No map then Follow ${run}`,{map:false});
  await page.setViewportSize({width:1440,height:900});
- await withAppearance(page,{reader:{display:"book",mode:"paginated"}},async()=>{
+ await withAppearance(page,{reader:{mode:"paginated"}},async()=>{
   await openAt(page,book,5);
   const room=page.locator(".inline-reader");
   const sidebar=room.getByLabel("Contents sidebar");
@@ -232,36 +231,21 @@ test("sequence 1: switching on Follow the narration without a narration map keep
  });
 });
 
-// Sequence 2: a sentence stepped to by hand in Word mode is saved after its own pause; back to narration drops it.
-test("sequence 2: F inside the pause after a Word mode sentence step keeps the listening place saved",async({page},testInfo)=>{
+// Sequence 2 on the book's text: a place chosen by hand waits out its pause; F with a narration to follow drops it.
+test("sequence 2: F inside the pause after a Contents choice keeps the listening place saved",async({page},testInfo)=>{
  const run=testInfo.repeatEachIndex;
- const {book,ebook,map,manifest}=await fixture(page,`Word step then F ${run}`);
+ const {book,ebook,map,manifest}=await fixture(page,`Contents then F ${run}`);
  const interval=map.intervals.find((i:any)=>i.section===1);
+ await bookmarkChapter(page,ebook,manifest,0,run);
  await seedListening(page,ebook,book,manifest,interval.paragraphId);
- await withAppearance(page,{reader:{display:"word"}},async()=>{
+ await withAppearance(page,{reader:{mode:"paginated"}},async()=>{
   await openFollowing(page,book,interval);
   const room=page.locator(".inline-reader");
-  const reader=room.getByLabel("Word reader");
-  await expect(reader).toBeVisible();
-  // Page away without saving anything: switch off "Follow the narration".
-  await room.getByRole("button",{name:"Show reader controls",exact:true}).click();
-  await room.locator(".reader-topbar").getByRole("button",{name:"More",exact:true}).click();
-  await page.locator(".reader-more:visible").getByRole("button",{name:"Reading sync",exact:true}).click();
-  const follow=room.getByRole("checkbox",{name:"Follow the narration"});
-  await follow.uncheck();
-  await room.getByRole("button",{name:"Close reader options",exact:true}).click();
-  await expect(room).not.toHaveAttribute("data-current-passage",/.+/);
-  await reader.focus();
+  await expect(room.locator(".reader-viewport .sonder-follow")).toHaveAttribute("data-epubcfi",/^epubcfi\(/);
+  await expect(pagesOf(page)).not.toHaveAttribute("data-jumping",/.*/);
   const before=await manualSaves(page);
-  // A sentence step by hand, then F well inside the pause after which it would be saved.
-  const elapsed=await page.evaluate(()=>{
-   const target=document.querySelector<HTMLElement>('.inline-reader [aria-label="Word reader"]')!;
-   const at=performance.now();
-   target.dispatchEvent(new KeyboardEvent("keydown",{key:"ArrowRight",shiftKey:true,bubbles:true,cancelable:true}));
-   target.dispatchEvent(new KeyboardEvent("keydown",{key:"f",bubbles:true,cancelable:true}));
-   return performance.now()-at;
-  });
-  expect(elapsed).toBeLessThan(400);
+  // Chapter one by hand, then F well inside the pause after which it would be saved.
+  expect(await contentsThen(page,0,"F")).toBeLessThan(400);
   await expect(room).toHaveAttribute("data-current-passage",interval.paragraphId);
   await expectKept(page,ebook,before,{origin:"listening",paragraphId:interval.paragraphId});
  });
@@ -340,7 +324,7 @@ test("sequence 6: the audio scrubber from a narrated sentence into a gap keeps t
  const interval=map.intervals.find((i:any)=>i.section===1);
  await seedListening(page,ebook,book,manifest,interval.paragraphId);
  await page.setViewportSize({width:1440,height:900});
- await withAppearance(page,{reader:{display:"book",mode:"paginated"},playback:{progressScope:"book"}},async()=>{
+ await withAppearance(page,{reader:{mode:"paginated"},playback:{progressScope:"book"}},async()=>{
   await openFollowing(page,book,interval);
   // The opening follow jump has shown its sentence: a Contents choice now is not undone by its last display.
   const room=page.locator(".inline-reader");
@@ -361,7 +345,7 @@ test("sequence 6: the audio scrubber from a gap onto a narrated sentence keeps t
  const interval=map.intervals.find((i:any)=>i.section===1&&Math.floor(i.end)>Math.ceil(i.start));
  await seedListening(page,ebook,book,manifest,interval.paragraphId);
  await page.setViewportSize({width:1440,height:900});
- await withAppearance(page,{reader:{display:"book",mode:"paginated"},playback:{progressScope:"book"}},async()=>{
+ await withAppearance(page,{reader:{mode:"paginated"},playback:{progressScope:"book"}},async()=>{
   await openAt(page,book,gap);
   const room=page.locator(".inline-reader");
   const sidebar=room.getByLabel("Contents sidebar");
@@ -401,7 +385,7 @@ test("review: the audio scrubber released in a gap of another file keeps the cho
  const interval=onFirst[0];
  await seedListening(page,ebook,book,manifest,interval.paragraphId);
  await page.setViewportSize({width:1440,height:900});
- await withAppearance(page,{reader:{display:"book",mode:"paginated"},playback:{progressScope:"book"}},async()=>{
+ await withAppearance(page,{reader:{mode:"paginated"},playback:{progressScope:"book"}},async()=>{
   await openFollowing(page,book,interval);
   const room=page.locator(".inline-reader");
   await expect(room.locator(".reader-viewport .sonder-follow")).toHaveAttribute("data-epubcfi",/^epubcfi\(/);
@@ -425,7 +409,7 @@ test("review: the audio scrubber released on a narrated sentence of another file
  expect(interval.end-interval.start).toBeGreaterThan(1.5);
  await seedListening(page,ebook,book,manifest,interval.paragraphId);
  await page.setViewportSize({width:1440,height:900});
- await withAppearance(page,{reader:{display:"book",mode:"paginated"},playback:{progressScope:"book"}},async()=>{
+ await withAppearance(page,{reader:{mode:"paginated"},playback:{progressScope:"book"}},async()=>{
   await openAt(page,book,gapFirst);
   const room=page.locator(".inline-reader");
   const sidebar=room.getByLabel("Contents sidebar");
@@ -446,14 +430,13 @@ test("review: the audio scrubber released on a narrated sentence of another file
 
 // Review round 1, blocking: a map restored from the cache is shown before the server confirmed it for the current
 // audio. Following it works, but it is no narration to drop a manual save for: the audio may have changed in place.
-test("review: F on a cached map the server has not confirmed yet keeps a Word mode step saved, and the refusal changes nothing",async({page},testInfo)=>{
+test("review: F on a cached map the server has not confirmed yet keeps a Contents choice saved, and the refusal changes nothing",async({page},testInfo)=>{
  const run=testInfo.repeatEachIndex;
  const {book,ebook,map,manifest}=await fixture(page,`Unconfirmed map then F ${run}`);
  const interval=map.intervals.find((i:any)=>i.section===1);
- const all=manifest.sections.flatMap((section:any)=>section.paragraphs);
- const next=all[all.findIndex((p:any)=>p.id===interval.paragraphId)+1].id;
+ await bookmarkChapter(page,ebook,manifest,0,run);
  await seedListening(page,ebook,book,manifest,interval.paragraphId);
- await withAppearance(page,{reader:{display:"word"}},async()=>{
+ await withAppearance(page,{reader:{mode:"paginated"}},async()=>{
   // Opened once: the map is fetched, confirmed and cached on this device.
   await openFollowing(page,book,interval);
   // From now on the map endpoint holds its answer until the test lets it go, then refuses the map
@@ -465,33 +448,19 @@ test("review: F on a cached map the server has not confirmed yet keeps a Word mo
    await openFollowing(page,book,interval);
    await expect.poll(()=>asked).toBeGreaterThan(0);
    const room=page.locator(".inline-reader");
-   const reader=room.getByLabel("Word reader");
-   await expect(reader).toBeVisible();
-   await room.getByRole("button",{name:"Show reader controls",exact:true}).click();
-   await room.locator(".reader-topbar").getByRole("button",{name:"More",exact:true}).click();
-   await page.locator(".reader-more:visible").getByRole("button",{name:"Reading sync",exact:true}).click();
-   const follow=room.getByRole("checkbox",{name:"Follow the narration"});
-   await follow.uncheck();
-   await room.getByRole("button",{name:"Close reader options",exact:true}).click();
-   await expect(room).not.toHaveAttribute("data-current-passage",/.+/);
-   await reader.focus();
-   const elapsed=await page.evaluate(()=>{
-    const target=document.querySelector<HTMLElement>('.inline-reader [aria-label="Word reader"]')!;
-    const at=performance.now();
-    target.dispatchEvent(new KeyboardEvent("keydown",{key:"ArrowRight",shiftKey:true,bubbles:true,cancelable:true}));
-    target.dispatchEvent(new KeyboardEvent("keydown",{key:"f",bubbles:true,cancelable:true}));
-    return performance.now()-at;
-   });
-   expect(elapsed).toBeLessThan(400);
-   // Following the cached map is unchanged; the step is still saved.
+   await expect(room.locator(".reader-viewport .sonder-follow")).toHaveAttribute("data-epubcfi",/^epubcfi\(/);
+   await expect(pagesOf(page)).not.toHaveAttribute("data-jumping",/.*/);
+   // Chapter one by hand, then F inside its pause.
+   expect(await contentsThen(page,0,"F")).toBeLessThan(400);
+   // Following the cached map is unchanged; the chapter chosen is still saved.
    await expect(room).toHaveAttribute("data-current-passage",interval.paragraphId);
-   await expectSaved(page,ebook,{origin:"reading",paragraphId:next});
+   await expectSaved(page,ebook,{origin:"reading",section:0});
    expect(asked).toBeGreaterThan(0);
    answer();
-   // Refused: the reader shows no map, and the step stays the saved place.
+   // Refused: the reader shows no map, and the chapter stays the saved place.
    await expect(room).not.toHaveAttribute("data-current-passage",/.+/);
    await expect(pagesOf(page)).not.toHaveAttribute("data-save-waiting",/.*/);
-   await expectSaved(page,ebook,{origin:"reading",paragraphId:next});
+   await expectSaved(page,ebook,{origin:"reading",section:0});
   }finally{answer();}
  });
 });
