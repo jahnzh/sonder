@@ -265,10 +265,8 @@ export function ActivityPage() {
 
   return (
     <>
+      {/* Shown as Activity's Server (#516): the place's Page header holds the Title. */}
       <div className="page-heading">
-        <div>
-          <h1>Activity</h1>
-        </div>
         <button type="button" className="button subtle" disabled={refreshing} onClick={() => void load()}>
           {refreshing ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />} Refresh
         </button>

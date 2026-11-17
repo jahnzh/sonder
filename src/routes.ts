@@ -1,16 +1,14 @@
 // Addresses (ADR 0020, spec #480 "Addresses and the page stack"). The one module that reads an address,
 // writes one and names a page's parent. Pure: no `window`, no React. The history wiring is in navigation.ts.
 
-/** One of the top-level areas. `downloads` is its own place until Activity replaces the Downloads page. */
-export type Place = "library" | "discover" | "downloads" | "activity" | "settings";
+/** One of the top-level areas. Activity took the Downloads slot (#516); `#downloads` is an old name for it. */
+export type Place = "library" | "discover" | "activity" | "settings";
 export type BookPage = "audiobook" | "ebook" | "sync" | "hardcover" | "chapters" | "bookmarks" | "search";
 export type ActivityPart = "now" | "device" | "server";
 
 export type Route =
   | { name: "library" }
   | { name: "discover" }
-  /** Old name: the Downloads page, until Activity replaces it and `#downloads` opens Activity. */
-  | { name: "downloads" }
   | { name: "activity"; part: ActivityPart }
   | { name: "worker"; worker: string }
   | { name: "settings" }
@@ -54,8 +52,10 @@ export function readAddress(hash: string): Route {
   switch (head) {
     case "library":
     case "discover":
-    case "downloads":
       return rest.length ? nothing(head) : { name: head };
+    // Old name: the Downloads page, which Activity replaced (#516). It opens Now; the redirect replaces the entry.
+    case "downloads":
+      return rest.length ? nothing("activity") : { name: "activity", part: "now" };
     case "settings": {
       if (!rest.length) return { name: "settings" };
       const page = rest.length === 1 ? decode(rest[0]) : null;
@@ -114,7 +114,6 @@ export function writeAddress(route: Route): string {
   switch (route.name) {
     case "library":
     case "discover":
-    case "downloads":
     case "settings":
       return `#${route.name}`;
     case "activity":
@@ -153,7 +152,6 @@ export function writeAddress(route: Route): string {
 export function placeOf(route: Route): Place {
   switch (route.name) {
     case "discover":
-    case "downloads":
     case "settings":
       return route.name;
     case "settings-page":
@@ -238,7 +236,6 @@ function built(route: Route): boolean {
   switch (route.name) {
     case "library":
     case "discover":
-    case "downloads":
     case "settings":
     case "reader":
     case "gallery":
@@ -246,15 +243,17 @@ function built(route: Route): boolean {
     case "gallery-sheet":
       return true;
     case "activity":
-      return route.part === "now";
+      // This device comes with its own ticket.
+      return route.part === "now" || route.part === "server";
     default:
       return false;
   }
 }
 
-/** Activity is the administrator's today, its Server part and workers for good. */
+/** Activity's Server part and its workers are the administrator's; Now and This device are everyone's. */
 function allowed(route: Route, admin: boolean): boolean {
-  return admin || placeOf(route) !== "activity";
+  if (admin) return true;
+  return !(route.name === "worker" || (route.name === "activity" && route.part === "server"));
 }
 
 /**
@@ -264,7 +263,6 @@ function allowed(route: Route, admin: boolean): boolean {
 export function resolve(route: Route, { admin }: { admin: boolean }): Route {
   if (route.name !== "unknown" && built(route) && allowed(route, admin)) return route;
   const first = firstPage(placeOf(route));
-  // Every place's first page is built; only Activity's is the administrator's.
-  if (allowed(first, admin)) return first;
-  return { name: "library" };
+  // Every place's first page is built and everyone's.
+  return first;
 }

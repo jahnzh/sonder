@@ -38,12 +38,15 @@ const outage: ActivityResponse = {
   ],
 };
 
-test("Settings shows an attention indicator and opens the Activity page with the outage", async ({ page }) => {
+test("Activity shows an attention indicator and its Server part the outage", async ({ page }) => {
   await page.route("**/api/activity", (route) => route.fulfill({ json: outage }));
   await page.goto("/#settings");
-  await expect(page.getByRole("img", { name: "Background work needs attention" }).first()).toBeAttached();
-  await page.getByTestId("open-activity").click();
-  await expect(page).toHaveURL(/#activity$/);
+  // The dot moved from Settings to Activity (#516).
+  const tab = page.getByRole("navigation", { name: "Mobile navigation" }).getByRole("button", { name: /^Activity/ });
+  await expect(tab.getByRole("img", { name: "Background work needs attention" })).toBeAttached();
+  await tab.click();
+  await page.getByRole("radiogroup", { name: "Activity" }).getByRole("radio", { name: "Server" }).click();
+  await expect(page).toHaveURL(/#activity\/server$/);
   await expect(page.getByRole("heading", { name: "Activity", level: 1 })).toBeVisible();
 
   const client = page.getByTestId("activity-process-torrent-client");
@@ -72,7 +75,7 @@ test("the Activity page loads directly from its address and shows an empty state
   await page.route("**/api/activity", (route) => route.fulfill({
     json: { ...outage, attention: 0, items: [], processes: outage.processes.map((process) => ({ ...process, health: process.notTracked ? process.health : "ok", reason: null })) },
   }));
-  await page.goto("/#activity");
+  await page.goto("/#activity/server");
   await expect(page.getByRole("heading", { name: "Activity", level: 1 })).toBeVisible();
   await expect(page.getByTestId("activity-empty")).toBeVisible();
   await expect(page.getByRole("img", { name: "Background work needs attention" })).toHaveCount(0);
@@ -84,7 +87,7 @@ test("a failing Activity request shows an error and a working Refresh", async ({
     calls += 1;
     return calls < 3 ? route.fulfill({ status: 500, json: { error: "The server is busy." } }) : route.fulfill({ json: { ...outage, items: [], attention: 0 } });
   });
-  await page.goto("/#activity");
+  await page.goto("/#activity/server");
   await expect(page.getByRole("alert")).toContainText("The server is busy.");
   await page.getByRole("button", { name: "Refresh" }).click();
   await expect(page.getByTestId("activity-page")).toBeVisible();
@@ -108,7 +111,7 @@ test("Pause stops a loop, says what it does, and Resume undoes it", async ({ pag
     paused = (route.request().postDataJSON() as { paused: boolean }).paused;
     return route.fulfill({ json: { ok: true } });
   });
-  await page.goto("/#activity");
+  await page.goto("/#activity/server");
   const row = page.getByTestId("activity-process-alignment");
   await expect(row).toContainText("Off: no new reading sync starts. One that is running finishes.");
   await expect(page.getByTestId("activity-process-paused")).toHaveCount(0);
@@ -127,7 +130,7 @@ test("a loop disabled by the environment shows why and has no switch", async ({ 
   await page.route("**/api/activity", (route) => route.fulfill({
     json: withProcesses([pausableProcess({ id: "series-acquisition", label: "Series search", lockedBy: "environment", pauseEffect: "Off: no new search or download for a series starts." })]),
   }));
-  await page.goto("/#activity");
+  await page.goto("/#activity/server");
   await expect(page.getByTestId("activity-process-locked")).toContainText("Disabled by environment");
   await expect(page.getByTestId("activity-process-series-acquisition").getByTestId("activity-process-health")).toHaveCount(0);
   await expect(page.getByRole("button", { name: /Pause Series search|Resume Series search/ })).toHaveCount(0);
@@ -136,7 +139,7 @@ test("a loop disabled by the environment shows why and has no switch", async ({ 
 test("a failed Pause request shows the reason on the row", async ({ page }) => {
   await page.route("**/api/activity", (route) => route.fulfill({ json: withProcesses([pausableProcess()]) }));
   await page.route("**/api/activity/processes/alignment/pause", (route) => route.fulfill({ status: 409, json: { error: "An environment setting disables this process, so it cannot be changed here." } }));
-  await page.goto("/#activity");
+  await page.goto("/#activity/server");
   await page.getByRole("button", { name: "Pause Reading sync queue" }).click();
   await expect(page.getByTestId("activity-process-alignment").getByRole("alert")).toContainText("environment setting");
 });
@@ -160,7 +163,7 @@ test("Discard asks twice, can be cancelled, and removes the item", async ({ page
     present = false;
     return route.fulfill({ json: { ok: true, discarded: 1 } });
   });
-  await page.goto("/#activity");
+  await page.goto("/#activity/server");
   const item = page.getByTestId("activity-item-hardcover:status:1");
   await expect(item.getByTestId("activity-retry")).toHaveCount(0);
   await item.getByTestId("activity-discard").click();
@@ -183,7 +186,7 @@ test("Retry now sends the item's id and shows a failure on the row", async ({ pa
     requests.push(route.request().postDataJSON());
     return route.fulfill({ status: 400, json: { error: "Add your Hardcover token first." } });
   });
-  await page.goto("/#activity");
+  await page.goto("/#activity/server");
   const item = page.getByTestId("activity-item-hardcover:listening:2");
   await expect(item.getByTestId("activity-discard")).toHaveCount(0);
   await item.getByTestId("activity-retry").click();
@@ -222,7 +225,7 @@ test("Resume on a paused download sends its id, and the row then shows it runnin
     retries.push(route.request().postDataJSON());
     return route.fulfill({ status: 409, json: { error: "Only a reading sync that stopped can be retried." } });
   });
-  await page.goto("/#activity");
+  await page.goto("/#activity/server");
   const download = page.getByTestId("activity-item-acquisition:acq-1");
   await expect(download).toHaveAttribute("data-state", "paused");
   await expect(download.getByTestId("activity-retry")).toHaveCount(0);
@@ -249,7 +252,7 @@ test("a failed download offers Retry now beside no Resume, and a refused Resume 
   }));
   await page.route("**/api/activity/items/resume", (route) =>
     route.fulfill({ status: 409, json: { error: "Only a paused download can be resumed." } }));
-  await page.goto("/#activity");
+  await page.goto("/#activity/server");
   const failed = page.getByTestId("activity-item-acquisition:acq-1");
   await expect(failed.getByTestId("activity-retry")).toBeVisible();
   await expect(failed.getByTestId("activity-resume")).toHaveCount(0);
@@ -260,7 +263,7 @@ test("a failed download offers Retry now beside no Resume, and a refused Resume 
 
 // The real server, no mocked response: the daily backups report their schedule and use the real pause switch (#361).
 test("the database backups row lists the schedule, and its switch pauses and resumes it", async ({ page }) => {
-  await page.goto("/#activity");
+  await page.goto("/#activity/server");
   const row = page.getByTestId("activity-process-backups");
   await expect(row).toContainText("Database backups");
   // Repeat-safe: a run that stopped halfway may have left the switch on.
@@ -310,7 +313,7 @@ test("a worker host row shows its status, version and job; restart asks first, c
     disabled = (route.request().postDataJSON() as { disabled: boolean }).disabled;
     return route.fulfill({ json: { ok: true, id: "alignment-host:wsl", disabled } });
   });
-  await page.goto("/#activity");
+  await page.goto("/#activity/server");
   const row = page.getByTestId("activity-process-alignment-host:wsl");
   await expect(row.getByTestId("activity-host-status")).toHaveText("Online · cuda · Code version c901429");
   await expect(row.getByTestId("activity-host-job")).toHaveText("Current job: 1 whole-book job, encoding · Speaker for the Dead");
@@ -340,7 +343,7 @@ test("an offline host shows unknown code version, its last restart and no curren
       lastRestart: { at: now - 120_000, ok: false, forced: true, message: "The restart command failed: ssh: connect to host: Connection refused" } }),
     health: "down", reason: "health: fetch failed" }]),
   }));
-  await page.goto("/#activity");
+  await page.goto("/#activity/server");
   const row = page.getByTestId("activity-process-alignment-host:wsl");
   await expect(row.getByTestId("activity-host-status")).toHaveText("Offline · Code version unknown");
   await expect(row.getByTestId("activity-host-job")).toHaveCount(0);

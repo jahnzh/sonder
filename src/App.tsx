@@ -9,6 +9,7 @@ import {
   Library,
   Compass,
   Download,
+  Activity as ActivityIcon,
   Settings,
   Search,
   Plus,
@@ -83,6 +84,7 @@ import { LibraryPage } from "./pages/library-page";
 import { DiscoverPage } from "./pages/discover-page";
 import { DownloadsPage } from "./pages/downloads-page";
 import { ActivityPage } from "./pages/activity-page";
+import { ActivityPlace } from "./pages/activity-place";
 import { SettingsPage } from "./pages/settings-page";
 import { firstPage, writeAddress, type Place, type Route } from "./routes";
 import { onPageLeftByHistory, startNavigation, useAddress } from "./navigation";
@@ -92,7 +94,8 @@ type Notice = { text: string; error?: boolean };
 const nav = [
   { id: "library", label: "My library", icon: Library },
   { id: "discover", label: "Discover", icon: Compass },
-  { id: "downloads", label: "Downloads", icon: Download },
+  // Activity took the Downloads slot, for everyone (#516).
+  { id: "activity", label: "Activity", icon: ActivityIcon },
 ] as const;
 function App() {
   const [user, setUser] = useState<Account | null>(null);
@@ -170,7 +173,7 @@ function SignedIn(props: { user: Account; needsPassword: boolean; onLogout: () =
 const routeOf = (p: Page): Route => firstPage(p);
 /** The page the shell shows for a route. The reader covers the page it was opened over (the Library after a link). */
 function shownPage(route: Route, under: { current: Page }): Page {
-  if (route.name === "library" || route.name === "discover" || route.name === "downloads" || route.name === "settings" || route.name === "activity")
+  if (route.name === "library" || route.name === "discover" || route.name === "settings" || route.name === "activity")
     under.current = route.name;
   return under.current;
 }
@@ -594,6 +597,9 @@ function LibraryApp({
               <button
                 key={n.id}
                 className={page === n.id ? "selected" : ""}
+                // Activity keeps its name while work needs attention; the dot describes it instead of renaming it.
+                aria-label={n.id === "activity" ? n.label : undefined}
+                aria-describedby={n.id === "activity" && activityAttention > 0 ? "activity-attention-sidebar" : undefined}
                 onClick={() => {
                   // Like the tab of the current place: on the Library, its own item shows every book again.
                   if (n.id === "library" && page === "library") {
@@ -606,10 +612,12 @@ function LibraryApp({
                 <n.icon size={20} strokeWidth={1.65} />
                 <span>{n.label}</span>
                 {n.id === "library" && <small>{libraryBooks.length}</small>}
-                {n.id === "downloads" &&
+                {n.id === "activity" &&
                   Object.keys(downloadJobs).length > 0 && (
                     <span className="activity-dot" />
                   )}
+                {/* The attention dot moved here from Settings (#516); it still reads the server's count, for the administrator. */}
+                {n.id === "activity" && activityAttention > 0 && <span id="activity-attention-sidebar" className="attention-dot" role="img" aria-label="Background work needs attention" data-testid="activity-indicator" />}
               </button>
             ))}
           </nav>
@@ -653,16 +661,12 @@ function LibraryApp({
           </button>}
           <div className="sidebar-bottom">
             <button
-              className={`settings-nav ${page === "settings" || page === "activity" ? "selected" : ""}`}
+              className={`settings-nav ${page === "settings" ? "selected" : ""}`}
               onClick={() => switchPlace("settings")}
-              // The tab keeps its name while work needs attention (voice control and "Settings" by name); the dot
-              // describes it instead of renaming it.
               aria-label="Settings"
-              aria-describedby={activityAttention > 0 ? "settings-attention-sidebar" : undefined}
             >
               <Settings size={19} />
               <span>Settings</span>
-              {activityAttention > 0 && <span id="settings-attention-sidebar" className="attention-dot" role="img" aria-label="Background work needs attention" data-testid="activity-indicator" />}
             </button>
             <div className="sidebar-footer">
               <span className={`status-dot ${online ? "" : "offline"}`} />
@@ -737,7 +741,7 @@ function LibraryApp({
                 <span>
                   You’re offline. Downloaded books are available.
                 </span>
-                <button onClick={() => navigate("downloads")}>
+                <button onClick={() => navigate("activity")}>
                   View downloads <ArrowRight size={14} />
                 </button>
               </div>
@@ -783,7 +787,7 @@ function LibraryApp({
                 ebookTarget={ebookTarget}
                 onQueued={() => {
                   void refresh();
-                  navigate("downloads");
+                  navigate("activity");
                 }}
                 books={visible}
                 query={query}
@@ -797,8 +801,13 @@ function LibraryApp({
                 refresh={refresh}
               />
             )}
-            {page === "downloads" && (
-              <DownloadsPage
+            {page === "activity" && (
+              <ActivityPlace
+                admin={user.role === "admin"}
+                part={address.route.name === "activity" ? address.route.part : "now"}
+                onPart={(part) => address.navigate({ name: "activity", part })}
+                server={<ActivityPage />}
+                now={<DownloadsPage
                 admin={user.role === "admin"}
                 books={books}
                 downloads={downloads}
@@ -816,9 +825,9 @@ function LibraryApp({
                 setMediaTarget={setMediaTarget}
                 navigate={navigate}
                 notify={notify}
+              />}
               />
             )}
-            {page === "activity" && user.role === "admin" && <ActivityPage />}
             {page === "settings" && (
               <SettingsPage
                 user={user}
@@ -837,7 +846,6 @@ function LibraryApp({
                       .prompt()
                       .then(() => setInstallPrompt(null));
                 }}
-                onOpenActivity={() => address.navigate(firstPage("activity"))}
               />
             )}
           </main>
@@ -850,11 +858,12 @@ function LibraryApp({
                 className={page === n.id ? "selected" : ""}
                 onClick={() => switchPlace(n.id as Place)}
                 aria-label={n.label}
-                aria-describedby={n.id === "settings" && activityAttention > 0 ? "settings-attention-mobile" : undefined}
+                // The tab keeps its name while work needs attention; the dot describes it instead of renaming it.
+                aria-describedby={n.id === "activity" && activityAttention > 0 ? "activity-attention-mobile" : undefined}
               >
                 <n.icon size={20} />
                 <span>{n.label}</span>
-                {n.id === "settings" && activityAttention > 0 && <span id="settings-attention-mobile" className="attention-dot" role="img" aria-label="Background work needs attention" />}
+                {n.id === "activity" && activityAttention > 0 && <span id="activity-attention-mobile" className="attention-dot" role="img" aria-label="Background work needs attention" />}
               </button>
             ),
           )}
@@ -876,7 +885,7 @@ function LibraryApp({
           onPauseDownload={(book) =>
             controllers.current.get(book.recordingId)?.abort()
           }
-          onViewDownloads={() => navigate("downloads")}
+          onViewDownloads={() => navigate("activity")}
           onBookDetails={setDetail}
           onManageSources={setMediaTarget}
         />
@@ -924,7 +933,7 @@ function LibraryApp({
                 .then(() => {
                   notify("Saving the audio to your server’s HDD.");
                   setDetail(null);
-                  if (left === leftByHistory.current) navigate("downloads");
+                  if (left === leftByHistory.current) navigate("activity");
                 })
                 .catch((e) => notify(e.message, true));
           }}
@@ -959,7 +968,7 @@ function LibraryApp({
             void refresh();
             if (!shown) return;
             setImportOpen(false);
-            navigate("downloads");
+            navigate("activity");
           }}
           open={importOpen}
           onClose={() => setImportOpen(false)}
