@@ -630,21 +630,17 @@ test("Settings → Playback offers no ebook view and saving it keeps a stored vi
     await page.request.put("/api/appearance", {
       data: { ...appearance, reader: { ...appearance.reader, display: "segment" } },
     });
-    await page.goto("/");
-    await page
-      .locator(".mobile-nav")
-      .getByRole("button", { name: "Settings", exact: true })
-      .click();
-    await expect(page.getByRole("combobox", { name: "Playback progress bar" })).toBeVisible();
-    await expect(page.getByRole("combobox", { name: "Ebook view" })).toHaveCount(0);
+    // Settings › Playback saves a change at once (#579).
+    await page.goto("/#settings/playback");
+    const scope = page.getByRole("radiogroup", { name: "Progress bar shows", exact: true });
+    await expect(scope).toBeVisible();
+    await expect(page.getByText("Ebook view")).toHaveCount(0);
     const saved = page.waitForResponse(
       (response) => response.request().method() === "PUT" && response.url().endsWith("/api/appearance"),
     );
-    await page
-      .getByRole("button", { name: "Save playback settings", exact: true })
-      .click();
+    const other = appearance.playback.progressScope === "chapter" ? "Whole audiobook" : "Current chapter";
+    await scope.getByRole("radio", { name: other, exact: true }).click();
     expect((await saved).ok()).toBe(true);
-    await expect(page.getByText("Playback settings saved.")).toBeVisible();
     expect((await (await page.request.get("/api/appearance")).json()).reader.display).toBe("segment");
   } finally {
     await page.request.put("/api/appearance", { data: appearance });
