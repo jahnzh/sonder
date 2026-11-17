@@ -22,22 +22,14 @@ test("remove a saved series while keeping its works", async ({ page }) => {
   );
 
   await page.goto("/#library");
-  // Revisiting a saved series refreshes it, and the fixture can then list a
-  // new work (#206), pre-selected for adding. While a work is selected the
-  // dialog offers "Add selected works" instead of "Remove series", so wait for
-  // the refresh and leave any selected new work out instead of racing it.
+  // Revisiting a saved series refreshes it, and the fixture can then list a new work (#206).
   const refreshed = page.waitForResponse(
     (response) => new URL(response.url()).pathname === "/api/series/701",
   );
   await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
   await refreshed;
-  const remove = page.getByRole("button", { name: "Remove series", exact: true });
-  await expect(async () => {
-    for (const checkbox of await page.getByRole("dialog").getByRole("checkbox", { checked: true }).all())
-      await checkbox.uncheck();
-    await expect(remove).toBeVisible({ timeout: 1000 });
-  }).toPass();
-  await remove.click();
+  // The saved series is a page (#562): Remove series is its last row, whatever a new work's choice in the dialog.
+  await page.getByRole("region", { name: "Series", exact: true }).getByRole("button", { name: "Remove series", exact: true }).click();
   await page.getByRole("button", { name: "Remove series", exact: true }).last().click();
   await expect(page.getByRole("button", { name: "Open The Crossing by Ada North" })).toHaveCount(0);
 

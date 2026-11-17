@@ -289,3 +289,11 @@ test("the refresh error", () => {
   // The last saved list is still shown.
   assert.equal(model.books.length, 1);
 });
+
+test("the Series page's words in the status-line module (#494)", () => {
+  assert.equal(NOT_RELEASED_LINE, "Not released yet");
+  assert.equal(SERIES_SEARCH_FAILED_LINE, "Series search failed");
+  assert.equal(NEEDS_ADMIN_LINE, "Needs the administrator to link it");
+  assert.equal(SEVERAL_MATCHES_LINE, "Matches more than one book on the server");
+  assert.equal(NOT_IN_LIBRARY_LINE, "Not in your library");
+});

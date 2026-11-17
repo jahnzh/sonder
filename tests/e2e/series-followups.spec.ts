@@ -1,6 +1,17 @@
 import { test, expect } from "@playwright/test";
 import { readerFixture } from "../reader-fixture.ts";
 
+/**
+ * Today's series dialog in its saved mode, for what only it shows (per-book statuses and choices): a saved series
+ * opens its Series page (#562), whose Add opens the dialog. Future Crossing is not released, so no spec adds it.
+ */
+async function openSavedSeriesDialog(page: import("@playwright/test").Page) {
+  await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
+  await expect(page).toHaveURL(/#series\/701$/);
+  await page.getByRole("button", { name: "Add Future Crossing", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "The Crossing" })).toBeVisible();
+}
+
 async function putReaderFilePreference(page: import("@playwright/test").Page, editionId: string) {
   await page.evaluate(async (id) => {
     await new Promise<void>((resolve, reject) => {
@@ -61,13 +72,13 @@ test("saved series shows completion control, provenance and ebook device state",
 
   await page.goto("/#library");
   await expect(page.getByRole("button", { name: "Open The Crossing by Ada North" })).toBeVisible();
-  await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
+  await openSavedSeriesDialog(page);
   await expect(page.getByText(/Ebook:.*· not on device/).first()).toBeVisible();
 
   await putReaderFilePreference(page, editionId);
   await page.reload();
   await page.goto("/#library");
-  await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
+  await openSavedSeriesDialog(page);
 
   await expect(page.getByLabel("Completion for Alice’s Adventures in Wonderland")).toBeVisible();
   const seriesView = await (await page.request.get("/api/series/701")).json();

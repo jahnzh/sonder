@@ -117,7 +117,13 @@ export function SeriesPage({ id, admin, online, books, revision, onAdd, onNotSav
   useEffect(() => {
     setRemoveOpen(false);
     void load();
-  }, [load, revision]);
+  }, [load]);
+  // Today's dialog saved books (an Add): the series and the library by work are read again.
+  useEffect(() => {
+    if (!revision) return;
+    void load();
+    void refreshLibraryWorks().catch(() => {});
+  }, [revision]);
   const isMoving = moving(series);
   useEffect(() => {
     if (!isMoving) return;
