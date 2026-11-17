@@ -96,6 +96,8 @@ import { GetAudiobookSheet } from "./pages/get-audiobook-sheet";
 import { Gallery, isGalleryRoute } from "./gallery/Gallery";
 import { refreshLibraryWorks, startLibraryWorks, useStoredWorksWithPlaces } from "./library-works-store";
 import { bookStatus, readingPercent, workProgress } from "./work-progress";
+import { classifyStop, type StopCause } from "./keep";
+import { activeSaves, claimRecording, keepSaver, tapKeep, onKeepJob, savesInOtherTabs, startKeepSaver, stopKeepSaver } from "./keep-runtime";
 type Notice = { text: string; error?: boolean };
 const nav = [
   { id: "library", label: "My library", icon: Library },
@@ -315,7 +317,30 @@ function LibraryApp({
   const [installPrompt, setInstallPrompt] = useState<
     (Event & { prompt: () => Promise<void> }) | null
   >(null);
-  const controllers = useRef(new Map<string, AbortController>());
+  // The saves running in this tab, Keep's and the save buttons' own, in one map so they never overlap (#550).
+  const controllers = useRef(activeSaves);
+  // Keep on this device (#550): the saver of this account; its saves show here as the save buttons' did.
+  useEffect(() => {
+    const unsubscribe = onKeepJob((recordingId, job) =>
+      setDownloadJobs((jobs) => {
+        const next = { ...jobs };
+        if (job) next[recordingId] = job;
+        else delete next[recordingId];
+        return next;
+      }),
+    );
+    startKeepSaver(user.id);
+    return () => {
+      unsubscribe();
+      stopKeepSaver();
+    };
+  }, [user.id]);
+  // Stops a running save, in whichever tab of this account runs it.
+  const pauseSave = (recordingId: string) => {
+    const saver = keepSaver();
+    if (saver) saver.pause(recordingId);
+    else controllers.current.get(recordingId)?.abort();
+  };
   // Now and the attention dot on Activity (#521, #522): one result of Now's builder, from the server's answer
   // (administrator) and this device's saves (anyone), so the dot and Now cannot disagree. The clock moves "2 h ago".
   const [clockNow, setClockNow] = useState(() => Date.now());
@@ -576,60 +601,59 @@ function LibraryApp({
       return next;
     });
   };
+  // A save asked for by a button (the dock's Download, Activity's Resume and Retry). Its line is the status line
+  // (#550): no toast. It never asks for persistent storage: only the Keep switch's tap does.
   const startDownload = async (b: Book) => {
-    if (controllers.current.has(b.recordingId)) return;
-    if (!b.tracks.length) {
-      notify("This book has no audio to download yet.", true);
-      return;
-    }
+    if (controllers.current.has(b.recordingId) || !b.tracks.length) return;
     const ctrl = new AbortController();
     controllers.current.set(b.recordingId, ctrl);
-    try {
-      await writeDeviceSaveRecord(b.recordingId, b.workId, { state: "saving" }).catch(() => {});
-      await navigator.storage?.persist?.().catch(() => false);
-      for (let i = 0; i < b.tracks.length; i++) {
-        setDownloadJobs((j) => ({
-          ...j,
-          [b.recordingId]: {
-            progress: (i / b.tracks.length) * 100,
-            chapter: i + 1,
-            total: b.tracks.length,
-            loaded: 0,
-            size: 0,
-          },
-        }));
-        await downloadTrack(b.tracks[i], ctrl.signal, (loaded, total) =>
+    const save = async () => {
+      try {
+        await writeDeviceSaveRecord(b.recordingId, b.workId, { state: "saving" }).catch(() => {});
+        for (let i = 0; i < b.tracks.length; i++) {
           setDownloadJobs((j) => ({
             ...j,
             [b.recordingId]: {
-              progress:
-                ((i + (total ? loaded / total : 0)) / b.tracks.length) * 100,
+              progress: (i / b.tracks.length) * 100,
               chapter: i + 1,
               total: b.tracks.length,
-              loaded,
-              size: total,
+              loaded: 0,
+              size: 0,
             },
-          })),
-        );
+          }));
+          await downloadTrack(b.tracks[i], ctrl.signal, (loaded, total) =>
+            setDownloadJobs((j) => ({
+              ...j,
+              [b.recordingId]: {
+                progress:
+                  ((i + (total ? loaded / total : 0)) / b.tracks.length) * 100,
+                chapter: i + 1,
+                total: b.tracks.length,
+                loaded,
+                size: total,
+              },
+            })),
+          );
+          await refreshDownloads();
+        }
+        await writeDeviceSaveRecord(b.recordingId, b.workId, { state: "finished" }).catch(() => {});
+      } catch (e) {
+        // Stopped from outside: a pause, Keep turned off, or the tab closing (`KeepSaver.pause` notes which).
+        const cause = (ctrl as AbortController & { cause?: StopCause }).cause ?? "pause";
+        const stop = classifyStop({ cause: ctrl.signal.aborted ? cause : null, error: e });
+        await writeDeviceSaveRecord(
+          b.recordingId,
+          b.workId,
+          stop.state === "failed" || stop.state === "interrupted" ? stop : { state: "paused" },
+        ).catch(() => {});
         await refreshDownloads();
       }
-      await writeDeviceSaveRecord(b.recordingId, b.workId, { state: "finished" }).catch(() => {});
-      notify(`“${b.title}” is ready for wherever you go.`);
-    } catch (e) {
-      await writeDeviceSaveRecord(
-        b.recordingId,
-        b.workId,
-        ctrl.signal.aborted ? { state: "paused" } : { state: "failed", reason: (e as Error).message },
-      ).catch(() => {});
-      notify(
-        ctrl.signal.aborted
-          ? "Download paused. Downloaded sections are kept; resume whenever you’re ready."
-          : (e as Error).message,
-        !ctrl.signal.aborted,
-      );
-      await refreshDownloads();
+    };
+    try {
+      // Another tab (or Keep's saver) saving the same recording: that save goes on, and this tab shows it.
+      await claimRecording(b.recordingId, save);
     } finally {
-      controllers.current.delete(b.recordingId);
+      if (controllers.current.get(b.recordingId) === ctrl) controllers.current.delete(b.recordingId);
       setDownloadJobs((j) => {
         const next = { ...j };
         delete next[b.recordingId];
@@ -921,11 +945,11 @@ function LibraryApp({
                 books={books}
                 downloads={downloads}
                 downloadParts={downloadParts}
-                running={downloadJobs}
+                running={{ ...savesInOtherTabs(saveRecords), ...downloadJobs }}
                 favorites={favorites}
                 onFavorite={toggleFavorites}
                 onSave={(book) => void startDownload(book)}
-                onPauseSave={(recordingId) => controllers.current.get(recordingId)?.abort()}
+                onPauseSave={pauseSave}
                 onFindAudio={findAudio}
                 onFindEbook={findEbook}
                 onSeries={(id, saved) => (saved ? address.navigate({ name: "series", id: String(id) }) : setSeriesTarget({ id, mode: "preview" }))}
@@ -1051,7 +1075,7 @@ function LibraryApp({
                     }
                   }}
                   onDevice={(action, recordingId, bookId) => {
-                    if (action === "pause") return controllers.current.get(recordingId)?.abort();
+                    if (action === "pause") return pauseSave(recordingId);
                     // Resume and Retry carry on from the files and sections already saved.
                     const book = books.find((b) => b.recordingId === recordingId) ?? books.find((b) => b.id === bookId);
                     if (book) void startDownload(book);
@@ -1065,12 +1089,14 @@ function LibraryApp({
                   records={saveRecords}
                   ebooks={savedEbooks.filter((e) => keptEbookEditionIds.has(e.id))}
                   online={online}
-                  onPause={(recordingId) => controllers.current.get(recordingId)?.abort()}
+                  onPause={pauseSave}
                   onOpen={openBookOf}
                   onRemove={async (row) => {
                     // Every file of the book on this device: its recordings' audio and its EPUB. The place, the
                     // bookmarks and the library entry stay (ADR 0018).
                     try {
+                      // Removing the book's files is Keep off for it (#550): the saver does not save them again.
+                      await tapKeep(row.workId, false).catch(() => {});
                       for (const recordingId of row.recordingIds) await deleteDownloads(recordingId);
                       for (const editionId of row.ebookIds) await removeOfflineEbook(editionId);
                       // The reader's cache of the book's other editions goes too: every file of it (#671).
@@ -1140,9 +1166,7 @@ function LibraryApp({
           }
           downloadJobs={downloadJobs}
           onDownload={(book) => void startDownload(book)}
-          onPauseDownload={(book) =>
-            controllers.current.get(book.recordingId)?.abort()
-          }
+          onPauseDownload={(book) => pauseSave(book.recordingId)}
           onViewDownloads={openDevice}
           onBookDetails={openBookOf}
           onManageSources={openAudiobook}

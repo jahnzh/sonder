@@ -1,7 +1,36 @@
 import { localDB } from "./lib";
 import type { DownloadPart, Track } from "./types";
+import { STALL_MS, stallGuard, type StallClock } from "./keep";
 const CHUNK_SIZE = 4 * 1024 * 1024;
-class DownloadRefused extends Error {}
+/** The source refused, or storage ran out: trying again does not help (`isRefusal` in keep.ts). */
+class DownloadRefused extends Error {
+  readonly refused = true;
+  override name = "DownloadRefused";
+}
+/** A range delivered nothing for 30 seconds (#550): aborted, and counted as a network failure. */
+class RangeStalled extends Error {
+  override name = "RangeStalled";
+}
+const realClock: StallClock = {
+  setTimeout: (fn, ms) => setTimeout(fn, ms),
+  clearTimeout: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
+};
+/** One range's signal: aborted with the save's signal, or when the range stalls. */
+function rangeSignal(signal: AbortSignal, clock: StallClock, ms: number) {
+  const controller = new AbortController();
+  const follow = () => controller.abort(signal.reason);
+  if (signal.aborted) follow();
+  else signal.addEventListener("abort", follow, { once: true });
+  const guard = stallGuard(clock, () => controller.abort(new RangeStalled("No audio arrived for 30 seconds.")), ms);
+  return {
+    signal: controller.signal,
+    touch: guard.touch,
+    done: () => {
+      guard.stop();
+      signal.removeEventListener("abort", follow);
+    },
+  };
+}
 class DownloadRetry extends Error {
   constructor(
     message: string,
@@ -31,6 +60,7 @@ async function rangeBlob(
   response: Response,
   expected: number,
   signal: AbortSignal,
+  touch: () => void = () => {},
 ) {
   const reader = response.body?.getReader();
   if (!reader) throw new Error("Missing audio body");
@@ -41,6 +71,7 @@ async function rangeBlob(
       const { done, value } = await reader.read();
       signal.throwIfAborted();
       if (done) break;
+      touch();
       size += value.byteLength;
       if (size > expected)
         throw new DownloadRefused(
@@ -75,6 +106,7 @@ export async function downloadInChunks(
   track: Track,
   signal: AbortSignal,
   onProgress: (loaded: number, total: number) => void,
+  stall: { clock?: StallClock; ms?: number } = {},
 ) {
   const saved = await localDB.downloadParts.get(track.id);
   let part: DownloadPart = saved || {
@@ -123,11 +155,12 @@ export async function downloadInChunks(
   try {
     while (!part.total || part.loaded < part.total) {
       signal.throwIfAborted();
+      const watch = rangeSignal(signal, stall.clock ?? realClock, stall.ms ?? STALL_MS);
       try {
         const response = await fetch(
           `/api/media/${encodeURIComponent(track.id)}`,
           {
-            signal,
+            signal: watch.signal,
             headers: {
               "X-Sonder-Download": "complete",
               Range: `bytes=${part.loaded}-${part.loaded + CHUNK_SIZE - 1}`,
@@ -211,7 +244,8 @@ export async function downloadInChunks(
           const blob = await rangeBlob(
             response,
             Number(range[2]) - Number(range[1]) + 1,
-            signal,
+            watch.signal,
+            watch.touch,
           );
           signal.throwIfAborted();
           if (blob.size !== Number(range[2]) - Number(range[1]) + 1)
@@ -237,8 +271,9 @@ export async function downloadInChunks(
           try {
             while (true) {
               const { done, value } = await reader.read();
-              signal.throwIfAborted();
+              watch.signal.throwIfAborted();
               if (done) break;
+              watch.touch();
               let offset = 0;
               while (offset < value.length) {
                 const take = Math.min(
@@ -270,6 +305,7 @@ export async function downloadInChunks(
         failures = 0;
       } catch (error) {
         signal.throwIfAborted();
+        // A stalled range is a network failure: counted, and fetched again after the delay.
         if (
           error instanceof DownloadRefused ||
           (error as Error).name === "QuotaExceededError"
@@ -286,6 +322,8 @@ export async function downloadInChunks(
           ),
           signal,
         );
+      } finally {
+        watch.done();
       }
     }
     signal.throwIfAborted();
@@ -309,7 +347,7 @@ export async function downloadInChunks(
     onProgress(part.loaded, part.total);
   } catch (error) {
     if ((error as Error).name === "QuotaExceededError")
-      throw new Error(
+      throw new DownloadRefused(
         "This device has run out of storage. Free some space, then resume the download.",
       );
     throw error;

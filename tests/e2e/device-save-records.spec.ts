@@ -34,6 +34,19 @@ async function twoFiles(page: Page) {
       throw error;
     }
   });
+  // Keep's saver saves the tracks the library by work lists (#550): the same two.
+  await page.route("**/api/library", async (route) => {
+    try {
+      const headers = { ...route.request().headers() };
+      delete headers["if-none-match"];
+      const works = await (await route.fetch({ headers })).json();
+      for (const work of works) for (const recording of work.recordings) recording.tracks = recording.tracks.slice(0, 2);
+      await route.fulfill({ status: 200, contentType: "application/json", json: works });
+    } catch (error) {
+      if (page.isClosed() || /disposed|closed|cancel/i.test(String(error))) return;
+      throw error;
+    }
+  });
 }
 
 function serve(route: Route, track: string) {
@@ -126,7 +139,9 @@ test("a save that fails is still Not complete with Retry after a reload, and Ret
     return serve(route, track);
   });
   await saveFromDialog(page);
-  await expect(page.locator(".toast")).toContainText("The source is gone.", { timeout: 20000 });
+  // No toast (#550): the failure is the device's record and the line.
+  await expect.poll(async () => ((await deviceRecordsOf(page, "recording-alice")).record as any)?.value?.state, { timeout: 20000 }).toBe("failed");
+  await expect(page.locator(".toast")).toHaveCount(0);
 
   await openDevice(page);
   await expect(line(page)).toHaveText("Not complete · 1 of 2 files");
@@ -190,7 +205,9 @@ test("removing a failed save from the device forgets how it ended", async ({ pag
     return serve(route, track);
   });
   await saveFromDialog(page);
-  await expect(page.locator(".toast")).toContainText("The source is gone.", { timeout: 20000 });
+  // No toast (#550): the failure is the device's record and the line.
+  await expect.poll(async () => ((await deviceRecordsOf(page, "recording-alice")).record as any)?.value?.state, { timeout: 20000 }).toBe("failed");
+  await expect(page.locator(".toast")).toHaveCount(0);
   await openDevice(page);
   await expect(line(page)).toHaveText("Not complete · 1 of 2 files");
   // The device remembers the failure and the first file, so there is something to forget.

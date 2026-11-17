@@ -69,13 +69,14 @@ test("mobile Hardcover connection, shelves, custom lists, edition selection and 
   await page
     .getByRole("button", { name: "About The Quiet Shelf", exact: true })
     .click();
-  // The Book page (#532): Get for its audiobook, the main action, and no This device.
+  // The Book page (#532): Get for its audiobook, the main action; This device shows for every book in the library,
+  // with nothing to save yet (#550).
   await expect(
     page.getByRole("button", { name: "Get an audiobook", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("switch", { name: "Keep on this device", exact: true }),
-  ).toHaveCount(0);
+  ).toHaveAttribute("aria-checked", "false");
   // The book's Hardcover is one row with the shelf; it opens the Hardcover page (#529).
   await page
     .getByRole("region", { name: "Book", exact: true })
