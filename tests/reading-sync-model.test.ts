@@ -6,7 +6,9 @@ import {
   readingSyncDetails,
   readingSyncPage,
   runPoint,
+  shownAfterPrepare,
   stageName,
+  syncRequest,
   whenLine,
   type ListedJob,
   type SyncPageFacts,
@@ -247,7 +249,7 @@ test("Prepare again over the map in use: the map is in use until the new one is 
   // A paused or stopped one is named under Prepare again, with its button.
   const paused = page(job("ready", { coverage: 1, rebuild: { status: "paused", progress: 0.2, engine: BOOK_ENGINE, error: null, updatedAt: AT } }));
   assert.deepEqual(paused.prepareAgainRow, { line: "Preparing again · Paused" });
-  assert.deepEqual(paused.buttons, ["Resume"]);
+  assert.deepEqual(paused.buttons, ["Resume", "Cancel"], "a paused Prepare again: Resume (main) and Cancel (#541)");
   const failed = page(job("ready", { coverage: 1, rebuild: { status: "error", progress: 0.2, engine: BOOK_ENGINE, error: "x", updatedAt: AT } }));
   assert.deepEqual(failed.prepareAgainRow, { line: "Preparing again · Stopped" });
   assert.deepEqual(failed.buttons, ["Retry"]);
@@ -326,4 +328,46 @@ test("the time of a state: today, yesterday, a date this year and another", () =
   assert.equal(whenLine(new Date(2026, 10, 2, 9, 5).getTime(), NOW), "2 Nov 09:05");
   assert.equal(whenLine(new Date(2025, 10, 2, 9, 5).getTime(), NOW), "2 Nov 2025");
   assert.equal(whenLine(0, NOW), "");
+});
+
+// #541: what each button sends, and how the page shows the server's answer before the listing does.
+test("Pause, Cancel, Resume and Retry send PATCH with the action; Prepare and Prepare again send the ebook and the recording only", () => {
+  const pair = { ebookId: "ebook-1", recordingId: "recording-1" };
+  assert.deepEqual(syncRequest("Pause", pair, "job-1"), { method: "PATCH", path: "/alignments/job-1", body: { action: "pause" } });
+  assert.deepEqual(syncRequest("Pause after section", pair, "job-1"), { method: "PATCH", path: "/alignments/job-1", body: { action: "pause" } });
+  assert.deepEqual(syncRequest("Cancel", pair, "job-1"), { method: "PATCH", path: "/alignments/job-1", body: { action: "cancel" } });
+  assert.deepEqual(syncRequest("Resume", pair, "job-1"), { method: "PATCH", path: "/alignments/job-1", body: { action: "resume" } });
+  assert.deepEqual(syncRequest("Retry", pair, "job-1"), { method: "PATCH", path: "/alignments/job-1", body: { action: "resume" } });
+  for (const button of ["Prepare", "Prepare again"] as const) {
+    const sent = syncRequest(button, pair, "job-1");
+    assert.deepEqual(sent, { method: "POST", path: "/alignments", body: { ebookId: "ebook-1", recordingId: "recording-1" } });
+    assert.deepEqual(Object.keys(sent!.body).sort(), ["ebookId", "recordingId"], "never pairings or a mode");
+    assert.deepEqual(syncRequest(button, pair, undefined)?.method, "POST", "a prepare needs no listed job");
+  }
+  // No listed job to act on: nothing is sent (the page says why).
+  assert.equal(syncRequest("Retry", pair, undefined), null);
+  assert.equal(syncRequest("Pause", pair, undefined), null);
+  assert.equal(syncRequest("Cancel", pair, "a/b")?.path, "/alignments/a%2Fb");
+});
+
+test("a Prepare's answer shows at once: under rebuild over a map in use, as it is otherwise", () => {
+  const answer = { ...job("queued", { progress: 0, generation: "g2", coverage: 0, createdAt: AT }), ebookId: "e", recordingId: "r", intervals: [], pairings: [], sectionsDone: [] } as never;
+  // Nothing listed, a cancelled, stopped or no-text job: the answer as it is.
+  assert.equal(shownAfterPrepare(null, answer).status, "queued");
+  assert.equal(shownAfterPrepare(undefined, answer).status, "queued");
+  assert.equal(shownAfterPrepare(job("cancelled"), answer).status, "queued");
+  assert.equal(shownAfterPrepare(job("error"), answer).status, "queued");
+  assert.equal(shownAfterPrepare(job("partial", { outcome: "unsynced", coverage: 0 }), answer).status, "queued");
+  // A finished map with text mapped is kept in use: the page reads "Preparing again" over it.
+  const kept = shownAfterPrepare(job("partial", { coverage: 0.96, outcome: "partial" }), answer);
+  assert.equal(kept.status, "partial");
+  assert.equal(kept.rebuild?.status, "queued");
+  assert.equal(kept.rebuild?.generation, "g2");
+  assert.equal(page(kept).state, "preparing-again");
+  // A row that already keeps a map: the new job replaces the one under rebuild.
+  const over = shownAfterPrepare(job("ready", { coverage: 1, rebuild: { status: "error", outcome: "rejected", progress: 1, engine: BOOK_ENGINE, error: "worse", updatedAt: AT } }), answer);
+  assert.equal(over.rebuild?.status, "queued");
+  assert.equal(over.rebuild?.outcome, undefined);
+  // An answer for another row (a superseding job) is shown as it is.
+  assert.equal(shownAfterPrepare(job("ready", { id: "other", coverage: 1 }), answer).status, "queued");
 });

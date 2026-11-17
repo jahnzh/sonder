@@ -3,7 +3,7 @@
 // ReadingSyncLanguage, and ReadingSyncAgain / ReadingSyncKept for a Prepare again over the map in use). One pure
 // function turns the listed job of the pair (or none), the role, the options' `languageMatch` and the pool's count
 // into the page: its status blocks with their rows and lines, the steps with the running one and its value, the
-// passages, which buttons the state has (named; they are wired by the next ticket), and the Details rows. No React,
+// passages, which buttons the state has and what a press of each sends (#541), and the Details rows. No React,
 // no `window`, no fetch. The words come from src/status-lines.ts and src/tooltip-texts.ts. The server imports
 // nothing from here.
 import {
@@ -23,7 +23,7 @@ import {
 } from "../status-lines";
 import type { Step } from "../parts/Steps";
 import type { TipName } from "../tooltip-texts";
-import { BOOK_ENGINE, bookWorkerJobId, type AlignmentFlag, type AlignmentJob, type BookJobCounts } from "../reading-types";
+import { BOOK_ENGINE, bookWorkerJobId, rebuildState, type AlignmentFlag, type AlignmentJob, type BookJobCounts } from "../reading-types";
 import type { ReadingSyncSummary } from "../types";
 import { lengthLine } from "./audiobook-model";
 
@@ -400,7 +400,7 @@ export function readingSyncPage(input: SyncPageFacts): SyncPageModel {
         blocks: [{ ...status, value: finishedValue(job, admin, now, true), rows: mapRows(job, SYNC_STATE_NOTES.estimated), steps: null }],
         ...none,
         prepareAgainRow: admin ? { line: againLine } : null,
-        buttons: admin && run && !rejected && (run.status === "paused" || run.status === "error") ? [run.status === "paused" ? "Resume" : "Retry"] : [],
+        buttons: admin && run && !rejected && (run.status === "paused" || run.status === "error") ? (run.status === "paused" ? ["Resume", "Cancel"] : ["Retry"]) : [],
         details: true,
         passages: passagesOf(job),
       };
@@ -408,6 +408,37 @@ export function readingSyncPage(input: SyncPageFacts): SyncPageModel {
     default:
       return { state: "loading", blocks: [], ...none };
   }
+}
+
+/**
+ * What a press of a button sends (#541, spec #537 "The page"): Pause, Cancel, Resume and Retry a `PATCH
+ * /api/alignments/<id>` with the action; Prepare and Prepare again a `POST /api/alignments` with the ebook and the
+ * recording only, never pairings or a mode.
+ */
+export type SyncRequest =
+  | { method: "PATCH"; path: string; body: { action: "pause" | "cancel" | "resume" } }
+  | { method: "POST"; path: "/alignments"; body: { ebookId: string; recordingId: string } };
+
+export function syncRequest(button: SyncButton, pair: { ebookId: string; recordingId: string }, jobId: string | undefined): SyncRequest | null {
+  if (button === "Prepare" || button === "Prepare again")
+    return { method: "POST", path: "/alignments", body: { ebookId: pair.ebookId, recordingId: pair.recordingId } };
+  if (!jobId) return null;
+  const action = button === "Cancel" ? "cancel" : button === "Resume" || button === "Retry" ? "resume" : "pause";
+  return { method: "PATCH", path: `/alignments/${encodeURIComponent(jobId)}`, body: { action } };
+}
+
+/** A finished map with text mapped: the one a Prepare again keeps in use while the new job runs (#538). */
+const servesMap = (job: ListedJob) =>
+  (job.status === "ready" || job.status === "partial") && job.outcome !== "unsynced" && job.outcome !== "language_not_supported" && job.coverage > 0;
+
+/**
+ * How the page shows the job a Prepare's `POST` answered with, before the listing answers. Over a map in use (the
+ * listing already keeps one, or the shown job is a finished map with text mapped) the new job goes under `rebuild`,
+ * as the listing serves it; otherwise the answer is shown as it is. The next listing answer replaces it either way.
+ */
+export function shownAfterPrepare(shown: ListedJob | null | undefined, answer: AlignmentJob): ListedJob {
+  if (shown && shown.id === answer.id && (shown.rebuild || servesMap(shown))) return { ...shown, rebuild: rebuildState(answer) };
+  return answer;
 }
 
 /** The Details page (`#book/<workId>/sync/details`): its rows, the warning, the older engine's line and the flags. */
