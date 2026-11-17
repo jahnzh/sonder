@@ -1,4 +1,4 @@
-import { test, expect, type Page, type Route } from "@playwright/test";
+import { test, expect, type Page, type Route } from "./device-store";
 import { readFileSync } from "node:fs";
 import { parseRange } from "../../server/range";
 import { TIPS } from "../../src/tooltip-texts";
@@ -212,10 +212,16 @@ test("storage used and Protected storage show; Off asks the browser on a tap and
     let granted = false;
     let asks = 0;
     if (!navigator.storage) return;
-    navigator.storage.persisted = async () => granted;
+    // On the prototype: WebKit can drop a property set on navigator.storage itself when it makes a new wrapper for it.
+    // The one Firefox's beforeEach sets on navigator.storage would hide it, so it goes.
+    const stub = (name: string, value: () => Promise<unknown>) => {
+      delete (navigator.storage as unknown as Record<string, unknown>)[name];
+      Object.defineProperty(StorageManager.prototype, name, { value, configurable: true, writable: true });
+    };
+    stub("persisted", async () => granted);
     // The first ask is refused, the second granted.
-    navigator.storage.persist = async () => (granted = ++asks > 1);
-    navigator.storage.estimate = async () => ({ usage: 0, quota: 12e9 });
+    stub("persist", async () => (granted = ++asks > 1));
+    stub("estimate", async () => ({ usage: 0, quota: 12e9 }));
   });
   await page.goto("/#activity/device");
   await expect(valueOf(page, "Used by Sonder")).toHaveAccessibleName("Used by Sonder 0 KB of 12 GB");

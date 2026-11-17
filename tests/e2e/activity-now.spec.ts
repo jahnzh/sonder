@@ -1,4 +1,4 @@
-import { test, expect, type Page, type Route } from "@playwright/test";
+import { test, expect, type Page, type Route } from "./device-store";
 import { readFileSync } from "node:fs";
 import { parseRange } from "../../server/range";
 import { TIPS } from "../../src/tooltip-texts";
