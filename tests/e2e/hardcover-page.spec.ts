@@ -4,6 +4,7 @@
 import { test, expect, type Page, type Route } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { rememberAlicesPlace } from "./alice-place";
 
 const ALICE = "Alice’s Adventures in Wonderland";
 
@@ -24,8 +25,15 @@ async function bookOf(page: Page, id: string) {
 
 // Works this file imported leave the library after each test, through the route the book's Remove uses.
 const imported: string[] = [];
+// Use Hardcover position plays Alice and so moves her saved place; it goes back to where this test found it.
+let restoreAlice: (() => Promise<void>) | null = null;
+test.beforeEach(async ({ page }) => {
+  restoreAlice = await rememberAlicesPlace(page);
+});
 test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "ignoreErrors" });
+  await restoreAlice?.();
+  restoreAlice = null;
   for (const workId of imported.splice(0)) {
     expect((await page.request.delete(`/api/works/${encodeURIComponent(workId)}/library`)).ok()).toBe(true);
   }

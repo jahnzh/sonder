@@ -1,8 +1,16 @@
 import { test, expect } from "@playwright/test";
+import { rememberAlicesPlace } from "./alice-place";
 // The first test moves the shelf book to another shelf, takes it off the list and sets Alice's Hardcover edition.
 // Afterwards they go back through the same routes, so a repeat (or the next browser on this server) starts the same.
+// Use Hardcover position plays Alice and so moves her saved place; it goes back to where the test found it.
+let restoreAlice: (() => Promise<void>) | null = null;
+test.beforeEach(async ({ page }) => {
+  restoreAlice = await rememberAlicesPlace(page);
+});
 test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "ignoreErrors" });
+  await restoreAlice?.();
+  restoreAlice = null;
   const books = await (await page.request.get("/api/books")).json();
   const shelf = books.find((b: { title: string }) => b.title === "The Quiet Shelf");
   const alice = books.find((b: { id: string }) => b.id === "alice");
