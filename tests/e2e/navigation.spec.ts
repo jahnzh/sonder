@@ -104,16 +104,17 @@ test("a reload shows the same page and keeps what lies behind it", async ({ page
 
 test("the old names keep working: #downloads and #reader/<ebook id>", async ({ page }) => {
   const book = await importWithEbook(page, unique("Old name reader"));
+  // #downloads opens Activity's Now since Activity took the Downloads slot (#516); the redirect replaces the entry.
   await page.goto("/#downloads");
-  await expect(shown(page)).toHaveText("Downloads");
-  expect(await hash(page)).toBe("#downloads");
+  await expect(shown(page)).toHaveText("Activity");
+  await expect.poll(() => hash(page)).toBe("#activity");
   await page.goto(`/#reader/${book.ebookId}`);
   await expect(reader(page)).toBeVisible();
   expect(await hash(page)).toBe(`#reader/${book.ebookId}`);
   // The phone's back gesture closes the reader, as before.
   await page.goBack();
   await expect(reader(page)).toBeHidden();
-  await expect(shown(page)).toHaveText("Downloads");
+  await expect(shown(page)).toHaveText("Activity");
 });
 
 test("an address that names nothing, or a page not built yet, shows its place's first page", async ({ page }) => {
