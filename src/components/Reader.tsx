@@ -424,7 +424,14 @@ export function ReaderView({
       fragment: { text: string; start: number };
       page: number;
       turning: boolean;
+      // The layout generation the words were measured in (`layoutGeneration`).
+      generation: number;
     } | null>(null),
+    // Counts the times epub.js laid a section frame out anew by itself (#588): it sizes a new frame in steps after
+    // it shows the frame's document (a resize, Appearance docked or closed, a theme), and the text's size follows
+    // the frame's width (the reader's font size is in vw). A measurement from an earlier generation is read again
+    // before a turn uses it (`measuredNow`).
+    layoutGeneration = useRef(0),
     // The layout the theme effect last applied to a rendition: a later change of it lays the text out anew (#509).
     laidOut = useRef<{ view: Rendition; key: string } | null>(null);
   const mountedRef = useRef(true);
@@ -857,6 +864,15 @@ export function ReaderView({
         }
         if (disposed) return;
         setRendered(true);
+        // epub.js sizes a section's frame to its text by itself, in steps after the frame shows its document, and
+        // again whenever the text's size changes (`resize` from its view manager, once per frame sized anew). The
+        // text's size follows the frame's width (the font size is in vw), so each one may move the narrated
+        // sentence's breaks: the follow step runs again and its turn measures them anew (#588).
+        (view as unknown as { manager?: { on?: (type: string, listener: () => void) => void } }).manager?.on?.("resize", () => {
+          if (disposed || rendition.current !== view) return;
+          layoutGeneration.current++;
+          if (pagedSentence.current) setFollowRevision((value) => value + 1);
+        });
         let lastWidth=0,lastHeight=0,resizes=0;
         const fit = () => {
           if (!disposed && host.clientHeight > 0) {
@@ -1032,6 +1048,7 @@ export function ReaderView({
     if (content.document.fonts && content.document.fonts.status !== "loaded") return null;
     const step = pageStep(view);
     if (!step) return null;
+    const generation = layoutGeneration.current;
     const { words, offsets, index } = measureSentence(node, fragment, step);
     const now = playerRef.current;
     const show = pageToShow(words, interval.start, interval.end, positionIn(interval, now.track?.id, now.position));
@@ -1053,6 +1070,7 @@ export function ReaderView({
         fragment,
         page: show.page,
         turning: false,
+        generation,
       },
     };
   };
@@ -1066,6 +1084,17 @@ export function ReaderView({
     range.setEnd(place.node, place.offset);
     return content.cfiFromRange(range);
   };
+  // The narrated sentence measured again in the layout as it is now, the one place a measurement is renewed after
+  // its jump (#509, #588): after each turn, and before a turn decides when epub.js laid the section out anew since.
+  const measuredNow = (paged: NonNullable<typeof pagedSentence.current>) => {
+    const step = pageStep(paged.view);
+    if (!step || !paged.node.isConnected) return;
+    const generation = layoutGeneration.current;
+    const again = measureSentence(paged.node, paged.fragment, step);
+    paged.words = again.words;
+    paged.index = again.index;
+    paged.generation = generation;
+  };
   // The page turn inside the narrated sentence (#508): the narration's reported position reached a word on
   // another page than the one shown (the break, or a jump past or back over it). It is one of the reader's
   // own jumps (ADR 0014): it does not count as navigating, a gesture or page turn invalidates it while it is
@@ -1073,6 +1102,8 @@ export function ReaderView({
   const turnInside = (key: string) => {
     const paged = pagedSentence.current, player = playerRef.current;
     if (!paged || paged.key !== key || paged.turning || rendition.current !== paged.view) return;
+    // Laid out anew since it was measured: the break is where the sentence breaks now, not where it broke.
+    if (paged.generation !== layoutGeneration.current) measuredNow(paged);
     const show = pageToShow(paged.words, paged.interval.start, paged.interval.end, positionIn(paged.interval, player.track?.id, player.position));
     if (!show || show.page === paged.page) return;
     const jump = following.startJump();
@@ -1090,12 +1121,7 @@ export function ReaderView({
         paged.page = show.page;
         // Measured again after each turn (#509): the next break is the first word after the page now shown,
         // as the pages are drawn now (a picture that loaded late may have moved them).
-        const step = pageStep(paged.view);
-        if (step && paged.node.isConnected) {
-          const again = measureSentence(paged.node, paged.fragment, step);
-          paged.words = again.words;
-          paged.index = again.index;
-        }
+        measuredNow(paged);
       })
       .catch(() => {})
       .finally(() => {
@@ -1148,7 +1174,12 @@ export function ReaderView({
       const measured = measureNarrated(paragraphId, content, node, fragment, view);
       const target = measured && measured.page !== measured.words[0]!.page ? wordCfi(measured, measured.first, measured.character) : cfi;
       await displayAutomatically(view, target);
-      if (measured && jump.current()) pagedSentence.current = measured.paged;
+      if (measured && jump.current()) {
+        pagedSentence.current = measured.paged;
+        // epub.js laid the section out anew while the jump was in flight (a new frame sized in steps, #588): the
+        // follow step runs again, and its turn reads the sentence in the layout as it is now.
+        if (measured.paged.generation !== layoutGeneration.current) setFollowRevision((value) => value + 1);
+      }
     } finally {
       if (opening) hidePages(-1);
     }
