@@ -8,7 +8,7 @@ import {
   serverDownloadIsActive,
   waitUntilServerDownloadIdle,
 } from "./downloads.ts";
-import { isPlaceholderEdition } from "./placeholder-edition.ts";
+import { ensurePlaceholder, isPlaceholderEdition } from "./placeholder-edition.ts";
 import { mediaRoot } from "./storage.ts";
 import { removeAlignmentJobsForRecording } from "./alignment-transitions.ts";
 import { transmission } from "./transmission.ts";
@@ -466,32 +466,16 @@ function hardcoverBookIdForWork(workId: string) {
     .get()?.bookId;
 }
 
+/**
+ * Keeps a Hardcover sync from adding the work back for the user: their hidden entry for the work's
+ * placeholder. A work matched on Hardcover gets its placeholder made when it has none
+ * (`ensurePlaceholder`, #555: `hc-<book id>`); a work that is not matched hides the placeholder it
+ * has, if any, and never its audio.
+ */
 export function ensureHardcoverSyncSuppressed(userId: number, workId: string) {
-  const bookId = hardcoverBookIdForWork(workId);
   let representativeId: string | null = null;
-  if (bookId != null) {
-    representativeId = `hc-${bookId}`;
-    db.insert(s.editions)
-      .values({
-        id: representativeId,
-        workId,
-        cover: "/covers/meditations.svg",
-        narrator: "Audio not added",
-        language: null,
-        releaseTitle: null,
-        rating: 0,
-        sourceLabel: "Hardcover library",
-      })
-      .onConflictDoNothing()
-      .run();
-    db.insert(s.recordings)
-      .values({
-        id: `recording-${representativeId}`,
-        editionId: representativeId,
-      })
-      .onConflictDoNothing()
-      .run();
-  } else {
+  if (hardcoverBookIdForWork(workId) != null) representativeId = ensurePlaceholder(sqlite, workId);
+  else {
     const editions = db
       .select()
       .from(s.editions)
