@@ -88,8 +88,9 @@ import { BookPage } from "./pages/book-page";
 import { toggleWorkFavorite } from "./pages/book-model";
 import { ReaderPages } from "./pages/reader-pages";
 import { isReaderPage } from "./reader-pages";
-import { firstPage, writeAddress, type Place, type Route } from "./routes";
-import { onPageLeftByHistory, startNavigation, useAddress } from "./navigation";
+import { firstPage, parentOf, writeAddress, type Place, type Route } from "./routes";
+import { coveredPage, onPageLeftByHistory, startNavigation, useAddress } from "./navigation";
+import { GetAudiobookSheet } from "./pages/get-audiobook-sheet";
 import { Gallery, isGalleryRoute } from "./gallery/Gallery";
 import { refreshLibraryWorks, startLibraryWorks, useStoredWorksWithPlaces } from "./library-works-store";
 import { bookStatus, readingPercent, workProgress } from "./work-progress";
@@ -260,8 +261,11 @@ function LibraryApp({
   // src/pages never read or write it themselves.
   const address = useAddress();
   const page = shownPage(address.route, useRef<Page>("library"));
+  // The Get audiobook sheet (#601) covers the page it was opened over; opened by a link, its Book page.
+  const getSheet = address.route.name === "get" && address.route.kind === "audiobook" ? address.route.workId : null;
+  const pageRoute: Route = getSheet ? (coveredPage() ?? parentOf(address.route) ?? address.route) : address.route;
   // The Ebook page (#531) is shown in place of the page under it.
-  const ebookPage = address.route.name === "book-page" && address.route.page === "ebook" ? address.route.workId : null;
+  const ebookPage = pageRoute.name === "book-page" && pageRoute.page === "ebook" ? pageRoute.workId : null;
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const admin = user.role === "admin";
@@ -283,7 +287,6 @@ function LibraryApp({
     shelf: "all",
     list: "all",
   });
-  const [audioTarget, setAudioTarget] = useState<Book | null>(null);
   const [sort, setSort] = useState("recent");
   const [view, setView] = useState<"grid" | "list">("grid");
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -453,7 +456,6 @@ function LibraryApp({
   // list Back returns to is the one its scroll position belongs to.
   const leavePage = (p: Page) => {
     setEbookTarget(null);
-    setAudioTarget(null);
     setQueries((q) => ({ library: q.library, discover: "", other: "" }));
     setSidebarOpen(false);
     if (p === "library" || p === "discover") void refresh();
@@ -501,10 +503,10 @@ function LibraryApp({
   };
   // The Audiobook page of a book (#530): from the player's "Audiobook", the book dialog's Audiobook row and Activity.
   const audiobookWorkId =
-    address.route.name === "book-page" && address.route.page === "audiobook" ? address.route.workId : null;
+    pageRoute.name === "book-page" && pageRoute.page === "audiobook" ? pageRoute.workId : null;
   const openAudiobook = (book: Book) => address.navigate({ name: "book-page", workId: book.workId, page: "audiobook" });
   // The Book page (#532): `#book/<workId>`, in place of the page under it.
-  const bookWorkId = address.route.name === "book" ? address.route.workId : null;
+  const bookWorkId = pageRoute.name === "book" ? pageRoute.workId : null;
   const onProgress = useCallback(
     (p: Progress) =>
       setBooks((current) =>
@@ -684,11 +686,8 @@ function LibraryApp({
     setEbookTarget(target);
     setDiscoverQuery(`${target.title} ${target.author}`);
   };
-  const findAudio = (b: Book) => {
-    navigate("discover");
-    setAudioTarget(b);
-    setDiscoverQuery(b.title);
-  };
+  // Get audiobook (#601): the sheet over the page it is opened from, the administrator's.
+  const findAudio = (b: Book) => address.navigate({ name: "get", workId: b.workId, kind: "audiobook" });
   visible.sort((a, b) =>
     sort === "title"
       ? a.title.localeCompare(b.title)
@@ -883,6 +882,18 @@ function LibraryApp({
                 </button>
               </div>
             )}
+            {getSheet && admin && (
+              <GetAudiobookSheet
+                key={getSheet}
+                workId={getSheet}
+                online={online}
+                prowlarrConfigured={settings ? !!settings.prowlarrConfigured : null}
+                onChanged={async () => {
+                  await refresh();
+                  await refreshDownloads();
+                }}
+              />
+            )}
             {audiobookWorkId && (
               <AudiobookPage
                 workId={audiobookWorkId}
@@ -898,7 +909,7 @@ function LibraryApp({
               />
             )}
             {/* The Book page (#532), its Hardcover (#529) and Ebook (#531) pages, and the reader's Chapters, Bookmarks and Search (#590) stand in place of the place's page. */}
-            {audiobookWorkId ? null : address.route.name === "book-page" && isReaderPage(address.route.page) ? <ReaderPages key={`${address.route.workId}:${address.route.page === "search" ? "search" : "chapters"}`} workId={address.route.workId} page={address.route.page} /> : bookWorkId ? (
+            {audiobookWorkId ? null : pageRoute.name === "book-page" && isReaderPage(pageRoute.page) ? <ReaderPages key={`${pageRoute.workId}:${pageRoute.page === "search" ? "search" : "chapters"}`} workId={pageRoute.workId} page={pageRoute.page} /> : bookWorkId ? (
               <BookPage
                 key={bookWorkId}
                 workId={bookWorkId}
@@ -922,7 +933,7 @@ function LibraryApp({
                 }}
                 notify={notify}
               />
-            ) : address.route.name === "book-page" && address.route.page === "hardcover" ? <HardcoverPage key={address.route.workId} workId={address.route.workId} admin={user.role === "admin"} books={books} onChanged={() => void refresh()} /> : ebookPage ? (
+            ) : pageRoute.name === "book-page" && pageRoute.page === "hardcover" ? <HardcoverPage key={pageRoute.workId} workId={pageRoute.workId} admin={user.role === "admin"} books={books} onChanged={() => void refresh()} /> : ebookPage ? (
               <EbookPage
                 key={ebookPage}
                 workId={ebookPage}
@@ -967,7 +978,6 @@ function LibraryApp({
             {page === "discover" && (
               <DiscoverPage
                 admin={user.role === "admin"}
-                audioTarget={audioTarget}
                 settings={settings}
                 ebookTarget={ebookTarget}
                 onQueued={() => {

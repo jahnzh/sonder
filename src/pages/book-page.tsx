@@ -54,7 +54,7 @@ type Props = {
   onSave: (book: Book) => void;
   /** Stops a running save of a recording. */
   onPauseSave: (recordingId: string) => void;
-  /** Today's release picker for the book (Get audiobook, until slice "Get"). */
+  /** Get audiobook (#601): opens the sheet at `#book/<workId>/get/audiobook`. */
   onFindAudio: (book: Book) => void;
   /** Today's ebook search for the book (Get ebook, until slice "Get"). */
   onFindEbook: (book: Book) => void;

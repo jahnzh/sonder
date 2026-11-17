@@ -1,0 +1,119 @@
+/* The Get audiobook sheet (src/pages/get-audiobook-sheet.tsx; board GetAudiobook.dc.html). Tokens from
+   src/parts/tokens.css, colours from the existing variables; the Sheet part keeps one centred column on a desktop. */
+.get-sheet-book {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  min-width: 0;
+}
+.get-sheet-cover {
+  flex: none;
+  display: block;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--corner-control);
+  background: var(--raised);
+  object-fit: cover;
+}
+.get-sheet-names {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.get-sheet-title {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.get-sheet-author {
+  margin: 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.get-sheet-search {
+  flex: none;
+  display: flex;
+  gap: var(--space-8);
+  margin: 0;
+}
+.get-sheet-field {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  height: var(--height-control);
+  padding: 0 var(--space-12);
+  border-radius: var(--corner-control);
+  background: var(--raised);
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.get-sheet-field svg {
+  flex: none;
+}
+.get-sheet-field input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text);
+  font: 400 16px/22px var(--font-body);
+  outline-offset: 4px;
+}
+.get-sheet-field input::-webkit-search-cancel-button {
+  display: none;
+}
+.get-sheet-recordings {
+  flex: none;
+}
+.get-sheet-notice,
+.get-sheet-failure p {
+  margin: 0;
+  color: var(--muted);
+}
+.get-sheet-notice {
+  padding: 0 var(--space-16);
+}
+.get-sheet-failure {
+  box-sizing: border-box;
+  padding: var(--space-12) var(--space-16);
+  border-radius: var(--corner-group);
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+}
+.get-sheet-failure p {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.get-sheet-reason {
+  color: var(--muted);
+}
+/* Drawn but off until tickets 05 (a magnet link) and 06 (files from this device). */
+.part-row.get-sheet-off {
+  cursor: default;
+  opacity: 0.55;
+}
+.get-sheet-refusal {
+  margin: 0;
+  padding: 0 var(--space-16);
+  color: var(--danger);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.get-sheet-line {
+  margin: 0;
+  padding: 0 var(--space-16);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted);
+  text-align: center;
+}

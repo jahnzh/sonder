@@ -436,6 +436,13 @@ export function setPageData(data: unknown) {
 export function pageData(): unknown {
   return ensure().data;
 }
+/**
+ * The page shown under a sheet or the reader: the route last shown in place of the page, or null when the app was
+ * opened on a cover (a link to a sheet), whose parent then stands under it (#601).
+ */
+export function coveredPage(): Route | null {
+  return shownPage;
+}
 /** The sheet the current entry shows, for code outside React. */
 export function shownSheet(): Sheet | null {
   return ensure().sheet;

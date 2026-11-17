@@ -59,3 +59,15 @@
   flex: none;
   color: var(--accent);
 }
+/* The right edge's status (Get's "Plays now", "N seeders"): Caption weight, not uppercase. */
+.part-choice-row-edge {
+  flex: none;
+  white-space: nowrap;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+.part-choice-row-edge[data-now] {
+  /* The board draws it green; the palette has no green of its own (a part names no colour), so it stands out in the text colour. */
+  color: var(--text);
+}
