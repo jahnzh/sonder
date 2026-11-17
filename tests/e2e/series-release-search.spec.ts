@@ -1,5 +1,16 @@
 import { test, expect } from "@playwright/test";
 
+/**
+ * Today's series dialog in its saved mode, for what only it shows (per-book statuses and choices): a saved series
+ * opens its Series page (#562), whose Add opens the dialog. Future Crossing is not released, so no spec adds it.
+ */
+async function openSavedSeriesDialog(page: import("@playwright/test").Page) {
+  await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
+  await expect(page).toHaveURL(/#series\/701$/);
+  await page.getByRole("button", { name: "Add Future Crossing", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "The Crossing" })).toBeVisible();
+}
+
 test("series work release search shows partial failure in the UI", async ({
   page,
 }) => {
@@ -87,7 +98,7 @@ test("series release selection uses real server search and replace flow", async 
   });
 
   await page.goto("/#library");
-  await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
+  await openSavedSeriesDialog(page);
   const workRow = page
     .getByRole("dialog")
     .locator(".series-work")
@@ -156,7 +167,7 @@ test("series release selection confirms existing audio through the server", asyn
   });
 
   await page.goto("/#library");
-  await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
+  await openSavedSeriesDialog(page);
   const aliceRow = page
     .getByRole("dialog")
     .locator(".series-work")

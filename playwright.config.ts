@@ -103,6 +103,8 @@ const desktopProjects = [
               /(^|\/)reader-foot-setting\.spec\.ts$/,
               // Every message while reading in the reader's foot (#591).
               /(^|\/)reader-messages\.spec\.ts$/,
+              // The Series page of a saved series (#562).
+              /(^|\/)series-page\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },
