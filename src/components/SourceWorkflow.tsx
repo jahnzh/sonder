@@ -1,23 +1,18 @@
 import {
   useCallback,
   useEffect,
-  useRef,
   useState,
   type FormEvent,
 } from "react";
 import {
   BookOpen,
-  Cloud,
   Download,
   ExternalLink,
   HardDrive,
   Loader2,
-  Pause,
-  Play,
   RefreshCw,
   Search,
   ShieldCheck,
-  ArrowRight,
   Check,
   Upload,
 } from "lucide-react";
@@ -36,221 +31,12 @@ import {
   type EbookSetView,
 } from "../ebook-set";
 import type {
-  Acquisition,
   EbookResult,
   SavedEbook,
   Settings,
   Book,
 } from "../types";
 type Notify = (message: string, error?: boolean) => void;
-export function AcquisitionQueue({
-  onReady,
-  onOpenBook,
-  onBrowse,
-  notify,
-}: {
-  onReady: () => void;
-  onOpenBook: (id: string) => void;
-  onBrowse: () => void;
-  notify: Notify;
-}) {
-  const [jobs, setJobs] = useState<Acquisition[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState<string | null>(null);
-  const readyIds = useRef(new Set<string>());
-  const refresh = useCallback(async () => {
-    try {
-      const next = await api<Acquisition[]>("/acquisitions");
-      setJobs(next.sort((a, b) => b.createdAt - a.createdAt));
-      setError("");
-      await localDB.preferences.put({ key: "server-queue", value: next });
-      const ready = next.filter((j) => j.status === "ready");
-      if (ready.some((j) => !readyIds.current.has(j.id))) {
-        readyIds.current = new Set(ready.map((j) => j.id));
-        onReady();
-      }
-    } catch (e) {
-      if (navigator.onLine) setError((e as Error).message);
-      else {
-        const cached = await localDB.preferences.get("server-queue");
-        if (Array.isArray(cached?.value)) setJobs(cached.value);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [onReady]);
-  useEffect(() => {
-    void refresh();
-    const timer = setInterval(() => {
-      if (navigator.onLine) void refresh();
-    }, 6000);
-    return () => clearInterval(timer);
-  }, [refresh]);
-  const control = async (
-    job: Acquisition,
-    action: "pause" | "resume" | "retry",
-  ) => {
-    setBusy(job.id);
-    try {
-      await api(`/acquisitions/${job.id}/control`, {
-        method: "POST",
-        body: JSON.stringify({ action }),
-      });
-      await refresh();
-    } catch (e) {
-      notify((e as Error).message, true);
-    } finally {
-      setBusy(null);
-    }
-  };
-  return (
-    <section className="server-queue">
-      <div className="section-heading">
-        <div>
-          <h2>
-            On your home server <span>{jobs.length}</span>
-          </h2>
-          <p className="queue-location">
-            <HardDrive size={14} /> 4 TB media drive · Downloads keep going when
-            you leave.
-          </p>
-        </div>
-        <button
-          className="icon-button"
-          aria-label="Refresh server downloads"
-          onClick={() => void refresh()}
-        >
-          <RefreshCw size={16} />
-        </button>
-      </div>
-      <div className="source-explainer">
-        <ShieldCheck size={19} />
-        <span>
-          Cached on TorBox? Stream it. Otherwise, your server downloads the book
-          to the HDD. Once it’s ready, you can listen or save a copy on this
-          device.
-        </span>
-      </div>
-      {error && (
-        <p className="inline-error" role="alert">
-          {error}
-        </p>
-      )}
-      {loading ? (
-        <div className="external-loading">
-          <Loader2 className="spin" /> Loading downloads…
-        </div>
-      ) : jobs.length ? (
-        <div className="download-list">
-          {jobs.map((job) => (
-            <article className="download-row" key={job.id}>
-              <div className="download-cover">
-                <img
-                  src={job.cover}
-                  alt=""
-                  onError={(e) => {
-                    e.currentTarget.src = "/covers/time.svg";
-                  }}
-                />
-              </div>
-              <div className="download-info">
-                <button
-                  className="text-link"
-                  disabled={!job.bookId}
-                  onClick={() => job.bookId && onOpenBook(job.bookId)}
-                >
-                  {job.title}
-                </button>
-                <p>{job.author}</p>
-                {!["ready", "error"].includes(job.status) && (
-                  <div className="queue-progress">
-                    <i
-                      style={{ width: `${Math.round(job.progress * 100)}%` }}
-                    />
-                  </div>
-                )}
-                <div className={`queue-info ${job.error ? "queue-error" : ""}`}>
-                  {job.error ||
-                    {
-                      checking: "Checking the fastest source…",
-                      preparing: "Preparing your cached stream…",
-                      downloading: `Downloading to your server · ${Math.round(job.progress * 100)}%`,
-                      paused: `Paused · ${Math.round(job.progress * 100)}% downloaded`,
-                      ready:
-                        job.backend !== "torbox"
-                          ? "Ready to listen · Stored on the HDD"
-                          : "Ready to stream · Cached on TorBox",
-                      error: "Download failed. Retry to continue.",
-                    }[job.status]}
-                </div>
-              </div>
-              <div className="download-actions">
-                <span className="queue-badge">
-                  {job.backend !== "torbox" ? (
-                    <>
-                      <HardDrive size={11} /> Your server
-                    </>
-                  ) : (
-                    <>
-                      <Cloud size={11} /> TorBox cache
-                    </>
-                  )}
-                </span>
-                {job.status === "ready" ? (
-                  <button
-                    className="button subtle"
-                    onClick={() => job.bookId && onOpenBook(job.bookId)}
-                  >
-                    <Play size={13} /> Open book
-                  </button>
-                ) : (
-                  <button
-                    className="button subtle"
-                    disabled={
-                      busy === job.id ||
-                      ["checking", "preparing"].includes(job.status)
-                    }
-                    onClick={() =>
-                      void control(
-                        job,
-                        job.status === "error"
-                          ? "retry"
-                          : job.status === "paused"
-                            ? "resume"
-                            : "pause",
-                      )
-                    }
-                  >
-                    {busy === job.id ? (
-                      <Loader2 className="spin" size={13} />
-                    ) : job.status === "error" ? (
-                      <RefreshCw size={13} />
-                    ) : job.status === "paused" ? (
-                      <Play size={13} />
-                    ) : (
-                      <Pause size={13} />
-                    )}{" "}
-                    {job.status === "error"
-                      ? "Retry"
-                      : job.status === "paused"
-                        ? "Resume"
-                        : "Pause"}
-                  </button>
-                )}
-              </div>
-            </article>
-          ))}
-        </div>
-      ) : (
-        <div className="queue-empty">
-          <button onClick={onBrowse}>Browse audiobooks</button> or add a magnet
-          link to start a server download.
-        </div>
-      )}
-    </section>
-  );
-}
 export function EbookDiscovery({
   query,
   onQuery,

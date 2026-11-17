@@ -1,0 +1,69 @@
+/* Activity's Now (src/pages/activity-now.tsx). Measures from the boards: groups 16 apart, book rows 64 high (the
+   Book row part), cards of one or two lines with 12 above and below. On a wide screen the list is the left column
+   of DesktopActivity.dc.html; the page beside it comes with the Book and Reading sync pages. */
+.activity-now {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-32);
+  min-width: 0;
+}
+.activity-now-list {
+  flex: 1 1 340px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+.activity-now-note {
+  box-sizing: border-box;
+  min-height: var(--height-bar);
+  padding: var(--space-12) var(--space-16);
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  list-style: none;
+  color: var(--text);
+}
+.activity-now-note-icon {
+  flex: none;
+  display: flex;
+  color: var(--muted);
+}
+.activity-now-note[role="alert"] .activity-now-note-icon {
+  color: var(--danger);
+}
+.activity-now-note-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-wrap: anywhere;
+}
+.activity-now-note-line {
+  color: var(--muted);
+}
+.activity-now-confirm {
+  list-style: none;
+  padding: var(--space-12) var(--space-16) var(--space-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.activity-now-confirm-buttons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-8);
+}
+.activity-now-confirm-buttons > .part-button.activity-now-discard {
+  color: var(--danger);
+}
+/* A button that failed: the reason under its row, in the failed colour. */
+.activity-now-failure {
+  list-style: none;
+  padding: 0 var(--space-16) var(--space-12);
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
