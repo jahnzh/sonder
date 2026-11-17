@@ -93,6 +93,7 @@ import { SettingsPage } from "./pages/settings-page";
 import { firstPage, writeAddress, type Place, type Route } from "./routes";
 import { onPageLeftByHistory, startNavigation, useAddress } from "./navigation";
 import { Gallery, isGalleryRoute } from "./gallery/Gallery";
+import { refreshLibraryWorks, startLibraryWorks } from "./library-works-store";
 type Notice = { text: string; error?: boolean };
 const nav = [
   { id: "library", label: "My library", icon: Library },
@@ -205,6 +206,7 @@ function useServerActivity(enabled: boolean) {
  */
 function SignedIn(props: { user: Account; needsPassword: boolean; onLogout: () => void }) {
   useState(() => startNavigation({ admin: props.user.role === "admin" }));
+  useEffect(() => startLibraryWorks(), []);
   const { route } = useAddress();
   if (isGalleryRoute(route.name)) return <Gallery />;
   return <LibraryApp {...props} />;
@@ -327,6 +329,7 @@ function LibraryApp({
     try {
       setLoadError("");
       setBooks(await loadBooks());
+      void refreshLibraryWorks();
     } catch (e) {
       setLoadError((e as Error).message);
     } finally {

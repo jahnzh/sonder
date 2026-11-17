@@ -1,4 +1,5 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { readerFixture } from "../reader-fixture";
 import { installReaderWaitBudget, READER_WAIT_MS, timedWait } from "./timing";
@@ -6,7 +7,10 @@ import { installReaderWaitBudget, READER_WAIT_MS, timedWait } from "./timing";
 // Per-step expect ceilings are up to 45 s; leave room around history restores.
 installReaderWaitBudget(test);
 
-async function importRecording(page: Page, title: string, tracks = 1) {
+// The title gets a suffix unique to this call: /api/import does not dedupe audio, so a repeat on the same server
+// would otherwise add a second library row of the same title. Callers use the returned book.title.
+async function importRecording(page: Page, name: string, tracks = 1) {
+  const title = `${name} ${randomUUID().slice(0, 8)}`;
   const audio = readFileSync("server/demo/alice-01.mp3");
   const files = Object.fromEntries(Array.from({ length: tracks }, (_, i) => [
     `file${i}`, { name: `Track ${i + 1}.mp3`, mimeType: "audio/mpeg", buffer: audio },
@@ -16,8 +20,21 @@ async function importRecording(page: Page, title: string, tracks = 1) {
   });
   expect(response.ok()).toBe(true);
   const { id } = await response.json();
-  return (await (await page.request.get("/api/books")).json()).find((book: any) => book.id === id);
+  const book = (await (await page.request.get("/api/books")).json()).find((book: any) => book.id === id);
+  importedWorks.push(book.workId);
+  return book;
 }
+
+// The works this file's tests imported. A played one becomes the most recently played book, which the dock and the
+// feature card of every later spec on the same shard server would open instead of Alice. After each test they leave
+// the library through the route the book dialog's Remove uses, so the server keeps the library it had before.
+const importedWorks: string[] = [];
+test.afterEach(async ({ page }) => {
+  for (const workId of importedWorks.splice(0)) {
+    const removed = await page.request.delete(`/api/works/${encodeURIComponent(workId)}/library`);
+    expect(removed.ok()).toBe(true);
+  }
+});
 
 async function instrument(page: Page) {
   await page.addInitScript(() => {
@@ -272,7 +289,8 @@ test("the Dexie upgrade retains existing local progress", async ({ page }) => {
   expect(upgraded).toEqual({
     progress: { recordingId: "old-recording", trackId: "old-track", position: 12.5, duration: 300, updatedAt: 12345 },
     hasHistory: true,
-    version: 40,
+    // db.version(5) added the works table (#528).
+    version: 50,
   });
 });
 
