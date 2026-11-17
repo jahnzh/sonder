@@ -44,3 +44,31 @@
   margin: 0;
   color: var(--danger);
 }
+/* The New card (board SeriesNew.dc.html): 64 high, 10 by 16 inside; "New from Hardcover", the new titles on one
+   muted line cut with an ellipsis, and Dismiss (quiet) on the right. A failure of Dismiss shows under the titles. */
+.series-page-new {
+  min-height: 64px;
+  padding: 10px var(--space-16);
+}
+.series-page-new-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.series-page-new-text > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.series-page-new-titles {
+  color: var(--muted);
+}
+.series-page-new-text > .series-page-new-error {
+  color: var(--danger);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.series-page-new > .part-button {
+  flex: none;
+}
