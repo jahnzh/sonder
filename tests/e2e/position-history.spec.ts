@@ -1,4 +1,5 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { readerFixture } from "../reader-fixture";
 import { installReaderWaitBudget, READER_WAIT_MS, timedWait } from "./timing";
@@ -6,7 +7,10 @@ import { installReaderWaitBudget, READER_WAIT_MS, timedWait } from "./timing";
 // Per-step expect ceilings are up to 45 s; leave room around history restores.
 installReaderWaitBudget(test);
 
-async function importRecording(page: Page, title: string, tracks = 1) {
+// The title gets a suffix unique to this call: /api/import does not dedupe audio, so a repeat on the same server
+// would otherwise add a second library row of the same title. Callers use the returned book.title.
+async function importRecording(page: Page, name: string, tracks = 1) {
+  const title = `${name} ${randomUUID().slice(0, 8)}`;
   const audio = readFileSync("server/demo/alice-01.mp3");
   const files = Object.fromEntries(Array.from({ length: tracks }, (_, i) => [
     `file${i}`, { name: `Track ${i + 1}.mp3`, mimeType: "audio/mpeg", buffer: audio },
