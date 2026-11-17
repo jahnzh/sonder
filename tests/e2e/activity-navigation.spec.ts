@@ -74,9 +74,8 @@ test("the administrator: Activity in the tab bar where Downloads was, with the d
 
   await parts(page).getByRole("radio", { name: "Server" }).click();
   await expect(page).toHaveURL(/#activity\/server$/);
-  // Server is today's Activity page.
-  await expect(page.getByTestId("activity-page")).toBeVisible();
-  await expect(page.getByTestId("activity-empty")).toBeVisible();
+  // Server is the administrator's queues and workers (#519).
+  await expect(page.getByTestId("activity-server")).toBeVisible();
   await noOverflow(page);
   // Settings has lost its Open Activity button.
   await settingsTab(page).click();
@@ -112,7 +111,7 @@ test("the administrator at desktop width: Activity in the rail with the dot, Set
   await noOverflow(page);
   await parts(page).getByRole("radio", { name: "Server" }).click();
   await expect(page).toHaveURL(/#activity\/server$/);
-  await expect(page.getByTestId("activity-page")).toBeVisible();
+  await expect(page.getByTestId("activity-server")).toBeVisible();
   // Server is still the Activity place: the rail shows it, not Settings.
   await expect(activityTab(rail(page))).toHaveClass(/selected/);
   await expect(settings).not.toHaveClass(/selected/);
@@ -122,9 +121,9 @@ test("the administrator at desktop width: Activity in the rail with the dot, Set
 test("#activity and #activity/server show the same part on a reload", async ({ page }) => {
   await answer(page, 0);
   await page.goto("/#activity/server");
-  await expect(page.getByTestId("activity-page")).toBeVisible();
+  await expect(page.getByTestId("activity-server")).toBeVisible();
   await page.reload();
-  await expect(page.getByTestId("activity-page")).toBeVisible();
+  await expect(page.getByTestId("activity-server")).toBeVisible();
   await expect(parts(page).getByRole("radio", { checked: true })).toHaveText("Server");
   expect(await hash(page)).toBe("#activity/server");
   await page.goto("/#activity");
@@ -197,7 +196,7 @@ test("someone who is not the administrator: Activity in the tab bar, Now with th
   await expect(heading(page)).toBeVisible();
   await expect(page.getByRole("heading", { name: "On this device", exact: true })).toBeVisible();
   await expect.poll(() => hash(page)).toBe("#activity");
-  await expect(page.getByTestId("activity-page")).toHaveCount(0);
+  await expect(page.getByTestId("activity-server")).toHaveCount(0);
   expect(asked).toBe(0);
 });
 

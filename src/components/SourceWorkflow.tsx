@@ -24,7 +24,6 @@ import {
 import { api, bytes, localDB } from "../lib";
 import {
   TorrentHealthLine,
-  TorrentHealthWarning,
   useTorrentHealth,
 } from "./TorrentHealth";
 import {openReader} from "../reading";
@@ -133,7 +132,6 @@ export function AcquisitionQueue({
           device.
         </span>
       </div>
-      <TorrentHealthWarning />
       {error && (
         <p className="inline-error" role="alert">
           {error}
