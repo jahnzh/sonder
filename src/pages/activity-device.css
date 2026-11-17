@@ -1,0 +1,64 @@
+/* Activity's This device (src/pages/activity-device.tsx). Measures from the boards: groups 16 apart; on a wide
+   screen two columns 32 apart (Storage and Saving now on the left, Kept on this device on the right), which fold
+   into one on a phone. Tokens and colours from tokens.css and appearance.css. */
+.activity-device {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-16) var(--space-32);
+  min-width: 0;
+}
+.activity-device-wide {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+.activity-device-column {
+  flex: 1 1 340px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+.activity-device-note {
+  box-sizing: border-box;
+  min-height: var(--height-bar);
+  padding: var(--space-12) var(--space-16);
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  list-style: none;
+  color: var(--text);
+}
+.activity-device-note-icon {
+  flex: none;
+  display: flex;
+  color: var(--muted);
+}
+.activity-device-note-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.activity-device-note-line {
+  color: var(--muted);
+}
+.activity-device-confirm {
+  list-style: none;
+  padding: var(--space-12) var(--space-16) var(--space-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  color: var(--text);
+}
+.activity-device-confirm-buttons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-8);
+}
+.activity-device-confirm-buttons > .part-button.activity-device-remove {
+  color: var(--danger);
+}
+.activity-device-failed {
+  color: var(--danger);
+}

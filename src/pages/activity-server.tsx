@@ -1,10 +1,10 @@
 // Activity › Server (#519, spec #513 "Server"; boards ActivityServer.dc.html, ActivityServerEmpty.dc.html,
 // ActivityServerOffline.dc.html, ActivityServerPaused.dc.html, DesktopActivityServer.dc.html): the administrator's
 // queues with a switch each, Prepare for all books, the workers and the torrent client, in three groups.
-// The lines are written by activity-server-lines.ts. A worker's row opens `#activity/server/<worker>`; until the
-// worker's page (#520) exists, that address shows this list with today's controls of the worker in the place the
-// page will take (activity-worker-bridge.tsx).
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
+// The lines are written by activity-server-lines.ts. A worker's row opens `#activity/server/<worker>`, the worker's
+// page (#520, activity-worker.tsx): on a phone in place of this list, on a desktop beside it. An address of a worker
+// the server does not report shows Server.
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import { WifiOff } from "lucide-react";
 import { api } from "../lib";
 import type { ActivityProcess, ActivityResponse } from "../types";
@@ -19,7 +19,9 @@ import {
   NOT_TRACKED_LINE, lightsDot, prepareResult, prepareValue, queueLine, torrentLine, workerLine, workers,
   type QueueId,
 } from "./activity-server-lines";
-import { ActivityWorkerSlot } from "./activity-worker-bridge";
+import { AttentionMark, ServerRow } from "./activity-server-row";
+import { WorkerHeading, WorkerPage } from "./activity-worker";
+import { findWorker } from "./activity-worker-lines";
 import "./activity-server.css";
 
 const POLL_MS = 15_000;
@@ -27,52 +29,6 @@ const POLL_MS = 15_000;
 /** What `GET /api/alignments/backfill` answers (the parts this page reads). */
 type Backfill = { available: boolean; counts: { ready: number } };
 type BackfillResult = { queued: number };
-
-/** The attention mark: an 8 px dot, announced as "Needs attention". */
-function AttentionMark() {
-  return <span className="activity-server-mark" role="img" aria-label="Needs attention" />;
-}
-
-/** A row of Server: its name (with its tooltip), its line, and on the right its mark and its control. 64 high. */
-function ServerRow({
-  id, name, info, line, failure, mark, muted, control,
-}: {
-  id: string;
-  name: string;
-  info: TipName;
-  line: string;
-  failure?: string;
-  mark?: boolean;
-  muted?: boolean;
-  control?: ReactNode;
-}) {
-  return (
-    <li className="activity-server-item" data-testid={`server-row-${id}`} data-muted={muted ? "" : undefined} data-attention={mark ? "" : undefined}>
-      <div className="activity-server-row">
-      <span className="activity-server-text">
-        <span className="activity-server-name">
-          <span className="activity-server-label type-body">{name}</span>
-          <InfoMark name={name} text={tip(info)} />
-        </span>
-        <span className="activity-server-line type-label" data-testid="server-row-line" data-danger={mark ? "" : undefined}>
-          {line}
-        </span>
-        {failure && (
-          <span className="activity-server-failure type-label" role="alert">
-            {failure}
-          </span>
-        )}
-      </span>
-      {(mark || control) && (
-        <span className="activity-server-end">
-          {mark && <AttentionMark />}
-          {control}
-        </span>
-      )}
-      </div>
-    </li>
-  );
-}
 
 /** A queue: its name, the pause sentence as its tooltip, its line and its switch. */
 function QueueRow({
@@ -204,6 +160,8 @@ export function ActivityServer({
   online,
   worker,
   onWorker,
+  onUnknownWorker,
+  beside = false,
   notify,
 }: {
   /** Whether the device has a connection: without one only the card shows. */
@@ -212,6 +170,10 @@ export function ActivityServer({
   worker?: string | null;
   /** Open a worker's address. */
   onWorker: (worker: string) => void;
+  /** The address names a worker the server does not report: show Server instead. */
+  onUnknownWorker?: () => void;
+  /** A worker's page sits beside the list (a desktop) rather than in its place (a phone). */
+  beside?: boolean;
   notify: (text: string, error?: boolean) => void;
 }) {
   const [activity, setActivity] = useState<ActivityResponse | null>(null);
@@ -237,10 +199,17 @@ export function ActivityServer({
       clearInterval(timer);
     };
   }, [load, online]);
+  const unknown = !!worker && !!activity && !findWorker(activity, worker);
+  useEffect(() => {
+    if (unknown) onUnknownWorker?.();
+  }, [unknown, onUnknownWorker]);
 
+  // On a phone the worker's page takes the list's place.
+  const alone = !!worker && !beside && !unknown;
   if (!online)
     return (
       <div className="activity-server" data-testid="activity-server">
+        {alone && <WorkerHeading hostId={worker} beside={false} />}
         <ul className="part-group activity-server-card" role="list" aria-label="No connection">
           <li className="activity-server-item">
             <div className="activity-server-row">
@@ -270,6 +239,22 @@ export function ActivityServer({
   const hosts = activity ? workers(activity) : [];
   const poolFailure = processOf("alignment-pool");
   const chosen = worker ? hosts.find((process) => process.host?.hostId === worker) : undefined;
+
+  if (alone)
+    return (
+      <div className="activity-server" data-testid="activity-server" aria-busy={!activity && !error ? true : undefined}>
+        {chosen && activity ? (
+          <WorkerPage process={chosen} items={activity.items} beside={false} onChanged={load} />
+        ) : (
+          <WorkerHeading hostId={worker} beside={false} />
+        )}
+        {error && (
+          <p className="activity-server-error type-label" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
+    );
 
   return (
     <div className="activity-server" data-testid="activity-server" data-attention={activity?.attention} aria-busy={!activity && !error ? true : undefined}>
@@ -314,10 +299,9 @@ export function ActivityServer({
           </>
         )}
       </div>
-      {/* The worker's page (#520) takes this place: beside the list on a desktop, under it on a phone. */}
-      {chosen && (
+      {chosen && activity && (
         <div className="activity-server-worker">
-          <ActivityWorkerSlot process={chosen} onChanged={() => void load()} />
+          <WorkerPage process={chosen} items={activity.items} beside onChanged={load} />
         </div>
       )}
     </div>

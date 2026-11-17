@@ -185,12 +185,30 @@ export async function replaceForAccount(
 export function isAdmin() { return currentRole === "admin"; }
 export function userStorageKey(key: string) { return currentUserId === 1 ? key : `sonder-user-${currentUserId}:${key}`; }
 
-/** Ebook edition ids with a reader-file entry in Dexie (device offline copy). */
+/**
+ * Ebook edition ids with a reader-file entry in Dexie (device offline copy). The reader writes them to the shared
+ * database (`saveEpubOffline` in reading.ts), as the downloads are not per user either; an older build may have left
+ * one in a personal database.
+ */
 export async function listOfflineEbookEditionIds(): Promise<string[]> {
-  const rows = await localDB.preferences.toArray();
-  return rows
-    .filter((row) => row.key.startsWith("reader-file:"))
-    .map((row) => row.key.slice("reader-file:".length));
+  const shared = await sharedDB.preferences.where("key").startsWith("reader-file:").primaryKeys();
+  const personal = personalDB === sharedDB ? [] : await personalDB.preferences.where("key").startsWith("reader-file:").primaryKeys();
+  return [...new Set([...shared, ...personal].map((key) => String(key).slice("reader-file:".length)))];
+}
+/** Removes an ebook edition's offline copy from this device (#518): its file and its reader-file entry. */
+export async function removeOfflineEbook(editionId: string) {
+  const key = `reader-file:${editionId}`;
+  const stored = (await sharedDB.preferences.get(key))?.value as { opfs?: boolean } | undefined;
+  if (stored?.opfs || !stored) {
+    try {
+      const folder = await (await navigator.storage.getDirectory()).getDirectoryHandle("sonder-ebooks");
+      await folder.removeEntry(`${editionId}.epub`);
+    } catch {
+      // No folder or no file: nothing of it is left to remove.
+    }
+  }
+  await sharedDB.preferences.delete(key);
+  if (personalDB !== sharedDB) await personalDB.preferences.delete(key);
 }
 
 export const localDB = new Proxy(sharedDB, {

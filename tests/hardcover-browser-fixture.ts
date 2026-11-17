@@ -78,7 +78,6 @@ export function installHardcoverFixture() {
     book_id: b.id,
     book: b,
   }));
-  let nextMemberId = 9950;
   globalThis.fetch = async (input, init) => {
     if (!String(input).startsWith("https://api.hardcover.app/"))
       return original(input, init);
@@ -128,10 +127,10 @@ export function installHardcoverFixture() {
       members = members.filter((m) => m.id !== v.id);
       data = { delete_list_book: { id: v.id } };
     } else if (q.includes("SonderListAdd")) {
-      // A new id each time: one counted from the list's length could repeat a member's id still on the list,
-      // and removing either would then remove both.
+      // A new id past every id in the list: `9900 + members.length` reused a remaining member's id after a
+      // removal, so removing the re-added book later removed that member too.
       const item = {
-        id: nextMemberId++,
+        id: Math.max(9900, ...members.map((m) => m.id)) + 1,
         list_id: v.object.list_id,
         book_id: v.object.book_id,
         book: books.find((b) => b.id === v.object.book_id)!,

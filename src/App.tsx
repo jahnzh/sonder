@@ -57,6 +57,8 @@ import {
   listOfflineEbookEditionIds,
   listDeviceSaveRecords,
   writeDeviceSaveRecord,
+  deleteDownloads,
+  removeOfflineEbook,
 } from "./lib";
 import { deviceSaveEntries, type DeviceSaveRecord } from "./device-saves";
 import { buildNow } from "./activity-now";
@@ -85,6 +87,8 @@ import { DownloadsPage } from "./pages/downloads-page";
 import { ActivityServer } from "./pages/activity-server";
 import { ActivityItemGroups } from "./pages/activity-items";
 import { ActivityPlace } from "./pages/activity-place";
+import { useSideBySide } from "./pages/side-by-side";
+import { ActivityDevice } from "./pages/activity-device";
 import { SettingsPage } from "./pages/settings-page";
 import { HardcoverPage } from "./pages/hardcover-page";
 import { HardcoverRow } from "./pages/hardcover-row";
@@ -215,7 +219,7 @@ function shownPage(route: Route, under: { current: Page }): Page {
   if (route.name === "library" || route.name === "discover" || route.name === "settings" || route.name === "activity")
     under.current = route.name;
   else if (route.name === "settings-page") under.current = "settings";
-  // A worker's address is Activity's Server until the worker's page (#520) has a screen of its own.
+  // A worker's page (#520) is a page of Activity's Server.
   else if (route.name === "worker") under.current = "activity";
   return under.current;
 }
@@ -238,6 +242,9 @@ function LibraryApp({
   const [loadError, setLoadError] = useState("");
   const admin = user.role === "admin";
   const serverActivity = useServerActivity(admin);
+  const sideBySide = useSideBySide();
+  // An address of a worker the server does not report shows Server, in the address too (#520).
+  const showServer = useCallback(() => address.navigate({ name: "activity", part: "server" }, { replace: true }), [address.navigate]);
   // The search field searches the page it is on. The Library's search is one of its filters and is remembered
   // with them (#455); Discover's goes with its results when the page is left.
   const [queries, setQueries] = useState({ library: "", discover: "", other: "" });
@@ -427,6 +434,11 @@ function LibraryApp({
     address.navigate({ name: "settings-page", page: "connections" });
   };
   // The tab bar and the rail: another place adds an entry, the current one returns to its first page.
+  // This device's part of Activity (#518): where the device's saves are listed.
+  const openDevice = () => {
+    leavePage("activity");
+    address.navigate({ name: "activity", part: "device" });
+  };
   const switchPlace = (p: Place) => {
     leavePage(p);
     address.goPlace(p);
@@ -804,7 +816,7 @@ function LibraryApp({
                 <span>
                   You’re offline. Downloaded books are available.
                 </span>
-                <button onClick={() => navigate("activity")}>
+                <button onClick={openDevice}>
                   View downloads <ArrowRight size={14} />
                 </button>
               </div>
@@ -871,33 +883,48 @@ function LibraryApp({
                 admin={user.role === "admin"}
                 part={address.route.name === "activity" ? address.route.part : address.route.name === "worker" ? "server" : "now"}
                 onPart={(part) => address.navigate({ name: "activity", part })}
+                alone={address.route.name === "worker" && !sideBySide}
                 server={<ActivityServer
                   online={online}
                   worker={address.route.name === "worker" ? address.route.worker : null}
-                  onWorker={(worker) => address.navigate({ name: "worker", worker })}
+                  beside={sideBySide}
+                  // On a desktop the page sits beside the list: choosing a worker replaces the address (#520).
+                  onWorker={(worker) => address.navigate({ name: "worker", worker }, { replace: sideBySide })}
+                  onUnknownWorker={showServer}
                   notify={notify}
                 />}
                 now={<><DownloadsPage
                 admin={user.role === "admin"}
                 books={books}
-                downloads={downloads}
-                downloadParts={downloadParts}
-                downloadJobs={downloadJobs}
-                saveRecords={saveRecords}
-                ebooks={savedEbooks.filter((e) => offlineEbookEditionIds.has(e.id))}
                 refresh={refresh}
-                refreshDownloads={refreshDownloads}
-                startDownload={startDownload}
-                onPauseDownload={(book) =>
-                  controllers.current.get(book.recordingId)?.abort()
-                }
                 setDetail={setDetail}
-                setMediaTarget={setMediaTarget}
                 navigate={navigate}
                 notify={notify}
               />
               {/* Today's item groups of the old Activity page, until Now's own ticket (#521). */}
               {user.role === "admin" && <ActivityItemGroups />}</>}
+                device={<ActivityDevice
+                  books={books}
+                  downloads={downloads}
+                  downloadParts={downloadParts}
+                  running={downloadJobs}
+                  records={saveRecords}
+                  ebooks={savedEbooks.filter((e) => offlineEbookEditionIds.has(e.id))}
+                  online={online}
+                  onPause={(recordingId) => controllers.current.get(recordingId)?.abort()}
+                  onOpen={setDetail}
+                  onRemove={async (row) => {
+                    // Every file of the book on this device: its recordings' audio and its EPUB. The place, the
+                    // bookmarks and the library entry stay (ADR 0018).
+                    try {
+                      for (const recordingId of row.recordingIds) await deleteDownloads(recordingId);
+                      for (const editionId of row.ebookIds) await removeOfflineEbook(editionId);
+                    } finally {
+                      await refreshDownloads();
+                      await refreshOfflineEbooks();
+                    }
+                  }}
+                />}
               />
             )}
             {page === "settings" && (
@@ -958,7 +985,7 @@ function LibraryApp({
           onPauseDownload={(book) =>
             controllers.current.get(book.recordingId)?.abort()
           }
-          onViewDownloads={() => navigate("activity")}
+          onViewDownloads={openDevice}
           onBookDetails={setDetail}
           onManageSources={setMediaTarget}
         />

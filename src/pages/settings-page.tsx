@@ -2,7 +2,8 @@
 // On a phone `#settings` is the list and `#settings/<page>` a Page with "Back to Settings"; on a desktop the list
 // stays on the left with the chosen page beside it (Account at `#settings`), and choosing another row replaces the
 // history entry.
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useState } from "react";
+import { useSideBySide } from "./side-by-side";
 import type { Account } from "../components/SignIn";
 import { useAppearance } from "../components/Appearance";
 import { api } from "../lib";
@@ -20,19 +21,7 @@ import { PlaybackPage, useDefaultSpeed } from "./settings/playback";
 import { ConnectionsPage, LibraryStoragePage, UsersPage } from "./settings/server";
 import "./settings/settings.css";
 
-/** The width from which the chosen page is shown beside the list (the rail's, spec #572 "The shell"). */
-export const SIDE_BY_SIDE = "(min-width: 760px)";
-
-function useSideBySide(): boolean {
-  return useSyncExternalStore(
-    (listener) => {
-      const media = matchMedia(SIDE_BY_SIDE);
-      media.addEventListener("change", listener);
-      return () => media.removeEventListener("change", listener);
-    },
-    () => matchMedia(SIDE_BY_SIDE).matches,
-  );
-}
+export { SIDE_BY_SIDE } from "./side-by-side";
 
 type Props = {
   user: Account;

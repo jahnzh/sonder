@@ -128,15 +128,49 @@ a.activity-server-link:focus-visible {
   color: var(--danger);
   overflow-wrap: anywhere;
 }
-/* The place of the worker's page (#520): today's controls of the worker until then, one under the other. */
-.activity-worker-slot {
+/* The worker's page (src/pages/activity-worker.tsx; boards Worker.dc.html, DesktopActivityServer.dc.html): its
+   header, then its groups 16 apart. */
+.activity-worker {
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  gap: var(--space-16);
+}
+.activity-worker-head {
+  display: flex;
+  flex-direction: column;
   gap: var(--space-8);
-  padding: 0 var(--space-16);
+}
+.activity-worker-head .part-page-header {
+  min-width: 0;
+}
+.activity-worker-caption {
+  margin: 0;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Beside the list: the id as a heading with the caption after it, on one line while they fit. */
+.activity-worker-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-4) var(--space-12);
+}
+.activity-worker-heading h2 {
+  margin: 0;
+  min-width: 0;
   overflow-wrap: anywhere;
 }
-.activity-worker-slot .settings-inline-actions {
-  flex-wrap: wrap;
+.activity-worker-use {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+/* Restart's question, in place of its button: Cancel and Restart now (or Restart anyway). */
+.activity-worker-confirm {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
 }

@@ -34,10 +34,13 @@ test("mobile Hardcover connection, shelves, custom lists, edition selection and 
   await expect(
     page.getByText("@browser-reader", { exact: true }),
   ).toBeVisible();
+  // The first sync on a server imports The Quiet Shelf; a repeat on the same server finds it already there.
+  const quietShelf = async () =>
+    ((await (await page.request.get("/api/books")).json()) as { title: string; workId: string; hardcover?: { statusId: number | null; pending: boolean; listIds: number[] } }[])
+      .find((b) => b.title === "The Quiet Shelf");
+  const imported = (await quietShelf()) ? 0 : 1;
   await page.getByRole("button", { name: "Sync now", exact: true }).click();
-  // The shelf book is imported by this sync, or by an earlier spec's on the same server (hardcover-page.spec.ts);
-  // the Library filter below finds it either way.
-  await expect(page.getByText(/Synced [01] new books/)).toBeVisible();
+  await expect(page.getByText(new RegExp(`Synced ${imported} new books`))).toBeVisible();
   await page
     .locator(".mobile-nav")
     .getByRole("button", { name: "My library", exact: true })
@@ -118,6 +121,11 @@ test("mobile Hardcover connection, shelves, custom lists, edition selection and 
     .click();
   await page.getByRole("button", { name: "Back to the book", exact: true }).click();
   await expect(page).toHaveURL(/#library$/);
+  // Put The Quiet Shelf back on Want to read and in Weekend escapes, here and in the Hardcover fixture, so the
+  // next run on this server finds the shelf and list it filters by as this one did.
+  const quiet = (await quietShelf())!;
+  expect((await page.request.patch("/api/hardcover/shelf", { data: { workId: quiet.workId, statusId: 1 } })).ok()).toBe(true);
+  expect((await page.request.patch("/api/hardcover/lists/8803", { data: { workId: quiet.workId, included: true } })).ok()).toBe(true);
   await page.getByRole("button", { name: "Sync now", exact: true }).click();
   await expect
     .poll(async () => {
@@ -126,6 +134,12 @@ test("mobile Hardcover connection, shelves, custom lists, edition selection and 
         .progressPending;
     })
     .toBe(false);
+  await expect
+    .poll(async () => {
+      const hardcover = (await quietShelf())!.hardcover!;
+      return { statusId: hardcover.statusId, pending: hardcover.pending, inList: hardcover.listIds.includes(8803) };
+    })
+    .toEqual({ statusId: 1, pending: false, inList: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     390,
   );
