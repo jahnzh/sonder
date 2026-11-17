@@ -298,6 +298,14 @@ export async function syncBookmarks(id: string) {
 const epubMemoryCache = new Map<string, Blob>();
 const inFlightEpub = new Map<string, Promise<Blob>>();
 
+/** Told when a device copy of an ebook is added or removed, so every screen that shows one reads it again. */
+export const EBOOK_DEVICE_EVENT = "sonder:ebook-device-changed";
+
+/** Drops the reader's in-memory copy of an edition, so the next open reads it from this device's copy or the server. */
+export function forgetEpub(id: string) {
+  for (const key of epubMemoryCache.keys()) if (key.startsWith(`${id}:`)) epubMemoryCache.delete(key);
+}
+
 export async function cachedEpub(
   id: string,
   fingerprint: string,
@@ -391,6 +399,7 @@ export async function saveEpubOffline(
       key: `reader-file:${book.id}`,
       value: { fingerprint: book.fingerprint, blob },
     });
+  window.dispatchEvent(new CustomEvent(EBOOK_DEVICE_EVENT, { detail: { id: book.id } }));
 }
 export function openReader(id: string, fromAudio = false) {
   window.dispatchEvent(

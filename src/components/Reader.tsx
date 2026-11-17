@@ -36,7 +36,7 @@ import { PlaybackTimeline } from "./PlaybackTimeline";
 import {PlaybackExtra,usePlaybackMenu} from "./PlaybackMenu";
 import { readerNeedsScripts } from "../reader-sandbox";
 import { lookupIndex, placeAt, type LookupIndex } from "../reader-lookup";
-import { pageToShow, wordPages, type PagedWord } from "../reader-page-turn";
+import { pageToShow, pagedWords, type PagedWord } from "../reader-page-turn";
 import { keyEventContext, OPEN_SHEET_SELECTOR, readerKeyAction, typingInField } from "../keyboard";
 import { followsNarration } from "../follow-default";
 import { createReaderFollowing, type DeferredReturn, type NarrationPlace, type NarrationReturn } from "../reader-following";
@@ -242,22 +242,29 @@ function sentenceWords(fragment: { text: string; start: number }) {
 // sentence breaks"). A word's page is the left edge of its first box in the section frame's coordinates,
 // divided by the layout's page step (with two pages side by side the step spans both) and rounded down:
 // word boxes, not hit-testing, which gives the wrong word beside a picture. The breaks are found by
-// binary search over the words (`wordPages`), so a sentence costs a few lookups, not one per word.
+// binary search over the words (`pagedWords`), so a sentence costs a few lookups, not one per word. A word
+// hyphenated across the page is searched the same way for its first character on the later page (#509).
+// A picture in the sentence moves the boxes of the words it pushed, so their pages are read as drawn.
 function measureSentence(block: Element, fragment: { text: string; start: number }, step: number) {
+  const began = performance.now();
   const index = blockLookup(block),
     words = sentenceWords(fragment),
     scroll = block.ownerDocument.defaultView?.scrollX ?? 0;
-  const pages = wordPages(words.length, (word) => {
-    const range = characterAt(index, words[word]!.offset);
+  const paged = pagedWords(words.map((word) => word.text), (word, character) => {
+    const range = characterAt(index, words[word]!.offset + character);
     const box = range && Array.from(range.getClientRects()).find((rect) => rect.width > 0 || rect.height > 0);
     return box ? Math.floor((box.left + scroll) / step) : null;
   });
-  return {
-    index,
-    offsets: words.map((word) => word.offset),
-    words: words.map((word, at): PagedWord => ({ text: word.text, page: pages[at]! })),
-  };
+  // The time a measurement took, kept only where a browser test asks for it (#509's measurement).
+  const timings = (window as { __sonderBreakTimings?: number[] }).__sonderBreakTimings;
+  if (Array.isArray(timings)) timings.push(performance.now() - began);
+  return { index, offsets: words.map((word) => word.offset), words: paged };
 }
+// The layout's page step: what one turn moves, both pages with two side by side (spec #503). Null before epub.js laid out.
+const pageStep = (view: Rendition) => {
+  const step = (view as unknown as { manager?: { layout?: { delta?: number } } }).manager?.layout?.delta;
+  return step && step > 0 ? step : null;
+};
 // The narration's position as a time inside `interval`: on a later track than the sentence's, the sentence
 // has ended (the narrated sentence stays across the start of the next file until its first sentence).
 const positionIn = (interval: AlignmentInterval, trackId: string | undefined, position: number) =>
@@ -390,9 +397,14 @@ export function ReaderView({
       index: LookupIndex<Node>;
       content: Contents;
       view: Rendition;
+      // The sentence's block and text, to measure it again after each turn (#509).
+      node: Element;
+      fragment: { text: string; start: number };
       page: number;
       turning: boolean;
-    } | null>(null);
+    } | null>(null),
+    // The layout the theme effect last applied to a rendition: a later change of it lays the text out anew (#509).
+    laidOut = useRef<{ view: Rendition; key: string } | null>(null);
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -879,8 +891,12 @@ export function ReaderView({
             ? { background: "#f2e6cd", text: "#362f24" }
             : { background: "#ffffff", text: "#202820" };
     settleAfterLayout(view);
-    // The new theme lays the text out anew, so the measured breaks no longer hold.
+    // The new theme lays the text out anew, so the measured breaks no longer hold. A change of the font, the
+    // size, the line height or the margins after the first theme follows the narrated sentence again below,
+    // which measures it in the new layout (#509).
     pagedSentence.current = null;
+    const anew = laidOut.current?.view === view && laidOut.current.key !== themeKey;
+    laidOut.current = { view, key: themeKey };
     view.themes.default({
       "html, body": {
         background: `${theme.background} !important`,
@@ -919,7 +935,10 @@ export function ReaderView({
     const timer = setTimeout(() => {
       if (!restoreDue.due()) return;
       const player=playerRef.current,current=mapRef.current;
-      if(following.highlightedSentence(current, placeOf(player.book, player.track?.id, player.position)))return;
+      if(following.highlightedSentence(current, placeOf(player.book, player.track?.id, player.position))){
+        if (anew) redrawHighlight();
+        return;
+      }
       // A checkpoint without a CFI (the listening place, or one an older client saved) is a sentence; go to it.
       if (latest.current && !latest.current.cfi) {
         void jumpRef.current(latest.current.paragraphId, false).catch(() => false);
@@ -981,8 +1000,8 @@ export function ReaderView({
     const recordingId = mapRef.current?.recordingId;
     if (!interval || interval.paragraphId !== paragraphId || !recordingId) return null;
     if (content.document.fonts && content.document.fonts.status !== "loaded") return null;
-    const step = (view as unknown as { manager?: { layout?: { delta?: number } } }).manager?.layout?.delta;
-    if (!step || step <= 0) return null;
+    const step = pageStep(view);
+    if (!step) return null;
     const { words, offsets, index } = measureSentence(node, fragment, step);
     const now = playerRef.current;
     const show = pageToShow(words, interval.start, interval.end, positionIn(interval, now.track?.id, now.position));
@@ -991,6 +1010,7 @@ export function ReaderView({
       words,
       page: show.page,
       first: show.word,
+      character: show.character,
       paged: {
         key: `${recordingId}:${paragraphId}`,
         interval,
@@ -999,15 +1019,18 @@ export function ReaderView({
         index,
         content,
         view,
+        node,
+        fragment,
         page: show.page,
         turning: false,
       },
     };
   };
-  // The CFI of word `word` of a measured sentence: a turn displays it to reach that word's page.
-  const wordCfi = (measured: { paged: { content: Contents; index: LookupIndex<Node>; offsets: number[] } }, word: number) => {
+  // The CFI of character `character` of word `word` of a measured sentence: a turn displays it to reach that
+  // character's page (the word's first, or the first on the later page of a word hyphenated across it).
+  const wordCfi = (measured: { paged: { content: Contents; index: LookupIndex<Node>; offsets: number[] } }, word: number, character = 0) => {
     const { content, index, offsets } = measured.paged;
-    const place = placeAt(index, offsets[word]! + 1),
+    const place = placeAt(index, offsets[word]! + character + 1),
       range = content.document.createRange();
     range.setStart(place.node, Math.max(0, place.offset - 1));
     range.setEnd(place.node, place.offset);
@@ -1026,14 +1049,23 @@ export function ReaderView({
     paged.turning = true;
     let target: string;
     try {
-      target = wordCfi({ paged }, show.word);
+      target = wordCfi({ paged }, show.word, show.character);
     } catch {
       paged.turning = false;
       return;
     }
     void displayAutomatically(paged.view, target)
       .then(() => {
-        if (jump.current()) paged.page = show.page;
+        if (!jump.current()) return;
+        paged.page = show.page;
+        // Measured again after each turn (#509): the next break is the first word after the page now shown,
+        // as the pages are drawn now (a picture that loaded late may have moved them).
+        const step = pageStep(paged.view);
+        if (step && paged.node.isConnected) {
+          const again = measureSentence(paged.node, paged.fragment, step);
+          paged.words = again.words;
+          paged.index = again.index;
+        }
       })
       .catch(() => {})
       .finally(() => {
@@ -1084,7 +1116,7 @@ export function ReaderView({
       // shown where its sentence starts. Nothing is awaited in between: a wait here would let a newer
       // jump replace this one while the pages of a section being opened are hidden.
       const measured = measureNarrated(paragraphId, content, node, fragment, view);
-      const target = measured && measured.page !== measured.words[0]!.page ? wordCfi(measured, measured.first) : cfi;
+      const target = measured && measured.page !== measured.words[0]!.page ? wordCfi(measured, measured.first, measured.character) : cfi;
       await displayAutomatically(view, target);
       if (measured && jump.current()) pagedSentence.current = measured.paged;
     } finally {
@@ -1216,8 +1248,10 @@ export function ReaderView({
     if (interval && following.followTarget(key)) {
       // A new narrated sentence, or the same one again (Back to narration): measured anew by its jump.
       pagedSentence.current = null;
+      const request = following.followRequest();
       void jumpRef.current(interval.paragraphId, false).catch(()=>false).then(shown => {
-        if (following.followShown(key, shown) === "failed")
+        // A jump a newer follow jump replaced while in flight is stale, not a failure (#509, seen in WebKit).
+        if (following.followShown(key, shown, request) === "failed")
           setError("Could not display the current passage. Try following audio again.");
       });
     } else if (interval) {

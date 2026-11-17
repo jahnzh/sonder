@@ -21,6 +21,10 @@ const mobileProjects = [
     ? [{ name: "mobile-safari", testMatch: mobileSpecs, use: { ...devices["iPhone 15"], launchOptions: {} } }]
     : []),
 ];
+// The page turn inside a sentence (#509) also runs in WebKit with the iPhone profile, the closest to iOS Safari here.
+const pageTurnIphone = existsSync(webkit.executablePath())
+  ? [{ name: "webkit-iphone-page-turn", testMatch: /(^|\/)reader-page-turn\.spec\.ts$/, use: { ...devices["iPhone 15"], launchOptions: {} } }]
+  : [];
 const desktopProjects = [
   { name: "chromium" },
   // Layout checks also run in Firefox/WebKit when those browsers are installed.
@@ -51,12 +55,15 @@ const desktopProjects = [
               /(^|\/)settings-pages\.spec\.ts$/,
               // A book's Hardcover page (#529), and the Hardcover spec that reaches it from the Library.
               /(^|\/)hardcover(-page)?\.spec\.ts$/,
+              // The Ebook page (#531).
+              /(^|\/)ebook-page\.spec\.ts$/,
               // The worker's page (#520).
               /(^|\/)activity-worker\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: {} },
     })),
+  ...pageTurnIphone,
 ];
 export default defineConfig({
   testDir: "./tests/e2e",
