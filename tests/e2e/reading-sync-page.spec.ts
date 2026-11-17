@@ -270,6 +270,14 @@ test("the addresses: a reload, a link straight to either and Back, the Book page
   await page.getByRole("button", { name: "Reading sync Ready · estimated timings", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`#book/${escape(encodeURIComponent(book.workId))}/sync$`));
   await expect(shownPage(page)).toHaveAttribute("data-state", "ready");
+  // The pair's rows open the Audiobook and Ebook pages.
+  await shownPage(page).getByRole("button", { name: /^Recording/ }).click();
+  await expect(page).toHaveURL(new RegExp(`#book/${escape(encodeURIComponent(book.workId))}/audiobook$`));
+  await page.goBack();
+  await shownPage(page).getByRole("button", { name: /^Edition EPUB/ }).click();
+  await expect(page).toHaveURL(new RegExp(`#book/${escape(encodeURIComponent(book.workId))}/ebook$`));
+  await page.goBack();
+  await expect(page).toHaveURL(new RegExp(`/sync$`));
   // Details, and back to Reading sync.
   await shownPage(page).getByRole("button", { name: "Details Engine, GPU, stage times", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/sync/details$`));
