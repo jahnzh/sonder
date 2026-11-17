@@ -51,10 +51,17 @@ try {
   const detail=page.getByRole("dialog",{name:"Book details",exact:true});
   const editions=detail.getByRole("combobox",{name:"Audiobook release",exact:true});
   if(await editions.count()) await editions.selectOption(book.id);
-  if(book.hardcover?.slug){
-    const link=detail.locator(".detail-actions").getByRole("link",{name:"Hardcover",exact:true});
+  // The book's Hardcover row (shown when this account connected Hardcover) opens the Hardcover page (#529), whose
+  // Open on Hardcover is the canonical link. Only read: nothing on the page is changed.
+  const hardcoverRow=detail.getByRole("button",{name:/^Hardcover /});
+  if(book.hardcover?.slug && await hardcoverRow.count()){
+    await hardcoverRow.click();
+    const link=page.getByRole("link",{name:"Open on Hardcover",exact:true});
     await expect(link).toHaveAttribute("href",`https://hardcover.app/books/${encodeURIComponent(book.hardcover.slug)}`);
     check("canonical Hardcover link",{href:await link.getAttribute("href")});
+    await page.getByRole("button",{name:"Back to the book",exact:true}).click();
+    await page.getByRole("button",{name:`About ${book.title}`,exact:true}).first().click();
+    if(await editions.count()) await editions.selectOption(book.id);
   }
   await detail.getByRole("button",{name:/^(Continue listening|Start listening)$/}).click();
   await expect.poll(async()=>{const a=await actual();return !!a && a.ready>=2 && !a.paused && !a.error;},{timeout:30000}).toBe(true);
