@@ -236,8 +236,8 @@ test("a book whose audiobook is downloading: the download's line and bar, Get fo
   await expect(files(page).getByRole("listitem").nth(1)).toHaveAccessibleName("Ebook Not added");
   await expect(files(page).getByRole("button", { name: "Get an ebook", exact: true })).toBeVisible();
   await expect(files(page).getByRole("listitem").nth(2)).toHaveAccessibleName("Reading sync Needs an ebook");
-  // This device shows only when there is something to keep.
-  await expect(shown.getByRole("heading", { name: "This device" })).toHaveCount(0);
+  // This device shows for every book in the library (#550), with nothing to save yet.
+  await expect(shown.getByRole("heading", { name: "This device" })).toHaveCount(1);
   for (const row of await files(page).locator(".part-file-row").all()) expect(await clientHeight(row)).toBe(64);
   await noOverflow(page);
   await settled(page);

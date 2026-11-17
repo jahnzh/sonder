@@ -83,7 +83,8 @@ test("offline downloads retry temporary HTTP errors at different chapter boundar
   await expect(page.locator("#book-keep-line")).toHaveText(/^Audiobook( and ebook)? · /, { timeout: 20000 });
   expect(attempts.get(`alice-0:${4 * 1024 * 1024}`)).toBe(2);
   expect(attempts.get("alice-1:0")).toBe(2);
-  await expect(page.locator(".toast")).not.toContainText("error");
+  // No saving toasts (#550): the line is the outcome.
+  await expect(page.locator(".toast")).toHaveCount(0);
 });
 test("player downloads retain verified sections after connection failure and resume by themselves after reload", async ({
   page,

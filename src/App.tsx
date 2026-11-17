@@ -94,7 +94,7 @@ import { Gallery, isGalleryRoute } from "./gallery/Gallery";
 import { refreshLibraryWorks, startLibraryWorks, useStoredWorksWithPlaces } from "./library-works-store";
 import { bookStatus, readingPercent, workProgress } from "./work-progress";
 import { classifyStop, type StopCause } from "./keep";
-import { activeSaves, claimRecording, keepSaver, onKeepJob, savesInOtherTabs, startKeepSaver, stopKeepSaver } from "./keep-runtime";
+import { activeSaves, claimRecording, keepSaver, tapKeep, onKeepJob, savesInOtherTabs, startKeepSaver, stopKeepSaver } from "./keep-runtime";
 type Notice = { text: string; error?: boolean };
 const nav = [
   { id: "library", label: "My library", icon: Library },
@@ -1061,6 +1061,8 @@ function LibraryApp({
                     // Every file of the book on this device: its recordings' audio and its EPUB. The place, the
                     // bookmarks and the library entry stay (ADR 0018).
                     try {
+                      // Removing the book's files is Keep off for it (#550): the saver does not save them again.
+                      await tapKeep(row.workId, false).catch(() => {});
                       for (const recordingId of row.recordingIds) await deleteDownloads(recordingId);
                       for (const editionId of row.ebookIds) await removeOfflineEbook(editionId);
                       // The reader's cache of the book's other editions goes too: every file of it (#671).
