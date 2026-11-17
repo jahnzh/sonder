@@ -592,9 +592,9 @@ test("a toast Undo for Listen from here takes back what it recorded and is not r
   const toast = room.getByRole("status").filter({ hasText: "Listening from here" });
   await expect(toast).toBeVisible();
   await expect.poll(async () => (await history(page, book.recordingId)).map((entry: any) => entry.position)).toEqual([170.25]);
-  await expect((await openPlaybackOptions(page)).getByRole("button", { name: "Position history", exact: true })).toBeEnabled();
-  await closePlaybackOptions(page);
-  await toast.getByRole("button", { name: "Undo", exact: true }).click();
+  // Undo is the foot's message action (#591). Opening Playback options first would end the notice: the head's More
+  // is a control, and the next tap on a control ends a notice with Undo (spec #586 "How long").
+  await room.locator(".reader-message").getByRole("button", { name: "Undo", exact: true }).click();
   await expect(toast).toBeHidden();
   await room.getByRole("button", { name: "Pause narration", exact: true }).click();
   await expect.poll(async () => (await audioState(page)).position).toBeGreaterThanOrEqual(170.25);

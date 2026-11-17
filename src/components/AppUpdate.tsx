@@ -1,14 +1,15 @@
 import { useState } from "react";
 import { RefreshCw, X } from "lucide-react";
 import { usePlayer } from "../player";
-import { reloadForUpdate, useAvailableUpdate } from "../app-update";
+import { dismissUpdate, reloadForUpdate, useUpdateNotice, useUpdateNoticeClaimed } from "../app-update";
 export function AppUpdate() {
-  const available = useAvailableUpdate();
-  const [applying, setApplying] = useState(false);
   // Dismissing hides the notice for this build only; Settings › App still says an update is ready.
-  const [dismissed, setDismissed] = useState<string | null>(null);
+  const available = useUpdateNotice();
+  // A reader on screen shows the update in its foot instead (#591): nothing is drawn over the book's text.
+  const inReader = useUpdateNoticeClaimed();
+  const [applying, setApplying] = useState(false);
   const player = usePlayer();
-  if (!available || available === dismissed) return null;
+  if (!available || inReader) return null;
   return (
     <aside className="app-update" role="status">
       <span>
@@ -34,7 +35,7 @@ export function AppUpdate() {
       <button
         className="icon-button"
         aria-label="Dismiss update notice"
-        onClick={() => setDismissed(available)}
+        onClick={() => dismissUpdate(available)}
       >
         <X size={15} />
       </button>
