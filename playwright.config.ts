@@ -39,6 +39,8 @@ const desktopProjects = [
               /(^|\/)(sign-in|account-requests)\.spec\.ts$/,
               // Activity's This device (#518).
               /(^|\/)activity-device\.spec\.ts$/,
+              // An account switch during a library write (#528 review finding 1).
+              /(^|\/)library-works-user-race\.spec\.ts$/,
               // The page turn inside a sentence that crosses a page (#508).
               /(^|\/)reader-page-turn\.spec\.ts$/,
               // Activity › Server (#519).
