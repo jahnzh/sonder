@@ -108,3 +108,23 @@ button.part-book-row:focus-visible {
   align-items: center;
   padding-right: var(--space-16);
 }
+/* A failed status line (Now's "Download failed"): the failed colour, its icon too. */
+.part-book-row[data-failed] .part-book-row-line {
+  color: var(--danger);
+}
+/* An icon in the cover's slot (a row that is not a book): raised, muted, centred. */
+.part-book-row-cover[data-icon] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+/* A short text on the right edge in place of the chevron ("2 h ago"): 12 on 16, muted, on one line. */
+.part-book-row-trailing {
+  flex: none;
+  font-family: var(--font-body);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted);
+  white-space: nowrap;
+}

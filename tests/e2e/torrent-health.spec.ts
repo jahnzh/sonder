@@ -41,8 +41,12 @@ test("the Torrent client row reads the VPN message with the attention mark, and 
   await expect(row.getByRole("img", { name: "Needs attention" })).toBeVisible();
   // The warning of the Downloads page is gone (#519).
   await page.goto("/#activity");
-  await expect(page.getByRole("heading", { name: /On your home server/ })).toBeVisible();
-  await expect(page.getByText("no internet connection through the VPN")).toHaveCount(0);
+  await expect(page.getByTestId("activity-now")).toBeVisible();
+  await expect(page.getByTestId("torrent-health")).toHaveCount(0);
+  // Now lists the torrent client that is down under Needs attention, with its message (#522).
+  await expect(
+    page.getByRole("list", { name: "Needs attention", exact: true }).getByRole("listitem").filter({ hasText: /^Torrent client/ }),
+  ).toContainText(VPN);
   await page.goto("/#settings/connections");
   await expect(page.getByTestId("torrent-health")).toHaveAttribute(
     "data-status",

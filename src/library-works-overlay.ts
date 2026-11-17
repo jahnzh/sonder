@@ -64,5 +64,5 @@ export function workIsMoving(work: LibraryWork): boolean {
   return work.readingSync.some((job) => alignmentJobActive(job.status) || alignmentJobActive(job.rebuild?.status));
 }
 
-/** Today's Downloads page reads the server queue every six seconds (`AcquisitionQueue`). */
+/** The pace the old Downloads page read the server queue at: every six seconds. */
 export const MOVING_REFRESH_MS = 6000;
