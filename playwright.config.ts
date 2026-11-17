@@ -37,6 +37,8 @@ const desktopProjects = [
               /(now-playing-layout|device-reset|reader-frame|navigation|gallery(-[a-z-]+)?|device-save-records)\.spec\.ts/,
               // Sign in, Request an account and Join (#582).
               /(^|\/)(sign-in|account-requests)\.spec\.ts$/,
+              // The page turn inside a sentence that crosses a page (#508).
+              /(^|\/)reader-page-turn\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: {} },

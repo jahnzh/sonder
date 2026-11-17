@@ -35,7 +35,8 @@ import { PlaybackOptions } from "./PlaybackOptions";
 import { PlaybackTimeline } from "./PlaybackTimeline";
 import {PlaybackExtra,usePlaybackMenu} from "./PlaybackMenu";
 import { readerNeedsScripts } from "../reader-sandbox";
-import { lookupIndex, placeAt } from "../reader-lookup";
+import { lookupIndex, placeAt, type LookupIndex } from "../reader-lookup";
+import { pageToShow, wordPages, type PagedWord } from "../reader-page-turn";
 import { keyEventContext, OPEN_SHEET_SELECTOR, readerKeyAction, typingInField } from "../keyboard";
 import { createReaderFollowing, type DeferredReturn, type NarrationPlace, type NarrationReturn } from "../reader-following";
 import { mapIdentityOf } from "../alignment-map-lifecycle";
@@ -64,6 +65,7 @@ import {
   type ReaderSection,
   type TextLocator,
   type AlignmentJob,
+  type AlignmentInterval,
   type ReadingCheckpoint,
 } from "../reading-types";
 const readerFonts = { ...fontFamilies, serif: '"Literata Variable", Georgia, "Times New Roman", serif' };
@@ -201,15 +203,19 @@ function sentenceAt(section: ReaderSection, blockIndex: number, offset: number) 
   const block = section.paragraphs.filter((fragment) => fragment.blockIndex === blockIndex);
   return block.filter((fragment) => fragment.start <= offset).pop() || block[0];
 }
-// The range of a block between two normalised offsets (one when `end` is left out), found by the
-// searched lookup (#507): the block is walked once, then each offset is a binary search.
-function rangeAt(block: Element, offset: number, end?: number) {
+// The block walked once for the searched lookup (#507).
+function blockLookup(block: Element) {
   const walker = textNodes(block),
     items: { node: Node; isBreak: boolean; text: string }[] = [];
   let node: Node | null;
   while ((node = walker.nextNode()))
     items.push({ node, isBreak: isBreak(node), text: nodeText(node) });
-  const index = lookupIndex(items, { node: block, childCount: block.childNodes.length }),
+  return lookupIndex(items, { node: block, childCount: block.childNodes.length });
+}
+// The range of a block between two normalised offsets (one when `end` is left out), found by the
+// searched lookup (#507): the block is walked once, then each offset is a binary search.
+function rangeAt(block: Element, offset: number, end?: number) {
+  const index = blockLookup(block),
     start = placeAt(index, offset),
     finish = end === undefined ? start : placeAt(index, end),
     range = block.ownerDocument.createRange();
@@ -217,6 +223,44 @@ function rangeAt(block: Element, offset: number, end?: number) {
   range.setEnd(finish.node, finish.offset);
   return range;
 }
+// The first character at normalised offset `offset` of a block: the place where the prefix reaches one
+// character past it, and the character before that place. Null when that is no character of a text node.
+function characterAt(index: LookupIndex<Node>, offset: number) {
+  const after = placeAt(index, offset + 1);
+  if (after.node.nodeType !== Node.TEXT_NODE || after.offset < 1) return null;
+  const range = after.node.ownerDocument!.createRange();
+  range.setStart(after.node, after.offset - 1);
+  range.setEnd(after.node, after.offset);
+  return range;
+}
+// The words of a sentence, each with the normalised offset in its block where it starts.
+function sentenceWords(fragment: { text: string; start: number }) {
+  return Array.from(fragment.text.matchAll(/\S+/gu), (match) => ({ text: match[0], offset: fragment.start + match.index! }));
+}
+// The narrated sentence's words and the page of the section each starts on (#508, spec #503 "Where the
+// sentence breaks"). A word's page is the left edge of its first box in the section frame's coordinates,
+// divided by the layout's page step (with two pages side by side the step spans both) and rounded down:
+// word boxes, not hit-testing, which gives the wrong word beside a picture. The breaks are found by
+// binary search over the words (`wordPages`), so a sentence costs a few lookups, not one per word.
+function measureSentence(block: Element, fragment: { text: string; start: number }, step: number) {
+  const index = blockLookup(block),
+    words = sentenceWords(fragment),
+    scroll = block.ownerDocument.defaultView?.scrollX ?? 0;
+  const pages = wordPages(words.length, (word) => {
+    const range = characterAt(index, words[word]!.offset);
+    const box = range && Array.from(range.getClientRects()).find((rect) => rect.width > 0 || rect.height > 0);
+    return box ? Math.floor((box.left + scroll) / step) : null;
+  });
+  return {
+    index,
+    offsets: words.map((word) => word.offset),
+    words: words.map((word, at): PagedWord => ({ text: word.text, page: pages[at]! })),
+  };
+}
+// The narration's position as a time inside `interval`: on a later track than the sentence's, the sentence
+// has ended (the narrated sentence stays across the start of the next file until its first sentence).
+const positionIn = (interval: AlignmentInterval, trackId: string | undefined, position: number) =>
+  trackId === interval.trackId ? position : Number.POSITIVE_INFINITY;
 export function ReaderHost({
   books,
   notify,
@@ -332,7 +376,22 @@ export function ReaderView({
     mapRef = useRef<AlignmentJob | null>(null),
     // Follow jumps in flight with the pages hidden.
     hiddenJumps = useRef(0),
-    highlight = useRef<string | null>(null);
+    highlight = useRef<string | null>(null),
+    // The narrated sentence as measured in pages mode when it began (#508): its words with their pages,
+    // the page shown, and whether a turn inside it is in flight. Null in scroll mode, before the follow
+    // jump to the sentence ended, and once anything may have laid the text out anew; nothing is kept
+    // between sentences.
+    pagedSentence = useRef<{
+      key: string;
+      interval: AlignmentInterval;
+      words: PagedWord[];
+      offsets: number[];
+      index: LookupIndex<Node>;
+      content: Contents;
+      view: Rendition;
+      page: number;
+      turning: boolean;
+    } | null>(null);
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -385,6 +444,8 @@ export function ReaderView({
   useEffect(() => () => following.dispose(), [following]);
   const redrawHighlight = () => {
     if (!mountedRef.current) return;
+    // A layout anew (fonts, a resize) moves the breaks: the follow jump below measures them again.
+    pagedSentence.current = null;
     if (following.followed() || highlight.current) {
       following.forgetFollowed();
       setFollowRevision((value) => value + 1);
@@ -813,6 +874,8 @@ export function ReaderView({
             ? { background: "#f2e6cd", text: "#362f24" }
             : { background: "#ffffff", text: "#202820" };
     settleAfterLayout(view);
+    // The new theme lays the text out anew, so the measured breaks no longer hold.
+    pagedSentence.current = null;
     view.themes.default({
       "html, body": {
         background: `${theme.background} !important`,
@@ -896,6 +959,84 @@ export function ReaderView({
     const ended = following.beginNavigation();
     void go(view).catch(() => {}).finally(ended);
   };
+  // The narrated sentence's words measured in its page, and the page to show at the narration's position;
+  // null when `paragraphId` is not the narrated sentence, in scroll mode, with no page step to read, or
+  // while the section's fonts are still loading: the layout is not settled then, and once they have
+  // loaded the reader follows the sentence again (`redrawHighlight`), which measures it.
+  const measureNarrated = (
+    paragraphId: string,
+    content: Contents,
+    node: Element,
+    fragment: { text: string; start: number },
+    view: Rendition,
+  ) => {
+    if (currentFlow.current !== "paginated") return null;
+    const player = playerRef.current,
+      interval = following.highlightedSentence(mapRef.current, placeOf(player.book, player.track?.id, player.position));
+    const recordingId = mapRef.current?.recordingId;
+    if (!interval || interval.paragraphId !== paragraphId || !recordingId) return null;
+    if (content.document.fonts && content.document.fonts.status !== "loaded") return null;
+    const step = (view as unknown as { manager?: { layout?: { delta?: number } } }).manager?.layout?.delta;
+    if (!step || step <= 0) return null;
+    const { words, offsets, index } = measureSentence(node, fragment, step);
+    const now = playerRef.current;
+    const show = pageToShow(words, interval.start, interval.end, positionIn(interval, now.track?.id, now.position));
+    if (!show) return null;
+    return {
+      words,
+      page: show.page,
+      first: show.word,
+      paged: {
+        key: `${recordingId}:${paragraphId}`,
+        interval,
+        words,
+        offsets,
+        index,
+        content,
+        view,
+        page: show.page,
+        turning: false,
+      },
+    };
+  };
+  // The CFI of word `word` of a measured sentence: a turn displays it to reach that word's page.
+  const wordCfi = (measured: { paged: { content: Contents; index: LookupIndex<Node>; offsets: number[] } }, word: number) => {
+    const { content, index, offsets } = measured.paged;
+    const place = placeAt(index, offsets[word]! + 1),
+      range = content.document.createRange();
+    range.setStart(place.node, Math.max(0, place.offset - 1));
+    range.setEnd(place.node, place.offset);
+    return content.cfiFromRange(range);
+  };
+  // The page turn inside the narrated sentence (#508): the narration's reported position reached a word on
+  // another page than the one shown (the break, or a jump past or back over it). It is one of the reader's
+  // own jumps (ADR 0014): it does not count as navigating, a gesture or page turn invalidates it while it is
+  // in flight, and following goes on after it. A pause reports no new position, so it keeps the page.
+  const turnInside = (key: string) => {
+    const paged = pagedSentence.current, player = playerRef.current;
+    if (!paged || paged.key !== key || paged.turning || rendition.current !== paged.view) return;
+    const show = pageToShow(paged.words, paged.interval.start, paged.interval.end, positionIn(paged.interval, player.track?.id, player.position));
+    if (!show || show.page === paged.page) return;
+    const jump = following.startJump();
+    paged.turning = true;
+    let target: string;
+    try {
+      target = wordCfi({ paged }, show.word);
+    } catch {
+      paged.turning = false;
+      return;
+    }
+    void displayAutomatically(paged.view, target)
+      .then(() => {
+        if (jump.current()) paged.page = show.page;
+      })
+      .catch(() => {})
+      .finally(() => {
+        paged.turning = false;
+        // The narration may have moved on while the turn was in flight.
+        if (pagedSentence.current === paged && jump.current()) setFollowRevision((value) => value + 1);
+      });
+  };
   const showFragment = async (
     paragraphId: string,
     persist = false,
@@ -933,7 +1074,14 @@ export function ReaderView({
       node = content && blockNodes(content.document)[fragment.blockIndex];
       if (!content || !node) return false;
       cfi = content.cfiFromRange(rangeAt(node, fragment.start));
-      await displayAutomatically(view, cfi);
+      // The narrated sentence in pages mode: measured as it begins, and shown on the page of the word
+      // being narrated (also after Back to narration inside a crossing sentence). Any other place is
+      // shown where its sentence starts. Nothing is awaited in between: a wait here would let a newer
+      // jump replace this one while the pages of a section being opened are hidden.
+      const measured = measureNarrated(paragraphId, content, node, fragment, view);
+      const target = measured && measured.page !== measured.words[0]!.page ? wordCfi(measured, measured.first) : cfi;
+      await displayAutomatically(view, target);
+      if (measured && jump.current()) pagedSentence.current = measured.paged;
     } finally {
       if (opening) hidePages(-1);
     }
@@ -1049,6 +1197,7 @@ export function ReaderView({
     )
       {
         following.forgetFollowed();
+        pagedSentence.current = null;
         if (highlight.current && rendition.current) {
           rendition.current.annotations.remove(highlight.current,"highlight");
           highlight.current=null;
@@ -1060,10 +1209,15 @@ export function ReaderView({
     const interval = following.highlightedSentence(map, placeOf(p.book, p.track?.id, p.position));
     const key = interval ? `${map.recordingId}:${interval.paragraphId}` : "";
     if (interval && following.followTarget(key)) {
+      // A new narrated sentence, or the same one again (Back to narration): measured anew by its jump.
+      pagedSentence.current = null;
       void jumpRef.current(interval.paragraphId, false).catch(()=>false).then(shown => {
         if (following.followShown(key, shown) === "failed")
           setError("Could not display the current passage. Try following audio again.");
       });
+    } else if (interval) {
+      // The same narrated sentence: in pages mode the page turns inside it once the narration reaches a word on the next page.
+      turnInside(key);
     } else if (!interval && highlight.current && rendition.current) {
       // Before the map's first sentence there is no narrated sentence (a jump back before it).
       rendition.current.annotations.remove(highlight.current, "highlight");
