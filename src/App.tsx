@@ -89,6 +89,7 @@ import { DownloadsPage } from "./pages/downloads-page";
 import { ActivityServer } from "./pages/activity-server";
 import { ActivityItemGroups } from "./pages/activity-items";
 import { ActivityPlace } from "./pages/activity-place";
+import { useSideBySide } from "./pages/side-by-side";
 import { SettingsPage } from "./pages/settings-page";
 import { firstPage, writeAddress, type Place, type Route } from "./routes";
 import { onPageLeftByHistory, startNavigation, useAddress } from "./navigation";
@@ -215,7 +216,7 @@ function shownPage(route: Route, under: { current: Page }): Page {
   if (route.name === "library" || route.name === "discover" || route.name === "settings" || route.name === "activity")
     under.current = route.name;
   else if (route.name === "settings-page") under.current = "settings";
-  // A worker's address is Activity's Server until the worker's page (#520) has a screen of its own.
+  // A worker's page (#520) is a page of Activity's Server.
   else if (route.name === "worker") under.current = "activity";
   return under.current;
 }
@@ -238,6 +239,9 @@ function LibraryApp({
   const [loadError, setLoadError] = useState("");
   const admin = user.role === "admin";
   const serverActivity = useServerActivity(admin);
+  const sideBySide = useSideBySide();
+  // An address of a worker the server does not report shows Server, in the address too (#520).
+  const showServer = useCallback(() => address.navigate({ name: "activity", part: "server" }, { replace: true }), [address.navigate]);
   // The search field searches the page it is on. The Library's search is one of its filters and is remembered
   // with them (#455); Discover's goes with its results when the page is left.
   const [queries, setQueries] = useState({ library: "", discover: "", other: "" });
@@ -868,10 +872,14 @@ function LibraryApp({
                 admin={user.role === "admin"}
                 part={address.route.name === "activity" ? address.route.part : address.route.name === "worker" ? "server" : "now"}
                 onPart={(part) => address.navigate({ name: "activity", part })}
+                alone={address.route.name === "worker" && !sideBySide}
                 server={<ActivityServer
                   online={online}
                   worker={address.route.name === "worker" ? address.route.worker : null}
-                  onWorker={(worker) => address.navigate({ name: "worker", worker })}
+                  beside={sideBySide}
+                  // On a desktop the page sits beside the list: choosing a worker replaces the address (#520).
+                  onWorker={(worker) => address.navigate({ name: "worker", worker }, { replace: sideBySide })}
+                  onUnknownWorker={showServer}
                   notify={notify}
                 />}
                 now={<><DownloadsPage

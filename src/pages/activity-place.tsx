@@ -23,6 +23,7 @@ export function ActivityPlace({
   onPart,
   now,
   server,
+  alone = false,
 }: {
   admin: boolean;
   /** The part the address names; routes.ts already turned Server into Now for someone who is not the administrator. */
@@ -31,9 +32,12 @@ export function ActivityPlace({
   onPart: (part: ActivityPart) => void;
   now: ReactNode;
   server: ReactNode;
+  /** Server shows a page of its own (a worker's page on a phone, #520), with its own Page header in place of Activity's. */
+  alone?: boolean;
 }) {
   const parts = activityParts(admin);
   const shown = parts.some((option) => option.value === part) ? part : "now";
+  if (alone && shown === "server") return <>{server}</>;
   return (
     <>
       <div style={{ display: "grid", gap: "var(--space-16)", marginBottom: "var(--space-24)" }}>

@@ -445,7 +445,7 @@ whose commit has the same `worker/` as the wanted one, so after a merge that lea
 `worker/` alone the hosts keep reporting the older commit: `revision` is the commit the
 worker code was last copied from, not always the newest commit on `main`.
 
-**Restart.** The Activity page restarts a host's worker with one fixed
+**Restart.** The worker's page (Activity › Server, `#activity/server/<worker>`, #520) restarts a host's worker with one fixed
 command over the pool's SSH connection, `systemctl --user restart
 sonder-ctc-worker.service` (`RESTART_TARGETS` in
 `server/alignment-host-control.ts`, ADR 0002); the request names only the host.
