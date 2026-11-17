@@ -923,7 +923,7 @@ function LibraryApp({
                 }}
                 notify={notify}
               />
-            ) : address.route.name === "series" ? (
+            ) : address.route.name === "series" || address.route.name === "series-add" ? (
               <SeriesPage
                 key={address.route.id}
                 id={address.route.id}
@@ -931,7 +931,6 @@ function LibraryApp({
                 online={online}
                 books={books}
                 revision={seriesRevision}
-                onAdd={(id, bookId) => setSeriesTarget({ id, mode: "saved", select: bookId })}
                 onNotSaved={(id) => setSeriesTarget({ id, mode: "preview" })}
                 onRemoved={() => {
                   setSeriesRevision((value) => value + 1);

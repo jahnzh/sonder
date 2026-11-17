@@ -63,6 +63,10 @@
           "pending": 0
         },
         "new": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2001-01-01",
         "selected": false
       },
       {
@@ -93,6 +97,10 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
+        "language": "fr",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2003-01-01",
         "selected": false
       },
       {
@@ -123,6 +131,10 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2002-01-01",
         "selected": false
       },
       {
@@ -175,6 +187,10 @@
           "pending": 0
         },
         "new": false,
+        "language": "fr",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2004-01-01",
         "selected": false
       },
       {
@@ -205,6 +221,10 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2005-01-01",
         "selected": false
       },
       {
@@ -235,6 +255,10 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2999-01-01",
         "selected": false
       },
       {
@@ -287,6 +311,10 @@
           "pending": 0
         },
         "new": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2006-01-01",
         "selected": false
       }
     ],
@@ -353,6 +381,10 @@
           "pending": 0
         },
         "new": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2001-01-01",
         "selected": false
       },
       {
@@ -383,6 +415,10 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
+        "language": "fr",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2003-01-01",
         "selected": false
       },
       {
@@ -413,6 +449,10 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2002-01-01",
         "selected": false
       },
       {
@@ -465,6 +505,10 @@
           "pending": 0
         },
         "new": false,
+        "language": "fr",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2004-01-01",
         "selected": false
       },
       {
@@ -495,6 +539,10 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2005-01-01",
         "selected": false
       },
       {
@@ -525,6 +573,10 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2999-01-01",
         "selected": false
       },
       {
@@ -577,6 +629,10 @@
           "pending": 0
         },
         "new": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2006-01-01",
         "selected": false
       }
     ],
@@ -855,6 +911,10 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2001-01-01",
         "selected": false
       },
       {
@@ -885,6 +945,10 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
+        "language": "fr",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2003-01-01",
         "selected": false
       },
       {
@@ -915,6 +979,10 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2002-01-01",
         "selected": false
       },
       {
@@ -945,6 +1013,10 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
+        "language": "fr",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2004-01-01",
         "selected": false
       },
       {
@@ -997,6 +1069,10 @@
           "pending": 0
         },
         "new": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2005-01-01",
         "selected": false
       },
       {
@@ -1027,6 +1103,10 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2999-01-01",
         "selected": false
       },
       {
@@ -1057,6 +1137,10 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2006-01-01",
         "selected": false
       }
     ],
@@ -1101,6 +1185,10 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2001-01-01",
         "selected": false
       },
       {
@@ -1131,6 +1219,10 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
+        "language": "fr",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2003-01-01",
         "selected": false
       },
       {
@@ -1161,6 +1253,10 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2002-01-01",
         "selected": false
       },
       {
@@ -1191,6 +1287,10 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
+        "language": "fr",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2004-01-01",
         "selected": false
       },
       {
@@ -1243,6 +1343,10 @@
           "pending": 0
         },
         "new": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2005-01-01",
         "selected": false
       },
       {
@@ -1273,6 +1377,10 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2999-01-01",
         "selected": false
       },
       {
@@ -1303,6 +1411,10 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
+        "language": "en",
+        "editionLanguages": [],
+        "popularity": 10,
+        "releaseDate": "2006-01-01",
         "selected": false
       }
     ],

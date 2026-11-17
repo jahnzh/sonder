@@ -151,7 +151,7 @@ test("an address that names nothing, or a page not built yet, shows its place's 
   for (const [asked, place, label] of [
     ["#nowhere", "#library", "Library"],
     ["#book/no-such-work", "#library", "Library"],
-    ["#series/42/add", "#library", "Library"],
+    ["#read/w1", "#library", "Library"],
     ["#settings/reading", "#settings", "Settings"],
     ["#activity/server/wsl/extra", "#activity", "Activity"],
     ["#discover/extra", "#discover", "Discover"],
