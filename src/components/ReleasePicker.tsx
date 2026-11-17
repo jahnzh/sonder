@@ -11,7 +11,6 @@ import { Dialog } from "./ui/dialog";
 import type {
   Acquisition,
   AudiobookRelease,
-  Book,
   ReleaseSourceStatus,
 } from "../types";
 import {
@@ -24,7 +23,6 @@ import {
 export function ReleasePicker({
   query,
   onQuery,
-  target,
   prowlarrConfigured = false,
   onQueued,
   refresh,
@@ -32,7 +30,6 @@ export function ReleasePicker({
 }: {
   query: string;
   onQuery: (query: string) => void;
-  target: Book | null;
   prowlarrConfigured?: boolean;
   onQueued: () => void;
   refresh: () => Promise<void>;
@@ -130,13 +127,13 @@ export function ReleasePicker({
       if (typeof value?.value === "string") setLanguage(value.value);
     });
   }, []);
-  useEffect(() => {
-    if (target) void search(1, target.title);
-    return () => {
+  useEffect(
+    () => () => {
       requestId.current++;
       chooseId.current++;
-    };
-  }, [target?.workId]);
+    },
+    [],
+  );
   const choose = async (release: AudiobookRelease) => {
     const id = ++chooseId.current;
     setSelected(release);
@@ -180,7 +177,6 @@ export function ReleasePicker({
             ...(selected.source === "prowlarr"
               ? { id: selected.id }
               : { slug: selected.id }),
-            ...(target ? { workId: target.workId } : {}),
           }),
         },
       );
@@ -213,28 +209,17 @@ export function ReleasePicker({
   ].sort();
   const visible = sortReleases(
     results.filter((release) => matchesLanguage(release, language)),
-    target?.title || searchedQuery,
+    searchedQuery,
   );
   return (
     <section className="release-picker external-search">
       <div className="section-heading">
-        <h2>
-          {target
-            ? `Choose a release of “${target.title}”`
-            : "Find the right audiobook release"}
-        </h2>
+        <h2>Find the right audiobook release</h2>
       </div>
       <p>
         Compare language, format and narration before choosing. Cached releases
         stream through TorBox; others download to your server’s HDD.
       </p>
-      {target && (
-        <p className="release-target">
-          New recordings will stay with this book in your library. Check the
-          volume and narration before choosing a collection or another book in
-          the series.
-        </p>
-      )}
       <form
         onSubmit={(event: FormEvent) => {
           event.preventDefault();
@@ -358,9 +343,7 @@ export function ReleasePicker({
           }
         }}
         title="Choose this audiobook release"
-        description={
-          target ? `For ${target.title}` : "Check the language and narration"
-        }
+        description="Check the language and narration"
         className="release-dialog"
       >
         {selected && (

@@ -2236,10 +2236,6 @@ input[type="range"]::-moz-range-thumb {
 .release-picker {
   margin-top: 28px;
 }
-.release-picker .release-target {
-  color: var(--muted);
-  font-size: calc(12px * var(--ui-scale, 1));
-}
 .release-picker .search-input input {
   font-size: calc(14px * var(--ui-scale, 1));
 }

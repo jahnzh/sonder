@@ -12,6 +12,8 @@ export type Choice<T extends string> = {
   label: string;
   /** The second line (Label size, muted). */
   detail: string;
+  /** What the right edge says before the tick (Caption size, muted; `now` in the accent's green), as Get's "Plays now". */
+  edge?: { text: string; now?: boolean } | null;
 };
 
 export type ChoiceGroupProps<T extends string> = {
@@ -64,7 +66,7 @@ export function ChoiceGroup<T extends string>({ label, options, value, onChange 
             type="button"
             role="radio"
             aria-checked={checked}
-            aria-labelledby={`${id}-${index}-label ${id}-${index}-detail`}
+            aria-labelledby={`${id}-${index}-label ${id}-${index}-detail${option.edge ? ` ${id}-${index}-edge` : ""}`}
             tabIndex={index === tabStop ? 0 : -1}
             className="part-choice-row"
             data-chosen={checked ? "" : undefined}
@@ -79,6 +81,11 @@ export function ChoiceGroup<T extends string>({ label, options, value, onChange 
                 {option.detail}
               </span>
             </span>
+            {option.edge && (
+              <span id={`${id}-${index}-edge`} className="part-choice-row-edge type-caption" data-now={option.edge.now ? "" : undefined}>
+                {option.edge.text}
+              </span>
+            )}
             {checked && <Tick className="part-choice-row-tick" />}
           </button>
         );

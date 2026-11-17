@@ -59,7 +59,7 @@ type Props = {
   downloads: Download[];
   admin: boolean;
   online: boolean;
-  /** Get another recording: today's release picker for the book, until the Get sheet (S8). */
+  /** Get another recording: opens the Get audiobook sheet (#601). */
   onFindAudio: (book: Book) => void;
   /** The library or this device's copies changed. */
   onChanged: () => void;
