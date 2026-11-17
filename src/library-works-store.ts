@@ -5,7 +5,7 @@
 // A page module: the server imports none of it.
 import { liveQuery } from "dexie";
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { localDB, userId } from "./lib";
+import { accountDatabase, localDB, replaceForAccount, userId, type SonderDB } from "./lib";
 import { MOVING_REFRESH_MS, overlayDevicePlaces, workIsMoving, type DevicePlaces, type DeviceReadingPlace } from "./library-works-overlay";
 import type { PendingReading } from "./reading";
 import type { LibraryWork } from "./types";
@@ -41,12 +41,19 @@ function current() {
 
 const byId = (works: LibraryWork[]) => new Map(works.map((work) => [work.workId, work]));
 
+type WorksDatabase = Pick<SonderDB, "transaction" | "works" | "preferences">;
+let accountStorage: () => { owner: number; db: WorksDatabase } = accountDatabase;
+/** Unit tests give the loader in-memory databases (Node has no IndexedDB); pass nothing to restore. */
+export function setAccountStorageForTesting(storage?: () => { owner: number; db: WorksDatabase }) {
+  accountStorage = storage ?? accountDatabase;
+}
+
 /** Reads the stored works of the signed-in user once (after a user change, again). */
 let storeRead: { owner: number; done: Promise<void> } | null = null;
 function readStore() {
-  const owner = userId();
+  const { owner, db } = accountStorage();
   if (storeRead?.owner === owner) return storeRead.done;
-  const done = localDB.works
+  const done = db.works
     .toArray()
     .catch(() => [] as LibraryWork[])
     .then((works) => {
@@ -86,9 +93,10 @@ export function refreshLibraryWorks(): Promise<void> {
 }
 
 async function loadOnce() {
-  const owner = userId();
+  // This account's device database, fixed now: `localDB` would follow a sign-in as another account mid-read.
+  const { owner, db } = accountStorage();
   await readStore();
-  const tag = (await localDB.preferences.get(TAG_KEY).catch(() => undefined))?.value;
+  const tag = (await db.preferences.get(TAG_KEY).catch(() => undefined))?.value;
   let response: Response;
   try {
     response = await fetch("/api/library", {
@@ -104,15 +112,36 @@ async function loadOnce() {
   if (!response.ok) return;
   const works = (await response.json().catch(() => null)) as LibraryWork[] | null;
   if (!Array.isArray(works) || owner !== userId()) return;
-  const nextTag = response.headers.get("ETag");
-  await localDB.transaction("rw", localDB.works, localDB.preferences, async () => {
-    await localDB.works.clear();
-    await localDB.works.bulkPut(works);
-    if (nextTag) await localDB.preferences.put({ key: TAG_KEY, value: nextTag });
-    else await localDB.preferences.delete(TAG_KEY);
-  });
-  if (owner !== userId()) return;
+  if (!(await storeLibraryWorks(owner, db, works, response.headers.get("ETag")))) return;
   publish({ owner, stored: true, works: byId(works) });
+}
+
+/**
+ * Replaces `owner`'s stored works and entity tag in `db` in one transaction. Every step goes to `db`, and once
+ * another account is signed in the write is rolled back: a refresh started for one account never clears that
+ * account's works half-way nor writes into another's. Resolves true when the works landed.
+ */
+export function storeLibraryWorks(
+  owner: number,
+  db: WorksDatabase,
+  works: LibraryWork[],
+  nextTag: string | null,
+  signedIn: () => number = userId,
+): Promise<boolean> {
+  return replaceForAccount(
+    owner,
+    db,
+    [db.works, db.preferences],
+    async (stillSignedIn) => {
+      await db.works.clear();
+      stillSignedIn();
+      await db.works.bulkPut(works);
+      stillSignedIn();
+      if (nextTag) await db.preferences.put({ key: TAG_KEY, value: nextTag });
+      else await db.preferences.delete(TAG_KEY);
+    },
+    signedIn,
+  );
 }
 
 let started = false;
