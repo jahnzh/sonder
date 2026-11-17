@@ -263,16 +263,6 @@
 .reader-background-sync {
   display: none;
 }
-.reading-conflict {
-  padding: 12px;
-  background: var(--raised);
-  border: 1px solid var(--accent);
-  border-radius: 8px;
-  font-size: 13px;
-}
-.reading-conflict .button {
-  margin: 5px;
-}
 .player-reading {
   margin: 20px 0;
   padding: 16px;
@@ -686,49 +676,8 @@
   transform: none;
   bottom: 52px;
 }
-.reader-floating {
-  position: absolute;
-  z-index: 4;
-  left: 16px;
-  right: 16px;
-  bottom: 16px;
-  display: flex;
-  flex-direction: column-reverse;
-  align-items: center;
-  gap: 12px;
-  pointer-events: none;
-}
-.reader-room[data-controls-visible="true"] .reader-floating {
-  bottom: 72px;
-}
-.reader-floating > * {
-  pointer-events: auto;
-}
 .reader-player .reader-back-narration {
   flex: 0 0 auto;
-}
-.reader-toast {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 4px 4px 16px;
-  border-radius: 24px;
-  background: var(--text);
-  color: var(--background);
-  font-size: 14px;
-  font-weight: 600;
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--shadow) 45%, transparent);
-}
-.reader-toast > button {
-  height: 40px;
-  padding: 0 14px;
-  border: 0;
-  border-radius: 20px;
-  background: transparent;
-  color: color-mix(in srgb, var(--accent) 55%, #000);
-  font: inherit;
-  font-weight: 700;
-  cursor: pointer;
 }
 .reader-room .reader-panel {
   z-index: 6;
@@ -956,9 +905,6 @@
     gap: 4px;
     margin: 0;
   }
-  .reader-room[data-controls-visible="true"] .reader-floating {
-    bottom: 24px;
-  }
   .reader-panel { left: 0; right: auto; }
 }
 
@@ -978,27 +924,6 @@
   overflow: hidden;
   clip-path: inset(50%);
 }
-/* The conflict notice floats over the top of the page, below the top bar. */
-.reader-room > .reading-conflict {
-  position: absolute;
-  z-index: 6;
-  top: 12px;
-  left: 12px;
-  right: 12px;
-  max-width: 560px;
-  margin: 0 auto;
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--shadow) 40%, transparent);
-}
-.reader-room[data-controls-visible="true"] > .reading-conflict {
-  top: 72px;
-}
-@media (min-width: 900px) {
-  .reader-room > .reading-conflict,
-  .reader-room[data-controls-visible="true"] > .reading-conflict {
-    top: 76px;
-  }
-}
-
 /* The reader's page (#587, ADR 0019, spec #586 "The reader's page"): on a phone the room is a grid of a head, the
    text band, a dock row and a foot. The head and the foot keep their boxes whether the controls show or not, so
    the text band, and with it the epub.js view, is sized once. They carry the safe areas as padding; the two
@@ -1202,14 +1127,6 @@
   }
   .reader-foot-row > .reader-foot-play {
     color: var(--muted);
-  }
-  .reader-floating,
-  .reader-room[data-controls-visible="true"] .reader-floating {
-    bottom: var(--space-16);
-  }
-  .reader-room > .reading-conflict,
-  .reader-room[data-controls-visible="true"] > .reading-conflict {
-    top: calc(var(--reader-head) + var(--space-12));
   }
 }
 @media (min-width: 900px) {

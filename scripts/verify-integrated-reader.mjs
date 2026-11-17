@@ -122,7 +122,8 @@ try {
  await expect(toast).toBeVisible();
  await expect.poll(async()=>!(await actual()).paused,{timeout:20000}).toBe(true);
  await page.screenshot({path:'artifacts/live-reader-listen-from-here-mobile.png'});
- await toast.getByRole('button',{name:'Undo',exact:true}).click();
+ // Undo is the foot's message action (#591).
+ await room.locator('.reader-message').getByRole('button',{name:'Undo',exact:true}).click();
  await expect.poll(async()=>Math.abs((await actual()).position-before),{timeout:20000}).toBeLessThan(3);
  await controls.click(pause,'Pause narration');
  report.checks.push({name:'Long-press listens from that sentence and Undo returns'});

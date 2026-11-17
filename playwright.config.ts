@@ -93,6 +93,8 @@ const desktopProjects = [
               /(^|\/)reader-pages\.spec\.ts$/,
               // A book read in the reader is In progress; the ebook shelf leaves Discover (#556).
               /(^|\/)(ebook-only-library|discovery)\.spec\.ts$/,
+              // Every message while reading in the reader's foot (#591).
+              /(^|\/)reader-messages\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },
