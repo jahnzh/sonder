@@ -1,0 +1,97 @@
+/* Appearance docked under the text (#588; ReaderAppearance.dc.html). Tokens from tokens.css, colours from the
+   existing variables. The panel takes the dock row in place of the foot (the reader hides the foot while it is
+   docked, reader.css); it is at most half the window high and scrolls inside. */
+.reader-appearance-dock {
+  box-sizing: border-box;
+  max-height: 50dvh;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--corner-group) var(--corner-group) 0 0;
+  background: var(--surface);
+  color: var(--text);
+  /* On a phone it stands where the foot stood: it keeps clear of the home bar as the foot did. */
+  padding-bottom: var(--reader-safe-bottom, 0px);
+}
+.reader-appearance-heading {
+  flex: none;
+  box-sizing: border-box;
+  height: var(--height-row);
+  padding: 0 var(--space-8) 0 var(--space-16);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+}
+.reader-appearance-heading h2 {
+  margin: 0;
+  color: var(--muted);
+}
+.reader-appearance-close {
+  box-sizing: border-box;
+  width: var(--height-control);
+  height: var(--height-control);
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--corner-control);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.reader-appearance-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.reader-appearance-rows {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* The line between rows is inside each row's 52, as on the board. */
+.reader-appearance-rows > .part-row-item + .part-row-item > .part-row {
+  border-top: 1px solid var(--border);
+}
+.reader-appearance-mode {
+  display: block;
+  width: 168px;
+}
+.reader-appearance-font {
+  display: block;
+  width: 216px;
+}
+.reader-appearance-swatches {
+  display: flex;
+}
+.reader-appearance-swatch {
+  box-sizing: border-box;
+  width: var(--height-control);
+  height: var(--height-control);
+  padding: 6px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.reader-appearance-swatch > span {
+  display: block;
+  box-sizing: border-box;
+  width: 32px;
+  height: 32px;
+  border: 2px solid var(--border);
+  border-radius: var(--corner-round);
+}
+.reader-appearance-swatch[data-chosen] > span {
+  border-color: var(--accent);
+}
+.reader-appearance-swatch:focus-visible {
+  outline: none;
+}
+.reader-appearance-swatch:focus-visible > span {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
