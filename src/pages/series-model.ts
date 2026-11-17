@@ -23,6 +23,10 @@ const DOT = " · ";
 
 /** The New mark in front of a row's line: Hardcover listed the book after the user last looked (GLOSSARY "New in a series"). */
 export const NEW_MARK = "New";
+/** The New card's first line (board SeriesNew.dc.html). */
+export const NEW_CARD_LINE = "New from Hardcover";
+/** The New card's button: sends `POST /api/series/<id>/ack` with every new work. */
+export const DISMISS_LABEL = "Dismiss";
 
 /** One work of `GET /api/series/<id>`, as far as the page reads it. */
 export type SeriesPageWork = SeriesBookCandidate & {
@@ -66,6 +70,10 @@ export type SeriesRow = {
   cover: string | null;
   /** The status line, the New mark in front of it when the book is new. */
   line: string;
+  /** The line without the New mark; the screen draws the mark in the accent colour in front of it. */
+  status: string;
+  /** The work is new in the series (the answer marks it `new`): "New" leads its line. */
+  isNew: boolean;
   /** The file marks of a book in the library, in the boards' order. */
   marks: FileKind[];
   /** 0 to 1 while its first file downloads. */
@@ -91,6 +99,12 @@ export type SeriesPageModel = {
   continueWith: { bookId: number; workId: string } | null;
   /** The refresh error card's message; null when Hardcover was read. */
   refreshError: string | null;
+  /**
+   * The New card under the intro while any row is marked New: the new titles for its second line, comma-separated
+   * in reading order (the screen cuts them with an ellipsis), and every work the answer marks new for Dismiss to
+   * acknowledge (a translation that stands at no row too). Null with no new row.
+   */
+  newCard: { titles: string; bookIds: number[] } | null;
 };
 
 /** The work of a series row in the user's library, or null. */
@@ -169,7 +183,9 @@ function rowOf(work: SeriesPageWork, number: number | null, library: ReadonlyMap
     number,
     title: work.title,
     cover: entry?.cover || work.cover || null,
-    line: work.new && !entry ? `${NEW_MARK}${DOT}${line.line}` : line.line,
+    line: work.new ? `${NEW_MARK}${DOT}${line.line}` : line.line,
+    status: line.line,
+    isNew: !!work.new,
     marks: marks?.kind === "marks" ? marks.marks.map((mark) => (mark === "reading-sync" ? "sync" : mark)) : [],
     progress: line.progress ?? (marks?.kind === "downloading" ? marks.percent / 100 : null),
     workId: entry ? entry.workId : null,
@@ -216,6 +232,10 @@ export function seriesPageModel(
   if (next) next.action = { kind: "play" };
   if (next) next.chevron = false;
   const counts = `${finished} of ${total} finished`;
+  const newRows = [...books, ...relatedRows].filter((row) => row.isNew);
+  const newCard = newRows.length
+    ? { titles: newRows.map((row) => row.title).join(", "), bookIds: series.works.filter((work) => work.new).map((work) => work.id) }
+    : null;
   return {
     title: series.name,
     intro: series.author ? `${series.author}${DOT}${counts}` : counts,
@@ -223,5 +243,11 @@ export function seriesPageModel(
     related: relatedRows,
     continueWith: next ? { bookId: next.bookId, workId: next.workId! } : null,
     refreshError: series.refreshError || null,
+    newCard,
   };
+}
+
+/** The series once Dismiss is acknowledged: no work is new, so the card and the marks are gone. */
+export function withoutNew<T extends SeriesPageSeries>(series: T): T {
+  return { ...series, works: series.works.map((work) => (work.new ? { ...work, new: false } : work)) };
 }
