@@ -109,7 +109,7 @@ export function ActivityWorkerSlot({ process, onChanged }: { process: ActivityPr
   const host = process.host;
   if (!host) return null;
   return (
-    <section className="activity-worker-slot user-row activity-row" aria-label={host.hostId} data-testid={`activity-process-${process.id}`}>
+    <section className="activity-worker-slot" aria-label={host.hostId} data-testid={`activity-process-${process.id}`}>
       <h2 className="requests-heading">{host.hostId}</h2>
       <WorkerHostControls host={host} label={process.label} onChanged={onChanged} />
     </section>

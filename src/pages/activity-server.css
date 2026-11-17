@@ -128,3 +128,15 @@ a.activity-server-link:focus-visible {
   color: var(--danger);
   overflow-wrap: anywhere;
 }
+/* The place of the worker's page (#520): today's controls of the worker until then, one under the other. */
+.activity-worker-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-8);
+  padding: 0 var(--space-16);
+  overflow-wrap: anywhere;
+}
+.activity-worker-slot .settings-inline-actions {
+  flex-wrap: wrap;
+}
