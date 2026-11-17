@@ -136,3 +136,21 @@ test("an update is held while the narration plays and shown once it is paused", 
   assert.equal(messageToShow(notice, at(NOTICE_MS, { update: "build-2", playing: true })), null);
   assert.equal(messageToShow(notice, at(NOTICE_MS, { update: "build-2", playing: false }))?.kind, "update");
 });
+
+// #591 fix: a long-press with no matching map, and Back to narration with no recording of this book, said their own
+// sentence in the app's toast; in the foot they keep it (the reader-frame specs look for the long-press one).
+test("a long-press without a matching map asks for one in the foot, until dismissed", () => {
+  const posted = postError(noMessages, "no-map", 0);
+  const shown = messageToShow(posted, at(60_000, { playing: true }));
+  assert.deepEqual(shown, { kind: "error", error: "no-map" });
+  assert.equal(messageText(shown!), "Prepare a matching audiobook map for this passage first.");
+  assert.equal(errorRetries("no-map"), false);
+  // An error needs an answer: neither the clock nor the next tap on a control takes it away, paused or playing.
+  assert.deepEqual(messageToShow(controlTapped(expire(posted, 60_000)), at(60_000)), shown);
+  assert.equal(messageToShow(clearError(posted, "no-map"), at(0)), null);
+  assert.equal(
+    messageText({ kind: "error", error: "no-recording" }),
+    "Choose this recording and prepare its reading sync first.",
+  );
+  assert.notEqual(messageText({ kind: "error", error: "no-map" }), messageText({ kind: "error", error: "no-sync" }));
+});

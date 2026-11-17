@@ -1210,7 +1210,7 @@ export function ReaderView({
         !player.track ||
         player.book.workId !== bookRef.current?.workId
       ) {
-        messages.error("no-sync");
+        messages.error("no-recording");
         setPanel("sync");
         return;
       }
@@ -1284,7 +1284,7 @@ export function ReaderView({
       audio = books.find((audio) => audio.recordingId === map?.recordingId);
     if (!interval || !audio) {
       setPanel("sync");
-      messages.error("no-sync");
+      messages.error("no-map");
       return;
     }
     const track = audio.tracks.find((track) => track.id === interval.trackId);

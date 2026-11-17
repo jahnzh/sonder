@@ -13,6 +13,8 @@ export type ReaderError =
   | "bookmark-save"
   | "bookmark-remove"
   | "no-sync"
+  | "no-map"
+  | "no-recording"
   | "save-offline";
 
 /** The notices with Undo. */
@@ -97,6 +99,10 @@ const errorTexts: Record<ReaderError, string> = {
   "bookmark-save": "The bookmark could not be saved.",
   "bookmark-remove": "The bookmark could not be removed.",
   "no-sync": "No reading sync is available for this position.",
+  // Listen from here on a sentence the open map does not cover, or with no map for this ebook.
+  "no-map": "Prepare a matching audiobook map for this passage first.",
+  // Back to narration while the player holds no recording of this book.
+  "no-recording": "Choose this recording and prepare its reading sync first.",
   "save-offline": "The ebook could not be saved on this device.",
 };
 
