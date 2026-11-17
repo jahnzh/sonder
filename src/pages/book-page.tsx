@@ -58,8 +58,8 @@ type Props = {
   onFindAudio: (book: Book) => void;
   /** Today's ebook search for the book (Get ebook, until slice "Get"). */
   onFindEbook: (book: Book) => void;
-  /** Today's series dialog. */
-  onSeries: (id: number) => void;
+  /** A saved series opens its Series page (#562); another one today's series dialog. */
+  onSeries: (id: number, saved: boolean) => void;
   /** The library changed (an add, a removal, a mark): read the books again. */
   onChanged: () => Promise<void> | void;
   /** This device's files changed. */
@@ -319,7 +319,7 @@ export function BookPage(props: Props) {
           <p className="book-page-muted type-label">{work.author}</p>
           {model.series &&
             (model.series.id != null ? (
-              <button type="button" className="book-page-series type-label" onClick={() => props.onSeries(model.series!.id!)}>
+              <button type="button" className="book-page-series type-label" onClick={() => props.onSeries(model.series!.id!, model.series!.saved)}>
                 {model.series.label}
               </button>
             ) : (

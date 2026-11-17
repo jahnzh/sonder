@@ -33,6 +33,8 @@ export type SeriesPageWork = SeriesBookCandidate & {
   new?: boolean;
   needsAdmin?: boolean;
   acquisition?: { audio: SeriesWorkAcquisition | null; ebook: SeriesWorkAcquisition | null } | null;
+  /** The work's media state for a book added with the series (the page polls while one is queued). */
+  mediaState?: { state: string } | null;
 };
 
 /** `GET /api/series/<id>`, as far as the page reads it. */
