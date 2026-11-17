@@ -113,6 +113,8 @@ const desktopProjects = [
               /(^|\/)(get-audiobook|releases|prowlarr|reliability)\.spec\.ts$/,
               // The Series page of a saved series (#562).
               /(^|\/)series-page\.spec\.ts$/,
+              // The Get audiobook sheet's language and Load more (#602).
+              /(^|\/)get-audiobook-language\.spec\.ts$/,
               // The Add sheet of a saved series (#563).
               /(^|\/)series-add\.spec\.ts$/,
               // The New mark on a series and Dismiss (#565).
