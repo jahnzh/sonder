@@ -1,5 +1,5 @@
 import {test,expect,type Page,type Locator} from "@playwright/test";
-import {readFileSync} from "node:fs";
+import {mkdirSync,readFileSync} from "node:fs";
 import {randomUUID} from "node:crypto";
 import {longBookFixture} from "../long-book-fixture";
 import {interpolateWordTimes} from "../../src/word-timing";
@@ -362,6 +362,13 @@ async function expectShowing(room:Locator,sentence:string,parts:{word:number;cha
  await expect.poll(()=>placeShown(room,sentence,parts[at]!),{timeout:READER_WAIT_MS.followHighlight}).toBe(true);
  for(const [index,part] of parts.entries())if(index!==at)expect(await placeShown(room,sentence,part),`part ${index} while ${at} is shown`).toBe(false);
 }
+// Screenshots of the turns for the pull request, when SONDER_SHOTS_DIR names a folder (#509).
+const SHOTS=process.env.SONDER_SHOTS_DIR;
+async function shot(page:Page,name:string){
+ if(!SHOTS)return;
+ mkdirSync(SHOTS,{recursive:true});
+ await page.screenshot({path:`${SHOTS}/${name}-${test.info().project.name}.png`});
+}
 // Opens the reader on `interval`, paused just after its start: the page that holds its first word.
 async function followAt(page:Page,book:any,interval:any,sentence:string){
  const room=await openAt(page,book,interval,interval.start+.01);
@@ -371,7 +378,7 @@ async function followAt(page:Page,book:any,interval:any,sentence:string){
 const back=(room:Locator)=>room.getByRole("button",{name:"Back to narration",exact:true});
 // Turns at each break of the sentence as laid out now, from its start: just before each break's time the page
 // stays, just after it the page that holds the break is shown, and no turn waits for the next sentence.
-async function expectTurnsAtEachBreak(page:Page,room:Locator,interval:any,next:any,sentence:string,most=Infinity){
+async function expectTurnsAtEachBreak(page:Page,room:Locator,interval:any,next:any,sentence:string,most=Infinity,shots=""){
  const layout=(await layoutOf(room,sentence))!;
  const breaks=breaksOf(layout.words,interval),parts=[sentenceStart,...breaks];
  for(const [index,item] of breaks.slice(0,most).entries()){
@@ -379,8 +386,10 @@ async function expectTurnsAtEachBreak(page:Page,room:Locator,interval:any,next:a
   expect(item.time-previous,`time before break ${index}`).toBeGreaterThan(.1);
   await narrateAt(page,item.time-.05);
   await expectStays(page,async()=>await placeShown(room,sentence,parts[index]!)&&!await placeShown(room,sentence,item));
+  if(shots)await shot(page,`${shots}-turn${index+1}-before`);
   await narrateAt(page,item.time+.02);
   await expectShowing(room,sentence,parts,index+1);
+  if(shots)await shot(page,`${shots}-turn${index+1}-after`);
   await expect(room).toHaveAttribute("data-current-passage",interval.paragraphId);
   expect(item.time+.02).toBeLessThan(next.start);
   // Each part of the sentence is highlighted on its page.
@@ -400,7 +409,7 @@ test("a sentence over three pages turns at each page's end, and a jump back over
  const interval=intervals[at],next=intervals[at+1],sentence=text(interval);
  await withReader(page,{mode:"paginated",font:"serif"},async()=>{
   const room=await followAt(page,book,interval,sentence);
-  const breaks=await expectTurnsAtEachBreak(page,room,interval,next,sentence);
+  const breaks=await expectTurnsAtEachBreak(page,room,interval,next,sentence,Infinity,"three-pages");
   // Over three pages or more: it turned at least twice, each time to the next page.
   expect(breaks.length).toBeGreaterThanOrEqual(2);
   breaks.forEach((item,index)=>expect(item.page).toBe((index?breaks[index-1]!.page:(breaks[0]!.page-1))+1));
@@ -435,7 +444,7 @@ test("a sentence with a picture in it turns at the word the picture pushed to th
   expect(found,"a sentence whose picture is pushed to the next page").not.toBeNull();
   const {interval,next,sentence,pushed}=found!;
   room=await followAt(page,book,interval,sentence);
-  const breaks=await expectTurnsAtEachBreak(page,room,interval,next,sentence);
+  const breaks=await expectTurnsAtEachBreak(page,room,interval,next,sentence,Infinity,"picture");
   // One turn, at the first word after the picture: the picture is shown with it, on the later page.
   expect(breaks.map(item=>item.word)).toEqual([pushed]);
   expect((await layoutOf(room,sentence))!.pictures[0]!.shown).toBe(true);
@@ -467,7 +476,7 @@ test("a word hyphenated across the page turns inside the word's time, at its fir
   // The word starts on the page shown: at its start nothing turns.
   await narrateAt(page,timed.start+.02);
   await expectStays(page,async()=>await placeShown(room,sentence,sentenceStart));
-  const breaks=await expectTurnsAtEachBreak(page,room,interval,next,sentence);
+  const breaks=await expectTurnsAtEachBreak(page,room,interval,next,sentence,Infinity,"hyphenated");
   // One turn, inside the word's time: after its start and before the next word's, at its share of the word.
   expect(breaks).toHaveLength(1);
   expect(breaks[0]!.word).toBe(word);
@@ -484,7 +493,9 @@ test("after a change of text size and after a resize the turn comes at the new b
  const interval=intervals[at],next=intervals[at+1],sentence=text(interval);
  await withReader(page,{mode:"paginated",font:"serif",size:18},async()=>{
   const room=await followAt(page,book,interval,sentence);
-  const firstBreak=async()=>breaksOf((await layoutOf(room,sentence))!.words,interval)[0]?.word;
+  // The first break's word, null while the section is being laid out anew (epub.js replaces its frame on a resize).
+  const firstBreak=async()=>{const layout=await layoutOf(room,sentence);return layout?breaksOf(layout.words,interval)[0]?.word??null:null;};
+  const movedFrom=async(previous:number|null|undefined)=>{const now=await firstBreak();return now!==null&&now!==previous;};
   const before=await firstBreak();
   // A larger text size, set in the reader's options while it follows the sentence's start.
   const topbar=room.locator(".reader-topbar");
@@ -495,20 +506,20 @@ test("after a change of text size and after a resize the turn comes at the new b
   await topbar.getByRole("button",{name:"Reader appearance",exact:true}).click();
   await page.getByRole("slider",{name:"Reader text size",exact:true}).fill("26");
   await room.locator(".reader-panel-heading").getByRole("button",{name:"Close reader options",exact:true}).click();
-  await expect.poll(firstBreak,{timeout:READER_WAIT_MS.followHighlight}).not.toBe(before);
+  await expect.poll(()=>movedFrom(before),{timeout:READER_WAIT_MS.followHighlight}).toBe(true);
   // Still following, on the page of the word being narrated: the sentence's start.
   await settledLayout(room,sentence,interval);
   await expect(back(room)).toBeDisabled();
-  const larger=await expectTurnsAtEachBreak(page,room,interval,next,sentence,2);
+  const larger=await expectTurnsAtEachBreak(page,room,interval,next,sentence,2,"text-size-26");
   expect(larger[0]!.word).not.toBe(before);
   // A resize (a narrower and shorter window, as a rotation or a split screen gives) moves the breaks again.
   await narrateAt(page,interval.start+.05);
   await expectShowing(room,sentence,[sentenceStart,...larger],0);
   await page.setViewportSize({width:340,height:700});
-  await expect.poll(firstBreak,{timeout:READER_WAIT_MS.followHighlight}).not.toBe(larger[0]!.word);
+  await expect.poll(()=>movedFrom(larger[0]!.word),{timeout:READER_WAIT_MS.followHighlight}).toBe(true);
   await settledLayout(room,sentence,interval);
   await expect(back(room)).toBeDisabled();
-  const resized=await expectTurnsAtEachBreak(page,room,interval,next,sentence,2);
+  const resized=await expectTurnsAtEachBreak(page,room,interval,next,sentence,2,"resized-340x700");
   expect(resized[0]!.word).not.toBe(larger[0]!.word);
  });
 });
@@ -544,7 +555,7 @@ test("at desktop width with two pages side by side the turn comes when the narra
   await expectStays(page,all);
   // Leaving the second page of a pair: the turn comes when the narration reaches its first word on the next pair, not before.
   room=await followAt(page,book,leaving!.interval,leaving!.sentence);
-  const breaks=await expectTurnsAtEachBreak(page,room,leaving!.interval,leaving!.next,leaving!.sentence);
+  const breaks=await expectTurnsAtEachBreak(page,room,leaving!.interval,leaving!.next,leaving!.sentence,Infinity,"two-pages");
   expect(breaks).toHaveLength(1);
  });
 });
@@ -598,4 +609,69 @@ test("finding the break of a narrated sentence takes a few milliseconds, also wi
  expect(results["slowed 1x"]["full-length book, chapter 1 sentences"].p95).toBeLessThan(16);
  expect(results["slowed 6x"]["full-length book, chapter 1 sentences"].p95).toBeLessThan(50);
  expect(results["slowed 6x"]["sentence over three pages, after each turn"].max).toBeLessThan(100);
+});
+
+test("after each turn the break is measured again: a picture that grows on the page now shown moves the next turn",async({page},testInfo)=>{
+ test.setTimeout(180000);
+ const {book,chapter,text}=await turnBook(page,`Measured again ${testInfo.repeatEachIndex} ${randomUUID()}`);
+ const intervals=chapter(0),at=intervals.findIndex((i:any)=>text(i)===longSentence(45));
+ const interval=intervals[at],next=intervals[at+1],sentence=text(interval);
+ await withReader(page,{mode:"paginated",font:"serif"},async()=>{
+  const room=await followAt(page,book,interval,sentence);
+  // Measured as the sentence began.
+  const before=breaksOf((await layoutOf(room,sentence))!.words,interval);
+  expect(before.length).toBeGreaterThanOrEqual(2);
+  // Then a picture grows inside the sentence's second part (one that loads late): a tall box between two of the
+  // words on the second page, which pushes the end of that page onto the third. The first page does not change.
+  const grown=Math.floor((before[0]!.word+before[1]!.word)/2);
+  await room.locator(".reader-viewport").evaluate((host,{sentence,word})=>{
+   for(const frame of host.querySelectorAll("iframe")){
+    const doc=frame.contentDocument;if(!doc?.body)continue;
+    const walker=doc.createTreeWalker(doc.body,NodeFilter.SHOW_TEXT);
+    for(let node=walker.nextNode() as Text|null;node;node=walker.nextNode() as Text|null){
+     const at=node.data.indexOf(sentence);if(at<0)continue;
+     const offset=at+[...sentence.matchAll(/\S+/g)][word]!.index!;
+     const box=doc.createElement("span");
+     box.style.cssText=`display:inline-block;width:2px;height:${Math.round(host.clientHeight*.6)}px`;
+     node.splitText(offset).before(box);
+     return;
+    }
+   }
+   throw new Error("sentence not found");
+  },{sentence,word:grown});
+  let after:ReturnType<typeof breaksOf>=[];
+  await expect.poll(async()=>{after=breaksOf((await layoutOf(room,sentence))!.words,interval);return after[1]?.word??0;}).toBeLessThan(before[1]!.word);
+  expect(after[0]).toEqual(before[0]);
+  // The first turn, at the break measured when the sentence began; then the second at the break as drawn after the
+  // turn, earlier than the one measured at the start.
+  await narrateAt(page,after[0]!.time+.02);
+  await expectShowing(room,sentence,[sentenceStart,...after],1);
+  expect(after[1]!.time+.02).toBeLessThan(before[1]!.time);
+  await narrateAt(page,after[1]!.time+.02);
+  await expectShowing(room,sentence,[sentenceStart,...after],2);
+  expect(after[1]!.time).toBeLessThan(next.start);
+  await expect(back(room)).toBeDisabled();
+ });
+});
+
+test("a follow jump that a newer one replaces while it is in flight is no failure: the reader shows the sentence",async({page},testInfo)=>{
+ test.setTimeout(180000);
+ const {book,chapter,text}=await turnBook(page,`Replaced jumps ${testInfo.repeatEachIndex} ${randomUUID()}`);
+ const first=chapter(0)[0],target=chapter(1)[4];
+ await withReader(page,{mode:"paginated",font:"serif"},async()=>{
+  const room=await openAt(page,book,first,first.start+.01);
+  // The narration moves to a sentence of the next chapter, and while its section opens the fonts report loading
+  // done again and again (each lays the text out anew and follows the sentence again, replacing the jump in flight).
+  await page.evaluate(()=>{
+   let count=0;
+   const timer=setInterval(()=>{document.fonts.dispatchEvent(new Event("loadingdone"));if(++count>=10)clearInterval(timer);},40);
+  });
+  await narrateAt(page,target.start+.01);
+  await expect(room).toHaveAttribute("data-current-passage",target.paragraphId,{timeout:READER_WAIT_MS.followHighlight});
+  await page.waitForTimeout(1500);
+  await expect(room.getByText("Could not display the current passage",{exact:false})).toHaveCount(0);
+  await expect.poll(()=>placeShown(room,text(target),sentenceStart),{timeout:READER_WAIT_MS.followHighlight}).toBe(true);
+  await expect.poll(()=>highlightShown(room),{timeout:READER_WAIT_MS.followHighlight}).toBe(true);
+  await expect(back(room)).toBeDisabled();
+ });
 });

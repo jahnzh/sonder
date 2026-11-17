@@ -1063,7 +1063,11 @@ export function ReaderView({
         // Measured again after each turn (#509): the next break is the first word after the page now shown,
         // as the pages are drawn now (a picture that loaded late may have moved them).
         const step = pageStep(paged.view);
-        if (step && paged.node.isConnected) paged.words = measureSentence(paged.node, paged.fragment, step).words;
+        if (step && paged.node.isConnected) {
+          const again = measureSentence(paged.node, paged.fragment, step);
+          paged.words = again.words;
+          paged.index = again.index;
+        }
       })
       .catch(() => {})
       .finally(() => {
