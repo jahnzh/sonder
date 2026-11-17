@@ -156,7 +156,9 @@ export function BookPage(props: Props) {
   const recording = work ? chosenRecording(work) : null;
   const preModel = work ? bookModel(work, { admin, deviceChoice }) : null;
   const chosenEpub = preModel?.readEbookId ?? null;
-  const epubCopy = useEbookDeviceCopy(chosenEpub ?? work?.ebooks[0]?.id ?? null);
+  // Only a copy the user kept: the reader's own copy of a book it opened is a reading cache, not kept (#671), so it
+  // neither turns Keep on nor stops Keep from saving the EPUB.
+  const epubCopy = useEbookDeviceCopy(chosenEpub ?? work?.ebooks[0]?.id ?? null, { kept: true });
   const model = work ? bookModel(work, { admin, deviceChoice, deviceEbookSize: epubCopy.size }) : null;
   const entries = useMemo(() => books.filter((b) => b.workId === workId), [books, workId]);
   const entryIds = entries.map((b) => b.id);

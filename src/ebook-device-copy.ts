@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from "react";
 import { authDB, userStorageKey } from "./lib";
 import { EBOOK_DEVICE_EVENT, forgetEpub, loadReader, saveEpubOffline } from "./reading";
 import { deviceEbookChoiceKey } from "./ebook-choice";
+import { isKeptReaderFile, type ReaderFileRecord } from "./ebook-keep";
 
 const fileKey = (id: string) => `reader-file:${id}`;
 const FOLDER = "sonder-ebooks";
@@ -15,10 +16,14 @@ export { EBOOK_DEVICE_EVENT };
 
 type Stored = { fingerprint?: string; blob?: Blob; opfs?: boolean } | undefined;
 
-/** The size in bytes of this device's copy of an edition, or null when this device keeps none. */
-export async function ebookDeviceCopySize(id: string): Promise<number | null> {
+/**
+ * The size in bytes of this device's copy of an edition, or null when this device has none. With `kept`, the reader's
+ * own reading cache counts as none: only a copy the user chose to keep (#671).
+ */
+export async function ebookDeviceCopySize(id: string, options: { kept?: boolean } = {}): Promise<number | null> {
   const stored = (await authDB.preferences.get(fileKey(id)).catch(() => undefined))?.value as Stored;
   if (!stored) return null;
+  if (options.kept && !isKeptReaderFile(stored as ReaderFileRecord)) return null;
   if (stored.blob) return stored.blob.size;
   if (!stored.opfs) return null;
   try {
@@ -61,13 +66,17 @@ export async function saveEbookToDevice(id: string): Promise<void> {
   await saveEpubOffline(book, await response.blob());
 }
 
-/** The size of this device's copy of an edition, read again when a copy is added or removed. */
-export function useEbookDeviceCopy(id: string | null) {
+/**
+ * The size of this device's copy of an edition, read again when a copy is added or removed. With `kept`, only a copy
+ * the user chose to keep counts, not the reader's own reading cache.
+ */
+export function useEbookDeviceCopy(id: string | null, options: { kept?: boolean } = {}) {
   const [size, setSize] = useState<{ id: string; size: number | null } | null>(null);
+  const kept = !!options.kept;
   const read = useCallback(() => {
     if (!id) return;
-    void ebookDeviceCopySize(id).then((value) => setSize({ id, size: value }));
-  }, [id]);
+    void ebookDeviceCopySize(id, { kept }).then((value) => setSize({ id, size: value }));
+  }, [id, kept]);
   useEffect(() => {
     read();
     window.addEventListener(EBOOK_DEVICE_EVENT, read);
