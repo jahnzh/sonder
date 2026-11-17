@@ -150,7 +150,7 @@ test("what an address shows: built pages as they are, everything else the first 
   assert.equal(shows("#listen/w1"), "#library");
   assert.equal(shows("#read/w1"), "#library");
   assert.equal(shows("#activity/device"), "#activity/device");
-  // A worker's address is the administrator's Server until the worker's page lands (#519): it stays in the address.
+  // A worker's address is the administrator's worker page (#520): it stays in the address.
   assert.equal(shows("#activity/server/wsl"), "#activity/server/wsl");
   // Activity is everyone's place (#516); its Server part and workers are the administrator's: someone else gets Now.
   for (const address of ["#activity", "#activity/server", "#activity/server/wsl", "#activity/bogus"])
@@ -217,10 +217,21 @@ test("what adds a history entry and what replaces the current one", () => {
   assert.equal(step(r("#activity"), r("#activity/device")), "replace");
   assert.equal(step(r("#activity/device"), r("#activity/server")), "replace");
   assert.equal(step(r("#activity/server"), r("#activity")), "replace");
+  // Choosing another worker beside the Server list replaces the worker's page shown (#520).
+  assert.equal(step(r("#activity/server/wsl"), r("#activity/server/lisa")), "replace");
   assert.equal(step(r("#listen/w"), r("#read/w")), "replace");
   assert.equal(step(r("#read/w"), r("#listen/w")), "replace");
   assert.equal(step(r("#read/w"), r("#listen/other")), "push");
   // The same address does not move.
   assert.equal(step(r("#library"), r("#library")), "none");
   assert.equal(step(r("#book/w"), r("#book/w")), "none");
+});
+
+test("#book/<workId>/ebook shows the Ebook page for everyone, its parent the book (#531)", () => {
+  for (const admin of [true, false]) {
+    assert.deepEqual(resolve(readAddress("#book/w1/ebook"), { admin }), { name: "book-page", workId: "w1", page: "ebook" });
+    assert.equal(writeAddress(resolve(readAddress("#book/w%2F1/ebook"), { admin })), "#book/w%2F1/ebook");
+  }
+  assert.deepEqual(parentOf(readAddress("#book/w1/ebook")), { name: "book", workId: "w1" });
+  assert.equal(placeOf(readAddress("#book/w1/ebook")), "library");
 });

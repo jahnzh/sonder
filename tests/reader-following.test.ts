@@ -355,6 +355,26 @@ test("a follow jump that ended after the narration moved on neither retries nor 
   assert.equal(retries(), 0);
 });
 
+test("a follow jump that a newer follow jump to the same sentence replaced is stale: no retry, and the sentence never fails for it", () => {
+  const { following, clock, retries } = setup();
+  // The fonts load, the window resizes, the layout changes: each follows the same sentence again while a jump is in flight.
+  const requests: number[] = [];
+  for (let again = 0; again <= FOLLOW_RETRIES + 1; again++) {
+    following.forgetFollowed();
+    assert.equal(following.followTarget("r:p1"), true);
+    requests.push(following.followRequest());
+  }
+  // Every replaced jump ends without showing its sentence: none counts.
+  for (const request of requests.slice(0, -1)) assert.equal(following.followShown("r:p1", false, request), "stale");
+  assert.equal(following.followed(), "r:p1");
+  clock.advance(FOLLOW_RETRY_DELAY_MS * 2);
+  assert.equal(retries(), 0);
+  // The latest one reports: shown, or a failure that retries as before.
+  assert.equal(following.followShown("r:p1", false, requests.at(-1)), "retrying");
+  following.followTarget("r:p1");
+  assert.equal(following.followShown("r:p1", true, following.followRequest()), "shown");
+});
+
 test("back to narration gives a sentence its full count of retries again", () => {
   const { following } = setup();
   for (let attempt = 1; attempt <= FOLLOW_RETRIES; attempt++) {

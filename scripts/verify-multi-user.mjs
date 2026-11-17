@@ -57,8 +57,14 @@ try {
  const media=await qa.request.get(`/api/media/${encodeURIComponent(playable.tracks[0].id)}/location?source=auto`);
  if(!media.ok())throw Error('User cannot resolve media: '+media.status());
  check('User can resolve shared media',{book:playable.title});
+ // Settings is a list whose rows open pages (#579): the user's list has Personal and no Server group,
+ // the Account page is the user's, and the administrator's pages are refused.
  await page.goto('/#settings');
- await expect(page.getByRole('heading',{name:'Account'})).toBeVisible();
+ await expect(page.getByRole('heading',{name:'Personal',exact:true})).toBeVisible();
+ await expect(page.getByRole('heading',{name:'Server',exact:true})).toHaveCount(0);
+ await page.goto('/#settings/account');
+ await expect(page.getByRole('heading',{name:'Account',level:1})).toBeVisible();
+ for(const admin of ['users','library']){await page.goto(`/#settings/${admin}`);await expect(page.getByRole('heading',{name:/^(Users|Library and storage)$/,level:1})).toHaveCount(0);}
  for(const hidden of ['Your home server','TorBox','Prowlarr','Users'])await expect(page.getByRole('heading',{name:hidden,exact:true})).toHaveCount(0);
  await page.screenshot({path:'artifacts/live-multi-user-settings.png',fullPage:true});
  check('Settings UI shows Account and hides admin sections');

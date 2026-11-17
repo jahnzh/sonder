@@ -335,30 +335,7 @@ test("no connection: only the card", async ({ page, context }) => {
   await expect(lineOf(page, "alignment")).toBeVisible();
 });
 
-test("a worker's row opens its address, which shows Server until the worker's page; Back returns", async ({ page }) => {
-  await routeActivity(page, () => boardState());
-  await routeBackfill(page);
-  await page.goto("/#activity/server");
-  const wsl = workerRow(page, "wsl").getByRole("link");
-  await expect(wsl).toHaveAttribute("href", "#activity/server/wsl");
-  await wsl.click();
-  await expect(page).toHaveURL(/#activity\/server\/wsl$/);
-  await expect(page.getByRole("radiogroup", { name: "Activity" }).getByRole("radio", { checked: true })).toHaveText("Server");
-  await expect(lineOf(page, "alignment")).toBeVisible();
-  // Today's controls of the worker, in the place its page will take.
-  await expect(page.getByTestId("activity-process-alignment-host:wsl").getByRole("button", { name: "Restart Reading sync worker (wsl)" })).toBeVisible();
-  await page.reload();
-  await expect(page).toHaveURL(/#activity\/server\/wsl$/);
-  await expect(page.getByTestId("activity-process-alignment-host:wsl")).toBeVisible();
-  await page.goBack();
-  await expect(page).toHaveURL(/#activity\/server$/);
-  await expect(page.getByTestId("activity-process-alignment-host:wsl")).toHaveCount(0);
-  // An unknown worker shows Server, with nothing beside it.
-  await page.goto("/#activity/server/nobody");
-  await expect(lineOf(page, "alignment")).toBeVisible();
-  await expect(page.locator(".activity-worker-slot")).toHaveCount(0);
-  await noOverflow(page);
-});
+// A worker's row opens its page, Back returns, a reload stays and an unknown worker shows Server: activity-worker.spec.ts (#520).
 
 test("someone who is not the administrator reads nothing of the server's activity", async ({ page }) => {
   const reads: string[] = [];

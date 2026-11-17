@@ -228,12 +228,15 @@ export function sameRoute(a: Route, b: Route): boolean {
 
 /**
  * Whether moving from one route to another adds a history entry or replaces the current one.
- * Activity's parts replace each other, as do Listen and Read of one work; everything else that moves adds one.
+ * Activity's parts replace each other, as do two workers' pages and Listen and Read of one work; everything else
+ * that moves adds one.
  * A redirect from an old name or a bad address also replaces, but that happens when an address is read.
  */
 export function step(from: Route, to: Route): "push" | "replace" | "none" {
   if (sameRoute(from, to)) return "none";
   if (from.name === "activity" && to.name === "activity") return "replace";
+  // Choosing another worker beside the Server list (a desktop) replaces the one shown (#520).
+  if (from.name === "worker" && to.name === "worker") return "replace";
   if ((from.name === "listen" || from.name === "read") && (to.name === "listen" || to.name === "read") && from.workId === to.workId)
     return "replace";
   return "push";
@@ -241,6 +244,8 @@ export function step(from: Route, to: Route): "push" | "replace" | "none" {
 
 /** Pages with a screen in this build. Every other address behaves like one that names nothing until its slice lands. */
 function built(route: Route): boolean {
+  // The Ebook page (#531).
+  if (route.name === "book-page" && route.page === "ebook") return true;
   switch (route.name) {
     case "library":
     case "discover":
@@ -254,7 +259,7 @@ function built(route: Route): boolean {
       return isSettingsPage(route.page);
     case "activity":
       return route.part === "now" || route.part === "device" || route.part === "server";
-    // A worker's address shows Server, with the worker's controls of today, until its page lands (#519, #520).
+    // The worker's page (#520). A worker the server does not report shows Server, once the page has read the server.
     case "worker":
       return true;
     default:

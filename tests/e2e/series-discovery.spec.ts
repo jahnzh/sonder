@@ -1,6 +1,22 @@
 import { test, expect } from "@playwright/test";
 
 test("discover and save chosen works from the intended series, then reopen it", async ({ page }) => {
+  // The test saves The Crossing (#701) and adds works of it to the library. At the end it puts the series and the
+  // library back as it found them, so a repeat on the same server finds Crossing Three new again.
+  const libraryTitles = async () =>
+    new Set(
+      ((await (await page.request.get("/api/books")).json()) as { title: string; inLibrary: boolean }[])
+        .filter((book) => book.inLibrary)
+        .map((book) => book.title),
+    );
+  const before = await libraryTitles();
+  type SeriesView = { works: { id: number; title: string; added: boolean }[] };
+  const crossing = async () => (await (await page.request.get("/api/series/701")).json()) as SeriesView;
+  const savedBefore = ((await (await page.request.get("/api/series")).json()) as { id: number }[]).some(
+    (series) => series.id === 701,
+  );
+  // Another spec on the server may have saved it already (series-acquisition does).
+  const addedBefore = savedBefore ? (await crossing()).works.filter((work) => work.added).map((work) => work.id) : [];
   await page.request.put("/api/hardcover/token", { data: { token: "" } });
   await page.goto("/#discover");
   await page.getByRole("button", { name: "Series", exact: true }).click();
@@ -75,6 +91,17 @@ test("discover and save chosen works from the intended series, then reopen it", 
   await page.getByRole("button", { name: "Add series", exact: true }).click();
   await expect(page.getByRole("heading", { name: "The Crossing" })).toBeVisible();
   await expect(page.getByRole("dialog").getByText("Hardcover #701", { exact: true })).toBeVisible();
+  const added = (await crossing()).works.filter(
+    (work) => work.added && !addedBefore.includes(work.id) && !before.has(work.title),
+  );
+  expect(added.map((work) => work.title).sort()).toEqual(
+    ["Crossing Companion", "Crossing Three"].filter((title) => !before.has(title)),
+  );
+  const removed = await page.request.delete("/api/series/701", { data: { bookIds: added.map((work) => work.id) } });
+  expect(removed.ok()).toBe(true);
+  if (savedBefore)
+    expect((await page.request.post("/api/series", { data: { id: 701, bookIds: addedBefore } })).ok()).toBe(true);
+  expect(await libraryTitles()).toEqual(before);
 });
 
 test("preferred series language changes defaults and preserves manual choices", async ({ page }) => {

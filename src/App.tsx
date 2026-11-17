@@ -90,8 +90,10 @@ import { DiscoverPage } from "./pages/discover-page";
 import { ActivityServer } from "./pages/activity-server";
 import { ActivityNow } from "./pages/activity-now";
 import { ActivityPlace } from "./pages/activity-place";
+import { useSideBySide } from "./pages/side-by-side";
 import { ActivityDevice } from "./pages/activity-device";
 import { SettingsPage } from "./pages/settings-page";
+import { EbookFileRow, EbookPage, ebookSearchTarget } from "./pages/ebook-page";
 import { firstPage, writeAddress, type Place, type Route } from "./routes";
 import { onPageLeftByHistory, startNavigation, useAddress } from "./navigation";
 import { Gallery, isGalleryRoute } from "./gallery/Gallery";
@@ -241,7 +243,7 @@ function shownPage(route: Route, under: { current: Page }): Page {
   if (route.name === "library" || route.name === "discover" || route.name === "settings" || route.name === "activity")
     under.current = route.name;
   else if (route.name === "settings-page") under.current = "settings";
-  // A worker's address is Activity's Server until the worker's page (#520) has a screen of its own.
+  // A worker's page (#520) is a page of Activity's Server.
   else if (route.name === "worker") under.current = "activity";
   return under.current;
 }
@@ -260,12 +262,17 @@ function LibraryApp({
   // src/pages never read or write it themselves.
   const address = useAddress();
   const page = shownPage(address.route, useRef<Page>("library"));
+  // The Ebook page (#531) is shown in place of the page under it.
+  const ebookPage = address.route.name === "book-page" && address.route.page === "ebook" ? address.route.workId : null;
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const admin = user.role === "admin";
   // Now is shown: the Activity place on its first part (an address of Server is Now for someone else, #516).
   const nowShown = address.route.name === "activity" && (address.route.part === "now" || (!admin && address.route.part === "server"));
   const serverActivity = useServerActivity(admin, nowShown);
+  const sideBySide = useSideBySide();
+  // An address of a worker the server does not report shows Server, in the address too (#520).
+  const showServer = useCallback(() => address.navigate({ name: "activity", part: "server" }, { replace: true }), [address.navigate]);
   // The search field searches the page it is on. The Library's search is one of its filters and is remembered
   // with them (#455); Discover's goes with its results when the page is left.
   const [queries, setQueries] = useState({ library: "", discover: "", other: "" });
@@ -666,6 +673,13 @@ function LibraryApp({
         (hardcoverFilter.list === "all" ||
           b.hardcover?.listIds.includes(Number(hardcoverFilter.list))),
     );
+  // Today's ebook search for a work (Discover's ebooks, linked to the work), until slice "Get" (S8).
+  const findEbook = (target: Book) => {
+    setDetail(null);
+    navigate("discover");
+    setEbookTarget(target);
+    setDiscoverQuery(`${target.title} ${target.author}`);
+  };
   const findAudio = (b: Book) => {
     setDetail(null);
     navigate("discover");
@@ -866,6 +880,14 @@ function LibraryApp({
                 </button>
               </div>
             )}
+            {ebookPage ? (
+              <EbookPage
+                key={ebookPage}
+                workId={ebookPage}
+                admin={user.role === "admin"}
+                onGetEdition={(work) => findEbook(books.find((b) => b.workId === work.workId) ?? ebookSearchTarget(work))}
+              />
+            ) : <>
             {page === "library" && (
               <LibraryPage
                 admin={user.role === "admin"}
@@ -926,10 +948,14 @@ function LibraryApp({
                 admin={user.role === "admin"}
                 part={address.route.name === "activity" ? address.route.part : address.route.name === "worker" ? "server" : "now"}
                 onPart={(part) => address.navigate({ name: "activity", part })}
+                alone={address.route.name === "worker" && !sideBySide}
                 server={<ActivityServer
                   online={online}
                   worker={address.route.name === "worker" ? address.route.worker : null}
-                  onWorker={(worker) => address.navigate({ name: "worker", worker })}
+                  beside={sideBySide}
+                  // On a desktop the page sits beside the list: choosing a worker replaces the address (#520).
+                  onWorker={(worker) => address.navigate({ name: "worker", worker }, { replace: sideBySide })}
+                  onUnknownWorker={showServer}
                   notify={notify}
                 />}
                 now={<ActivityNow
@@ -998,6 +1024,7 @@ function LibraryApp({
                 }}
               />
             )}
+            </>}
           </main>
         </div>
         <nav className="mobile-nav" aria-label="Mobile navigation">
@@ -1087,14 +1114,12 @@ function LibraryApp({
                 })
                 .catch((e) => notify(e.message, true));
           }}
-          onFindEbook={() => {
-            if (detail) {
-              const target = detail;
-              setDetail(null);
-              navigate("discover");
-              setEbookTarget(target);
-              setDiscoverQuery(`${target.title} ${target.author}`);
-            }
+          onFindEbook={() => detail && findEbook(detail)}
+          onOpenEbook={() => {
+            if (!detail) return;
+            const workId = detail.workId;
+            setDetail(null);
+            address.navigate({ name: "book-page", workId, page: "ebook" });
           }}
           book={
             detail && { ...detail, ...books.find((b) => b.id === detail.id) }
@@ -1150,6 +1175,7 @@ function BookDetail({
   notify,
   onKeepServer,
   onFindEbook,
+  onOpenEbook,
   book: b,
   onClose,
   downloaded,
@@ -1172,6 +1198,7 @@ function BookDetail({
   notify: (s: string, error?: boolean) => void;
   onKeepServer: () => void;
   onFindEbook: () => void;
+  onOpenEbook: () => void;
   book: Book | null;
   onClose: () => void;
   downloaded: boolean;
@@ -1373,14 +1400,7 @@ function BookDetail({
               </button>
             </div>
           )}
-          {admin && <div className="detail-ebook-action">
-            <span>
-              <BookOpen size={18} /> Ebook edition
-            </span>
-            <button className="button subtle" onClick={onFindEbook}>
-              Find ebook <ArrowRight size={14} />
-            </button>
-          </div>}
+          <EbookFileRow workId={b.workId} admin={admin} onOpen={onOpenEbook} onGet={onFindEbook} />
           {b.tracks.length > 0 && (
             <div className="detail-chapters">
               <h3>
