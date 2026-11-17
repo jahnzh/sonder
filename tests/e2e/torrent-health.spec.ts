@@ -23,7 +23,7 @@ test("downloads warns and settings flags the VPN when local torrents are offline
       },
     }),
   );
-  await page.goto("/#downloads");
+  await page.goto("/#activity");
   await expect(page.getByTestId("torrent-health-warning")).toContainText(
     "no internet connection through the VPN",
   );
@@ -51,7 +51,7 @@ test("downloads shows no warning when local torrents are healthy", async ({
       },
     }),
   );
-  await page.goto("/#downloads");
+  await page.goto("/#activity");
   await expect(
     page.getByRole("heading", { name: /On your home server/ }),
   ).toBeVisible();

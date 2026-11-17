@@ -43,7 +43,6 @@ type Props = {
   onLogout: () => void;
   installPrompt: Event | null;
   onInstall: () => void;
-  onOpenActivity: () => void;
 };
 
 export function SettingsPage(props: Props) {
@@ -78,8 +77,6 @@ export function SettingsPage(props: Props) {
           {group.rows.map((row) => (
             <Row key={row.page} label={row.label} value={row.value} opens onClick={() => open(row.page)} />
           ))}
-          {/* Activity opens from here until it has its own tab (#516). */}
-          {group.caption === "Server" && <Row label="Background work" opens onClick={props.onOpenActivity} />}
         </Group>
       ))}
     </nav>

@@ -63,7 +63,6 @@ for (const [size, viewport] of [["phone", { width: 390, height: 844 }], ["deskto
         /^Connections\s*\S/,
         /^Users\s*\d+ accounts?/,
         /^Library and storage/,
-        /^Background work/,
         /^App\s*(Installed|Install)/,
       ]);
       await expectLaidOut(page);
