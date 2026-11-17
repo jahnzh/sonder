@@ -83,9 +83,12 @@ import { ActivityDevice } from "./pages/activity-device";
 import { SettingsPage } from "./pages/settings-page";
 import { AudiobookPage } from "./pages/audiobook-page";
 import { HardcoverPage } from "./pages/hardcover-page";
-import { EbookPage, ebookSearchTarget } from "./pages/ebook-page";
+import { HardcoverRow } from "./pages/hardcover-row";
+import { EbookFileRow, EbookPage, ebookSearchTarget } from "./pages/ebook-page";
 import { BookPage } from "./pages/book-page";
 import { toggleWorkFavorite } from "./pages/book-model";
+import { ReaderPages } from "./pages/reader-pages";
+import { isReaderPage } from "./reader-pages";
 import { firstPage, writeAddress, type Place, type Route } from "./routes";
 import { onPageLeftByHistory, startNavigation, useAddress } from "./navigation";
 import { Gallery, isGalleryRoute } from "./gallery/Gallery";
@@ -895,8 +898,8 @@ function LibraryApp({
                 }}
               />
             )}
-            {/* The Book page (#532) and its Hardcover (#529) and Ebook (#531) pages stand in place of the place's page. */}
-            {audiobookWorkId ? null : bookWorkId ? (
+            {/* The Book page (#532), its Hardcover (#529) and Ebook (#531) pages, and the reader's Chapters, Bookmarks and Search (#590) stand in place of the place's page. */}
+            {audiobookWorkId ? null : address.route.name === "book-page" && isReaderPage(address.route.page) ? <ReaderPages key={`${address.route.workId}:${address.route.page === "search" ? "search" : "chapters"}`} workId={address.route.workId} page={address.route.page} /> : bookWorkId ? (
               <BookPage
                 key={bookWorkId}
                 workId={bookWorkId}

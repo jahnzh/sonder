@@ -1,0 +1,140 @@
+/* The reader's pages (src/pages/reader-pages.tsx; boards Chapters.dc.html, ReaderBookmarks.dc.html,
+   ReaderSearch.dc.html): the phone's column, centred on a desktop, 16 between its parts. */
+.reader-pages {
+  max-width: 560px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  min-width: 0;
+}
+/* The book's title under the Title, 8 closer to the header than the parts below. */
+.reader-pages-book {
+  margin: calc(-1 * var(--space-8)) 0 0;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.reader-pages-note {
+  margin: 0;
+  padding: 0 var(--space-4);
+  color: var(--muted);
+}
+/* A card of rows, as a Group draws it: corner 14 on the surface, a 1 px line between rows. */
+.reader-pages-card {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-radius: var(--corner-group);
+  background: var(--surface);
+  overflow: hidden;
+}
+.reader-pages-card > li + li {
+  border-top: 1px solid var(--border);
+}
+.reader-pages-card button {
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+}
+/* A muted line in a row: a result's chapter, a bookmark's chapter and date. */
+.reader-pages-line {
+  color: var(--muted);
+}
+
+/* Chapters: one row per section, 52 high; the narrated one on the raised colour with the headphones and its time left. */
+.reader-pages-chapter {
+  width: 100%;
+  min-height: var(--height-row);
+  box-sizing: border-box;
+  padding: 0 var(--space-16);
+  border: 0;
+  background: transparent;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+}
+.reader-pages-chapter[data-narrated] {
+  background: var(--raised);
+}
+.reader-pages-chapter-mark {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  display: flex;
+  color: var(--accent);
+}
+.reader-pages-chapter-title {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.reader-pages-chapter-value {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* Bookmarks: the sentence in full and its line, with Remove (44) at the row's end. */
+.reader-pages-bookmark {
+  box-sizing: border-box;
+  padding: var(--space-4) var(--space-4) var(--space-4) var(--space-16);
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.reader-pages-bookmark-open {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-8) 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.reader-pages-bookmark > .part-button {
+  flex: none;
+  color: var(--muted);
+}
+
+/* Search: the field (44), the count and the sentences. */
+.reader-pages-search {
+  height: var(--height-control);
+  box-sizing: border-box;
+  padding: 0 var(--space-12);
+  border: 1px solid var(--border);
+  border-radius: var(--corner-control);
+  background: var(--surface);
+  color: var(--text);
+  font: 400 16px/22px var(--font-body);
+}
+.reader-pages-results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.reader-pages-count {
+  margin: 0;
+  padding: 0 var(--space-4);
+  color: var(--muted);
+}
+.reader-pages-result {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-12) var(--space-16);
+  border: 0;
+  background: transparent;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.reader-pages-match {
+  font-weight: 600;
+  color: var(--accent);
+}

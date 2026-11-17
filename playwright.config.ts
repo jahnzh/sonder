@@ -93,6 +93,8 @@ const desktopProjects = [
               /(^|\/)reader-bands\.spec\.ts$/,
               // The rest of Activity's specs, the slice's final check (#523).
               /(^|\/)(activity-navigation|torrent-health)\.spec\.ts$/,
+              // Chapters, Bookmarks and Search as pages of the reader (#590).
+              /(^|\/)reader-pages\.spec\.ts$/,
               // A book read in the reader is In progress; the ebook shelf leaves Discover (#556).
               /(^|\/)(ebook-only-library|discovery)\.spec\.ts$/,
               // Every message while reading in the reader's foot (#591).

@@ -36,7 +36,8 @@ export type ReaderBook = {
   sections: ReaderSection[];
   toc: { label: string; href: string; section: number }[];
   checkpoint: ReadingCheckpoint | null;
-  bookmarks: { id: string; label: string; locator: TextLocator }[];
+  /** `createdAt`: when it was saved (ms); older servers and cached books have none (#590). */
+  bookmarks: { id: string; label: string; locator: TextLocator; createdAt?: number }[];
 };
 export type AlignmentInterval = {
   paragraphId: string;
