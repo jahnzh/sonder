@@ -70,7 +70,7 @@ export interface ReaderFollowingOptions<L> {
   onManualSave: (locator: L) => void;
   /**
    * Whether there is a narration to follow now: a map for the open ebook that matches
-   * the recording in the player, with an interval at the player's position.
+   * the recording in the player, with a narrated sentence at the player's position (`narratedSentence`).
    */
   narrationToFollow?: () => boolean;
   /** Run the follow step again (a retry is due). */
@@ -87,6 +87,39 @@ export interface ReaderFollowingOptions<L> {
 export interface DeferredReturn {
   /** The narration is there (or could not get there): back to narration now, unless the reader chose again since. */
   run(narration?: boolean): NarrationReturn | null;
+}
+
+/** A sentence of an alignment map, as far as the narrated sentence needs it: where the narration starts it. */
+export interface MapSentence {
+  trackId: string;
+  start: number;
+}
+
+/** The alignment map the reader shows for the open ebook edition: the recording it was made for and its sentences. */
+export interface NarrationMap<S extends MapSentence> {
+  recordingId: string;
+  intervals: readonly S[];
+}
+
+/** Where the narration is: the recording in the player, its tracks in order, the track and the position in it. */
+export interface NarrationPlace {
+  recordingId?: string;
+  /** The ids of the recording's tracks, in the order they are played. */
+  tracks: readonly string[];
+  trackId?: string;
+  position: number;
+}
+
+// The map's sentences in narration order: by track (the recording's order), then by start. Equal places
+// keep the map's order, so of two sentences that start together the later one in the book is narrated.
+function narrationOrder<S extends MapSentence>(sentences: readonly S[], tracks: readonly string[]) {
+  const rank = new Map(tracks.map((id, index) => [id, index]));
+  const ordered = sentences
+    .map((sentence, index) => ({ sentence, index, track: rank.get(sentence.trackId) }))
+    // A sentence on a track the recording does not have cannot be placed; it is never narrated.
+    .filter((entry): entry is { sentence: S; index: number; track: number } => entry.track !== undefined)
+    .sort((a, b) => a.track - b.track || a.sentence.start - b.sentence.start || a.index - b.index);
+  return { rank, ordered };
 }
 
 const systemClock: FollowingClock = {
@@ -200,8 +233,47 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
     if (locator !== null) options.onManualSave(locator);
   };
 
+  // The map's sentences in narration order, kept while the map and the order of its tracks stay the same:
+  // the narrated sentence is asked for at every position update.
+  let order: { sentences: readonly MapSentence[]; tracks: string; ordered: ReturnType<typeof narrationOrder<MapSentence>> } | null = null;
+  const orderOf = (sentences: readonly MapSentence[], tracks: readonly string[]) => {
+    const key = tracks.join("\n");
+    if (order?.sentences !== sentences || order.tracks !== key)
+      order = { sentences, tracks: key, ordered: narrationOrder(sentences, tracks) };
+    return order.ordered;
+  };
+
   const self = {
     isFollowing: () => following,
+    /**
+     * The narrated sentence (glossary): the sentence of the map with the latest start at or before
+     * the narration's position, taking the recording's tracks in order. It stays with no time limit
+     * through a silence, music or narration the ebook does not have, and across the start of the next
+     * track, until the next sentence begins. None without a map, with a map made for another recording
+     * than the one in the player, or before the map's first sentence.
+     */
+    narratedSentence<S extends MapSentence>(map: NarrationMap<S> | null | undefined, place: NarrationPlace): S | null {
+      if (!map || !place.recordingId || place.recordingId !== map.recordingId || place.trackId === undefined) return null;
+      const { rank, ordered } = orderOf(map.intervals, place.tracks) as ReturnType<typeof narrationOrder<S>>;
+      const track = rank.get(place.trackId);
+      if (track === undefined) return null;
+      // The last sentence that starts at or before the place: an earlier track, or this one up to the position.
+      let low = 0, high = ordered.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        const entry = ordered[middle]!;
+        if (entry.track < track || (entry.track === track && entry.sentence.start <= place.position)) low = middle + 1;
+        else high = middle;
+      }
+      return low > 0 ? ordered[low - 1]!.sentence : null;
+    },
+    /**
+     * The sentence the narration highlight marks: the narrated sentence while following. None with
+     * "Follow the narration" off (paged away), and none whenever there is no narrated sentence.
+     */
+    highlightedSentence<S extends MapSentence>(map: NarrationMap<S> | null | undefined, place: NarrationPlace): S | null {
+      return following ? self.narratedSentence(map, place) : null;
+    },
     /** A manual position still waiting for its save. */
     pendingManual: () => pendingManual,
     /** The sentence last followed, or "". */

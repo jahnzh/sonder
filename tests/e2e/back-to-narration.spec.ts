@@ -20,8 +20,9 @@ const chapterTwo=`<p>Leading words open this block. Then more words follow here.
  `<p>Plain emphasis starts this one. A span sits in the second sentence.</p>`+
  `<p>After the code block comes this sentence. Then one more sentence ends the chapter.</p>`;
 // An audiobook and its ebook; with `map`, each chapter is narrated at 100 s per chapter for 95 s of the file.
-// With two `tracks`, chapter i is narrated on file i, from its start for 95 s.
-async function fixture(page:Page,title:string,{map:align=true,tracks=1}={}){
+// With two `tracks`, chapter i is narrated on file i, from its start for 95 s. `lead` moves the map's first
+// sentence that far into the first file: before it there is no narrated sentence (#502).
+async function fixture(page:Page,title:string,{map:align=true,tracks=1,lead=0}={}){
  const audio=readFileSync("server/demo/alice-01.mp3");
  const files=Object.fromEntries(Array.from({length:tracks},(_,i)=>[`file${i}`,{name:`Narration ${i+1}.mp3`,mimeType:"audio/mpeg",buffer:audio}]));
  const response=await page.request.post("/api/import",{multipart:{title,author:"Reader QA",...files}});
@@ -43,20 +44,20 @@ async function fixture(page:Page,title:string,{map:align=true,tracks=1}={}){
   return {book,ebook,map:null as any,manifest};
  }
  const created=await page.request.post("/api/alignments",{data:{ebookId:ebook,recordingId:book.recordingId,pairings:manifest.sections.map((section:any)=>tracks>1
-  ?{section:section.index,trackId:book.tracks[section.index].id,start:0,duration:95}
-  :{section:section.index,trackId:book.tracks[0].id,start:section.index*100,duration:95})}});
+  ?{section:section.index,trackId:book.tracks[section.index].id,start:section.index===0?lead:0,duration:95}
+  :{section:section.index,trackId:book.tracks[0].id,start:lead+section.index*100,duration:95})}});
  expect(created.ok()).toBe(true);
  await expect.poll(async()=>(await(await page.request.get(`/api/alignments?ebookId=${ebook}`)).json()).jobs[0]?.sectionsDone.length,{timeout:15000}).toBe(manifest.sections.length);
  const jobs=(await(await page.request.get(`/api/alignments?ebookId=${ebook}`)).json()).jobs;
  const map=await(await page.request.get(`/api/alignments/${jobs[0].id}/map`)).json();
  return {book,ebook,map,manifest};
 }
-// The player at `position` of the first file, then the inline reader opened from the home page.
-async function openAt(page:Page,book:any,position:number){
+// The player at `position` of file `track` (the first by default), then the inline reader opened from the home page.
+async function openAt(page:Page,book:any,position:number,track=0){
  await page.goto("about:blank");
  const books=await(await page.request.get("/api/books")).json();
  const previous=books.find((b:any)=>b.recordingId===book.recordingId)?.progress?.updatedAt||0;
- const response=await page.request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[0].id,position,duration:book.tracks[0].duration,updatedAt:Math.max(Date.now(),previous+1)}});
+ const response=await page.request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[track].id,position,duration:book.tracks[track].duration,updatedAt:Math.max(Date.now(),previous+1)}});
  expect(response.ok()).toBe(true);
  expect((await response.json()).progress.position).toBe(position);
  await page.goto("/");
@@ -65,8 +66,8 @@ async function openAt(page:Page,book:any,position:number){
  await expect(page.frameLocator(".inline-reader .reader-viewport iframe").locator("p").first()).toBeAttached({timeout:READER_WAIT_MS.followHighlight});
 }
 // Opened on a narrated sentence: the reader follows it.
-async function openFollowing(page:Page,book:any,interval:any){
- await openAt(page,book,interval.start+.5);
+async function openFollowing(page:Page,book:any,interval:any,track=0){
+ await openAt(page,book,interval.start+.5,track);
  await timedWait("follow-highlight",()=>expect(page.locator(".inline-reader")).toHaveAttribute("data-current-passage",interval.paragraphId,{timeout:READER_WAIT_MS.followHighlight}),{testName:test.info().title});
 }
 async function withAppearance(page:Page,patch:{reader?:object;playback?:object},run:()=>Promise<void>){
@@ -260,17 +261,22 @@ async function restored(page:Page,manifest:any,paragraphId:string){
  await expect(pagesOf(page)).not.toHaveAttribute("data-jumping",/.*/);
 }
 // Sequence 6: the audio scrubber decides from where the scrub ends. Desktop width: the player bar and the
-// Contents sidebar are always shown.
+// Contents sidebar are always shown. The map starts 40 s into the file: before that there is no narrated
+// sentence, so no narration to follow (`before`). After the last narrated sentence the file goes on without any:
+// a gap far from every interval, where the last sentence stays the narrated one (#502).
 async function scrubberSetup(page:Page,title:string){
- const {book,ebook,map,manifest}=await fixture(page,title);
+ const {book,ebook,map,manifest}=await fixture(page,title,{lead:40});
  const track=book.tracks[0];
  const intervals=map.intervals.filter((i:any)=>i.trackId===track.id);
  const lastEnd=Math.max(...intervals.map((i:any)=>i.end));
- // After the last narrated sentence the file goes on without any: a gap far from every interval.
  expect(track.duration-lastEnd).toBeGreaterThan(30);
  const gap=Math.round((lastEnd+track.duration)/2);
  expect(intervals.some((i:any)=>i.start<=gap&&i.end>gap)).toBe(false);
- return {book,ebook,map,manifest,gap};
+ const before=20;
+ expect(Math.min(...intervals.map((i:any)=>i.start))).toBeGreaterThan(before+5);
+ // The narrated sentence in the gap: the one with the latest start.
+ const last=[...intervals].sort((a:any,b:any)=>b.start-a.start)[0];
+ return {book,ebook,map,manifest,gap,before,last};
 }
 // Chooses chapter `chapter` (the first by default) in the Contents sidebar, and as soon as the reader's position is in it (its save
 // waiting out the pause) moves the audio scrubber to `second`: a click with the real mouse (pointer released),
@@ -318,9 +324,9 @@ async function contentsThenScrub(page:Page,second:number,via:"mouse"|"fill",chap
  return page.evaluate(()=>(window as any).__scrubAt-(window as any).__arrivedAt);
 }
 
-test("sequence 6: the audio scrubber from a narrated sentence into a gap keeps the chosen chapter saved",async({page},testInfo)=>{
+test("sequence 6: the audio scrubber from a narrated sentence to before the first sentence keeps the chosen chapter saved",async({page},testInfo)=>{
  const run=testInfo.repeatEachIndex;
- const {book,ebook,map,manifest,gap}=await scrubberSetup(page,`Scrub into a gap ${run}`);
+ const {book,ebook,map,manifest,before:gap}=await scrubberSetup(page,`Scrub before the first sentence ${run}`);
  const interval=map.intervals.find((i:any)=>i.section===1);
  await seedListening(page,ebook,book,manifest,interval.paragraphId);
  await page.setViewportSize({width:1440,height:900});
@@ -331,16 +337,16 @@ test("sequence 6: the audio scrubber from a narrated sentence into a gap keeps t
   await expect(room.locator(".reader-viewport .sonder-follow")).toHaveAttribute("data-epubcfi",/^epubcfi\(/);
   await expect(room.locator(".reader-viewport")).not.toHaveAttribute("data-jumping",/.*/);
   expect(await contentsThenScrub(page,gap,"mouse")).toBeLessThan(400);
-  // The narration is in the gap now: nothing replaces the chapter chosen by hand.
+  // The narration is before the map's first sentence now: nothing replaces the chapter chosen by hand.
   const slider=room.locator(".reader-audio-timeline input[type=range]");
   await expect.poll(async()=>Math.abs(Number(await slider.inputValue())-gap)).toBeLessThan(5);
   await expectSaved(page,ebook,{origin:"reading",section:0});
  });
 });
 
-test("sequence 6: the audio scrubber from a gap onto a narrated sentence keeps the listening place saved",async({page},testInfo)=>{
+test("sequence 6: the audio scrubber from before the first sentence onto a narrated sentence keeps the listening place saved",async({page},testInfo)=>{
  const run=testInfo.repeatEachIndex;
- const {book,ebook,map,manifest,gap}=await scrubberSetup(page,`Scrub out of a gap ${run}`);
+ const {book,ebook,map,manifest,before:gap}=await scrubberSetup(page,`Scrub onto the first sentences ${run}`);
  // A narrated sentence of chapter two that holds a whole second, the scrubber's step.
  const interval=map.intervals.find((i:any)=>i.section===1&&Math.floor(i.end)>Math.ceil(i.start));
  await seedListening(page,ebook,book,manifest,interval.paragraphId);
@@ -362,10 +368,60 @@ test("sequence 6: the audio scrubber from a gap onto a narrated sentence keeps t
  });
 });
 
+// The gap case (#502): in a gap the last sentence stays the narrated one, so there is a narration to follow and
+// back to narration works there: the chapter chosen by hand is dropped and the reader follows that sentence.
+test("sequence 6: the audio scrubber from a narrated sentence into a gap follows the last narrated sentence and keeps the listening place saved",async({page},testInfo)=>{
+ const run=testInfo.repeatEachIndex;
+ const {book,ebook,map,manifest,gap,last}=await scrubberSetup(page,`Scrub into a gap ${run}`);
+ const interval=map.intervals.find((i:any)=>i.section===1);
+ await seedListening(page,ebook,book,manifest,interval.paragraphId);
+ await page.setViewportSize({width:1440,height:900});
+ await withAppearance(page,{reader:{mode:"paginated"},playback:{progressScope:"book"}},async()=>{
+  await openFollowing(page,book,interval);
+  const room=page.locator(".inline-reader");
+  await expect(room.locator(".reader-viewport .sonder-follow")).toHaveAttribute("data-epubcfi",/^epubcfi\(/);
+  await expect(pagesOf(page)).not.toHaveAttribute("data-jumping",/.*/);
+  const before=await manualSaves(page);
+  expect(await contentsThenScrub(page,gap,"mouse")).toBeLessThan(400);
+  const slider=room.locator(".reader-audio-timeline input[type=range]");
+  await expect.poll(async()=>Math.abs(Number(await slider.inputValue())-gap)).toBeLessThan(5);
+  // Following again, on the last sentence that started before the gap; the chapter chosen by hand is not saved.
+  await expect(room).toHaveAttribute("data-current-passage",last.paragraphId);
+  await expectKept(page,ebook,before,{origin:"listening",paragraphId:interval.paragraphId});
+ });
+});
+
+// The gap case through the player-bar button: opened in a gap the reader follows the last narrated sentence; paged
+// away by a Contents choice, Back to narration is offered and returns to that sentence.
+test("gap case: Back to narration in a gap is offered and returns to the last narrated sentence",async({page},testInfo)=>{
+ const run=testInfo.repeatEachIndex;
+ const {book,ebook,manifest,gap,last}=await scrubberSetup(page,`Back in a gap ${run}`);
+ await seedListening(page,ebook,book,manifest,last.paragraphId);
+ await page.setViewportSize({width:1440,height:900});
+ await withAppearance(page,{reader:{mode:"paginated"}},async()=>{
+  await openAt(page,book,gap);
+  const room=page.locator(".inline-reader");
+  await timedWait("follow-highlight",()=>expect(room).toHaveAttribute("data-current-passage",last.paragraphId,{timeout:READER_WAIT_MS.followHighlight}),{testName:test.info().title});
+  await expect(room.locator(".reader-viewport .sonder-follow")).toHaveAttribute("data-epubcfi",/^epubcfi\(/);
+  await expect(pagesOf(page)).not.toHaveAttribute("data-jumping",/.*/);
+  const back=room.getByRole("button",{name:"Back to narration",exact:true});
+  await expect(back).toBeDisabled();
+  const sidebar=room.getByLabel("Contents sidebar");
+  await sidebar.getByRole("button").nth(0).click();
+  await expect(sidebar.getByRole("button").nth(0)).toHaveAttribute("aria-current","location");
+  await expect(room).not.toHaveAttribute("data-current-passage",/.+/);
+  await expect(back).toBeEnabled();
+  await back.click();
+  await expect(room).toHaveAttribute("data-current-passage",last.paragraphId);
+  await expect(sidebar.getByRole("button").nth(1)).toHaveAttribute("aria-current","location");
+ });
+});
+
 // Review round 1: the scrubber released on another file. The player loads that file first; back to narration is
 // decided once the player reports the place, not for the narrated sentence of the file left.
+// The map starts 40 s into the first file: before that there is no narrated sentence (`before`, on the first file).
 async function twoFileSetup(page:Page,title:string){
- const {book,ebook,map,manifest}=await fixture(page,title,{tracks:2});
+ const {book,ebook,map,manifest}=await fixture(page,title,{tracks:2,lead:40});
  expect(book.tracks).toHaveLength(2);
  const [first,second]=book.tracks;
  const onFirst=map.intervals.filter((i:any)=>i.trackId===first.id),onSecond=map.intervals.filter((i:any)=>i.trackId===second.id);
@@ -376,41 +432,45 @@ async function twoFileSetup(page:Page,title:string){
   expect(track.duration-lastEnd).toBeGreaterThan(30);
   return Math.round((lastEnd+track.duration)/2);
  };
- return {book,ebook,map,manifest,onFirst,onSecond,gapFirst:gapIn(first,onFirst),gapSecond:gapIn(second,onSecond),first};
+ const before=20;
+ expect(Math.min(...onFirst.map((i:any)=>i.start))).toBeGreaterThan(before+5);
+ return {book,ebook,map,manifest,onFirst,onSecond,gapFirst:gapIn(first,onFirst),gapSecond:gapIn(second,onSecond),first,before};
 }
 
-test("review: the audio scrubber released in a gap of another file keeps the chosen chapter saved",async({page},testInfo)=>{
+// From the second file back to the first, before its first sentence: there the narration has no sentence to follow.
+test("review: the audio scrubber released before the first sentence of another file keeps the chosen chapter saved",async({page},testInfo)=>{
  const run=testInfo.repeatEachIndex;
- const {book,ebook,manifest,onFirst,gapSecond,first}=await twoFileSetup(page,`Scrub into another file's gap ${run}`);
- const interval=onFirst[0];
+ const {book,ebook,manifest,onSecond,before}=await twoFileSetup(page,`Scrub before another file's first sentence ${run}`);
+ const interval=onSecond[0];
  await seedListening(page,ebook,book,manifest,interval.paragraphId);
  await page.setViewportSize({width:1440,height:900});
  await withAppearance(page,{reader:{mode:"paginated"},playback:{progressScope:"book"}},async()=>{
-  await openFollowing(page,book,interval);
+  await openFollowing(page,book,interval,1);
   const room=page.locator(".inline-reader");
   await expect(room.locator(".reader-viewport .sonder-follow")).toHaveAttribute("data-epubcfi",/^epubcfi\(/);
   await expect(pagesOf(page)).not.toHaveAttribute("data-jumping",/.*/);
-  // Chapter two by hand, then the scrubber released in the gap of the second file.
-  const target=Math.round(first.duration)+gapSecond;
-  expect(await contentsThenScrub(page,target,"mouse",1)).toBeLessThan(400);
-  // The player is in the second file's gap.
+  // Chapter one by hand, then the scrubber released before the first sentence of the first file.
+  const target=before;
+  expect(await contentsThenScrub(page,target,"mouse",0)).toBeLessThan(400);
+  // The player is on the first file, before the map's first sentence.
   const slider=room.locator(".reader-audio-timeline input[type=range]");
   await expect.poll(async()=>Math.abs(Number(await slider.inputValue())-target)).toBeLessThan(5);
   await expect(room).not.toHaveAttribute("data-current-passage",/.+/);
-  await expectSaved(page,ebook,{origin:"reading",section:1});
+  await expectSaved(page,ebook,{origin:"reading",section:0});
  });
 });
 
 test("review: the audio scrubber released on a narrated sentence of another file keeps the listening place saved",async({page},testInfo)=>{
  const run=testInfo.repeatEachIndex;
- const {book,ebook,manifest,onSecond,gapFirst}=await twoFileSetup(page,`Scrub onto another file's sentence ${run}`);
+ const {book,ebook,manifest,onSecond,before:unmapped}=await twoFileSetup(page,`Scrub onto another file's sentence ${run}`);
  // The longest narrated sentence of the second file, aimed at its middle.
  const interval=[...onSecond].sort((a:any,b:any)=>(b.end-b.start)-(a.end-a.start))[0];
  expect(interval.end-interval.start).toBeGreaterThan(1.5);
  await seedListening(page,ebook,book,manifest,interval.paragraphId);
  await page.setViewportSize({width:1440,height:900});
  await withAppearance(page,{reader:{mode:"paginated"},playback:{progressScope:"book"}},async()=>{
-  await openAt(page,book,gapFirst);
+  // Before the map's first sentence: no narrated sentence, so the reader shows the saved listening place.
+  await openAt(page,book,unmapped);
   const room=page.locator(".inline-reader");
   const sidebar=room.getByLabel("Contents sidebar");
   await expect(sidebar).toBeVisible();
