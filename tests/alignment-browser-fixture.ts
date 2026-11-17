@@ -55,6 +55,21 @@ export async function installAlignmentFixture() {
       failedOnce.add(token);
       return Response.json({ error: "Browser fixture: this alignment request fails once." }, { status: 500 });
     }
+    // The page-turn fixture's chapters (#509) are narrated at reading pace: each sentence takes time by its length.
+    const { PACED_MARKER, PACED_CHARACTERS_PER_SECOND } = await import("./page-turn-fixture.ts");
+    if ((body.fragments as string[]).some((text) => text.includes(PACED_MARKER))) {
+      let cursor = body.start;
+      return Response.json({
+        engine: CTC_ENGINE,
+        outcome: "mapped",
+        elapsedSeconds: 0.1,
+        intervals: (body.fragments as string[]).map((text, index) => {
+          const start = cursor;
+          cursor += Math.max(1, text.length / PACED_CHARACTERS_PER_SECOND);
+          return { index, start, end: cursor };
+        }),
+      });
+    }
     return Response.json({
       engine: CTC_ENGINE,
       outcome: "mapped",

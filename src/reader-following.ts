@@ -158,6 +158,8 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
   // A Read from audio jump is in flight; the follow step leaves the view to it.
   let explicit = false;
   let retry: { key: string; attempts: number; timer: unknown } = { key: "", attempts: 0, timer: null };
+  // Follow jumps started (each followTarget that answered true), so one a newer follow jump replaced is told apart.
+  let follows = 0;
   // The pending saves of places chosen by hand, all owned here so back to narration can drop
   // them together. The page debounce: a relocation the reader caused, saved after a pause.
   let pendingManual: L | null = null;
@@ -526,14 +528,23 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
         retry = { key, attempts: 0, timer: null };
       }
       followed = key;
+      follows++;
       return true;
     },
-    /** The follow jump to `key` ended; `shown` says whether the sentence is on screen. */
-    followShown(key: string, shown: boolean): FollowOutcome {
+    /** The follow jump that followTarget just started, to hand back to followShown. */
+    followRequest() { return follows; },
+    /**
+     * The follow jump to `key` ended; `shown` says whether the sentence is on screen. `request` (from
+     * followRequest) is the jump's own: one that a newer follow jump replaced while it was in flight (the
+     * fonts loaded, a resize, a new layout) is stale, not a failure, since the newer one reports (#509).
+     * Counted, each replaced jump started a retry that replaced the next, until the sentence failed.
+     */
+    followShown(key: string, shown: boolean, request?: number): FollowOutcome {
       if (shown) {
         retry.attempts = 0;
         return "shown";
       }
+      if (request !== undefined && request !== follows) return "stale";
       if (followed !== key) return "stale";
       followed = "";
       if (++retry.attempts <= FOLLOW_RETRIES) {
