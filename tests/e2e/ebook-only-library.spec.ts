@@ -46,7 +46,10 @@ async function read(request: APIRequestContext, book: { id: string; paragraphId:
 const card = (page: Page, title: string) => page.locator(".book-card").filter({ has: page.getByRole("button", { name: title, exact: true }) });
 
 async function filterBy(page: Page, name: string) {
-  await page.getByRole("tab", { name: new RegExp(`^${name}`) }).click();
+  const tab = page.getByRole("tab", { name: new RegExp(`^${name}`) });
+  await tab.click();
+  // The filter took the click: a card left on screen then means its state, not a click the page lost.
+  await expect(tab).toHaveAttribute("aria-selected", "true");
 }
 
 test("an ebook-only book read past its start is under Listening after a reload; one read to the end shows Finished", async ({ page }) => {

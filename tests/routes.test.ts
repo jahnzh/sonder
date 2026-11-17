@@ -149,12 +149,13 @@ test("what an address shows: built pages as they are, everything else the first 
   // The Get audiobook sheet (#601) is the administrator's; someone else gets the Book page at its address.
   assert.equal(shows("#book/w1/get/audiobook"), "#book/w1/get/audiobook");
   assert.equal(shows("#book/w1/get/audiobook", false), "#book/w1");
-  // The Series page (#562) is built, for everyone; its Add sheet is not.
+  // The Series page (#562) is built, for everyone; so is its Add sheet (#563).
   assert.equal(shows("#series/701"), "#series/701");
   assert.equal(shows("#series/701", false), "#series/701");
+  assert.equal(shows("#series/s1/add"), "#series/s1/add");
+  assert.equal(shows("#series/s1/add", false), "#series/s1/add");
   // Not built yet: behaves like an address that names nothing.
   assert.equal(shows("#book/w1/get/ebook"), "#library");
-  assert.equal(shows("#series/s1/add"), "#library");
   assert.equal(shows("#listen/w1"), "#library");
   assert.equal(shows("#read/w1"), "#library");
   assert.equal(shows("#activity/device"), "#activity/device");

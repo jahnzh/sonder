@@ -26,9 +26,16 @@ export type DeviceSaveRecord = {
   startedAt: number;
   /**
    * `saving` while an attempt runs (a record left at `saving` with nothing running was interrupted), `paused` when the
-   * user paused it, `failed` when the attempt ended in an error, `finished` when every file was saved.
+   * user paused it, `failed` when the attempt ended in an error, `finished` when every file was saved, `interrupted`
+   * when a network failure or a closed or frozen tab stopped it (#550: it resumes by itself at the next run).
    */
-  state: "saving" | "paused" | "failed" | "finished";
+  state: "saving" | "paused" | "failed" | "finished" | "interrupted";
+  /** How an interrupted save stopped (#550). */
+  how?: "network" | "closed" | null;
+  /**
+   * Where a running save is, written by the tab that saves so the account's other tabs show the same line (#550).
+   */
+  job?: { progress: number; chapter: number; total: number; loaded: number; size: number } | null;
   /** Why the last attempt failed. */
   reason?: string | null;
   /** When the save finished. */
@@ -40,7 +47,8 @@ export function readDeviceSaveRecord(value: unknown): DeviceSaveRecord | null {
   if (!value || typeof value !== "object") return null;
   const row = value as Record<string, unknown>;
   if (typeof row.recordingId !== "string" || typeof row.workId !== "string") return null;
-  if (!["saving", "paused", "failed", "finished"].includes(row.state as string)) return null;
+  if (!["saving", "paused", "failed", "finished", "interrupted"].includes(row.state as string)) return null;
+  const job = row.job as Record<string, unknown> | null | undefined;
   return {
     recordingId: row.recordingId,
     workId: row.workId,
@@ -48,6 +56,19 @@ export function readDeviceSaveRecord(value: unknown): DeviceSaveRecord | null {
     state: row.state as DeviceSaveRecord["state"],
     reason: typeof row.reason === "string" ? row.reason : null,
     finishedAt: typeof row.finishedAt === "number" ? row.finishedAt : null,
+    // Only on the records that have them, so an older record reads back as it was stored.
+    ...(row.how === "network" || row.how === "closed" ? { how: row.how } : {}),
+    ...(job && typeof job === "object" && typeof job.chapter === "number" && typeof job.total === "number"
+      ? {
+          job: {
+            progress: typeof job.progress === "number" ? job.progress : 0,
+            chapter: job.chapter,
+            total: job.total,
+            loaded: typeof job.loaded === "number" ? job.loaded : 0,
+            size: typeof job.size === "number" ? job.size : 0,
+          },
+        }
+      : {}),
   };
 }
 

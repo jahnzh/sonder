@@ -2,6 +2,7 @@ import Dexie, { type Table } from "dexie";
 import { dropPosition, peekPosition, recentPositions, recordPosition, serialQueue, type PositionEntry, type PositionHistory } from "./position-history";
 import type { Book, LibraryWork, Progress, Download, DownloadPart, Track } from "./types";
 import { DEVICE_SAVE_KEY_PREFIX, deviceSaveKey, readDeviceSaveRecord, type DeviceSaveRecord } from "./device-saves";
+import type { KeepEntry } from "./keep";
 import { isKeptReaderFile, type ReaderFileRecord } from "./ebook-keep";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -100,6 +101,8 @@ export class SonderDB extends Dexie {
   works!: Table<LibraryWork, string>;
   progress!: Table<Progress & { pending?: boolean }, string>;
   positionHistory!: Table<PositionHistory, string>;
+  /** Keep on this device, this account's choices on this device (#550, ADR 0021): one record per work. */
+  keep!: Table<KeepEntry, string>;
   downloads!: Table<Download, string>;
   preferences!: Table<{ key: string; value: unknown }, string>;
   downloadParts!: Table<DownloadPart, string>;
@@ -122,6 +125,8 @@ export class SonderDB extends Dexie {
     this.version(3).stores({});
     this.version(4).stores({ positionHistory: "recordingId" });
     this.version(5).stores({ works: "workId" });
+    // Additive: a new table, nothing of the earlier ones changes (places, downloads, favourites, history stay).
+    this.version(6).stores({ keep: "workId" });
   }
 }
 const sharedDB = new SonderDB();
@@ -226,7 +231,7 @@ export async function removeOfflineEbook(editionId: string) {
 
 export const localDB = new Proxy(sharedDB, {
   get(target, prop) {
-    const db = ["books", "works", "progress", "positionHistory", "preferences"].includes(String(prop)) ? personalDB : target;
+    const db = ["books", "works", "progress", "positionHistory", "preferences", "keep"].includes(String(prop)) ? personalDB : target;
     if (prop === "preferences" && personalDB !== sharedDB) {
       const table = personalDB.preferences;
       return new Proxy(table, { get(obj, key) {
@@ -419,19 +424,28 @@ export async function listDeviceSaveRecords(): Promise<DeviceSaveRecord[]> {
 export async function writeDeviceSaveRecord(
   recordingId: string,
   workId: string,
-  change: { state: "saving" } | { state: "paused" } | { state: "failed"; reason: string } | { state: "finished" },
+  change:
+    | { state: "saving"; job?: DeviceSaveRecord["job"] }
+    | { state: "paused" }
+    | { state: "failed"; reason: string }
+    | { state: "finished" }
+    | { state: "interrupted"; how: "network" | "closed" },
   now = Date.now(),
 ) {
   const key = deviceSaveKey(recordingId);
   await sharedDB.transaction("rw", sharedDB.preferences, async () => {
     const previous = readDeviceSaveRecord((await sharedDB.preferences.get(key))?.value);
+    // A progress note of a running save keeps when it started.
+    const progressNote = change.state === "saving" && change.job != null && previous?.state === "saving";
     const record: DeviceSaveRecord = {
       recordingId,
       workId,
-      startedAt: change.state === "saving" || !previous ? now : previous.startedAt,
+      startedAt: (change.state === "saving" && !progressNote) || !previous ? now : previous.startedAt,
       state: change.state,
       reason: change.state === "failed" ? change.reason : null,
       finishedAt: change.state === "finished" ? now : null,
+      ...(change.state === "interrupted" ? { how: change.how } : {}),
+      ...(change.state === "saving" && change.job ? { job: change.job } : {}),
     };
     await sharedDB.preferences.put({ key, value: record });
   });
