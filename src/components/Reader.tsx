@@ -31,7 +31,7 @@ import { useAppearance } from "./Appearance";
 import { fontFamilies, paletteFor } from "../appearance";
 import { ReadingSync } from "./ReadingSync";
 import { PlaybackSource } from "./PlaybackSource";
-import { PlaybackOptions } from "./PlaybackOptions";
+import { FootSettingButtons, FootSettingRow, useFootSetting } from "./ReaderFootSetting";
 import { PlaybackTimeline } from "./PlaybackTimeline";
 import {PlaybackExtra,usePlaybackMenu} from "./PlaybackMenu";
 import { readerNeedsScripts } from "../reader-sandbox";
@@ -1485,6 +1485,7 @@ export function ReaderView({
     pending.back.run();
   }, [p.book?.recordingId, p.track?.id, p.position, p.error, scrubEnded]);
   const controls = controlsVisible || desktop;
+  const [footSetting, setFootSetting] = useFootSetting(controls);
   // The foot at rest (#587): the progress line by Settings › Playback "Progress bar shows", and where the
   // narration is in its chapter, or with no narration of this book in the player, where the page is in the book.
   const audioScoped = audio ? playbackTimeline(audio.book, audio.track.id, p.position, p.length, scope) : null;
@@ -1635,7 +1636,7 @@ export function ReaderView({
       </div>
       {/* The foot (#587): its box stays whether the controls show or not. At rest the progress line, where the
           narration is and a small Play or Pause; with the controls shown the timeline and the transport row. */}
-      <section className="reader-player" aria-label="Player" data-controls={controls}>
+      <section className="reader-player" aria-label="Player" data-controls={controls} data-setting={footSetting ?? undefined}>
         <div className="reader-foot-rest">
           <span className="reader-foot-line" aria-hidden="true"><i style={{ width: `${restProgress * 100}%` }} /></span>
           <div className="reader-foot-row">
@@ -1694,9 +1695,9 @@ export function ReaderView({
           <button className="icon-button" aria-label="Forward 30 seconds" disabled={!p.book} onClick={()=>p.skip(30)}><RotateCw size={26}/><span>30</span></button>
         </div>
         <div className="reader-player-extras">
-          <PlaybackOptions kind="sleep" />
-          <PlaybackOptions kind="speed" />
+          <FootSettingButtons open={footSetting} onOpen={setFootSetting} />
         </div>
+        {footSetting && <FootSettingRow setting={footSetting} onDone={() => setFootSetting(null)} />}
         </div>
       </section>
       {conflict && (

@@ -219,12 +219,12 @@ test("at 3× the follow highlight stays within one sentence of the audio and the
     await page.addScriptTag({ url: "/__epub-test.js" });
     // Speed is in the reader's foot row, which shows with the controls (#587).
     await showControls(page, reader);
-    const speed = page.getByRole("dialog", { name: "Now playing", exact: true }).getByRole("button", { name: /^Playback speed/ }).last();
+    // Speed takes the foot's transport row with its stepper and Done (#589); End is 3×.
+    const speed = reader.locator(".reader-player").getByRole("button", { name: /^Speed [\d.]+ times$/ });
     await speed.click();
-    await page.getByRole("slider", { name: "Playback speed", exact: true }).fill("3");
+    await reader.getByRole("spinbutton", { name: "Playback speed", exact: true }).press("End");
+    await reader.getByRole("button", { name: "Done", exact: true }).click();
     await expect(speed).toHaveText("3×");
-    // The open menu covers the middle of its backdrop here, so tap the backdrop's corner.
-    await page.getByRole("button", { name: "Close options", exact: true }).click({ position: { x: 4, y: 4 } });
     await page.getByRole("button", { name: "Play narration", exact: true }).click();
     await expect.poll(() => audioRate(page)).toBe(3);
     // Samples the audio position, the passage the reader follows and the text the highlight covers, all
