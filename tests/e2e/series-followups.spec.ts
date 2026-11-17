@@ -1,39 +1,12 @@
 import { test, expect } from "@playwright/test";
-import { readerFixture } from "../reader-fixture.ts";
 
 /**
- * Today's series dialog in its saved mode, for what only it shows (per-book statuses and choices): a saved series
- * opens its Series page (#562), whose Add opens the dialog. Future Crossing is not released, so no spec adds it.
+ * A saved series opens its Series page (#562), and its Add opens the Add sheet (#563): the series dialog's saved mode,
+ * with its per-book statuses and choices, is no longer reached. What only it showed is gone by design (spec #560):
+ * the ebook's "on device" per book (the Book page's This device says it) and the Completion select (the Book page's
+ * Mark as finished); a completion set on the book is kept, and the series counts it.
  */
-async function openSavedSeriesDialog(page: import("@playwright/test").Page) {
-  await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
-  await expect(page).toHaveURL(/#series\/701$/);
-  await page.getByRole("button", { name: "Add Future Crossing", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "The Crossing" })).toBeVisible();
-}
-
-async function putReaderFilePreference(page: import("@playwright/test").Page, editionId: string) {
-  await page.evaluate(async (id) => {
-    await new Promise<void>((resolve, reject) => {
-      const open = indexedDB.open("sonder");
-      open.onerror = () => reject(open.error);
-      open.onsuccess = () => {
-        const tx = open.result.transaction("preferences", "readwrite");
-        tx.objectStore("preferences").put({
-          key: `reader-file:${id}`,
-          value: { fingerprint: "browser-fixture", blob: new Blob(["epub"]) },
-        });
-        tx.oncomplete = () => {
-          open.result.close();
-          resolve();
-        };
-        tx.onerror = () => reject(tx.error);
-      };
-    });
-  }, editionId);
-}
-
-test("saved series shows completion control, provenance and ebook device state", async ({ page }) => {
+test("a saved series keeps the provenance of a synced book and counts its completion", async ({ page }) => {
   await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
   const initialBooks = await (await page.request.get("/api/books")).json();
   const seededAlice = initialBooks.find(
@@ -58,38 +31,28 @@ test("saved series shows completion control, provenance and ebook device state",
   const aliceWork = seriesBefore.works.find((work: { id: number }) => work.id === 501);
   expect(aliceWork?.removalDefaultSelected).toBe(false);
 
-  const imported = await page.request.post(`/api/ebooks/import?workId=${alice.workId}`, {
-    multipart: {
-      file: {
-        name: "Alice.epub",
-        mimeType: "application/epub+zip",
-        buffer: await readerFixture(),
-      },
-    },
-  });
-  expect(imported.ok()).toBe(true);
-  const editionId = (await imported.json()).id as string;
-
   await page.goto("/#library");
-  await expect(page.getByRole("button", { name: "Open The Crossing by Ada North" })).toBeVisible();
-  await openSavedSeriesDialog(page);
-  await expect(page.getByText(/Ebook:.*· not on device/).first()).toBeVisible();
-
-  await putReaderFilePreference(page, editionId);
-  await page.reload();
-  await page.goto("/#library");
-  await openSavedSeriesDialog(page);
-
-  await expect(page.getByLabel("Completion for Alice’s Adventures in Wonderland")).toBeVisible();
+  await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
+  await expect(page).toHaveURL(/#series\/701$/);
+  const intro = page.getByRole("region", { name: "Series", exact: true }).getByText(/^Ada North · \d+ of \d+ finished$/);
+  await expect(intro).toBeVisible();
   const seriesView = await (await page.request.get("/api/series/701")).json();
   const aliceRow = seriesView.works.find((work: { id: number }) => work.id === 501);
   expect(aliceRow?.libraryOrigin?.source).toBe("hardcover_sync");
   expect(aliceRow?.removalDefaultSelected).toBe(false);
-  await expect(page.getByText(/Ebook:.*· on device/).first()).toBeVisible();
-  await page.getByLabel("Completion for Alice’s Adventures in Wonderland").selectOption("unread");
+
+  // Finished on the book: kept, and the series counts it; then unread again.
+  const complete = (status: string) =>
+    page.request.patch(`/api/works/${encodeURIComponent(alice.workId)}/completion`, { data: { status } });
+  expect((await complete("finished")).ok()).toBe(true);
+  await page.reload();
+  await expect(intro).toHaveText(/^Ada North · 1 of \d+ finished$/);
+  expect((await complete("unread")).ok()).toBe(true);
   await expect.poll(async () => {
     const work = (await (await page.request.get("/api/series/701")).json()).works
       .find((entry: { id: number }) => entry.id === 501);
     return work?.completionOverride;
   }).toBe("unread");
+  await page.reload();
+  await expect(intro).toHaveText(/^Ada North · 0 of \d+ finished$/);
 });

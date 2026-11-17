@@ -752,7 +752,12 @@ function refreshedSeriesWithDefaults(userId: number, id: number, payload: Series
   const addedPositions = new Set(saved.works.filter((work) => work.added && work.position !== null).map((work) => work.position));
   const newIds = new Set(saved.works.filter((work) => work.new && !work.added && !addedPositions.has(work.position)).map((work) => work.id));
   const defaults = selectSeriesDefaults(preview.works.filter((work) => newIds.has(work.id)), language);
-  return { ...saved, works: saved.works.map((work) => ({ ...work, selected: defaults.has(work.id) })) };
+  // What the Add sheet ranks the books at one number by (#563): Hardcover's languages, popularity and release, from the
+  // same answer; a work Hardcover no longer lists has none.
+  const ranking = new Map(preview.works.map((work) => [work.id, {
+    language: work.language, editionLanguages: work.editionLanguages, popularity: work.popularity, releaseDate: work.releaseDate,
+  }]));
+  return { ...saved, works: saved.works.map((work) => ({ ...work, ...ranking.get(work.id), selected: defaults.has(work.id) })) };
 }
 /** Refresh the shared catalogue for a saved series by Hardcover ID without adding works. */
 export async function refreshSavedHardcoverSeries(userId: number, id: number, options?: { force?: boolean; language?: string }) {
