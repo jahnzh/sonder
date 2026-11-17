@@ -2,6 +2,7 @@ import { test, expect, type Page, type Route } from "./device-store";
 import { readFileSync } from "node:fs";
 import { parseRange } from "../../server/range";
 import { TIPS } from "../../src/tooltip-texts";
+import { noOverflow } from "./overflow";
 
 // Activity's This device (#518, spec #513 "This device"; boards ActivityDevice.dc.html, ActivityDeviceEmpty.dc.html,
 // ActivityDeviceOffline.dc.html, ActivityDeviceMember.dc.html, DesktopActivityDevice.dc.html): Storage, Saving now
@@ -126,21 +127,6 @@ function filesOf(page: Page, recordingId: string) {
       }),
     recordingId,
   );
-}
-
-async function noOverflow(page: Page) {
-  const overflow = await page.evaluate(() => {
-    const width = window.innerWidth;
-    return [...document.querySelectorAll("body *")]
-      .filter((element) => {
-        const box = element.getBoundingClientRect();
-        return box.width > 0 && box.right > width + 1 && getComputedStyle(element).position !== "fixed";
-      })
-      .slice(0, 6)
-      .map((element) => `${element.tagName.toLowerCase()}.${String(element.className).slice(0, 40)}`);
-  });
-  expect(overflow, "elements wider than the viewport").toEqual([]);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
 
 const heightOf = async (locator: ReturnType<Page["locator"]>) => Math.round((await locator.boundingBox())!.height);
