@@ -68,15 +68,16 @@ test("discover and save chosen works from the intended series, then reopen it", 
   expect(library.some((book: { title: string }) => book.title === "Crossing Two")).toBe(false);
   expect(library.some((book: { title: string }) => book.title === "Crossing Companion")).toBe(true);
   expect(library.some((book: { title: string }) => book.title === "Crossing Three")).toBe(false);
-  // Add opens today's dialog in its saved mode with the book chosen (until the Add sheet).
+  // Add opens the Add sheet (#563) with the book chosen; adding closes it to the page.
   await bookRow("Crossing Three").getByRole("button", { name: "Add Crossing Three", exact: true }).click();
-  await expect(page.getByRole("dialog").getByRole("checkbox", { name: /Crossing Three/ })).toBeChecked();
-  await page.getByRole("button", { name: "Add selected works" }).click();
-  await expect(page.getByRole("dialog").getByText("Series saved.")).toBeVisible();
+  const sheet = page.getByRole("dialog", { name: "Add to library" });
+  await expect(sheet.getByRole("checkbox", { name: "Crossing Three Book 4", exact: true })).toBeChecked();
+  await sheet.getByRole("button", { name: "Add 1 book", exact: true }).click();
+  await expect(sheet).toHaveCount(0);
+  await expect(page).toHaveURL(/#series\/701$/);
   const afterAdd = (await (await page.request.get("/api/books")).json()).filter((book: { inLibrary: boolean }) => book.inLibrary);
   expect(afterAdd.filter((book: { title: string }) => book.title === "Crossing Three")).toHaveLength(1);
   expect(afterAdd.filter((book: { title: string }) => book.title === "Alice’s Adventures in Wonderland")).toHaveLength(1);
-  await page.getByRole("button", { name: "Close series" }).click();
   // The page reads the series and the library again: Crossing Three is a book of the library, a link with no Add.
   await expect(bookRow("Crossing Three").getByRole("button", { name: /^\d+ Crossing Three / })).toBeVisible();
   await expect(bookRow("Crossing Three").getByRole("button", { name: "Add Crossing Three", exact: true })).toHaveCount(0);

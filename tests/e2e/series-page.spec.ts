@@ -153,12 +153,14 @@ test("the saved series opens from the Library; its rows; a book opens its Book p
   for (const button of await shown.getByRole("button").all()) await expect(button).toHaveAccessibleName(/\S/);
   for (const mark of await shown.locator(".part-book-row-mark svg").all()) await expect(mark).toHaveAccessibleName(/^(Audiobook|Ebook|Reading sync)$/);
 
-  // Add opens today's series dialog in its saved mode, with the book chosen (until the Add sheet).
+  // Add opens the Add sheet (#563) with the book chosen; Escape closes it to the page.
   await future.getByRole("button", { name: "Add Future Crossing", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "The Crossing" });
-  await expect(dialog.getByRole("checkbox", { name: /Future Crossing/ })).toBeChecked();
+  await expect(page).toHaveURL(/#series\/701\/add$/);
+  const sheet = page.getByRole("dialog", { name: "Add to library" });
+  await expect(sheet.getByRole("checkbox", { name: "Future Crossing Book 3", exact: true })).toBeChecked();
+  // With a book in the dock (Now playing's dialog stays mounted while closed) too.
   await page.keyboard.press("Escape");
-  await expect(dialog).toHaveCount(0);
+  await expect(sheet).toHaveCount(0);
   await expect(page).toHaveURL(/#series\/701$/);
 
   // A library book opens its Book page; Back returns to the series where it was scrolled.

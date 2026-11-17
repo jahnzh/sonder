@@ -59,3 +59,7 @@
   flex: none;
   color: var(--accent);
 }
+/* Several chosen (ChoiceList): a row under the line stretches to the card, its 64 and its padding inside it. */
+.part-choice-list > .part-choice-row + .part-choice-row {
+  width: auto;
+}

@@ -107,6 +107,8 @@ const desktopProjects = [
               /(^|\/)book-page-states\.spec\.ts$/,
               // The Series page of a saved series (#562).
               /(^|\/)series-page\.spec\.ts$/,
+              // The Add sheet of a saved series (#563).
+              /(^|\/)series-add\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },

@@ -101,7 +101,7 @@ export type ChoiceListProps = {
 export function ChoiceList({ label, options, onToggle }: ChoiceListProps) {
   const id = useId();
   return (
-    <div className="part-choice-group" role="group" aria-label={label}>
+    <div className="part-choice-group part-choice-list" role="group" aria-label={label}>
       {options.map((option, index) => (
         <button
           key={option.value}
