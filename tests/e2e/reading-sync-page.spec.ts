@@ -372,3 +372,29 @@ test("measured against the boards at 390 by 844 and on a desktop: one centred co
   await measure(page, "preparing, desktop");
   await page.screenshot({ path: `${OUT}/reading-sync-preparing-desktop.png` });
 });
+
+test("Now: a reading sync that is running or stopped opens its Reading sync page; a finished one opens the book", async ({ page }) => {
+  const book = await importBook(page, unique("Now's sync"));
+  await routeListing(page, book, () => STATES(book).preparing);
+  const sync = (id: string, status: string, state: string, extra: Record<string, unknown> = {}) => ({
+    id: `alignment:${id}`, kind: "alignment", processId: "alignment", title: book.title, detail: null, user: null, state, progress: null, host: null,
+    startedAt: Date.now() - 3_600_000, updatedAt: Date.now() - 60_000, error: null, permanent: false, actions: [], stuck: null, blockedBy: null,
+    workId: book.workId, bookId: null, cover: null, attention: false,
+    facts: { kind: "alignment", status, outcome: null, coverage: null, wholeBook: true, stage: "encoding", files: { done: 24, total: 43 } },
+    ...extra,
+  });
+  let items = [sync("running", "processing", "running")];
+  await page.route("**/api/activity", (route) =>
+    route.fulfill({ json: { checkedAt: Date.now(), stuckMultiplier: 1, processes: [], items, attention: 0 } }),
+  );
+  await page.goto("/#activity");
+  await page.getByRole("button", { name: new RegExp(`^${escape(book.title)}.*Encoding audio`) }).click();
+  await expect(page).toHaveURL(new RegExp(`#book/${escape(encodeURIComponent(book.workId))}/sync$`));
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(["Reading sync"]);
+  await page.getByRole("button", { name: "Back to Activity", exact: true }).click();
+  await expect(page).toHaveURL(/#activity$/);
+  items = [sync("done", "ready", "done", { updatedAt: Date.now() - 120_000, facts: { kind: "alignment", status: "ready", outcome: "mapped", coverage: 1, wholeBook: true, stage: null, files: null } })];
+  await page.reload();
+  await page.getByRole("button", { name: new RegExp(`^${escape(book.title)}.*Reading sync ready`) }).click();
+  await expect(page).toHaveURL(new RegExp(`#book/${escape(encodeURIComponent(book.workId))}$`));
+});
