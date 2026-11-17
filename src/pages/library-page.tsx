@@ -57,6 +57,7 @@ export function LibraryPage({
   favorites,
   toggleFavorite,
   downloaded,
+  readingPercentOf,
   findAudio,
   mutateLibrary,
   refresh,
@@ -87,6 +88,8 @@ export function LibraryPage({
   favorites: string[];
   toggleFavorite: (id: string) => void;
   downloaded: (b: Book) => boolean;
+  /** The ebook's place in percent for a book without audio (#556), null otherwise. */
+  readingPercentOf: (b: Book) => number | null;
   findAudio: (b: Book) => void;
   mutateLibrary: (b: Book, action: LibraryAction) => Promise<void>;
   refresh: () => Promise<void>;
@@ -228,6 +231,7 @@ export function LibraryPage({
                 favorite={favorites.includes(b.id)}
                 onFavorite={() => toggleFavorite(b.id)}
                 downloaded={downloaded(b)}
+                readingPercent={readingPercentOf(b)}
                 onAction={(action) => void mutateLibrary(b, action)}
               />
             ))}
@@ -334,10 +338,12 @@ function BookCard({
   favorite,
   onFavorite,
   downloaded,
+  readingPercent,
   onAction,
   onFindAudio,
 }: {
   onFindAudio: () => void;
+  readingPercent: number | null;
   book: Book;
   onDetail: () => void;
   favorite: boolean;
@@ -347,7 +353,7 @@ function BookCard({
 }) {
   const p = usePlayer();
   const [menu, setMenu] = useState(false);
-  const progress = percent(b);
+  const progress = readingPercent ?? percent(b);
   const active = p.book?.id === b.id;
   return (
     <article className="book-card">

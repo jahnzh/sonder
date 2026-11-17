@@ -27,12 +27,18 @@ export type BookRowProps = {
    * button that opens the book, without its chevron.
    */
   action?: ReactNode;
+  /** The status line is in the failed colour (Activity's Now: "Download failed"). */
+  failed?: boolean;
+  /** A short muted text on the right edge in place of the chevron ("2 h ago" in Now's Finished today). */
+  trailing?: string | null;
+  /** A 20 px icon in the cover's slot, for a row that is not a book (Now's server rows); drawn when there is no cover. */
+  coverIcon?: ReactNode;
 };
 
-export function BookRow({ title, status, cover, number, marks = [], progress, onClick, action }: BookRowProps) {
+export function BookRow({ title, status, cover, number, marks = [], progress, onClick, action, failed, trailing, coverIcon }: BookRowProps) {
   const id = useId();
   const numbered = number != null && number !== "";
-  const names = [numbered && `${id}-number`, `${id}-title`, ...marks.map((_, index) => `${id}-mark-${index}`), `${id}-status`].filter(Boolean).join(" ");
+  const names = [numbered && `${id}-number`, `${id}-title`, ...marks.map((_, index) => `${id}-mark-${index}`), `${id}-status`, trailing && !action && `${id}-trailing`].filter(Boolean).join(" ");
   const body = (
     <>
       {numbered && (
@@ -40,8 +46,8 @@ export function BookRow({ title, status, cover, number, marks = [], progress, on
           {number}
         </span>
       )}
-      <span className="part-book-row-cover" aria-hidden="true">
-        {cover && <img src={cover} alt="" loading="lazy" decoding="async" />}
+      <span className="part-book-row-cover" aria-hidden="true" data-icon={!cover && coverIcon ? "" : undefined}>
+        {cover ? <img src={cover} alt="" loading="lazy" decoding="async" /> : coverIcon}
       </span>
       <span className="part-book-row-text">
         <span id={`${id}-title`} className="part-book-row-title type-body">
@@ -59,9 +65,18 @@ export function BookRow({ title, status, cover, number, marks = [], progress, on
         </span>
         {progress != null && <ProgressBar progress={progress} />}
       </span>
+      {trailing && !action && (
+        <span id={`${id}-trailing`} className="part-book-row-trailing">
+          {trailing}
+        </span>
+      )}
     </>
   );
-  const data = { "data-numbered": numbered ? "" : undefined, "data-moving": progress != null ? "" : undefined };
+  const data = {
+    "data-numbered": numbered ? "" : undefined,
+    "data-moving": progress != null ? "" : undefined,
+    "data-failed": failed ? "" : undefined,
+  };
   if (action) {
     return (
       <li className="part-book-row-item" data-action="" aria-labelledby={onClick ? undefined : names}>
@@ -83,9 +98,11 @@ export function BookRow({ title, status, cover, number, marks = [], progress, on
       <li className="part-book-row-item">
         <button type="button" className="part-book-row" {...data} aria-labelledby={names} onClick={onClick}>
           {body}
-          <span className="part-book-row-end">
-            <Chevron />
-          </span>
+          {!trailing && (
+            <span className="part-book-row-end">
+              <Chevron />
+            </span>
+          )}
         </button>
       </li>
     );

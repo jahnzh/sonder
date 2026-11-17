@@ -261,7 +261,8 @@ test("a down process and a Hardcover failure are rows that are not books, under 
   assert.deepEqual(row(now, "torrent").opens, { to: "server" });
   assert.deepEqual(row(now, "alignment-host:lisa").opens, { to: "worker", hostId: "lisa" });
   assert.equal(row(now, "hardcover:status:1").title, "Status changes");
-  assert.equal(row(now, "hardcover:status:1").line, "This change cannot succeed");
+  // A Hardcover queue is one user's: the line names whose it is (#522).
+  assert.equal(row(now, "hardcover:status:1").line, "This change cannot succeed · admin");
   assert.deepEqual(row(now, "hardcover:status:1").opens, { to: "server" });
   assert.deepEqual(row(now, "hardcover:status:1").button, { action: "discard", source: "server", itemId: "hardcover:status:1" });
   assert.equal(now.dot, true);
@@ -418,4 +419,28 @@ test("a save's row takes the server's title and cover when the device does not k
   assert.equal(row(now, "work:w-fail").entry, "device-save");
   assert.equal(row(now, "work:w-fail").title, "Feral Gods");
   assert.equal(row(now, "work:w-fail").cover, "/feral");
+});
+
+test("a Hardcover failure with no user says only its reason; a backup's failure has none either (#522)", () => {
+  const hardcover = item("hardcover:reading:3", {
+    title: "Reading changes", state: "failed", attention: true, user: null, actions: ["retry"],
+    error: "socket hang up", facts: { kind: "hardcover", status: "failing", queue: "reading" },
+  });
+  const backup = item("backup:1", {
+    title: "Daily database backup", state: "failed", attention: true, user: null, error: "Disk full", facts: { kind: "backup", status: "failed" },
+  });
+  const now = build({ activity: answer([hardcover, backup]) });
+  assert.equal(row(now, "hardcover:reading:3").line, "socket hang up");
+  assert.equal(row(now, "backup:1").line, "Disk full");
+});
+
+test("a series search's line has the icon of the file it looks for (#522)", () => {
+  const search = (id: string, workId: string, kind: "audiobook" | "ebook", state: ActivityItem["state"]) =>
+    item(id, { workId, bookId: `b-${workId}`, title: `Book ${workId}`, state, updatedAt: NOW - HOUR, facts: { kind: "series-acquisition", status: state === "done" ? "done" : "searching", search: kind } });
+  const now = build({ activity: answer([search("s1", "w1", "ebook", "done"), search("s2", "w2", "audiobook", "running"), search("s3", "w3", "ebook", "running")]) });
+  assert.equal(row(now, "work:w1").line, "Ebook on server");
+  assert.equal(row(now, "work:w1").icon, "ebook");
+  assert.equal(row(now, "work:w2").line, "Searching for the audiobook");
+  assert.equal(row(now, "work:w2").icon, "audiobook");
+  assert.equal(row(now, "work:w3").icon, "ebook");
 });

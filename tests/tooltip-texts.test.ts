@@ -44,3 +44,13 @@ test("the server imports nothing from the tooltip module", () => {
     assert.doesNotMatch(readFileSync(join(root, "server", name), "utf8"), /tooltip-texts/, name);
   }
 });
+
+test("the Hardcover page's three tooltips are in the module, and it holds as many texts as the design's list (#529)", async () => {
+  // @ts-expect-error the design's tools are plain JavaScript without declarations
+  const { tipGroups } = (await import("../docs/design/redesign/tools/tips.mjs")) as { tipGroups: [string, [string, string][]][] };
+  const hardcover = tipGroups.find(([screen]) => screen === "Hardcover");
+  assert.ok(hardcover, "the design lists the Hardcover page");
+  assert.deepEqual(hardcover[1].map(([name]) => name), ["Use Hardcover position", "Hardcover edition", "Match on Hardcover"]);
+  assert.deepEqual(hardcover[1].map(([, text]) => text), [tip("hardcoverPosition"), tip("hardcoverEdition"), tip("hardcoverMatch")]);
+  assert.equal(Object.keys(TIPS).length, Object.keys(design).length);
+});

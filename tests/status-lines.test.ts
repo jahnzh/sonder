@@ -228,3 +228,20 @@ test("Now's lines: a series search, and the finished and failed forms with their
   assert.equal(withReason("Downloading to server · 77%", "Blocked by Torrent client"), "Downloading to server · 77% · Blocked by Torrent client");
   assert.equal(withReason("Copying audio", null), "Copying audio");
 });
+
+test("Now's own forms: whose a Hardcover line is, and how long ago a finished entry finished (#522)", async () => {
+  const { withUser, finishedAgo } = await import("../src/status-lines.ts");
+  assert.equal(withUser("We weren't able to find that book", "admin"), "We weren't able to find that book · admin");
+  assert.equal(withUser("socket hang up", null), "socket hang up");
+  assert.equal(withUser("", "reader"), "reader");
+  const at = 1_000_000_000;
+  assert.equal(finishedAgo(at, at + 20_000), "Just now");
+  assert.equal(finishedAgo(at, at + 5 * 60_000), "5 min ago");
+  assert.equal(finishedAgo(at, at + 59 * 60_000), "59 min ago");
+  assert.equal(finishedAgo(at, at + 60 * 60_000), "1 h ago");
+  assert.equal(finishedAgo(at, at + 89 * 60_000), "1 h ago");
+  assert.equal(finishedAgo(at, at + 2 * 3_600_000 + 10 * 60_000), "2 h ago");
+  assert.equal(finishedAgo(at, at + 23 * 3_600_000 + 59 * 60_000), "23 h ago");
+  // A clock a little behind the server's never reads as the future.
+  assert.equal(finishedAgo(at, at - 30_000), "Just now");
+});
