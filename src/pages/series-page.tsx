@@ -1,7 +1,8 @@
 // The Series page (#562, spec #560 "The Series page"; boards Series.dc.html, SeriesMore.dc.html, DesktopSeries.dc.html
 // for the column): `#series/<id>` for a saved series. The Page header (the back button named after where it goes, the
 // series' name as its Title), the intro line, Books · N with the series rows, Related works · N, then Remove series.
-// It replaces the series dialog for a saved series; a series that is not saved still opens the dialog. The words and
+// It replaces the series dialog for a saved series; a series that is not saved still opens the dialog. A row's Add
+// opens the Add sheet (#563) at `#series/<id>/add`, over the page. The words and
 // rules are in series-model.ts; the books in the library come from the library by work on this device (#528).
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { SeriesRemoveDialog } from "../components/SeriesRemoveDialog";
@@ -20,6 +21,8 @@ import { normalizeSeriesLanguage } from "../series-selection";
 import { tip } from "../tooltip-texts";
 import type { Book } from "../types";
 import { chosenRecording } from "./book-model";
+import { openAddSheet, SeriesAddSheet } from "./series-add-sheet";
+import type { SeriesAddSeries } from "./series-add-model";
 import { DISMISS_LABEL, NEW_CARD_LINE, NEW_MARK, seriesPageModel, withoutNew, type SeriesPageSeries, type SeriesRow } from "./series-model";
 import "./series-page.css";
 
@@ -33,7 +36,7 @@ export function seriesLanguage(): string {
   }
 }
 
-type SavedSeries = SeriesPageSeries;
+type SavedSeries = SeriesAddSeries;
 
 /**
  * The series last read, by account and id: Back to the page shows it at once (and so at its scroll position) while
@@ -49,8 +52,6 @@ type Props = {
   books: Book[];
   /** Grows when today's series dialog saved something: the page reads the series again. */
   revision: number;
-  /** Add of a book not in the library: today's series dialog in its saved mode, the book chosen (until the Add sheet). */
-  onAdd: (seriesId: number, bookId: number) => void;
   /** The address names a series this account has not saved: today's dialog shows it (until the not-saved page). */
   onNotSaved: (seriesId: number) => void;
   /** The series was removed. */
@@ -77,7 +78,7 @@ function moving(series: SavedSeries | null) {
   );
 }
 
-export function SeriesPage({ id, admin, online, books, revision, onAdd, onNotSaved, onRemoved }: Props) {
+export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onRemoved }: Props) {
   const address = useAddress();
   const p = usePlayer();
   const library = useStoredWorksWithPlaces();
@@ -87,6 +88,16 @@ export function SeriesPage({ id, admin, online, books, revision, onAdd, onNotSav
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
+  // The preferred language: the Add sheet changes it, for the page under it too.
+  const [language, setLanguage] = useState(seriesLanguage);
+  const changeLanguage = (next: string) => {
+    setLanguage(next);
+    try {
+      localStorage.setItem(SERIES_LANGUAGE_KEY, next);
+    } catch {
+      // Without storage the language holds for this page only.
+    }
+  };
   /** Dismiss of the New card: sending, and its failure, shown on the card. */
   const [dismissing, setDismissing] = useState(false);
   const [dismissError, setDismissError] = useState("");
@@ -136,8 +147,8 @@ export function SeriesPage({ id, admin, online, books, revision, onAdd, onNotSav
   }, [isMoving, load]);
 
   const model = useMemo(
-    () => (series ? seriesPageModel(series, { library, admin, language: seriesLanguage() }) : null),
-    [series, library, admin],
+    () => (series ? seriesPageModel(series, { library, admin, language }) : null),
+    [series, library, admin, language],
   );
 
   const run = async (action: () => Promise<void>) => {
@@ -198,7 +209,7 @@ export function SeriesPage({ id, admin, online, books, revision, onAdd, onNotSav
     const open = row.workId ? () => address.navigate({ name: "book", workId: row.workId! }) : undefined;
     const action =
       row.action?.kind === "add" ? (
-        <Button kind="secondary" aria-label={`Add ${row.title}`} disabled={!online} onClick={() => onAdd(seriesId, row.bookId)}>
+        <Button kind="secondary" aria-label={`Add ${row.title}`} disabled={!online} onClick={() => openAddSheet(seriesId, row.bookId)}>
           Add
         </Button>
       ) : row.action?.kind === "retry-search" || row.action?.kind === "retry-download" ? (
@@ -277,6 +288,21 @@ export function SeriesPage({ id, admin, online, books, revision, onAdd, onNotSav
         <p className="series-page-error type-label" role="alert">
           {error}
         </p>
+      )}
+
+      {address.route.name === "series-add" && (
+        <SeriesAddSheet
+          seriesId={seriesId}
+          series={series}
+          admin={admin}
+          online={online}
+          language={language}
+          onLanguage={changeLanguage}
+          onAdded={() => {
+            void load();
+            void refreshLibraryWorks().catch(() => {});
+          }}
+        />
       )}
 
       <SeriesRemoveDialog

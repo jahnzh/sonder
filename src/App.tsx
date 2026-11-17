@@ -965,7 +965,7 @@ function LibraryApp({
               <ReadingSyncPage key={pageRoute.workId} workId={pageRoute.workId} admin={admin} />
             ) : pageRoute.name === "sync-details" ? (
               <ReadingSyncDetailsPage key={pageRoute.workId} workId={pageRoute.workId} />
-            ) : pageRoute.name === "series" ? (
+            ) : pageRoute.name === "series" || pageRoute.name === "series-add" ? (
               <SeriesPage
                 key={pageRoute.id}
                 id={pageRoute.id}
@@ -973,7 +973,6 @@ function LibraryApp({
                 online={online}
                 books={books}
                 revision={seriesRevision}
-                onAdd={(id, bookId) => setSeriesTarget({ id, mode: "saved", select: bookId })}
                 onNotSaved={(id) => setSeriesTarget({ id, mode: "preview" })}
                 onRemoved={() => {
                   setSeriesRevision((value) => value + 1);
