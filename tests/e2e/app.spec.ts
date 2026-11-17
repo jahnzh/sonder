@@ -40,8 +40,20 @@ async function importOwnBook(page: Page, name: string) {
   expect(response.ok()).toBe(true);
   const { id } = await response.json();
   const book = (await (await page.request.get("/api/books")).json()).find((b: { id: string }) => b.id === id);
-  return book as { id: string; title: string; tracks: { id: string }[] };
+  importedWorks.push(book.workId);
+  return book as { id: string; title: string; workId: string; tracks: { id: string }[] };
 }
+// The works this file's tests imported. Playing one makes it the most recently played book, so the dock and the
+// feature card of every later spec on the same shard server would open it instead of Alice (which about twenty specs
+// reach through `.dock-book`). After each test its books leave the library through the route the book dialog's
+// Remove uses, as if the owner had removed them: the server is left with the library it had before the test.
+const importedWorks: string[] = [];
+test.afterEach(async ({ page }) => {
+  for (const workId of importedWorks.splice(0)) {
+    const removed = await page.request.delete(`/api/works/${encodeURIComponent(workId)}/library`);
+    expect(removed.ok()).toBe(true);
+  }
+});
 const SEEDED_TITLES = [
   "Alice’s Adventures in Wonderland",
   "The Adventures of Sherlock Holmes",
@@ -251,6 +263,7 @@ test("import, complete device download, service-worker ranges and offline relaun
   const book = books.find(
     (b: { title: string }) => b.title === story,
   );
+  importedWorks.push(book.workId);
   await context.setOffline(true);
   await page.reload();
   await expect(

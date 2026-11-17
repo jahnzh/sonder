@@ -20,8 +20,21 @@ async function importRecording(page: Page, name: string, tracks = 1) {
   });
   expect(response.ok()).toBe(true);
   const { id } = await response.json();
-  return (await (await page.request.get("/api/books")).json()).find((book: any) => book.id === id);
+  const book = (await (await page.request.get("/api/books")).json()).find((book: any) => book.id === id);
+  importedWorks.push(book.workId);
+  return book;
 }
+
+// The works this file's tests imported. A played one becomes the most recently played book, which the dock and the
+// feature card of every later spec on the same shard server would open instead of Alice. After each test they leave
+// the library through the route the book dialog's Remove uses, so the server keeps the library it had before.
+const importedWorks: string[] = [];
+test.afterEach(async ({ page }) => {
+  for (const workId of importedWorks.splice(0)) {
+    const removed = await page.request.delete(`/api/works/${encodeURIComponent(workId)}/library`);
+    expect(removed.ok()).toBe(true);
+  }
+});
 
 async function instrument(page: Page) {
   await page.addInitScript(() => {
