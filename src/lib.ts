@@ -2,6 +2,7 @@ import Dexie, { type Table } from "dexie";
 import { dropPosition, peekPosition, recentPositions, recordPosition, serialQueue, type PositionEntry, type PositionHistory } from "./position-history";
 import type { Book, LibraryWork, Progress, Download, DownloadPart, Track } from "./types";
 import { DEVICE_SAVE_KEY_PREFIX, deviceSaveKey, readDeviceSaveRecord, type DeviceSaveRecord } from "./device-saves";
+import { isKeptReaderFile, type ReaderFileRecord } from "./ebook-keep";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 export function cn(...inputs: ClassValue[]) {
@@ -191,9 +192,21 @@ export function userStorageKey(key: string) { return currentUserId === 1 ? key :
  * one in a personal database.
  */
 export async function listOfflineEbookEditionIds(): Promise<string[]> {
-  const shared = await sharedDB.preferences.where("key").startsWith("reader-file:").primaryKeys();
-  const personal = personalDB === sharedDB ? [] : await personalDB.preferences.where("key").startsWith("reader-file:").primaryKeys();
-  return [...new Set([...shared, ...personal].map((key) => String(key).slice("reader-file:".length)))];
+  return (await listOfflineEbookCopies()).map((copy) => copy.id);
+}
+/**
+ * The same copies, each with whether the user kept it (#671): the reader's own reading cache is marked `cache` and
+ * is not kept (`isKeptReaderFile`). A copy in either database that is kept counts as kept.
+ */
+export async function listOfflineEbookCopies(): Promise<{ id: string; kept: boolean }[]> {
+  const read = (db: typeof sharedDB) => db.preferences.where("key").startsWith("reader-file:").toArray();
+  const rows = [...(await read(sharedDB)), ...(personalDB === sharedDB ? [] : await read(personalDB))];
+  const copies = new Map<string, boolean>();
+  for (const row of rows) {
+    const id = String(row.key).slice("reader-file:".length);
+    copies.set(id, (copies.get(id) ?? false) || isKeptReaderFile(row.value as ReaderFileRecord));
+  }
+  return [...copies].map(([id, kept]) => ({ id, kept }));
 }
 /** Removes an ebook edition's offline copy from this device (#518): its file and its reader-file entry. */
 export async function removeOfflineEbook(editionId: string) {
