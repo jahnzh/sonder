@@ -672,14 +672,45 @@ test("a reading sync job changed right after a read shows at the next read", asy
     assert.equal(await progressOf(), 0.32, "same time, same length");
     Date.now = realNow;
     // A row read after its write: a change of its length or of its kept map shows, also with the same time.
-    job(alignment("job-ready", "eb-two", "rec-two-a", "processing", 0.4), now - 10);
+    // The rows are stamped at a fixed time before any write above, so the stamp can never equal the one the
+    // writer gave the 0.7 write (a time relative to `now` did under load, #658).
+    const before = T0 + 10;
+    job(alignment("job-ready", "eb-two", "rec-two-a", "processing", 0.4), before);
     assert.equal(await progressOf(), 0.4);
-    job(alignment("job-ready", "eb-two", "rec-two-a", "processing", 0.45), now - 10);
+    job(alignment("job-ready", "eb-two", "rec-two-a", "processing", 0.45), before);
     assert.equal(await progressOf(), 0.45, "same time, another length");
-    job(alignment("job-ready", "eb-two", "rec-two-a", "processing", 0.45), now - 10, alignment("job-ready", "eb-two", "rec-two-a", "ready", 1));
+    job(alignment("job-ready", "eb-two", "rec-two-a", "processing", 0.45), before, alignment("job-ready", "eb-two", "rec-two-a", "ready", 1));
     const kept = inWork(await library(OWNER_TOKEN), "w-two").readingSync.find((entry) => entry.id === "job-ready");
     assert.equal(kept?.status, "ready", "the kept map is served");
     assert.equal(kept?.rebuild?.progress, 0.45, "with the rebuild's state");
+  } finally {
+    Date.now = realNow;
+    job(alignment("job-ready", "eb-two", "rec-two-a", "ready", 1), T0 + 1);
+  }
+});
+
+test("a reading sync job written after the clock stepped back shows at the next read", async () => {
+  const { putAlignmentJob, deleteAlignmentJob } = await import("../server/alignment-transitions.ts");
+  const progressOf = async () =>
+    inWork(await library(OWNER_TOKEN), "w-two").readingSync.find((entry) => entry.id === "job-ready")?.progress;
+  const realNow = Date.now;
+  const at = realNow();
+  const written = alignment("job-ready", "eb-two", "rec-two-a", "processing", 0.5) as unknown as Parameters<typeof putAlignmentJob>[0];
+  // Each write keeps the job's length (one progress digit changes), and the read after it is kept.
+  const writeAt = async (time: number, progress: number) => {
+    Date.now = () => time;
+    putAlignmentJob({ ...written, progress });
+    Date.now = () => time + 5;
+    assert.equal(await progressOf(), progress);
+  };
+  try {
+    await writeAt(at, 0.41);
+    // A row deleted and made again under its id stamps from the clock: here the deleted row's time.
+    deleteAlignmentJob("job-ready");
+    await writeAt(at, 0.49);
+    // The wall clock steps back (NTP, a resumed VM) to the millisecond of the last write, or further.
+    await writeAt(at, 0.47);
+    await writeAt(at - 1000, 0.43);
   } finally {
     Date.now = realNow;
     job(alignment("job-ready", "eb-two", "rec-two-a", "ready", 1), T0 + 1);
