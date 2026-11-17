@@ -1,5 +1,5 @@
 import { isAdmin } from "../lib";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import type EpubBook from "epubjs/types/book";
 import type Rendition from "epubjs/types/rendition";
 import type Contents from "epubjs/types/contents";
@@ -43,6 +43,7 @@ import { createReaderFollowing, type DeferredReturn, type NarrationPlace, type N
 import { mapIdentityOf } from "../alignment-map-lifecycle";
 import { chapterTimeLeft, currentChapter, playbackTimeline } from "../chapters";
 import { footRestLine, headRestLine } from "../reader-bands";
+import { ReaderAppearance } from "./ReaderAppearance";
 import { Button } from "../parts/Button";
 import { usePlayer, type SeekTarget } from "../player";
 import { ApiError, api, forgetPositionHistory, localDB } from "../lib";
@@ -344,7 +345,7 @@ export function ReaderView({
     [loading, setLoading] = useState(true),
     [rendered, setRendered] = useState(false),
     [panel, setPanel] = useState<
-      "contents" | "search" | "bookmarks" | "appearance" | "sync" | "more" | null
+      "contents" | "search" | "bookmarks" | "sync" | "more" | null
     >(null),
     [locator, setLocator] = useState<TextLocator | null>(null),
     [query, setQuery] = useState(""),
@@ -362,6 +363,19 @@ export function ReaderView({
     [toast, setToast] = useState<{ previous: { book: Book; trackId: string; position: number } | null } | null>(null),
     [scrub, setScrub] = useState<number | null>(null),
     [contentsHidden, setContentsHidden] = useState(() => localStorage.getItem("sonder-reader-contents") === "hidden");
+  // Appearance docked under the text in place of the foot (#588); not in the address.
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
+  // Sizes the view to the text band when the band changed (the ResizeObserver's work, #587); set once the book opens.
+  const fitBand = useRef<() => void>(() => {});
+  // Opening and closing Appearance also lays the view out on the next frame by itself: WebKit reported the band
+  // growing back late (#469, finding 1). A fit after the observer's sees the same band and does nothing.
+  const docked = useRef(appearanceOpen);
+  useLayoutEffect(() => {
+    if (docked.current === appearanceOpen) return;
+    docked.current = appearanceOpen;
+    const frame = requestAnimationFrame(() => fitBand.current());
+    return () => cancelAnimationFrame(frame);
+  }, [appearanceOpen]);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The history entries the latest Listen from here wrote, so its Undo can take them back.
   const listenRecords = useRef<{ undone: boolean; entries: { recordingId: string; entry: PositionEntry }[] } | null>(null);
@@ -836,7 +850,7 @@ export function ReaderView({
         if (disposed) return;
         setRendered(true);
         let lastWidth=0,lastHeight=0,resizes=0;
-        const observer = new ResizeObserver(() => {
+        const fit = () => {
           if (!disposed && host.clientHeight > 0) {
             if(host.clientWidth===lastWidth && host.clientHeight===lastHeight)return;
             lastWidth=host.clientWidth;lastHeight=host.clientHeight;
@@ -847,7 +861,9 @@ export function ReaderView({
             host.setAttribute("data-view-resizes", String(++resizes));
             redrawHighlight();
           }
-        });
+        };
+        const observer = new ResizeObserver(fit);
+        fitBand.current = fit;
         observer.observe(host);
         // Scrolling the page container itself (scroll mode, scrollbar drags).
         for (const type of ["pointerdown", "wheel", "touchmove"])
@@ -872,6 +888,7 @@ export function ReaderView({
       cleanChapterFonts = null;
       setRendered(false);
       (rendition.current as any)?.__observer?.disconnect();
+      fitBand.current = () => {};
       // epub.js throws when destroyed before its view finished initializing, so
       // releaseEpub never throws: an error thrown here would unmount the whole app.
       // The hidden Now Playing reader is torn down this way whenever the playing
@@ -1543,7 +1560,7 @@ export function ReaderView({
     </div>
   );
   return (
-    <div className={`reader-room ${inline ? "inline-reader" : ""}`} data-controls-visible={controls} data-contents={showContents} data-current-passage={follow ? currentInterval?.paragraphId : undefined}>
+    <div className={`reader-room ${inline ? "inline-reader" : ""}`} data-controls-visible={controls} data-appearance={appearanceOpen ? "docked" : undefined} data-contents={showContents} data-current-passage={follow ? currentInterval?.paragraphId : undefined}>
       {inline && <PlaybackExtra>{moreItems}</PlaybackExtra>}
       {loading && (
         <p className="reader-loading" role="status">
@@ -1555,7 +1572,7 @@ export function ReaderView({
       <header className="reader-head" data-controls={controls}>
       <p className="reader-head-rest"><span className="type-caption">{headRestLine(book?.title, currentSection?.title || barChapter)}</span></p>
       <div className="reader-topbar">
-        {onClose &&<button className="icon-button" aria-label="Close reader" onClick={() => { setControlsVisible(false); setPanel(null); onClose(); }}><ChevronDown size={22} /></button>}
+        {onClose &&<button className="icon-button" aria-label="Close reader" onClick={() => { setControlsVisible(false); setPanel(null); setAppearanceOpen(false); onClose(); }}><ChevronDown size={22} /></button>}
         {desktop && (
           <button
             className="icon-button"
@@ -1584,7 +1601,7 @@ export function ReaderView({
           <Bookmark size={21} fill={pageBookmark ? "currentColor" : "none"} />
         </button>
         <button className="icon-button" aria-label="Search this book" onClick={() => setPanel("search")}><Search size={20} /></button>
-        <button className="icon-button reader-appearance-button" aria-label="Reader appearance" onClick={() => setPanel("appearance")}>Aa</button>
+        <button className="icon-button reader-appearance-button" aria-label="Reader appearance" aria-expanded={appearanceOpen} onClick={() => { setPanel(null); setAppearanceOpen(true); }}>Aa</button>
         <button className="icon-button" aria-label="More" aria-expanded={panel === "more"} onClick={openMore}><MoreHorizontal size={22} /></button>
       </div>
       </header>
@@ -1625,12 +1642,22 @@ export function ReaderView({
           </div>
         </div>
       </div>
-      {/* The dock row (#587): empty but for a reader error until Appearance docks here (spec #586). */}
+      {/* The dock row (#587): a reader error, and Appearance docked in place of the foot (#588). */}
       <div className="reader-dock">
         {error && (
           <p className="inline-error" role="alert">
             {error}
           </p>
+        )}
+        {appearanceOpen && (
+          <ReaderAppearance
+            preferences={preferences}
+            onChange={editReader}
+            follow={follow}
+            onFollow={(on) => { if (on) following.backToNarration(); else following.pageAway(); }}
+            theme={!inline}
+            onClose={() => setAppearanceOpen(false)}
+          />
         )}
       </div>
       {/* The foot (#587): its box stays whether the controls show or not. At rest the progress line, where the
@@ -1743,7 +1770,6 @@ export function ReaderView({
                   contents: "Contents",
                   search: "Search",
                   bookmarks: "Bookmarks",
-                  appearance: "Reader appearance",
                   sync: "Reading sync",
                   more: "More",
                 }[panel]
@@ -1828,81 +1854,6 @@ export function ReaderView({
             ) : (
               <p>Bookmark a sentence with the bookmark button at the top.</p>
             ))}
-          {panel === "appearance" && (
-            <div className="reader-appearance">
-              {!inline && <label>
-                Page theme
-                <select
-                  aria-label="Reader page theme"
-                  value={preferences.theme}
-                  onChange={(event) =>
-                    editReader({
-                      theme: event.target.value as typeof preferences.theme,
-                    })
-                  }
-                >
-                  <option value="app">Match app</option>
-                  <option value="dark">Dark</option>
-                  <option value="light">Light</option>
-                  <option value="sepia">Sepia</option>
-                </select>
-              </label>}
-              <label>
-                Font
-                <select
-                  aria-label="Reader font"
-                  value={preferences.font}
-                  onChange={(event) =>
-                    editReader({
-                      font: event.target.value as typeof preferences.font,
-                    })
-                  }
-                >
-                  <option value="serif">Serif</option>
-                  <option value="sans">Sans serif</option>
-                  <option value="system">System</option>
-                </select>
-              </label>
-              {(
-                [
-                  ["size", "Text size", 14, 36, 1],
-                  ["lineHeight", "Line height", 1.2, 2.4, 0.1],
-                  ["margin", "Margins", 8, 80, 2],
-                  ["width", "Line width", 350, 1100, 25],
-                ] as const
-              ).map(([key, label, min, max, step]) => (
-                <label key={key}>
-                  {label} · {preferences[key]}
-                  <input
-                    aria-label={`Reader ${label.toLowerCase()}`}
-                    type="range"
-                    min={min}
-                    max={max}
-                    step={step}
-                    value={preferences[key]}
-                    onChange={(event) =>
-                      editReader({ [key]: Number(event.target.value) })
-                    }
-                  />
-                </label>
-              ))}
-              <label>
-                Reading mode
-                <select
-                  aria-label="Reader mode"
-                  value={preferences.mode}
-                  onChange={(event) =>
-                    editReader({
-                      mode: event.target.value as typeof preferences.mode,
-                    })
-                  }
-                >
-                  <option value="paginated">Pages</option>
-                  <option value="scroll">Scroll</option>
-                </select>
-              </label>
-            </div>
-          )}
         </aside>
       )}
       {book && (
@@ -1924,14 +1875,6 @@ export function ReaderView({
                   <X size={19} />
                 </button>
               </div>
-              <label className="reader-follow">
-                <input
-                  type="checkbox"
-                  checked={follow}
-                  onChange={(event) => { if (event.target.checked) following.backToNarration(); else following.pageAway(); }}
-                />{" "}
-                Follow the narration
-              </label>
             </>
           )}
           <ReadingSync

@@ -3,6 +3,7 @@ import {readFileSync} from "node:fs";
 import {randomUUID} from "node:crypto";
 import {readerFixture} from "../reader-fixture";
 import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
+import {appearancePanel,openAppearance} from "./reader-appearance";
 // Back to narration and the manual positions still waiting for their save (#417, ADR 0014): with a
 // narration to follow they are dropped, without one they are kept and saved. Sequences 1, 2 and 6 of the issue.
 test.use({serviceWorkers:"block"});
@@ -206,20 +207,20 @@ test("sequence 1: switching on Follow the narration without a narration map keep
   const sidebar=room.getByLabel("Contents sidebar");
   await expect(sidebar).toBeVisible();
   expect(await checkpointOf(page,ebook)).toBeNull();
-  // Open the Reading sync panel first, so the switch is there to press inside the pause.
-  await room.locator(".reader-topbar").getByRole("button",{name:"More",exact:true}).click();
-  await page.locator(".reader-more:visible").getByRole("button",{name:"Reading sync",exact:true}).click();
-  const follow=room.getByRole("checkbox",{name:"Follow the narration"});
+  // Dock Appearance first, so the switch is there to press inside the pause (#588: it moved there from Reading sync).
+  await openAppearance(page,room);
+  const follow=appearancePanel(room).getByRole("switch",{name:"Follow the narration"});
   await expect(follow).toBeVisible();
   const title=(await sidebar.getByRole("button").nth(1).textContent())!.trim();
   const elapsed=await page.evaluate((title)=>new Promise<number>((done,fail)=>{
    const scope=document.querySelector(".inline-reader")!;
    const chapter=[...scope.querySelectorAll<HTMLButtonElement>('[aria-label="Contents sidebar"] button')].find(button=>button.textContent?.trim()===title)!;
-   const box=scope.querySelector<HTMLInputElement>(".reader-follow input[type=checkbox]")!;
+   const box=scope.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Follow the narration"]')!;
    const limit=Date.now()+10000;
    chapter.click();
    const wait=()=>{
-    if(chapter.getAttribute("aria-current")!=="location"||box.checked){if(Date.now()>limit){fail(new Error(`stuck: current=${chapter.getAttribute("aria-current")} checked=${box.checked}`));return;}requestAnimationFrame(wait);return;}
+    const checked=box.getAttribute("aria-checked")==="true";
+    if(chapter.getAttribute("aria-current")!=="location"||checked){if(Date.now()>limit){fail(new Error(`stuck: current=${chapter.getAttribute("aria-current")} checked=${checked}`));return;}requestAnimationFrame(wait);return;}
     const at=performance.now();
     box.click();
     done(performance.now()-at);
@@ -227,7 +228,7 @@ test("sequence 1: switching on Follow the narration without a narration map keep
    wait();
   }),title);
   expect(elapsed).toBeLessThan(400);
-  await expect(follow).toBeChecked();
+  await expect(follow).toHaveAttribute("aria-checked","true");
   await expectSaved(page,ebook,{origin:"reading",section:1});
  });
 });

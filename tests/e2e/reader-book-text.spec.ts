@@ -5,6 +5,7 @@ import {longBookFixture,longBookSentence} from "../long-book-fixture";
 import {readerFixture} from "../reader-fixture";
 import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
 import {highlightShown,textShown} from "./reader-view";
+import {setTextSize} from "./reader-appearance";
 // What the deleted Lyrics long-book test guarded that also holds for the book's text (#501 review): a search
 // result and a bookmark far away in a long book show their sentence on the page, and the text size setting
 // changes the size of the book's text that is drawn.
@@ -117,9 +118,9 @@ test("the text size setting changes the size of the book's text that is drawn, a
   await expect(page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").locator("p").first()).toBeVisible();
   const sizes:number[]=[];
   for(const size of [16,26]){
-   await (await showTopbar(page,room)).getByRole("button",{name:"Reader appearance",exact:true}).click();
-   await page.getByRole("slider",{name:"Reader text size",exact:true}).fill(String(size));
-   await room.locator(".reader-panel-heading").getByRole("button",{name:"Close reader options",exact:true}).click();
+   // From Appearance docked under the text (#588).
+   await showTopbar(page,room);
+   await setTextSize(page,room,size);
    await expect.poll(async()=>{
     const drawn=await drawnSize(page);
     return drawn && Math.abs(drawn.px-expectedSize(size,drawn.frameWidth))<0.5;

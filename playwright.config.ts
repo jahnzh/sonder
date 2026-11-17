@@ -73,6 +73,8 @@ const desktopProjects = [
               /(^|\/)activity-worker\.spec\.ts$/,
               // The reader's page: a head, the text band and a foot (#587).
               /(^|\/)reader-bands\.spec\.ts$/,
+              // Appearance docked under the text (#588).
+              /(^|\/)reader-appearance\.spec\.ts$/,
               // The rest of Activity's specs, the slice's final check (#523).
               /(^|\/)(activity-navigation|torrent-health)\.spec\.ts$/,
               // A book read in the reader is In progress; the ebook shelf leaves Discover (#556).

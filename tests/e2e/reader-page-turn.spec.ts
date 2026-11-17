@@ -7,6 +7,7 @@ import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
 import {highlightShown} from "./reader-view";
 import {showControls} from "./reader-bands";
 import {longSentence,pageTurnFixture,PACED_CHARACTERS_PER_SECOND} from "../page-turn-fixture";
+import {closeAppearance,openAppearance,setStepper} from "./reader-appearance";
 // The page turns inside a sentence that crosses a page (#508, spec #503): in Page mode, when the narration's
 // reported position reaches the first word on the next page. The narration's position is set on the player's
 // audio element without playing it (headless Firefox plays no audio in this suite).
@@ -508,9 +509,10 @@ test("after a change of text size and after a resize the turn comes at the new b
    const box=(await room.locator(".reader-viewport").boundingBox())!;
    await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
   }
-  await topbar.getByRole("button",{name:"Reader appearance",exact:true}).click();
-  await page.getByRole("slider",{name:"Reader text size",exact:true}).fill("26");
-  await room.locator(".reader-panel-heading").getByRole("button",{name:"Close reader options",exact:true}).click();
+  // From Appearance docked under the text (#588).
+  await openAppearance(page,room);
+  await setStepper(room,"Size",26);
+  await closeAppearance(room);
   await expect.poll(()=>movedFrom(before),{timeout:READER_WAIT_MS.followHighlight}).toBe(true);
   // Still following, on the page of the word being narrated: the sentence's start.
   await settledLayout(room,sentence,interval);
