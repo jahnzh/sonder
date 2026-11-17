@@ -1,5 +1,5 @@
 import { isAdmin } from "../lib";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import type EpubBook from "epubjs/types/book";
 import type Rendition from "epubjs/types/rendition";
 import type Contents from "epubjs/types/contents";
@@ -43,6 +43,7 @@ import { createReaderFollowing, type DeferredReturn, type NarrationPlace, type N
 import { mapIdentityOf } from "../alignment-map-lifecycle";
 import { chapterTimeLeft, currentChapter, playbackTimeline } from "../chapters";
 import { footRestLine, headRestLine } from "../reader-bands";
+import { ReaderAppearance } from "./ReaderAppearance";
 import { Button } from "../parts/Button";
 import { ReaderFootMessage, tappedControl, useReaderMessages, useReaderUpdate } from "./ReaderFootMessage";
 import { messageToShow, type ReaderError, type ReaderNotice } from "../reader-messages";
@@ -356,8 +357,8 @@ export function ReaderView({
     [error, setError] = useState(""),
     [loading, setLoading] = useState(true),
     [rendered, setRendered] = useState(false),
-    // Chapters, Bookmarks and Search are pages of their own now (#590), not panels.
-    [panel, setPanel] = useState<"appearance" | "sync" | "more" | null>(null),
+    // Chapters, Bookmarks and Search are pages of their own now (#590), not panels; Appearance docks under the text (#588).
+    [panel, setPanel] = useState<"sync" | "more" | null>(null),
     [locator, setLocator] = useState<TextLocator | null>(null),
     [map, setMap] = useState<AlignmentJob | null>(null),
     // The server confirmed `map` for the current audio in this reader (a cached map is not, until the map endpoint answers).
@@ -370,6 +371,19 @@ export function ReaderView({
     [desktop, setDesktop] = useState(() => window.matchMedia("(min-width: 900px)").matches),
     [scrub, setScrub] = useState<number | null>(null),
     [contentsHidden, setContentsHidden] = useState(() => localStorage.getItem("sonder-reader-contents") === "hidden");
+  // Appearance docked under the text in place of the foot (#588); not in the address.
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
+  // Sizes the view to the text band when the band changed (the ResizeObserver's work, #587); set once the book opens.
+  const fitBand = useRef<() => void>(() => {});
+  // Opening and closing Appearance also lays the view out on the next frame by itself: WebKit reported the band
+  // growing back late (#469, finding 1). A fit after the observer's sees the same band and does nothing.
+  const docked = useRef(appearanceOpen);
+  useLayoutEffect(() => {
+    if (docked.current === appearanceOpen) return;
+    docked.current = appearanceOpen;
+    const frame = requestAnimationFrame(() => fitBand.current());
+    return () => cancelAnimationFrame(frame);
+  }, [appearanceOpen]);
   // The messages in the foot (#591): one at a time, by `messageToShow`.
   const messages = useReaderMessages();
   // Where the narration was before the latest Listen from here, for its Undo.
@@ -416,7 +430,14 @@ export function ReaderView({
       fragment: { text: string; start: number };
       page: number;
       turning: boolean;
+      // The layout generation the words were measured in (`layoutGeneration`).
+      generation: number;
     } | null>(null),
+    // Counts the times epub.js laid a section frame out anew by itself (#588): it sizes a new frame in steps after
+    // it shows the frame's document (a resize, Appearance docked or closed, a theme), and the text's size follows
+    // the frame's width (the reader's font size is in vw). A measurement from an earlier generation is read again
+    // before a turn uses it (`measuredNow`).
+    layoutGeneration = useRef(0),
     // The layout the theme effect last applied to a rendition: a later change of it lays the text out anew (#509).
     laidOut = useRef<{ view: Rendition; key: string } | null>(null);
   const mountedRef = useRef(true);
@@ -853,8 +874,17 @@ export function ReaderView({
         }
         if (disposed) return;
         setRendered(true);
+        // epub.js sizes a section's frame to its text by itself, in steps after the frame shows its document, and
+        // again whenever the text's size changes (`resize` from its view manager, once per frame sized anew). The
+        // text's size follows the frame's width (the font size is in vw), so each one may move the narrated
+        // sentence's breaks: the follow step runs again and its turn measures them anew (#588).
+        (view as unknown as { manager?: { on?: (type: string, listener: () => void) => void } }).manager?.on?.("resize", () => {
+          if (disposed || rendition.current !== view) return;
+          layoutGeneration.current++;
+          if (pagedSentence.current) setFollowRevision((value) => value + 1);
+        });
         let lastWidth=0,lastHeight=0,resizes=0;
-        const observer = new ResizeObserver(() => {
+        const fit = () => {
           if (!disposed && host.clientHeight > 0) {
             if(host.clientWidth===lastWidth && host.clientHeight===lastHeight)return;
             lastWidth=host.clientWidth;lastHeight=host.clientHeight;
@@ -865,7 +895,9 @@ export function ReaderView({
             host.setAttribute("data-view-resizes", String(++resizes));
             redrawHighlight();
           }
-        });
+        };
+        const observer = new ResizeObserver(fit);
+        fitBand.current = fit;
         observer.observe(host);
         // Scrolling the page container itself (scroll mode, scrollbar drags).
         for (const type of ["pointerdown", "wheel", "touchmove"])
@@ -890,6 +922,7 @@ export function ReaderView({
       cleanChapterFonts = null;
       setRendered(false);
       (rendition.current as any)?.__observer?.disconnect();
+      fitBand.current = () => {};
       // epub.js throws when destroyed before its view finished initializing, so
       // releaseEpub never throws: an error thrown here would unmount the whole app.
       // The hidden Now Playing reader is torn down this way whenever the playing
@@ -1025,6 +1058,7 @@ export function ReaderView({
     if (content.document.fonts && content.document.fonts.status !== "loaded") return null;
     const step = pageStep(view);
     if (!step) return null;
+    const generation = layoutGeneration.current;
     const { words, offsets, index } = measureSentence(node, fragment, step);
     const now = playerRef.current;
     const show = pageToShow(words, interval.start, interval.end, positionIn(interval, now.track?.id, now.position));
@@ -1046,6 +1080,7 @@ export function ReaderView({
         fragment,
         page: show.page,
         turning: false,
+        generation,
       },
     };
   };
@@ -1059,6 +1094,17 @@ export function ReaderView({
     range.setEnd(place.node, place.offset);
     return content.cfiFromRange(range);
   };
+  // The narrated sentence measured again in the layout as it is now, the one place a measurement is renewed after
+  // its jump (#509, #588): after each turn, and before a turn decides when epub.js laid the section out anew since.
+  const measuredNow = (paged: NonNullable<typeof pagedSentence.current>) => {
+    const step = pageStep(paged.view);
+    if (!step || !paged.node.isConnected) return;
+    const generation = layoutGeneration.current;
+    const again = measureSentence(paged.node, paged.fragment, step);
+    paged.words = again.words;
+    paged.index = again.index;
+    paged.generation = generation;
+  };
   // The page turn inside the narrated sentence (#508): the narration's reported position reached a word on
   // another page than the one shown (the break, or a jump past or back over it). It is one of the reader's
   // own jumps (ADR 0014): it does not count as navigating, a gesture or page turn invalidates it while it is
@@ -1066,6 +1112,8 @@ export function ReaderView({
   const turnInside = (key: string) => {
     const paged = pagedSentence.current, player = playerRef.current;
     if (!paged || paged.key !== key || paged.turning || rendition.current !== paged.view) return;
+    // Laid out anew since it was measured: the break is where the sentence breaks now, not where it broke.
+    if (paged.generation !== layoutGeneration.current) measuredNow(paged);
     const show = pageToShow(paged.words, paged.interval.start, paged.interval.end, positionIn(paged.interval, player.track?.id, player.position));
     if (!show || show.page === paged.page) return;
     const jump = following.startJump();
@@ -1083,12 +1131,7 @@ export function ReaderView({
         paged.page = show.page;
         // Measured again after each turn (#509): the next break is the first word after the page now shown,
         // as the pages are drawn now (a picture that loaded late may have moved them).
-        const step = pageStep(paged.view);
-        if (step && paged.node.isConnected) {
-          const again = measureSentence(paged.node, paged.fragment, step);
-          paged.words = again.words;
-          paged.index = again.index;
-        }
+        measuredNow(paged);
       })
       .catch(() => {})
       .finally(() => {
@@ -1141,7 +1184,12 @@ export function ReaderView({
       const measured = measureNarrated(paragraphId, content, node, fragment, view);
       const target = measured && measured.page !== measured.words[0]!.page ? wordCfi(measured, measured.first, measured.character) : cfi;
       await displayAutomatically(view, target);
-      if (measured && jump.current()) pagedSentence.current = measured.paged;
+      if (measured && jump.current()) {
+        pagedSentence.current = measured.paged;
+        // epub.js laid the section out anew while the jump was in flight (a new frame sized in steps, #588): the
+        // follow step runs again, and its turn reads the sentence in the layout as it is now.
+        if (measured.paged.generation !== layoutGeneration.current) setFollowRevision((value) => value + 1);
+      }
     } finally {
       if (opening) hidePages(-1);
     }
@@ -1654,7 +1702,7 @@ export function ReaderView({
     </div>
   );
   return (
-    <div className={`reader-room ${inline ? "inline-reader" : ""}`} data-controls-visible={controls} data-contents={showContents} data-current-passage={follow ? currentInterval?.paragraphId : undefined}>
+    <div className={`reader-room ${inline ? "inline-reader" : ""}`} data-controls-visible={controls} data-appearance={appearanceOpen ? "docked" : undefined} data-contents={showContents} data-current-passage={follow ? currentInterval?.paragraphId : undefined}>
       {inline && <PlaybackExtra>{moreItems}</PlaybackExtra>}
       {loading && (
         <p className="reader-loading" role="status">
@@ -1666,7 +1714,7 @@ export function ReaderView({
       <header className="reader-head" data-controls={controls} onClickCapture={tapControls}>
       <p className="reader-head-rest"><span className="type-caption">{headRestLine(book?.title, currentSection?.title || barChapter)}</span></p>
       <div className="reader-topbar">
-        {onClose &&<button className="icon-button" aria-label="Close reader" onClick={() => { setControlsVisible(false); setPanel(null); onClose(); }}><ChevronDown size={22} /></button>}
+        {onClose &&<button className="icon-button" aria-label="Close reader" onClick={() => { setControlsVisible(false); setPanel(null); setAppearanceOpen(false); onClose(); }}><ChevronDown size={22} /></button>}
         {desktop && (
           <button
             className="icon-button"
@@ -1695,7 +1743,7 @@ export function ReaderView({
           <Bookmark size={21} fill={pageBookmark ? "currentColor" : "none"} />
         </button>
         <button className="icon-button" aria-label="Search this book" disabled={!book} onClick={() => openPage("search")}><Search size={20} /></button>
-        <button className="icon-button reader-appearance-button" aria-label="Reader appearance" onClick={() => setPanel("appearance")}>Aa</button>
+        <button className="icon-button reader-appearance-button" aria-label="Reader appearance" aria-expanded={appearanceOpen} onClick={() => { setPanel(null); setAppearanceOpen(true); }}>Aa</button>
         <button className="icon-button" aria-label="More" aria-expanded={panel === "more"} onClick={openMore}><MoreHorizontal size={22} /></button>
       </div>
       </header>
@@ -1727,12 +1775,22 @@ export function ReaderView({
           </>}
         </div>
       </div>
-      {/* The dock row (#587): empty but for a reader error until Appearance docks here (spec #586). */}
+      {/* The dock row (#587): a reader error, and Appearance docked in place of the foot (#588). */}
       <div className="reader-dock">
         {error && (
           <p className="inline-error" role="alert">
             {error}
           </p>
+        )}
+        {appearanceOpen && (
+          <ReaderAppearance
+            preferences={preferences}
+            onChange={editReader}
+            follow={follow}
+            onFollow={(on) => { if (on) following.backToNarration(); else following.pageAway(); }}
+            theme={!inline}
+            onClose={() => setAppearanceOpen(false)}
+          />
         )}
       </div>
       {/* The foot (#587): its box stays whether the controls show or not. At rest the progress line, where the
@@ -1810,7 +1868,6 @@ export function ReaderView({
             <h3>
               {
                 {
-                  appearance: "Reader appearance",
                   sync: "Reading sync",
                   more: "More",
                 }[panel]
@@ -1825,81 +1882,6 @@ export function ReaderView({
             </button>
           </div>
           {panel === "more" && moreItems}
-          {panel === "appearance" && (
-            <div className="reader-appearance">
-              {!inline && <label>
-                Page theme
-                <select
-                  aria-label="Reader page theme"
-                  value={preferences.theme}
-                  onChange={(event) =>
-                    editReader({
-                      theme: event.target.value as typeof preferences.theme,
-                    })
-                  }
-                >
-                  <option value="app">Match app</option>
-                  <option value="dark">Dark</option>
-                  <option value="light">Light</option>
-                  <option value="sepia">Sepia</option>
-                </select>
-              </label>}
-              <label>
-                Font
-                <select
-                  aria-label="Reader font"
-                  value={preferences.font}
-                  onChange={(event) =>
-                    editReader({
-                      font: event.target.value as typeof preferences.font,
-                    })
-                  }
-                >
-                  <option value="serif">Serif</option>
-                  <option value="sans">Sans serif</option>
-                  <option value="system">System</option>
-                </select>
-              </label>
-              {(
-                [
-                  ["size", "Text size", 14, 36, 1],
-                  ["lineHeight", "Line height", 1.2, 2.4, 0.1],
-                  ["margin", "Margins", 8, 80, 2],
-                  ["width", "Line width", 350, 1100, 25],
-                ] as const
-              ).map(([key, label, min, max, step]) => (
-                <label key={key}>
-                  {label} · {preferences[key]}
-                  <input
-                    aria-label={`Reader ${label.toLowerCase()}`}
-                    type="range"
-                    min={min}
-                    max={max}
-                    step={step}
-                    value={preferences[key]}
-                    onChange={(event) =>
-                      editReader({ [key]: Number(event.target.value) })
-                    }
-                  />
-                </label>
-              ))}
-              <label>
-                Reading mode
-                <select
-                  aria-label="Reader mode"
-                  value={preferences.mode}
-                  onChange={(event) =>
-                    editReader({
-                      mode: event.target.value as typeof preferences.mode,
-                    })
-                  }
-                >
-                  <option value="paginated">Pages</option>
-                  <option value="scroll">Scroll</option>
-                </select>
-              </label>
-            </div>
-          )}
         </aside>
       )}
       {book && (
@@ -1921,14 +1903,6 @@ export function ReaderView({
                   <X size={19} />
                 </button>
               </div>
-              <label className="reader-follow">
-                <input
-                  type="checkbox"
-                  checked={follow}
-                  onChange={(event) => { if (event.target.checked) following.backToNarration(); else following.pageAway(); }}
-                />{" "}
-                Follow the narration
-              </label>
             </>
           )}
           <ReadingSync

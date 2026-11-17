@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { defaultAppearance } from "../../src/appearance";
 import { skipOnMobile } from "./mobile";
+import { closeAppearance, openAppearance, setStepper } from "./reader-appearance";
 // Tapping the middle of the page shows the reader's top bar and slider.
 async function showControls(page: Page) {
   const room = page.locator(".reader-room:not(.inline-reader)");
@@ -168,18 +169,12 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await page.setViewportSize({ width: 430, height: 844 });
   await expect(page.locator(".reader-room:not(.inline-reader) .reader-viewport iframe")).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
-  await page
-    .getByRole("button", { name: "Reader appearance", exact: true })
-    .click();
-  await page
-    .getByRole("combobox", { name: "Reader page theme" })
-    .selectOption("sepia");
-  await page
-    .getByRole("slider", { name: "Reader text size", exact: true })
-    .fill("23");
-  await page
-    .getByRole("button", { name: "Close reader options", exact: true })
-    .click();
+  // Appearance docked under the text (#588).
+  const standaloneRoom = page.locator(".reader-room:not(.inline-reader)");
+  const docked = await openAppearance(page, standaloneRoom);
+  await docked.getByRole("radio", { name: "Sepia", exact: true }).click();
+  await setStepper(standaloneRoom, "Size", 23);
+  await closeAppearance(standaloneRoom);
   // Linking queued a backfill job; cancel it so the manual pairing flow starts from "Rebuild".
   await expect
     .poll(
@@ -461,12 +456,10 @@ test("a reader setting does not save an appearance preview", async ({
     const reader = page.getByRole("dialog", { name: "Reader" });
     await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
     await showControls(page);
-    await reader
-      .getByRole("button", { name: "Reader appearance", exact: true })
-      .click();
-    await reader
-      .getByRole("slider", { name: "Reader text size", exact: true })
-      .fill("23");
+    // From Appearance docked under the text (#588).
+    const room = reader.locator(".reader-room");
+    await openAppearance(page, room);
+    await setStepper(room, "Size", 23);
     await expect
       .poll(
         async () =>

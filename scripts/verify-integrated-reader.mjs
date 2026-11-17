@@ -45,12 +45,16 @@ try {
   report.checks.push({name:'Opening reader restores the saved position without starting playback'});
   await controls.click(room.locator('.reader-topbar').getByRole('button',{name:'Close reader',exact:true}),'Close reader');
  }
- await page.getByRole('button',{name:`About ${book.title}`,exact:true}).first().click();
- const detail=page.getByRole('dialog',{name:'Book details',exact:true});
- const releases=detail.getByRole('combobox',{name:'Audiobook release',exact:true});if(await releases.count())await releases.selectOption(book.id);
- await detail.getByRole('button',{name:/^(Continue listening|Start listening)$/}).click();
+ // The Book page (#532) replaced the book dialog: Listen plays the book's chosen recording and opens Now playing.
+ await page.goto(`/#book/${encodeURIComponent(book.workId)}`);
+ const bookPage=page.getByRole('region',{name:'Book',exact:true});
+ await bookPage.getByRole('button',{name:'Listen',exact:true}).click();
  await expect.poll(async()=>{const a=await actual();return a&&a.ready>=2&&!a.paused&&!a.error;},{timeout:30000}).toBe(true);
- await detail.getByRole('button',{name:'Pause',exact:true}).click();await detail.getByRole('button',{name:'Close dialog',exact:true}).click();
+ // The chosen recording is the one this check selected; another one would make every later step test the wrong map.
+ const playing=await page.evaluate(()=>window.__audio.find(a=>a.src)?.src??'');
+ if(!decodeURIComponent(playing).includes(pick.recordingId.replace(/^recording-/,'')))throw Error(`Listen played ${playing}, not the selected recording ${pick.recordingId}: choose it on the book's Audiobook page or pass it as the recording id`);
+ await page.evaluate(()=>window.__audio.find(a=>a.src)?.pause());
+ await page.goto('/');
  await page.locator('.dock-book').click();
  await expect(page.getByRole('dialog',{name:'Now playing',exact:true})).toBeVisible();
  await expect(page.locator('.inline-reader .reader-viewport iframe')).toBeVisible();
