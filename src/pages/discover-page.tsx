@@ -11,7 +11,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { ReleasePicker } from "../components/ReleasePicker";
-import { SeriesDiscovery } from "../components/Series";
+import { SeriesDiscovery, seriesSearchWanted } from "../components/Series";
 import { hardcoverChanged } from "../components/Hardcover";
 import { EbookDiscovery } from "../components/SourceWorkflow";
 import { api, duration } from "../lib";
@@ -51,7 +51,7 @@ export function DiscoverPage({
   const [genre, setGenre] = useState("All genres");
   const [source, setSource] = useState<
     "curated" | "abb" | "hardcover" | "ebooks" | "series"
-  >("curated");
+  >(() => (seriesSearchWanted() ? "series" : "curated"));
   const [busy, setBusy] = useState(false);
   const [external, setExternal] = useState<
     {

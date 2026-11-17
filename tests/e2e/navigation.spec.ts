@@ -8,6 +8,7 @@ import { defaultAppearance } from "../../src/appearance";
 import { readerFixture } from "../reader-fixture";
 import { SAVED_SERIES_701, SERIES_701_REMOVAL } from "./navigation-fixtures";
 import { tempDir } from "../temp-dir";
+import { openSavedSeries, savedSeriesList, showSavedSeries } from "./library-series";
 
 // Addresses and the page stack (#484, ADR 0020): the browser's history is the stack, Back means the same for the
 // phone's gesture and the browser's button, and every address that works today keeps working.
@@ -466,7 +467,7 @@ test.describe("with answers from the test", () => {
     // A saved series is a page of its own (#562): an entry, whose removal confirmation goes with it.
     const series = page.getByRole("region", { name: "Series", exact: true });
     const removal = page.getByRole("dialog", { name: "Remove The Crossing", exact: true });
-    await page.getByRole("button", { name: "Open The Crossing by Ada North", exact: true }).click();
+    await openSavedSeries(page, "The Crossing", "Ada North");
     await expect(page).toHaveURL(/#series\/701$/);
     await series.getByRole("button", { name: "Remove series", exact: true }).click();
     await expect(removal).toBeVisible();
@@ -817,8 +818,12 @@ test.describe("with a password", () => {
     await expect(shown(page)).toHaveText("Discover");
     await tab(page, "My library").click();
     await expect(shown(page)).toHaveText("Library");
-    await expect(page.getByText("No saved series yet.", { exact: false })).toBeVisible();
+    // The Series chip (#567): the reader's list is not read yet, and nothing of the administrator's stands in it.
+    await showSavedSeries(page);
+    await expect(savedSeriesList(page)).toBeVisible();
+    await expect(savedSeriesList(page).getByText("Loading…", { exact: true })).toBeVisible();
     await expect(page.getByText("The Crossing", { exact: true })).toHaveCount(0);
+    await expect(savedSeriesList(page).getByRole("button", { name: /The Crossing/ })).toHaveCount(0);
     await expect(page.getByText("Hardcover is connected.", { exact: false })).toHaveCount(0);
     releaseReader();
     await context.close();

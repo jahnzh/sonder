@@ -8,6 +8,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { noOverflow } from "./overflow";
+import { openSavedSeries, showSavedSeries, savedSeriesRow } from "./library-series";
 
 test.use({ serviceWorkers: "block" });
 
@@ -117,7 +118,7 @@ test("the saved series opens from the Library; its rows; a book opens its Book p
   page.on("pageerror", (error) => errors.push(error.message));
 
   await page.goto("/#library");
-  await page.getByRole("button", { name: "Open The Crossing by Ada North", exact: true }).click();
+  await openSavedSeries(page, "The Crossing", "Ada North");
   await expect(page).toHaveURL(/#series\/701$/);
   const shown = region(page);
   await expect(shown).toBeVisible();
@@ -215,7 +216,8 @@ test("a book's series line opens the saved series; the address on a reload and f
   await expect(books(page)).toBeVisible();
   await region(page).getByRole("button", { name: "Back to Library", exact: true }).click();
   await expect(page).toHaveURL(/#library$/);
-  await expect(page.getByRole("button", { name: "Open The Crossing by Ada North", exact: true })).toBeVisible();
+  await showSavedSeries(page);
+  await expect(savedSeriesRow(page, "The Crossing", "Ada North")).toBeVisible();
 });
 
 test("a failed ebook search shows Series search failed with Retry, which runs it again to done", async ({ page }) => {

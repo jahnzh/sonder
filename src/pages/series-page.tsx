@@ -56,6 +56,11 @@ type Props = {
   onNotSaved: (seriesId: number) => void;
   /** The series was removed. */
   onRemoved: () => void;
+  /**
+   * The page stands beside the Library's list of saved series (a desktop, #567; board DesktopSeries.dc.html): the
+   * Library holds the page's Title and the way back, so the series' name is a heading with the intro beside it.
+   */
+  beside?: boolean;
 };
 
 function PlayIcon() {
@@ -78,7 +83,7 @@ function moving(series: SavedSeries | null) {
   );
 }
 
-export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onRemoved }: Props) {
+export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onRemoved, beside = false }: Props) {
   const address = useAddress();
   const p = usePlayer();
   const library = useStoredWorksWithPlaces();
@@ -239,9 +244,18 @@ export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onR
 
   return (
     <section className="series-page" aria-label="Series">
-      <PageHeader title={model?.title ?? ""} back />
-      {model && <p className="series-page-intro type-label">{model.intro}</p>}
-      {!model && !error && <p className="series-page-intro type-label">Loading…</p>}
+      {beside ? (
+        <div className="series-page-beside-head">
+          <h2 className="type-heading">{model?.title ?? ""}</h2>
+          <span className="type-label">{model ? model.intro : error ? "" : "Loading…"}</span>
+        </div>
+      ) : (
+        <>
+          <PageHeader title={model?.title ?? ""} back />
+          {model && <p className="series-page-intro type-label">{model.intro}</p>}
+          {!model && !error && <p className="series-page-intro type-label">Loading…</p>}
+        </>
+      )}
 
       {model?.refreshError && (
         <div className="series-page-card" role="group" aria-label="Hardcover could not be read">

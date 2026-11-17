@@ -1,0 +1,164 @@
+/* The Library's Series chip (src/pages/library-series.tsx; boards LibrarySeries.dc.html, DesktopSeries.dc.html).
+   Tokens from src/parts/tokens.css, colours from the existing variables. */
+.library-series {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  min-width: 0;
+}
+/* The section's name (the board's h2): 44 high, Heading. */
+.library-series-heading {
+  margin: 0;
+  min-height: var(--height-control);
+  display: flex;
+  align-items: center;
+}
+.library-series-note {
+  margin: 0;
+  color: var(--muted);
+}
+.library-series-error {
+  color: var(--danger);
+}
+.library-series-item {
+  display: block;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+/* A series row: 64 high as the board names it (its 12 above and below would make 66 with the two lines), 16 inside on
+   the sides; the stacked cover, the name over its line, the chevron. */
+.library-series-row {
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--height-bar);
+  padding: 0 var(--space-16);
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.library-series-row:hover {
+  background: color-mix(in srgb, var(--raised) 55%, transparent);
+}
+.library-series-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+/* The series shown beside the list (a desktop) stands on the raised fill. */
+.library-series-row[data-current] {
+  background: var(--raised);
+}
+/* The stacked cover: 52 by 40; the first number in front (40, corner 8), the second 10 right and 2 down (36, corner 7),
+   the third 20 right and 4 down (32, corner 6). */
+.library-series-stack {
+  flex: none;
+  position: relative;
+  display: block;
+  width: 52px;
+  height: 40px;
+}
+.library-series-cover {
+  position: absolute;
+  display: block;
+  overflow: hidden;
+  background: var(--raised);
+  box-shadow: 0 0 0 1px var(--surface);
+}
+.library-series-cover[data-layer="0"] {
+  left: 0;
+  top: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--corner-control);
+}
+.library-series-cover[data-layer="1"] {
+  left: 10px;
+  top: 2px;
+  width: 36px;
+  height: 36px;
+  border-radius: 7px;
+}
+.library-series-cover[data-layer="2"] {
+  left: 20px;
+  top: 4px;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+}
+.library-series-cover > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.library-series-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.library-series-row .library-series-name {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.library-series-line {
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.library-series-end {
+  flex: none;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+}
+/* A desktop: the list on the left, the series beside it (DesktopSeries.dc.html: 300 and 420 at least, 32 apart). */
+.library-series-beside {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-32);
+}
+.library-series-beside > .library-series {
+  flex: 1 1 300px;
+}
+.library-series-beside > .library-series-shown {
+  flex: 2 1 420px;
+  min-width: 0;
+}
+.library-series-beside > .library-series-shown > .series-page {
+  max-width: none;
+}
+
+/* The Series chip in today's filter row (the other filters keep their look until the Library slice): the Chip part's
+   own measures, not the row's tab rules (styles.css' `.filter-tabs > button`), and a row tall enough for its 44. */
+.library-section > .library-toolbar {
+  height: 52px;
+}
+.filter-tabs > .part-chip.library-series-chip {
+  height: var(--height-control);
+  padding: 0 var(--space-16);
+  align-self: center;
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--text);
+}
+.filter-tabs > .part-chip.library-series-chip[data-selected] {
+  color: var(--background);
+  font-weight: 600;
+}
+.filter-tabs > .part-chip.library-series-chip::after {
+  content: none;
+}

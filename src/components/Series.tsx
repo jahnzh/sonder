@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, userId } from "../lib";
-import { accountAnswer } from "../account-answer";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { api } from "../lib";
 import type { Download, SavedEbook, SeriesWorkAcquisition } from "../types";
 import { normalizeSeriesLanguage, selectSeriesDefaults, type SeriesCandidate } from "../series-selection";
 import { Dialog } from "./ui/dialog";
@@ -51,7 +50,24 @@ function languageLabel(language: string) {
   catch { return language; }
 }
 
+/** The Library's "Find a series" (#567) asked for the series search: Discover shown next puts its field in view, focused. */
+let seriesSearchAsked = false;
+export function askSeriesSearch() {
+  seriesSearchAsked = true;
+}
+/** Discover opens on its series search while the ask is pending. */
+export function seriesSearchWanted() {
+  return seriesSearchAsked;
+}
+
 export function SeriesDiscovery({ configured, onConnect, onOpen }: { configured: boolean; onConnect: () => void; onOpen: (id: number) => void }) {
+  const field = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!seriesSearchAsked) return;
+    seriesSearchAsked = false;
+    field.current?.scrollIntoView({ block: "center" });
+    field.current?.focus({ preventScroll: true });
+  }, []);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SeriesSummary[]>([]);
   const [error, setError] = useState("");
@@ -68,7 +84,7 @@ export function SeriesDiscovery({ configured, onConnect, onOpen }: { configured:
     <div className="section-heading"><h2>Search series</h2></div>
     {!configured && <p>Connect Hardcover to search for series. <button className="button subtle" onClick={onConnect}>Connect Hardcover</button></p>}
     <form onSubmit={(event) => void search(event)}>
-      <label className="search-input"><input aria-label="Search series" placeholder="Series name" value={query} onChange={(event) => setQuery(event.target.value)} minLength={2} required /></label>
+      <label className="search-input"><input ref={field} aria-label="Search series" placeholder="Series name" value={query} onChange={(event) => setQuery(event.target.value)} minLength={2} required /></label>
       <button className="button primary" disabled={busy || !configured}>Search series</button>
     </form>
     {error && <p className="inline-error" role="alert">{error}</p>}
@@ -78,21 +94,6 @@ export function SeriesDiscovery({ configured, onConnect, onOpen }: { configured:
       <div><strong>{item.name}</strong><p>{item.author || "Author unknown"}{item.count !== null ? ` · ${item.count} works` : ""}</p><small>Hardcover #{item.id}</small></div>
       <button className="button subtle" aria-label={`View ${item.name} by ${item.author || "unknown author"}`} onClick={() => onOpen(item.id)}>View series</button>
     </article>)}</div>
-  </section>;
-}
-
-/** The saved series last read, for the account they were read for: the Library shown again starts with them (see useHardcover). */
-const lastSeries = accountAnswer<SeriesSummary[]>(userId);
-export function SeriesLibrary({ onOpen, revision }: { onOpen: (id: number) => void; revision: number }) {
-  const [items, setItems] = useState<SeriesSummary[]>(() => lastSeries.kept() ?? []);
-  const [error, setError] = useState("");
-  useEffect(() => { let active = true; lastSeries.read(() => api<SeriesSummary[]>("/series")).then((answer) => { if (answer && active) setItems(answer.value); }).catch((reason) => { if (active) setError(reason.message); }); return () => { active = false; }; }, [revision]);
-  return <section className="library-section series-library"><div className="section-heading"><h2>Series</h2></div>
-    {error ? <p className="inline-error">{error}</p> : !items.length ? <p>No saved series yet. Search for a series in Discover.</p> :
-      <div className="series-results">{items.map((item) => <article className="series-result" key={item.id}>
-        <div><strong>{item.name}</strong><p>{item.author || "Author unknown"} · Hardcover #{item.id}</p></div>
-        <button className="button subtle" aria-label={`Open ${item.name} by ${item.author || "unknown author"}`} onClick={() => onOpen(item.id)}>Open series</button>
-      </article>)}</div>}
   </section>;
 }
 

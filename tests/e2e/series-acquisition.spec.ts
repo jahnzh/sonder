@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { openSavedSeries } from "./library-series";
 
 test("series save opt-ins, ebook failure, and retry show specific progress", async ({
   page,
@@ -51,7 +52,7 @@ test("series save opt-ins, ebook failure, and retry show specific progress", asy
   await page.getByRole("button", { name: "Close series" }).click();
   await page.goto("/#library");
   // The saved series opens its Series page (#562); Crossing Companion is a related work there.
-  await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
+  await openSavedSeries(page, "The Crossing", "Ada North");
   await expect(page).toHaveURL(/#series\/701$/);
   const companion = page
     .getByRole("region", { name: "Series", exact: true })
