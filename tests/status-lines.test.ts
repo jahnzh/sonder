@@ -275,7 +275,7 @@ test("the Reading sync page's lines (#540): states, notes, steps, and the lines 
     resumeOver: "Resume starts this book over",
     noMatch: "The narration does not match this edition",
     englishOnly: "Reading sync works with English books only",
-    languageDiffers: "The ebook and the narration are in different languages",
+    languageDiffers: "The recording and the edition are in different languages",
     failedEverywhere: "Reading sync failed on every worker.",
     noConnection: "No connection",
   });
