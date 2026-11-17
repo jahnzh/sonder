@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { showControls } from "./reader-bands";
 import { readFileSync } from "node:fs";
 import { readerFixture } from "../reader-fixture";
 import { installReaderWaitBudget, READER_WAIT_MS, timedWait } from "./timing";
@@ -216,6 +217,8 @@ test("at 3× the follow highlight stays within one sentence of the audio and the
       route.fulfill({ path: "node_modules/epubjs/dist/epub.min.js", contentType: "text/javascript" }),
     );
     await page.addScriptTag({ url: "/__epub-test.js" });
+    // Speed is in the reader's foot row, which shows with the controls (#587).
+    await showControls(page, reader);
     const speed = page.getByRole("dialog", { name: "Now playing", exact: true }).getByRole("button", { name: /^Playback speed/ }).last();
     await speed.click();
     await page.getByRole("slider", { name: "Playback speed", exact: true }).fill("3");

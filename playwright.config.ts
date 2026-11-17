@@ -7,23 +7,33 @@ const installed =
 // SONDER_MOBILE=1 adds them to the default projects; SONDER_MOBILE=only (npm run test:mobile) runs just them.
 const mobileMode = process.env.SONDER_MOBILE;
 const mobileSpecs = /(^|\/)(now-playing-layout|device-reset|app|playback-workflow|integrated-reader|playback-speed|navigation|gallery(-[a-z-]+)?)\.spec\.ts$/;
+// The reader's page (#587): the bands and the reader behaviours they must keep also run on the phone projects.
+const readerPhoneSpecs = /(^|\/)(reader-bands|reader-frame|reader-theme|reader-follow-highlight|reader-load-teardown)\.spec\.ts$/;
 const { isMobile: _isMobile, defaultBrowserType: _browser, ...pixelWithoutIsMobile } = devices["Pixel 7"];
 const mobileProjects = [
   // Pixel 7 in Chromium: touch input, mobile user agent, device pixel ratio and isMobile viewport handling.
-  { name: "mobile-chrome", testMatch: mobileSpecs, use: { ...devices["Pixel 7"] } },
+  { name: "mobile-chrome", testMatch: [mobileSpecs, readerPhoneSpecs], use: { ...devices["Pixel 7"] } },
   // Firefox with the Pixel 7 viewport, touch and user agent. Firefox does not support isMobile, so it is dropped
   // (no meta-viewport handling); the project exists only when the Firefox binary does.
   ...(existsSync(firefox.executablePath())
-    ? [{ name: "mobile-firefox", testMatch: mobileSpecs, use: { ...pixelWithoutIsMobile, browserName: "firefox" as const, launchOptions: {} } }]
+    ? [{ name: "mobile-firefox", testMatch: [mobileSpecs, readerPhoneSpecs], use: { ...pixelWithoutIsMobile, browserName: "firefox" as const, launchOptions: {} } }]
     : []),
   // iPhone 15 profile in WebKit: the closest to iOS Safari on Linux; skipped cleanly when the binary is missing.
   ...(existsSync(webkit.executablePath())
-    ? [{ name: "mobile-safari", testMatch: mobileSpecs, use: { ...devices["iPhone 15"], launchOptions: {} } }]
+    ? [{ name: "mobile-safari", testMatch: [mobileSpecs, readerPhoneSpecs], use: { ...devices["iPhone 15"], launchOptions: {} } }]
     : []),
 ];
 // The page turn inside a sentence (#509) also runs in WebKit with the iPhone profile, the closest to iOS Safari here.
 const pageTurnIphone = existsSync(webkit.executablePath())
   ? [{ name: "webkit-iphone-page-turn", testMatch: /(^|\/)reader-page-turn\.spec\.ts$/, use: { ...devices["iPhone 15"], launchOptions: {} } }]
+  : [];
+// Every Activity browser spec also runs in WebKit with the iPhone profile, the slice's final check (#523): Now, This device,
+// Server, the worker's page, the dot, the addresses, the device's save records, the Torrent client row, and the page stack.
+// The service worker is blocked there: once it controls the page, WebKit's requests no longer pass page.route, so every
+// answer a spec routes (the activity answer, a pause, a restart) would reach the suite's server instead after a reload.
+const activitySpecs = /(^|\/)(activity(-[a-z]+)?|device-save-records|torrent-health|navigation)\.spec\.ts$/;
+const activityIphone = existsSync(webkit.executablePath())
+  ? [{ name: "webkit-iphone-activity", testMatch: activitySpecs, use: { ...devices["iPhone 15"], serviceWorkers: "block" as const, launchOptions: {} } }]
   : [];
 const desktopProjects = [
   { name: "chromium" },
@@ -63,6 +73,10 @@ const desktopProjects = [
               /(^|\/)activity-worker\.spec\.ts$/,
               // The Audiobook page (#530).
               /(^|\/)audiobook-page\.spec\.ts$/,
+              // The reader's page: a head, the text band and a foot (#587).
+              /(^|\/)reader-bands\.spec\.ts$/,
+              // The rest of Activity's specs, the slice's final check (#523).
+              /(^|\/)(activity-navigation|torrent-health)\.spec\.ts$/,
               // A book read in the reader is In progress; the ebook shelf leaves Discover (#556).
               /(^|\/)(ebook-only-library|discovery)\.spec\.ts$/,
             ]
@@ -70,6 +84,7 @@ const desktopProjects = [
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: {} },
     })),
   ...pageTurnIphone,
+  ...activityIphone,
 ];
 export default defineConfig({
   testDir: "./tests/e2e",

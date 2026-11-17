@@ -2039,73 +2039,6 @@ input[type="range"]::-moz-range-thumb {
   margin-left: auto;
   white-space: nowrap;
 }
-.storage-card {
-  display: flex;
-  align-items: center;
-  gap: 19px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 24px;
-  margin-bottom: 35px;
-}
-.storage-icon {
-  width: 50px;
-  height: 50px;
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--muted);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-.storage-main {
-  flex: 1;
-  min-width: 0;
-}
-.storage-main > div:first-child {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 15px;
-}
-.storage-main strong {
-  font-size: calc(12px * var(--ui-scale, 1));
-  font-weight: 500;
-  color: var(--muted);
-}
-.storage-main > div > span {
-  font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  color: var(--text);
-}
-.storage-bar {
-  height: 5px;
-  border-radius: 5px;
-  background: var(--surface);
-  margin: 12px 0 10px;
-  overflow: hidden;
-}
-.storage-bar > i {
-  display: block;
-  height: 100%;
-  background: var(--surface);
-  border-radius: 5px;
-}
-.storage-main > small {
-  font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  color: var(--text);
-  line-height: 1.7;
-  display: block;
-}
-.storage-card > .quiet-tag {
-  align-self: flex-start;
-  font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  padding: 6px 8px;
-}
-.download-section {
-  margin-top: 5px;
-}
 .download-progress {
   height: 4px;
   border-radius: 4px;
@@ -2119,33 +2052,6 @@ input[type="range"]::-moz-range-thumb {
   display: block;
   background: var(--surface);
   transition: width 0.25s;
-}
-.download-note {
-  display: flex;
-  align-items: flex-start;
-  gap: 13px;
-  padding: 22px 24px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  margin-top: 30px;
-  background: var(--surface);
-  color: var(--text);
-}
-.download-note > svg {
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-.download-note strong {
-  font-size: calc(11px * var(--ui-scale, 1));
-  font-weight: 500;
-  color: var(--muted);
-}
-.download-note p {
-  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  line-height: 1.8;
-  margin-top: 6px;
-  color: var(--text);
-  max-width: 660px;
 }
 .discover-banner {
   display: flex;
@@ -3509,19 +3415,6 @@ input[type="range"]::-moz-range-thumb {
   .quiet-tag {
     font-size: max(11px, calc(8px * var(--ui-scale, 1)));
   }
-  .storage-card {
-    padding: 19px;
-    gap: 14px;
-  }
-  .storage-card > .quiet-tag {
-    display: none;
-  }
-  .storage-main strong {
-    font-size: calc(11px * var(--ui-scale, 1));
-  }
-  .storage-main > div > span {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  }
   .page-settings .page-heading h1 {
     font-size: calc(29px * var(--ui-scale, 1));
   }
@@ -3911,24 +3804,6 @@ input[type="range"]::-moz-range-thumb {
   }
   .page-heading > .quiet-tag {
     display: none;
-  }
-  .storage-main > div:first-child {
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .storage-main strong {
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  }
-  .storage-icon {
-    width: 39px;
-    height: 39px;
-  }
-  .storage-main > small {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-  }
-  .storage-card {
-    padding: 16px;
-    gap: 13px;
   }
   .settings-section-heading {
     gap: 10px;
@@ -4915,43 +4790,6 @@ input[type="range"]::-moz-range-thumb {
   }
   .external-results .button {
     margin-left: auto;
-  }
-  .storage-card {
-    gap: 13px;
-    padding: 19px 16px;
-    margin-bottom: 28px;
-  }
-  .storage-icon {
-    width: 42px;
-    height: 42px;
-  }
-  .storage-main strong {
-    font-size: calc(11px * var(--ui-scale, 1));
-  }
-  .storage-main > small {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-    line-height: 1.9;
-  }
-  .storage-main > div > span {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  }
-  .storage-main > div:first-child {
-    gap: 7px;
-  }
-  .storage-bar {
-    margin: 11px 0 8px;
-    height: 4px;
-  }
-  .download-note {
-    padding: 19px 16px;
-    gap: 12px;
-    margin-top: 26px;
-  }
-  .download-note strong {
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  }
-  .download-note p {
-    font-size: max(11px, calc(9px * var(--ui-scale, 1)));
   }
   .page-settings .page-heading h1 {
     font-size: calc(29px * var(--ui-scale, 1));
@@ -5992,45 +5830,11 @@ input[type="range"]::-moz-range-thumb {
   border-color: var(--border);
   color: var(--text);
 }
-.storage-card {
-  background: var(--raised);
-  border-color: var(--border);
-}
-.storage-icon {
-  background: var(--raised);
-  color: var(--text);
-}
-.storage-main strong {
-  color: var(--text);
-}
-.storage-main > div > span {
-  color: var(--text);
-}
-.storage-bar {
-  background: var(--raised);
-}
-.storage-bar > i {
-  background: var(--surface);
-}
-.storage-main > small {
-  color: var(--muted);
-}
 .download-progress {
   background: var(--raised);
 }
 .download-progress > i {
   background: var(--surface);
-}
-.download-note {
-  background: var(--raised);
-  border-color: var(--border);
-  color: var(--muted);
-}
-.download-note strong {
-  color: var(--text);
-}
-.download-note p {
-  color: var(--muted);
 }
 .discover-banner {
   background: linear-gradient(105deg, var(--accent-soft), var(--raised));
@@ -6262,12 +6066,6 @@ input[type="range"]::-moz-range-thumb {
   gap: 7px;
   margin-top: 8px;
 }
-.queue-info {
-  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  color: var(--text);
-  margin-top: 7px;
-  line-height: 1.7;
-}
 .queue-empty {
   padding: 18px 20px;
   border: 1px dashed var(--border);
@@ -6280,30 +6078,6 @@ input[type="range"]::-moz-range-thumb {
   color: var(--text);
   text-decoration: underline;
   text-underline-offset: 3px;
-}
-.download-kind-tabs {
-  display: flex;
-  gap: 25px;
-  border-bottom: 1px solid var(--line);
-  margin: 15px 0 27px;
-}
-.download-kind-tabs > button {
-  font-size: calc(12px * var(--ui-scale, 1));
-  color: var(--muted);
-  position: relative;
-  padding: 0 0 13px;
-}
-.download-kind-tabs > button.selected {
-  color: var(--text);
-}
-.download-kind-tabs > button.selected:after {
-  content: "";
-  height: 2px;
-  background: var(--surface);
-  position: absolute;
-  bottom: -1px;
-  left: 0;
-  right: 0;
 }
 .source-explainer {
   display: flex;
@@ -6851,21 +6625,6 @@ input[type="range"]::-moz-range-thumb {
   .empty-state {
     padding: 35px 20px;
   }
-  .storage-main strong {
-    font-size: calc(13px * var(--ui-scale, 1));
-  }
-  .storage-main > div > span {
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  }
-  .storage-main > small {
-    font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  }
-  .download-note strong {
-    font-size: calc(12px * var(--ui-scale, 1));
-  }
-  .download-note p {
-    font-size: calc(11px * var(--ui-scale, 1));
-  }
   .settings-section-heading h2 {
     font-size: calc(15px * var(--ui-scale, 1));
   }
@@ -7037,9 +6796,6 @@ input[type="range"]::-moz-range-thumb {
     font-size: calc(12px * var(--ui-scale, 1));
     padding: 10px 11px;
   }
-  .queue-info {
-    font-size: calc(11px * var(--ui-scale, 1));
-  }
   .queue-location {
     font-size: max(11px, calc(10px * var(--ui-scale, 1)));
   }
@@ -7130,11 +6886,6 @@ input[type="range"]::-moz-range-thumb {
 }
 .ebook-source-note + .ebook-source-tabs {
   margin-top: 10px;
-}
-.download-device-heading {
-  margin-top: 36px;
-  padding-top: 25px;
-  border-top: 1px solid var(--line);
 }
 .discover-ebook-callout {
   display: flex;

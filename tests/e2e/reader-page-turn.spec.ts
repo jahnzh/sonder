@@ -5,6 +5,7 @@ import {longBookFixture} from "../long-book-fixture";
 import {interpolateWordTimes} from "../../src/word-timing";
 import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
 import {highlightShown} from "./reader-view";
+import {showControls} from "./reader-bands";
 import {longSentence,pageTurnFixture,PACED_CHARACTERS_PER_SECOND} from "../page-turn-fixture";
 // The page turns inside a sentence that crosses a page (#508, spec #503): in Page mode, when the narration's
 // reported position reaches the first word on the next page. The narration's position is set on the player's
@@ -123,6 +124,8 @@ async function crossingSentence(room:Locator,intervals:any[],text:(interval:any)
   const words=[...sentence.matchAll(/\S+/g)].map(m=>({text:m[0]}));
   // The break's time: the estimated start of its word, as the reader interpolates it.
   const breakTime=interpolateWordTimes(words,interval.start,interval.end)[breakWord]!.start;
+  // Room on both sides of the break for the narration to sit before and after it (the bands of #587 move the breaks).
+  if(breakTime-interval.start<=.3||interval.end-breakTime<=.3)continue;
   return {interval,next:intervals[at+1],sentence,breakWord,breakTime,firstPage:first.page};
  }
  throw new Error("no sentence of chapter 1 crosses a page inside it at this size");
@@ -143,7 +146,7 @@ test("in Page mode the page turns inside a crossing sentence when the narration 
   expect(breakTime-interval.start).toBeGreaterThan(.3);
   expect(interval.end-breakTime).toBeGreaterThan(.3);
   room=await openAt(page,book,interval,interval.start+.05);
-  const back=room.getByRole("button",{name:"Back to narration",exact:true});
+  const back=room.getByRole("button",{name:"Back to narration",exact:true,includeHidden:true});
   // Not turned at the sentence's start: its first word is on the page, the break's word is not.
   expect(await shown(room,sentence,0)).toBe(true);
   expect(await shown(room,sentence,breakWord)).toBe(false);
@@ -189,7 +192,7 @@ test("a page turned by hand inside a crossing sentence turns nothing until Back 
   // Not on the chapter's first page, so that a page back by hand goes to a page of its own.
   const {interval,sentence,breakWord,breakTime}=await crossingSentence(room,intervals,text,1);
   room=await openAt(page,book,interval,interval.start+.05);
-  const back=room.getByRole("button",{name:"Back to narration",exact:true});
+  const back=room.getByRole("button",{name:"Back to narration",exact:true,includeHidden:true});
   expect(await shown(room,sentence,0)).toBe(true);
   // A tap on the page's left edge turns back a page by hand: paged away.
   const box=(await room.locator(".reader-viewport").boundingBox())!;
@@ -201,6 +204,7 @@ test("a page turned by hand inside a crossing sentence turns nothing until Back 
   await expectStays(page,async()=>!await shown(room,sentence,0)&&!await shown(room,sentence,breakWord));
   await expect(back).toBeEnabled();
   // Back to narration shows the page of the word being narrated: the second part, not the sentence's start.
+  await showControls(page,room);
   await back.click();
   await expect.poll(()=>shown(room,sentence,breakWord),{timeout:READER_WAIT_MS.followHighlight}).toBe(true);
   expect(await shown(room,sentence,0)).toBe(false);
@@ -375,7 +379,8 @@ async function followAt(page:Page,book:any,interval:any,sentence:string){
  expect(await placeShown(room,sentence,sentenceStart)).toBe(true);
  return room;
 }
-const back=(room:Locator)=>room.getByRole("button",{name:"Back to narration",exact:true});
+// Back to narration is in the foot's row, which shows with the controls (#587); its state is read while it is hidden.
+const back=(room:Locator)=>room.getByRole("button",{name:"Back to narration",exact:true,includeHidden:true});
 // Turns at each break of the sentence as laid out now, from its start: just before each break's time the page
 // stays, just after it the page that holds the break is shown, and no turn waits for the next sentence.
 async function expectTurnsAtEachBreak(page:Page,room:Locator,interval:any,next:any,sentence:string,most=Infinity,shots=""){
