@@ -86,7 +86,8 @@ export function Sheet({ title, children, footer, parent, onClose }: SheetProps) 
   const explanationOpen = useRef(false);
   useEffect(() => {
     const read = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") explanationOpen.current = !!document.querySelector("[data-radix-popper-content-wrapper]");
+      // A Picker (#602's language) is a layer of its own over the sheet: it takes Escape too.
+      if (event.key === "Escape") explanationOpen.current = !!document.querySelector("[data-radix-popper-content-wrapper], .part-picker");
     };
     window.addEventListener("keydown", read, true);
     return () => window.removeEventListener("keydown", read, true);
@@ -94,7 +95,7 @@ export function Sheet({ title, children, footer, parent, onClose }: SheetProps) 
 
   const onKeyDown = (event: KeyboardEvent) => {
     if (event.key !== "Escape") return;
-    // An explanation open in the sheet takes Escape first. Now playing's dialog stays mounted while closed whenever the
+    // An explanation or a Picker open over the sheet takes Escape first. Now playing's dialog stays mounted while closed whenever the
     // dock has a book, and Radix marks every Escape it sees as handled even then: that one does not keep the sheet open.
     if (event.defaultPrevented && explanationOpen.current) return;
     event.preventDefault();
