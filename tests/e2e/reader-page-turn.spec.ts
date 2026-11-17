@@ -7,6 +7,7 @@ import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
 import {highlightShown} from "./reader-view";
 import {showControls} from "./reader-bands";
 import {longSentence,pageTurnFixture,PACED_CHARACTERS_PER_SECOND} from "../page-turn-fixture";
+import {closeAppearance,openAppearance,setStepper} from "./reader-appearance";
 // The page turns inside a sentence that crosses a page (#508, spec #503): in Page mode, when the narration's
 // reported position reaches the first word on the next page. The narration's position is set on the player's
 // audio element without playing it (headless Firefox plays no audio in this suite).
@@ -18,6 +19,22 @@ test.beforeEach(async({page})=>{
   const audio:HTMLAudioElement[]=[];(window as any).__turnAudio=audio;
   const NativeAudio=window.Audio;
   window.Audio=class extends NativeAudio{constructor(src?:string){super(src);audio.push(this);}};
+  // The fonts of the document each section frame shows now, before its words are read (#588). A frame epub.js has
+  // just made for a new layout (a resize, Appearance docked or closed) first holds an empty about:blank document that
+  // the section then replaces. Under load Firefox left that replaced document's fonts.ready pending (seen with the
+  // frame at no width, no font faces, status "loaded"), so a wait on it hung the poll that asked until its timeout.
+  // The wait follows the frame to the document it shows instead.
+  (window as any).__sectionFontsReady=async(host:Element)=>{
+   for(const frame of host.querySelectorAll("iframe")){
+    for(let doc=frame.contentDocument;doc;){
+     let timer=0;
+     const replaced=new Promise<void>(resolve=>{const check=()=>frame.contentDocument!==doc?resolve():void(timer=window.setTimeout(check,50));check();});
+     const settled=await Promise.race([doc.fonts.ready.then(()=>true),replaced.then(()=>false)]);
+     window.clearTimeout(timer);
+     doc=settled?null:frame.contentDocument;
+    }
+   }
+  };
  });
 });
 test.afterEach(async({page})=>{
@@ -83,7 +100,7 @@ async function narrateAt(page:Page,position:number){
 async function wordState(room:Locator,sentence:string,word:number){
  return room.locator(".reader-viewport").evaluate(async(host,{sentence,word})=>{
   // The section's fonts first: a layout measured with a fallback font breaks elsewhere (WebKit loads them late).
-  for(const frame of host.querySelectorAll("iframe"))await frame.contentDocument?.fonts?.ready;
+  await (window as any).__sectionFontsReady(host);
   const bounds=host.getBoundingClientRect();
   for(const frame of host.querySelectorAll("iframe")){
    const doc=frame.contentDocument,box=frame.getBoundingClientRect();
@@ -280,7 +297,7 @@ type LaidWord={text:string;page:number;x:number;shown:boolean;highlighted:boolea
 async function layoutOf(room:Locator,sentence:string){
  return room.locator(".reader-viewport").evaluate(async(host,sentence)=>{
   // The section's fonts first: a layout measured with a fallback font breaks elsewhere (WebKit loads them late).
-  for(const frame of host.querySelectorAll("iframe"))await frame.contentDocument?.fonts?.ready;
+  await (window as any).__sectionFontsReady(host);
   const bounds=host.getBoundingClientRect(),step=host.clientWidth;
   const overlap=(r:Box,b:Box)=>Math.min(r.right,b.right)-Math.max(r.left,b.left)>0.5&&Math.min(r.bottom,b.bottom)-Math.max(r.top,b.top)>0.5;
   const marks=[...host.querySelectorAll(".sonder-follow rect")].map(r=>r.getBoundingClientRect());
@@ -491,6 +508,25 @@ test("a word hyphenated across the page turns inside the word's time, at its fir
  });
 });
 
+// The width of the section frames each time the reader measures where the narrated sentence breaks (#588), kept through
+// the reader's own timing hook (#509). epub.js sizes a new frame in steps after it shows the section, and the text's size
+// follows the frame's width: a measurement read between two of them breaks the sentence elsewhere than it is drawn.
+async function recordMeasuredFrames(page:Page){
+ await page.evaluate(()=>{
+  const widths=()=>[...document.querySelectorAll(".inline-reader .reader-viewport iframe")].map(frame=>frame.getBoundingClientRect().width).join(",");
+  const measured:string[]=[];
+  (window as any).__frameWidths=widths;
+  (window as any).__measuredFrames=measured;
+  (window as any).__sonderBreakTimings=new Proxy([] as number[],{get:(target,key)=>key==="push"?(...values:number[])=>{measured.push(widths());return target.push(...values);}:Reflect.get(target,key)});
+ });
+}
+// The reader's last measurement read the section frames as they are laid out now.
+async function expectMeasuredAsLaidOut(page:Page){
+ await expect.poll(()=>page.evaluate(()=>{
+  const measured=(window as any).__measuredFrames as string[],now=(window as any).__frameWidths() as string;
+  return measured.length?`${measured.at(-1)} of ${now}`:`none of ${now}`;
+ }),{timeout:READER_WAIT_MS.followHighlight}).toMatch(/^(.+) of \1$/);
+}
 test("after a change of text size and after a resize the turn comes at the new break",async({page},testInfo)=>{
  test.setTimeout(240000);
  const {book,chapter,text}=await turnBook(page,`New layout ${testInfo.repeatEachIndex} ${randomUUID()}`);
@@ -508,12 +544,15 @@ test("after a change of text size and after a resize the turn comes at the new b
    const box=(await room.locator(".reader-viewport").boundingBox())!;
    await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
   }
-  await topbar.getByRole("button",{name:"Reader appearance",exact:true}).click();
-  await page.getByRole("slider",{name:"Reader text size",exact:true}).fill("26");
-  await room.locator(".reader-panel-heading").getByRole("button",{name:"Close reader options",exact:true}).click();
+  // From Appearance docked under the text (#588).
+  await recordMeasuredFrames(page);
+  await openAppearance(page,room);
+  await setStepper(room,"Size",26);
+  await closeAppearance(room);
   await expect.poll(()=>movedFrom(before),{timeout:READER_WAIT_MS.followHighlight}).toBe(true);
   // Still following, on the page of the word being narrated: the sentence's start.
   await settledLayout(room,sentence,interval);
+  await expectMeasuredAsLaidOut(page);
   await expect(back(room)).toBeDisabled();
   const larger=await expectTurnsAtEachBreak(page,room,interval,next,sentence,2,"text-size-26");
   expect(larger[0]!.word).not.toBe(before);
@@ -523,6 +562,7 @@ test("after a change of text size and after a resize the turn comes at the new b
   await page.setViewportSize({width:340,height:700});
   await expect.poll(()=>movedFrom(larger[0]!.word),{timeout:READER_WAIT_MS.followHighlight}).toBe(true);
   await settledLayout(room,sentence,interval);
+  await expectMeasuredAsLaidOut(page);
   await expect(back(room)).toBeDisabled();
   const resized=await expectTurnsAtEachBreak(page,room,interval,next,sentence,2,"resized-340x700");
   expect(resized[0]!.word).not.toBe(larger[0]!.word);

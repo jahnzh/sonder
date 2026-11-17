@@ -91,6 +91,8 @@ const desktopProjects = [
               /(^|\/)book-page\.spec\.ts$/,
               // The reader's page: a head, the text band and a foot (#587).
               /(^|\/)reader-bands\.spec\.ts$/,
+              // Appearance docked under the text (#588).
+              /(^|\/)reader-appearance\.spec\.ts$/,
               // The rest of Activity's specs, the slice's final check (#523).
               /(^|\/)(activity-navigation|torrent-health)\.spec\.ts$/,
               // Chapters, Bookmarks and Search as pages of the reader (#590).
