@@ -1,0 +1,79 @@
+// Book row (spec #480, "Parts"; boards LanguageFiles.dc.html, Series.dc.html): a cover of 40 with corner 8, the
+// title and one status line, 64 high. With a number in front (its place in a series) it is 56 high: the series row.
+// Small marks before the status line say which files the book has; a thin accent bar under the line shows that
+// something moves. It is an item of a Group; a row that opens the book is one button with a chevron.
+// The status line is a plain string: the functions that make it are in src/status-lines.ts.
+import { useId } from "react";
+import { Chevron, FileIcon, fileKindName, type FileKind } from "./icons";
+import { ProgressBar } from "./ProgressBar";
+import "./book-row.css";
+
+export type BookRowProps = {
+  title: string;
+  /** One status line. */
+  status: string;
+  /** The cover's address; without one the cover is an empty raised square. */
+  cover?: string | null;
+  /** Its place in a series ("1", "2.5"): drawn in front, and the row is 56 high. */
+  number?: string | number | null;
+  /** Which files the book has, as 16 px marks before the status line. */
+  marks?: FileKind[];
+  /** 0 to 1 while something moves; draws the bar under the status line. */
+  progress?: number | null;
+  /** The row opens the book. */
+  onClick?: () => void;
+};
+
+export function BookRow({ title, status, cover, number, marks = [], progress, onClick }: BookRowProps) {
+  const id = useId();
+  const numbered = number != null && number !== "";
+  const names = [numbered && `${id}-number`, `${id}-title`, ...marks.map((_, index) => `${id}-mark-${index}`), `${id}-status`].filter(Boolean).join(" ");
+  const body = (
+    <>
+      {numbered && (
+        <span id={`${id}-number`} className="part-book-row-number type-label">
+          {number}
+        </span>
+      )}
+      <span className="part-book-row-cover" aria-hidden="true">
+        {cover && <img src={cover} alt="" loading="lazy" decoding="async" />}
+      </span>
+      <span className="part-book-row-text">
+        <span id={`${id}-title`} className="part-book-row-title type-body">
+          {title}
+        </span>
+        <span className="part-book-row-line type-label">
+          {marks.map((kind, index) => (
+            <span key={`${kind}-${index}`} id={`${id}-mark-${index}`} className="part-book-row-mark">
+              <FileIcon kind={kind} size={16} name={fileKindName[kind]} />
+            </span>
+          ))}
+          <span id={`${id}-status`} className="part-book-row-status">
+            {status}
+          </span>
+        </span>
+        {progress != null && <ProgressBar progress={progress} />}
+      </span>
+    </>
+  );
+  const data = { "data-numbered": numbered ? "" : undefined, "data-moving": progress != null ? "" : undefined };
+  if (onClick) {
+    return (
+      <li className="part-book-row-item">
+        <button type="button" className="part-book-row" {...data} aria-labelledby={names} onClick={onClick}>
+          {body}
+          <span className="part-book-row-end">
+            <Chevron />
+          </span>
+        </button>
+      </li>
+    );
+  }
+  return (
+    <li className="part-book-row-item" aria-labelledby={names}>
+      <div className="part-book-row" {...data}>
+        {body}
+      </div>
+    </li>
+  );
+}

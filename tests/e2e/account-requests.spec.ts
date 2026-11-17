@@ -32,35 +32,13 @@ test.beforeAll(async () => {
   throw new Error("Authenticated browser server did not start");
 });
 test.afterAll(() => { server?.kill(); });
-test("an unauthenticated visitor can request an account from the sign-in page", async ({ page }) => {
-  mkdirSync("artifacts", { recursive: true });
-  await page.goto(base);
-  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
-  const trigger = page.getByRole("button", { name: "Request an account" });
-  await expect(trigger).toBeVisible();
-  await trigger.click();
-  const dialog = page.getByRole("dialog", { name: "Request an account" });
-  await expect(dialog).toBeVisible();
-  // The hidden honeypot is rendered but unreachable by a person.
-  await expect(dialog.getByLabel("Website")).toHaveAttribute("tabindex", "-1");
-  // Invalid formats are refused client-side before anything is sent.
-  await dialog.getByLabel("Email").fill("not-an-email");
-  await dialog.getByLabel("Username").fill("a");
-  await dialog.getByRole("button", { name: "Send request" }).click();
-  await expect(dialog.getByText("Enter a valid email address.")).toBeVisible();
-  await expect(dialog.getByText("Usernames are 2 to 40 characters.")).toBeVisible();
-  await dialog.getByLabel("Email").fill("bradley@example.com");
-  await dialog.getByLabel("Username").fill("bradley");
-  await dialog.getByLabel("Note optional").fill("Just want access for a while");
-  await page.screenshot({ path: "artifacts/account-request-dialog.png" });
-  await dialog.getByRole("button", { name: "Send request" }).click();
-  await expect(dialog.getByRole("status").getByText("Your request has been received. Thank you!")).toBeVisible();
-  await page.screenshot({ path: "artifacts/account-request-confirmed.png" });
-  await dialog.getByRole("button", { name: "Done" }).click();
-  await expect(dialog).toBeHidden();
-});
+// A visitor's request (list 10 of spec #572) is guarded in sign-in.spec.ts; this one is sent as that sheet sends it.
 test("the administrator sees the pending account request in Settings", async ({ page }) => {
   mkdirSync("artifacts", { recursive: true });
+  const sent = await page.request.post(`${base}/api/account-requests`, {
+    data: { email: "bradley@example.com", username: "bradley", note: "Just want access for a while", honeypot: "" },
+  });
+  expect(sent.ok()).toBe(true);
   await page.goto(base);
   await page.getByLabel("Password", { exact: true }).fill("admin-password");
   await page.getByRole("button", { name: "Sign in" }).click();
@@ -71,4 +49,7 @@ test("the administrator sees the pending account request in Settings", async ({ 
   await expect(row.getByText("bradley", { exact: true })).toBeVisible();
   await expect(row.getByText("Just want access for a while")).toBeVisible();
   await page.screenshot({ path: "artifacts/account-request-queue.png" });
+  // Approving shows the invite line (moved here from join.spec.ts, whose activation is in sign-in.spec.ts).
+  await row.getByRole("button", { name: "Approve" }).click();
+  await expect(users.locator(".request-approval-link")).toHaveText(/\/join\?token=[0-9a-f]{64}$/);
 });

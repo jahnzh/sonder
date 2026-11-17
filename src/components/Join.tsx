@@ -1,23 +1,30 @@
+// Join (#582; spec #572, "Sign in, Request an account, Join"; boards Join.dc.html and JoinExpired.dc.html). `/join`
+// stays the one real path (ADR 0020). The username comes from the invite as a fact; Create account signs in and lands
+// on the Library. A link that does not work shows the server's message as the Title and the way to sign in.
 import { useEffect, useState, type FormEvent } from "react";
-import { ArrowRight, CircleAlert, Loader2 } from "lucide-react";
 import { api } from "../lib";
-import { PasswordField, rememberAccount, SignInArt, type Account } from "./SignIn";
-import "../signin.css";
+import { Button } from "../parts/Button";
+import { Group } from "../parts/Group";
+import { Row } from "../parts/Row";
+import { busyIcon, FieldError, PasswordField, rememberAccount, SignInPage, type Account } from "./SignIn";
 
 type Verified = { username: string; email: string };
 
-// The dedicated error card for a link that cannot be activated: missing,
-// unknown, malformed, expired or already used. The messages come from the
-// server (404/410 in server/invites.ts) and name the problem.
+/** The server's message about a link (404/410 in server/invites.ts) as a Title, which ends without a full stop. */
+export function linkTitle(message: string) {
+  return message.trim().replace(/\.$/, "");
+}
+
+// A link that cannot be activated: missing, unknown, malformed, expired or already used.
 function JoinError({ message }: { message: string }) {
   return (
-    <div className="join-error" role="alert">
-      <CircleAlert size={28} aria-hidden="true" />
-      <p>{message}</p>
-      <a className="signin-request" href="/">
-        Return to sign in
-      </a>
-    </div>
+    <>
+      <h1 className="signin-title type-title">{linkTitle(message)}</h1>
+      <p className="signin-lead type-body">Ask the administrator for a new link.</p>
+      <Button kind="secondary" className="signin-main" onClick={() => location.assign("/")}>
+        Go to sign in
+      </Button>
+    </>
   );
 }
 
@@ -77,103 +84,68 @@ export function Join({ onActivated }: { onActivated: (user: Account) => void }) 
       setBusy(false);
     }
   };
+  if (!invite && verifyError)
+    return (
+      <SignInPage>
+        <JoinError message={verifyError} />
+      </SignInPage>
+    );
   return (
-    <main className="signin-page">
-      <SignInArt />
-      <section className="signin-panel">
-        <div className="signin-content">
-          <div className="signin-brand">
-            <span className="brand-mark" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-              <i />
-            </span>
-            sonder<span>®</span>
-          </div>
-          <h1>Create your account</h1>
-          {!invite && verifyError && <JoinError message={verifyError} />}
-          {!invite && !verifyError && (
-            <div className="join-loading" role="status">
-              <Loader2 className="spin" size={22} aria-hidden="true" />
-              <span>Checking your invite…</span>
+    <SignInPage>
+      <h1 className="signin-title type-title">Create your account</h1>
+      {!invite && (
+        <p className="signin-lead type-body" role="status">
+          Checking your invite…
+        </p>
+      )}
+      {invite && (
+        <>
+          <Group label="Your invite" note="From your invite.">
+            <Row label="Username" value={invite.username} />
+          </Group>
+          <form className="signin-form" noValidate onSubmit={submit}>
+            <PasswordField
+              id="join-password"
+              label="Password"
+              value={password}
+              show={show}
+              onShowChange={setShow}
+              onChange={(next) => {
+                setPassword(next);
+                setServerError("");
+              }}
+              autoComplete="new-password"
+              required
+              autoFocus
+              invalid={attempted && !!passwordErr}
+              describedBy="join-error"
+              hint="At least 8 characters."
+              error={attempted ? passwordErr : undefined}
+            />
+            <PasswordField
+              id="join-confirm"
+              label="Confirm password"
+              value={confirm}
+              show={show}
+              onChange={(next) => {
+                setConfirm(next);
+                setServerError("");
+              }}
+              autoComplete="new-password"
+              required
+              invalid={attempted && !!confirmErr}
+              describedBy="join-error"
+              error={attempted ? confirmErr : undefined}
+            />
+            <div id="join-error" className="signin-alert" role="alert">
+              {serverError && <FieldError>{serverError}</FieldError>}
             </div>
-          )}
-          {invite && (
-            <form className="signin-form" noValidate onSubmit={submit}>
-              <p className="join-intro">
-                You’re invited as <strong>{invite.username}</strong>.
-                <span className="join-email">{invite.email}</span>
-              </p>
-              <div className="signin-field">
-                <label htmlFor="join-username">Username</label>
-                <input
-                  id="join-username"
-                  className="join-username"
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={invite.username}
-                  readOnly
-                />
-              </div>
-              <PasswordField
-                id="join-password"
-                label="Password"
-                value={password}
-                show={show}
-                onShowChange={setShow}
-                onChange={(next) => {
-                  setPassword(next);
-                  setServerError("");
-                }}
-                autoComplete="new-password"
-                required
-                autoFocus
-                invalid={attempted && !!passwordErr}
-                describedBy="join-error"
-                error={attempted ? passwordErr : undefined}
-              />
-              <PasswordField
-                id="join-confirm"
-                label="Confirm password"
-                value={confirm}
-                show={show}
-                onShowChange={setShow}
-                onChange={(next) => {
-                  setConfirm(next);
-                  setServerError("");
-                }}
-                autoComplete="new-password"
-                required
-                invalid={attempted && !!confirmErr}
-                describedBy="join-error"
-                error={attempted ? confirmErr : undefined}
-              />
-              <div id="join-error" role="alert">
-                {serverError && (
-                  <p className="signin-error">
-                    <CircleAlert size={16} aria-hidden="true" />
-                    {serverError}
-                  </p>
-                )}
-              </div>
-              <button type="submit" className="signin-submit" aria-busy={busy}>
-                {busy ? (
-                  <>
-                    <Loader2 className="spin" size={20} aria-hidden="true" />
-                    Creating account
-                  </>
-                ) : (
-                  <>
-                    Create account
-                    <ArrowRight size={18} aria-hidden="true" />
-                  </>
-                )}
-              </button>
-            </form>
-          )}
-        </div>
-      </section>
-    </main>
+            <Button kind="primary" type="submit" className="signin-main" aria-busy={busy} icon={busy ? busyIcon : undefined}>
+              {busy ? "Creating account" : "Create account"}
+            </Button>
+          </form>
+        </>
+      )}
+    </SignInPage>
   );
 }

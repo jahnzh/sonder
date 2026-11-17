@@ -1,0 +1,64 @@
+/* File row (src/parts/FileRow.tsx). 64 high with or without the bar: the text column fits inside. */
+.part-file-row-item {
+  display: block;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.part-file-row {
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--height-bar);
+  padding: 0 var(--space-16);
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+}
+button.part-file-row {
+  cursor: pointer;
+}
+button.part-file-row:hover {
+  background: color-mix(in srgb, var(--raised) 55%, transparent);
+}
+button.part-file-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.part-file-row-icon {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  color: var(--muted);
+}
+.part-file-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.part-file-row-name,
+.part-file-row-status {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.part-file-row-name {
+  color: var(--text);
+}
+.part-file-row-status {
+  color: var(--muted);
+}
+.part-file-row-end {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  color: var(--muted);
+}

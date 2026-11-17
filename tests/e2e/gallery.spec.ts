@@ -92,8 +92,9 @@ function measure(page: Page) {
         radii: [style.borderTopLeftRadius, style.borderTopRightRadius, style.borderBottomLeftRadius, style.borderBottomRightRadius],
         background: style.backgroundColor,
         lines: items.slice(1).map((item, index) => {
-          const previous = items[index].querySelector(".part-row")!.getBoundingClientRect();
-          const row = item.querySelector(".part-row")!.getBoundingClientRect();
+          // Each item holds one row of whichever part (Row, File row, Book row).
+          const previous = items[index].firstElementChild!.getBoundingClientRect();
+          const row = item.firstElementChild!.getBoundingClientRect();
           const itemStyle = getComputedStyle(item);
           return { gap: row.top - previous.bottom, width: itemStyle.borderTopWidth, style: itemStyle.borderTopStyle, colour: itemStyle.borderTopColor };
         }),
