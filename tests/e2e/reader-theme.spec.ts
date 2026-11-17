@@ -3,6 +3,7 @@ import { readerFixture } from "../reader-fixture";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { defaultAppearance } from "../../src/appearance";
+import { skipOnMobile } from "./mobile";
 // Tapping the middle of the page shows the reader's top bar and slider.
 async function showControls(page: Page) {
   const room = page.locator(".reader-room:not(.inline-reader)");
@@ -19,6 +20,9 @@ async function openMore(page: Page) {
 test("appearance presets and custom colors persist without interrupting audio", async ({
   page,
 }) => {
+  // On the phone projects (#587) only for what the bands change: this one measures the desktop projects' 390-wide
+  // window and plays audio, which the suite's Firefox cannot (#656).
+  skipOnMobile(true, "measures the 390-wide window of the desktop projects and plays audio");
   await page.goto("/");
   await page
     .getByRole("button", {
@@ -81,6 +85,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   page,
   context,
 }) => {
+  test.skip(test.info().project.name === "mobile-firefox", "plays audio, which the suite's Firefox cannot (#656)");
   const audio = await page.request.post("/api/import", {
     multipart: {
       title: "Reader companion",

@@ -1,4 +1,5 @@
 import {test,expect,type Page,type Locator} from "@playwright/test";
+import {showControls} from "./reader-bands";
 import {readFileSync} from "node:fs";
 import {readerFixture} from "../reader-fixture";
 // WebKit needs allow-scripts so the reader's own listeners run on the page (#37).
@@ -156,6 +157,7 @@ test("EPUB scripts cannot run in the reader frame or reach the app",async({page,
  for(const section of first.sections)expect(section).toEqual(expected);
  expect(first.parent).toBeUndefined();
  // A section loaded later is prepared the same way.
+ await showControls(page,room);
  await room.getByRole("button",{name:"Chapters",exact:true}).click();
  await page.getByRole("button",{name:"The Pool of Tears"}).click();
  await expect(frame.getByText("This is the beginning of the second chapter",{exact:false})).toBeVisible();

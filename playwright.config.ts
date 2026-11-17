@@ -7,18 +7,20 @@ const installed =
 // SONDER_MOBILE=1 adds them to the default projects; SONDER_MOBILE=only (npm run test:mobile) runs just them.
 const mobileMode = process.env.SONDER_MOBILE;
 const mobileSpecs = /(^|\/)(now-playing-layout|device-reset|app|playback-workflow|integrated-reader|playback-speed|navigation|gallery(-[a-z-]+)?)\.spec\.ts$/;
+// The reader's page (#587): the bands and the reader behaviours they must keep also run on the phone projects.
+const readerPhoneSpecs = /(^|\/)(reader-bands|reader-frame|reader-theme|reader-follow-highlight|reader-load-teardown)\.spec\.ts$/;
 const { isMobile: _isMobile, defaultBrowserType: _browser, ...pixelWithoutIsMobile } = devices["Pixel 7"];
 const mobileProjects = [
   // Pixel 7 in Chromium: touch input, mobile user agent, device pixel ratio and isMobile viewport handling.
-  { name: "mobile-chrome", testMatch: mobileSpecs, use: { ...devices["Pixel 7"] } },
+  { name: "mobile-chrome", testMatch: [mobileSpecs, readerPhoneSpecs], use: { ...devices["Pixel 7"] } },
   // Firefox with the Pixel 7 viewport, touch and user agent. Firefox does not support isMobile, so it is dropped
   // (no meta-viewport handling); the project exists only when the Firefox binary does.
   ...(existsSync(firefox.executablePath())
-    ? [{ name: "mobile-firefox", testMatch: mobileSpecs, use: { ...pixelWithoutIsMobile, browserName: "firefox" as const, launchOptions: {} } }]
+    ? [{ name: "mobile-firefox", testMatch: [mobileSpecs, readerPhoneSpecs], use: { ...pixelWithoutIsMobile, browserName: "firefox" as const, launchOptions: {} } }]
     : []),
   // iPhone 15 profile in WebKit: the closest to iOS Safari on Linux; skipped cleanly when the binary is missing.
   ...(existsSync(webkit.executablePath())
-    ? [{ name: "mobile-safari", testMatch: mobileSpecs, use: { ...devices["iPhone 15"], launchOptions: {} } }]
+    ? [{ name: "mobile-safari", testMatch: [mobileSpecs, readerPhoneSpecs], use: { ...devices["iPhone 15"], launchOptions: {} } }]
     : []),
 ];
 // The page turn inside a sentence (#509) also runs in WebKit with the iPhone profile, the closest to iOS Safari here.
@@ -57,6 +59,8 @@ const desktopProjects = [
               /(^|\/)ebook-page\.spec\.ts$/,
               // The worker's page (#520).
               /(^|\/)activity-worker\.spec\.ts$/,
+              // The reader's page: a head, the text band and a foot (#587).
+              /(^|\/)reader-bands\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: {} },

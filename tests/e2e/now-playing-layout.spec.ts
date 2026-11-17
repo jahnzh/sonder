@@ -114,6 +114,8 @@ for(const size of sizes){
   const [width,height]=size;
   const dialog=await open(page,browserName,"Layout reader",size);
   await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
+  // On a phone the foot's transport row shows with the controls (#587); at rest the foot has a small Play only.
+  if(width<900)await showReaderTopbar(page,dialog.locator(".inline-reader"));
   // With an ebook, Now Playing is the full-screen reader with one player bar (#22).
   await expect(dialog.locator(".now-playing-transport")).toBeHidden();
   const player=dialog.getByRole("region",{name:"Player",exact:true});
@@ -153,10 +155,8 @@ for(const size of sizes){
   expect((await boxOf(page.locator(".inline-reader .reader-viewport"))).height).toBeGreaterThan(height*.6);
   const surface=await page.locator(".inline-reader").evaluate(el=>getComputedStyle(el).backgroundColor);
   await expect(page.frameLocator(".inline-reader .reader-viewport iframe").locator("body")).toHaveCSS("background-color",surface);
-  if(width<900){
-   const viewport=await boxOf(page.locator(".inline-reader .reader-viewport"));
-   await page.mouse.click(viewport.x+viewport.width/2,viewport.y+viewport.height/2);
-  }
+  // The controls shown above stay until the next tap (#587: no timer); this shows them if anything hid them.
+  if(width<900)await showReaderTopbar(page,dialog.locator(".inline-reader"));
   // The bar is the narration's position; the page follows it.
   await expect(player.getByRole("slider",{name:/^Seek in /})).toBeVisible();
   await expect(player.getByRole("slider",{name:"Position in book"})).toHaveCount(0);
@@ -371,6 +371,8 @@ async function openAlignedReader(page:Page,browserName:string,request:APIRequest
  if(await pause.isVisible())await pause.click();
  await expect(player.getByRole("button",{name:"Play narration",exact:true})).toBeVisible();
  await expect(dialog.locator(".inline-reader")).toHaveAttribute("data-current-passage",/./,{timeout:READER_WAIT_MS.followHighlight});
+ // On a phone the foot's controls show with the head's (#587).
+ if(size[0]<900)await showReaderTopbar(page,dialog.locator(".inline-reader"));
  return {dialog,player,book,ebookId};
 }
 async function pageAwayFromNarration(page:Page,dialog:Locator,back:Locator){
@@ -393,7 +395,10 @@ async function resizeAlignedReader(page:Page,dialog:Locator,player:Locator,[widt
  await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
  await expect(player).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
  if(width>=900)await expect(page.getByLabel("Contents sidebar")).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
- else await expect(player.getByRole("button",{name:"Chapters",exact:true})).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
+ else{
+  await showReaderTopbar(page,dialog.locator(".inline-reader"));
+  await expect(player.getByRole("button",{name:"Chapters",exact:true})).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
+ }
 }
 
 test.describe("#122 reader Back to narration layout",()=>{

@@ -5,6 +5,7 @@ import {longBookFixture} from "../long-book-fixture";
 import {interpolateWordTimes} from "../../src/word-timing";
 import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
 import {highlightShown} from "./reader-view";
+import {showControls} from "./reader-bands";
 import {longSentence,pageTurnFixture,PACED_CHARACTERS_PER_SECOND} from "../page-turn-fixture";
 // The page turns inside a sentence that crosses a page (#508, spec #503): in Page mode, when the narration's
 // reported position reaches the first word on the next page. The narration's position is set on the player's
@@ -65,6 +66,8 @@ async function openAt(page:Page,book:any,interval:any,position:number){
  await timedWait("follow-highlight",()=>expect(room).toHaveAttribute("data-current-passage",interval.paragraphId,{timeout:READER_WAIT_MS.followHighlight}),{testName:test.info().title});
  await expect.poll(()=>highlightShown(room),{timeout:READER_WAIT_MS.followHighlight}).toBe(true);
  await expect(room.locator(".reader-viewport")).not.toHaveAttribute("data-jumping",/.*/);
+ // Back to narration is in the foot's row, which shows with the controls (#587); a tap in the middle turns no page.
+ await showControls(page,room);
  return room;
 }
 // The narration's reported position, set on the paused audio element as a seek would: the player reads it on timeupdate.
@@ -123,6 +126,8 @@ async function crossingSentence(room:Locator,intervals:any[],text:(interval:any)
   const words=[...sentence.matchAll(/\S+/g)].map(m=>({text:m[0]}));
   // The break's time: the estimated start of its word, as the reader interpolates it.
   const breakTime=interpolateWordTimes(words,interval.start,interval.end)[breakWord]!.start;
+  // Room on both sides of the break for the narration to sit before and after it (the bands of #587 move the breaks).
+  if(breakTime-interval.start<=.3||interval.end-breakTime<=.3)continue;
   return {interval,next:intervals[at+1],sentence,breakWord,breakTime,firstPage:first.page};
  }
  throw new Error("no sentence of chapter 1 crosses a page inside it at this size");
