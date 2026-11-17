@@ -41,8 +41,8 @@ async function fixture(page: Page, title: string, { map = true } = {}): Promise<
   });
   expect(uploaded.ok()).toBe(true);
   const ebookId = (await uploaded.json()).id as string;
-  const made_ = { workId: book.workId, recordingId: book.recordingId, trackId: book.tracks[0].id, ebookId, title };
-  if (!map) return { ...made_, interval: null };
+  const pair = { workId: book.workId, recordingId: book.recordingId, trackId: book.tracks[0].id, ebookId, title };
+  if (!map) return { ...pair, interval: null };
   const manifest = await (await page.request.get(`/api/reader/${ebookId}`)).json();
   const created = await page.request.post("/api/alignments", {
     data: {
@@ -68,7 +68,7 @@ async function fixture(page: Page, title: string, { map = true } = {}): Promise<
   const jobs = (await (await page.request.get(`/api/alignments?ebookId=${ebookId}`)).json()).jobs;
   const job = jobs.find((j: { recordingId: string }) => j.recordingId === book.recordingId);
   const full = await (await page.request.get(`/api/alignments/${job.id}/map`)).json();
-  return { ...made_, interval: full.intervals[0] };
+  return { ...pair, interval: full.intervals[0] };
 }
 
 const unique = (title: string) => `${title} ${randomUUID().slice(0, 8)}`;
@@ -124,11 +124,7 @@ test("a kept book with an audiobook, an EPUB and a ready reading sync is complet
   test.setTimeout(150_000);
   const book = await fixture(page, unique("Kept whole"));
   const interval = book.interval!;
-  // The player's book is this one, at a narrated sentence.
-  const progress = await page.request.post("/api/progress", {
-    data: { recordingId: book.recordingId, trackId: book.trackId, position: interval.start + 0.5, duration: 300, updatedAt: Date.now() },
-  });
-  expect(progress.ok()).toBe(true);
+  // Not the player's book yet: the hidden reader of Now playing would cache its map by itself.
   await page.goto(address(book.workId));
   await expect(keep(page)).toHaveAttribute("aria-checked", "false");
   await keep(page).click();
@@ -153,6 +149,13 @@ test("a kept book with an audiobook, an EPUB and a ready reading sync is complet
   await page.setViewportSize({ width: 390, height: 844 });
 
   // Without a connection after a reload: the reader opens the EPUB at the player's place and follows the narration.
+  // The player's book becomes this one, at a narrated sentence, while there is a connection.
+  const progress = await page.request.post("/api/progress", {
+    data: { recordingId: book.recordingId, trackId: book.trackId, position: interval.start + 0.5, duration: 300, updatedAt: Date.now() },
+  });
+  expect(progress.ok()).toBe(true);
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Open ebook reader", exact: true })).toBeVisible({ timeout: 30_000 });
   await page.evaluate(() => navigator.serviceWorker.ready);
   await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
   await context.setOffline(true);
