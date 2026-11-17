@@ -1,6 +1,6 @@
 import Dexie, { type Table } from "dexie";
 import { dropPosition, peekPosition, recentPositions, recordPosition, serialQueue, type PositionEntry, type PositionHistory } from "./position-history";
-import type { Book, Progress, Download, DownloadPart, Track } from "./types";
+import type { Book, LibraryWork, Progress, Download, DownloadPart, Track } from "./types";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 export function cn(...inputs: ClassValue[]) {
@@ -94,6 +94,8 @@ export async function api<T = unknown>(
 }
 class SonderDB extends Dexie {
   books!: Table<Book, string>;
+  /** The library by work on the device (#528): one record per work of `GET /api/library`. */
+  works!: Table<LibraryWork, string>;
   progress!: Table<Progress & { pending?: boolean }, string>;
   positionHistory!: Table<PositionHistory, string>;
   downloads!: Table<Download, string>;
@@ -117,6 +119,7 @@ class SonderDB extends Dexie {
     });
     this.version(3).stores({});
     this.version(4).stores({ positionHistory: "recordingId" });
+    this.version(5).stores({ works: "workId" });
   }
 }
 const sharedDB = new SonderDB();
@@ -145,7 +148,7 @@ export async function listOfflineEbookEditionIds(): Promise<string[]> {
 
 export const localDB = new Proxy(sharedDB, {
   get(target, prop) {
-    const db = ["books", "progress", "positionHistory", "preferences"].includes(String(prop)) ? personalDB : target;
+    const db = ["books", "works", "progress", "positionHistory", "preferences"].includes(String(prop)) ? personalDB : target;
     if (prop === "preferences" && personalDB !== sharedDB) {
       const table = personalDB.preferences;
       return new Proxy(table, { get(obj, key) {
