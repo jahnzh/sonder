@@ -231,7 +231,20 @@ test("a link straight to the page: its back button goes to the book (today's dia
   await page.goto(address(work.workId));
   await region(page).getByRole("button", { name: "Back to the book", exact: true }).click();
   await expect(page).toHaveURL(/#library$/);
-  await expect(page.getByRole("dialog", { name: "Book details" }).getByRole("heading", { name: work.title, exact: true })).toBeVisible();
+  const details = page.getByRole("dialog", { name: "Book details" });
+  await expect(details.getByRole("heading", { name: work.title, exact: true })).toBeVisible();
+  // The dialog's release block is one Audiobook row now, opening the page.
+  const row = details.getByRole("button", { name: /^Audiobook Audiobook page QA · 11 min · On server$/ });
+  await row.scrollIntoViewIfNeeded();
+  await settled(page);
+  await page.screenshot({ path: `${OUT}/book-dialog-audiobook-row-phone.png` });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await row.scrollIntoViewIfNeeded();
+  await settled(page);
+  await page.screenshot({ path: `${OUT}/book-dialog-audiobook-row-desktop.png` });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await row.click();
+  await expect(region(page)).toBeVisible();
   // An address that names no recording shows the Library.
   await page.goto(address("work-that-does-not-exist"));
   await expect(page).toHaveURL(/#library$/);
