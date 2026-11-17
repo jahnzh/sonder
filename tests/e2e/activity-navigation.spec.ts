@@ -64,10 +64,11 @@ test("the administrator: Activity in the tab bar where Downloads was, with the d
   await activityTab(tabBar(page)).click();
   await expect(page).toHaveURL(/#activity$/);
   await expect(heading(page)).toBeVisible();
-  // Now is today's Downloads page: the server's downloads for the administrator, and this device's saves.
+  // Now is today's Downloads page: the server's downloads for the administrator. This device's saves are on This
+  // device (#518).
   await expect(page.getByRole("heading", { name: /On your home server/ })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "On this device", exact: true })).toBeVisible();
-  await expect(parts(page).getByRole("radio")).toHaveText(["Now", "Server"]);
+  await expect(page.getByRole("heading", { name: "On this device", exact: true })).toHaveCount(0);
+  await expect(parts(page).getByRole("radio")).toHaveText(["Now", "This device", "Server"]);
   await expect(parts(page).getByRole("radio", { checked: true })).toHaveText("Now");
   await expect(activityTab(tabBar(page))).toHaveClass(/selected/);
   await noOverflow(page);
@@ -127,9 +128,9 @@ test("#activity and #activity/server show the same part on a reload", async ({ p
   await expect(parts(page).getByRole("radio", { checked: true })).toHaveText("Server");
   expect(await hash(page)).toBe("#activity/server");
   await page.goto("/#activity");
-  await expect(page.getByRole("heading", { name: "On this device", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /On your home server/ })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole("heading", { name: "On this device", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /On your home server/ })).toBeVisible();
   await expect(parts(page).getByRole("radio", { checked: true })).toHaveText("Now");
   expect(await hash(page)).toBe("#activity");
 });
@@ -169,7 +170,7 @@ test("switching between Now and Server adds no step to Back", async ({ page }) =
   await expect(page.locator(".topbar .breadcrumb strong")).toHaveText("Library");
 });
 
-test("someone who is not the administrator: Activity in the tab bar, Now with this device's saves, no Server", async ({ page }) => {
+test("someone who is not the administrator: Activity in the tab bar, Now and This device, no Server", async ({ page }) => {
   await asMember(page);
   let asked = 0;
   await page.route("**/api/activity", (route) => {
@@ -181,10 +182,10 @@ test("someone who is not the administrator: Activity in the tab bar, Now with th
   await activityTab(tabBar(page)).click();
   await expect(page).toHaveURL(/#activity$/);
   await expect(heading(page)).toBeVisible();
-  await expect(page.getByRole("heading", { name: "On this device", exact: true })).toBeVisible();
-  // The server's downloads are the administrator's.
+  // The server's downloads are the administrator's; this device's saves are on This device (#518).
   await expect(page.getByRole("heading", { name: /On your home server/ })).toHaveCount(0);
-  await expect(parts(page)).toHaveCount(0);
+  await expect(parts(page).getByRole("radio")).toHaveText(["Now", "This device"]);
+  await expect(parts(page).getByRole("radio", { checked: true })).toHaveText("Now");
   await expect(page.getByRole("radio", { name: "Server" })).toHaveCount(0);
   await noOverflow(page);
   // The server's work is the administrator's: nothing is asked, and with no failed save on this device no dot (#521).
@@ -194,7 +195,7 @@ test("someone who is not the administrator: Activity in the tab bar, Now with th
   // An address of Server shows Now, in place of its entry.
   await page.goto("/#activity/server");
   await expect(heading(page)).toBeVisible();
-  await expect(page.getByRole("heading", { name: "On this device", exact: true })).toBeVisible();
+  await expect(parts(page).getByRole("radio", { checked: true })).toHaveText("Now");
   await expect.poll(() => hash(page)).toBe("#activity");
   await expect(page.getByTestId("activity-server")).toHaveCount(0);
   expect(asked).toBe(0);
@@ -208,6 +209,6 @@ test("someone who is not the administrator at desktop width: Activity in the rai
   await expect.poll(() => hash(page)).toBe("#activity");
   await expect(rail(page).getByRole("button")).toHaveText([/^My library/, "Discover", "Activity"]);
   await expect(activityTab(rail(page))).toHaveClass(/selected/);
-  await expect(parts(page)).toHaveCount(0);
+  await expect(parts(page).getByRole("radio")).toHaveText(["Now", "This device"]);
   await noOverflow(page);
 });
