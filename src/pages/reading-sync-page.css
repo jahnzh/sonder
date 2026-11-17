@@ -134,6 +134,12 @@
   line-height: 16px;
   color: var(--muted);
 }
+/* The server's message for a refused action, under the buttons. */
+.reading-sync-error {
+  margin: 0;
+  padding: 0 var(--space-16);
+  color: var(--danger);
+}
 /* A flag of the older engine: a sentence that wraps. */
 .reading-sync-flag {
   list-style: none;

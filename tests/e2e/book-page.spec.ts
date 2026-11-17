@@ -83,6 +83,8 @@ async function instrument(page: Page) {
       constructor(src?: string) {
         super(src);
         elements.push(this);
+        // Where playback started: the position at its first "playing", which a poll of the running position can miss.
+        this.addEventListener("playing", () => ((this as any).__startedAt ??= this.currentTime));
       }
     };
   });
@@ -90,7 +92,7 @@ async function instrument(page: Page) {
 const audioState = (page: Page) =>
   page.evaluate(() => {
     const audio = ((window as any).__audioElements as HTMLAudioElement[]).find((a) => !!a.src);
-    return audio ? { position: audio.currentTime, src: audio.src, paused: audio.paused } : null;
+    return audio ? { position: audio.currentTime, src: audio.src, paused: audio.paused, startedAt: (audio as any).__startedAt as number | undefined } : null;
   });
 
 const address = (workId: string) => `/#book/${encodeURIComponent(workId)}`;
@@ -211,7 +213,10 @@ test("Listen plays the chosen recording from its place; Read opens the chosen EP
   await region(page).getByRole("button", { name: "Listen", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Now playing" })).toBeVisible();
   await expect.poll(async () => (await audioState(page))?.src ?? "").toContain(book.tracks[0].id);
-  await expect.poll(async () => Math.round((await audioState(page))?.position ?? 0)).toBe(61);
+  // From its place: playback started at 61 s. The position itself runs on while it plays (Firefox plays in real time),
+  // so a poll of it can miss 61 and read on to 71 when its time runs out.
+  await expect.poll(async () => (await audioState(page))?.startedAt ?? null).not.toBeNull();
+  expect(Math.round((await audioState(page))!.startedAt!)).toBe(61);
   await page.getByRole("dialog", { name: "Now playing" }).getByRole("button", { name: "Pause narration" }).first().click().catch(() => {});
   await page.evaluate(() => ((window as any).__audioElements as HTMLAudioElement[]).forEach((audio) => audio.pause()));
 });
@@ -235,8 +240,8 @@ test("a book whose audiobook is downloading: the download's line and bar, Get fo
   await expect(files(page).getByRole("listitem").nth(1)).toHaveAccessibleName("Ebook Not added");
   await expect(files(page).getByRole("button", { name: "Get an ebook", exact: true })).toBeVisible();
   await expect(files(page).getByRole("listitem").nth(2)).toHaveAccessibleName("Reading sync Needs an ebook");
-  // This device shows only when there is something to keep.
-  await expect(shown.getByRole("heading", { name: "This device" })).toHaveCount(0);
+  // This device shows for every book in the library (#550), with nothing to save yet.
+  await expect(shown.getByRole("heading", { name: "This device" })).toHaveCount(1);
   for (const row of await files(page).locator(".part-file-row").all()) expect(await clientHeight(row)).toBe(64);
   await noOverflow(page);
   await settled(page);

@@ -175,7 +175,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await docked.getByRole("radio", { name: "Sepia", exact: true }).click();
   await setStepper(standaloneRoom, "Size", 23);
   await closeAppearance(standaloneRoom);
-  // Linking queued a backfill job; cancel it so the manual pairing flow starts from "Rebuild".
+  // Linking queued a backfill job; cancel it so the reading sync is prepared from the Reading sync page (#541).
   await expect
     .poll(
       async () =>
@@ -187,51 +187,53 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   expect(
     (await page.request.patch(`/api/alignments/${autoJob.id}`, { data: { action: "cancel" } })).ok(),
   ).toBe(true);
-  await openMore(page);
-  await more.getByRole("button", { name: "Reading sync", exact: true }).click();
-  const sameRelease = page.getByRole("combobox", {
-    name: "Reading sync audiobook release",
-  });
-  const chosenRecording = await sameRelease.inputValue();
-  await sameRelease.selectOption(chosenRecording);
-  await sameRelease.selectOption("");
-  await sameRelease.selectOption(chosenRecording);
-  await page
-    .getByText("Match ebook sections to audio chapters", { exact: true })
-    .click();
-  await page
-    .getByRole("combobox", {
-      name: "Audio for Down the Rabbit-Hole",
-      exact: true,
-    })
-    .selectOption({ index: 1 });
-  await expect(
-    page.getByRole("button", { name: "Rebuild reading sync", exact: true }),
-  ).toBeEnabled();
-  await page
-    .getByRole("button", { name: "Rebuild reading sync", exact: true })
-    .click();
-  await expect(page.locator(".reader-room:not(.inline-reader) .alignment-status")).toContainText(
-    "Partial alignment",
-    { timeout: 15000 },
+  const chosenRecording = audioBook.recordingId as string;
+  await page.goto(`/#book/${encodeURIComponent(audioBook.workId)}/sync`);
+  const sync = page.locator(".reading-sync-page");
+  const syncButtons = sync.locator(".reading-sync-buttons").getByRole("button");
+  await expect(sync).toHaveAttribute("data-state", "cancelled");
+  // Prepare (Cancelled's main action, Prepare again) sends the ebook and the recording only, and finishes.
+  const prepared = page.waitForRequest(
+    (request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/alignments",
   );
+  await syncButtons.getByText("Prepare again", { exact: true }).click();
+  expect((await prepared).postDataJSON()).toEqual({ ebookId: id, recordingId: chosenRecording });
+  await expect(sync).toHaveAttribute("data-state", /^(ready|partial)$/, { timeout: 15000 });
+  // Pause shows Paused. The suite's server finishes a job in a moment, so the listing names it as running until
+  // Pause is pressed; the PATCH and its answer are the server's own.
   const alignment = (
     await (await page.request.get(`/api/alignments?ebookId=${id}`)).json()
-  ).jobs[0];
-  await page.request.patch(`/api/alignments/${alignment.id}`, {
-    data: { action: "pause" },
+  ).jobs.find((job: any) => job.recordingId === chosenRecording);
+  let pausePressed = false;
+  await page.route(/\/api\/alignments\?ebookId=/, async (route) => {
+    const response = await route.fetch();
+    const listing = await response.json();
+    await route.fulfill({
+      response,
+      json: pausePressed
+        ? listing
+        : { ...listing, jobs: listing.jobs.map((job: any) => (job.id === alignment.id ? { ...job, status: "processing", outcome: undefined } : job)) },
+    });
   });
-  await expect(page.locator(".reader-room:not(.inline-reader) .alignment-status")).toContainText("Paused");
-  await page
-    .getByRole("button", { name: "Rebuild reading sync", exact: true })
-    .click();
-  await expect(page.locator(".reader-room:not(.inline-reader) .alignment-status")).toContainText(
-    "Partial alignment",
-  );
+  await expect(sync).toHaveAttribute("data-state", "preparing", { timeout: 9000 });
+  const paused = page.waitForRequest((request) => {
+    if (request.method() !== "PATCH" || new URL(request.url()).pathname !== `/api/alignments/${alignment.id}`) return false;
+    pausePressed = true;
+    return true;
+  });
+  await syncButtons.first().click();
+  expect((await paused).postDataJSON()).toEqual({ action: "pause" });
+  await expect(sync).toHaveAttribute("data-state", "paused");
+  await expect(sync.locator(".reading-sync-block .part-group > li").first()).toHaveText(/^Paused/);
+  await page.unroute(/\/api\/alignments\?ebookId=/);
+  // Prepare again from Paused: Paused's main action, Resume, runs the reading sync again from the start.
+  await expect(syncButtons).toHaveText(["Resume", "Cancel"]);
+  await syncButtons.first().click();
+  await expect(sync).toHaveAttribute("data-state", /^(ready|partial)$/, { timeout: 15000 });
   await expect(page.getByRole("button", { name: "Mark alignment reviewed", exact: true })).toHaveCount(0);
-  await page
-    .getByRole("button", { name: "Close reader options", exact: true })
-    .click();
+  await page.goto(`/#reader/${id}`);
+  await expect(page.locator(".reader-room:not(.inline-reader) .reader-viewport iframe")).toBeVisible();
+  await showControls(page);
   await page.getByRole("button", { name: "Chapters", exact: true }).click();
   await page
     .getByRole("button", { name: "Down the Rabbit-Hole", exact: true })

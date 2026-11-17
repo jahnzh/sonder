@@ -121,6 +121,19 @@ async function twoFiles(page: Page) {
       throw error;
     }
   });
+  // Keep's saver saves the tracks the library by work lists (#550): the same two.
+  await page.route("**/api/library", async (route) => {
+    try {
+      const headers = { ...route.request().headers() };
+      delete headers["if-none-match"];
+      const works = await (await route.fetch({ headers })).json();
+      for (const work of works) for (const recording of work.recordings) recording.tracks = recording.tracks.slice(0, 2);
+      await route.fulfill({ status: 200, contentType: "application/json", json: works });
+    } catch (error) {
+      if (page.isClosed() || /disposed|closed|cancel/i.test(String(error))) return;
+      throw error;
+    }
+  });
 }
 
 function serve(route: Route) {
@@ -361,10 +374,11 @@ test("a failed save is under Needs attention with Retry and lights the dot; Retr
   const serving = await media$(page, { broken: ["alice"] });
   await routeAnswer(page, () => answer([]));
   await save(page, ALICE);
-  await expect(page.locator(".toast")).toContainText("The source is gone.", { timeout: 20000 });
+  // No toast (#550): the failure is Now's row.
   await activityTab(page).click();
   const attention = group(page, "Needs attention");
-  await expect(attention.getByRole("listitem")).toHaveText([`${ALICE}Not complete · 1 of 2 filesRetry`]);
+  await expect(attention.getByRole("listitem")).toHaveText([`${ALICE}Not complete · 1 of 2 filesRetry`], { timeout: 20000 });
+  await expect(page.locator(".toast")).toHaveCount(0);
   await expect(activityTab(page).getByRole("img", { name: DOT })).toBeAttached();
   serving.mend();
   await attention.getByRole("button", { name: `Retry ${ALICE}`, exact: true }).click();

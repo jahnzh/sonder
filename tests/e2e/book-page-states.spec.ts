@@ -193,7 +193,8 @@ test("a book with nothing yet, as board BookNothing draws it; a held work's line
   await expect(files(page).getByRole("button", { name: "Get an audiobook", exact: true })).toHaveAttribute("data-kind", "primary");
   await expect(files(page).getByRole("button", { name: "Get an ebook", exact: true })).toHaveAttribute("data-kind", "secondary");
   await expect(files(page).getByRole("listitem").nth(2)).toHaveAccessibleName("Reading sync Needs an audiobook");
-  await expect(shown.getByRole("switch", { name: "Keep on this device", exact: true })).toHaveCount(0);
+  // This device shows for every book in the library (#550), off until tapped.
+  await expect(shown.getByRole("switch", { name: "Keep on this device", exact: true })).toHaveAttribute("aria-checked", "false");
   for (const row of await files(page).locator(".part-file-row").all()) expect(await clientHeight(row)).toBe(64);
   await noOverflow(page);
   await settled(page);

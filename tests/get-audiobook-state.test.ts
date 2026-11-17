@@ -5,7 +5,6 @@ import {
   answered,
   emptySearch,
   failed,
-  NOTHING_ENGLISH_TEXT,
   NOTHING_TEXT,
   NOTHING_TRY,
   OFFLINE_TEXT,
@@ -90,12 +89,12 @@ test("every source failing shows the failures and no nothing-found", () => {
   assert.equal(view.notice, null);
 });
 
-test("nothing found says what to try; nothing in English says so", () => {
+test("nothing found says what to try; nothing in English says so (#602's line)", () => {
   const { state, asks } = startSearch(emptySearch(), "Frankenstein", ["abb"]);
   let view = sheetView(answered(state, "abb", asks[0].token, []), on);
   assert.deepEqual(view.notice, { kind: "nothing", text: NOTHING_TEXT, tryText: NOTHING_TRY });
   view = sheetView(answered(state, "abb", asks[0].token, [release("fr", { language: "French" })]), on);
-  assert.deepEqual(view.notice, { kind: "nothing", text: NOTHING_ENGLISH_TEXT, tryText: NOTHING_TRY });
+  assert.deepEqual(view.notice, { kind: "language", text: "No recordings in English on the loaded pages." });
 });
 
 test("fewer than two characters asks nothing and keeps the rows shown", () => {

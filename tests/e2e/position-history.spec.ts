@@ -303,8 +303,8 @@ test("the Dexie upgrade retains existing local progress", async ({ page }) => {
   expect(upgraded).toEqual({
     progress: { recordingId: "old-recording", trackId: "old-track", position: 12.5, duration: 300, updatedAt: 12345 },
     hasHistory: true,
-    // db.version(5) added the works table (#528).
-    version: 50,
+    // db.version(5) added the works table (#528), db.version(6) the keep table (#550).
+    version: 60,
   });
 });
 

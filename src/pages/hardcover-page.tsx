@@ -10,7 +10,6 @@ import { usePlayer } from "../player";
 import { useAddress } from "../navigation";
 import { useWork } from "../library-works-store";
 import { hardcoverChanged, useHardcover } from "../components/Hardcover";
-import { Dialog } from "../components/ui/dialog";
 import { PageHeader } from "../parts/PageHeader";
 import { Group } from "../parts/Group";
 import { Row } from "../parts/Row";
@@ -18,7 +17,7 @@ import { Switch } from "../parts/Switch";
 import { Button } from "../parts/Button";
 import { ChoiceGroup } from "../parts/ChoiceRow";
 import { InfoMark } from "../parts/Tooltip";
-import { ChoiceList } from "./settings/Choice";
+import { Picker } from "../parts/Picker";
 import { tip } from "../tooltip-texts";
 import {
   EDITION_SAVED_LINE,
@@ -78,23 +77,6 @@ function OutIcon() {
     <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />
     </svg>
-  );
-}
-
-/** A picker: a dialog named after its row, one radio row per choice; choosing closes it. */
-function Picker({ open, title, options, value, onClose, onChoose }: { open: boolean; title: string; options: { value: string; label: string }[]; value: string | null; onClose: () => void; onChoose: (value: string) => void }) {
-  return (
-    <Dialog open={open} onOpenChange={(next) => !next && onClose()} title={title} className="settings-choice-dialog">
-      <ChoiceList
-        label={title}
-        options={options}
-        value={value}
-        onChoose={(next) => {
-          onClose();
-          if (next !== value) onChoose(next);
-        }}
-      />
-    </Dialog>
   );
 }
 

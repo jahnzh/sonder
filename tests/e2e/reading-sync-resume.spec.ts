@@ -3,8 +3,16 @@ import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
 
-// #324: Resume / retry on a failed job must always send the PATCH and then change the card or show the error.
-// Every test makes its own book, so the file can run twice against one server.
+// #324, on the Reading sync page (#541): Retry on a stopped job must always send the PATCH and then change the page
+// or show the server's message; Retry and Prepare again free the buttons when their request answers, whatever the
+// listing does. Every test makes its own book and removes it, so the file can run twice against one server.
+test.use({ serviceWorkers: "block" });
+const made: string[] = [];
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+  for (const workId of made.splice(0))
+    expect((await page.request.delete(`/api/works/${encodeURIComponent(workId)}/library`)).ok()).toBe(true);
+});
 
 /** A book whose import-time reading sync job fails once on the pool (the fixture's pool-fails-once token). */
 async function failedJob(page: Page, name: string) {
@@ -20,6 +28,7 @@ async function failedJob(page: Page, name: string) {
   expect(audio.ok()).toBe(true);
   const bookId = (await audio.json()).id;
   const book = (await (await page.request.get("/api/books")).json()).find((b: any) => b.id === bookId);
+  made.push(book.workId);
   const chapter = (n: number) =>
     Array.from({ length: 6 }, (_, i) =>
       `<p>Passage ${n}.${i} tells part of the story ${token}. The rabbit hurried past the trees.</p>`).join("");
@@ -40,101 +49,113 @@ async function failedJob(page: Page, name: string) {
       (job) => job.recordingId === book.recordingId,
     );
   await expect.poll(async () => (await listed())?.status, { timeout: 20000 }).toBe("error");
-  return { ebook, recordingId: book.recordingId as string, job: await listed() };
+  return { workId: book.workId as string, ebook, recordingId: book.recordingId as string, job: await listed(), listed };
 }
 
-async function openSync(page: Page, ebook: string, recordingId: string) {
-  await page.goto(`/#reader/${ebook}`);
-  const reader = page.locator(".reader-dialog");
-  await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
-  const viewport = (await reader.locator(".reader-viewport").boundingBox())!;
-  await page.mouse.click(viewport.x + viewport.width / 2, viewport.y + viewport.height / 2);
-  await reader.getByRole("button", { name: "More", exact: true }).click();
-  await reader.locator(".reader-more").getByRole("button", { name: "Reading sync", exact: true }).click();
-  const card = reader.locator(".reader-panel .reading-sync");
-  const release = card.getByRole("combobox", { name: "Reading sync audiobook release" });
-  if ((await release.inputValue()) !== recordingId) await release.selectOption(recordingId);
-  await expect(card.locator(".alignment-status strong")).toHaveText("Needs attention");
-  return card;
+/** The pair's Reading sync page, showing the state the listing names. */
+async function openSync(page: Page, workId: string, state: string) {
+  await page.goto(`/#book/${encodeURIComponent(workId)}/sync`);
+  const region = page.locator(".reading-sync-page");
+  await expect(region).toHaveAttribute("data-state", state);
+  return region;
 }
 
-const isResume = (url: string, method: string, id: string) =>
+const isAction = (url: string, method: string, id: string) =>
   method === "PATCH" && new URL(url).pathname === `/api/alignments/${id}`;
+const isPrepare = (url: string, method: string) => method === "POST" && new URL(url).pathname === "/api/alignments";
+const buttons = (region: ReturnType<Page["locator"]>) => region.locator(".reading-sync-buttons").getByRole("button");
 
-test("Resume / retry on a failed reading sync job sends the PATCH and the card changes (#324)", async ({ page }) => {
-  const { ebook, recordingId, job } = await failedJob(page, "Resume failed sync");
-  const card = await openSync(page, ebook, recordingId);
-  const sent = page.waitForRequest((request) => isResume(request.url(), request.method(), job.id));
-  await card.getByRole("button", { name: "Resume / retry", exact: true }).click();
+test("Retry on a stopped reading sync sends resume and the page shows the answer (#324, #541)", async ({ page }) => {
+  const { workId, job } = await failedJob(page, "Resume failed sync");
+  const region = await openSync(page, workId, "stopped");
+  await expect(buttons(region)).toHaveText(["Retry"]);
+  const sent = page.waitForRequest((request) => isAction(request.url(), request.method(), job.id));
+  await region.getByRole("button", { name: "Retry", exact: true }).click();
   const request = await sent;
   expect(request.postDataJSON()).toEqual({ action: "resume" });
   expect((await request.response())?.status()).toBe(200);
   // The fixture fails only the first request, so the resumed job runs to a map.
-  await expect(card.locator(".alignment-status strong")).toHaveText(/Ready · Estimated timings|Partial alignment/, { timeout: 20000 });
-  await expect(card.getByRole("alert")).toHaveCount(0);
+  await expect(region).toHaveAttribute("data-state", /^(ready|partial)$/, { timeout: 20000 });
+  await expect(region.getByRole("alert")).toHaveCount(0);
 });
 
-test("A refused Resume / retry shows the server's error on the card (#324)", async ({ page }) => {
-  const { ebook, recordingId, job } = await failedJob(page, "Refused resume");
-  const card = await openSync(page, ebook, recordingId);
+test("a refused Retry shows the server's message under the buttons and leaves them usable (#324, #541)", async ({ page }) => {
+  const { workId, job } = await failedJob(page, "Refused resume");
+  const region = await openSync(page, workId, "stopped");
   // The job is gone on the server by the time the press arrives: the real route refuses it.
   const gone = `/api/alignments/${randomUUID()}`;
   await page.route(`**/api/alignments/${job.id}`, (route: Route) =>
     route.request().method() === "PATCH" ? route.continue({ url: new URL(gone, route.request().url()).href }) : route.fallback());
   const answered = page.waitForResponse((response) => new URL(response.url()).pathname === gone);
-  const resume = card.getByRole("button", { name: "Resume / retry", exact: true });
-  await resume.click();
+  const retry = region.getByRole("button", { name: "Retry", exact: true });
+  await retry.click();
   expect((await answered).ok()).toBe(false);
-  await expect(card.getByRole("alert")).toHaveText("This reading-sync job could not be found.");
-  await expect(card.locator(".alignment-status strong")).toHaveText("Needs attention");
-  await expect(resume).toBeEnabled();
+  await expect(region.getByRole("alert")).toHaveText("This reading-sync job could not be found.");
+  // Under the buttons.
+  const below = await region.evaluate((root) => {
+    const alert = root.querySelector('[role="alert"]')!;
+    const row = root.querySelector(".reading-sync-buttons")!;
+    return !!(row.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+  expect(below).toBe(true);
+  await expect(region).toHaveAttribute("data-state", "stopped");
+  await expect(retry).toBeEnabled();
 });
 
-test("Resume / retry shows the server's answer and frees the card while the listing never answers (#324)", async ({ page }) => {
-  const { ebook, recordingId, job } = await failedJob(page, "Hanging listing");
-  const card = await openSync(page, ebook, recordingId);
+test("Retry shows the server's answer and frees the buttons while the listing never answers (#324, #541)", async ({ page }) => {
+  const { workId, job } = await failedJob(page, "Hanging listing");
+  const region = await openSync(page, workId, "stopped");
   let resumed = false;
   const held: Route[] = [];
   page.on("request", (request) => {
-    if (isResume(request.url(), request.method(), job.id)) resumed = true;
+    if (isAction(request.url(), request.method(), job.id)) resumed = true;
   });
   // After the PATCH, every listing request hangs (a stalled connection).
   await page.route(/\/api\/alignments\?ebookId=/, (route: Route) => (resumed ? void held.push(route) : route.fallback()));
   try {
-    const answered = page.waitForResponse((response) => isResume(response.url(), response.request().method(), job.id));
-    await card.getByRole("button", { name: "Resume / retry", exact: true }).click();
+    const answered = page.waitForResponse((response) => isAction(response.url(), response.request().method(), job.id));
+    await region.getByRole("button", { name: "Retry", exact: true }).click();
     expect((await answered).status()).toBe(200);
-    await expect.poll(() => held.length, { message: "the card refreshed its listing after the PATCH" }).toBeGreaterThan(0);
-    await expect(card.locator(".alignment-status strong")).toHaveText("Queued");
-    await expect(card.getByRole("button", { name: "Pause after section", exact: true })).toBeEnabled();
-    await expect(card.locator("#reading-sync-help")).not.toHaveText("Saving your reading-sync request…");
+    await expect.poll(() => held.length, { message: "the page read its listing after the PATCH" }).toBeGreaterThan(0);
+    // The answer (queued again) shows at once: Preparing, with Pause and Cancel usable.
+    await expect(region).toHaveAttribute("data-state", "preparing");
+    await expect(buttons(region)).toHaveText([/^Pause/, "Cancel"]);
+    for (const button of await buttons(region).all()) await expect(button).toBeEnabled();
+    await expect(region.getByRole("alert")).toHaveCount(0);
   } finally {
     await page.unroute(/\/api\/alignments\?ebookId=/);
     for (const route of held) await route.abort().catch(() => {});
   }
 });
 
-test("Rebuild reading sync frees Resume / retry when its POST answers while the listing never answers (#324)", async ({ page }) => {
-  const { ebook, recordingId } = await failedJob(page, "Hanging rebuild");
-  const card = await openSync(page, ebook, recordingId);
+test("Prepare again frees the buttons when its POST answers while the listing never answers (#324, #541)", async ({ page }) => {
+  const { workId, ebook, recordingId, job, listed } = await failedJob(page, "Hanging prepare");
+  expect((await page.request.patch(`/api/alignments/${job.id}`, { data: { action: "cancel" } })).ok()).toBe(true);
+  await expect.poll(async () => (await listed())?.status).toBe("cancelled");
+  const region = await openSync(page, workId, "cancelled");
   let prepared = false;
   const held: Route[] = [];
   page.on("request", (request) => {
-    if (request.method() === "POST" && new URL(request.url()).pathname === "/api/alignments") prepared = true;
+    if (isPrepare(request.url(), request.method())) prepared = true;
   });
   await page.route(/\/api\/alignments\?ebookId=/, (route: Route) => (prepared ? void held.push(route) : route.fallback()));
   try {
-    const rebuild = card.getByRole("button", { name: "Rebuild reading sync", exact: true });
-    await expect(rebuild).toBeEnabled();
-    const answered = page.waitForResponse((response) =>
-      response.request().method() === "POST" && new URL(response.url()).pathname === "/api/alignments");
-    await rebuild.click();
-    expect((await answered).ok()).toBe(true);
-    await expect.poll(() => held.length, { message: "the card refreshed its listing after the POST" }).toBeGreaterThan(0);
-    await expect(card.locator("#reading-sync-help")).not.toHaveText("Saving your reading-sync request…");
-    await expect(card.getByRole("button", { name: "Resume / retry", exact: true })).toBeEnabled();
+    const again = region.getByRole("button", { name: "Prepare again", exact: true });
+    await expect(buttons(region)).toHaveText(["Prepare again"]);
+    await expect(again).toBeEnabled();
+    const answered = page.waitForResponse((response) => isPrepare(response.url(), response.request().method()));
+    await again.click();
+    const response = await answered;
+    expect(response.ok()).toBe(true);
+    expect(response.request().postDataJSON()).toEqual({ ebookId: ebook, recordingId });
+    await expect.poll(() => held.length, { message: "the page read its listing after the POST" }).toBeGreaterThan(0);
+    await expect(region).toHaveAttribute("data-state", "preparing");
+    await expect(buttons(region)).toHaveText([/^Pause/, "Cancel"]);
+    for (const button of await buttons(region).all()) await expect(button).toBeEnabled();
   } finally {
     await page.unroute(/\/api\/alignments\?ebookId=/);
     for (const route of held) await route.abort().catch(() => {});
   }
+  // The job runs to its end, so nothing outlives the test.
+  await expect.poll(async () => (await listed())?.status, { timeout: 20000 }).toMatch(/^(ready|partial)$/);
 });
