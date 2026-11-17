@@ -3,24 +3,29 @@
 // the one heading, author), the search field (the title and author, searched on open and on Enter or the search
 // key), Recordings with one choice row per recording found, the Group of the other ways to get one (off until
 // tickets 05 and 06) and Get this recording with its line. The rows are get-audiobook-rows.ts, the search's
-// states get-audiobook-state.ts. The words, the rows and the choice are kept in the history entry; a reload
-// searches again.
+// states get-audiobook-state.ts. The language button beside the field opens a Picker (#602): the choice applies at
+// once and is stored on this device; Load more recordings asks AudioBookBay's next page. The words, the rows, the
+// pages loaded, the language and the choice are kept in the history entry; a reload searches again (as many pages).
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { api } from "../lib";
+import { api, localDB } from "../lib";
+import { mergeReleases } from "../releases";
 import { refreshLibraryWorks, useWork } from "../library-works-store";
 import { pageData, setPageData, useAddress } from "../navigation";
 import { writeAddress, type Route } from "../routes";
 import { Button } from "../parts/Button";
 import { ChoiceGroup } from "../parts/ChoiceRow";
+import { Picker } from "../parts/Picker";
 import { Sheet } from "../parts/Sheet";
 import { InfoMark } from "../parts/Tooltip";
 import { tip } from "../tooltip-texts";
 import type { Acquisition, AudiobookRelease } from "../types";
-import { getLine } from "./get-audiobook-rows";
+import { GET_LANGUAGE, getLine, LANGUAGE_KEY, languageChoices, languageName, recordingRows } from "./get-audiobook-rows";
 import {
   answered,
   emptySearch,
   failed,
+  followUp,
+  loadMore,
   retrySource,
   settledSources,
   sheetView,
@@ -33,13 +38,29 @@ import {
 import "./get-audiobook-sheet.css";
 
 /** What the sheet keeps in its history entry. */
-type Kept = { words: string; search: GetSearch; chosen: string | null };
+type Kept = { words: string; search: GetSearch; chosen: string | null; language: string | null };
 
 function keptOf(data: unknown, workId: string): Kept | null {
   const value = (data as { getAudiobook?: Kept & { workId?: string } } | null)?.getAudiobook;
   if (!value || value.workId !== workId || typeof value.words !== "string" || !value.search || typeof value.search !== "object")
     return null;
-  return { words: value.words, search: value.search, chosen: typeof value.chosen === "string" ? value.chosen : null };
+  return {
+    words: value.words,
+    search: value.search,
+    chosen: typeof value.chosen === "string" ? value.chosen : null,
+    // An entry from before the language picker keeps none: the stored one applies.
+    language: typeof value.language === "string" && value.language ? value.language : null,
+  };
+}
+
+/** The language stored on this device (today's `release-language`), English when none is. */
+async function storedLanguage(): Promise<string> {
+  try {
+    const value = (await localDB.preferences.get(LANGUAGE_KEY))?.value;
+    return typeof value === "string" && value ? value : GET_LANGUAGE;
+  } catch {
+    return GET_LANGUAGE;
+  }
 }
 
 /** The first sheet shown since the document loaded (a reload, a link): it searches again whatever its entry kept. */
@@ -53,6 +74,13 @@ function SearchIcon() {
     <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="11" cy="11" r="7" />
       <path d="M20 20l-3.5-3.5" />
+    </svg>
+  );
+}
+function ChevronDown() {
+  return (
+    <svg className="get-sheet-language-chevron" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 9l6 6 6-6" />
     </svg>
   );
 }
@@ -95,6 +123,9 @@ export function GetAudiobookSheet({ workId, online, prowlarrConfigured, onChange
   const [words, setWords] = useState(initial?.words ?? "");
   const [search, setSearch] = useState<GetSearch>(() => (initial ? settledSources(initial.search) : emptySearch()));
   const [chosen, setChosen] = useState<string | null>(initial?.chosen ?? null);
+  // The entry's language; else the stored one, read before the first search (null until then).
+  const [language, setLanguage] = useState<string | null>(initial?.language ?? null);
+  const [picking, setPicking] = useState(false);
   const [refusal, setRefusal] = useState("");
   const [getting, setGetting] = useState(false);
   const live = useRef(true);
@@ -107,31 +138,55 @@ export function GetAudiobookSheet({ workId, online, prowlarrConfigured, onChange
     },
     [],
   );
+  useEffect(() => {
+    if (language !== null) return;
+    void storedLanguage().then((stored) => live.current && setLanguage((current) => current ?? stored));
+  }, []);
 
   const sources = (): SourceId[] => (prowlarrConfigured ? ["abb", "prowlarr"] : ["abb"]);
   const ask = (asks: Ask[]) => {
-    for (const { source, token, query } of asks) {
+    for (const { source, token, query, page } of asks) {
       const path =
         source === "abb"
-          ? "/discover/abb/releases?" + new URLSearchParams({ q: query, page: "1" })
+          ? "/discover/abb/releases?" + new URLSearchParams({ q: query, page: String(page) })
           : "/discover/prowlarr/releases?" + new URLSearchParams({ q: query });
-      void api<{ results: AudiobookRelease[] }>(path).then(
-        (answer) => live.current && setSearch((state) => answered(state, source, token, Array.isArray(answer?.results) ? answer.results : [])),
-        (error: Error) => live.current && setSearch((state) => failed(state, source, token, error.message)),
+      void api<{ results: AudiobookRelease[]; nextPage?: number | null }>(path).then(
+        (answer) => {
+          if (!live.current) return;
+          const results = Array.isArray(answer?.results) ? answer.results : [];
+          const next = typeof answer?.nextPage === "number" ? answer.nextPage : null;
+          apply(answered(searchRef.current, source, token, results, next));
+          // A reload asks again as many pages as its entry had loaded, one after the other.
+          const more = followUp(searchRef.current);
+          if (more.asks.length) {
+            apply(more.state);
+            ask(more.asks);
+          }
+        },
+        (error: Error) => live.current && apply(failed(searchRef.current, source, token, error.message)),
       );
     }
   };
-  const run = (text: string) => {
-    if (!online) return;
-    const { state, asks } = startSearch(searchRef.current, text, sources());
+  const apply = (state: GetSearch) => {
     searchRef.current = state;
     setSearch(state);
+  };
+  const run = (text: string, { pages = 1, keepChoice = false }: { pages?: number; keepChoice?: boolean } = {}) => {
+    if (!online) return;
+    const { state, asks } = startSearch(searchRef.current, text, sources(), pages);
+    // A new search clears the choice; a reload's search of the kept words keeps it while its row is shown.
+    if (asks.length && !keepChoice) setChosen(null);
+    apply(state);
     ask(asks);
   };
   const retry = (source: SourceId) => {
     const { state, asks } = retrySource(searchRef.current, source);
-    searchRef.current = state;
-    setSearch(state);
+    apply(state);
+    ask(asks);
+  };
+  const more = () => {
+    const { state, asks } = loadMore(searchRef.current);
+    apply(state);
     ask(asks);
   };
 
@@ -139,21 +194,32 @@ export function GetAudiobookSheet({ workId, online, prowlarrConfigured, onChange
   // by Back or Forward shows what its entry kept; a reload (or a link) searches its words again.
   const started = useRef(false);
   useEffect(() => {
-    if (started.current || !work || prowlarrConfigured === null) return;
+    // The language too, so the first rows shown are already in it.
+    if (started.current || !work || prowlarrConfigured === null || language === null) return;
     started.current = true;
     const text = initial ? initial.words : `${work.title} ${work.author}`.trim();
     if (!initial) setWords(text);
-    if (!initial || fresh) run(text);
-  }, [work, prowlarrConfigured]);
+    if (!initial) run(text);
+    // A reload: the kept words again, as many AudioBookBay pages as were loaded, the choice kept while its row is shown.
+    else if (fresh) run(initial.search.query || text, { pages: initial.search.pages ?? 1, keepChoice: true });
+  }, [work, prowlarrConfigured, language]);
 
   // Kept in the sheet's own entry while it is the one shown.
   useEffect(() => {
     if (location.hash !== writeAddress(route)) return;
-    setPageData({ getAudiobook: { workId, words, search: lean(search), chosen } });
-  }, [words, search, chosen]);
+    setPageData({ getAudiobook: { workId, words, search: lean(search), chosen, language } });
+  }, [words, search, chosen, language]);
 
   const title = work?.title ?? "";
-  const view = sheetView(search, { online, bookTitle: title });
+  const shownLanguage = language ?? GET_LANGUAGE;
+  const view = sheetView(search, { online, bookTitle: title, language: shownLanguage });
+  const loaded = mergeReleases(...Object.values(search.sources).map((source) => source?.results ?? []));
+  const chooseLanguage = (next: string) => {
+    setLanguage(next);
+    void localDB.preferences.put({ key: LANGUAGE_KEY, value: next }).catch(() => {});
+    // The choice stays while its row is still shown in the new language.
+    if (chosen && !recordingRows(loaded, title, next).some((row) => row.id === chosen)) setChosen(null);
+  };
   const chosenRow = view.rows.find((row) => row.id === chosen) ?? null;
   const line = getLine(chosenRow?.release ?? null);
   const asked = Object.keys(search.sources) as SourceId[];
@@ -232,7 +298,25 @@ export function GetAudiobookSheet({ workId, online, prowlarrConfigured, onChange
             onChange={(event) => setWords(event.target.value)}
           />
         </label>
+        <button
+          type="button"
+          className="get-sheet-language type-label"
+          aria-label={`Language: ${languageName(shownLanguage)}`}
+          aria-haspopup="dialog"
+          onClick={() => setPicking(true)}
+        >
+          <span className="get-sheet-language-name">{languageName(shownLanguage)}</span>
+          <ChevronDown />
+        </button>
       </form>
+      <Picker
+        open={picking}
+        title="Language"
+        options={languageChoices(loaded, shownLanguage)}
+        value={shownLanguage}
+        onClose={() => setPicking(false)}
+        onChoose={chooseLanguage}
+      />
 
       <div className="part-group-block get-sheet-recordings">
         <div className="part-group-caption-line">
@@ -266,6 +350,11 @@ export function GetAudiobookSheet({ workId, online, prowlarrConfigured, onChange
             }}
             options={view.rows.map((row) => ({ value: row.id, label: row.first, detail: row.second, edge: row.edge }))}
           />
+        )}
+        {view.more && (
+          <Button kind="quiet" className="get-sheet-more" onClick={more}>
+            Load more recordings
+          </Button>
         )}
         {view.searching && (
           <p className="get-sheet-notice type-label" role="status">
