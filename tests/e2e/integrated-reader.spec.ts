@@ -123,7 +123,9 @@ test("page controls follow the prepared narration",async({page})=>{
  await expect(room).toHaveAttribute("data-current-passage",/.+/);
  const player=page.getByRole("region",{name:"Player",exact:true});
  const backToNarration=player.getByRole("button",{name:"Back to narration",exact:true});
- // Always in the player bar between Chapters and Back 30 seconds (#122).
+ // At rest the foot's row is hidden (#587); with the controls shown it is between Chapters and Back 30 seconds (#122).
+ await expect(backToNarration).toHaveCount(0);
+ await showControls(page,".inline-reader");
  await expect(backToNarration).toBeVisible();
  await expect(backToNarration).toBeDisabled();
  const order=await player.evaluate((bar)=>{

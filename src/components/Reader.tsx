@@ -41,7 +41,9 @@ import { keyEventContext, OPEN_SHEET_SELECTOR, readerKeyAction, typingInField } 
 import { followsNarration } from "../follow-default";
 import { createReaderFollowing, type DeferredReturn, type NarrationPlace, type NarrationReturn } from "../reader-following";
 import { mapIdentityOf } from "../alignment-map-lifecycle";
-import { currentChapter, playbackTimeline } from "../chapters";
+import { chapterTimeLeft, currentChapter, playbackTimeline } from "../chapters";
+import { footRestLine, headRestLine } from "../reader-bands";
+import { Button } from "../parts/Button";
 import { usePlayer, type SeekTarget } from "../player";
 import { ApiError, api, forgetPositionHistory, localDB } from "../lib";
 import {
@@ -833,13 +835,16 @@ export function ReaderView({
         }
         if (disposed) return;
         setRendered(true);
-        let lastWidth=0,lastHeight=0;
+        let lastWidth=0,lastHeight=0,resizes=0;
         const observer = new ResizeObserver(() => {
           if (!disposed && host.clientHeight > 0) {
             if(host.clientWidth===lastWidth && host.clientHeight===lastHeight)return;
             lastWidth=host.clientWidth;lastHeight=host.clientHeight;
             settleAfterLayout(view);
             view.resize(host.clientWidth, host.clientHeight);
+            // Counted on the pages for the browser tests (#587): the view is sized to the text band when the book
+            // opens and again only when the band changes, never when the controls show or hide.
+            host.setAttribute("data-view-resizes", String(++resizes));
             redrawHighlight();
           }
         });
@@ -1480,6 +1485,16 @@ export function ReaderView({
     pending.back.run();
   }, [p.book?.recordingId, p.track?.id, p.position, p.error, scrubEnded]);
   const controls = controlsVisible || desktop;
+  // The foot at rest (#587): the progress line by Settings › Playback "Progress bar shows", and where the
+  // narration is in its chapter, or with no narration of this book in the player, where the page is in the book.
+  const audioScoped = audio ? playbackTimeline(audio.book, audio.track.id, p.position, p.length, scope) : null;
+  const restProgress = audio
+    ? audioScoped?.duration ? Math.min(1, Math.max(0, audioScoped.position / audioScoped.duration)) : 0
+    : progress;
+  const narratedChapter = audio ? currentChapter(audio.book, audio.track.id, p.position) : undefined;
+  const restLine = audio
+    ? footRestLine(barChapter, { secondsLeft: narratedChapter ? chapterTimeLeft(narratedChapter, p.position, p.speed) : 0 })
+    : footRestLine(currentSection?.title, { fraction: allFragments.length > 1 ? Math.max(0, allFragments.findIndex((fragment) => fragment.id === locator?.paragraphId)) / (allFragments.length - 1) : 0 });
   const timing = currentInterval ? " · estimated timings" : "";
   const showContents = desktop && !contentsHidden;
   const openMore = () => {
@@ -1530,18 +1545,17 @@ export function ReaderView({
   return (
     <div className={`reader-room ${inline ? "inline-reader" : ""}`} data-controls-visible={controls} data-contents={showContents} data-current-passage={follow ? currentInterval?.paragraphId : undefined}>
       {inline && <PlaybackExtra>{moreItems}</PlaybackExtra>}
-      {error && (
-        <p className="inline-error" role="alert">
-          {error}
-        </p>
-      )}
       {loading && (
         <p className="reader-loading" role="status">
           <Loader2 className="spin" /> Opening your book…
         </p>
       )}
-      <header className="reader-topbar" hidden={!controls}>
-        {onClose && <button className="icon-button" aria-label="Close reader" onClick={() => { setControlsVisible(false); setPanel(null); onClose(); }}><ChevronDown size={22} /></button>}
+      {/* The head (#587): its box stays whether the controls show or not; at rest it names the book and the
+          chapter, and its controls are visibility: hidden, so they are neither seen, tapped nor read. */}
+      <header className="reader-head" data-controls={controls}>
+      <p className="reader-head-rest"><span className="type-caption">{headRestLine(book?.title, currentSection?.title || barChapter)}</span></p>
+      <div className="reader-topbar">
+        {onClose &&<button className="icon-button" aria-label="Close reader" onClick={() => { setControlsVisible(false); setPanel(null); onClose(); }}><ChevronDown size={22} /></button>}
         {desktop && (
           <button
             className="icon-button"
@@ -1572,6 +1586,7 @@ export function ReaderView({
         <button className="icon-button" aria-label="Search this book" onClick={() => setPanel("search")}><Search size={20} /></button>
         <button className="icon-button reader-appearance-button" aria-label="Reader appearance" onClick={() => setPanel("appearance")}>Aa</button>
         <button className="icon-button" aria-label="More" aria-expanded={panel === "more"} onClick={openMore}><MoreHorizontal size={22} /></button>
+      </div>
       </header>
       <div className="reader-body">
         {showContents && book && (
@@ -1610,7 +1625,33 @@ export function ReaderView({
           </div>
         </div>
       </div>
+      {/* The dock row (#587): empty but for a reader error until Appearance docks here (spec #586). */}
+      <div className="reader-dock">
+        {error && (
+          <p className="inline-error" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
+      {/* The foot (#587): its box stays whether the controls show or not. At rest the progress line, where the
+          narration is and a small Play or Pause; with the controls shown the timeline and the transport row. */}
       <section className="reader-player" aria-label="Player" data-controls={controls}>
+        <div className="reader-foot-rest">
+          <span className="reader-foot-line" aria-hidden="true"><i style={{ width: `${restProgress * 100}%` }} /></span>
+          <div className="reader-foot-row">
+            <span className="reader-foot-place">{restLine}</span>
+            {p.book && (
+              <Button
+                kind="quiet"
+                className="reader-foot-play"
+                label={p.playing ? "Pause narration" : "Play narration"}
+                icon={p.playing ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
+                onClick={p.toggle}
+              />
+            )}
+          </div>
+        </div>
+        <div className="reader-foot-controls">
         <div className="reader-player-info">
           <strong>{barChapter}</strong>
           <span>{barPercent}% of {audio || scope !== "chapter" ? "book" : "chapter"}{timing}</span>
@@ -1655,6 +1696,7 @@ export function ReaderView({
         <div className="reader-player-extras">
           <PlaybackOptions kind="sleep" />
           <PlaybackOptions kind="speed" />
+        </div>
         </div>
       </section>
       {conflict && (

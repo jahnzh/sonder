@@ -1,4 +1,5 @@
 import {test,expect,type Page} from "@playwright/test";
+import {showControls} from "./reader-bands";
 import {readFileSync} from "node:fs";
 import {randomUUID} from "node:crypto";
 import {readerFixture} from "../reader-fixture";
@@ -82,7 +83,9 @@ test("F does nothing behind Playback options, a dialog above the reader or with 
  // turn, and outside them.
  for(const key of ["Control+f","Alt+f","Meta+f","Control+Shift+F"])await page.keyboard.press(key);
  await stillAway(page);
- // Outside them: on the player's Back to narration button (Firefox keeps the focus in the frame after a blur).
+ // Outside them: on the player's Back to narration button (Firefox keeps the focus in the frame after a blur),
+ // in the foot's row that the controls show (#587).
+ await showControls(page,room);
  const backButton=room.getByRole("button",{name:"Back to narration",exact:true});
  await backButton.focus();
  expect(await backButton.evaluate(button=>document.activeElement===button)).toBe(true);
@@ -90,8 +93,7 @@ test("F does nothing behind Playback options, a dialog above the reader or with 
  await stillAway(page);
  const options=page.getByRole("region",{name:"Playback options"});
  // The reader's More opens Now Playing's Playback options sheet; no reader panel is open with it.
- const box=(await room.locator(".reader-viewport").boundingBox())!;
- await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
+ await showControls(page,room);
  await room.locator(".reader-topbar").getByRole("button",{name:"More",exact:true}).click();
  await expect(options).toBeVisible();
  await expect(room.locator(".reader-panel")).toHaveCount(0);
@@ -119,6 +121,7 @@ test("F typed into a field goes into the field, in the book's pages and in the r
  const room=await openFollowing(page,book,interval);
  const frame=page.frameLocator(".inline-reader .reader-viewport iframe");
  // Contents → chapter two, which holds the fields: the reader pages away from the narration in chapter one.
+ await showControls(page,room);
  await room.getByRole("button",{name:"Chapters",exact:true}).click();
  await room.locator(".reader-panel").getByRole("button",{name:"The Pool of Tears"}).click();
  await expect(room).not.toHaveAttribute("data-current-passage",/.+/);
@@ -140,8 +143,11 @@ test("F typed into a field goes into the field, in the book's pages and in the r
  await expect(playing).toHaveCount(0);
  // The reader's own search field takes F as a letter too.
  await page.evaluate(()=>(document.activeElement as HTMLElement|null)?.blur());
- const box=(await room.locator(".reader-viewport").boundingBox())!;
- await page.mouse.click(box.x+box.width/2,box.y+box.height*0.75);
+ // The controls shown for Chapters stay until the next tap (#587); a tap shows them only if they are hidden.
+ if(!await room.locator(".reader-topbar").isVisible()){
+  const box=(await room.locator(".reader-viewport").boundingBox())!;
+  await page.mouse.click(box.x+box.width/2,box.y+box.height*0.75);
+ }
  await room.locator(".reader-topbar").getByRole("button",{name:"Search this book",exact:true}).click();
  const search=page.getByRole("searchbox",{name:"Search inside ebook"});
  await search.focus();

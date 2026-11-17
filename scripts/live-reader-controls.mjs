@@ -1,16 +1,17 @@
 // Helpers for the live reader checks (#413): reveal the reader's controls, wait for the control to be laid out, then use it.
 //
 // What the product does (src/components/Reader.tsx, src/reader.css):
-// - The top bar (Close reader, More, ...) is `<header class="reader-topbar" hidden={!controls}>` and
-//   `controls = controlsVisible || desktop`. On a phone-width screen `controlsVisible` starts false.
-// - There is no hide timer. A tap in the middle 30-70% of the page (or on the Lyrics surface, outside
-//   a button) TOGGLES `controlsVisible`: tapping while the bar is shown hides it again. The state also
-//   resets to false whenever the reader remounts (opening it, closing it) and Close reader sets it false.
-// - The player bar (Play/Pause narration, seek slider) is always rendered, but its grid changes when the
-//   controls toggle (the info row and the scrubber appear), so its buttons move while the layout settles.
+// - The reader's page is a head, the text and a foot (#587). On a phone-width screen the head's controls
+//   (`.reader-topbar`: Close reader, More, ...) and the foot's timeline and transport row are `visibility: hidden`
+//   while `controlsVisible` is false; the head and the foot keep their boxes, so nothing moves when they show.
+//   At rest the head names the book and the chapter and the foot shows the progress line, the time left and a
+//   small Play or Pause narration. `controls = controlsVisible || desktop`; on a phone `controlsVisible` starts false.
+// - There is no hide timer. A tap in the middle 30-70% of the page TOGGLES `controlsVisible`: tapping while the
+//   controls show hides them again. The state also resets to false whenever the reader remounts (opening it,
+//   closing it) and Close reader sets it false.
 // - A page tap only registers once the EPUB iframe has attached its pointer handlers; before that the
-//   tap is swallowed and the bar stays hidden.
-// So a click on a control must (1) tap only while the bar is hidden, (2) confirm that it appeared, retrying
+//   tap is swallowed and the controls stay hidden.
+// So a click on a control must (1) tap only while the controls are hidden, (2) confirm that they appeared, retrying
 // a swallowed tap, and (3) wait for the control to have a stable box before clicking.
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
