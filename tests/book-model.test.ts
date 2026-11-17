@@ -114,7 +114,7 @@ test("a book with both files and a ready reading sync", () => {
   assert.equal(model.readEbookId, "e1");
   assert.deepEqual(model.audiobook, { line: "Ann Reader · 30 min · On server", progress: null, opens: "audiobook", action: null });
   assert.deepEqual(model.ebook, { line: "EPUB · 1.2 MB · On server", opens: true, action: null });
-  assert.deepEqual(model.sync, { line: "Ready · estimated timings", muted: false });
+  assert.deepEqual(model.sync, { line: "Ready · estimated timings", muted: false, opens: true });
   assert.equal(model.device, true);
   // Another pair's job is not the chosen pair's: the row says nothing was added for this one.
   const other = bookModel(work({ recordings: [recording("r1")], ebooks: [ebook("e1")], readingSync: [sync("r9", "e1", "ready")] }), { admin: true });
@@ -123,6 +123,10 @@ test("a book with both files and a ready reading sync", () => {
   assert.equal(partial.sync.line, "Partly ready · 62% of the text");
   const stopped = bookModel(work({ recordings: [recording("r1")], ebooks: [ebook("e1")], readingSync: [sync("r1", "e1", "error")] }), { admin: false });
   assert.equal(stopped.sync.line, "Stopped");
+  // With both files the row opens the Reading sync page (#540), whatever its line, for everyone.
+  for (const shown of [other, partial, stopped]) assert.equal(shown.sync.opens, true);
+  const ready97 = bookModel(work({ recordings: [recording("r1")], ebooks: [ebook("e1")], readingSync: [sync("r1", "e1", "partial", { coverage: 0.97, progress: 1 })] }), { admin: false });
+  assert.equal(ready97.sync.line, "Ready · estimated timings", "the 95% rule");
 });
 
 test("a book whose audiobook is downloading: the download's line with its bar, opening Activity", () => {
@@ -135,7 +139,7 @@ test("a book whose audiobook is downloading: the download's line with its bar, o
   assert.equal(model.readEbookId, null);
   assert.equal(model.main, null, "nothing to get while the audiobook is on its way");
   assert.equal(model.ebook.action, "get");
-  assert.deepEqual(model.sync, { line: "Needs an ebook", muted: true });
+  assert.deepEqual(model.sync, { line: "Needs an ebook", muted: true, opens: false });
   // Someone who is not the administrator gets the acquisition without its status.
   const member = bookModel(work({ mediaState: { state: "queued", holdReason: null, acquisition: { id: "a1", status: null, progress: null, error: null } } }), { admin: false });
   assert.deepEqual(member.audiobook, { line: "Finding a source", progress: null, opens: "activity", action: null });
@@ -147,7 +151,7 @@ test("a book with nothing: the Audiobook row's Get is the main action, for the a
   assert.equal(admin.main, "get-audiobook");
   assert.deepEqual(admin.audiobook, { line: "Not added", progress: null, opens: null, action: "get" });
   assert.deepEqual(admin.ebook, { line: "Not added", opens: false, action: "get" });
-  assert.deepEqual(admin.sync, { line: "Needs an audiobook", muted: true });
+  assert.deepEqual(admin.sync, { line: "Needs an audiobook", muted: true, opens: false });
   assert.equal(admin.listen, false);
   assert.equal(admin.device, false, "nothing to keep on this device");
   const member = bookModel(work(), { admin: false });
@@ -173,7 +177,7 @@ test("a PDF-only book: Read off, the PDF line, Needs an EPUB once there is a rec
   assert.equal(pdfOnly.sync.line, "Needs an audiobook");
   assert.equal(pdfOnly.device, false);
   const withAudio = bookModel(work({ recordings: [recording("r1")], ebooks: [ebook("p1", "pdf")] }), { admin: true });
-  assert.deepEqual(withAudio.sync, { line: NEEDS_EPUB_LINE, muted: true });
+  assert.deepEqual(withAudio.sync, { line: NEEDS_EPUB_LINE, muted: true, opens: false });
   assert.equal(withAudio.listen, true);
   assert.equal(withAudio.readEbookId, null);
 });
