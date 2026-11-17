@@ -53,7 +53,7 @@ function serve(route: Route, track: string) {
 async function saveFromDialog(page: Page) {
   await page.goto("/");
   await page.getByRole("button", { name: `About ${TITLE}`, exact: true }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Save offline", exact: true }).click();
+  await page.getByRole("switch", { name: "Keep on this device", exact: true }).click();
 }
 
 /** The device's save of the book, in This device's Kept on this device. */
@@ -62,12 +62,18 @@ const row = (page: Page) => kept(page).getByRole("listitem").filter({ hasText: T
 const line = (page: Page) => row(page).locator(".part-book-row-status");
 /** The book's row while its save runs, in Saving now. */
 const saving = (page: Page) => page.getByRole("list", { name: "Saving now", exact: true }).getByRole("listitem").filter({ hasText: TITLE });
-/** Retry and Resume until Now's rows: the Kept row opens the book dialog, whose save button carries on. */
+/**
+ * Retry and Resume until Now's rows: the Kept row opens the Book page (#532), where Resume carries on a save that has
+ * files on this device and the Keep on this device switch starts one that has none.
+ */
 async function saveAgain(page: Page) {
   await row(page).getByRole("button", { name: new RegExp(`^${TITLE}`) }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Save offline", exact: true }).click();
-  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  const book = page.getByRole("region", { name: "Book", exact: true });
+  const keep = book.getByRole("switch", { name: "Keep on this device", exact: true });
+  await expect(keep).toBeVisible();
+  if ((await keep.getAttribute("aria-checked")) === "true") await book.getByRole("button", { name: "Resume", exact: true }).click();
+  else await keep.click();
+  await book.getByRole("button", { name: /^Back to / }).click();
 }
 /** Activity took the Downloads slot in the tab bar (#516); its name stays "Activity" while the dot is lit. */
 const activityTab = (page: Page) =>

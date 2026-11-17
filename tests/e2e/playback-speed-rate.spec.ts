@@ -106,19 +106,16 @@ test("lock-screen position state carries the real rate, the chapter list shows t
   await expect(speedButton).toHaveText("2.3×");
   await expect.poll(async () => (await positionStates(page)).at(-1)?.playbackRate).toBe(2.3);
   await page.getByRole("button", { name: "Close options", exact: true }).click();
-  await nowPlaying.getByRole("button", { name: "Close dialog", exact: true }).click();
-  // The current chapter's time left is at 2.3×; the length the book holds is the real one.
-  await page.locator(".mobile-nav").getByRole("button", { name: "My library", exact: true }).click();
-  await page.getByRole("button", { name: `About ${title}`, exact: true }).click();
-  const details = page.getByRole("dialog", { name: "Book details", exact: true });
-  const current = details.locator(".detail-chapters .chapter-row.selected small");
+  // The current chapter's time left is at 2.3×; the length the book holds is the real one. The Book page has no
+  // chapter list (#532): the player's chapter list, the same component, shows it.
+  const current = nowPlaying.locator(".chapter-list .chapter-row.selected small");
   await expect(current).toHaveAttribute("title", "Left in chapter at 2.3×");
   const { duration, position } = await page.evaluate(() => {
     const audio = ((window as any).__speedAudio as HTMLAudioElement[]).find((a) => !!a.src)!;
     return { duration: audio.duration, position: audio.currentTime };
   });
-  expect(Math.abs(seconds(await current.innerText()) - (duration - position) / 2.3)).toBeLessThan(5);
-  await details.getByRole("button", { name: "Close dialog", exact: true }).click();
+  expect(Math.abs(seconds((await current.textContent()) ?? "") - (duration - position) / 2.3)).toBeLessThan(5);
+  await nowPlaying.getByRole("button", { name: "Close dialog", exact: true }).click();
   // Use default drops the recording's own speed, also after a reload.
   await page.locator(".dock-book").click();
   await speedButton.click();

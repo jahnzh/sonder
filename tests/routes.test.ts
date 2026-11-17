@@ -141,8 +141,10 @@ test("what an address shows: built pages as they are, everything else the first 
   assert.equal(shows("#nowhere"), "#library");
   assert.equal(shows("#settings/a/b"), "#settings");
   assert.equal(shows("#activity/bogus"), "#activity");
+  // The Book page (#532) is built, for everyone.
+  assert.equal(shows("#book/w1"), "#book/w1");
+  assert.equal(shows("#book/w1", false), "#book/w1");
   // Not built yet: behaves like an address that names nothing.
-  assert.equal(shows("#book/w1"), "#library");
   assert.equal(shows("#book/w1/get/ebook"), "#library");
   assert.equal(shows("#series/s1"), "#library");
   assert.equal(shows("#series/s1/add"), "#library");
@@ -229,12 +231,12 @@ test("what adds a history entry and what replaces the current one", () => {
   assert.equal(step(r("#book/w"), r("#book/w")), "none");
 });
 
-test("#book/<workId>/hardcover is built (#529) for everyone; the Book page and its unbuilt pages are not yet", () => {
+test("#book/<workId>/hardcover is built (#529) for everyone, as is the Book page (#532); its unbuilt pages are not yet", () => {
   const shows = (address: string, admin: boolean) => writeAddress(resolve(readAddress(address), { admin }));
   for (const admin of [true, false]) {
     assert.equal(shows("#book/w1/hardcover", admin), "#book/w1/hardcover");
     assert.equal(shows("#book/hardcover%3A42/hardcover", admin), "#book/hardcover%3A42/hardcover");
-    assert.equal(shows("#book/w1", admin), "#library");
+    assert.equal(shows("#book/w1", admin), "#book/w1");
     assert.equal(shows("#book/w1/sync", admin), "#library");
   }
   assert.deepEqual(parentOf(readAddress("#book/w1/hardcover")), { name: "book", workId: "w1" });

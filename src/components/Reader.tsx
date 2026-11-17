@@ -11,7 +11,6 @@ import {
   Bookmark,
   Search,
   Headphones,
-  Download,
   Loader2,
   List,
   X,
@@ -49,8 +48,6 @@ import { ApiError, api, forgetPositionHistory, localDB } from "../lib";
 import {
   loadReader,
   epubFile,
-  saveEpubOffline,
-  cachedEpub,
   readingState,
   saveReading,
   storeReading,
@@ -351,8 +348,6 @@ export function ReaderView({
     [map, setMap] = useState<AlignmentJob | null>(null),
     // The server confirmed `map` for the current audio in this reader (a cached map is not, until the map endpoint answers).
     [mapConfirmed, setMapConfirmed] = useState(false),
-    [offline, setOffline] = useState(false),
-    [saving, setSaving] = useState(false),
     [recovering, setRecovering] = useState(false),
     [conflict, setConflict] = useState<ReadingCheckpoint | null>(null),
     [follow, setFollow] = useState(true),
@@ -508,7 +503,6 @@ export function ReaderView({
       latest.current = value.checkpoint?.locator || null;
       const state = await readingState(id);
       setConflict(state?.conflict || null);
-      setOffline(!!(await cachedEpub(id, value.fingerprint)));
     } catch (error) {
       // Only a confirmed "not found" means gone; offline, with no copy here, keeps the reader's message.
       // A reader closed before the answer came leaves the page shown now alone.
@@ -1507,17 +1501,6 @@ export function ReaderView({
     setPanel(null);
     action();
   };
-  const saveOffline = () => {
-    if (!book || !file.current) return;
-    setSaving(true);
-    void saveEpubOffline(book, file.current)
-      .then(() => {
-        setOffline(true);
-        notify("Ebook saved on this device.");
-      })
-      .catch((error) => notify(error.message, true))
-      .finally(() => setSaving(false));
-  };
   const moreItems = (
     <div className="reader-more">
       <button className="reader-more-item" onClick={fromMenu(listen)}>
@@ -1532,10 +1515,6 @@ export function ReaderView({
       </button>
       <button className="reader-more-item" onClick={fromMenu(() => setPanel("sync"))}>
         <Headphones size={19} /> Reading sync
-      </button>
-      <button className="reader-more-item" disabled={!book || !file.current || saving || offline} onClick={saveOffline}>
-        {saving ? <Loader2 size={19} className="spin" /> : <Download size={19} />}
-        {offline ? "Ebook saved offline" : "Save ebook offline"}
       </button>
       <p className="reader-sync-state" role="status">
         {recoveryStatus || (!follow ? "Audio follow paused" : currentInterval ? "Estimated sentence timings" : map ? "No timing for this position" : "Prepare reading sync to highlight narration")}

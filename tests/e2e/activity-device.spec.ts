@@ -79,13 +79,13 @@ async function titleOf(page: Page, id: string): Promise<string> {
   return books.find((book: { id: string }) => book.id === id).title;
 }
 
-/** Starts a save from today's book dialog, where saving lives until Keep on this device (S10). */
+/** Starts a save from the Book page's Keep on this device switch, a bridge to today's saves until S10 (#532). */
 async function save(page: Page, title: string) {
   await page.goto("/#library");
   await page.getByRole("button", { name: `About ${title}`, exact: true }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Save offline", exact: true }).click();
-  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByRole("switch", { name: "Keep on this device", exact: true }).click();
+  await page.getByRole("button", { name: "Back to Library", exact: true }).click();
+  await expect(page).toHaveURL(/#library$/);
 }
 
 const tabBar = (page: Page) => page.getByRole("navigation", { name: "Mobile navigation" });
@@ -326,9 +326,10 @@ test("every name, row and button has a role and a name; each tooltip's text is t
     await page.keyboard.press("Escape");
     await expect(page.getByRole("tooltip")).toHaveCount(0);
   }
-  // A row opens its book: today's book dialog, until the Book page exists.
+  // A row opens its book: the Book page (#532).
   await open.click();
-  await expect(page.getByRole("dialog")).toContainText(ALICE);
+  await expect(page).toHaveURL(/#book\//);
+  await expect(page.getByRole("region", { name: "Book", exact: true }).getByRole("heading", { level: 1 })).toHaveText(ALICE);
 });
 
 test("switching to This device and back adds no step to Back", async ({ page }) => {

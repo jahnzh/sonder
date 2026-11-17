@@ -178,9 +178,9 @@ async function media$(page: Page, { held = [] as string[], broken = [] as string
 async function save(page: Page, title: string) {
   await page.goto("/#library");
   await page.getByRole("button", { name: `About ${title}`, exact: true }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Save offline", exact: true }).click();
-  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByRole("switch", { name: "Keep on this device", exact: true }).click();
+  await page.getByRole("button", { name: "Back to Library", exact: true }).click();
+  await expect(page).toHaveURL(/#library$/);
 }
 const asMember = (page: Page) =>
   page.route("**/api/auth/status", (route) =>

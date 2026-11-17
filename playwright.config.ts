@@ -85,6 +85,8 @@ const desktopProjects = [
               /(^|\/)activity-worker\.spec\.ts$/,
               // The Audiobook page (#530).
               /(^|\/)audiobook-page\.spec\.ts$/,
+              // The Book page (#532).
+              /(^|\/)book-page\.spec\.ts$/,
               // The reader's page: a head, the text band and a foot (#587).
               /(^|\/)reader-bands\.spec\.ts$/,
               // The rest of Activity's specs, the slice's final check (#523).

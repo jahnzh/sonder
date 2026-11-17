@@ -89,9 +89,9 @@ test("a matched book: shelf, a list, Use Hardcover position, the Hardcover editi
   const alice = await bookOf(page, "alice");
   expect(alice.hardcover.statusId).toBe(2);
   await page.goto("/#library");
-  // The book dialog has one Hardcover row with the shelf; it opens the page.
+  // The Book page (#532) has one Hardcover row with the shelf; it opens the page.
   await page.getByRole("button", { name: `About ${ALICE}`, exact: true }).click();
-  const dialog = page.getByRole("dialog");
+  const dialog = page.getByRole("region", { name: "Book", exact: true });
   await expect(dialog.getByRole("combobox", { name: "Book Hardcover shelf" })).toHaveCount(0);
   await expect(dialog.getByRole("link", { name: "Hardcover", exact: true })).toHaveCount(0);
   const row = dialog.getByRole("button", { name: "Hardcover Currently reading", exact: true });
@@ -168,9 +168,9 @@ test("a matched book: shelf, a list, Use Hardcover position, the Hardcover editi
   await page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true }).click();
 
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
-  // The reload kept the entry behind: the back button goes back to the Library.
+  // The reload kept the entry behind: the back button goes back to the Book page (#532).
   await back.click();
-  await expect(page).toHaveURL(/#library$/);
+  await expect(page).toHaveURL(new RegExp(`#book/${encodeURIComponent(alice.workId)}$`));
   expect(errors).toEqual([]);
 });
 

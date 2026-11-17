@@ -222,12 +222,16 @@ test("playback opens the reader and title page; downloaded sources can be switch
   await showReaderControls(page);
   await page.getByRole("button",{name:"Close reader",exact:true}).click();
   await page.getByRole("button",{name:`Open title page for ${title}`,exact:true}).click();
-  await expect(page.getByRole("dialog",{name:"Book details"})).toBeVisible();
-  await expect(page.getByRole("button",{name:"Read ebook",exact:true})).toBeVisible();
-  await page.getByRole("button",{name:"Save offline",exact:true}).click();
-  await expect(page.getByRole("button",{name:"Downloaded",exact:true})).toBeDisabled();
-  // The book dialog's Audiobook row opens the Audiobook page, and only the page (#530).
-  await page.getByRole("dialog",{name:"Book details"}).getByRole("button",{name:/^Audiobook /}).click();
+  // The player's "Open title page" opens the Book page (#532), with Read; its This device switch saves the book.
+  const bookPage=page.getByRole("region",{name:"Book",exact:true});
+  await expect(bookPage).toBeVisible();
+  await expect(bookPage.getByRole("button",{name:"Read",exact:true})).toBeEnabled();
+  const keep=bookPage.getByRole("switch",{name:"Keep on this device",exact:true});
+  await keep.click();
+  await expect(keep).toHaveAttribute("aria-checked","true");
+  await expect(page.locator("#book-keep-line")).toHaveText(/^Audiobook and ebook · /,{timeout:20000});
+  // The Book page's Audiobook row opens the Audiobook page, and only the page (#530).
+  await bookPage.getByRole("button",{name:/^Audiobook /}).click();
   const manager=page.getByRole("region",{name:"Audiobook",exact:true});
   await expect(manager).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -393,7 +397,7 @@ test.describe("failed source retry",()=>{
   await page.evaluate(() => ((window as any).__audioElements as HTMLAudioElement[]).find(a => !!a.src)!.dispatchEvent(new Event("pause")));
   await expect.poll(async()=>(await(await page.request.get("/api/books")).json()).find((b:any)=>b.id===id).progress?.position).toBeGreaterThanOrEqual(159);
   await page.getByRole("button",{name:`Open title page for ${title}`,exact:true}).click();
-  await page.getByRole("dialog",{name:"Book details"}).getByRole("button",{name:/^Audiobook /}).click();
+  await page.getByRole("region",{name:"Book",exact:true}).getByRole("button",{name:/^Audiobook /}).click();
   const manager=page.getByRole("region",{name:"Audiobook",exact:true});
   const source=(url:URL)=>url.pathname===`/api/media/${book.tracks[0].id}` && url.searchParams.get("source")==="server";
   await page.route(source,route=>route.abort());

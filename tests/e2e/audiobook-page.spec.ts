@@ -212,9 +212,9 @@ test("the chosen recording is stored for the user: it survives a reload and is t
   await expect.poll(() => chosenOf(page, work.workId)).toBe(work.second.recordingId);
   await page.reload();
   await expect(second()).toHaveAttribute("aria-checked", "true");
-  // Back to the book: the book dialog shows the chosen recording, its Audiobook row with the recording's line.
+  // Back to the book: the Book page (#532) shows the chosen recording, its Audiobook row with the recording's line.
   await region(page).getByRole("button", { name: "Back to the book", exact: true }).click();
-  const details = page.getByRole("dialog", { name: "Book details" });
+  const details = page.getByRole("region", { name: "Book", exact: true });
   await expect(details.getByRole("button", { name: "Audiobook Second Narrator · 9 h 40 min · On server", exact: true })).toBeVisible();
   await expect(details.getByRole("combobox")).toHaveCount(0);
   await expect(details.getByRole("button", { name: "Versions & sources", exact: true })).toHaveCount(0);
@@ -229,26 +229,18 @@ test("the chosen recording is stored for the user: it survives a reload and is t
   }
 });
 
-test("a link straight to the page: its back button goes to the book (today's dialog over the Library)", async ({ page }) => {
+test("a link straight to the page: its back button goes to the book, the Book page", async ({ page }) => {
   const work = await twoRecordings(page, "Linked audiobook");
   await page.goto(address(work.workId));
   // The page shows its header while the book loads and then builds it again with the book: a press and release
   // on either side of that would be lost, so Back is pressed once the page is in.
   await expect(region(page).getByRole("radiogroup", { name: "Recordings", exact: true })).toBeVisible();
   await region(page).getByRole("button", { name: "Back to the book", exact: true }).click();
-  await expect(page).toHaveURL(/#library$/);
-  const details = page.getByRole("dialog", { name: "Book details" });
-  await expect(details.getByRole("heading", { name: work.title, exact: true })).toBeVisible();
-  // The dialog's release block is one Audiobook row now, opening the page.
+  await expect(page).toHaveURL(new RegExp(`#book/${encodeURIComponent(work.workId)}$`));
+  const details = page.getByRole("region", { name: "Book", exact: true });
+  await expect(details.getByRole("heading", { level: 1, name: work.title, exact: true })).toBeVisible();
+  // The Book page's Audiobook row, with the recording's line, opens the page again.
   const row = details.getByRole("button", { name: /^Audiobook Audiobook page QA · 11 min · On server$/ });
-  await row.scrollIntoViewIfNeeded();
-  await settled(page);
-  await page.screenshot({ path: `${OUT}/book-dialog-audiobook-row-phone.png` });
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await row.scrollIntoViewIfNeeded();
-  await settled(page);
-  await page.screenshot({ path: `${OUT}/book-dialog-audiobook-row-desktop.png` });
-  await page.setViewportSize({ width: 390, height: 844 });
   await row.click();
   await expect(region(page)).toBeVisible();
   // An address that names no recording shows the Library.

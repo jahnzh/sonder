@@ -63,7 +63,7 @@ async function routeWork(page: Page, workId: string, checks: Record<string, Chec
   });
 }
 
-const details = (page: Page) => page.getByRole("dialog", { name: "Book details" });
+const details = (page: Page) => page.getByRole("region", { name: "Book", exact: true });
 const editions = (page: Page) => page.getByRole("radiogroup", { name: "Editions" });
 async function openFromLibrary(page: Page, title: string) {
   await page.goto("/#library");
@@ -94,13 +94,13 @@ test("the administrator's Ebook page: editions and checks, shared default and Re
   const matchingSize = await sizeOf(page, book.workId, matching);
   const pdfSize = await sizeOf(page, book.workId, pdf);
 
-  // The dialog's Ebook row: the chosen edition's line, opening the page.
+  // The Book page's Ebook row (#532): the chosen edition's line, opening the page.
   await openFromLibrary(page, title);
   const row = details(page).getByRole("button", { name: `Ebook EPUB · ${kb(firstSize)} · On server`, exact: true });
   await expect(row).toBeVisible();
   await expect(details(page).getByRole("button", { name: "Find ebook", exact: true })).toHaveCount(0);
   await row.scrollIntoViewIfNeeded();
-  await page.screenshot({ path: "artifacts/ebook-row-dialog-390.png" });
+  await page.screenshot({ path: "artifacts/ebook-row-book-page-390.png" });
   await row.click();
   await expect(page).toHaveURL(new RegExp(`#book/${escape(encodeURIComponent(book.workId))}/ebook$`));
   await expect(details(page)).toBeHidden();
@@ -153,7 +153,7 @@ test("the administrator's Ebook page: editions and checks, shared default and Re
 
   // Read with several EPUBs opens the chosen one, without a chooser.
   await openFromLibrary(page, title);
-  await details(page).getByRole("button", { name: "Read ebook", exact: true }).click();
+  await details(page).getByRole("button", { name: "Read", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`#reader/${escape(encodeURIComponent(matching))}$`));
   await expect(page.getByText("Choose a reading edition")).toHaveCount(0);
   await closeReader(page);
@@ -202,9 +202,8 @@ test("the administrator's Ebook page: editions and checks, shared default and Re
 
   // The reader then reads the edition from the server.
   const fetched = page.waitForRequest((request) => request.url().endsWith(`/api/ebooks/${encodeURIComponent(matching)}/file`));
-  await page.getByRole("button", { name: "Back to Library", exact: true }).click();
-  await page.getByRole("button", { name: `About ${title}`, exact: true }).click();
-  await details(page).getByRole("button", { name: "Read ebook", exact: true }).click();
+  await page.getByRole("button", { name: "Back to the book", exact: true }).click();
+  await details(page).getByRole("button", { name: "Read", exact: true }).click();
   await fetched;
   await expect(page).toHaveURL(new RegExp(`#reader/${escape(encodeURIComponent(matching))}$`));
 });
@@ -274,13 +273,11 @@ test("the Ebook page measured against the board at 390 by 844 and at desktop wid
   expect(desktop.choiceRows).toEqual([64, 64]);
   for (const [, height] of desktop.rows) expect(height).toBe(52);
   await page.screenshot({ path: "artifacts/ebook-page-desktop.png", fullPage: true });
-  // The book dialog's Ebook row at desktop width.
+  // The Book page's Ebook row at desktop width: Back goes to the book (#532).
   await page.getByRole("button", { name: "Back to the book", exact: true }).click();
-  await expect(page).toHaveURL(/#library$/);
-  await page.getByRole("button", { name: `About ${title}`, exact: true }).click();
-  await expect(details(page).getByRole("list", { name: "Ebook", exact: true })).toBeVisible();
-  await details(page).getByRole("list", { name: "Ebook", exact: true }).scrollIntoViewIfNeeded();
-  await page.screenshot({ path: "artifacts/ebook-row-dialog-desktop.png" });
+  await expect(page).toHaveURL(new RegExp(`#book/${escape(encodeURIComponent(book.workId))}$`));
+  await expect(details(page).getByRole("button", { name: /^Ebook EPUB/ })).toBeVisible();
+  await page.screenshot({ path: "artifacts/ebook-row-book-page-desktop.png" });
 });
 
 test.describe("someone who is not the administrator", () => {

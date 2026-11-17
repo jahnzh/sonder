@@ -252,13 +252,22 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await page
     .getByRole("button", { name: "Pause narration", exact: true })
     .click();
-  await openMore(page);
-  await more
-    .getByRole("button", { name: "Save ebook offline", exact: true })
-    .click();
-  await expect(
-    page.getByRole("button", { name: "Ebook saved offline", exact: true }),
-  ).toBeDisabled();
+  // The reader keeps the EPUB it opened on this device by itself; the More sheet's "Save ebook offline" went to the
+  // Book page's Keep on this device (#532).
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          new Promise<boolean>((resolve) => {
+            const request = indexedDB.open("sonder");
+            request.onsuccess = () => {
+              const keys = request.result.transaction("preferences").objectStore("preferences").getAllKeys();
+              keys.onsuccess = () => resolve(keys.result.some((key) => String(key).startsWith("reader-file:")));
+            };
+          }),
+      ),
+    )
+    .toBe(true);
   await page.evaluate(() => navigator.serviceWorker.ready);
   await expect
     .poll(() => page.evaluate(() => !!navigator.serviceWorker.controller))
@@ -270,9 +279,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
     page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").locator("body"),
   ).toBeVisible();
   await openMore(page);
-  await expect(
-    page.getByRole("button", { name: "Ebook saved offline", exact: true }),
-  ).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Save ebook offline", exact: true })).toHaveCount(0);
   await page
     .getByRole("button", { name: "Close reader options", exact: true })
     .click();

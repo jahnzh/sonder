@@ -93,9 +93,9 @@ async function failedSave(page: Page) {
   await expect(activityTab(page)).toBeVisible();
   await expect(dot(page)).toHaveCount(0);
   await page.getByRole("button", { name: `About ${TITLE}`, exact: true }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Save offline", exact: true }).click();
+  await page.getByRole("switch", { name: "Keep on this device", exact: true }).click();
   await expect(page.locator(".toast")).toContainText("The source is gone.", { timeout: 20000 });
-  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
+  await page.getByRole("button", { name: "Back to Library", exact: true }).click();
 }
 
 test("a failed save on this device lights the dot for someone who is not the administrator, also without a connection", async ({ page, context }) => {

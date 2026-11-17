@@ -156,13 +156,13 @@ async function media$(page: Page, { held = [] as string[], broken = [] as string
   return { waiting: () => waiting, release: () => (hold = false), mend: () => (gone = false) };
 }
 
-/** Starts a save from today's book dialog, where saving lives until Keep on this device (S10). */
+/** Starts a save from the Book page's Keep on this device switch, a bridge to today's saves until S10 (#532). */
 async function save(page: Page, title: string) {
   await page.goto("/#library");
   await page.getByRole("button", { name: `About ${title}`, exact: true }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Save offline", exact: true }).click();
-  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByRole("switch", { name: "Keep on this device", exact: true }).click();
+  await page.getByRole("button", { name: "Back to Library", exact: true }).click();
+  await expect(page).toHaveURL(/#library$/);
 }
 
 // ---- What the page shows ---------------------------------------------------------------------------------------
@@ -342,9 +342,10 @@ test("one row per book: a download to the server and a save on this device of on
   // The download comes first among a group's entries.
   await expect(row).toContainText("Downloading to server · 43%");
   await expect(row.locator(".part-progress")).toHaveCount(1);
-  // A row opens its book: today's book dialog, until the Book page exists.
+  // A row opens its book: the Book page (#532).
   await row.getByRole("button", { name: new RegExp(`^${ALICE} Audiobook Downloading`) }).click();
-  await expect(page.getByRole("dialog")).toContainText(ALICE);
+  await expect(page).toHaveURL(/#book\//);
+  await expect(page.getByRole("region", { name: "Book", exact: true }).getByRole("heading", { level: 1 })).toHaveText(ALICE);
   serving.release();
 });
 

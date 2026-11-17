@@ -3,7 +3,7 @@ test.use({ serviceWorkers: "block" });
 test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "wait" });
 });
-test("a library book without media offers a working Find audio action and no download controls", async ({
+test("a library book without media offers a working Get for its audiobook and no download controls", async ({
   page,
 }) => {
   await page.route("**/api/books", async (route) => {
@@ -26,6 +26,31 @@ test("a library book without media offers a working Find audio action and no dow
     });
     await route.fulfill({ response, json: books });
   });
+  // The same book in the library by work, with no recording: the Book page (#532) reads it there.
+  await page.route("**/api/library", async (route) => {
+    const headers = { ...route.request().headers() };
+    delete headers["if-none-match"];
+    const response = await route.fetch({ headers });
+    const works = await response.json();
+    works.push({
+      ...works[0],
+      workId: "work-metadata-fixture",
+      title: "Ancillary Justice",
+      author: "Ann Leckie",
+      recordings: [],
+      chosenRecordingId: null,
+      ebooks: [],
+      chosenEbookId: null,
+      readingSync: [],
+      series: [],
+      mediaState: null,
+      hardcover: null,
+      inLibrary: true,
+      finished: false,
+      completionOverride: null,
+    });
+    await route.fulfill({ status: 200, contentType: "application/json", json: works });
+  });
   await page.route("**/api/discover/abb/releases?*", (route) =>
     route.fulfill({ json: { results: [], nextPage: null } }),
   );
@@ -33,23 +58,20 @@ test("a library book without media offers a working Find audio action and no dow
   await page
     .getByRole("button", { name: "About Ancillary Justice", exact: true })
     .click();
-  const dialog = page.getByRole("dialog");
-  expect(
-    await dialog.evaluate((element) => getComputedStyle(element).backgroundColor),
-  ).not.toBe("rgba(0, 0, 0, 0)");
+  const book = page.getByRole("region", { name: "Book", exact: true });
+  await expect(book.getByRole("heading", { level: 1 })).toHaveText("Ancillary Justice");
+  // Get for its audiobook is the main action; Listen is off; no This device and no Save to server.
+  const get = book.getByRole("button", { name: "Get an audiobook", exact: true });
+  await expect(get).toBeVisible();
+  expect(await get.getAttribute("data-kind")).toBe("primary");
+  await expect(book.getByRole("button", { name: "Listen", exact: true })).toBeDisabled();
   await expect(
-    dialog.getByRole("button", { name: "Find audio", exact: true }),
-  ).toBeVisible();
-  await expect(
-    dialog.getByRole("button", { name: "Start listening", exact: true }),
+    book.getByRole("switch", { name: "Keep on this device", exact: true }),
   ).toHaveCount(0);
   await expect(
-    dialog.getByRole("button", { name: "Save offline", exact: true }),
+    book.getByRole("button", { name: "Save to server", exact: true }),
   ).toHaveCount(0);
-  await expect(
-    dialog.getByRole("button", { name: "Save to server", exact: true }),
-  ).toHaveCount(0);
-  await dialog.getByRole("button", { name: "Find audio", exact: true }).click();
+  await get.click();
   await expect(
     page.getByRole("textbox", {
       name: "Search audiobook releases",

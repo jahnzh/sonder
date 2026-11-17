@@ -83,11 +83,11 @@ async function openAlice(page: Page) {
   await page
     .getByRole("button", { name: "About Alice’s Adventures in Wonderland", exact: true })
     .click();
-  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Book", exact: true })).toBeVisible();
 }
 
 async function playAlice(page: Page) {
-  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
+  await page.getByRole("button", { name: "Back to Library", exact: true }).click();
   const dockPlay = page
     .getByRole("button", { name: "Play Alice’s Adventures in Wonderland", exact: true })
     .first();
