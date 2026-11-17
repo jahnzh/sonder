@@ -65,18 +65,3 @@ export function TorrentHealthLine({
     </p>
   );
 }
-
-export function TorrentHealthWarning() {
-  const { health } = useTorrentHealth();
-  if (!health || health.status === "ok" || health.status === "unconfigured")
-    return null;
-  return (
-    <p
-      className="inline-error"
-      role="alert"
-      data-testid="torrent-health-warning"
-    >
-      {health.message}
-    </p>
-  );
-}

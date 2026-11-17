@@ -1,4 +1,6 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
+import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { skipOnMobile } from "./mobile";
 function wave() {
   const seconds = 10,
@@ -23,6 +25,43 @@ function wave() {
     );
   return b;
 }
+// A recording of this test's own, titled uniquely per run. The seeded Alice carries listening progress, an ebook and a
+// "most recent" place on the feature card from the other specs on a shared server (and from the previous repeat),
+// so tests that play, resume or open the player import their own book instead of using it.
+async function importOwnBook(page: Page, name: string) {
+  const title = `${name} ${randomUUID().slice(0, 8)}`;
+  const response = await page.request.post("/api/import", {
+    multipart: {
+      title,
+      author: "Sonder test",
+      file0: { name: "Track 1.mp3", mimeType: "audio/mpeg", buffer: readFileSync("server/demo/alice-01.mp3") },
+    },
+  });
+  expect(response.ok()).toBe(true);
+  const { id } = await response.json();
+  const book = (await (await page.request.get("/api/books")).json()).find((b: { id: string }) => b.id === id);
+  importedWorks.push(book.workId);
+  return book as { id: string; title: string; workId: string; tracks: { id: string }[] };
+}
+// The works this file's tests imported. Playing one makes it the most recently played book, so the dock and the
+// feature card of every later spec on the same shard server would open it instead of Alice (which about twenty specs
+// reach through `.dock-book`). After each test its books leave the library through the route the book dialog's
+// Remove uses, as if the owner had removed them: the server is left with the library it had before the test.
+const importedWorks: string[] = [];
+test.afterEach(async ({ page }) => {
+  for (const workId of importedWorks.splice(0)) {
+    const removed = await page.request.delete(`/api/works/${encodeURIComponent(workId)}/library`);
+    expect(removed.ok()).toBe(true);
+  }
+});
+const SEEDED_TITLES = [
+  "Alice’s Adventures in Wonderland",
+  "The Adventures of Sherlock Holmes",
+  "Pride and Prejudice",
+  "Frankenstein",
+  "The Time Machine",
+  "Meditations",
+];
 test("dark mobile library, browsing, filters, favorites and ebook sources", async ({
   page,
 }) => {
@@ -32,7 +71,11 @@ test("dark mobile library, browsing, filters, favorites and ebook sources", asyn
   await expect(
     page.getByRole("heading", { name: "Your library." }),
   ).toBeVisible();
-  await expect(page.locator(".book-card")).toHaveCount(6);
+  // Other specs on a shared server (a repeat run) add books, so prove the six seeded books by title, not the total.
+  for (const title of SEEDED_TITLES)
+    await expect(
+      page.locator(".book-card").filter({ has: page.getByRole("button", { name: title, exact: true }) }),
+    ).toHaveCount(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     page.viewportSize()!.width,
   );
@@ -73,10 +116,10 @@ test("dark mobile library, browsing, filters, favorites and ebook sources", asyn
 test("real audio playback, speed, seek, pause and recording-specific resume after reload", async ({
   page,
 }) => {
+  const own = await importOwnBook(page, "Playback resume");
   await page.goto("/");
   await page
-    .locator(".feature")
-    .getByRole("button", { name: "Start listening", exact: true })
+    .getByRole("button", { name: `Play ${own.title}`, exact: true })
     .click();
   await expect(
     page
@@ -88,7 +131,7 @@ test("real audio playback, speed, seek, pause and recording-specific resume afte
       async () => {
         const books = await (await page.request.get("/api/books")).json();
         return (
-          books.find((b: { id: string }) => b.id === "alice").progress
+          books.find((b: { id: string }) => b.id === own.id).progress
             ?.position || 0
         );
       },
@@ -100,7 +143,7 @@ test("real audio playback, speed, seek, pause and recording-specific resume afte
     .getByRole("button", { name: "Pause", exact: true })
     .click();
   const before = (await (await page.request.get("/api/books")).json()).find(
-    (b: { id: string }) => b.id === "alice",
+    (b: { id: string }) => b.id === own.id,
   ).progress.position;
   await page.reload();
   await page
@@ -116,7 +159,7 @@ test("real audio playback, speed, seek, pause and recording-specific resume afte
     .poll(
       async () => {
         const b = (await (await page.request.get("/api/books")).json()).find(
-          (b: { id: string }) => b.id === "alice",
+          (b: { id: string }) => b.id === own.id,
         );
         return b.progress?.position || 0;
       },
@@ -139,7 +182,7 @@ test("real audio playback, speed, seek, pause and recording-specific resume afte
   await expect
     .poll(async () => {
       const b = (await (await page.request.get("/api/books")).json()).find(
-        (b: { id: string }) => b.id === "alice",
+        (b: { id: string }) => b.id === own.id,
       );
       return b.progress?.position || 0;
     })
@@ -179,6 +222,8 @@ test("import, complete device download, service-worker ranges and offline relaun
   page,
   context,
 }) => {
+  // Unique per run: /api/import does not dedupe audio, so a repeat on one server would add a second row of the same title.
+  const story = `A tiny offline story ${randomUUID().slice(0, 8)}`;
   await page.goto("/");
   await page.evaluate(async () => {
     await navigator.serviceWorker.ready;
@@ -195,7 +240,7 @@ test("import, complete device download, service-worker ranges and offline relaun
   });
   await page
     .getByRole("textbox", { name: "Book title", exact: true })
-    .fill("A tiny offline story");
+    .fill(story);
   await page
     .getByRole("textbox", { name: "Author", exact: true })
     .fill("Sonder test");
@@ -204,10 +249,10 @@ test("import, complete device download, service-worker ranges and offline relaun
     .click();
   await expect(page.getByRole("dialog")).toBeHidden();
   await expect(
-    page.getByRole("button", { name: "A tiny offline story", exact: true }),
+    page.getByRole("button", { name: story, exact: true }),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: "A tiny offline story", exact: true })
+    .getByRole("button", { name: story, exact: true })
     .click();
   await page.getByRole("button", { name: "Save offline", exact: true }).click();
   await expect(
@@ -216,8 +261,9 @@ test("import, complete device download, service-worker ranges and offline relaun
   await page.getByRole("button", { name: "Close dialog", exact: true }).click();
   const books = await (await page.request.get("/api/books")).json();
   const book = books.find(
-    (b: { title: string }) => b.title === "A tiny offline story",
+    (b: { title: string }) => b.title === story,
   );
+  importedWorks.push(book.workId);
   await context.setOffline(true);
   await page.reload();
   await expect(
@@ -226,7 +272,7 @@ test("import, complete device download, service-worker ranges and offline relaun
   await page.getByRole("tab", { name: "Downloaded", exact: true }).click();
   await expect(page.locator(".book-card")).toHaveCount(1);
   await page
-    .getByRole("button", { name: "Play A tiny offline story", exact: true })
+    .getByRole("button", { name: `Play ${story}`, exact: true })
     .click();
   await expect(
     page
@@ -279,11 +325,12 @@ test("desktop layout and server/device distinction remain usable without overflo
 test("embedded chapter controls seek within a recording without changing the physical track ID", async ({
   page,
 }) => {
+  const own = await importOwnBook(page, "Chapter controls");
   await page.route("**/api/books", async (route) => {
     const response = await route.fetch();
     const books = await response.json();
-    const alice = books.find((b: { id: string }) => b.id === "alice");
-    alice.tracks[0].chapters = [
+    const mine = books.find((b: { id: string }) => b.id === own.id);
+    mine.tracks[0].chapters = [
       { title: "At the beginning", start: 0, end: 20 },
       { title: "A new turn", start: 20, end: 40 },
       { title: "The long way home", start: 40, end: 640 },
@@ -293,7 +340,7 @@ test("embedded chapter controls seek within a recording without changing the phy
   await page.goto("/");
   await page
     .getByRole("button", {
-      name: "Play Alice’s Adventures in Wonderland",
+      name: `Play ${own.title}`,
       exact: true,
     })
     .click();
@@ -313,15 +360,15 @@ test("embedded chapter controls seek within a recording without changing the phy
   await expect
     .poll(async () => {
       const b = (await (await page.request.get("/api/books")).json()).find(
-        (b: { id: string }) => b.id === "alice",
+        (b: { id: string }) => b.id === own.id,
       );
       return b.progress?.position || 0;
     })
     .toBeGreaterThanOrEqual(20);
-  const alice = (await (await page.request.get("/api/books")).json()).find(
-    (b: { id: string }) => b.id === "alice",
+  const saved = (await (await page.request.get("/api/books")).json()).find(
+    (b: { id: string }) => b.id === own.id,
   );
-  expect(alice.progress.trackId).toBe("alice-0");
+  expect(saved.progress.trackId).toBe(own.tracks[0].id);
   await expect(page.getByRole("button", { name: /A new turn/ })).toHaveClass(
     /selected/,
   );

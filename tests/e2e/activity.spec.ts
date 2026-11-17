@@ -38,7 +38,7 @@ const outage: ActivityResponse = {
   ],
 };
 
-test("Activity shows an attention indicator and its Server part the outage", async ({ page }) => {
+test("Activity shows an attention indicator, its Server part the outage, and Now the work it blocks", async ({ page }) => {
   await page.route("**/api/activity", (route) => route.fulfill({ json: outage }));
   await page.goto("/#settings");
   // The dot moved from Settings to Activity (#516).
@@ -49,11 +49,15 @@ test("Activity shows an attention indicator and its Server part the outage", asy
   await expect(page).toHaveURL(/#activity\/server$/);
   await expect(page.getByRole("heading", { name: "Activity", level: 1 })).toBeVisible();
 
-  const client = page.getByTestId("activity-process-torrent-client");
-  await expect(client).toHaveAttribute("data-health", "down");
+  // Server (#519): the torrent client's row with its reason and the attention mark; Imports not tracked yet.
+  const client = page.getByTestId("server-row-torrent-client");
   await expect(client).toContainText("The local torrent client cannot be reached.");
-  await expect(page.getByTestId("activity-process-imports")).toContainText("Not tracked yet");
+  await expect(client.getByRole("img", { name: "Needs attention" })).toBeVisible();
+  await expect(page.getByTestId("server-row-imports")).toContainText("Not tracked yet");
 
+  // The item groups of the old page are on Now until Now's own ticket (#519, #521).
+  await page.getByRole("radiogroup", { name: "Activity" }).getByRole("radio", { name: "Now" }).click();
+  await expect(page).toHaveURL(/#activity$/);
   const attention = page.getByRole("list", { name: "Needs attention" });
   await expect(attention.getByTestId("activity-stuck").filter({ hasText: "Blocked by Torrent client" })).toHaveCount(2);
   await expect(attention.getByTestId("activity-item-hardcover:status:1")).toContainText("This change cannot succeed");
@@ -71,25 +75,25 @@ test("Activity shows an attention indicator and its Server part the outage", asy
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
-test("the Activity page loads directly from its address and shows an empty state", async ({ page }) => {
+test("Now loads directly from its address and shows the server work's empty state", async ({ page }) => {
   await page.route("**/api/activity", (route) => route.fulfill({
     json: { ...outage, attention: 0, items: [], processes: outage.processes.map((process) => ({ ...process, health: process.notTracked ? process.health : "ok", reason: null })) },
   }));
-  await page.goto("/#activity/server");
+  await page.goto("/#activity");
   await expect(page.getByRole("heading", { name: "Activity", level: 1 })).toBeVisible();
   await expect(page.getByTestId("activity-empty")).toBeVisible();
   await expect(page.getByRole("img", { name: "Background work needs attention" })).toHaveCount(0);
 });
 
-test("a failing Activity request shows an error and a working Refresh", async ({ page }) => {
+test("a failing Activity request shows an error on Now and a working Refresh", async ({ page }) => {
   let calls = 0;
   await page.route("**/api/activity", (route) => {
     calls += 1;
     return calls < 3 ? route.fulfill({ status: 500, json: { error: "The server is busy." } }) : route.fulfill({ json: { ...outage, items: [], attention: 0 } });
   });
-  await page.goto("/#activity/server");
+  await page.goto("/#activity");
   await expect(page.getByRole("alert")).toContainText("The server is busy.");
-  await page.getByRole("button", { name: "Refresh" }).click();
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(page.getByTestId("activity-page")).toBeVisible();
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
@@ -102,47 +106,8 @@ const pausableProcess = (over: Partial<ActivityResponse["processes"][number]> = 
 const withProcesses = (processes: ActivityResponse["processes"], items: ActivityResponse["items"] = []): ActivityResponse =>
   ({ checkedAt: now, stuckMultiplier: 1, attention: 0, processes, items });
 
-test("Pause stops a loop, says what it does, and Resume undoes it", async ({ page }) => {
-  let paused = false;
-  const requests: unknown[] = [];
-  await page.route("**/api/activity", (route) => route.fulfill({ json: withProcesses([pausableProcess({ paused })]) }));
-  await page.route("**/api/activity/processes/alignment/pause", (route) => {
-    requests.push(route.request().postDataJSON());
-    paused = (route.request().postDataJSON() as { paused: boolean }).paused;
-    return route.fulfill({ json: { ok: true } });
-  });
-  await page.goto("/#activity/server");
-  const row = page.getByTestId("activity-process-alignment");
-  await expect(row).toContainText("Off: no new reading sync starts. One that is running finishes.");
-  await expect(page.getByTestId("activity-process-paused")).toHaveCount(0);
-  await expect(row.getByTestId("activity-process-health")).toHaveText("Running");
-  await page.getByRole("button", { name: "Pause Reading sync queue" }).click();
-  await expect(page.getByTestId("activity-process-paused")).toBeVisible();
-  await expect(row.getByTestId("activity-process-health")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Resume Reading sync queue" })).toBeVisible();
-  await page.getByRole("button", { name: "Resume Reading sync queue" }).click();
-  await expect(page.getByTestId("activity-process-paused")).toHaveCount(0);
-  expect(requests).toEqual([{ paused: true }, { paused: false }]);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-});
-
-test("a loop disabled by the environment shows why and has no switch", async ({ page }) => {
-  await page.route("**/api/activity", (route) => route.fulfill({
-    json: withProcesses([pausableProcess({ id: "series-acquisition", label: "Series search", lockedBy: "environment", pauseEffect: "Off: no new search or download for a series starts." })]),
-  }));
-  await page.goto("/#activity/server");
-  await expect(page.getByTestId("activity-process-locked")).toContainText("Disabled by environment");
-  await expect(page.getByTestId("activity-process-series-acquisition").getByTestId("activity-process-health")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /Pause Series search|Resume Series search/ })).toHaveCount(0);
-});
-
-test("a failed Pause request shows the reason on the row", async ({ page }) => {
-  await page.route("**/api/activity", (route) => route.fulfill({ json: withProcesses([pausableProcess()]) }));
-  await page.route("**/api/activity/processes/alignment/pause", (route) => route.fulfill({ status: 409, json: { error: "An environment setting disables this process, so it cannot be changed here." } }));
-  await page.goto("/#activity/server");
-  await page.getByRole("button", { name: "Pause Reading sync queue" }).click();
-  await expect(page.getByTestId("activity-process-alignment").getByRole("alert")).toContainText("environment setting");
-});
+// Pausing a queue, a queue an environment setting holds and a failed switch are guarded on Server by
+// activity-server.spec.ts (#519).
 
 const hardcoverItem = (id: string, actions: Array<"retry" | "discard">, permanent: boolean): ActivityResponse["items"][number] => ({
   id, kind: "hardcover", processId: "hardcover-sync", title: "Hardcover shelf changes", detail: "1 waiting to be sent", user: "admin",
@@ -163,7 +128,7 @@ test("Discard asks twice, can be cancelled, and removes the item", async ({ page
     present = false;
     return route.fulfill({ json: { ok: true, discarded: 1 } });
   });
-  await page.goto("/#activity/server");
+  await page.goto("/#activity");
   const item = page.getByTestId("activity-item-hardcover:status:1");
   await expect(item.getByTestId("activity-retry")).toHaveCount(0);
   await item.getByTestId("activity-discard").click();
@@ -186,7 +151,7 @@ test("Retry now sends the item's id and shows a failure on the row", async ({ pa
     requests.push(route.request().postDataJSON());
     return route.fulfill({ status: 400, json: { error: "Add your Hardcover token first." } });
   });
-  await page.goto("/#activity/server");
+  await page.goto("/#activity");
   const item = page.getByTestId("activity-item-hardcover:listening:2");
   await expect(item.getByTestId("activity-discard")).toHaveCount(0);
   await item.getByTestId("activity-retry").click();
@@ -225,7 +190,7 @@ test("Resume on a paused download sends its id, and the row then shows it runnin
     retries.push(route.request().postDataJSON());
     return route.fulfill({ status: 409, json: { error: "Only a reading sync that stopped can be retried." } });
   });
-  await page.goto("/#activity/server");
+  await page.goto("/#activity");
   const download = page.getByTestId("activity-item-acquisition:acq-1");
   await expect(download).toHaveAttribute("data-state", "paused");
   await expect(download.getByTestId("activity-retry")).toHaveCount(0);
@@ -252,7 +217,7 @@ test("a failed download offers Retry now beside no Resume, and a refused Resume 
   }));
   await page.route("**/api/activity/items/resume", (route) =>
     route.fulfill({ status: 409, json: { error: "Only a paused download can be resumed." } }));
-  await page.goto("/#activity/server");
+  await page.goto("/#activity");
   const failed = page.getByTestId("activity-item-acquisition:acq-1");
   await expect(failed.getByTestId("activity-retry")).toBeVisible();
   await expect(failed.getByTestId("activity-resume")).toHaveCount(0);
@@ -261,31 +226,7 @@ test("a failed download offers Retry now beside no Resume, and a refused Resume 
   await expect(paused.getByRole("alert")).toContainText("Only a paused download can be resumed.");
 });
 
-// The real server, no mocked response: the daily backups report their schedule and use the real pause switch (#361).
-test("the database backups row lists the schedule, and its switch pauses and resumes it", async ({ page }) => {
-  await page.goto("/#activity/server");
-  const row = page.getByTestId("activity-process-backups");
-  await expect(row).toContainText("Database backups");
-  // Repeat-safe: a run that stopped halfway may have left the switch on.
-  const resume = page.getByRole("button", { name: "Resume Database backups" });
-  if (await resume.isVisible()) {
-    await resume.click();
-    await expect(row.getByTestId("activity-process-paused")).toHaveCount(0);
-  }
-  await expect(row).not.toContainText("Not tracked yet");
-  // A backup may be running at this moment (the test server starts one when due): the row then says so.
-  await expect(row).toContainText(/No backup yet|Running since|Last run \d+ \w{3} \d{2}:\d{2} UTC: (succeeded, \d+\.\d MB|failed)/);
-  await expect(row).toContainText(/Next run (within 10 minutes|\d+ \w{3} 03:00 UTC)|Running since/);
-  await expect(row).toContainText("Off: no new daily backup starts. One that is running finishes.");
-
-  await page.getByRole("button", { name: "Pause Database backups" }).click();
-  await expect(row.getByTestId("activity-process-paused")).toBeVisible();
-  await expect(row).toContainText("Next run when resumed");
-  await resume.click();
-  await expect(row.getByTestId("activity-process-paused")).toHaveCount(0);
-  await expect(row).toContainText(/Next run (within 10 minutes|\d+ \w{3} 03:00 UTC)/);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-});
+// The database backups row against the real server is guarded on Server by activity-server.spec.ts (#519).
 
 const hostRow = (over: Partial<NonNullable<ActivityResponse["processes"][number]["host"]>> = {}): ActivityResponse["processes"][number] => ({
   id: "alignment-host:wsl", label: "Reading sync worker (wsl)", type: "service", health: "ok", reason: null, since: null, notTracked: false,
@@ -313,7 +254,8 @@ test("a worker host row shows its status, version and job; restart asks first, c
     disabled = (route.request().postDataJSON() as { disabled: boolean }).disabled;
     return route.fulfill({ json: { ok: true, id: "alignment-host:wsl", disabled } });
   });
-  await page.goto("/#activity/server");
+  // The worker's controls of today, on its address until the worker's page lands (#519, #520).
+  await page.goto("/#activity/server/wsl");
   const row = page.getByTestId("activity-process-alignment-host:wsl");
   await expect(row.getByTestId("activity-host-status")).toHaveText("Online · cuda · Code version c901429");
   await expect(row.getByTestId("activity-host-job")).toHaveText("Current job: 1 whole-book job, encoding · Speaker for the Dead");
@@ -330,9 +272,9 @@ test("a worker host row shows its status, version and job; restart asks first, c
   expect(restarts).toEqual([{ force: false }, { force: true }]);
 
   await page.getByRole("button", { name: "Disable Reading sync worker (wsl)" }).click();
-  await expect(row.getByTestId("activity-host-disabled")).toHaveText("Disabled by you");
+  await expect(page.getByTestId("server-worker-wsl")).toContainText("Not in use");
   await page.getByRole("button", { name: "Enable Reading sync worker (wsl)" }).click();
-  await expect(row.getByTestId("activity-host-disabled")).toHaveCount(0);
+  await expect(page.getByTestId("server-worker-wsl")).toContainText("Online");
   expect(switches).toEqual([{ disabled: true }, { disabled: false }]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
@@ -343,7 +285,8 @@ test("an offline host shows unknown code version, its last restart and no curren
       lastRestart: { at: now - 120_000, ok: false, forced: true, message: "The restart command failed: ssh: connect to host: Connection refused" } }),
     health: "down", reason: "health: fetch failed" }]),
   }));
-  await page.goto("/#activity/server");
+  // The worker's controls of today, on its address until the worker's page lands (#519, #520).
+  await page.goto("/#activity/server/wsl");
   const row = page.getByTestId("activity-process-alignment-host:wsl");
   await expect(row.getByTestId("activity-host-status")).toHaveText("Offline · Code version unknown");
   await expect(row.getByTestId("activity-host-job")).toHaveCount(0);

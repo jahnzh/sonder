@@ -86,12 +86,14 @@ import { type Page, Mark, ListenButton, Empty } from "./pages/shared";
 import { LibraryPage } from "./pages/library-page";
 import { DiscoverPage } from "./pages/discover-page";
 import { DownloadsPage } from "./pages/downloads-page";
-import { ActivityPage } from "./pages/activity-page";
+import { ActivityServer } from "./pages/activity-server";
+import { ActivityItemGroups } from "./pages/activity-items";
 import { ActivityPlace } from "./pages/activity-place";
 import { SettingsPage } from "./pages/settings-page";
 import { firstPage, writeAddress, type Place, type Route } from "./routes";
 import { onPageLeftByHistory, startNavigation, useAddress } from "./navigation";
 import { Gallery, isGalleryRoute } from "./gallery/Gallery";
+import { refreshLibraryWorks, startLibraryWorks } from "./library-works-store";
 type Notice = { text: string; error?: boolean };
 const nav = [
   { id: "library", label: "My library", icon: Library },
@@ -204,6 +206,7 @@ function useServerActivity(enabled: boolean) {
  */
 function SignedIn(props: { user: Account; needsPassword: boolean; onLogout: () => void }) {
   useState(() => startNavigation({ admin: props.user.role === "admin" }));
+  useEffect(() => startLibraryWorks(), []);
   const { route } = useAddress();
   if (isGalleryRoute(route.name)) return <Gallery />;
   return <LibraryApp {...props} />;
@@ -214,6 +217,8 @@ function shownPage(route: Route, under: { current: Page }): Page {
   if (route.name === "library" || route.name === "discover" || route.name === "settings" || route.name === "activity")
     under.current = route.name;
   else if (route.name === "settings-page") under.current = "settings";
+  // A worker's address is Activity's Server until the worker's page (#520) has a screen of its own.
+  else if (route.name === "worker") under.current = "activity";
   return under.current;
 }
 function LibraryApp({
@@ -324,6 +329,7 @@ function LibraryApp({
     try {
       setLoadError("");
       setBooks(await loadBooks());
+      void refreshLibraryWorks();
     } catch (e) {
       setLoadError((e as Error).message);
     } finally {
@@ -863,10 +869,15 @@ function LibraryApp({
             {page === "activity" && (
               <ActivityPlace
                 admin={user.role === "admin"}
-                part={address.route.name === "activity" ? address.route.part : "now"}
+                part={address.route.name === "activity" ? address.route.part : address.route.name === "worker" ? "server" : "now"}
                 onPart={(part) => address.navigate({ name: "activity", part })}
-                server={<ActivityPage />}
-                now={<DownloadsPage
+                server={<ActivityServer
+                  online={online}
+                  worker={address.route.name === "worker" ? address.route.worker : null}
+                  onWorker={(worker) => address.navigate({ name: "worker", worker })}
+                  notify={notify}
+                />}
+                now={<><DownloadsPage
                 admin={user.role === "admin"}
                 books={books}
                 downloads={downloads}
@@ -884,7 +895,9 @@ function LibraryApp({
                 setMediaTarget={setMediaTarget}
                 navigate={navigate}
                 notify={notify}
-              />}
+              />
+              {/* Today's item groups of the old Activity page, until Now's own ticket (#521). */}
+              {user.role === "admin" && <ActivityItemGroups />}</>}
               />
             )}
             {page === "settings" && (
