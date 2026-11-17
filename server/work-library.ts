@@ -8,12 +8,13 @@
  * and their Hardcover queue. Files, places, bookmarks and the stored chosen recording are not
  * touched, so a book removed and added again comes back as it was.
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
-import { hiddenHardcoverPlaceholders, queueHardcoverStatus } from "./hardcover.ts";
+import { claimHardcoverAudio, hiddenHardcoverPlaceholders, queueHardcoverStatus } from "./hardcover.ts";
 import { removeUserLibraryRow, setLibraryOrigin } from "./library-origin.ts";
-import { placeholderEditionSql } from "./placeholder-edition.ts";
+import { ensurePlaceholder, placeholderEditionSql } from "./placeholder-edition.ts";
+import { ADMIN_USER_ID, getUserSetting, listUserIds, setUserSetting } from "./users.ts";
 import { CONSENSUS_EBOOK_PREFIX } from "./ebook-set-consensus.ts";
 
 /** The work's audio editions, the oldest first, each with whether it is a placeholder. */
@@ -62,23 +63,36 @@ export function workVisibleTo(userId: number, workId: string, hidden?: Set<strin
   );
 }
 
-export type AddWorkResult = "added" | "no-audio";
+/** Whether `userId` has a hidden entry for the audio edition `editionId`. */
+function hidesEdition(userId: number, editionId: string) {
+  return !!db
+    .select({ bookId: s.userHiddenLibrary.bookId })
+    .from(s.userHiddenLibrary)
+    .where(and(eq(s.userHiddenLibrary.userId, userId), eq(s.userHiddenLibrary.bookId, editionId)))
+    .get();
+}
+
+/** Whether the user has a library row of any audio edition of the work, placeholder included. */
+export function workInLibrary(userId: number, workId: string) {
+  return workEditions(workId).some((edition) => hasLibraryRow(userId, edition.id));
+}
 
 /**
  * Adds the work to the user's library. Every audio edition of the work that is not a placeholder
  * gets the user's library row and loses their hidden entry, and a placeholder row of theirs beside
  * one is dropped (as the Hardcover import replaces a placeholder once audio is linked). A work whose
- * only audio editions are placeholders gets its first placeholder's row the same way. A work with
- * no audio edition at all is refused (`"no-audio"`): when a placeholder is made for one is #467's.
+ * only audio editions are placeholders gets its first placeholder's row the same way, and a work
+ * with no audio edition at all gets its placeholder made first (`ensurePlaceholder`, #467
+ * decision 2), so it joins the library through it.
  *
  * When the work joins the library (the user had no row of it before), its library origin becomes
  * "manual" and Hardcover is told "add", once for the work. Adding a work that is already in the
  * library keeps its origin and its shelf status, so a repeated request changes nothing.
  */
-export function addWorkToLibrary(userId: number, workId: string): AddWorkResult {
-  return sqlite.transaction((): AddWorkResult => {
+export function addWorkToLibrary(userId: number, workId: string) {
+  sqlite.transaction(() => {
+    if (!workEditions(workId).length) ensurePlaceholder(sqlite, workId);
     const editions = workEditions(workId);
-    if (!editions.length) return "no-audio";
     const real = editions.filter((edition) => !edition.placeholder);
     const targets = real.length ? real : editions.slice(0, 1);
     const joins = !editions.some((edition) => hasLibraryRow(userId, edition.id));
@@ -99,7 +113,101 @@ export function addWorkToLibrary(userId: number, workId: string): AddWorkResult 
       setLibraryOrigin(userId, workId, "manual", { addedAt });
       queueHardcoverStatus(userId, workId, "unread", "add");
     }
-    return "added";
+  })();
+}
+
+/**
+ * An EPUB or PDF the user imported or got (the ebook edition `ebookId`) puts its work in their
+ * library (#467, decision 2), by the rule of Add to library (`addWorkToLibrary`), when it is not
+ * there yet. A work already in their library is left as it is: a recording they removed beside it
+ * stays removed.
+ */
+export function joinLibraryWithEbook(userId: number, ebookId: string) {
+  sqlite.transaction(() => {
+    const workId = db
+      .select({ workId: s.ebookEditions.workId })
+      .from(s.ebookEditions)
+      .where(eq(s.ebookEditions.id, ebookId))
+      .get()?.workId;
+    if (workId && !workInLibrary(userId, workId)) addWorkToLibrary(userId, workId);
+  })();
+}
+
+/**
+ * Real audio arriving for a work (#467, decision 3), for every work: each user who has a library
+ * row of one of the work's placeholders gets the new edition `editionId`'s row with the status of
+ * that placeholder row and loses the placeholder rows. A user who hid `editionId` is left alone
+ * (their placeholder row stays, so the book stays in their library without the recording they
+ * removed). Then the Hardcover part (`claimHardcoverAudio`) runs, which does something only for a
+ * work matched on Hardcover. The library origin, places in the ebook and bookmarks are not touched.
+ *
+ * The acquisition import and the upload call it inside the transaction that wrote the edition.
+ */
+export function claimWorkAudio(workId: string, editionId: string) {
+  sqlite.transaction(() => {
+    const placeholders = workEditions(workId).filter((edition) => edition.placeholder && edition.id !== editionId);
+    if (placeholders.length)
+      for (const userId of listUserIds()) {
+        const shelved = placeholders.flatMap((edition) =>
+          db
+            .select({ status: s.userLibrary.status })
+            .from(s.userLibrary)
+            .where(and(eq(s.userLibrary.userId, userId), eq(s.userLibrary.bookId, edition.id)))
+            .all(),
+        );
+        if (!shelved.length || hidesEdition(userId, editionId)) continue;
+        // A row of the new edition the user has already is, as a rule, the one the acquisition or the
+        // upload just wrote for its requester ("unread"): it takes the placeholder's status too. A
+        // status of its own (listening, finished) is kept.
+        db.insert(s.userLibrary)
+          .values({ userId, bookId: editionId, status: shelved[0].status, addedAt: Date.now() })
+          .onConflictDoUpdate({
+            target: [s.userLibrary.userId, s.userLibrary.bookId],
+            set: { status: shelved[0].status },
+            setWhere: sql`${s.userLibrary.status}='unread'`,
+          })
+          .run();
+        for (const edition of placeholders) removeUserLibraryRow(userId, edition.id);
+      }
+    claimHardcoverAudio(workId, editionId);
+  })();
+}
+
+/** The marker in the administrator's settings that the shelf ebooks joined his library (#467, decision 6). */
+export const SHELF_EBOOKS_JOINED = "shelfEbooksJoined";
+
+/**
+ * Once, at server start (#467, decision 6): every work with an ebook edition (an ebook set's
+ * consensus text not counted) that is not in the administrator's library joins it through its
+ * placeholder (`ensurePlaceholder`), unless he hid that placeholder. Only the placeholder's row is
+ * written, so a recording he removed stays hidden, and Hardcover is not told anything. Other users
+ * are left alone: the shared ebook shelf records no owner. A marker in his settings keeps a second
+ * start from doing anything. Answers the works that joined.
+ */
+export function joinShelfEbooksOnce(): string[] {
+  return sqlite.transaction((): string[] => {
+    if (getUserSetting(ADMIN_USER_ID, SHELF_EBOOKS_JOINED)) return [];
+    const workIds = sqlite
+      .prepare(
+        `SELECT DISTINCT work_id FROM ebook_editions WHERE substr(id,1,length(?))<>? ORDER BY rowid`,
+      )
+      .pluck()
+      .all(CONSENSUS_EBOOK_PREFIX, CONSENSUS_EBOOK_PREFIX) as string[];
+    const joined: string[] = [];
+    for (const workId of workIds) {
+      if (workInLibrary(ADMIN_USER_ID, workId)) continue;
+      const placeholder = ensurePlaceholder(sqlite, workId);
+      if (hidesEdition(ADMIN_USER_ID, placeholder)) continue;
+      const addedAt = Date.now();
+      db.insert(s.userLibrary)
+        .values({ userId: ADMIN_USER_ID, bookId: placeholder, status: "unread", addedAt })
+        .onConflictDoNothing()
+        .run();
+      setLibraryOrigin(ADMIN_USER_ID, workId, "manual", { addedAt });
+      joined.push(workId);
+    }
+    setUserSetting(ADMIN_USER_ID, SHELF_EBOOKS_JOINED, String(Date.now()));
+    return joined;
   })();
 }
 

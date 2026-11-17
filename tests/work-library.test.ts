@@ -96,6 +96,9 @@ globalThis.fetch = async (input, init) => {
   return Response.json({ data: structuredClone(data) });
 };
 
+// The fixture is a library after the one-off start step (#555): w-text stays outside the owner's
+// library until a test adds it, so the step is marked done before the server starts.
+run("INSERT INTO user_settings(user_id,key,value) VALUES(?,'shelfEbooksJoined','1')", OWNER);
 const { createApp } = await import("../server/app.ts");
 const app = await createApp({ background: { manual: true } });
 await removeRecording((options) => app.inject(options));
@@ -248,13 +251,21 @@ test("PUT of a work with a real recording beside a placeholder adds only the rea
   assert.equal(origin(OWNER, "w-beside"), undefined);
 });
 
-test("PUT of a work with no audio edition is refused with a message and writes nothing", async () => {
-  const owner = userState(OWNER);
-  const refused = await membership("PUT", "w-text");
-  assert.equal(refused.statusCode, 409, refused.body);
-  assert.deepEqual(refused.json(), { error: "This book has no audiobook to add yet." });
-  assert.deepEqual(userState(OWNER), owner);
+test("PUT of a work with no audio edition makes its placeholder and adds its row (#555)", async () => {
+  const sam = userState(SAM);
+  assert.deepEqual(rows("SELECT id FROM audio_editions WHERE work_id='w-text'"), []);
   assert.equal((await work("w-text")).inLibrary, false);
+  const added = await membership("PUT", "w-text");
+  assert.equal(added.statusCode, 200, added.body);
+  assert.deepEqual(added.json(), { ok: true });
+  assert.deepEqual(rows("SELECT id,narrator,cover FROM audio_editions WHERE work_id='w-text'"), [
+    { id: "placeholder-w-text", narrator: "Audio not added", cover: "/covers/meditations.svg" },
+  ]);
+  assert.deepEqual(libraryRows(OWNER, "w-text"), ["placeholder-w-text"]);
+  assert.deepEqual(origin(OWNER, "w-text"), { source: "manual", seriesId: null });
+  assert.equal((await work("w-text")).inLibrary, true);
+  assert.ok((await library()).includes("w-text"));
+  assert.deepEqual(userState(SAM), sam, "Sam's rows are untouched");
 });
 
 test("a work the user may not see, or that does not exist, answers 404 and writes nothing", async () => {

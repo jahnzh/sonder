@@ -15,6 +15,7 @@ const s = await import("../server/schema.ts");
 const { eq } = await import("drizzle-orm");
 const { setUserSecret } = await import("../server/users.ts");
 const hc = await import("../server/hardcover.ts");
+const { claimWorkAudio } = await import("../server/work-library.ts");
 const app = await createApp();
 const realFetch = globalThis.fetch;
 const queries = new Set<string>();
@@ -708,7 +709,7 @@ test("new audio inherits the remembered Hardcover position when it replaces a me
   db.insert(s.userLibrary)
     .values({ userId: 1, bookId: id, status: "unread", addedAt: Date.now() })
     .run();
-  hc.claimHardcoverAudio(workId, id);
+  claimWorkAudio(workId, id);
   assert.equal(absolute(id), 250);
   assert.equal(
     db.select().from(s.userLibrary).where(eq(s.userLibrary.bookId, "hc-202")).get(),

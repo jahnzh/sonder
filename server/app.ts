@@ -39,6 +39,7 @@ import {
   syncHardcover,
 } from "./hardcover.ts";
 import { registerHardcoverRoutes } from "./hardcover-routes.ts";
+import { claimWorkAudio, joinLibraryWithEbook, joinShelfEbooksOnce } from "./work-library.ts";
 import { registerEbookSetRoutes } from "./ebook-set-routes.ts";
 import { CSP_REPORT_PATH, cspMode, registerCsp } from "./csp.ts";
 import { registerAppearance } from "./appearance.ts";
@@ -183,6 +184,8 @@ export async function createApp(options?: {
   checkPoolHostsSetting();
   ensureMediaStorage();
   seed();
+  // Once: the shelf ebooks outside the administrator's library join it through their placeholders (#555).
+  joinShelfEbooksOnce();
   sqlite
     .prepare("UPDATE tracks SET source=? WHERE id=? AND source=?")
     .run(
@@ -846,6 +849,8 @@ export async function createApp(options?: {
       })
       .parse(req.body);
     const saved = await saveEbook(libgenOnly(input));
+    // The ebook's work joins the library of the user who got it (#555).
+    joinLibraryWithEbook(currentUserId(req), saved.id);
     // The set membership is recorded as pending and evaluated in the background (#325); `ebookSet` is additive.
     const ebookSet =
       input.workId && input.extension === "epub" ? registerUploadedEbookSetMember(input.workId, saved.id) : null;
@@ -861,6 +866,8 @@ export async function createApp(options?: {
     });
     if (!part) throw new Error("Choose an EPUB or PDF file.");
     const imported = await importEbook(part.file, part.filename, workId);
+    // The ebook's work joins the library of the user who imported it (#555).
+    joinLibraryWithEbook(currentUserId(req), imported.id);
     if (workId) {
       const ebookSet = registerUploadedEbookSetMember(workId, imported.id);
       await autoQueueAlignmentsForWork(workId, { ebookId: imported.id }, req.log);
@@ -1034,7 +1041,7 @@ export async function createApp(options?: {
         db.insert(s.userLibrary)
           .values({ userId: currentUserId(req), bookId: id, status: "unread", addedAt: Date.now() })
           .run();
-        claimHardcoverAudio(workId, id);
+        claimWorkAudio(workId, id);
       })();
       await autoQueueAlignmentsForWork(workId, { recordingId: `recording-${id}` }, req.log);
       await reevaluateEbookSetForWork(workId);
