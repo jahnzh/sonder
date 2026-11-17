@@ -1,0 +1,255 @@
+// The Series page (#562, spec #560 "The Series page"; boards Series.dc.html, SeriesMore.dc.html, DesktopSeries.dc.html
+// for the column): `#series/<id>` for a saved series. The Page header (the back button named after where it goes, the
+// series' name as its Title), the intro line, Books · N with the series rows, Related works · N, then Remove series.
+// It replaces the series dialog for a saved series; a series that is not saved still opens the dialog. The words and
+// rules are in series-model.ts; the books in the library come from the library by work on this device (#528).
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { SeriesRemoveDialog } from "../components/SeriesRemoveDialog";
+import { SERIES_SAVED_POLL_MS } from "../components/SeriesWorkStatus";
+import { api, ApiError, userId } from "../lib";
+import { refreshLibraryWorks, useStoredWorksWithPlaces } from "../library-works-store";
+import { openSheet, useAddress } from "../navigation";
+import { BookRow } from "../parts/BookRow";
+import { Button } from "../parts/Button";
+import { Group } from "../parts/Group";
+import { PageHeader } from "../parts/PageHeader";
+import { Row } from "../parts/Row";
+import { InfoMark } from "../parts/Tooltip";
+import { usePlayer } from "../player";
+import { normalizeSeriesLanguage } from "../series-selection";
+import { tip } from "../tooltip-texts";
+import type { Book } from "../types";
+import { chosenRecording } from "./book-model";
+import { seriesPageModel, type SeriesPageSeries, type SeriesRow } from "./series-model";
+import "./series-page.css";
+
+/** The preferred language of a series' books, as today's series dialog keeps it. */
+export const SERIES_LANGUAGE_KEY = "sonder-series-language";
+export function seriesLanguage(): string {
+  try {
+    return normalizeSeriesLanguage(localStorage.getItem(SERIES_LANGUAGE_KEY) || navigator.language || "en") || "en";
+  } catch {
+    return normalizeSeriesLanguage(navigator.language || "en") || "en";
+  }
+}
+
+type SavedSeries = SeriesPageSeries;
+
+/**
+ * The series last read, by account and id: Back to the page shows it at once (and so at its scroll position) while
+ * it is read again.
+ */
+const lastRead = new Map<string, SavedSeries>();
+
+type Props = {
+  id: string;
+  admin: boolean;
+  online: boolean;
+  /** Every book of `GET /api/books` the app holds: the recordings as the player plays them. */
+  books: Book[];
+  /** Grows when today's series dialog saved something: the page reads the series again. */
+  revision: number;
+  /** Add of a book not in the library: today's series dialog in its saved mode, the book chosen (until the Add sheet). */
+  onAdd: (seriesId: number, bookId: number) => void;
+  /** The address names a series this account has not saved: today's dialog shows it (until the not-saved page). */
+  onNotSaved: (seriesId: number) => void;
+  /** The series was removed. */
+  onRemoved: () => void;
+};
+
+function PlayIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor">
+      <path d="M8 5l11 7-11 7z" />
+    </svg>
+  );
+}
+
+/** Something of the series is moving: a series search waits or runs, or a download is on its way. */
+function moving(series: SavedSeries | null) {
+  return !!series?.works.some(
+    (work) =>
+      work.acquisition?.audio?.status === "pending" ||
+      work.acquisition?.audio?.status === "searching" ||
+      work.acquisition?.ebook?.status === "pending" ||
+      work.acquisition?.ebook?.status === "searching" ||
+      work.mediaState?.state === "queued",
+  );
+}
+
+export function SeriesPage({ id, admin, online, books, revision, onAdd, onNotSaved, onRemoved }: Props) {
+  const address = useAddress();
+  const p = usePlayer();
+  const library = useStoredWorksWithPlaces();
+  const key = `${userId()}:${id}`;
+  const seriesId = Number(id);
+  const [series, setSeries] = useState<SavedSeries | null>(() => lastRead.get(key) ?? null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [removeOpen, setRemoveOpen] = useState(false);
+
+  const load = useCallback(
+    async (refresh = false) => {
+      if (!Number.isSafeInteger(seriesId) || seriesId <= 0) {
+        address.navigate({ name: "library" }, { replace: true });
+        return;
+      }
+      try {
+        const value = await api<SavedSeries>(
+          `/series/${seriesId}?language=${encodeURIComponent(seriesLanguage())}${refresh ? "&refresh=1" : ""}`,
+        );
+        lastRead.set(key, value);
+        setSeries(value);
+        setError("");
+      } catch (reason) {
+        // Not saved by this account: today's dialog shows the series, over the Library.
+        if (reason instanceof ApiError && reason.status < 500 && /could not be found/i.test(reason.message)) {
+          lastRead.delete(key);
+          address.navigate({ name: "library" }, { replace: true });
+          onNotSaved(seriesId);
+          return;
+        }
+        setError((reason as Error).message);
+      }
+    },
+    [key, seriesId],
+  );
+  useEffect(() => {
+    setRemoveOpen(false);
+    void load();
+  }, [load]);
+  // Today's dialog saved books (an Add): the series and the library by work are read again.
+  useEffect(() => {
+    if (!revision) return;
+    void load();
+    void refreshLibraryWorks().catch(() => {});
+  }, [revision]);
+  const isMoving = moving(series);
+  useEffect(() => {
+    if (!isMoving) return;
+    const timer = setInterval(() => void load(), SERIES_SAVED_POLL_MS);
+    return () => clearInterval(timer);
+  }, [isMoving, load]);
+
+  const model = useMemo(
+    () => (series ? seriesPageModel(series, { library, admin, language: seriesLanguage() }) : null),
+    [series, library, admin],
+  );
+
+  const run = async (action: () => Promise<void>) => {
+    setBusy(true);
+    setError("");
+    try {
+      await action();
+    } catch (reason) {
+      setError((reason as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const retryRefresh = () => run(() => load(true));
+  const play = async (workId: string) => {
+    const work = library.get(workId);
+    const recording = work ? chosenRecording(work) : null;
+    const book = recording && books.find((b) => b.recordingId === recording.recordingId);
+    if (!book) return;
+    if (p.book?.recordingId === book.recordingId) {
+      if (!p.playing) p.toggle();
+    } else await p.play(book);
+    openSheet("now-playing");
+  };
+  const retry = (row: SeriesRow) =>
+    run(async () => {
+      const action = row.action;
+      if (action?.kind === "retry-search") {
+        for (const kind of action.kinds)
+          await api(`/series/${seriesId}/works/${row.bookId}/acquisition/retry`, { method: "POST", body: JSON.stringify({ kind }) });
+      } else if (action?.kind === "retry-download" && row.workId) {
+        await api(`/works/${encodeURIComponent(row.workId)}/media/retry`, { method: "POST" });
+        await refreshLibraryWorks().catch(() => {});
+      }
+      await load();
+    });
+
+  const renderRow = (row: SeriesRow) => {
+    const open = row.workId ? () => address.navigate({ name: "book", workId: row.workId! }) : undefined;
+    const action =
+      row.action?.kind === "add" ? (
+        <Button kind="secondary" aria-label={`Add ${row.title}`} disabled={!online} onClick={() => onAdd(seriesId, row.bookId)}>
+          Add
+        </Button>
+      ) : row.action?.kind === "retry-search" || row.action?.kind === "retry-download" ? (
+        <Button kind="secondary" aria-label={`Retry ${row.title}`} disabled={busy || !online} onClick={() => void retry(row)}>
+          Retry
+        </Button>
+      ) : row.action?.kind === "play" ? (
+        <Button kind="primary" className="series-page-play" icon={<PlayIcon />} label={`Listen to ${row.title}`} onClick={() => void play(row.workId!)} />
+      ) : undefined;
+    return (
+      <BookRow
+        key={row.bookId}
+        title={row.title}
+        status={row.line}
+        cover={row.cover}
+        number={row.number}
+        marks={row.marks}
+        progress={row.progress}
+        failed={row.failed}
+        onClick={open}
+        action={action}
+        raised={row.action?.kind === "play"}
+      />
+    );
+  };
+
+  return (
+    <section className="series-page" aria-label="Series">
+      <PageHeader title={model?.title ?? ""} back />
+      {model && <p className="series-page-intro type-label">{model.intro}</p>}
+      {!model && !error && <p className="series-page-intro type-label">Loading…</p>}
+
+      {model?.refreshError && (
+        <div className="series-page-card" role="group" aria-label="Hardcover could not be read">
+          <p className="type-label" role="alert">
+            {model.refreshError}
+          </p>
+          <Button kind="secondary" disabled={busy || !online} onClick={() => void retryRefresh()}>
+            Retry
+          </Button>
+        </div>
+      )}
+
+      {model && model.books.length > 0 && (
+        <Group caption={`Books · ${model.books.length}`} info={<InfoMark name="Books" text={tip("seriesBooks")} />}>
+          {model.books.map(renderRow)}
+        </Group>
+      )}
+      {model && model.related.length > 0 && <Group caption={`Related works · ${model.related.length}`}>{model.related.map(renderRow)}</Group>}
+
+      {model && (
+        <Group label="Series">
+          <Row label="Remove series" disabled={busy || !online} onClick={() => setRemoveOpen(true)} />
+        </Group>
+      )}
+
+      {error && (
+        <p className="series-page-error type-label" role="alert">
+          {error}
+        </p>
+      )}
+
+      <SeriesRemoveDialog
+        seriesId={series ? seriesId : null}
+        open={removeOpen}
+        onClose={() => setRemoveOpen(false)}
+        onRemoved={() => {
+          lastRead.delete(key);
+          onRemoved();
+          void refreshLibraryWorks().catch(() => {});
+          if (address.backTarget().name === "library") address.goBack();
+          else address.navigate({ name: "library" }, { replace: true });
+        }}
+      />
+    </section>
+  );
+}

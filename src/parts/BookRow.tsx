@@ -33,9 +33,11 @@ export type BookRowProps = {
   trailing?: string | null;
   /** A 20 px icon in the cover's slot, for a row that is not a book (Now's server rows); drawn when there is no cover. */
   coverIcon?: ReactNode;
+  /** The row stands out on the raised fill (the Series page's book to continue). */
+  raised?: boolean;
 };
 
-export function BookRow({ title, status, cover, number, marks = [], progress, onClick, action, failed, trailing, coverIcon }: BookRowProps) {
+export function BookRow({ title, status, cover, number, marks = [], progress, onClick, action, failed, trailing, coverIcon, raised }: BookRowProps) {
   const id = useId();
   const numbered = number != null && number !== "";
   const names = [numbered && `${id}-number`, `${id}-title`, ...marks.map((_, index) => `${id}-mark-${index}`), `${id}-status`, trailing && !action && `${id}-trailing`].filter(Boolean).join(" ");
@@ -79,7 +81,7 @@ export function BookRow({ title, status, cover, number, marks = [], progress, on
   };
   if (action) {
     return (
-      <li className="part-book-row-item" data-action="" aria-labelledby={onClick ? undefined : names}>
+      <li className="part-book-row-item" data-action="" data-raised={raised ? "" : undefined} aria-labelledby={onClick ? undefined : names}>
         {onClick ? (
           <button type="button" className="part-book-row" {...data} aria-labelledby={names} onClick={onClick}>
             {body}

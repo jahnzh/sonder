@@ -1,5 +1,5 @@
 // The Book page (#532, spec #526 "The Book page"; boards Book.dc.html, BookMore.dc.html, BookGetting.dc.html,
-// BookSeries.dc.html): `#book/<workId>`. The head (the back button named after where it goes, Favorite), the intro
+// BookSeries.dc.html; and #533's BookNotInLibrary.dc.html, BookNothing.dc.html, BookPdf.dc.html): `#book/<workId>`. The head (the back button named after where it goes, Favorite), the intro
 // (cover, title, author, the series line, the place line), Listen and Read; Files (Audiobook, Ebook, Reading sync);
 // This device (Keep on this device, a bridge to today's saves until slice "Keep"); About; then Hardcover, Mark as
 // finished and Remove from library. It replaces the book dialog (`BookDetail`). The words and rules are in
@@ -58,8 +58,8 @@ type Props = {
   onFindAudio: (book: Book) => void;
   /** Today's ebook search for the book (Get ebook, until slice "Get"). */
   onFindEbook: (book: Book) => void;
-  /** Today's series dialog. */
-  onSeries: (id: number) => void;
+  /** A saved series opens its Series page (#562); another one today's series dialog. */
+  onSeries: (id: number, saved: boolean) => void;
   /** The library changed (an add, a removal, a mark): read the books again. */
   onChanged: () => Promise<void> | void;
   /** This device's files changed. */
@@ -92,6 +92,13 @@ function ReadIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 6v14M12 6C10 4.5 7 4 4 4v14c3 0 6 .5 8 2M12 6c2-1.5 5-2 8-2v14c-3 0-6 .5-8 2" />
+    </svg>
+  );
+}
+function AddIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 5v14M5 12h14" />
     </svg>
   );
 }
@@ -319,7 +326,7 @@ export function BookPage(props: Props) {
           <p className="book-page-muted type-label">{work.author}</p>
           {model.series &&
             (model.series.id != null ? (
-              <button type="button" className="book-page-series type-label" onClick={() => props.onSeries(model.series!.id!)}>
+              <button type="button" className="book-page-series type-label" onClick={() => props.onSeries(model.series!.id!, model.series!.saved)}>
                 {model.series.label}
               </button>
             ) : (
@@ -342,7 +349,7 @@ export function BookPage(props: Props) {
         </div>
       ) : (
         <div className="book-page-actions" data-one="">
-          <Button kind="primary" disabled={busy || !online} onClick={() => void add()}>
+          <Button kind="primary" icon={<AddIcon />} disabled={busy || !online} onClick={() => void add()}>
             Add to library
           </Button>
         </div>

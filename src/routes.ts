@@ -267,6 +267,8 @@ function built(route: Route): boolean {
   switch (route.name) {
     // The Book page (#532).
     case "book":
+    // The Series page of a saved series (#562).
+    case "series":
     case "library":
     case "discover":
     case "settings":
