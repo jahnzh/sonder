@@ -3,6 +3,7 @@ import {
   useEffect,
   useCallback,
   useRef,
+  useMemo,
   type FormEvent,
 } from "react";
 import {
@@ -38,11 +39,11 @@ import {
 } from "lucide-react";
 import { PlayerProvider, usePlayer } from "./player";
 import { SeriesDialog, type SeriesTarget } from "./components/Series";
-import { useActivityAttention } from "./components/Activity";
 import { MediaManager } from "./components/MediaManager";
 import {ReaderShortcut} from "./components/ReaderShortcut";
 import { ReaderHost } from "./components/Reader";
 import {
+  ApiError,
   api,
   loadBooks,
   localDB,
@@ -58,13 +59,15 @@ import {
   listDeviceSaveRecords,
   writeDeviceSaveRecord,
 } from "./lib";
-import type { DeviceSaveRecord } from "./device-saves";
+import { deviceSaveEntries, type DeviceSaveRecord } from "./device-saves";
+import { buildNow } from "./activity-now";
 import type {
   Book,
   Download as DownloadRecord,
   Progress,
   Settings as SettingsData,
   Acquisition,
+  ActivityResponse,
   DownloadPart,
   SavedEbook,
 } from "./types";
@@ -159,6 +162,43 @@ function App() {
     <SignedIn user={user || { id: 1, username: "admin", role: "admin" }} needsPassword={needsPassword} onLogout={() => setAuth(false)} />
   );
 }
+const ATTENTION_POLL_MS = 60_000;
+
+/**
+ * The server's Activity answer for the shell's attention dot (#521; it was `useActivityAttention` in
+ * `components/Activity.tsx`): read every minute while the app is visible, for the administrator only, and again when
+ * the browser is back online. `reached` is false while the last read got no answer at all; a read answered with an
+ * error keeps the last answer.
+ */
+function useServerActivity(enabled: boolean) {
+  const [state, setState] = useState<{ activity: ActivityResponse | null; reached: boolean }>({ activity: null, reached: true });
+  useEffect(() => {
+    if (!enabled) {
+      setState({ activity: null, reached: true });
+      return;
+    }
+    let cancelled = false;
+    const load = () => {
+      if (document.visibilityState !== "visible") return;
+      api<ActivityResponse>("/activity")
+        .then((activity) => !cancelled && setState({ activity, reached: true }))
+        .catch((error) => {
+          if (cancelled) return;
+          const reached = error instanceof ApiError;
+          setState((current) => (current.reached === reached ? current : { ...current, reached }));
+        });
+    };
+    load();
+    const timer = setInterval(load, ATTENTION_POLL_MS);
+    window.addEventListener("online", load);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      window.removeEventListener("online", load);
+    };
+  }, [enabled]);
+  return state;
+}
 /**
  * The address (src/routes.ts) and the history (src/navigation.ts), read once the user is known, so an
  * administrator's address survives the sign-in. The parts gallery is shown in place of the shell.
@@ -174,8 +214,9 @@ const routeOf = (p: Page): Route => firstPage(p);
 function shownPage(route: Route, under: { current: Page }): Page {
   if (route.name === "library" || route.name === "discover" || route.name === "settings" || route.name === "activity")
     under.current = route.name;
+  else if (route.name === "settings-page") under.current = "settings";
   // A worker's address is Activity's Server until the worker's page (#520) has a screen of its own.
-  if (route.name === "worker") under.current = "activity";
+  else if (route.name === "worker") under.current = "activity";
   return under.current;
 }
 function LibraryApp({
@@ -195,7 +236,8 @@ function LibraryApp({
   const page = shownPage(address.route, useRef<Page>("library"));
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const activityAttention = useActivityAttention(user.role === "admin");
+  const admin = user.role === "admin";
+  const serverActivity = useServerActivity(admin);
   // The search field searches the page it is on. The Library's search is one of its filters and is remembered
   // with them (#455); Discover's goes with its results when the page is left.
   const [queries, setQueries] = useState({ library: "", discover: "", other: "" });
@@ -236,6 +278,21 @@ function LibraryApp({
     (Event & { prompt: () => Promise<void> }) | null
   >(null);
   const controllers = useRef(new Map<string, AbortController>());
+  // The attention dot on Activity (#521): lit exactly when Now's builder has a row under Needs attention, from the
+  // server's answer (administrator) and this device's saves (anyone), so the dot and Now cannot disagree.
+  const attentionDot = useMemo(
+    () =>
+      buildNow({
+        activity: serverActivity.activity,
+        saves: deviceSaveEntries({ books, downloads, downloadParts, running: downloadJobs, records: saveRecords }),
+        books,
+        admin,
+        // No connection: the browser says so, or the last read of the server got no answer at all.
+        online: online && serverActivity.reached,
+        now: Date.now(),
+      }).dot,
+    [serverActivity, books, downloads, downloadParts, downloadJobs, saveRecords, admin, online],
+  );
   const notify = useCallback(
     (text: string, error = false) => setNotice({ text, error }),
     [],
@@ -362,6 +419,11 @@ function LibraryApp({
   const navigate = (p: Page) => {
     leavePage(p);
     address.navigate(routeOf(p));
+  };
+  // A "Connect …" link: Settings › Connections, where TorBox and Hardcover are connected.
+  const openConnections = () => {
+    leavePage("settings");
+    address.navigate({ name: "settings-page", page: "connections" });
   };
   // The tab bar and the rail: another place adds an entry, the current one returns to its first page.
   const switchPlace = (p: Place) => {
@@ -599,7 +661,7 @@ function LibraryApp({
                 className={page === n.id ? "selected" : ""}
                 // Activity keeps its name while work needs attention; the dot describes it instead of renaming it.
                 aria-label={n.id === "activity" ? n.label : undefined}
-                aria-describedby={n.id === "activity" && activityAttention > 0 ? "activity-attention-sidebar" : undefined}
+                aria-describedby={n.id === "activity" && attentionDot ? "activity-attention-sidebar" : undefined}
                 onClick={() => {
                   // Like the tab of the current place: on the Library, its own item shows every book again.
                   if (n.id === "library" && page === "library") {
@@ -616,8 +678,8 @@ function LibraryApp({
                   Object.keys(downloadJobs).length > 0 && (
                     <span className="activity-dot" />
                   )}
-                {/* The attention dot moved here from Settings (#516); it still reads the server's count, for the administrator. */}
-                {n.id === "activity" && activityAttention > 0 && <span id="activity-attention-sidebar" className="attention-dot" role="img" aria-label="Background work needs attention" data-testid="activity-indicator" />}
+                {/* The attention dot (#516), lit by Now's builder (#521): the server's work for the administrator, this device's saves for anyone. */}
+                {n.id === "activity" && attentionDot && <span id="activity-attention-sidebar" className="attention-dot" role="img" aria-label="Background work needs attention" data-testid="activity-indicator" />}
               </button>
             ))}
           </nav>
@@ -796,7 +858,7 @@ function LibraryApp({
                 onAdd={(b) => void mutateLibrary(b, "add")}
                 notify={notify}
                 torboxConfigured={!!settings?.torboxConfigured}
-                onConnect={() => navigate("settings")}
+                onConnect={openConnections}
                 onSeries={(id) => setSeriesTarget({ id, mode: "preview" })}
                 refresh={refresh}
               />
@@ -866,11 +928,11 @@ function LibraryApp({
                 onClick={() => switchPlace(n.id as Place)}
                 aria-label={n.label}
                 // The tab keeps its name while work needs attention; the dot describes it instead of renaming it.
-                aria-describedby={n.id === "activity" && activityAttention > 0 ? "activity-attention-mobile" : undefined}
+                aria-describedby={n.id === "activity" && attentionDot ? "activity-attention-mobile" : undefined}
               >
                 <n.icon size={20} />
                 <span>{n.label}</span>
-                {n.id === "activity" && activityAttention > 0 && <span id="activity-attention-mobile" className="attention-dot" role="img" aria-label="Background work needs attention" />}
+                {n.id === "activity" && attentionDot && <span id="activity-attention-mobile" className="attention-dot" role="img" aria-label="Background work needs attention" />}
               </button>
             ),
           )}
@@ -930,7 +992,7 @@ function LibraryApp({
           onOpenSeries={(id) => { setDetail(null); setSeriesTarget({ id, mode: "preview" }); }}
           onSettings={() => {
             setDetail(null);
-            navigate("settings");
+            openConnections();
           }}
           notify={notify}
           onKeepServer={() => {
@@ -988,7 +1050,7 @@ function LibraryApp({
           torboxConfigured={!!settings?.torboxConfigured}
           onConnect={() => {
             setImportOpen(false);
-            navigate("settings");
+            openConnections();
           }}
         />
       </div>

@@ -78,7 +78,11 @@ test("switching place counts as a step for Back, and the installed app starts on
 // The dot sits on Activity since #516; the rule is the same there.
 test("the Activity tab keeps its name while background work needs attention", async ({ page }) => {
   await page.route("**/api/activity", (route) =>
-    route.fulfill({ json: { checkedAt: Date.now(), stuckMultiplier: 1, processes: [], items: [], attention: 1 } }));
+    route.fulfill({ json: { checkedAt: Date.now(), stuckMultiplier: 1, attention: 1, items: [], processes: [
+      // Since #521 the dot is lit by Now's builder from what needs attention, here a process that is down.
+      { id: "torrent-client", label: "Torrent client", type: "service", health: "down", reason: "Down", since: null, notTracked: false,
+        pausable: false, paused: false, lockedBy: null, pauseEffect: null, counts: { running: 0, queued: 0, failed: 0, stuck: 0 } },
+    ] } }));
   await page.goto("/#discover");
   await expect(shown(page)).toHaveText("Discover");
   const activity = tab(page, "Activity");
@@ -139,7 +143,7 @@ test("an address that names nothing, or a page not built yet, shows its place's 
     ["#nowhere", "#library", "Library"],
     ["#book/no-such-work", "#library", "Library"],
     ["#series/42/add", "#library", "Library"],
-    ["#settings/appearance", "#settings", "Settings"],
+    ["#settings/reading", "#settings", "Settings"],
     ["#activity/server/wsl/extra", "#activity", "Activity"],
     ["#discover/extra", "#discover", "Discover"],
   ] as const) {

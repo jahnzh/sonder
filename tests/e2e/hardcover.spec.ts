@@ -4,7 +4,7 @@ test("mobile Hardcover connection, shelves, custom lists, edition selection and 
 }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto("/#settings");
+  await page.goto("/#settings/connections");
   await page
     .getByRole("textbox", { name: /^API token/ })
     .fill("browser-test-token");

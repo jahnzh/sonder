@@ -136,9 +136,8 @@ test("the reader offers no view switch, P does nothing and F returns to the narr
 });
 
 test("Settings offers no view choice and no words per minute",async({page})=>{
- await page.goto("/#settings");
- const playback=page.getByRole("region",{name:"Playback settings",exact:true});
- await expect(playback.getByRole("combobox",{name:"Playback progress bar",exact:true})).toBeVisible();
+ await page.goto("/#settings/playback");
+ await expect(page.getByRole("radiogroup",{name:"Progress bar shows",exact:true})).toBeVisible();
  await expect(page.getByRole("combobox",{name:"Ebook view"})).toHaveCount(0);
  for(const text of ["Ebook view","Words per minute","Lyrics"])await expect(page.getByText(text)).toHaveCount(0);
  await expect(page.getByRole("slider",{name:/words per minute/i})).toHaveCount(0);

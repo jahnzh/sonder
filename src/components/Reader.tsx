@@ -35,7 +35,9 @@ import { PlaybackOptions } from "./PlaybackOptions";
 import { PlaybackTimeline } from "./PlaybackTimeline";
 import {PlaybackExtra,usePlaybackMenu} from "./PlaybackMenu";
 import { readerNeedsScripts } from "../reader-sandbox";
+import { lookupIndex, placeAt } from "../reader-lookup";
 import { keyEventContext, OPEN_SHEET_SELECTOR, readerKeyAction, typingInField } from "../keyboard";
+import { followsNarration } from "../follow-default";
 import { createReaderFollowing, type DeferredReturn, type NarrationPlace, type NarrationReturn } from "../reader-following";
 import { mapIdentityOf } from "../alignment-map-lifecycle";
 import { currentChapter, playbackTimeline } from "../chapters";
@@ -200,43 +202,18 @@ function sentenceAt(section: ReaderSection, blockIndex: number, offset: number) 
   const block = section.paragraphs.filter((fragment) => fragment.blockIndex === blockIndex);
   return block.filter((fragment) => fragment.start <= offset).pop() || block[0];
 }
+// The range of a block between two normalised offsets (one when `end` is left out), found by the
+// searched lookup (#507): the block is walked once, then each offset is a binary search.
 function rangeAt(block: Element, offset: number, end?: number) {
-  const doc = block.ownerDocument;
-  const find = (target: number) => {
-    const walker = textNodes(block);
-    let raw = "",
-      node: Node | null,
-      last: Node = block,
-      pending = false;
-    while ((node = walker.nextNode())) {
-      // A <br> that reaches the target puts it at the start of the next text node.
-      if (pending && !isBreak(node)) return { node, offset: 0 };
-      if (isBreak(node)) {
-        raw += "\n";
-        if (readerTextOffset(raw) >= target) pending = true;
-        continue;
-      }
-      last = node;
-      const text = node.textContent || "";
-      if (readerTextOffset(raw + text) >= target) {
-        let i = 0;
-        for (; i <= text.length; i++)
-          if (readerTextOffset(raw + text.slice(0, i)) >= target) break;
-        return { node, offset: Math.min(i, text.length) };
-      }
-      raw += text;
-    }
-    return {
-      node: last,
-      offset:
-        last.nodeType === Node.TEXT_NODE
-          ? (last.textContent || "").length
-          : last.childNodes.length,
-    };
-  };
-  const start = find(offset),
-    finish = end === undefined ? start : find(end),
-    range = doc.createRange();
+  const walker = textNodes(block),
+    items: { node: Node; isBreak: boolean; text: string }[] = [];
+  let node: Node | null;
+  while ((node = walker.nextNode()))
+    items.push({ node, isBreak: isBreak(node), text: nodeText(node) });
+  const index = lookupIndex(items, { node: block, childCount: block.childNodes.length }),
+    start = placeAt(index, offset),
+    finish = end === undefined ? start : placeAt(index, end),
+    range = block.ownerDocument.createRange();
   range.setStart(start.node, start.offset);
   range.setEnd(finish.node, finish.offset);
   return range;
@@ -407,6 +384,10 @@ export function ReaderView({
     setMapConfirmed(!!job && confirmed);
   };
   useEffect(() => () => following.dispose(), [following]);
+  // Settings › Playback: with Follow the narration off, the reader opens paged away from the narration.
+  useEffect(() => {
+    if (!followsNarration()) following.pageAway();
+  }, [following]);
   const redrawHighlight = () => {
     if (!mountedRef.current) return;
     if (following.followed() || highlight.current) {

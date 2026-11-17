@@ -2,7 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 test("settings shows local torrent status from the real health endpoint", async ({
   page,
 }) => {
-  await page.goto("/#settings");
+  await page.goto("/#settings/connections");
   const line = page.getByTestId("torrent-health");
   await expect(line).toHaveAttribute("data-status", "unconfigured");
   await expect(line).toContainText("Local torrents are not configured.");
@@ -43,17 +43,20 @@ test("the Torrent client row reads the VPN message with the attention mark, and 
   await page.goto("/#activity");
   await expect(page.getByRole("heading", { name: /On your home server/ })).toBeVisible();
   await expect(page.getByText("no internet connection through the VPN")).toHaveCount(0);
-  await page.goto("/#settings");
+  await page.goto("/#settings/connections");
   await expect(page.getByTestId("torrent-health")).toHaveAttribute(
     "data-status",
     "offline",
   );
-  // Settings' Reading sync section moved to Activity › Server (#519).
-  await expect(page.getByRole("heading", { name: "Reading sync", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /Prepare reading sync/ })).toHaveCount(0);
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),
   ).toBe(390);
+  // Settings' Reading sync section moved to Activity › Server (#519); Settings as pages (#579) had put it on
+  // Library and storage.
+  await page.goto("/#settings/library");
+  await expect(page.getByRole("heading", { name: "Library", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Reading sync", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Prepare reading sync/ })).toHaveCount(0);
 });
 test("the Torrent client row reads Running and has no mark when local torrents are healthy", async ({
   page,

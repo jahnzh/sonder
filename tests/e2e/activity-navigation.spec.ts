@@ -8,8 +8,14 @@ import type { ActivityResponse } from "../../src/types";
 
 const DESKTOP = { width: 1280, height: 800 };
 const quiet: ActivityResponse = { checkedAt: Date.now(), stuckMultiplier: 1, attention: 0, processes: [], items: [] };
+/** Processes that are down: the dot is lit by Now's builder from what needs attention, not by the count (#521). */
+const down = (count: number): ActivityResponse["processes"] =>
+  Array.from({ length: count }, (_, i) => ({
+    id: `service-${i}`, label: `Service ${i}`, type: "service", health: "down", reason: "Down", since: null, notTracked: false,
+    pausable: false, paused: false, lockedBy: null, pauseEffect: null, counts: { running: 0, queued: 0, failed: 0, stuck: 0 },
+  }));
 const answer = (page: Page, attention: number) =>
-  page.route("**/api/activity", (route) => route.fulfill({ json: { ...quiet, checkedAt: Date.now(), attention } }));
+  page.route("**/api/activity", (route) => route.fulfill({ json: { ...quiet, checkedAt: Date.now(), attention, processes: down(attention) } }));
 /** Someone who is not the administrator, as the client is told (prior art: hardcover.spec.ts "r6#4"). */
 const asMember = (page: Page) =>
   page.route("**/api/auth/status", (route) =>
@@ -164,7 +170,7 @@ test("someone who is not the administrator: Activity in the tab bar, Now with th
   let asked = 0;
   await page.route("**/api/activity", (route) => {
     asked++;
-    return route.fulfill({ json: { ...quiet, attention: 3 } });
+    return route.fulfill({ json: { ...quiet, attention: 3, processes: down(3) } });
   });
   await page.goto("/#library");
   await expect(tabBar(page).getByRole("button")).toHaveText(["My library", "Discover", "Activity", "Settings"]);
@@ -177,7 +183,7 @@ test("someone who is not the administrator: Activity in the tab bar, Now with th
   await expect(parts(page)).toHaveCount(0);
   await expect(page.getByRole("radio", { name: "Server" })).toHaveCount(0);
   await noOverflow(page);
-  // The dot reads the administrator's count in this ticket: nothing is asked and nothing lights for anyone else.
+  // The server's work is the administrator's: nothing is asked, and with no failed save on this device no dot (#521).
   await expect(page.getByRole("img", { name: dot })).toHaveCount(0);
   expect(asked).toBe(0);
 
