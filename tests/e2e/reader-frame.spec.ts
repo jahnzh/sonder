@@ -62,6 +62,10 @@ async function longPressSentence(page:Page,viewport:Locator){
  await page.mouse.move(state.point.x,state.point.y);
  await page.mouse.down(); await page.waitForTimeout(650); await page.mouse.up();
 }
+// Without a matching map the long-press says so in the foot's row, as an error (#591, spec #586 "Messages in the foot").
+async function expectNoMapInFoot(room:Locator){
+ await expect(room.locator(".reader-player .reader-message").getByRole("alert")).toHaveText("Prepare a matching audiobook map for this passage first.");
+}
 async function expectNoAlignment(page:Page,id:string){
  const response=await page.request.get(`/api/alignments?ebookId=${id}`);
  expect(response.ok()).toBe(true);
@@ -89,7 +93,7 @@ test("taps, page turns and long-press on the book page reach the reader",async({
  await expect.poll(async()=>(await(await page.request.get(`/api/reader/${id}`)).json()).checkpoint?.revision||0).toBeGreaterThan(revision);
  // Long-press listens from that sentence; without a narration map it asks for one.
  await longPressSentence(page,room.locator(".reader-viewport"));
- await expect(page.getByText("Prepare a matching audiobook map for this passage first.")).toBeVisible();
+ await expectNoMapInFoot(room);
 });
 test("long-press reaches a sentence after the reader is resized",async({page,browserName},testInfo)=>{
  const {id,room}=await openReader(page,`Frame resize ${browserName} ${testInfo.repeatEachIndex}`,false,false);
@@ -103,7 +107,7 @@ test("long-press reaches a sentence after the reader is resized",async({page,bro
  // The old long-press point is now below the book page, over the player.
  expect(box.y+box.height/3).toBeGreaterThan(resized.y+resized.height);
  await longPressSentence(page,viewport);
- await expect(page.getByText("Prepare a matching audiobook map for this passage first.")).toBeVisible();
+ await expectNoMapInFoot(room);
 });
 test("a no-map long-press stays isolated from an already prepared ebook",async({page,browserName},testInfo)=>{
  const suffix=`${browserName} ${testInfo.repeatEachIndex}`;
@@ -122,7 +126,7 @@ test("a no-map long-press stays isolated from an already prepared ebook",async({
  expect(id).not.toBe(seeded);
  await expectNoAlignment(page,id);
  await longPressSentence(page,room.locator(".reader-viewport"));
- await expect(page.getByText("Prepare a matching audiobook map for this passage first.")).toBeVisible();
+ await expectNoMapInFoot(room);
 });
 // Every section document starts with the CSP and has no script left; scripts, inline handlers and a
 // javascript: link added after sanitising are refused too, so nothing reaches the frame's or the app's window.

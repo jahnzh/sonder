@@ -1,0 +1,79 @@
+/* The reader's message in the foot (#591, ADR 0019, spec #586 "Messages in the foot"; boards ReaderUndo, ReaderError,
+   ReaderConflict, ReaderUpdate, ReaderConfirm). On a phone the message takes the foot's lower row: under the progress
+   line at rest (the place and the small Pause give way), under the timeline with the controls shown (the transport
+   row gives way). The foot keeps its box, so the text band is not laid out again. */
+.reader-message {
+  display: none;
+}
+.reader-message-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.reader-message[data-kind="error"] .reader-message-text {
+  color: var(--danger);
+}
+.reader-message .part-button[data-kind="quiet"].reader-message-action {
+  color: var(--accent);
+  font-weight: 600;
+}
+.reader-message .part-button[data-kind="quiet"].reader-message-dismiss,
+.reader-message .part-button[data-kind="quiet"].reader-message-play {
+  color: var(--muted);
+}
+@media (max-width: 899.98px) {
+  .reader-player > .reader-message {
+    position: absolute;
+    z-index: 1;
+    left: var(--space-16);
+    right: var(--space-16);
+    /* At rest: the foot's top padding, the 2-high progress line and the gap under it. */
+    top: calc(var(--space-8) + 2px + var(--space-4));
+    height: var(--height-control);
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+  }
+  /* With the controls shown: the foot's top padding, the 20-high timeline and the gap under it. */
+  .reader-player[data-controls="true"] > .reader-message {
+    top: calc(var(--space-4) + 20px + var(--space-4));
+  }
+  .reader-player[data-controls="true"] > .reader-message .reader-message-play {
+    border-radius: var(--corner-round);
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+  .reader-player[data-message] .reader-foot-row,
+  .reader-player[data-message] .reader-player-leading,
+  .reader-player[data-message] .reader-transport,
+  .reader-player[data-message] .reader-player-extras {
+    visibility: hidden;
+  }
+}
+/* A desktop keeps its footer until the desktop ticket: the message takes the chapter's place beside the transport,
+   whose Play or Pause stays in view. */
+@media (min-width: 900px) {
+  .reader-player > .reader-message {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    justify-self: start;
+    align-self: center;
+    max-width: calc(100% - 52px);
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+  }
+  .reader-player > .reader-message .reader-message-play {
+    display: none;
+  }
+  .reader-player[data-message] .reader-player-info {
+    visibility: hidden;
+  }
+}
