@@ -619,34 +619,31 @@ test("a 409 with no server checkpoint rebases to revision 0 and saves instead of
     .toBe(1);
   await expect(reader.locator(".reading-conflict")).toBeHidden();
 });
-test("Settings → Playback chooses whether linked ebooks open in Page or Lyrics mode", async ({
+// The view choice is gone from Settings (ADR 0017); a choice saved by an older client stays stored, ignored.
+test("Settings → Playback offers no ebook view and saving it keeps a stored view choice", async ({
   page,
 }) => {
   const appearance = await (await page.request.get("/api/appearance")).json();
   try {
     await page.request.put("/api/appearance", {
-      data: { ...appearance, reader: { ...appearance.reader, display: "book" } },
+      data: { ...appearance, reader: { ...appearance.reader, display: "segment" } },
     });
     await page.goto("/");
     await page
       .locator(".mobile-nav")
       .getByRole("button", { name: "Settings", exact: true })
       .click();
-    const view = page.getByRole("combobox", { name: "Ebook view" });
-    await expect(view).toHaveValue("book");
-    await view.selectOption("segment");
+    await expect(page.getByRole("combobox", { name: "Playback progress bar" })).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "Ebook view" })).toHaveCount(0);
+    const saved = page.waitForResponse(
+      (response) => response.request().method() === "PUT" && response.url().endsWith("/api/appearance"),
+    );
     await page
       .getByRole("button", { name: "Save playback settings", exact: true })
       .click();
-    await expect
-      .poll(async () => (await (await page.request.get("/api/appearance")).json()).reader.display)
-      .toBe("segment");
-    await page.reload();
-    await page
-      .locator(".mobile-nav")
-      .getByRole("button", { name: "Settings", exact: true })
-      .click();
-    await expect(page.getByRole("combobox", { name: "Ebook view" })).toHaveValue("segment");
+    expect((await saved).ok()).toBe(true);
+    await expect(page.getByText("Playback settings saved.")).toBeVisible();
+    expect((await (await page.request.get("/api/appearance")).json()).reader.display).toBe("segment");
   } finally {
     await page.request.put("/api/appearance", { data: appearance });
   }

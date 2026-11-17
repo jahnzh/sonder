@@ -8,7 +8,20 @@ A self-hosted audiobook player with a built-in ebook reader that follows the nar
 An ordered group of related works.
 
 **Saved series**:
-A series a user has added to their library for ongoing reference, independently of the individual works they have added.
+A series a user has added to their library for ongoing reference, independently of the individual works they have added. Its list follows Hardcover: a work Hardcover adds later is marked new. Removing it keeps its works in the library unless the administrator also removes the works it added.
+_Avoid_: Followed series, series selection
+
+**Related work**:
+A work Hardcover lists in a series without a number, such as a companion or a collection. It is shown after the numbered works and does not count towards how many of the series are finished.
+_Avoid_: Unnumbered work, extra
+
+**New in a series**:
+A work Hardcover added to a saved series after the user last reviewed it. It stays marked until the user dismisses the marks or adds a work from the series.
+_Avoid_: Unseen work
+
+**Added with a series**:
+A work that came into a user's library when they saved a series or added a work from it, as opposed to one added on its own or from Hardcover's shelves. Only these are offered for removal together with the series.
+_Avoid_: Introduced
 
 **Work**:
 A book as an abstract title, independent of any edition, recording or file. A user's library is made of works, whether a work has an audio edition, an ebook edition, both or neither yet.
@@ -37,6 +50,14 @@ _Avoid_: Ebook file
 **Delivery source**:
 Where a recording's bytes come from on this play: device copy, server copy, or the original stream.
 _Avoid_: Source (alone), copy
+
+**Get**:
+The administrator's action of bringing a missing file to a work: a recording from AudioBookBay, Prowlarr, a magnet link or audio files from the device, or an ebook edition from Library Genesis or a file from the device. It always happens in the Get sheet of that work, and the file joins that work.
+_Avoid_: Find another release, Find ebook, acquire (on screen), download (for the action)
+
+**Release**:
+A listing a source offers before Sonder has it: a torrent of a recording on AudioBookBay or an indexer behind Prowlarr, or a file of an edition on Library Genesis. Getting one makes it a recording or an ebook edition of the work. A release TorBox already holds plays at once ("Plays now"). On screen a release is called a recording or an edition.
+_Avoid_: Result, torrent (alone), version
 
 **Device save**:
 Copying a work's files onto one device, done by that device's browser while Sonder is open there. The server knows what the device should keep but does not see the save, so it is not an activity.
@@ -74,6 +95,10 @@ _Avoid_: Hardcover link, linked book
 The audio edition on Hardcover that a user's place in one recording is sent to. It is automatic (the edition of the user's current read there, or the one with the same narrator) until the user chooses one.
 _Avoid_: Recording edition, Hardcover audio edition
 
+**Hardcover book**:
+A book in Hardcover's catalogue, as Discover finds it. One that no work on the server is matched to opens as a book not in the library under the work id it will get (`work-hc-<id>`, ADR 0022), and becomes a work when someone adds it or gets a file for it.
+_Avoid_: Hardcover result, catalogue entry, external book
+
 ## Screens
 
 **Place**:
@@ -88,11 +113,39 @@ _Avoid_: Screen, view, dialog
 A full-screen task opened over a page, such as Get. Going back closes it and returns to the page.
 _Avoid_: Modal, dialog, popup
 
+**Picker**:
+A short list of choices that opens over a page from its bottom edge, such as the Library's Sort and view or a book's Hardcover shelf. It has no address: a choice applies at once, Done or a tap outside closes it, and Back leaves the page under it, as for a tooltip.
+_Avoid_: Dropdown, menu, popover, select
+
+**Old name**:
+An address from before the redesign, such as `#downloads` or `#reader/<ebook id>`, that keeps working for good by opening the page that took its place and replacing itself in the history.
+_Avoid_: Legacy route, alias, deprecated address
+
+**Token**:
+A named value of the design language that every screen takes its spacing, corners, heights, text styles and colours from. A stylesheet sets a corner or spacing only through a token; a value the boards draw that no token gives is marked as an exception where it is written (ADR 0023).
+_Avoid_: Magic number, design variable, theme value
+
+**Offline line**:
+The one line the shell shows above the player while the device has no connection, on every place and page that does not say so itself.
+_Avoid_: Offline banner, offline toast
+
 ## Reading along
 
 **Face**:
 One of the two sides of the screen for the work in use: Listen, the player, or Read, the reader. A device reopens a work on the face last used there. A work without a recording has no Listen face, and a work without an EPUB has no Read face.
 _Avoid_: View, tab, mode (which is pages or scroll)
+
+**Head**:
+The band at the top of the reader's page, 44 high plus the phone's safe area. At rest it names the book and chapter; a tap on the text shows the reader's controls in it. It keeps its height either way, so the text never moves.
+_Avoid_: Top bar, toolbar, header
+
+**Foot**:
+The band at the bottom of the reader's page, 72 high plus the phone's safe area. At rest it holds the progress line, the time left and Pause; with the controls shown, the timeline and the transport. Speed, the sleep timer and every message while reading take its lower row.
+_Avoid_: Player bar, bottom bar, footer, toast
+
+**Text band**:
+The part of the reader's page between the head and the foot, or a docked panel, where the book's text is laid out. It changes size only with the window or when Appearance docks or closes, never on a tap.
+_Avoid_: Viewport, page area, reading area
 
 **Pages mode**:
 The reader showing the ebook as turnable pages.

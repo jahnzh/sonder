@@ -332,11 +332,14 @@ test("reading sync: one entry per pair with a job, in the alignment list's summa
     assert.ok(listed, entry.id);
     for (const key of omitted) assert.equal(key in entry, false, `${key} stays on the alignment routes`);
     assert.ok("pool" in listed && "stageTimings" in listed && "anchoring" in listed, "the alignment list still has them");
-    assert.deepEqual(
-      entry,
-      Object.fromEntries(Object.entries(listed).filter(([key]) => !omitted.includes(key))),
-      `${entry.id} is the list's summary`,
-    );
+    // The list's `rebuild` also carries the new job's run, steps and result for the Reading sync page (#538): the
+    // work lists its state only.
+    const summary = Object.fromEntries(Object.entries(listed).filter(([key]) => !omitted.includes(key)));
+    if (listed.rebuild) {
+      const { generation: _g, bookJob: _b, poolErrors: _p, coverage: _c, elapsedSeconds: _e, createdAt: _a, ...state } = listed.rebuild;
+      summary.rebuild = state;
+    }
+    assert.deepEqual(entry, summary, `${entry.id} is the list's summary`);
   }
   // Sam has only ed-two-a (rec-two-a): only that pair.
   const samTwo = await bothReads(SAM_TOKEN, "w-two");
@@ -470,8 +473,10 @@ test("a second user's places, overrides and saved series are not visible", async
     "INSERT INTO user_work_completion(user_id,work_id,status) VALUES(?,'w-two','finished') ON CONFLICT DO UPDATE SET status='finished'",
     OWNER,
   );
-  // w-epub's only audio edition is a placeholder: Sam sees the work once it is in Sam's library too.
-  assert.equal((await get("/api/works/w-epub", SAM_TOKEN)).statusCode, 404);
+  // w-epub's only audio edition is a placeholder Sam may not see, but it has ebook editions, which
+  // every user is shown (`GET /api/ebooks`), so Sam sees the work (#573: the rule `GET /api/works`
+  // shares with this read). Sam has it in the library too below.
+  assert.equal((await get("/api/works/w-epub", SAM_TOKEN)).statusCode, 200);
   run("INSERT INTO user_library(user_id,book_id,status,added_at) VALUES(?,'hc-201','unread',?)", SAM, T0 + 25 * DAY);
   const samEpub = await bothReads(SAM_TOKEN, "w-epub");
   assert.deepEqual(samEpub.ebooks.map((e) => e.id), ["eb-epub", "eb-pdf"]);

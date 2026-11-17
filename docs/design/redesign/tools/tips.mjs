@@ -84,6 +84,12 @@ export const T = {
   torbox: 'Asked first for every recording. What TorBox already has plays at once; the rest is downloaded.',
   hardcoverProgress: 'On: your listening and reading progress is also sent to Hardcover. Off: Sonder only reads your shelves, lists and positions from it.',
   prowlarr: 'Adds the indexers of your Prowlarr to the recording search. Sonder only reads from it.',
+
+  // Settings, the detail pages (#472)
+  density: 'Compact puts less space around rows and groups, so more fits on the screen.',
+  readerTheme: 'The colours of the book’s pages in the reader. App uses the colours of the app.',
+  mediaDrive: 'The drive on your server that holds the audiobooks and ebooks. While it is not connected, nothing is saved to it.',
+  resetDevice: 'Reloads the app’s files and clears what it keeps for streaming. Books kept on this device, your places and your settings stay.',
 };
 
 /** Screen, then its entries in the order they appear: [the entry's name, its tooltip]. */
@@ -103,4 +109,7 @@ export const tipGroups = [
   ['Reader', [['Reading mode', T.readingMode], ['Follow the narration', T.follow]]],
   ['Settings, Playback', [['Default speed', T.defaultSpeed], ['Progress bar shows', T.progressBar]]],
   ['Settings, Connections', [['TorBox', T.torbox], ['Sync listening and reading progress', T.hardcoverProgress], ['Prowlarr', T.prowlarr]]],
+  ['Settings, Appearance', [['Density', T.density], ['Reader theme', T.readerTheme]]],
+  ['Settings, Library and storage', [['Media drive', T.mediaDrive]]],
+  ['Settings, App', [['Reset this device', T.resetDevice]]],
 ];

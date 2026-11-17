@@ -20,7 +20,8 @@ import {
   X,
   ArrowRight,
 } from "lucide-react";
-import { api, localDB, duration, isAdmin } from "../lib";
+import { api, localDB, duration, isAdmin, userId } from "../lib";
+import { accountAnswer } from "../account-answer";
 import type { Book, HardcoverState, Progress } from "../types";
 import { workMediaStateLabel } from "../work-media-state";
 import { savedPreferencesToFollow, type SyncPreferences } from "../hardcover-sync-draft";
@@ -30,12 +31,21 @@ type Notify = (text: string, error?: boolean) => void;
 export function hardcoverChanged() {
   window.dispatchEvent(new Event("sonder:hardcover-changed"));
 }
+/**
+ * The state last read, for the account it was read for. A page shown again (Back to the Library) starts from it
+ * instead of from "not connected", so it has its height at once and a restored scroll position stays on the
+ * book it was on; the fresh state replaces it when it arrives.
+ */
+const lastState = accountAnswer<HardcoverState>(userId);
 function useHardcover() {
   const lastSeenSync = useRef(0);
-  const [state, setState] = useState<HardcoverState | null>(null);
+  const [state, setState] = useState<HardcoverState | null>(() => lastState.kept() ?? null);
   const refresh = useCallback(async () => {
     try {
-      const next = await api<HardcoverState>("/hardcover");
+      const answer = await lastState.read(() => api<HardcoverState>("/hardcover"));
+      // Asked as an account that is no longer signed in: not this account's state, nor its device's copy.
+      if (!answer) return;
+      const next = answer.value;
       setState(next);
       if (next.lastSync !== lastSeenSync.current) {
         lastSeenSync.current = next.lastSync;

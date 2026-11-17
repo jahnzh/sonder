@@ -22,4 +22,5 @@ The same description owns the loop. A background process declares its interval a
 - Every source has a test that walks its whole status vocabulary and asserts the Activity state of each value.
 - Worker hosts (#357), scheduled backups (#361) and imports (#362) arrive as further sources, not as new branches in the Activity module.
 - A probe that a source needs (torrent client, alignment pool) stays behind that source, with the existing time limit.
+- A source also fills what the page needs to group by book and to word the status line (#514): the work, its audio edition and cover of the item (read with its rows, by the cover rule of the library by work) and the facts of its line, one shape per kind, from rows it already reads. Whether an item needs attention is still decided in the Activity module alone.
 - Issue: #392.

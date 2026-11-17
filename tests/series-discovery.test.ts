@@ -118,8 +118,8 @@ test("series search distinguishes same-name Hardcover identities", async () => {
   const response = await app.inject("/api/discover/series?q=Crossing");
   assert.equal(response.statusCode, 200, response.body);
   assert.deepEqual(response.json(), [
-    { id: 11, name: "The Crossing", author: "Ada North", count: 3, cover: "https://covers.test/11.jpg" },
-    { id: 12, name: "The Crossing", author: "Bea South", count: 2, cover: null },
+    { id: 11, name: "The Crossing", author: "Ada North", count: 3, cover: "https://covers.test/11.jpg", saved: false },
+    { id: 12, name: "The Crossing", author: "Bea South", count: 2, cover: null, saved: false },
   ]);
 });
 

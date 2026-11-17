@@ -401,14 +401,20 @@ test("keyboard shortcut sheet opens from Now Playing and Settings", async ({ pag
   await page.getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
   const sheet = page.getByRole("dialog", { name: "Keyboard shortcuts", exact: true });
   await expect(sheet).toBeVisible();
-  for (const action of ["Play or pause", "Skip 30 seconds back or forward", "Search", "Follow the audio in the reader", "Switch the reader to Page view"])
+  for (const action of ["Play or pause", "Skip 30 seconds back or forward", "Search", "Follow the audio in the reader"])
     await expect(sheet.getByText(action, { exact: true })).toBeVisible();
-  for (const key of ["Space", "←", "→", "/", "f", "p"])
+  for (const key of ["Space", "←", "→", "/", "f"])
     await expect(sheet.locator("kbd", { hasText: new RegExp(`^${key === "/" ? "\\/" : key}$`) })).toBeVisible();
+  // The reader has one view (ADR 0017): no view switch and no `p` key are listed.
+  await expect(sheet.getByText(/Page view|Lyrics|Word view/)).toHaveCount(0);
+  await expect(sheet.locator("kbd", { hasText: /^p$/i })).toHaveCount(0);
+  await expect(sheet.locator("kbd")).toHaveCount(5);
   await sheet.getByRole("button", { name: "Close dialog" }).click();
   await expect(sheet).toBeHidden();
   await page.goto("/#settings");
-  await page.getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
+  // The new address closes Now playing (it has a history entry of its own, #484); its button may still be on
+  // screen while it closes, so this is the Settings page's own.
+  await page.getByRole("region", { name: "Keyboard" }).getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Keyboard shortcuts", exact: true }).getByText("Play or pause")).toBeVisible();
 });
 test("a form dialog focuses its first text field when it opens", async ({ page }) => {

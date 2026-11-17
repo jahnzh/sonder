@@ -153,6 +153,8 @@ const STAGE_LINES: Record<string, string> = {
 
 function jobLine(job: ReadingSyncJobFacts): string | null {
   if (job.outcome === "language_not_supported") return "Not available, English only";
+  // A new map the server did not use over the map in use (#539); the map in use keeps its own line elsewhere.
+  if (job.status === "error" && job.outcome === "rejected") return "New reading sync not used";
   switch (job.status) {
     case "queued":
       return "Waiting for a worker";

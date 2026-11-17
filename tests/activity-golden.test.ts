@@ -36,8 +36,9 @@ const run = (sql: string, ...args: unknown[]) => sqlite.prepare(sql).run(...args
 run("INSERT OR IGNORE INTO users(id,username,password_hash,role,created_at) VALUES(2,'sam',NULL,'user',?)", NOW);
 run("INSERT INTO works(id,title,author,description,genre,year) VALUES('w1','Speaker for the Dead','Card','','',1986)");
 run("INSERT INTO works(id,title,author,description,genre,year) VALUES('w2','Xenocide','Card','','',1991)");
-run("INSERT INTO audio_editions(id,work_id,cover,narrator,rating,source_label) VALUES('ed1','w1','','',0,'')");
-run("INSERT INTO audio_editions(id,work_id,cover,narrator,rating,source_label) VALUES('ed2','w2','','',0,'')");
+// Neither edition has a track, so both are placeholders: a work lends its cover, and no edition id is sent (#514).
+run("INSERT INTO audio_editions(id,work_id,cover,narrator,rating,source_label) VALUES('ed1','w1','/covers/ed1.jpg','',0,'')");
+run("INSERT INTO audio_editions(id,work_id,cover,narrator,rating,source_label) VALUES('ed2','w2','/covers/ed2.jpg','',0,'')");
 run("INSERT INTO series_catalogue(id,name,author,book_count) VALUES(7,'Ender','Card',4)");
 
 // Acquisitions: every status `server/acquisitions.ts`, `server/app.ts` and `server/series-removal.ts` write,
@@ -61,6 +62,12 @@ const acquisitions: Array<[string, string, string, number, string | null, number
 for (const [id, backend, status, progress, error, updated] of acquisitions)
   run("INSERT INTO acquisitions(id,hash,magnet,backend,title,author,cover,status,progress,error,created_at,updated_at) VALUES(?,?,?,?,?,?,'',?,?,?,?,?)",
     `acq-${id}`, `hash-${id}`, `magnet:?xt=urn:btih:${id}`, backend, `Book ${id}`, id === "unknown" ? "" : "Card", status, progress, error, NOW - DAY / 2, updated);
+
+// Two downloads of a work (#514): by its `work_id`, and by its audio edition when it has no `work_id`. The ready one
+// has no work yet and keeps its own cover.
+run("UPDATE acquisitions SET work_id = 'w1' WHERE id = 'acq-downloading'");
+run("UPDATE acquisitions SET book_id = 'ed2' WHERE id = 'acq-paused'");
+run("UPDATE acquisitions SET cover = '/covers/torbox.jpg' WHERE id = 'acq-ready'");
 
 // Copies to the server: every status `server/downloads.ts` writes, the old extra word, one nobody writes.
 const copies: Array<[string, string, string, number, string | null, number]> = [
@@ -102,6 +109,9 @@ const alignments: Array<[string, string | null, Record<string, unknown> | string
   ["ready", "set-consensus:w1", { status: "ready", progress: 0.9, outcome: "complete" }, NOW - 5 * MIN],
   ["partial", "eb-1", { status: "partial", progress: 0.7, rebuildOf: { engine: "old", status: "ready", requestedAt: NOW - DAY } }, NOW - 6 * MIN],
   ["error", "eb-1", { status: "error", progress: 1.7, error: "The worker stopped." }, NOW - 7 * MIN],
+  // A new map the #379 rule did not use: the map in use stays (#539).
+  ["rejected", "eb-1", { status: "error", outcome: "rejected", progress: 1, coverage: 0, rebuildOf: { engine: "old", status: "ready", requestedAt: NOW - DAY },
+    error: "The rebuild was rejected: it mapped none of the text. The previous map (82% of the text mapped) stays published." }, NOW - 8 * MIN],
   ["no-status", "eb-1", { progress: -1 }, NOW - 2 * MIN], // same rank and time as hardcover:status:2: pins the tie order
   ["unreadable", "eb-1", "{not json", NOW - 9 * MIN],
   ["unknown", "eb-1", { status: "exploded", progress: 0.2 }, NOW - 10 * MIN],
@@ -191,12 +201,16 @@ const snapshots = async (sources = ACTIVITY_SOURCES) => ({
 /** The sources that existed when the Activity module was split; the ebook-set checks came later (#325). */
 const sourcesAtSplit = ACTIVITY_SOURCES.filter((source) => source.kind !== "ebook-set");
 
-/** Rows whose Activity state changes on purpose with #392: statuses outside a vocabulary, failed series jobs. */
+/**
+ * Rows whose Activity state changes on purpose with #392 (statuses outside a vocabulary, failed series jobs), and the
+ * rejected reading sync added with #539, which the record from before the split does not have.
+ */
 function deleteIntendedChanges() {
   run("DELETE FROM acquisitions WHERE status NOT IN ('checking','preparing','downloading','paused','ready','error')");
   run("DELETE FROM server_downloads WHERE status NOT IN ('queued','downloading','paused','ready','error')");
   run("DELETE FROM series_acquisition_jobs WHERE status = 'failed'");
   run("DELETE FROM alignment_jobs WHERE id = 'align-unknown'");
+  run("DELETE FROM alignment_jobs WHERE id = 'align-rejected'"); // added after the split, with #539
 }
 
 /**
@@ -213,6 +227,27 @@ function withBackupsUntracked(all: Record<string, { processes: Array<{ id: strin
     assert.equal(tracked.length, 1, "the backups source reports its process once");
     snapshot.processes = [...snapshot.processes.filter((process) => process.id !== "backups"), UNTRACKED_BACKUPS];
   }
+  return all;
+}
+
+/**
+ * The items gained their book, cover, status facts and `attention` on purpose with #514. Take them off again, so the
+ * comparison with the record from before the split still proves that nothing else moved. Never rewrite that record.
+ */
+function withoutBookAndFacts<All extends Record<string, { items: object[] }>>(all: All): All {
+  for (const snapshot of Object.values(all))
+    for (const item of snapshot.items as Array<Record<string, unknown>>)
+      for (const field of ["workId", "bookId", "cover", "facts", "attention"]) delete item[field];
+  return all;
+}
+
+/**
+ * Downloads and reading syncs gained Retry and Resume on purpose with #515; before, they offered no action. Take them
+ * off again for the comparison with the record from before the split. Never rewrite that record.
+ */
+function withoutActionsOf515<All extends Record<string, { items: Array<{ kind: string; actions: string[] }> }>>(all: All): All {
+  for (const snapshot of Object.values(all))
+    for (const item of snapshot.items) if (item.kind === "acquisition" || item.kind === "alignment") item.actions = [];
   return all;
 }
 
@@ -285,6 +320,6 @@ test("GET /api/activity returns the recorded JSON for the same rows", async () =
   assert.deepEqual(all, JSON.parse(readFileSync(GOLDEN, "utf8")));
 
   deleteIntendedChanges();
-  const unchanged = withNamesBefore495(`${JSON.stringify(withBackupsUntracked(withoutHostDetail(await snapshots(sourcesAtSplit))), null, 2)}\n`);
+  const unchanged = withNamesBefore495(`${JSON.stringify(withBackupsUntracked(withoutHostDetail(withoutBookAndFacts(withoutActionsOf515(await snapshots(sourcesAtSplit))))), null, 2)}\n`);
   assert.equal(unchanged, readFileSync(BEFORE_SOURCES, "utf8"), "same rows, same JSON text as before the split into sources");
 });

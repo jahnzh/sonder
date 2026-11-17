@@ -1,7 +1,8 @@
 import { userStorageKey } from "./lib";
 import { alignmentJobNeedsPolling, warmMap } from "./alignment-map-lifecycle";
 import { alignmentMapDeps } from "./alignment-map-deps";
-import { api, localDB, authDB, userId } from "./lib";
+import { ApiError, api, localDB, authDB, userId } from "./lib";
+import { navigate } from "./navigation";
 import type {
   AlignmentJob,
   ReaderBook,
@@ -341,6 +342,8 @@ export async function epubFile(id: string, fingerprint: string): Promise<Blob> {
         return cached;
       }
       const response = await fetch(`/api/ebooks/${encodeURIComponent(id)}/file`);
+      // A confirmed "not found": the ebook is gone, though its details may still be on this device.
+      if (response.status === 404) throw new ApiError("The EPUB could not be opened.", 404);
       if (!response.ok)
         throw new Error(
           navigator.onLine
@@ -393,7 +396,7 @@ export function openReader(id: string, fromAudio = false) {
   window.dispatchEvent(
     new CustomEvent("sonder:open-reader", { detail: { id, fromAudio } }),
   );
-  location.hash = `reader/${encodeURIComponent(id)}`;
+  navigate({ name: "reader", ebookId: id });
 }
 
 let cachedEbooksList: SavedEbook[] | null = null;

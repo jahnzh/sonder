@@ -1,0 +1,14 @@
+/* Page header (src/parts/PageHeader.tsx). */
+.part-page-header {
+  box-sizing: border-box;
+  min-height: var(--height-control);
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+}
+.part-page-title {
+  margin: 0;
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}

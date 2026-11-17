@@ -25,6 +25,15 @@ const { eq } = await import("drizzle-orm");
 const { extractBook } = await import("../server/reader.ts");
 const { createAlignment, alignmentJob, putAlignmentJob, processAlignments, stopAlignments, registerAlignment, resetAnchorBatchSupportForTests, resetAlignmentRunnerForTests, setAnchorBatchClockForTests, ANCHOR_BATCH_CHUNK } = await import("../server/alignment.ts");
 const { resetAlignmentPoolCoordinator, setAlignmentPoolDepsForTests } = await import("../server/alignment-pool.ts");
+const { deleteAlignmentJob } = await import("../server/alignment.ts");
+/**
+ * These tests are about the run, so each prepare is a first one: Prepare again would keep an earlier test's map of
+ * the pair in use and not use a worse new map (#538).
+ */
+function forgetPair(ebookId: string, recordingId: string) {
+  const row = sqlite.prepare("SELECT id FROM alignment_jobs WHERE ebook_id=? AND recording_id=?").get(ebookId, recordingId) as { id: string } | undefined;
+  if (row) deleteAlignmentJob(row.id);
+}
 const originalFetch = globalThis.fetch;
 const engine = "ctc-wav2vec2-base-960h-torchaudio-2.8-v2";
 resetAlignmentPoolCoordinator([
@@ -342,6 +351,7 @@ test("unreachable, busy or incompatible WSL routes chapter CTC to lisa without u
       return Response.json({ engine, outcome: "mapped", elapsedSeconds: 1,
         intervals: request.fragments.map((_: string, index: number) => ({ index, start: request.start + index, end: request.start + index + 0.8 })) });
     }, options);
+    forgetPair("ctc-ebook", "ctc-recording");
     const created = await createAlignment("ctc-ebook", "ctc-recording", [{
       section: book.sections[0].index, trackId: "ctc-track", start: 210 + i * 45, duration: 40,
     }], "chapters");
@@ -366,6 +376,7 @@ test("CTC waits while both workers are busy and starts when a worker is free", a
     return Response.json({ engine, outcome: "mapped", elapsedSeconds: 1,
       intervals: request.fragments.map((_: string, index: number) => ({ index, start: request.start + index, end: request.start + index + 0.8 })) });
   }, { busy, onHealth: (host) => checked.push(host) });
+  forgetPair("ctc-ebook", "ctc-recording");
   const created = await createAlignment("ctc-ebook", "ctc-recording", [{
     section: book.sections[0].index, trackId: "ctc-track", start: 350, duration: 40,
   }], "chapters");
@@ -386,6 +397,7 @@ test("CTC waits while both workers are busy and starts when a worker is free", a
 test("a persisted legacy pool assignment is re-probed instead of sending CTC to the old worker", async () => {
   const book = await extractBook("ctc-ebook");
   delete process.env.ALIGNMENT_WORKER_TOKEN;
+  forgetPair("ctc-ebook", "ctc-recording");
   const created = await createAlignment("ctc-ebook", "ctc-recording", [{
     section: book.sections[0].index, trackId: "ctc-track", start: 160, duration: 40,
   }], "chapters");
@@ -464,6 +476,7 @@ test("CTC retries the other host once, remains failed after both fail, and resum
     calls.push(String(input));
     return new Response("worker failed", { status: 500 });
   });
+  forgetPair("ctc-ebook", "ctc-recording");
   const created = await createAlignment("ctc-ebook", "ctc-recording", [{
     section: book.sections[0].index, trackId: "ctc-track", start: 320, duration: 40,
   }], "chapters");
@@ -508,6 +521,7 @@ test("unsynced passages and unsupported-language outcomes survive storage and AP
       return Response.json({ engine, outcome: calls === 1 ? "mapped" : "unsynced", elapsedSeconds: 1,
         intervals: calls === 1 ? [{ index: 0, start: request.start, end: request.start + 1 }] : [] });
     });
+    forgetPair("ctc-ebook", "ctc-recording");
     const created = await createAlignment("ctc-ebook", "ctc-recording", pairings, "chapters");
     const job = await settled(created.id);
     assert.equal(job.outcome, "partial");
@@ -528,6 +542,7 @@ test("unsynced passages and unsupported-language outcomes survive storage and AP
       return Response.json({ engine, outcome: calls === 1 ? "mapped" : "language_not_supported", elapsedSeconds: 1,
         intervals: calls === 1 ? [{ index: 0, start: request.start, end: request.start + 1 }] : [] });
     });
+    forgetPair("ctc-ebook", "ctc-recording");
     const retried = await createAlignment("ctc-ebook", "ctc-recording", pairings, "chapters");
     const unsupported = await settled(retried.id);
     assert.equal(unsupported.outcome, "language_not_supported");
@@ -568,6 +583,7 @@ test("unsynced passages and unsupported-language outcomes survive storage and AP
     assert.ok(undCalls > 0, "an undetermined language must reach the CTC worker");
 
     mockWorker(async () => Response.json({ engine, outcome: "unsynced", match: null, text: "unrelated narration ".repeat(10) }));
+    forgetPair("ctc-alice-ebook", "ctc-alice-recording");
     const mismatch = await createAlignment("ctc-alice-ebook", "ctc-alice-recording", undefined, "anchored");
     const unsynced = await settled(mismatch.id);
     assert.equal(unsynced.outcome, "unsynced");
@@ -609,6 +625,7 @@ test("pool failure reasons survive storage and summary responses, and resume sta
       .get("ctc-ebook", "ctc-recording") as { id: string } | undefined;
     if (previous) rmSync(join(temp, "media", "alignment", previous.id), { recursive: true, force: true });
     mockWorker(async () => { throw new Error("worker request must not run"); }, { down: ["wsl", "lisa"] });
+    forgetPair("ctc-ebook", "ctc-recording");
     const created = await createAlignment("ctc-ebook", "ctc-recording", [{
       section: book.sections[0].index, trackId: "ctc-track", start: 0, duration: 40,
     }], "chapters");
