@@ -143,3 +143,11 @@ test("a book in the library is not offered; a number whose book is held offers n
   assert.deepEqual(model.choices.map((choice) => choice.bookId), [21, 4, 9]);
   assert.equal(model.caption, "Not in your library · 3");
 });
+
+test("a book not released yet is not chosen on opening even when the answer marks it selected", () => {
+  // The answer was read before Hardcover dated the book in the future (the catalogue is refreshed apart from `selected`).
+  const works = culture.works.map((work) => (work.id === 4 ? { ...work, selected: true } : work));
+  const model = seriesAddModel(series(works), facts());
+  assert.equal(model.choices.find((choice) => choice.bookId === 4)!.chosen, false);
+  assert.deepEqual(model.body.bookIds, [21, 5]);
+});
