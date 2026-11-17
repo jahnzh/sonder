@@ -1,0 +1,61 @@
+/* Choice row (src/parts/ChoiceRow.tsx). Two lines in 64; the card as a Group's. */
+.part-choice-group {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--corner-group);
+  background: var(--surface);
+  overflow: hidden;
+}
+/* The line between rows, outside each row's 64 as in a Group; more specific than the row's own `border: 0`. */
+.part-choice-group > .part-choice-row + .part-choice-row {
+  box-sizing: content-box;
+  border-top: 1px solid var(--border);
+}
+.part-choice-row {
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--height-bar);
+  padding: 0 var(--space-16);
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.part-choice-row[data-chosen] {
+  background: var(--raised);
+}
+.part-choice-row:not([data-chosen]):hover {
+  background: color-mix(in srgb, var(--raised) 55%, transparent);
+}
+.part-choice-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.part-choice-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.part-choice-row-label,
+.part-choice-row-detail {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.part-choice-row-label {
+  color: var(--text);
+}
+.part-choice-row-detail {
+  color: var(--muted);
+}
+.part-choice-row-tick {
+  flex: none;
+  color: var(--accent);
+}
