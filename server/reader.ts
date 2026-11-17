@@ -228,9 +228,9 @@ export function registerReader(app: FastifyInstance) {
     const book = await extractBook(id);
     const bookmarks = sqlite
       .prepare(
-        "SELECT id,label,locator FROM user_reader_bookmarks WHERE edition_id=? AND user_id=? ORDER BY created_at",
+        "SELECT id,label,locator,created_at AS createdAt FROM user_reader_bookmarks WHERE edition_id=? AND user_id=? ORDER BY created_at",
       )
-      .all(id, currentUserId(req)) as { id: string; label: string; locator: string }[];
+      .all(id, currentUserId(req)) as { id: string; label: string; locator: string; createdAt: number }[];
     return {
       ...book,
       checkpoint: readerCheckpoint(id, currentUserId(req)),

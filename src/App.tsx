@@ -92,6 +92,8 @@ import { SettingsPage } from "./pages/settings-page";
 import { HardcoverPage } from "./pages/hardcover-page";
 import { HardcoverRow } from "./pages/hardcover-row";
 import { EbookFileRow, EbookPage, ebookSearchTarget } from "./pages/ebook-page";
+import { ReaderPages } from "./pages/reader-pages";
+import { isReaderPage } from "./reader-pages";
 import { firstPage, writeAddress, type Place, type Route } from "./routes";
 import { onPageLeftByHistory, startNavigation, useAddress } from "./navigation";
 import { Gallery, isGalleryRoute } from "./gallery/Gallery";
@@ -898,7 +900,8 @@ function LibraryApp({
               </div>
             )}
             {/* A book's Hardcover page (#529) and its Ebook page (#531) stand in place of the place's page; the Book page (#532) joins the book's pages. */}
-            {address.route.name === "book-page" && address.route.page === "hardcover" ? <HardcoverPage key={address.route.workId} workId={address.route.workId} admin={user.role === "admin"} books={books} onChanged={() => void refresh()} /> : ebookPage ? (
+            {/* The reader's Chapters, Bookmarks and Search (#590) are pages too. */}
+            {address.route.name === "book-page" && isReaderPage(address.route.page) ? <ReaderPages key={`${address.route.workId}:${address.route.page === "search" ? "search" : "chapters"}`} workId={address.route.workId} page={address.route.page} /> : address.route.name === "book-page" && address.route.page === "hardcover" ? <HardcoverPage key={address.route.workId} workId={address.route.workId} admin={user.role === "admin"} books={books} onChanged={() => void refresh()} /> : ebookPage ? (
               <EbookPage
                 key={ebookPage}
                 workId={ebookPage}

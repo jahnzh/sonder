@@ -41,6 +41,9 @@ test("users have isolated libraries and progress and cannot access administratio
  assert.equal((await request(first,"POST","/api/reader/isolation/bookmarks",{id:"bookmark-first",label:"First",locator})).statusCode,200);
  const firstReader=(await request(first,"GET","/api/reader/isolation")).json(), secondReader=(await request(second,"GET","/api/reader/isolation")).json();
  assert.equal(firstReader.checkpoint.revision,1); assert.equal(secondReader.checkpoint.revision,1); assert.equal(firstReader.bookmarks.length,1); assert.equal(secondReader.bookmarks.length,0);
+ // The day a bookmark was saved (#590) is the saver's: it comes with that user's bookmark and reaches no one else.
+ assert.equal(typeof firstReader.bookmarks[0].createdAt,"number"); assert.ok(Math.abs(firstReader.bookmarks[0].createdAt-Date.now())<60_000);
+ assert.doesNotMatch(JSON.stringify(secondReader),/bookmark-first|createdAt/);
  assert.equal((await request(first,"DELETE",`/api/library/${book.id}`)).statusCode,200);
  assert.ok(sqlite.prepare("SELECT 1 FROM user_hidden_library WHERE user_id=2 AND book_id=?").get(book.id)); assert.equal(sqlite.prepare("SELECT 1 FROM user_hidden_library WHERE user_id=3 AND book_id=?").get(book.id),undefined);
  assert.equal((await request(admin,"GET","/api/auth/status")).json().user.username,"admin");

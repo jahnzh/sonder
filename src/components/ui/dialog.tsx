@@ -29,6 +29,20 @@ export function Dialog({
 }) {
   const descriptionId = useId();
   const content = useRef<HTMLDivElement>(null);
+  // A dialog kept mounted listens for presses outside it while closed too, and Radix answers a press only at its
+  // click: a press that opened this dialog (a row of the reader's pages, #590) would close it again at once. Only
+  // a press that began while the dialog was open closes it.
+  const openNow = useRef(open);
+  openNow.current = open;
+  const openAtPress = useRef(open);
+  useEffect(() => {
+    if (!forceMount) return;
+    const press = () => {
+      openAtPress.current = openNow.current;
+    };
+    document.addEventListener("pointerdown", press, true);
+    return () => document.removeEventListener("pointerdown", press, true);
+  }, [forceMount]);
   // A modal Radix dialog hides the rest of the page as soon as it mounts, even
   // while closed. A dialog kept mounted to stay warm is therefore non-modal,
   // and hides the page and draws its overlay itself only while open.
@@ -82,7 +96,13 @@ export function Dialog({
           className={`dialog-content ${className}`}
           aria-describedby={description ? descriptionId : undefined}
           onEscapeKeyDown={onEscapeKeyDown}
-          onPointerDownOutside={onPointerDownOutside}
+          onPointerDownOutside={(event) => {
+            if (forceMount && !openAtPress.current) {
+              event.preventDefault();
+              return;
+            }
+            onPointerDownOutside?.(event);
+          }}
           onCloseAutoFocus={onCloseAutoFocus}
           onOpenAutoFocus={(event) => {
             event.preventDefault();

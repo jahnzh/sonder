@@ -36,6 +36,8 @@ type Entry = {
   sheet: Sheet | null;
   /** The route of the app's entry right behind this one, when the app knows it; Back goes there. */
   from: Route | null;
+  /** What the page keeps in its own entry (Search's words, #590), so Back and a reload show it again. */
+  data?: unknown;
 };
 type EntryState = {
   sonderDepth: number;
@@ -45,6 +47,8 @@ type EntryState = {
   sonderSheet?: Sheet;
   /** The address of the app's entry right behind, written by this build; older entries have none. */
   sonderFrom?: string;
+  /** The page's own data for this entry (see Entry.data). */
+  sonderData?: unknown;
 };
 
 /** How long a Back the app asked for may take to land before the app takes it as one the browser could not make. */
@@ -91,6 +95,7 @@ function stateOf(entry: Entry, scroll?: number): EntryState {
     ...(scroll === undefined ? {} : { sonderScroll: scroll }),
     ...(entry.sheet ? { sonderSheet: entry.sheet } : {}),
     ...(entry.from ? { sonderFrom: writeAddress(entry.from) } : {}),
+    ...(entry.data === undefined ? {} : { sonderData: entry.data }),
   };
 }
 function entryState(state: unknown): EntryState | null {
@@ -219,7 +224,7 @@ function onPopState(event: PopStateEvent) {
   const added = history.length > lengthSeen;
   const depth = saved ? saved.sonderDepth : added ? current.depth + 1 : 0;
   const entry: Entry = saved
-    ? { route, depth, root: saved.sonderRoot, key: saved.sonderKey, sheet: saved.sonderSheet ?? null, from: fromState(saved) }
+    ? { route, depth, root: saved.sonderRoot, key: saved.sonderKey, sheet: saved.sonderSheet ?? null, from: fromState(saved), data: saved.sonderData }
     : {
         route,
         depth,
@@ -267,6 +272,8 @@ export function startNavigation(options: { admin: boolean }) {
     key: saved?.sonderKey ?? newKey(),
     sheet: null,
     from: fromState(saved),
+    // A reload with Now playing open goes back to the page's entry, whose own data the browser still holds.
+    data: saved?.sonderSheet ? undefined : saved?.sonderData,
   };
   const first = !current;
   show(entry);
@@ -404,6 +411,20 @@ const snapshot = () => ensure();
 export function useAddress() {
   const entry = useSyncExternalStore(subscribe, snapshot);
   return { route: entry.route, canGoBack: entry.depth > 0, backTarget, navigate, goBack, goPlace };
+}
+/**
+ * What the current page keeps in its own entry (#590): written in place, so Back to this entry and a reload of it
+ * give it back. Moving to another entry leaves it with the entry it was written to.
+ */
+export function setPageData(data: unknown) {
+  const entry = ensure();
+  if (pending) return;
+  entry.data = data;
+  history.replaceState(stateOf(entry), "");
+}
+/** The current entry's own data, as the page last wrote it; undefined when it wrote none. */
+export function pageData(): unknown {
+  return ensure().data;
 }
 /** The sheet the current entry shows, for code outside React. */
 export function shownSheet(): Sheet | null {
