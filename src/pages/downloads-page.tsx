@@ -132,7 +132,7 @@ export function DownloadsPage({
                     )}
                   </div>
                   <div className="download-actions">
-                    <button className="button subtle" aria-label={`Manage versions and sources for ${b.title}`} onClick={()=>setMediaTarget(b)}>Manage versions</button>
+                    <button className="button subtle" aria-label={`Audiobook of ${b.title}`} onClick={()=>setMediaTarget(b)}>Audiobook</button>
                     {entry.state === "saving" ? (
                       <button
                         className="button subtle"

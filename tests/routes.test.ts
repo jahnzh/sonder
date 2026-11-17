@@ -143,7 +143,6 @@ test("what an address shows: built pages as they are, everything else the first 
   assert.equal(shows("#activity/bogus"), "#activity");
   // Not built yet: behaves like an address that names nothing.
   assert.equal(shows("#book/w1"), "#library");
-  assert.equal(shows("#book/w1/audiobook"), "#library");
   assert.equal(shows("#book/w1/get/ebook"), "#library");
   assert.equal(shows("#series/s1"), "#library");
   assert.equal(shows("#series/s1/add"), "#library");
@@ -157,6 +156,9 @@ test("what an address shows: built pages as they are, everything else the first 
     assert.equal(shows(address, false), "#activity", address);
   assert.equal(shows("#settings", false), "#settings");
   assert.equal(shows("#discover", false), "#discover");
+  // The Audiobook page (#530) is built, for everyone.
+  assert.equal(shows("#book/w1/audiobook"), "#book/w1/audiobook");
+  assert.equal(shows("#book/w1/audiobook", false), "#book/w1/audiobook");
 });
 
 test("#settings/<page>: each page, an unknown word, and the administrator's pages for someone else", () => {

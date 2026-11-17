@@ -241,6 +241,8 @@ export function step(from: Route, to: Route): "push" | "replace" | "none" {
 
 /** Pages with a screen in this build. Every other address behaves like one that names nothing until its slice lands. */
 function built(route: Route): boolean {
+  // The Audiobook page (#530).
+  if (route.name === "book-page" && route.page === "audiobook") return true;
   switch (route.name) {
     case "library":
     case "discover":

@@ -278,7 +278,7 @@ test("Space toggles playback across views and arrows skip 30 seconds while ignor
   await expect(search).toHaveValue("wonder land");
   expect(await paused()).toBe(true);
   await search.fill("");
-  // Space on a title page toggles playback, and is ignored while Versions & sources is open.
+  // Space on a title page toggles playback.
   await page
     .getByRole("button", {
       name: "Open title page for Alice’s Adventures in Wonderland",
@@ -292,17 +292,43 @@ test("Space toggles playback across views and arrows skip 30 seconds while ignor
   await expect.poll(paused).toBe(false);
   await page.keyboard.press(" ");
   await expect.poll(paused).toBe(true);
+  // On the Audiobook page (#530) Space toggles playback, and is ignored while its picker, a dialog of a copy or the
+  // note of Report a problem has focus.
   await page
     .getByRole("dialog", { name: "Book details", exact: true })
-    .getByRole("button", { name: "Versions & sources", exact: true })
+    .getByRole("button", { name: /^Audiobook / })
     .click();
-  await expect(
-    page.getByRole("dialog", { name: "Versions & sources", exact: true }),
-  ).toBeVisible();
+  const audiobook = page.getByRole("region", { name: "Audiobook", exact: true });
+  await expect(audiobook).toBeVisible();
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press(" ");
+  await expect.poll(paused).toBe(false);
+  await page.keyboard.press(" ");
+  await expect.poll(paused).toBe(true);
+  await audiobook.getByRole("button", { name: /^Plays from: / }).click();
+  const picker = page.getByRole("dialog", { name: "Plays from", exact: true });
+  await expect(picker).toBeVisible();
   await page.keyboard.press(" ");
   expect(await paused()).toBe(true);
+  await picker.getByRole("button", { name: "Close dialog", exact: true }).click();
+  await audiobook.getByRole("button", { name: /^Original stream / }).click();
+  const copy = page.getByRole("dialog", { name: "Original stream", exact: true });
+  await expect(copy).toBeVisible();
+  await page.keyboard.press(" ");
+  expect(await paused()).toBe(true);
+  await copy.getByRole("button", { name: "Close dialog", exact: true }).click();
+  await audiobook.getByRole("button", { name: "Report a problem", exact: true }).click();
+  const note = page.getByRole("dialog", { name: "Report a problem", exact: true }).getByRole("textbox", { name: "Note", exact: true });
+  await expect(note).toBeFocused();
+  await page.keyboard.press(" ");
+  await expect(note).toHaveValue(" ");
+  expect(await paused()).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(note).toBeHidden();
+  await page.goBack();
+  await expect(audiobook).toBeHidden();
   await page
-    .getByRole("dialog", { name: "Versions & sources", exact: true })
+    .getByRole("dialog", { name: "Book details", exact: true })
     .getByRole("button", { name: "Close dialog", exact: true })
     .click();
   // Space and arrows work in Now Playing.

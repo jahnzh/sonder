@@ -201,13 +201,6 @@
   padding-inline: 8px;
 }
 
-.media-source-settings label,
-.media-fault-form label {
-  display: grid;
-  gap: 8px;
-  font-size: 14px;
-}
-
 .player-option .option-menu.speed-menu {
   width: 200px;
 }
@@ -244,118 +237,6 @@
 .full-timestamps .timeline-speed-left {
   color: var(--muted);
   text-align: center;
-}
-.media-manager-dialog {
-  width: min(800px, calc(100vw - 28px));
-  max-width: 800px;
-}
-.media-manager-title {
-  font-size: 20px;
-  margin-bottom: 16px;
-}
-.media-version-list {
-  display: grid;
-  gap: 10px;
-  margin-bottom: 20px;
-}
-.media-version {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  text-align: left;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  padding: 14px;
-}
-.media-version > span {
-  display: grid;
-  gap: 7px;
-  min-width: 0;
-}
-.media-version > span > span {
-  font-size: 13px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-.media-version small {
-  font-size: 12px;
-  color: var(--muted);
-  line-height: 1.6;
-}
-.media-version.selected {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-}
-.media-source-settings {
-  display: grid;
-  gap: 12px;
-  margin-bottom: 20px;
-}
-.media-source-settings select,
-.media-fault-form select,
-.media-fault-form textarea {
-  min-height: 44px;
-  width: 100%;
-  min-width: 0;
-}
-.media-source-settings p,
-.media-fault p {
-  font-size: 13px;
-  color: var(--muted);
-  line-height: 1.65;
-}
-.media-source-settings > button {
-  justify-self: start;
-}
-.media-resume-offer {
-  display: grid;
-  gap: 10px;
-  justify-items: start;
-}
-.media-resume-offer .button {
-  min-height: 44px;
-  white-space: normal;
-  text-align: left;
-}
-.media-management-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-block: 16px;
-}
-.media-management-actions .button,
-.media-fault .button {
-  min-height: 44px;
-  white-space: normal;
-  font-size: 13px;
-}
-.media-fault {
-  border: 1px solid var(--danger);
-  border-radius: 9px;
-  padding: 14px;
-  margin-block: 12px;
-  display: grid;
-  gap: 10px;
-}
-.media-fault strong {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  color: var(--danger);
-}
-.media-fault .button {
-  justify-self: start;
-}
-.media-fault-form {
-  display: grid;
-  gap: 15px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
-}
-.media-fault-form textarea {
-  min-height: 80px;
 }
 .download-actions {
   flex-wrap: wrap;
@@ -433,10 +314,6 @@
   }
   .timeline-scope {
     font-size: 11px;
-  }
-  .media-manager-dialog {
-    width: calc(100vw - 20px);
-    padding-inline: 16px;
   }
 }
 

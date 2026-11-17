@@ -39,7 +39,6 @@ import {
 } from "lucide-react";
 import { PlayerProvider, usePlayer } from "./player";
 import { SeriesDialog, type SeriesTarget } from "./components/Series";
-import { MediaManager } from "./components/MediaManager";
 import {ReaderShortcut} from "./components/ReaderShortcut";
 import { ReaderHost } from "./components/Reader";
 import {
@@ -90,10 +89,14 @@ import { ActivityServer } from "./pages/activity-server";
 import { ActivityItemGroups } from "./pages/activity-items";
 import { ActivityPlace } from "./pages/activity-place";
 import { SettingsPage } from "./pages/settings-page";
+import { AudiobookPage } from "./pages/audiobook-page";
+import { audiobookRowLine } from "./pages/audiobook-model";
+import { FileRow } from "./parts/FileRow";
+import { Group } from "./parts/Group";
 import { firstPage, writeAddress, type Place, type Route } from "./routes";
-import { onPageLeftByHistory, startNavigation, useAddress } from "./navigation";
+import { onPageLeftByHistory, shownSheet, startNavigation, useAddress } from "./navigation";
 import { Gallery, isGalleryRoute } from "./gallery/Gallery";
-import { refreshLibraryWorks, startLibraryWorks } from "./library-works-store";
+import { refreshLibraryWorks, startLibraryWorks, useStoredWorks } from "./library-works-store";
 type Notice = { text: string; error?: boolean };
 const nav = [
   { id: "library", label: "My library", icon: Library },
@@ -260,7 +263,6 @@ function LibraryApp({
   const [detail, setDetail] = useState<Book | null>(null);
   const [seriesTarget, setSeriesTarget] = useState<SeriesTarget | null>(null);
   const [seriesRevision, setSeriesRevision] = useState(0);
-  const [mediaTarget,setMediaTarget]=useState<Book|null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
@@ -411,7 +413,6 @@ function LibraryApp({
       onPageLeftByHistory(() => {
         leftByHistory.current++;
         setDetail(null);
-        setMediaTarget(null);
         setSeriesTarget(null);
         setImportOpen(false);
         setSidebarOpen(false);
@@ -430,9 +431,40 @@ function LibraryApp({
   };
   // The tab bar and the rail: another place adds an entry, the current one returns to its first page.
   const switchPlace = (p: Place) => {
+    leftAudiobookByTab.current = true;
     leavePage(p);
     address.goPlace(p);
   };
+  // The Audiobook page of a book (#530): from the player's "Audiobook", the book dialog's Audiobook row and Activity.
+  const audiobookWorkId =
+    address.route.name === "book-page" && address.route.page === "audiobook" ? address.route.workId : null;
+  const openAudiobook = (book: Book) => {
+    setDetail(null);
+    address.navigate({ name: "book-page", workId: book.workId, page: "audiobook" });
+  };
+  // Its back button is "Back to the book": until the Book page (#532) the book is today's dialog, so landing on the
+  // Library from the page (Back, or the parent of a page opened by a link) opens the dialog again for that work.
+  const leftAudiobookByTab = useRef(false);
+  const lastAudiobook = useRef<string | null>(null);
+  useEffect(() => {
+    const left = lastAudiobook.current;
+    lastAudiobook.current = audiobookWorkId;
+    const byTab = leftAudiobookByTab.current;
+    leftAudiobookByTab.current = false;
+    setReopenBook(!left || audiobookWorkId || byTab || address.route.name !== "library" || shownSheet() ? null : left);
+  }, [address.route]);
+  // The book's entries may still be loading after a link straight to the page: the dialog opens once they are in.
+  const [reopenBook, setReopenBook] = useState<string | null>(null);
+  const storedWorks = useStoredWorks();
+  useEffect(() => {
+    if (!reopenBook) return;
+    const ofWork = books.filter((b) => b.workId === reopenBook && b.inLibrary && b.tracks.length > 0);
+    if (!ofWork.length) return;
+    setReopenBook(null);
+    // The dialog shows the chosen recording, the one the page ticked.
+    const chosen = storedWorks.find((work) => work.workId === reopenBook)?.chosenRecordingId;
+    setDetail(ofWork.find((b) => b.recordingId === chosen) ?? ofWork[0]);
+  }, [reopenBook, books]);
   const onProgress = useCallback(
     (p: Progress) =>
       setBooks((current) =>
@@ -811,7 +843,21 @@ function LibraryApp({
                 </button>
               </div>
             )}
-            {page === "library" && (
+            {audiobookWorkId && (
+              <AudiobookPage
+                workId={audiobookWorkId}
+                books={books}
+                downloads={downloads}
+                admin={user.role === "admin"}
+                online={online}
+                onFindAudio={findAudio}
+                onChanged={() => {
+                  void refresh();
+                  void refreshDownloads();
+                }}
+              />
+            )}
+            {page === "library" && !audiobookWorkId && (
               <LibraryPage
                 admin={user.role === "admin"}
                 visible={visible}
@@ -892,7 +938,7 @@ function LibraryApp({
                   controllers.current.get(book.recordingId)?.abort()
                 }
                 setDetail={setDetail}
-                setMediaTarget={setMediaTarget}
+                setMediaTarget={openAudiobook}
                 navigate={navigate}
                 notify={notify}
               />
@@ -959,10 +1005,9 @@ function LibraryApp({
           }
           onViewDownloads={() => navigate("activity")}
           onBookDetails={setDetail}
-          onManageSources={setMediaTarget}
+          onManageSources={openAudiobook}
         />
         <ReaderHost books={books} notify={notify} />
-        <MediaManager book={mediaTarget} books={books} onClose={()=>setMediaTarget(null)} onChanged={()=>{void refresh();void refreshDownloads();}} onDownload={book=>void startDownload(book)} onBookDetails={setDetail} notify={notify}/>
         {notice && (
           <div className={`toast ${notice.error ? "error" : ""}`} role="status">
             {notice.error ? <X size={18} /> : <Check size={18} />}
@@ -978,18 +1023,7 @@ function LibraryApp({
         )}
         <BookDetail
           admin={user.role === "admin"}
-          releases={
-            detail
-              ? books.filter(
-                  (book) =>
-                    book.workId === detail.workId &&
-                    book.tracks.length > 0 &&
-                    book.inLibrary,
-                )
-              : []
-          }
-          onRelease={setDetail}
-          onManageSources={()=>{if(detail){setMediaTarget(detail);setDetail(null);}}}
+          onOpenAudiobook={() => detail && openAudiobook(detail)}
           onFindAudio={() => detail && findAudio(detail)}
           onChanged={refresh}
           onOpenSeries={(id) => { setDetail(null); setSeriesTarget({ id, mode: "preview" }); }}
@@ -1062,9 +1096,7 @@ function LibraryApp({
 }
 function BookDetail({
   admin,
-  releases,
-  onManageSources,
-  onRelease,
+  onOpenAudiobook,
   onFindAudio,
   onChanged,
   onOpenSeries,
@@ -1084,9 +1116,8 @@ function BookDetail({
   downloads,
 }: {
   admin: boolean;
-  releases: Book[];
-  onManageSources:()=>void;
-  onRelease: (book: Book) => void;
+  /** The Audiobook row: opens the Audiobook page (#530). */
+  onOpenAudiobook: () => void;
   onFindAudio: () => void;
   onChanged: () => void;
   onOpenSeries: (id: number) => void;
@@ -1181,39 +1212,11 @@ function BookDetail({
             <p>{b.description}</p>
           </div>
           {b.tracks.length > 0 && (
-            <section className="detail-release">
-              <h3>Your audiobook release</h3>
-              <p>
-                {b.releaseTitle || b.title} · {b.language || "Language unknown"}{" "}
-                · {b.narrator}
-              </p>
-              {releases.length > 1 && (
-                <label>
-                  Available recordings
-                  <select
-                    aria-label="Audiobook release"
-                    value={b.id}
-                    onChange={(event) => {
-                      const release = releases.find(
-                        (book) => book.id === event.target.value,
-                      );
-                      if (release) onRelease(release);
-                    }}
-                  >
-                    {releases.map((book) => (
-                      <option key={book.id} value={book.id}>
-                        {book.language || "Language unknown"} · {book.narrator}{" "}
-                        · {book.releaseTitle || book.sourceLabel}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              <button className="button subtle" onClick={onManageSources}>Versions & sources</button>
-              {admin && <button className="button subtle" onClick={onFindAudio}>
-                <Search size={15} /> Find another release
-              </button>}
-            </section>
+            <div className="detail-audiobook">
+              <Group label="Files">
+                <FileRow kind="audiobook" name="Audiobook" status={audiobookRowLine({ narrator: b.narrator, duration: b.duration, serverStored: b.serverStored, tracks: b.tracks })} onClick={onOpenAudiobook} />
+              </Group>
+            </div>
           )}
           <HardcoverBookTools
             book={b}

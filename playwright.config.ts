@@ -47,6 +47,8 @@ const desktopProjects = [
               /(^|\/)activity-dot\.spec\.ts$/,
               // Settings as a list with pages (#579).
               /(^|\/)settings-pages\.spec\.ts$/,
+              // The Audiobook page (#530).
+              /(^|\/)audiobook-page\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: {} },

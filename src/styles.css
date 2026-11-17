@@ -2558,15 +2558,13 @@ input[type="range"]::-moz-range-thumb {
   justify-content: space-between;
   margin: 22px 0 10px;
 }
-.release-filters label,
-.detail-release label {
+.release-filters label {
   display: grid;
   gap: 6px;
   color: var(--muted);
   font-size: calc(12px * var(--ui-scale, 1));
 }
-.release-filters select,
-.detail-release select {
+.release-filters select {
   min-height: 44px;
   max-width: 100%;
   border: 1px solid var(--line);
@@ -2694,24 +2692,8 @@ input[type="range"]::-moz-range-thumb {
   min-height: 48px;
   margin-top: 12px;
 }
-.detail-release {
-  margin: 24px 0;
-  padding: 18px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-}
-.detail-release h3 {
-  font-size: calc(14px * var(--ui-scale, 1));
-}
-.detail-release p {
-  font-size: calc(12px * var(--ui-scale, 1));
-  color: var(--muted);
-  line-height: 1.7;
-  margin: 8px 0 14px;
-}
-.detail-release .button {
-  margin-top: 12px;
-  min-height: 44px;
+.detail-audiobook {
+  margin: var(--space-24) 0;
 }
 @media (min-width: 760px) {
   .release-card {

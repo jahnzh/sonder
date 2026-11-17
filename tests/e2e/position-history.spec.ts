@@ -150,6 +150,14 @@ async function openPlaybackOptions(page: Page) {
   return options;
 }
 
+// Plays from on the Audiobook page (#530): a picker that keeps the place.
+async function playFrom(page: Page, source: string) {
+  await page.getByRole("region", { name: "Audiobook", exact: true }).getByRole("button", { name: /^Plays from: / }).click();
+  const picker = page.getByRole("dialog", { name: "Plays from", exact: true });
+  await picker.getByRole("radio", { name: source, exact: true }).click();
+  await expect(picker).toBeHidden();
+}
+
 async function closePlaybackOptions(page: Page) {
   const options = page.locator(".playback-options-panel");
   if (await options.isVisible()) {
@@ -463,12 +471,9 @@ test("source reloads only record a jump when the new source moves the position",
   await startPaused(page, book.title);
   await setPosition(page, 150.25);
   await openReaderPlayer(page);
-  await (await openPlaybackOptions(page)).getByRole("button", { name: "Versions & sources", exact: true }).click();
-  const manager = page.getByRole("dialog", { name: "Versions & sources", exact: true });
-  const choice = manager.getByRole("combobox", { name: "Playback source choice", exact: true });
-  await expect(choice).toBeEnabled();
-  await choice.selectOption("server");
-  await manager.getByRole("button", { name: "Apply source", exact: true }).click();
+  await (await openPlaybackOptions(page)).getByRole("button", { name: "Audiobook", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Audiobook", exact: true }).getByRole("button", { name: /^Plays from: / })).toBeEnabled();
+  await playFrom(page, "Server copy");
   await expect.poll(async () => (await audioState(page)).src).toContain("?source=server");
   await expect.poll(async () => (await audioState(page)).position).toBe(150.25);
   expect(await history(page, book.recordingId)).toEqual([]);
@@ -477,15 +482,13 @@ test("source reloads only record a jump when the new source moves the position",
     const audio = ((window as any).__jumpAudio as HTMLAudioElement[]).find((item) => !!item.src)!;
     Object.defineProperty(audio, "duration", { configurable: true, get: () => 100 });
   });
-  await choice.selectOption("auto");
-  await manager.getByRole("button", { name: "Apply source", exact: true }).click();
+  await playFrom(page, "Automatic");
   await expect.poll(async () => (await history(page, book.recordingId))[0]?.kind).toBe("source");
   expect((await history(page, book.recordingId))[0].position).toBe(150.25);
   await page.evaluate(() => {
     const audio = ((window as any).__jumpAudio as HTMLAudioElement[]).find((item) => !!item.src)!;
     delete (audio as any).duration;
   });
-  await manager.getByRole("button", { name: "Close dialog", exact: true }).click();
   await openReaderPlayer(page);
   await restoreLatest(page);
   await expect.poll(async () => (await audioState(page)).position).toBe(150.25);
@@ -759,10 +762,8 @@ test.describe("failed source loads", () => {
       Object.defineProperty(audio, "duration", { configurable: true, get: () => 100 });
     });
     const dialog = await openPlayer(page);
-    await dialog.getByRole("button", { name: "Versions & sources", exact: true }).click();
-    const manager = page.getByRole("dialog", { name: "Versions & sources", exact: true });
-    await manager.getByRole("combobox", { name: "Playback source choice", exact: true }).selectOption("server");
-    await manager.getByRole("button", { name: "Apply source", exact: true }).click();
+    await dialog.getByRole("button", { name: "Audiobook", exact: true }).click();
+    await playFrom(page, "Server copy");
     await expect.poll(async () => page.evaluate(() => ((window as any).__jumpAudio as HTMLAudioElement[]).find((item) => !!item.src)!.error !== null)).toBe(true);
     await expect(page.getByText("The audio source is unavailable. Please try again.").first()).toBeVisible();
     // Some other load reaches the element without going through a source switch.
