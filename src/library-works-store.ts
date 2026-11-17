@@ -259,3 +259,20 @@ export function useWork(workId: string): WorkRead {
   const work = useMemo(() => base && overlayDevicePlaces(base, places), [base, places]);
   return { work, status: stored ? "ready" : read ? read.status : "loading", reload };
 }
+
+/**
+ * The stored works of the signed-in user by work id, each with this device's newer places laid over it: what
+ * today's Library reads In progress, Not started and Finished from (#556, `workProgress`).
+ */
+export function useStoredWorksWithPlaces(): ReadonlyMap<string, LibraryWork> {
+  const store = useSyncExternalStore(subscribe, current);
+  const places = useDevicePlaces();
+  useEffect(() => startLibraryWorks(), []);
+  const own = store.owner === userId();
+  return useMemo(() => {
+    const works = new Map<string, LibraryWork>();
+    if (!own) return works;
+    for (const [workId, work] of store.works) works.set(workId, overlayDevicePlaces(work, places));
+    return works;
+  }, [own, store.works, places]);
+}
