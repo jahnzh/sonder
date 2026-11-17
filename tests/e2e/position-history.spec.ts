@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { readerFixture } from "../reader-fixture";
 import { installReaderWaitBudget, READER_WAIT_MS, timedWait } from "./timing";
+import { rememberAlicesPlace } from "./alice-place";
 
 // Per-step expect ceilings are up to 45 s; leave room around history restores.
 installReaderWaitBudget(test);
@@ -29,7 +30,21 @@ async function importRecording(page: Page, name: string, tracks = 1) {
 // feature card of every later spec on the same shard server would open instead of Alice. After each test they leave
 // the library through the route the book dialog's Remove uses, so the server keeps the library it had before.
 const importedWorks: string[] = [];
+// Ebooks a test put on Alice's work. Alice with an ebook opens Now playing with the reader, where the next spec on the
+// server (media-controls: Space toggles playback, the shortcut sheet) finds no plain Pause and no Keyboard shortcuts
+// button (#529, #645). There is no route that deletes an ebook, so after the test each one moves, through the reader's
+// link route, to a work of its own that then leaves the library with this file's other imports.
+const ebooksOnAlice: string[] = [];
+// Use Hardcover position plays Alice and so moves her saved place; it goes back to where the test found it.
+let restoreAlice: (() => Promise<void>) | null = null;
 test.afterEach(async ({ page }) => {
+  await restoreAlice?.();
+  restoreAlice = null;
+  for (const ebookId of ebooksOnAlice.splice(0)) {
+    const away = await importRecording(page, "Ebook taken off Alice");
+    const moved = await page.request.post(`/api/reader/${encodeURIComponent(ebookId)}/link`, { data: { workId: away.workId } });
+    expect(moved.ok()).toBe(true);
+  }
   for (const workId of importedWorks.splice(0)) {
     const removed = await page.request.delete(`/api/works/${encodeURIComponent(workId)}/library`);
     expect(removed.ok()).toBe(true);
@@ -492,6 +507,7 @@ test("source reloads only record a jump when the new source moves the position",
 });
 
 test("Use Hardcover position can be undone through the normal progress path", async ({ page }) => {
+  restoreAlice = await rememberAlicesPlace(page);
   await instrument(page);
   await page.goto("/#settings/connections");
   await page.getByRole("textbox", { name: /^API token/ }).fill("browser-test-token");
@@ -508,6 +524,7 @@ test("Use Hardcover position can be undone through the normal progress path", as
     multipart: { file: { name: "Companion.epub", mimeType: "application/epub+zip", buffer: await readerFixture() } },
   });
   expect(uploaded.ok()).toBe(true);
+  ebooksOnAlice.push((await uploaded.json()).id);
   await page.reload();
   await page.locator(".mobile-nav").getByRole("button", { name: "My library", exact: true }).click();
   await startPaused(page, book.title);
