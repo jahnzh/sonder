@@ -70,11 +70,14 @@ export function placeLine(work: LibraryWork, deviceChoice: string | null | undef
   return NOT_STARTED_LINE;
 }
 
-/** The series line: the work's first series, "The Culture · Book 8"; null without series information. */
-export function seriesLine(work: Pick<LibraryWork, "series">): { label: string; id: number | null } | null {
+/**
+ * The series line: the work's first series, "The Culture · Book 8"; null without series information. `saved` says
+ * whether the user saved it: a saved series opens its Series page (#562), another today's series dialog.
+ */
+export function seriesLine(work: Pick<LibraryWork, "series">): { label: string; id: number | null; saved: boolean } | null {
   const first = work.series[0];
   if (!first?.name) return null;
-  return { label: first.position != null ? `${first.name}${DOT}Book ${first.position}` : first.name, id: first.id };
+  return { label: first.position != null ? `${first.name}${DOT}Book ${first.position}` : first.name, id: first.id, saved: !!first.saved };
 }
 
 /** The reading sync of the chosen pair, in the facts of the status-line module; null when none was ever queued. */
@@ -89,7 +92,7 @@ export type FileAction = "get" | "retry" | null;
 export type BookModel = {
   inLibrary: boolean;
   place: string;
-  series: { label: string; id: number | null } | null;
+  series: { label: string; id: number | null; saved: boolean } | null;
   /** Listen is on: the work has a recording with audio. */
   listen: boolean;
   /** The EPUB Read opens; null (Read off) without one, also when the work has only a PDF. */

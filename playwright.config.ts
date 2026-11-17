@@ -107,6 +107,8 @@ const desktopProjects = [
               /(^|\/)book-page-states\.spec\.ts$/,
               // Keep on this device saves the chosen recording and resumes by itself (#550).
               /(^|\/)keep-saver\.spec\.ts$/,
+              // The Series page of a saved series (#562).
+              /(^|\/)series-page\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },
