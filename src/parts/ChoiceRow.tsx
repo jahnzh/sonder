@@ -14,6 +14,8 @@ export type Choice<T extends string> = {
   detail: string;
   /** What the right edge says before the tick (Caption size, muted; `now` in the accent's green), as Get's "Plays now". */
   edge?: { text: string; now?: boolean } | null;
+  /** Off: shown but not chosen by a tap or the arrow keys (Get ebook's "Already added"). */
+  disabled?: boolean;
 };
 
 export type ChoiceGroupProps<T extends string> = {
@@ -30,27 +32,31 @@ export function ChoiceGroup<T extends string>({ label, options, value, onChange 
   const rows = useRef<(HTMLButtonElement | null)[]>([]);
   const chosen = options.findIndex((option) => option.value === value);
   // The row Tab reaches: the chosen one, or the first while none is.
-  const tabStop = chosen >= 0 ? chosen : 0;
+  const tabStop = chosen >= 0 ? chosen : Math.max(0, options.findIndex((option) => !option.disabled));
 
   function choose(index: number) {
     rows.current[index]?.focus();
     onChange(options[index].value);
   }
+  // The rows a tap or a key can choose: every row but those that are off.
+  const open = options.map((option, index) => (option.disabled ? -1 : index)).filter((index) => index >= 0);
   function onKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
-    const last = options.length - 1;
-    const to =
+    if (!open.length) return;
+    const at = open.indexOf(index);
+    const last = open.length - 1;
+    const step =
       event.key === "ArrowDown" || event.key === "ArrowRight"
-        ? index === last ? 0 : index + 1
+        ? at < 0 || at === last ? 0 : at + 1
         : event.key === "ArrowUp" || event.key === "ArrowLeft"
-          ? index === 0 ? last : index - 1
+          ? at <= 0 ? last : at - 1
           : event.key === "Home"
             ? 0
             : event.key === "End"
               ? last
               : null;
-    if (to === null) return;
+    if (step === null) return;
     event.preventDefault();
-    choose(to);
+    choose(open[step]);
   }
 
   return (
@@ -70,7 +76,8 @@ export function ChoiceGroup<T extends string>({ label, options, value, onChange 
             tabIndex={index === tabStop ? 0 : -1}
             className="part-choice-row"
             data-chosen={checked ? "" : undefined}
-            onClick={() => onChange(option.value)}
+            disabled={option.disabled || undefined}
+            onClick={() => option.disabled || onChange(option.value)}
             onKeyDown={(event) => onKeyDown(event, index)}
           >
             <span className="part-choice-row-text">

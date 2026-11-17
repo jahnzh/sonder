@@ -284,9 +284,9 @@ function built(route: Route): boolean {
     // The worker's page (#520). A worker the server does not report shows Server, once the page has read the server.
     case "worker":
       return true;
-    // The Get audiobook sheet (#601); Get ebook comes with its own ticket.
+    // The Get audiobook sheet (#601) and the Get ebook sheet (#604).
     case "get":
-      return route.kind === "audiobook";
+      return route.kind === "audiobook" || route.kind === "ebook";
     default:
       return false;
   }
@@ -296,7 +296,7 @@ function built(route: Route): boolean {
 function allowed(route: Route, admin: boolean): boolean {
   if (admin) return true;
   if (route.name === "settings-page") return !(ADMIN_SETTINGS_PAGES as readonly string[]).includes(route.page);
-  // Getting files is the administrator's (#601).
+  // Getting files is the administrator's (#601, #604).
   if (route.name === "get") return false;
   return !(route.name === "worker" || (route.name === "activity" && route.part === "server"));
 }

@@ -77,3 +77,11 @@
   width: auto;
   align-self: stretch;
 }
+/* A row that is off (Get ebook's "Already added"): shown, not chosen. */
+.part-choice-row:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.part-choice-row:disabled:hover {
+  background: transparent;
+}
