@@ -183,6 +183,11 @@ test("Read opens the chosen EPUB: the shared default, then this device's choice,
   assert.equal(bookModel(two, { admin: false }).readEbookId, "e1");
   assert.equal(bookModel(two, { admin: false, deviceChoice: "e2" }).readEbookId, "e2");
   assert.equal(bookModel({ ...two, chosenEbookId: "e1" }, { admin: false, deviceChoice: "e2" }).readEbookId, "e1");
+  // A book with only an EPUB: Read on, Listen off, and This device shows (there is something to keep).
+  const epubOnly = bookModel(work({ ebooks: [ebook("e1")] }), { admin: false });
+  assert.equal(epubOnly.readEbookId, "e1");
+  assert.equal(epubOnly.listen, false);
+  assert.equal(epubOnly.device, true);
 });
 
 test("a work outside the library: Add to library is the one main action; no Listen, Read or This device", () => {

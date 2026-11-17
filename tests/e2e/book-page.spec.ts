@@ -264,6 +264,9 @@ test("the series line opens the series; Mark as finished and back", async ({ pag
 
 test("Remove from library asks once; Cancel sends nothing; Remove sends the work's DELETE and the book stays gone", async ({ page }) => {
   const book = await importBook(page, unique("Removed book"), false);
+  // A place in the recording, which Remove from library keeps.
+  const place = { recordingId: book.recordingId, trackId: book.tracks[0].id, position: 44, duration: book.tracks[0].duration, updatedAt: Date.now() };
+  expect((await page.request.post("/api/progress", { data: place })).ok()).toBe(true);
   const sent: Request[] = [];
   page.on("request", (request) => {
     if (request.url().includes("/library") && request.method() !== "GET") sent.push(request);
@@ -289,6 +292,10 @@ test("Remove from library asks once; Cancel sends nothing; Remove sends the work
   await expect(page.getByRole("heading", { name: /Your library/ })).toBeVisible();
   await expect(page.getByRole("button", { name: `About ${book.title}`, exact: true })).toHaveCount(0);
   expect((await (await page.request.get(`/api/works/${encodeURIComponent(book.workId)}`)).json()).inLibrary).toBe(false);
+  // The recording keeps its own place: added back, the work has it as it was.
+  expect((await page.request.put(`/api/works/${encodeURIComponent(book.workId)}/library`)).ok()).toBe(true);
+  const back = await (await page.request.get(`/api/works/${encodeURIComponent(book.workId)}`)).json();
+  expect(back.recordings.map((r: any) => [r.recordingId, r.progress?.position])).toEqual([[book.recordingId, 44]]);
 });
 
 test("the heart and today's Favorites filter agree", async ({ page }) => {
