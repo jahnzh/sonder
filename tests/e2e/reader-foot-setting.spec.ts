@@ -291,7 +291,6 @@ test("the default speed from Settings shows in the foot's Speed once saved, and 
   await page.request.put("/api/appearance", { data: withSpeed(null) });
   try {
     const { book, ebook } = await fixture(page, "Foot default");
-    const other = await fixture(page, "Foot other");
     let room = await readerWithNarration(page, book, ebook);
     const speed = (scope: Locator) => scope.locator(".reader-player").getByRole("button", { name: /^Speed [\d.]+ times$/ });
     await expect(speed(room)).toHaveAccessibleName("Speed 1 times");
@@ -313,14 +312,11 @@ test("the default speed from Settings shows in the foot's Speed once saved, and 
     await speed(room).click();
     await expect(room.getByRole("spinbutton", { name: "Playback speed", exact: true })).toHaveText("1.8×");
     await room.getByRole("button", { name: "Done", exact: true }).click();
-    // Chapter lengths stay real lengths for a book not in the player.
-    await page.goto("/");
-    await page.locator(".mobile-nav").getByRole("button", { name: "My library", exact: true }).click();
-    await page.getByRole("button", { name: `About ${other.title}`, exact: true }).click();
-    const details = page.getByRole("dialog", { name: "Book details", exact: true });
-    await expect(details.locator(".detail-chapters .chapter-row small").first()).toHaveAttribute("title", "Chapter length");
-    await details.getByRole("button", { name: "Close dialog", exact: true }).click();
+    // The book dialog's chapter list is gone with the Book page (#532): that a book not in the player keeps real
+    // chapter lengths is held by tests/playback-speed.test.ts (chapterRowTime); Now playing's Chapters page (#593)
+    // shows it on screen again.
     // Back to 1× in Settings clears it, also after a reload.
+    await page.goto("/");
     await page.locator(".mobile-nav").getByRole("button", { name: "Settings", exact: true }).click();
     await page.getByRole("button", { name: /^Playback\b/ }).click();
     await stepper.focus();
@@ -344,7 +340,7 @@ test("the default speed from Settings shows in the foot's Speed once saved, and 
 test("speed from the foot: the lock screen's rate, the chapter list's time left at it, and Use default", async ({ page, browserName }) => {
   const saved = (await (await page.request.get("/api/appearance")).json()).playback.speed;
   const defaultSpeed = Number((saved ?? 1).toFixed(2));
-  const { title, book, ebook } = await fixture(page, "Foot rate");
+  const { book, ebook } = await fixture(page, "Foot rate");
   await instrument(page);
   const room = await readerWithNarration(page, book, ebook);
   const foot = room.locator(".reader-player");
@@ -372,14 +368,8 @@ test("speed from the foot: the lock screen's rate, the chapter list's time left 
   expect(later.every((state) => state.playbackRate === 2.65)).toBe(true);
   await row.getByRole("button", { name: "Done", exact: true }).click();
   await expect(speed).toHaveAccessibleName("Speed 2.65 times");
-  // The chapter list shows the current chapter's time left at 2.65×. (The app's own address change keeps the
-  // narration in the player; a reload would not.)
-  await page.evaluate(() => { location.hash = "#library"; });
-  await page.locator(".mobile-nav").getByRole("button", { name: "My library", exact: true }).click();
-  await page.getByRole("button", { name: `About ${title}`, exact: true }).click();
-  const details = page.getByRole("dialog", { name: "Book details", exact: true });
-  await expect(details.locator(".detail-chapters .chapter-row.selected small")).toHaveAttribute("title", "Left in chapter at 2.65×");
-  await details.getByRole("button", { name: "Close dialog", exact: true }).click();
+  // The current chapter's time left at 2.65× was in the book dialog's chapter list, gone with the Book page (#532):
+  // tests/playback-speed.test.ts holds the rule (chapterRowTime), and Now playing's Chapters page (#593) shows it.
   // Use default in the foot returns to the default, also after a reload.
   await page.evaluate((id) => { location.hash = `#reader/${id}`; }, ebook);
   const again = standalone(page);
