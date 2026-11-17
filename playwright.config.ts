@@ -37,6 +37,10 @@ const desktopProjects = [
               /(now-playing-layout|device-reset|reader-frame|navigation|gallery(-[a-z-]+)?|device-save-records)\.spec\.ts/,
               // Sign in, Request an account and Join (#582).
               /(^|\/)(sign-in|account-requests)\.spec\.ts$/,
+              // The attention dot from Now's builder (#521).
+              /(^|\/)activity-dot\.spec\.ts$/,
+              // Settings as a list with pages (#579).
+              /(^|\/)settings-pages\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: {} },

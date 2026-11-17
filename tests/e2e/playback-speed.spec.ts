@@ -10,7 +10,7 @@ async function expectDockSpeed(page: Page, speed: string) {
   ).toHaveText(speed);
   await nowPlaying.getByRole("button", { name: "Close dialog", exact: true }).click();
 }
-test("the default speed applies once saved, chapter lengths stay real for a book not in the player, and a saved reset clears it", async ({
+test("the default speed applies once chosen, chapter lengths stay real for a book not in the player, and choosing 1× again keeps it", async ({
   page,
 }) => {
   const original = await (await page.request.get("/api/appearance")).json();
@@ -20,21 +20,21 @@ test("the default speed applies once saved, chapter lengths stay real for a book
     playback: { ...original.playback, speed },
   });
   await page.request.put("/api/appearance", { data: withSpeed(null) });
+  const openPlayback = async () => {
+    await page.locator(".mobile-nav").getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("button", { name: /^Playback\b/ }).click();
+    return page.getByRole("spinbutton", { name: "Default speed", exact: true });
+  };
   try {
     await page.goto("/");
-    await page
-      .locator(".mobile-nav")
-      .getByRole("button", { name: "Settings", exact: true })
-      .click();
-    await page
-      .getByRole("slider", { name: "Default playback speed", exact: true })
-      .fill("1.8");
-    await expect(page.locator(".setting-range-label output")).toHaveText("1.8×");
-    await expectDockSpeed(page, "1×");
+    // Settings › Playback saves the speed when it is changed (#579): ten steps up with Page Up, six more.
+    let stepper = await openPlayback();
+    await expect(stepper).toHaveText("1×");
     expect(await serverSpeed(page)).toBe(null);
-    await page
-      .getByRole("button", { name: "Save playback settings", exact: true })
-      .click();
+    await stepper.focus();
+    await page.keyboard.press("PageUp");
+    for (let i = 0; i < 6; i++) await page.keyboard.press("ArrowUp");
+    await expect(stepper).toHaveText("1.8×");
     await expect.poll(() => serverSpeed(page)).toBe(1.8);
     await expectDockSpeed(page, "1.8×");
     const dockTitle = await page
@@ -56,14 +56,14 @@ test("the default speed applies once saved, chapter lengths stay real for a book
       details.locator(".detail-chapters .chapter-row small").first(),
     ).toHaveAttribute("title", "Chapter length");
     await details.getByRole("button", { name: "Close dialog", exact: true }).click();
-    await page.locator(".mobile-nav").getByRole("button", { name: "Settings", exact: true }).click();
-    await page.getByRole("button", { name: "Reset", exact: true }).click();
-    await page
-      .getByRole("button", { name: "Save appearance", exact: true })
-      .click();
-    await expect.poll(() => serverSpeed(page)).toBe(null);
+    stepper = await openPlayback();
+    await stepper.focus();
+    await page.keyboard.press("PageDown");
+    for (let i = 0; i < 6; i++) await page.keyboard.press("ArrowDown");
+    await expect(stepper).toHaveText("1×");
+    await expect.poll(() => serverSpeed(page)).toBe(1);
     await page.reload();
-    await expect(page.locator(".setting-range-label output")).toHaveText("1×");
+    await expect(stepper).toHaveText("1×");
     await expectDockSpeed(page, "1×");
   } finally {
     await page.request.put("/api/appearance", {
