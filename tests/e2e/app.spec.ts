@@ -300,9 +300,8 @@ test("desktop layout and server/device distinction remain usable without overflo
   skipOnMobile(true, "desktop layout (min-width: 900px) is not reachable on a phone profile");
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/#activity");
-  await expect(
-    page.getByRole("heading", { name: /On your home server/ }),
-  ).toBeVisible();
+  // Now lists the server's work and this device's saves together (#522).
+  await expect(page.getByTestId("activity-now")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     1440,
   );
