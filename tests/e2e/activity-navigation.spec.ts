@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import type { ActivityResponse } from "../../src/types";
+import { noOverflow } from "./overflow";
 
 // Activity is a place, with Now and Server (#516; boards Activity.dc.html, ActivityMember.dc.html,
 // DesktopActivity.dc.html). Activity took the Downloads slot in the tab bar and the rail, for everyone, with the
@@ -31,25 +32,6 @@ const parts = (page: Page) => page.getByRole("radiogroup", { name: "Activity" })
 const heading = (page: Page) => page.getByRole("heading", { name: "Activity", level: 1 });
 const hash = (page: Page) => page.evaluate(() => location.hash);
 const dot = "Background work needs attention";
-
-async function noOverflow(page: Page) {
-  const overflow = await page.evaluate(() => {
-    const width = window.innerWidth;
-    // Only what is shown counts. The closed Now Playing dialog stays mounted with visibility: hidden, and when the dock's
-    // book has an ebook (the seeded Alice gets one from position-history.spec.ts on a shared server) its inline reader's
-    // epub.js view is laid out in columns wider than the viewport, clipped by the dialog: no overflow the owner can see.
-    return [...document.querySelectorAll("body *")]
-      .filter((element) => {
-        const box = element.getBoundingClientRect();
-        const style = getComputedStyle(element);
-        return box.width > 0 && box.right > width + 1 && style.position !== "fixed" && style.visibility === "visible";
-      })
-      .slice(0, 6)
-      .map((element) => `${element.tagName.toLowerCase()}.${String(element.className).slice(0, 40)}`);
-  });
-  expect(overflow, "elements wider than the viewport").toEqual([]);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-}
 
 test("the administrator: Activity in the tab bar where Downloads was, with the dot, and none on Settings", async ({ page }) => {
   await answer(page, 2);
