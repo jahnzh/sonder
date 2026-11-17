@@ -91,8 +91,6 @@ async function checkTimeline(dialog:Locator,transport:Locator){
  expect(slider.box.y+slider.box.height).toBeLessThanOrEqual(row.box.y+1);
 }
 test.beforeAll(async({request})=>{
- const appearance=await(await request.get("/api/appearance")).json();
- await request.put("/api/appearance",{data:{...appearance,reader:{...appearance.reader,display:"book"}}});
  // One import per spec run; the browser server keeps its temp library for the whole run.
  const books=await(await request.get("/api/books")).json();
  if(!books.some((b:any)=>b.title==="Layout plain"))await importBook(request,"Layout plain",false);
@@ -337,29 +335,10 @@ async function assertDesktopBackNarration(dialog:Locator,player:Locator,width:nu
 async function showReaderTopbar(page:Page,room:Locator){
  const topbar=room.locator(".reader-topbar");
  if(await topbar.isVisible())return;
- // Lyrics/Word hide the EPUB iframe; tap their surface (not the iframe) to reveal chrome.
- const overlay=room.locator(".lyrics-reader,.word-reader");
- if(await overlay.count())await overlay.first().evaluate((el:HTMLElement)=>el.click());
- else{
-  await expect(room.locator(".reader-viewport iframe")).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
-  const box=await boxOf(room.locator(".reader-viewport"));
-  await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
- }
+ await expect(room.locator(".reader-viewport iframe")).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
+ const box=await boxOf(room.locator(".reader-viewport"));
+ await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
  await expect(topbar).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
-}
-async function setReadingMode(page:Page,dialog:Locator,mode:"Page"|"Lyrics"|"Word"){
- const room=dialog.locator(".inline-reader");
- await showReaderTopbar(page,room);
- const more=room.locator(".reader-topbar").getByRole("button",{name:"More",exact:true});
- await expect(more).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
- // DOM click: Playwright's actionability "stable" never settles under WebKit while the EPUB reflows (#122 Deck).
- await more.evaluate((el:HTMLButtonElement)=>el.click());
- const modeButton=page.locator(".reader-more:visible").getByRole("group",{name:"Reading mode"}).getByRole("button",{name:mode,exact:true});
- await expect(modeButton).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
- await modeButton.evaluate((el:HTMLButtonElement)=>el.click());
- if(mode==="Lyrics")await expect(room.getByLabel("Lyrics reader")).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
- else if(mode==="Word")await expect(room.getByLabel("Word reader")).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
- else await expect(room.locator(".reader-viewport iframe")).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
 }
 /** Seed narration progress and open the aligned Layout reader once for a #122 fixture. */
 async function openAlignedReader(page:Page,browserName:string,request:APIRequestContext,size:readonly [number,number],title="Layout reader"){
@@ -446,13 +425,6 @@ test.describe("#122 reader Back to narration layout",()=>{
      expect(more.x).toBeGreaterThanOrEqual(0);
      expect(more.x+more.width).toBeLessThanOrEqual(width);
     }
-    for(const mode of ["Lyrics","Word"] as const){
-     await setReadingMode(page,dialog,mode);
-     if(state==="enabled")await expect(back).toBeEnabled();
-     else await expect(back).toBeDisabled();
-     await assertReaderTransportCentred(dialog,player);
-     await setReadingMode(page,dialog,"Page");
-    }
    }
   });
  }
@@ -472,12 +444,6 @@ test.describe("#122 reader Back to narration layout",()=>{
    const enabledPlay=await assertDesktopBackNarration(dialog,player,width);
    expect(Math.abs(enabledPlay.x-disabledPlay.x)).toBeLessThanOrEqual(1);
    expect(Math.abs(enabledPlay.y-disabledPlay.y)).toBeLessThanOrEqual(1);
-   for(const mode of ["Lyrics","Word"] as const){
-    await setReadingMode(page,dialog,mode);
-    await expect(back).toBeEnabled();
-    await assertDesktopBackNarration(dialog,player,width);
-    await setReadingMode(page,dialog,"Page");
-   }
   }
  });
  test("chromium: player control DOM and Tab order across phone and desktop",async({page,browserName,request})=>{

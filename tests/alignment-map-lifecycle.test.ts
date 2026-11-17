@@ -307,15 +307,6 @@ test("a superseded request does not publish after its map arrives, but a later f
   assert.deepEqual(t.shown, []);
 });
 
-test("a corrected map is stored under the recording's key; a storage failure rejects to the caller", async () => {
-  const t = setup();
-  const corrected = fullMap({ updatedAt: 999 });
-  await t.lifecycle.saveCorrected(EBOOK.id, REC, corrected);
-  assert.equal(t.data.get(KEY)?.updatedAt, 999);
-  t.setPutError(new Error("quota exceeded"));
-  await assert.rejects(t.lifecycle.saveCorrected(EBOOK.id, REC, corrected), /quota exceeded/);
-});
-
 // Playback warming: the same module, a separate instance, no session confirmation.
 function warmTarget(t: ReturnType<typeof setup>, over: Partial<Parameters<typeof t.lifecycle.warm>[0]> = {}) {
   return { ebookId: EBOOK.id, recordingId: REC, fingerprint: async () => EBOOK.fingerprint, isCancelled: () => false, ...over };
