@@ -1,10 +1,24 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
 
+// Books a test imports get a title unique to the run, so a repeat on the same server finds one
+// "Play <title>" button, and leave the library afterwards, so what a test played does not become
+// the latest played book that the next spec on the server finds in the dock.
+const imported: string[] = [];
+const unique = (title: string) => `${title} ${randomUUID().slice(0,8)}`;
+async function importBook(page: Page, multipart: Record<string, unknown>) {
+  const response = await page.request.post("/api/import", {multipart: multipart as any});
+  expect(response.ok()).toBe(true);
+  const id = (await response.json()).id as string;
+  imported.push(id);
+  return id;
+}
 test.afterEach(async ({page}) => {
   // Drain the catalog routes before Playwright tears down its request context.
   await page.unrouteAll({behavior:"wait"});
+  for (const id of imported.splice(0)) expect((await page.request.delete(`/api/library/${id}`)).ok()).toBe(true);
 });
 
 async function instrument(page: Page) {
@@ -155,9 +169,8 @@ test("chapter progress persists; precision dragging previews, slows with distanc
 
 test("whole-audiobook seeking crosses real audio files and preserves pause",async({page})=>{
   await instrument(page);
-  const result=await page.request.post("/api/import",{multipart:{title:"Timeline across files",author:"Playback QA",one:{name:"One.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")},two:{name:"Two.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
-  expect(result.ok()).toBe(true);
-  const id=(await result.json()).id;
+  const title=unique("Timeline across files");
+  const id=await importBook(page,{title,author:"Playback QA",one:{name:"One.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")},two:{name:"Two.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}});
   const book=(await (await page.request.get("/api/books")).json()).find((b:any)=>b.id===id);
   let releaseFirst!:()=>void,held=false;
   const firstRequest=new Promise<void>(resolve=>{releaseFirst=resolve;});
@@ -170,7 +183,7 @@ test("whole-audiobook seeking crosses real audio files and preserves pause",asyn
   });
   try {
   await page.goto("/");
-  await playAndPause(page,"Timeline across files");
+  await playAndPause(page,title);
   await expect.poll(()=>held).toBe(true);
   await page.locator(".dock-book").click();
   const length=book.tracks[0].duration;
@@ -190,23 +203,22 @@ test("whole-audiobook seeking crosses real audio files and preserves pause",asyn
 test("playback opens the reader and title page; downloaded sources can be switched, flagged and removed",async({page})=>{
   test.setTimeout(90000);
   await instrument(page);
-  const result=await page.request.post("/api/import",{multipart:{title:"Managed playback story",author:"Playback QA",file:{name:"Chapter.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
-  expect(result.ok()).toBe(true);
-  const id=(await result.json()).id;
+  const title=unique("Managed playback story");
+  const id=await importBook(page,{title,author:"Playback QA",file:{name:"Chapter.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}});
   const book=(await(await page.request.get("/api/books")).json()).find((b:any)=>b.id===id);
   expect((await page.request.post(`/api/ebooks/import?workId=${book.workId}`,{multipart:{file:{name:"Companion.epub",mimeType:"application/epub+zip",buffer:await readerFixture()}}})).ok()).toBe(true);
   await page.goto("/");
   await page.evaluate(async()=>{await navigator.serviceWorker.ready;});
   await page.reload();
   await page.waitForFunction(()=>!!navigator.serviceWorker.controller);
-  await playAndPause(page,"Managed playback story");
+  await playAndPause(page,title);
   await position(page,160);
   await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
   await expect(page.getByRole("dialog",{name:"Now playing"})).toBeVisible();
   await expect(page.frameLocator(".inline-reader .reader-viewport iframe").getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
   await showReaderControls(page);
   await page.getByRole("button",{name:"Close reader",exact:true}).click();
-  await page.getByRole("button",{name:"Open title page for Managed playback story",exact:true}).click();
+  await page.getByRole("button",{name:`Open title page for ${title}`,exact:true}).click();
   await expect(page.getByRole("dialog",{name:"Book details"})).toBeVisible();
   await expect(page.getByRole("button",{name:"Read ebook",exact:true})).toBeVisible();
   await page.getByRole("button",{name:"Save offline",exact:true}).click();
@@ -243,7 +255,7 @@ test("playback opens the reader and title page; downloaded sources can be switch
   await page.reload();
   await expect(manager.getByRole("button",{name:"Device copy Marked faulty",exact:true})).toBeVisible();
   await page.locator(".mobile-nav").getByRole("button",{name:"My library",exact:true}).click();
-  await page.getByRole("button",{name:"Play Managed playback story",exact:true}).click();
+  await page.getByRole("button",{name:`Play ${title}`,exact:true}).click();
   await expect(page.locator(".player-dock").getByRole("button",{name:"Pause",exact:true})).toBeVisible();
   await page.locator(".player-dock").getByRole("button",{name:"Pause",exact:true}).click();
   expect((await audioState(page)).src).not.toMatch(/^blob:/);
@@ -282,24 +294,25 @@ test("playback opens the reader and title page; downloaded sources can be switch
 
 test("switching audiobook versions resumes each recording's own checkpoint",async({page})=>{
   await instrument(page);
-  const response=await page.request.post("/api/import",{multipart:{title:"Release choice",author:"Version QA",file:{name:"Chapter.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
-  expect(response.ok()).toBe(true);
-  const id=(await response.json()).id;
+  const title=unique("Release choice");
+  const id=await importBook(page,{title,author:"Version QA",file:{name:"Chapter.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}});
   const english=(await(await page.request.get("/api/books")).json()).find((b:any)=>b.id===id);
   // A second recording of the same work on the same audio file (#530: the Audiobook page lists the work's recordings).
   const suffix=Math.random().toString(36).slice(2,8);
-  const french={recordingId:`recording-french-${suffix}`,trackId:`track-french-${suffix}`};
-  expect((await page.request.post("/api/test/seed-local-audio",{data:{relPath:`imports/${english.tracks[0].id}.mp3`,editionId:`edition-french-${suffix}`,recordingId:french.recordingId,trackId:french.trackId,workId:english.workId,narrator:"French Reader",language:"French",duration:english.tracks[0].duration}})).ok()).toBe(true);
+  const french={editionId:`edition-french-${suffix}`,recordingId:`recording-french-${suffix}`,trackId:`track-french-${suffix}`};
+  expect((await page.request.post("/api/test/seed-local-audio",{data:{relPath:`imports/${english.tracks[0].id}.mp3`,editionId:french.editionId,recordingId:french.recordingId,trackId:french.trackId,workId:english.workId,narrator:"French Reader",language:"French",duration:english.tracks[0].duration}})).ok()).toBe(true);
+  // The seeded recording leaves the library after the test too (#645).
+  imported.push(french.editionId);
   await page.request.post("/api/progress",{data:{recordingId:french.recordingId,trackId:french.trackId,position:42,duration:english.tracks[0].duration,updatedAt:Date.now()}});
   // The Library still shows one tile per recording: the French one gets a title of its own there.
   await page.route("**/api/books",async route=>{
     const response=await route.fetch(), all=await response.json();
-    for (const b of all) if(b.recordingId===french.recordingId) b.title="Release choice French";
+    for (const b of all) if(b.recordingId===french.recordingId) b.title=`${title} French`;
     // A read the app gave up on meanwhile is already answered.
     await route.fulfill({response,json:all}).catch(()=>{});
   });
   await page.goto("/");
-  await playAndPause(page,"Release choice");
+  await playAndPause(page,title);
   await position(page,210);
   const dialog=await manage(page);
   await dialog.getByRole("radio",{name:/French Reader/}).click();
@@ -319,10 +332,10 @@ test.describe("touch seeking",()=>{
   test.use({hasTouch:true,isMobile:true});
   test("releasing a fine-seek gesture keeps the exact previewed destination",async({page,context})=>{
     await instrument(page);
-    const response=await page.request.post("/api/import",{multipart:{title:"Touch seek story",author:"Seek QA",file:{name:"Chapter.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
-    expect(response.ok()).toBe(true);
+    const title=unique("Touch seek story");
+    await importBook(page,{title,author:"Seek QA",file:{name:"Chapter.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}});
     await page.goto("/");
-    await playAndPause(page,"Touch seek story");
+    await playAndPause(page,title);
     await position(page,200);
     await page.locator(".dock-book").click();
     const slider=page.getByRole("slider",{name:"Seek in audiobook",exact:true});
@@ -370,13 +383,13 @@ test.describe("failed source retry",()=>{
  test.use({serviceWorkers:"block"});
  test("a failed source reload preserves the saved listening position on retry",async({page})=>{
   await instrument(page);
-  const result=await page.request.post("/api/import",{multipart:{title:"Retry checkpoint",author:"Playback QA",file:{name:"Chapter.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
-  const id=(await result.json()).id;
+  const title=unique("Retry checkpoint");
+  const id=await importBook(page,{title,author:"Playback QA",file:{name:"Chapter.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}});
   const book=(await(await page.request.get("/api/books")).json()).find((b:any)=>b.id===id);
-  await page.goto("/");await playAndPause(page,"Retry checkpoint");await position(page,160);
+  await page.goto("/");await playAndPause(page,title);await position(page,160);
   await page.evaluate(() => ((window as any).__audioElements as HTMLAudioElement[]).find(a => !!a.src)!.dispatchEvent(new Event("pause")));
   await expect.poll(async()=>(await(await page.request.get("/api/books")).json()).find((b:any)=>b.id===id).progress?.position).toBeGreaterThanOrEqual(159);
-  await page.getByRole("button",{name:"Open title page for Retry checkpoint",exact:true}).click();
+  await page.getByRole("button",{name:`Open title page for ${title}`,exact:true}).click();
   await page.getByRole("dialog",{name:"Book details"}).getByRole("button",{name:/^Audiobook /}).click();
   const manager=page.getByRole("region",{name:"Audiobook",exact:true});
   const source=(url:URL)=>url.pathname===`/api/media/${book.tracks[0].id}` && url.searchParams.get("source")==="server";

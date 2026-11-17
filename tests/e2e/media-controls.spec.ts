@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { parseRange } from "../../server/range";
 import { readerFixture } from "../reader-fixture";
 test.use({ serviceWorkers: "block" });
@@ -126,6 +127,14 @@ test("headphone seeks cross audio files while paused and retain the 30-second of
   page,
 }) => {
   await instrument(page);
+  // Alice's second file is a remote URL that only this test serves, from the demo file. Its progress writes stay in
+  // the page: a saved place on alice-1 (or the demo file's length saved as that track's duration) would leave the
+  // next test that plays Alice on this server starting a file it cannot load.
+  const aliceBefore = (await (await page.request.get("/api/books")).json()).find((book: any) => book.id === "alice");
+  await page.route("**/api/progress", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    await route.fulfill({ json: { progress: route.request().postDataJSON(), conflict: false } });
+  });
   const audio = readFileSync("server/demo/alice-01.mp3");
   await page.route("**/api/media/alice-1", (route) => {
     const range = parseRange(route.request().headers()["range"], audio.length);
@@ -209,6 +218,12 @@ test("headphone seeks cross audio files while paused and retain the 30-second of
     )
     .toContain("/api/media/alice-0");
   await expect.poll(() => audioPosition(page)).toBeCloseTo(length - 10, 0);
+  // page.request does not go through the page's routes, so this reads the server's own record.
+  const aliceAfter = (await (await page.request.get("/api/books")).json()).find((book: any) => book.id === "alice");
+  expect({ progress: aliceAfter.progress, tracks: aliceAfter.tracks.map((track: any) => track.duration) }).toEqual({
+    progress: aliceBefore.progress,
+    tracks: aliceBefore.tracks.map((track: any) => track.duration),
+  });
 });
 test("Space toggles playback across views and arrows skip 30 seconds while ignoring inputs, buttons and dialogs", async ({
   page,
@@ -362,9 +377,10 @@ test("Space toggles playback across views and arrows skip 30 seconds while ignor
     .getByRole("button", { name: "Close dialog", exact: true })
     .click();
   // Space and arrows also work in the Now Playing reader in Page mode.
+  const readerTitle = `Keyboard reader book ${randomUUID().slice(0, 8)}`;
   const imported = await page.request.post("/api/import", {
     multipart: {
-      title: "Keyboard reader book",
+      title: readerTitle,
       author: "Reader QA",
       file: {
         name: "Chapter.mp3",
@@ -394,7 +410,7 @@ test("Space toggles playback across views and arrows skip 30 seconds while ignor
     ).toBe(true);
     await page.reload();
     await page
-      .getByRole("button", { name: "Play Keyboard reader book", exact: true })
+      .getByRole("button", { name: `Play ${readerTitle}`, exact: true })
       .click();
     await page
       .locator(".player-dock")

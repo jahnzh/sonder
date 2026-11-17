@@ -1,0 +1,132 @@
+/**
+ * What Activity's This device shows (#518, spec #513 "This device"; boards ActivityDevice.dc.html,
+ * ActivityDeviceEmpty.dc.html, ActivityDeviceOffline.dc.html, ActivityDeviceMember.dc.html,
+ * DesktopActivityDevice.dc.html).
+ *
+ * Pure: it takes the device's save entries (`device-saves.ts`), the books they belong to and whether there is a
+ * connection, and returns the rows of Saving now and Kept on this device and the space they take. The screen
+ * (`pages/activity-device.tsx`) only draws them.
+ *
+ * The server must not import this file: the production image copies only four files of `src/`.
+ */
+import type { DeviceSaveEntries } from "./device-saves";
+import { deviceSaveEntryLine } from "./device-saves";
+import { deviceKeptLine } from "./status-lines";
+import { bytes } from "./size-format";
+
+/** A book as This device needs it: the audio edition a row opens, its work, title and cover. */
+export type DeviceBook = { id: string; workId: string; title: string; cover?: string | null };
+/** An ebook edition saved for reading offline, with its title for a work that has no audio edition here. */
+export type DeviceEbook = { id: string; workId: string; title: string };
+
+export type DeviceSavingRow = {
+  workId: string;
+  title: string;
+  cover: string | null;
+  /** The book a row opens; null when the device knows no book of the work. */
+  bookId: string | null;
+  /** The recording whose save runs (Pause stops it). */
+  recordingId: string;
+  /** "Saving · 3 of 12 files". */
+  status: string;
+  /** 0 to 1, for the bar. */
+  progress: number;
+};
+
+export type DeviceKeptRow = {
+  workId: string;
+  title: string;
+  cover: string | null;
+  bookId: string | null;
+  /** "Audiobook and ebook · 414 MB", "Ebook · 0.6 MB", or "Not complete · 3 of 12 files". */
+  status: string;
+  /** The audiobook's save is not complete: the line has the audiobook's mark. */
+  notComplete: boolean;
+  /** Everything of the work on this device, in bytes: what Remove frees. */
+  size: number;
+  /** What Remove deletes: every recording with files here, and every saved ebook edition of the work. */
+  recordingIds: string[];
+  ebookIds: string[];
+};
+
+export type DevicePart = {
+  /** Saves running in this tab. Empty without a connection: nothing is saved then. */
+  saving: DeviceSavingRow[];
+  /** One row per work with files on this device; unfinished saves first, then newest change first. */
+  kept: DeviceKeptRow[];
+  /** What the device's saves take, in bytes. */
+  used: number;
+};
+
+export function buildDevicePart({
+  entries,
+  books,
+  ebooks = [],
+  online,
+}: {
+  entries: DeviceSaveEntries;
+  books: readonly DeviceBook[];
+  ebooks?: readonly DeviceEbook[];
+  online: boolean;
+}): DevicePart {
+  const saving: DeviceSavingRow[] = [];
+  const kept: DeviceKeptRow[] = [];
+  let used = 0;
+  for (const entry of entries) {
+    used += entry.totalSize;
+    const book =
+      (entry.audio ? books.find((b) => b.id === entry.bookId) : undefined) ?? books.find((b) => b.workId === entry.workId);
+    const ebookTitle = ebooks.find((e) => e.workId === entry.workId)?.title;
+    const title = book?.title ?? ebookTitle ?? "";
+    const common = { workId: entry.workId, title, cover: book?.cover ?? null, bookId: book?.id ?? null };
+    // A save runs only with a connection; without one it waits as not complete, with no bar.
+    if (entry.audio && entry.state === "saving" && online) {
+      saving.push({
+        ...common,
+        recordingId: entry.recordingId,
+        status: deviceSaveEntryLine(entry) ?? "",
+        progress: entry.progress,
+      });
+      continue;
+    }
+    // Nothing of the work is on this device (a failed save that wrote nothing): Now lists it, not Kept. A save that
+    // runs without a connection stays: it waits, and its first section may not be counted yet.
+    if (entry.state !== "saving" && !entry.totalSize && !entry.ebook) continue;
+    const audio = !entry.audio ? "none" : entry.state === "complete" ? "complete" : "partial";
+    const status = deviceKeptLine({
+      audio,
+      filesTotal: entry.filesTotal,
+      filesSaved: entry.filesDone,
+      ebook: !!entry.ebook,
+      size: entry.totalSize,
+    });
+    if (!status) continue;
+    kept.push({
+      ...common,
+      status,
+      notComplete: audio === "partial",
+      size: entry.totalSize,
+      recordingIds: entry.recordings.map((r) => r.recordingId),
+      ebookIds: entry.ebook?.editionIds ?? [],
+    });
+  }
+  // A stable sort: entries come newest change first, and an unfinished save goes before every complete one.
+  kept.sort((a, b) => Number(b.notComplete) - Number(a.notComplete));
+  return { saving, kept, used };
+}
+
+/** "2.1 GB of 12 GB": what Sonder uses out of what the browser allows, or the use alone when the browser does not say. */
+export function usedLine(used: number, quota: number | null | undefined): string {
+  return quota && quota > 0 ? `${bytes(used)} of ${bytes(quota)}` : bytes(used);
+}
+
+/** The share of the allowance in use, 0 to 1, for the bar. */
+export function usedShare(used: number, quota: number | null | undefined): number {
+  return quota && quota > 0 ? Math.min(1, Math.max(0, used / quota)) : 0;
+}
+
+/** The value of the Protected storage row: the browser's answer, or Off with what a refused ask said. */
+export function protectedLine(state: { persisted: boolean; refused: boolean }): string {
+  if (state.persisted) return "On";
+  return state.refused ? "Off · Refused by the browser" : "Off";
+}
