@@ -153,7 +153,8 @@ function ChaptersSwitch({ workId, page }: { workId: string; page: "chapters" | "
         { value: "bookmarks", label: "Bookmarks" },
       ]}
       value={page}
-      onChange={(value) => navigate({ name: "book-page", workId, page: value }, { replace: true })}
+      // The segment replaces the entry (routes.ts, step).
+      onChange={(value) => navigate({ name: "book-page", workId, page: value })}
     />
   );
 }
