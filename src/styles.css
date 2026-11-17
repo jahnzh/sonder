@@ -2159,6 +2159,10 @@ input[type="range"]::-moz-range-thumb {
 .download-info > .download-complete {
   color: var(--muted);
 }
+.download-info > .download-reason {
+  color: var(--danger);
+  margin-top: 4px;
+}
 .download-actions {
   display: flex;
   align-items: center;
