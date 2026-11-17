@@ -224,6 +224,7 @@ export function GetAudiobookSheet({ workId, online, prowlarrConfigured, onChange
           <SearchIcon />
           <input
             type="search"
+            className="get-sheet-input"
             aria-label="Search for a recording"
             enterKeyHint="search"
             maxLength={150}

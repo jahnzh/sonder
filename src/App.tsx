@@ -884,7 +884,8 @@ function LibraryApp({
             )}
             {getSheet && admin && (
               <GetAudiobookSheet
-                key={getSheet}
+                // Not the work's id alone: the Book page under it, a sibling, is keyed by that.
+                key={`get-audiobook:${getSheet}`}
                 workId={getSheet}
                 online={online}
                 prowlarrConfigured={settings ? !!settings.prowlarrConfigured : null}

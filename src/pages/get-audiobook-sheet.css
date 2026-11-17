@@ -54,7 +54,8 @@
 .get-sheet-field svg {
   flex: none;
 }
-.get-sheet-field input {
+/* Repeated class: above appearance.css's rule for every text field (a filled field of its own). */
+.get-sheet-field .get-sheet-input.get-sheet-input.get-sheet-input.get-sheet-input {
   flex: 1;
   min-width: 0;
   height: 100%;
@@ -65,7 +66,7 @@
   font: 400 16px/22px var(--font-body);
   outline-offset: 4px;
 }
-.get-sheet-field input::-webkit-search-cancel-button {
+.get-sheet-field .get-sheet-input::-webkit-search-cancel-button {
   display: none;
 }
 .get-sheet-recordings {
