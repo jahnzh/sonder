@@ -363,6 +363,16 @@ export function goBack(fallback?: Route) {
   if (entry.depth > 0) traverse(-1, () => replaceAtStart(parent()));
   else navigate(parent(), { replace: true });
 }
+/**
+ * Closes the page that shows `route` (the reader, #590): back as goBack, but only while the current entry still
+ * shows it. A close heard after its Back has landed (a kept-mounted dialog told of a focus outside it, with the
+ * route of the render before) then moves nothing, rather than going a second step back.
+ */
+export function goBackFrom(route: Route, fallback?: Route) {
+  const entry = ensure();
+  if (!sameRoute(entry.route, route)) return;
+  goBack(fallback);
+}
 
 /**
  * The tab bar and the rail. Another place adds an entry. The current place returns to its first page:

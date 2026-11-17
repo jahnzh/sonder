@@ -26,7 +26,7 @@ import {
 import literataNormal from "@fontsource-variable/literata/files/literata-latin-wght-normal.woff2?url";
 import literataItalic from "@fontsource-variable/literata/files/literata-latin-wght-italic.woff2?url";
 import { Dialog } from "./ui/dialog";
-import { navigate as goTo, openSheet, useAddress } from "../navigation";
+import { goBackFrom, navigate as goTo, openSheet, useAddress } from "../navigation";
 import { isReaderPage, openedFrom, onPlaceRequested, publishReader, takePlace, useOpenerAny, type LiveReader, type ReaderPage, type ReaderPlace } from "../reader-pages";
 import { useAppearance } from "./Appearance";
 import { fontFamilies, paletteFor } from "../appearance";
@@ -284,7 +284,7 @@ export function ReaderHost({
 }) {
   // The reader is open while the address names it (`#reader/<ebook id>`, an old name kept for good).
   // Closing goes back, so Back afterwards does not reopen it.
-  const { route, goBack } = useAddress();
+  const { route } = useAddress();
   // Under one of its pages (Chapters, Bookmarks, Search, #590) the reader stays mounted, hidden, so Back finds it
   // where it was and a row of the page can show a place in it.
   const opener = useOpenerAny();
@@ -300,8 +300,10 @@ export function ReaderHost({
     window.addEventListener("sonder:open-reader", open);
     return () => window.removeEventListener("sonder:open-reader", open);
   }, []);
+  // Kept mounted, the dialog also hears of a focus outside it once the close's Back has landed and before this
+  // renders again; the page stack checks the entry it stands on, so that late close moves nothing (#590).
   const close = () => {
-    if (route.name === "reader") goBack();
+    if (route.name === "reader") goBackFrom(route);
   };
   if (!id) return null;
   return (
