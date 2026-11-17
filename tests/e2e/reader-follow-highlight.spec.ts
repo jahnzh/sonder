@@ -73,7 +73,7 @@ for(const [mode,label] of [["paginated","Page"],["scroll","Scroll"]] as const)
 test(`the follow highlight covers exactly the narrated sentence in ${label} mode`,async({page})=>{
  const {book,map,manifest}=await fixture(page,`Highlight offsets ${label}`);
  const fragments=new Map(manifest.sections.flatMap((s:any)=>s.paragraphs.map((p:any)=>[p.id,p])));
- await withReader(page,{mode,display:"book"},async()=>{
+ await withReader(page,{mode},async()=>{
   const wrong=[];
   for(const interval of map.intervals){
    await open(page,book,interval);
@@ -84,16 +84,6 @@ test(`the follow highlight covers exactly the narrated sentence in ${label} mode
   expect(wrong).toEqual([]);
  });
 });
-test("lyrics mode shows the narrated sentence as the current line in the same chapters",async({page})=>{
- const {book,map,manifest}=await fixture(page,"Highlight offsets Lyrics");
- const fragments=new Map(manifest.sections.flatMap((s:any)=>s.paragraphs.map((p:any)=>[p.id,p])));
- await withReader(page,{display:"segment"},async()=>{
-  for(const interval of map.intervals){
-   await open(page,book,interval);
-   await timedWait("follow-highlight",()=>expect(page.locator(".inline-reader .lyrics-line.current")).toHaveText((fragments.get(interval.paragraphId) as any).text,{timeout:READER_WAIT_MS.followHighlight}),{testName:test.info().title});
-  }
- });
-});
 test("long-press on a sentence's first letter listens from that sentence, not the one before",async({page})=>{
  await page.addInitScript(()=>{
   const time=Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype,"currentTime")!;
@@ -101,7 +91,7 @@ test("long-press on a sentence's first letter listens from that sentence, not th
  });
  const {book,map}=await fixture(page,"Highlight offsets long-press");
  const second=map.intervals.find((interval:any)=>interval.paragraphId==="0:2");
- await withReader(page,{mode:"paginated",display:"book"},async()=>{
+ await withReader(page,{mode:"paginated"},async()=>{
   await open(page,book,map.intervals[0]);
   await page.frameLocator(".inline-reader .reader-viewport iframe").getByText("It carries a second sentence.").waitFor();
   // The left edge of "It carries a second sentence.": a caret there sits right after the previous sentence's space.
@@ -126,7 +116,7 @@ test("long-press on a sentence's first letter listens from that sentence, not th
 });
 test("the follow highlight is re-measured when fonts finish loading and cleans up listeners on chapter change",async({page})=>{
  const {book,map}=await fixture(page,"Highlight font load redraw");
- await withReader(page,{mode:"paginated",display:"book"},async()=>{
+ await withReader(page,{mode:"paginated"},async()=>{
   await open(page,book,map.intervals[0]);
   const rect=page.locator(".inline-reader .reader-viewport .sonder-follow rect").first();
   await expect(rect).toBeVisible();

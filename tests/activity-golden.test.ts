@@ -109,6 +109,9 @@ const alignments: Array<[string, string | null, Record<string, unknown> | string
   ["ready", "set-consensus:w1", { status: "ready", progress: 0.9, outcome: "complete" }, NOW - 5 * MIN],
   ["partial", "eb-1", { status: "partial", progress: 0.7, rebuildOf: { engine: "old", status: "ready", requestedAt: NOW - DAY } }, NOW - 6 * MIN],
   ["error", "eb-1", { status: "error", progress: 1.7, error: "The worker stopped." }, NOW - 7 * MIN],
+  // A new map the #379 rule did not use: the map in use stays (#539).
+  ["rejected", "eb-1", { status: "error", outcome: "rejected", progress: 1, coverage: 0, rebuildOf: { engine: "old", status: "ready", requestedAt: NOW - DAY },
+    error: "The rebuild was rejected: it mapped none of the text. The previous map (82% of the text mapped) stays published." }, NOW - 8 * MIN],
   ["no-status", "eb-1", { progress: -1 }, NOW - 2 * MIN], // same rank and time as hardcover:status:2: pins the tie order
   ["unreadable", "eb-1", "{not json", NOW - 9 * MIN],
   ["unknown", "eb-1", { status: "exploded", progress: 0.2 }, NOW - 10 * MIN],
@@ -198,12 +201,16 @@ const snapshots = async (sources = ACTIVITY_SOURCES) => ({
 /** The sources that existed when the Activity module was split; the ebook-set checks came later (#325). */
 const sourcesAtSplit = ACTIVITY_SOURCES.filter((source) => source.kind !== "ebook-set");
 
-/** Rows whose Activity state changes on purpose with #392: statuses outside a vocabulary, failed series jobs. */
+/**
+ * Rows whose Activity state changes on purpose with #392 (statuses outside a vocabulary, failed series jobs), and the
+ * rejected reading sync added with #539, which the record from before the split does not have.
+ */
 function deleteIntendedChanges() {
   run("DELETE FROM acquisitions WHERE status NOT IN ('checking','preparing','downloading','paused','ready','error')");
   run("DELETE FROM server_downloads WHERE status NOT IN ('queued','downloading','paused','ready','error')");
   run("DELETE FROM series_acquisition_jobs WHERE status = 'failed'");
   run("DELETE FROM alignment_jobs WHERE id = 'align-unknown'");
+  run("DELETE FROM alignment_jobs WHERE id = 'align-rejected'"); // added after the split, with #539
 }
 
 /**

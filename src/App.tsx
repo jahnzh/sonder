@@ -55,7 +55,10 @@ import {
   getDownloadedBlob,
   clock,
   listOfflineEbookEditionIds,
+  listDeviceSaveRecords,
+  writeDeviceSaveRecord,
 } from "./lib";
+import type { DeviceSaveRecord } from "./device-saves";
 import type {
   Book,
   Download as DownloadRecord,
@@ -220,8 +223,9 @@ function LibraryApp({
   );
   const [downloadParts, setDownloadParts] = useState<DownloadPart[]>([]);
   const [downloadJobs, setDownloadJobs] = useState<
-    Record<string, { progress: number; chapter: number; total: number }>
+    Record<string, { progress: number; chapter: number; total: number; loaded?: number; size?: number }>
   >({});
+  const [saveRecords, setSaveRecords] = useState<DeviceSaveRecord[]>([]);
   const [online, setOnline] = useState(navigator.onLine);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settings, setSettings] = useState<SettingsData | null>(null);
@@ -244,6 +248,7 @@ function LibraryApp({
     }
     setDownloads(valid);
     setDownloadParts(await localDB.downloadParts.toArray());
+    setSaveRecords(await listDeviceSaveRecords().catch(() => []));
   }, []);
   const refreshOfflineEbooks = useCallback(async () => {
     setOfflineEbookEditionIds(new Set(await listOfflineEbookEditionIds()));
@@ -454,6 +459,7 @@ function LibraryApp({
     const ctrl = new AbortController();
     controllers.current.set(b.recordingId, ctrl);
     try {
+      await writeDeviceSaveRecord(b.recordingId, b.workId, { state: "saving" }).catch(() => {});
       await navigator.storage?.persist?.().catch(() => false);
       for (let i = 0; i < b.tracks.length; i++) {
         setDownloadJobs((j) => ({
@@ -462,6 +468,8 @@ function LibraryApp({
             progress: (i / b.tracks.length) * 100,
             chapter: i + 1,
             total: b.tracks.length,
+            loaded: 0,
+            size: 0,
           },
         }));
         await downloadTrack(b.tracks[i], ctrl.signal, (loaded, total) =>
@@ -472,13 +480,21 @@ function LibraryApp({
                 ((i + (total ? loaded / total : 0)) / b.tracks.length) * 100,
               chapter: i + 1,
               total: b.tracks.length,
+              loaded,
+              size: total,
             },
           })),
         );
         await refreshDownloads();
       }
+      await writeDeviceSaveRecord(b.recordingId, b.workId, { state: "finished" }).catch(() => {});
       notify(`“${b.title}” is ready for wherever you go.`);
     } catch (e) {
+      await writeDeviceSaveRecord(
+        b.recordingId,
+        b.workId,
+        ctrl.signal.aborted ? { state: "paused" } : { state: "failed", reason: (e as Error).message },
+      ).catch(() => {});
       notify(
         ctrl.signal.aborted
           ? "Download paused. Downloaded sections are kept; resume whenever you’re ready."
@@ -578,6 +594,9 @@ function LibraryApp({
               <button
                 key={n.id}
                 className={page === n.id ? "selected" : ""}
+                // Activity keeps its name while work needs attention; the dot describes it instead of renaming it.
+                aria-label={n.id === "activity" ? n.label : undefined}
+                aria-describedby={n.id === "activity" && activityAttention > 0 ? "activity-attention-sidebar" : undefined}
                 onClick={() => {
                   // Like the tab of the current place: on the Library, its own item shows every book again.
                   if (n.id === "library" && page === "library") {
@@ -595,7 +614,7 @@ function LibraryApp({
                     <span className="activity-dot" />
                   )}
                 {/* The attention dot moved here from Settings (#516); it still reads the server's count, for the administrator. */}
-                {n.id === "activity" && activityAttention > 0 && <span className="attention-dot" role="img" aria-label="Background work needs attention" data-testid="activity-indicator" />}
+                {n.id === "activity" && activityAttention > 0 && <span id="activity-attention-sidebar" className="attention-dot" role="img" aria-label="Background work needs attention" data-testid="activity-indicator" />}
               </button>
             ))}
           </nav>
@@ -641,6 +660,7 @@ function LibraryApp({
             <button
               className={`settings-nav ${page === "settings" ? "selected" : ""}`}
               onClick={() => switchPlace("settings")}
+              aria-label="Settings"
             >
               <Settings size={19} />
               <span>Settings</span>
@@ -790,7 +810,8 @@ function LibraryApp({
                 downloads={downloads}
                 downloadParts={downloadParts}
                 downloadJobs={downloadJobs}
-                downloaded={downloaded}
+                saveRecords={saveRecords}
+                ebooks={savedEbooks.filter((e) => offlineEbookEditionIds.has(e.id))}
                 refresh={refresh}
                 refreshDownloads={refreshDownloads}
                 startDownload={startDownload}
@@ -833,10 +854,13 @@ function LibraryApp({
                 key={n.id}
                 className={page === n.id ? "selected" : ""}
                 onClick={() => switchPlace(n.id as Place)}
+                aria-label={n.label}
+                // The tab keeps its name while work needs attention; the dot describes it instead of renaming it.
+                aria-describedby={n.id === "activity" && activityAttention > 0 ? "activity-attention-mobile" : undefined}
               >
                 <n.icon size={20} />
                 <span>{n.label}</span>
-                {n.id === "activity" && activityAttention > 0 && <span className="attention-dot" role="img" aria-label="Background work needs attention" />}
+                {n.id === "activity" && activityAttention > 0 && <span id="activity-attention-mobile" className="attention-dot" role="img" aria-label="Background work needs attention" />}
               </button>
             ),
           )}

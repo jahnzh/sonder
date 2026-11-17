@@ -73,6 +73,23 @@ test("switching place counts as a step for Back, and the installed app starts on
   await expect(shown(page)).toHaveText("Discover");
 });
 
+// Work an earlier spec leaves failed or stuck on the shared server lights the attention dot. The dot used to join the
+// tab's name ("Settings Background work needs attention"), so the tab could not be reached by its name (#501's check).
+// The dot sits on Activity since #516; the rule is the same there.
+test("the Activity tab keeps its name while background work needs attention", async ({ page }) => {
+  await page.route("**/api/activity", (route) =>
+    route.fulfill({ json: { checkedAt: Date.now(), stuckMultiplier: 1, processes: [], items: [], attention: 1 } }));
+  await page.goto("/#discover");
+  await expect(shown(page)).toHaveText("Discover");
+  const activity = tab(page, "Activity");
+  await expect(activity.getByRole("img", { name: "Background work needs attention" })).toBeAttached();
+  await expect(activity).toHaveAccessibleDescription("Background work needs attention");
+  await expect(tab(page, "Settings")).toHaveAccessibleDescription("");
+  await activity.click();
+  await expect(page).toHaveURL(/#activity$/);
+  await expect(shown(page)).toHaveText("Activity");
+});
+
 test("tapping the tab of the current place adds no step", async ({ page }) => {
   await page.goto("/#library");
   await expect(shown(page)).toHaveText("Library");

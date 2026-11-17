@@ -7,13 +7,15 @@ import {
   X,
   Trash2,
   HardDrive,
+  RotateCcw,
 } from "lucide-react";
 import { AcquisitionQueue } from "../components/SourceWorkflow";
 import { bytes, deleteDownloads } from "../lib";
 import type { Book, Download as DownloadRecord, DownloadPart } from "../types";
 import { type Page, type Notify, ListenButton, Empty } from "./shared";
+import { deviceSaveEntries, deviceSaveEntryLine, type DeviceSaveRecord, type RunningSave } from "../device-saves";
 
-export type DownloadJobs = Record<string, { progress: number; chapter: number; total: number }>;
+export type DownloadJobs = Record<string, { progress: number; chapter: number; total: number } & RunningSave>;
 
 export function DownloadsPage({
   admin,
@@ -21,7 +23,8 @@ export function DownloadsPage({
   downloads,
   downloadParts,
   downloadJobs,
-  downloaded,
+  saveRecords,
+  ebooks,
   refresh,
   refreshDownloads,
   startDownload,
@@ -36,7 +39,8 @@ export function DownloadsPage({
   downloads: DownloadRecord[];
   downloadParts: DownloadPart[];
   downloadJobs: DownloadJobs;
-  downloaded: (b: Book) => boolean;
+  saveRecords: DeviceSaveRecord[];
+  ebooks: { id: string; workId: string; size: number }[];
   refresh: () => Promise<void>;
   refreshDownloads: () => Promise<void>;
   startDownload: (b: Book) => Promise<void>;
@@ -46,14 +50,13 @@ export function DownloadsPage({
   navigate: (p: Page) => void;
   notify: Notify;
 }) {
-  const downloadBooks = books.filter(
-    (b) =>
-      downloads.some((d) => d.recordingId === b.recordingId) ||
-      downloadParts.some(
-        (d) => d.recordingId === b.recordingId && d.loaded > 0,
-      ) ||
-      downloadJobs[b.recordingId],
-  );
+  // One entry per work from the device's books, files, running saves and records (#517); ebook-only works are kept
+  // here too but have no audiobook row on this page.
+  const entries = deviceSaveEntries({ books, downloads, downloadParts, running: downloadJobs, records: saveRecords, ebooks })
+    .flatMap((entry) => {
+      const book = entry.audio ? books.find((b) => b.id === entry.bookId) : undefined;
+      return book ? [{ entry, book }] : [];
+    });
   return (
     <>
       {/* Shown as Activity's Now (#516): the place's Page header holds the Title. */}
@@ -91,19 +94,16 @@ export function DownloadsPage({
       <section className="download-section">
         <div className="section-heading">
           <h2>
-            Your downloads <span>{downloadBooks.length}</span>
+            Your downloads <span>{entries.length}</span>
           </h2>
           <span className="muted small">Stored on this device</span>
         </div>
-        {downloadBooks.length ? (
+        {entries.length ? (
           <div className="download-list">
-            {downloadBooks.map((b) => {
-              const files = downloads.filter(
-                (d) => d.recordingId === b.recordingId,
-              );
-              const job = downloadJobs[b.recordingId];
+            {entries.map(({ entry, book: b }) => {
+              const line = deviceSaveEntryLine(entry);
               return (
-                <div className="download-row" key={b.id}>
+                <div className="download-row" key={entry.workId} data-save-state={entry.state}>
                   <button
                     className="download-cover"
                     onClick={() => setDetail(b)}
@@ -118,53 +118,22 @@ export function DownloadsPage({
                       {b.title}
                     </button>
                     <p>{b.author}</p>
-                    {job ? (
-                      <>
-                        <div className="download-progress">
-                          <i style={{ width: `${job.progress}%` }} />
-                        </div>
-                        <small>
-                          Downloading chapter {job.chapter} of{" "}
-                          {job.total} · {Math.round(job.progress)}%
-                        </small>
-                      </>
-                    ) : (
-                      <small
-                        className={
-                          downloaded(b) ? "download-complete" : ""
-                        }
-                      >
-                        {downloaded(b) ? (
-                          <>
-                            <Check size={13} /> Ready for offline
-                            listening
-                          </>
-                        ) : (
-                          `${files.length} of ${b.tracks.length} chapters downloaded`
-                        )}{" "}
-                        <span>
-                          ·{" "}
-                          {bytes(
-                            files.reduce((a, d) => a + d.size, 0) +
-                              downloadParts
-                                .filter(
-                                  (part) =>
-                                    part.recordingId ===
-                                    b.recordingId,
-                                )
-                                .reduce(
-                                  (total, part) =>
-                                    total + part.loaded,
-                                  0,
-                                ),
-                          )}
-                        </span>
-                      </small>
+                    {entry.state === "saving" && (
+                      <div className="download-progress">
+                        <i style={{ width: `${Math.round(entry.progress * 100)}%` }} />
+                      </div>
+                    )}
+                    <small className={entry.state === "complete" ? "download-complete" : ""}>
+                      {entry.state === "complete" && <Check size={13} />}
+                      {line}
+                    </small>
+                    {entry.why === "failed" && entry.reason && (
+                      <small className="download-reason">{entry.reason}</small>
                     )}
                   </div>
                   <div className="download-actions">
                     <button className="button subtle" aria-label={`Manage versions and sources for ${b.title}`} onClick={()=>setMediaTarget(b)}>Manage versions</button>
-                    {job ? (
+                    {entry.state === "saving" ? (
                       <button
                         className="button subtle"
                         onClick={() => onPauseDownload(b)}
@@ -173,14 +142,15 @@ export function DownloadsPage({
                       </button>
                     ) : (
                       <>
-                        {downloaded(b) ? (
+                        {entry.state === "complete" ? (
                           <ListenButton book={b} compact />
                         ) : (
                           <button
                             className="button subtle"
                             onClick={() => void startDownload(b)}
                           >
-                            <Download size={16} /> Finish download
+                            {entry.why === "failed" ? <RotateCcw size={16} /> : <Download size={16} />}
+                            {entry.why === "failed" ? " Retry" : " Resume"}
                           </button>
                         )}
                         <button
