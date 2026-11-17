@@ -257,8 +257,13 @@ test("desktop layout and server/device distinction remain usable without overflo
   await expect(
     page.getByRole("heading", { name: /On your home server/ }),
   ).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+    1440,
+  );
+  // This device's saves are Activity's This device (#518).
+  await page.goto("/#activity/device");
   await expect(
-    page.getByRole("heading", { name: "On this device", exact: true }),
+    page.getByRole("list", { name: "Kept on this device", exact: true }),
   ).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     1440,

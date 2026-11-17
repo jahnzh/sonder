@@ -243,8 +243,7 @@ function built(route: Route): boolean {
     case "gallery-sheet":
       return true;
     case "activity":
-      // This device comes with its own ticket.
-      return route.part === "now" || route.part === "server";
+      return route.part === "now" || route.part === "device" || route.part === "server";
     default:
       return false;
   }

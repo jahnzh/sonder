@@ -148,11 +148,13 @@ test("what an address shows: built pages as they are, everything else the first 
   assert.equal(shows("#listen/w1"), "#library");
   assert.equal(shows("#read/w1"), "#library");
   assert.equal(shows("#settings/appearance"), "#settings");
-  assert.equal(shows("#activity/device"), "#activity");
+  assert.equal(shows("#activity/device"), "#activity/device");
   assert.equal(shows("#activity/server/wsl"), "#activity");
   // Activity is everyone's place (#516); its Server part and workers are the administrator's: someone else gets Now.
-  for (const address of ["#activity", "#activity/server", "#activity/server/wsl", "#activity/bogus", "#activity/device"])
+  for (const address of ["#activity", "#activity/server", "#activity/server/wsl", "#activity/bogus"])
     assert.equal(shows(address, false), "#activity", address);
+  // This device is everyone's (#518).
+  assert.equal(shows("#activity/device", false), "#activity/device");
   assert.equal(shows("#settings", false), "#settings");
   assert.equal(shows("#discover", false), "#discover");
 });

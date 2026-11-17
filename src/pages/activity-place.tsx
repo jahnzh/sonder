@@ -1,7 +1,7 @@
 // Activity as a place (#516, spec #513 "The place, addresses and navigation"; boards Activity.dc.html,
 // ActivityMember.dc.html, DesktopActivity.dc.html): the Page header and the Segmented control of its parts. Until
 // their own tickets land the parts show what exists: Now is today's Downloads page, Server today's Activity page.
-// This device joins with its own ticket.
+// This device is everyone's (#518, `activity-device.tsx`).
 import type { ReactNode } from "react";
 import type { ActivityPart } from "../routes";
 import { PageHeader } from "../parts/PageHeader";
@@ -12,9 +12,13 @@ export function activityParts(admin: boolean): SegmentOption<ActivityPart>[] {
   return admin
     ? [
         { value: "now", label: "Now" },
+        { value: "device", label: "This device" },
         { value: "server", label: "Server" },
       ]
-    : [{ value: "now", label: "Now" }];
+    : [
+        { value: "now", label: "Now" },
+        { value: "device", label: "This device" },
+      ];
 }
 
 export function ActivityPlace({
@@ -22,6 +26,7 @@ export function ActivityPlace({
   part,
   onPart,
   now,
+  device,
   server,
 }: {
   admin: boolean;
@@ -30,6 +35,7 @@ export function ActivityPlace({
   /** Switching parts replaces the address (ADR 0020): the shell moves there. */
   onPart: (part: ActivityPart) => void;
   now: ReactNode;
+  device: ReactNode;
   server: ReactNode;
 }) {
   const parts = activityParts(admin);
@@ -41,7 +47,7 @@ export function ActivityPlace({
         {/* One part alone is nothing to choose between. */}
         {parts.length > 1 && <Segmented label="Activity" options={parts} value={shown} onChange={onPart} />}
       </div>
-      {shown === "server" ? server : now}
+      {shown === "server" ? server : shown === "device" ? device : now}
     </>
   );
 }

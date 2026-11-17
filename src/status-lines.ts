@@ -207,6 +207,28 @@ export function deviceSaveLine({ keep, saving, filesTotal, filesSaved, size }: D
   return `Not complete${DOT}${filesSaved} of ${filesTotal} files`;
 }
 
+/**
+ * What a work keeps on this device, for This device's Kept rows (#518, spec #513 "This device"): "Audiobook and
+ * ebook · 414 MB", "Audiobook · 702 MB", "Ebook · 0.6 MB", or the line of an unfinished audiobook save.
+ */
+export type DeviceKeptFacts = {
+  /** The audiobook's files on this device: every file, some, or none. */
+  audio: "complete" | "partial" | "none";
+  /** The audiobook's files, and of those the complete ones (for an unfinished save). */
+  filesTotal: number;
+  filesSaved: number;
+  /** An ebook of the work is saved for reading offline. */
+  ebook: boolean;
+  /** Everything of the work kept here, in bytes. */
+  size: number;
+};
+
+export function deviceKeptLine({ audio, filesTotal, filesSaved, ebook, size }: DeviceKeptFacts): string | null {
+  if (audio === "partial") return `Not complete${DOT}${filesSaved} of ${filesTotal} files`;
+  if (audio === "complete") return `${ebook ? "Audiobook and ebook" : "Audiobook"}${DOT}${bytes(size)}`;
+  return ebook ? `Ebook${DOT}${bytes(size)}` : null;
+}
+
 /** A book of a series the user has not added. */
 export const NOT_IN_LIBRARY_LINE = "Not in your library";
 /** A queue that is switched off. */
