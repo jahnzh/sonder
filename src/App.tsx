@@ -54,7 +54,10 @@ import {
   getDownloadedBlob,
   clock,
   listOfflineEbookEditionIds,
+  listDeviceSaveRecords,
+  writeDeviceSaveRecord,
 } from "./lib";
+import type { DeviceSaveRecord } from "./device-saves";
 import type {
   Book,
   Download as DownloadRecord,
@@ -217,8 +220,9 @@ function LibraryApp({
   );
   const [downloadParts, setDownloadParts] = useState<DownloadPart[]>([]);
   const [downloadJobs, setDownloadJobs] = useState<
-    Record<string, { progress: number; chapter: number; total: number }>
+    Record<string, { progress: number; chapter: number; total: number; loaded?: number; size?: number }>
   >({});
+  const [saveRecords, setSaveRecords] = useState<DeviceSaveRecord[]>([]);
   const [online, setOnline] = useState(navigator.onLine);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settings, setSettings] = useState<SettingsData | null>(null);
@@ -241,6 +245,7 @@ function LibraryApp({
     }
     setDownloads(valid);
     setDownloadParts(await localDB.downloadParts.toArray());
+    setSaveRecords(await listDeviceSaveRecords().catch(() => []));
   }, []);
   const refreshOfflineEbooks = useCallback(async () => {
     setOfflineEbookEditionIds(new Set(await listOfflineEbookEditionIds()));
@@ -451,6 +456,7 @@ function LibraryApp({
     const ctrl = new AbortController();
     controllers.current.set(b.recordingId, ctrl);
     try {
+      await writeDeviceSaveRecord(b.recordingId, b.workId, { state: "saving" }).catch(() => {});
       await navigator.storage?.persist?.().catch(() => false);
       for (let i = 0; i < b.tracks.length; i++) {
         setDownloadJobs((j) => ({
@@ -459,6 +465,8 @@ function LibraryApp({
             progress: (i / b.tracks.length) * 100,
             chapter: i + 1,
             total: b.tracks.length,
+            loaded: 0,
+            size: 0,
           },
         }));
         await downloadTrack(b.tracks[i], ctrl.signal, (loaded, total) =>
@@ -469,13 +477,21 @@ function LibraryApp({
                 ((i + (total ? loaded / total : 0)) / b.tracks.length) * 100,
               chapter: i + 1,
               total: b.tracks.length,
+              loaded,
+              size: total,
             },
           })),
         );
         await refreshDownloads();
       }
+      await writeDeviceSaveRecord(b.recordingId, b.workId, { state: "finished" }).catch(() => {});
       notify(`“${b.title}” is ready for wherever you go.`);
     } catch (e) {
+      await writeDeviceSaveRecord(
+        b.recordingId,
+        b.workId,
+        ctrl.signal.aborted ? { state: "paused" } : { state: "failed", reason: (e as Error).message },
+      ).catch(() => {});
       notify(
         ctrl.signal.aborted
           ? "Download paused. Downloaded sections are kept; resume whenever you’re ready."
@@ -785,7 +801,8 @@ function LibraryApp({
                 downloads={downloads}
                 downloadParts={downloadParts}
                 downloadJobs={downloadJobs}
-                downloaded={downloaded}
+                saveRecords={saveRecords}
+                ebooks={savedEbooks.filter((e) => offlineEbookEditionIds.has(e.id))}
                 refresh={refresh}
                 refreshDownloads={refreshDownloads}
                 startDownload={startDownload}
