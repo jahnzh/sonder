@@ -246,6 +246,8 @@ export function step(from: Route, to: Route): "push" | "replace" | "none" {
 function built(route: Route): boolean {
   // The Audiobook page (#530).
   if (route.name === "book-page" && route.page === "audiobook") return true;
+  // The Ebook page (#531).
+  if (route.name === "book-page" && route.page === "ebook") return true;
   switch (route.name) {
     case "library":
     case "discover":

@@ -1,10 +1,17 @@
-import { userStorageKey } from "../lib";
 import { useState } from "react";
 import { BookOpen, Loader2 } from "lucide-react";
-import { api, localDB, bytes, isAdmin } from "../lib";
+import { api, isAdmin } from "../lib";
 import { openReader } from "../reading";
 import { usePlayer } from "../player";
-import type { Book, SavedEbook } from "../types";
+import { chosenEbook } from "../ebook-choice";
+import { deviceEbookChoice } from "../ebook-device-copy";
+import { useStoredWorks } from "../library-works-store";
+import type { Book, LibraryWork } from "../types";
+
+/**
+ * Read: opens the work's chosen EPUB (src/ebook-choice.ts, the edition the Ebook page ticks) without asking which
+ * one (#531). Without an EPUB it closes and, for the administrator, opens today's ebook search.
+ */
 export function ReaderShortcut({
   book,
   compact = false,
@@ -18,49 +25,23 @@ export function ReaderShortcut({
   onMissing: () => void;
   playback?: boolean;
 }) {
-  const [loading, setLoading] = useState(false),
-    [choices, setChoices] = useState<SavedEbook[]>([]);
+  const [loading, setLoading] = useState(false);
   const p = usePlayer();
-  const read = (ebook: SavedEbook) => {
-    localStorage.setItem(userStorageKey(`reader-ebook:${book.workId}`), ebook.id);
-    setChoices([]);
+  const stored = useStoredWorks().find((work) => work.workId === book.workId) ?? null;
+  const read = (ebookId: string) => {
     onOpen();
     if (playback || p.book?.recordingId === book.recordingId)
-      window.dispatchEvent(new CustomEvent("sonder:playback-reader",{detail:{id:ebook.id,workId:book.workId}}));
-    else openReader(ebook.id);
+      window.dispatchEvent(new CustomEvent("sonder:playback-reader", { detail: { id: ebookId, workId: book.workId } }));
+    else openReader(ebookId);
   };
   const open = async () => {
     setLoading(true);
     try {
-      const all = await api<SavedEbook[]>("/ebooks").catch(
-        async () =>
-          ((await localDB.preferences.get("ebooks"))?.value ||
-            []) as SavedEbook[],
-      );
-      const ebooks = all.filter(
-        (ebook) =>
-          ebook.workId === book.workId &&
-          ebook.format === "epub" &&
-          ebook.available,
-      );
-      let defaultEbookId: string | null = null;
-      try {
-        defaultEbookId = (
-          await api<{ defaultEbookId: string | null }>(
-            `/works/${encodeURIComponent(book.workId)}/ebook-set`,
-          )
-        ).defaultEbookId;
-      } catch {
-        /* offline */
-      }
-      const preferred = ebooks.find(
-        (ebook) =>
-          ebook.id ===
-          (defaultEbookId ||
-            localStorage.getItem(userStorageKey(`reader-ebook:${book.workId}`))),
-      );
-      if (preferred || ebooks.length === 1) read(preferred || ebooks[0]);
-      else if (ebooks.length) setChoices(ebooks);
+      // The work as the server has it now (an edition added a moment ago counts); without a connection, the
+      // library's stored work.
+      const work = (await api<LibraryWork>(`/works/${encodeURIComponent(book.workId)}`).catch(() => null)) ?? stored;
+      const chosen = work ? chosenEbook(work, deviceEbookChoice(book.workId)) : null;
+      if (chosen) read(chosen.id);
       else {
         onOpen();
         if (isAdmin()) onMissing();
@@ -78,42 +59,8 @@ export function ReaderShortcut({
         disabled={loading}
         onClick={() => void open()}
       >
-        {loading ? (
-          <Loader2 size={19} className="spin" />
-        ) : (
-          <BookOpen size={19} />
-        )}{" "}
-        {!compact && "Read ebook"}
+        {loading ? <Loader2 size={19} className="spin" /> : <BookOpen size={19} />} {!compact && "Read ebook"}
       </button>
-      {choices.length > 0 && (
-        <>
-          <button
-            className="menu-backdrop"
-            aria-label="Close ebook choices"
-            onClick={() => setChoices([])}
-          />
-          <div
-            className="reader-shortcut-menu"
-            role="group"
-            aria-label="Ebook editions"
-          >
-            <strong>Choose a reading edition</strong>
-            {choices.map((ebook, index) => (
-              <button key={ebook.id} onClick={() => read(ebook)}>
-                <span>{ebook.title}</span>
-                <small>
-                  {ebook.id.startsWith("upload-")
-                    ? "Imported EPUB"
-                    : ebook.id.startsWith("libgen-")
-                      ? "Library Genesis EPUB"
-                      : `EPUB edition ${index + 1}`}{" "}
-                  · {bytes(ebook.size)}
-                </small>
-              </button>
-            ))}
-          </div>
-        </>
-      )}
     </div>
   );
 }
