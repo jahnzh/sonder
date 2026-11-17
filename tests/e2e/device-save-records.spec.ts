@@ -1,4 +1,4 @@
-import { test, expect, type Page, type Route } from "@playwright/test";
+import { test, expect, type Page, type Route } from "./device-store";
 import { readFileSync } from "node:fs";
 import { parseRange } from "../../server/range";
 
@@ -130,7 +130,7 @@ test("a save that fails is still Not complete with Retry after a reload, and Ret
   await page.reload();
   await expect(line(page)).toHaveText("Not complete · 1 of 2 files");
   expect(await deviceRecordsOf(page, "recording-alice")).toMatchObject({ record: { value: { state: "failed", reason: "The source is gone." } } });
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
   fail = false;
   await saveAgain(page);
@@ -169,7 +169,7 @@ test("a paused save offers Resume after a reload, and Resume finishes it", async
   await page.reload();
   await expect(line(page)).toHaveText("Not complete · 0 of 2 files");
   expect(await deviceRecordsOf(page, "recording-alice")).toMatchObject({ record: { value: { state: "paused" } } });
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
   await saveAgain(page);
   await expect(line(page)).toHaveText(/^Audiobook · \d/, { timeout: 20000 });

@@ -52,9 +52,10 @@ test("the Torrent client row reads the VPN message with the attention mark, and 
     "data-status",
     "offline",
   );
+  // No horizontal overflow at the window's width (390 here, 393 with the iPhone profile).
   expect(
-    await page.evaluate(() => document.documentElement.scrollWidth),
-  ).toBe(390);
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+  ).toBe(true);
   // Settings' Reading sync section moved to Activity › Server (#519); Settings as pages (#579) had put it on
   // Library and storage.
   await page.goto("/#settings/library");

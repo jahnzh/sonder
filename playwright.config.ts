@@ -25,6 +25,14 @@ const mobileProjects = [
 const pageTurnIphone = existsSync(webkit.executablePath())
   ? [{ name: "webkit-iphone-page-turn", testMatch: /(^|\/)reader-page-turn\.spec\.ts$/, use: { ...devices["iPhone 15"], launchOptions: {} } }]
   : [];
+// Every Activity browser spec also runs in WebKit with the iPhone profile, the slice's final check (#523): Now, This device,
+// Server, the worker's page, the dot, the addresses, the device's save records, the Torrent client row, and the page stack.
+// The service worker is blocked there: once it controls the page, WebKit's requests no longer pass page.route, so every
+// answer a spec routes (the activity answer, a pause, a restart) would reach the suite's server instead after a reload.
+const activitySpecs = /(^|\/)(activity(-[a-z]+)?|device-save-records|torrent-health|navigation)\.spec\.ts$/;
+const activityIphone = existsSync(webkit.executablePath())
+  ? [{ name: "webkit-iphone-activity", testMatch: activitySpecs, use: { ...devices["iPhone 15"], serviceWorkers: "block" as const, launchOptions: {} } }]
+  : [];
 const desktopProjects = [
   { name: "chromium" },
   // Layout checks also run in Firefox/WebKit when those browsers are installed.
@@ -59,6 +67,8 @@ const desktopProjects = [
               /(^|\/)ebook-page\.spec\.ts$/,
               // The worker's page (#520).
               /(^|\/)activity-worker\.spec\.ts$/,
+              // The rest of Activity's specs, the slice's final check (#523).
+              /(^|\/)(activity-navigation|torrent-health)\.spec\.ts$/,
               // A book read in the reader is In progress; the ebook shelf leaves Discover (#556).
               /(^|\/)(ebook-only-library|discovery)\.spec\.ts$/,
             ]
@@ -66,6 +76,7 @@ const desktopProjects = [
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: {} },
     })),
   ...pageTurnIphone,
+  ...activityIphone,
 ];
 export default defineConfig({
   testDir: "./tests/e2e",
