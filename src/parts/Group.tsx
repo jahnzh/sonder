@@ -9,21 +9,31 @@ export type GroupProps = {
   caption?: string;
   /** The name for a group shown without a caption. */
   label?: string;
+  /** An info mark (Tooltip's InfoMark) after the caption. */
+  info?: ReactNode;
   /** A note under the card (Caption size, not uppercase, muted). */
   note?: string;
   /** Rows. */
   children: ReactNode;
 };
 
-export function Group({ caption, label, note, children }: GroupProps) {
+export function Group({ caption, label, info, note, children }: GroupProps) {
   const id = useId();
   return (
     <div className="part-group-block">
-      {caption && (
-        <h2 id={`${id}-caption`} className="part-group-caption type-caption">
-          {caption}
-        </h2>
-      )}
+      {caption &&
+        (info ? (
+          <div className="part-group-caption-line">
+            <h2 id={`${id}-caption`} className="part-group-caption type-caption">
+              {caption}
+            </h2>
+            {info}
+          </div>
+        ) : (
+          <h2 id={`${id}-caption`} className="part-group-caption type-caption">
+            {caption}
+          </h2>
+        ))}
       <ul className="part-group" role="list" aria-labelledby={caption ? `${id}-caption` : undefined} aria-label={caption ? undefined : label}>
         {children}
       </ul>
