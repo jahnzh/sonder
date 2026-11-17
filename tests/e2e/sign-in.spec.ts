@@ -86,8 +86,13 @@ async function expectPageFrame(page: Page, title: string, viewport: { width: num
     expect(column.width).toBe(400);
     expect(Math.abs(column.x + column.width / 2 - viewport.width / 2)).toBeLessThanOrEqual(1);
   }
-  // The Title is 24 under Sonder's name or the block before it.
-  expect((await box(h1)).height).toBe(34);
+  // The Title is 24 under Sonder's name or the block before it, and one line: its height is the line height (34 in
+  // the app's own fonts). The fonts are bundled but load on first use, so wait for them: measured on the fallback
+  // font the Title can be wider and wrap (#643). A wrapped Title is twice the line height and still fails.
+  await page.evaluate(() => document.fonts.ready);
+  const lineHeight = await h1.evaluate((el) => parseFloat(getComputedStyle(el).lineHeight));
+  expect(lineHeight).toBeGreaterThan(0);
+  expect((await box(h1)).height).toBe(lineHeight);
   return column;
 }
 /** Each block's top is 24 under the previous one's bottom (the boards' gap), in the order given. */

@@ -3,8 +3,8 @@ import { readFileSync } from "node:fs";
 import { parseRange } from "../../server/range";
 
 // The device remembers how each save ended (#517): a failed or paused save to this device keeps its state in
-// Activity's Now (the Downloads page until #516 put Activity in its slot) after a reload, from the device's own
-// records, and offers Retry or Resume.
+// Activity's This device (#518; Now until then) after a reload, from the device's own records. Until Keep on this
+// device (S10) and Now's rows (#521), Retry and Resume are the book dialog's save button, which the Kept row opens.
 test.use({ serviceWorkers: "block" });
 
 // A save first asks the browser to protect its storage. Firefox asks the owner in a prompt that nobody answers in a
@@ -56,21 +56,33 @@ async function saveFromDialog(page: Page) {
   await page.getByRole("dialog").getByRole("button", { name: "Save offline", exact: true }).click();
 }
 
-/** The device's save of the book, in Now's "Your downloads" (the server's own downloads above it are other rows). */
-const row = (page: Page) => page.locator(".download-section .download-row", { hasText: TITLE });
+/** The device's save of the book, in This device's Kept on this device. */
+const kept = (page: Page) => page.getByRole("list", { name: "Kept on this device", exact: true });
+const row = (page: Page) => kept(page).getByRole("listitem").filter({ hasText: TITLE });
+const line = (page: Page) => row(page).locator(".part-book-row-status");
+/** The book's row while its save runs, in Saving now. */
+const saving = (page: Page) => page.getByRole("list", { name: "Saving now", exact: true }).getByRole("listitem").filter({ hasText: TITLE });
+/** Retry and Resume until Now's rows: the Kept row opens the book dialog, whose save button carries on. */
+async function saveAgain(page: Page) {
+  await row(page).getByRole("button", { name: new RegExp(`^${TITLE}`) }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Save offline", exact: true }).click();
+  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+}
 /** Activity took the Downloads slot in the tab bar (#516); its name stays "Activity" while the dot is lit. */
 const activityTab = (page: Page) =>
   page.getByRole("navigation", { name: "Mobile navigation" }).getByRole("button", { name: "Activity", exact: true });
 
-/** Reaches this device's saves the way the owner does: the Activity tab, which opens on Now. */
-async function openNow(page: Page) {
+/** Reaches this device's saves the way the owner does: the Activity tab, which opens on Now, then This device. */
+async function openDevice(page: Page) {
   const dialog = page.getByRole("dialog");
   if (await dialog.isVisible()) await page.getByRole("button", { name: "Close dialog", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await activityTab(page).click();
   await expect(page).toHaveURL(/#activity$/);
-  await expect(page.getByRole("radiogroup", { name: "Activity" }).getByRole("radio", { checked: true })).toHaveText("Now");
-  await expect(page.getByRole("heading", { name: /Your downloads/ })).toBeVisible();
+  await page.getByRole("radiogroup", { name: "Activity" }).getByRole("radio", { name: "This device" }).click();
+  await expect(page).toHaveURL(/#activity\/device$/);
+  await expect(kept(page)).toBeVisible();
 }
 
 /** What the device database holds of the book's recording: its save record, complete files and saved sections. */
@@ -110,23 +122,22 @@ test("a save that fails is still Not complete with Retry after a reload, and Ret
   await saveFromDialog(page);
   await expect(page.locator(".toast")).toContainText("The source is gone.", { timeout: 20000 });
 
-  await openNow(page);
-  await expect(row(page).locator("small").first()).toHaveText("Not complete · 1 of 2 files");
-  await expect(row(page).getByText("The source is gone.", { exact: true })).toBeVisible();
-  await expect(row(page).getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+  await openDevice(page);
+  await expect(line(page)).toHaveText("Not complete · 1 of 2 files");
+  // The failure and its reason are the device's record (Now shows them with Retry, #521).
+  expect(await deviceRecordsOf(page, "recording-alice")).toMatchObject({ record: { value: { state: "failed", reason: "The source is gone." } }, files: 1 });
 
   await page.reload();
-  await expect(row(page).locator("small").first()).toHaveText("Not complete · 1 of 2 files");
-  await expect(row(page).getByText("The source is gone.", { exact: true })).toBeVisible();
-  await expect(row(page).getByRole("button", { name: "Resume", exact: true })).toHaveCount(0);
+  await expect(line(page)).toHaveText("Not complete · 1 of 2 files");
+  expect(await deviceRecordsOf(page, "recording-alice")).toMatchObject({ record: { value: { state: "failed", reason: "The source is gone." } } });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
 
   fail = false;
-  await row(page).getByRole("button", { name: "Retry", exact: true }).click();
-  await expect(row(page).locator("small").first()).toHaveText(/^On this device · \d/, { timeout: 20000 });
-  await expect(row(page).getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
+  await saveAgain(page);
+  await expect(line(page)).toHaveText(/^Audiobook · \d/, { timeout: 20000 });
   await page.reload();
-  await expect(row(page).locator("small").first()).toHaveText(/^On this device · \d/);
+  await expect(line(page)).toHaveText(/^Audiobook · \d/);
+  expect(await deviceRecordsOf(page, "recording-alice")).toMatchObject({ record: { value: { state: "finished" } }, files: 2 });
 });
 
 test("a paused save offers Resume after a reload, and Resume finishes it", async ({ page }) => {
@@ -148,21 +159,20 @@ test("a paused save offers Resume after a reload, and Resume finishes it", async
   });
   await saveFromDialog(page);
   await expect.poll(() => held).toBeGreaterThan(0);
-  await openNow(page);
-  await expect(row(page).locator("small").first()).toHaveText("Saving · 0 of 2 files");
-  await row(page).getByRole("button", { name: "Pause", exact: true }).click();
-  await expect(row(page).locator("small").first()).toHaveText("Not complete · 0 of 2 files");
-  await expect(row(page).getByRole("button", { name: "Resume", exact: true })).toBeVisible();
+  await openDevice(page);
+  await expect(saving(page)).toContainText("Saving · 0 of 2 files");
+  await saving(page).getByRole("button", { name: `Pause saving ${TITLE}`, exact: true }).click();
+  await expect(line(page)).toHaveText("Not complete · 0 of 2 files");
+  await expect(saving(page)).toHaveCount(0);
   hold = false;
 
   await page.reload();
-  await expect(row(page).locator("small").first()).toHaveText("Not complete · 0 of 2 files");
-  await expect(row(page).getByRole("button", { name: "Resume", exact: true })).toBeVisible();
-  await expect(row(page).getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
+  await expect(line(page)).toHaveText("Not complete · 0 of 2 files");
+  expect(await deviceRecordsOf(page, "recording-alice")).toMatchObject({ record: { value: { state: "paused" } } });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
 
-  await row(page).getByRole("button", { name: "Resume", exact: true }).click();
-  await expect(row(page).locator("small").first()).toHaveText(/^On this device · \d/, { timeout: 20000 });
+  await saveAgain(page);
+  await expect(line(page)).toHaveText(/^Audiobook · \d/, { timeout: 20000 });
 });
 
 test("removing a failed save from the device forgets how it ended", async ({ page }) => {
@@ -175,12 +185,13 @@ test("removing a failed save from the device forgets how it ended", async ({ pag
   });
   await saveFromDialog(page);
   await expect(page.locator(".toast")).toContainText("The source is gone.", { timeout: 20000 });
-  await openNow(page);
-  await expect(row(page).getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+  await openDevice(page);
+  await expect(line(page)).toHaveText("Not complete · 1 of 2 files");
   // The device remembers the failure and the first file, so there is something to forget.
   expect(await deviceRecordsOf(page, "recording-alice")).toMatchObject({ record: { value: { state: "failed" } }, files: 1 });
 
-  await row(page).getByRole("button", { name: `Remove download of ${TITLE}`, exact: true }).click();
+  await row(page).getByRole("button", { name: `Remove ${TITLE} from this device`, exact: true }).click();
+  await page.getByRole("group", { name: `Remove ${TITLE} from this device` }).getByRole("button", { name: "Remove", exact: true }).click();
   await expect(row(page)).toHaveCount(0);
   await expect.poll(() => deviceRecordsOf(page, "recording-alice")).toEqual({ record: null, files: 0, parts: 0 });
 
@@ -188,7 +199,7 @@ test("removing a failed save from the device forgets how it ended", async ({ pag
   const books = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/books");
   await page.reload();
   await books;
-  await expect(page.getByRole("heading", { name: /Your downloads/ })).toBeVisible();
-  await expect(page.locator(".download-section .download-row")).toHaveCount(0);
+  await expect(kept(page)).toContainText("No books kept on this device");
+  await expect(row(page)).toHaveCount(0);
   expect(await deviceRecordsOf(page, "recording-alice")).toEqual({ record: null, files: 0, parts: 0 });
 });

@@ -37,6 +37,12 @@ const desktopProjects = [
               /(now-playing-layout|device-reset|reader-frame|navigation|gallery(-[a-z-]+)?|device-save-records)\.spec\.ts/,
               // Sign in, Request an account and Join (#582).
               /(^|\/)(sign-in|account-requests)\.spec\.ts$/,
+              // Activity's This device (#518).
+              /(^|\/)activity-device\.spec\.ts$/,
+              // An account switch during a library write (#528 review finding 1).
+              /(^|\/)library-works-user-race\.spec\.ts$/,
+              // The page turn inside a sentence that crosses a page (#508).
+              /(^|\/)reader-page-turn\.spec\.ts$/,
               // Activity › Server (#519).
               /(^|\/)activity-server\.spec\.ts$/,
               // The attention dot from Now's builder (#521).

@@ -256,8 +256,7 @@ function built(route: Route): boolean {
     case "settings-page":
       return isSettingsPage(route.page);
     case "activity":
-      // This device comes with its own ticket.
-      return route.part === "now" || route.part === "server";
+      return route.part === "now" || route.part === "device" || route.part === "server";
     // The worker's page (#520). A worker the server does not report shows Server, once the page has read the server.
     case "worker":
       return true;
