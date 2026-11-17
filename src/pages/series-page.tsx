@@ -23,7 +23,7 @@ import type { Book } from "../types";
 import { chosenRecording } from "./book-model";
 import { openAddSheet, SeriesAddSheet } from "./series-add-sheet";
 import type { SeriesAddSeries } from "./series-add-model";
-import { seriesPageModel, type SeriesRow } from "./series-model";
+import { DISMISS_LABEL, NEW_CARD_LINE, NEW_MARK, seriesPageModel, withoutNew, type SeriesPageSeries, type SeriesRow } from "./series-model";
 import "./series-page.css";
 
 /** The preferred language of a series' books, as today's series dialog keeps it. */
@@ -98,6 +98,9 @@ export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onR
       // Without storage the language holds for this page only.
     }
   };
+  /** Dismiss of the New card: sending, and its failure, shown on the card. */
+  const [dismissing, setDismissing] = useState(false);
+  const [dismissError, setDismissError] = useState("");
 
   const load = useCallback(
     async (refresh = false) => {
@@ -127,6 +130,7 @@ export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onR
   );
   useEffect(() => {
     setRemoveOpen(false);
+    setDismissError("");
     void load();
   }, [load]);
   // Today's dialog saved books (an Add): the series and the library by work are read again.
@@ -159,6 +163,25 @@ export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onR
     }
   };
   const retryRefresh = () => run(() => load(true));
+  // Dismiss: acknowledges every work the answer marks new; the card and the marks clear, then the series is read again.
+  const dismiss = async (bookIds: number[]) => {
+    setDismissing(true);
+    setDismissError("");
+    try {
+      await api(`/series/${seriesId}/ack`, { method: "POST", body: JSON.stringify({ bookIds }) });
+      setSeries((current) => {
+        if (!current) return current;
+        const cleared = withoutNew(current);
+        lastRead.set(key, cleared);
+        return cleared;
+      });
+      void load();
+    } catch (reason) {
+      setDismissError((reason as Error).message);
+    } finally {
+      setDismissing(false);
+    }
+  };
   const play = async (workId: string) => {
     const work = library.get(workId);
     const recording = work ? chosenRecording(work) : null;
@@ -200,7 +223,8 @@ export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onR
       <BookRow
         key={row.bookId}
         title={row.title}
-        status={row.line}
+        status={row.status}
+        lead={row.isNew ? NEW_MARK : null}
         cover={row.cover}
         number={row.number}
         marks={row.marks}
@@ -226,6 +250,23 @@ export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onR
           </p>
           <Button kind="secondary" disabled={busy || !online} onClick={() => void retryRefresh()}>
             Retry
+          </Button>
+        </div>
+      )}
+
+      {model?.newCard && (
+        <div className="series-page-card series-page-new" role="group" aria-label={NEW_CARD_LINE}>
+          <div className="series-page-new-text">
+            <span className="type-body">{NEW_CARD_LINE}</span>
+            <span className="series-page-new-titles type-label">{model.newCard.titles}</span>
+            {dismissError && (
+              <span className="series-page-new-error type-label" role="alert">
+                {dismissError}
+              </span>
+            )}
+          </div>
+          <Button kind="quiet" disabled={dismissing || !online} onClick={() => void dismiss(model.newCard!.bookIds)}>
+            {DISMISS_LABEL}
           </Button>
         </div>
       )}

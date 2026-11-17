@@ -3,7 +3,7 @@
 // each role), Add, Retry and the chevron, the book to continue, related works and the refresh error.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { NEW_MARK, seriesPageModel, type SeriesPageSeries, type SeriesPageWork } from "../src/pages/series-model.ts";
+import { NEW_MARK, seriesPageModel, withoutNew, type SeriesPageSeries, type SeriesPageWork } from "../src/pages/series-model.ts";
 import {
   NEEDS_ADMIN_LINE,
   NOT_IN_LIBRARY_LINE,
@@ -296,4 +296,70 @@ test("the Series page's words in the status-line module (#494)", () => {
   assert.equal(NEEDS_ADMIN_LINE, "Needs the administrator to link it");
   assert.equal(SEVERAL_MATCHES_LINE, "Matches more than one book on the server");
   assert.equal(NOT_IN_LIBRARY_LINE, "Not in your library");
+});
+
+// The New mark and the New card (#565, spec #560 "The Series page"; boards SeriesNew.dc.html, SeriesMore.dc.html).
+
+test("the New line: New leads the line of every work the answer marks new, numbered or related, in the library or not", () => {
+  const works = [
+    book(1, 1),
+    book(2, 2, { new: true }),
+    book(3, 3, { new: true, unreleased: true }),
+    book(4, 4, { new: true }),
+    book(9, null, { title: "Drawings", new: true }),
+  ];
+  const model = seriesPageModel(series(works), facts(libraryOf(libraryWork("work-4"))));
+  assert.deepEqual(
+    [...model.books, ...model.related].map((row) => [row.line, row.status, row.isNew]),
+    [
+      [NOT_IN_LIBRARY_LINE, NOT_IN_LIBRARY_LINE, false],
+      [`${NEW_MARK} · ${NOT_IN_LIBRARY_LINE}`, NOT_IN_LIBRARY_LINE, true],
+      [`${NEW_MARK} · ${NOT_RELEASED_LINE}`, NOT_RELEASED_LINE, true],
+      [`${NEW_MARK} · Not started`, "Not started", true],
+      [`${NEW_MARK} · ${NOT_IN_LIBRARY_LINE}`, NOT_IN_LIBRARY_LINE, true],
+    ],
+  );
+  assert.equal(NEW_MARK, "New");
+  // A new work keeps its Add: the mark changes the line only.
+  assert.deepEqual(model.books[1].action, { kind: "add" });
+});
+
+test("the New card: the new titles in reading order, comma-separated, and every new work for Dismiss", () => {
+  const works = [
+    book(9, null, { title: "The Culture: The Drawings", new: true }),
+    book(4, 4, { title: "The State of the Art", new: true }),
+    book(1, 1, { title: "Consider Phlebas" }),
+    book(10, 10, { title: "The Hydrogen Sonata", new: true }),
+  ];
+  const card = seriesPageModel(series(works), facts(libraryOf())).newCard;
+  assert.deepEqual(card, {
+    titles: "The State of the Art, The Hydrogen Sonata, The Culture: The Drawings",
+    bookIds: [9, 4, 10],
+  });
+});
+
+test("the New card acknowledges a new translation that stands at no row, and names only the rows", () => {
+  const works = [
+    book(1, 1, { title: "English first", language: "en", new: true }),
+    book(2, 1, { title: "Premier", language: "fr", new: true }),
+  ];
+  const card = seriesPageModel(series(works), facts(libraryOf())).newCard;
+  assert.equal(card?.titles, "English first");
+  assert.deepEqual(card?.bookIds, [1, 2]);
+});
+
+test("no card without new works; Dismiss clears the card and the marks", () => {
+  assert.equal(seriesPageModel(series([book(1, 1), book(2, null)]), facts(libraryOf())).newCard, null);
+  // A new translation that stands at no row alone: no row is marked, so no card.
+  const hidden = [book(1, 1, { title: "English first", language: "en" }), book(2, 1, { title: "Premier", language: "fr", new: true })];
+  assert.equal(seriesPageModel(series(hidden), facts(libraryOf())).newCard, null);
+  const answer = series([book(1, 1, { new: true }), book(9, null, { new: true })]);
+  const cleared = seriesPageModel(withoutNew(answer), facts(libraryOf()));
+  assert.equal(cleared.newCard, null);
+  assert.deepEqual([...cleared.books, ...cleared.related].map((row) => [row.line, row.isNew]), [
+    [NOT_IN_LIBRARY_LINE, false],
+    [NOT_IN_LIBRARY_LINE, false],
+  ]);
+  // The answer itself is not changed.
+  assert.equal(answer.works[0].new, true);
 });
