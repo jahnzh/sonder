@@ -48,6 +48,9 @@ test("the Torrent client row reads the VPN message with the attention mark, and 
     "data-status",
     "offline",
   );
+  // Settings' Reading sync section moved to Activity › Server (#519).
+  await expect(page.getByRole("heading", { name: "Reading sync", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Prepare reading sync/ })).toHaveCount(0);
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),
   ).toBe(390);
