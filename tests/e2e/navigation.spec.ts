@@ -144,7 +144,7 @@ test("an address that names nothing, or a page not built yet, shows its place's 
     ["#book/no-such-work", "#library", "Library"],
     ["#series/42/add", "#library", "Library"],
     ["#settings/reading", "#settings", "Settings"],
-    ["#activity/server/wsl", "#activity", "Activity"],
+    ["#activity/server/wsl/extra", "#activity", "Activity"],
     ["#discover/extra", "#discover", "Discover"],
   ] as const) {
     await page.goto(`/${asked}`);

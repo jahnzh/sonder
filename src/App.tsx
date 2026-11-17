@@ -86,7 +86,8 @@ import { type Page, Mark, ListenButton, Empty } from "./pages/shared";
 import { LibraryPage } from "./pages/library-page";
 import { DiscoverPage } from "./pages/discover-page";
 import { DownloadsPage } from "./pages/downloads-page";
-import { ActivityPage } from "./pages/activity-page";
+import { ActivityServer } from "./pages/activity-server";
+import { ActivityItemGroups } from "./pages/activity-items";
 import { ActivityPlace } from "./pages/activity-place";
 import { SettingsPage } from "./pages/settings-page";
 import { firstPage, writeAddress, type Place, type Route } from "./routes";
@@ -214,6 +215,8 @@ function shownPage(route: Route, under: { current: Page }): Page {
   if (route.name === "library" || route.name === "discover" || route.name === "settings" || route.name === "activity")
     under.current = route.name;
   else if (route.name === "settings-page") under.current = "settings";
+  // A worker's address is Activity's Server until the worker's page (#520) has a screen of its own.
+  else if (route.name === "worker") under.current = "activity";
   return under.current;
 }
 function LibraryApp({
@@ -863,10 +866,15 @@ function LibraryApp({
             {page === "activity" && (
               <ActivityPlace
                 admin={user.role === "admin"}
-                part={address.route.name === "activity" ? address.route.part : "now"}
+                part={address.route.name === "activity" ? address.route.part : address.route.name === "worker" ? "server" : "now"}
                 onPart={(part) => address.navigate({ name: "activity", part })}
-                server={<ActivityPage />}
-                now={<DownloadsPage
+                server={<ActivityServer
+                  online={online}
+                  worker={address.route.name === "worker" ? address.route.worker : null}
+                  onWorker={(worker) => address.navigate({ name: "worker", worker })}
+                  notify={notify}
+                />}
+                now={<><DownloadsPage
                 admin={user.role === "admin"}
                 books={books}
                 downloads={downloads}
@@ -884,7 +892,9 @@ function LibraryApp({
                 setMediaTarget={setMediaTarget}
                 navigate={navigate}
                 notify={notify}
-              />}
+              />
+              {/* Today's item groups of the old Activity page, until Now's own ticket (#521). */}
+              {user.role === "admin" && <ActivityItemGroups />}</>}
               />
             )}
             {page === "settings" && (

@@ -5,7 +5,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ArrowUpRight, BookOpen, Check, Cloud, Compass, Copy, Headphones, KeyRound, Loader2, Plus, ShieldCheck, Trash2, UsersRound, Wifi } from "lucide-react";
 import { ProwlarrSettings } from "../../components/ProwlarrSettings";
-import { ReadingSyncSettings } from "../../components/ReadingSyncSettings";
 import { HardcoverSyncSettings, hardcoverChanged } from "../../components/Hardcover";
 import { SourceSettings } from "../../components/SourceWorkflow";
 import { Dialog } from "../../components/ui/dialog";
@@ -419,7 +418,7 @@ export function UsersPage({ user, notify, onChanged }: { user: Account; notify: 
   );
 }
 
-/** The library's name and the reading sync of every title (the administrator's). */
+/** The library's name (the administrator's). Reading sync moved to Activity › Server (#519). */
 export function LibraryStoragePage({ settings, onSaved, notify }: Omit<Props, "user">) {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -461,7 +460,6 @@ export function LibraryStoragePage({ settings, onSaved, notify }: Omit<Props, "u
           </div>
         </section>
       </form>
-      <ReadingSyncSettings notify={notify} />
     </div>
   );
 }
