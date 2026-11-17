@@ -4,8 +4,6 @@
 // every save of a place the reader chose by hand that is still waiting, so back
 // to narration can drop or keep all of them at once.
 
-import { createCheckpointSaver } from "./word-timing";
-
 /** Time and timers, injected so tests can drive them. */
 export interface FollowingClock {
   now(): number;
@@ -44,17 +42,12 @@ export type Relocation = "ignored" | "shown" | "manual";
 export interface FollowJump {
   /** No newer jump, navigation or recording change replaced this one. */
   current(): boolean;
-  /** A Word mode step happened since this jump started, so it must not pull the display back. */
-  stepped(): boolean;
 }
 
 /** How a follow jump to `key` ended. */
 export type FollowOutcome = "shown" | "stale" | "retrying" | "failed";
 
-/** Where a saved reading place came from: chosen while reading, or the narrated sentence. */
-export type SaveOrigin = "reading" | "listening";
-
-/** A place the reader chose by hand whose display is still in flight (a Lyrics turn, a search result, the scrubber). */
+/** A place the reader chose by hand whose display is still in flight (a search result, the scrubber). */
 export interface ManualPlace<L> {
   /** The display ended: save `locator` unless back to narration dropped this place meanwhile; null saves nothing. */
   save(locator: L | null): void;
@@ -70,8 +63,11 @@ export interface NarrationReturn {
 
 export interface ReaderFollowingOptions<L> {
   clock?: FollowingClock;
-  /** Save a manual position once its pause has passed. */
-  onManualSave: (locator: L, origin: SaveOrigin) => void;
+  /**
+   * Save a manual position once its pause has passed. Every place the module saves was chosen while reading;
+   * the narrated sentence is saved as a listening place by the reader itself (`showFragment`), not here.
+   */
+  onManualSave: (locator: L) => void;
   /**
    * Whether there is a narration to follow now: a map for the open ebook that matches
    * the recording in the player, with an interval at the player's position.
@@ -102,7 +98,7 @@ const systemClock: FollowingClock = {
 export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
   const clock = options.clock ?? systemClock;
   let following = true;
-  // Each jump of ours (follow, Lyrics, progress) and each navigation takes a new epoch.
+  // Each jump of ours (follow, search, progress) and each navigation takes a new epoch.
   let epoch = 0;
   // The epoch of the latest navigation (Contents, page turns): a jump started after it ends its window.
   let navigationEpoch = 0;
@@ -124,8 +120,6 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
     gestures++;
     chosen++;
   };
-  // Word mode steps, so a follow jump still waiting for the page when the reader stepped on does not pull the display back.
-  let wordSteps = 0;
   // The sentence last followed (`recording:paragraph`), so the same sentence is not jumped to twice.
   let followed = "";
   // A Read from audio jump is in flight; the follow step leaves the view to it.
@@ -138,14 +132,7 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
   // The page debounce came due while a scrubber return waited for the player: `pendingManual` is held
   // for that return's decision, which is made for where the scrub ended.
   let held = false;
-  // Word mode's checkpoint (a step by hand or the words advancing at a set speed).
-  let wordOrigin: SaveOrigin | null = null;
-  const wordSaver = createCheckpointSaver<{ locator: L; origin: SaveOrigin }>(({ locator, origin }) => {
-    wordOrigin = null;
-    report();
-    options.onManualSave(locator, origin);
-  }, {}, clock);
-  // Displays of a place chosen by hand that save once they end (a Lyrics turn, a search result, the scrubber).
+  // Displays of a place chosen by hand that save once they end (a search result, the scrubber).
   const places = new Set<{ dropped: boolean }>();
   // A back to narration that found no narration to follow kept the saves waiting. Once following
   // starts to work they are dropped after all; paging away (the reader chose again) ends this.
@@ -165,7 +152,7 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
   let mapIdentity: string | null = null;
   let mapConfirmed = false;
   let maps = 0;
-  // Choices of the reader (gestures, navigations, Word steps, paging away) and deferred returns,
+  // Choices of the reader (gestures, navigations, paging away) and deferred returns,
   // so a deferred return can tell whether it is still wanted.
   let chosen = 0;
   let deferrals = 0;
@@ -175,7 +162,7 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
   const holding = () => !!deferral && deferral.at === deferrals && deferral.returns === returns && deferral.chosen === chosen;
   let waiting = false;
   const report = () => {
-    const now = saveTimer !== null || held || wordOrigin !== null || places.size > 0;
+    const now = saveTimer !== null || held || places.size > 0;
     if (now === waiting) return;
     waiting = now;
     options.onSaveWaiting?.(now);
@@ -197,11 +184,6 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
     held = false;
     pendingManual = null;
     navigatedUntil = 0;
-    // A listening checkpoint is the narrated sentence a step moved the audio to; it is kept.
-    if (wordOrigin === "reading") {
-      wordSaver.cancel();
-      wordOrigin = null;
-    }
     for (const place of places) place.dropped = true;
     places.clear();
     returnedFromNavigation = navigationEpoch;
@@ -215,7 +197,7 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
     const locator = pendingManual;
     pendingManual = null;
     report();
-    if (locator !== null) options.onManualSave(locator, "reading");
+    if (locator !== null) options.onManualSave(locator);
   };
 
   const self = {
@@ -228,14 +210,13 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
 
     /**
      * Back to narration, the one operation behind every way of asking for it (the player-bar
-     * button, `F`, Read from audio, Listen from here and its Undo, the audio scrubber, a seek
-     * in Lyrics mode, switching on "Follow the narration"). Following starts, the next
-     * narration update moves the view even to the same sentence, the retries are reset and a
-     * follow error is cleared.
+     * button, `F`, Read from audio, Listen from here and its Undo, the audio scrubber,
+     * switching on "Follow the narration"). Following starts, the next narration update moves
+     * the view even to the same sentence, the retries are reset and a follow error is cleared.
      *
      * With a narration to follow, every save of a place chosen by hand that is still waiting
-     * is dropped (the page debounce, Word mode's reading checkpoint, a Lyrics turn, a search
-     * result, the scrubber), or it would land after the listening place and overwrite it.
+     * is dropped (the page debounce, a search result, the scrubber), or it would land after the
+     * listening place and overwrite it.
      * Without one they are kept and still saved, unless following starts to work before they
      * are (the map arrives, the audio reaches a mapped sentence): then they are dropped at that
      * moment. `narration` defaults to `narrationToFollow()`; an entry point that moves the
@@ -271,7 +252,7 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
      * Back to narration once the narration reached the place it is moving to: the audio scrubber
      * released on another track, which the player loads first. Until `run()` nothing changes, so
      * every save still waiting is kept. `run()` decides for where the narration is then; it does
-     * nothing once the reader chose again (a gesture, a navigation, a Word step, paging away), after
+     * nothing once the reader chose again (a gesture, a navigation, paging away), after
      * another back to narration or when a newer deferred return replaced this one.
      */
     deferredReturn(): DeferredReturn {
@@ -301,25 +282,13 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
       mapIdentity = identity;
       mapConfirmed = identity !== null && confirmed;
     },
-    /** Stop following (a search result, a bookmark, the scrubber, scrolling Lyrics, the checkbox). */
+    /** Stop following (a search result, a bookmark, the scrubber, the checkbox). */
     pageAway() {
       chosen++;
       set(false);
     },
     /** A wheel, key, swipe or link tap on the pages. */
     gesture() { gestureNow(); },
-    /** A page turn in Lyrics mode: pages away and counts as a gesture, not as our own layout. */
-    manualStep() {
-      set(false);
-      automaticUntil = 0;
-      gestureNow();
-    },
-    /** A Word mode step (a sentence or a word chosen by the reader). It pages away unless it moved the narration along. */
-    wordStep(movedAudio: boolean) {
-      wordSteps++;
-      chosen++;
-      if (following && !movedAudio) set(false);
-    },
     /** The first display after the book opened. */
     openingDisplay() { automaticUntil = clock.now() + OPENING_DISPLAY_MS; },
     /** A display of our own; call the returned function when it settled. */
@@ -375,11 +344,7 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
     /** A jump of ours to a sentence. */
     startJump(): FollowJump {
       const request = ++epoch;
-      const steps = wordSteps;
-      return {
-        current: () => request === epoch,
-        stepped: () => steps !== wordSteps,
-      };
+      return { current: () => request === epoch };
     },
     /** The narration switched to another recording, or the map did. */
     recordingChanged() {
@@ -389,8 +354,8 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
     },
     /**
      * A display of ours back to the place shown, due later (a re-theme re-paginated the book).
-     * `due()` is false once the reader chose a place since (Contents, a page turn, a gesture, a Word
-     * step, paging away): the place shown may still be the one from before that choice, while the
+     * `due()` is false once the reader chose a place since (Contents, a page turn, a gesture, paging
+     * away): the place shown may still be the one from before that choice, while the
      * choice's relocation is not reported yet. Displaying it would undo the choice, and its relocation,
      * inside the navigation's window, would be saved as the reader's.
      */
@@ -435,23 +400,11 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
         pendingManual = null;
         navigatedUntil = 0;
         report();
-        options.onManualSave(locator, "reading");
+        options.onManualSave(locator);
       }, MANUAL_SAVE_DELAY_MS);
       report();
       return beforeReturn ? "shown" : "manual";
     },
-    /**
-     * A Word mode checkpoint: a sentence or word stepped to by hand is saved after a pause;
-     * while the words advance by themselves (`auto`), saves are also spaced out. Each request
-     * replaces the one still waiting. `listening` is a step that moved the narration along.
-     */
-    wordCheckpoint(locator: L, origin: SaveOrigin, auto = false) {
-      wordOrigin = origin;
-      wordSaver.request({ locator, origin }, auto);
-      report();
-    },
-    /** Save the Word mode checkpoint still waiting now (page hidden, reader closed, display changed). */
-    flushWordCheckpoint() { wordSaver.flush(); },
     /** A display of a place chosen by hand starts; save it through the answer once it ended. */
     manualPlace(): ManualPlace<L> {
       const place = { dropped: false };
@@ -461,7 +414,7 @@ export function createReaderFollowing<L>(options: ReaderFollowingOptions<L>) {
         save(locator) {
           if (place.dropped || !places.delete(place)) return;
           report();
-          if (locator !== null) options.onManualSave(locator, "reading");
+          if (locator !== null) options.onManualSave(locator);
         },
       };
     },

@@ -1558,6 +1558,39 @@
         "attention": false
       },
       {
+        "id": "alignment:align-rejected",
+        "kind": "alignment",
+        "processId": "alignment",
+        "title": "Speaker for the Dead",
+        "detail": "Reading sync rebuild rejected, the earlier one is kept",
+        "user": null,
+        "state": "done",
+        "progress": 1,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794657120000,
+        "workId": "w1",
+        "bookId": null,
+        "cover": "/covers/ed1.jpg",
+        "facts": {
+          "kind": "alignment",
+          "status": "error",
+          "outcome": "rejected",
+          "coverage": 0,
+          "wholeBook": false,
+          "stage": null,
+          "files": null
+        },
+        "error": "The rebuild was rejected: it mapped none of the text. The previous map (82% of the text mapped) stays published.",
+        "permanent": false,
+        "actions": [
+          "retry"
+        ],
+        "stuck": null,
+        "blockedBy": null,
+        "attention": false
+      },
+      {
         "id": "ebook-set:w2:eb-accepted",
         "kind": "ebook-set",
         "processId": "ebook-set",
@@ -3120,6 +3153,39 @@
         "attention": false
       },
       {
+        "id": "alignment:align-rejected",
+        "kind": "alignment",
+        "processId": "alignment",
+        "title": "Speaker for the Dead",
+        "detail": "Reading sync rebuild rejected, the earlier one is kept",
+        "user": null,
+        "state": "done",
+        "progress": 1,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794657120000,
+        "workId": "w1",
+        "bookId": null,
+        "cover": "/covers/ed1.jpg",
+        "facts": {
+          "kind": "alignment",
+          "status": "error",
+          "outcome": "rejected",
+          "coverage": 0,
+          "wholeBook": false,
+          "stage": null,
+          "files": null
+        },
+        "error": "The rebuild was rejected: it mapped none of the text. The previous map (82% of the text mapped) stays published.",
+        "permanent": false,
+        "actions": [
+          "retry"
+        ],
+        "stuck": null,
+        "blockedBy": null,
+        "attention": false
+      },
+      {
         "id": "ebook-set:w2:eb-accepted",
         "kind": "ebook-set",
         "processId": "ebook-set",
@@ -4658,6 +4724,39 @@
         "error": null,
         "permanent": false,
         "actions": [],
+        "stuck": null,
+        "blockedBy": null,
+        "attention": false
+      },
+      {
+        "id": "alignment:align-rejected",
+        "kind": "alignment",
+        "processId": "alignment",
+        "title": "Speaker for the Dead",
+        "detail": "Reading sync rebuild rejected, the earlier one is kept",
+        "user": null,
+        "state": "done",
+        "progress": 1,
+        "host": null,
+        "startedAt": null,
+        "updatedAt": 1794657120000,
+        "workId": "w1",
+        "bookId": null,
+        "cover": "/covers/ed1.jpg",
+        "facts": {
+          "kind": "alignment",
+          "status": "error",
+          "outcome": "rejected",
+          "coverage": 0,
+          "wholeBook": false,
+          "stage": null,
+          "files": null
+        },
+        "error": "The rebuild was rejected: it mapped none of the text. The previous map (82% of the text mapped) stays published.",
+        "permanent": false,
+        "actions": [
+          "retry"
+        ],
         "stuck": null,
         "blockedBy": null,
         "attention": false

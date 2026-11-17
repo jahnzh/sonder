@@ -653,14 +653,14 @@ export function registerLibraryWorks(app: FastifyInstance) {
   /**
    * Add to library and Remove from library by work (#527, `work-library.ts`). Both take no body
    * (an empty JSON body is accepted too) and answer `{ ok: true }`; a work the user may not see
-   * answers 404 as `GET /api/works/<workId>` does.
+   * answers 404 as `GET /api/works/<workId>` does. A work with no audio edition joins the library
+   * through the placeholder `PUT` makes for it (#555).
    */
   app.put("/api/works/:workId/library", async (req, reply) => {
     const userId = currentUserId(req);
     const { workId } = req.params as { workId: string };
     if (!workVisibleTo(userId, workId)) return reply.code(404).send({ error: "This book could not be found." });
-    if (addWorkToLibrary(userId, workId) === "no-audio")
-      return reply.code(409).send({ error: "This book has no audiobook to add yet." });
+    addWorkToLibrary(userId, workId);
     return { ok: true };
   });
   app.delete("/api/works/:workId/library", async (req, reply) => {

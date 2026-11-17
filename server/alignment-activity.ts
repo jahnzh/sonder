@@ -24,6 +24,17 @@ export const ALIGNMENT_ACTIVITY_STATES: Record<AlignmentJob["status"], ActivityS
 };
 
 /**
+ * The Activity state of one job: its status's, except for a new map the #379 rule did not use (status `error`, outcome
+ * `rejected`), which is finished, not failed (#462 point 6, #539). The map in use stays, so nothing needs the owner and
+ * no attention dot lights. This covers the automatic rebuild and Prepare again alike. A job that stopped (status
+ * `error` with any other outcome) stays failed.
+ */
+export function alignmentActivityState(job: Pick<ParsedAlignment, "status" | "outcome">) {
+  if (job.status === "error" && job.outcome === "rejected") return { state: "done" as const, unknown: null };
+  return stateFrom(ALIGNMENT_ACTIVITY_STATES, job.status);
+}
+
+/**
  * What Activity offers for a reading sync in each status (#515), through the `resume` of `PATCH /api/alignments/<id>`:
  * Retry when it stopped (failed), Resume when it is paused. A cancelled one is finished and offers neither, as on
  * the Reading sync card's Activity line. `readingSyncActions` adds the exceptions of a single job.
@@ -198,7 +209,7 @@ export const alignmentSource = defineSource<AlignmentRow[], AlignmentProbe>({
   report(rows, probe) {
     const drafts = rows.map((row) => {
       const job = parseAlignment(row.data, row.id);
-      const { state, unknown } = stateFrom(ALIGNMENT_ACTIVITY_STATES, job.status);
+      const { state, unknown } = alignmentActivityState(job);
       const consensus = row.ebook_id.startsWith("set-consensus:");
       return {
         id: `alignment:${row.id}`, kind: "alignment" as const, processId: "alignment", title: row.title || row.recording_id,

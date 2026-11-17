@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import {protectBrowserMutations, closeProtectedBrowser} from './verification-safety.mjs';
 import {chromium,expect as baseExpect} from '@playwright/test';
-import {createReaderControls,waitForBox} from './live-reader-controls.mjs';
+import {createReaderControls,narratedOnPage,waitForBox} from './live-reader-controls.mjs';
 import {verifyBaseURL} from './live-check-target.mjs';
 import {selectReaderRecording,requestFrom,getJSON,NoSuitableRecording,NO_SUITABLE_RECORDING_EXIT,FOLLOW_WAIT_SECONDS} from './live-check-recording.mjs';
 const expect=baseExpect.configure({timeout:25000});
@@ -26,7 +26,7 @@ try {
  report.recordingId=pick.recordingId;report.selection={ebookId:ebook.id,jobId:pick.job.id,start:sequence.start,follow:sequence.follow,...(pick.preferred?{preferred:pick.preferred}:{})};
  const appearance=await getJSON(get,'/api/appearance');
  await context.addInitScript(({appearance,ebook,workId})=>{
-  localStorage.setItem('sonder-appearance-device','true');localStorage.setItem('sonder-appearance',JSON.stringify({...appearance,playback:{progressScope:'book'},reader:{...appearance.reader,display:'book',segmentWords:30}}));
+  localStorage.setItem('sonder-appearance-device','true');localStorage.setItem('sonder-appearance',JSON.stringify({...appearance,playback:{progressScope:'book'},reader:{...appearance.reader}}));
   localStorage.setItem(`reader-ebook:${workId}`,ebook);
   const Native=window.Audio;window.__audio=[];window.Audio=class extends Native{constructor(...args){super(...args);window.__audio.push(this);}};
  },{appearance,ebook:ebook.id,workId:book.workId});
@@ -66,11 +66,13 @@ try {
  const options=page.getByRole('region',{name:'Playback options',exact:true});
  await expect(options.getByRole('button',{name:'Versions & sources',exact:true})).toBeVisible();
  await expect(options.getByRole('button',{name:'Listen from here',exact:true})).toBeVisible();
- await expect(options.getByRole('group',{name:'Reading mode',exact:true})).toBeVisible();
+ // The reader shows the book's own text only: there is no switch between views (ADR 0017).
+ await expect(options.getByRole('group',{name:'Reading mode',exact:true})).toHaveCount(0);
+ for(const name of ['Page','Lyrics','Word'])await expect(options.getByRole('button',{name,exact:true})).toHaveCount(0);
  await expect(page.getByRole('button',{name:'Back to narration',exact:true})).toBeDisabled();
  await page.screenshot({path:'artifacts/live-reader-options-mobile.png'});
  await options.getByRole('button',{name:'Close playback options',exact:true}).click();
- report.checks.push({name:'EPUB fills Now Playing; More holds playback and reader options',ebookId:ebook.id});
+ report.checks.push({name:'EPUB fills Now Playing; More holds playback and reader options and no view switch',ebookId:ebook.id});
  // Sample the audio element directly and check that Page mode follows.
  const seek=position=>page.evaluate(position=>{const a=window.__audio.find(a=>a.src);a.currentTime=position;},position);
  // Seeking the audio element stays within the loaded file: the file of the saved position, whose passages the sequence samples.
@@ -96,8 +98,7 @@ try {
  const middle=sequence.middle,follow=sequence.follow;
  await seek(follow.start);
  await expect(room).toHaveAttribute('data-current-passage',follow.passage);
- // Look for Play/Pause inside the player bar only: in Lyrics mode every sentence of the book is a button, and a role query over
- // the whole reader took seconds per read in a long book (#413).
+ // Look for Play/Pause inside the player bar only: a role query over the whole reader took seconds per read in a long book (#413).
  const player=room.locator('.reader-player'),play=player.getByRole('button',{name:'Play narration',exact:true}),pause=player.getByRole('button',{name:'Pause narration',exact:true});
  const initial=await room.getAttribute('data-current-passage');
  await controls.click(play,'Play narration');
@@ -125,42 +126,36 @@ try {
  await expect.poll(async()=>Math.abs((await actual()).position-before),{timeout:20000}).toBeLessThan(3);
  await controls.click(pause,'Pause narration');
  report.checks.push({name:'Long-press listens from that sentence and Undo returns'});
- await more();
- await options.getByRole('group',{name:'Reading mode',exact:true}).getByRole('button',{name:'Lyrics',exact:true}).click();
- await expect(page.locator('.inline-reader .lyrics-line.current')).toHaveCount(1);
- await expect(page.locator('.inline-reader .reader-viewport')).toHaveAttribute('aria-hidden','true');
- const size=await page.locator('.inline-reader .lyrics-line.current').evaluate(el=>parseFloat(getComputedStyle(el).fontSize));
- // Spacing by width (clamp 24–34 px) scaled by the reader text-size preference (19 = normal).
- const expected=Math.max(24,Math.min(34,390*.066))*(appearance.reader.size||19)/19;
- if(Math.abs(size-expected)>1)throw Error(`Lyrics text is ${size}px at 390px wide, expected ${expected.toFixed(1)}px`);
- const lines=page.locator('.inline-reader .lyrics-line');
- const current=await lines.evaluateAll(els=>els.findIndex(el=>el.classList.contains('current')));
- const start=(await actual()).position;
- await lines.nth(current+3).click();
- await expect.poll(async()=>Math.abs((await actual()).position-start),{timeout:20000}).toBeGreaterThan(1);
- await expect(lines.nth(current+3)).toHaveClass(/current/);
- await controls.click(pause,'Pause narration');
- await expect(page.locator('.toast')).toHaveCount(0);
- await page.screenshot({path:'artifacts/live-integrated-reader-lyrics-mobile.png'});
- report.checks.push({name:'Lyrics mode follows the narration and tapping a line seeks there',fontSize:size});
+ // F returns to the narration from a page that does not show it (#501 review): page forward until the narrated
+ // sentence is off the page, then F. The page turns save a reading place, which is intercepted like every write.
+ // Undo may have played on a little before the pause; put the narration back on the proven-mapped sentence.
+ await seek(middle.middle);
+ await expect.poll(async()=>(await actual()).position).toBeCloseTo(middle.middle,0);
+ await expect(room).toHaveAttribute('data-current-passage',middle.paragraphId);
+ await expect.poll(()=>narratedOnPage(room),{message:`the narrated sentence ${middle.paragraphId} is not on the page before paging away`}).toBe(true);
+ await controls.hide();
+ // A long sentence can run on to the next page: turn until none of it is on the page, at most three times.
+ for(let turns=0;turns<3&&await narratedOnPage(room);turns++){await controls.turn('next');await page.waitForTimeout(600);}
+ await expect(room).not.toHaveAttribute('data-current-passage',/.+/);
+ await expect.poll(()=>narratedOnPage(room),{message:`the narrated sentence ${middle.paragraphId} is still on the page after three page turns`}).toBe(false);
+ await page.keyboard.press('f');
+ await expect(room).toHaveAttribute('data-current-passage',middle.paragraphId);
+ await expect.poll(()=>narratedOnPage(room),{message:`F did not bring the page of the narrated sentence ${middle.paragraphId} back`}).toBe(true);
+ report.checks.push({name:'F brings the narrated sentence back on the page after paging away'});
  await page.setViewportSize({width:320,height:740});
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(320);
  expect((await waitForBox(play,{description:'Play narration button'})).y+44).toBeLessThanOrEqual(740);
  await page.setViewportSize({width:1440,height:1000});
- // Playback after the line tap may have paused inside an unsynced gap (partially mapped books, #349); return to a proven-mapped position.
+ // Return to a proven-mapped position (partially mapped books, #349). The reader catches up with the seek and the new
+ // layout on its own; a seek that landed before the layout change is repeated. Nothing here scrolls the pages.
  await seek(middle.middle);
- // Wait for the current line to exist before looking at where it is. The reader catches up with the seek and the new layout on its own;
- // a seek that landed before the layout change is repeated. Nothing here scrolls the lyrics.
- const currentLine=page.locator('.inline-reader .lyrics-line.current');
+ const narrated=page.locator('.inline-reader .reader-viewport .sonder-follow');
  await expect.poll(async()=>{
-  if(await currentLine.count()===1)return true;
+  if(await room.getAttribute('data-current-passage')===middle.paragraphId&&await narrated.count()>0)return true;
   await seek(middle.middle);return false;
- },{timeout:25000,intervals:[500,1000,2000],message:`no current Lyrics line after seeking to the mapped sample ${middle.paragraphId} at ${middle.middle.toFixed(1)} s on file ${loaded.id}`}).toBe(true);
- await expect(currentLine).toBeInViewport();
- await page.screenshot({path:'artifacts/live-integrated-reader-lyrics-desktop.png'});
- await more();
- await options.getByRole('group',{name:'Reading mode',exact:true}).getByRole('button',{name:'Page',exact:true}).click();
- await expect(page.locator('.inline-reader .reader-viewport .sonder-follow').first()).toBeVisible();
+ },{timeout:25000,intervals:[500,1000,2000],message:`no narrated-sentence highlight after seeking to the mapped sample ${middle.paragraphId} at ${middle.middle.toFixed(1)} s on file ${loaded.id}`}).toBe(true);
+ // On the page the reader shows, not only rendered somewhere in the chapter's columns.
+ await expect.poll(()=>narratedOnPage(room),{message:`the narrated sentence ${middle.paragraphId} is not on the page after the desktop resize`}).toBe(true);
  await expect(page.getByLabel('Contents sidebar')).toBeVisible();
  await expect(room.getByRole('slider',{name:/^Seek in /})).toBeVisible();
  await page.screenshot({path:'artifacts/live-integrated-reader-desktop.png'});

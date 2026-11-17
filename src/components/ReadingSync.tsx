@@ -12,11 +12,9 @@ import { pauseLabel, pausedLabel, syncProgressLine } from "../reading-sync-statu
 import { anchoredMode as pairingsAnchored, offersChapterMatching, pairingBlock, prepareBody, prepareHelp } from "../reading-sync-prepare";
 import type { Book } from "../types";
 import {
-  alignmentJobActive,
   type AlignmentFlag,
   type AlignmentJob,
   type ReaderBook,
-  type TextLocator,
 } from "../reading-types";
 type Options = {
   sections: { index: number; title: string; paragraphs: number }[];
@@ -62,7 +60,6 @@ export function ReadingSync({
   books,
   onMap,
   onLinked,
-  locator,
   recordingId,
   loadOptions = false,
 }: {
@@ -71,7 +68,6 @@ export function ReadingSync({
   /** `confirmed`: the server confirmed this map for the current audio (see the map lifecycle's `onMap`). */
   onMap: (job: AlignmentJob | null, confirmed: boolean) => void;
   onLinked: () => void;
-  locator?: TextLocator | null;
   recordingId?: string;
   /** When false (background-mounted), skip /alignments/options. */
   loadOptions?: boolean;
@@ -99,8 +95,6 @@ export function ReadingSync({
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [available, setAvailable] = useState(true);
-  const [anchorStart, setAnchorStart] = useState(0),
-    [anchorEnd, setAnchorEnd] = useState(15);
   const selectedAudio = books.find((audio) => audio.recordingId === selected);
   const stopPoll = () => {
     if (pollRef.current) {
@@ -568,87 +562,6 @@ export function ReadingSync({
       <p id="reading-sync-help" className="sync-preparation-help" role="status">
         {blockedReason || prepareHelp(options, pairings)}
       </p>
-      {job &&
-        locator &&
-        player.book?.recordingId === selected &&
-        player.track &&
-        !alignmentJobActive(job.status) && (
-          <details className="manual-anchor">
-            <summary>Correct this sentence’s timing</summary>
-            <p>{locator.quote || "Current sentence"}</p>
-            <div className="chapter-bounds">
-              <label>
-                Start (seconds)
-                <input
-                  type="number"
-                  min="0"
-                  max={player.track.duration}
-                  step="0.1"
-                  value={anchorStart}
-                  onChange={(event) =>
-                    setAnchorStart(Number(event.target.value))
-                  }
-                />
-              </label>
-              <label>
-                End (seconds)
-                <input
-                  type="number"
-                  min="0"
-                  max={player.track.duration}
-                  step="0.1"
-                  value={anchorEnd}
-                  onChange={(event) => setAnchorEnd(Number(event.target.value))}
-                />
-              </label>
-            </div>
-            <div className="reading-sync-actions">
-              <button
-                className="button subtle"
-                onClick={() =>
-                  setAnchorStart(Math.round(player.position * 10) / 10)
-                }
-              >
-                Set start to audio position
-              </button>
-              <button
-                className="button subtle"
-                onClick={() =>
-                  setAnchorEnd(Math.round(player.position * 10) / 10)
-                }
-              >
-                Set end to audio position
-              </button>
-              <button
-                className="button primary"
-                disabled={busy || anchorEnd <= anchorStart}
-                onClick={() => {
-                  setBusy(true);
-                  setError("");
-                  void api<AlignmentJob>(`/alignments/${job.id}/anchors`, {
-                    method: "POST",
-                    body: JSON.stringify({
-                      paragraphId: locator.paragraphId,
-                      trackId: player.track!.id,
-                      start: anchorStart,
-                      end: anchorEnd,
-                    }),
-                  })
-                    .then(async (value) => {
-                      await lifecycle.current!.saveCorrected(book.id, selected, value);
-                      // The server's answer to the correction: confirmed for the current audio.
-                      onMap(value, true);
-                      ensurePoll(await refresh());
-                    })
-                    .catch((error) => setError(error.message))
-                    .finally(() => setBusy(false));
-                }}
-              >
-                Save sentence timing
-              </button>
-            </div>
-          </details>
-        )}
       <p className="reading-local-note">
         Processed locally on your server. Audio and sync files stay on the 4 TB
         HDD. Timings are estimated.

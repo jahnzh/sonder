@@ -24,7 +24,7 @@ const mobileProjects = [
 const desktopProjects = [
   { name: "chromium" },
   // Layout checks also run in Firefox/WebKit when those browsers are installed.
-  // Only now-playing-layout, device-reset and reader-frame specs run on them, plus the page stack
+  // Only now-playing-layout, device-reset and reader-frame specs run on them, plus the page stack, the device save records
   // (navigation) and the parts gallery (gallery) in Firefox, a browser the owner uses; other spec files are skipped for these
   // projects without an error in a multi-project run.
   ...[firefox, webkit]
@@ -33,7 +33,7 @@ const desktopProjects = [
       name: browser.name(),
       testMatch:
         browser === firefox
-          ? /(now-playing-layout|device-reset|reader-frame|navigation|gallery|gallery-controls|gallery-sheet)\.spec\.ts/
+          ? /(now-playing-layout|device-reset|reader-frame|navigation|gallery|gallery-controls|gallery-sheet|device-save-records)\.spec\.ts/
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: {} },
     })),

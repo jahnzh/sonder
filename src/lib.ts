@@ -1,6 +1,7 @@
 import Dexie, { type Table } from "dexie";
 import { dropPosition, peekPosition, recentPositions, recordPosition, serialQueue, type PositionEntry, type PositionHistory } from "./position-history";
 import type { Book, LibraryWork, Progress, Download, DownloadPart, Track } from "./types";
+import { DEVICE_SAVE_KEY_PREFIX, deviceSaveKey, readDeviceSaveRecord, type DeviceSaveRecord } from "./device-saves";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 export function cn(...inputs: ClassValue[]) {
@@ -324,7 +325,37 @@ export async function downloadTrack(
   const { downloadInChunks } = await import("./media-download");
   return downloadInChunks(track, signal, onProgress);
 }
+/**
+ * The device's records of its saves (#517): one per recording, in the shared database's key-value store beside the
+ * downloads (not per user, as the downloads are not).
+ */
+export async function listDeviceSaveRecords(): Promise<DeviceSaveRecord[]> {
+  const rows = await sharedDB.preferences.where("key").startsWith(DEVICE_SAVE_KEY_PREFIX).toArray();
+  return rows.flatMap((row) => readDeviceSaveRecord(row.value) ?? []);
+}
+/** Writes what became of a save: started, paused by the user, failed with its reason, or finished. */
+export async function writeDeviceSaveRecord(
+  recordingId: string,
+  workId: string,
+  change: { state: "saving" } | { state: "paused" } | { state: "failed"; reason: string } | { state: "finished" },
+  now = Date.now(),
+) {
+  const key = deviceSaveKey(recordingId);
+  await sharedDB.transaction("rw", sharedDB.preferences, async () => {
+    const previous = readDeviceSaveRecord((await sharedDB.preferences.get(key))?.value);
+    const record: DeviceSaveRecord = {
+      recordingId,
+      workId,
+      startedAt: change.state === "saving" || !previous ? now : previous.startedAt,
+      state: change.state,
+      reason: change.state === "failed" ? change.reason : null,
+      finishedAt: change.state === "finished" ? now : null,
+    };
+    await sharedDB.preferences.put({ key, value: record });
+  });
+}
 export async function deleteDownloads(recordingId: string) {
+  await sharedDB.preferences.delete(deviceSaveKey(recordingId));
   const items = await localDB.downloads
     .where("recordingId")
     .equals(recordingId)

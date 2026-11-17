@@ -14,7 +14,7 @@ import { selectSeriesDefaults, seriesBooks } from "../src/series-selection.ts";
 import { existsSync } from "node:fs";
 import { and, eq, inArray } from "drizzle-orm";
 import { db, sqlite } from "./db.ts";
-import { isPlaceholderEdition, placeholderEditionSql } from "./placeholder-edition.ts";
+import { ensurePlaceholder, isPlaceholderEdition, placeholderEditionSql } from "./placeholder-edition.ts";
 import * as s from "./schema.ts";
 import {
   isUnreleasedHardcoverBook,
@@ -1222,8 +1222,7 @@ function importCatalogBook(
     }
   }
   if (!links.length) {
-    const workId = `work-hc-${book.id}`,
-      editionId = `hc-${book.id}`;
+    const workId = `work-hc-${book.id}`;
     db.insert(s.works)
       .values({
         id: workId,
@@ -1237,24 +1236,9 @@ function importCatalogBook(
       })
       .onConflictDoNothing()
       .run();
-    db.insert(s.editions)
-      .values({
-        id: editionId,
-        workId,
-        cover: book.cached_image?.url?.startsWith("https://")
-          ? book.cached_image.url
-          : "/covers/meditations.svg",
-        narrator: "Audio not added",
-        rating: 0,
-        sourceLabel: "Hardcover library",
-      })
-      .onConflictDoNothing()
-      .run();
-    db.insert(s.recordings)
-      .values({ id: `recording-${editionId}`, editionId })
-      .onConflictDoNothing()
-      .run();
+    // Linked first, so the placeholder the work gets is `hc-<book id>` (#467, `ensurePlaceholder`).
     metadataLink(workId, book);
+    ensurePlaceholder(sqlite, workId, { cover: book.cached_image?.url });
     links = linkRepresentatives(book.id);
     imported = true;
   }
@@ -1984,46 +1968,22 @@ export function hardcoverWorkForMedia(title: string, author: string) {
     );
   return matches.length === 1 ? matches[0].id : undefined;
 }
-// New audio for a linked work replaces metadata-only placeholders on every user's shelf
-// and picks up that user's own Hardcover shelf status and remembered position.
+/**
+ * The Hardcover part of real audio arriving for a work (#467, decision 3; `claimWorkAudio` in
+ * `work-library.ts` moves the library rows first and then calls this): for a work matched on
+ * Hardcover, every user's own Hardcover shelf status is applied to their rows of the work, and
+ * their remembered Hardcover position to the new recording when they have no place in it yet.
+ * Does nothing for a work that is not matched.
+ */
 export function claimHardcoverAudio(workId: string, editionId: string) {
   const bookId = hardcoverLinkedBook(workId);
   if (bookId === undefined) return;
-  const placeholders = db
-    .select()
-    .from(s.editions)
-    .where(eq(s.editions.workId, workId))
-    .all()
-    .filter((e) => e.id !== editionId && isPlaceholderEdition(sqlite, e.id));
   const recording = db
     .select()
     .from(s.recordings)
     .where(eq(s.recordings.editionId, editionId))
     .get();
   for (const userId of listUserIds()) {
-    const shelved = placeholders.flatMap((e) => libraryEntry(userId, e.id) || []);
-    if (
-      shelved.length &&
-      !db
-        .select()
-        .from(s.userHiddenLibrary)
-        .where(
-          and(
-            eq(s.userHiddenLibrary.userId, userId),
-            eq(s.userHiddenLibrary.bookId, editionId),
-          ),
-        )
-        .get()
-    )
-      db.insert(s.userLibrary)
-        .values({
-          userId,
-          bookId: editionId,
-          status: shelved[0].status,
-          addedAt: Date.now(),
-        })
-        .onConflictDoNothing()
-        .run();
     const dirty = statusJob(userId, bookId);
     const known = userLink(userId, bookId);
     if (dirty || known)
@@ -2041,7 +2001,6 @@ export function claimHardcoverAudio(workId: string, editionId: string) {
       recordingData(recording.id)?.completeDuration
     )
       applyFraction(userId, recording.id, remoteRead.fraction);
-    for (const e of placeholders) removeUserLibraryRow(userId, e.id);
   }
 }
 function recordingData(recordingId: string) {
