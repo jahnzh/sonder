@@ -51,6 +51,8 @@ const desktopProjects = [
               /(^|\/)settings-pages\.spec\.ts$/,
               // The worker's page (#520).
               /(^|\/)activity-worker\.spec\.ts$/,
+              // A book read in the reader is In progress; the ebook shelf leaves Discover (#556).
+              /(^|\/)(ebook-only-library|discovery)\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: {} },

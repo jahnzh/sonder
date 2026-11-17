@@ -97,7 +97,8 @@ import { SettingsPage } from "./pages/settings-page";
 import { firstPage, writeAddress, type Place, type Route } from "./routes";
 import { onPageLeftByHistory, startNavigation, useAddress } from "./navigation";
 import { Gallery, isGalleryRoute } from "./gallery/Gallery";
-import { refreshLibraryWorks, startLibraryWorks } from "./library-works-store";
+import { refreshLibraryWorks, startLibraryWorks, useStoredWorksWithPlaces } from "./library-works-store";
+import { bookStatus, readingPercent, workProgress } from "./work-progress";
 type Notice = { text: string; error?: boolean };
 const nav = [
   { id: "library", label: "My library", icon: Library },
@@ -235,6 +236,9 @@ function LibraryApp({
   onLogout: () => void;
 }) {
   const [books, setBooks] = useState<Book[]>([]);
+  // The library by work with this device's places (#528): the Library's Listening, Not started and Finished
+  // follow the work of each entry, so a book read in the reader is In progress (#556).
+  const deviceWorks = useStoredWorksWithPlaces();
   const [ebookTarget, setEbookTarget] = useState<Book | null>(null);
   // The address, read by SignedIn once the user is known. The page modules in
   // src/pages never read or write it themselves.
@@ -493,6 +497,8 @@ function LibraryApp({
           method: "PATCH",
           body: JSON.stringify({ status: action }),
         });
+      // The Library's states come from the works (#556): read them before the books, so a mark shows at once.
+      await refreshLibraryWorks().catch(() => {});
       await refresh();
       setDetail((d) =>
         d?.id === b.id
@@ -591,7 +597,20 @@ function LibraryApp({
       });
     }
   };
-  const libraryBooks = books.filter((b) => b.inLibrary);
+  // Each entry's status is its work's (`workProgress`), while the work is stored; otherwise `GET /api/books`' own.
+  const libraryBooks = books
+    .filter((b) => b.inLibrary)
+    .map((b) => {
+      const work = deviceWorks.get(b.workId);
+      if (!work) return b;
+      const status = bookStatus(workProgress(work));
+      return status === b.status ? b : { ...b, status };
+    });
+  // A book without audio shows its ebook's place; a book with audio its listening percentage, as before.
+  const readingPercentOf = (b: Book) => {
+    const work = b.tracks.length ? undefined : deviceWorks.get(b.workId);
+    return work ? readingPercent(work) : null;
+  };
   const downloaded = (b: Book) =>
     b.tracks.length > 0 &&
     b.tracks.every((t) => downloads.some((d) => d.trackId === t.id));
@@ -849,6 +868,7 @@ function LibraryApp({
                 favorites={favorites}
                 toggleFavorite={toggleFavorite}
                 downloaded={downloaded}
+                readingPercentOf={readingPercentOf}
                 findAudio={findAudio}
                 mutateLibrary={mutateLibrary}
                 refresh={refresh}

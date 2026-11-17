@@ -6658,9 +6658,6 @@ input[type="range"]::-moz-range-thumb {
   padding: 8px 12px;
   min-height: 34px;
 }
-.ebook-saved-heading {
-  margin-top: 32px;
-}
 .ebook-source-note {
   font-size: calc(11px * var(--ui-scale, 1));
   color: var(--muted);

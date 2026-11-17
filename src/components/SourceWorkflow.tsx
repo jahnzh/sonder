@@ -8,7 +8,6 @@ import {
 import {
   BookOpen,
   Cloud,
-  Download,
   ExternalLink,
   HardDrive,
   Loader2,
@@ -26,7 +25,6 @@ import {
   TorrentHealthLine,
   useTorrentHealth,
 } from "./TorrentHealth";
-import {openReader} from "../reading";
 import {
   EBOOK_SET_PENDING_REFRESH_MS,
   checkingNote,
@@ -345,6 +343,8 @@ export function EbookDiscovery({
       );
       await refreshSaved();
       await refreshSet();
+      // The ebook's book is in the importer's library now (#555): the Library reads it again (#556).
+      window.dispatchEvent(new Event("sonder:library-changed"));
       notify(
         (response.alreadySaved
           ? "This ebook is already on your server."
@@ -367,6 +367,7 @@ export function EbookDiscovery({
         }),
       });
       notify("Your ebook is saved on the 4 TB media drive." + checkingNote(response.ebookSet));
+      window.dispatchEvent(new Event("sonder:library-changed"));
       await refreshSaved();
       await refreshSet();
     } catch (e) {
@@ -507,12 +508,6 @@ export function EbookDiscovery({
           )}
         </div>
       )}
-      <div className="section-heading ebook-saved-heading">
-        <h2>
-          Your ebook shelf <span>{saved.length}</span>
-        </h2>
-        <span className="muted small">Saved on the 4 TB media drive</span>
-      </div>
       <div className="ebook-import">
         <p>
           Downloaded a book in your browser? Import an EPUB or PDF to keep it on
@@ -538,44 +533,6 @@ export function EbookDiscovery({
           />
         </label>
       </div>
-      {saved.length ? (
-        <div className="ebook-saved-list">
-          {saved.map((book) => (
-            <article className="ebook-result" key={book.id}>
-              <span className="settings-section-icon">
-                <BookOpen size={21} />
-              </span>
-              <div className="ebook-result-info">
-                <h3>{book.title}</h3>
-                <p>{book.author}</p>
-                <div className="ebook-facts">
-                  <span>{book.format.toUpperCase()}</span>
-                  <span>· {bytes(book.size)}</span>
-                  {target?.workId === book.workId && (
-                    <span>· Linked edition</span>
-                  )}
-                </div>
-              </div>
-              {book.available && book.format==='epub' && <button className="button primary" onClick={()=>openReader(book.id)}><BookOpen size={14}/> Read</button>}
-              {book.available ? (
-                <a
-                  className="button subtle"
-                  href={`/api/ebooks/${encodeURIComponent(book.id)}/file`}
-                  download
-                >
-                  <Download size={14} /> Get file
-                </a>
-              ) : (
-                <span className="queue-info">File unavailable</span>
-              )}
-            </article>
-          ))}
-        </div>
-      ) : (
-        <div className="queue-empty">
-          No saved ebooks. Search either source or import an EPUB or PDF.
-        </div>
-      )}
     </section>
   );
 }
