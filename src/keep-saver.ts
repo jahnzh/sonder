@@ -244,7 +244,8 @@ export class KeepSaver {
     let state = await this.deps.read();
     let { keep, synced } = await this.sync(state);
     // The rollout needs the server's records first, so a choice made on the server (off) is not overwritten.
-    if (synced && !(await this.deps.rolloutDone())) {
+    // It also waits for a stored library: a device that has not read it yet cannot tell which saved books are in it.
+    if (synced && state.works.length > 0 && !(await this.deps.rolloutDone())) {
       const at = this.now();
       const turnOn = rolloutChoices({ works: state.works, keep, downloads: state.downloads, parts: state.parts });
       if (turnOn.length) {

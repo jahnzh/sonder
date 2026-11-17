@@ -60,14 +60,17 @@ test("a library book without media offers a working Get for its audiobook and no
     .click();
   const book = page.getByRole("region", { name: "Book", exact: true });
   await expect(book.getByRole("heading", { level: 1 })).toHaveText("Ancillary Justice");
-  // Get for its audiobook is the main action; Listen is off; no This device and no Save to server.
+  // Get for its audiobook is the main action; Listen is off; no Save to server. This device shows for every book in
+  // the library (#550): Keep on a book with nothing yet reads "Nothing to save yet".
   const get = book.getByRole("button", { name: "Get an audiobook", exact: true });
   await expect(get).toBeVisible();
   expect(await get.getAttribute("data-kind")).toBe("primary");
   await expect(book.getByRole("button", { name: "Listen", exact: true })).toBeDisabled();
-  await expect(
-    book.getByRole("switch", { name: "Keep on this device", exact: true }),
-  ).toHaveCount(0);
+  const keep = book.getByRole("switch", { name: "Keep on this device", exact: true });
+  await expect(keep).toHaveAttribute("aria-checked", "false");
+  await keep.click();
+  await expect(keep).toHaveAttribute("aria-checked", "true");
+  await expect(book.locator("#book-keep-line")).toHaveText("Nothing to save yet");
   await expect(
     book.getByRole("button", { name: "Save to server", exact: true }),
   ).toHaveCount(0);

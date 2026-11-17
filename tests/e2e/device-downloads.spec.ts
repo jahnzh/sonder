@@ -85,7 +85,7 @@ test("offline downloads retry temporary HTTP errors at different chapter boundar
   expect(attempts.get("alice-1:0")).toBe(2);
   await expect(page.locator(".toast")).not.toContainText("error");
 });
-test("player downloads retain verified sections after connection failure and resume after reload", async ({
+test("player downloads retain verified sections after connection failure and resume by themselves after reload", async ({
   page,
 }) => {
   const media = readFileSync("server/demo/alice-01.mp3");
@@ -123,8 +123,9 @@ test("player downloads retain verified sections after connection failure and res
   await page.goto(`/#book/${encodeURIComponent(ALICE_WORK)}`);
   const keep = page.getByRole("switch", { name: "Keep on this device", exact: true });
   await keep.click();
-  await expect(page.locator(".toast")).toContainText("downloaded sections are kept", { timeout: 20000 });
-  // Partly on this device: the switch stays on, and the row offers Resume.
+  // The connection failed: no toast (#550), the line says what is missing; the switch stays on, the row offers Resume.
+  await expect(page.locator("#book-keep-line")).toHaveText("Not complete · 0 of 1 files", { timeout: 20000 });
+  await expect(page.locator(".toast")).toHaveCount(0);
   await expect(keep).toHaveAttribute("aria-checked", "true");
   await expect(page.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
   await page.locator(".dock-book").click();
@@ -132,9 +133,6 @@ test("player downloads retain verified sections after connection failure and res
   await expect(
     page.getByRole("button", { name: "Resume download", exact: true }),
   ).toBeVisible({ timeout: 20000 });
-  await expect(page.locator(".toast")).toContainText(
-    "downloaded sections are kept",
-  );
   expect(starts.filter((start) => start === 0)).toHaveLength(1);
   expect(starts.filter((start) => start === 4 * 1024 * 1024)).toHaveLength(4);
   const pending = await page.evaluate(
@@ -159,9 +157,8 @@ test("player downloads retain verified sections after connection failure and res
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.reload();
-  // After a reload the switch is still on and Resume carries on from the saved sections.
+  // After a reload the switch is still on and the save carries on by itself from the saved sections (#550).
   await expect(keep).toHaveAttribute("aria-checked", "true");
-  await page.getByRole("button", { name: "Resume", exact: true }).click();
   await expect(page.locator("#book-keep-line")).toHaveText(/^Audiobook( and ebook)? · /, { timeout: 20000 });
   await page.locator(".dock-book").click();
   await expect(

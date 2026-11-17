@@ -112,10 +112,18 @@ async function loadOnce() {
   if (!response.ok) return;
   const works = (await response.json().catch(() => null)) as LibraryWork[] | null;
   if (!Array.isArray(works) || owner !== userId()) return;
+  // What Keep on this device saves from: the recordings and their tracks, and which is chosen.
+  const keepFacts = (list: Iterable<LibraryWork>) =>
+    JSON.stringify(
+      [...list]
+        .map((w) => [w.workId, w.inLibrary, w.chosenRecordingId, w.recordings.map((r) => [r.recordingId, r.tracks.map((t) => t.id)])])
+        .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+    );
+  const before = snapshot.owner === owner && snapshot.stored ? keepFacts(snapshot.works.values()) : null;
   if (!(await storeLibraryWorks(owner, db, works, response.headers.get("ETag")))) return;
   publish({ owner, stored: true, works: byId(works) });
   // A read that changed the library: Keep on this device saves what arrived (#550, `keep-runtime.ts`).
-  window.dispatchEvent(new Event("sonder:library-works-stored"));
+  if (before !== keepFacts(works)) window.dispatchEvent(new Event("sonder:library-works-stored"));
 }
 
 /**

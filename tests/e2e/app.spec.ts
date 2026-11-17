@@ -254,7 +254,7 @@ test("import, complete device download, service-worker ranges and offline relaun
   await page
     .getByRole("button", { name: story, exact: true })
     .click();
-  // The Book page's Keep on this device switch saves the book (#532).
+  // The Book page's Keep on this device switch saves the book: the saver saves the chosen recording (#550).
   await page.getByRole("switch", { name: "Keep on this device", exact: true }).click();
   await expect(page.locator("#book-keep-line")).toHaveText(/^Audiobook · /, { timeout: 20000 });
   await page.getByRole("button", { name: "Back to Library", exact: true }).click();
