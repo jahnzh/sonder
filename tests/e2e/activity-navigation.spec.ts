@@ -29,10 +29,14 @@ const dot = "Background work needs attention";
 async function noOverflow(page: Page) {
   const overflow = await page.evaluate(() => {
     const width = window.innerWidth;
+    // Only what is shown counts. The closed Now Playing dialog stays mounted with visibility: hidden, and when the dock's
+    // book has an ebook (the seeded Alice gets one from position-history.spec.ts on a shared server) its inline reader's
+    // epub.js view is laid out in columns wider than the viewport, clipped by the dialog: no overflow the owner can see.
     return [...document.querySelectorAll("body *")]
       .filter((element) => {
         const box = element.getBoundingClientRect();
-        return box.width > 0 && box.right > width + 1 && getComputedStyle(element).position !== "fixed";
+        const style = getComputedStyle(element);
+        return box.width > 0 && box.right > width + 1 && style.position !== "fixed" && style.visibility === "visible";
       })
       .slice(0, 6)
       .map((element) => `${element.tagName.toLowerCase()}.${String(element.className).slice(0, 40)}`);
