@@ -36,7 +36,7 @@ import { PlaybackTimeline } from "./PlaybackTimeline";
 import {PlaybackExtra,usePlaybackMenu} from "./PlaybackMenu";
 import { readerNeedsScripts } from "../reader-sandbox";
 import { keyEventContext, OPEN_SHEET_SELECTOR, readerKeyAction, typingInField } from "../keyboard";
-import { createReaderFollowing, type DeferredReturn, type NarrationReturn } from "../reader-following";
+import { createReaderFollowing, type DeferredReturn, type NarrationPlace, type NarrationReturn } from "../reader-following";
 import { mapIdentityOf } from "../alignment-map-lifecycle";
 import { currentChapter, playbackTimeline } from "../chapters";
 import { usePlayer, type SeekTarget } from "../player";
@@ -113,6 +113,24 @@ function releaseEpub(publication: EpubBook | null, view: Rendition | null, openi
     )
     .then(destroy);
 }
+// A recording's track ids in the order they are played, kept per track list: asked for at every position update.
+const trackOrders = new WeakMap<Book["tracks"], string[]>();
+function trackOrder(book: Book | null | undefined) {
+  if (!book?.tracks) return [];
+  let order = trackOrders.get(book.tracks);
+  if (!order) {
+    order = [...book.tracks].sort((a, b) => a.index - b.index).map((track) => track.id);
+    trackOrders.set(book.tracks, order);
+  }
+  return order;
+}
+// Where the narration is, as the following module asks for it to decide the narrated sentence.
+const placeOf = (book: Book | null | undefined, trackId: string | undefined, position: number): NarrationPlace => ({
+  recordingId: book?.recordingId,
+  tracks: trackOrder(book),
+  trackId,
+  position,
+});
 const mixHex = (a: string, b: string, amount: number) =>
   "#" + [1, 3, 5].map((i) => Math.round(parseInt(a.slice(i, i + 2), 16) * amount + parseInt(b.slice(i, i + 2), 16) * (1 - amount)).toString(16).padStart(2, "0")).join("");
 // Narration jumps to a long-pressed sentence: listening, then a book, then headphones.
@@ -344,12 +362,9 @@ export function ReaderView({
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
-  // Whether the open ebook's map has a sentence at this place of this recording.
-  const narrationAt = (recordingId: string | undefined, trackId: string | undefined, position: number) => {
-    const current = mapRef.current;
-    return !!current && !!recordingId && recordingId === current.recordingId &&
-      current.intervals.some((interval) => interval.trackId === trackId && interval.start <= position && interval.end > position);
-  };
+  // Whether the open ebook's map has a narrated sentence at this place of this recording (the following module's rule).
+  const narrationAt = (book: Book | null | undefined, trackId: string | undefined, position: number) =>
+    !!following.narratedSentence(mapRef.current, placeOf(book, trackId, position));
   const [followRevision,setFollowRevision]=useState(0);
   // Following the narration or paged away, and which input wins (ADR 0014).
   const followingEvents = useRef({
@@ -366,10 +381,10 @@ export function ReaderView({
       viewport.current?.setAttribute("data-manual-saves", String(++manualSaves.current));
       void saveReading(id, locator, "reading", mapRef.current?.recordingId).catch(() => {});
     },
-    // A map for this ebook that matches the recording in the player, with a sentence at its position.
+    // A map for this ebook that matches the recording in the player, with a narrated sentence at its position.
     narrationToFollow: () => {
       const player = playerRef.current;
-      return narrationAt(player.book?.recordingId, player.track?.id, player.position);
+      return narrationAt(player.book, player.track?.id, player.position);
     },
     retry: () => setFollowRevision((value) => value + 1),
     clearFollowError: () => setError(""),
@@ -426,9 +441,8 @@ export function ReaderView({
   // The removed views' fields (ADR 0017) do not change how the EPUB is styled; an older client that
   // still saves them must not re-theme, which would re-paginate the whole book for nothing.
   const themeKey = JSON.stringify({ ...appearance, reader: { ...appearance.reader, display: undefined, segmentWords: undefined, wordWpm: undefined } });
-  const currentInterval = map?.recordingId === p.book?.recordingId
-    ? map?.intervals.find(interval => interval.trackId === p.track?.id && interval.start <= p.position && interval.end > p.position)
-    : undefined;
+  // The narrated sentence, decided by the following module: it stays through a gap until the next one begins.
+  const currentInterval = following.narratedSentence(map, placeOf(p.book, p.track?.id, p.position)) ?? undefined;
   const refresh = async () => {
     try {
       const value = await loadReader(id);
@@ -861,7 +875,7 @@ export function ReaderView({
     const timer = setTimeout(() => {
       if (!restoreDue.due()) return;
       const player=playerRef.current,current=mapRef.current;
-      if(following.isFollowing() && current && player.book?.recordingId===current.recordingId && current.intervals.some(interval=>interval.trackId===player.track?.id && interval.start<=player.position && interval.end>player.position))return;
+      if(following.highlightedSentence(current, placeOf(player.book, player.track?.id, player.position)))return;
       // A checkpoint without a CFI (the listening place, or one an older client saved) is a sentence; go to it.
       if (latest.current && !latest.current.cfi) {
         void jumpRef.current(latest.current.paragraphId, false).catch(() => false);
@@ -1031,12 +1045,8 @@ export function ReaderView({
       await recover(back, player);
       return;
     }
-    const interval = currentMap.intervals.find(
-      (interval) =>
-        interval.trackId === player.track!.id &&
-        interval.start <= player.position &&
-        interval.end > player.position,
-    );
+    // The narrated sentence, also in a gap after it; speech recovery only where there is none (before the first sentence).
+    const interval = following.narratedSentence(currentMap, placeOf(player.book, player.track.id, player.position));
     if (interval) {
       following.beginExplicitJump(`${currentMap.recordingId}:${interval.paragraphId}`);
       try { await jumpRef.current(interval.paragraphId, true); }
@@ -1069,7 +1079,9 @@ export function ReaderView({
         }
         return;
       }
-    const interval = currentInterval;
+    // The sentence the highlight marks (the following module's rule). In a gap it is still the last narrated
+    // sentence: the same key, so nothing moves and the highlight stays until the next sentence begins.
+    const interval = following.highlightedSentence(map, placeOf(p.book, p.track?.id, p.position));
     const key = interval ? `${map.recordingId}:${interval.paragraphId}` : "";
     if (interval && following.followTarget(key)) {
       void jumpRef.current(interval.paragraphId, false).catch(()=>false).then(shown => {
@@ -1077,6 +1089,7 @@ export function ReaderView({
           setError("Could not display the current passage. Try following audio again.");
       });
     } else if (!interval && highlight.current && rendition.current) {
+      // Before the map's first sentence there is no narrated sentence (a jump back before it).
       rendition.current.annotations.remove(highlight.current, "highlight");
       highlight.current = null;
       following.forgetFollowed();
@@ -1130,7 +1143,7 @@ export function ReaderView({
     if (previous && track) void p.play(previous.book, track, previous.position, { kind: null });
     else if (playerRef.current.playing) playerRef.current.toggle();
     // Decided for where the narration goes back to; with nothing playing before, it stays where it is.
-    if (previous && track) following.backToNarration(narrationAt(previous.book.recordingId, track.id, previous.position));
+    if (previous && track) following.backToNarration(narrationAt(previous.book, track.id, previous.position));
     else following.backToNarration();
     setToast(null);
   };
