@@ -53,12 +53,18 @@ const desktopProjects = [
               /(^|\/)activity-dot\.spec\.ts$/,
               // Settings as a list with pages (#579).
               /(^|\/)settings-pages\.spec\.ts$/,
+              // A book's Hardcover page (#529), and the Hardcover spec that reaches it from the Library.
+              /(^|\/)hardcover(-page)?\.spec\.ts$/,
+              // Activity's Now (#522).
+              /(^|\/)activity-now\.spec\.ts$/,
               // The Ebook page (#531).
               /(^|\/)ebook-page\.spec\.ts$/,
               // The worker's page (#520).
               /(^|\/)activity-worker\.spec\.ts$/,
               // The Audiobook page (#530).
               /(^|\/)audiobook-page\.spec\.ts$/,
+              // A book read in the reader is In progress; the ebook shelf leaves Discover (#556).
+              /(^|\/)(ebook-only-library|discovery)\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: {} },

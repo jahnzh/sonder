@@ -200,9 +200,6 @@
   color: var(--muted);
   text-align: center;
 }
-.download-actions {
-  flex-wrap: wrap;
-}
 @media (max-width: 1200px) and (min-width: 651px) {
   .dock-actions .volume-control {
     display: none;

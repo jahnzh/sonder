@@ -229,6 +229,17 @@ test("what adds a history entry and what replaces the current one", () => {
   assert.equal(step(r("#book/w"), r("#book/w")), "none");
 });
 
+test("#book/<workId>/hardcover is built (#529) for everyone; the Book page and its unbuilt pages are not yet", () => {
+  const shows = (address: string, admin: boolean) => writeAddress(resolve(readAddress(address), { admin }));
+  for (const admin of [true, false]) {
+    assert.equal(shows("#book/w1/hardcover", admin), "#book/w1/hardcover");
+    assert.equal(shows("#book/hardcover%3A42/hardcover", admin), "#book/hardcover%3A42/hardcover");
+    assert.equal(shows("#book/w1", admin), "#library");
+    assert.equal(shows("#book/w1/sync", admin), "#library");
+  }
+  assert.deepEqual(parentOf(readAddress("#book/w1/hardcover")), { name: "book", workId: "w1" });
+});
+
 test("#book/<workId>/ebook shows the Ebook page for everyone, its parent the book (#531)", () => {
   for (const admin of [true, false]) {
     assert.deepEqual(resolve(readAddress("#book/w1/ebook"), { admin }), { name: "book-page", workId: "w1", page: "ebook" });

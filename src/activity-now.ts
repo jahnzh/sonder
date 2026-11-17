@@ -11,7 +11,7 @@
 import type { DeviceSaveEntry } from "./device-saves";
 import {
   downloadLine, ebookCheckLine, failedLine, finishedLine, readingSyncLine, serverCopyLine, seriesSearchLine,
-  withFileCount, withReason, deviceSaveLine,
+  withFileCount, withReason, withUser, deviceSaveLine,
   type DownloadFacts, type EbookCheckFacts, type ReadingSyncJobFacts, type SeriesSearchFacts, type ServerCopyFacts,
 } from "./status-lines";
 import type { ActivityItem, ActivityItemAction, ActivityProcess, ActivityResponse } from "./types";
@@ -219,7 +219,8 @@ function serverEntry(item: ActivityItem, now: number): Entry | null {
   const notBook = entry === "hardcover" || entry === "backup";
   if (notBook && group !== "attention") return null;
   let line: string | null;
-  if (notBook) line = item.error ?? item.stuck?.reason ?? item.detail;
+  // A Hardcover queue is one user's: its line names whose it is, as Server's queue line does ("… · admin").
+  if (notBook) line = withUser(item.error ?? item.stuck?.reason ?? item.detail ?? "", item.user);
   else if (failed) line = failedLine({ entry: entry as "download" });
   else if (item.state === "done") line = doneLine(item);
   else line = movingLine(item);
@@ -236,7 +237,8 @@ function serverEntry(item: ActivityItem, now: number): Entry | null {
     title: item.title,
     cover: notBook ? null : item.cover,
     entry,
-    icon: notBook ? "server" : ICON_OF[entry] ?? null,
+    // A series search is about the file it looks for ("Ebook on server" has the Ebook icon, ActivityFailedSave.dc.html).
+    icon: notBook ? "server" : item.facts.kind === "series-acquisition" ? item.facts.search : ICON_OF[entry] ?? null,
     line: line ?? item.detail ?? "",
     failed: failed || notBook,
     progress: group === "progress" && !item.stuck ? item.progress : null,

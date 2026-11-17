@@ -30,7 +30,6 @@ import {
   Loader2,
   FolderOpen,
   Link2,
-  ExternalLink,
   RefreshCw,
   Volume2,
   Music2,
@@ -78,17 +77,13 @@ import { Join } from "./components/Join";
 import { PlayerDock } from "./components/Player";
 import { AppUpdate } from "./components/AppUpdate";
 import { Chapters } from "./components/Chapters";
-import {
-  HardcoverBookTools,
-  type HardcoverFilter,
-} from "./components/Hardcover";
+import { type HardcoverFilter } from "./components/Hardcover";
 import { listeningChapters } from "./chapters";
 import { type Page, Mark, ListenButton, Empty } from "./pages/shared";
 import { LibraryPage } from "./pages/library-page";
 import { DiscoverPage } from "./pages/discover-page";
-import { DownloadsPage } from "./pages/downloads-page";
 import { ActivityServer } from "./pages/activity-server";
-import { ActivityItemGroups } from "./pages/activity-items";
+import { ActivityNow } from "./pages/activity-now";
 import { ActivityPlace } from "./pages/activity-place";
 import { useSideBySide } from "./pages/side-by-side";
 import { ActivityDevice } from "./pages/activity-device";
@@ -97,11 +92,14 @@ import { AudiobookPage } from "./pages/audiobook-page";
 import { audiobookRowLine } from "./pages/audiobook-model";
 import { FileRow } from "./parts/FileRow";
 import { Group } from "./parts/Group";
+import { HardcoverPage } from "./pages/hardcover-page";
+import { HardcoverRow } from "./pages/hardcover-row";
 import { EbookFileRow, EbookPage, ebookSearchTarget } from "./pages/ebook-page";
 import { firstPage, writeAddress, type Place, type Route } from "./routes";
 import { onPageLeftByHistory, shownSheet, startNavigation, useAddress } from "./navigation";
 import { Gallery, isGalleryRoute } from "./gallery/Gallery";
-import { refreshLibraryWorks, startLibraryWorks, useStoredWorks } from "./library-works-store";
+import { refreshLibraryWorks, startLibraryWorks, useStoredWorksWithPlaces } from "./library-works-store";
+import { bookStatus, readingPercent, workProgress } from "./work-progress";
 type Notice = { text: string; error?: boolean };
 const nav = [
   { id: "library", label: "My library", icon: Library },
@@ -172,41 +170,63 @@ function App() {
   );
 }
 const ATTENTION_POLL_MS = 60_000;
+/** Now reads the server's answer this often while it is visible (spec #513 "Now", as today's Activity page did). */
+const NOW_POLL_MS = 15_000;
+
+export type ServerActivity = {
+  activity: ActivityResponse | null;
+  /** False while the last read got no answer at all: there is no connection. */
+  reached: boolean;
+  /** The server's message when the last read was answered with an error; null once a read succeeds. */
+  error: string | null;
+  /** Reads the server again now (after an action on a row). */
+  reload: () => void;
+};
 
 /**
- * The server's Activity answer for the shell's attention dot (#521; it was `useActivityAttention` in
- * `components/Activity.tsx`): read every minute while the app is visible, for the administrator only, and again when
- * the browser is back online. `reached` is false while the last read got no answer at all; a read answered with an
- * error keeps the last answer.
+ * The server's Activity answer for the shell's attention dot and for Now (#521, #522; it was `useActivityAttention` in
+ * `components/Activity.tsx`): read every minute while the app is visible, every 15 seconds while Now is shown, for
+ * the administrator only, and again when the browser is back online or the app visible again. `reached` is false
+ * while the last read got no answer at all; a read answered with an error keeps the last answer and its message.
  */
-function useServerActivity(enabled: boolean) {
-  const [state, setState] = useState<{ activity: ActivityResponse | null; reached: boolean }>({ activity: null, reached: true });
+function useServerActivity(enabled: boolean, nowShown: boolean): ServerActivity {
+  const [state, setState] = useState<Omit<ServerActivity, "reload">>({ activity: null, reached: true, error: null });
+  const loadRef = useRef<() => void>(() => {});
   useEffect(() => {
     if (!enabled) {
-      setState({ activity: null, reached: true });
+      setState({ activity: null, reached: true, error: null });
+      loadRef.current = () => {};
       return;
     }
     let cancelled = false;
     const load = () => {
       if (document.visibilityState !== "visible") return;
       api<ActivityResponse>("/activity")
-        .then((activity) => !cancelled && setState({ activity, reached: true }))
+        .then((activity) => !cancelled && setState({ activity, reached: true, error: null }))
         .catch((error) => {
           if (cancelled) return;
           const reached = error instanceof ApiError;
-          setState((current) => (current.reached === reached ? current : { ...current, reached }));
+          const message = reached ? (error as Error).message : null;
+          setState((current) =>
+            current.reached === reached && current.error === message ? current : { ...current, reached, error: message },
+          );
         });
     };
+    loadRef.current = load;
     load();
-    const timer = setInterval(load, ATTENTION_POLL_MS);
+    const timer = setInterval(load, nowShown ? NOW_POLL_MS : ATTENTION_POLL_MS);
+    const visible = () => document.visibilityState === "visible" && load();
     window.addEventListener("online", load);
+    document.addEventListener("visibilitychange", visible);
     return () => {
       cancelled = true;
       clearInterval(timer);
       window.removeEventListener("online", load);
+      document.removeEventListener("visibilitychange", visible);
     };
-  }, [enabled]);
-  return state;
+  }, [enabled, nowShown]);
+  const reload = useCallback(() => loadRef.current(), []);
+  return useMemo(() => ({ ...state, reload }), [state, reload]);
 }
 /**
  * The address (src/routes.ts) and the history (src/navigation.ts), read once the user is known, so an
@@ -239,6 +259,9 @@ function LibraryApp({
   onLogout: () => void;
 }) {
   const [books, setBooks] = useState<Book[]>([]);
+  // The library by work with this device's places (#528): the Library's Listening, Not started and Finished
+  // follow the work of each entry, so a book read in the reader is In progress (#556).
+  const deviceWorks = useStoredWorksWithPlaces();
   const [ebookTarget, setEbookTarget] = useState<Book | null>(null);
   // The address, read by SignedIn once the user is known. The page modules in
   // src/pages never read or write it themselves.
@@ -249,7 +272,9 @@ function LibraryApp({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const admin = user.role === "admin";
-  const serverActivity = useServerActivity(admin);
+  // Now is shown: the Activity place on its first part (an address of Server is Now for someone else, #516).
+  const nowShown = address.route.name === "activity" && (address.route.part === "now" || (!admin && address.route.part === "server"));
+  const serverActivity = useServerActivity(admin, nowShown);
   const sideBySide = useSideBySide();
   // An address of a worker the server does not report shows Server, in the address too (#520).
   const showServer = useCallback(() => address.navigate({ name: "activity", part: "server" }, { replace: true }), [address.navigate]);
@@ -292,9 +317,14 @@ function LibraryApp({
     (Event & { prompt: () => Promise<void> }) | null
   >(null);
   const controllers = useRef(new Map<string, AbortController>());
-  // The attention dot on Activity (#521): lit exactly when Now's builder has a row under Needs attention, from the
-  // server's answer (administrator) and this device's saves (anyone), so the dot and Now cannot disagree.
-  const attentionDot = useMemo(
+  // Now and the attention dot on Activity (#521, #522): one result of Now's builder, from the server's answer
+  // (administrator) and this device's saves (anyone), so the dot and Now cannot disagree. The clock moves "2 h ago".
+  const [clockNow, setClockNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setClockNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  const nowState = useMemo(
     () =>
       buildNow({
         activity: serverActivity.activity,
@@ -304,9 +334,10 @@ function LibraryApp({
         // No connection: the browser says so, or the last read of the server got no answer at all.
         online: online && serverActivity.reached,
         now: Date.now(),
-      }).dot,
-    [serverActivity, books, downloads, downloadParts, downloadJobs, saveRecords, admin, online],
+      }),
+    [serverActivity, books, downloads, downloadParts, downloadJobs, saveRecords, admin, online, clockNow],
   );
+  const attentionDot = nowState.dot;
   const notify = useCallback(
     (text: string, error = false) => setNotice({ text, error }),
     [],
@@ -348,6 +379,16 @@ function LibraryApp({
       setLoading(false);
     }
   }, []);
+  // A download or a copy to the server that finishes joins the library: read it again, as the Downloads page did.
+  const finishedOnServer = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const items = serverActivity.activity?.items;
+    if (!items) return;
+    const done = new Set(items.filter((item) => item.state === "done" && (item.kind === "acquisition" || item.kind === "server-copy")).map((item) => item.id));
+    const seen = finishedOnServer.current;
+    finishedOnServer.current = done;
+    if (seen && [...done].some((id) => !seen.has(id))) void refresh();
+  }, [serverActivity.activity, refresh]);
   const refreshSettings = useCallback(
     () =>
       void api<SettingsData>("/settings")
@@ -445,6 +486,14 @@ function LibraryApp({
     leavePage("activity");
     address.navigate({ name: "activity", part: "device" });
   };
+  // A row of Now opens its work: today's book dialog, until the Book page exists (#522). A work that is not in the
+  // list yet (a download that just finished) is read again first.
+  const openWork = (workId: string, bookId: string | null) => {
+    const book = (bookId ? books.find((b) => b.id === bookId) : undefined) ?? books.find((b) => b.workId === workId);
+    if (book) return setDetail(book);
+    void refresh();
+    notify("Your book is joining the library. Open it in a moment.");
+  };
   const switchPlace = (p: Place) => {
     leftAudiobookByTab.current = true;
     leavePage(p);
@@ -470,14 +519,13 @@ function LibraryApp({
   }, [address.route]);
   // The book's entries may still be loading after a link straight to the page: the dialog opens once they are in.
   const [reopenBook, setReopenBook] = useState<string | null>(null);
-  const storedWorks = useStoredWorks();
   useEffect(() => {
     if (!reopenBook) return;
     const ofWork = books.filter((b) => b.workId === reopenBook && b.inLibrary && b.tracks.length > 0);
     if (!ofWork.length) return;
     setReopenBook(null);
     // The dialog shows the chosen recording, the one the page ticked.
-    const chosen = storedWorks.find((work) => work.workId === reopenBook)?.chosenRecordingId;
+    const chosen = deviceWorks.get(reopenBook)?.chosenRecordingId;
     setDetail(ofWork.find((b) => b.recordingId === chosen) ?? ofWork[0]);
   }, [reopenBook, books]);
   const onProgress = useCallback(
@@ -528,6 +576,8 @@ function LibraryApp({
           method: "PATCH",
           body: JSON.stringify({ status: action }),
         });
+      // The Library's states come from the works (#556): read them before the books, so a mark shows at once.
+      await refreshLibraryWorks().catch(() => {});
       await refresh();
       setDetail((d) =>
         d?.id === b.id
@@ -626,7 +676,20 @@ function LibraryApp({
       });
     }
   };
-  const libraryBooks = books.filter((b) => b.inLibrary);
+  // Each entry's status is its work's (`workProgress`), while the work is stored; otherwise `GET /api/books`' own.
+  const libraryBooks = books
+    .filter((b) => b.inLibrary)
+    .map((b) => {
+      const work = deviceWorks.get(b.workId);
+      if (!work) return b;
+      const status = bookStatus(workProgress(work));
+      return status === b.status ? b : { ...b, status };
+    });
+  // A book without audio shows its ebook's place; a book with audio its listening percentage, as before.
+  const readingPercentOf = (b: Book) => {
+    const work = b.tracks.length ? undefined : deviceWorks.get(b.workId);
+    return work ? readingPercent(work) : null;
+  };
   const downloaded = (b: Book) =>
     b.tracks.length > 0 &&
     b.tracks.every((t) => downloads.some((d) => d.trackId === t.id));
@@ -879,7 +942,8 @@ function LibraryApp({
                 }}
               />
             )}
-            {ebookPage ? (
+            {/* A book's Hardcover page (#529) and its Ebook page (#531) stand in place of the place's page; the Book page (#532) joins the book's pages. */}
+            {address.route.name === "book-page" && address.route.page === "hardcover" ? <HardcoverPage key={address.route.workId} workId={address.route.workId} admin={user.role === "admin"} books={books} onChanged={() => void refresh()} /> : ebookPage ? (
               <EbookPage
                 key={ebookPage}
                 workId={ebookPage}
@@ -913,6 +977,7 @@ function LibraryApp({
                 favorites={favorites}
                 toggleFavorite={toggleFavorite}
                 downloaded={downloaded}
+                readingPercentOf={readingPercentOf}
                 findAudio={findAudio}
                 mutateLibrary={mutateLibrary}
                 refresh={refresh}
@@ -957,16 +1022,28 @@ function LibraryApp({
                   onUnknownWorker={showServer}
                   notify={notify}
                 />}
-                now={<><DownloadsPage
-                admin={user.role === "admin"}
-                books={books}
-                refresh={refresh}
-                setDetail={setDetail}
-                navigate={navigate}
-                notify={notify}
-              />
-              {/* Today's item groups of the old Activity page, until Now's own ticket (#521). */}
-              {user.role === "admin" && <ActivityItemGroups />}</>}
+                now={<ActivityNow
+                  now={nowState}
+                  serverError={admin ? serverActivity.error : null}
+                  open={{
+                    book: openWork,
+                    worker: (worker) => address.navigate({ name: "worker", worker }),
+                    server: () => address.navigate({ name: "activity", part: "server" }),
+                  }}
+                  onServer={async (action, id) => {
+                    try {
+                      await api(`/activity/items/${action}`, { method: "POST", body: JSON.stringify({ id }) });
+                    } finally {
+                      serverActivity.reload();
+                    }
+                  }}
+                  onDevice={(action, recordingId, bookId) => {
+                    if (action === "pause") return controllers.current.get(recordingId)?.abort();
+                    // Resume and Retry carry on from the files and sections already saved.
+                    const book = books.find((b) => b.recordingId === recordingId) ?? books.find((b) => b.id === bookId);
+                    if (book) void startDownload(book);
+                  }}
+                />}
                 device={<ActivityDevice
                   books={books}
                   downloads={downloads}
@@ -1071,13 +1148,12 @@ function LibraryApp({
           admin={user.role === "admin"}
           onOpenAudiobook={() => detail && openAudiobook(detail)}
           onFindAudio={() => detail && findAudio(detail)}
-          onChanged={refresh}
-          onOpenSeries={(id) => { setDetail(null); setSeriesTarget({ id, mode: "preview" }); }}
-          onSettings={() => {
+          onHardcover={() => {
+            if (!detail) return;
+            const workId = detail.workId;
             setDetail(null);
-            openConnections();
+            address.navigate({ name: "book-page", workId, page: "hardcover" });
           }}
-          notify={notify}
           onKeepServer={() => {
             const left = leftByHistory.current;
             if (detail)
@@ -1142,10 +1218,7 @@ function BookDetail({
   admin,
   onOpenAudiobook,
   onFindAudio,
-  onChanged,
-  onOpenSeries,
-  onSettings,
-  notify,
+  onHardcover,
   onKeepServer,
   onFindEbook,
   onOpenEbook,
@@ -1164,10 +1237,8 @@ function BookDetail({
   /** The Audiobook row: opens the Audiobook page (#530). */
   onOpenAudiobook: () => void;
   onFindAudio: () => void;
-  onChanged: () => void;
-  onOpenSeries: (id: number) => void;
-  onSettings: () => void;
-  notify: (s: string, error?: boolean) => void;
+  /** Opens the book's Hardcover page (#529). */
+  onHardcover: () => void;
   onKeepServer: () => void;
   onFindEbook: () => void;
   onOpenEbook: () => void;
@@ -1229,11 +1300,6 @@ function BookDetail({
               </div>
               <div className="detail-actions">
                 <ReaderShortcut book={b} onOpen={onClose} onMissing={onFindEbook}/>
-                {b.hardcover?.slug && (
-                  <a className="button subtle" href={`https://hardcover.app/books/${encodeURIComponent(b.hardcover.slug)}`} target="_blank" rel="noopener noreferrer">
-                    Hardcover <ExternalLink size={16}/>
-                  </a>
-                )}
                 {b.inLibrary ? (
                   <ListenButton book={b} onFindAudio={onFindAudio} />
                 ) : (
@@ -1264,13 +1330,7 @@ function BookDetail({
               </Group>
             </div>
           )}
-          <HardcoverBookTools
-            book={b}
-            onChanged={onChanged}
-            onSettings={onSettings}
-            onOpenSeries={onOpenSeries}
-            notify={notify}
-          />
+          <HardcoverRow match={b.hardcover} onOpen={onHardcover} />
           {!b.tracks.length && (
             <div className="metadata-book-note">
               This book is on your reading shelf. Find an audiobook recording to

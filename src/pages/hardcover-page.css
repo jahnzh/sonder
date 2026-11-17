@@ -1,0 +1,158 @@
+/* The Hardcover page (src/pages/hardcover-page.tsx; boards Hardcover.dc.html, HardcoverMatch.dc.html). One column
+   of groups 16 apart; on a desktop the phone layout in one centred column beside the rail. Colours are the app's
+   variables; the parts keep their own measures. */
+.hardcover-page {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  min-width: 0;
+}
+.hardcover-page-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  min-width: 0;
+}
+/* The book's title under the Title (Label size, not bold, muted, one line). */
+.hardcover-page-book {
+  margin: 0;
+  font-weight: 400;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hardcover-page-line {
+  margin: 0;
+  font-weight: 400;
+  color: var(--muted);
+}
+.hardcover-page-line[data-failed] {
+  color: var(--danger);
+}
+/* The first group with the lines under it, 8 apart as a group's caption and note. */
+.hardcover-page-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+/* A line under a group, as a Group's note; the sync error in the failed colour. */
+.hardcover-page-note {
+  margin: 0;
+  padding: 0 var(--space-16);
+  font-family: var(--font-body);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted);
+}
+.hardcover-page-note[data-failed] {
+  color: var(--danger);
+}
+/* A result on the row above it: no line between the row and what it says. */
+.part-group > .hardcover-row-line {
+  border-top: 0;
+}
+.hardcover-row-line {
+  list-style: none;
+  margin: -8px 0 0;
+  padding: 0 var(--space-16) var(--space-12);
+  font-weight: 400;
+  color: var(--muted);
+}
+.hardcover-row-line[data-failed] {
+  color: var(--danger);
+}
+/* A row's value that acts (Use Hardcover position, Hardcover edition): the value on the right edge is the button. */
+.hardcover-value-button {
+  height: var(--height-control);
+  max-width: 100%;
+  min-width: var(--height-control);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-8);
+  cursor: pointer;
+}
+.hardcover-value-button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.hardcover-value-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--corner-control);
+}
+.hardcover-value-text {
+  min-width: 0;
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Open on Hardcover: a row that is a link, drawn as a Row. */
+a.hardcover-link-row {
+  text-decoration: none;
+  cursor: pointer;
+}
+a.hardcover-link-row:hover {
+  background: color-mix(in srgb, var(--raised) 55%, transparent);
+}
+a.hardcover-link-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+/* The match search: one field 44 high on the raised fill, corner 8, a search icon before the text. */
+.hardcover-search {
+  margin: 0;
+  display: flex;
+}
+.hardcover-search-field {
+  box-sizing: border-box;
+  height: var(--height-control);
+  flex: 1;
+  min-width: 0;
+  padding: 0 var(--space-12);
+  border-radius: var(--corner-control);
+  background: var(--raised);
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.hardcover-search-field svg {
+  flex: none;
+}
+/* Over the app's field fill (appearance.css), which names every text input with four :not()s. */
+.hardcover-search-field input:not([type="range"]):not([type="checkbox"]):not([type="file"]):not([type="color"]) {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text);
+  outline-offset: 4px;
+}
+.hardcover-search-field input::-webkit-search-cancel-button {
+  display: none;
+}
+.hardcover-match-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.hardcover-match-block > .hardcover-page-line {
+  padding: 0 var(--space-16);
+}
+.hardcover-match-button {
+  width: 100%;
+}

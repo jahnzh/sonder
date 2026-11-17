@@ -328,3 +328,16 @@ export function withFileCount(line: string, files: { done: number; total: number
 export function withReason(line: string, reason: string | null | undefined): string {
   return reason ? `${line}${DOT}${reason}` : line;
 }
+
+/** A line of one user's work, for the administrator, with whose it is ("We weren't able to find that book · admin"). */
+export function withUser(line: string, user: string | null | undefined): string {
+  return user ? (line ? `${line}${DOT}${user}` : user) : line;
+}
+
+/** How long ago a finished entry of Now finished, on the right of its row in Finished today ("2 h ago"). */
+export function finishedAgo(at: number, now: number): string {
+  const minutes = Math.floor(Math.max(0, now - at) / 60_000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  return `${Math.floor(minutes / 60)} h ago`;
+}

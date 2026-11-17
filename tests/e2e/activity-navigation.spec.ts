@@ -3,7 +3,7 @@ import type { ActivityResponse } from "../../src/types";
 
 // Activity is a place, with Now and Server (#516; boards Activity.dc.html, ActivityMember.dc.html,
 // DesktopActivity.dc.html). Activity took the Downloads slot in the tab bar and the rail, for everyone, with the
-// attention dot that was on Settings. Now shows today's Downloads page, Server today's Activity page.
+// attention dot that was on Settings. Now lists the books with work going on (#522), Server the queues and workers.
 // The file name ends in "navigation.spec.ts" so the Firefox project's pattern in playwright.config.ts picks it up.
 
 const DESKTOP = { width: 1280, height: 800 };
@@ -64,9 +64,8 @@ test("the administrator: Activity in the tab bar where Downloads was, with the d
   await activityTab(tabBar(page)).click();
   await expect(page).toHaveURL(/#activity$/);
   await expect(heading(page)).toBeVisible();
-  // Now is today's Downloads page: the server's downloads for the administrator. This device's saves are on This
-  // device (#518).
-  await expect(page.getByRole("heading", { name: /On your home server/ })).toBeVisible();
+  // Now lists every book with work going on (#522); this device's kept books are on This device (#518).
+  await expect(page.getByTestId("activity-now")).toBeVisible();
   await expect(page.getByRole("heading", { name: "On this device", exact: true })).toHaveCount(0);
   await expect(parts(page).getByRole("radio")).toHaveText(["Now", "This device", "Server"]);
   await expect(parts(page).getByRole("radio", { checked: true })).toHaveText("Now");
@@ -128,9 +127,9 @@ test("#activity and #activity/server show the same part on a reload", async ({ p
   await expect(parts(page).getByRole("radio", { checked: true })).toHaveText("Server");
   expect(await hash(page)).toBe("#activity/server");
   await page.goto("/#activity");
-  await expect(page.getByRole("heading", { name: /On your home server/ })).toBeVisible();
+  await expect(page.getByTestId("activity-now")).toBeVisible();
   await page.reload();
-  await expect(page.getByRole("heading", { name: /On your home server/ })).toBeVisible();
+  await expect(page.getByTestId("activity-now")).toBeVisible();
   await expect(parts(page).getByRole("radio", { checked: true })).toHaveText("Now");
   expect(await hash(page)).toBe("#activity");
 });
@@ -182,8 +181,9 @@ test("someone who is not the administrator: Activity in the tab bar, Now and Thi
   await activityTab(tabBar(page)).click();
   await expect(page).toHaveURL(/#activity$/);
   await expect(heading(page)).toBeVisible();
-  // The server's downloads are the administrator's; this device's saves are on This device (#518).
-  await expect(page.getByRole("heading", { name: /On your home server/ })).toHaveCount(0);
+  // The server's work is the administrator's: Now holds this device's saves only (#522).
+  await expect(page.getByTestId("activity-now")).toBeVisible();
+  await expect(page.getByRole("list", { name: "Needs attention", exact: true })).toHaveCount(0);
   await expect(parts(page).getByRole("radio")).toHaveText(["Now", "This device"]);
   await expect(parts(page).getByRole("radio", { checked: true })).toHaveText("Now");
   await expect(page.getByRole("radio", { name: "Server" })).toHaveCount(0);

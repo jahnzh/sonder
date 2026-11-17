@@ -2106,80 +2106,6 @@ input[type="range"]::-moz-range-thumb {
 .download-section {
   margin-top: 5px;
 }
-.download-list {
-  display: flex;
-  flex-direction: column;
-  border-top: 1px solid var(--line);
-}
-.download-row {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  padding: 22px 0;
-  border-bottom: 1px solid var(--line);
-}
-.download-cover {
-  padding: 0;
-  flex-shrink: 0;
-}
-.download-cover > img {
-  width: 55px;
-  height: 75px;
-  object-fit: cover;
-  border-radius: 3px;
-  box-shadow: 0 3px 6px color-mix(in srgb, var(--shadow) 7%, transparent);
-}
-.download-info {
-  flex: 1;
-  min-width: 0;
-}
-.download-info > .text-link {
-  font-size: calc(12px * var(--ui-scale, 1));
-  line-height: 1.6;
-  padding: 0;
-}
-.download-info > p {
-  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  color: var(--text);
-  margin-top: 4px;
-}
-.download-info > small {
-  font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  color: var(--text);
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-top: 11px;
-  flex-wrap: wrap;
-}
-.download-info > small > span {
-  color: var(--text);
-  margin-left: 3px;
-}
-.download-info > .download-complete {
-  color: var(--muted);
-}
-.download-info > .download-reason {
-  color: var(--danger);
-  margin-top: 4px;
-}
-.download-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.download-actions > .button {
-  min-height: 34px;
-  font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  padding: 8px 11px;
-}
-.download-actions > .delete-download {
-  color: var(--text);
-  width: 26px;
-}
-.download-actions > .delete-download:hover {
-  color: var(--accent);
-}
 .download-progress {
   height: 4px;
   border-radius: 4px;
@@ -3599,22 +3525,6 @@ input[type="range"]::-moz-range-thumb {
   .page-settings .page-heading h1 {
     font-size: calc(29px * var(--ui-scale, 1));
   }
-  .download-actions {
-    gap: 8px;
-  }
-  .download-actions > .button {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-    gap: 6px;
-  }
-  .download-row {
-    gap: 16px;
-  }
-  .download-info > .text-link {
-    font-size: calc(11px * var(--ui-scale, 1));
-  }
-  .download-info > small {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  }
   .main-footer {
     padding: 0 27px;
   }
@@ -4001,32 +3911,6 @@ input[type="range"]::-moz-range-thumb {
   }
   .page-heading > .quiet-tag {
     display: none;
-  }
-  .download-row {
-    gap: 12px;
-    flex-wrap: wrap;
-  }
-  .download-cover > img {
-    width: 46px;
-    height: 63px;
-  }
-  .download-actions {
-    margin-left: auto;
-  }
-  .download-actions > .button {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-    padding: 7px 9px;
-    gap: 4px;
-    min-height: 29px;
-  }
-  .download-actions .button svg {
-    width: 12px;
-  }
-  .download-info > small {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-  }
-  .download-info > .text-link {
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
   }
   .storage-main > div:first-child {
     flex-wrap: wrap;
@@ -5058,44 +4942,6 @@ input[type="range"]::-moz-range-thumb {
     margin: 11px 0 8px;
     height: 4px;
   }
-  .download-row {
-    gap: 14px;
-    padding: 19px 0;
-    position: relative;
-  }
-  .download-cover > img {
-    width: 47px;
-    height: 65px;
-  }
-  .download-info > .text-link {
-    font-size: calc(11px * var(--ui-scale, 1));
-  }
-  .download-info > p {
-    font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  }
-  .download-info > small {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-    margin-top: 8px;
-  }
-  .download-actions {
-    gap: 8px;
-    flex-shrink: 0;
-  }
-  .download-actions > .button {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-    padding: 7px 9px;
-    gap: 4px;
-  }
-  .download-actions .button > svg {
-    width: 12px;
-  }
-  .download-actions .delete-download {
-    width: 22px;
-    height: 25px;
-  }
-  .download-actions .delete-download > svg {
-    width: 14px;
-  }
   .download-note {
     padding: 19px 16px;
     gap: 12px;
@@ -5451,17 +5297,6 @@ input[type="range"]::-moz-range-thumb {
   }
   .detail-actions .button {
     font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-  }
-  .download-actions {
-    width: 100%;
-    justify-content: flex-end;
-    margin-top: -4px;
-  }
-  .download-actions > .button {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  }
-  .download-row {
-    gap: 12px;
   }
   .page-settings .page-heading h1 {
     font-size: calc(27px * var(--ui-scale, 1));
@@ -6180,27 +6015,6 @@ input[type="range"]::-moz-range-thumb {
 .storage-main > small {
   color: var(--muted);
 }
-.download-info > .text-link {
-  color: var(--text);
-}
-.download-info > p {
-  color: var(--muted);
-}
-.download-info > small {
-  color: var(--text);
-}
-.download-info > small > span {
-  color: var(--muted);
-}
-.download-info > .download-complete {
-  color: var(--text);
-}
-.download-actions > .delete-download {
-  color: var(--muted);
-}
-.download-actions > .delete-download:hover {
-  color: var(--accent);
-}
 .download-progress {
   background: var(--raised);
 }
@@ -6440,9 +6254,6 @@ input[type="range"]::-moz-range-thumb {
 .equalizer > i {
   background: var(--surface);
 }
-.server-queue {
-  margin-bottom: 35px;
-}
 .queue-location {
   font-size: calc(11px * var(--ui-scale, 1));
   color: var(--muted);
@@ -6450,31 +6261,6 @@ input[type="range"]::-moz-range-thumb {
   align-items: center;
   gap: 7px;
   margin-top: 8px;
-}
-.queue-badge {
-  font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  color: var(--text);
-  border: 1px solid var(--border);
-  background: var(--raised);
-  border-radius: 4px;
-  padding: 4px 7px;
-  white-space: nowrap;
-}
-.queue-error {
-  color: var(--danger) !important;
-}
-.queue-progress {
-  height: 4px;
-  background: var(--raised);
-  margin-top: 11px;
-  max-width: 420px;
-  border-radius: 4px;
-  overflow: hidden;
-}
-.queue-progress > i {
-  display: block;
-  height: 100%;
-  background: var(--surface);
 }
 .queue-info {
   font-size: max(11px, calc(10px * var(--ui-scale, 1)));
@@ -6639,9 +6425,6 @@ input[type="range"]::-moz-range-thumb {
   font-size: max(11px, calc(10px * var(--ui-scale, 1)));
   padding: 8px 12px;
   min-height: 34px;
-}
-.ebook-saved-heading {
-  margin-top: 32px;
 }
 .ebook-source-note {
   font-size: calc(11px * var(--ui-scale, 1));
@@ -7077,31 +6860,6 @@ input[type="range"]::-moz-range-thumb {
   .storage-main > small {
     font-size: max(11px, calc(9px * var(--ui-scale, 1)));
   }
-  .download-info > .text-link {
-    font-size: calc(13px * var(--ui-scale, 1));
-  }
-  .download-info > p {
-    font-size: calc(11px * var(--ui-scale, 1));
-  }
-  .download-info > small {
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-    line-height: 1.7;
-  }
-  .download-info > .download-complete {
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  }
-  .download-actions > .button {
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-    min-height: 34px;
-  }
-  .download-row {
-    padding: 20px 0;
-    gap: 15px;
-  }
-  .download-actions {
-    width: 100%;
-    justify-content: flex-end;
-  }
   .download-note strong {
     font-size: calc(12px * var(--ui-scale, 1));
   }
@@ -7282,9 +7040,6 @@ input[type="range"]::-moz-range-thumb {
   .queue-info {
     font-size: calc(11px * var(--ui-scale, 1));
   }
-  .queue-badge {
-    font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  }
   .queue-location {
     font-size: max(11px, calc(10px * var(--ui-scale, 1)));
   }
@@ -7370,18 +7125,6 @@ input[type="range"]::-moz-range-thumb {
 .additional-setting {
   margin-top: 18px;
 }
-.queue-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-.server-queue .download-row {
-  gap: 18px;
-}
-.server-queue .download-info > .text-link:disabled {
-  opacity: 1;
-  cursor: default;
-}
 .ebook-settings-form {
   margin-top: 0;
 }
@@ -7392,9 +7135,6 @@ input[type="range"]::-moz-range-thumb {
   margin-top: 36px;
   padding-top: 25px;
   border-top: 1px solid var(--line);
-}
-.server-queue .source-explainer {
-  margin-bottom: 10px;
 }
 .discover-ebook-callout {
   display: flex;
@@ -7445,12 +7185,6 @@ input[type="range"]::-moz-range-thumb {
   }
   .discover-ebook-callout > .button {
     margin-left: auto;
-  }
-  .server-queue .download-row {
-    gap: 14px;
-  }
-  .server-queue .download-actions {
-    justify-content: space-between;
   }
   .source-explainer strong {
     font-size: calc(12px * var(--ui-scale, 1));
@@ -7648,8 +7382,7 @@ input[type="range"]::-moz-range-thumb {
   min-width: 0;
 }
 .hardcover-library-controls select,
-.hardcover-sync-settings select,
-.hardcover-book-tools select {
+.hardcover-sync-settings select {
   width: 100%;
   min-height: 38px;
   border: 1px solid var(--border);
@@ -7743,195 +7476,6 @@ input[type="range"]::-moz-range-thumb {
   margin-top: 17px;
   line-height: 1.8;
 }
-.hardcover-book-tools {
-  padding: 19px 17px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--raised);
-  margin-bottom: 23px;
-}
-.hardcover-book-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 15px;
-  margin-bottom: 16px;
-}
-.hardcover-book-heading > span:first-child {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: calc(13px * var(--ui-scale, 1));
-  color: var(--text);
-  font-weight: 500;
-}
-.hardcover-linked {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  color: var(--text);
-}
-.hardcover-unlinked {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 15px;
-}
-.hardcover-unlinked > p {
-  font-size: calc(11px * var(--ui-scale, 1));
-  line-height: 1.9;
-  color: var(--muted);
-}
-.hardcover-unlinked > .button {
-  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  flex-shrink: 0;
-}
-.hardcover-book-summary {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px;
-  align-items: center;
-  margin-bottom: 17px;
-}
-.hardcover-book-summary label,
-.hardcover-edition-select {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  font-size: calc(11px * var(--ui-scale, 1));
-  color: var(--text);
-}
-.hardcover-progress-summary > span {
-  display: block;
-  color: var(--text);
-  font-size: calc(13px * var(--ui-scale, 1));
-}
-.hardcover-progress-summary > small {
-  display: block;
-  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  color: var(--muted);
-  margin-top: 7px;
-  line-height: 1.8;
-}
-.hardcover-book-tools .hardcover-help {
-  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  margin: 12px 0 0;
-}
-.hardcover-series {
-  display: flex;
-  gap: 7px;
-  flex-wrap: wrap;
-  margin-top: 14px;
-}
-.hardcover-series > span {
-  padding: 5px 8px;
-  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  line-height: 1.6;
-  border: 1px solid var(--border);
-  background: var(--raised);
-  color: var(--text);
-  border-radius: 4px;
-}
-.hardcover-media-state {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 10px;
-  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  color: var(--muted);
-}
-.hardcover-book-lists {
-  border-top: 1px solid var(--border);
-  padding-top: 16px;
-  margin-top: 16px;
-}
-.hardcover-book-lists > span {
-  display: block;
-  font-size: calc(11px * var(--ui-scale, 1));
-  color: var(--text);
-}
-.hardcover-book-lists .hardcover-checkbox {
-  margin: 12px 0 !important;
-}
-.hardcover-book-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-top: 17px;
-}
-.hardcover-book-actions > .button,
-.hardcover-book-actions > a {
-  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  min-height: 34px;
-  padding: 8px 10px;
-}
-.hardcover-edition-select {
-  padding-top: 16px;
-  margin-top: 17px;
-  border-top: 1px solid var(--border);
-}
-.hardcover-edition-select > small {
-  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  color: var(--muted);
-  line-height: 1.9;
-}
-.hardcover-match-search {
-  display: flex;
-  gap: 10px;
-}
-.hardcover-match-search > input {
-  min-width: 0;
-  flex: 1;
-  background: var(--raised);
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  color: var(--text);
-  font-size: calc(12px * var(--ui-scale, 1));
-  padding: 11px 12px;
-}
-.hardcover-match-search > .button {
-  font-size: calc(11px * var(--ui-scale, 1));
-}
-.hardcover-matches > article {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 18px 0;
-  border-bottom: 1px solid var(--border);
-}
-.hardcover-matches img {
-  width: 43px;
-  height: 61px;
-  object-fit: cover;
-  border-radius: 3px;
-  flex-shrink: 0;
-}
-.hardcover-matches > article > div {
-  flex: 1;
-  min-width: 0;
-}
-.hardcover-matches strong {
-  display: block;
-  font-size: calc(12px * var(--ui-scale, 1));
-  font-weight: 500;
-  line-height: 1.6;
-  color: var(--text);
-}
-.hardcover-matches > article > div > span {
-  display: block;
-  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  line-height: 1.7;
-  color: var(--muted);
-  margin-top: 6px;
-}
-.hardcover-matches .button {
-  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  min-height: 34px;
-  padding: 8px 10px;
-}
 .hardcover-book-label {
   font-size: max(11px, calc(9px * var(--ui-scale, 1)));
   color: var(--text);
@@ -7945,9 +7489,6 @@ input[type="range"]::-moz-range-thumb {
   color: var(--muted);
   line-height: 1.8;
   margin-top: 5px;
-}
-.hardcover-book-lists input:disabled {
-  cursor: default;
 }
 .metadata-book-note {
   font-size: calc(11px * var(--ui-scale, 1));
@@ -8186,101 +7727,6 @@ input[type="range"]::-moz-range-thumb {
   .hardcover-permissions {
     font-size: calc(11px * var(--ui-scale, 1));
   }
-  .hardcover-book-tools {
-    padding: 17px 13px;
-  }
-  .hardcover-book-heading > span:first-child {
-    font-size: calc(14px * var(--ui-scale, 1));
-  }
-  .hardcover-unlinked {
-    flex-wrap: wrap;
-    gap: 13px;
-  }
-  .hardcover-unlinked > p {
-    font-size: calc(12px * var(--ui-scale, 1));
-  }
-  .hardcover-unlinked > .button {
-    font-size: calc(11px * var(--ui-scale, 1));
-    min-height: 38px;
-    margin-left: auto;
-  }
-  .hardcover-book-summary {
-    grid-template-columns: 1fr;
-    gap: 16px;
-  }
-  .hardcover-book-summary label {
-    font-size: calc(12px * var(--ui-scale, 1));
-  }
-  .hardcover-book-tools select {
-    font-size: calc(12px * var(--ui-scale, 1));
-    min-height: 43px;
-  }
-  .hardcover-progress-summary {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 14px;
-  }
-  .hardcover-progress-summary > span {
-    font-size: calc(12px * var(--ui-scale, 1));
-  }
-  .hardcover-progress-summary > small {
-    font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-    max-width: 145px;
-    text-align: right;
-    margin: 0;
-    line-height: 1.7;
-  }
-  .hardcover-book-tools .hardcover-help {
-    font-size: calc(11px * var(--ui-scale, 1));
-  }
-  .hardcover-series > span {
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  }
-  .hardcover-book-actions {
-    gap: 7px;
-  }
-  .hardcover-book-actions > .button {
-    font-size: calc(11px * var(--ui-scale, 1));
-    min-height: 40px;
-  }
-  .hardcover-edition-select {
-    font-size: calc(12px * var(--ui-scale, 1));
-  }
-  .hardcover-edition-select > small {
-    font-size: calc(11px * var(--ui-scale, 1));
-  }
-  .hardcover-match-search {
-    gap: 8px;
-  }
-  .hardcover-match-search > input {
-    font-size: calc(12px * var(--ui-scale, 1));
-    min-height: 44px;
-    padding: 10px;
-  }
-  .hardcover-match-search > .button {
-    font-size: calc(11px * var(--ui-scale, 1));
-    min-height: 44px;
-    padding: 10px 12px;
-  }
-  .hardcover-matches > article {
-    gap: 11px;
-    flex-wrap: wrap;
-  }
-  .hardcover-matches > article > div {
-    min-width: 130px;
-  }
-  .hardcover-matches .button {
-    margin-left: auto;
-    font-size: calc(11px * var(--ui-scale, 1));
-    min-height: 38px;
-  }
-  .hardcover-matches strong {
-    font-size: calc(13px * var(--ui-scale, 1));
-  }
-  .hardcover-matches > article > div > span {
-    font-size: calc(11px * var(--ui-scale, 1));
-  }
   .hardcover-book-label,
   .hardcover-series-label {
     font-size: max(11px, calc(9px * var(--ui-scale, 1)));
@@ -8311,14 +7757,3 @@ input[type="range"]::-moz-range-thumb {
 }
 
 /* Activity rows hold long reasons and errors: wrap instead of widening the page. */
-.activity-row .user-row-name {
-  flex-wrap: wrap;
-  row-gap: 6px;
-}
-.activity-row .quiet-tag {
-  white-space: normal;
-  padding: 4px 8px;
-}
-.activity-row small {
-  overflow-wrap: anywhere;
-}
