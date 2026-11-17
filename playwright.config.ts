@@ -7,9 +7,9 @@ const installed =
 // SONDER_MOBILE=1 adds them to the default projects; SONDER_MOBILE=only (npm run test:mobile) runs just them.
 const mobileMode = process.env.SONDER_MOBILE;
 // A host without a sound server (lisa, #656) gives Firefox no audio stream, so <audio> stops with
-// OnMediaSinkAudioError and the dock never shows Pause. SONDER_FIREFOX_PULSE_SERVER names a PulseAudio
+// OnMediaSinkAudioError and the dock never shows Pause. PLAYWRIGHT_FIREFOX_PULSE_SERVER names a PulseAudio
 // server with a null sink there; it is passed to Firefox only, as PULSE_SERVER (docs/agents/ci-host.md).
-const firefoxPulseServer = process.env.SONDER_FIREFOX_PULSE_SERVER;
+const firefoxPulseServer = process.env.PLAYWRIGHT_FIREFOX_PULSE_SERVER;
 const firefoxLaunchOptions = firefoxPulseServer
   ? {
       env: {
