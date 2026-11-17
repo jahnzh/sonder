@@ -5,11 +5,17 @@
 //
 // While it is open the rest of the document is inert, focus is in the sheet, and Escape or Close goes back (to the
 // page under it, or to the page's parent when the sheet was opened by a link). Closing returns focus to what opened it.
+// A sheet shown before anyone is signed in (Request an account, #582) has no address: it closes with `onClose`, and
+// then never reads or writes the history, so the address asked for survives until the sign-in.
+//
+// The sheet covers what the screen shows (the visual viewport), so a phone's keyboard never covers its body or its
+// foot.
 import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { useAddress } from "../navigation";
+import { goBack } from "../navigation";
 import type { Route } from "../routes";
 import { Button } from "./Button";
+import { shownRoom } from "./shown-room";
 import "./sheet.css";
 
 export type SheetProps = {
@@ -20,6 +26,8 @@ export type SheetProps = {
   footer?: ReactNode;
   /** Where Close lands when no entry of the app lies behind (a link to the sheet): the sheet's parent by default. */
   parent?: Route;
+  /** Closes a sheet that has no address of its own; without it, Close and Escape go back in the history. */
+  onClose?: () => void;
 };
 
 function CloseIcon() {
@@ -36,11 +44,29 @@ function opener(): HTMLElement | null {
   return active instanceof HTMLElement && active !== document.body && active !== document.documentElement ? active : null;
 }
 
-export function Sheet({ title, children, footer, parent }: SheetProps) {
-  const { goBack } = useAddress();
+export function Sheet({ title, children, footer, parent, onClose }: SheetProps) {
   const ref = useRef<HTMLDivElement>(null);
   const titleId = useId();
-  const close = () => goBack(parent);
+  const close = () => (onClose ? onClose() : goBack(parent));
+
+  useEffect(() => {
+    const view = window.visualViewport;
+    const sheet = ref.current;
+    if (!view || !sheet) return;
+    const fit = () => {
+      const room = shownRoom(view, window.innerHeight);
+      sheet.style.setProperty("--sheet-shown-top", `${room.top}px`);
+      sheet.style.setProperty("--sheet-shown-bottom", `${room.bottom}px`);
+    };
+    // The browser scrolls the field being typed in back into sight once the sheet has shrunk.
+    fit();
+    view.addEventListener("resize", fit);
+    view.addEventListener("scroll", fit);
+    return () => {
+      view.removeEventListener("resize", fit);
+      view.removeEventListener("scroll", fit);
+    };
+  }, []);
 
   useEffect(() => {
     const sheet = ref.current!;
