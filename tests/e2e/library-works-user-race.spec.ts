@@ -1,116 +1,184 @@
-// Review #528: prove that loadOnce's write (src/library-works-store.ts) through the personalDB proxy
-// (src/lib.ts) can land one user's library works in another's IndexedDB when selectUserStorage flips
-// mid-write. Same shape as the production write: transaction → clear → bulkPut → tag. A macrotask
-// (login) during a large bulkPut is enough; the owner's library is large enough for that on a phone.
-import { readFileSync } from "node:fs";
+// Review #528, finding 1: a library write started for one account while the user signs in as another must stay
+// in the first account's device database. The page runs the real client modules (`src/library-works-store.ts`
+// and `src/lib.ts`, bundled here with esbuild) against real IndexedDB; the account switch is made with the real
+// `selectUserStorage` right after the write's clear, which is where the `localDB` proxy used to send the rest of
+// the write (bulkPut, tag) into the other account's database. Each run uses its own origin and its own titles,
+// so the spec can run twice on one server.
+import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { test, expect } from "@playwright/test";
+import { fileURLToPath } from "node:url";
+import { build } from "esbuild";
+import { test, expect, type Browser } from "@playwright/test";
 
-const dexieSrc = readFileSync(new URL("../../node_modules/dexie/dist/dexie.min.js", import.meta.url), "utf8");
+const srcDir = fileURLToPath(new URL("../../src/", import.meta.url));
 
-test("a library works write started for one user must not clear their store or fill another's", async ({ browser }) => {
+async function bundle() {
+  const result = await build({
+    stdin: {
+      contents: `
+        import Dexie from "dexie";
+        import { accountDatabase, loadBooks, localDB, selectUserStorage, SonderDB, userId } from "./lib";
+        import { refreshLibraryWorks, useStoredWorks } from "./library-works-store";
+        void useStoredWorks;
+        window.__sonder = { Dexie, SonderDB, accountDatabase, loadBooks, localDB, refreshLibraryWorks, selectUserStorage, userId };
+      `,
+      resolveDir: srcDir,
+      loader: "ts",
+    },
+    bundle: true,
+    write: false,
+    format: "iife",
+    platform: "browser",
+    define: { "process.env.NODE_ENV": '"production"' },
+    logLevel: "silent",
+  });
+  return result.outputFiles[0].text;
+}
+
+/** A page origin of its own that serves the bundle, `/api/library` and `/api/books` for user 1. */
+async function withPage(browser: Browser, run: string, use: (page: import("@playwright/test").Page) => Promise<void>) {
+  const script = await bundle();
+  const works = Array.from({ length: 300 }, (_, i) => ({
+    workId: `work-${run}-${i}`,
+    title: `From user 1 ${run} #${i}`,
+    recordings: [{ recordingId: `rec-${run}-${i}`, tracks: Array.from({ length: 12 }, (_, t) => ({ id: `t-${t}`, duration: 60 })) }],
+    ebookEditions: [],
+  }));
+  const books = works.map((work) => ({ id: `book-${work.workId}`, title: work.title, recordingId: work.recordings[0].recordingId }));
   const server = createServer((req, res) => {
-    if (req.url === "/dexie.js") {
+    if (req.url === "/bundle.js") {
       res.writeHead(200, { "content-type": "text/javascript" });
-      res.end(dexieSrc);
-      return;
+      res.end(script);
+    } else if (req.url === "/api/library") {
+      res.writeHead(200, { "content-type": "application/json", etag: `"etag-user-1-${run}"` });
+      res.end(JSON.stringify(works));
+    } else if (req.url === "/api/books") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(books));
+    } else {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end('<!doctype html><body>ok<script src="/bundle.js"></script></body>');
     }
-    res.writeHead(200, { "content-type": "text/html" });
-    res.end('<script src="/dexie.js"></script><body>ok</body>');
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
-  const port = (server.address() as AddressInfo).port;
   const page = await browser.newPage();
   try {
-    await page.goto(`http://127.0.0.1:${port}/`);
-    const result = await page.evaluate(async () => {
-      const Dexie = (window as unknown as { Dexie: typeof import("dexie").default }).Dexie;
-      class SonderDB extends Dexie {
-        works!: import("dexie").Table<{ workId: string; title: string }, string>;
-        preferences!: import("dexie").Table<{ key: string; value: unknown }, string>;
-        constructor(name: string) {
-          super(name);
-          this.version(1).stores({ works: "workId", preferences: "key" });
-        }
-      }
-      await Dexie.delete("sonder");
-      await Dexie.delete("sonder-user-2");
-      // Same idea as src/lib.ts: personalDB flips on selectUserStorage; localDB reads it each time.
-      let personalDB: SonderDB = new SonderDB("sonder");
-      await personalDB.open();
-      await personalDB.works.put({ workId: "already-a", title: "Owner's cached work" });
-      await personalDB.preferences.put({ key: "library-works-tag", value: '"old-tag"' });
-      await new SonderDB("sonder-user-2").open().then((db) => db.close());
-
-      const localDB = new Proxy({} as SonderDB, {
-        get(_, prop) {
-          const db = personalDB;
-          if (prop === "transaction") {
-            return (...args: unknown[]) => {
-              const table = args[1] as { db?: SonderDB };
-              return (table?.db || db).transaction.apply(table?.db || db, args as never);
-            };
-          }
-          const value = Reflect.get(db, prop, db);
-          return typeof value === "function" ? value.bind(db) : value;
-        },
-      });
-
-      // A macrotask login mid-write, as sonder:unauthorized → Sign in for user 2 would be.
-      const login = setInterval(() => {
-        if (personalDB.name === "sonder") personalDB = new SonderDB("sonder-user-2");
-      }, 0);
-
-      let writeError: string | null = null;
-      try {
-        // Same write as loadOnce in src/library-works-store.ts (lines 108–113).
-        const works = Array.from({ length: 200 }, (_, i) => ({
-          workId: `work-${i}`,
-          title: `From user 1 #${i}`,
-          recordings: [{ recordingId: `rec-${i}`, tracks: Array.from({ length: 12 }, (__, t) => ({ id: `t-${t}`, duration: 60 })) }],
-        }));
-        await localDB.transaction("rw", localDB.works, localDB.preferences, async () => {
-          await localDB.works.clear();
-          await localDB.works.bulkPut(works);
-          await localDB.preferences.put({ key: "library-works-tag", value: '"etag-user-1"' });
-        });
-      } catch (error) {
-        writeError = String(error);
-      }
-      clearInterval(login);
-
-      const owner = new SonderDB("sonder");
-      const other = new SonderDB("sonder-user-2");
-      await owner.open();
-      await other.open();
-      const out = {
-        writeError,
-        ownerCount: await owner.works.count(),
-        ownerStillHasCached: !!(await owner.works.get("already-a")),
-        ownerTag: (await owner.preferences.get("library-works-tag"))?.value ?? null,
-        otherCount: await other.works.count(),
-        otherHasUser1Title: (await other.works.toArray()).some((row) => String(row.title).startsWith("From user 1")),
-        otherTag: (await other.preferences.get("library-works-tag"))?.value ?? null,
-      };
-      owner.close();
-      other.close();
-      await Dexie.delete("sonder");
-      await Dexie.delete("sonder-user-2");
-      return out;
-    });
-
-    // Privacy / durability invariant for #528's works write: a write that began as user 1 must not
-    // put user 1's library into user 2's database, and must not leave user 1 with an empty works
-    // table after a failed cross-user write.
-    expect(result.otherHasUser1Title, `user 2 received user 1's works: ${JSON.stringify(result)}`).toBe(false);
-    expect(result.otherCount, `user 2 works count: ${JSON.stringify(result)}`).toBe(0);
-    expect(
-      result.ownerCount > 0,
-      `user 1's works table was emptied by a crossed write: ${JSON.stringify(result)}`,
-    ).toBe(true);
+    await page.goto(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+    await page.waitForFunction(() => "__sonder" in window);
+    await use(page);
   } finally {
     await page.close();
     server.close();
   }
+}
+
+test("a library works write started for one user must not clear their store or fill another's", async ({ browser }) => {
+  const run = randomUUID().slice(0, 8);
+  await withPage(browser, run, async (page) => {
+    const result = await page.evaluate(async (run) => {
+      const s = (window as any).__sonder;
+      await s.Dexie.delete("sonder");
+      await s.Dexie.delete("sonder-user-2");
+      s.selectUserStorage(1);
+      await s.localDB.works.put({ workId: `cached-${run}`, title: `Owner's cached work ${run}` });
+      await s.localDB.preferences.put({ key: "library-works-tag", value: '"old-tag"' });
+      // The user signs in as the second account just after the write has cleared user 1's works.
+      const table = s.accountDatabase().db.works;
+      const clear = table.clear.bind(table);
+      let switched = false;
+      table.clear = () =>
+        clear().then((value: unknown) => {
+          if (!switched) s.selectUserStorage(2, "user");
+          switched = true;
+          return value;
+        });
+      let writeError: string | null = null;
+      await s.refreshLibraryWorks().catch((error: unknown) => (writeError = String(error)));
+      delete table.clear;
+
+      const owner = new s.SonderDB("sonder");
+      const other = new s.SonderDB("sonder-user-2");
+      await owner.open();
+      await other.open();
+      const otherWorks = await other.table("works").toArray();
+      const otherTag = (await other.table("preferences").get("library-works-tag"))?.value ?? null;
+      const out = {
+        switched,
+        signedIn: s.userId(),
+        writeError,
+        ownerCount: await owner.table("works").count(),
+        ownerStillHasCached: !!(await owner.table("works").get(`cached-${run}`)),
+        ownerTag: (await owner.table("preferences").get("library-works-tag"))?.value ?? null,
+        otherCount: otherWorks.length,
+        otherHasUser1Title: otherWorks.some((row: any) => String(row.title).startsWith("From user 1")),
+        otherTag,
+      };
+      owner.close();
+      other.close();
+      return out;
+    }, run);
+
+    expect(result.switched, JSON.stringify(result)).toBe(true);
+    expect(result.signedIn).toBe(2);
+    expect(result.writeError, JSON.stringify(result)).toBeNull();
+    // Privacy: nothing of user 1's write reaches user 2's database.
+    expect(result.otherHasUser1Title, `user 2 received user 1's works: ${JSON.stringify(result)}`).toBe(false);
+    expect(result.otherCount, `user 2 works count: ${JSON.stringify(result)}`).toBe(0);
+    expect(result.otherTag, `user 2 received user 1's entity tag: ${JSON.stringify(result)}`).toBeNull();
+    // Durability: the stopped write is rolled back, so user 1 keeps the works and tag they had.
+    expect(result.ownerStillHasCached, `user 1's works table was emptied by a crossed write: ${JSON.stringify(result)}`).toBe(true);
+    expect(result.ownerCount).toBe(1);
+    expect(result.ownerTag).toBe('"old-tag"');
+  });
+});
+
+test("a books write started for one user must not clear their store or fill another's", async ({ browser }) => {
+  const run = randomUUID().slice(0, 8);
+  await withPage(browser, run, async (page) => {
+    const result = await page.evaluate(async (run) => {
+      const s = (window as any).__sonder;
+      await s.Dexie.delete("sonder");
+      await s.Dexie.delete("sonder-user-2");
+      s.selectUserStorage(1);
+      await s.localDB.books.put({ id: `cached-${run}`, title: `Owner's cached book ${run}`, recordingId: `rec-cached-${run}` });
+      const table = s.accountDatabase().db.books;
+      const clear = table.clear.bind(table);
+      let switched = false;
+      table.clear = () =>
+        clear().then((value: unknown) => {
+          if (!switched) s.selectUserStorage(2, "user");
+          switched = true;
+          return value;
+        });
+      let loadError: string | null = null;
+      const loaded = await s.loadBooks().catch((error: unknown) => ((loadError = String(error)), []));
+      delete table.clear;
+
+      const owner = new s.SonderDB("sonder");
+      const other = new s.SonderDB("sonder-user-2");
+      await owner.open();
+      await other.open();
+      const otherBooks = await other.table("books").toArray();
+      const out = {
+        switched,
+        loadError,
+        loadedCount: loaded.length,
+        ownerCount: await owner.table("books").count(),
+        ownerStillHasCached: !!(await owner.table("books").get(`cached-${run}`)),
+        otherCount: otherBooks.length,
+      };
+      owner.close();
+      other.close();
+      return out;
+    }, run);
+
+    expect(result.switched, JSON.stringify(result)).toBe(true);
+    expect(result.loadError, JSON.stringify(result)).toBeNull();
+    expect(result.otherCount, `user 2 received user 1's books: ${JSON.stringify(result)}`).toBe(0);
+    expect(result.ownerStillHasCached, `user 1's books were emptied by a crossed write: ${JSON.stringify(result)}`).toBe(true);
+    expect(result.ownerCount).toBe(1);
+    // The caller that asked for user 1's books still gets what the server answered for user 1.
+    expect(result.loadedCount).toBe(300);
+  });
 });
