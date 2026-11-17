@@ -108,8 +108,8 @@ export type BookModel = {
     action: FileAction;
   };
   ebook: { line: string; opens: boolean; action: FileAction };
-  /** The Reading sync row: muted and not a link while a file is missing (and until the Reading sync page exists). */
-  sync: { line: string; muted: boolean };
+  /** The Reading sync row: muted and not a link while a file is missing; with both, it opens the Reading sync page (#540). */
+  sync: { line: string; muted: boolean; opens: boolean };
   /** This device's group: for a book in the library with a recording or an EPUB. */
   device: boolean;
   /** Mark as finished, or Mark as not finished when the work is finished. */
@@ -157,7 +157,8 @@ export function bookModel(work: LibraryWork, facts: { admin: boolean; deviceChoi
   const job = recording && epub ? work.readingSync.find((entry) => entry.recordingId === recording.recordingId && entry.ebookId === epub.id) : undefined;
   const syncLine = bookSyncLine({ hasRecording: !!recording, audioComing: coming, hasEbook, hasEpub, job: syncFacts(job) });
   const missing = !recording || !hasEpub;
-  const sync = { line: syncLine ?? downloadLine({ status: null })!, muted: missing };
+  // The page is for the chosen pair: the chosen recording and an EPUB the reader opens.
+  const sync = { line: syncLine ?? downloadLine({ status: null })!, muted: missing, opens: !!recording && !!epub };
 
   const main: BookModel["main"] = !work.inLibrary
     ? "add"
