@@ -114,6 +114,14 @@ export const TIPS = {
     "On: your listening and reading progress is also sent to Hardcover. Off: Sonder only reads your shelves, lists and positions from it.",
   prowlarr:
     "Adds the indexers of your Prowlarr to the recording search. Sonder only reads from it.",
+  density:
+    "Compact puts less space around rows and groups, so more fits on the screen.",
+  readerTheme:
+    "The colours of the book’s pages in the reader. App uses the colours of the app.",
+  mediaDrive:
+    "The drive on your server that holds the audiobooks and ebooks. While it is not connected, nothing is saved to it.",
+  resetDevice:
+    "Reloads the app’s files and clears what it keeps for streaming. Books kept on this device, your places and your settings stay.",
 } as const;
 
 export type TipName = keyof typeof TIPS;
