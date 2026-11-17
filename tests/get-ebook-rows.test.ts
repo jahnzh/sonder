@@ -55,6 +55,8 @@ test("an edition the work already has reads Already added and is off", () => {
   // The md5 is matched whatever its case.
   const upper = "ABCDEF".padStart(32, "0");
   assert.equal(editionRow(result(5, { md5: upper }), addedEditions({ ebooks: [{ id: `libgen-${upper.toLowerCase()}` }] } as unknown as Pick<LibraryWork, "ebooks">)).disabled, true);
+  // The server keeps the md5 as Library Genesis gave it: an edition saved with capitals is still this file.
+  assert.equal(editionRow(result(6, { md5: upper.toLowerCase() }), addedEditions({ ebooks: [{ id: `libgen-${upper}` }] } as unknown as Pick<LibraryWork, "ebooks">)).disabled, true);
   assert.equal(editionId({ source: "libgen", md5: "ABCDEF".padStart(32, "0") }), `libgen-${"abcdef".padStart(32, "0")}`);
   assert.equal(addedEditions(null).size, 0);
 });

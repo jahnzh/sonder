@@ -448,5 +448,6 @@ test("every row, switch and button has a role and a name; someone who is not the
   // The administrator: Get for the missing ebook.
   await expect(files(page).getByRole("button", { name: "Get an ebook", exact: true })).toBeVisible();
   await files(page).getByRole("button", { name: "Get an ebook", exact: true }).click();
-  await expect(page).toHaveURL(/#discover$/);
+  // The Get ebook sheet for the book (#604).
+  await expect(page).toHaveURL(new RegExp(`#book/${book.workId}/get/ebook$`));
 });

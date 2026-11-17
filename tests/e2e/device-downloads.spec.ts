@@ -208,7 +208,7 @@ test("player downloads retain verified sections after connection failure and res
   const bookPage = page.getByRole("region", { name: "Book", exact: true });
   await expect(bookPage.getByRole("button", { name: /^Audiobook / })).toBeVisible();
   // The ebook's actions pass through the Ebook row (#531): Get when the book has no edition yet, otherwise the
-  // row opens the Ebook page, whose Get another edition opens the same search.
+  // row opens the Ebook page, whose Get another edition opens the same sheet.
   const ebookRow = bookPage.getByRole("list", { name: "Files", exact: true }).getByRole("listitem").nth(1);
   await expect(ebookRow.getByText("Ebook", { exact: true })).toBeVisible();
   const getEbook = ebookRow.getByRole("button", { name: "Get an ebook", exact: true });
@@ -220,7 +220,11 @@ test("player downloads retain verified sections after connection failure and res
     await expect(page.getByRole("heading", { level: 1, name: "Ebook", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Get another edition", exact: true }).click();
   }
-  await expect(page.getByText(/Downloaded editions will be linked to “.+”\./)).toBeVisible();
+  // The Get ebook sheet for the book (#604).
+  await expect(page).toHaveURL(/#book\/[^/]+\/get\/ebook$/);
+  await expect(page.getByRole("dialog", { name: "Get ebook", exact: true })).toBeVisible();
+  await page.getByRole("dialog", { name: "Get ebook", exact: true }).getByRole("button", { name: "Close", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Get ebook", exact: true })).toHaveCount(0);
   await page.reload();
   await page.locator(".dock-book").click();
   await expect(
