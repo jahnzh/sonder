@@ -2,6 +2,7 @@
 // Rows sit in a Group, which is a list: a Row is one of its items. A row that does something is a button and is
 // reached with Tab; a row that only shows a value is named by its label and value.
 import { useId, type ReactNode } from "react";
+import { ProgressBar } from "./ProgressBar";
 import "./row.css";
 
 type Common = {
@@ -26,6 +27,8 @@ export type RowProps = Common &
         control?: ReactNode;
         /** An info mark (Tooltip's InfoMark) after the label. Not on a row that is a button: a mark is a button. */
         info?: ReactNode;
+        /** 0 to 1: a thin bar under the label (a share, such as the storage in use); the row is then 64 high. */
+        progress?: number | null;
         onClick?: never;
         opens?: never;
         disabled?: never;
@@ -58,20 +61,29 @@ export function Row(props: RowProps) {
       </li>
     );
   }
+  const name = props.info ? (
+    <span className="part-row-name">
+      <span id={`${id}-label`} className="part-row-label type-body">
+        {label}
+      </span>
+      {props.info}
+    </span>
+  ) : (
+    <span id={`${id}-label`} className="part-row-label type-body">
+      {label}
+    </span>
+  );
+  const moving = props.progress != null;
   return (
     <li className="part-row-item" aria-labelledby={value ? `${id}-label ${id}-value` : `${id}-label`}>
-      <div className="part-row">
-        {props.info ? (
-          <span className="part-row-name">
-            <span id={`${id}-label`} className="part-row-label type-body">
-              {label}
-            </span>
-            {props.info}
+      <div className="part-row" data-moving={moving ? "" : undefined}>
+        {moving ? (
+          <span className="part-row-stack">
+            {name}
+            <ProgressBar progress={props.progress as number} />
           </span>
         ) : (
-          <span id={`${id}-label`} className="part-row-label type-body">
-            {label}
-          </span>
+          name
         )}
         {value && (
           <span id={`${id}-value`} className="part-row-value type-label">

@@ -58,6 +58,8 @@ import {
   listOfflineEbookEditionIds,
   listDeviceSaveRecords,
   writeDeviceSaveRecord,
+  deleteDownloads,
+  removeOfflineEbook,
 } from "./lib";
 import { deviceSaveEntries, type DeviceSaveRecord } from "./device-saves";
 import { buildNow } from "./activity-now";
@@ -89,6 +91,7 @@ import { DownloadsPage } from "./pages/downloads-page";
 import { ActivityServer } from "./pages/activity-server";
 import { ActivityItemGroups } from "./pages/activity-items";
 import { ActivityPlace } from "./pages/activity-place";
+import { ActivityDevice } from "./pages/activity-device";
 import { SettingsPage } from "./pages/settings-page";
 import { firstPage, writeAddress, type Place, type Route } from "./routes";
 import { onPageLeftByHistory, startNavigation, useAddress } from "./navigation";
@@ -429,6 +432,11 @@ function LibraryApp({
     address.navigate({ name: "settings-page", page: "connections" });
   };
   // The tab bar and the rail: another place adds an entry, the current one returns to its first page.
+  // This device's part of Activity (#518): where the device's saves are listed.
+  const openDevice = () => {
+    leavePage("activity");
+    address.navigate({ name: "activity", part: "device" });
+  };
   const switchPlace = (p: Place) => {
     leavePage(p);
     address.goPlace(p);
@@ -806,7 +814,7 @@ function LibraryApp({
                 <span>
                   You’re offline. Downloaded books are available.
                 </span>
-                <button onClick={() => navigate("activity")}>
+                <button onClick={openDevice}>
                   View downloads <ArrowRight size={14} />
                 </button>
               </div>
@@ -880,24 +888,35 @@ function LibraryApp({
                 now={<><DownloadsPage
                 admin={user.role === "admin"}
                 books={books}
-                downloads={downloads}
-                downloadParts={downloadParts}
-                downloadJobs={downloadJobs}
-                saveRecords={saveRecords}
-                ebooks={savedEbooks.filter((e) => offlineEbookEditionIds.has(e.id))}
                 refresh={refresh}
-                refreshDownloads={refreshDownloads}
-                startDownload={startDownload}
-                onPauseDownload={(book) =>
-                  controllers.current.get(book.recordingId)?.abort()
-                }
                 setDetail={setDetail}
-                setMediaTarget={setMediaTarget}
                 navigate={navigate}
                 notify={notify}
               />
               {/* Today's item groups of the old Activity page, until Now's own ticket (#521). */}
               {user.role === "admin" && <ActivityItemGroups />}</>}
+                device={<ActivityDevice
+                  books={books}
+                  downloads={downloads}
+                  downloadParts={downloadParts}
+                  running={downloadJobs}
+                  records={saveRecords}
+                  ebooks={savedEbooks.filter((e) => offlineEbookEditionIds.has(e.id))}
+                  online={online}
+                  onPause={(recordingId) => controllers.current.get(recordingId)?.abort()}
+                  onOpen={setDetail}
+                  onRemove={async (row) => {
+                    // Every file of the book on this device: its recordings' audio and its EPUB. The place, the
+                    // bookmarks and the library entry stay (ADR 0018).
+                    try {
+                      for (const recordingId of row.recordingIds) await deleteDownloads(recordingId);
+                      for (const editionId of row.ebookIds) await removeOfflineEbook(editionId);
+                    } finally {
+                      await refreshDownloads();
+                      await refreshOfflineEbooks();
+                    }
+                  }}
+                />}
               />
             )}
             {page === "settings" && (
@@ -957,7 +976,7 @@ function LibraryApp({
           onPauseDownload={(book) =>
             controllers.current.get(book.recordingId)?.abort()
           }
-          onViewDownloads={() => navigate("activity")}
+          onViewDownloads={openDevice}
           onBookDetails={setDetail}
           onManageSources={setMediaTarget}
         />

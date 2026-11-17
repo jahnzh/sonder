@@ -69,3 +69,17 @@ button.part-row:focus-visible {
 .part-row-name > .part-row-label {
   flex: 0 1 auto;
 }
+/* A row with a bar under its label (Row's progress): the label and the bar are one column, and the row is 64 high. */
+.part-row[data-moving] {
+  height: var(--height-bar);
+}
+.part-row-stack {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.part-row-stack > .part-row-name,
+.part-row-stack > .part-row-label {
+  flex: none;
+}
