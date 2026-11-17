@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import type { AudiobookRelease } from "../../src/types";
-test("multiple audiobook releases can be filtered, paged and explicitly chosen for an existing book", async ({
+test("multiple audiobook releases are shown in English and one is explicitly chosen for an existing book", async ({
   page,
 }) => {
   const release = (
@@ -17,7 +17,7 @@ test("multiple audiobook releases can be filtered, paged and explicitly chosen f
     author: "Lewis Carroll",
     url: `https://audiobookbay.lu/abss/${id}/`,
     bitrate: "64 Kbps",
-    size: "400 MB",
+    size: `${id.length}00 MB`,
     posted: "20 Oct 2026",
     uploader: "reader",
     description: "A complete audiobook recording.",
@@ -30,22 +30,9 @@ test("multiple audiobook releases can be filtered, paged and explicitly chosen f
       "Another Narrator",
       "MP3",
     );
-  await page.route("**/api/discover/abb/releases?*", (route) => {
-    const second =
-      new URL(route.request().url()).searchParams.get("page") === "2";
-    return route.fulfill({
-      json: {
-        results: second ? [alternative] : [french, english],
-        nextPage: second ? null : 2,
-      },
-    });
-  });
-  await page.route("**/api/discover/abb/releases/*", (route) => {
-    const id = route.request().url().split("/").at(-1);
-    return route.fulfill({
-      json: [english, french, alternative].find((release) => release.id === id),
-    });
-  });
+  await page.route("**/api/discover/abb/releases?*", (route) =>
+    route.fulfill({ json: { results: [french, english, alternative], nextPage: null } }),
+  );
   const chosen: any[] = [];
   await page.route("**/api/discover/abb/add", (route) => {
     chosen.push(route.request().postDataJSON());
@@ -60,7 +47,7 @@ test("multiple audiobook releases can be filtered, paged and explicitly chosen f
       exact: true,
     })
     .click();
-  // From the Audiobook page's Get another recording (#530), until the Get sheet replaces the picker.
+  // From the Audiobook page's Get another recording (#530): the Get audiobook sheet (#601).
   await page
     .getByRole("region", { name: "Book", exact: true })
     .getByRole("button", { name: /^Audiobook / })
@@ -69,44 +56,23 @@ test("multiple audiobook releases can be filtered, paged and explicitly chosen f
   await page
     .getByRole("button", { name: "Get another recording", exact: true })
     .click();
-  await expect(
-    page.getByRole("combobox", { name: "Release language", exact: true }),
-  ).toHaveValue("English");
-  await expect(page.locator(".release-card")).toHaveCount(1);
-  await expect(page.locator(".release-card")).toContainText("M4B");
-  await expect(page.locator(".release-card")).not.toContainText("French");
-  await page
-    .getByRole("button", { name: "Load more releases", exact: true })
-    .click();
-  await expect(page.locator(".release-card")).toHaveCount(2);
-  await page
-    .getByRole("combobox", { name: "Release language", exact: true })
-    .selectOption("all");
-  await expect(page.locator(".release-card")).toHaveCount(3);
-  await page
-    .locator(".release-card")
-    .filter({ hasText: "French Reader" })
-    .getByRole("button", { name: "Choose release", exact: true })
-    .click();
-  await expect(page.getByRole("dialog")).toContainText("French");
-  await expect(page.getByRole("dialog")).toContainText("French Reader");
+  await expect(page).toHaveURL(/#book\/work-alice\/get\/audiobook$/);
+  const sheet = page.getByRole("dialog", { name: "Get audiobook", exact: true });
+  const rows = sheet.getByRole("radio");
+  // English only, until the language picker.
+  await expect(rows).toHaveCount(2);
+  await expect(sheet).not.toContainText("French Reader");
+  // A tap only chooses.
+  await rows.filter({ hasText: "Another Narrator" }).click();
+  await expect(rows.filter({ hasText: "Another Narrator" })).toHaveAttribute("aria-checked", "true");
   expect(chosen).toEqual([]);
-  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
-  await page
-    .locator(".release-card")
-    .filter({ hasText: "Another Narrator" })
-    .getByRole("button", { name: "Choose release", exact: true })
-    .click();
-  await expect(page.getByRole("dialog")).toContainText("Another Narrator");
-  await expect(page.getByRole("dialog")).toContainText("English");
-  await page
-    .getByRole("button", { name: "Use this release", exact: true })
-    .click();
+  await sheet.getByRole("button", { name: "Get this recording", exact: true }).click();
   await expect.poll(() => chosen.length).toBe(1);
   expect(chosen[0]).toEqual({
     slug: "english-alternative",
     workId: "work-alice",
   });
+  await expect(page).toHaveURL(/#book\/work-alice\/audiobook$/);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     390,
   );

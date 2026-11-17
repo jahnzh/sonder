@@ -107,6 +107,8 @@ const desktopProjects = [
               /(^|\/)reading-sync-page\.spec\.ts$/,
               // The Book page for a book without files or not in the library (#533).
               /(^|\/)book-page-states\.spec\.ts$/,
+              // The Get audiobook sheet, and the specs that used today's release picker for a book (#601).
+              /(^|\/)(get-audiobook|releases|prowlarr|reliability)\.spec\.ts$/,
               // The Series page of a saved series (#562).
               /(^|\/)series-page\.spec\.ts$/,
             ]

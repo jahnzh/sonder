@@ -284,6 +284,9 @@ function built(route: Route): boolean {
     // The worker's page (#520). A worker the server does not report shows Server, once the page has read the server.
     case "worker":
       return true;
+    // The Get audiobook sheet (#601); Get ebook comes with its own ticket.
+    case "get":
+      return route.kind === "audiobook";
     default:
       return false;
   }
@@ -293,6 +296,8 @@ function built(route: Route): boolean {
 function allowed(route: Route, admin: boolean): boolean {
   if (admin) return true;
   if (route.name === "settings-page") return !(ADMIN_SETTINGS_PAGES as readonly string[]).includes(route.page);
+  // Getting files is the administrator's (#601).
+  if (route.name === "get") return false;
   return !(route.name === "worker" || (route.name === "activity" && route.part === "server"));
 }
 
@@ -302,6 +307,8 @@ function allowed(route: Route, admin: boolean): boolean {
  */
 export function resolve(route: Route, { admin }: { admin: boolean }): Route {
   if (route.name !== "unknown" && built(route) && allowed(route, admin)) return route;
+  // Someone who is not the administrator gets the book's own page at a Get sheet's address (#601).
+  if (route.name === "get" && built(route)) return { name: "book", workId: route.workId };
   const first = firstPage(placeOf(route));
   // Every place's first page is built and everyone's.
   return first;
