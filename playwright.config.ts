@@ -121,6 +121,8 @@ const desktopProjects = [
               /(^|\/)series-add\.spec\.ts$/,
               // The New mark on a series and Dismiss (#565).
               /(^|\/)series-new\.spec\.ts$/,
+              // The Get ebook sheet (#604).
+              /(^|\/)get-ebook\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },

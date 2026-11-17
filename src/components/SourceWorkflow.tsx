@@ -17,24 +17,15 @@ import {
   Check,
   Upload,
 } from "lucide-react";
-import { api, bytes, localDB } from "../lib";
+import { api, localDB } from "../lib";
 import {
   TorrentHealthLine,
   useTorrentHealth,
 } from "./TorrentHealth";
-import {
-  EBOOK_SET_PENDING_REFRESH_MS,
-  checkingNote,
-  ebookSetHasPendingMember,
-  ebookSetStatusLabel,
-  type EbookSetMember,
-  type EbookSetView,
-} from "../ebook-set";
 import type {
   EbookResult,
   SavedEbook,
   Settings,
-  Book,
 } from "../types";
 type Notify = (message: string, error?: boolean) => void;
 export function EbookDiscovery({
@@ -42,14 +33,13 @@ export function EbookDiscovery({
   onQuery,
   settings,
   notify,
-  target,
 }: {
   query: string;
   onQuery: (q: string) => void;
   settings: Settings | null;
   notify: Notify;
-  target?: Book | null;
 }) {
+  // Discover's ebook search without a book (#572 removes it). A book's ebook is got in its Get ebook sheet (#604).
   const source = "libgen";
   const [results, setResults] = useState<EbookResult[]>([]);
   const [saved, setSaved] = useState<SavedEbook[]>([]);
@@ -58,22 +48,6 @@ export function EbookDiscovery({
   const [error, setError] = useState("");
   const [searched, setSearched] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [setMembers, setSetMembers] = useState<EbookSetMember[]>([]);
-  const refreshSet = useCallback(async () => {
-    if (!target?.workId) {
-      setSetMembers([]);
-      return;
-    }
-    try {
-      setSetMembers(
-        (await api<EbookSetView>(
-          `/works/${encodeURIComponent(target.workId)}/ebook-set`,
-        )).members,
-      );
-    } catch {
-      setSetMembers([]);
-    }
-  }, [target?.workId]);
   const refreshSaved = useCallback(async () => {
     try {
       const books = await api<SavedEbook[]>("/ebooks");
@@ -87,15 +61,6 @@ export function EbookDiscovery({
   useEffect(() => {
     void refreshSaved();
   }, [refreshSaved]);
-  useEffect(() => {
-    void refreshSet();
-  }, [refreshSet]);
-  const checking = ebookSetHasPendingMember(setMembers);
-  useEffect(() => {
-    if (!checking) return;
-    const timer = window.setInterval(() => void refreshSet(), EBOOK_SET_PENDING_REFRESH_MS);
-    return () => window.clearInterval(timer);
-  }, [checking, refreshSet]);
   const base = settings?.libgenUrl || "https://libgen.li";
   const website = `${base}/index.php?req=${encodeURIComponent(query)}`;
   const search = async (e: FormEvent) => {
@@ -124,19 +89,14 @@ export function EbookDiscovery({
     try {
       const body = new FormData();
       body.append("file", file);
-      const response = await api<{ alreadySaved: boolean; ebookSet?: { status: EbookSetMember["status"] } }>(
-        "/ebooks/import" +
-          (target ? `?workId=${encodeURIComponent(target.workId)}` : ""),
-        { method: "POST", body },
-      );
+      const response = await api<{ alreadySaved: boolean }>("/ebooks/import", { method: "POST", body });
       await refreshSaved();
-      await refreshSet();
       // The ebook's book is in the importer's library now (#555): the Library reads it again (#556).
       window.dispatchEvent(new Event("sonder:library-changed"));
       notify(
-        (response.alreadySaved
+        response.alreadySaved
           ? "This ebook is already on your server."
-          : "Your ebook is saved on the 4 TB media drive.") + checkingNote(response.ebookSet),
+          : "Your ebook is saved on the 4 TB media drive.",
       );
     } catch (error) {
       notify((error as Error).message, true);
@@ -147,17 +107,10 @@ export function EbookDiscovery({
   const download = async (book: EbookResult) => {
     setDownloading(book.md5);
     try {
-      const response = await api<{ ebookSet?: { status: EbookSetMember["status"] } }>("/ebooks", {
-        method: "POST",
-        body: JSON.stringify({
-          ...book,
-          ...(target ? { workId: target.workId } : {}),
-        }),
-      });
-      notify("Your ebook is saved on the 4 TB media drive." + checkingNote(response.ebookSet));
+      await api("/ebooks", { method: "POST", body: JSON.stringify(book) });
+      notify("Your ebook is saved on the 4 TB media drive.");
       window.dispatchEvent(new Event("sonder:library-changed"));
       await refreshSaved();
-      await refreshSet();
     } catch (e) {
       notify((e as Error).message, true);
     } finally {
@@ -173,37 +126,8 @@ export function EbookDiscovery({
         </span>
       </div>
       <p className="ebook-source-note">
-        Find EPUB and PDF editions through Library Genesis.{" "}
-        {target
-          ? `Downloaded editions will be linked to “${target.title}”.`
-          : "Save an edition to your server to read or download it."}
+        Find EPUB and PDF editions through Library Genesis. Save an edition to your server to read or download it.
       </p>
-      {target && setMembers.length > 0 && (
-        <ul className="ebook-set-members" aria-label="Ebook set members">
-          {setMembers.map((member) => (
-            <li key={member.ebookId}>
-              <strong>{member.sourceTitle || member.ebookId}</strong>
-              <span>{ebookSetStatusLabel(member.status)}</span>
-              {member.language && <span>{member.language}</span>}
-              {member.byteSize != null && <span>{bytes(member.byteSize)}</span>}
-              <span>
-                Shared {member.evidence.sharedSentenceCount}, unique{" "}
-                {member.evidence.uniqueSentenceCount}
-              </span>
-              {member.evidence.audioSupportedCoverage != null && (
-                <span>
-                  Audio coverage{" "}
-                  {Math.round(member.evidence.audioSupportedCoverage * 100)}%
-                </span>
-              )}
-              {!member.evidence.outlier.passed &&
-                member.evidence.outlier.samples[0]?.passage && (
-                  <span>{member.evidence.outlier.samples[0].passage}</span>
-                )}
-            </li>
-          ))}
-        </ul>
-      )}
       <form className="ebooks-search-form" onSubmit={(e) => void search(e)}>
         <input
           className="ebook-search-query"
@@ -299,7 +223,7 @@ export function EbookDiscovery({
       <div className="ebook-import">
         <p>
           Downloaded a book in your browser? Import an EPUB or PDF to keep it on
-          your server{target ? ` with “${target.title}”` : ""}.
+          your server.
         </p>
         <label className={`button subtle ${importing ? "disabled" : ""}`}>
           {importing ? (
