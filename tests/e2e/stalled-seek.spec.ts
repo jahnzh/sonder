@@ -79,6 +79,21 @@ async function openAlice(page: Page) {
         : ebooks,
     });
   });
+  // Other specs on the shared server may have left alice's saved place past the stored bytes, where the first range
+  // request already gets a 416 and playback never starts: bring it back to the start before the app restores it.
+  const alice = ((await (await page.request.get("/api/books")).json()) as any[]).find((b) => b.id === "alice");
+  if (alice?.tracks?.[0]) {
+    const saved = await page.request.post("/api/progress", {
+      data: {
+        recordingId: alice.recordingId,
+        trackId: alice.tracks[0].id,
+        position: 1,
+        duration: alice.tracks[0].duration,
+        updatedAt: Math.max(Date.now(), (alice.progress?.updatedAt || 0) + 1),
+      },
+    });
+    expect(saved.ok()).toBe(true);
+  }
   await page.goto("/");
   await page
     .getByRole("button", { name: "About Alice’s Adventures in Wonderland", exact: true })

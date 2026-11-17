@@ -106,6 +106,12 @@ const keep = (page: Page) => region(page).getByRole("switch", { name: "Keep on t
 test("a book with both files and a ready reading sync, as the boards draw it, at phone size and on a desktop", async ({ page }) => {
   const book = await importBook(page, unique("Board book"));
   await routeWork(page, book.workId, readySync(book));
+  // The boards draw the page without Hardcover: answered as not connected, whatever an earlier spec left on the
+  // suite's shared server (a connected Hardcover adds its row to the last group).
+  await page.route("**/api/hardcover", async (route) => {
+    const real = await (await route.fetch()).json();
+    await route.fulfill({ json: { ...real, configured: false } });
+  });
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(address(book.workId));
