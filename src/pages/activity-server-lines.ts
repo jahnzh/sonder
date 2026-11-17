@@ -5,6 +5,7 @@
 // A page module: the server imports none of it.
 import type { ActivityItem, ActivityProcess, ActivityResponse } from "../types";
 import { QUEUE_OFF_LINE, WORKER_OFF_LINE } from "../status-lines";
+import { processNeedsAttention } from "../activity-now";
 
 const DOT = " · ";
 
@@ -70,8 +71,11 @@ export function queueLine(process: ActivityProcess, items: ActivityItem[]): stri
   return what || NOTHING_RUNNING;
 }
 
-/** A row lights the attention dot, and carries its mark, when its process is down (spec #513 "The attention dot"). */
-export const lightsDot = (process: ActivityProcess | undefined) => !!process && process.health === "down" && !process.notTracked;
+/**
+ * A row lights the attention dot, and carries its mark, when its process is down (spec #513 "The attention dot"):
+ * the rule of Now's builder (#521), so the mark and the dot cannot disagree.
+ */
+export const lightsDot = (process: ActivityProcess | undefined) => !!process && processNeedsAttention(process);
 
 /** The torrent client's line: "Running", or the health message when it cannot download. */
 export function torrentLine(process: ActivityProcess): string {

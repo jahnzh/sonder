@@ -110,6 +110,8 @@ test("a worker's line, and the mark only for one that is offline and in use", ()
   assert.equal(workerLine(offAndAway, [], NOW), "Not in use");
   assert.equal(lightsDot(offAndAway), false);
   assert.equal(lightsDot(notInUse), false);
+  // The mark follows Now's rule (#521): a worker switched off is never marked, even if it were reported down.
+  assert.equal(lightsDot(worker({ hostId: "lisa", device: "cpu", disabled: true, online: false }, { health: "down" })), false);
 });
 
 test("devices and times as the boards write them", () => {
