@@ -20,11 +20,17 @@ const media = readFileSync("server/demo/alice-01.mp3");
 
 async function twoFiles(page: Page) {
   await page.route("**/api/books", async (route) => {
-    const response = await route.fetch();
-    const books = await response.json();
-    const alice = books.find((book: { id: string }) => book.id === "alice");
-    alice.tracks = alice.tracks.slice(0, 2);
-    await route.fulfill({ response, json: books });
+    // A request the app still has in flight when the test ends is answered into a closed page: the fetch or its body
+    // is then gone ("Response has been disposed"), which says nothing about the save records.
+    try {
+      const response = await route.fetch();
+      const books = await response.json();
+      const alice = books.find((book: { id: string }) => book.id === "alice");
+      alice.tracks = alice.tracks.slice(0, 2);
+      await route.fulfill({ response, json: books });
+    } catch (error) {
+      if (!page.isClosed()) throw error;
+    }
   });
 }
 
