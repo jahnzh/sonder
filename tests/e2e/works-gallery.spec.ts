@@ -177,6 +177,7 @@ test("the Dexie upgrade to the works table keeps places, downloads, favourites a
     const state = {
       version: db.version,
       hasWorks: db.objectStoreNames.contains("works"),
+      hasKeep: db.objectStoreNames.contains("keep"),
       progress: await get("progress", "old-recording"),
       favorites: (await get("preferences", "favorites"))?.value,
       reading: (await get("preferences", "reader-position:old-ebook"))?.value?.checkpoint?.locator?.progression,
@@ -189,8 +190,10 @@ test("the Dexie upgrade to the works table keeps places, downloads, favourites a
     return state;
   });
   expect(upgraded).toEqual({
-    version: 50,
+    // db.version(5) added the works table (#528), db.version(6) the keep table (#550).
+    version: 60,
     hasWorks: true,
+    hasKeep: true,
     progress: rows.progress,
     favorites: ["old-book"],
     reading: 0.4,

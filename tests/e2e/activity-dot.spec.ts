@@ -84,6 +84,22 @@ async function failedSave(page: Page) {
       throw error;
     }
   });
+  // The saver reads the chosen recording's tracks from the library's works (#550): the same two files there.
+  await page.route("**/api/library", async (route) => {
+    try {
+      const headers = { ...route.request().headers() };
+      delete headers["if-none-match"];
+      const response = await route.fetch({ headers });
+      const works = await response.json();
+      for (const work of works)
+        for (const recording of work.recordings ?? [])
+          if (recording.tracks?.some((track: { id: string }) => track.id === "alice-0")) recording.tracks = recording.tracks.slice(0, 2);
+      await route.fulfill({ status: 200, contentType: "application/json", json: works });
+    } catch (error) {
+      if (page.isClosed() || /disposed|closed|cancel/i.test(String(error))) return;
+      throw error;
+    }
+  });
   await page.route(/\/api\/media\/alice-[01]$/, (route) => {
     if (!route.request().headers()["x-sonder-download"]) return route.continue();
     if (route.request().url().endsWith("alice-1")) return route.fulfill({ status: 404, json: { error: "The source is gone." } });
@@ -94,7 +110,9 @@ async function failedSave(page: Page) {
   await expect(dot(page)).toHaveCount(0);
   await page.getByRole("button", { name: `About ${TITLE}`, exact: true }).click();
   await page.getByRole("switch", { name: "Keep on this device", exact: true }).click();
-  await expect(page.locator(".toast")).toContainText("The source is gone.", { timeout: 20000 });
+  // No toast (#548 "Messages"): the failure is the Keep row's line, from the save's record on this device.
+  await expect(page.locator("#book-keep-line")).toHaveText("Not complete · 1 of 2 files", { timeout: 20000 });
+  await expect(page.locator(".toast")).toHaveCount(0);
   await page.getByRole("button", { name: "Back to Library", exact: true }).click();
 }
 
