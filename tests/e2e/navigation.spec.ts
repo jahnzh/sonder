@@ -25,13 +25,22 @@ const tab = (page: Page, name: string) =>
   page.getByRole("navigation", { name: "Mobile navigation" }).getByRole("button", { name, exact: true });
 const hash = (page: Page) => page.evaluate(() => location.hash);
 
+// The works a test imports leave the library after it, so a book it played is not the latest played book that the
+// dock opens for the next spec on the server (device-downloads opens whatever the dock shows).
+const imported: string[] = [];
+test.afterEach(async ({ page }) => {
+  for (const workId of imported.splice(0))
+    expect((await page.request.delete(`/api/works/${encodeURIComponent(workId)}/library`)).ok()).toBe(true);
+});
 async function importAudio(page: Page, title: string) {
   const response = await page.request.post("/api/import", {
     multipart: { title, author: "Navigation QA", file: { name: "Narration.mp3", mimeType: "audio/mpeg", buffer: readFileSync("server/demo/alice-01.mp3") } },
   });
   expect(response.ok()).toBe(true);
   const id = (await response.json()).id as string;
-  return (await (await page.request.get("/api/books")).json()).find((b: { id: string }) => b.id === id) as { id: string; workId: string };
+  const book = (await (await page.request.get("/api/books")).json()).find((b: { id: string }) => b.id === id) as { id: string; workId: string };
+  imported.push(book.workId);
+  return book;
 }
 async function importWithEbook(page: Page, title: string) {
   const book = await importAudio(page, title);
@@ -464,18 +473,26 @@ test.describe("with answers from the test", () => {
     expect(changes).toEqual([]);
   });
 
-  test("Back with the media manager open leaves the page and closes it", async ({ page }) => {
+  test("Back from the Audiobook page returns to the book, and Back again leaves it", async ({ page }) => {
     const title = unique("Manager back");
     await importAudio(page, title);
     await libraryOverDiscover(page);
     const details = page.getByRole("dialog", { name: "Book details" });
-    const manager = page.getByRole("dialog", { name: "Versions & sources", exact: true });
+    const manager = page.getByRole("region", { name: "Audiobook", exact: true });
     await page.getByRole("button", { name: `About ${title}`, exact: true }).click();
-    await details.getByRole("button", { name: "Versions & sources", exact: true }).click();
+    // The book dialog's Audiobook row opens the Audiobook page (#530), an entry of its own.
+    await details.getByRole("button", { name: /^Audiobook / }).click();
     await expect(manager).toBeVisible();
+    await expect(page).toHaveURL(/#book\/[^/]+\/audiobook$/);
+    await expect(details).toBeHidden();
+    // Its back button is "Back to the book": until the Book page, the book is its dialog.
+    await page.goBack();
+    await expect(manager).toBeHidden();
+    await expect(page).toHaveURL(/#library$/);
+    await expect(details.getByRole("heading", { name: title, exact: true })).toBeVisible();
     await page.goBack();
     await expect(shown(page)).toHaveText("Discover");
-    await expect(manager).toBeHidden();
+    await expect(details).toBeHidden();
     await page.goForward();
     await expect(shown(page)).toHaveText("Library");
     await expect(manager).toBeHidden();
@@ -602,7 +619,7 @@ test.describe("with answers from the test", () => {
   });
 });
 
-test("Back with the media manager's removal confirmation open removes nothing", async ({ page, browserName }) => {
+test("Back with the Audiobook page's removal confirmation open removes nothing", async ({ page, browserName }) => {
   // A device copy needs the browser's storage for downloads, which the specs drive in Chromium (device-downloads.spec).
   test.skip(browserName !== "chromium", "device copies are made in Chromium only");
   const title = unique("Removal back");
@@ -611,26 +628,25 @@ test("Back with the media manager's removal confirmation open removes nothing", 
   await tab(page, "My library").click();
   await expect(shown(page)).toHaveText("Library");
   const details = page.getByRole("dialog", { name: "Book details" });
-  const manager = page.getByRole("dialog", { name: "Versions & sources", exact: true });
-  const confirm = page.getByRole("dialog", { name: "Remove downloaded copy?", exact: true });
+  const manager = page.getByRole("region", { name: "Audiobook", exact: true });
+  const confirm = page.getByRole("dialog", { name: "Remove from this device?", exact: true });
   await page.getByRole("button", { name: `About ${title}`, exact: true }).click();
   await details.getByRole("button", { name: "Save offline", exact: true }).click();
   await expect(details.getByText("Ready for offline listening", { exact: true })).toBeVisible();
-  await details.getByRole("button", { name: "Versions & sources", exact: true }).click();
-  await manager.getByRole("button", { name: "Remove device copy", exact: true }).click();
+  await details.getByRole("button", { name: /^Audiobook / }).click();
+  await manager.getByRole("button", { name: /^Device copy / }).click();
+  await page.getByRole("dialog", { name: "Device copy", exact: true }).getByRole("button", { name: "Remove from this device", exact: true }).click();
   await expect(confirm).toBeVisible();
   await page.goBack();
-  await expect(shown(page)).toHaveText("Discover");
+  await expect(page).toHaveURL(/#library$/);
   await expect(confirm).toBeHidden();
   await expect(manager).toBeHidden();
   await page.goForward();
-  await expect(shown(page)).toHaveText("Library");
+  await expect(manager).toBeVisible();
   await expect(confirm).toBeHidden();
-  await page.getByRole("button", { name: `About ${title}`, exact: true }).click();
-  await expect(details.getByText("Ready for offline listening", { exact: true })).toBeVisible();
-  await details.getByRole("button", { name: "Versions & sources", exact: true }).click();
-  await expect(manager.getByRole("button", { name: "Remove device copy", exact: true })).toBeEnabled();
-  await expect(confirm).toBeHidden();
+  // Nothing was removed: the device copy is still there.
+  await expect(manager.getByRole("button", { name: /^Device copy / })).toBeVisible();
+  await expect(manager.getByRole("button", { name: "Device copy None", exact: true })).toHaveCount(0);
 });
 
 test("an old reader link to an ebook that is gone shows the Library, in the link's place", async ({ page }) => {

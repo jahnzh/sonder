@@ -38,7 +38,6 @@ import {
 } from "lucide-react";
 import { PlayerProvider, usePlayer } from "./player";
 import { SeriesDialog, type SeriesTarget } from "./components/Series";
-import { MediaManager } from "./components/MediaManager";
 import {ReaderShortcut} from "./components/ReaderShortcut";
 import { ReaderHost } from "./components/Reader";
 import {
@@ -89,13 +88,17 @@ import { ActivityPlace } from "./pages/activity-place";
 import { useSideBySide } from "./pages/side-by-side";
 import { ActivityDevice } from "./pages/activity-device";
 import { SettingsPage } from "./pages/settings-page";
+import { AudiobookPage } from "./pages/audiobook-page";
+import { audiobookRowLine } from "./pages/audiobook-model";
+import { FileRow } from "./parts/FileRow";
+import { Group } from "./parts/Group";
 import { HardcoverPage } from "./pages/hardcover-page";
 import { HardcoverRow } from "./pages/hardcover-row";
 import { EbookFileRow, EbookPage, ebookSearchTarget } from "./pages/ebook-page";
 import { ReaderPages } from "./pages/reader-pages";
 import { isReaderPage } from "./reader-pages";
 import { firstPage, writeAddress, type Place, type Route } from "./routes";
-import { onPageLeftByHistory, startNavigation, useAddress } from "./navigation";
+import { onPageLeftByHistory, shownSheet, startNavigation, useAddress } from "./navigation";
 import { Gallery, isGalleryRoute } from "./gallery/Gallery";
 import { refreshLibraryWorks, startLibraryWorks, useStoredWorksWithPlaces } from "./library-works-store";
 import { bookStatus, readingPercent, workProgress } from "./work-progress";
@@ -297,7 +300,6 @@ function LibraryApp({
   const [detail, setDetail] = useState<Book | null>(null);
   const [seriesTarget, setSeriesTarget] = useState<SeriesTarget | null>(null);
   const [seriesRevision, setSeriesRevision] = useState(0);
-  const [mediaTarget,setMediaTarget]=useState<Book|null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
@@ -464,7 +466,6 @@ function LibraryApp({
       onPageLeftByHistory(() => {
         leftByHistory.current++;
         setDetail(null);
-        setMediaTarget(null);
         setSeriesTarget(null);
         setImportOpen(false);
         setSidebarOpen(false);
@@ -496,9 +497,39 @@ function LibraryApp({
     notify("Your book is joining the library. Open it in a moment.");
   };
   const switchPlace = (p: Place) => {
+    leftAudiobookByTab.current = true;
     leavePage(p);
     address.goPlace(p);
   };
+  // The Audiobook page of a book (#530): from the player's "Audiobook", the book dialog's Audiobook row and Activity.
+  const audiobookWorkId =
+    address.route.name === "book-page" && address.route.page === "audiobook" ? address.route.workId : null;
+  const openAudiobook = (book: Book) => {
+    setDetail(null);
+    address.navigate({ name: "book-page", workId: book.workId, page: "audiobook" });
+  };
+  // Its back button is "Back to the book": until the Book page (#532) the book is today's dialog, so landing on the
+  // Library from the page (Back, or the parent of a page opened by a link) opens the dialog again for that work.
+  const leftAudiobookByTab = useRef(false);
+  const lastAudiobook = useRef<string | null>(null);
+  useEffect(() => {
+    const left = lastAudiobook.current;
+    lastAudiobook.current = audiobookWorkId;
+    const byTab = leftAudiobookByTab.current;
+    leftAudiobookByTab.current = false;
+    setReopenBook(!left || audiobookWorkId || byTab || address.route.name !== "library" || shownSheet() ? null : left);
+  }, [address.route]);
+  // The book's entries may still be loading after a link straight to the page: the dialog opens once they are in.
+  const [reopenBook, setReopenBook] = useState<string | null>(null);
+  useEffect(() => {
+    if (!reopenBook) return;
+    const ofWork = books.filter((b) => b.workId === reopenBook && b.inLibrary && b.tracks.length > 0);
+    if (!ofWork.length) return;
+    setReopenBook(null);
+    // The dialog shows the chosen recording, the one the page ticked.
+    const chosen = deviceWorks.get(reopenBook)?.chosenRecordingId;
+    setDetail(ofWork.find((b) => b.recordingId === chosen) ?? ofWork[0]);
+  }, [reopenBook, books]);
   const onProgress = useCallback(
     (p: Progress) =>
       setBooks((current) =>
@@ -899,6 +930,20 @@ function LibraryApp({
                 </button>
               </div>
             )}
+            {audiobookWorkId && (
+              <AudiobookPage
+                workId={audiobookWorkId}
+                books={books}
+                downloads={downloads}
+                admin={user.role === "admin"}
+                online={online}
+                onFindAudio={findAudio}
+                onChanged={() => {
+                  void refresh();
+                  void refreshDownloads();
+                }}
+              />
+            )}
             {/* A book's Hardcover page (#529) and its Ebook page (#531) stand in place of the place's page; the Book page (#532) joins the book's pages. */}
             {/* The reader's Chapters, Bookmarks and Search (#590) are pages too. */}
             {address.route.name === "book-page" && isReaderPage(address.route.page) ? <ReaderPages key={`${address.route.workId}:${address.route.page === "search" ? "search" : "chapters"}`} workId={address.route.workId} page={address.route.page} /> : address.route.name === "book-page" && address.route.page === "hardcover" ? <HardcoverPage key={address.route.workId} workId={address.route.workId} admin={user.role === "admin"} books={books} onChanged={() => void refresh()} /> : ebookPage ? (
@@ -909,7 +954,7 @@ function LibraryApp({
                 onGetEdition={(work) => findEbook(books.find((b) => b.workId === work.workId) ?? ebookSearchTarget(work))}
               />
             ) : <>
-            {page === "library" && (
+            {page === "library" && !audiobookWorkId && (
               <LibraryPage
                 admin={user.role === "admin"}
                 visible={visible}
@@ -1086,10 +1131,9 @@ function LibraryApp({
           }
           onViewDownloads={openDevice}
           onBookDetails={setDetail}
-          onManageSources={setMediaTarget}
+          onManageSources={openAudiobook}
         />
         <ReaderHost books={books} notify={notify} />
-        <MediaManager book={mediaTarget} books={books} onClose={()=>setMediaTarget(null)} onChanged={()=>{void refresh();void refreshDownloads();}} onDownload={book=>void startDownload(book)} onBookDetails={setDetail} notify={notify}/>
         {notice && (
           <div className={`toast ${notice.error ? "error" : ""}`} role="status">
             {notice.error ? <X size={18} /> : <Check size={18} />}
@@ -1105,18 +1149,7 @@ function LibraryApp({
         )}
         <BookDetail
           admin={user.role === "admin"}
-          releases={
-            detail
-              ? books.filter(
-                  (book) =>
-                    book.workId === detail.workId &&
-                    book.tracks.length > 0 &&
-                    book.inLibrary,
-                )
-              : []
-          }
-          onRelease={setDetail}
-          onManageSources={()=>{if(detail){setMediaTarget(detail);setDetail(null);}}}
+          onOpenAudiobook={() => detail && openAudiobook(detail)}
           onFindAudio={() => detail && findAudio(detail)}
           onHardcover={() => {
             if (!detail) return;
@@ -1186,9 +1219,7 @@ function LibraryApp({
 }
 function BookDetail({
   admin,
-  releases,
-  onManageSources,
-  onRelease,
+  onOpenAudiobook,
   onFindAudio,
   onHardcover,
   onKeepServer,
@@ -1206,9 +1237,8 @@ function BookDetail({
   downloads,
 }: {
   admin: boolean;
-  releases: Book[];
-  onManageSources:()=>void;
-  onRelease: (book: Book) => void;
+  /** The Audiobook row: opens the Audiobook page (#530). */
+  onOpenAudiobook: () => void;
   onFindAudio: () => void;
   /** Opens the book's Hardcover page (#529). */
   onHardcover: () => void;
@@ -1297,39 +1327,11 @@ function BookDetail({
             <p>{b.description}</p>
           </div>
           {b.tracks.length > 0 && (
-            <section className="detail-release">
-              <h3>Your audiobook release</h3>
-              <p>
-                {b.releaseTitle || b.title} · {b.language || "Language unknown"}{" "}
-                · {b.narrator}
-              </p>
-              {releases.length > 1 && (
-                <label>
-                  Available recordings
-                  <select
-                    aria-label="Audiobook release"
-                    value={b.id}
-                    onChange={(event) => {
-                      const release = releases.find(
-                        (book) => book.id === event.target.value,
-                      );
-                      if (release) onRelease(release);
-                    }}
-                  >
-                    {releases.map((book) => (
-                      <option key={book.id} value={book.id}>
-                        {book.language || "Language unknown"} · {book.narrator}{" "}
-                        · {book.releaseTitle || book.sourceLabel}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              <button className="button subtle" onClick={onManageSources}>Versions & sources</button>
-              {admin && <button className="button subtle" onClick={onFindAudio}>
-                <Search size={15} /> Find another release
-              </button>}
-            </section>
+            <div className="detail-audiobook">
+              <Group label="Files">
+                <FileRow kind="audiobook" name="Audiobook" status={audiobookRowLine({ narrator: b.narrator, duration: b.duration, serverStored: b.serverStored, tracks: b.tracks })} onClick={onOpenAudiobook} />
+              </Group>
+            </div>
           )}
           <HardcoverRow match={b.hardcover} onOpen={onHardcover} />
           {!b.tracks.length && (

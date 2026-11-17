@@ -68,7 +68,9 @@ test("Prowlarr is configured in Settings and merges with AudioBookBay, isolating
   await page
     .getByRole("button", { name: "About Alice’s Adventures in Wonderland", exact: true })
     .click();
-  await page.getByRole("button", { name: "Find another release", exact: true }).click();
+  // Get another recording on the Audiobook page (#530) opens today's release picker.
+  await page.getByRole("dialog", { name: "Book details" }).getByRole("button", { name: /^Audiobook / }).click();
+  await page.getByRole("button", { name: "Get another recording", exact: true }).click();
   const cards = page.locator(".release-card");
   // The AudioBookBay release and both indexer copies of the same torrent collapse into one card.
   await expect(cards).toHaveCount(2);

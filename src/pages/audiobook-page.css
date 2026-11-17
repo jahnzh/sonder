@@ -1,0 +1,147 @@
+/* The Audiobook page (src/pages/audiobook-page.tsx; board Audiobook.dc.html). Tokens from src/parts/tokens.css,
+   colours from the existing variables. On a desktop the page is one centred column beside the rail. */
+.audiobook-page {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  min-width: 0;
+}
+.audiobook-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.audiobook-subtitle {
+  margin: 0;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* A row's value that opens something, beside an info mark: the value and a chevron, 44 high where it is tapped. */
+.audiobook-row-open {
+  box-sizing: border-box;
+  min-height: var(--height-control);
+  min-width: var(--height-control);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-8);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.audiobook-row-open:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.audiobook-row-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: calc(-1 * var(--space-4));
+}
+/* A copy marked faulty says so in its row, in the failed colour. Rows: Device copy, Server copy, Original stream. */
+.audiobook-copies[data-faulty~="device"] .part-group > :nth-child(1) .part-row-value,
+.audiobook-copies[data-faulty~="server"] .part-group > :nth-child(2) .part-row-value,
+.audiobook-copies[data-faulty~="original"] .part-group > :nth-child(3) .part-row-value {
+  color: var(--danger);
+}
+.audiobook-error {
+  margin: 0;
+  padding: 0 var(--space-16);
+  color: var(--danger);
+}
+.audiobook-resume,
+.audiobook-copy,
+.audiobook-report {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+.audiobook-resume > p,
+.audiobook-copy > p {
+  margin: 0;
+  color: var(--muted);
+}
+.audiobook-mark {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  color: var(--danger);
+}
+.audiobook-mark > .type-label {
+  color: var(--muted);
+}
+.audiobook-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+}
+.audiobook-actions:empty {
+  display: none;
+}
+/* A short list to choose one from (Plays from, What is faulty, Reason). */
+.audiobook-picks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-radius: var(--corner-group);
+  background: var(--surface);
+  overflow: hidden;
+}
+.audiobook-picks > li + li {
+  border-top: 1px solid var(--border);
+}
+.audiobook-pick {
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--height-row);
+  padding: 0 var(--space-16);
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  text-align: left;
+  cursor: pointer;
+}
+.audiobook-pick[data-chosen] {
+  background: var(--raised);
+}
+.audiobook-pick[data-chosen] svg {
+  color: var(--accent);
+}
+.audiobook-pick:disabled {
+  cursor: default;
+  color: var(--muted);
+  opacity: 0.55;
+}
+.audiobook-pick:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: calc(-1 * var(--space-4));
+}
+.audiobook-note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  color: var(--muted);
+}
+.audiobook-note textarea {
+  box-sizing: border-box;
+  min-height: 88px;
+  padding: var(--space-8) var(--space-12);
+  border: 1px solid var(--border);
+  border-radius: var(--corner-control);
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+}

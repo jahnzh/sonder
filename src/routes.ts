@@ -250,8 +250,8 @@ export function step(from: Route, to: Route): "push" | "replace" | "none" {
 
 /** Pages with a screen in this build. Every other address behaves like one that names nothing until its slice lands. */
 function built(route: Route): boolean {
-  // A book's Hardcover page (#529) and its Ebook page (#531); the Book page and its other pages come with their own tickets.
-  if (route.name === "book-page" && (route.page === "hardcover" || route.page === "ebook")) return true;
+  // The Audiobook page (#530), a book's Hardcover page (#529) and its Ebook page (#531); the Book page and its other pages come with their own tickets.
+  if (route.name === "book-page" && (route.page === "audiobook" || route.page === "hardcover" || route.page === "ebook")) return true;
   // The reader's pages: Chapters, Bookmarks and Search (#590).
   if (route.name === "book-page" && (route.page === "chapters" || route.page === "bookmarks" || route.page === "search")) return true;
   switch (route.name) {

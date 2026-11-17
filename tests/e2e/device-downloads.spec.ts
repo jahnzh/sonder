@@ -174,8 +174,9 @@ test("player downloads retain verified sections after connection failure and res
   await page
     .getByRole("button", { name: "Book details and editions", exact: true })
     .click();
+  // The Audiobook row opens the Audiobook page (#530), where Get another recording is.
   await expect(
-    page.getByRole("button", { name: "Find another release", exact: true }),
+    page.getByRole("dialog", { name: "Book details" }).getByRole("button", { name: /^Audiobook / }),
   ).toBeVisible();
   // The ebook's actions pass through the Ebook row (#531): Get when the book has no edition yet, otherwise the
   // row opens the Ebook page, whose Get another edition opens the same search.

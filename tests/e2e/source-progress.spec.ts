@@ -1,12 +1,21 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 
 test.use({ serviceWorkers: "block" });
+// Each test's work gets a name unique to the run, so a repeat on the same server finds one "Play <title>" button,
+// and leaves the library afterwards with both its recordings, so the book a test played is not the latest played
+// book that the dock and the feature card show the next spec on the server.
+const made: string[] = [];
 test.afterEach(async ({ page }) => {
-  await page.unrouteAll({ behavior: "wait" });
+  for (const workId of made.splice(0))
+    expect((await page.request.delete(`/api/works/${encodeURIComponent(workId)}/library`)).ok()).toBe(true);
+  // Not "wait": after the page gave up on a catalog read it sometimes never returned, which held this hook to the
+  // test's timeout (the handler already ignores a fulfil that comes too late).
+  await page.unrouteAll({ behavior: "ignoreErrors" });
 });
 
-type Release = { title: string; id: string; recordingId: string; trackId: string };
+type Release = { title: string; id: string; recordingId: string; trackId: string; workId: string };
 async function instrument(page: Page) {
   await page.addInitScript(() => {
     const elements: HTMLAudioElement[] = [];
@@ -37,29 +46,44 @@ async function importRelease(page: Page, title: string): Promise<Release> {
   expect(response.ok()).toBe(true);
   const id = (await response.json()).id;
   const book = (await (await page.request.get("/api/books")).json()).find((b: any) => b.id === id);
-  return { title, id, recordingId: book.recordingId, trackId: book.tracks[0].id };
+  return { title, id, recordingId: book.recordingId, trackId: book.tracks[0].id, workId: book.workId };
 }
 const chapters = (titles: string[], length: number) => titles.map((title, i) => ({ title, start: i * length, end: (i + 1) * length }));
-// Two recordings of one work with different durations and chapters. The audio files are the same, so
-// positions stay inside the real 640 s; only the catalog data differs.
-async function twoReleases(page: Page, name: string, second: { duration: number; chapters?: ReturnType<typeof chapters> }) {
+// Two recordings of one work with different durations and chapters (#530: one real work on the server, so the
+// Audiobook page lists both and can store the choice). The second is seeded on the first's audio file, so positions
+// stay inside the real 640 s; only the catalog data differs. The first's narrator and chapters are routed.
+async function twoReleases(page: Page, base: string, second: { duration: number; chapters?: ReturnType<typeof chapters> }) {
+  const name = `${base} ${randomUUID().slice(0, 8)}`;
   const first = await importRelease(page, `${name} English`);
-  const other = await importRelease(page, `${name} French`);
+  made.push(first.workId);
+  const slug = `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Math.random().toString(36).slice(2, 8)}`;
+  const other: Release = { title: `${name} French`, id: `edition-${slug}`, recordingId: `recording-${slug}`, trackId: `track-${slug}`, workId: first.workId };
+  const seeded = await page.request.post("/api/test/seed-local-audio", {
+    data: {
+      relPath: `imports/${first.trackId}.mp3`,
+      editionId: other.id,
+      recordingId: other.recordingId,
+      trackId: other.trackId,
+      workId: first.workId,
+      narrator: "French Reader",
+      language: "French",
+      duration: second.duration,
+      ...(second.chapters ? { chapters: second.chapters } : {}),
+    },
+  });
+  expect(seeded.ok()).toBe(true);
   await page.route("**/api/books", async (route) => {
     const response = await route.fetch();
     const all = await response.json();
     for (const book of all) {
       if (book.id === first.id) {
-        Object.assign(book, { workId: `work-${name}`, narrator: "English Reader", language: "English" });
+        Object.assign(book, { narrator: "English Reader", language: "English" });
         Object.assign(book.tracks[0], { duration: 400, chapters: chapters(["Chapter 1", "Chapter 2", "Chapter 3", "Chapter 4"], 100) });
       }
-      if (book.id === other.id) {
-        Object.assign(book, { workId: `work-${name}`, narrator: "French Reader", language: "French" });
-        Object.assign(book.tracks[0], { duration: second.duration, chapters: second.chapters });
-        if (!second.chapters) delete book.tracks[0].chapters;
-      }
+      if (book.id === other.id) Object.assign(book, { title: other.title });
     }
-    await route.fulfill({ response, json: all });
+    // A read the page gave up on meanwhile is already answered.
+    await route.fulfill({ response, json: all }).catch(() => {});
   });
   return { first, other };
 }
@@ -73,15 +97,18 @@ async function listenAt(page: Page, release: Release, value: number) {
   await setPosition(page, value);
   await expect.poll(async () => (await audioState(page)).position).toBeCloseTo(value, 0);
   await page.locator(".dock-book").click();
-  await page.getByRole("button", { name: "Versions & sources", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Versions & sources", exact: true });
-  await expect(dialog).toBeVisible();
-  return dialog;
+  await page.getByRole("dialog", { name: "Now playing", exact: true }).getByRole("button", { name: "Audiobook", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`#book/${encodeURIComponent(release.workId)}/audiobook$`));
+  const audiobook = page.getByRole("region", { name: "Audiobook", exact: true });
+  await expect(audiobook.getByRole("radiogroup", { name: "Recordings", exact: true })).toBeVisible();
+  return audiobook;
 }
 async function progressOf(page: Page, release: Release) {
   const books = await (await page.request.get("/api/books")).json();
   return books.find((b: any) => b.id === release.id).progress || { position: -1, updatedAt: 0 };
 }
+const chosenOf = async (page: Page, release: Release) =>
+  (await (await page.request.get(`/api/works/${encodeURIComponent(release.workId)}`)).json()).chosenRecordingId as string;
 async function idb<T>(page: Page, store: string, key: string): Promise<T | undefined> {
   return page.evaluate(async ({ store, key }) => {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -111,14 +138,14 @@ test("Resume at the matching chapter carries the place over and leaves the other
   await instrument(page);
   const { first, other } = await twoReleases(page, "Resume chapter", { duration: 640, chapters: french("") });
   const dialog = await listenAt(page, first, 250);
-  await dialog.getByRole("button", { name: /French Reader/ }).click();
-  const offer = dialog.getByRole("group", { name: "Where to resume", exact: true });
+  await dialog.getByRole("radio", { name: /French Reader/ }).click();
+  const offer = page.getByRole("group", { name: "Where to resume", exact: true });
   // Chapter 3 plus 50 s into it, in a recording 60% longer.
   await expect(offer.getByRole("button", { name: "Resume at Chapitre 3 (00:06:10)", exact: true })).toBeVisible();
   await expect(offer.getByRole("button", { name: "Start from beginning", exact: true })).toBeVisible();
   await expect(offer.getByText("Durations differ; the position may be off", { exact: true })).toBeVisible();
   await expect(offer.getByRole("button", { name: /Resume saved position/ })).toHaveCount(0);
-  await expect(dialog.getByRole("button", { name: "Use this version", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Use this version", exact: true })).toHaveCount(0);
   // Nothing is switched until the choice is made.
   expect((await audioState(page)).src).toContain(first.trackId);
   await offer.getByRole("button", { name: "Resume at Chapitre 3 (00:06:10)", exact: true }).click();
@@ -130,14 +157,17 @@ test("Resume at the matching chapter carries the place over and leaves the other
   expect(await localPosition(page, other)).toBeLessThan(380);
   await expect.poll(async () => (await progressOf(page, other)).position).toBeGreaterThanOrEqual(370);
   await expect.poll(async () => (await progressOf(page, first)).position).toBeCloseTo(250, 0);
+  // The chosen recording is stored for the user (#530) and ticked on the page.
+  expect(await chosenOf(page, first)).toBe(other.recordingId);
+  await expect(dialog.getByRole("radio", { name: /French Reader/ })).toHaveAttribute("aria-checked", "true");
 });
 
 test("Start from beginning plays the other recording from 0:00", async ({ page }) => {
   await instrument(page);
   const { first, other } = await twoReleases(page, "Start over", { duration: 640, chapters: french("") });
   const dialog = await listenAt(page, first, 250);
-  await dialog.getByRole("button", { name: /French Reader/ }).click();
-  await dialog.getByRole("button", { name: "Start from beginning", exact: true }).click();
+  await dialog.getByRole("radio", { name: /French Reader/ }).click();
+  await page.getByRole("group", { name: "Where to resume", exact: true }).getByRole("button", { name: "Start from beginning", exact: true }).click();
   await expect.poll(async () => (await audioState(page)).src).toContain(other.trackId);
   await expect.poll(async () => (await audioState(page)).position).toBeLessThan(10);
   await expect.poll(async () => (await progressOf(page, other)).position).toBeLessThan(10);
@@ -149,8 +179,8 @@ test("Start from beginning says which saved position it replaces, then writes 0:
   const { first, other } = await twoReleases(page, "Replace", { duration: 640, chapters: french("") });
   expect((await save(page, other, 42, Date.now() - 60000)).ok()).toBe(true);
   const dialog = await listenAt(page, first, 250);
-  await dialog.getByRole("button", { name: /French Reader/ }).click();
-  const offer = dialog.getByRole("group", { name: "Where to resume", exact: true });
+  await dialog.getByRole("radio", { name: /French Reader/ }).click();
+  const offer = page.getByRole("group", { name: "Where to resume", exact: true });
   const start = offer.getByRole("button", { name: "Start from beginning", exact: true });
   await expect(offer.getByText("Start from beginning replaces your saved position at 00:00:42", { exact: true })).toBeVisible();
   await expect(start).toHaveAccessibleDescription("Start from beginning replaces your saved position at 00:00:42");
@@ -166,14 +196,16 @@ test("closing the dialog without choosing does not switch recordings", async ({ 
   await instrument(page);
   const { first, other } = await twoReleases(page, "Dismiss", { duration: 640, chapters: french("") });
   const dialog = await listenAt(page, first, 250);
-  await dialog.getByRole("button", { name: /French Reader/ }).click();
-  await expect(dialog.getByRole("group", { name: "Where to resume", exact: true })).toBeVisible();
+  await dialog.getByRole("radio", { name: /French Reader/ }).click();
+  await expect(page.getByRole("group", { name: "Where to resume", exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(dialog).toBeHidden();
+  await expect(page.getByRole("dialog", { name: "Where to resume", exact: true })).toBeHidden();
   expect((await audioState(page)).src).toContain(first.trackId);
   expect((await audioState(page)).position).toBeCloseTo(250, 0);
   expect(await localPosition(page, other)).toBe(-1);
   expect((await progressOf(page, other)).position).toBe(-1);
+  // Nor is the choice stored: the first recording, the one with the newest place, stays the chosen one.
+  expect(await chosenOf(page, first)).toBe(first.recordingId);
 });
 
 test("a recording paused in the player still gets the offer when the target was saved after its last save", async ({ page }) => {
@@ -184,19 +216,19 @@ test("a recording paused in the player still gets the offer when the target was 
   expect((await save(page, other, 42, savedAt)).ok()).toBe(true);
   const dialog = await listenAt(page, first, 250);
   await expect.poll(() => page.evaluate((at) => Date.now() > at, savedAt), { timeout: 15000 }).toBe(true);
-  await dialog.getByRole("button", { name: /French Reader/ }).click();
-  const offer = dialog.getByRole("group", { name: "Where to resume", exact: true });
+  await dialog.getByRole("radio", { name: /French Reader/ }).click();
+  const offer = page.getByRole("group", { name: "Where to resume", exact: true });
   await expect(offer.getByRole("button", { name: "Resume at Chapitre 3 (00:06:10)", exact: true })).toBeVisible();
   await expect(offer.getByRole("button", { name: "Resume saved position (00:00:42)", exact: true })).toBeVisible();
-  await expect(dialog.getByRole("button", { name: "Use this version", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Use this version", exact: true })).toHaveCount(0);
 });
 
 test("a recording without chapters resumes by the share of the book and warns when that is an estimate", async ({ page }) => {
   await instrument(page);
   const { first, other } = await twoReleases(page, "Fraction", { duration: 400 });
   const dialog = await listenAt(page, first, 250);
-  await dialog.getByRole("button", { name: /French Reader/ }).click();
-  const offer = dialog.getByRole("group", { name: "Where to resume", exact: true });
+  await dialog.getByRole("radio", { name: /French Reader/ }).click();
+  const offer = page.getByRole("group", { name: "Where to resume", exact: true });
   await expect(offer.getByRole("button", { name: "Resume at 63% (00:04:10)", exact: true })).toBeVisible();
   await expect(offer.getByText("Position estimated from the book length; it may be off", { exact: true })).toBeVisible();
   await offer.getByRole("button", { name: "Resume at 63% (00:04:10)", exact: true }).click();
@@ -210,8 +242,8 @@ test("a recording with older progress also offers its own saved position", async
   const { first, other } = await twoReleases(page, "Older", { duration: 640, chapters: french("") });
   expect((await save(page, other, 42, Date.now() - 60000)).ok()).toBe(true);
   const dialog = await listenAt(page, first, 250);
-  await dialog.getByRole("button", { name: /French Reader/ }).click();
-  const offer = dialog.getByRole("group", { name: "Where to resume", exact: true });
+  await dialog.getByRole("radio", { name: /French Reader/ }).click();
+  const offer = page.getByRole("group", { name: "Where to resume", exact: true });
   await expect(offer.getByRole("button", { name: "Resume at Chapitre 3 (00:06:10)", exact: true })).toBeVisible();
   await offer.getByRole("button", { name: "Resume saved position (00:00:42)", exact: true }).click();
   await expect.poll(async () => (await audioState(page)).src).toContain(other.trackId);
@@ -224,10 +256,9 @@ test("a recording with newer progress switches without asking and keeps its posi
   const { first, other } = await twoReleases(page, "Newer", { duration: 640, chapters: french("") });
   expect((await save(page, other, 42, Date.now() + 120000)).ok()).toBe(true);
   const dialog = await listenAt(page, first, 250);
-  await dialog.getByRole("button", { name: /French Reader/ }).click();
-  await expect(dialog.getByRole("button", { name: "Use this version", exact: true })).toBeVisible();
-  await expect(dialog.getByRole("group", { name: "Where to resume", exact: true })).toHaveCount(0);
-  await dialog.getByRole("button", { name: "Use this version", exact: true }).click();
+  // The page has no "Use this version": choosing the recording is the switch, without asking.
+  await dialog.getByRole("radio", { name: /French Reader/ }).click();
+  await expect(page.getByRole("group", { name: "Where to resume", exact: true })).toHaveCount(0);
   await expect.poll(async () => (await audioState(page)).src).toContain(other.trackId);
   await expect.poll(async () => (await audioState(page)).position).toBeGreaterThanOrEqual(42);
   expect((await audioState(page)).position).toBeLessThan(50);

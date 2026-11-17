@@ -69,3 +69,30 @@ test("a recording id of another edition fails the request and writes nothing", a
   assert.equal(count("user_library", "book_id", "seeded-third"), 0);
   assert.equal(count("tracks", "recording_id", "rec-seeded-first"), 1);
 });
+
+test("a seeded recording can carry its narrator, language, length and chapters (#530), and keeps the old defaults", async () => {
+  const chapters = [{ title: "Chapitre 1", start: 0, end: 160 }, { title: "Chapitre 2", start: 160, end: 320 }];
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/test/seed-local-audio",
+    payload: {
+      relPath: "seeded-french.mp3",
+      editionId: "seeded-french",
+      recordingId: "rec-seeded-french",
+      trackId: "seeded-track-french",
+      workId: "work-alice",
+      narrator: "French Reader",
+      language: "French",
+      duration: 320,
+      chapters,
+    },
+  });
+  assert.equal(response.statusCode, 200, response.body);
+  const edition = sqlite.prepare("SELECT narrator, language FROM audio_editions WHERE id='seeded-french'").get();
+  assert.deepEqual({ ...(edition as object) }, { narrator: "French Reader", language: "French" });
+  const track = sqlite.prepare("SELECT duration, chapters FROM tracks WHERE id='seeded-track-french'").get() as { duration: number; chapters: string };
+  assert.equal(track.duration, 320);
+  assert.deepEqual(JSON.parse(track.chapters), chapters);
+  const plain = sqlite.prepare("SELECT e.narrator, e.language, t.duration, t.chapters FROM audio_editions e JOIN recordings r ON r.edition_id=e.id JOIN tracks t ON t.recording_id=r.id WHERE e.id='seeded-first'").get();
+  assert.deepEqual({ ...(plain as object) }, { narrator: "N", language: null, duration: 10, chapters: "[]" });
+});
