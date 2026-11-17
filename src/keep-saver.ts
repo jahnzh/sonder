@@ -6,7 +6,9 @@
  * the same lines from the device database. A run is asked for when Sonder opens, returns to the foreground, comes back
  * online, after a library read that changed, and when the switch is turned on; never on a timer. A run first merges
  * the device's Keep records with the server's (when there is a connection), turns Keep on once for the books saved
- * before Keep existed, then saves the missing files of each kept book, one book after another.
+ * before Keep existed, then saves the missing files of each kept book, one book after another: the recording's
+ * tracks first, then the chosen EPUB, then the pair's reading sync map (#551). An EPUB or a map that arrives later
+ * (a new chosen EPUB, a map that became ready, a map prepared again) is missing at the next run and saved then.
  *
  * Network failures and a closed or frozen tab interrupt a save; it resumes by itself at the next run. A paused or
  * failed save waits for a tap. Everything outside this file (Dexie, the API, the lock, the channel, the file save) is
@@ -19,11 +21,14 @@ import {
   keptNeeds,
   mergeKeep,
   rolloutChoices,
+  type HeldEbook,
   type HeldFile,
+  type HeldMap,
   type HeldPart,
   type KeepEntry,
   type KeepSend,
   type KeepWork,
+  type KeptNeeds,
   type NeededTrack,
   type SaveStop,
   type ServerKeep,
@@ -42,6 +47,12 @@ export type SaverState = {
   downloads: HeldFile[];
   parts: HeldPart[];
   records: DeviceSaveRecord[];
+  /** This device's kept EPUB copies (#551); not the reader's own reading cache. */
+  ebooks?: HeldEbook[];
+  /** This device's stored maps, by `reader-map:<ebookId>:<recordingId>`. */
+  maps?: Record<string, HeldMap | undefined>;
+  /** This user's choice of edition on this device, by work. */
+  ebookChoices?: Record<string, string | null | undefined>;
 };
 
 /** The record change a save writes (`writeDeviceSaveRecord`). */
@@ -75,6 +86,10 @@ export type SaverDeps = {
   rolloutDone: () => Promise<boolean>;
   markRolloutDone: () => Promise<void>;
   saveTrack: (track: NeededTrack, signal: AbortSignal, onProgress: (loaded: number, total: number) => void) => Promise<void>;
+  /** Fetches an EPUB, fingerprints it on the device and keeps it (`saveEpubOffline`). */
+  saveEbook?: (ebookId: string, signal: AbortSignal) => Promise<void>;
+  /** Fetches and stores the pair's map (`warmMap`). */
+  saveMap?: (ebookId: string, recordingId: string, signal: AbortSignal) => Promise<void>;
   writeRecord: (recordingId: string, workId: string, change: RecordChange) => Promise<void>;
   online: () => boolean;
   /**
@@ -263,30 +278,31 @@ export class KeepSaver {
       if (!entry.on) continue;
       const work = works.get(entry.workId);
       if (!work || !work.inLibrary) continue;
-      const recording = keepRecording(work);
-      const needs = keptNeeds(recording, state.downloads, state.parts);
+      const needs = this.needsOf(work, state);
       const forced = this.forced.delete(entry.workId);
-      if (!needs.recordingId || !needs.filesTotal) continue;
+      if (!needs.filesTotal) continue;
       if (needs.complete) {
         if (entry.completeAt === null) await this.reportComplete(entry, keep);
         continue;
       }
-      if (this.deps.running.has(needs.recordingId)) continue;
-      const record = records.get(needs.recordingId);
+      // A book without a recording (only an ebook) has no save record of its own: its save is keyed by its EPUB.
+      const saveId = needs.recordingId ?? `ebook:${needs.ebook!.id}`;
+      if (this.deps.running.has(saveId)) continue;
+      const record = needs.recordingId ? records.get(needs.recordingId) : undefined;
       // A save the user paused, or one the source refused, waits for a tap.
       if (!forced && (record?.state === "paused" || record?.state === "failed")) continue;
       if (!this.deps.online()) {
         // A save that was running when the tab closed is noted as such; it resumes when there is a connection.
-        if (record?.state === "saving") await this.deps.writeRecord(needs.recordingId, work.workId, { state: "interrupted", how: "closed" });
+        if (record?.state === "saving" && needs.recordingId)
+          await this.deps.writeRecord(needs.recordingId, work.workId, { state: "interrupted", how: "closed" });
         continue;
       }
-      const recordingId = needs.recordingId;
-      const save = () => this.save(work.workId, recordingId, needs.tracks, needs.missing);
-      const stop = this.deps.claim ? await this.deps.claim(recordingId, save) : await save();
+      const save = () => this.save(work.workId, saveId, needs);
+      const stop = this.deps.claim ? await this.deps.claim(saveId, save) : await save();
       if (stop === "busy") continue;
       if (stop === null) {
         state = await this.deps.read();
-        const done = keptNeeds(keepRecording(works.get(entry.workId)!), state.downloads, state.parts);
+        const done = this.needsOf(works.get(entry.workId)!, state);
         if (done.complete) await this.reportComplete(entry, keep);
       } else if (stop.state === "interrupted" && stop.how === "network") return; // The others would fail as well.
     }
@@ -310,40 +326,68 @@ export class KeepSaver {
     await this.deps.storeKeep(keep);
   }
 
-  /** Saves the missing tracks of one recording; null when every one was saved, otherwise how it stopped. */
-  private async save(workId: string, recordingId: string, tracks: readonly NeededTrack[], missing: readonly NeededTrack[]): Promise<SaveStop | null> {
+  /** What a work needs on this device, from the device's state. */
+  private needsOf(work: KeepWork, state: SaverState) {
+    return keptNeeds(keepRecording(work), state.downloads, state.parts, {
+      work: { ebooks: (work.ebooks ?? []) as never, chosenEbookId: work.chosenEbookId ?? null, readingSync: work.readingSync ?? [] },
+      deviceChoice: state.ebookChoices?.[work.workId] ?? null,
+      ebooks: state.ebooks ?? [],
+      maps: state.maps ?? {},
+    });
+  }
+
+  /**
+   * Saves the missing files of one kept book: its recording's tracks, then its EPUB, then its map. Null when every one
+   * was saved, otherwise how it stopped. `saveId` is the recording (or, for a book with only an ebook, its EPUB).
+   */
+  private async save(workId: string, saveId: string, needs: KeptNeeds): Promise<SaveStop | null> {
     const controller: Stoppable = new AbortController();
-    this.deps.running.set(recordingId, controller);
-    const missingIds = new Set(missing.map((track) => track.id));
-    const total = tracks.length;
-    let done = total - missing.length;
+    this.deps.running.set(saveId, controller);
+    const recordingId = needs.recordingId;
+    const write = (change: RecordChange) => (recordingId ? this.deps.writeRecord(recordingId, workId, change) : Promise.resolve());
+    const missingIds = new Set(needs.missing.map((track) => track.id));
+    const total = needs.filesTotal;
+    let done = needs.filesSaved;
     const publish = (loaded: number, size: number) => {
       const share = size ? Math.min(1, loaded / size) : 0;
       const job: KeepJob = { progress: Math.min(100, ((done + share) / total) * 100), chapter: Math.min(total, done + 1), total, loaded, size };
-      this.deps.onJob(recordingId, job);
-      void this.deps.writeRecord(recordingId, workId, { state: "saving", job }).catch(() => {});
+      this.deps.onJob(saveId, job);
+      void write({ state: "saving", job }).catch(() => {});
     };
-    try {
-      await this.deps.writeRecord(recordingId, workId, { state: "saving", job: null });
+    const step = () => {
+      done++;
       publish(0, 0);
       this.changed();
-      for (const track of tracks) {
+    };
+    try {
+      await write({ state: "saving", job: null });
+      publish(0, 0);
+      this.changed();
+      for (const track of needs.tracks) {
         if (!missingIds.has(track.id)) continue;
         controller.signal.throwIfAborted();
         await this.deps.saveTrack(track, controller.signal, (loaded, size) => publish(loaded, size));
-        done++;
-        publish(0, 0);
-        this.changed();
+        step();
       }
-      await this.deps.writeRecord(recordingId, workId, { state: "finished" });
+      if (needs.ebook && !needs.ebook.complete && this.deps.saveEbook) {
+        controller.signal.throwIfAborted();
+        await this.deps.saveEbook(needs.ebook.id, controller.signal);
+        step();
+      }
+      if (needs.map && !needs.map.complete && this.deps.saveMap) {
+        controller.signal.throwIfAborted();
+        await this.deps.saveMap(needs.map.ebookId, needs.map.recordingId, controller.signal);
+        step();
+      }
+      await write({ state: "finished" });
       return null;
     } catch (error) {
       const stop = classifyStop({ cause: controller.signal.aborted ? controller.cause ?? "pause" : null, error });
-      if (stop.state !== "off") await this.deps.writeRecord(recordingId, workId, stop).catch(() => {});
+      if (stop.state !== "off") await write(stop).catch(() => {});
       return stop;
     } finally {
-      if (this.deps.running.get(recordingId) === controller) this.deps.running.delete(recordingId);
-      this.deps.onJob(recordingId, null);
+      if (this.deps.running.get(saveId) === controller) this.deps.running.delete(saveId);
+      this.deps.onJob(saveId, null);
       this.changed();
     }
   }

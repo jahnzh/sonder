@@ -248,22 +248,27 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await page
     .getByRole("button", { name: "Pause narration", exact: true })
     .click();
-  // The reader keeps the EPUB it opened on this device by itself; the More sheet's "Save ebook offline" went to the
-  // Book page's Keep on this device (#532).
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          new Promise<boolean>((resolve) => {
-            const request = indexedDB.open("sonder");
-            request.onsuccess = () => {
-              const keys = request.result.transaction("preferences").objectStore("preferences").getAllKeys();
-              keys.onsuccess = () => resolve(keys.result.some((key) => String(key).startsWith("reader-file:")));
-            };
-          }),
-      ),
-    )
-    .toBe(true);
+  // The EPUB is kept on this device by the Book page's Keep on this device switch (#551): the reader's own copy of a
+  // book it opened is only a reading cache, and "Save ebook offline" left the More sheet (#532).
+  await page.goto(`/#book/${encodeURIComponent(audioBook.workId)}`);
+  const bookRegion = page.getByRole("region", { name: "Book", exact: true });
+  await bookRegion.getByRole("switch", { name: "Keep on this device", exact: true }).click();
+  await expect(bookRegion.locator("#book-keep-line")).toHaveText(/^Audiobook and ebook · /, { timeout: 60_000 });
+  expect(
+    await page.evaluate(
+      (key) =>
+        new Promise<unknown>((resolve) => {
+          const request = indexedDB.open("sonder");
+          request.onsuccess = () => {
+            const get = request.result.transaction("preferences").objectStore("preferences").get(key);
+            get.onsuccess = () => resolve(get.result?.value?.cache ?? false);
+          };
+        }),
+      `reader-file:${id}`,
+    ),
+  ).toBe(false);
+  await page.goto(`/#reader/${id}`);
+  await expect(page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").locator("body")).toBeVisible();
   await page.evaluate(() => navigator.serviceWorker.ready);
   await expect
     .poll(() => page.evaluate(() => !!navigator.serviceWorker.controller))
