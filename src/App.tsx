@@ -40,6 +40,7 @@ import { PlayerProvider, usePlayer } from "./player";
 import { SeriesDialog, type SeriesTarget } from "./components/Series";
 import {ReaderShortcut} from "./components/ReaderShortcut";
 import { ReaderHost } from "./components/Reader";
+import { EBOOK_DEVICE_EVENT } from "./reading";
 import {
   ApiError,
   api,
@@ -53,7 +54,7 @@ import {
   downloadTrack,
   getDownloadedBlob,
   clock,
-  listOfflineEbookEditionIds,
+  listOfflineEbookCopies,
   listDeviceSaveRecords,
   writeDeviceSaveRecord,
   deleteDownloads,
@@ -307,6 +308,8 @@ function LibraryApp({
   const [offlineEbookEditionIds, setOfflineEbookEditionIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  // The copies the user chose to keep; the reader's own reading cache is on the device but not kept (#671).
+  const [keptEbookEditionIds, setKeptEbookEditionIds] = useState<ReadonlySet<string>>(() => new Set());
   const [downloadParts, setDownloadParts] = useState<DownloadPart[]>([]);
   const [downloadJobs, setDownloadJobs] = useState<
     Record<string, { progress: number; chapter: number; total: number; loaded?: number; size?: number }>
@@ -358,8 +361,16 @@ function LibraryApp({
     setSaveRecords(await listDeviceSaveRecords().catch(() => []));
   }, []);
   const refreshOfflineEbooks = useCallback(async () => {
-    setOfflineEbookEditionIds(new Set(await listOfflineEbookEditionIds()));
+    const copies = await listOfflineEbookCopies();
+    setOfflineEbookEditionIds(new Set(copies.map((copy) => copy.id)));
+    setKeptEbookEditionIds(new Set(copies.filter((copy) => copy.kept).map((copy) => copy.id)));
   }, []);
+  // A copy written or removed while the app is open (the reader's cache, a save, a removal) is read again (#671).
+  useEffect(() => {
+    const read = () => void refreshOfflineEbooks().catch(() => {});
+    window.addEventListener(EBOOK_DEVICE_EVENT, read);
+    return () => window.removeEventListener(EBOOK_DEVICE_EVENT, read);
+  }, [refreshOfflineEbooks]);
   const refreshSavedEbooks = useCallback(async () => {
     try {
       const value = await api<SavedEbook[]>("/ebooks");
@@ -1053,7 +1064,7 @@ function LibraryApp({
                   downloadParts={downloadParts}
                   running={downloadJobs}
                   records={saveRecords}
-                  ebooks={savedEbooks.filter((e) => offlineEbookEditionIds.has(e.id))}
+                  ebooks={savedEbooks.filter((e) => keptEbookEditionIds.has(e.id))}
                   online={online}
                   onPause={(recordingId) => controllers.current.get(recordingId)?.abort()}
                   onOpen={setDetail}
@@ -1063,6 +1074,10 @@ function LibraryApp({
                     try {
                       for (const recordingId of row.recordingIds) await deleteDownloads(recordingId);
                       for (const editionId of row.ebookIds) await removeOfflineEbook(editionId);
+                      // The reader's cache of the book's other editions goes too: every file of it (#671).
+                      for (const ebook of savedEbooks)
+                        if (ebook.workId === row.workId && offlineEbookEditionIds.has(ebook.id) && !row.ebookIds.includes(ebook.id))
+                          await removeOfflineEbook(ebook.id);
                     } finally {
                       await refreshDownloads();
                       await refreshOfflineEbooks();
