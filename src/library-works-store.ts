@@ -116,7 +116,7 @@ async function loadOnce() {
   const keepFacts = (list: Iterable<LibraryWork>) =>
     JSON.stringify(
       [...list]
-        .map((w) => [w.workId, w.inLibrary, w.chosenRecordingId, w.recordings.map((r) => [r.recordingId, r.tracks.map((t) => t.id)])])
+        .map((w) => [w.workId, w.inLibrary, w.chosenRecordingId, (w.recordings ?? []).map((r) => [r.recordingId, (r.tracks ?? []).map((t) => t.id)])])
         .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
     );
   const before = snapshot.owner === owner && snapshot.stored ? keepFacts(snapshot.works.values()) : null;
