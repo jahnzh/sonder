@@ -7,8 +7,12 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
 
 test.use({ serviceWorkers: "block" });
+// The works a test made leave the library after it, so a book played here is not the Library's featured book for
+// the specs that run next (device-downloads plays whatever the dock shows).
+const made: string[] = [];
 test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "wait" });
+  for (const workId of made.splice(0)) await page.request.delete(`/api/works/${encodeURIComponent(workId)}/library`);
 });
 
 const OUT = "OUT";
@@ -43,8 +47,10 @@ async function twoRecordings(page: Page, title: string): Promise<Work> {
     const fetched = await route.fetch();
     const all = await fetched.json();
     for (const b of all) if (b.recordingId === second.recordingId) b.title = `${title} (second)`;
-    await route.fulfill({ response: fetched, json: all });
+    // A read the page gave up on meanwhile is already answered.
+    await route.fulfill({ response: fetched, json: all }).catch(() => {});
   });
+  made.push(book.workId);
   return { workId: book.workId, title, first: { id, recordingId: book.recordingId }, second };
 }
 const address = (workId: string) => `/#book/${encodeURIComponent(workId)}/audiobook`;
@@ -52,6 +58,9 @@ const region = (page: Page) => page.getByRole("region", { name: "Audiobook", exa
 const chosenOf = async (page: Page, workId: string) =>
   (await (await page.request.get(`/api/works/${encodeURIComponent(workId)}`)).json()).chosenRecordingId as string;
 const box = async (locator: ReturnType<Page["locator"]>) => (await locator.boundingBox())!;
+/** Waits until nothing moves (a dialog's fade), so a screenshot shows the screen as it stays. */
+const settled = (page: Page) =>
+  page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"));
 /** A row's own height, without the 1 px line a group draws between rows. */
 const clientHeight = (locator: ReturnType<Page["locator"]>) => locator.evaluate((el) => (el as HTMLElement).clientHeight);
 const noOverflow = async (page: Page) =>
@@ -93,6 +102,7 @@ test("the page as the board draws it, at phone size and on a desktop, and on a r
   );
   expect([...tops].sort((a, b) => a - b)).toEqual(tops);
   await noOverflow(page);
+  await settled(page);
   await page.screenshot({ path: `${OUT}/audiobook-phone.png`, fullPage: true });
   // A reload keeps the address and the page.
   await page.reload();
@@ -106,6 +116,7 @@ test("the page as the board draws it, at phone size and on a desktop, and on a r
   expect(Math.abs(column.x + column.width / 2 - (main.x + main.width / 2))).toBeLessThanOrEqual(2);
   for (const radio of await region(page).getByRole("radio").all()) expect(await clientHeight(radio)).toBe(64);
   await noOverflow(page);
+  await settled(page);
   await page.screenshot({ path: `${OUT}/audiobook-desktop.png`, fullPage: true });
   expect(errors).toEqual([]);
 });
@@ -118,6 +129,7 @@ test("its dialogs at phone size and on a desktop: a copy, Plays from, Report a p
     const audiobook = region(page);
     await audiobook.getByRole("button", { name: "Server copy On server", exact: true }).click();
     await expect(page.getByRole("dialog", { name: "Server copy", exact: true })).toBeVisible();
+    await settled(page);
     await page.screenshot({ path: `${OUT}/audiobook-copy-${size}.png` });
     await page.keyboard.press("Escape");
     await audiobook.getByRole("button", { name: "Plays from: Automatic", exact: true }).click();
@@ -128,6 +140,7 @@ test("its dialogs at phone size and on a desktop: a copy, Plays from, Report a p
     await expect(picker.getByRole("radio", { name: "Server copy", exact: true })).toBeEnabled();
     await expect(picker.getByRole("radio", { name: "Automatic", exact: true })).toHaveAttribute("aria-checked", "true");
     for (const pick of await picker.getByRole("radio").all()) expect(await clientHeight(pick)).toBe(52);
+    await settled(page);
     await page.screenshot({ path: `${OUT}/audiobook-plays-from-${size}.png` });
     await page.keyboard.press("Escape");
     await audiobook.getByRole("button", { name: "Report a problem", exact: true }).click();
@@ -141,6 +154,7 @@ test("its dialogs at phone size and on a desktop: a copy, Plays from, Report a p
       "Missing or incomplete audio",
       "Other problem",
     ]);
+    await settled(page);
     await page.screenshot({ path: `${OUT}/audiobook-report-${size}.png`, fullPage: true });
     await page.keyboard.press("Escape");
     await noOverflow(page);
@@ -173,8 +187,10 @@ test("its dialogs at phone size and on a desktop: a copy, Plays from, Report a p
   await region(page).getByRole("radio", { name: /^Second Narrator/ }).click();
   const offer = page.getByRole("dialog", { name: "Where to resume", exact: true });
   await expect(offer.getByRole("group", { name: "Where to resume", exact: true })).toBeVisible();
+  await settled(page);
   await page.screenshot({ path: `${OUT}/audiobook-where-to-resume-phone.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
+  await settled(page);
   await page.screenshot({ path: `${OUT}/audiobook-where-to-resume-desktop.png` });
   await page.keyboard.press("Escape");
   await expect(offer).toBeHidden();
@@ -324,9 +340,11 @@ test.describe("someone who is not the administrator", () => {
       await expect(copy).toBeVisible();
       for (const name of ["Save to server", "Remove server copy", "Clear the mark"])
         await expect(copy.getByRole("button", { name, exact: true })).toHaveCount(0);
+      await settled(page);
       await page.screenshot({ path: `${OUT}/audiobook-member-phone.png`, fullPage: true });
       await page.keyboard.press("Escape");
       await page.setViewportSize({ width: 1440, height: 900 });
+      await settled(page);
       await page.screenshot({ path: `${OUT}/audiobook-member-desktop.png`, fullPage: true });
       // The reader's choice of recording is the reader's: the administrator's stays as it was.
       const adminChoice = async () => (await (await admin.request.get(`${base}/api/works/work-alice`)).json()).chosenRecordingId;

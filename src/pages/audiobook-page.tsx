@@ -67,10 +67,14 @@ type Props = {
 
 type Pick<T extends string> = { value: T; label: string; disabled?: boolean };
 
-/** A short list to choose one from, in a dialog: one radio row per choice; a choice that is ruled out is off. */
-function PickList<T extends string>({ label, options, value, onChoose }: { label: string; options: Pick<T>[]; value: T | null; onChoose: (value: T) => void }) {
-  return (
-    <ul className="audiobook-picks" role="radiogroup" aria-label={label}>
+/**
+ * A short list to choose one from, in a dialog: one radio row per choice; a choice that is ruled out is off. With
+ * `caption` its name is shown above it, as a Group's caption.
+ */
+function PickList<T extends string>({ label, caption, options, value, onChoose }: { label: string; caption?: boolean; options: Pick<T>[]; value: T | null; onChoose: (value: T) => void }) {
+  const id = useId();
+  const list = (
+    <ul className="audiobook-picks" role="radiogroup" aria-label={caption ? undefined : label} aria-labelledby={caption ? id : undefined}>
       {options.map((option) => (
         <li key={option.value}>
           <button
@@ -92,6 +96,15 @@ function PickList<T extends string>({ label, options, value, onChoose }: { label
         </li>
       ))}
     </ul>
+  );
+  if (!caption) return list;
+  return (
+    <div className="part-group-block">
+      <h3 id={id} className="part-group-caption type-caption">
+        {label}
+      </h3>
+      {list}
+    </div>
   );
 }
 
@@ -521,12 +534,14 @@ export function AudiobookPage({ workId, books, downloads, admin, online, onFindA
           }}
         >
           <PickList
+            caption
             label="What is faulty"
             options={scopes.map((value) => ({ value, label: SCOPE_NAMES[value] }))}
             value={scopes.includes(scope) ? scope : "recording"}
             onChoose={setScope}
           />
           <PickList
+            caption
             label="Reason"
             options={(Object.keys(FAULT_REASONS) as MediaFault["reason"][]).map((value) => ({ value, label: FAULT_REASONS[value] }))}
             value={reason}

@@ -295,7 +295,8 @@ test("switching audiobook versions resumes each recording's own checkpoint",asyn
   await page.route("**/api/books",async route=>{
     const response=await route.fetch(), all=await response.json();
     for (const b of all) if(b.recordingId===french.recordingId) b.title="Release choice French";
-    await route.fulfill({response,json:all});
+    // A read the app gave up on meanwhile is already answered.
+    await route.fulfill({response,json:all}).catch(()=>{});
   });
   await page.goto("/");
   await playAndPause(page,"Release choice");

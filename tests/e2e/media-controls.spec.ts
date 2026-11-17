@@ -305,6 +305,12 @@ test("Space toggles playback across views and arrows skip 30 seconds while ignor
   await expect.poll(paused).toBe(false);
   await page.keyboard.press(" ");
   await expect.poll(paused).toBe(true);
+  // Back to the place the arrows are measured from below: the page played for a moment.
+  await page.evaluate(() => {
+    const audio = ((window as any).__audioElements as HTMLAudioElement[]).find((item) => !!item.src)!;
+    audio.currentTime = 100;
+  });
+  await expect.poll(() => audioPosition(page)).toBeCloseTo(100, 0);
   await audiobook.getByRole("button", { name: /^Plays from: / }).click();
   const picker = page.getByRole("dialog", { name: "Plays from", exact: true });
   await expect(picker).toBeVisible();

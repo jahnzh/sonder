@@ -71,7 +71,8 @@ async function twoReleases(page: Page, name: string, second: { duration: number;
       }
       if (book.id === other.id) Object.assign(book, { title: other.title });
     }
-    await route.fulfill({ response, json: all });
+    // A read the page gave up on meanwhile is already answered.
+    await route.fulfill({ response, json: all }).catch(() => {});
   });
   return { first, other };
 }
