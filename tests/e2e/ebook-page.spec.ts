@@ -15,6 +15,11 @@ import { readerFixture } from "../reader-fixture";
 
 const unique = (label: string) => `${label} ${test.info().repeatEachIndex} ${randomBytes(3).toString("hex")}`;
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// A routed read still in flight when a test ends (the Book page and the reader read the work as the test closes)
+// finds its response disposed: the routes go first, and such a handler's error is not the test's.
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+});
 const PDF = Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n");
 type Check = { status: "pending" | "held" | "accepted" | "rejected"; holdReason: string | null };
 type Edition = { id: string; format: string; size: number; check: Check | null };
