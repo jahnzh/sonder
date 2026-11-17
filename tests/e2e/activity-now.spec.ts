@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { parseRange } from "../../server/range";
 import { TIPS } from "../../src/tooltip-texts";
 import type { ActivityItem, ActivityProcess, ActivityResponse } from "../../src/types";
+import { noOverflow } from "./overflow";
 
 // Activity's Now (#522, spec #513 "Now"; boards Activity.dc.html, ActivityEmpty.dc.html, ActivityOffline.dc.html,
 // ActivityMember.dc.html, ActivityFailedSave.dc.html, DesktopActivity.dc.html), against the suite's own server. The
@@ -176,21 +177,6 @@ const captions = (page: Page) => nowPart(page).locator("h2");
 const asMember = (page: Page) =>
   page.route("**/api/auth/status", (route) =>
     route.fulfill({ json: { required: true, authenticated: true, user: { id: 1, username: "reader", role: "user" } } }));
-
-async function noOverflow(page: Page) {
-  const overflow = await page.evaluate(() => {
-    const width = window.innerWidth;
-    return [...document.querySelectorAll("body *")]
-      .filter((element) => {
-        const box = element.getBoundingClientRect();
-        return box.width > 0 && box.right > width + 1 && getComputedStyle(element).position !== "fixed";
-      })
-      .slice(0, 6)
-      .map((element) => `${element.tagName.toLowerCase()}.${String(element.className).slice(0, 40)}`);
-  });
-  expect(overflow, "elements wider than the viewport").toEqual([]);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-}
 
 const routeAnswer = (page: Page, json: () => ActivityResponse) => page.route("**/api/activity", (route) => route.fulfill({ json: json() }));
 
