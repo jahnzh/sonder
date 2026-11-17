@@ -90,6 +90,7 @@ import { ActivityServer } from "./pages/activity-server";
 import { ActivityItemGroups } from "./pages/activity-items";
 import { ActivityPlace } from "./pages/activity-place";
 import { SettingsPage } from "./pages/settings-page";
+import { EbookFileRow, EbookPage, ebookSearchTarget } from "./pages/ebook-page";
 import { firstPage, writeAddress, type Place, type Route } from "./routes";
 import { onPageLeftByHistory, startNavigation, useAddress } from "./navigation";
 import { Gallery, isGalleryRoute } from "./gallery/Gallery";
@@ -236,6 +237,8 @@ function LibraryApp({
   // src/pages never read or write it themselves.
   const address = useAddress();
   const page = shownPage(address.route, useRef<Page>("library"));
+  // The Ebook page (#531) is shown in place of the page under it.
+  const ebookPage = address.route.name === "book-page" && address.route.page === "ebook" ? address.route.workId : null;
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const admin = user.role === "admin";
@@ -611,6 +614,13 @@ function LibraryApp({
         (hardcoverFilter.list === "all" ||
           b.hardcover?.listIds.includes(Number(hardcoverFilter.list))),
     );
+  // Today's ebook search for a work (Discover's ebooks, linked to the work), until slice "Get" (S8).
+  const findEbook = (target: Book) => {
+    setDetail(null);
+    navigate("discover");
+    setEbookTarget(target);
+    setDiscoverQuery(`${target.title} ${target.author}`);
+  };
   const findAudio = (b: Book) => {
     setDetail(null);
     navigate("discover");
@@ -811,6 +821,14 @@ function LibraryApp({
                 </button>
               </div>
             )}
+            {ebookPage ? (
+              <EbookPage
+                key={ebookPage}
+                workId={ebookPage}
+                admin={user.role === "admin"}
+                onGetEdition={(work) => findEbook(books.find((b) => b.workId === work.workId) ?? ebookSearchTarget(work))}
+              />
+            ) : <>
             {page === "library" && (
               <LibraryPage
                 admin={user.role === "admin"}
@@ -920,6 +938,7 @@ function LibraryApp({
                 }}
               />
             )}
+            </>}
           </main>
         </div>
         <nav className="mobile-nav" aria-label="Mobile navigation">
@@ -1009,14 +1028,12 @@ function LibraryApp({
                 })
                 .catch((e) => notify(e.message, true));
           }}
-          onFindEbook={() => {
-            if (detail) {
-              const target = detail;
-              setDetail(null);
-              navigate("discover");
-              setEbookTarget(target);
-              setDiscoverQuery(`${target.title} ${target.author}`);
-            }
+          onFindEbook={() => detail && findEbook(detail)}
+          onOpenEbook={() => {
+            if (!detail) return;
+            const workId = detail.workId;
+            setDetail(null);
+            address.navigate({ name: "book-page", workId, page: "ebook" });
           }}
           book={
             detail && { ...detail, ...books.find((b) => b.id === detail.id) }
@@ -1072,6 +1089,7 @@ function BookDetail({
   notify,
   onKeepServer,
   onFindEbook,
+  onOpenEbook,
   book: b,
   onClose,
   downloaded,
@@ -1094,6 +1112,7 @@ function BookDetail({
   notify: (s: string, error?: boolean) => void;
   onKeepServer: () => void;
   onFindEbook: () => void;
+  onOpenEbook: () => void;
   book: Book | null;
   onClose: () => void;
   downloaded: boolean;
@@ -1295,14 +1314,7 @@ function BookDetail({
               </button>
             </div>
           )}
-          {admin && <div className="detail-ebook-action">
-            <span>
-              <BookOpen size={18} /> Ebook edition
-            </span>
-            <button className="button subtle" onClick={onFindEbook}>
-              Find ebook <ArrowRight size={14} />
-            </button>
-          </div>}
+          <EbookFileRow workId={b.workId} admin={admin} onOpen={onOpenEbook} onGet={onFindEbook} />
           {b.tracks.length > 0 && (
             <div className="detail-chapters">
               <h3>
