@@ -6,7 +6,9 @@ import {
   setSeriesAcquisitionDeps,
 } from "../server/series-acquisition.ts";
 
-const failOnce = new Set<string>();
+// Each work's first ebook search fails and the next one succeeds, then the next fails again: a spec that saves the
+// series and retries sees the same failure and recovery when it runs again on the same server.
+const failNext = new Map<string, boolean>();
 
 export function installSeriesAcquisitionFixture() {
   resetSeriesAcquisitionDeps();
@@ -17,9 +19,10 @@ export function installSeriesAcquisitionFixture() {
         .from(s.works)
         .where(eq(s.works.id, workId))
         .get();
-      if (work?.title === "Crossing Companion" && !failOnce.has(workId)) {
-        failOnce.add(workId);
-        throw new Error("fixture ebook fail");
+      if (work?.title === "Crossing Companion") {
+        const fail = failNext.get(workId) ?? true;
+        failNext.set(workId, !fail);
+        if (fail) throw new Error("fixture ebook fail");
       }
       return {
         downloaded: [{ id: "libgen-series-fixture", status: "held" as const }],

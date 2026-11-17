@@ -41,6 +41,10 @@ const desktopProjects = [
               /(now-playing-layout|device-reset|reader-frame|navigation|gallery(-[a-z-]+)?|device-save-records)\.spec\.ts/,
               // Sign in, Request an account and Join (#582).
               /(^|\/)(sign-in|account-requests)\.spec\.ts$/,
+              // Activity's This device (#518).
+              /(^|\/)activity-device\.spec\.ts$/,
+              // An account switch during a library write (#528 review finding 1).
+              /(^|\/)library-works-user-race\.spec\.ts$/,
               // The page turn inside a sentence that crosses a page (#508).
               /(^|\/)reader-page-turn\.spec\.ts$/,
               // Activity › Server (#519).
@@ -49,6 +53,8 @@ const desktopProjects = [
               /(^|\/)activity-dot\.spec\.ts$/,
               // Settings as a list with pages (#579).
               /(^|\/)settings-pages\.spec\.ts$/,
+              // The worker's page (#520).
+              /(^|\/)activity-worker\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: {} },

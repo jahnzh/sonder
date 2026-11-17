@@ -124,8 +124,10 @@ export function installHardcoverFixture() {
       members = members.filter((m) => m.id !== v.id);
       data = { delete_list_book: { id: v.id } };
     } else if (q.includes("SonderListAdd")) {
+      // A new id past every id in the list: `9900 + members.length` reused a remaining member's id after a
+      // removal, so removing the re-added book later removed that member too.
       const item = {
-        id: 9900 + members.length,
+        id: Math.max(9900, ...members.map((m) => m.id)) + 1,
         list_id: v.object.list_id,
         book_id: v.object.book_id,
         book: books.find((b) => b.id === v.object.book_id)!,

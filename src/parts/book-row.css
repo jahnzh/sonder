@@ -92,3 +92,19 @@ button.part-book-row:focus-visible {
   align-items: center;
   color: var(--muted);
 }
+/* A row with a button of its own (BookRow's action): the part that opens the book, then the button, 16 from the edge. */
+.part-book-row-item[data-action] {
+  display: flex;
+  align-items: center;
+}
+.part-book-row-item[data-action] > .part-book-row {
+  flex: 1;
+  min-width: 0;
+  padding-right: var(--space-12);
+}
+.part-book-row-action {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding-right: var(--space-16);
+}

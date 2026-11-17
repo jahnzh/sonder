@@ -1,6 +1,6 @@
 import Dexie, { type Table } from "dexie";
 import { dropPosition, peekPosition, recentPositions, recordPosition, serialQueue, type PositionEntry, type PositionHistory } from "./position-history";
-import type { Book, Progress, Download, DownloadPart, Track } from "./types";
+import type { Book, LibraryWork, Progress, Download, DownloadPart, Track } from "./types";
 import { DEVICE_SAVE_KEY_PREFIX, deviceSaveKey, readDeviceSaveRecord, type DeviceSaveRecord } from "./device-saves";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -93,8 +93,10 @@ export async function api<T = unknown>(
     );
   return result as T;
 }
-class SonderDB extends Dexie {
+export class SonderDB extends Dexie {
   books!: Table<Book, string>;
+  /** The library by work on the device (#528): one record per work of `GET /api/library`. */
+  works!: Table<LibraryWork, string>;
   progress!: Table<Progress & { pending?: boolean }, string>;
   positionHistory!: Table<PositionHistory, string>;
   downloads!: Table<Download, string>;
@@ -118,6 +120,7 @@ class SonderDB extends Dexie {
     });
     this.version(3).stores({});
     this.version(4).stores({ positionHistory: "recordingId" });
+    this.version(5).stores({ works: "workId" });
   }
 }
 const sharedDB = new SonderDB();
@@ -133,20 +136,84 @@ let currentUserId = 1;
 let userKnown = false;
 let currentRole: "admin" | "user" = "admin";
 export function userId() { return currentUserId; }
+
+/**
+ * The signed-in account and its device database, fixed at the call. `localDB` resolves the personal tables
+ * again on every access, so a write that spans several awaits would follow an account switch into the other
+ * account's database; a write that takes its tables from here stays in the database it was started for.
+ */
+export function accountDatabase(): { owner: number; db: SonderDB } {
+  return { owner: currentUserId, db: personalDB };
+}
+
+/** Thrown inside a replace when the account it was started for is no longer signed in; rolls it back. */
+export class AccountChanged extends Error {
+  constructor() {
+    super("Another account is signed in.");
+    this.name = "AccountChanged";
+  }
+}
+
+/**
+ * Replaces personal tables of `owner`'s device database in one transaction. `body` calls `stillSignedIn()`
+ * between its steps; once another account is signed in the transaction is rolled back and nothing is written
+ * (resolves false). Resolves true when the replace landed.
+ */
+export async function replaceForAccount(
+  owner: number,
+  db: Pick<SonderDB, "transaction">,
+  tables: Table[],
+  body: (stillSignedIn: () => void) => Promise<void>,
+  signedIn: () => number = userId,
+): Promise<boolean> {
+  const stillSignedIn = () => {
+    if (signedIn() !== owner) throw new AccountChanged();
+  };
+  if (signedIn() !== owner) return false;
+  try {
+    await db.transaction("rw", tables, async () => {
+      stillSignedIn();
+      await body(stillSignedIn);
+      stillSignedIn();
+    });
+  } catch (error) {
+    if (error instanceof AccountChanged) return false;
+    throw error;
+  }
+  return true;
+}
 export function isAdmin() { return currentRole === "admin"; }
 export function userStorageKey(key: string) { return currentUserId === 1 ? key : `sonder-user-${currentUserId}:${key}`; }
 
-/** Ebook edition ids with a reader-file entry in Dexie (device offline copy). */
+/**
+ * Ebook edition ids with a reader-file entry in Dexie (device offline copy). The reader writes them to the shared
+ * database (`saveEpubOffline` in reading.ts), as the downloads are not per user either; an older build may have left
+ * one in a personal database.
+ */
 export async function listOfflineEbookEditionIds(): Promise<string[]> {
-  const rows = await localDB.preferences.toArray();
-  return rows
-    .filter((row) => row.key.startsWith("reader-file:"))
-    .map((row) => row.key.slice("reader-file:".length));
+  const shared = await sharedDB.preferences.where("key").startsWith("reader-file:").primaryKeys();
+  const personal = personalDB === sharedDB ? [] : await personalDB.preferences.where("key").startsWith("reader-file:").primaryKeys();
+  return [...new Set([...shared, ...personal].map((key) => String(key).slice("reader-file:".length)))];
+}
+/** Removes an ebook edition's offline copy from this device (#518): its file and its reader-file entry. */
+export async function removeOfflineEbook(editionId: string) {
+  const key = `reader-file:${editionId}`;
+  const stored = (await sharedDB.preferences.get(key))?.value as { opfs?: boolean } | undefined;
+  if (stored?.opfs || !stored) {
+    try {
+      const folder = await (await navigator.storage.getDirectory()).getDirectoryHandle("sonder-ebooks");
+      await folder.removeEntry(`${editionId}.epub`);
+    } catch {
+      // No folder or no file: nothing of it is left to remove.
+    }
+  }
+  await sharedDB.preferences.delete(key);
+  if (personalDB !== sharedDB) await personalDB.preferences.delete(key);
 }
 
 export const localDB = new Proxy(sharedDB, {
   get(target, prop) {
-    const db = ["books", "progress", "positionHistory", "preferences"].includes(String(prop)) ? personalDB : target;
+    const db = ["books", "works", "progress", "positionHistory", "preferences"].includes(String(prop)) ? personalDB : target;
     if (prop === "preferences" && personalDB !== sharedDB) {
       const table = personalDB.preferences;
       return new Proxy(table, { get(obj, key) {
@@ -270,18 +337,23 @@ export async function saveProgress(p: Progress) {
 }
 export async function loadBooks() {
   await syncProgress().catch(() => {});
+  // The account's own tables, so a sign-in as another account during the read cannot carry these books
+  // into that account's database (or clear this one's).
+  const { owner, db } = accountDatabase();
   let books: Book[];
   try {
     books = await api<Book[]>("/books");
-    await localDB.transaction("rw", localDB.books, async () => {
-      await localDB.books.clear();
-      await localDB.books.bulkPut(books);
+    const fetched = books;
+    await replaceForAccount(owner, db, [db.books], async (stillSignedIn) => {
+      await db.books.clear();
+      stillSignedIn();
+      await db.books.bulkPut(fetched);
     });
   } catch (error) {
-    books = await localDB.books.toArray();
+    books = await db.books.toArray();
     if (!books.length) throw error;
   }
-  const progress = await localDB.progress.toArray();
+  const progress = await db.progress.toArray();
   return books.map((b) => {
     const local = progress.find((p) => p.recordingId === b.recordingId);
     return local && local.updatedAt > (b.progress?.updatedAt || 0)

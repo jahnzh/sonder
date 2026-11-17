@@ -3,7 +3,7 @@
 // Small marks before the status line say which files the book has; a thin accent bar under the line shows that
 // something moves. It is an item of a Group; a row that opens the book is one button with a chevron.
 // The status line is a plain string: the functions that make it are in src/status-lines.ts.
-import { useId } from "react";
+import { useId, type ReactNode } from "react";
 import { Chevron, FileIcon, fileKindName, type FileKind } from "./icons";
 import { ProgressBar } from "./ProgressBar";
 import "./book-row.css";
@@ -22,9 +22,14 @@ export type BookRowProps = {
   progress?: number | null;
   /** The row opens the book. */
   onClick?: () => void;
+  /**
+   * One button on the right edge (Pause, Remove), named by itself. With `onClick` the rest of the row stays the
+   * button that opens the book, without its chevron.
+   */
+  action?: ReactNode;
 };
 
-export function BookRow({ title, status, cover, number, marks = [], progress, onClick }: BookRowProps) {
+export function BookRow({ title, status, cover, number, marks = [], progress, onClick, action }: BookRowProps) {
   const id = useId();
   const numbered = number != null && number !== "";
   const names = [numbered && `${id}-number`, `${id}-title`, ...marks.map((_, index) => `${id}-mark-${index}`), `${id}-status`].filter(Boolean).join(" ");
@@ -57,6 +62,22 @@ export function BookRow({ title, status, cover, number, marks = [], progress, on
     </>
   );
   const data = { "data-numbered": numbered ? "" : undefined, "data-moving": progress != null ? "" : undefined };
+  if (action) {
+    return (
+      <li className="part-book-row-item" data-action="" aria-labelledby={onClick ? undefined : names}>
+        {onClick ? (
+          <button type="button" className="part-book-row" {...data} aria-labelledby={names} onClick={onClick}>
+            {body}
+          </button>
+        ) : (
+          <div className="part-book-row" {...data}>
+            {body}
+          </div>
+        )}
+        <span className="part-book-row-action">{action}</span>
+      </li>
+    );
+  }
   if (onClick) {
     return (
       <li className="part-book-row-item">
