@@ -38,6 +38,7 @@ import { readerNeedsScripts } from "../reader-sandbox";
 import { lookupIndex, placeAt, type LookupIndex } from "../reader-lookup";
 import { pageToShow, wordPages, type PagedWord } from "../reader-page-turn";
 import { keyEventContext, OPEN_SHEET_SELECTOR, readerKeyAction, typingInField } from "../keyboard";
+import { followsNarration } from "../follow-default";
 import { createReaderFollowing, type DeferredReturn, type NarrationPlace, type NarrationReturn } from "../reader-following";
 import { mapIdentityOf } from "../alignment-map-lifecycle";
 import { currentChapter, playbackTimeline } from "../chapters";
@@ -442,6 +443,10 @@ export function ReaderView({
     setMapConfirmed(!!job && confirmed);
   };
   useEffect(() => () => following.dispose(), [following]);
+  // Settings › Playback: with Follow the narration off, the reader opens paged away from the narration.
+  useEffect(() => {
+    if (!followsNarration()) following.pageAway();
+  }, [following]);
   const redrawHighlight = () => {
     if (!mountedRef.current) return;
     // A layout anew (fonts, a resize) moves the breaks: the follow jump below measures them again.

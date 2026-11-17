@@ -200,41 +200,14 @@
 .now-playing-main {
   padding-inline: 8px;
 }
-.playback-settings {
-  margin-block: 24px;
-  display: grid;
-  gap: 16px;
-}
-.playback-settings > label,
+
 .media-source-settings label,
 .media-fault-form label {
   display: grid;
   gap: 8px;
   font-size: 14px;
 }
-.playback-settings select {
-  min-height: 44px;
-  width: 100%;
-}
-.playback-settings p {
-  font-size: 13px;
-  line-height: 1.65;
-}
-.playback-settings > button {
-  justify-self: start;
-}
-.playback-settings input[type="range"] {
-  width: 100%;
-  min-height: 44px;
-}
-.setting-range-label {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-}
-.setting-range-label output {
-  font-variant-numeric: tabular-nums;
-}
+
 .player-option .option-menu.speed-menu {
   width: 200px;
 }

@@ -411,14 +411,14 @@ test("keyboard shortcut sheet opens from Now Playing and Settings", async ({ pag
   await expect(sheet.locator("kbd")).toHaveCount(5);
   await sheet.getByRole("button", { name: "Close dialog" }).click();
   await expect(sheet).toBeHidden();
-  await page.goto("/#settings");
+  await page.goto("/#settings/playback");
   // The new address closes Now playing (it has a history entry of its own, #484); its button may still be on
-  // screen while it closes, so this is the Settings page's own.
-  await page.getByRole("region", { name: "Keyboard" }).getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
+  // screen while it closes, so this is the Settings page's own (Settings › Playback, #579).
+  await page.locator("main").getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Keyboard shortcuts", exact: true }).getByText("Play or pause")).toBeVisible();
 });
 test("a form dialog focuses its first text field when it opens", async ({ page }) => {
-  await page.goto("/#settings");
+  await page.goto("/#settings/connections");
   await page.getByRole("textbox", { name: /^API token/ }).fill("browser-test-token");
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(page.getByRole("combobox", { name: "Hardcover sync mode", exact: true })).toBeEnabled();
