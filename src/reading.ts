@@ -3,6 +3,7 @@ import { alignmentJobNeedsPolling, warmMap } from "./alignment-map-lifecycle";
 import { alignmentMapDeps } from "./alignment-map-deps";
 import { ApiError, api, localDB, authDB, userId } from "./lib";
 import { navigate } from "./navigation";
+import { isKeptReaderFile, writesAsCache, type ReaderFileRecord } from "./ebook-keep";
 import type {
   AlignmentJob,
   ReaderBook,
@@ -334,6 +335,12 @@ export async function cachedEpub(
     return null;
   }
 }
+/** Whether this device keeps the edition's EPUB at this fingerprint because the user saved it (not as a cache). */
+export async function epubKept(id: string, fingerprint: string): Promise<boolean> {
+  const stored = (await authDB.preferences.get(`reader-file:${id}`).catch(() => undefined))?.value as ReaderFileRecord;
+  if (!isKeptReaderFile(stored) || stored?.fingerprint !== fingerprint) return false;
+  return !!(await cachedEpub(id, fingerprint));
+}
 export async function epubFile(id: string, fingerprint: string): Promise<Blob> {
   const key = `${id}:${fingerprint}`;
   const mem = epubMemoryCache.get(key);
@@ -360,7 +367,8 @@ export async function epubFile(id: string, fingerprint: string): Promise<Blob> {
         );
       const blob = await response.blob();
       epubMemoryCache.set(key, blob);
-      void saveEpubOffline({ id, fingerprint }, blob).catch(() => {});
+      // A reading cache, so the book opens again without a connection; it is not kept (#671).
+      void saveEpubOffline({ id, fingerprint }, blob, { cache: true }).catch(() => {});
       return blob;
     } finally {
       inFlightEpub.delete(key);
@@ -370,10 +378,21 @@ export async function epubFile(id: string, fingerprint: string): Promise<Blob> {
   inFlightEpub.set(key, promise);
   return promise;
 }
+/**
+ * Writes an EPUB to this device under `reader-file:<id>`. `cache` marks the reader's own copy of a book it opened,
+ * which This device does not list as kept; an explicit save (the default) keeps it. A cache write never turns an
+ * edition the user kept back into a cache (`writesAsCache`, #671).
+ */
 export async function saveEpubOffline(
   book: Pick<ReaderBook, "id" | "fingerprint">,
   blob: Blob,
+  options: { cache?: boolean } = {},
 ) {
+  // Read just before the record is written, so an explicit save that lands while a cache write runs stays kept.
+  const mark = async () => {
+    const existing = (await authDB.preferences.get(`reader-file:${book.id}`).catch(() => undefined))?.value as ReaderFileRecord;
+    return writesAsCache(existing, { cache: options.cache === true }) ? { cache: true } : {};
+  };
   await navigator.storage?.persist?.().catch(() => false);
   if (navigator.storage?.getDirectory) {
     const folder = await (
@@ -392,12 +411,12 @@ export async function saveEpubOffline(
     }
     await authDB.preferences.put({
       key: `reader-file:${book.id}`,
-      value: { fingerprint: book.fingerprint, opfs: true },
+      value: { fingerprint: book.fingerprint, opfs: true, ...(await mark()) },
     });
   } else
     await authDB.preferences.put({
       key: `reader-file:${book.id}`,
-      value: { fingerprint: book.fingerprint, blob },
+      value: { fingerprint: book.fingerprint, blob, ...(await mark()) },
     });
   window.dispatchEvent(new CustomEvent(EBOOK_DEVICE_EVENT, { detail: { id: book.id } }));
 }

@@ -65,6 +65,8 @@ const desktopProjects = [
               /(^|\/)(sign-in|account-requests)\.spec\.ts$/,
               // Activity's This device (#518).
               /(^|\/)activity-device\.spec\.ts$/,
+              // The reader's own EPUB copy is not kept on This device (#671).
+              /(^|\/)reader-cache-not-kept\.spec\.ts$/,
               // An account switch during a library write (#528 review finding 1).
               /(^|\/)library-works-user-race\.spec\.ts$/,
               // The page turn inside a sentence that crosses a page (#508).

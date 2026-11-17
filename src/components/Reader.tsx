@@ -54,7 +54,7 @@ import {
   loadReader,
   epubFile,
   saveEpubOffline,
-  cachedEpub,
+  epubKept,
   readingState,
   saveReading,
   storeReading,
@@ -528,7 +528,8 @@ export function ReaderView({
       latest.current = value.checkpoint?.locator || null;
       const state = await readingState(id);
       setConflict(state?.conflict || null);
-      setOffline(!!(await cachedEpub(id, value.fingerprint)));
+      // The reader's own copy is a cache, not a save (#671): the entry offers Save until the user saved it.
+      setOffline(await epubKept(id, value.fingerprint));
     } catch (error) {
       // Only a confirmed "not found" means gone; offline, with no copy here, keeps the reader's message.
       // A reader closed before the answer came leaves the page shown now alone.
