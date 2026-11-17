@@ -167,8 +167,11 @@ test("a book with both files and a ready reading sync, as the boards draw it, at
   for (const row of await region(page).getByRole("list", { name: "Book", exact: true }).locator(".part-row").all()) expect(await clientHeight(row)).toBe(52);
   await expect(page.getByRole("heading", { level: 1 })).toHaveText([book.title]);
   await noOverflow(page);
+  // No explanation left open by the pointer resting on a mark.
+  await page.mouse.move(0, 0);
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
   await settled(page);
-  await page.screenshot({ path: `${OUT}/book-desktop.png`, fullPage: true });
+  await page.screenshot({ path: `${OUT}/book-desktop.png` });
   expect(errors).toEqual([]);
 });
 
