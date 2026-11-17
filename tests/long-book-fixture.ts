@@ -1,12 +1,12 @@
 import JSZip from "jszip";
-// A long EPUB for the Lyrics window (#428): `chapters` chapters of `sentences` sentences each, in paragraphs of six.
+// A long EPUB (#428, kept for the book-text jumps of #501): `chapters` chapters of `sentences` sentences each, in paragraphs of six.
 // Every sentence is unique and names its chapter and number, so a test can find it by text.
 export const longBookSentence = (chapter: number, index: number) =>
   `Chapter ${chapter + 1} sentence ${index + 1} walks past the ${nouns[(chapter * 7 + index) % nouns.length]} and ${verbs[(chapter * 3 + index) % verbs.length]} quietly.`;
 const nouns = ["river", "lantern", "orchard", "harbour", "meadow", "tower", "garden", "bridge", "forest", "market", "chapel", "valley"];
 const verbs = ["listens", "waits", "turns", "wonders", "smiles", "lingers", "hurries", "pauses", "returns"];
 export const longBookChapterTitle = (chapter: number) => `Long Chapter ${chapter + 1}`;
-export async function longBookFixture({ chapters = 30, sentences = 600, title = "Long Lyrics Book" } = {}) {
+export async function longBookFixture({ chapters = 30, sentences = 600, title = "Long Book" } = {}) {
   const zip = new JSZip();
   const escaped = title.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
   zip.file("mimetype", "application/epub+zip", { compression: "STORE" });

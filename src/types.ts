@@ -138,6 +138,26 @@ export type ReadingSyncSummary = Omit<
   | "stageTimings"
   | "elapsedSeconds"
 > & { intervalCount: number };
+/**
+ * One of Discover's works on the server (`GET /api/works`, #573): enough for a result row, which opens
+ * the work's Book page (`GET /api/works/<workId>`).
+ */
+export type WorkResult = {
+  workId: string;
+  title: string;
+  author: string;
+  year: number;
+  /** As `LibraryWork.cover`: the chosen recording's, otherwise the placeholder's or first audio edition's; "" for none. */
+  cover: string;
+  /** One of the work's audio editions is in the user's library. */
+  inLibrary: boolean;
+  /** One of the work's recordings has a track. */
+  hasAudiobook: boolean;
+  /** The work has an ebook edition; the consensus text of an ebook set is not counted. */
+  hasEbook: boolean;
+  /** The Hardcover book the work is matched to, if any. */
+  hardcoverId: number | null;
+};
 export type WorkSeries = { id: number | null; name: string; position: number | null; saved: boolean };
 export type WorkMediaState = {
   state: "missing" | "queued" | "failed" | "available";
@@ -333,6 +353,8 @@ export type ActivityKind =
   | "ebook-set"
   | "backup";
 export type ActivityState = "running" | "queued" | "paused" | "failed" | "done";
+/** An item's action, sent to `/api/activity/items/<action>`: Retry after a failure, Resume after a pause, Discard. */
+export type ActivityItemAction = "retry" | "discard" | "resume";
 export type ActivityItem = {
   id: string;
   kind: ActivityKind;
@@ -350,8 +372,8 @@ export type ActivityItem = {
   error: string | null;
   /** A failed item that cannot succeed on retry: it is offered Discard, not Retry. */
   permanent: boolean;
-  /** What the administrator can do with this item now. */
-  actions: Array<"retry" | "discard">;
+  /** What the administrator can do with this item now. An older client ignores an action it does not know (#515). */
+  actions: ActivityItemAction[];
   stuck: { reason: string } | null;
   /** The background process this item cannot move without, while that process is down. */
   blockedBy: string | null;

@@ -3,11 +3,11 @@
  * (`data` JSON); its vocabulary is `AlignmentJob["status"]` in `src/reading-types.ts`, which `server/alignment-transitions.ts`
  * writes. A record without a status is queued; a record that cannot be read is failed with the reason.
  */
-import type { ActivityHealth, ActivityHostRestart, ActivityState } from "../src/types.ts";
+import type { ActivityHealth, ActivityHostRestart, ActivityItemAction, ActivityState } from "../src/types.ts";
 import { BOOK_ENGINE, bookWorkerJobId, type AlignmentJob, type AlignmentPoolHostWork, type AlignmentPoolStatus } from "../src/reading-types.ts";
 import {
-  activityFailure, clamp01, defineSource, itemWork, stateFrom, withWorks, type ActivityActionContext, type ActivityService,
-  type ItemWork,
+  activityFailure, clamp01, defineSource, itemWork, offeredActions, stateFrom, withWorks,
+  type ActivityAction, type ActivityActionContext, type ActivityService, type ItemWork,
 } from "./activity-source.ts";
 
 const MINUTE = 60_000;
@@ -21,6 +21,57 @@ export const ALIGNMENT_ACTIVITY_STATES: Record<AlignmentJob["status"], ActivityS
   ready: "done",
   partial: "done",
   error: "failed",
+};
+
+/**
+ * The Activity state of one job: its status's, except for a new map the #379 rule did not use (status `error`, outcome
+ * `rejected`), which is finished, not failed (#462 point 6, #539). The map in use stays, so nothing needs the owner and
+ * no attention dot lights. This covers the automatic rebuild and Prepare again alike. A job that stopped (status
+ * `error` with any other outcome) stays failed.
+ */
+export function alignmentActivityState(job: Pick<ParsedAlignment, "status" | "outcome">) {
+  if (job.status === "error" && job.outcome === "rejected") return { state: "done" as const, unknown: null };
+  return stateFrom(ALIGNMENT_ACTIVITY_STATES, job.status);
+}
+
+/**
+ * What Activity offers for a reading sync in each status (#515), through the `resume` of `PATCH /api/alignments/<id>`:
+ * Retry when it stopped (failed), Resume when it is paused. A cancelled one is finished and offers neither, as on
+ * the Reading sync card's Activity line. `readingSyncActions` adds the exceptions of a single job.
+ */
+export const ALIGNMENT_ACTIONS: Record<AlignmentJob["status"], readonly ActivityItemAction[]> = {
+  queued: [],
+  copying: [],
+  processing: [],
+  paused: ["resume"],
+  cancelled: [],
+  ready: [],
+  partial: [],
+  error: ["retry"],
+};
+
+/**
+ * The actions of one job: its status's, except for a projected ebook-set map (it is rebuilt by its set's check,
+ * never on its own, as on the Reading sync card), a language the worker does not support (a retry fails the same
+ * way) and a record that cannot be read (there is no job to resume).
+ */
+function readingSyncActions(job: Pick<ParsedAlignment, "status" | "outcome" | "projected" | "unreadable">) {
+  if (job.unreadable || job.projected || job.outcome === "language_not_supported") return [];
+  return offeredActions(ALIGNMENT_ACTIONS, job.status);
+}
+
+const ITEM_PREFIX = "alignment:";
+
+/** Retry or Resume of a reading sync: refused unless the stored job offers it, then the reading sync route's resume. */
+const resumeJob = (name: "retry" | "resume"): ActivityAction => async (id, { deps, log }) => {
+  const rowId = id.slice(ITEM_PREFIX.length);
+  const row = deps.sqlite.prepare("SELECT data FROM alignment_jobs WHERE id = ?").get(rowId) as { data: string } | undefined;
+  if (!row) throw activityFailure(404, "This reading sync could not be found.");
+  const job = parseAlignment(row.data, rowId);
+  const reason = name === "retry" ? "Only a reading sync that stopped can be retried." : "Only a paused reading sync can be resumed.";
+  if (!readingSyncActions(job).includes(name)) throw activityFailure(409, reason);
+  log.info({ action: `activity.${name}`, alignmentId: rowId }, name === "retry" ? "Reading sync started again" : "Reading sync resumed");
+  return { ok: true, result: await deps.resumeAlignment(rowId) };
 };
 
 export type AlignmentRow = {
@@ -48,6 +99,10 @@ type ParsedAlignment = {
   /** The worker's stage of this run, with its file counts where it counts files (#514). */
   stage: string | null;
   files: { done: number; total: number } | null;
+  /** A member's map projected from its ebook set's consensus (#325). */
+  projected: boolean;
+  /** The record is not JSON. */
+  unreadable: boolean;
 };
 
 /**
@@ -80,11 +135,12 @@ function parseAlignment(data: string, rowId: string): ParsedAlignment {
       hostId: typeof job.pool?.hostId === "string" ? job.pool.hostId : null,
       outcome: typeof job.outcome === "string" ? job.outcome : null,
       rebuild: !!job.rebuildOf,
+      projected: job.origin === "projected", unreadable: false,
     };
   } catch (error) {
     return {
       status: "error", progress: null, createdAt: null, hostId: null, outcome: null, rebuild: false,
-      coverage: null, wholeBook: false, stage: null, files: null,
+      coverage: null, wholeBook: false, stage: null, files: null, projected: false, unreadable: true,
       error: `The job record could not be read: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
@@ -153,7 +209,7 @@ export const alignmentSource = defineSource<AlignmentRow[], AlignmentProbe>({
   report(rows, probe) {
     const drafts = rows.map((row) => {
       const job = parseAlignment(row.data, row.id);
-      const { state, unknown } = stateFrom(ALIGNMENT_ACTIVITY_STATES, job.status);
+      const { state, unknown } = alignmentActivityState(job);
       const consensus = row.ebook_id.startsWith("set-consensus:");
       return {
         id: `alignment:${row.id}`, kind: "alignment" as const, processId: "alignment", title: row.title || row.recording_id,
@@ -166,11 +222,14 @@ export const alignmentSource = defineSource<AlignmentRow[], AlignmentProbe>({
           stage: job.stage, files: job.files,
         },
         error: unknown ?? job.error, changedAt: row.updated_at, dependsOn: job.hostId ? hostId(job.hostId) : null,
+        actions: readingSyncActions(job),
       };
     });
     const jobsOn = (host: string) => drafts.filter((draft) => draft.host === host && draft.state === "running").map((draft) => draft.title);
     return { drafts, services: poolServices(probe.value, probe.failure, jobsOn) };
   },
+  retry: resumeJob("retry"),
+  resume: resumeJob("resume"),
   services: {
     prefix: HOST_PREFIX,
     restart: async (serviceId, body, context) => {

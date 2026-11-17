@@ -8,7 +8,8 @@
  */
 import type { FastifyBaseLogger } from "fastify";
 import type {
-  ActivityHealth, ActivityHostRestart, ActivityItem, ActivityKind, ActivityState, ActivityWorkerHost, TorrentHealth,
+  ActivityHealth, ActivityHostRestart, ActivityItem, ActivityItemAction, ActivityKind, ActivityState, ActivityWorkerHost,
+  TorrentHealth,
 } from "../src/types.ts";
 import type { AlignmentPoolStatus } from "../src/reading-types.ts";
 import type { PausableProcess } from "./activity-pause-model.ts";
@@ -28,6 +29,13 @@ export type ActivityDeps = {
   syncHardcover: (userId: number) => Promise<unknown>;
   /** Evaluate one ebook-set member again in the background (the "Retry" action on an ebook-set check). */
   retryEbookSetMember: (workId: string, ebookId: string) => Promise<unknown>;
+  /**
+   * Retry a failed download or resume a paused one, as the Downloads page's control does
+   * (`POST /api/acquisitions/<id>/control`, #515). `userId` is the administrator who asked.
+   */
+  controlAcquisition: (id: string, action: "retry" | "resume", userId: number) => Promise<unknown>;
+  /** Resume or retry a reading sync, as the `resume` of `PATCH /api/alignments/<id>` does (#515); answers the job. */
+  resumeAlignment: (id: string) => Promise<unknown>;
   /** Pause state per loop: the settings table plus the environment lock. */
   pauseState: () => Record<string, { paused: boolean; locked: boolean }>;
   setPaused: (id: PausableProcess, paused: boolean) => void;
@@ -123,7 +131,11 @@ export function withWorks<Row>(
 export const itemWork = (work: ItemWork | null | undefined, ownCover: string | null = null) =>
   ({ workId: work?.workId ?? null, bookId: work?.bookId ?? null, cover: work ? work.cover : ownCover });
 
-export type ActivityActionContext = { deps: ActivityDeps; log: FastifyBaseLogger };
+export type ActivityActionContext = {
+  deps: ActivityDeps; log: FastifyBaseLogger;
+  /** The administrator who asked (#515); the first administrator where the request names none. */
+  userId: number;
+};
 export type ActivityAction = (id: string, context: ActivityActionContext) => Promise<Record<string, unknown>>;
 /** An action on a service the source reports (a worker host's restart or switch), with the request body. */
 export type ServiceAction = (
@@ -147,6 +159,8 @@ export type ActivitySource<Rows = unknown, Probe = never> = {
   stuck?(item: ActivityDraft, now: number, thresholdMs: number): ActivityItem["stuck"];
   retry?: ActivityAction;
   discard?: ActivityAction;
+  /** Resume a paused item (#515). */
+  resume?: ActivityAction;
   /** Actions on the services this source reports, whose ids start with `prefix`. */
   services?: { prefix: string; restart?: ServiceAction; disable?: ServiceAction };
 };
@@ -179,5 +193,19 @@ export function formatAge(ms: number) {
   if (hours < 48) return `${hours} h`;
   return `${Math.round(hours / 24)} days`;
 }
+
+/**
+ * The action `name` of an item whose stored status is `status`, by the source's table of actions per status: refused
+ * with `reason` (409) when that status does not offer it, so an Activity page older than the row cannot act on it.
+ */
+export function assertOffered<Status extends string>(
+  table: Record<Status, readonly ActivityItemAction[]>, status: string, name: ActivityItemAction, reason: string,
+) {
+  if (!offeredActions(table, status).includes(name)) throw activityFailure(409, reason);
+}
+
+/** The actions a stored status offers by the source's table; none for a status outside the vocabulary. */
+export const offeredActions = <Status extends string>(table: Record<Status, readonly ActivityItemAction[]>, status: string): ActivityItemAction[] =>
+  Object.hasOwn(table, status) ? [...table[status as Status]] : [];
 
 export const activityFailure = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });

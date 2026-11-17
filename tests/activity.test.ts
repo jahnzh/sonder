@@ -150,15 +150,45 @@ test("alignment states map and finished jobs drop off after 24 hours", () => {
   assert.equal(result.attention, 0, "a failure older than a week stays listed without lighting the indicator");
 });
 
-test("a rejected alignment rebuild is listed as failed with the reason and says the previous map is kept (#379)", () => {
+test("a new reading sync that was not used is finished, needs no attention and is not counted; a stopped one is failed and counted (#539)", () => {
   const reason = "The rebuild was rejected: it mapped none of the text. The previous map (82% of the text mapped) stays published.";
+  const row = (id: string, age: number, over: Record<string, unknown>): AlignmentRow =>
+    ({ id, ebook_id: "e", recording_id: `r-${id}`, title: id, updated_at: NOW - age, data: alignmentData({ pool: undefined, ...over }) });
   const result = buildActivity(base({
-    alignments: [{ id: "rej", ebook_id: "e", recording_id: "r", title: "Rejected", updated_at: NOW - MIN,
-      data: alignmentData({ status: "error", outcome: "rejected", error: reason, rebuildOf: { engine: "aeneas-1.7.3" }, pool: undefined }) }],
+    alignments: [
+      // The automatic rebuild (#379) and Prepare again (#462, no `rebuildOf`), both rejected over the map in use.
+      row("rebuild-rejected", MIN, { status: "error", outcome: "rejected", error: reason, progress: 1, rebuildOf: { engine: "aeneas-1.7.3" } }),
+      row("again-rejected", 2 * MIN, { status: "error", outcome: "rejected", error: reason, progress: 1 }),
+      // Under Finished today for 24 hours, like any finished work.
+      row("old-rejected", FINISHED_VISIBLE_MS + MIN, { status: "error", outcome: "rejected", error: reason, progress: 1 }),
+      // Stopped: status `error` without that outcome.
+      row("stopped", 3 * MIN, { status: "error", error: "The worker stopped." }),
+      row("stopped-outcome", 4 * MIN, { status: "error", outcome: "error", error: "The worker stopped." }),
+      // A rejected job retried is queued again; its old outcome does not make it finished.
+      row("retried", 5 * MIN, { status: "queued", outcome: "rejected", progress: 0 }),
+    ],
   }));
-  assert.equal(result.items[0].state, "failed");
-  assert.equal(result.items[0].detail, "Reading sync rebuild rejected, the earlier one is kept");
-  assert.equal(result.items[0].error, reason);
+  const byId = Object.fromEntries(result.items.map((item) => [item.title, item]));
+  for (const id of ["rebuild-rejected", "again-rejected"]) {
+    assert.equal(byId[id].state, "done", id);
+    assert.equal(byId[id].attention, false, id);
+    assert.equal(byId[id].progress, 1, id);
+    assert.equal(byId[id].error, reason, `${id}: the server's sentence stays for older clients`);
+    assert.deepEqual(byId[id].actions, ["retry"], `${id}: Prepare again stays available`);
+    assert.equal(byId[id].facts?.kind === "alignment" && byId[id].facts.outcome, "rejected", id);
+  }
+  assert.equal(byId["rebuild-rejected"].detail, "Reading sync rebuild rejected, the earlier one is kept");
+  assert.equal(byId["old-rejected"], undefined, "a finished one drops off after 24 hours");
+  for (const id of ["stopped", "stopped-outcome"]) {
+    assert.equal(byId[id].state, "failed", id);
+    assert.equal(byId[id].attention, true, id);
+  }
+  assert.equal(byId.retried.state, "queued");
+  assert.equal(result.attention, 2, "the response's count is the two stopped ones");
+  assert.equal(result.attention, result.items.filter((item) => item.attention).length);
+  const queue = result.processes.find((process) => process.id === "alignment");
+  assert.equal(queue?.counts.failed, 2, "the queue counts the stopped ones only");
+  assert.deepEqual(result.items.slice(0, 2).map((item) => item.title), ["stopped", "stopped-outcome"], "only the stopped ones sort first");
 });
 
 test("Hardcover queues: permanent errors and long waits are flagged, one row per user and queue", () => {

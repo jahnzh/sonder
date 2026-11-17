@@ -28,6 +28,8 @@ export type Route =
   | { name: "gallery" }
   /** The gallery's one child page, so the Page header's back button can be tried. */
   | { name: "gallery-child" }
+  /** The gallery's own sheet (#492), over the gallery: no real sheet exists before Get. */
+  | { name: "gallery-sheet" }
   /** An address that names nothing; it shows the first page of the place it points into. */
   | { name: "unknown"; place: Place };
 
@@ -93,7 +95,8 @@ export function readAddress(hash: string): Route {
     }
     case "gallery":
       if (!rest.length) return { name: "gallery" };
-      return rest.length === 1 && rest[0] === "child" ? { name: "gallery-child" } : nothing("library");
+      if (rest.length === 1 && rest[0] === "child") return { name: "gallery-child" };
+      return rest.length === 1 && rest[0] === "sheet" ? { name: "gallery-sheet" } : nothing("library");
     case "reader": {
       // Today's reader read everything after "reader/" as the id, so an id with a slash keeps working.
       const ebookId = rest.length ? decode(rest.join("/")) : null;
@@ -139,6 +142,8 @@ export function writeAddress(route: Route): string {
       return "#gallery";
     case "gallery-child":
       return "#gallery/child";
+    case "gallery-sheet":
+      return "#gallery/sheet";
     case "unknown":
       return writeAddress(firstPage(route.place));
   }
@@ -190,6 +195,7 @@ export function parentOf(route: Route): Route | null {
     case "settings-page":
       return { name: "settings" };
     case "gallery-child":
+    case "gallery-sheet":
       return { name: "gallery" };
     default:
       return null;
@@ -198,7 +204,7 @@ export function parentOf(route: Route): Route | null {
 
 /** A sheet, Now playing or the reader: shown over a page rather than in place of it. */
 export function coversPage(route: Route): boolean {
-  return ["get", "series-add", "listen", "read", "reader"].includes(route.name);
+  return ["get", "series-add", "listen", "read", "reader", "gallery-sheet"].includes(route.name);
 }
 
 /**
@@ -237,6 +243,7 @@ function built(route: Route): boolean {
     case "reader":
     case "gallery":
     case "gallery-child":
+    case "gallery-sheet":
       return true;
     case "activity":
       return route.part === "now";

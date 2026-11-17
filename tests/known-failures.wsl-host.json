@@ -19,51 +19,11 @@
     },
     {
       "project": "chromium",
-      "file": "tests/e2e/reader-follow-highlight.spec.ts",
-      "title": "lyrics mode shows the narrated sentence as the current line in the same chapters",
-      "kind": "environment",
-      "reason": "Fails on the WSL host's chromium on a clean main (482967b, run sonder-ci-20261102T163427Z-15096) and not locally, on the Deck, or on WSL firefox/webkit; cause not found",
-      "issue": 145
-    },
-    {
-      "project": "chromium",
       "file": "tests/e2e/reader-frame.spec.ts",
       "title": "a failed event probe enables scripts while the content defences still block them",
       "kind": "environment",
       "reason": "Fails on the WSL host's chromium on a clean main (482967b, run sonder-ci-20261102T163427Z-15096) and not locally, on the Deck, or on WSL firefox/webkit; cause not found",
       "issue": 145
-    },
-    {
-      "project": "chromium",
-      "file": "tests/e2e/word-reader.spec.ts",
-      "title": "switching from Word to Page with the p key shows the sentence reached",
-      "kind": "intermittent",
-      "reason": "WSL host only: times out ~46s under load while local runs finish in 10-12s; passes on other full WSL runs of the same code (#225)",
-      "issue": 225
-    },
-    {
-      "project": "chromium",
-      "file": "tests/e2e/word-reader.spec.ts",
-      "title": "switching from Word to Page with the player's mode button shows the sentence reached",
-      "kind": "intermittent",
-      "reason": "WSL host only: same Word→Page timeout class as the p-key case (#225)",
-      "issue": 225
-    },
-    {
-      "project": "chromium",
-      "file": "tests/e2e/word-reader.spec.ts",
-      "title": "switching from Word to Page in Settings shows the sentence reached",
-      "kind": "intermittent",
-      "reason": "WSL host only: same Word→Page timeout class; seen on #219 tip and listed by #225",
-      "issue": 225
-    },
-    {
-      "project": "chromium",
-      "file": "tests/e2e/word-reader.spec.ts",
-      "title": "a checkpoint written in Word mode restores the sentence in Page mode after a reload",
-      "kind": "intermittent",
-      "reason": "WSL host only: ~46s timeout under load per #225; passes locally and on other WSL runs",
-      "issue": 225
     },
     {
       "project": "webkit",

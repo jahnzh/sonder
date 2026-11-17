@@ -14,6 +14,7 @@ import * as s from "./schema.ts";
 import { hiddenHardcoverPlaceholders, queueHardcoverStatus } from "./hardcover.ts";
 import { removeUserLibraryRow, setLibraryOrigin } from "./library-origin.ts";
 import { placeholderEditionSql } from "./placeholder-edition.ts";
+import { CONSENSUS_EBOOK_PREFIX } from "./ebook-set-consensus.ts";
 
 /** The work's audio editions, the oldest first, each with whether it is a placeholder. */
 function workEditions(workId: string) {
@@ -33,15 +34,32 @@ function hasLibraryRow(userId: number, editionId: string) {
 }
 
 /**
- * Whether `userId` may see the work: it exists, and not every audio edition it has is a placeholder
- * hidden from them (`hiddenHardcoverPlaceholders`), the rule `GET /api/works/<workId>` answers 404 by.
+ * The rule by which a user may see a work that exists (#573): unless every audio edition it has is a
+ * placeholder hidden from them (`hiddenHardcoverPlaceholders`, `hidden`) and it has no ebook edition
+ * (the consensus text of an ebook set not counted). Ebook editions are listed to every user
+ * (`GET /api/ebooks`), so a work with one is no one user's secret.
  */
-export function workVisibleTo(userId: number, workId: string) {
+export function workVisibleByRule(editionIds: string[], hidden: Set<string>, hasEbook: boolean) {
+  return hasEbook || !editionIds.length || !editionIds.every((id) => hidden.has(id));
+}
+
+/**
+ * Whether `userId` may see the work: it exists, and `workVisibleByRule` holds, the rule
+ * `GET /api/works/<workId>` answers 404 by and `GET /api/works` leaves works out by. `hidden` is
+ * `hiddenHardcoverPlaceholders(userId)`, when the caller has it already.
+ */
+export function workVisibleTo(userId: number, workId: string, hidden?: Set<string>) {
   if (!db.select({ id: s.works.id }).from(s.works).where(eq(s.works.id, workId)).get()) return false;
   const editions = workEditions(workId);
   if (!editions.length) return true;
-  const hidden = hiddenHardcoverPlaceholders(userId);
-  return !editions.every((edition) => hidden.has(edition.id));
+  const hasEbook = !!sqlite
+    .prepare("SELECT 1 FROM ebook_editions WHERE work_id=? AND substr(id,1,length(?))<>? LIMIT 1")
+    .get(workId, CONSENSUS_EBOOK_PREFIX, CONSENSUS_EBOOK_PREFIX);
+  return workVisibleByRule(
+    editions.map((edition) => edition.id),
+    hidden ?? hiddenHardcoverPlaceholders(userId),
+    hasEbook,
+  );
 }
 
 export type AddWorkResult = "added" | "no-audio";

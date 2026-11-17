@@ -25,14 +25,15 @@ import { z } from "zod";
 import { currentUserId, setUserSetting, userIsAdmin } from "./users.ts";
 import { hardcoverForWorks, hiddenHardcoverPlaceholders } from "./hardcover.ts";
 import { deliveredTracks } from "./media-library.ts";
-import { choiceKey, chosenRecordingId, fallbackCovers, idList, listedRecordings, storedChoices } from "./work-cover.ts";
+import { choiceKey, chosenRecordingId, fallbackCovers, idList, listedRecordings, storedChoices, workCovers } from "./work-cover.ts";
 import { readerPlaces, workCompletions } from "./work-completion.ts";
 import { ebookFile } from "./ebooks.ts";
 import { listEbookSetMembers } from "./ebook-set.ts";
-import { consensusEbookId, defaultEbookIds } from "./ebook-set-consensus.ts";
+import { CONSENSUS_EBOOK_PREFIX, consensusEbookId, defaultEbookIds } from "./ebook-set-consensus.ts";
 import { listServedAlignmentSummaries, type slimAlignmentJob } from "./alignment-transitions.ts";
 import { getWorkMediaStates } from "./work-media-state.ts";
-import { addWorkToLibrary, removeWorkFromLibrary, workVisibleTo } from "./work-library.ts";
+import { addWorkToLibrary, removeWorkFromLibrary, workVisibleByRule, workVisibleTo } from "./work-library.ts";
+import { keepOffOnEveryDevice } from "./device-keep.ts";
 import type {
   Book,
   LibraryWork,
@@ -42,6 +43,7 @@ import type {
   WorkEbook,
   WorkMediaState,
   WorkRecording,
+  WorkResult,
   WorkSeries,
 } from "../src/types.ts";
 
@@ -409,18 +411,154 @@ function libraryWorks(userId: number, files: FileCheck[]): LibraryWork[] {
 }
 
 /**
- * One work for `userId`, in the library or not; null when it does not exist or when every audio
- * edition it has is a placeholder the user may not see (`hiddenHardcoverPlaceholders`).
+ * One work for `userId`, in the library or not; null when it does not exist or when the user may
+ * not see it (`workVisibleTo`: every audio edition it has is a placeholder hidden from them and it
+ * has no ebook edition).
  */
 function libraryWork(userId: number, workId: string): LibraryWork | null {
   const hidden = hiddenHardcoverPlaceholders(userId);
-  const editions = db
-    .select({ id: s.editions.id })
-    .from(s.editions)
-    .where(eq(s.editions.workId, workId))
-    .all();
-  if (editions.length && editions.every((edition) => hidden.has(edition.id))) return null;
+  if (!workVisibleTo(userId, workId, hidden)) return null;
   return buildWorks(userId, [workId], hidden)[0] ?? null;
+}
+
+/** At most this many works answer `GET /api/works`. */
+export const WORK_RESULTS_LIMIT = 30;
+
+/**
+ * Text as Discover's search compares it: case and accents ignored. Letters that Unicode does not
+ * decompose into a base letter and a mark (ø, æ, ß, …) are written as the letters they are typed as.
+ */
+export function searchText(text: string) {
+  return text
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[øæœßđłþ]/g, (letter) => ({ ø: "o", æ: "ae", œ: "oe", ß: "ss", đ: "d", ł: "l", þ: "th" })[letter]!)
+    .replace(/[\u2018\u2019]/g, "'");
+}
+
+/** What `GET /api/works` reads of each work on the server, for one user. */
+type CatalogueRow = {
+  seq: number;
+  id: string;
+  title: string;
+  author: string;
+  year: number;
+  editions: string;
+  hasAudiobook: 0 | 1;
+  hasEbook: 0 | 1;
+  inLibrary: 0 | 1;
+  removed: 0 | 1;
+  hardcoverId: number | null;
+};
+
+/** Every work on the server with what `GET /api/works` needs of it for `userId`. */
+function catalogue(userId: number) {
+  return sqlite
+    .prepare(
+      `SELECT w.rowid AS seq,w.id,w.title,w.author,w.year,
+         (SELECT json_group_array(e.id) FROM audio_editions e WHERE e.work_id=w.id) AS editions,
+         EXISTS(SELECT 1 FROM audio_editions e JOIN recordings r ON r.edition_id=e.id
+           JOIN tracks t ON t.recording_id=r.id WHERE e.work_id=w.id) AS hasAudiobook,
+         EXISTS(SELECT 1 FROM ebook_editions b WHERE b.work_id=w.id AND substr(b.id,1,length(@consensus))<>@consensus) AS hasEbook,
+         EXISTS(SELECT 1 FROM audio_editions e JOIN user_library u ON u.book_id=e.id
+           WHERE e.work_id=w.id AND u.user_id=@userId) AS inLibrary,
+         EXISTS(SELECT 1 FROM audio_editions e JOIN user_hidden_library h ON h.book_id=e.id
+           WHERE e.work_id=w.id AND h.user_id=@userId) AS removed,
+         (SELECT l.book_id FROM hardcover_links l WHERE l.work_id=w.id) AS hardcoverId
+       FROM works w`,
+    )
+    .all({ userId, consensus: CONSENSUS_EBOOK_PREFIX }) as CatalogueRow[];
+}
+
+const titleOrder = new Intl.Collator("en", { sensitivity: "base", numeric: true });
+
+/**
+ * Discover's read of the server's works (#573; spec #572, "What the server answers and accepts").
+ * With `query`: the works the user may see (`workVisibleByRule`) whose title or author holds every
+ * word of the query (`searchText`; a word may be in either), the ones in the user's library first,
+ * then by title. Without: the works the user may see that are not in their library, that they have
+ * not removed (a hidden entry on any of its audio editions) and that have a file (a recording with
+ * a track, or an ebook edition), the newest work on the server first. At most `WORK_RESULTS_LIMIT`.
+ */
+export function serverWorks(userId: number, query: string | null): WorkResult[] {
+  const hidden = hiddenHardcoverPlaceholders(userId);
+  const visible = catalogue(userId).filter((row) =>
+    workVisibleByRule(JSON.parse(row.editions) as string[], hidden, row.hasEbook === 1),
+  );
+  let chosen: CatalogueRow[];
+  if (query) {
+    const words = searchText(query).split(/\s+/).filter(Boolean);
+    chosen = visible
+      .filter((row) => {
+        const title = searchText(row.title);
+        const author = searchText(row.author);
+        return words.every((word) => title.includes(word) || author.includes(word));
+      })
+      .sort((a, b) => b.inLibrary - a.inLibrary || titleOrder.compare(a.title, b.title) || a.seq - b.seq);
+  } else
+    chosen = visible
+      .filter((row) => !row.inLibrary && !row.removed && (row.hasAudiobook || row.hasEbook))
+      .sort((a, b) => b.seq - a.seq);
+  chosen = chosen.slice(0, WORK_RESULTS_LIMIT);
+  const covers = workCovers(sqlite, userId, chosen.map((row) => row.id), hidden);
+  return chosen.map((row) => ({
+    workId: row.id,
+    title: row.title,
+    author: row.author,
+    year: row.year,
+    cover: covers.get(row.id)?.cover ?? "",
+    inLibrary: row.inLibrary === 1,
+    hasAudiobook: row.hasAudiobook === 1,
+    hasEbook: row.hasEbook === 1,
+    hardcoverId: row.hardcoverId,
+  }));
+}
+
+/**
+ * The work each Hardcover book in `bookIds` opens for `userId` (ADR 0022): the work on the server
+ * it is matched to (`hardcover_links`) that the user may see, one in their library first, else the
+ * work `work-hc-<id>` when it exists and they may see it (`onServer`); otherwise the id the import
+ * will give it, `work-hc-<id>`, not on the server. A matched work the user may not see is not named.
+ */
+export function hardcoverBookWorks(userId: number, bookIds: number[]) {
+  const hidden = hiddenHardcoverPlaceholders(userId);
+  const links = sqlite
+    .prepare(
+      `SELECT l.book_id AS bookId,l.work_id AS workId FROM hardcover_links l JOIN works w ON w.id=l.work_id
+       WHERE l.book_id IN (SELECT value FROM json_each(?))
+       ORDER BY EXISTS(SELECT 1 FROM audio_editions e JOIN user_library u ON u.book_id=e.id
+         WHERE e.work_id=l.work_id AND u.user_id=?) DESC,w.rowid`,
+    )
+    .all(JSON.stringify([...new Set(bookIds)]), userId) as { bookId: number; workId: string }[];
+  const works = new Map<number, { workId: string; onServer: boolean }>();
+  for (const bookId of new Set(bookIds)) {
+    const fallback = `work-hc-${bookId}`;
+    const candidates = [...links.filter((link) => link.bookId === bookId).map((link) => link.workId), fallback];
+    const matched = candidates.find((workId) => workVisibleTo(userId, workId, hidden));
+    works.set(bookId, matched ? { workId: matched, onServer: true } : { workId: fallback, onServer: false });
+  }
+  return works;
+}
+
+/**
+ * Hardcover's search answer (`hardcoverSearch`) with each hit's `workId` and `onServer`
+ * (`hardcoverBookWorks`). A hit whose id is not a Hardcover book id gets `workId` null.
+ */
+export function withHitWorks<T extends { hits: { document: { id: string | number } }[] }>(userId: number, results: T) {
+  const bookId = (hit: { document: { id: string | number } }) => {
+    const id = Number(hit.document.id);
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+  };
+  const works = hardcoverBookWorks(userId, results.hits.flatMap((hit) => bookId(hit) ?? []));
+  return {
+    ...results,
+    hits: results.hits.map((hit) => {
+      const id = bookId(hit);
+      const work = id === null ? undefined : works.get(id);
+      return { ...hit, workId: work?.workId ?? null, onServer: work?.onServer ?? false };
+    }),
+  };
 }
 
 let totalChanges: import("better-sqlite3").Statement<[], number> | null = null;
@@ -474,6 +612,16 @@ function matchesTag(header: string | string[] | undefined, tag: string) {
 }
 
 export function registerLibraryWorks(app: FastifyInstance) {
+  /**
+   * Discover's works (#573, `serverWorks`): `{ works: WorkResult[] }`. `q` is 2 to 150 characters
+   * once trimmed; an empty or absent `q` answers the works before a search.
+   */
+  app.get("/api/works", async (req) => {
+    const { q } = z
+      .object({ q: z.string().trim().max(150).refine((text) => text.length !== 1, "Type at least two characters.").optional() })
+      .parse(req.query ?? {});
+    return { works: serverWorks(currentUserId(req), q || null) };
+  });
   app.get("/api/library", async (req, reply) => {
     const { body, tag } = libraryRead(currentUserId(req));
     reply.header("ETag", tag).header("Cache-Control", "private, no-cache");
@@ -520,6 +668,8 @@ export function registerLibraryWorks(app: FastifyInstance) {
     const { workId } = req.params as { workId: string };
     if (!workVisibleTo(userId, workId)) return reply.code(404).send({ error: "This book could not be found." });
     removeWorkFromLibrary(userId, workId);
+    // Keep on this device goes off for the work on every device of the user (#549).
+    keepOffOnEveryDevice(userId, workId);
     return { ok: true };
   });
 }

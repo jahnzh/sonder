@@ -35,6 +35,9 @@ export const appearanceSchema = z.object({
       margin: z.number().min(8).max(80).default(20),
       width: z.number().min(350).max(1100).default(720),
       mode: z.enum(["paginated", "scroll"]).default("paginated"),
+      // The view choice, words per line and words per minute of the removed Lyrics and Word views
+      // (ADR 0017). Accepted and kept because an older open client still sends them; the reader
+      // ignores them and always shows the book's text.
       display: z.enum(["book", "segment", "word"]).default("book"),
       segmentWords: z.number().int().min(1).max(160).default(30),
       wordWpm: z.number().int().min(100).max(900).default(300),
@@ -58,17 +61,6 @@ export const defaultAppearance = appearanceSchema.parse({});
 export function keepPlaybackSpeed(input: Appearance, stored: Appearance): Appearance {
   return input.playback.speed === undefined && stored.playback.speed !== undefined
     ? { ...input, playback: { ...input.playback, speed: stored.playback.speed } }
-    : input;
-}
-/**
- * Older clients drop `reader.wordWpm` when they save; a body without it must
- * not reset the stored words per minute to the default. `sent` is the body as
- * received, since parsing fills in the default.
- */
-export function keepWordWpm(input: Appearance, stored: Appearance, sent: unknown): Appearance {
-  const reader = (sent as { reader?: { wordWpm?: unknown } } | null)?.reader;
-  return reader?.wordWpm === undefined
-    ? { ...input, reader: { ...input.reader, wordWpm: stored.reader.wordWpm } }
     : input;
 }
 /** What this client sends: an unset default speed goes out as null, so the server clears it too. */
