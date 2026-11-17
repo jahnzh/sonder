@@ -16,9 +16,12 @@ async function importBook(page: Page, multipart: Record<string, unknown>) {
   return id;
 }
 test.afterEach(async ({page}) => {
-  // Drain the catalog routes before Playwright tears down its request context.
-  await page.unrouteAll({behavior:"wait"});
+  // The books leave first, so a hook that runs out of time still leaves the library as it found it. Then the
+  // catalog routes go without waiting for a handler: "wait" sometimes never returned after the page gave up on a
+  // catalog read, which held the hook to the test's timeout and skipped the clean-up (the handlers already ignore
+  // a fulfil that comes too late, and errors after unrouting are dropped).
   for (const id of imported.splice(0)) expect((await page.request.delete(`/api/library/${id}`)).ok()).toBe(true);
+  await page.unrouteAll({behavior:"ignoreErrors"});
 });
 
 async function instrument(page: Page) {

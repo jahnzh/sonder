@@ -1,9 +1,18 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 
 test.use({ serviceWorkers: "block" });
+// Each test's work gets a name unique to the run, so a repeat on the same server finds one "Play <title>" button,
+// and leaves the library afterwards with both its recordings, so the book a test played is not the latest played
+// book that the dock and the feature card show the next spec on the server.
+const made: string[] = [];
 test.afterEach(async ({ page }) => {
-  await page.unrouteAll({ behavior: "wait" });
+  for (const workId of made.splice(0))
+    expect((await page.request.delete(`/api/works/${encodeURIComponent(workId)}/library`)).ok()).toBe(true);
+  // Not "wait": after the page gave up on a catalog read it sometimes never returned, which held this hook to the
+  // test's timeout (the handler already ignores a fulfil that comes too late).
+  await page.unrouteAll({ behavior: "ignoreErrors" });
 });
 
 type Release = { title: string; id: string; recordingId: string; trackId: string; workId: string };
@@ -43,8 +52,10 @@ const chapters = (titles: string[], length: number) => titles.map((title, i) => 
 // Two recordings of one work with different durations and chapters (#530: one real work on the server, so the
 // Audiobook page lists both and can store the choice). The second is seeded on the first's audio file, so positions
 // stay inside the real 640 s; only the catalog data differs. The first's narrator and chapters are routed.
-async function twoReleases(page: Page, name: string, second: { duration: number; chapters?: ReturnType<typeof chapters> }) {
+async function twoReleases(page: Page, base: string, second: { duration: number; chapters?: ReturnType<typeof chapters> }) {
+  const name = `${base} ${randomUUID().slice(0, 8)}`;
   const first = await importRelease(page, `${name} English`);
+  made.push(first.workId);
   const slug = `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Math.random().toString(36).slice(2, 8)}`;
   const other: Release = { title: `${name} French`, id: `edition-${slug}`, recordingId: `recording-${slug}`, trackId: `track-${slug}`, workId: first.workId };
   const seeded = await page.request.post("/api/test/seed-local-audio", {

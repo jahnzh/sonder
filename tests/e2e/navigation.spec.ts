@@ -25,13 +25,22 @@ const tab = (page: Page, name: string) =>
   page.getByRole("navigation", { name: "Mobile navigation" }).getByRole("button", { name, exact: true });
 const hash = (page: Page) => page.evaluate(() => location.hash);
 
+// The works a test imports leave the library after it, so a book it played is not the latest played book that the
+// dock opens for the next spec on the server (device-downloads opens whatever the dock shows).
+const imported: string[] = [];
+test.afterEach(async ({ page }) => {
+  for (const workId of imported.splice(0))
+    expect((await page.request.delete(`/api/works/${encodeURIComponent(workId)}/library`)).ok()).toBe(true);
+});
 async function importAudio(page: Page, title: string) {
   const response = await page.request.post("/api/import", {
     multipart: { title, author: "Navigation QA", file: { name: "Narration.mp3", mimeType: "audio/mpeg", buffer: readFileSync("server/demo/alice-01.mp3") } },
   });
   expect(response.ok()).toBe(true);
   const id = (await response.json()).id as string;
-  return (await (await page.request.get("/api/books")).json()).find((b: { id: string }) => b.id === id) as { id: string; workId: string };
+  const book = (await (await page.request.get("/api/books")).json()).find((b: { id: string }) => b.id === id) as { id: string; workId: string };
+  imported.push(book.workId);
+  return book;
 }
 async function importWithEbook(page: Page, title: string) {
   const book = await importAudio(page, title);

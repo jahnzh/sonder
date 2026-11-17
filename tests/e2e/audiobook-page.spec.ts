@@ -11,8 +11,11 @@ test.use({ serviceWorkers: "block" });
 // the specs that run next (device-downloads plays whatever the dock shows).
 const made: string[] = [];
 test.afterEach(async ({ page }) => {
-  await page.unrouteAll({ behavior: "wait" });
-  for (const workId of made.splice(0)) await page.request.delete(`/api/works/${encodeURIComponent(workId)}/library`);
+  for (const workId of made.splice(0))
+    expect((await page.request.delete(`/api/works/${encodeURIComponent(workId)}/library`)).ok()).toBe(true);
+  // Not "wait": after the page gave up on a catalog read it sometimes never returned, which held the hook to the
+  // test's timeout and, before the works left first, kept a played book in the library for the next spec.
+  await page.unrouteAll({ behavior: "ignoreErrors" });
 });
 
 const OUT = "OUT";
@@ -229,6 +232,9 @@ test("the chosen recording is stored for the user: it survives a reload and is t
 test("a link straight to the page: its back button goes to the book (today's dialog over the Library)", async ({ page }) => {
   const work = await twoRecordings(page, "Linked audiobook");
   await page.goto(address(work.workId));
+  // The page shows its header while the book loads and then builds it again with the book: a press and release
+  // on either side of that would be lost, so Back is pressed once the page is in.
+  await expect(region(page).getByRole("radiogroup", { name: "Recordings", exact: true })).toBeVisible();
   await region(page).getByRole("button", { name: "Back to the book", exact: true }).click();
   await expect(page).toHaveURL(/#library$/);
   const details = page.getByRole("dialog", { name: "Book details" });
