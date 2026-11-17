@@ -172,11 +172,6 @@ export function createAlignmentMapLifecycle(deps: MapLifecycleDeps) {
       return cached?.fingerprint === ebook.fingerprint ? cached : undefined;
     },
 
-    /** Persists a map returned by a manual timing correction. The caller then shows it and refreshes. */
-    async saveCorrected(ebookId: string, recordingId: string, map: AlignmentJob) {
-      await deps.store.put(mapCacheKey(ebookId, recordingId), map);
-    },
-
     /** Playback warming: same path as {@link warmMap}, kept on the instance for callers that already hold one. */
     warm(target: WarmTarget): Promise<AlignmentJob | null> {
       return warmMap(deps, target);

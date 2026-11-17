@@ -79,6 +79,9 @@ test("a reading sync: every line of the table, with its figures", () => {
   assert.equal(reading(book("error", { outcome: "language_not_supported" })), "Not available, English only");
   assert.equal(reading(book("error", { outcome: "error" })), "Stopped");
   assert.equal(reading(book("error")), "Stopped");
+  assert.equal(reading(book("error", { outcome: "rejected", coverage: 0.4 })), "New reading sync not used", "a new map the server did not use (#539)");
+  assert.equal(reading(book("error", { outcome: "rejected", wholeBook: false })), "New reading sync not used", "the older engine's rebuild too");
+  assert.equal(reading(book("queued", { outcome: "rejected" })), "Waiting for a worker", "a rejected one prepared again is waiting");
 });
 
 test("while a reading sync is rebuilt or prepared again, the line is that of the map in use", () => {

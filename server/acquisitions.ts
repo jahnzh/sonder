@@ -6,7 +6,8 @@ import { and, eq, inArray } from "drizzle-orm";
 import { parseFile } from "music-metadata";
 import { audioParseOptions, normalizeChapters, type Chapter } from "./chapters.ts";
 import { db, sqlite } from "./db.ts";
-import { hardcoverWorkForMedia, claimHardcoverAudio } from "./hardcover.ts";
+import { hardcoverWorkForMedia } from "./hardcover.ts";
+import { claimWorkAudio } from "./work-library.ts";
 import * as s from "./schema.ts";
 import { getSecret, torbox } from "./services.ts";
 import { addTorrent, getTorrent, transmission } from "./transmission.ts";
@@ -272,7 +273,7 @@ function createBook(
       db.delete(s.userHiddenLibrary).where(and(eq(s.userHiddenLibrary.userId, userId), eq(s.userHiddenLibrary.bookId, id))).run();
       db.insert(s.userLibrary).values({ userId, bookId: id, status: "unread", addedAt: Date.now() }).onConflictDoNothing().run();
     }
-    claimHardcoverAudio(workId, id);
+    claimWorkAudio(workId, id);
     setAcquisitionStatus(job.id, "ready", {
       progress: 1,
       error: null,
