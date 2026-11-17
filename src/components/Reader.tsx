@@ -32,7 +32,7 @@ import { useAppearance } from "./Appearance";
 import { fontFamilies, paletteFor } from "../appearance";
 import { ReadingSync } from "./ReadingSync";
 import { PlaybackSource } from "./PlaybackSource";
-import { PlaybackOptions } from "./PlaybackOptions";
+import { FootSettingButtons, FootSettingRow, useFootSetting } from "./ReaderFootSetting";
 import { PlaybackTimeline } from "./PlaybackTimeline";
 import {PlaybackExtra,usePlaybackMenu} from "./PlaybackMenu";
 import { readerNeedsScripts } from "../reader-sandbox";
@@ -782,6 +782,8 @@ export function ReaderView({
             active = false;
             doc?.fonts?.removeEventListener?.("loadingdone", onFonts);
           };
+          // A tap is timed by its events' own timestamps, not by when the handlers run: a page busy laying out
+          // as the finger lifts runs pointerup late, and a short tap timed by the clock would be dropped (#589).
           let start: {x:number; y:number; time:number} | null = null;
           let hold: ReturnType<typeof setTimeout> | null = null;
           let held = false;
@@ -793,8 +795,12 @@ export function ReaderView({
             // Links may navigate without a page turn; a tap on the page itself
             // is only a potential gesture until it moves or turns the page.
             if ((event.target as Element)?.closest("a")) { gesture(); return; }
-            start = { x: event.clientX, y: event.clientY, time: Date.now() }; held = false;
-            hold = setTimeout(() => { held = true; pageAction.current("sentence", content, event); }, 550);
+            start = { x: event.clientX, y: event.clientY, time: event.timeStamp }; held = false;
+            const pressed = event.timeStamp, now = () => content.document.defaultView?.performance.now() ?? pressed + 550;
+            const longPress = () => { hold = null; held = true; pageAction.current("sentence", content, event); };
+            // The same busy page can run this timer late, while a pointerup that ended a short tap waits behind
+            // it: a late timer gives that pointerup a moment to arrive before the long press listens from here.
+            hold = setTimeout(() => { if (now() - pressed > 650) hold = setTimeout(longPress, 50); else longPress(); }, 550);
           });
           content.document.addEventListener("pointermove", (event: PointerEvent) => {
             if (start && (Math.abs(event.clientX-start.x)>12 || Math.abs(event.clientY-start.y)>12)) {
@@ -809,7 +815,7 @@ export function ReaderView({
             const dx=event.clientX-start.x, dy=event.clientY-start.y;
             if (Math.abs(dx)>50 && Math.abs(dx)>Math.abs(dy)) pageAction.current(dx>0 ? "previous" : "next");
             else if (start.y<40 && dy>80 && Math.abs(dy)>Math.abs(dx)) pageAction.current("close");
-            else if (Math.abs(dx)<12 && Math.abs(dy)<12 && Date.now()-start.time<550) {
+            else if (Math.abs(dx)<12 && Math.abs(dy)<12 && event.timeStamp-start.time<550) {
               const frame = content.document.defaultView?.frameElement?.getBoundingClientRect();
               const bounds = viewport.current?.getBoundingClientRect();
               const fraction = frame && bounds ? (frame.left + event.clientX - bounds.left) / Math.max(1, bounds.width) : event.clientX / Math.max(1, content.document.documentElement.clientWidth);
@@ -1510,6 +1516,7 @@ export function ReaderView({
     pending.back.run();
   }, [p.book?.recordingId, p.track?.id, p.position, p.error, scrubEnded]);
   const controls = controlsVisible || desktop;
+  const [footSetting, setFootSetting] = useFootSetting(controls);
   // The foot at rest (#587): the progress line by Settings › Playback "Progress bar shows", and where the
   // narration is in its chapter, or with no narration of this book in the player, where the page is in the book.
   const audioScoped = audio ? playbackTimeline(audio.book, audio.track.id, p.position, p.length, scope) : null;
@@ -1750,7 +1757,7 @@ export function ReaderView({
       </div>
       {/* The foot (#587): its box stays whether the controls show or not. At rest the progress line, where the
           narration is and a small Play or Pause; with the controls shown the timeline and the transport row. */}
-      <section className="reader-player" aria-label="Player" data-controls={controls} data-message={message?.kind} onClickCapture={tapControls}>
+      <section className="reader-player" aria-label="Player" data-controls={controls} data-setting={footSetting ?? undefined} data-message={message?.kind} onClickCapture={tapControls}>
         {message && (
           <ReaderFootMessage message={message} actions={messageActions} play={p.book ? { playing: p.playing, toggle: p.toggle } : null} />
         )}
@@ -1812,9 +1819,9 @@ export function ReaderView({
           <button className="icon-button" aria-label="Forward 30 seconds" disabled={!p.book} onClick={()=>p.skip(30)}><RotateCw size={26}/><span>30</span></button>
         </div>
         <div className="reader-player-extras">
-          <PlaybackOptions kind="sleep" />
-          <PlaybackOptions kind="speed" />
+          <FootSettingButtons open={footSetting} onOpen={setFootSetting} />
         </div>
+        {footSetting && <FootSettingRow setting={footSetting} onDone={() => setFootSetting(null)} />}
         </div>
       </section>
       {panel && panel !== "sync" && book && (

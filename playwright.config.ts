@@ -95,6 +95,8 @@ const desktopProjects = [
               /(^|\/)reader-pages\.spec\.ts$/,
               // A book read in the reader is In progress; the ebook shelf leaves Discover (#556).
               /(^|\/)(ebook-only-library|discovery)\.spec\.ts$/,
+              // Speed and the sleep timer in the reader's foot (#589).
+              /(^|\/)reader-foot-setting\.spec\.ts$/,
               // Every message while reading in the reader's foot (#591).
               /(^|\/)reader-messages\.spec\.ts$/,
             ]

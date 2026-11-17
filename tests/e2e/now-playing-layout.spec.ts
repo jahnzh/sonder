@@ -133,7 +133,7 @@ for(const size of sizes){
    seeks.push(b);
   }
   expect(Math.abs((play.x-seeks[0].x)-(seeks[1].x-play.x))).toBeLessThanOrEqual(1);
-  const timer=player.getByRole("button",{name:"Sleep timer",exact:true});
+  const timer=player.getByRole("button",{name:/^Sleep timer: /});
   const timerBox=await centre(timer),forwardBox=await boxOf(forward);
   // Phones keep the timer on the transport row; desktop centres it in the footer.
   const bar=await centre(player);
@@ -141,15 +141,20 @@ for(const size of sizes){
   expect(timerBox.box.width).toBeGreaterThanOrEqual(44);
   expect(timerBox.box.x+timerBox.box.width).toBeLessThanOrEqual(width);
   expect(timerBox.box.x).toBeGreaterThanOrEqual(forwardBox.x+forwardBox.width);
+  // The sleep timer takes the transport row's place with its stepper and Done (#589); its row stays in the window.
   await timer.click();
-  const minutes=dialog.getByRole("button",{name:"15 minutes",exact:true});
-  await expect(minutes).toBeVisible();
-  const menuBox=await boxOf(minutes);
-  expect(menuBox.x).toBeGreaterThanOrEqual(0);expect(menuBox.x+menuBox.width).toBeLessThanOrEqual(width);
-  await minutes.click();
-  await expect(timer).toContainText("15m");
+  const longer=player.getByRole("button",{name:"Longer",exact:true});
+  await expect(longer).toBeVisible();
+  const rowBox=await boxOf(player.locator(".reader-foot-setting"));
+  expect(rowBox.x).toBeGreaterThanOrEqual(0);expect(rowBox.x+rowBox.width).toBeLessThanOrEqual(width);
+  await longer.click();await longer.click();
+  await expect(player.getByRole("spinbutton",{name:"Sleep timer",exact:true})).toHaveText("15 min");
+  await player.getByRole("button",{name:"Done",exact:true}).click();
+  await expect(timer).toContainText("15 min");
   await timer.click();
-  await dialog.getByRole("button",{name:"Turn off",exact:true}).click();
+  await player.getByRole("spinbutton",{name:"Sleep timer",exact:true}).press("Home");
+  await player.getByRole("button",{name:"Done",exact:true}).click();
+  await expect(timer).toHaveAccessibleName("Sleep timer: off");
   const box=await boxOf(dialog);
   expect(box.y).toBeGreaterThanOrEqual(0); expect(box.y+box.height).toBeLessThanOrEqual(height);
   expect((await boxOf(page.locator(".inline-reader .reader-viewport"))).height).toBeGreaterThan(height*.6);
@@ -160,7 +165,7 @@ for(const size of sizes){
   // The bar is the narration's position; the page follows it.
   await expect(player.getByRole("slider",{name:/^Seek in /})).toBeVisible();
   await expect(player.getByRole("slider",{name:"Position in book"})).toHaveCount(0);
-  const names=["Close reader","Bookmark current sentence","Search this book","Reader appearance","More","Back to narration","Back 30 seconds","Play narration","Forward 30 seconds","Sleep timer"];
+  const names=["Close reader","Bookmark current sentence","Search this book","Reader appearance","More","Back to narration","Back 30 seconds","Play narration","Forward 30 seconds",/^Sleep timer: /];
   if(width<900)names.push("Chapters");
   for(const name of names){
    // The transport button reads "Play narration" or "Pause narration" depending on whether the tap above started playback.
@@ -420,8 +425,8 @@ test.describe("#122 reader Back to narration layout",()=>{
     else await expect(back).toBeDisabled();
     await assertReaderTransportCentred(dialog,player);
     if(width===360){
-     for(const name of ["Sleep timer",/^Playback speed/] as const){
-      const box=await boxOf(player.getByRole("button",{name,exact:typeof name==="string"}));
+     for(const name of [/^Sleep timer: /,/^Speed [\d.]+ times$/] as const){
+      const box=await boxOf(player.getByRole("button",{name}));
       expect(box.x).toBeGreaterThanOrEqual(0);
       expect(box.x+box.width).toBeLessThanOrEqual(width);
      }

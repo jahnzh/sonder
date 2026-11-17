@@ -95,6 +95,32 @@ test("taps, page turns and long-press on the book page reach the reader",async({
  await longPressSentence(page,room.locator(".reader-viewport"));
  await expectNoMapInFoot(room);
 });
+// A page busy as the finger lifts (epub.js laying out, a highlight redrawn) runs pointerup late: the tap is still a
+// tap, timed by its events, not dropped or taken for a long press that listens from the sentence (#589).
+test("a short tap shows the controls while the page is busy as the finger lifts",async({page,browserName},testInfo)=>{
+ // Firefox's driver sends the button's release only once the page has handled the press, so the release is stamped
+ // after the 700 ms too: there the tap below is a real 700 ms hold and cannot stand for a short one.
+ test.skip(browserName==="firefox","the driver stamps the release after the busy press, a 700 ms hold");
+ const {id,room}=await openReader(page,`Frame busy tap ${browserName} ${testInfo.repeatEachIndex}`,false,false);
+ await expectNoAlignment(page,id);
+ const topbar=room.locator(".reader-topbar"),box=(await room.locator(".reader-viewport").boundingBox())!;
+ await expect(topbar).toBeHidden();
+ // After the reader's own pointerdown listener, the page is held for 700 ms, past the 550 of a long press. The
+ // listener comes from the app's window, as the reader's do: the book's frame itself runs no script.
+ const blocked=await room.locator(".reader-viewport").evaluate(host=>{
+  const frames=[...host.querySelectorAll("iframe")].filter(frame=>frame.contentDocument);
+  for(const frame of frames)frame.contentDocument!.addEventListener("pointerdown",()=>{const until=Date.now()+700;while(Date.now()<until);},{once:true});
+  return frames.length;
+ });
+ expect(blocked).toBeGreaterThan(0);
+ const started=Date.now();
+ await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
+ await expect(topbar).toBeVisible();
+ expect(Date.now()-started).toBeGreaterThanOrEqual(700);
+ // Not a long press: it would have asked for a narration map for this book without one.
+ await page.waitForTimeout(300);
+ await expect(page.getByText("Prepare a matching audiobook map for this passage first.")).toHaveCount(0);
+});
 test("long-press reaches a sentence after the reader is resized",async({page,browserName},testInfo)=>{
  const {id,room}=await openReader(page,`Frame resize ${browserName} ${testInfo.repeatEachIndex}`,false,false);
  await expectNoAlignment(page,id);
