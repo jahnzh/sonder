@@ -690,7 +690,7 @@ test.describe("with a password", () => {
       });
     });
   }
-  // An own server with a password, as join.spec does: the shared one runs without, for every other spec.
+  // An own server with a password, as sign-in.spec does: the shared one runs without, for every other spec.
   test.beforeAll(async () => {
     dataDir = join(tempDir("sonder-navigation-e2e-"), "db");
     for (let attempt = 0; attempt < 3; attempt++) {
