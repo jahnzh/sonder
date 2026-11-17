@@ -206,8 +206,8 @@ export function PlayerDock({
         <div className="dock-actions">
           <button
             className="icon-button"
-            aria-label="Manage versions and sources"
-            title="Versions & sources"
+            aria-label="Audiobook"
+            title="Audiobook"
             onClick={() => onManageSources(p.book || b)}
           >
             <Layers size={19} />
@@ -333,7 +333,7 @@ export function PlayerDock({
                   onManageSources(p.book || b);
                 }}
               >
-                <Layers size={16} /> Versions & sources
+                <Layers size={16} /> Audiobook
               </button>
               <KeyboardHelpButton open={keysOpen} onOpenChange={setKeysOpen} />
             </div>
