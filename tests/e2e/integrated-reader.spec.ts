@@ -1,15 +1,19 @@
 import {test,expect,type Page} from "@playwright/test";
 import {readFileSync} from "node:fs";
+import {randomUUID} from "node:crypto";
 import {readerFixture} from "../reader-fixture";
 import {skipOnMobile} from "./mobile";
 import {highlightShown} from "./reader-view";
 test.afterEach(async({page})=>{await page.unrouteAll({behavior:"wait"});});
-async function fixture(page:Page,title:string,language="en-US"){
+// Imports a book whose title is unique to this run, so a repeat on the same server finds exactly one
+// "Play <title>" button and its own EPUB; returns that title.
+async function fixture(page:Page,name:string,language="en-US"){
+ const title=`${name} ${randomUUID().slice(0,8)}`;
  const response=await page.request.post("/api/import",{multipart:{title,author:"Reader QA",file:{name:"Narration.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
  expect(response.ok()).toBe(true);
  const id=(await response.json()).id;
  const book=(await(await page.request.get("/api/books")).json()).find((b:any)=>b.id===id);
- const uploaded=await page.request.post(`/api/ebooks/import?workId=${book.workId}`,{multipart:{file:{name:"Companion.epub",mimeType:"application/epub+zip",buffer:await readerFixture({language})}}});
+ const uploaded=await page.request.post(`/api/ebooks/import?workId=${book.workId}`,{multipart:{file:{name:"Companion.epub",mimeType:"application/epub+zip",buffer:await readerFixture({language,title})}}});
  expect(uploaded.ok()).toBe(true);const ebook=(await uploaded.json()).id;
  const manifest=await(await page.request.get(`/api/reader/${ebook}`)).json();
  const created=await page.request.post("/api/alignments",{data:{ebookId:ebook,recordingId:book.recordingId,pairings:manifest.sections.map((section:any)=>({section:section.index,trackId:book.tracks[0].id,start:section.index*100,duration:95}))}});
@@ -20,7 +24,7 @@ async function fixture(page:Page,title:string,language="en-US"){
  },{timeout:15000}).toBe(manifest.sections.length);
  const jobs=(await(await page.request.get(`/api/alignments?ebookId=${ebook}`)).json()).jobs;
  const map=await(await page.request.get(`/api/alignments/${jobs[0].id}/map`)).json();
- return {book,ebook,map,manifest};
+ return {book,ebook,map,manifest,title};
 }
 async function start(page:Page,title:string){
  await page.goto("/");
@@ -68,8 +72,8 @@ async function checkHeading(page:Page){
  expect(Math.abs(await centre(dialog.locator(".now-playing-heading-title"))-close)).toBeLessThan(1);
 }
 test("page gestures show controls and long-press listens from that sentence",async({page})=>{
- const {ebook,map,manifest}=await fixture(page,"Integrated narration");
- await start(page,"Integrated narration");
+ const {ebook,map,manifest,title}=await fixture(page,"Integrated narration");
+ await start(page,title);
  const before=(await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint;
  const room=page.locator(".inline-reader");
  await expect(room.locator(".reader-topbar")).toBeHidden();
@@ -112,8 +116,8 @@ test("page gestures show controls and long-press listens from that sentence",asy
  await expect.poll(async()=>(await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint?.origin).toBe("listening");
 });
 test("page controls follow the prepared narration",async({page})=>{
- await fixture(page,"Page narration","en-GB");
- await start(page,"Page narration");
+ const {title}=await fixture(page,"Page narration","en-GB");
+ await start(page,title);
  const room=page.locator(".inline-reader");
  await expect(room.locator(".reader-topbar")).toBeHidden();
  await expect(room).toHaveAttribute("data-current-passage",/.+/);
@@ -296,8 +300,8 @@ for(const [label,viewport] of [["phone",{width:390,height:844}],["desktop",{widt
 test(`following narration on ${label} never paints another page on the way`,async({page})=>{
  skipOnMobile(label==="desktop","desktop layout (min-width: 900px) is not reachable on a phone profile");
  await page.setViewportSize(viewport);
- const {map}=await fixture(page,`Follow pages ${label}`);
- await start(page,`Follow pages ${label}`);
+ const {map,title}=await fixture(page,`Follow pages ${label}`);
+ await start(page,title);
  const room=page.locator(".inline-reader");
  await sampleFrames(page);
  // The page shown before the first jump is where it starts from.
