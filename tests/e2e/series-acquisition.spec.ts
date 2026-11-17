@@ -50,11 +50,14 @@ test("series save opt-ins, ebook failure, and retry show specific progress", asy
 
   await page.getByRole("button", { name: "Close series" }).click();
   await page.goto("/#library");
+  // The saved series opens its Series page (#562); Crossing Companion is a related work there.
   await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
-
-  const companion = page.getByRole("dialog").getByText("Crossing Companion", {
-    exact: true,
-  });
+  await expect(page).toHaveURL(/#series\/701$/);
+  const companion = page
+    .getByRole("region", { name: "Series", exact: true })
+    .getByRole("list", { name: /^Related works/ })
+    .getByRole("listitem")
+    .filter({ hasText: "Crossing Companion" });
   await expect(companion).toBeVisible();
   await expect.poll(async () => {
     const view = await (
@@ -64,7 +67,9 @@ test("series save opt-ins, ebook failure, and retry show specific progress", asy
     return work?.acquisition?.ebook?.status;
   }).toBe("failed");
 
-  await page.getByRole("button", { name: "Retry ebook" }).click();
+  await page.reload();
+  await expect(companion.getByRole("button", { name: /^Crossing Companion Series search failed$/ })).toBeVisible();
+  await companion.getByRole("button", { name: "Retry Crossing Companion", exact: true }).click();
   await expect.poll(async () => {
     const view = await (
       await page.request.get("/api/series/701")
@@ -72,13 +77,14 @@ test("series save opt-ins, ebook failure, and retry show specific progress", asy
     const work = view.works.find((row: { title: string }) => row.title === "Crossing Companion");
     return work?.acquisition?.ebook?.status;
   }).toBe("done");
-  await expect(
-    page
-      .getByRole("dialog")
-      .locator(".series-work")
-      .filter({ hasText: "Crossing Companion" })
-      .getByText(/Ebook: Search complete · not on device/),
-  ).toBeVisible();
+  // The row reads failed while any of its series searches is: the audiobook's, which this spec also asked for, may be.
+  const audioFailed = ((await (await page.request.get("/api/series/701")).json()).works as { title: string; acquisition?: { audio?: { status: string } | null } | null }[])
+    .find((row) => row.title === "Crossing Companion")?.acquisition?.audio?.status === "failed";
+  if (audioFailed) await expect(companion.getByRole("button", { name: "Retry Crossing Companion", exact: true })).toBeVisible();
+  else {
+    await expect(companion.getByRole("button", { name: "Retry Crossing Companion", exact: true })).toHaveCount(0);
+    await expect(companion.getByRole("button", { name: /^Crossing Companion / })).not.toHaveAccessibleName(/Series search failed/);
+  }
   const added = (await crossing()).works.filter(
     (work) => work.added && !addedBefore.includes(work.id) && !before.has(work.title),
   );

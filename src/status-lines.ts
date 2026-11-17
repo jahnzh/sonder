@@ -392,3 +392,18 @@ export function mediaStateLine({ state, holdReason }: MediaStateFacts): string |
   if (state !== "missing") return null;
   return holdReason === "unreleased" ? `${downloadLine({ status: null })}${DOT}not released yet` : downloadLine({ status: null });
 }
+
+/*
+ * The Series page's lines (#562, spec #560 "The Series page"): a book of a series that is not released yet, a series
+ * search that failed, and a book the user cannot add until the administrator links it ("Matches more than one book
+ * on the server" is how the administrator sees the same hold).
+ */
+
+/** A book of a series that is not out yet. */
+export const NOT_RELEASED_LINE = "Not released yet";
+/** A series search for the book's audiobook or ebook failed (`series_acquisition_jobs`, `failed`). */
+export const SERIES_SEARCH_FAILED_LINE = failedLine({ entry: "series-search" });
+/** A book a member cannot add: it matches a book on the server that only the administrator can link. */
+export const NEEDS_ADMIN_LINE = "Needs the administrator to link it";
+/** The same hold for the administrator: the book matches several books on the server. */
+export const SEVERAL_MATCHES_LINE = "Matches more than one book on the server";

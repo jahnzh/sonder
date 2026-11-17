@@ -463,21 +463,26 @@ test.describe("with answers from the test", () => {
   test("Back with a series and its removal confirmation open leaves the page, and nothing is confirmed", async ({ page }) => {
     const changes = await savedSeries(page);
     await libraryOverDiscover(page);
-    const series = page.getByRole("dialog", { name: "The Crossing", exact: true });
+    // A saved series is a page of its own (#562): an entry, whose removal confirmation goes with it.
+    const series = page.getByRole("region", { name: "Series", exact: true });
     const removal = page.getByRole("dialog", { name: "Remove The Crossing", exact: true });
     await page.getByRole("button", { name: "Open The Crossing by Ada North", exact: true }).click();
+    await expect(page).toHaveURL(/#series\/701$/);
     await series.getByRole("button", { name: "Remove series", exact: true }).click();
     await expect(removal).toBeVisible();
     await page.goBack();
-    await expect(shown(page)).toHaveText("Discover");
+    await expect(page).toHaveURL(/#library$/);
+    await expect(shown(page)).toHaveText("Library");
     await expect(removal).toBeHidden();
     await expect(series).toBeHidden();
     // Opened again, the series does not bring the confirmation back with it.
     await page.goForward();
-    await expect(shown(page)).toHaveText("Library");
-    await page.getByRole("button", { name: "Open The Crossing by Ada North", exact: true }).click();
     await expect(series.getByRole("button", { name: "Remove series", exact: true })).toBeVisible();
     await expect(removal).toBeHidden();
+    // Back, and Back again leaves the Library for Discover.
+    await page.goBack();
+    await page.goBack();
+    await expect(shown(page)).toHaveText("Discover");
     expect(changes).toEqual([]);
   });
 
