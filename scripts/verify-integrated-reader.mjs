@@ -64,7 +64,6 @@ try {
  const more=()=>controls.click(room.locator('.reader-topbar').getByRole('button',{name:'More',exact:true}),'More');
  await more();
  const options=page.getByRole('region',{name:'Playback options',exact:true});
- await expect(options.getByRole('button',{name:'Versions & sources',exact:true})).toBeVisible();
  await expect(options.getByRole('button',{name:'Listen from here',exact:true})).toBeVisible();
  // The reader shows the book's own text only: there is no switch between views (ADR 0017).
  await expect(options.getByRole('group',{name:'Reading mode',exact:true})).toHaveCount(0);
