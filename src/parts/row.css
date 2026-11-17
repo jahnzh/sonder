@@ -58,3 +58,14 @@ button.part-row:focus-visible {
   align-items: center;
   gap: var(--space-8);
 }
+/* A label followed by an info mark: the pair takes the label's place, the mark right after the words. */
+.part-row-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+.part-row-name > .part-row-label {
+  flex: 0 1 auto;
+}
