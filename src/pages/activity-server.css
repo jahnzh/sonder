@@ -1,0 +1,142 @@
+/* Activity › Server (src/pages/activity-server.tsx). Tokens from src/parts/tokens.css, colours from the existing
+   variables. Its rows are 64 high with a name and a line, as the boards draw them; the Row part has no line. */
+.activity-server {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-32);
+}
+.activity-server-list,
+.activity-server-worker {
+  flex: 1 1 280px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+.activity-server-item {
+  display: block;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.activity-server-row {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--height-bar);
+  padding: 10px var(--space-16);
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  margin: 0;
+  color: var(--text);
+  text-decoration: none;
+}
+.activity-server-item[data-muted] .activity-server-row {
+  color: var(--muted);
+}
+a.activity-server-link {
+  cursor: pointer;
+}
+a.activity-server-link:hover {
+  background: color-mix(in srgb, var(--raised) 55%, transparent);
+}
+a.activity-server-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.activity-server-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.activity-server-name {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+.activity-server-label,
+.activity-server-line {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.activity-server-line {
+  color: var(--muted);
+}
+.activity-server-line[data-danger] {
+  color: var(--danger);
+}
+.activity-server-wrap,
+.activity-server-failure {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.activity-server-failure {
+  color: var(--danger);
+}
+.activity-server-end {
+  flex: none;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  color: var(--muted);
+}
+.activity-server-mark {
+  display: block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--corner-round);
+  background: var(--accent);
+}
+.activity-server-icon {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  color: var(--muted);
+}
+/* Prepare for all books: its value and chevron are the button, 44 high where it is tapped. */
+.activity-server-prepare {
+  min-height: var(--height-control);
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.activity-server-prepare:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.activity-server-prepare:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--corner-control);
+}
+.activity-server-error {
+  margin: 0;
+  padding: 0 var(--space-16);
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+/* The place of the worker's page (#520): today's controls of the worker until then, one under the other. */
+.activity-worker-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-8);
+  padding: 0 var(--space-16);
+  overflow-wrap: anywhere;
+}
+.activity-worker-slot .settings-inline-actions {
+  flex-wrap: wrap;
+}

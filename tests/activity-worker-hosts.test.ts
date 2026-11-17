@@ -177,6 +177,11 @@ test("each host row shows online or offline, its current job and the worker's co
     assert.equal(lisa.host.online, false);
     assert.equal(lisa.host.revision, null, "no answer: the version is unknown");
     assert.equal(lisa.host.work, null);
+    // Since when it is offline, as the server first saw it (#519: "Offline since 14:02"); a later read keeps the time.
+    assert.equal(typeof lisa.since, "number");
+    assert.ok(Math.abs(Date.now() - lisa.since) < 60_000, `offline since a moment ago: ${lisa.since}`);
+    assert.equal((await hostRow("lisa")).since, lisa.since);
+    assert.equal((await hostRow("wsl")).since, null, "an online worker has no time");
 
     // A worker from before the field reports no revision: unknown. An idle worker has no current job.
     fake.hosts.lisa.down = false;

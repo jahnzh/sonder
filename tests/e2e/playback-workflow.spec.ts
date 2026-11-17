@@ -67,12 +67,13 @@ test("chapter progress persists; precision dragging previews, slows with distanc
     await route.fulfill({response,json:books});
   });
   try {
-    await page.goto("/#settings");
-    await page.getByRole("combobox",{name:"Playback progress bar",exact:true}).selectOption("chapter");
-    await page.getByRole("button",{name:"Save playback settings",exact:true}).click();
-    await expect(page.getByText("Playback settings saved.", {exact:true})).toBeVisible();
+    // Settings › Playback saves the choice when it is made (#579).
+    await page.goto("/#settings/playback");
+    const scope=page.getByRole("radiogroup",{name:"Progress bar shows",exact:true});
+    await scope.getByRole("radio",{name:"Current chapter",exact:true}).click();
+    await expect.poll(async()=>(await (await page.request.get("/api/appearance")).json()).playback.progressScope).toBe("chapter");
     await page.reload();
-    await expect(page.getByRole("combobox",{name:"Playback progress bar",exact:true})).toHaveValue("chapter");
+    await expect(scope.getByRole("radio",{name:"Current chapter",exact:true})).toHaveAttribute("aria-checked","true");
     await page.locator(".mobile-nav").getByRole("button",{name:"My library",exact:true}).click();
     await playAndPause(page,"Alice’s Adventures in Wonderland");
     await position(page,150.12345678);
@@ -123,7 +124,8 @@ test("chapter progress persists; precision dragging previews, slows with distanc
     await page.getByRole("button",{name:"Close dialog",exact:true}).click();
     await page.setViewportSize({width:390,height:844});
     await page.locator(".mobile-nav").getByRole("button",{name:"Settings",exact:true}).click();
-    await page.getByRole("combobox",{name:"Playback progress bar",exact:true}).selectOption("book");
+    await page.getByRole("button",{name:/^Playback\b/}).click();
+    await page.getByRole("radiogroup",{name:"Progress bar shows",exact:true}).getByRole("radio",{name:"Whole audiobook",exact:true}).click();
     await page.locator(".dock-book").click();
     await expect(page.getByRole("slider",{name:"Seek in audiobook",exact:true})).toHaveValue("151");
     expect((await audioState(page)).paused).toBe(true);

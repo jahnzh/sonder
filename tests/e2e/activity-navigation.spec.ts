@@ -8,8 +8,14 @@ import type { ActivityResponse } from "../../src/types";
 
 const DESKTOP = { width: 1280, height: 800 };
 const quiet: ActivityResponse = { checkedAt: Date.now(), stuckMultiplier: 1, attention: 0, processes: [], items: [] };
+/** Processes that are down: the dot is lit by Now's builder from what needs attention, not by the count (#521). */
+const down = (count: number): ActivityResponse["processes"] =>
+  Array.from({ length: count }, (_, i) => ({
+    id: `service-${i}`, label: `Service ${i}`, type: "service", health: "down", reason: "Down", since: null, notTracked: false,
+    pausable: false, paused: false, lockedBy: null, pauseEffect: null, counts: { running: 0, queued: 0, failed: 0, stuck: 0 },
+  }));
 const answer = (page: Page, attention: number) =>
-  page.route("**/api/activity", (route) => route.fulfill({ json: { ...quiet, checkedAt: Date.now(), attention } }));
+  page.route("**/api/activity", (route) => route.fulfill({ json: { ...quiet, checkedAt: Date.now(), attention, processes: down(attention) } }));
 /** Someone who is not the administrator, as the client is told (prior art: hardcover.spec.ts "r6#4"). */
 const asMember = (page: Page) =>
   page.route("**/api/auth/status", (route) =>
@@ -65,9 +71,8 @@ test("the administrator: Activity in the tab bar where Downloads was, with the d
 
   await parts(page).getByRole("radio", { name: "Server" }).click();
   await expect(page).toHaveURL(/#activity\/server$/);
-  // Server is today's Activity page.
-  await expect(page.getByTestId("activity-page")).toBeVisible();
-  await expect(page.getByTestId("activity-empty")).toBeVisible();
+  // Server is the administrator's queues and workers (#519).
+  await expect(page.getByTestId("activity-server")).toBeVisible();
   await noOverflow(page);
   // Settings has lost its Open Activity button.
   await settingsTab(page).click();
@@ -103,7 +108,7 @@ test("the administrator at desktop width: Activity in the rail with the dot, Set
   await noOverflow(page);
   await parts(page).getByRole("radio", { name: "Server" }).click();
   await expect(page).toHaveURL(/#activity\/server$/);
-  await expect(page.getByTestId("activity-page")).toBeVisible();
+  await expect(page.getByTestId("activity-server")).toBeVisible();
   // Server is still the Activity place: the rail shows it, not Settings.
   await expect(activityTab(rail(page))).toHaveClass(/selected/);
   await expect(settings).not.toHaveClass(/selected/);
@@ -113,9 +118,9 @@ test("the administrator at desktop width: Activity in the rail with the dot, Set
 test("#activity and #activity/server show the same part on a reload", async ({ page }) => {
   await answer(page, 0);
   await page.goto("/#activity/server");
-  await expect(page.getByTestId("activity-page")).toBeVisible();
+  await expect(page.getByTestId("activity-server")).toBeVisible();
   await page.reload();
-  await expect(page.getByTestId("activity-page")).toBeVisible();
+  await expect(page.getByTestId("activity-server")).toBeVisible();
   await expect(parts(page).getByRole("radio", { checked: true })).toHaveText("Server");
   expect(await hash(page)).toBe("#activity/server");
   await page.goto("/#activity");
@@ -166,7 +171,7 @@ test("someone who is not the administrator: Activity in the tab bar, Now and Thi
   let asked = 0;
   await page.route("**/api/activity", (route) => {
     asked++;
-    return route.fulfill({ json: { ...quiet, attention: 3 } });
+    return route.fulfill({ json: { ...quiet, attention: 3, processes: down(3) } });
   });
   await page.goto("/#library");
   await expect(tabBar(page).getByRole("button")).toHaveText(["My library", "Discover", "Activity", "Settings"]);
@@ -179,7 +184,7 @@ test("someone who is not the administrator: Activity in the tab bar, Now and Thi
   await expect(parts(page).getByRole("radio", { checked: true })).toHaveText("Now");
   await expect(page.getByRole("radio", { name: "Server" })).toHaveCount(0);
   await noOverflow(page);
-  // The dot reads the administrator's count in this ticket: nothing is asked and nothing lights for anyone else.
+  // The server's work is the administrator's: nothing is asked, and with no failed save on this device no dot (#521).
   await expect(page.getByRole("img", { name: dot })).toHaveCount(0);
   expect(asked).toBe(0);
 
@@ -188,7 +193,7 @@ test("someone who is not the administrator: Activity in the tab bar, Now and Thi
   await expect(heading(page)).toBeVisible();
   await expect(parts(page).getByRole("radio", { checked: true })).toHaveText("Now");
   await expect.poll(() => hash(page)).toBe("#activity");
-  await expect(page.getByTestId("activity-page")).toHaveCount(0);
+  await expect(page.getByTestId("activity-server")).toHaveCount(0);
   expect(asked).toBe(0);
 });
 

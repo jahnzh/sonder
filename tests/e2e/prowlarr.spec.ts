@@ -47,7 +47,7 @@ test("Prowlarr is configured in Settings and merges with AudioBookBay, isolating
     });
   });
 
-  await page.goto("/#settings");
+  await page.goto("/#settings/connections");
   await page.getByRole("textbox", { name: "Prowlarr address" }).fill(prowlarrFixtureUrl);
   await page.getByLabel("Prowlarr API key").fill("wrong-key");
   await page.getByRole("button", { name: "Save Prowlarr", exact: true }).click();

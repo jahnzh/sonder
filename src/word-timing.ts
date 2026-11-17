@@ -6,7 +6,7 @@ import type { ReaderWord } from "./reader-segments";
 /** Punctuation that adds a pause weight when interpolating inside a sentence. */
 const PAUSE_MARKS = /[,.?:;!]/;
 
-export type TimedWord = ReaderWord & {
+export type TimedWord<W extends { text: string } = ReaderWord> = W & {
   index: number;
   start: number;
   end: number;
@@ -26,11 +26,11 @@ export function wordWeight(text: string): number {
  * fill [start, end] exactly. Weights use character count plus a pause bonus
  * for comma, period, question mark and colon (and nearby sentence punctuation).
  */
-export function interpolateWordTimes(
-  words: ReaderWord[],
+export function interpolateWordTimes<W extends { text: string }>(
+  words: readonly W[],
   start: number,
   end: number,
-): TimedWord[] {
+): TimedWord<W>[] {
   if (!words.length) return [];
   const span = Math.max(0, end - start);
   const weights = words.map((word) => wordWeight(word.text));

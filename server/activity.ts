@@ -47,7 +47,23 @@ export type ActivityInput = {
   /** The pause switch of each loop and whether an environment flag locks it. */
   pause?: Record<string, { paused: boolean; locked: boolean }>;
   tracker: ChangeTracker;
+  /**
+   * When each service's current health began, as this server saw it (#519: "Offline since 14:02"). Given only for a
+   * read whose probes ran; without it a service's `since` stays null.
+   */
+  serviceClock?: ServiceClock;
 };
+
+/** Remembers, per service, the health it last had and since when. In memory: a restart of the server forgets it. */
+export class ServiceClock {
+  private seen = new Map<string, { health: ActivityHealth; since: number }>();
+  observe(id: string, health: ActivityHealth, now: number) {
+    const previous = this.seen.get(id);
+    if (previous && previous.health === health) return previous.since;
+    this.seen.set(id, { health, since: now });
+    return now;
+  }
+}
 
 const loopOrder = (snapshot: SourceSnapshot) => PAUSABLE_PROCESSES.indexOf(snapshot.source.process.id);
 
@@ -120,6 +136,9 @@ export function buildActivity(input: ActivityInput): ActivityResponse {
     }
     const summary = summaries.get(process.id);
     if (summary) reason = reason ? `${reason} · ${summary}` : summary;
+    // A service has no items of its own to date its trouble: the clock says since when it has its health.
+    const observed = probe && input.serviceClock ? input.serviceClock.observe(process.id, health, now) : null;
+    if (observed !== null && health !== "ok") return { ...process, ...pauseFields, health, reason, since: observed, counts };
     const since = health === "ok" ? null : mine.filter((item) => item.stuck || item.state === "failed").reduce<number | null>(
       (oldest, item) => (oldest === null ? item.updatedAt : Math.min(oldest, item.updatedAt)), null);
     return { ...process, ...pauseFields, health, reason, since, counts };
@@ -131,6 +150,7 @@ export function buildActivity(input: ActivityInput): ActivityResponse {
 }
 
 const tracker = new ChangeTracker();
+const serviceClock = new ServiceClock();
 
 /** A probe that is slow or fails must not hold the page: the process then shows why it was not checked. */
 async function within<T>(probe: () => Promise<T>, ms: number): Promise<ProbeResult<T>> {
@@ -153,7 +173,13 @@ async function within<T>(probe: () => Promise<T>, ms: number): Promise<ProbeResu
 
 export async function collectActivity(
   deps: ActivityDeps,
-  options: { probes: boolean; /** Whose library the covers come from; the administrator who asked. */ userId?: number } = { probes: true },
+  options: {
+    probes: boolean;
+    /** Whose library the covers come from; the administrator who asked. */
+    userId?: number;
+    /** Dates each service's health (`ServiceClock`); the route passes the server's own. */
+    serviceClock?: ServiceClock;
+  } = { probes: true },
   sources: ReadonlyArray<ActivitySource<unknown, unknown>> = ACTIVITY_SOURCES,
 ) {
   const rows = sources.map((source) => source.load(deps.sqlite, { userId: options.userId ?? DEFAULT_ACTIVITY_USER_ID }));
@@ -168,13 +194,15 @@ export async function collectActivity(
     pause: deps.pauseState(),
     snapshots: sources.map((source, index) => ({ source, rows: rows[index], probe: probes[index] })),
     tracker,
+    // Only a read that asked the services may say since when they have their health.
+    ...(options.probes && options.serviceClock ? { serviceClock: options.serviceClock } : {}),
   });
 }
 
 export function registerActivity(app: FastifyInstance, deps: ActivityDeps, sources: ReadonlyArray<ActivitySource<unknown, unknown>> = ACTIVITY_SOURCES) {
   app.get("/api/activity", async (req) => {
     deps.requireAdmin(req);
-    return collectActivity(deps, { probes: true, userId: deps.userId?.(req) }, sources);
+    return collectActivity(deps, { probes: true, userId: deps.userId?.(req), serviceClock }, sources);
   });
   app.post("/api/activity/processes/:id/pause", async (req) => {
     deps.requireAdmin(req);

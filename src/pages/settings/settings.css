@@ -1,0 +1,205 @@
+/* Settings as a list with pages (src/pages/settings-page.tsx). Tokens from src/parts/tokens.css, colours from the
+   existing variables, so every preset and the custom palette apply. */
+.settings-phone,
+.settings-split-list,
+.settings-split-page,
+.settings-page-body,
+.settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-24);
+  min-width: 0;
+}
+.settings-phone,
+.settings-split {
+  max-width: 1040px;
+}
+.settings-split {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  gap: var(--space-32);
+  align-items: start;
+}
+/* The page beside the list is named like a page: its Title sits on the line of the list's own. */
+.settings-page-title {
+  margin: 0;
+  min-height: var(--height-control);
+  display: flex;
+  align-items: center;
+  color: var(--text);
+}
+
+/* A label with its info mark on one line, the Segmented control under it. */
+.settings-stacked {
+  box-sizing: border-box;
+  padding: var(--space-12) var(--space-16) var(--space-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  color: var(--text);
+}
+.settings-stacked > .part-row-name {
+  min-height: 22px;
+}
+
+/* The Accent row: four swatches and the custom colour, each 44 by 44 where it is tapped. */
+.settings-swatches {
+  display: flex;
+  margin-right: calc(-1 * var(--space-8));
+}
+.settings-swatch {
+  position: relative;
+  box-sizing: border-box;
+  width: var(--height-control);
+  height: var(--height-control);
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--corner-round);
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.settings-swatch > span,
+.settings-swatch-custom input {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--corner-round);
+  display: block;
+}
+.settings-swatch > span[data-chosen],
+.settings-swatch-custom[data-chosen] input {
+  box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--text);
+}
+.settings-swatch-custom input {
+  box-sizing: border-box;
+  padding: 0;
+  border: 2px dashed var(--muted);
+  background: conic-gradient(#dd8966, #e0b060, #8fb8a0, #9db4e8, #dd8966);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.settings-swatch-custom input::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+/* One rule each: a selector a browser does not know drops the whole rule. */
+.settings-swatch-custom input::-webkit-color-swatch {
+  border: 0;
+  opacity: 0;
+}
+.settings-swatch-custom input::-moz-color-swatch {
+  border: 0;
+  opacity: 0;
+}
+.settings-swatch:focus-visible,
+.settings-swatch-custom:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.settings-colour {
+  box-sizing: border-box;
+  width: var(--height-control);
+  height: 36px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--corner-control);
+  background: var(--raised);
+  cursor: pointer;
+}
+
+/* A value that opens a list, on a row that also has an info mark. */
+.settings-choice-trigger {
+  height: var(--height-control);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  cursor: pointer;
+}
+.settings-choice-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--corner-control);
+}
+.settings-choice-dialog {
+  width: min(360px, calc(100vw - 32px));
+}
+.settings-choices {
+  margin: var(--space-8) 0 0;
+  padding: 0;
+  list-style: none;
+  border-radius: var(--corner-group);
+  background: var(--surface);
+  overflow: hidden;
+}
+.settings-choices > li + li {
+  border-top: 1px solid var(--border);
+}
+.settings-choice {
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--height-row);
+  padding: 0 var(--space-16);
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  text-align: left;
+  cursor: pointer;
+}
+.settings-choice[data-chosen] {
+  font-weight: 600;
+}
+.settings-choice[data-chosen] svg {
+  color: var(--accent);
+}
+.settings-choice:hover {
+  background: color-mix(in srgb, var(--raised) 55%, transparent);
+}
+.settings-choice:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* A text field in a Group: its name over the field. */
+.settings-field {
+  box-sizing: border-box;
+  padding: var(--space-12) var(--space-16);
+}
+.settings-field label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  color: var(--text);
+}
+.settings-field input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--height-control);
+}
+.settings-form-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-12);
+}
+.settings-form-group > .part-group-block {
+  align-self: stretch;
+}
+.part-button.settings-sign-out {
+  align-self: flex-start;
+  color: var(--danger);
+}
+/* Today's sections of the long form, on the Server pages until their own slice builds them. */
+.settings-legacy {
+  min-width: 0;
+}

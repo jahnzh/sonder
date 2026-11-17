@@ -26,42 +26,48 @@ test("appearance presets and custom colors persist without interrupting audio", 
       exact: true,
     })
     .click();
-  await expect(
-    page
-      .locator(".player-dock")
-      .getByRole("button", { name: "Pause", exact: true }),
-  ).toBeVisible();
+  const playing = () =>
+    expect(
+      page
+        .locator(".player-dock")
+        .getByRole("button", { name: "Pause", exact: true }),
+    ).toBeVisible();
+  await playing();
   await page
     .locator(".mobile-nav")
     .getByRole("button", { name: "Settings", exact: true })
     .click();
-  await page.getByRole("button", { name: "Light", exact: true }).click();
+  // Settings › Appearance saves a theme when it is chosen (#579).
+  await page.getByRole("button", { name: /^Appearance\b/ }).click();
+  const chooseTheme = async (name: string) => {
+    await page.getByRole("button", { name: /^Theme\b/ }).click();
+    await page.getByRole("dialog", { name: "Theme", exact: true }).getByRole("radio", { name, exact: true }).click();
+  };
+  await chooseTheme("Light");
   await expect(page.locator("body")).toHaveCSS(
     "background-color",
     "rgb(245, 244, 240)",
   );
-  await expect(
-    page
-      .locator(".player-dock")
-      .getByRole("button", { name: "Pause", exact: true }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Save appearance", exact: true })
-    .click();
+  await playing();
+  await expect
+    .poll(async () => (await (await page.request.get("/api/appearance")).json()).preset)
+    .toBe("light");
   await page.reload();
   await expect(page.locator("body")).toHaveCSS(
     "background-color",
     "rgb(245, 244, 240)",
   );
-  await page.getByRole("button", { name: "AMOLED", exact: true }).click();
+  await chooseTheme("AMOLED");
   await expect(page.locator("body")).toHaveCSS(
     "background-color",
     "rgb(0, 0, 0)",
   );
-  await page.getByRole("slider", { name: "Interface text size" }).fill("1.3");
-  await page
-    .getByRole("button", { name: "Save appearance", exact: true })
-    .click();
+  for (let i = 0; i < 6; i++)
+    await page.getByRole("button", { name: "Larger text", exact: true }).click();
+  await expect(page.getByRole("spinbutton", { name: "Text size", exact: true })).toHaveText("130%");
+  await expect
+    .poll(async () => (await (await page.request.get("/api/appearance")).json()).scale)
+    .toBe(1.3);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     390,
   );
@@ -415,18 +421,11 @@ test("a reader setting does not save an appearance preview", async ({
       },
     });
     const { id } = await upload.json();
-    await page.goto("/");
+    // A playback setting saved from Settings › Playback (#579) leaves the app's look as it was stored.
+    await page.goto("/#settings/playback");
     await page
-      .locator(".mobile-nav")
-      .getByRole("button", { name: "Settings", exact: true })
-      .click();
-    // Preview Light without saving it.
-    await page.getByRole("button", { name: "Light", exact: true }).click();
-    await page
-      .getByRole("combobox", { name: "Playback progress bar" })
-      .selectOption("chapter");
-    await page
-      .getByRole("button", { name: "Save playback settings", exact: true })
+      .getByRole("radiogroup", { name: "Progress bar shows", exact: true })
+      .getByRole("radio", { name: "Current chapter", exact: true })
       .click();
     await expect
       .poll(
@@ -631,21 +630,17 @@ test("Settings → Playback offers no ebook view and saving it keeps a stored vi
     await page.request.put("/api/appearance", {
       data: { ...appearance, reader: { ...appearance.reader, display: "segment" } },
     });
-    await page.goto("/");
-    await page
-      .locator(".mobile-nav")
-      .getByRole("button", { name: "Settings", exact: true })
-      .click();
-    await expect(page.getByRole("combobox", { name: "Playback progress bar" })).toBeVisible();
-    await expect(page.getByRole("combobox", { name: "Ebook view" })).toHaveCount(0);
+    // Settings › Playback saves a change at once (#579).
+    await page.goto("/#settings/playback");
+    const scope = page.getByRole("radiogroup", { name: "Progress bar shows", exact: true });
+    await expect(scope).toBeVisible();
+    await expect(page.getByText("Ebook view")).toHaveCount(0);
     const saved = page.waitForResponse(
       (response) => response.request().method() === "PUT" && response.url().endsWith("/api/appearance"),
     );
-    await page
-      .getByRole("button", { name: "Save playback settings", exact: true })
-      .click();
+    const other = appearance.playback.progressScope === "chapter" ? "Whole audiobook" : "Current chapter";
+    await scope.getByRole("radio", { name: other, exact: true }).click();
     expect((await saved).ok()).toBe(true);
-    await expect(page.getByText("Playback settings saved.")).toBeVisible();
     expect((await (await page.request.get("/api/appearance")).json()).reader.display).toBe("segment");
   } finally {
     await page.request.put("/api/appearance", { data: appearance });

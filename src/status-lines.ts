@@ -235,3 +235,96 @@ export const NOT_IN_LIBRARY_LINE = "Not in your library";
 export const QUEUE_OFF_LINE = "Paused";
 /** A worker that is switched off. */
 export const WORKER_OFF_LINE = "Not in use";
+
+/*
+ * The lines Now adds (#521, spec #513 "Now"): a series search's own lines, and the named forms of a finished or failed
+ * entry, which say what became of its file. Kept here with the rest of the vocabulary, in one place.
+ */
+
+/** A series search (`series_acquisition_jobs`): for the audiobook or for the ebook of a work. */
+export type SeriesSearchFacts = {
+  status: "pending" | "searching" | "done" | "failed";
+  search: "audiobook" | "ebook";
+};
+
+/**
+ * A series search's line. A finished search for the audiobook has none: the download it starts takes over the row.
+ */
+export function seriesSearchLine({ status, search }: SeriesSearchFacts): string | null {
+  switch (status) {
+    case "pending":
+      return "Waiting for series search";
+    case "searching":
+      return search === "ebook" ? "Searching for the ebook" : "Searching for the audiobook";
+    case "done":
+      return search === "ebook" ? "Ebook on server" : null;
+    case "failed":
+      return "Series search failed";
+    default:
+      return null;
+  }
+}
+
+/** What a finished entry of Now concerns, with the facts its line is written from. */
+export type FinishedFacts =
+  | { entry: "download"; backend?: "local" | "torbox" | "copy" | null }
+  | { entry: "server-copy" }
+  | { entry: "series-search"; search: "audiobook" | "ebook" }
+  | { entry: "ebook-check"; status: "accepted" | "rejected" }
+  | { entry: "reading-sync"; status: "ready" | "partial" | "cancelled"; coverage?: number | null }
+  | { entry: "device-save"; size: number };
+
+/** The line of a finished entry: what became of its file. */
+export function finishedLine(facts: FinishedFacts): string | null {
+  switch (facts.entry) {
+    case "download":
+      return facts.backend === "torbox" ? "Audiobook streams from TorBox" : "Audiobook on server";
+    case "server-copy":
+      return "Audiobook on server";
+    case "series-search":
+      return seriesSearchLine({ status: "done", search: facts.search });
+    case "ebook-check":
+      return facts.status === "accepted" ? "Ebook matches the narration" : "Ebook does not match the narration";
+    case "reading-sync":
+      if (facts.status === "ready") return "Reading sync ready";
+      if (facts.status === "partial") return `Reading sync partly ready${DOT}${percentOf(facts.coverage)} of the text`;
+      return "Reading sync cancelled";
+    case "device-save":
+      return `On this device${DOT}${bytes(facts.size)}`;
+    default:
+      return null;
+  }
+}
+
+/** What a failed entry of Now concerns; a save to this device names the files it has. */
+export type FailedFacts =
+  | { entry: "download" | "server-copy" | "series-search" | "ebook-check" | "reading-sync" }
+  | { entry: "device-save"; filesDone: number; filesTotal: number };
+
+/** The line of a failed entry: what did not become of its file. */
+export function failedLine(facts: FailedFacts): string {
+  switch (facts.entry) {
+    case "download":
+      return "Download failed";
+    case "server-copy":
+      return "Copy to server failed";
+    case "series-search":
+      return "Series search failed";
+    case "ebook-check":
+      return "Check failed";
+    case "reading-sync":
+      return "Reading sync stopped";
+    case "device-save":
+      return `Not complete${DOT}${facts.filesDone} of ${facts.filesTotal} files`;
+  }
+}
+
+/** A running reading sync step with the worker's file count, where it reports one ("Encoding audio · 24 of 43 files"). */
+export function withFileCount(line: string, files: { done: number; total: number } | null | undefined): string {
+  return files && files.total > 0 ? `${line}${DOT}${files.done} of ${files.total} files` : line;
+}
+
+/** A stuck or blocked entry's line with the server's reason ("Downloading to server · 77% · Blocked by Torrent client"). */
+export function withReason(line: string, reason: string | null | undefined): string {
+  return reason ? `${line}${DOT}${reason}` : line;
+}

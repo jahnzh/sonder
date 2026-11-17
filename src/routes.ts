@@ -5,6 +5,14 @@
 export type Place = "library" | "discover" | "activity" | "settings";
 export type BookPage = "audiobook" | "ebook" | "sync" | "hardcover" | "chapters" | "bookmarks" | "search";
 export type ActivityPart = "now" | "device" | "server";
+/** The pages of Settings (spec #572, "Settings"): `#settings/<page>`. */
+export type SettingsPage = "account" | "appearance" | "playback" | "connections" | "users" | "library" | "app";
+export const SETTINGS_PAGES: readonly SettingsPage[] = ["account", "appearance", "playback", "connections", "users", "library", "app"];
+/** The Settings pages only the administrator has. */
+export const ADMIN_SETTINGS_PAGES: readonly SettingsPage[] = ["users", "library"];
+export function isSettingsPage(page: string): page is SettingsPage {
+  return (SETTINGS_PAGES as readonly string[]).includes(page);
+}
 
 export type Route =
   | { name: "library" }
@@ -242,16 +250,22 @@ function built(route: Route): boolean {
     case "gallery-child":
     case "gallery-sheet":
       return true;
+    case "settings-page":
+      return isSettingsPage(route.page);
     case "activity":
       return route.part === "now" || route.part === "device" || route.part === "server";
+    // A worker's address shows Server, with the worker's controls of today, until its page lands (#519, #520).
+    case "worker":
+      return true;
     default:
       return false;
   }
 }
 
-/** Activity's Server part and its workers are the administrator's; Now and This device are everyone's. */
+/** Activity's Server part and its workers are the administrator's; Now and This device are everyone's. So are Users and Library and storage in Settings. */
 function allowed(route: Route, admin: boolean): boolean {
   if (admin) return true;
+  if (route.name === "settings-page") return !(ADMIN_SETTINGS_PAGES as readonly string[]).includes(route.page);
   return !(route.name === "worker" || (route.name === "activity" && route.part === "server"));
 }
 

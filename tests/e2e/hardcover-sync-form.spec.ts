@@ -20,7 +20,7 @@ async function fakeHardcoverSettings(page: Page) {
     fake.saved = route.request().postDataJSON();
     await route.fulfill({ json: {} });
   });
-  await page.goto("/#settings");
+  await page.goto("/#settings/connections");
   const mode = page.getByRole("combobox", { name: "Hardcover sync mode", exact: true });
   await expect(mode).toBeEnabled();
   return { fake, mode };
