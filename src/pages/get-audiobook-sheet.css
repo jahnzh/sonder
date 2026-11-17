@@ -118,3 +118,38 @@
   color: var(--muted);
   text-align: center;
 }
+/* The language beside the field (#602): a filled 44 high button with the language's name and a chevron. */
+.get-sheet-language {
+  flex: none;
+  box-sizing: border-box;
+  height: var(--height-control);
+  max-width: 45%;
+  padding: 0 var(--space-12);
+  border: 0;
+  border-radius: var(--corner-control);
+  background: var(--raised);
+  color: var(--text);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  cursor: pointer;
+}
+.get-sheet-language-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.get-sheet-language-chevron {
+  flex: none;
+  color: var(--muted);
+}
+.get-sheet-language:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* Load more recordings: a quiet button after the last row. */
+.part-button.get-sheet-more {
+  align-self: center;
+}

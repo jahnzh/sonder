@@ -1,0 +1,53 @@
+/* Picker (src/parts/Picker.tsx): the dialog's list, one 52 high row per choice on a surface card with a 1 px line
+   between rows, the chosen one in bold with the accent's tick. Tokens from tokens.css, colours the variables. */
+.part-picker {
+  width: min(360px, calc(100vw - 32px));
+}
+.part-picker-list {
+  margin: var(--space-8) 0 0;
+  padding: 0;
+  list-style: none;
+  border-radius: var(--corner-group);
+  background: var(--surface);
+  overflow: hidden;
+  max-height: min(60vh, 520px);
+  overflow-y: auto;
+}
+.part-picker-list > li + li {
+  border-top: 1px solid var(--border);
+}
+.part-picker-choice {
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--height-row);
+  padding: 0 var(--space-16);
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  text-align: left;
+  cursor: pointer;
+}
+.part-picker-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.part-picker-choice[data-chosen] {
+  font-weight: 600;
+}
+.part-picker-tick {
+  flex: none;
+  color: var(--accent);
+}
+.part-picker-choice:hover {
+  background: color-mix(in srgb, var(--raised) 55%, transparent);
+}
+.part-picker-choice:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
