@@ -71,10 +71,10 @@ test("a parameter with reserved characters survives writing and reading", () => 
   }
 });
 
-test("the old names keep working: #downloads opens Downloads, #reader/<ebook id> opens that edition", () => {
-  assert.deepEqual(readAddress("#downloads"), { name: "downloads" });
-  assert.equal(writeAddress({ name: "downloads" }), "#downloads");
-  assert.equal(placeOf({ name: "downloads" }), "downloads");
+test("the old names keep working: #downloads opens Activity's Now, #reader/<ebook id> opens that edition", () => {
+  assert.deepEqual(readAddress("#downloads"), { name: "activity", part: "now" });
+  assert.equal(writeAddress(readAddress("#downloads")), "#activity");
+  assert.equal(placeOf(readAddress("#downloads")), "activity");
   assert.deepEqual(readAddress("#reader/upload-abc123"), { name: "reader", ebookId: "upload-abc123" });
   assert.deepEqual(readAddress("#reader/libgen-9%3A1"), { name: "reader", ebookId: "libgen-9:1" });
   // Today's reader took everything after "reader/" as the id, slashes included.
@@ -82,7 +82,7 @@ test("the old names keep working: #downloads opens Downloads, #reader/<ebook id>
   assert.equal(writeAddress({ name: "reader", ebookId: "upload-abc123" }), "#reader/upload-abc123");
   assert.deepEqual(parentOf({ name: "reader", ebookId: "x" }), { name: "library" });
   for (const admin of [true, false]) {
-    assert.deepEqual(resolve(readAddress("#downloads"), { admin }), { name: "downloads" });
+    assert.deepEqual(resolve(readAddress("#downloads"), { admin }), { name: "activity", part: "now" });
     assert.deepEqual(resolve(readAddress("#reader/e1"), { admin }), { name: "reader", ebookId: "e1" });
   }
 });
@@ -98,7 +98,7 @@ test("an address that names nothing reads as nothing in the place it points into
     ["#Library", "library"],
     ["#library/extra", "library"],
     ["#discover/x", "discover"],
-    ["#downloads/x", "downloads"],
+    ["#downloads/x", "activity"],
     ["#activity/now", "activity"],
     ["#activity/device/x", "activity"],
     ["#activity/server/", "activity"],
@@ -130,8 +130,11 @@ test("an address that names nothing reads as nothing in the place it points into
 test("what an address shows: built pages as they are, everything else the first page of its place", () => {
   const shows = (address: string, admin = true) => writeAddress(resolve(readAddress(address), { admin }));
   // Built today.
-  for (const address of ["#library", "#discover", "#downloads", "#settings", "#activity", "#reader/e1"])
+  for (const address of ["#library", "#discover", "#settings", "#activity", "#activity/server", "#reader/e1"])
     assert.equal(shows(address), address, address);
+  // The old name of the Downloads page shows Now.
+  assert.equal(shows("#downloads"), "#activity");
+  assert.equal(shows("#downloads", false), "#activity");
   // Names nothing.
   assert.equal(shows("#nowhere"), "#library");
   assert.equal(shows("#settings/a/b"), "#settings");
@@ -146,11 +149,10 @@ test("what an address shows: built pages as they are, everything else the first 
   assert.equal(shows("#read/w1"), "#library");
   assert.equal(shows("#settings/appearance"), "#settings");
   assert.equal(shows("#activity/device"), "#activity");
-  assert.equal(shows("#activity/server"), "#activity");
   assert.equal(shows("#activity/server/wsl"), "#activity");
-  // The administrator's pages for someone else: the Library, since Activity is the administrator's today.
-  for (const address of ["#activity", "#activity/server", "#activity/server/wsl", "#activity/bogus"])
-    assert.equal(shows(address, false), "#library", address);
+  // Activity is everyone's place (#516); its Server part and workers are the administrator's: someone else gets Now.
+  for (const address of ["#activity", "#activity/server", "#activity/server/wsl", "#activity/bogus", "#activity/device"])
+    assert.equal(shows(address, false), "#activity", address);
   assert.equal(shows("#settings", false), "#settings");
   assert.equal(shows("#discover", false), "#discover");
 });

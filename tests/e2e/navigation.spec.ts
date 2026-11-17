@@ -75,17 +75,19 @@ test("switching place counts as a step for Back, and the installed app starts on
 
 // Work an earlier spec leaves failed or stuck on the shared server lights the attention dot. The dot used to join the
 // tab's name ("Settings Background work needs attention"), so the tab could not be reached by its name (#501's check).
-test("the Settings tab keeps its name while background work needs attention", async ({ page }) => {
+// The dot sits on Activity since #516; the rule is the same there.
+test("the Activity tab keeps its name while background work needs attention", async ({ page }) => {
   await page.route("**/api/activity", (route) =>
     route.fulfill({ json: { checkedAt: Date.now(), stuckMultiplier: 1, processes: [], items: [], attention: 1 } }));
   await page.goto("/#discover");
   await expect(shown(page)).toHaveText("Discover");
-  const settings = tab(page, "Settings");
-  await expect(settings.getByRole("img", { name: "Background work needs attention" })).toBeAttached();
-  await expect(settings).toHaveAccessibleDescription("Background work needs attention");
-  await settings.click();
-  await expect(page).toHaveURL(/#settings$/);
-  await expect(shown(page)).toHaveText("Settings");
+  const activity = tab(page, "Activity");
+  await expect(activity.getByRole("img", { name: "Background work needs attention" })).toBeAttached();
+  await expect(activity).toHaveAccessibleDescription("Background work needs attention");
+  await expect(tab(page, "Settings")).toHaveAccessibleDescription("");
+  await activity.click();
+  await expect(page).toHaveURL(/#activity$/);
+  await expect(shown(page)).toHaveText("Activity");
 });
 
 test("tapping the tab of the current place adds no step", async ({ page }) => {
@@ -119,16 +121,17 @@ test("a reload shows the same page and keeps what lies behind it", async ({ page
 
 test("the old names keep working: #downloads and #reader/<ebook id>", async ({ page }) => {
   const book = await importWithEbook(page, unique("Old name reader"));
+  // #downloads opens Activity's Now since Activity took the Downloads slot (#516); the redirect replaces the entry.
   await page.goto("/#downloads");
-  await expect(shown(page)).toHaveText("Downloads");
-  expect(await hash(page)).toBe("#downloads");
+  await expect(shown(page)).toHaveText("Activity");
+  await expect.poll(() => hash(page)).toBe("#activity");
   await page.goto(`/#reader/${book.ebookId}`);
   await expect(reader(page)).toBeVisible();
   expect(await hash(page)).toBe(`#reader/${book.ebookId}`);
   // The phone's back gesture closes the reader, as before.
   await page.goBack();
   await expect(reader(page)).toBeHidden();
-  await expect(shown(page)).toHaveText("Downloads");
+  await expect(shown(page)).toHaveText("Activity");
 });
 
 test("an address that names nothing, or a page not built yet, shows its place's first page", async ({ page }) => {

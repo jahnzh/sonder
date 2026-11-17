@@ -195,22 +195,39 @@ test("an address the app did not write counts as a step, and one that names noth
   assert.deepEqual(browser.hashes, ["#library", "#library", "#settings"]);
 });
 
-test("an old name is read in place: #downloads stays, an unknown word becomes the Library without a new entry", async () => {
-  const downloads = new FakeBrowser("/#downloads");
-  await load(downloads);
-  assert.deepEqual(downloads.hashes, ["#downloads"]);
+test("an old name is read in place: #downloads becomes #activity, an unknown word the Library, without a new entry", async () => {
+  for (const admin of [true, false]) {
+    const downloads = new FakeBrowser("/#downloads");
+    await load(downloads, admin);
+    assert.deepEqual(downloads.hashes, ["#activity"]);
+  }
   const unknown = new FakeBrowser("/#nowhere");
   await load(unknown);
   assert.deepEqual(unknown.hashes, ["#library"]);
 });
 
-test("the administrator's page for someone else shows the Library, and survives for the administrator", async () => {
-  const other = new FakeBrowser("/#activity");
+test("Activity's Server for someone else shows Now, and survives for the administrator", async () => {
+  const other = new FakeBrowser("/#activity/server");
   await load(other, false);
-  assert.deepEqual(other.hashes, ["#library"]);
-  const admin = new FakeBrowser("/#activity");
+  assert.deepEqual(other.hashes, ["#activity"]);
+  const now = new FakeBrowser("/#activity");
+  await load(now, false);
+  assert.deepEqual(now.hashes, ["#activity"]);
+  const admin = new FakeBrowser("/#activity/server");
   await load(admin, true);
-  assert.deepEqual(admin.hashes, ["#activity"]);
+  assert.deepEqual(admin.hashes, ["#activity/server"]);
+});
+
+test("switching Activity's parts replaces the entry, so Back leaves Activity", async () => {
+  const browser = new FakeBrowser("/#library");
+  const nav = await load(browser, true);
+  nav.goPlace("activity");
+  nav.navigate({ name: "activity", part: "server" });
+  nav.navigate({ name: "activity", part: "now" });
+  nav.navigate({ name: "activity", part: "server" });
+  assert.deepEqual(browser.hashes, ["#library", "#activity/server"]);
+  nav.goBack();
+  await until(() => browser.url.hash === "#library" && browser.index === 0, "#library");
 });
 
 test("Back restores the scroll position the entry had, and a new page starts at its top", async () => {
@@ -399,11 +416,11 @@ test("closing Now playing with its own control goes back, and a move asked for r
   const nav = await load(browser);
   nav.openSheet("now-playing");
   nav.closeSheet("now-playing");
-  // "Manage device downloads": close, then open Downloads in the same moment.
-  nav.navigate({ name: "downloads" });
-  await until(() => browser.url.hash === "#downloads", "#downloads");
+  // "Manage device downloads": close, then open Activity (Downloads' place since #516) in the same moment.
+  nav.navigate({ name: "activity", part: "now" });
+  await until(() => browser.url.hash === "#activity", "#activity");
   await settle();
-  assert.deepEqual(browser.hashes, ["#library", "#downloads"]);
+  assert.deepEqual(browser.hashes, ["#library", "#activity"]);
   assert.equal(nav.shownSheet(), null);
   nav.goBack();
   await until(() => browser.url.hash === "#library" && browser.index === 0, "#library");

@@ -2,8 +2,9 @@ import { test, expect, type Page, type Route } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { parseRange } from "../../server/range";
 
-// The device remembers how each save ended (#517): a failed or paused save to this device keeps its state on the
-// Downloads page after a reload, from the device's own records, and offers Retry or Resume.
+// The device remembers how each save ended (#517): a failed or paused save to this device keeps its state in
+// Activity's Now (the Downloads page until #516 put Activity in its slot) after a reload, from the device's own
+// records, and offers Retry or Resume.
 test.use({ serviceWorkers: "block" });
 
 // A save first asks the browser to protect its storage. Firefox asks the owner in a prompt that nobody answers in a
@@ -20,11 +21,18 @@ const media = readFileSync("server/demo/alice-01.mp3");
 
 async function twoFiles(page: Page) {
   await page.route("**/api/books", async (route) => {
-    const response = await route.fetch();
-    const books = await response.json();
-    const alice = books.find((book: { id: string }) => book.id === "alice");
-    alice.tracks = alice.tracks.slice(0, 2);
-    await route.fulfill({ response, json: books });
+    // A reload or the test's end can cancel a request that is still in flight; its answer is then disposed, and
+    // nothing is left to fulfil.
+    try {
+      const response = await route.fetch();
+      const books = await response.json();
+      const alice = books.find((book: { id: string }) => book.id === "alice");
+      alice.tracks = alice.tracks.slice(0, 2);
+      await route.fulfill({ response, json: books });
+    } catch (error) {
+      if (page.isClosed() || /disposed|closed|cancel/i.test(String(error))) return;
+      throw error;
+    }
   });
 }
 
@@ -48,9 +56,46 @@ async function saveFromDialog(page: Page) {
   await page.getByRole("dialog").getByRole("button", { name: "Save offline", exact: true }).click();
 }
 
-const row = (page: Page) => page.locator(".download-row", { hasText: TITLE });
-const downloadsTab = (page: Page) =>
-  page.getByRole("navigation", { name: "Mobile navigation" }).getByRole("button", { name: "Downloads", exact: true });
+/** The device's save of the book, in Now's "Your downloads" (the server's own downloads above it are other rows). */
+const row = (page: Page) => page.locator(".download-section .download-row", { hasText: TITLE });
+/** Activity took the Downloads slot in the tab bar (#516); its name stays "Activity" while the dot is lit. */
+const activityTab = (page: Page) =>
+  page.getByRole("navigation", { name: "Mobile navigation" }).getByRole("button", { name: "Activity", exact: true });
+
+/** Reaches this device's saves the way the owner does: the Activity tab, which opens on Now. */
+async function openNow(page: Page) {
+  const dialog = page.getByRole("dialog");
+  if (await dialog.isVisible()) await page.getByRole("button", { name: "Close dialog", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await activityTab(page).click();
+  await expect(page).toHaveURL(/#activity$/);
+  await expect(page.getByRole("radiogroup", { name: "Activity" }).getByRole("radio", { checked: true })).toHaveText("Now");
+  await expect(page.getByRole("heading", { name: /Your downloads/ })).toBeVisible();
+}
+
+/** What the device database holds of the book's recording: its save record, complete files and saved sections. */
+function deviceRecordsOf(page: Page, recordingId: string) {
+  return page.evaluate(
+    (recordingId) =>
+      new Promise<{ record: unknown; files: number; parts: number }>((resolve, reject) => {
+        const req = indexedDB.open("sonder");
+        req.onerror = () => reject(req.error);
+        req.onsuccess = () => {
+          const db = req.result;
+          const tx = db.transaction(["preferences", "downloads", "downloadParts"], "readonly");
+          const record = tx.objectStore("preferences").get(`device-save:${recordingId}`);
+          const files = tx.objectStore("downloads").index("recordingId").count(recordingId);
+          const parts = tx.objectStore("downloadParts").index("recordingId").count(recordingId);
+          tx.oncomplete = () => {
+            resolve({ record: record.result ?? null, files: files.result, parts: parts.result });
+            db.close();
+          };
+          tx.onerror = () => reject(tx.error);
+        };
+      }),
+    recordingId,
+  );
+}
 
 test("a save that fails is still Not complete with Retry after a reload, and Retry finishes it", async ({ page }) => {
   await twoFiles(page);
@@ -65,7 +110,7 @@ test("a save that fails is still Not complete with Retry after a reload, and Ret
   await saveFromDialog(page);
   await expect(page.locator(".toast")).toContainText("The source is gone.", { timeout: 20000 });
 
-  await page.goto("/#downloads");
+  await openNow(page);
   await expect(row(page).locator("small").first()).toHaveText("Not complete · 1 of 2 files");
   await expect(row(page).getByText("The source is gone.", { exact: true })).toBeVisible();
   await expect(row(page).getByRole("button", { name: "Retry", exact: true })).toBeVisible();
@@ -103,8 +148,7 @@ test("a paused save offers Resume after a reload, and Resume finishes it", async
   });
   await saveFromDialog(page);
   await expect.poll(() => held).toBeGreaterThan(0);
-  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
-  await downloadsTab(page).click();
+  await openNow(page);
   await expect(row(page).locator("small").first()).toHaveText("Saving · 0 of 2 files");
   await row(page).getByRole("button", { name: "Pause", exact: true }).click();
   await expect(row(page).locator("small").first()).toHaveText("Not complete · 0 of 2 files");
@@ -131,11 +175,20 @@ test("removing a failed save from the device forgets how it ended", async ({ pag
   });
   await saveFromDialog(page);
   await expect(page.locator(".toast")).toContainText("The source is gone.", { timeout: 20000 });
-  await page.goto("/#downloads");
+  await openNow(page);
   await expect(row(page).getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+  // The device remembers the failure and the first file, so there is something to forget.
+  expect(await deviceRecordsOf(page, "recording-alice")).toMatchObject({ record: { value: { state: "failed" } }, files: 1 });
+
   await row(page).getByRole("button", { name: `Remove download of ${TITLE}`, exact: true }).click();
   await expect(row(page)).toHaveCount(0);
+  await expect.poll(() => deviceRecordsOf(page, "recording-alice")).toEqual({ record: null, files: 0, parts: 0 });
+
+  // After a reload the row must not come back once the books are known: before they are, no row is shown anyway.
+  const books = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/books");
   await page.reload();
+  await books;
   await expect(page.getByRole("heading", { name: /Your downloads/ })).toBeVisible();
-  await expect(row(page)).toHaveCount(0);
+  await expect(page.locator(".download-section .download-row")).toHaveCount(0);
+  expect(await deviceRecordsOf(page, "recording-alice")).toEqual({ record: null, files: 0, parts: 0 });
 });

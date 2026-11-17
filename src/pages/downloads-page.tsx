@@ -59,10 +59,8 @@ export function DownloadsPage({
     });
   return (
     <>
+      {/* Shown as Activity's Now (#516): the place's Page header holds the Title. */}
       <div className="page-heading">
-        <div>
-          <h1>Downloads</h1>
-        </div>
         <div className="quiet-tag">
           <HardDrive size={15} />
           {bytes(downloads.reduce((a, d) => a + d.size, 0))} stored

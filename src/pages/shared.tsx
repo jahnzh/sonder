@@ -5,7 +5,7 @@ import { isAdmin } from "../lib";
 import type { Book } from "../types";
 
 /** The pages the shell switches between; the shell reads the address into one of these. */
-export type Page = "library" | "discover" | "downloads" | "settings" | "activity";
+export type Page = "library" | "discover" | "settings" | "activity";
 export type Notify = (text: string, error?: boolean) => void;
 
 export function Mark() {
