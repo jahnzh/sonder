@@ -314,6 +314,32 @@ test("Now playing has an entry: Back closes it and leaves the page where it was,
   await expect(shown(page)).toHaveText("Discover");
 });
 
+test("a dialog opened from Now playing closes with it on Back", async ({ page }) => {
+  const title = unique("Now playing dialog");
+  await importAudio(page, title);
+  await page.goto("/#discover");
+  await tab(page, "My library").click();
+  await expect(shown(page)).toHaveText("Library");
+  await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
+  const dock = page.locator(".player-dock");
+  await expect(dock.locator(".dock-book")).toContainText(title);
+  const nowPlaying = page.getByRole("dialog", { name: "Now playing", exact: true });
+  const keys = page.getByRole("dialog", { name: "Keyboard shortcuts", exact: true });
+  await dock.locator(".dock-book").click();
+  await expect(nowPlaying).toBeVisible();
+  await nowPlaying.getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
+  await expect(keys).toBeVisible();
+  await page.goBack();
+  await expect(nowPlaying).toBeHidden();
+  await expect(keys).toBeHidden();
+  await expect(shown(page)).toHaveText("Library");
+  // Opened again, Now playing does not bring the dialog back with it.
+  await dock.locator(".dock-book").click();
+  await expect(nowPlaying).toBeVisible();
+  await expect(nowPlaying.getByRole("button", { name: "Keyboard shortcuts", exact: true })).toBeVisible();
+  await expect(keys).toBeHidden();
+});
+
 /** A saved series on the Library, answered from a test server's copy, with every change to it counted (none may happen). */
 async function savedSeries(page: Page) {
   const changes: string[] = [];
@@ -441,6 +467,116 @@ test.describe("with answers from the test", () => {
     await page.goBack();
     await expect(shown(page)).toHaveText("Discover");
     await expect(importDialog).toBeHidden();
+  });
+
+  test("a magnet link sent before Back does not clear the dialog opened again, nor move the page", async ({ page }) => {
+    let answer!: () => void;
+    const held = new Promise<void>((resolve) => (answer = resolve));
+    let answered = false;
+    await page.route("**/api/acquire", async (route) => {
+      await held;
+      await route.fulfill({
+        json: { id: "acq-597", hash: "a".repeat(40), backend: "local", title: "Held", author: "QA", cover: "", status: "queued" },
+      });
+      answered = true;
+    });
+    await libraryOverDiscover(page);
+    const importDialog = page.getByRole("dialog", { name: "Add audiobook", exact: true });
+    const magnet = importDialog.getByRole("textbox", { name: "Magnet link" });
+    await page.getByRole("button", { name: "Add audiobook", exact: true }).click();
+    await importDialog.getByRole("button", { name: "Magnet link", exact: true }).click();
+    await magnet.fill(`magnet:?xt=urn:btih:${"a".repeat(40)}`);
+    await importDialog.locator("form.magnet-form").evaluate((form: HTMLFormElement) => form.requestSubmit());
+    await expect.poll(() => page.evaluate(() => !!document.querySelector(".magnet-form .spin"))).toBe(true);
+    // Back closes the dialog with the request still out; Forward, and the dialog opened again with a new draft.
+    await page.goBack();
+    await expect(shown(page)).toHaveText("Discover");
+    await expect(importDialog).toBeHidden();
+    await page.goForward();
+    await expect(shown(page)).toHaveText("Library");
+    await page.getByRole("button", { name: "Add audiobook", exact: true }).click();
+    await expect(importDialog).toBeVisible();
+    const draft = `magnet:?xt=urn:btih:${"b".repeat(40)}`;
+    await magnet.fill(draft);
+    answer();
+    await expect.poll(() => answered).toBe(true);
+    // The toast sits outside the open dialog, which hides the rest of the page from the accessibility tree.
+    await expect(page.locator(".toast").filter({ hasText: "Downloading to your home server’s HDD." })).toBeVisible();
+    await expect(importDialog).toBeVisible();
+    await expect(magnet).toHaveValue(draft);
+    expect(await hash(page)).toBe("#library");
+    await expect(shown(page)).toHaveText("Library");
+  });
+
+  test("a reader closed before its ebook's \"gone\" answer came leaves the page shown then alone", async ({ page }) => {
+    const id = unique("late-gone").replace(/ /g, "-");
+    let answer!: () => void;
+    const held = new Promise<void>((resolve) => (answer = resolve));
+    let answered = false;
+    await page.route(new RegExp(`/api/reader/${id}$`), async (route) => {
+      await held;
+      await route.fulfill({ status: 404, json: { error: "Ebook not found." } });
+      answered = true;
+    });
+    await page.goto("/#library");
+    await expect(shown(page)).toHaveText("Library");
+    // A link followed inside the app: an entry on the Library's.
+    await page.evaluate((target) => { location.hash = `#reader/${target}`; }, id);
+    await expect(reader(page)).toBeVisible();
+    await page.goBack();
+    await expect(reader(page)).toBeHidden();
+    await expect(shown(page)).toHaveText("Library");
+    await tab(page, "Discover").click();
+    await expect(shown(page)).toHaveText("Discover");
+    answer();
+    await expect.poll(() => answered).toBe(true);
+    // The answer is read and dropped within a few turns of the event loop; give it time to move the page if it would.
+    await page.waitForTimeout(500);
+    expect(await hash(page)).toBe("#discover");
+    await expect(shown(page)).toHaveText("Discover");
+    await expect(page.getByRole("status").filter({ hasText: "That ebook is no longer in your library." })).toHaveCount(0);
+  });
+
+  test("a removed ebook whose details are kept on the device but whose file is not shows the Library", async ({ page }) => {
+    const book = await importWithEbook(page, unique("Cached details"));
+    await page.goto(`/#reader/${book.ebookId}`);
+    await expect(reader(page).locator(".reader-viewport iframe")).toBeVisible();
+    // The reader kept the details on the device (and, where the browser can, the file: take that away again).
+    const fileKey = `reader-file:${book.ebookId}`;
+    const preferences = (action: "has" | "delete", key: string) =>
+      page.evaluate(
+        ([action, key]) =>
+          new Promise<boolean>((resolve, reject) => {
+            const open = indexedDB.open("sonder");
+            open.onerror = () => reject(open.error);
+            open.onsuccess = () => {
+              const db = open.result;
+              const store = db.transaction("preferences", "readwrite").objectStore("preferences");
+              const request = action === "has" ? store.count(key) : store.delete(key);
+              request.onsuccess = () => {
+                db.close();
+                resolve(action === "has" ? (request.result as number) > 0 : true);
+              };
+              request.onerror = () => reject(request.error);
+            };
+          }),
+        [action, key] as const,
+      );
+    await expect.poll(() => preferences("has", `reader-book:${book.ebookId}`)).toBe(true);
+    // Away from the app first, so no save of the file is still on its way.
+    await page.goto("/api/health");
+    await preferences("delete", fileKey);
+    expect(await preferences("has", fileKey)).toBe(false);
+    // Removed on the server: both its details and its file are "not found".
+    await page.route(new RegExp(`/api/reader/${book.ebookId}$`), (route) =>
+      route.fulfill({ status: 404, json: { error: "Ebook not found." } }));
+    await page.route(new RegExp(`/api/ebooks/${book.ebookId}/file$`), (route) =>
+      route.fulfill({ status: 404, json: { error: "This ebook is no longer on the media drive." } }));
+    await page.goto(`/#reader/${book.ebookId}`);
+    await expect(shown(page)).toHaveText("Library");
+    await expect(reader(page)).toBeHidden();
+    await expect(page).toHaveURL(/#library$/);
+    await expect(page.getByRole("status").filter({ hasText: "That ebook is no longer in your library." })).toBeVisible();
   });
 });
 
@@ -573,6 +709,64 @@ test.describe("with a password", () => {
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page.getByRole("heading", { name: "Activity", level: 1 })).toBeVisible();
     expect(await hash(page)).toBe("#activity");
+    await context.close();
+  });
+
+  test("an answer asked for as one account that comes after another signed in is not shown to the other", async ({ browser }) => {
+    // Requests answered from the test, so no service worker may take them out of page.route's reach.
+    const context = await browser.newContext({ serviceWorkers: "block" });
+    const page = await context.newPage();
+    const name = `reader${randomBytes(3).toString("hex")}`;
+    // The administrator's answers wait until the test lets them go; the reader's answers wait too, so the Library the
+    // reader sees can only start from what the app kept.
+    let releaseAdmin!: () => void;
+    const adminHeld = new Promise<void>((resolve) => (releaseAdmin = resolve));
+    let releaseReader!: () => void;
+    const readerHeld = new Promise<void>((resolve) => (releaseReader = resolve));
+    const asked = { admin: 0, reader: 0 };
+    const answered = { admin: 0 };
+    const answer = (adminJson: unknown, readerJson: unknown) => async (route: import("@playwright/test").Route) => {
+      if (route.request().headers()["x-sonder-user-id"] === "1") {
+        asked.admin++;
+        await adminHeld;
+        await route.fulfill({ json: adminJson }).catch(() => {});
+        answered.admin++;
+      } else {
+        asked.reader++;
+        await readerHeld;
+        await route.fulfill({ json: readerJson }).catch(() => {});
+      }
+    };
+    await page.route("**/api/series", answer(SAVED_SERIES, []));
+    await page.route("**/api/hardcover", answer(CONNECTED, { ...CONNECTED, configured: false }));
+    await page.goto(`${base}/#library`);
+    await page.getByLabel("Password", { exact: true }).fill("admin-password");
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(shown(page)).toHaveText("Library");
+    expect((await page.request.post(`${base}/api/users`, { data: { username: name, password: "reader-password" } })).ok()).toBe(true);
+    await expect.poll(() => asked.admin).toBeGreaterThanOrEqual(2);
+    // The administrator's session ends with those requests out, and the reader signs in on the same device.
+    await page.evaluate(() => window.dispatchEvent(new Event("sonder:unauthorized")));
+    await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+    await page.getByLabel("Username").fill(name);
+    await page.getByLabel("Password", { exact: true }).fill("reader-password");
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(shown(page)).toHaveText("Library");
+    await expect.poll(() => asked.reader).toBeGreaterThanOrEqual(2);
+    // Now the administrator's answers arrive.
+    const before = answered.admin;
+    releaseAdmin();
+    await expect.poll(() => answered.admin).toBeGreaterThanOrEqual(before + 2);
+    await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 300)));
+    // The Library shown again starts from what was kept for the reader: nothing of the administrator's.
+    await tab(page, "Discover").click();
+    await expect(shown(page)).toHaveText("Discover");
+    await tab(page, "My library").click();
+    await expect(shown(page)).toHaveText("Library");
+    await expect(page.getByText("No saved series yet.", { exact: false })).toBeVisible();
+    await expect(page.getByText("The Crossing", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Hardcover is connected.", { exact: false })).toHaveCount(0);
+    releaseReader();
     await context.close();
   });
 });

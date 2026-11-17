@@ -335,8 +335,6 @@ function LibraryApp({
   // Back (or any traversal) that changes the page closes the shell's dialogs and confirms nothing: they belonged
   // to the page that was left. A task they started that ends later does not move the user from the page now shown.
   const leftByHistory = useRef(0);
-  const importOpenNow = useRef(importOpen);
-  importOpenNow.current = importOpen;
   useEffect(
     () =>
       onPageLeftByHistory(() => {
@@ -931,17 +929,17 @@ function LibraryApp({
           canAcquire={user.role === "admin"}
           onSaved={() => { setSeriesRevision((value) => value + 1); void refresh(); notify("Series saved."); }} />
         <ImportDialog
-          onQueued={() => {
-            const shown = importOpenNow.current;
-            setImportOpen(false);
+          onQueued={(shown) => {
             void refresh();
-            if (shown) navigate("downloads");
+            if (!shown) return;
+            setImportOpen(false);
+            navigate("downloads");
           }}
           open={importOpen}
           onClose={() => setImportOpen(false)}
-          onImported={() => {
+          onImported={(shown) => {
             void refresh();
-            setImportOpen(false);
+            if (shown) setImportOpen(false);
             notify("Audiobook imported.");
           }}
           notify={notify}
@@ -1227,10 +1225,11 @@ function ImportDialog({
   torboxConfigured,
   onConnect,
 }: {
-  onQueued: () => void;
+  /** `shown`: the dialog the request was made in is still open; one closed by Back or opened anew is left alone. */
+  onQueued: (shown: boolean) => void;
   open: boolean;
   onClose: () => void;
-  onImported: () => void;
+  onImported: (shown: boolean) => void;
   notify: (s: string, error?: boolean) => void;
   torboxConfigured: boolean;
   onConnect: () => void;
@@ -1249,6 +1248,15 @@ function ImportDialog({
   const input = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  // Each opening of the dialog. A request that ends after its opening was closed (Back closes it even while busy)
+  // must not clear, close or move away from a dialog opened again meanwhile.
+  const opening = useRef(0);
+  const openNow = useRef(open);
+  openNow.current = open;
+  useEffect(() => {
+    if (open) opening.current++;
+  }, [open]);
+  const stillShown = (asked: number) => openNow.current && opening.current === asked;
   useEffect(() => {
     if (open) {
       setError("");
@@ -1289,6 +1297,7 @@ function ImportDialog({
       setError("Choose an audio file to get started.");
       return;
     }
+    const asked = opening.current;
     setBusy(true);
     setError("");
     setUploadProgress(0);
@@ -1322,15 +1331,17 @@ function ImportDialog({
           reject(new Error("The upload was interrupted. Please try again."));
         xhr.send(form);
       });
-      onImported();
+      onImported(stillShown(asked));
     } catch (e) {
-      setError((e as Error).message);
+      if (stillShown(asked)) setError((e as Error).message);
+      else notify((e as Error).message, true);
     } finally {
       setBusy(false);
       setUploadProgress(null);
     }
   };
   const importTorrent = async (id: number) => {
+    const asked = opening.current;
     setBusy(true);
     setError("");
     try {
@@ -1338,15 +1349,17 @@ function ImportDialog({
         method: "POST",
         body: JSON.stringify({ torrentId: id }),
       });
-      onImported();
+      onImported(stillShown(asked));
     } catch (e) {
-      setError((e as Error).message);
+      if (stillShown(asked)) setError((e as Error).message);
+      else notify((e as Error).message, true);
     } finally {
       setBusy(false);
     }
   };
   const addMagnet = async (e: FormEvent) => {
     e.preventDefault();
+    const asked = opening.current;
     setBusy(true);
     setError("");
     try {
@@ -1354,7 +1367,9 @@ function ImportDialog({
         method: "POST",
         body: JSON.stringify({ magnet }),
       });
-      setMagnet("");
+      const shown = stillShown(asked);
+      // A draft typed into the dialog opened again is not this request's to clear.
+      if (shown) setMagnet("");
       notify(
         job.status === "ready"
           ? "Your audiobook is ready."
@@ -1362,9 +1377,10 @@ function ImportDialog({
             ? "Preparing your cached stream."
             : "Downloading to your home server’s HDD.",
       );
-      onQueued();
+      onQueued(shown);
     } catch (e) {
-      setError((e as Error).message);
+      if (stillShown(asked)) setError((e as Error).message);
+      else notify((e as Error).message, true);
     } finally {
       setBusy(false);
     }

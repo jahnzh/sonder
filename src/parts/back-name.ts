@@ -35,6 +35,8 @@ export function pageName(route: Route): string {
       return "Gallery";
     case "gallery-child":
       return "Child page";
+    case "gallery-sheet":
+      return "the sheet";
   }
 }
 
