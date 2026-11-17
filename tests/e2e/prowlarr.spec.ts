@@ -68,59 +68,49 @@ test("Prowlarr is configured in Settings and merges with AudioBookBay, isolating
   await page
     .getByRole("button", { name: "About Alice’s Adventures in Wonderland", exact: true })
     .click();
-  // Get another recording on the Audiobook page (#530) opens today's release picker.
+  // Get another recording on the Audiobook page (#530) opens the Get audiobook sheet (#601).
   await page.getByRole("region", { name: "Book", exact: true }).getByRole("button", { name: /^Audiobook / }).click();
   await page.getByRole("button", { name: "Get another recording", exact: true }).click();
-  const cards = page.locator(".release-card");
-  // The AudioBookBay release and both indexer copies of the same torrent collapse into one card.
-  await expect(cards).toHaveCount(2);
-  await expect(cards.first()).toContainText("Kara Shallenberg");
-  await expect(cards.first()).toContainText(
-    "AudioBookBay, Fixture Tracker, Second Tracker · 40 seeders",
-  );
-  await expect(cards.nth(1)).toContainText("Lewis Carroll - Alice in Wonderland [M4B] 64kbps");
-  await expect(cards.nth(1)).toContainText("Fixture Tracker · 12 seeders");
-  await expect(cards.nth(1)).toContainText("Language unknown");
-  await expect(page.locator(".release-source-error")).toHaveCount(0);
+  const sheet = page.getByRole("dialog", { name: "Get audiobook", exact: true });
+  const rows = sheet.getByRole("radio");
+  // The AudioBookBay release and both indexer copies of the same torrent collapse into one row, with the most seeders.
+  await expect(rows).toHaveCount(2);
+  await expect(rows.first()).toContainText("Kara Shallenberg");
+  await expect(rows.first()).toContainText("40 seeders");
+  await expect(rows.nth(1)).toContainText("Lewis Carroll - Alice in Wonderland [M4B] 64kbps");
+  await expect(rows.nth(1)).toContainText("12 seeders");
+  await expect(sheet.getByText("From AudioBookBay and Prowlarr.", { exact: true })).toBeVisible();
+  await expect(sheet.getByText(/could not be searched/)).toHaveCount(0);
   expect(await page.content()).not.toContain("fixture-download-key");
 
-  // Closing a pending ABB detail request must not disable a later Prowlarr choice.
-  await cards.first().getByRole("button", { name: "Choose release", exact: true }).click();
-  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
-  await cards.nth(1).getByRole("button", { name: "Choose release", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Use this release", exact: true })).toBeEnabled();
-  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
+  // A pending ABB detail request is no longer part of choosing: choosing sends nothing, and a Prowlarr row can be got.
+  await rows.first().click();
+  await rows.nth(1).click();
+  await expect(sheet.getByRole("button", { name: "Get this recording", exact: true })).toBeEnabled();
   releaseDetails();
 
   // A failing Prowlarr leaves AudioBookBay results in place with a note.
-  const picker = page.locator(".release-picker");
-  const search = picker.getByRole("textbox", { name: "Search audiobook releases" });
+  const search = sheet.getByRole("searchbox", { name: "Search for a recording" });
   await search.fill("broken alice");
-  await picker.getByRole("button", { name: "Search", exact: true }).click();
-  await expect(page.locator(".release-source-error")).toHaveText(
-    "Prowlarr unavailable: Prowlarr returned 500.",
-  );
-  await expect(cards).toHaveCount(1);
-  await expect(cards.first()).toContainText("AudioBookBay");
+  await search.press("Enter");
+  await expect(sheet.getByText("Prowlarr could not be searched.", { exact: false })).toContainText("Prowlarr returned 500.");
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toContainText("Kara Shallenberg");
 
   // A failing AudioBookBay leaves Prowlarr results in place with a note.
   abbFails = true;
   await search.fill("wonderland");
-  await picker.getByRole("button", { name: "Search", exact: true }).click();
-  await expect(page.locator(".release-source-error")).toHaveText(
-    "AudioBookBay unavailable: AudioBookBay returned 503. Try another mirror in Settings.",
+  await search.press("Enter");
+  await expect(sheet.getByText("AudioBookBay could not be searched.", { exact: false })).toContainText(
+    "AudioBookBay returned 503. Try another mirror in Settings.",
   );
-  await expect(cards).toHaveCount(2);
-  await expect(cards.first()).toContainText("Fixture Tracker, Second Tracker · 40 seeders");
-  await expect(page.locator(".inline-error")).toHaveCount(0);
+  await expect(rows).toHaveCount(2);
+  await expect(rows.first()).toContainText("40 seeders");
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
 
-  await cards
-    .nth(1)
-    .getByRole("button", { name: "Choose release", exact: true })
-    .click();
-  await expect(page.getByRole("dialog")).toContainText("Fixture Tracker · 12 seeders");
-  await page.getByRole("button", { name: "Use this release", exact: true }).click();
+  const indexed = rows.filter({ hasText: "12 seeders" });
+  await indexed.click();
+  await sheet.getByRole("button", { name: "Get this recording", exact: true }).click();
   await expect.poll(() => chosen.length).toBe(1);
   expect(chosen[0]).toEqual({
     id: expect.stringMatching(/^prowlarr-[a-f0-9]{32}$/),

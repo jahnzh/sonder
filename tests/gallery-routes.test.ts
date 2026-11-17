@@ -31,6 +31,9 @@ test("a back button is named after where it lands", () => {
   assert.equal(backName({ name: "library" }), "Back to Library");
   assert.equal(backName({ name: "discover" }), "Back to Discover");
   assert.equal(backName({ name: "book", workId: "w1" }), "Back to the book");
+  // Reading sync's Details goes back to Reading sync (#540); the book's other pages go back to the book.
+  assert.equal(backName({ name: "book-page", workId: "w1", page: "sync" }), "Back to Reading sync");
+  assert.equal(backName({ name: "book-page", workId: "w1", page: "ebook" }), "Back to the book");
   assert.equal(backName({ name: "activity", part: "server" }), "Back to Server");
   assert.equal(backName({ name: "settings" }), "Back to Settings");
   // A page with a name of its own passes it in; one it does not know falls back to the generic name.
