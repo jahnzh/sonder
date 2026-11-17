@@ -239,10 +239,11 @@ test("bookmarks survive app reopening and deleting one does not change reading p
   );
   const reopened = await createApp();
   try {
-    assert.equal(
-      (await reopened.inject(`/api/reader/${id}`)).json().bookmarks.length,
-      1,
-    );
+    const saved = (await reopened.inject(`/api/reader/${id}`)).json().bookmarks;
+    assert.equal(saved.length, 1);
+    // The Bookmarks page shows the day each was saved (#590): the row gains its created_at, nothing else changes.
+    assert.deepEqual(Object.keys(saved[0]).sort(), ["createdAt", "id", "label", "locator"]);
+    assert.equal(typeof saved[0].createdAt, "number");
     await reopened.inject({
       method: "DELETE",
       url: `/api/reader/${id}/bookmarks/bookmark-12345`,

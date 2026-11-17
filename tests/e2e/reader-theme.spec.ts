@@ -151,12 +151,13 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await expect(
     page.getByRole("button", { name: "Remove bookmark from current sentence", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
+  // More's Bookmarks opens the Bookmarks page (#590), which lists the bookmark; Back returns to the reader.
   await openMore(page);
   await more.getByRole("button", { name: "Bookmarks", exact: true }).click();
-  await expect(page.locator(".reader-room:not(.inline-reader) .reader-bookmark")).toHaveCount(1);
-  await page
-    .getByRole("button", { name: "Close reader options", exact: true })
-    .click();
+  await expect(page.getByRole("heading", { level: 1, name: "Bookmarks", exact: true })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Bookmarks", exact: true }).getByRole("listitem")).toHaveCount(1);
+  await page.getByRole("button", { name: "Back to the book", exact: true }).click();
+  await expect(page.locator(".reader-room:not(.inline-reader) .reader-viewport iframe")).toBeVisible();
   await expect
     .poll(
       async () =>
@@ -389,16 +390,18 @@ test("a bookmark the server rejects is dropped with a notice and later bookmarks
     exact: true,
   });
   await add.click();
+  // The refusal is said in the foot (#591), not in the app's toast over the text.
+  const refused = reader.locator('.reader-message[data-kind="error"]');
   await expect.poll(() => temporary.length).toBe(1);
-  await expect(page.locator(".toast.error")).toHaveCount(0);
+  await expect(refused).toHaveCount(0);
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
   await expect.poll(() => temporary.length).toBe(0);
-  await expect(page.locator(".toast.error")).toHaveCount(0);
+  await expect(refused).toHaveCount(0);
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
-  // The reader dialog hides the rest of the page from the accessibility tree.
-  await expect(page.locator(".toast.error")).toContainText(
-    "A bookmark could not be saved",
-  );
+  await expect(refused.getByRole("alert")).toHaveText("The bookmark could not be saved.");
+  await expect(page.locator(".toast.error")).toHaveCount(0);
+  await refused.getByRole("button", { name: "Dismiss", exact: true }).click();
+  await expect(refused).toHaveCount(0);
   await add.click();
   await expect.poll(() => transientForSecond).toBe(false);
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
@@ -550,12 +553,13 @@ test("Keep my place while offline keeps the conflict until reconnected and then 
   });
   expect(remote.ok()).toBe(true);
   await frame.locator("body").click({ position: { x: 340, y: 100 } });
-  const conflict = reader.locator(".reading-conflict");
+  // The conflict is the foot's message (#591); Stay is today's Keep my place.
+  const conflict = reader.locator('.reader-message[data-kind="conflict"]');
   await expect(conflict).toBeVisible();
   await context.setOffline(true);
   try {
     await conflict
-      .getByRole("button", { name: "Keep my place", exact: true })
+      .getByRole("button", { name: "Stay here", exact: true })
       .click();
     await expect(conflict).toBeVisible();
   } finally {
@@ -624,7 +628,7 @@ test("a 409 with no server checkpoint rebases to revision 0 and saves instead of
           ?.revision,
     )
     .toBe(1);
-  await expect(reader.locator(".reading-conflict")).toBeHidden();
+  await expect(reader.locator('.reader-message[data-kind="conflict"]')).toBeHidden();
 });
 // The view choice is gone from Settings (ADR 0017); a choice saved by an older client stays stored, ignored.
 test("Settings → Playback offers no ebook view and saving it keeps a stored view choice", async ({

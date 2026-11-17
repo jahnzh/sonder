@@ -64,7 +64,6 @@ try {
  const more=()=>controls.click(room.locator('.reader-topbar').getByRole('button',{name:'More',exact:true}),'More');
  await more();
  const options=page.getByRole('region',{name:'Playback options',exact:true});
- await expect(options.getByRole('button',{name:'Versions & sources',exact:true})).toBeVisible();
  await expect(options.getByRole('button',{name:'Listen from here',exact:true})).toBeVisible();
  // The reader shows the book's own text only: there is no switch between views (ADR 0017).
  await expect(options.getByRole('group',{name:'Reading mode',exact:true})).toHaveCount(0);
@@ -122,7 +121,8 @@ try {
  await expect(toast).toBeVisible();
  await expect.poll(async()=>!(await actual()).paused,{timeout:20000}).toBe(true);
  await page.screenshot({path:'artifacts/live-reader-listen-from-here-mobile.png'});
- await toast.getByRole('button',{name:'Undo',exact:true}).click();
+ // Undo is the foot's message action (#591).
+ await room.locator('.reader-message').getByRole('button',{name:'Undo',exact:true}).click();
  await expect.poll(async()=>Math.abs((await actual()).position-before),{timeout:20000}).toBeLessThan(3);
  await controls.click(pause,'Pause narration');
  report.checks.push({name:'Long-press listens from that sentence and Undo returns'});
@@ -142,6 +142,37 @@ try {
  await expect(room).toHaveAttribute('data-current-passage',middle.paragraphId);
  await expect.poll(()=>narratedOnPage(room),{message:`F did not bring the page of the narrated sentence ${middle.paragraphId} back`}).toBe(true);
  report.checks.push({name:'F brings the narrated sentence back on the page after paging away'});
+ // Search and Bookmarks are pages of the book (#590): a result opens the reader there, paged away, Back to narration
+ // returns to the narration, and Back from the reader shows the words and results again. Nothing here writes a bookmark.
+ const manifest=await getJSON(get,`/api/reader/${encodeURIComponent(ebook.id)}`);
+ const narratedText=manifest.sections.flatMap(section=>section.paragraphs).find(fragment=>fragment.id===middle.paragraphId)?.text||'';
+ const words=narratedText.trim().split(/\s+/).slice(0,6).join(' ');
+ if(words.length<2)throw Error(`The narrated sentence ${middle.paragraphId} has no words to search for`);
+ await controls.click(room.locator('.reader-topbar').getByRole('button',{name:'Search this book',exact:true}),'Search this book');
+ await expect(page.getByRole('heading',{level:1,name:'Search',exact:true})).toBeVisible();
+ const field=page.getByRole('searchbox',{name:'Search this book',exact:true});
+ await field.fill(words);
+ await expect(page.locator('.reader-pages-count')).toHaveText(/^\d+ sentences?$/);
+ await page.screenshot({path:'artifacts/live-reader-search-mobile.png'});
+ await page.locator('.reader-pages-result').filter({hasText:words}).first().click();
+ await expect(full).toBeVisible();
+ await expect(room).not.toHaveAttribute('data-current-passage',/.+/);
+ await controls.click(room.getByRole('button',{name:'Back to narration',exact:true}),'Back to narration');
+ await expect(room).toHaveAttribute('data-current-passage',middle.paragraphId);
+ await page.goBack();
+ await expect(field).toHaveValue(words);
+ await expect(page.locator('.reader-pages-count')).toHaveText(/^\d+ sentences?$/);
+ await page.getByRole('button',{name:'Back to the book',exact:true}).click();
+ await expect(full).toBeVisible();
+ await controls.click(room.locator('.reader-player').getByRole('button',{name:'Chapters',exact:true}),'Chapters');
+ await expect(page.getByRole('heading',{level:1,name:'Chapters',exact:true})).toBeVisible();
+ await page.getByRole('radio',{name:'Bookmarks',exact:true}).click();
+ await expect(page.getByRole('heading',{level:1,name:'Bookmarks',exact:true})).toBeVisible();
+ await page.screenshot({path:'artifacts/live-reader-bookmarks-mobile.png'});
+ await page.getByRole('button',{name:'Back to the book',exact:true}).click();
+ await expect(full).toBeVisible();
+ await expect(room).toHaveAttribute('data-current-passage',middle.paragraphId);
+ report.checks.push({name:'Search and Bookmarks open as pages; a result opens the reader there and Back to narration returns'});
  await page.setViewportSize({width:320,height:740});
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(320);
  expect((await waitForBox(play,{description:'Play narration button'})).y+44).toBeLessThanOrEqual(740);

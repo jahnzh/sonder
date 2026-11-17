@@ -1,9 +1,10 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { spawn, type ChildProcess } from "node:child_process";
+import { createServer, type AddressInfo } from "node:net";
 import { readerFixture } from "../reader-fixture";
 import { installReaderWaitBudget, READER_WAIT_MS, timedWait } from "./timing";
-import { rememberAlicesPlace } from "./alice-place";
 
 // Per-step expect ceilings are up to 45 s; leave room around history restores.
 installReaderWaitBudget(test);
@@ -30,21 +31,7 @@ async function importRecording(page: Page, name: string, tracks = 1) {
 // feature card of every later spec on the same shard server would open instead of Alice. After each test they leave
 // the library through the route the book dialog's Remove uses, so the server keeps the library it had before.
 const importedWorks: string[] = [];
-// Ebooks a test put on Alice's work. Alice with an ebook opens Now playing with the reader, where the next spec on the
-// server (media-controls: Space toggles playback, the shortcut sheet) finds no plain Pause and no Keyboard shortcuts
-// button (#529, #645). There is no route that deletes an ebook, so after the test each one moves, through the reader's
-// link route, to a work of its own that then leaves the library with this file's other imports.
-const ebooksOnAlice: string[] = [];
-// Use Hardcover position plays Alice and so moves her saved place; it goes back to where the test found it.
-let restoreAlice: (() => Promise<void>) | null = null;
 test.afterEach(async ({ page }) => {
-  await restoreAlice?.();
-  restoreAlice = null;
-  for (const ebookId of ebooksOnAlice.splice(0)) {
-    const away = await importRecording(page, "Ebook taken off Alice");
-    const moved = await page.request.post(`/api/reader/${encodeURIComponent(ebookId)}/link`, { data: { workId: away.workId } });
-    expect(moved.ok()).toBe(true);
-  }
   for (const workId of importedWorks.splice(0)) {
     const removed = await page.request.delete(`/api/works/${encodeURIComponent(workId)}/library`);
     expect(removed.ok()).toBe(true);
@@ -138,11 +125,15 @@ async function revealReaderControls(page: Page) {
   const room = page.locator(".inline-reader");
   await expect(room.locator(".reader-viewport iframe")).toBeVisible();
   const topbar = room.locator(".reader-topbar");
-  if (await topbar.isHidden()) {
-    const box = (await room.locator(".reader-viewport").boundingBox())!;
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  }
-  await expect(topbar).toBeVisible();
+  // The controls can hide between the look and the tap (the reader follows a new position), so tap again until
+  // they are up.
+  await expect(async () => {
+    if (await topbar.isHidden()) {
+      const box = (await room.locator(".reader-viewport").boundingBox())!;
+      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    }
+    await expect(topbar).toBeVisible({ timeout: 1500 });
+  }).toPass({ timeout: 15000 });
 }
 
 async function openPlaybackOptions(page: Page) {
@@ -163,6 +154,14 @@ async function openPlaybackOptions(page: Page) {
   }
   await expect(options).toBeVisible();
   return options;
+}
+
+// Plays from on the Audiobook page (#530): a picker that keeps the place.
+async function playFrom(page: Page, source: string) {
+  await page.getByRole("region", { name: "Audiobook", exact: true }).getByRole("button", { name: /^Plays from: / }).click();
+  const picker = page.getByRole("dialog", { name: "Plays from", exact: true });
+  await picker.getByRole("radio", { name: source, exact: true }).click();
+  await expect(picker).toBeHidden();
 }
 
 async function closePlaybackOptions(page: Page) {
@@ -478,12 +477,9 @@ test("source reloads only record a jump when the new source moves the position",
   await startPaused(page, book.title);
   await setPosition(page, 150.25);
   await openReaderPlayer(page);
-  await (await openPlaybackOptions(page)).getByRole("button", { name: "Versions & sources", exact: true }).click();
-  const manager = page.getByRole("dialog", { name: "Versions & sources", exact: true });
-  const choice = manager.getByRole("combobox", { name: "Playback source choice", exact: true });
-  await expect(choice).toBeEnabled();
-  await choice.selectOption("server");
-  await manager.getByRole("button", { name: "Apply source", exact: true }).click();
+  await (await openPlaybackOptions(page)).getByRole("button", { name: "Audiobook", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Audiobook", exact: true }).getByRole("button", { name: /^Plays from: / })).toBeEnabled();
+  await playFrom(page, "Server copy");
   await expect.poll(async () => (await audioState(page)).src).toContain("?source=server");
   await expect.poll(async () => (await audioState(page)).position).toBe(150.25);
   expect(await history(page, book.recordingId)).toEqual([]);
@@ -492,22 +488,61 @@ test("source reloads only record a jump when the new source moves the position",
     const audio = ((window as any).__jumpAudio as HTMLAudioElement[]).find((item) => !!item.src)!;
     Object.defineProperty(audio, "duration", { configurable: true, get: () => 100 });
   });
-  await choice.selectOption("auto");
-  await manager.getByRole("button", { name: "Apply source", exact: true }).click();
+  await playFrom(page, "Automatic");
   await expect.poll(async () => (await history(page, book.recordingId))[0]?.kind).toBe("source");
   expect((await history(page, book.recordingId))[0].position).toBe(150.25);
   await page.evaluate(() => {
     const audio = ((window as any).__jumpAudio as HTMLAudioElement[]).find((item) => !!item.src)!;
     delete (audio as any).duration;
   });
-  await manager.getByRole("button", { name: "Close dialog", exact: true }).click();
   await openReaderPlayer(page);
   await restoreLatest(page);
   await expect.poll(async () => (await audioState(page)).position).toBe(150.25);
 });
 
-test("Use Hardcover position can be undone through the normal progress path", async ({ page }) => {
-  restoreAlice = await rememberAlicesPlace(page);
+// Hardcover's position is for Alice (the fixture's book 501), so this test needs an EPUB on Alice, which no route
+// removes again; reading it copies Alice's streamed tracks to the server, and the sync saves a Hardcover token and
+// Alice's place. On the shared server every later spec (and a repeat of this file) would find Alice opening in the
+// reader with "On server" copies. So it runs against a server of its own, which it stops afterwards.
+async function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.once("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const { port } = probe.address() as AddressInfo;
+      probe.close(() => resolve(port));
+    });
+  });
+}
+test.describe("on a server of its own", () => {
+  let server: ChildProcess | undefined;
+  let base = "";
+  test.beforeAll(async () => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const port = await freePort();
+      base = `http://127.0.0.1:${port}`;
+      server = spawn(process.execPath, ["--import", "tsx", "tests/browser-server.ts"], {
+        env: { ...process.env, PLAYWRIGHT_PORT: String(port) },
+        stdio: "ignore",
+      });
+      for (let i = 0; i < 150 && server.exitCode === null; i++) {
+        try {
+          if ((await fetch(`${base}/api/health`)).ok) return;
+        } catch {}
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      server.kill();
+    }
+    throw new Error("Browser server for the Hardcover test did not start");
+  });
+  test.afterAll(() => {
+    server?.kill();
+  });
+
+test("Use Hardcover position can be undone through the normal progress path", async ({ browser }) => {
+  const context = await browser.newContext({ baseURL: base, viewport: { width: 390, height: 844 } });
+  const page = await context.newPage();
+  try {
   await instrument(page);
   await page.goto("/#settings/connections");
   await page.getByRole("textbox", { name: /^API token/ }).fill("browser-test-token");
@@ -524,7 +559,6 @@ test("Use Hardcover position can be undone through the normal progress path", as
     multipart: { file: { name: "Companion.epub", mimeType: "application/epub+zip", buffer: await readerFixture() } },
   });
   expect(uploaded.ok()).toBe(true);
-  ebooksOnAlice.push((await uploaded.json()).id);
   await page.reload();
   await page.locator(".mobile-nav").getByRole("button", { name: "My library", exact: true }).click();
   await startPaused(page, book.title);
@@ -543,6 +577,10 @@ test("Use Hardcover position can be undone through the normal progress path", as
     const books = await (await page.request.get("/api/books")).json();
     return books.find((item: any) => item.id === book.id)?.progress?.position;
   }).toBe(70.25);
+  } finally {
+    await context.close();
+  }
+});
 });
 
 test("Listen from here records the position left and the expanded player restores it", async ({ page }) => {
@@ -578,13 +616,16 @@ test("a toast Undo for Listen from here takes back what it recorded and is not r
   const paragraphs = page.frameLocator(".inline-reader .reader-viewport iframe").locator("p");
   await paragraphs.first().waitFor();
   const view = (await room.locator(".reader-viewport").boundingBox())!;
-  let box = null;
-  // Long-press a sentence that is on the page.
-  for (let i = 0; i < await paragraphs.count() && !box; i++) {
-    const candidate = await paragraphs.nth(i).boundingBox();
-    if (candidate && candidate.x >= view.x && candidate.x + 100 <= view.x + view.width && candidate.y >= view.y && candidate.y + 20 <= view.y + view.height) box = candidate;
-  }
-  expect(box).not.toBeNull();
+  let box: { x: number; y: number; width: number; height: number } | null = null;
+  // Long-press a sentence that is on the page. The reader may still be moving to the new position's passage, so
+  // look again until one is on the page.
+  await expect.poll(async () => {
+    for (let i = 0; i < await paragraphs.count() && !box; i++) {
+      const candidate = await paragraphs.nth(i).boundingBox();
+      if (candidate && candidate.x >= view.x && candidate.x + 100 <= view.x + view.width && candidate.y >= view.y && candidate.y + 20 <= view.y + view.height) box = candidate;
+    }
+    return box !== null;
+  }, { timeout: 15000 }).toBe(true);
   await page.mouse.move(box!.x + Math.min(box!.width / 2, 80), box!.y + Math.min(box!.height / 2, 10));
   await page.mouse.down();
   await page.waitForTimeout(650);
@@ -592,9 +633,9 @@ test("a toast Undo for Listen from here takes back what it recorded and is not r
   const toast = room.getByRole("status").filter({ hasText: "Listening from here" });
   await expect(toast).toBeVisible();
   await expect.poll(async () => (await history(page, book.recordingId)).map((entry: any) => entry.position)).toEqual([170.25]);
-  await expect((await openPlaybackOptions(page)).getByRole("button", { name: "Position history", exact: true })).toBeEnabled();
-  await closePlaybackOptions(page);
-  await toast.getByRole("button", { name: "Undo", exact: true }).click();
+  // Undo is the foot's message action (#591). Opening Playback options first would end the notice: the head's More
+  // is a control, and the next tap on a control ends a notice with Undo (spec #586 "How long").
+  await room.locator(".reader-message").getByRole("button", { name: "Undo", exact: true }).click();
   await expect(toast).toBeHidden();
   await room.getByRole("button", { name: "Pause narration", exact: true }).click();
   await expect.poll(async () => (await audioState(page)).position).toBeGreaterThanOrEqual(170.25);
@@ -749,7 +790,7 @@ test("reader-open Now Playing still exposes Position history from Playback optio
   await expect.poll(async () => (await history(page, book.recordingId)).length).toBe(0);
 });
 
-test("inline reader Chapters button opens ebook Contents, not Playback options", async ({ page }) => {
+test("inline reader Chapters button opens the ebook's Chapters page, not Playback options", async ({ page }) => {
   const book = await importWithEbook(page, "Chapters opens contents");
   await instrument(page);
   await page.goto("/");
@@ -758,8 +799,9 @@ test("inline reader Chapters button opens ebook Contents, not Playback options",
   await revealReaderControls(page);
   const player = dialog.getByRole("region", { name: "Player", exact: true });
   await player.getByRole("button", { name: "Chapters", exact: true }).click();
-  const contents = page.locator(".inline-reader").getByRole("complementary", { name: "Reader options" });
-  await expect(contents.getByRole("heading", { name: "Contents", exact: true })).toBeVisible();
+  // The Chapters page (#590) lists the ebook's sections.
+  await expect(page.getByRole("heading", { level: 1, name: "Chapters", exact: true })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Chapters", exact: true }).getByRole("button").first()).toBeVisible();
   await expect(page.getByRole("region", { name: "Playback options" })).toBeHidden();
 });
 
@@ -778,10 +820,8 @@ test.describe("failed source loads", () => {
       Object.defineProperty(audio, "duration", { configurable: true, get: () => 100 });
     });
     const dialog = await openPlayer(page);
-    await dialog.getByRole("button", { name: "Versions & sources", exact: true }).click();
-    const manager = page.getByRole("dialog", { name: "Versions & sources", exact: true });
-    await manager.getByRole("combobox", { name: "Playback source choice", exact: true }).selectOption("server");
-    await manager.getByRole("button", { name: "Apply source", exact: true }).click();
+    await dialog.getByRole("button", { name: "Audiobook", exact: true }).click();
+    await playFrom(page, "Server copy");
     await expect.poll(async () => page.evaluate(() => ((window as any).__jumpAudio as HTMLAudioElement[]).find((item) => !!item.src)!.error !== null)).toBe(true);
     await expect(page.getByText("The audio source is unavailable. Please try again.").first()).toBeVisible();
     // Some other load reaches the element without going through a source switch.

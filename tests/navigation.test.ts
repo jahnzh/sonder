@@ -273,6 +273,37 @@ test("closing twice before the first Back lands goes back one step", async () =>
   assert.equal(browser.index, 1);
 });
 
+test("a close heard after its Back has landed moves nothing: Back afterwards still goes one step (#590)", async () => {
+  const browser = new FakeBrowser("/#discover");
+  const nav = await load(browser);
+  nav.goPlace("library");
+  const reader = { name: "reader", ebookId: "e1" } as const;
+  nav.navigate(reader);
+  nav.goBackFrom(reader);
+  await until(() => browser.url.hash === "#library", "#library");
+  // The kept-mounted reader is told of a focus outside it before it renders again, with the reader's route.
+  nav.goBackFrom(reader);
+  await settle();
+  assert.equal(browser.url.hash, "#library");
+  assert.equal(browser.index, 1);
+  assert.deepEqual(browser.landed, ["#library"]);
+  nav.goBack();
+  await until(() => browser.url.hash === "#discover", "#discover");
+});
+
+test("a close of the reader before its Back lands goes back one step, like goBack", async () => {
+  const browser = new FakeBrowser("/#discover");
+  const nav = await load(browser);
+  nav.goPlace("library");
+  const reader = { name: "reader", ebookId: "e1" } as const;
+  nav.navigate(reader);
+  nav.goBackFrom(reader);
+  nav.goBackFrom(reader);
+  await until(() => browser.url.hash === "#library", "#library");
+  await settle();
+  assert.equal(browser.index, 1);
+});
+
 /** A browser whose history already holds these entries, standing on the last one (as after a reload or an upgrade). */
 function browserWith(entries: Entry[], index = entries.length - 1) {
   const browser = new FakeBrowser(entries[0].url, entries[0].state);

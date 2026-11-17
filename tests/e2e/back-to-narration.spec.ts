@@ -122,7 +122,7 @@ async function bookmarkChapter(page:Page,ebook:string,manifest:any,section:numbe
  }
  expect((await(await page.request.get(`/api/reader/${ebook}`)).json()).bookmarks).toHaveLength(manifest.sections[section].paragraphs.length);
 }
-// Contents in the player bar, chapter `index`, and as soon as the bookmark toggle shows the chapter
+// Chapters in the player bar (the Chapters page, #590), chapter `index`, and as soon as the reader is shown again and the bookmark toggle shows the chapter
 // is the reader's position (its save waits out the half-second pause), `act` in the same frame. Answers the time
 // from the relocation showing to `act`.
 async function contentsThen(page:Page,index:number,act:"F"|"Read from audio"){
@@ -130,11 +130,12 @@ async function contentsThen(page:Page,index:number,act:"F"|"Read from audio"){
   const scope=document.querySelector(".inline-reader")!;
   const toggle=scope.querySelector<HTMLButtonElement>(".reader-bookmark-toggle")!;
   const limit=Date.now()+10000;
-  const late=()=>Date.now()>limit&&(fail(new Error(`stuck: panel=${!!scope.querySelector(".reader-panel")} pressed=${toggle.getAttribute("aria-pressed")}`)),true);
+  const hidden=()=>!!scope.closest('[data-state="closed"]');
+  const late=()=>Date.now()>limit&&(fail(new Error(`stuck: hidden=${hidden()} pressed=${toggle.getAttribute("aria-pressed")}`)),true);
   scope.querySelector<HTMLButtonElement>(".reader-player-chapters")!.click();
   const wait=()=>{
-   // The key handler sees the panel closed once React re-rendered without it.
-   if(scope.querySelector(".reader-panel")||toggle.getAttribute("aria-pressed")!=="true"){if(!late())requestAnimationFrame(wait);return;}
+   // The key handler takes keys once Now playing shows the reader again over the page.
+   if(hidden()||toggle.getAttribute("aria-pressed")!=="true"){if(!late())requestAnimationFrame(wait);return;}
    const at=performance.now();
    if(act==="F")document.body.dispatchEvent(new KeyboardEvent("keydown",{key:"f",bubbles:true,cancelable:true}));
    else{
@@ -145,7 +146,7 @@ async function contentsThen(page:Page,index:number,act:"F"|"Read from audio"){
    done(performance.now()-at);
   };
   const choose=()=>{
-   const chapter=scope.querySelectorAll<HTMLButtonElement>(".reader-contents-item")[index];
+   const chapter=document.querySelectorAll<HTMLButtonElement>(".reader-pages-chapter")[index];
    if(!chapter){if(!late())requestAnimationFrame(choose);return;}
    chapter.click();
    wait();

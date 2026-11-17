@@ -26,7 +26,8 @@ import {
 import literataNormal from "@fontsource-variable/literata/files/literata-latin-wght-normal.woff2?url";
 import literataItalic from "@fontsource-variable/literata/files/literata-latin-wght-italic.woff2?url";
 import { Dialog } from "./ui/dialog";
-import { useAddress } from "../navigation";
+import { goBackFrom, navigate as goTo, openSheet, useAddress } from "../navigation";
+import { isReaderPage, openedFrom, onPlaceRequested, publishReader, takePlace, useOpenerAny, type LiveReader, type ReaderPage, type ReaderPlace } from "../reader-pages";
 import { useAppearance } from "./Appearance";
 import { fontFamilies, paletteFor } from "../appearance";
 import { ReadingSync } from "./ReadingSync";
@@ -44,13 +45,16 @@ import { mapIdentityOf } from "../alignment-map-lifecycle";
 import { chapterTimeLeft, currentChapter, playbackTimeline } from "../chapters";
 import { footRestLine, headRestLine } from "../reader-bands";
 import { Button } from "../parts/Button";
+import { ReaderFootMessage, tappedControl, useReaderMessages, useReaderUpdate } from "./ReaderFootMessage";
+import { messageToShow, type ReaderError, type ReaderNotice } from "../reader-messages";
+import { dismissUpdate, reloadForUpdate } from "../app-update";
 import { usePlayer, type SeekTarget } from "../player";
 import { ApiError, api, forgetPositionHistory, localDB } from "../lib";
 import {
   loadReader,
   epubFile,
   saveEpubOffline,
-  cachedEpub,
+  epubKept,
   readingState,
   saveReading,
   storeReading,
@@ -280,25 +284,37 @@ export function ReaderHost({
 }) {
   // The reader is open while the address names it (`#reader/<ebook id>`, an old name kept for good).
   // Closing goes back, so Back afterwards does not reopen it.
-  const { route, goBack } = useAddress();
-  const id = route.name === "reader" ? route.ebookId : null;
+  const { route } = useAddress();
+  // Under one of its pages (Chapters, Bookmarks, Search, #590) the reader stays mounted, hidden, so Back finds it
+  // where it was and a row of the page can show a place in it.
+  const opener = useOpenerAny();
+  const under =
+    opener?.host === "reader" && route.name === "book-page" && isReaderPage(route.page) && route.workId === opener.workId
+      ? opener.ebookId
+      : null;
+  const open = route.name === "reader";
+  const id = open ? route.ebookId : under;
   const [fromAudio, setFromAudio] = useState(false);
   useEffect(() => {
     const open = (event: Event) => setFromAudio(!!(event as CustomEvent).detail?.fromAudio);
     window.addEventListener("sonder:open-reader", open);
     return () => window.removeEventListener("sonder:open-reader", open);
   }, []);
+  // Kept mounted, the dialog also hears of a focus outside it once the close's Back has landed and before this
+  // renders again; the page stack checks the entry it stands on, so that late close moves nothing (#590).
   const close = () => {
-    if (route.name === "reader") goBack();
+    if (route.name === "reader") goBackFrom(route);
   };
+  if (!id) return null;
   return (
     <Dialog
-      open={!!id}
-      onOpenChange={(open) => {
-        if (!open) close();
+      open={open}
+      onOpenChange={(value) => {
+        if (!value) close();
       }}
       title="Reader"
       className="reader-dialog"
+      forceMount
     >
       {id && (
         <ReaderView
@@ -325,7 +341,6 @@ export function ReaderView({
   inline = false,
   recordingId,
   books,
-  notify,
   onClose,
   onGone,
 }: {
@@ -337,17 +352,16 @@ export function ReaderView({
   /** The server says the ebook is gone and no copy of it is on this device. */
   onGone?: () => void;
   books: Book[];
-  notify: (text: string, error?: boolean) => void;
+  /** Kept for the callers: every message while reading is in the foot (#591), none goes to the app's toast. */
+  notify?: (text: string, error?: boolean) => void;
 }) {
   const [book, setBook] = useState<ReaderBook | null>(null),
     [error, setError] = useState(""),
     [loading, setLoading] = useState(true),
     [rendered, setRendered] = useState(false),
-    [panel, setPanel] = useState<
-      "contents" | "search" | "bookmarks" | "appearance" | "sync" | "more" | null
-    >(null),
+    // Chapters, Bookmarks and Search are pages of their own now (#590), not panels.
+    [panel, setPanel] = useState<"appearance" | "sync" | "more" | null>(null),
     [locator, setLocator] = useState<TextLocator | null>(null),
-    [query, setQuery] = useState(""),
     [map, setMap] = useState<AlignmentJob | null>(null),
     // The server confirmed `map` for the current audio in this reader (a cached map is not, until the map endpoint answers).
     [mapConfirmed, setMapConfirmed] = useState(false),
@@ -359,13 +373,16 @@ export function ReaderView({
     [recoveryStatus, setRecoveryStatus] = useState(""),
     [controlsVisible, setControlsVisible] = useState(false),
     [desktop, setDesktop] = useState(() => window.matchMedia("(min-width: 900px)").matches),
-    [toast, setToast] = useState<{ previous: { book: Book; trackId: string; position: number } | null } | null>(null),
     [scrub, setScrub] = useState<number | null>(null),
     [contentsHidden, setContentsHidden] = useState(() => localStorage.getItem("sonder-reader-contents") === "hidden");
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The messages in the foot (#591): one at a time, by `messageToShow`.
+  const messages = useReaderMessages();
+  // Where the narration was before the latest Listen from here, for its Undo.
+  const listenUndo = useRef<{ previous: { book: Book; trackId: string; position: number } | null } | null>(null);
+  // The bookmark the head's button removed last, and where it was in the list, for its Undo.
+  const removedBookmark = useRef<{ entry: ReaderBook["bookmarks"][number]; index: number } | null>(null);
   // The history entries the latest Listen from here wrote, so its Undo can take them back.
   const listenRecords = useRef<{ undone: boolean; entries: { recordingId: string; entry: PositionEntry }[] } | null>(null);
-  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
   useEffect(() => {
     const media=window.matchMedia("(min-width: 900px)");
     const change=() => setDesktop(media.matches);
@@ -437,7 +454,7 @@ export function ReaderView({
       return narrationAt(player.book, player.track?.id, player.position);
     },
     retry: () => setFollowRevision((value) => value + 1),
-    clearFollowError: () => setError(""),
+    clearFollowError: () => messages.clearError("narration"),
   };
   const [following] = useState(() => createReaderFollowing<TextLocator>({
     onManualSave: (locator) => followingEvents.current.manualSave(locator),
@@ -508,7 +525,8 @@ export function ReaderView({
       latest.current = value.checkpoint?.locator || null;
       const state = await readingState(id);
       setConflict(state?.conflict || null);
-      setOffline(!!(await cachedEpub(id, value.fingerprint)));
+      // The reader's own copy is a cache, not a save (#671): the entry offers Save until the user saved it.
+      setOffline(await epubKept(id, value.fingerprint));
     } catch (error) {
       // Only a confirmed "not found" means gone; offline, with no copy here, keeps the reader's message.
       // A reader closed before the answer came leaves the page shown now alone.
@@ -542,7 +560,8 @@ export function ReaderView({
     const rejected = (event: Event) => {
       const detail = (event as CustomEvent).detail;
       if (detail.id !== id) return;
-      notify(`${detail.method === "DELETE" ? "A bookmark could not be removed" : "A bookmark could not be saved"}: ${detail.error}`, true);
+      // The server's own sentence is not shown (spec #586 "Messages in the foot").
+      messages.error(detail.method === "DELETE" ? "bookmark-remove" : "bookmark-save");
       if (detail.method === "POST" && bookRef.current) {
         const updated = { ...bookRef.current, bookmarks: bookRef.current.bookmarks.filter(entry => entry.id !== detail.bookmark) };
         bookRef.current = updated;
@@ -1188,8 +1207,8 @@ export function ReaderView({
       back.confirm();
       await jumpRef.current(result.locator.paragraphId, true, recordingId);
       setRecoveryStatus("Approximate passage · Located using local speech recognition");
-    } catch (error) {
-      notify((error as Error).message, true);
+    } catch {
+      messages.error("locate");
     } finally {
       setRecovering(false);
     }
@@ -1209,11 +1228,11 @@ export function ReaderView({
         !player.track ||
         player.book.workId !== bookRef.current?.workId
       ) {
-        notify("Choose this recording and prepare its reading sync first.");
+        messages.error("no-recording");
         setPanel("sync");
         return;
       }
-      if (!isAdmin()) { notify("No reading sync is available for this position."); return; }
+      if (!isAdmin()) { messages.error("no-sync"); return; }
       await recover(back, player);
       return;
     }
@@ -1224,7 +1243,7 @@ export function ReaderView({
       try { await jumpRef.current(interval.paragraphId, true); }
       finally { following.endExplicitJump(); setFollowRevision(value => value + 1); }
     } else {
-      if (!isAdmin()) { notify("No reading sync is available for this position."); return; }
+      if (!isAdmin()) { messages.error("no-sync"); return; }
       await recover(back, player);
     }
   };
@@ -1263,7 +1282,7 @@ export function ReaderView({
       void jumpRef.current(interval.paragraphId, false).catch(()=>false).then(shown => {
         // A jump a newer follow jump replaced while in flight is stale, not a failure (#509, seen in WebKit).
         if (following.followShown(key, shown, request) === "failed")
-          setError("Could not display the current passage. Try following audio again.");
+          messages.error("narration");
       });
     } else if (interval) {
       // The same narrated sentence: in pages mode the page turns inside it once the narration reaches a word on the next page.
@@ -1283,7 +1302,7 @@ export function ReaderView({
       audio = books.find((audio) => audio.recordingId === map?.recordingId);
     if (!interval || !audio) {
       setPanel("sync");
-      notify("Prepare a matching audiobook map for this passage first.");
+      messages.error("no-map");
       return;
     }
     const track = audio.tracks.find((track) => track.id === interval.trackId);
@@ -1301,13 +1320,15 @@ export function ReaderView({
       },
     });
     if (undoable) {
-      setToast({ previous });
-      if (toastTimer.current) clearTimeout(toastTimer.current);
-      toastTimer.current = setTimeout(() => setToast(null), 4000);
+      listenUndo.current = { previous };
+      messages.notice("listening");
     }
   };
   const listen = () => listenAt(latest.current?.paragraphId);
   const undoListen = () => {
+    const toast = listenUndo.current;
+    listenUndo.current = null;
+    messages.clearNotice("listening");
     if (!toast) return;
     const previous = toast.previous;
     const track = previous?.book.tracks.find((track) => track.id === previous.trackId);
@@ -1325,7 +1346,6 @@ export function ReaderView({
     // Decided for where the narration goes back to; with nothing playing before, it stays where it is.
     if (previous && track) following.backToNarration(narrationAt(previous.book, track.id, previous.position));
     else following.backToNarration();
-    setToast(null);
   };
   const bookmark = async () => {
     if (!book || !latest.current) return;
@@ -1344,14 +1364,33 @@ export function ReaderView({
     });
     await queueBookmark(id, "POST", entry);
   };
-  const removeBookmark = (entry: ReaderBook["bookmarks"][number]) => {
+  const removeBookmark = (entry: ReaderBook["bookmarks"][number], undoable = false) => {
     const current = bookRef.current;
     if (!current) return;
+    if (undoable) {
+      removedBookmark.current = { entry, index: current.bookmarks.findIndex((bookmark) => bookmark.id === entry.id) };
+      messages.notice("bookmark-removed");
+    }
     const updated = { ...current, bookmarks: current.bookmarks.filter((bookmark) => bookmark.id !== entry.id) };
     setBook(updated);
     bookRef.current = updated;
     void localDB.preferences.put({ key: `reader-book:${id}`, value: updated });
     void queueBookmark(id, "DELETE", entry);
+  };
+  // Undo of "Bookmark removed": the same bookmark, back where it was in the list, saved again.
+  const undoRemoveBookmark = () => {
+    const removed = removedBookmark.current, current = bookRef.current;
+    removedBookmark.current = null;
+    messages.clearNotice("bookmark-removed");
+    if (!removed || !current || current.bookmarks.some((bookmark) => bookmark.id === removed.entry.id)) return;
+    const bookmarks = [...current.bookmarks];
+    bookmarks.splice(removed.index < 0 ? bookmarks.length : Math.min(removed.index, bookmarks.length), 0, removed.entry);
+    const updated = { ...current, bookmarks };
+    setBook(updated);
+    bookRef.current = updated;
+    void localDB.preferences.put({ key: `reader-book:${id}`, value: updated });
+    void localDB.preferences.put({ key: `reader-bookmarks:${id}`, value: updated.bookmarks });
+    void queueBookmark(id, "POST", removed.entry);
   };
   const editReader = (patch: Partial<typeof preferences>) => {
     void saveReader(patch).catch(() => {});
@@ -1406,20 +1445,6 @@ export function ReaderView({
     };
     window.addEventListener("keydown",key); return () => window.removeEventListener("keydown",key);
   }, [panel]);
-  const searchResults =
-    book && query.trim().length > 1
-      ? book.sections
-          .flatMap((section) =>
-            section.paragraphs
-              .filter((fragment) =>
-                fragment.text
-                  .toLocaleLowerCase()
-                  .includes(query.trim().toLocaleLowerCase()),
-              )
-              .map((fragment) => ({ ...fragment, title: section.title })),
-          )
-          .slice(0, 60)
-      : [];
   const sections = book?.sections || [];
   const sectionOf = (paragraphId?: string) =>
     paragraphId ? sections.find((section) => section.paragraphs.some((fragment) => fragment.id === paragraphId)) : undefined;
@@ -1428,7 +1453,7 @@ export function ReaderView({
   // Bookmarks mark the sentence in view: the narrated one while following,
   // otherwise the first sentence on the page.
   const pageBookmark = book?.bookmarks.find((entry) => entry.locator.paragraphId === locator?.paragraphId);
-  const toggleBookmark = () => (pageBookmark ? removeBookmark(pageBookmark) : void bookmark());
+  const toggleBookmark = () => (pageBookmark ? removeBookmark(pageBookmark, true) : void bookmark());
   // The slider follows the book/chapter progress setting and moves the page on release.
   const scope = appearance.playback.progressScope;
   const allFragments = sections.flatMap((section) => section.paragraphs);
@@ -1503,6 +1528,64 @@ export function ReaderView({
     ? footRestLine(barChapter, { secondsLeft: narratedChapter ? chapterTimeLeft(narratedChapter, p.position, p.speed) : 0 })
     : footRestLine(currentSection?.title, { fraction: allFragments.length > 1 ? Math.max(0, allFragments.findIndex((fragment) => fragment.id === locator?.paragraphId)) / (allFragments.length - 1) : 0 });
   const timing = currentInterval ? " · estimated timings" : "";
+  // Chapters, Bookmarks and Search (#590): pages of the book, opened from here with an entry of their own. This
+  // reader stays mounted under them and publishes what they list; a row asks it to show a place, paged away.
+  const host: LiveReader["host"] = inline ? "now-playing" : "reader";
+  const narratedSecondsLeft = audio && narratedChapter ? Math.ceil(chapterTimeLeft(narratedChapter, p.position, p.speed) / 30) * 30 : 0;
+  const shown = useRef<() => void>(() => {});
+  shown.current = () => (inline ? openSheet("now-playing") : goTo({ name: "reader", ebookId: id }));
+  const removeShown = useRef(removeBookmark);
+  removeShown.current = removeBookmark;
+  useEffect(() => {
+    if (!book) return;
+    publishReader({ ebookId: id, host }, {
+      ebookId: id,
+      workId: book.workId,
+      host,
+      title: book.title,
+      sections: book.sections,
+      bookmarks: book.bookmarks,
+      shownSection: locator?.section ?? null,
+      narrated: narratedSection ? { section: narratedSection.index, secondsLeft: narratedSecondsLeft } : null,
+      removeBookmark: (entry) => removeShown.current(entry),
+      show: () => shown.current(),
+    });
+  }, [book, id, host, locator?.section, narratedSection?.index, narratedSecondsLeft]);
+  useEffect(() => () => publishReader({ ebookId: id, host }, null), [id, host]);
+  const openPage = (page: ReaderPage) => {
+    if (!book) return;
+    openedFrom({ ebookId: id, host });
+    goTo({ name: "book-page", workId: book.workId, page });
+  };
+  // A place a page asked for: a section from Chapters (today's Contents navigation, which wins over a follow
+  // jump and is saved), a search result (saved as a place chosen by hand) or a bookmark (as before).
+  const showPlace = useRef<(place: ReaderPlace) => void>(() => {});
+  showPlace.current = (place) => {
+    if (place.kind === "section") {
+      navigate((view) => view.display(place.href), place.section);
+      return;
+    }
+    following.pageAway();
+    if (place.from === "bookmark") {
+      void showFragment(place.paragraphId, false);
+      return;
+    }
+    const manual = following.manualPlace();
+    void showFragment(place.paragraphId, false).then(
+      () => manual.save(latest.current),
+      () => manual.save(null),
+    );
+  };
+  useEffect(() => {
+    if (!rendered) return;
+    const take = () => {
+      const place = takePlace({ ebookId: id, host });
+      if (place) showPlace.current(place);
+    };
+    take();
+    return onPlaceRequested(take);
+  }, [rendered, id, host]);
+
   const showContents = desktop && !contentsHidden;
   const openMore = () => {
     setPanel(null);
@@ -1518,12 +1601,53 @@ export function ReaderView({
     if (!book || !file.current) return;
     setSaving(true);
     void saveEpubOffline(book, file.current)
-      .then(() => {
-        setOffline(true);
-        notify("Ebook saved on this device.");
-      })
-      .catch((error) => notify(error.message, true))
+      // The entry itself says "Ebook saved offline" once it is; only a failure is a message (#591).
+      .then(() => setOffline(true))
+      .catch(() => messages.error("save-offline"))
       .finally(() => setSaving(false));
+  };
+  // The message in the foot (#591): a place saved elsewhere, an error, a notice with Undo, an update while paused.
+  const update = useReaderUpdate(viewport);
+  const message = messageToShow(messages.state, {
+    now: Date.now(),
+    playing: p.playing,
+    conflict: conflict ? { chapter: sections.find((section) => section.index === conflict.locator.section)?.title?.trim() || "" } : null,
+    update,
+  });
+  const messageActions = {
+    undo: (notice: ReaderNotice) => (notice === "listening" ? undoListen() : undoRemoveBookmark()),
+    retry: (failed: ReaderError) => {
+      messages.clearError(failed);
+      if (failed === "locate") void fromAudio();
+      else {
+        // Back to narration, and the follow jump is tried again even when the reader was still following.
+        following.backToNarration();
+        setFollowRevision((value) => value + 1);
+      }
+    },
+    dismissError: (failed: ReaderError) => messages.clearError(failed),
+    // Stay is today's "Keep my place": offline the conflict stays until the reader is back online and it resolves.
+    stay: () => {
+      void syncReading(id, true)
+        .then((resolved) => {
+          if (resolved) setConflict(null);
+        })
+        .catch(() => {});
+    },
+    // Go there is today's "Use other session's place".
+    goThere: () => {
+      if (!conflict) return;
+      void storeReading(id, { checkpoint: conflict, baseRevision: conflict.revision, pending: false }).then(() => {
+        setConflict(null);
+        void jumpRef.current(conflict.locator.paragraphId, false);
+      });
+    },
+    reload: () => void reloadForUpdate(() => { if (playerRef.current.playing) playerRef.current.toggle(); }),
+    dismissUpdate,
+  };
+  // The next tap on a control ends a notice with Undo (spec #586 "How long").
+  const tapControls = (event: { target: EventTarget | null }) => {
+    if (tappedControl(event.target)) messages.tapped();
   };
   const moreItems = (
     <div className="reader-more">
@@ -1534,7 +1658,7 @@ export function ReaderView({
         {recovering ? <Loader2 size={19} className="spin" /> : <BookOpen size={19} />}
         {recovering ? "Locating passage…" : "Read from audio"}
       </button>
-      <button className="reader-more-item" onClick={fromMenu(() => setPanel("bookmarks"))}>
+      <button className="reader-more-item" onClick={fromMenu(() => openPage("bookmarks"))}>
         <Bookmark size={19} /> Bookmarks
       </button>
       <button className="reader-more-item" onClick={fromMenu(() => setPanel("sync"))}>
@@ -1559,7 +1683,7 @@ export function ReaderView({
       )}
       {/* The head (#587): its box stays whether the controls show or not; at rest it names the book and the
           chapter, and its controls are visibility: hidden, so they are neither seen, tapped nor read. */}
-      <header className="reader-head" data-controls={controls}>
+      <header className="reader-head" data-controls={controls} onClickCapture={tapControls}>
       <p className="reader-head-rest"><span className="type-caption">{headRestLine(book?.title, currentSection?.title || barChapter)}</span></p>
       <div className="reader-topbar">
         {onClose &&<button className="icon-button" aria-label="Close reader" onClick={() => { setControlsVisible(false); setPanel(null); onClose(); }}><ChevronDown size={22} /></button>}
@@ -1590,7 +1714,7 @@ export function ReaderView({
         >
           <Bookmark size={21} fill={pageBookmark ? "currentColor" : "none"} />
         </button>
-        <button className="icon-button" aria-label="Search this book" onClick={() => setPanel("search")}><Search size={20} /></button>
+        <button className="icon-button" aria-label="Search this book" disabled={!book} onClick={() => openPage("search")}><Search size={20} /></button>
         <button className="icon-button reader-appearance-button" aria-label="Reader appearance" onClick={() => setPanel("appearance")}>Aa</button>
         <button className="icon-button" aria-label="More" aria-expanded={panel === "more"} onClick={openMore}><MoreHorizontal size={22} /></button>
       </div>
@@ -1621,15 +1745,6 @@ export function ReaderView({
             <button className="reader-edge reader-edge-previous" aria-label="Previous page" onClick={()=>turn(-1)}><ArrowLeft size={22}/></button>
             <button className="reader-edge reader-edge-next" aria-label="Next page" onClick={()=>turn(1)}><ArrowRight size={22}/></button>
           </>}
-          <div className="reader-floating">
-            {toast && (
-              <div className="reader-toast" role="status">
-                <BookToHeadphones size={18} />
-                <span>Listening from here</span>
-                <button onClick={undoListen}>Undo</button>
-              </div>
-            )}
-          </div>
         </div>
       </div>
       {/* The dock row (#587): empty but for a reader error until Appearance docks here (spec #586). */}
@@ -1642,7 +1757,10 @@ export function ReaderView({
       </div>
       {/* The foot (#587): its box stays whether the controls show or not. At rest the progress line, where the
           narration is and a small Play or Pause; with the controls shown the timeline and the transport row. */}
-      <section className="reader-player" aria-label="Player" data-controls={controls} data-setting={footSetting ?? undefined}>
+      <section className="reader-player" aria-label="Player" data-controls={controls} data-setting={footSetting ?? undefined} data-message={message?.kind} onClickCapture={tapControls}>
+        {message && (
+          <ReaderFootMessage message={message} actions={messageActions} play={p.book ? { playing: p.playing, toggle: p.toggle } : null} />
+        )}
         <div className="reader-foot-rest">
           <span className="reader-foot-line" aria-hidden="true"><i style={{ width: `${restProgress * 100}%` }} /></span>
           <div className="reader-foot-row">
@@ -1685,7 +1803,7 @@ export function ReaderView({
           onBlur={commitScrub}
         />}
         <div className="reader-player-leading">
-          <button className="icon-button reader-player-chapters" aria-label="Chapters" onClick={() => setPanel(panel === "contents" ? null : "contents")}><List size={21} /></button>
+          <button className="icon-button reader-player-chapters" aria-label="Chapters" disabled={!book} onClick={() => openPage("chapters")}><List size={21} /></button>
           <button
             className="icon-button reader-back-narration"
             aria-label="Back to narration"
@@ -1706,50 +1824,12 @@ export function ReaderView({
         {footSetting && <FootSettingRow setting={footSetting} onDone={() => setFootSetting(null)} />}
         </div>
       </section>
-      {conflict && (
-        <div className="reading-conflict" role="alert">
-          <p>
-            Another session saved a different place. Your local place is still
-            kept.
-          </p>
-          <button
-            className="button subtle"
-            onClick={() => {
-              void syncReading(id, true)
-                .then((resolved) => {
-                  if (resolved) setConflict(null);
-                })
-                .catch((error) => notify(error.message, true));
-            }}
-          >
-            Keep my place
-          </button>
-          <button
-            className="button subtle"
-            onClick={() => {
-              void storeReading(id, {
-                checkpoint: conflict,
-                baseRevision: conflict.revision,
-                pending: false,
-              }).then(() => {
-                setConflict(null);
-                void jumpRef.current(conflict.locator.paragraphId, false);
-              });
-            }}
-          >
-            Use other session’s place
-          </button>
-        </div>
-      )}
       {panel && panel !== "sync" && book && (
         <aside className="reader-panel" aria-label="Reader options">
           <div className="reader-panel-heading">
             <h3>
               {
                 {
-                  contents: "Contents",
-                  search: "Search",
-                  bookmarks: "Bookmarks",
                   appearance: "Reader appearance",
                   sync: "Reading sync",
                   more: "More",
@@ -1765,76 +1845,6 @@ export function ReaderView({
             </button>
           </div>
           {panel === "more" && moreItems}
-          {panel === "contents" &&
-            book.sections.map((section) => (
-              <button
-                className="reader-list-item reader-contents-item"
-                key={section.index}
-                aria-current={section.index === locator?.section ? "location" : undefined}
-                onClick={() => {
-                  navigate((view) => view.display(section.href), section.index);
-                  setPanel(null);
-                }}
-              >
-                <span>{section.title}</span>
-                {section.index === narratedSection?.index && <Headphones size={16} role="img" aria-label="Narrating" />}
-              </button>
-            ))}
-          {panel === "search" && (
-            <>
-              <input
-                type="search"
-                aria-label="Search inside ebook"
-                placeholder="Find a word or passage"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-              />
-              {searchResults.map((fragment) => (
-                <button
-                  className="reader-list-item"
-                  key={fragment.id}
-                  onClick={() => {
-                    following.pageAway();
-                    const place = following.manualPlace();
-                    void showFragment(fragment.id, false).then(
-                      () => place.save(latest.current),
-                      () => place.save(null),
-                    );
-                    setPanel(null);
-                  }}
-                >
-                  <strong>{fragment.title}</strong>
-                  <span>{fragment.text}</span>
-                </button>
-              ))}
-            </>
-          )}
-          {panel === "bookmarks" &&
-            (book.bookmarks.length ? (
-              book.bookmarks.map((entry) => (
-                <div className="reader-bookmark" key={entry.id}>
-                  <button
-                    className="reader-list-item"
-                    onClick={() => {
-                      following.pageAway();
-                      void showFragment(entry.locator.paragraphId, false);
-                      setPanel(null);
-                    }}
-                  >
-                    {entry.label}
-                  </button>
-                  <button
-                    className="icon-button"
-                    aria-label={`Remove bookmark ${entry.label}`}
-                    onClick={() => removeBookmark(entry)}
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
-              ))
-            ) : (
-              <p>Bookmark a sentence with the bookmark button at the top.</p>
-            ))}
           {panel === "appearance" && (
             <div className="reader-appearance">
               {!inline && <label>

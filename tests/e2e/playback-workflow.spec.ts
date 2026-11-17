@@ -16,9 +16,12 @@ async function importBook(page: Page, multipart: Record<string, unknown>) {
   return id;
 }
 test.afterEach(async ({page}) => {
-  // Drain the catalog routes before Playwright tears down its request context.
-  await page.unrouteAll({behavior:"wait"});
+  // The books leave first, so a hook that runs out of time still leaves the library as it found it. Then the
+  // catalog routes go without waiting for a handler: "wait" sometimes never returned after the page gave up on a
+  // catalog read, which held the hook to the test's timeout and skipped the clean-up (the handlers already ignore
+  // a fulfil that comes too late, and errors after unrouting are dropped).
   for (const id of imported.splice(0)) expect((await page.request.delete(`/api/library/${id}`)).ok()).toBe(true);
+  await page.unrouteAll({behavior:"ignoreErrors"});
 });
 
 async function instrument(page: Page) {
@@ -66,8 +69,27 @@ async function manage(page: Page) {
     await showReaderControls(page);
     await page.locator(".inline-reader .reader-topbar").getByRole("button",{name:"More",exact:true}).click();
   }
-  await page.getByRole("button",{name:"Versions & sources",exact:true}).click();
-  await expect(page.getByRole("dialog",{name:"Versions & sources",exact:true})).toBeVisible();
+  // The player's "Audiobook" opens the Audiobook page (#530).
+  await page.getByRole("button",{name:"Audiobook",exact:true}).click();
+  const audiobook=page.getByRole("region",{name:"Audiobook",exact:true});
+  await expect(audiobook.getByRole("radiogroup",{name:"Recordings",exact:true})).toBeVisible();
+  return audiobook;
+}
+// Plays from: a picker that keeps the place (#530).
+async function playFrom(page: Page, audiobook: ReturnType<Page["getByRole"]>, source: string) {
+  await audiobook.getByRole("button",{name:/^Plays from: /}).click();
+  const picker=page.getByRole("dialog",{name:"Plays from",exact:true});
+  await picker.getByRole("radio",{name:source,exact:true}).click();
+  await expect(picker).toBeHidden();
+}
+// Report a problem (administrator): what is faulty, the reason and a note.
+async function report(page: Page, audiobook: ReturnType<Page["getByRole"]>, what: string, reason?: string) {
+  await audiobook.getByRole("button",{name:"Report a problem",exact:true}).click();
+  const dialog=page.getByRole("dialog",{name:"Report a problem",exact:true});
+  await dialog.getByRole("radiogroup",{name:"What is faulty",exact:true}).getByRole("radio",{name:what,exact:true}).click();
+  if(reason) await dialog.getByRole("radiogroup",{name:"Reason",exact:true}).getByRole("radio",{name:reason,exact:true}).click();
+  await dialog.getByRole("button",{name:"Mark as faulty",exact:true}).click();
+  await expect(dialog).toBeHidden();
 }
 
 test("chapter progress persists; precision dragging previews, slows with distance and cancels safely; wide bars expand", async ({page})=>{
@@ -204,19 +226,17 @@ test("playback opens the reader and title page; downloaded sources can be switch
   await expect(page.getByRole("button",{name:"Read ebook",exact:true})).toBeVisible();
   await page.getByRole("button",{name:"Save offline",exact:true}).click();
   await expect(page.getByRole("button",{name:"Downloaded",exact:true})).toBeDisabled();
-  await page.getByRole("button",{name:"Versions & sources",exact:true}).click();
-  const manager=page.getByRole("dialog",{name:"Versions & sources",exact:true});
-  // Opening the manager from a title page should expose just the manager.
+  // The book dialog's Audiobook row opens the Audiobook page, and only the page (#530).
+  await page.getByRole("dialog",{name:"Book details"}).getByRole("button",{name:/^Audiobook /}).click();
+  const manager=page.getByRole("region",{name:"Audiobook",exact:true});
   await expect(manager).toBeVisible();
-  const choice=manager.getByRole("combobox",{name:"Playback source choice",exact:true});
-  await expect(choice).toBeEnabled();
-  await choice.selectOption("device");
-  await manager.getByRole("button",{name:"Apply source",exact:true}).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(manager.getByRole("button",{name:/^Plays from: Automatic$/})).toBeEnabled();
+  await playFrom(page,manager,"Device copy");
   await expect.poll(async()=>(await audioState(page)).src).toMatch(/^blob:/);
   expect((await audioState(page)).paused).toBe(true);
   expect((await audioState(page)).position).toBeCloseTo(160,0);
-  await choice.selectOption("server");
-  await manager.getByRole("button",{name:"Apply source",exact:true}).click();
+  await playFrom(page,manager,"Server copy");
   await expect.poll(async()=>(await audioState(page)).src).toContain("?source=server");
   await expect.poll(async()=>(await audioState(page)).position).toBeCloseTo(160,0);
   const response=await page.evaluate(async(id)=>{
@@ -224,33 +244,47 @@ test("playback opens the reader and title page; downloaded sources can be switch
     return {status:response.status,source:response.headers.get("X-Sonder-Media-Source")};
   },book.tracks[0].id);
   expect(response).toEqual({status:206,source:"server"});
-  await manager.getByRole("button",{name:"Mark as faulty",exact:true}).click();
-  await manager.getByRole("combobox",{name:"Faulty item",exact:true}).selectOption("device");
-  await manager.getByRole("button",{name:"Save fault report",exact:true}).click();
-  await expect(manager.getByText("Device copy marked faulty",{exact:true})).toBeVisible();
+  await report(page,manager,"Device copy");
+  // The device copy's row says it is marked, and its dialog says so with the reason.
+  const deviceRow=manager.getByRole("button",{name:"Device copy Marked faulty",exact:true});
+  await expect(deviceRow).toBeVisible();
+  await deviceRow.click();
+  const copy=page.getByRole("dialog",{name:"Device copy",exact:true});
+  await expect(copy.getByText("Device copy marked faulty",{exact:true})).toBeVisible();
+  await copy.getByRole("button",{name:"Close dialog",exact:true}).click();
   await expect.poll(async()=>(await audioState(page)).src).toContain(`/api/media/${book.tracks[0].id}`);
   expect((await audioState(page)).paused).toBe(true);
+  // The page's address survives a reload, and so does the mark.
   await page.reload();
+  await expect(manager.getByRole("button",{name:"Device copy Marked faulty",exact:true})).toBeVisible();
+  await page.locator(".mobile-nav").getByRole("button",{name:"My library",exact:true}).click();
   await page.getByRole("button",{name:`Play ${title}`,exact:true}).click();
   await expect(page.locator(".player-dock").getByRole("button",{name:"Pause",exact:true})).toBeVisible();
   await page.locator(".player-dock").getByRole("button",{name:"Pause",exact:true}).click();
   expect((await audioState(page)).src).not.toMatch(/^blob:/);
   await manage(page);
-  await expect(manager.getByText("Device copy marked faulty",{exact:true})).toBeVisible();
-  await manager.getByRole("button",{name:"Remove device copy",exact:true}).click();
-  await page.getByRole("dialog",{name:"Remove downloaded copy?",exact:true}).getByRole("button",{name:"Remove copy",exact:true}).click();
-  await expect(manager.getByRole("button",{name:"Remove device copy",exact:true})).toBeDisabled();
-  await expect(manager.getByText("Device copy marked faulty",{exact:true})).toHaveCount(0);
-  await manager.getByRole("button",{name:"Mark as faulty",exact:true}).click();
-  await manager.getByRole("combobox",{name:"Faulty item",exact:true}).selectOption("recording");
-  await manager.getByRole("combobox",{name:"Fault reason",exact:true}).selectOption("wrong-language");
-  await manager.getByRole("button",{name:"Save fault report",exact:true}).click();
+  // Removing the device copy asks once, says what stays, and clears its mark.
+  await manager.getByRole("button",{name:"Device copy Marked faulty",exact:true}).click();
+  await page.getByRole("dialog",{name:"Device copy",exact:true}).getByRole("button",{name:"Remove from this device",exact:true}).click();
+  const confirm=page.getByRole("dialog",{name:"Remove from this device?",exact:true});
+  await expect(confirm).toHaveAccessibleDescription("Your place and the library entry stay.");
+  await confirm.getByRole("button",{name:"Remove",exact:true}).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(manager.getByRole("listitem").filter({hasText:"Device copy"})).toHaveText("Device copyNone");
+  await expect(manager.getByRole("button",{name:/^Device copy/})).toHaveCount(0);
+  await expect(manager.getByText("Marked faulty",{exact:true})).toHaveCount(0);
+  await report(page,manager,"Recording","Wrong language");
   await expect(manager.getByText("Recording marked faulty",{exact:true})).toBeVisible();
-  await expect(manager.getByRole("button",{name:"Apply source",exact:true})).toBeDisabled();
+  await expect(manager.getByRole("radio",{name:/Marked faulty/})).toHaveAttribute("aria-checked","true");
+  // A faulty recording rules out every source.
+  await manager.getByRole("button",{name:/^Plays from: /}).click();
+  for (const source of ["Automatic","Device copy","Server copy","Original stream"])
+    await expect(page.getByRole("dialog",{name:"Plays from",exact:true}).getByRole("radio",{name:source,exact:true})).toBeDisabled();
+  await page.keyboard.press("Escape");
   const saved=(await(await page.request.get(`/api/recordings/${book.recordingId}/sources`)).json());
   expect(saved.faults.recording.reason).toBe("wrong-language");
   expect((await page.request.get(`/api/media/${book.tracks[0].id}`)).status()).toBe(409);
-  await manager.getByRole("button",{name:"Clear fault flag",exact:true}).click();
+  await manager.getByRole("button",{name:"Clear the mark",exact:true}).click();
   await expect(manager.getByText("Recording marked faulty",{exact:true})).toHaveCount(0);
   await expect(manager.getByRole("alert")).toHaveCount(0);
   expect((await audioState(page)).paused).toBe(true);
@@ -263,35 +297,35 @@ test("playback opens the reader and title page; downloaded sources can be switch
 
 test("switching audiobook versions resumes each recording's own checkpoint",async({page})=>{
   await instrument(page);
-  const books=[];
-  const titles=[unique("Release choice English"),unique("Release choice French")];
-  for (const title of titles) {
-    const id=await importBook(page,{title,author:"Version QA",file:{name:"Chapter.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}});
-    books.push((await(await page.request.get("/api/books")).json()).find((b:any)=>b.id===id));
-  }
-  const [english,french]=books;
-  await page.request.post("/api/progress",{data:{recordingId:french.recordingId,trackId:french.tracks[0].id,position:42,duration:french.tracks[0].duration,updatedAt:Date.now()}});
+  const title=unique("Release choice");
+  const id=await importBook(page,{title,author:"Version QA",file:{name:"Chapter.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}});
+  const english=(await(await page.request.get("/api/books")).json()).find((b:any)=>b.id===id);
+  // A second recording of the same work on the same audio file (#530: the Audiobook page lists the work's recordings).
+  const suffix=Math.random().toString(36).slice(2,8);
+  const french={editionId:`edition-french-${suffix}`,recordingId:`recording-french-${suffix}`,trackId:`track-french-${suffix}`};
+  expect((await page.request.post("/api/test/seed-local-audio",{data:{relPath:`imports/${english.tracks[0].id}.mp3`,editionId:french.editionId,recordingId:french.recordingId,trackId:french.trackId,workId:english.workId,narrator:"French Reader",language:"French",duration:english.tracks[0].duration}})).ok()).toBe(true);
+  // The seeded recording leaves the library after the test too (#645).
+  imported.push(french.editionId);
+  await page.request.post("/api/progress",{data:{recordingId:french.recordingId,trackId:french.trackId,position:42,duration:english.tracks[0].duration,updatedAt:Date.now()}});
+  // The Library still shows one tile per recording: the French one gets a title of its own there.
   await page.route("**/api/books",async route=>{
     const response=await route.fetch(), all=await response.json();
-    for (const b of all) {
-      if(b.id===english.id) Object.assign(b,{workId:english.workId,narrator:"English Reader",language:"English"});
-      if(b.id===french.id) Object.assign(b,{workId:english.workId,narrator:"French Reader",language:"French"});
-    }
-    await route.fulfill({response,json:all});
+    for (const b of all) if(b.recordingId===french.recordingId) b.title=`${title} French`;
+    // A read the app gave up on meanwhile is already answered.
+    await route.fulfill({response,json:all}).catch(()=>{});
   });
   await page.goto("/");
-  await playAndPause(page,titles[0]);
+  await playAndPause(page,title);
   await position(page,210);
-  await manage(page);
-  const dialog=page.getByRole("dialog",{name:"Versions & sources",exact:true});
-  await dialog.getByRole("button",{name:/French Reader/}).click();
+  const dialog=await manage(page);
+  await dialog.getByRole("radio",{name:/French Reader/}).click();
   // French has an older checkpoint than the English place being left: it is offered, not applied.
-  await dialog.getByRole("button",{name:"Resume saved position (00:00:42)",exact:true}).click();
-  await expect.poll(async()=>(await audioState(page)).src).toContain(french.tracks[0].id);
+  await page.getByRole("button",{name:"Resume saved position (00:00:42)",exact:true}).click();
+  await expect.poll(async()=>(await audioState(page)).src).toContain(french.trackId);
   await expect.poll(async()=>(await audioState(page)).position).toBeGreaterThanOrEqual(42);
   expect((await audioState(page)).position).toBeLessThan(50);
-  await dialog.getByRole("button",{name:/English Reader/}).click();
-  await dialog.getByRole("button",{name:"Resume saved position (00:03:30)",exact:true}).click();
+  await dialog.getByRole("radio",{name:/Version QA/}).click();
+  await page.getByRole("button",{name:"Resume saved position (00:03:30)",exact:true}).click();
   await expect.poll(async()=>(await audioState(page)).src).toContain(english.tracks[0].id);
   await expect.poll(async()=>(await audioState(page)).position).toBeGreaterThanOrEqual(210);
   expect((await audioState(page)).position).toBeLessThan(220);
@@ -359,15 +393,13 @@ test.describe("failed source retry",()=>{
   await page.evaluate(() => ((window as any).__audioElements as HTMLAudioElement[]).find(a => !!a.src)!.dispatchEvent(new Event("pause")));
   await expect.poll(async()=>(await(await page.request.get("/api/books")).json()).find((b:any)=>b.id===id).progress?.position).toBeGreaterThanOrEqual(159);
   await page.getByRole("button",{name:`Open title page for ${title}`,exact:true}).click();
-  await page.getByRole("button",{name:"Versions & sources",exact:true}).click();
-  const manager=page.getByRole("dialog",{name:"Versions & sources"});
-  await manager.getByRole("combobox",{name:"Playback source choice"}).selectOption("server");
+  await page.getByRole("dialog",{name:"Book details"}).getByRole("button",{name:/^Audiobook /}).click();
+  const manager=page.getByRole("region",{name:"Audiobook",exact:true});
   const source=(url:URL)=>url.pathname===`/api/media/${book.tracks[0].id}` && url.searchParams.get("source")==="server";
   await page.route(source,route=>route.abort());
-  await manager.getByRole("button",{name:"Apply source"}).click();
+  await playFrom(page,manager,"Server copy");
   await expect.poll(()=>page.evaluate(() => ((window as any).__audioElements as HTMLAudioElement[]).find(a => !!a.src)?.error?.code)).toBeTruthy();
   await page.unroute(source);
-  await manager.getByRole("button",{name:"Close dialog"}).click();
   await page.locator(".player-dock").getByRole("button",{name:"Play",exact:true}).click();
   await expect.poll(async()=>(await audioState(page)).position).toBeGreaterThanOrEqual(159);
   await expect.poll(async()=>(await(await page.request.get("/api/books")).json()).find((b:any)=>b.id===id).progress?.position).toBeGreaterThanOrEqual(159);

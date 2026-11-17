@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import type { ActivityHostRestart, ActivityItem, ActivityProcess, ActivityResponse, ActivityWorkerHost } from "../../src/types";
+import { noOverflow } from "./overflow";
 
 // The worker's page (#520; boards Worker.dc.html, WorkerNotInUse.dc.html and the right half of
 // DesktopActivityServer.dc.html): `#activity/server/<worker>` with the worker's id, the caption "Reading sync worker"
@@ -61,21 +62,6 @@ const back = (page: Page) => page.getByRole("button", { name: "Back to Activity"
 const serverList = (page: Page) => page.getByTestId("server-row-alignment");
 const workerRow = (page: Page, id: string) => page.getByTestId(`server-worker-${id}`).getByRole("link");
 const hash = (page: Page) => page.evaluate(() => location.hash);
-
-async function noOverflow(page: Page) {
-  const overflow = await page.evaluate(() => {
-    const width = window.innerWidth;
-    return [...document.querySelectorAll("body *")]
-      .filter((element) => {
-        const box = element.getBoundingClientRect();
-        return box.width > 0 && box.right > width + 1 && getComputedStyle(element).position !== "fixed";
-      })
-      .slice(0, 6)
-      .map((element) => `${element.tagName.toLowerCase()}.${String(element.className).slice(0, 40)}`);
-  });
-  expect(overflow, "elements wider than the viewport").toEqual([]);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-}
 
 async function shot(page: Page, name: string) {
   if (!SHOTS) return;

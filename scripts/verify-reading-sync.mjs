@@ -83,6 +83,8 @@ try {
   const room = page.locator(".reader-room:not(.inline-reader)");
   const showControls = async () => {
     if (await room.locator(".reader-topbar").isVisible()) return;
+    // A tap before the book's pages are in the frame reaches nothing.
+    await expect(room.locator(".reader-viewport iframe")).toBeVisible();
     const box = await room.locator(".reader-viewport").boundingBox();
     await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
     await expect(room.locator(".reader-topbar")).toBeVisible();
@@ -136,11 +138,12 @@ try {
     await page
       .getByRole("button", { name: "Search this book", exact: true })
       .click();
+    // Search is a page of the book (#590): a result opens the reader there.
     await page
-      .getByRole("searchbox", { name: "Search inside ebook" })
+      .getByRole("searchbox", { name: "Search this book" })
       .fill(chosen.text);
     await page
-      .locator(".reader-list-item")
+      .locator(".reader-pages-result")
       .filter({ hasText: chosen.text })
       .first()
       .click();

@@ -65,6 +65,8 @@ const desktopProjects = [
               /(^|\/)(sign-in|account-requests)\.spec\.ts$/,
               // Activity's This device (#518).
               /(^|\/)activity-device\.spec\.ts$/,
+              // The reader's own EPUB copy is not kept on This device (#671).
+              /(^|\/)reader-cache-not-kept\.spec\.ts$/,
               // An account switch during a library write (#528 review finding 1).
               /(^|\/)library-works-user-race\.spec\.ts$/,
               // The page turn inside a sentence that crosses a page (#508).
@@ -83,14 +85,20 @@ const desktopProjects = [
               /(^|\/)ebook-page\.spec\.ts$/,
               // The worker's page (#520).
               /(^|\/)activity-worker\.spec\.ts$/,
+              // The Audiobook page (#530).
+              /(^|\/)audiobook-page\.spec\.ts$/,
               // The reader's page: a head, the text band and a foot (#587).
               /(^|\/)reader-bands\.spec\.ts$/,
               // The rest of Activity's specs, the slice's final check (#523).
               /(^|\/)(activity-navigation|torrent-health)\.spec\.ts$/,
+              // Chapters, Bookmarks and Search as pages of the reader (#590).
+              /(^|\/)reader-pages\.spec\.ts$/,
               // A book read in the reader is In progress; the ebook shelf leaves Discover (#556).
               /(^|\/)(ebook-only-library|discovery)\.spec\.ts$/,
               // Speed and the sleep timer in the reader's foot (#589).
               /(^|\/)reader-foot-setting\.spec\.ts$/,
+              // Every message while reading in the reader's foot (#591).
+              /(^|\/)reader-messages\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },

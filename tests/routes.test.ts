@@ -143,7 +143,6 @@ test("what an address shows: built pages as they are, everything else the first 
   assert.equal(shows("#activity/bogus"), "#activity");
   // Not built yet: behaves like an address that names nothing.
   assert.equal(shows("#book/w1"), "#library");
-  assert.equal(shows("#book/w1/audiobook"), "#library");
   assert.equal(shows("#book/w1/get/ebook"), "#library");
   assert.equal(shows("#series/s1"), "#library");
   assert.equal(shows("#series/s1/add"), "#library");
@@ -159,6 +158,9 @@ test("what an address shows: built pages as they are, everything else the first 
   assert.equal(shows("#activity/device", false), "#activity/device");
   assert.equal(shows("#settings", false), "#settings");
   assert.equal(shows("#discover", false), "#discover");
+  // The Audiobook page (#530) is built, for everyone.
+  assert.equal(shows("#book/w1/audiobook"), "#book/w1/audiobook");
+  assert.equal(shows("#book/w1/audiobook", false), "#book/w1/audiobook");
 });
 
 test("#settings/<page>: each page, an unknown word, and the administrator's pages for someone else", () => {
@@ -245,4 +247,21 @@ test("#book/<workId>/ebook shows the Ebook page for everyone, its parent the boo
   }
   assert.deepEqual(parentOf(readAddress("#book/w1/ebook")), { name: "book", workId: "w1" });
   assert.equal(placeOf(readAddress("#book/w1/ebook")), "library");
+});
+
+test("the reader's pages: Chapters, Bookmarks and Search are built for everyone, their parent the book (#590)", () => {
+  for (const admin of [true, false])
+    for (const page of ["chapters", "bookmarks", "search"] as const) {
+      assert.deepEqual(resolve(readAddress(`#book/w1/${page}`), { admin }), { name: "book-page", workId: "w1", page });
+      assert.equal(writeAddress(resolve(readAddress(`#book/w%2F1/${page}`), { admin })), `#book/w%2F1/${page}`);
+      assert.deepEqual(parentOf(readAddress(`#book/w1/${page}`)), { name: "book", workId: "w1" });
+    }
+  const r = readAddress;
+  // The segmented control between Chapters and Bookmarks replaces the entry; Search and other works add one.
+  assert.equal(step(r("#book/w/chapters"), r("#book/w/bookmarks")), "replace");
+  assert.equal(step(r("#book/w/bookmarks"), r("#book/w/chapters")), "replace");
+  assert.equal(step(r("#book/w/chapters"), r("#book/w/search")), "push");
+  assert.equal(step(r("#book/w/chapters"), r("#book/v/bookmarks")), "push");
+  assert.equal(step(r("#reader/e"), r("#book/w/chapters")), "push");
+  assert.equal(step(r("#book/w/search"), r("#reader/e")), "push");
 });

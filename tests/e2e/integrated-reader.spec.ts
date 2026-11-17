@@ -91,7 +91,8 @@ test("page gestures show controls and long-press listens from that sentence",asy
  const toast=room.getByRole("status").filter({hasText:"Listening from here"});
  await expect(toast).toBeVisible();
  await expect(room.getByRole("button",{name:"Pause narration",exact:true})).toBeVisible();
- await toast.getByRole("button",{name:"Undo",exact:true}).click();
+ // Undo is the foot's message action (#591).
+ await room.locator(".reader-message").getByRole("button",{name:"Undo",exact:true}).click();
  await expect(toast).toBeHidden();
  expect((await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint).toEqual(before);
  const target=map.intervals.find((interval:any)=>interval.section===1 && interval.start>105);
