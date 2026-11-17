@@ -398,9 +398,9 @@ export async function saveEpubOffline(
       const mark = writesAsCache(existing, { cache: options.cache === true }) ? { cache: true } : {};
       await authDB.preferences.put({ key, value: { ...value, ...mark } });
     });
-  // Asked for, not waited on: Firefox answers with a prompt that may stay unanswered, and the copy must not wait on it
-  // (Keep on this device then never saved the EPUB in Firefox, #532).
-  void navigator.storage?.persist?.().catch(() => false);
+  // Never asks for persistent storage (spec #548): only the Keep switch's tap and the Protected storage row do. The
+  // reader's cache write of the book in the mini player runs at every page load, so asking here put Firefox's question
+  // on screen with nobody having tapped anything.
   if (navigator.storage?.getDirectory) {
     const folder = await (
       await navigator.storage.getDirectory()

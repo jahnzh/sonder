@@ -6,6 +6,7 @@
 import { test, expect, type Page, type Request, type Route } from "@playwright/test";
 import { mkdirSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { readerFixture } from "../reader-fixture";
 
 test.use({ serviceWorkers: "block" });
 
@@ -116,6 +117,52 @@ test("the switch on a book with a recording saves it: the line goes from Saving 
   await page.setViewportSize({ width: 1440, height: 900 });
   await settled(page);
   await page.screenshot({ path: `${OUT}/keep-kept-desktop.png` });
+});
+
+test("no persist() without a tap: the reading cache of the book in the mini player does not ask", async ({ page }) => {
+  test.setTimeout(60_000);
+  await countPersist(page);
+  // The most recently listened book has an EPUB: the mini player shows it and the reader caches its EPUB at load.
+  const book = await importBook(page, unique("Listened"));
+  const epub = await readerFixture({ title: book.title, bodies: ["<p>One sentence opens the book.</p>", "<p>A second chapter follows.</p>"] });
+  const uploaded = await page.request.post(`/api/ebooks/import?workId=${encodeURIComponent(book.workId)}`, {
+    multipart: { file: { name: "Listened.epub", mimeType: "application/epub+zip", buffer: epub } },
+  });
+  expect(uploaded.ok()).toBe(true);
+  const ebookId = (await uploaded.json()).id as string;
+  const track = (await (await page.request.get("/api/books")).json()).find((b: { id: string }) => b.id === book.id).tracks[0];
+  const progress = await page.request.post("/api/progress", {
+    data: { recordingId: book.recordingId, trackId: book.trackId, position: 5, duration: track.duration, updatedAt: Date.now() },
+  });
+  expect(progress.ok()).toBe(true);
+  await page.goto("/#library");
+  // The reader's cache write of that EPUB happened (it is the write that used to ask).
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (key) =>
+          new Promise<boolean>((resolve) => {
+            const open = indexedDB.open("sonder");
+            open.onsuccess = () => {
+              const db = open.result;
+              if (!db.objectStoreNames.contains("preferences")) return resolve(false), db.close();
+              const get = db.transaction("preferences").objectStore("preferences").get(key);
+              get.onsuccess = () => (resolve(get.result?.value?.cache === true), db.close());
+              get.onerror = () => (resolve(false), db.close());
+            };
+            open.onerror = () => resolve(false);
+          }),
+        `reader-file:${ebookId}`,
+      ),
+      { timeout: 20_000 },
+    )
+    .toBe(true);
+  expect(await persistCalls(page)).toBe(0);
+  // The tap still asks, once.
+  await page.goto(address(book.workId));
+  await keep(page).click();
+  await expect(keep(page)).toHaveAttribute("aria-checked", "true");
+  expect(await persistCalls(page)).toBe(1);
 });
 
 test("on for a book with nothing yet reads Nothing to save yet; the recording arriving is saved without a tap", async ({ page }) => {
