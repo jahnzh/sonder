@@ -1281,6 +1281,11 @@ export async function createApp(options?: {
           trackId: z.string().min(1),
           workId: z.string().min(1),
           releaseTitle: z.string().optional(),
+          // A recording the browser tests can tell apart and seek in (#530); the defaults are the old ones.
+          narrator: z.string().min(1).optional(),
+          language: z.string().min(1).optional(),
+          duration: z.number().positive().optional(),
+          chapters: z.array(z.object({ title: z.string(), start: z.number(), end: z.number().optional() })).optional(),
         })
         .parse(req.body);
       // A track id that is already in use fails the request and writes nothing.
@@ -1307,8 +1312,8 @@ export async function createApp(options?: {
             id: input.editionId,
             workId: input.workId,
             cover: "",
-            narrator: "N",
-            language: null,
+            narrator: input.narrator ?? "N",
+            language: input.language ?? null,
             releaseTitle: input.releaseTitle ?? "Test audio",
             rating: 0,
             sourceLabel: "Test",
@@ -1325,8 +1330,8 @@ export async function createApp(options?: {
             recordingId: input.recordingId,
             title: "Ch 1",
             index: 0,
-            duration: 10,
-            chapters: [],
+            duration: input.duration ?? 10,
+            chapters: input.chapters ?? [],
             source: full,
             sourceType: "local",
           })

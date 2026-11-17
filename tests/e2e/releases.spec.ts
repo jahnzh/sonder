@@ -60,8 +60,14 @@ test("multiple audiobook releases can be filtered, paged and explicitly chosen f
       exact: true,
     })
     .click();
+  // From the Audiobook page's Get another recording (#530), until the Get sheet replaces the picker.
   await page
-    .getByRole("button", { name: "Find another release", exact: true })
+    .getByRole("dialog", { name: "Book details" })
+    .getByRole("button", { name: /^Audiobook / })
+    .click();
+  await expect(page).toHaveURL(/#book\/work-alice\/audiobook$/);
+  await page
+    .getByRole("button", { name: "Get another recording", exact: true })
     .click();
   await expect(
     page.getByRole("combobox", { name: "Release language", exact: true }),
