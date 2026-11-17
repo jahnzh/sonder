@@ -77,3 +77,35 @@ button.part-file-row:focus-visible {
 .part-file-row[data-muted] .part-file-row-name {
   color: var(--muted);
 }
+/* A row that opens a page and has an info mark: the name is the link and its hit area covers the row; the mark sits
+   above it, a button of its own. */
+div.part-file-row[data-opens] {
+  position: relative;
+}
+div.part-file-row[data-opens]:hover {
+  background: color-mix(in srgb, var(--raised) 55%, transparent);
+}
+.part-file-row-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.part-file-row-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+.part-file-row-link:focus-visible {
+  outline: none;
+}
+.part-file-row-link:focus-visible::after {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+div.part-file-row[data-opens] .part-file-row-title > :not(.part-file-row-link) {
+  position: relative;
+  z-index: 1;
+}

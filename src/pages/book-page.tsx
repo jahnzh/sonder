@@ -387,8 +387,12 @@ export function BookPage(props: Props) {
             }
           />
         )}
-        {/* Not a link until the Reading sync page (S9); the reader's More sheet keeps today's card. */}
-        <FileRow kind="sync" name="Reading sync" status={model.sync.line} info={syncInfo} muted={model.sync.muted} />
+        {/* With both files the row opens the Reading sync page (#540); the reader's More sheet keeps today's card. */}
+        {model.sync.opens ? (
+          <FileRow kind="sync" name="Reading sync" status={model.sync.line} info={syncInfo} onClick={() => address.navigate({ name: "book-page", workId, page: "sync" })} />
+        ) : (
+          <FileRow kind="sync" name="Reading sync" status={model.sync.line} info={syncInfo} muted={model.sync.muted} />
+        )}
       </Group>
 
       {model.device && (

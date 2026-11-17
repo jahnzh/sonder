@@ -16,7 +16,11 @@ type Common = {
   status: string;
   /** 0 to 1 while something moves; draws the bar under the status line. Leave out when nothing moves. */
   progress?: number | null;
-  /** An info mark (Tooltip's InfoMark) after the name. Not on a row that is a button: a mark is a button. */
+  /**
+   * An info mark (Tooltip's InfoMark) after the name. On a row that opens a page the row is then not one button: the
+   * name is the link (it covers the row) and the mark is a button of its own beside it, as the Book board draws
+   * Reading sync.
+   */
   info?: ReactNode;
   /** The row is muted: what it names cannot be used yet (a Reading sync that needs a file). */
   muted?: boolean;
@@ -66,6 +70,32 @@ function Body({ id, kind, name, status, progress, info }: Common & { id: string 
 export function FileRow(props: FileRowProps) {
   const id = useId();
   const moving = props.progress != null ? "" : undefined;
+  if (props.onClick && props.info) {
+    return (
+      <li className="part-file-row-item">
+        <div className="part-file-row" data-kind={props.kind} data-moving={moving} data-opens="">
+          <span className="part-file-row-icon">
+            <FileIcon kind={props.kind} />
+          </span>
+          <span className="part-file-row-text">
+            <span className="part-file-row-title">
+              <button type="button" id={`${id}-name`} className="part-file-row-name part-file-row-link type-body" aria-labelledby={`${id}-name ${id}-status`} onClick={props.onClick}>
+                {props.name}
+              </button>
+              {props.info}
+            </span>
+            <span id={`${id}-status`} className="part-file-row-status type-label">
+              {props.status}
+            </span>
+            {props.progress != null && <ProgressBar progress={props.progress} />}
+          </span>
+          <span className="part-file-row-end">
+            <Chevron />
+          </span>
+        </div>
+      </li>
+    );
+  }
   if (props.onClick) {
     return (
       <li className="part-file-row-item">
