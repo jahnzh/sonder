@@ -12,6 +12,8 @@ export type BookRowProps = {
   title: string;
   /** One status line. */
   status: string;
+  /** A word in front of the status line, in the accent colour ("New · Not in your library" on the Series page). */
+  lead?: string | null;
   /** The cover's address; without one the cover is an empty raised square. */
   cover?: string | null;
   /** Its place in a series ("1", "2.5"): drawn in front, and the row is 56 high. */
@@ -37,7 +39,7 @@ export type BookRowProps = {
   raised?: boolean;
 };
 
-export function BookRow({ title, status, cover, number, marks = [], progress, onClick, action, failed, trailing, coverIcon, raised }: BookRowProps) {
+export function BookRow({ title, status, lead, cover, number, marks = [], progress, onClick, action, failed, trailing, coverIcon, raised }: BookRowProps) {
   const id = useId();
   const numbered = number != null && number !== "";
   const names = [numbered && `${id}-number`, `${id}-title`, ...marks.map((_, index) => `${id}-mark-${index}`), `${id}-status`, trailing && !action && `${id}-trailing`].filter(Boolean).join(" ");
@@ -62,6 +64,12 @@ export function BookRow({ title, status, cover, number, marks = [], progress, on
             </span>
           ))}
           <span id={`${id}-status`} className="part-book-row-status">
+            {lead && (
+              <>
+                <span className="part-book-row-lead">{lead}</span>
+                {" · "}
+              </>
+            )}
             {status}
           </span>
         </span>
