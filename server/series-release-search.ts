@@ -1,12 +1,10 @@
-import { and, eq } from "drizzle-orm";
-import { db, sqlite } from "./db.ts";
-import * as s from "./schema.ts";
-import { acquire as defaultAcquire, magnetHash } from "./acquisitions.ts";
+import { sqlite } from "./db.ts";
 import {
-  isActiveAcquisitionStatus,
-  isFinishedAcquisitionStatus,
-  setAcquisitionStatus,
-} from "./acquisition-status.ts";
+  acquire as defaultAcquire,
+  activeWorkAcquisition,
+  replacePreviousAcquisition,
+  type ReplacePreviousResult,
+} from "./acquisitions.ts";
 import {
   abbMagnet,
   abbRelease,
@@ -18,7 +16,6 @@ import {
 } from "./services.ts";
 import {
   getWorkMediaState,
-  trackWorkMediaState,
   workHasPlayableAudio,
   type WorkMediaState,
 } from "./work-media-state.ts";
@@ -31,7 +28,6 @@ import {
   restoreManualSeriesReleaseClaim,
   seriesWorkAcquisitions,
 } from "./series-acquisition.ts";
-import { transmission } from "./transmission.ts";
 
 export type SeriesReleaseSourceError = {
   source: "abb" | "prowlarr";
@@ -106,100 +102,6 @@ export function defaultReleaseSearchQuery(
 ) {
   const parts = [title.trim(), author?.trim()].filter(Boolean);
   return parts.join(" ");
-}
-
-function activeWorkAcquisition(userId: number, workId: string) {
-  const state = getWorkMediaState(userId, workId);
-  if (state?.state !== "queued" || !state.acquisitionId) return null;
-  const job = db
-    .select()
-    .from(s.acquisitions)
-    .where(eq(s.acquisitions.id, state.acquisitionId))
-    .get();
-  if (!job || !isActiveAcquisitionStatus(job.status)) return null;
-  return job;
-}
-
-export type ReplacePreviousResult =
-  | { action: "skipped_same_hash" }
-  | { action: "stopped_local" }
-  | { action: "detached_shared" }
-  | { action: "detached_torbox"; note: string };
-
-/** Detach or stop the caller's previous acquisition after a new one has started. */
-export async function replacePreviousAcquisition(
-  userId: number,
-  previousAcquisitionId: string,
-  newMagnet: string,
-): Promise<ReplacePreviousResult> {
-  const previous = db
-    .select()
-    .from(s.acquisitions)
-    .where(eq(s.acquisitions.id, previousAcquisitionId))
-    .get();
-  if (!previous) return { action: "skipped_same_hash" };
-  const newHash = magnetHash(newMagnet);
-  if (previous.hash === newHash) return { action: "skipped_same_hash" };
-
-  const users = db
-    .select()
-    .from(s.userAcquisitions)
-    .where(eq(s.userAcquisitions.acquisitionId, previousAcquisitionId))
-    .all();
-  const shared =
-    users.length !== 1 ||
-    users[0].userId !== userId ||
-    users.some((row) => row.userId !== userId);
-
-  if (shared) {
-    db.delete(s.userAcquisitions)
-      .where(
-        and(
-          eq(s.userAcquisitions.userId, userId),
-          eq(s.userAcquisitions.acquisitionId, previousAcquisitionId),
-        ),
-      )
-      .run();
-    if (previous.workId) trackWorkMediaState(userId, previous.workId);
-    return { action: "detached_shared" };
-  }
-
-  if (previous.backend === "torbox") {
-    db.delete(s.userAcquisitions)
-      .where(
-        and(
-          eq(s.userAcquisitions.userId, userId),
-          eq(s.userAcquisitions.acquisitionId, previousAcquisitionId),
-        ),
-      )
-      .run();
-    return {
-      action: "detached_torbox",
-      note:
-        "The previous TorBox download was not cancelled upstream; this account no longer tracks it.",
-    };
-  }
-
-  db.delete(s.userAcquisitions)
-    .where(
-      and(
-        eq(s.userAcquisitions.userId, userId),
-        eq(s.userAcquisitions.acquisitionId, previousAcquisitionId),
-      ),
-    )
-    .run();
-  if (!isFinishedAcquisitionStatus(previous.status)) {
-    try {
-      await transmission("torrent-stop", { ids: [previous.hash] });
-    } catch {
-      /* best effort */
-    }
-  }
-  setAcquisitionStatus(previousAcquisitionId, "error", {
-    error: "Replaced by a new release selection.",
-    updatedAt: Date.now(),
-  });
-  return { action: "stopped_local" };
 }
 
 export async function searchSeriesWorkReleases(
