@@ -1138,3 +1138,10 @@
     flex-shrink: 0;
   }
 }
+/* The reader on its own stays mounted under its pages (#590): closed, it keeps its layout but is neither seen,
+   tapped nor read, as Now playing does. */
+.reader-dialog[data-state="closed"],
+.reader-dialog[data-state="closed"] * {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}

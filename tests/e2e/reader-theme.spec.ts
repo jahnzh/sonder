@@ -151,12 +151,13 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await expect(
     page.getByRole("button", { name: "Remove bookmark from current sentence", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
+  // More's Bookmarks opens the Bookmarks page (#590), which lists the bookmark; Back returns to the reader.
   await openMore(page);
   await more.getByRole("button", { name: "Bookmarks", exact: true }).click();
-  await expect(page.locator(".reader-room:not(.inline-reader) .reader-bookmark")).toHaveCount(1);
-  await page
-    .getByRole("button", { name: "Close reader options", exact: true })
-    .click();
+  await expect(page.getByRole("heading", { level: 1, name: "Bookmarks", exact: true })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Bookmarks", exact: true }).getByRole("listitem")).toHaveCount(1);
+  await page.getByRole("button", { name: "Back to the book", exact: true }).click();
+  await expect(page.locator(".reader-room:not(.inline-reader) .reader-viewport iframe")).toBeVisible();
   await expect
     .poll(
       async () =>
