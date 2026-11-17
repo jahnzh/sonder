@@ -86,7 +86,11 @@ test("with All languages the second line starts with the language, or Language u
 });
 
 test("the picker: All languages, English, then every language of the loaded rows alphabetically, each once", () => {
-  const choices = languageChoices([...LOADED, release("fr2", { language: "french" }), release("en2", { language: "english" })], GET_LANGUAGE);
+  // Loaded out of order: Spanish before French.
+  const choices = languageChoices(
+    [release("es0", { language: "Spanish" }), ...LOADED, release("fr2", { language: "french" }), release("en2", { language: "english" })],
+    GET_LANGUAGE,
+  );
   assert.deepEqual(
     choices.map((choice) => choice.label),
     ["All languages", "English", "French", "german", "Spanish"],

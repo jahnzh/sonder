@@ -2,6 +2,7 @@
 // language): a short list of choices over the page, named after what it chooses, one radio row per choice with a
 // tick on the chosen one. It has no address. A choice applies at once and closes it; Escape, Close and a tap outside
 // close it without choosing. Focus moves in and returns.
+import { useRef } from "react";
 import { Dialog } from "../components/ui/dialog";
 import { Tick } from "./icons";
 import "./picker.css";
@@ -20,8 +21,30 @@ export type PickerProps<T extends string> = {
 };
 
 export function Picker<T extends string>({ open, title, options, value, onClose, onChoose }: PickerProps<T>) {
+  // The control that opened it gets the focus back when it closes (it opens without a Radix trigger).
+  // Read while rendering the opening: the dialog's own effects move the focus in before an effect here would run.
+  const opener = useRef<HTMLElement | null>(null);
+  const wasOpen = useRef(false);
+  if (open && !wasOpen.current) {
+    const active = typeof document === "undefined" ? null : document.activeElement;
+    opener.current = active instanceof HTMLElement && active !== document.body ? active : null;
+  }
+  wasOpen.current = open;
   return (
-    <Dialog open={open} onOpenChange={(next) => !next && onClose()} title={title} className="part-picker">
+    <Dialog
+      open={open}
+      onOpenChange={(next) => !next && onClose()}
+      title={title}
+      className="part-picker"
+      onCloseAutoFocus={(event) => {
+        const back = opener.current;
+        opener.current = null;
+        if (back?.isConnected) {
+          event.preventDefault();
+          back.focus({ preventScroll: true });
+        }
+      }}
+    >
       <ul className="part-picker-list" role="radiogroup" aria-label={title}>
         {options.map((option) => {
           const chosen = option.value === value;
