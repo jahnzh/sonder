@@ -32,6 +32,9 @@ export function installHardcoverFixture() {
     { ...book(505, "Future Crossing", "Ada North"), release_year: 2999, release_date: "2999-01-01" },
   ];
   const lateSeriesBook = book(506, "Crossing Three", "Ada North");
+  // Books only the Hardcover page's match spec finds (#529), one id per run from 900000 up: in no library, list or
+  // series, so matching a work to one changes nothing another spec (or a repeat of the spec) reads.
+  const matchOnlyBook = (id: number) => ({ ...book(id, "Feral Gods", "Ada North"), release_year: 2021 });
   let series701Previews = 0;
   const series = [
     { id: 701, name: "The Crossing", books_count: 4, author: { name: "Ada North" },
@@ -153,7 +156,7 @@ export function installHardcoverFixture() {
     else if (q.includes("SonderBookProgress"))
       data = { user_books: entries.filter((e) => e.book_id === v.bookId) };
     else if (q.includes("SonderBook("))
-      data = { books_by_pk: [...books, ...seriesBooks, lateSeriesBook].find((b) => b.id === v.id) || null };
+      data = { books_by_pk: v.id >= 900000 ? matchOnlyBook(v.id) : [...books, ...seriesBooks, lateSeriesBook].find((b) => b.id === v.id) || null };
     else if (q.includes("SonderShelfUpdate")) {
       const item = entries.find((e) => e.id === v.id)!;
       item.status_id = v.object.status_id;

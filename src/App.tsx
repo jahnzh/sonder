@@ -30,7 +30,6 @@ import {
   Loader2,
   FolderOpen,
   Link2,
-  ExternalLink,
   RefreshCw,
   Volume2,
   Music2,
@@ -79,10 +78,7 @@ import { Join } from "./components/Join";
 import { PlayerDock } from "./components/Player";
 import { AppUpdate } from "./components/AppUpdate";
 import { Chapters } from "./components/Chapters";
-import {
-  HardcoverBookTools,
-  type HardcoverFilter,
-} from "./components/Hardcover";
+import { type HardcoverFilter } from "./components/Hardcover";
 import { listeningChapters } from "./chapters";
 import { type Page, Mark, ListenButton, Empty } from "./pages/shared";
 import { LibraryPage } from "./pages/library-page";
@@ -93,6 +89,8 @@ import { ActivityPlace } from "./pages/activity-place";
 import { useSideBySide } from "./pages/side-by-side";
 import { ActivityDevice } from "./pages/activity-device";
 import { SettingsPage } from "./pages/settings-page";
+import { HardcoverPage } from "./pages/hardcover-page";
+import { HardcoverRow } from "./pages/hardcover-row";
 import { EbookFileRow, EbookPage, ebookSearchTarget } from "./pages/ebook-page";
 import { firstPage, writeAddress, type Place, type Route } from "./routes";
 import { onPageLeftByHistory, startNavigation, useAddress } from "./navigation";
@@ -899,7 +897,8 @@ function LibraryApp({
                 </button>
               </div>
             )}
-            {ebookPage ? (
+            {/* A book's Hardcover page (#529) and its Ebook page (#531) stand in place of the place's page; the Book page (#532) joins the book's pages. */}
+            {address.route.name === "book-page" && address.route.page === "hardcover" ? <HardcoverPage key={address.route.workId} workId={address.route.workId} admin={user.role === "admin"} books={books} onChanged={() => void refresh()} /> : ebookPage ? (
               <EbookPage
                 key={ebookPage}
                 workId={ebookPage}
@@ -1116,13 +1115,12 @@ function LibraryApp({
           onRelease={setDetail}
           onManageSources={()=>{if(detail){setMediaTarget(detail);setDetail(null);}}}
           onFindAudio={() => detail && findAudio(detail)}
-          onChanged={refresh}
-          onOpenSeries={(id) => { setDetail(null); setSeriesTarget({ id, mode: "preview" }); }}
-          onSettings={() => {
+          onHardcover={() => {
+            if (!detail) return;
+            const workId = detail.workId;
             setDetail(null);
-            openConnections();
+            address.navigate({ name: "book-page", workId, page: "hardcover" });
           }}
-          notify={notify}
           onKeepServer={() => {
             const left = leftByHistory.current;
             if (detail)
@@ -1189,10 +1187,7 @@ function BookDetail({
   onManageSources,
   onRelease,
   onFindAudio,
-  onChanged,
-  onOpenSeries,
-  onSettings,
-  notify,
+  onHardcover,
   onKeepServer,
   onFindEbook,
   onOpenEbook,
@@ -1212,10 +1207,8 @@ function BookDetail({
   onManageSources:()=>void;
   onRelease: (book: Book) => void;
   onFindAudio: () => void;
-  onChanged: () => void;
-  onOpenSeries: (id: number) => void;
-  onSettings: () => void;
-  notify: (s: string, error?: boolean) => void;
+  /** Opens the book's Hardcover page (#529). */
+  onHardcover: () => void;
   onKeepServer: () => void;
   onFindEbook: () => void;
   onOpenEbook: () => void;
@@ -1277,11 +1270,6 @@ function BookDetail({
               </div>
               <div className="detail-actions">
                 <ReaderShortcut book={b} onOpen={onClose} onMissing={onFindEbook}/>
-                {b.hardcover?.slug && (
-                  <a className="button subtle" href={`https://hardcover.app/books/${encodeURIComponent(b.hardcover.slug)}`} target="_blank" rel="noopener noreferrer">
-                    Hardcover <ExternalLink size={16}/>
-                  </a>
-                )}
                 {b.inLibrary ? (
                   <ListenButton book={b} onFindAudio={onFindAudio} />
                 ) : (
@@ -1340,13 +1328,7 @@ function BookDetail({
               </button>}
             </section>
           )}
-          <HardcoverBookTools
-            book={b}
-            onChanged={onChanged}
-            onSettings={onSettings}
-            onOpenSeries={onOpenSeries}
-            notify={notify}
-          />
+          <HardcoverRow match={b.hardcover} onOpen={onHardcover} />
           {!b.tracks.length && (
             <div className="metadata-book-note">
               This book is on your reading shelf. Find an audiobook recording to
