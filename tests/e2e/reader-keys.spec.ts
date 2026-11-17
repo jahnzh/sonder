@@ -124,7 +124,8 @@ test("F typed into a field goes into the field, in the book's pages and in the r
  // Contents → chapter two, which holds the fields: the reader pages away from the narration in chapter one.
  await showControls(page,room);
  await room.getByRole("button",{name:"Chapters",exact:true}).click();
- await room.locator(".reader-panel").getByRole("button",{name:"The Pool of Tears"}).click();
+ // Chapters is a page of its own (#590): its row opens the reader there.
+ await page.locator(".reader-pages-chapter",{hasText:"The Pool of Tears"}).click();
  await expect(room).not.toHaveAttribute("data-current-passage",/.+/);
  const note=frame.locator("#note");
  await expect(note).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
@@ -142,7 +143,7 @@ test("F typed into a field goes into the field, in the book's pages and in the r
  await expect(choice).toHaveValue("fig");
  await stillAway(page);
  await expect(playing).toHaveCount(0);
- // The reader's own search field takes F as a letter too.
+ // The Search page's field takes F as a letter too (#590).
  await page.evaluate(()=>(document.activeElement as HTMLElement|null)?.blur());
  // The controls shown for Chapters stay until the next tap (#587); a tap shows them only if they are hidden.
  if(!await room.locator(".reader-topbar").isVisible()){
@@ -150,13 +151,13 @@ test("F typed into a field goes into the field, in the book's pages and in the r
   await page.mouse.click(box.x+box.width/2,box.y+box.height*0.75);
  }
  await room.locator(".reader-topbar").getByRole("button",{name:"Search this book",exact:true}).click();
- const search=page.getByRole("searchbox",{name:"Search inside ebook"});
+ const search=page.getByRole("searchbox",{name:"Search this book"});
  await search.focus();
  await page.keyboard.type("f");
  await expect(search).toHaveValue("f");
  await stillAway(page);
- await room.locator(".reader-panel-heading").getByRole("button",{name:"Close reader options",exact:true}).click();
- await expect(room.locator(".reader-panel")).toHaveCount(0);
+ await page.getByRole("button",{name:"Back to the book",exact:true}).click();
+ await expect(page.getByRole("dialog",{name:"Now playing",exact:true})).toBeVisible();
  await page.evaluate(()=>(document.activeElement as HTMLElement|null)?.blur());
  await backWithF(page,room,interval,manifest);
 });

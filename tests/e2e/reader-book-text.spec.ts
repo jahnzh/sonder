@@ -77,15 +77,17 @@ test("a search result and a bookmark far away in a long book show their sentence
  const foundText=longBookSentence(24,332);
  expect(await textShown(room,foundText)).toBe(false);
  await (await showTopbar(page,room)).getByRole("button",{name:"Search this book",exact:true}).click();
- await page.getByRole("searchbox",{name:"Search inside ebook"}).fill("Chapter 25 sentence 333 walks");
- await page.locator(".reader-panel .reader-list-item",{hasText:"Chapter 25 sentence 333 walks"}).click();
+ // Search is a page of its own (#590): a result opens the reader there.
+ await page.getByRole("searchbox",{name:"Search this book"}).fill("Chapter 25 sentence 333 walks");
+ await page.locator(".reader-pages-result",{hasText:"Chapter 25 sentence 333 walks"}).click();
  await expect.poll(()=>textShown(room,foundText),{timeout:READER_WAIT_MS.followHighlight}).toBe(true);
  await expect(room).not.toHaveAttribute("data-current-passage",/.+/);
  // Bookmarks → sentence 450 of chapter 20, back across five chapters.
  expect(await textShown(room,markedText)).toBe(false);
  await (await showTopbar(page,room)).getByRole("button",{name:"More",exact:true}).click();
  await page.locator(".reader-more:visible").getByRole("button",{name:"Bookmarks",exact:true}).click();
- await page.locator(".reader-panel").getByRole("button",{name:"Long bookmark",exact:true}).click();
+ // The Bookmarks page lists the saved sentence in full.
+ await page.locator(".reader-pages-bookmark-open",{hasText:markedText.trim().slice(0,40)}).click();
  await expect.poll(()=>textShown(room,markedText),{timeout:READER_WAIT_MS.followHighlight}).toBe(true);
  expect(await textShown(room,foundText)).toBe(false);
 });
