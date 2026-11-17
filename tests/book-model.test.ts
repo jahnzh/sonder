@@ -261,3 +261,95 @@ test("the heart: pressed when any entry of the work is a favourite, toggling all
   assert.deepEqual(toggleWorkFavorite(["a", "b"], ["x", "b"]), ["x"]);
   assert.deepEqual(toggleWorkFavorite([], ["x"]), ["x"]);
 });
+
+// #533: the three states of boards BookNotInLibrary, BookNothing and BookPdf, each read as a whole: the place line,
+// which rows have Get and which Get is the main action, Listen and Read, the Reading sync line and the hold reasons.
+const rows = (model: ReturnType<typeof bookModel>) => ({
+  place: model.place,
+  main: model.main,
+  listen: model.listen,
+  read: model.readEbookId,
+  audiobook: [model.audiobook.line, model.audiobook.action],
+  ebook: [model.ebook.line, model.ebook.action, model.ebook.opens],
+  sync: model.sync.line,
+  device: model.device,
+});
+
+test("#533 not in the library, as the server answers it (no recordings of a work outside the library): Add, Get on both rows", () => {
+  const outside = work({ inLibrary: false, addedAt: null as unknown as number });
+  assert.deepEqual(rows(bookModel(outside, { admin: true })), {
+    place: "Not in your library",
+    main: "add",
+    listen: false,
+    read: null,
+    audiobook: ["Not added", "get"],
+    ebook: ["Not added", "get", false],
+    sync: "Needs an audiobook",
+    device: false,
+  });
+  // A held work outside the library still reads its hold reason; Add stays the main action.
+  const held = bookModel(work({ inLibrary: false, mediaState: { state: "missing", holdReason: "unreleased", acquisition: null } }), { admin: true });
+  assert.equal(held.main, "add");
+  assert.equal(held.audiobook.line, "Not added · not released yet");
+  // An EPUB outside the library: the row opens the Ebook page, Read stays off, no This device.
+  const epub = bookModel(work({ inLibrary: false, ebooks: [ebook("e1")] }), { admin: false });
+  assert.equal(epub.readEbookId, null);
+  assert.equal(epub.ebook.opens, true);
+  assert.equal(epub.device, false);
+  assert.equal(epub.sync.line, "Needs an audiobook");
+  // Someone who is not the administrator: no Get, Add still the main action.
+  const member = bookModel(outside, { admin: false });
+  assert.equal(member.main, "add");
+  assert.equal(member.audiobook.action, null);
+  assert.equal(member.ebook.action, null);
+});
+
+test("#533 nothing yet: Listen and Read off; the Audiobook row's Get is the main action whenever nothing is on its way", () => {
+  const states = [
+    [null, "Not added"],
+    [{ state: "missing", holdReason: null, acquisition: null }, "Not added"],
+    [{ state: "missing", holdReason: "empty_search", acquisition: null }, "Not added"],
+    [{ state: "missing", holdReason: "unreleased", acquisition: null }, "Not added · not released yet"],
+  ] as const;
+  for (const [mediaState, line] of states)
+    assert.deepEqual(rows(bookModel(work({ mediaState: mediaState as LibraryWork["mediaState"] }), { admin: true })), {
+      place: "Not started",
+      main: "get-audiobook",
+      listen: false,
+      read: null,
+      audiobook: [line, "get"],
+      ebook: ["Not added", "get", false],
+      sync: "Needs an audiobook",
+      device: false,
+    });
+  // A failed media state: "Download failed" with Retry, which is not the main action, and no Get.
+  const failed = bookModel(work({ mediaState: { state: "failed", holdReason: null, acquisition: null } }), { admin: true });
+  assert.deepEqual([failed.audiobook.line, failed.audiobook.action, failed.main], ["Download failed", "retry", null]);
+  // On its way: no Get and no main action.
+  const coming = bookModel(work({ mediaState: { state: "queued", holdReason: null, acquisition: null } }), { admin: true });
+  assert.deepEqual([coming.audiobook.action, coming.main, coming.sync.line], [null, null, "Needs an ebook"]);
+  // The hold-reason forms live in the status-line module.
+  assert.equal(mediaStateLine({ state: "missing", holdReason: "unreleased" }), "Not added · not released yet");
+  assert.equal(mediaStateLine({ state: "missing", holdReason: "empty_search" }), "Not added");
+  assert.equal(mediaStateLine({ state: "missing", holdReason: null }), "Not added");
+  assert.equal(mediaStateLine({ state: "failed", holdReason: null }), "Download failed");
+});
+
+test("#533 only a PDF: Read off, the PDF line opening the Ebook page; the Reading sync line in its order", () => {
+  assert.deepEqual(rows(bookModel(work({ ebooks: [ebook("p1", "pdf")] }), { admin: true })), {
+    place: "Not started",
+    main: "get-audiobook",
+    listen: false,
+    read: null,
+    audiobook: ["Not added", "get"],
+    ebook: ["PDF · opens in another app", null, true],
+    sync: "Needs an audiobook",
+    device: false,
+  });
+  // With a recording: "Needs an EPUB"; with a recording and no ebook: "Needs an ebook"; a PDF beside an EPUB is no PDF-only book.
+  assert.equal(bookModel(work({ recordings: [recording("r1")], ebooks: [ebook("p1", "pdf")] }), { admin: true }).sync.line, "Needs an EPUB");
+  assert.equal(bookModel(work({ recordings: [recording("r1")] }), { admin: true }).sync.line, "Needs an ebook");
+  const both = bookModel(work({ recordings: [recording("r1")], ebooks: [ebook("p1", "pdf"), ebook("e1")] }), { admin: true });
+  assert.equal(both.readEbookId, "e1");
+  assert.notEqual(both.ebook.line, "PDF · opens in another app");
+});
