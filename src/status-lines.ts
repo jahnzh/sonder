@@ -151,6 +151,18 @@ const STAGE_LINES: Record<string, string> = {
   cancelled: "Cancelled",
 };
 
+/** Above this share of the text, a finished `partial` map reads as Ready (#540); exactly 95% is still Partly ready. */
+export const READY_COVERAGE = 0.95;
+
+/**
+ * A finished `partial` map that maps more than 95% of the text reads "Ready · estimated timings", as today's card
+ * did. A job without a progress figure is taken as finished: `partial` is an end state.
+ */
+export function readsAsReady(job: Pick<ReadingSyncJobFacts, "status" | "outcome" | "coverage" | "progress">): boolean {
+  if (job.status !== "partial" || job.outcome === "unsynced") return false;
+  return (job.progress ?? 1) >= 1 && (job.coverage ?? 0) > READY_COVERAGE;
+}
+
 function jobLine(job: ReadingSyncJobFacts): string | null {
   if (job.outcome === "language_not_supported") return "Not available, English only";
   // A new map the server did not use over the map in use (#539); the map in use keeps its own line elsewhere.
@@ -171,7 +183,8 @@ function jobLine(job: ReadingSyncJobFacts): string | null {
     case "ready":
       return `Ready${DOT}estimated timings`;
     case "partial":
-      return job.outcome === "unsynced" ? "No text matched" : `Partly ready${DOT}${percentOf(job.coverage)} of the text`;
+      if (job.outcome === "unsynced") return "No text matched";
+      return readsAsReady(job) ? `Ready${DOT}estimated timings` : `Partly ready${DOT}${percentOf(job.coverage)} of the text`;
     case "error":
       return "Stopped";
     default:
@@ -287,6 +300,8 @@ export function finishedLine(facts: FinishedFacts): string | null {
       return facts.status === "accepted" ? "Ebook matches the narration" : "Ebook does not match the narration";
     case "reading-sync":
       if (facts.status === "ready") return "Reading sync ready";
+      // The 95% rule: a finished partial map of more than 95% of the text is ready.
+      if (facts.status === "partial" && (facts.coverage ?? 0) > READY_COVERAGE) return "Reading sync ready";
       if (facts.status === "partial") return `Reading sync partly ready${DOT}${percentOf(facts.coverage)} of the text`;
       return "Reading sync cancelled";
     case "device-save":
@@ -392,3 +407,85 @@ export function mediaStateLine({ state, holdReason }: MediaStateFacts): string |
   if (state !== "missing") return null;
   return holdReason === "unreleased" ? `${downloadLine({ status: null })}${DOT}not released yet` : downloadLine({ status: null });
 }
+
+/*
+ * The Reading sync page's lines (#540, spec #537 "The page"; boards ReadingSync*.dc.html): the state's name on its
+ * status row and the line under it, the steps, the notes under the buttons and the Details row. In one place with
+ * the rest of the vocabulary; the page's model (src/pages/reading-sync-model.ts) picks them.
+ */
+
+/** The steps of a whole-book reading sync, in order (board ReadingSync.dc.html). */
+export const SYNC_STEP_LINES = {
+  waiting: "Waiting for a worker",
+  copying: "Copying audio",
+  decoding: "Decoding audio",
+  encoding: "Encoding audio",
+  anchoring: "Anchoring text to audio",
+  aligning: "Aligning text",
+  saving: "Saving the map",
+} as const;
+export type SyncStep = keyof typeof SYNC_STEP_LINES;
+
+/** The names of the page's states, on the status row or the Status caption. */
+export const SYNC_STATE_LINES = {
+  preparing: "Preparing",
+  preparingAgain: "Preparing again",
+  ready: "Ready",
+  partial: "Partly ready",
+  noMatch: "No text matched",
+  paused: "Paused",
+  cancelled: "Cancelled",
+  stopped: "Stopped",
+  notAvailable: "Not available",
+  notPrepared: "Not prepared",
+} as const;
+
+/** The line under a state's name. */
+export const SYNC_STATE_NOTES = {
+  estimated: "Timings are estimated",
+  inUse: "In use until the new one is ready",
+  resumeOver: "Resume starts this book over",
+  noMatch: "The narration does not match this edition",
+  englishOnly: "Reading sync works with English books only",
+  languageDiffers: "The ebook and the narration are in different languages",
+  failedEverywhere: "Reading sync failed on every worker.",
+  noConnection: "No connection",
+} as const;
+
+/** The notes under the buttons. */
+export const SYNC_BUTTON_NOTES = {
+  pause: "Pause stops the worker. Resume starts this book over.",
+  retry: "Retry starts this book over on the first free worker.",
+  chooseOther: "Choose another recording or edition above.",
+} as const;
+
+/** The Details row's value on the Reading sync page. */
+export const SYNC_DETAILS_VALUE = "Engine, GPU, stage times";
+/** The row with the share of the text mapped. */
+export const TEXT_MAPPED_LINE = "Text mapped";
+
+/** A stopped reading sync names the step it stopped in ("Stopped while encoding audio"). */
+export function stoppedWhileLine(step: SyncStep | null): string {
+  if (!step) return SYNC_STATE_LINES.stopped;
+  const words = SYNC_STEP_LINES[step];
+  return `Stopped while ${words.charAt(0).toLowerCase()}${words.slice(1)}`;
+}
+
+/** A Prepare again whose map was not used over the map in use, with the share it matched (board ReadingSyncKept). */
+export function notUsedLine(coverage: number | null | undefined): string {
+  return `Not used: it matched ${percentOf(coverage)} of the text`;
+}
+
+/** The workers online out of those configured ("1 of 2 online"). */
+export function workersOnlineLine(online: number, total: number): string {
+  return `${online} of ${total} online`;
+}
+
+/** An unsynced passage's line: its excerpt and how many sentences it holds ("It was a dark… · 6 sentences"). */
+export function passageLine(excerpt: string, sentences: number): string {
+  const count = `${sentences} ${sentences === 1 ? "sentence" : "sentences"}`;
+  return excerpt ? `${excerpt}${DOT}${count}` : count;
+}
+
+/** The share of the text mapped, as the Text mapped row shows it. */
+export const mappedShare = (coverage: number | null | undefined): string => percentOf(coverage);

@@ -23,6 +23,8 @@ export type Route =
   | { name: "settings-page"; page: string }
   | { name: "book"; workId: string }
   | { name: "book-page"; workId: string; page: BookPage }
+  /** The Details of a book's Reading sync (#540): engine, GPU use, processing and stage times. */
+  | { name: "sync-details"; workId: string }
   | { name: "get"; workId: string; kind: "audiobook" | "ebook" }
   | { name: "series"; id: string }
   | { name: "series-add"; id: string }
@@ -85,6 +87,7 @@ export function readAddress(hash: string): Route {
       if (rest.length === 1) return { name: "book", workId };
       if (rest.length === 2 && (BOOK_PAGES as readonly string[]).includes(rest[1]))
         return { name: "book-page", workId, page: rest[1] as BookPage };
+      if (rest.length === 3 && rest[1] === "sync" && rest[2] === "details") return { name: "sync-details", workId };
       if (rest.length === 3 && rest[1] === "get" && (rest[2] === "audiobook" || rest[2] === "ebook"))
         return { name: "get", workId, kind: rest[2] };
       return nothing("library");
@@ -136,6 +139,8 @@ export function writeAddress(route: Route): string {
       return `#book/${part(route.workId)}/${route.page}`;
     case "get":
       return `#book/${part(route.workId)}/get/${route.kind}`;
+    case "sync-details":
+      return `#book/${part(route.workId)}/sync/details`;
     case "series":
       return `#series/${part(route.id)}`;
     case "series-add":
@@ -196,6 +201,9 @@ export function parentOf(route: Route): Route | null {
       return { name: "library" };
     case "series-add":
       return { name: "series", id: route.id };
+    // Details belongs to the book's Reading sync page (#540).
+    case "sync-details":
+      return { name: "book-page", workId: route.workId, page: "sync" };
     case "worker":
       return { name: "activity", part: "server" };
     case "settings-page":
@@ -254,6 +262,8 @@ function built(route: Route): boolean {
   if (route.name === "book-page" && (route.page === "audiobook" || route.page === "hardcover" || route.page === "ebook")) return true;
   // The reader's pages: Chapters, Bookmarks and Search (#590).
   if (route.name === "book-page" && (route.page === "chapters" || route.page === "bookmarks" || route.page === "search")) return true;
+  // The Reading sync page and its Details (#540).
+  if ((route.name === "book-page" && route.page === "sync") || route.name === "sync-details") return true;
   switch (route.name) {
     // The Book page (#532).
     case "book":

@@ -245,3 +245,56 @@ test("Now's own forms: whose a Hardcover line is, and how long ago a finished en
   // A clock a little behind the server's never reads as the future.
   assert.equal(finishedAgo(at, at - 30_000), "Just now");
 });
+
+test("the 95% rule (#540): a finished partial map of more than 95% of the text reads Ready · estimated timings", async () => {
+  const { readsAsReady, finishedLine, bookSyncLine } = await import("../src/status-lines.ts");
+  assert.equal(reading(book("partial", { outcome: "partial", coverage: 0.951, progress: 1 })), "Ready · estimated timings");
+  assert.equal(reading(book("partial", { outcome: "partial", coverage: 0.96 })), "Ready · estimated timings", "partial is an end state");
+  assert.equal(reading(book("partial", { outcome: "partial", coverage: 0.95, progress: 1 })), "Partly ready · 95% of the text", "95% exactly");
+  assert.equal(reading(book("partial", { outcome: "partial", coverage: 0.99, progress: 0.5 })), "Partly ready · 99% of the text", "not finished");
+  assert.equal(reading(book("partial", { outcome: "unsynced", coverage: 0.99 })), "No text matched");
+  assert.equal(readsAsReady({ status: "ready", coverage: 1 }), false, "only a partial map is read by the rule");
+  // The same rule in the Book page's row and in Now's finished line.
+  assert.equal(bookSyncLine({ hasRecording: true, audioComing: false, hasEbook: true, hasEpub: true, job: book("partial", { coverage: 0.97, progress: 1 }) }), "Ready · estimated timings");
+  assert.equal(finishedLine({ entry: "reading-sync", status: "partial", coverage: 0.97 }), "Reading sync ready");
+  assert.equal(finishedLine({ entry: "reading-sync", status: "partial", coverage: 0.95 }), "Reading sync partly ready · 95% of the text");
+});
+
+test("the Reading sync page's lines (#540): states, notes, steps, and the lines with figures", async () => {
+  const lines = await import("../src/status-lines.ts");
+  assert.deepEqual(Object.values(lines.SYNC_STEP_LINES), [
+    "Waiting for a worker", "Copying audio", "Decoding audio", "Encoding audio", "Anchoring text to audio", "Aligning text", "Saving the map",
+  ]);
+  assert.deepEqual(lines.SYNC_STATE_LINES, {
+    preparing: "Preparing", preparingAgain: "Preparing again", ready: "Ready", partial: "Partly ready", noMatch: "No text matched",
+    paused: "Paused", cancelled: "Cancelled", stopped: "Stopped", notAvailable: "Not available", notPrepared: "Not prepared",
+  });
+  assert.deepEqual(lines.SYNC_STATE_NOTES, {
+    estimated: "Timings are estimated",
+    inUse: "In use until the new one is ready",
+    resumeOver: "Resume starts this book over",
+    noMatch: "The narration does not match this edition",
+    englishOnly: "Reading sync works with English books only",
+    languageDiffers: "The ebook and the narration are in different languages",
+    failedEverywhere: "Reading sync failed on every worker.",
+    noConnection: "No connection",
+  });
+  assert.deepEqual(lines.SYNC_BUTTON_NOTES, {
+    pause: "Pause stops the worker. Resume starts this book over.",
+    retry: "Retry starts this book over on the first free worker.",
+    chooseOther: "Choose another recording or edition above.",
+  });
+  assert.equal(lines.SYNC_DETAILS_VALUE, "Engine, GPU, stage times");
+  assert.equal(lines.TEXT_MAPPED_LINE, "Text mapped");
+  assert.equal(lines.stoppedWhileLine("encoding"), "Stopped while encoding audio");
+  assert.equal(lines.stoppedWhileLine("saving"), "Stopped while saving the map");
+  assert.equal(lines.stoppedWhileLine(null), "Stopped");
+  assert.equal(lines.notUsedLine(0.4), "Not used: it matched 40% of the text");
+  assert.equal(lines.workersOnlineLine(1, 2), "1 of 2 online");
+  assert.equal(lines.passageLine("It was a dark", 6), "It was a dark · 6 sentences");
+  assert.equal(lines.passageLine("", 1), "1 sentence");
+  assert.equal(lines.mappedShare(0.961), "96%");
+  // The step lines are the stage lines a reading sync's row shows elsewhere.
+  for (const [stage, step] of [["decoding", "decoding"], ["encoding", "encoding"], ["anchoring", "anchoring"], ["aligning", "aligning"], ["finishing", "saving"]] as const)
+    assert.equal(reading(book("processing", { stage })), lines.SYNC_STEP_LINES[step], stage);
+});

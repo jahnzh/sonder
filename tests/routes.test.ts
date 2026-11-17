@@ -33,6 +33,7 @@ const table: { address: string; route: Route; place: string; parent: Route | nul
     place: "library",
     parent: { name: "book", workId: "w1" } as Route,
   })),
+  { address: "#book/w1/sync/details", route: { name: "sync-details", workId: "w1" }, place: "library", parent: { name: "book-page", workId: "w1", page: "sync" } },
   { address: "#book/w1/get/audiobook", route: { name: "get", workId: "w1", kind: "audiobook" }, place: "library", parent: { name: "book", workId: "w1" } },
   { address: "#book/w1/get/ebook", route: { name: "get", workId: "w1", kind: "ebook" }, place: "library", parent: { name: "book", workId: "w1" } },
   { address: "#series/s1", route: { name: "series", id: "s1" }, place: "library", parent: { name: "library" } },
@@ -57,6 +58,7 @@ test("a parameter with reserved characters survives writing and reading", () => 
     for (const route of [
       { name: "book", workId: id },
       { name: "book-page", workId: id, page: "sync" },
+      { name: "sync-details", workId: id },
       { name: "get", workId: id, kind: "ebook" },
       { name: "series", id },
       { name: "series-add", id },
@@ -237,9 +239,22 @@ test("#book/<workId>/hardcover is built (#529) for everyone, as is the Book page
     assert.equal(shows("#book/w1/hardcover", admin), "#book/w1/hardcover");
     assert.equal(shows("#book/hardcover%3A42/hardcover", admin), "#book/hardcover%3A42/hardcover");
     assert.equal(shows("#book/w1", admin), "#book/w1");
-    assert.equal(shows("#book/w1/sync", admin), "#library");
   }
   assert.deepEqual(parentOf(readAddress("#book/w1/hardcover")), { name: "book", workId: "w1" });
+});
+
+test("#book/<workId>/sync and /sync/details are built for everyone (#540): Details' parent is Reading sync, its parent the book", () => {
+  for (const admin of [true, false]) {
+    assert.deepEqual(resolve(readAddress("#book/w1/sync"), { admin }), { name: "book-page", workId: "w1", page: "sync" });
+    assert.deepEqual(resolve(readAddress("#book/w1/sync/details"), { admin }), { name: "sync-details", workId: "w1" });
+    assert.equal(writeAddress(resolve(readAddress("#book/w%2F1/sync/details"), { admin })), "#book/w%2F1/sync/details");
+  }
+  assert.deepEqual(parentOf(readAddress("#book/w1/sync")), { name: "book", workId: "w1" });
+  assert.deepEqual(parentOf(readAddress("#book/w1/sync/details")), { name: "book-page", workId: "w1", page: "sync" });
+  // Anything else under sync names nothing.
+  assert.equal(readAddress("#book/w1/sync/other").name, "unknown");
+  assert.equal(readAddress("#book/w1/sync/details/x").name, "unknown");
+  assert.equal(step(readAddress("#book/w1/sync"), readAddress("#book/w1/sync/details")), "push");
 });
 
 test("#book/<workId>/ebook shows the Ebook page for everyone, its parent the book (#531)", () => {
