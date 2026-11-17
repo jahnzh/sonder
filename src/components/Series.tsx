@@ -36,7 +36,8 @@ type Series = SeriesSummary & {
   completion?: { finished: number; total: number; nextBookId: number | null };
   refreshError?: string;
 };
-export type SeriesTarget = { id: number; mode: "preview" | "saved" };
+/** `select`: the book an Add on the Series page asked for (#562), chosen when the dialog opens in its saved mode. */
+export type SeriesTarget = { id: number; mode: "preview" | "saved"; select?: number };
 
 const SERIES_LANGUAGE_KEY = "sonder-series-language";
 function initialSeriesLanguage() {
@@ -116,7 +117,10 @@ export function SeriesDialog({ target, onClose, onSaved, downloads, savedEbooks,
         : `/hardcover/series/${target.id}?language=${encodeURIComponent(initialSeriesLanguage())}`;
       const value = await api<Series>(path);
       setSeries(value);
-      setSelected(target.mode === "saved" ? value.works.filter((work) => work.selected).map((work) => work.id) : []);
+      const select = target.mode === "saved" ? value.works.find((work) => work.id === target.select && !work.added && !work.needsAdmin) : undefined;
+      setSelected(target.mode === "saved"
+        ? [...new Set([...value.works.filter((work) => work.selected).map((work) => work.id), ...(select ? [select.id] : [])])]
+        : []);
     } catch (reason) { setSeries(null); setError((reason as Error).message); }
     finally { setBusy(false); }
   }, [target]);

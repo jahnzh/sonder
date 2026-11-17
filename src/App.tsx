@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { PlayerProvider } from "./player";
 import { SeriesDialog, type SeriesTarget } from "./components/Series";
+import { SeriesPage } from "./pages/series-page";
 import { ReaderHost } from "./components/Reader";
 import { EBOOK_DEVICE_EVENT } from "./reading";
 import {
@@ -926,13 +927,28 @@ function LibraryApp({
                 onPauseSave={(recordingId) => controllers.current.get(recordingId)?.abort()}
                 onFindAudio={findAudio}
                 onFindEbook={findEbook}
-                onSeries={(id) => setSeriesTarget({ id, mode: "preview" })}
+                onSeries={(id, saved) => (saved ? address.navigate({ name: "series", id: String(id) }) : setSeriesTarget({ id, mode: "preview" }))}
                 onChanged={refresh}
                 onDevice={async () => {
                   await refreshDownloads();
                   await refreshOfflineEbooks();
                 }}
                 notify={notify}
+              />
+            ) : pageRoute.name === "series" ? (
+              <SeriesPage
+                key={pageRoute.id}
+                id={pageRoute.id}
+                admin={admin}
+                online={online}
+                books={books}
+                revision={seriesRevision}
+                onAdd={(id, bookId) => setSeriesTarget({ id, mode: "saved", select: bookId })}
+                onNotSaved={(id) => setSeriesTarget({ id, mode: "preview" })}
+                onRemoved={() => {
+                  setSeriesRevision((value) => value + 1);
+                  void refresh();
+                }}
               />
             ) : pageRoute.name === "book-page" && pageRoute.page === "hardcover" ? <HardcoverPage key={pageRoute.workId} workId={pageRoute.workId} admin={user.role === "admin"} books={books} onChanged={() => void refresh()} /> : ebookPage ? (
               <EbookPage
@@ -962,7 +978,8 @@ function LibraryApp({
                 setLoading={setLoading}
                 loadError={loadError}
                 seriesRevision={seriesRevision}
-                setSeriesTarget={setSeriesTarget}
+                // A saved series opens its page (#562); the dialog stays for one that is not saved.
+                setSeriesTarget={(target) => (target.mode === "saved" ? address.navigate({ name: "series", id: String(target.id) }) : setSeriesTarget(target))}
                 setDetail={openBookOf}
                 setImportOpen={setImportOpen}
                 favorites={favorites}

@@ -128,3 +128,7 @@ button.part-book-row:focus-visible {
   color: var(--muted);
   white-space: nowrap;
 }
+/* The Series page's book to continue: the row on the raised fill (board Series.dc.html). */
+.part-book-row-item[data-raised] {
+  background: var(--raised);
+}
