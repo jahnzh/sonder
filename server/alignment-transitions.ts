@@ -156,9 +156,10 @@ type AlignmentSummary = ReturnType<typeof slimAlignmentJob>;
 /**
  * The last summary made of each job, with the version of its row it was made from. A row's version
  * is its small columns and the byte lengths of its job and kept map, which SQLite gives without
- * parsing them. Every write of a job's data goes through `persist`, which stamps `updated_at` with
- * the time of the write; a summary is kept only when it was read after the millisecond of its row's
- * last write, so any later write gives the row another version.
+ * parsing them. Every write of a job's data goes through `persist`, which stamps `updated_at` later
+ * than the row's stored stamp (`writeStamp`), so any later write gives the row another version, whatever
+ * the wall clock does. A summary is also kept only when it was read after the millisecond of its row's
+ * last write. Deleting a row drops its summary, since a row made again under that id stamps from the clock.
  */
 const summaries = new Map<string, { version: string; summary: AlignmentSummary }>();
 type SummaryVersionRow = {
@@ -284,8 +285,20 @@ function rejectWorseRebuild(job: AlignmentJob) {
   job.outcome = "rejected";
   job.error = reason;
 }
+/**
+ * The time a write stamps on row `id`: now, but always after the row's stored stamp, so every write gives the
+ * row a later `updated_at` even when the wall clock steps back (NTP, a resumed VM) or two writes share a
+ * millisecond. The summary cache (`summaries`) and `rowUnchanged` rely on that (#658).
+ */
+function writeStamp(id: string) {
+  const stored = sqlite.prepare("SELECT updated_at AS updatedAt FROM alignment_jobs WHERE id=?").get(id) as
+    | { updatedAt: number }
+    | undefined;
+  const now = Date.now();
+  return stored && stored.updatedAt >= now ? stored.updatedAt + 1 : now;
+}
 function persist(job: AlignmentJob) {
-  job.updatedAt = Date.now();
+  job.updatedAt = writeStamp(job.id);
   rejectWorseRebuild(job);
   if (alignmentMapUsable(job)) {
     ensureMediaStorage();
@@ -561,6 +574,8 @@ function deleteJobRows(where: string, value: string) {
         keep.run(hostId, folder, row.id, row.recording_id, Date.now());
     }
     sqlite.prepare(`DELETE FROM alignment_jobs WHERE ${where}=?`).run(value);
+    // A row made again under the same id starts its stamps from the clock, not after the deleted row's.
+    for (const row of rows) summaries.delete(row.id);
   })();
 }
 export function deleteAlignmentJob(id: string) {
