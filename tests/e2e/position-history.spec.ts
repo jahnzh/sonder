@@ -513,10 +513,12 @@ test("Use Hardcover position can be undone through the normal progress path", as
   await startPaused(page, book.title);
   await setPosition(page, 70.25);
   await page.getByRole("button", { name: `About ${book.title}`, exact: true }).click();
+  // The book's Hardcover row opens the Hardcover page (#529), where Use Hardcover position is.
+  await page.getByRole("dialog").getByRole("button", { name: /^Hardcover / }).click();
+  await expect(page).toHaveURL(/#book\/[^/]+\/hardcover$/);
   await page.getByRole("button", { name: "Use Hardcover position", exact: true }).click();
   await expect.poll(async () => (await history(page, book.recordingId)).at(-1)?.kind).toBe("hardcover");
-  await page.getByRole("dialog").getByRole("button", { name: "Pause", exact: true }).click();
-  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
+  await page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true }).click();
   await openReaderPlayer(page);
   await restoreLatest(page);
   await expect.poll(async () => (await audioState(page)).position).toBe(70.25);

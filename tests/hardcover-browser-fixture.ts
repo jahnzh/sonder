@@ -32,6 +32,9 @@ export function installHardcoverFixture() {
     { ...book(505, "Future Crossing", "Ada North"), release_year: 2999, release_date: "2999-01-01" },
   ];
   const lateSeriesBook = book(506, "Crossing Three", "Ada North");
+  // Books only the Hardcover page's match spec finds (#529), one id per run from 900000 up: in no library, list or
+  // series, so matching a work to one changes nothing another spec (or a repeat of the spec) reads.
+  const matchOnlyBook = (id: number) => ({ ...book(id, "Feral Gods", "Ada North"), release_year: 2021 });
   let series701Previews = 0;
   const series = [
     { id: 701, name: "The Crossing", books_count: 4, author: { name: "Ada North" },
@@ -75,6 +78,7 @@ export function installHardcoverFixture() {
     book_id: b.id,
     book: b,
   }));
+  let nextMemberId = 9950;
   globalThis.fetch = async (input, init) => {
     if (!String(input).startsWith("https://api.hardcover.app/"))
       return original(input, init);
@@ -124,8 +128,10 @@ export function installHardcoverFixture() {
       members = members.filter((m) => m.id !== v.id);
       data = { delete_list_book: { id: v.id } };
     } else if (q.includes("SonderListAdd")) {
+      // A new id each time: one counted from the list's length could repeat a member's id still on the list,
+      // and removing either would then remove both.
       const item = {
-        id: 9900 + members.length,
+        id: nextMemberId++,
         list_id: v.object.list_id,
         book_id: v.object.book_id,
         book: books.find((b) => b.id === v.object.book_id)!,
@@ -151,7 +157,7 @@ export function installHardcoverFixture() {
     else if (q.includes("SonderBookProgress"))
       data = { user_books: entries.filter((e) => e.book_id === v.bookId) };
     else if (q.includes("SonderBook("))
-      data = { books_by_pk: [...books, ...seriesBooks, lateSeriesBook].find((b) => b.id === v.id) || null };
+      data = { books_by_pk: v.id >= 900000 ? matchOnlyBook(v.id) : [...books, ...seriesBooks, lateSeriesBook].find((b) => b.id === v.id) || null };
     else if (q.includes("SonderShelfUpdate")) {
       const item = entries.find((e) => e.id === v.id)!;
       item.status_id = v.object.status_id;

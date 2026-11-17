@@ -418,12 +418,9 @@ test("keyboard shortcut sheet opens from Now Playing and Settings", async ({ pag
   await expect(page.getByRole("dialog", { name: "Keyboard shortcuts", exact: true }).getByText("Play or pause")).toBeVisible();
 });
 test("a form dialog focuses its first text field when it opens", async ({ page }) => {
-  await page.goto("/#settings/connections");
-  await page.getByRole("textbox", { name: /^API token/ }).fill("browser-test-token");
-  await page.getByRole("button", { name: "Save changes", exact: true }).click();
-  await expect(page.getByRole("combobox", { name: "Hardcover sync mode", exact: true })).toBeEnabled();
+  // The book dialog's Hardcover match dialog became the Hardcover page (#529); Add an audiobook is a form dialog.
   await page.goto("/#library");
-  await page.getByRole("button", { name: "About Frankenstein", exact: true }).click();
-  await page.getByRole("button", { name: /Match on Hardcover/ }).click();
-  await expect(page.getByRole("textbox", { name: "Match book title and author" })).toBeFocused();
+  await page.getByRole("button", { name: "Open navigation", exact: true }).click();
+  await page.getByRole("button", { name: "Add an audiobook", exact: true }).click();
+  await expect(page.getByRole("dialog").getByRole("textbox", { name: "Book title" })).toBeFocused();
 });

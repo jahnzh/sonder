@@ -47,6 +47,8 @@ const desktopProjects = [
               /(^|\/)activity-dot\.spec\.ts$/,
               // Settings as a list with pages (#579).
               /(^|\/)settings-pages\.spec\.ts$/,
+              // A book's Hardcover page (#529), and the Hardcover spec that reaches it from the Library.
+              /(^|\/)hardcover(-page)?\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: {} },

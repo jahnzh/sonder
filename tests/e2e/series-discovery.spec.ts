@@ -71,8 +71,9 @@ test("discover and save chosen works from the intended series, then reopen it", 
   await page.getByRole("button", { name: "Close series" }).click();
 
   await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
-  await page.getByRole("button", { name: "About Alice’s Adventures in Wonderland" }).first().click();
-  await page.getByRole("button", { name: "Add series", exact: true }).click();
+  // The book dialog's Hardcover block with its "Add series" became the Hardcover page (#529); the Book page's series
+  // line (#532) takes it over. The saved series reopens from its own entry.
+  await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
   await expect(page.getByRole("heading", { name: "The Crossing" })).toBeVisible();
   await expect(page.getByRole("dialog").getByText("Hardcover #701", { exact: true })).toBeVisible();
 });
